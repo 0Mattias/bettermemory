@@ -284,3 +284,174 @@ async def test_confirmation_disabled_writes_immediately(server: Any) -> None:
     )
     assert res["status"] == "committed"
     assert "pending_id" not in res
+
+
+# ---------------------------------------------------------------------------
+# memory_list(with_bodies=True)
+# ---------------------------------------------------------------------------
+
+
+def _unwrap(res: Any) -> Any:
+    return res.get("result", res) if isinstance(res, dict) and "result" in res else res
+
+
+async def test_list_default_excludes_body(server: Any) -> None:
+    await _call(
+        server, "memory_write", content="alpha body content", scopes=["tools"]
+    )
+    listing = _unwrap(await _call(server, "memory_list"))
+    assert len(listing) == 1
+    assert "body" not in listing[0]
+    assert "summary" in listing[0]
+
+
+async def test_list_with_bodies_inlines_body(server: Any) -> None:
+    written = await _call(
+        server,
+        "memory_write",
+        content="full body content here for inlining",
+        scopes=["tools"],
+    )
+    listing = _unwrap(await _call(server, "memory_list", with_bodies=True))
+    assert len(listing) == 1
+    assert listing[0]["id"] == written["id"]
+    assert "full body content here for inlining" in listing[0]["body"]
+    # Summary still surfaced for uniformity with body-less mode.
+    assert "summary" in listing[0]
+
+
+async def test_list_with_bodies_respects_scope_filter(server: Any) -> None:
+    await _call(
+        server,
+        "memory_write",
+        content="alpha note",
+        scopes=["projects:alpha"],
+    )
+    await _call(
+        server,
+        "memory_write",
+        content="tools note",
+        scopes=["tools"],
+    )
+    listing = _unwrap(
+        await _call(server, "memory_list", scopes=["tools"], with_bodies=True)
+    )
+    assert len(listing) == 1
+    assert listing[0]["scopes"] == ["tools"]
+    assert "tools note" in listing[0]["body"]
+
+
+async def test_list_with_bodies_respects_disabled_scopes(server: Any) -> None:
+    await _call(
+        server,
+        "memory_write",
+        content="should be hidden",
+        scopes=["projects:alpha"],
+    )
+    await _call(
+        server,
+        "memory_write",
+        content="should be visible",
+        scopes=["tools"],
+    )
+    await _call(server, "memory_scope_disable", scope="projects:alpha")
+
+    listing = _unwrap(await _call(server, "memory_list", with_bodies=True))
+    assert all("projects:alpha" not in m["scopes"] for m in listing)
+    assert any("should be visible" in m["body"] for m in listing)
+
+
+# ---------------------------------------------------------------------------
+# memory_search(expand_top=True)
+# ---------------------------------------------------------------------------
+
+
+async def test_search_expand_top_inlines_body_for_high_relevance(server: Any) -> None:
+    written = await _call(
+        server,
+        "memory_write",
+        content="kubernetes networking troubleshooting cheatsheet",
+        scopes=["infrastructure"],
+    )
+    hits = _unwrap(
+        await _call(
+            server,
+            "memory_search",
+            query="kubernetes networking troubleshooting",
+            expand_top=True,
+        )
+    )
+    assert len(hits) >= 1
+    assert hits[0]["id"] == written["id"]
+    assert hits[0]["relevance"] == "high"
+    assert "body" in hits[0]
+    assert "cheatsheet" in hits[0]["body"]
+
+
+async def test_search_expand_top_no_body_when_only_low_relevance(server: Any) -> None:
+    await _call(
+        server,
+        "memory_write",
+        content="python list comprehension notes",
+        scopes=["tools"],
+    )
+    # 5 content tokens, only "python" matches → "low".
+    hits = _unwrap(
+        await _call(
+            server,
+            "memory_search",
+            query="python kubernetes networking docker terraform",
+            expand_top=True,
+        )
+    )
+    assert len(hits) == 1
+    assert hits[0]["relevance"] == "low"
+    assert "body" not in hits[0]
+
+
+async def test_search_expand_top_only_first_hit_gets_body(server: Any) -> None:
+    a = await _call(
+        server,
+        "memory_write",
+        content="kubernetes networking notes one",
+        scopes=["infrastructure"],
+    )
+    b = await _call(
+        server,
+        "memory_write",
+        content="kubernetes networking notes two",
+        scopes=["infrastructure"],
+    )
+    hits = _unwrap(
+        await _call(
+            server,
+            "memory_search",
+            query="kubernetes networking",
+            expand_top=True,
+        )
+    )
+    assert len(hits) == 2
+    # Top hit gets a body; second hit must not.
+    assert "body" in hits[0]
+    assert "body" not in hits[1]
+    # Both ids are present (which one is "top" can vary by recency tiebreak).
+    ids = {hits[0]["id"], hits[1]["id"]}
+    assert ids == {a["id"], b["id"]}
+
+
+async def test_search_expand_top_default_false_keeps_old_shape(server: Any) -> None:
+    await _call(
+        server,
+        "memory_write",
+        content="kubernetes networking notes",
+        scopes=["infrastructure"],
+    )
+    hits = _unwrap(
+        await _call(
+            server,
+            "memory_search",
+            query="kubernetes networking",
+        )
+    )
+    assert len(hits) == 1
+    assert "body" not in hits[0]

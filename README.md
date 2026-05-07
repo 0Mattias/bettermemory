@@ -49,10 +49,10 @@ See [`docs/installation.md`](docs/installation.md) for more detail.
 
 | Tool | What it does |
 |---|---|
-| `memory_search(query, scopes?, max_results?)` | Rank and return memory hits with snippets. Each hit carries `relevance: "high" \| "medium" \| "low"` and `match_terms` (the query words that actually hit) — branch on `relevance`, not the raw `score`. |
+| `memory_search(query, scopes?, max_results?, expand_top?)` | Rank and return memory hits with snippets. Each hit carries `relevance: "high" \| "medium" \| "low"` and `match_terms` (the query words that actually hit) — branch on `relevance`, not the raw `score`. Pass `expand_top=true` to inline the full body of the top hit when its relevance is `"high"` (collapses search→show into one call on confident hits). |
 | `memory_show(id)` | Full body of one memory. |
 | `memory_write(content, scopes, confidence?, source?)` | Create a new memory. |
-| `memory_list(scopes?)` | List active memories — IDs and one-line summaries, no body. |
+| `memory_list(scopes?, with_bodies?)` | List active memories — IDs and one-line summaries by default. Pass `with_bodies=true` for a single-call corpus dump (full body on every result); useful for small stores where N round trips of `list → show → show` would be wasteful. |
 | `memory_remove(id, reason)` | Tombstone a memory. |
 | `memory_scope_disable(scope)` | Mute a scope for the rest of this session. |
 | `memory_scope_enable(scope)` | Re-enable a previously muted scope. |

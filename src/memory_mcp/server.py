@@ -89,13 +89,18 @@ def _register_tools(
             "Each hit includes `relevance` (high/medium/low) and "
             "`match_terms` (which query words actually hit). Branch on "
             "`relevance`, not the raw `score` — and treat \"low\" hits as "
-            "probable noise unless you have a reason to use them."
+            "probable noise unless you have a reason to use them. "
+            "Pass `expand_top=True` to inline the full body of the top hit "
+            "when its relevance is \"high\" — collapses the common "
+            "search-then-show round trip into one call. Skip it when you "
+            "only need to triage."
         ),
     )
     async def memory_search(
         query: str,
         scopes: list[str] | None = None,
         max_results: int | None = None,
+        expand_top: bool = False,
     ) -> list[dict[str, Any]]:
         if max_results is None:
             max_results = config.behavior.default_max_results
@@ -113,7 +118,22 @@ def _register_tools(
             max_results=max_results,
             half_life_days=config.behavior.recency_boost_half_life_days,
         )
-        return [_hit_to_dict(h) for h in hits]
+        out = [_hit_to_dict(h) for h in hits]
+
+        # Optional auto-expansion of the top hit. Conservative: only fires
+        # when the top hit clearly wins ("high" relevance) so the model
+        # doesn't get hosed with full bodies it didn't really need.
+        if expand_top and out and out[0]["relevance"] == "high":
+            try:
+                memory = store.load_one(hits[0].id)
+            except (MemoryNotFoundError, TombstonedError):
+                # Race: memory was tombstoned between search and show.
+                # Drop the body silently, the snippet still got returned.
+                pass
+            else:
+                out[0]["body"] = memory.body
+
+        return out
 
     # ---- memory_show -----------------------------------------------------
 
@@ -222,24 +242,42 @@ def _register_tools(
     @mcp.tool(
         name="memory_list",
         description=(
-            "List active memories (no body content) with one-line summaries. "
-            "Use this to see what's available without retrieving everything. "
-            "Filter by scopes if you only care about a subset."
+            "List active memories. By default returns one-line summaries "
+            "(IDs, scopes, summary, no body) — cheap triage. "
+            "Pass `with_bodies=True` to inline full bodies in one call; "
+            "useful for small stores where N round trips of "
+            "`list -> show -> show` would be wasteful. Don't reach for "
+            "`with_bodies` casually — it pulls every memory in scope into "
+            "your context, which is the failure mode this project exists "
+            "to avoid. Filter by `scopes` if you only care about a subset."
         ),
     )
     async def memory_list(
         scopes: list[str] | None = None,
+        with_bodies: bool = False,
     ) -> list[dict[str, Any]]:
         if scopes:
             scopes = [validate_scope(s) for s in scopes]
         # Apply session-disabled scopes to listing too — consistency.
         excluded = set(state.disabled_scopes)
-        out: list[dict[str, Any]] = []
+
+        if with_bodies:
+            out: list[dict[str, Any]] = []
+            for memory in store.load_all():
+                memory_scopes = set(memory.scopes)
+                if excluded and (memory_scopes & excluded):
+                    continue
+                if scopes and not (memory_scopes & set(scopes)):
+                    continue
+                out.append(_memory_to_dict(memory))
+            return out
+
+        out_summary: list[dict[str, Any]] = []
         for summary in store.list_summaries(scopes=scopes):
             if excluded and (set(summary.scopes) & excluded):
                 continue
-            out.append(_summary_to_dict(summary))
-        return out
+            out_summary.append(_summary_to_dict(summary))
+        return out_summary
 
     # ---- memory_remove ---------------------------------------------------
 
@@ -385,6 +423,26 @@ def _summary_to_dict(summary: MemorySummary) -> dict[str, Any]:
         "confidence": summary.confidence.value,
         "summary": summary.summary,
         "created": _isoformat(summary.created),
+    }
+
+
+def _memory_to_dict(memory) -> dict[str, Any]:  # type: ignore[no-untyped-def]
+    """Full memory shape used by `memory_list(with_bodies=True)`.
+
+    Same fields as `memory_show` plus the `summary` line so a consumer can
+    treat the response uniformly with the body-less `memory_list` shape.
+    """
+    from .models import first_summary_line
+
+    return {
+        "id": memory.id,
+        "scopes": memory.scopes,
+        "confidence": memory.confidence.value,
+        "source": memory.source.value,
+        "summary": first_summary_line(memory.body),
+        "body": memory.body,
+        "created": _isoformat(memory.created),
+        "updated": _isoformat(memory.updated),
     }
 
 
