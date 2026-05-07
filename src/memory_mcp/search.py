@@ -17,6 +17,9 @@ from .models import Memory, MemoryHit, snippet_for
 # inside tokens. Lowercase before tokenizing.
 _TOKEN_RE = re.compile(r"[a-z0-9][a-z0-9\-_]*", re.UNICODE)
 
+# Used by `_expand_kebab` to peel off sub-tokens from a kebab/snake compound.
+_KEBAB_SPLIT_RE = re.compile(r"[-_]+")
+
 
 # Short English stopword list. Stripped from the *query* only — bodies stay
 # unfiltered so we don't lose information at index time. The point isn't NLP
@@ -38,7 +41,34 @@ _STOPWORDS = frozenset(
 
 
 def tokenize(text: str) -> list[str]:
+    """Pure regex tokenization. Whitespace and punctuation split; hyphens and
+    underscores stay token-internal (so `python-frontmatter` is one token).
+    Pair with `_expand_kebab` on indexed text if you also want to match by
+    component.
+    """
     return _TOKEN_RE.findall(text.lower())
+
+
+def _expand_kebab(tokens: list[str]) -> list[str]:
+    """Append the parts of any hyphen/underscore-joined token after the whole.
+
+    `python-frontmatter` -> ['python-frontmatter', 'python', 'frontmatter'].
+
+    Applied to indexed text (body, scope) only — never the query. The
+    asymmetry is deliberate: a body containing `zephyr-quartz-9417` is
+    *also* about `zephyr` and `quartz`, so a one-word query should hit it.
+    But a query for `python-frontmatter` is a specific intent — we don't
+    want it dragging in every body that happens to mention plain `python`.
+    Index side widens; query side stays narrow.
+    """
+    out: list[str] = []
+    for t in tokens:
+        out.append(t)
+        if "-" in t or "_" in t:
+            for sub in _KEBAB_SPLIT_RE.split(t):
+                if sub:
+                    out.append(sub)
+    return out
 
 
 def _strip_stopwords(tokens: list[str]) -> list[str]:
@@ -63,8 +93,10 @@ def _relevance_label(matched_unique: int, query_unique: int) -> str:
 
 
 def _scope_tokens(scope: str) -> list[str]:
-    """Break `projects:foo-bar` into ['projects', 'foo', 'bar'] for matching."""
-    return tokenize(scope)
+    """Break `projects:foo-bar` into ['projects', 'foo-bar', 'foo', 'bar']
+    for matching — both the joined form and its components are emitted.
+    """
+    return _expand_kebab(tokenize(scope))
 
 
 def _recency_factor(created: datetime, now: datetime, half_life_days: float) -> float:
@@ -92,7 +124,7 @@ def score_memory(
     if not query_tokens:
         return 0.0, []
 
-    body_tokens = tokenize(memory.body)
+    body_tokens = _expand_kebab(tokenize(memory.body))
     body_count: dict[str, int] = {}
     for tok in body_tokens:
         body_count[tok] = body_count.get(tok, 0) + 1

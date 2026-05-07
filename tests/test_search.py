@@ -222,3 +222,58 @@ def test_relevance_low_for_sparse_coverage() -> None:
     a = _memory("python notes")
     hits = search([a], "python kubernetes networking docker terraform")
     assert hits[0].relevance == "low"
+
+
+# ---------------------------------------------------------------------------
+# Kebab/snake expansion on indexed text
+#
+# `tokenize` keeps `python-frontmatter` as one token by design (so an exact
+# query for the joined form ranks tightest). For the relaxed direction —
+# query a single component, hit a body that contains the joined form — we
+# expand on the indexed side only. Asymmetric: bodies/scopes widen, query
+# stays specific.
+# ---------------------------------------------------------------------------
+
+
+def test_kebab_body_findable_by_component() -> None:
+    """A body containing `python-frontmatter` should hit a query for `python`
+    or `frontmatter` alone — without that, kebab-named libraries, ULIDs,
+    package slugs, etc. become unsearchable by their parts.
+    """
+    a = _memory("we vendored python-frontmatter to drop the deprecated dep")
+    assert any(h.id == a.id for h in search([a], "python"))
+    assert any(h.id == a.id for h in search([a], "frontmatter"))
+
+
+def test_kebab_body_still_matches_joined_query() -> None:
+    """Index-side expansion must not regress the exact-form match."""
+    a = _memory("we vendored python-frontmatter to drop the deprecated dep")
+    hits = search([a], "python-frontmatter")
+    assert hits and hits[0].id == a.id
+    assert "python-frontmatter" in hits[0].match_terms
+
+
+def test_kebab_query_does_not_match_unrelated_component_body() -> None:
+    """Asymmetry guard: querying `python-frontmatter` should NOT pull in a
+    body that only mentions plain `python`. The query is specific intent;
+    we don't want every Python memory surfaced.
+    """
+    a = _memory("python is a great general-purpose language")
+    assert search([a], "python-frontmatter") == []
+
+
+def test_kebab_scope_findable_by_component() -> None:
+    """A memory tagged `projects:foo-bar` should hit a query for `bar`.
+    Without component-level scope expansion, nested project slugs become
+    invisible to natural one-word queries.
+    """
+    a = _memory("body without the keyword", scopes=["projects:foo-bar"])
+    hits = search([a], "bar")
+    assert any(h.id == a.id for h in hits)
+
+
+def test_kebab_underscore_treated_like_hyphen() -> None:
+    """`zephyr_quartz_9417` should split the same way as `zephyr-quartz-9417`."""
+    a = _memory("identifier zephyr_quartz_9417 in the logs")
+    assert any(h.id == a.id for h in search([a], "zephyr"))
+    assert any(h.id == a.id for h in search([a], "quartz"))
