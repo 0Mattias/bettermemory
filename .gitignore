@@ -1,0 +1,25 @@
+# Python
+__pycache__/
+*.pyc
+*.egg-info/
+dist/
+build/
+
+# Virtualenvs
+.venv/
+venv/
+
+# Test / coverage artifacts
+.pytest_cache/
+.coverage
+.coverage.*
+.coverage *
+htmlcov/
+
+# Editor / IDE
+.idea/
+.vscode/
+*.swp
+
+# Local Claude Code settings (keep settings.json shared, ignore the per-machine one)
+.claude/settings.local.json

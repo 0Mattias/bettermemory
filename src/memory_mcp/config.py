@@ -1,0 +1,146 @@
+"""Config loading and the rules for picking a memory directory.
+
+Resolution order for the storage directory:
+
+1. The `MEMORY_MCP_DIR` env var, if set.
+2. `./.claude-memory/` if it exists in the current working directory
+   (project-scoped — write a memory while in that project, see it only
+   when you come back to that project).
+3. `~/.claude-memory/` (global fallback).
+
+A user-level config file lives at `~/.config/memory-mcp/config.toml` (or the
+platform equivalent). It's created with defaults on first run.
+"""
+
+from __future__ import annotations
+
+import os
+import sys
+import tomllib
+from dataclasses import dataclass, field
+from pathlib import Path
+
+import platformdirs
+
+
+CONFIG_FILENAME = "config.toml"
+PROJECT_DIR_NAME = ".claude-memory"
+GLOBAL_DIR_NAME = ".claude-memory"
+ENV_DIR_OVERRIDE = "MEMORY_MCP_DIR"
+
+DEFAULT_CONFIG = """\
+# memory-mcp config
+#
+# See: https://github.com/yourname/memory-mcp
+
+[storage]
+# Where memories live. Leave commented to use the default resolution rule:
+#   1. $MEMORY_MCP_DIR
+#   2. ./.claude-memory if cwd has one
+#   3. ~/.claude-memory
+# directory = "~/.claude-memory"
+
+[behavior]
+# If true, memory_write returns a "pending" result and the consumer must
+# call memory_write_confirm to commit. MVP defaults to false for solo use.
+require_write_confirmation = false
+
+# Default cap on memory_search results.
+default_max_results = 5
+
+# Recency boost decay. Larger = older memories get a meaningful bump.
+recency_boost_half_life_days = 30
+
+[scopes]
+# If non-empty, writes with scopes outside this list fail. Empty = anything.
+allowed = []
+"""
+
+
+@dataclass
+class StorageConfig:
+    directory: str | None = None  # if None, use resolution rule.
+
+
+@dataclass
+class BehaviorConfig:
+    require_write_confirmation: bool = False
+    default_max_results: int = 5
+    recency_boost_half_life_days: float = 30.0
+
+
+@dataclass
+class ScopesConfig:
+    allowed: list[str] = field(default_factory=list)
+
+
+@dataclass
+class Config:
+    storage: StorageConfig = field(default_factory=StorageConfig)
+    behavior: BehaviorConfig = field(default_factory=BehaviorConfig)
+    scopes: ScopesConfig = field(default_factory=ScopesConfig)
+    config_path: Path | None = None
+
+    # ---- methods ----------------------------------------------------------
+
+    def resolved_directory(self, cwd: Path | None = None) -> Path:
+        """Apply the resolution rule and return an absolute directory path."""
+        env_override = os.environ.get(ENV_DIR_OVERRIDE)
+        if env_override:
+            return Path(env_override).expanduser().resolve()
+
+        if self.storage.directory:
+            return Path(self.storage.directory).expanduser().resolve()
+
+        cwd = (cwd or Path.cwd()).resolve()
+        project_dir = cwd / PROJECT_DIR_NAME
+        if project_dir.is_dir():
+            return project_dir.resolve()
+
+        return (Path.home() / GLOBAL_DIR_NAME).resolve()
+
+
+# ---------------------------------------------------------------------------
+# Loading
+# ---------------------------------------------------------------------------
+
+
+def default_config_path() -> Path:
+    return Path(platformdirs.user_config_dir("memory-mcp")) / CONFIG_FILENAME
+
+
+def load_config(path: Path | None = None) -> Config:
+    """Load config from `path`, creating it with defaults if missing."""
+    config_path = path or default_config_path()
+    config_path.parent.mkdir(parents=True, exist_ok=True)
+    if not config_path.exists():
+        config_path.write_text(DEFAULT_CONFIG, encoding="utf-8")
+        # First-run notice on stderr so consumers see what happened.
+        print(
+            f"[memory-mcp] created default config at {config_path}",
+            file=sys.stderr,
+        )
+
+    with config_path.open("rb") as f:
+        data = tomllib.load(f)
+
+    storage_raw = data.get("storage", {})
+    behavior_raw = data.get("behavior", {})
+    scopes_raw = data.get("scopes", {})
+
+    return Config(
+        storage=StorageConfig(directory=storage_raw.get("directory")),
+        behavior=BehaviorConfig(
+            require_write_confirmation=bool(
+                behavior_raw.get("require_write_confirmation", False)
+            ),
+            default_max_results=int(behavior_raw.get("default_max_results", 5)),
+            recency_boost_half_life_days=float(
+                behavior_raw.get("recency_boost_half_life_days", 30.0)
+            ),
+        ),
+        scopes=ScopesConfig(
+            allowed=list(scopes_raw.get("allowed", [])),
+        ),
+        config_path=config_path,
+    )
