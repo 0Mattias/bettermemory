@@ -73,6 +73,44 @@ def test_recency_boost_breaks_ties() -> None:
     assert hits[0].score >= hits[1].score
 
 
+def test_recency_boost_uses_updated_when_newer() -> None:
+    """A memory edited recently outranks an older memory with the same body,
+    even if its `created` is the older one. Without this, memory_update would
+    leave a refined fact buried under recency boost it should be earning.
+    """
+    now = datetime.now(timezone.utc)
+    long_ago = now - timedelta(days=365)
+
+    edited = Memory(
+        id=generate_ulid(),
+        created=long_ago,
+        updated=now - timedelta(days=1),  # edited yesterday
+        scopes=["tools"],
+        confidence=Confidence.MEDIUM,
+        source=Source.EXPLICIT,
+        body="identical body words here",
+    )
+    stale = Memory(
+        id=generate_ulid(),
+        created=now - timedelta(days=30),  # newer creation
+        updated=now - timedelta(days=30),  # never edited
+        scopes=["tools"],
+        confidence=Confidence.MEDIUM,
+        source=Source.EXPLICIT,
+        body="identical body words here",
+    )
+
+    hits = search([edited, stale], "identical body", now=now)
+    assert hits[0].id == edited.id
+    assert hits[0].score > hits[1].score
+
+
+def test_hit_includes_updated_timestamp() -> None:
+    a = _memory("python list comprehension")
+    hits = search([a], "python")
+    assert hits[0].updated == a.updated
+
+
 def test_empty_query_returns_empty_list() -> None:
     a = _memory("anything")
     assert search([a], "") == []

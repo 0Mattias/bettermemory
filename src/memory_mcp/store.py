@@ -165,6 +165,7 @@ class Store:
                     confidence=memory.confidence,
                     summary=first_summary_line(memory.body),
                     created=memory.created,
+                    updated=memory.updated,
                 )
             )
         return out

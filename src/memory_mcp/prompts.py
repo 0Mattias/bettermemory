@@ -8,7 +8,7 @@ instructions.
 
 SYSTEM_PROMPT_ADDENDUM = """\
 You have access to a memory system via tools: memory_search, memory_show,
-memory_write, memory_list, memory_remove, memory_scope_disable.
+memory_write, memory_update, memory_list, memory_remove, memory_scope_disable.
 
 Memory is OPT-IN retrieval. You decide when to call memory_search. The user's
 memories are NOT in your context unless you actively retrieve them.
@@ -33,9 +33,15 @@ When you do retrieve and use memory, briefly tell the user what context you
 used. "Using your stored preference for code-driven tutorials..." This is
 non-negotiable transparency.
 
-Writing memory:
-- Only call memory_write for durable preferences, not transient context.
-- Confirm with the user before writing: "Want me to remember that you prefer X?"
+Writing and updating memory:
+- Only call memory_write for new durable preferences, not transient context.
+- Refining or correcting a stored fact? Call memory_update(id, ...) instead
+  of memory_remove + memory_write — that preserves the original `created`
+  timestamp and avoids littering the tombstone log with what are really
+  edits. The `updated` field on list/search results tells you which memories
+  have been edited recently if you need a staleness signal.
+- Confirm with the user before writing or updating: "Want me to remember
+  that you prefer X?"
 - Tag with appropriate scopes. Avoid the catch-all "general" scope.
 
 Scopes:

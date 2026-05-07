@@ -237,6 +237,82 @@ def _register_tools(
         existed = state.cancel_pending(pending_id)
         return {"cancelled": pending_id, "existed": existed}
 
+    # ---- memory_update ---------------------------------------------------
+
+    @mcp.tool(
+        name="memory_update",
+        description=(
+            "Refine an existing memory in place. Pass the memory id and any "
+            "of `content`, `scopes`, `confidence` to change. Preserves `id`, "
+            "`created`, and `source`; bumps `updated`. Prefer this over "
+            "memory_remove + memory_write when correcting or refining a "
+            "stored fact — delete-and-recreate loses the original timestamp "
+            "and litters .tombstones/ with what are really edits. Pass at "
+            "least one field; replace semantics for `scopes` (provide the "
+            "full new list, not a delta)."
+        ),
+    )
+    async def memory_update(
+        id: str,
+        content: str | None = None,
+        scopes: list[str] | None = None,
+        confidence: str | None = None,
+    ) -> dict[str, Any]:
+        if content is None and scopes is None and confidence is None:
+            raise ValueError(
+                "memory_update needs at least one of content, scopes, "
+                "or confidence"
+            )
+        if content is not None and not content.strip():
+            raise ValueError("content must be non-empty if provided")
+
+        try:
+            existing = store.load_one(id)
+        except TombstonedError as exc:
+            raise ValueError(str(exc)) from exc
+        except MemoryNotFoundError as exc:
+            raise ValueError(str(exc)) from exc
+
+        new_scopes = existing.scopes
+        if scopes is not None:
+            if not scopes:
+                raise ValueError(
+                    "scopes must contain at least one entry if provided"
+                )
+            new_scopes = [validate_scope(s) for s in scopes]
+            if config.scopes.allowed:
+                allowed = set(config.scopes.allowed)
+                unknown = [s for s in new_scopes if s not in allowed]
+                if unknown:
+                    raise ValueError(
+                        f"scope(s) not in allowed list: {unknown}. "
+                        f"Allowed: {sorted(config.scopes.allowed)}"
+                    )
+
+        new_confidence = existing.confidence
+        if confidence is not None:
+            try:
+                new_confidence = Confidence(confidence)
+            except ValueError as exc:
+                raise ValueError(
+                    f"confidence must be one of "
+                    f"{[c.value for c in Confidence]}"
+                ) from exc
+
+        new_body = existing.body
+        if content is not None:
+            new_body = content.strip() + "\n"
+
+        merged = existing.model_copy(
+            update={
+                "body": new_body,
+                "scopes": new_scopes,
+                "confidence": new_confidence,
+            }
+        )
+        updated = store.update(merged)
+        return _committed(updated)
+
     # ---- memory_list -----------------------------------------------------
 
     @mcp.tool(
@@ -413,6 +489,7 @@ def _hit_to_dict(hit: MemoryHit) -> dict[str, Any]:
         "relevance": hit.relevance,
         "match_terms": hit.match_terms,
         "created": _isoformat(hit.created),
+        "updated": _isoformat(hit.updated),
     }
 
 
@@ -423,6 +500,7 @@ def _summary_to_dict(summary: MemorySummary) -> dict[str, Any]:
         "confidence": summary.confidence.value,
         "summary": summary.summary,
         "created": _isoformat(summary.created),
+        "updated": _isoformat(summary.updated),
     }
 
 

@@ -49,9 +49,10 @@ See [`docs/installation.md`](docs/installation.md) for more detail.
 
 | Tool | What it does |
 |---|---|
-| `memory_search(query, scopes?, max_results?, expand_top?)` | Rank and return memory hits with snippets. Each hit carries `relevance: "high" \| "medium" \| "low"` and `match_terms` (the query words that actually hit) — branch on `relevance`, not the raw `score`. Pass `expand_top=true` to inline the full body of the top hit when its relevance is `"high"` (collapses search→show into one call on confident hits). |
+| `memory_search(query, scopes?, max_results?, expand_top?)` | Rank and return memory hits with snippets. Each hit carries `relevance: "high" \| "medium" \| "low"` and `match_terms` (the query words that actually hit) — branch on `relevance`, not the raw `score`. Hits also include `created` and `updated` timestamps so a stale-but-relevant memory is visible at a glance. Pass `expand_top=true` to inline the full body of the top hit when its relevance is `"high"` (collapses search→show into one call on confident hits). |
 | `memory_show(id)` | Full body of one memory. |
 | `memory_write(content, scopes, confidence?, source?)` | Create a new memory. |
+| `memory_update(id, content?, scopes?, confidence?)` | Refine an existing memory in place. Preserves `id`, `created`, and `source`; bumps `updated`. Use this instead of `memory_remove` + `memory_write` when correcting or extending a stored fact — that round-trip would lose the original timestamp and litter the tombstone log with non-deletes. Replace semantics for `scopes` (provide the full new list). |
 | `memory_list(scopes?, with_bodies?)` | List active memories — IDs and one-line summaries by default. Pass `with_bodies=true` for a single-call corpus dump (full body on every result); useful for small stores where N round trips of `list → show → show` would be wasteful. |
 | `memory_remove(id, reason)` | Tombstone a memory. |
 | `memory_scope_disable(scope)` | Mute a scope for the rest of this session. |
@@ -185,7 +186,7 @@ Files written by the previous `python-frontmatter`-based code keep loading byte-
 1. **Single-process access.** Concurrent writes from two MCP servers pointed at the same directory may corrupt files. A file-lock guard is in place; multi-process is still untested.
 2. **No conflict resolution.** If you edit a memory file by hand while the server is running, the next read will pick up your change but there's no merge story.
 3. **No encryption.** Memories are plaintext on disk. Don't store secrets — use OS-level disk encryption if you need it.
-4. **Search is keyword-only.** Synonyms, paraphrases, semantic similarity — not handled. Embeddings are a Phase 2 feature. A short stopword list is stripped from the *query* (so "how to bake sourdough" doesn't match every memory on shared filler tokens), but bodies stay unfiltered. Hits are returned with a `relevance` label calibrated on coverage — distinguish "1 of 4 query words matched" (low) from "all 3 matched" (high) without inventing a score threshold.
+4. **Search is keyword-only.** Synonyms, paraphrases, semantic similarity — not handled. Embeddings are a Phase 2 feature. A short stopword list is stripped from the *query* (so "how to bake sourdough" doesn't match every memory on shared filler tokens), but bodies stay unfiltered. Hits are returned with a `relevance` label calibrated on coverage — distinguish "1 of 4 query words matched" (low) from "all 3 matched" (high) without inventing a score threshold. The recency boost reads `max(created, updated)`, so editing a fact via `memory_update` ranks it as fresh.
 5. **Disabled scopes don't survive restart.** Intentional — start each session fresh.
 
 ## What's out of scope

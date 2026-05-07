@@ -129,7 +129,8 @@ class MemoryHit(BaseModel):
     content words actually matched. Consumers should branch on `relevance`,
     not on `score`. `match_terms` lists which query tokens hit the body or
     scopes, so the caller can sanity-check whether a hit is meaningful or
-    stopword noise.
+    stopword noise. `updated` lets a consumer spot stale memories at a
+    glance — bumped by `memory_update`, equal to `created` on first write.
     """
 
     id: str
@@ -140,6 +141,7 @@ class MemoryHit(BaseModel):
     relevance: str = "medium"
     match_terms: list[str] = []
     created: datetime
+    updated: datetime
 
 
 class MemorySummary(BaseModel):
@@ -150,6 +152,7 @@ class MemorySummary(BaseModel):
     confidence: Confidence
     summary: str
     created: datetime
+    updated: datetime
 
 
 # ---------------------------------------------------------------------------

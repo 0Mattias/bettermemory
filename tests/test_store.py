@@ -142,6 +142,17 @@ def test_list_summaries_strips_body(store: Store) -> None:
     assert "second sentence" not in summaries[0].summary
 
 
+def test_list_summaries_carries_updated_timestamp(store: Store) -> None:
+    """The `updated` field is durable on disk and threaded through to the
+    summary so callers can spot stale memories at a glance."""
+    memory = store.write(content="x", scopes=["tools"])
+    summaries = store.list_summaries()
+    assert len(summaries) == 1
+    assert summaries[0].updated == memory.updated
+    # On a fresh write, created and updated agree.
+    assert summaries[0].updated == summaries[0].created
+
+
 def test_summary_does_not_split_inside_dotted_identifier(store: Store) -> None:
     """The previous implementation split on bare `.`, so a body like
     `gh auth login does NOT write git config --global user.name` produced

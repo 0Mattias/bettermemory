@@ -122,7 +122,12 @@ def score_memory(
     coverage = len(matched) / len(set(query_tokens))
     base = raw * (0.5 + 0.5 * coverage)
 
-    return base * _recency_factor(memory.created, now, half_life_days), matched
+    # Recency boost reads from the freshness timestamp — `max(created, updated)`
+    # — so an edited memory ranks like a new one. Without this, calling
+    # memory_update on a year-old fact gives it the score of a year-old fact;
+    # with it, refining a fact moves it up the list as you'd expect.
+    freshness = max(memory.created, memory.updated)
+    return base * _recency_factor(freshness, now, half_life_days), matched
 
 
 def search(
@@ -182,6 +187,7 @@ def search(
                 relevance=_relevance_label(len(matched), query_unique),
                 match_terms=matched,
                 created=memory.created,
+                updated=memory.updated,
             )
         )
 

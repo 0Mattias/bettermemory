@@ -61,13 +61,14 @@ async def _call(server: Any, name: str, **kwargs: Any) -> Any:
 # ---------------------------------------------------------------------------
 
 
-async def test_six_tools_registered_plus_companion(server: Any) -> None:
+async def test_tools_registered(server: Any) -> None:
     tools = await server.list_tools()
     names = {t.name for t in tools}
     expected = {
         "memory_search",
         "memory_show",
         "memory_write",
+        "memory_update",
         "memory_list",
         "memory_remove",
         "memory_scope_disable",
@@ -455,3 +456,223 @@ async def test_search_expand_top_default_false_keeps_old_shape(server: Any) -> N
     )
     assert len(hits) == 1
     assert "body" not in hits[0]
+
+
+# ---------------------------------------------------------------------------
+# `updated` timestamp surfaced in list / search
+# ---------------------------------------------------------------------------
+
+
+async def test_list_summary_includes_updated_timestamp(server: Any) -> None:
+    written = await _call(
+        server, "memory_write", content="x", scopes=["tools"]
+    )
+    listing = _unwrap(await _call(server, "memory_list"))
+    assert len(listing) == 1
+    assert listing[0]["id"] == written["id"]
+    assert "updated" in listing[0]
+    # On first write, created == updated.
+    assert listing[0]["updated"] == listing[0]["created"]
+
+
+async def test_search_hit_includes_updated_timestamp(server: Any) -> None:
+    await _call(
+        server,
+        "memory_write",
+        content="kubernetes networking notes",
+        scopes=["infrastructure"],
+    )
+    hits = _unwrap(
+        await _call(server, "memory_search", query="kubernetes networking")
+    )
+    assert len(hits) == 1
+    assert "updated" in hits[0]
+    assert hits[0]["updated"] == hits[0]["created"]
+
+
+# ---------------------------------------------------------------------------
+# memory_update
+# ---------------------------------------------------------------------------
+
+
+async def test_update_changes_content_and_bumps_updated(server: Any) -> None:
+    written = await _call(
+        server,
+        "memory_write",
+        content="initial body",
+        scopes=["tools"],
+    )
+
+    # Sleep a hair so the `updated` timestamp can move forward measurably.
+    import asyncio
+
+    await asyncio.sleep(0.01)
+
+    res = await _call(
+        server,
+        "memory_update",
+        id=written["id"],
+        content="refined body with more detail",
+    )
+    assert res["status"] == "committed"
+    assert res["id"] == written["id"]
+    assert res["created"] == written["created"]  # preserved
+    assert res["updated"] > written["updated"]   # bumped
+
+    # Disk reflects the change.
+    shown = await _call(server, "memory_show", id=written["id"])
+    assert "refined body" in shown["body"]
+
+
+async def test_update_replaces_scopes_when_given(server: Any) -> None:
+    written = await _call(
+        server,
+        "memory_write",
+        content="x",
+        scopes=["tools"],
+    )
+    res = await _call(
+        server,
+        "memory_update",
+        id=written["id"],
+        scopes=["tools", "learning-style"],
+    )
+    assert set(res["scopes"]) == {"tools", "learning-style"}
+
+
+async def test_update_changes_confidence(server: Any) -> None:
+    written = await _call(
+        server,
+        "memory_write",
+        content="x",
+        scopes=["tools"],
+        confidence="medium",
+    )
+    res = await _call(
+        server,
+        "memory_update",
+        id=written["id"],
+        confidence="high",
+    )
+    assert res["confidence"] == "high"
+
+
+async def test_update_preserves_source(server: Any) -> None:
+    written = await _call(
+        server,
+        "memory_write",
+        content="x",
+        scopes=["tools"],
+        source="user-correction",
+    )
+    res = await _call(
+        server,
+        "memory_update",
+        id=written["id"],
+        content="refined",
+    )
+    # source is durable — it describes how the memory came to exist, not
+    # how it was last edited.
+    assert res["source"] == "user-correction"
+
+
+async def test_update_combines_multiple_fields(server: Any) -> None:
+    written = await _call(
+        server,
+        "memory_write",
+        content="initial",
+        scopes=["tools"],
+        confidence="low",
+    )
+    res = await _call(
+        server,
+        "memory_update",
+        id=written["id"],
+        content="combined edit",
+        scopes=["tools", "infrastructure"],
+        confidence="high",
+    )
+    assert res["confidence"] == "high"
+    assert set(res["scopes"]) == {"tools", "infrastructure"}
+    shown = await _call(server, "memory_show", id=written["id"])
+    assert "combined edit" in shown["body"]
+
+
+async def test_update_rejects_no_fields(server: Any) -> None:
+    written = await _call(
+        server, "memory_write", content="x", scopes=["tools"]
+    )
+    with pytest.raises(Exception):
+        await _call(server, "memory_update", id=written["id"])
+
+
+async def test_update_rejects_empty_content(server: Any) -> None:
+    written = await _call(
+        server, "memory_write", content="x", scopes=["tools"]
+    )
+    with pytest.raises(Exception):
+        await _call(
+            server, "memory_update", id=written["id"], content="   "
+        )
+
+
+async def test_update_rejects_empty_scopes(server: Any) -> None:
+    written = await _call(
+        server, "memory_write", content="x", scopes=["tools"]
+    )
+    with pytest.raises(Exception):
+        await _call(
+            server, "memory_update", id=written["id"], scopes=[]
+        )
+
+
+async def test_update_rejects_invalid_scope(server: Any) -> None:
+    written = await _call(
+        server, "memory_write", content="x", scopes=["tools"]
+    )
+    with pytest.raises(Exception):
+        await _call(
+            server,
+            "memory_update",
+            id=written["id"],
+            scopes=["With Space"],
+        )
+
+
+async def test_update_rejects_invalid_confidence(server: Any) -> None:
+    written = await _call(
+        server, "memory_write", content="x", scopes=["tools"]
+    )
+    with pytest.raises(Exception):
+        await _call(
+            server,
+            "memory_update",
+            id=written["id"],
+            confidence="extreme",
+        )
+
+
+async def test_update_unknown_id_errors(server: Any) -> None:
+    with pytest.raises(Exception):
+        await _call(
+            server,
+            "memory_update",
+            id="01HXYZNOTAREALIDOK000000ZZ",
+            content="anything",
+        )
+
+
+async def test_update_tombstoned_id_errors(server: Any) -> None:
+    written = await _call(
+        server, "memory_write", content="x", scopes=["tools"]
+    )
+    await _call(
+        server, "memory_remove", id=written["id"], reason="superseded"
+    )
+    with pytest.raises(Exception):
+        await _call(
+            server,
+            "memory_update",
+            id=written["id"],
+            content="cannot update a corpse",
+        )
