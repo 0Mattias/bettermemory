@@ -167,12 +167,19 @@ def _register_tools(
     @mcp.tool(
         name="memory_write",
         description=(
-            "Create a new memory. Only call this for durable preferences, "
-            "not transient context, and confirm with the user first. "
-            "Provide non-empty scopes (e.g. ['tools', 'learning-style']). "
-            "If `require_write_confirmation` is true in config, this returns "
-            "{status:'pending', pending_id} and you must call "
-            "memory_write_confirm(pending_id) to commit."
+            "Create a new memory. Durable facts only — scan the body for "
+            "transient-state markers (\"currently\", \"N commits ahead\", "
+            "\"today I\", \"as of now\") and reject the write if you spot "
+            "them; the durable fact is one level up. There is no content "
+            "dedup, so memory_search the topic first and prefer "
+            "memory_update on an existing memory over creating a parallel "
+            "entry. Confirm with the user only when the memory captures an "
+            "inference about them (preferences, beliefs); for project / "
+            "infra / reference / tooling memories, write directly and "
+            "announce the save. Provide non-empty scopes (e.g. ['tools', "
+            "'learning-style']). If `require_write_confirmation` is true "
+            "in config, this returns {status:'pending', pending_id} and "
+            "you must call memory_write_confirm(pending_id) to commit."
         ),
     )
     async def memory_write(
