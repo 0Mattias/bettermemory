@@ -1,11 +1,11 @@
 [project]
-name = "memory-mcp"
+name = "bettermemory"
 version = "0.1.0"
 description = "Local file-backed memory MCP server with retrieval-on-demand"
 readme = "README.md"
 requires-python = ">=3.11"
 license = { text = "MIT" }
-authors = [{ name = "memory-mcp contributors" }]
+authors = [{ name = "Mattias Rask", email = "rask@duck.com" }]
 dependencies = [
     "mcp>=1.0.0",
     "pydantic>=2.0",
@@ -18,14 +18,14 @@ embeddings = ["sentence-transformers>=2.2", "numpy>=1.24"]
 dev = ["pytest>=7.0", "pytest-asyncio>=0.21", "pytest-cov>=4.0", "ruff>=0.1"]
 
 [project.scripts]
-memory-mcp = "memory_mcp.server:main"
+bettermemory = "bettermemory.server:main"
 
 [build-system]
 requires = ["hatchling"]
 build-backend = "hatchling.build"
 
 [tool.hatch.build.targets.wheel]
-packages = ["src/memory_mcp"]
+packages = ["src/bettermemory"]
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
@@ -34,5 +34,10 @@ testpaths = ["tests"]
 # the python-frontmatter codecs.open() deprecation — instead we vendored our
 # own frontmatter handling in store.py to drop the dependency entirely.
 filterwarnings = [
-    "error::DeprecationWarning:memory_mcp",
+    "error::DeprecationWarning:bettermemory",
 ]
+
+[tool.ruff.lint.per-file-ignores]
+# conftest.py does sys.path manipulation before imports as a belt-and-suspenders
+# fix for the iCloud UF_HIDDEN .venv issue — see the comment in conftest.py.
+"tests/conftest.py" = ["E402"]

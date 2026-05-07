@@ -1,6 +1,6 @@
 """Tests for the vendored frontmatter parser.
 
-Originally `python-frontmatter`, vendored as `memory_mcp._frontmatter` so we
+Originally `python-frontmatter`, vendored as `bettermemory._frontmatter` so we
 can drop the dependency (it calls deprecated `codecs.open()` on 3.14) and pin
 pure-Python YAML directly. Tests here document the contract that
 `store.py` relies on; the cross-checks against the upstream library were
@@ -11,7 +11,7 @@ from __future__ import annotations
 
 import pytest
 
-from memory_mcp._frontmatter import Post, dumps, load, loads
+from bettermemory._frontmatter import Post, dumps, load, loads
 
 
 # ---------------------------------------------------------------------------

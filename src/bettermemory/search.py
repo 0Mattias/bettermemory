@@ -236,6 +236,6 @@ def embeddings_search(*_args, **_kwargs):  # noqa: D401
     """Reserved for embeddings-based search; install with extras."""
     raise NotImplementedError(
         "embeddings search not implemented in the MVP. "
-        "Install with `pip install memory-mcp[embeddings]` and a future "
+        "Install with `pip install bettermemory[embeddings]` and a future "
         "release will enable this."
     )

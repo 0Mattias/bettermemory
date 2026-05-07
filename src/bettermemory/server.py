@@ -34,7 +34,7 @@ from .store import (
 )
 
 
-log = logging.getLogger("memory_mcp")
+log = logging.getLogger("bettermemory")
 
 
 # ---------------------------------------------------------------------------
@@ -58,7 +58,7 @@ def build_server(
     state = state or get_state()
 
     mcp = FastMCP(
-        "memory-mcp",
+        "bettermemory",
         instructions=(
             "Local file-backed memory. Memory is OPT-IN: call memory_search "
             "only when the user references shared context you don't have, or "
@@ -530,7 +530,7 @@ def _memory_to_dict(memory) -> dict[str, Any]:  # type: ignore[no-untyped-def]
 
 
 def main() -> None:
-    """CLI entry point — `memory-mcp` runs this. Stdio transport."""
+    """CLI entry point — `bettermemory` runs this. Stdio transport."""
     logging.basicConfig(
         level=logging.INFO,
         stream=sys.stderr,

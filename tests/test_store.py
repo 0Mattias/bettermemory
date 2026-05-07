@@ -9,8 +9,8 @@ from pathlib import Path
 import pytest
 from pydantic import ValidationError
 
-from memory_mcp.models import Confidence, Source, generate_ulid, is_valid_ulid
-from memory_mcp.store import (
+from bettermemory.models import Confidence, Source, generate_ulid, is_valid_ulid
+from bettermemory.store import (
     MemoryNotFoundError,
     Store,
     TombstonedError,
@@ -109,8 +109,8 @@ def test_empty_scopes_rejected(store: Store) -> None:
 def test_filename_collision_doesnt_clobber(store: Store, monkeypatch: pytest.MonkeyPatch) -> None:
     # Force two writes to the same date+slug.
     fixed = datetime(2025, 3, 14, 10, tzinfo=timezone.utc)
-    monkeypatch.setattr("memory_mcp.store.utcnow", lambda: fixed)
-    monkeypatch.setattr("memory_mcp.models.utcnow", lambda: fixed)
+    monkeypatch.setattr("bettermemory.store.utcnow", lambda: fixed)
+    monkeypatch.setattr("bettermemory.models.utcnow", lambda: fixed)
 
     a = store.write(content="hello world", scopes=["tools"])
     b = store.write(content="hello world", scopes=["tools"])

@@ -1,4 +1,4 @@
-"""Pydantic models, enums, and ULID generation for memory-mcp."""
+"""Pydantic models, enums, and ULID generation for bettermemory."""
 
 from __future__ import annotations
 

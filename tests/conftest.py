@@ -18,9 +18,9 @@ if str(_SRC) not in sys.path:
 
 import pytest
 
-from memory_mcp.config import BehaviorConfig, Config, ScopesConfig, StorageConfig
-from memory_mcp.session import SessionState
-from memory_mcp.store import Store
+from bettermemory.config import BehaviorConfig, Config, ScopesConfig, StorageConfig
+from bettermemory.session import SessionState
+from bettermemory.store import Store
 
 
 @pytest.fixture

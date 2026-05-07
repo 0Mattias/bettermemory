@@ -10,11 +10,11 @@ uv pip install -e .
 uv tool install .
 ```
 
-This puts a `memory-mcp` script on your `$PATH`.
+This puts a `bettermemory` script on your `$PATH`.
 
 ```sh
-which memory-mcp
-# → /Users/<you>/.local/bin/memory-mcp  (or similar)
+which bettermemory
+# → /Users/<you>/.local/bin/bettermemory  (or similar)
 ```
 
 ## 2. Register with Claude Code
@@ -25,7 +25,7 @@ The config location depends on your platform — see the [Claude Code docs on MC
 
 - macOS: `~/Library/Application Support/Claude/claude_desktop_config.json` (Claude Desktop)
 - A project-level `.mcp.json` in the repo root (Claude Code)
-- Or via `claude mcp add memory memory-mcp` if your version of the CLI supports it.
+- Or via `claude mcp add memory bettermemory` if your version of the CLI supports it.
 
 Whichever config file you edit, add:
 
@@ -33,7 +33,7 @@ Whichever config file you edit, add:
 {
   "mcpServers": {
     "memory": {
-      "command": "memory-mcp",
+      "command": "bettermemory",
       "args": []
     }
   }
@@ -46,7 +46,7 @@ If the binary isn't on `$PATH` for the Claude process, give the absolute path:
 {
   "mcpServers": {
     "memory": {
-      "command": "/Users/you/.local/bin/memory-mcp",
+      "command": "/Users/you/.local/bin/bettermemory",
       "args": []
     }
   }
@@ -81,7 +81,7 @@ Claude should call `memory_search`, surface the stored preference, and tell you 
 
 ## Troubleshooting
 
-- **`memory-mcp` not found** when Claude tries to start the server: use the absolute path in the config.
-- **Memories aren't being found by `memory_search`**: check `MEMORY_MCP_DIR` env var, then look at the directory the server logs at startup ("memory directory: …"). Project-scoped `./.claude-memory/` overrides global `~/.claude-memory/`.
+- **`bettermemory` not found** when Claude tries to start the server: use the absolute path in the config.
+- **Memories aren't being found by `memory_search`**: check `BETTERMEMORY_DIR` env var, then look at the directory the server logs at startup ("memory directory: …"). Project-scoped `./.claude-memory/` overrides global `~/.claude-memory/`.
 - **The server isn't picking up changes after I edit a memory file**: it should — there's no in-memory cache. If you see staleness, restart Claude Code.
 - **Claude is calling `memory_search` for everything**: the system-prompt addendum isn't being included. That's the most common cause.

@@ -4,8 +4,8 @@ from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
 
-from memory_mcp.models import Confidence, Memory, Source, generate_ulid
-from memory_mcp.search import search, tokenize
+from bettermemory.models import Confidence, Memory, Source, generate_ulid
+from bettermemory.search import search, tokenize
 
 
 def _memory(
@@ -151,7 +151,7 @@ def test_snippet_does_not_cut_mid_word() -> None:
     sliced — previously a snippet could end with `...config --global user`
     when the full body said `user.name`.
     """
-    from memory_mcp.models import snippet_for
+    from bettermemory.models import snippet_for
 
     text = "x" * 50 + " word " + "y" * 200
     snippet = snippet_for(text, max_chars=80)

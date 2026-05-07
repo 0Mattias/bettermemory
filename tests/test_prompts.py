@@ -13,7 +13,7 @@ from __future__ import annotations
 import re
 from pathlib import Path
 
-from memory_mcp.prompts import SYSTEM_PROMPT_ADDENDUM
+from bettermemory.prompts import SYSTEM_PROMPT_ADDENDUM
 
 
 # Match the first ```...``` fence in the doc — the addendum is the first one.

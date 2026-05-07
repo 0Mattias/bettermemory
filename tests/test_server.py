@@ -12,10 +12,10 @@ from typing import Any
 
 import pytest
 
-from memory_mcp.config import Config, StorageConfig
-from memory_mcp.server import build_server
-from memory_mcp.session import SessionState
-from memory_mcp.store import Store
+from bettermemory.config import Config, StorageConfig
+from bettermemory.server import build_server
+from bettermemory.session import SessionState
+from bettermemory.store import Store
 
 
 @pytest.fixture
@@ -31,7 +31,7 @@ def server(memory_dir: Path) -> Any:
 @pytest.fixture
 def confirming_server(memory_dir: Path) -> tuple[Any, SessionState]:
     """A server with require_write_confirmation=True."""
-    from memory_mcp.config import BehaviorConfig
+    from bettermemory.config import BehaviorConfig
 
     cfg = Config(
         storage=StorageConfig(directory=str(memory_dir)),

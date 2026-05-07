@@ -2,7 +2,7 @@
 
 Paste this into your client's system prompt (for Claude Code, that means appending to `CLAUDE.md` or the project's system-prompt configuration). **Without it, the model will overuse memory and reproduce the failure mode this project exists to fix.**
 
-The same string is exported as `memory_mcp.SYSTEM_PROMPT_ADDENDUM` for programmatic access.
+The same string is exported as `bettermemory.SYSTEM_PROMPT_ADDENDUM` for programmatic access.
 
 ---
 

@@ -1,4 +1,4 @@
-"""memory-mcp: a local file-backed memory MCP server with retrieval-on-demand.
+"""bettermemory: a local file-backed memory MCP server with retrieval-on-demand.
 
 Memory is opt-in retrieval, not forced context. See the module-level docs
 and `prompts.SYSTEM_PROMPT_ADDENDUM` for the consumer-side instructions.

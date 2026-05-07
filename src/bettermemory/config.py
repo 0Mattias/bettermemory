@@ -2,13 +2,13 @@
 
 Resolution order for the storage directory:
 
-1. The `MEMORY_MCP_DIR` env var, if set.
+1. The `BETTERMEMORY_DIR` env var, if set.
 2. `./.claude-memory/` if it exists in the current working directory
    (project-scoped — write a memory while in that project, see it only
    when you come back to that project).
 3. `~/.claude-memory/` (global fallback).
 
-A user-level config file lives at `~/.config/memory-mcp/config.toml` (or the
+A user-level config file lives at `~/.config/bettermemory/config.toml` (or the
 platform equivalent). It's created with defaults on first run.
 """
 
@@ -26,16 +26,16 @@ import platformdirs
 CONFIG_FILENAME = "config.toml"
 PROJECT_DIR_NAME = ".claude-memory"
 GLOBAL_DIR_NAME = ".claude-memory"
-ENV_DIR_OVERRIDE = "MEMORY_MCP_DIR"
+ENV_DIR_OVERRIDE = "BETTERMEMORY_DIR"
 
 DEFAULT_CONFIG = """\
-# memory-mcp config
+# bettermemory config
 #
-# See: https://github.com/yourname/memory-mcp
+# See: https://github.com/0Mattias/bettermemory
 
 [storage]
 # Where memories live. Leave commented to use the default resolution rule:
-#   1. $MEMORY_MCP_DIR
+#   1. $BETTERMEMORY_DIR
 #   2. ./.claude-memory if cwd has one
 #   3. ~/.claude-memory
 # directory = "~/.claude-memory"
@@ -106,7 +106,7 @@ class Config:
 
 
 def default_config_path() -> Path:
-    return Path(platformdirs.user_config_dir("memory-mcp")) / CONFIG_FILENAME
+    return Path(platformdirs.user_config_dir("bettermemory")) / CONFIG_FILENAME
 
 
 def load_config(path: Path | None = None) -> Config:
@@ -117,7 +117,7 @@ def load_config(path: Path | None = None) -> Config:
         config_path.write_text(DEFAULT_CONFIG, encoding="utf-8")
         # First-run notice on stderr so consumers see what happened.
         print(
-            f"[memory-mcp] created default config at {config_path}",
+            f"[bettermemory] created default config at {config_path}",
             file=sys.stderr,
         )
 

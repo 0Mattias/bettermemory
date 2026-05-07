@@ -1,4 +1,4 @@
-"""Filesystem operations for memory-mcp.
+"""Filesystem operations for bettermemory.
 
 Pure file I/O — no search logic, no MCP awareness. The store owns the layout
 of the memory directory and the on-disk format; callers pass in `Memory`
@@ -22,7 +22,7 @@ from . import _frontmatter as frontmatter
 #
 # 1. CSafeDumper has a state-machine bug that surfaces under coverage
 #    instrumentation: it raises `EmitterError: expected SCALAR, ...` when
-#    coverage filters by a specific submodule (e.g. `--cov=memory_mcp.store`).
+#    coverage filters by a specific submodule (e.g. `--cov=bettermemory.store`).
 #    Pure-Python yaml is unaffected.
 # 2. `python-frontmatter` 1.1.0 (current release) calls `codecs.open()`,
 #    which Python 3.14 emits a DeprecationWarning for. The library is

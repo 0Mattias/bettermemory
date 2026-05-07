@@ -1,7 +1,7 @@
 """The system-prompt addendum that consumers should prepend.
 
 This is the most important file in the project after store.py. The whole
-point of memory-mcp is to flip memory from forced context to opt-in
+point of bettermemory is to flip memory from forced context to opt-in
 retrieval, and the model only behaves that way if it reads these
 instructions.
 """

@@ -1,4 +1,8 @@
-# memory-mcp
+# bettermemory
+
+[![CI](https://github.com/0Mattias/bettermemory/actions/workflows/ci.yml/badge.svg)](https://github.com/0Mattias/bettermemory/actions/workflows/ci.yml)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+[![Python](https://img.shields.io/badge/python-3.11%2B-blue.svg)](https://www.python.org/downloads/)
 
 A local, file-backed memory MCP server for Claude — built around the principle that **memory is a tool the model retrieves on demand, not context auto-injected into every prompt.**
 
@@ -34,7 +38,7 @@ Python ≥ 3.11.
    {
      "mcpServers": {
        "memory": {
-         "command": "memory-mcp",
+         "command": "bettermemory",
          "args": []
        }
      }
@@ -105,7 +109,7 @@ Tombstones move to `.tombstones/` with `removed:` and `removed_reason:` added �
 
 Resolution order:
 
-1. `$MEMORY_MCP_DIR` env var, if set.
+1. `$BETTERMEMORY_DIR` env var, if set.
 2. `./.claude-memory/` if it exists in the working directory (project-scoped).
 3. `~/.claude-memory/` (global).
 
@@ -116,9 +120,9 @@ Crossing projects is *not* default behavior. A memory written while working on P
 The config file is created on first run at the platform-standard config dir
 (via `platformdirs`):
 
-- macOS: `~/Library/Application Support/memory-mcp/config.toml`
-- Linux: `~/.config/memory-mcp/config.toml`
-- Windows: `%LOCALAPPDATA%\memory-mcp\config.toml`
+- macOS: `~/Library/Application Support/bettermemory/config.toml`
+- Linux: `~/.config/bettermemory/config.toml`
+- Windows: `%LOCALAPPDATA%\bettermemory\config.toml`
 
 Defaults:
 
@@ -156,14 +160,14 @@ source venv/bin/activate
 pytest -q
 
 # With coverage (spec asks for >80% on store.py and search.py)
-pytest --cov=memory_mcp.store --cov=memory_mcp.search --cov-report=term-missing
+pytest --cov=bettermemory.store --cov=bettermemory.search --cov-report=term-missing
 ```
 
 `tests/conftest.py` puts `src/` on `sys.path` directly, so the suite passes even if the editable install is in a weird state. `pytest -q` is a sanity check that doesn't depend on `uv pip install -e .` succeeding.
 
 ### macOS gotcha: the env is `venv/`, not `.venv/`
 
-macOS Sequoia auto-applies `UF_HIDDEN` to anything literally named `.venv` inside iCloud-synced folders (`~/Documents/`, `~/Desktop/`). Python 3.12+ then silently skips hidden `.pth` files, so `import memory_mcp` after an editable install fails with `ModuleNotFoundError`. A one-shot `chflags -R nohidden .venv` works for ~5 seconds before iCloud re-applies the flag — there is no good cure.
+macOS Sequoia auto-applies `UF_HIDDEN` to anything literally named `.venv` inside iCloud-synced folders (`~/Documents/`, `~/Desktop/`). Python 3.12+ then silently skips hidden `.pth` files, so `import bettermemory` after an editable install fails with `ModuleNotFoundError`. A one-shot `chflags -R nohidden .venv` works for ~5 seconds before iCloud re-applies the flag — there is no good cure.
 
 Two clean ways to avoid it:
 
@@ -174,10 +178,10 @@ This is not a uv bug. `uv venv .venv` in `/tmp/` or `~/projects/` stays clean. I
 
 ### YAML + frontmatter
 
-The on-disk format is YAML frontmatter inside a markdown file. We use a tiny vendored parser (`src/memory_mcp/_frontmatter.py`) instead of `python-frontmatter` for two reasons:
+The on-disk format is YAML frontmatter inside a markdown file. We use a tiny vendored parser (`src/bettermemory/_frontmatter.py`) instead of `python-frontmatter` for two reasons:
 
 1. **Python 3.14 compatibility.** `python-frontmatter` 1.1.0 (the current release) calls `codecs.open()`, which 3.14 emits a `DeprecationWarning` for. The library is effectively unmaintained.
-2. **Forced pure-Python YAML.** `yaml.CSafeDumper` has a state-machine bug under submodule coverage instrumentation (`--cov=memory_mcp.store`). The vendored parser pins `yaml.SafeLoader` / `yaml.SafeDumper` directly. Memory frontmatter is dozens of bytes per write, so the libyaml C speedup is irrelevant.
+2. **Forced pure-Python YAML.** `yaml.CSafeDumper` has a state-machine bug under submodule coverage instrumentation (`--cov=bettermemory.store`). The vendored parser pins `yaml.SafeLoader` / `yaml.SafeDumper` directly. Memory frontmatter is dozens of bytes per write, so the libyaml C speedup is irrelevant.
 
 Files written by the previous `python-frontmatter`-based code keep loading byte-for-byte; cross-tested against the upstream library before the swap.
 
@@ -194,3 +198,15 @@ Files written by the previous `python-frontmatter`-based code keep loading byte-
 - Cloud sync. Memories are local. If you want sync, that's `git`'s job.
 - Cross-user sharing. Single-user tool.
 - Automatic memory extraction from transcripts. The whole point of this project is that auto-extraction is the failure mode it exists to fix.
+
+## Origins
+
+I started building this because the existing memory feature in Claude Code at the time auto-injected every stored "fact" into every system prompt. The more I taught the model about my preferences, the more it dragged irrelevant context into unrelated conversations — asking for a Python tutorial would pull in my home-lab notes; a generic question would get coloured by some preference I'd stated months ago. I wanted memory the model retrieved on demand, like any other tool. That's the design you see throughout.
+
+The project was originally called `bettermemory`. Mid-build the auto-injecting memory feature kept overriding my stated preference and renaming the package `memory-mcp` in conversation. The irony was sufficient motivation to finish.
+
+Built by [Mattias Rask](https://0mattias.github.io) — Anthropic Cyber Verification Program participant.
+
+## License
+
+MIT — see [LICENSE](LICENSE).
