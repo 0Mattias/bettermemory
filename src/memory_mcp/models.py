@@ -192,19 +192,62 @@ def build_filename(created: datetime, slug: str) -> str:
 _SENTENCE_END_RE = re.compile(r"[.!?](?=\s|$)")
 
 
+# Abbreviations whose trailing period isn't a sentence boundary. Looked up
+# case-insensitively against the alnum/dot run ending at the period (so
+# "e.g." matches the stored "e.g", "Mr." matches "mr", etc.). Kept short
+# and conservative — adding a word here means losing one legitimate sentence
+# break for every false positive, so we only list ones that show up in
+# normal technical/note prose. Bare `!` and `?` aren't ambiguous, so they
+# never consult this list.
+_ABBREVIATIONS = frozenset(
+    {
+        "e.g", "i.e", "etc", "vs", "cf", "viz",
+        "mr", "mrs", "ms", "dr", "prof", "jr", "sr", "st",
+        "u.s", "u.k", "a.k.a", "a.m", "p.m",
+        "fig", "no", "vol", "ca", "approx",
+    }
+)
+
+
+def _word_ending_at(text: str, end: int) -> str:
+    r"""Return the alnum/dot run ending just before position `end`.
+
+    Used to recover the abbreviation candidate whose trailing period sits at
+    `end` — for `"e.g. python"` with `end=3` (the second `.`) returns `"e.g"`.
+    Walks back through alphanumerics and dots; stops at whitespace, punctuation
+    (`,;:`), brackets, etc. Empty string when the previous char is non-word
+    (e.g. closing backtick before the period in `` `...`. Next sentence ``).
+    """
+    i = end
+    while i > 0 and (text[i - 1].isalnum() or text[i - 1] == "."):
+        i -= 1
+    return text[i:end]
+
+
 def first_summary_line(body: str, max_chars: int = 80) -> str:
     """First sentence or first ~80 chars of `body`, single line.
 
     Sentence boundary is `[.!?]` followed by whitespace or end-of-string,
     so dotted identifiers (`user.name`, `git config --global x`) and version
-    numbers (`1.0.2`) don't get treated as sentence breaks.
+    numbers (`1.0.2`) don't get treated as sentence breaks. We also walk past
+    a small known list of abbreviations (`e.g.`, `i.e.`, `etc.`, `Mr.`, `U.S.`,
+    …) — without that, a body that opens with one collapses its summary to
+    "e.g" or "Mr".
     """
     text = body.strip().replace("\n", " ")
-    match = _SENTENCE_END_RE.search(text)
-    if match:
+    for match in _SENTENCE_END_RE.finditer(text):
+        # Only `.` is ambiguous — `!` and `?` always end sentences.
+        if match.group() == "." and (
+            _word_ending_at(text, match.start()).lower() in _ABBREVIATIONS
+        ):
+            continue
         sentence = text[: match.start()].strip()
         if sentence and len(sentence) <= max_chars:
             return sentence
+        # First real boundary is past max_chars — fall through to truncation
+        # rather than scanning further; subsequent boundaries would only
+        # produce longer sentences.
+        break
     if len(text) <= max_chars:
         return text
     return _truncate_at_word(text, max_chars)

@@ -180,6 +180,75 @@ def test_summary_uses_first_real_sentence_when_short_enough(store: Store) -> Non
     assert summary == "Short topic sentence"
 
 
+def test_summary_walks_past_eg_abbreviation(store: Store) -> None:
+    """`e.g.` opening a body shouldn't chop the summary to "e.g"."""
+    store.write(
+        content=(
+            "e.g. always lower-case scope names. "
+            "Otherwise validation fails."
+        ),
+        scopes=["tools"],
+    )
+    summary = store.list_summaries()[0].summary
+    assert "lower-case scope names" in summary
+    assert "Otherwise" not in summary  # stopped at the real boundary
+
+
+def test_summary_walks_past_ie_abbreviation(store: Store) -> None:
+    store.write(
+        content=(
+            "i.e. one memory per fact. "
+            "Combining unrelated bullets defeats the search."
+        ),
+        scopes=["tools"],
+    )
+    summary = store.list_summaries()[0].summary
+    assert "one memory per fact" in summary
+    assert "Combining" not in summary
+
+
+def test_summary_walks_past_mr_abbreviation(store: Store) -> None:
+    """Title abbreviations like `Mr.` are case-folded for the lookup."""
+    store.write(
+        content="Mr. Smith owns the deploy box. Ping him before pushing.",
+        scopes=["infrastructure"],
+    )
+    summary = store.list_summaries()[0].summary
+    assert "Mr. Smith" in summary
+    assert "Ping" not in summary
+
+
+def test_summary_walks_past_us_abbreviation(store: Store) -> None:
+    """Multi-dot abbreviations (`U.S.`) — the lookup token is `u.s`."""
+    store.write(
+        content=(
+            "U.S. infrastructure pricing differs from EU. "
+            "See the spreadsheet for the breakdown."
+        ),
+        scopes=["infrastructure"],
+    )
+    summary = store.list_summaries()[0].summary
+    assert "U.S. infrastructure" in summary
+    assert "See the spreadsheet" not in summary
+
+
+def test_summary_still_breaks_on_genuine_sentence_after_abbreviation(
+    store: Store,
+) -> None:
+    """The skip is per-match, not global — once we walk past `e.g.` we still
+    pick up the next real boundary."""
+    store.write(
+        content=(
+            "Use lower-case scope names, e.g. tools or learning-style. "
+            "Allowed list rejects everything else."
+        ),
+        scopes=["tools"],
+    )
+    summary = store.list_summaries()[0].summary
+    assert summary.endswith("learning-style")
+    assert "Allowed list" not in summary
+
+
 def test_round_trip_through_disk(memory_dir: Path) -> None:
     """A second Store on the same directory sees the same memories."""
     s1 = Store(memory_dir)
