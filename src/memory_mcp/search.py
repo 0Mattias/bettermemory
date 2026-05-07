@@ -18,8 +18,48 @@ from .models import Memory, MemoryHit, snippet_for
 _TOKEN_RE = re.compile(r"[a-z0-9][a-z0-9\-_]*", re.UNICODE)
 
 
+# Short English stopword list. Stripped from the *query* only — bodies stay
+# unfiltered so we don't lose information at index time. The point isn't NLP
+# accuracy; it's stopping queries like "how to bake sourdough bread" from
+# matching every memory on shared filler tokens ("how", "to"). We keep the
+# list short and conservative — domain words ("get", "set", "run") stay in
+# because they often *are* what the user is searching for.
+_STOPWORDS = frozenset(
+    {
+        "a", "an", "and", "are", "as", "at", "be", "but", "by", "can", "do",
+        "does", "for", "from", "had", "has", "have", "how", "i", "if", "in",
+        "into", "is", "it", "its", "me", "my", "no", "not", "of", "on", "or",
+        "so", "than", "that", "the", "their", "them", "then", "there",
+        "these", "they", "this", "to", "too", "us", "was", "we", "were",
+        "what", "when", "where", "which", "who", "why", "will", "with",
+        "would", "you", "your",
+    }
+)
+
+
 def tokenize(text: str) -> list[str]:
     return _TOKEN_RE.findall(text.lower())
+
+
+def _strip_stopwords(tokens: list[str]) -> list[str]:
+    return [t for t in tokens if t not in _STOPWORDS]
+
+
+def _relevance_label(matched_unique: int, query_unique: int) -> str:
+    """Map coverage (fraction of distinct query terms that hit) to a label.
+
+    Calibrated for short queries: matching 1/1 or 2/2 is "high"; matching 1/3
+    is "low". The thresholds are deliberately generous on the high side
+    because a 1-word query with a strong match shouldn't be downgraded.
+    """
+    if query_unique <= 0:
+        return "low"
+    coverage = matched_unique / query_unique
+    if coverage >= 0.75:
+        return "high"
+    if coverage >= 0.40:
+        return "medium"
+    return "low"
 
 
 def _scope_tokens(scope: str) -> list[str]:
@@ -42,10 +82,15 @@ def score_memory(
     *,
     now: datetime,
     half_life_days: float = 30.0,
-) -> float:
-    """Score a single memory against a tokenised query."""
+) -> tuple[float, list[str]]:
+    """Score a memory against a query. Return `(score, matched_terms)`.
+
+    `matched_terms` is the de-duplicated subset of `query_tokens` that hit
+    the body or scopes — surfaced in the result so the consumer can tell
+    whether a partial match is meaningful or stopword-driven noise.
+    """
     if not query_tokens:
-        return 0.0
+        return 0.0, []
 
     body_tokens = tokenize(memory.body)
     body_count: dict[str, int] = {}
@@ -58,24 +103,26 @@ def score_memory(
     scope_set = set(scope_tokens)
 
     raw = 0.0
-    matched_unique = 0
+    matched: list[str] = []
+    seen: set[str] = set()
     for tok in query_tokens:
         body_hits = body_count.get(tok, 0)
         scope_hit = 1 if tok in scope_set else 0
         contrib = body_hits + 2 * scope_hit  # scopes weighted 2x.
-        if contrib > 0:
-            matched_unique += 1
+        if contrib > 0 and tok not in seen:
+            matched.append(tok)
+            seen.add(tok)
         raw += contrib
 
     if raw == 0.0:
-        return 0.0
+        return 0.0, []
 
     # Mild boost for matching multiple distinct query terms — keeps "foo bar"
     # ranked above "foo foo foo" when the latter is just keyword spam.
-    coverage = matched_unique / len(set(query_tokens))
+    coverage = len(matched) / len(set(query_tokens))
     base = raw * (0.5 + 0.5 * coverage)
 
-    return base * _recency_factor(memory.created, now, half_life_days)
+    return base * _recency_factor(memory.created, now, half_life_days), matched
 
 
 def search(
@@ -95,9 +142,15 @@ def search(
       (Used for session-disabled scopes.)
     """
     now = now or datetime.now(timezone.utc)
-    query_tokens = tokenize(query)
+    raw_tokens = tokenize(query)
+    # Strip stopwords from the query — bodies stay unfiltered. If the query
+    # was *only* stopwords ("what is the"), there's nothing meaningful left
+    # to match on; return empty rather than serving every memory at score 0.
+    query_tokens = _strip_stopwords(raw_tokens)
     if not query_tokens:
         return []
+
+    query_unique = len(set(query_tokens))
 
     scope_filter = set(scopes) if scopes else None
     excluded = excluded_scopes or set()
@@ -110,7 +163,7 @@ def search(
         if scope_filter is not None and not (memory_scope_set & scope_filter):
             continue
 
-        score = score_memory(
+        score, matched = score_memory(
             memory,
             query_tokens,
             now=now,
@@ -126,6 +179,8 @@ def search(
                 confidence=memory.confidence,
                 snippet=snippet_for(memory.body),
                 score=round(score, 4),
+                relevance=_relevance_label(len(matched), query_unique),
+                match_terms=matched,
                 created=memory.created,
             )
         )

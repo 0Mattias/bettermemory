@@ -49,7 +49,7 @@ See [`docs/installation.md`](docs/installation.md) for more detail.
 
 | Tool | What it does |
 |---|---|
-| `memory_search(query, scopes?, max_results?)` | Rank and return memory hits with snippets. |
+| `memory_search(query, scopes?, max_results?)` | Rank and return memory hits with snippets. Each hit carries `relevance: "high" \| "medium" \| "low"` and `match_terms` (the query words that actually hit) — branch on `relevance`, not the raw `score`. |
 | `memory_show(id)` | Full body of one memory. |
 | `memory_write(content, scopes, confidence?, source?)` | Create a new memory. |
 | `memory_list(scopes?)` | List active memories — IDs and one-line summaries, no body. |
@@ -185,7 +185,7 @@ Files written by the previous `python-frontmatter`-based code keep loading byte-
 1. **Single-process access.** Concurrent writes from two MCP servers pointed at the same directory may corrupt files. A file-lock guard is in place; multi-process is still untested.
 2. **No conflict resolution.** If you edit a memory file by hand while the server is running, the next read will pick up your change but there's no merge story.
 3. **No encryption.** Memories are plaintext on disk. Don't store secrets — use OS-level disk encryption if you need it.
-4. **MVP search is keyword-only.** Synonyms, paraphrases, semantic similarity — not handled. Embeddings are a Phase 2 feature.
+4. **Search is keyword-only.** Synonyms, paraphrases, semantic similarity — not handled. Embeddings are a Phase 2 feature. A short stopword list is stripped from the *query* (so "how to bake sourdough" doesn't match every memory on shared filler tokens), but bodies stay unfiltered. Hits are returned with a `relevance` label calibrated on coverage — distinguish "1 of 4 query words matched" (low) from "all 3 matched" (high) without inventing a score threshold.
 5. **Disabled scopes don't survive restart.** Intentional — start each session fresh.
 
 ## What's out of scope

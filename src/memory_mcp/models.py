@@ -121,13 +121,24 @@ class Memory(BaseModel):
 
 
 class MemoryHit(BaseModel):
-    """One result from memory_search."""
+    """One result from memory_search.
+
+    `score` is the raw ranking number (corpus-relative — useful for sorting,
+    not for thresholding by hand). `relevance` is the calibrated label —
+    `"high" | "medium" | "low"` — based on what fraction of the query's
+    content words actually matched. Consumers should branch on `relevance`,
+    not on `score`. `match_terms` lists which query tokens hit the body or
+    scopes, so the caller can sanity-check whether a hit is meaningful or
+    stopword noise.
+    """
 
     id: str
     scopes: list[str]
     confidence: Confidence
     snippet: str
     score: float
+    relevance: str = "medium"
+    match_terms: list[str] = []
     created: datetime
 
 
@@ -171,25 +182,56 @@ def build_filename(created: datetime, slug: str) -> str:
     return f"{created.strftime('%Y-%m-%d')}-{slug}.md"
 
 
+# Sentence boundary: terminator (.!?) followed by whitespace or end-of-string.
+# The trailing-context check is what stops `user.name` or `git config` from
+# being treated as a sentence break — bare `.` inside an identifier was the
+# cause of summaries like "memory-mcp (a" and "git config --global user".
+_SENTENCE_END_RE = re.compile(r"[.!?](?=\s|$)")
+
+
 def first_summary_line(body: str, max_chars: int = 80) -> str:
-    """First sentence or first ~80 chars of `body`, single line."""
+    """First sentence or first ~80 chars of `body`, single line.
+
+    Sentence boundary is `[.!?]` followed by whitespace or end-of-string,
+    so dotted identifiers (`user.name`, `git config --global x`) and version
+    numbers (`1.0.2`) don't get treated as sentence breaks.
+    """
     text = body.strip().replace("\n", " ")
-    # Sentence split on `. ` or end of string.
-    if "." in text:
-        sentence = text.split(".", 1)[0].strip()
+    match = _SENTENCE_END_RE.search(text)
+    if match:
+        sentence = text[: match.start()].strip()
         if sentence and len(sentence) <= max_chars:
             return sentence
     if len(text) <= max_chars:
         return text
-    return text[:max_chars].rstrip() + "..."
+    return _truncate_at_word(text, max_chars)
 
 
 def snippet_for(body: str, max_chars: int = 200) -> str:
-    """Snippet shown in search results."""
+    """Snippet shown in search results.
+
+    Truncates on a word boundary so we don't cut mid-token. Prevents
+    snippets like "...does NOT write `git config --global user" where the
+    trailing identifier is sliced — the consumer then has to round-trip to
+    `memory_show` to recover what it was.
+    """
     text = body.strip()
     if len(text) <= max_chars:
         return text
-    return text[:max_chars].rstrip() + "..."
+    return _truncate_at_word(text, max_chars)
+
+
+def _truncate_at_word(text: str, max_chars: int) -> str:
+    """Trim to <=max_chars, backing off to the last whitespace boundary.
+
+    If there's no whitespace in the last 40 chars (long URL, dense code),
+    we accept the hard cut — backing off too far makes the snippet empty.
+    """
+    truncated = text[:max_chars]
+    space_idx = truncated.rfind(" ")
+    if space_idx >= max_chars - 40:
+        truncated = truncated[:space_idx]
+    return truncated.rstrip(" ,;:.-") + "..."
 
 
 # Re-export so callers don't import from os.

@@ -85,7 +85,11 @@ def _register_tools(
             "Search stored memories. Call this only when you have reason to "
             "think the user is referencing context you don't have, or when "
             "the user explicitly asks. Default to not searching. Returns "
-            "ranked hits with snippets — call memory_show for full content."
+            "ranked hits with snippets — call memory_show for full content. "
+            "Each hit includes `relevance` (high/medium/low) and "
+            "`match_terms` (which query words actually hit). Branch on "
+            "`relevance`, not the raw `score` — and treat \"low\" hits as "
+            "probable noise unless you have a reason to use them."
         ),
     )
     async def memory_search(
@@ -368,6 +372,8 @@ def _hit_to_dict(hit: MemoryHit) -> dict[str, Any]:
         "confidence": hit.confidence.value,
         "snippet": hit.snippet,
         "score": hit.score,
+        "relevance": hit.relevance,
+        "match_terms": hit.match_terms,
         "created": _isoformat(hit.created),
     }
 

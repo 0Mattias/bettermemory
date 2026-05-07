@@ -142,6 +142,33 @@ def test_list_summaries_strips_body(store: Store) -> None:
     assert "second sentence" not in summaries[0].summary
 
 
+def test_summary_does_not_split_inside_dotted_identifier(store: Store) -> None:
+    """The previous implementation split on bare `.`, so a body like
+    `gh auth login does NOT write git config --global user.name` produced
+    a summary truncated to `...write git config --global user`. Sentence
+    boundary is `.!?` followed by whitespace or end-of-string.
+    """
+    store.write(
+        content=(
+            "`gh auth login` does NOT write `git config --global user.name`. "
+            "It only sets up GitHub credentials."
+        ),
+        scopes=["tools"],
+    )
+    summary = store.list_summaries()[0].summary
+    assert "user.name" in summary  # didn't split inside the identifier
+    assert "It only sets up" not in summary  # did stop at the real boundary
+
+
+def test_summary_uses_first_real_sentence_when_short_enough(store: Store) -> None:
+    store.write(
+        content="Short topic sentence. Then more detail follows on a new line.",
+        scopes=["tools"],
+    )
+    summary = store.list_summaries()[0].summary
+    assert summary == "Short topic sentence"
+
+
 def test_round_trip_through_disk(memory_dir: Path) -> None:
     """A second Store on the same directory sees the same memories."""
     s1 = Store(memory_dir)

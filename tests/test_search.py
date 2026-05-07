@@ -106,3 +106,81 @@ def test_snippet_truncated_to_200_chars() -> None:
     a = _memory(long.strip())
     hits = search([a], "python")
     assert len(hits[0].snippet) <= 203  # 200 + "..."
+
+
+def test_snippet_does_not_cut_mid_word() -> None:
+    """Truncation should land on a word boundary so the trailing token isn't
+    sliced — previously a snippet could end with `...config --global user`
+    when the full body said `user.name`.
+    """
+    from memory_mcp.models import snippet_for
+
+    text = "x" * 50 + " word " + "y" * 200
+    snippet = snippet_for(text, max_chars=80)
+    assert snippet.endswith("...")
+    # The body of the snippet (sans ellipsis) should not end in a half word —
+    # i.e. it should end at a space-separated token, not slice through `yyy...`.
+    head = snippet[:-3].rstrip()
+    assert head.endswith("word") or head.endswith("x" * 50)
+
+
+# ---------------------------------------------------------------------------
+# Stopwords
+# ---------------------------------------------------------------------------
+
+
+def test_stopwords_alone_in_query_returns_empty() -> None:
+    """A query that is *only* stopwords has no signal — should return []."""
+    a = _memory("the kubernetes networking notes")
+    assert search([a], "what is the") == []
+    assert search([a], "how do i") == []
+
+
+def test_stopwords_dont_create_phantom_matches() -> None:
+    """An off-topic query with one shared stopword shouldn't surface a hit."""
+    a = _memory("python list comprehension tips")
+    # 'how' / 'to' / 'at' are stopwords, 'bake', 'sourdough', 'bread', 'home'
+    # don't appear in `a` — should be no hit.
+    assert search([a], "how to bake sourdough bread at home") == []
+
+
+def test_stopwords_stripped_but_real_terms_still_match() -> None:
+    """The content words drive the match; stopwords are silently dropped."""
+    a = _memory("python list comprehension tips")
+    hits = search([a], "the python tutorial")
+    assert len(hits) == 1
+    assert hits[0].id == a.id
+
+
+# ---------------------------------------------------------------------------
+# Match terms / relevance label
+# ---------------------------------------------------------------------------
+
+
+def test_hit_includes_match_terms() -> None:
+    a = _memory("python list comprehension performance notes")
+    hits = search([a], "python performance")
+    assert hits[0].match_terms == ["python", "performance"] or hits[0].match_terms == [
+        "performance",
+        "python",
+    ]
+
+
+def test_relevance_high_for_full_coverage() -> None:
+    a = _memory("python list comprehension")
+    hits = search([a], "python comprehension")
+    assert hits[0].relevance == "high"
+
+
+def test_relevance_medium_for_partial_coverage() -> None:
+    # 5 content tokens, only 2 match → coverage 0.4 → "medium".
+    a = _memory("python list comprehension")
+    hits = search([a], "python comprehension kubernetes networking docker")
+    assert hits[0].relevance == "medium"
+
+
+def test_relevance_low_for_sparse_coverage() -> None:
+    # 5 content tokens, only 1 matches → coverage 0.2 → "low".
+    a = _memory("python notes")
+    hits = search([a], "python kubernetes networking docker terraform")
+    assert hits[0].relevance == "low"
