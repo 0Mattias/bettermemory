@@ -20,8 +20,8 @@ This project takes the opposite tack:
 # from a clone
 uv pip install -e .
 
-# or as a tool
-pipx install .
+# or as an isolated tool (recommended)
+uv tool install .
 ```
 
 Python ≥ 3.11.

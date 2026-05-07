@@ -6,8 +6,8 @@
 # From a local clone
 uv pip install -e .
 
-# Or as an isolated tool
-pipx install .
+# Or as an isolated tool (recommended)
+uv tool install .
 ```
 
 This puts a `memory-mcp` script on your `$PATH`.
