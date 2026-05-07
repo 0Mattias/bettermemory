@@ -100,6 +100,29 @@ def test_dumps_handles_unicode() -> None:
     assert "αβγ ✓ こんにちは" in out
 
 
+def test_dumps_emits_literal_values_not_yaml_aliases() -> None:
+    """When two metadata fields share the same object — e.g. `created` and
+    `updated` on a fresh write, both pointing at the same `utcnow()` value —
+    pyyaml's default behavior is to emit `&id001` / `*id001` anchor/alias
+    syntax. We override that: literal repetition is more human-readable for
+    a directory the user is expected to grep and read by eye.
+    """
+    from datetime import datetime, timezone
+
+    ts = datetime(2026, 5, 7, 20, 56, 8, 199145, tzinfo=timezone.utc)
+    out = dumps(Post(content="body", metadata={"created": ts, "updated": ts}))
+
+    assert "&id" not in out
+    assert "*id" not in out
+    # Both timestamps should appear literally.
+    assert out.count("2026-05-07") == 2
+
+    # And the result must still round-trip through `loads`.
+    parsed = loads(out)
+    assert parsed.metadata["created"] == ts
+    assert parsed.metadata["updated"] == ts
+
+
 # ---------------------------------------------------------------------------
 # load (file-based)
 # ---------------------------------------------------------------------------

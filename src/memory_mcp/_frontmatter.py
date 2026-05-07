@@ -90,17 +90,32 @@ def load(path: Path | str) -> Post:
     return loads(Path(path).read_text(encoding="utf-8"))
 
 
+class _NoAliasDumper(yaml.SafeDumper):
+    """SafeDumper variant that never emits YAML anchors/aliases.
+
+    Without this, pyyaml emits `&idN` / `*idN` syntax whenever two metadata
+    fields reference the same object — e.g. `created` / `updated` on a fresh
+    write, where both come from the same `utcnow()` call. The output is
+    valid YAML and round-trips, but humans grep memory files and the alias
+    form is harder to read than two literal timestamps.
+    """
+
+    def ignore_aliases(self, data: Any) -> bool:
+        return True
+
+
 def dumps(post: Post) -> str:
     """Serialise a Post to a frontmatter string.
 
     Matches python-frontmatter's output: `---\\n<yaml>\\n---\\n\\n<body>`,
     with `body` right-stripped of trailing whitespace (leading whitespace
     preserved). Existing files written by the previous library round-trip
-    byte-for-byte.
+    byte-for-byte (modulo the alias-suppression policy above, which only
+    affects metadata dicts where two fields share the same object).
     """
     yaml_text = yaml.dump(
         post.metadata,
-        Dumper=yaml.SafeDumper,
+        Dumper=_NoAliasDumper,
         default_flow_style=False,
         allow_unicode=True,
     ).strip()
