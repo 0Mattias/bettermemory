@@ -21,11 +21,12 @@ from .models import (
     Confidence,
     MemoryHit,
     MemorySummary,
+    SimilarHit,
     Source,
     validate_scope,
 )
 from .prompts import SYSTEM_PROMPT_ADDENDUM
-from .search import search as run_search
+from .search import find_similar, search as run_search
 from .session import SessionState, get_state
 from .store import (
     MemoryNotFoundError,
@@ -170,16 +171,23 @@ def _register_tools(
             "Create a new memory. Durable facts only — scan the body for "
             "transient-state markers (\"currently\", \"N commits ahead\", "
             "\"today I\", \"as of now\") and reject the write if you spot "
-            "them; the durable fact is one level up. There is no content "
-            "dedup, so memory_search the topic first and prefer "
-            "memory_update on an existing memory over creating a parallel "
-            "entry. Confirm with the user only when the memory captures an "
-            "inference about them (preferences, beliefs); for project / "
-            "infra / reference / tooling memories, write directly and "
-            "announce the save. Provide non-empty scopes (e.g. ['tools', "
-            "'learning-style']). If `require_write_confirmation` is true "
-            "in config, this returns {status:'pending', pending_id} and "
-            "you must call memory_write_confirm(pending_id) to commit."
+            "them; the durable fact is one level up. Confirm with the user "
+            "only when the memory captures an inference about them "
+            "(preferences, beliefs); for project / infra / reference / "
+            "tooling memories, write directly and announce the save. "
+            "Provide non-empty scopes (e.g. ['tools', 'learning-style']). "
+            "Content dedup runs at write time: if an existing memory has "
+            "high overlap with the new body, this returns "
+            "{status:'duplicate', matches:[...]} instead of creating a "
+            "parallel entry — prefer memory_update on the matched id. Pass "
+            "`force=True` to override when the new memory is meaningfully "
+            "different (you have already inspected the matches and decided "
+            "they are adjacent topics, not duplicates). Medium-overlap "
+            "matches don't block; they're surfaced as `related` on the "
+            "success response. If `require_write_confirmation` is true in "
+            "config, a write that passes dedup returns "
+            "{status:'pending', pending_id} and you must call "
+            "memory_write_confirm(pending_id) to commit."
         ),
     )
     async def memory_write(
@@ -187,6 +195,7 @@ def _register_tools(
         scopes: list[str],
         confidence: str = "medium",
         source: str = "explicit-statement",
+        force: bool = False,
     ) -> dict[str, Any]:
         payload = _validate_write_payload(
             content=content,
@@ -196,9 +205,30 @@ def _register_tools(
             allowed_scopes=config.scopes.allowed,
         )
 
+        # Dedup runs first — staging or writing happens only if the new body
+        # isn't a high-overlap duplicate of an existing memory. `force=True`
+        # is the override path: the caller has already looked at the matches
+        # and decided this entry is meaningfully different.
+        related: list[SimilarHit] = []
+        if not force:
+            similar = find_similar(payload["content"], store.load_all())
+            high = [h for h in similar if h.relevance == "high"]
+            if high:
+                return {
+                    "status": "duplicate",
+                    "matches": [_similar_to_dict(h) for h in high],
+                    "hint": (
+                        "An existing memory has high content overlap with "
+                        "this write. Prefer memory_update on the matched "
+                        "id over creating a parallel entry. Pass force=True "
+                        "if the new memory is meaningfully different."
+                    ),
+                }
+            related = [h for h in similar if h.relevance == "medium"]
+
         if config.behavior.require_write_confirmation:
             pending = state.stage_write(payload)
-            return {
+            response: dict[str, Any] = {
                 "status": "pending",
                 "pending_id": pending.pending_id,
                 "preview": {
@@ -212,9 +242,12 @@ def _register_tools(
                     "drop with memory_write_cancel(pending_id)."
                 ),
             }
+            if related:
+                response["related"] = [_similar_to_dict(h) for h in related]
+            return response
 
         memory = store.write(**payload)
-        return _committed(memory)
+        return _committed(memory, related=related)
 
     @mcp.tool(
         name="memory_write_confirm",
@@ -469,9 +502,18 @@ def _validate_write_payload(
     }
 
 
-def _committed(memory) -> dict[str, Any]:  # type: ignore[no-untyped-def]
-    """Serialise a freshly-written Memory into the tool response shape."""
-    return {
+def _committed(  # type: ignore[no-untyped-def]
+    memory,
+    *,
+    related: list[SimilarHit] | None = None,
+) -> dict[str, Any]:
+    """Serialise a freshly-written Memory into the tool response shape.
+
+    `related` carries any medium-overlap matches that didn't block the write
+    — surfaced so the caller can still consider memory_update on a similar
+    existing entry, just without a hard refusal.
+    """
+    out: dict[str, Any] = {
         "status": "committed",
         "id": memory.id,
         "scopes": memory.scopes,
@@ -479,6 +521,22 @@ def _committed(memory) -> dict[str, Any]:  # type: ignore[no-untyped-def]
         "source": memory.source.value,
         "created": _isoformat(memory.created),
         "updated": _isoformat(memory.updated),
+    }
+    if related:
+        out["related"] = [_similar_to_dict(h) for h in related]
+    return out
+
+
+def _similar_to_dict(hit: SimilarHit) -> dict[str, Any]:
+    return {
+        "id": hit.id,
+        "scopes": hit.scopes,
+        "confidence": hit.confidence.value,
+        "snippet": hit.snippet,
+        "similarity": hit.similarity,
+        "relevance": hit.relevance,
+        "created": _isoformat(hit.created),
+        "updated": _isoformat(hit.updated),
     }
 
 

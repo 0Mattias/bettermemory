@@ -676,3 +676,218 @@ async def test_update_tombstoned_id_errors(server: Any) -> None:
             id=written["id"],
             content="cannot update a corpse",
         )
+
+
+# ---------------------------------------------------------------------------
+# Content dedup at write time
+#
+# memory_write runs find_similar against the current store before staging or
+# committing. High overlap returns status:"duplicate" instead of a write;
+# medium overlap is surfaced as `related` but does not block; force=True
+# overrides the check entirely.
+# ---------------------------------------------------------------------------
+
+
+async def test_dedup_blocks_identical_second_write(server: Any) -> None:
+    """A second write with byte-identical content should be refused, not
+    silently duplicated."""
+    body = "vendored python-frontmatter to drop the deprecated codecs.open call"
+    first = await _call(server, "memory_write", content=body, scopes=["tools"])
+    assert first["status"] == "committed"
+
+    second = await _call(server, "memory_write", content=body, scopes=["tools"])
+    assert second["status"] == "duplicate"
+    assert len(second["matches"]) == 1
+    assert second["matches"][0]["id"] == first["id"]
+    assert second["matches"][0]["relevance"] == "high"
+    assert "force=True" in second["hint"]
+
+
+async def test_dedup_blocks_near_duplicate(server: Any) -> None:
+    """High but not 1.0 overlap should still block."""
+    await _call(
+        server,
+        "memory_write",
+        content=(
+            "vendored python-frontmatter to drop the deprecated codecs.open call"
+        ),
+        scopes=["tools"],
+    )
+    second = await _call(
+        server,
+        "memory_write",
+        content=(
+            "vendored python-frontmatter so we can drop the deprecated codecs.open"
+        ),
+        scopes=["tools"],
+    )
+    assert second["status"] == "duplicate"
+
+
+async def test_dedup_allows_low_overlap_write(server: Any) -> None:
+    """Two memories that share only stopwords / nothing meaningful should
+    coexist without dedup interference."""
+    await _call(
+        server,
+        "memory_write",
+        content="kubernetes ingress nginx tls termination notes",
+        scopes=["tools"],
+    )
+    second = await _call(
+        server,
+        "memory_write",
+        content="user prefers tabs over spaces in the editor",
+        scopes=["learning-style"],
+    )
+    assert second["status"] == "committed"
+    assert "related" not in second
+
+
+async def test_dedup_medium_overlap_returns_committed_with_related(
+    server: Any,
+) -> None:
+    """Medium overlap should surface as `related` on a successful write —
+    not a hard refusal, but the writer learns the adjacent entry exists."""
+    first = await _call(
+        server,
+        "memory_write",
+        content="kubernetes ingress nginx tls",
+        scopes=["tools"],
+    )
+    second = await _call(
+        server,
+        "memory_write",
+        content="kubernetes ingress nginx logging",
+        scopes=["tools"],
+    )
+    assert second["status"] == "committed"
+    assert "related" in second
+    assert second["related"][0]["id"] == first["id"]
+    assert second["related"][0]["relevance"] == "medium"
+
+
+async def test_dedup_force_override_creates_new_memory(server: Any) -> None:
+    """force=True bypasses the check — the writer has already inspected the
+    matches and decided this entry is meaningfully different."""
+    body = "vendored python-frontmatter to drop the deprecated codecs.open call"
+    first = await _call(server, "memory_write", content=body, scopes=["tools"])
+    second = await _call(
+        server,
+        "memory_write",
+        content=body,
+        scopes=["tools"],
+        force=True,
+    )
+    assert second["status"] == "committed"
+    assert second["id"] != first["id"]
+
+
+async def test_dedup_ignores_tombstoned_memories(server: Any) -> None:
+    """A removed memory shouldn't keep blocking new writes on the same topic.
+    Store.load_all already excludes tombstones; this test pins that behavior
+    end-to-end through memory_write."""
+    body = "vendored python-frontmatter to drop the deprecated codecs.open call"
+    first = await _call(server, "memory_write", content=body, scopes=["tools"])
+    await _call(
+        server, "memory_remove", id=first["id"], reason="testing dedup"
+    )
+
+    second = await _call(server, "memory_write", content=body, scopes=["tools"])
+    assert second["status"] == "committed"
+
+
+async def test_dedup_match_carries_metadata(server: Any) -> None:
+    """The matches list should give the writer enough to act — id, snippet,
+    similarity, scopes — without an extra memory_show round-trip."""
+    body = "vendored python-frontmatter to drop the deprecated codecs.open call"
+    first = await _call(
+        server, "memory_write", content=body, scopes=["tools", "infrastructure"]
+    )
+    dup = await _call(server, "memory_write", content=body, scopes=["tools"])
+
+    match = dup["matches"][0]
+    assert match["id"] == first["id"]
+    assert match["scopes"] == ["tools", "infrastructure"]
+    assert "snippet" in match and match["snippet"]
+    assert match["similarity"] >= 0.99
+
+
+async def test_dedup_blocks_under_require_confirmation(
+    confirming_server: tuple[Any, SessionState],
+) -> None:
+    """High overlap should return status:"duplicate" *instead of* staging.
+    Otherwise the staged-write flow would let a duplicate through on
+    confirm."""
+    server, _state = confirming_server
+    body = "vendored python-frontmatter to drop the deprecated codecs.open call"
+    first = await _call(server, "memory_write", content=body, scopes=["tools"])
+    # First write goes through the staged-write path → confirm it.
+    confirmed = await _call(
+        server, "memory_write_confirm", pending_id=first["pending_id"]
+    )
+    assert confirmed["status"] == "committed"
+
+    second = await _call(server, "memory_write", content=body, scopes=["tools"])
+    assert second["status"] == "duplicate"
+    assert "pending_id" not in second  # didn't even stage.
+
+
+async def test_dedup_passes_through_to_pending_with_related(
+    confirming_server: tuple[Any, SessionState],
+) -> None:
+    """Medium overlap under require_confirmation: still stages, but the
+    pending response carries `related` so the user can see what's adjacent
+    before confirming."""
+    server, _state = confirming_server
+
+    first_pending = await _call(
+        server,
+        "memory_write",
+        content="kubernetes ingress nginx tls",
+        scopes=["tools"],
+    )
+    await _call(
+        server,
+        "memory_write_confirm",
+        pending_id=first_pending["pending_id"],
+    )
+
+    second = await _call(
+        server,
+        "memory_write",
+        content="kubernetes ingress nginx logging",
+        scopes=["tools"],
+    )
+    assert second["status"] == "pending"
+    assert "related" in second
+    assert second["related"][0]["relevance"] == "medium"
+
+
+async def test_memory_update_unaffected_by_dedup(server: Any) -> None:
+    """memory_update doesn't go through the dedup check — it edits an
+    existing entry, so by definition there's no parallel entry to create.
+    Even if the new content overlaps another memory heavily, the update
+    should still succeed."""
+    a = await _call(
+        server,
+        "memory_write",
+        content="kubernetes ingress nginx tls termination notes",
+        scopes=["tools"],
+    )
+    b = await _call(
+        server,
+        "memory_write",
+        content="user prefers tabs over spaces in editor config",
+        scopes=["learning-style"],
+    )
+
+    # Update b's body to overlap a's heavily — dedup mustn't block.
+    updated = await _call(
+        server,
+        "memory_update",
+        id=b["id"],
+        content="kubernetes ingress nginx tls termination",
+    )
+    assert updated["status"] == "committed"
+    assert updated["id"] == b["id"]
+    assert updated["id"] != a["id"]

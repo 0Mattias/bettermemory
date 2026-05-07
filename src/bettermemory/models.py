@@ -155,6 +155,27 @@ class MemorySummary(BaseModel):
     updated: datetime
 
 
+class SimilarHit(BaseModel):
+    """One existing memory that overlaps a candidate write.
+
+    Surfaced by `find_similar` and by `memory_write` when it refuses to create
+    a parallel entry. `similarity` is Jaccard on stopword-stripped, kebab-
+    expanded token sets — symmetric, unlike `MemoryHit.score`. `relevance` is
+    the same `"high" | "medium"` ladder that drives the decision: high
+    overlap blocks the write (unless `force=True`), medium overlap is
+    surfaced as `related` but does not block.
+    """
+
+    id: str
+    scopes: list[str]
+    confidence: Confidence
+    snippet: str
+    similarity: float
+    relevance: str
+    created: datetime
+    updated: datetime
+
+
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
@@ -287,6 +308,7 @@ __all__ = [
     "Memory",
     "MemoryHit",
     "MemorySummary",
+    "SimilarHit",
     "generate_ulid",
     "is_valid_ulid",
     "validate_scope",

@@ -5,7 +5,7 @@ from __future__ import annotations
 from datetime import datetime, timedelta, timezone
 
 from bettermemory.models import Confidence, Memory, Source, generate_ulid
-from bettermemory.search import search, tokenize
+from bettermemory.search import find_similar, search, tokenize
 
 
 def _memory(
@@ -277,3 +277,109 @@ def test_kebab_underscore_treated_like_hyphen() -> None:
     a = _memory("identifier zephyr_quartz_9417 in the logs")
     assert any(h.id == a.id for h in search([a], "zephyr"))
     assert any(h.id == a.id for h in search([a], "quartz"))
+
+
+# ---------------------------------------------------------------------------
+# find_similar — content dedup at write time
+#
+# Symmetric Jaccard on stopword-stripped, kebab-expanded token sets. >= 0.75
+# is "high" (block the write); >= 0.40 is "medium" (surface as related);
+# below is ignored. Recency is irrelevant — two memories aren't more or less
+# duplicate based on age.
+# ---------------------------------------------------------------------------
+
+
+def test_find_similar_identical_body_is_high() -> None:
+    """Byte-identical bodies should always trip the high-similarity tier."""
+    body = "vendored python-frontmatter to drop the deprecated codecs.open call"
+    a = _memory(body)
+    hits = find_similar(body, [a])
+    assert len(hits) == 1
+    assert hits[0].id == a.id
+    assert hits[0].relevance == "high"
+    assert hits[0].similarity >= 0.99
+
+
+def test_find_similar_near_duplicate_is_high() -> None:
+    """Bodies that share most content tokens should still be flagged high."""
+    a = _memory(
+        "vendored python-frontmatter to drop the deprecated codecs.open call"
+    )
+    candidate = (
+        "vendored python-frontmatter so we can drop the deprecated codecs.open"
+    )
+    hits = find_similar(candidate, [a])
+    assert hits and hits[0].relevance == "high"
+
+
+def test_find_similar_partial_overlap_is_medium() -> None:
+    """~60% overlap is the "related but not duplicate" zone (>=0.40, <0.75)."""
+    # tokens(a) = {kubernetes, ingress, nginx, tls}
+    # tokens(candidate) = {kubernetes, ingress, nginx, logging}
+    # intersection = 3, union = 5, jaccard = 0.6 → medium.
+    a = _memory("kubernetes ingress nginx tls")
+    candidate = "kubernetes ingress nginx logging"
+    hits = find_similar(candidate, [a])
+    assert hits and hits[0].relevance == "medium"
+
+
+def test_find_similar_unrelated_returns_empty() -> None:
+    a = _memory("kubernetes ingress nginx tls termination notes")
+    candidate = "user prefers tabs over spaces in editor config"
+    assert find_similar(candidate, [a]) == []
+
+
+def test_find_similar_empty_body_returns_empty() -> None:
+    """No content tokens to compare → nothing to dedup against."""
+    a = _memory("python frontmatter library notes")
+    assert find_similar("", [a]) == []
+    # All stopwords → also empty after stripping.
+    assert find_similar("the and or but is", [a]) == []
+
+
+def test_find_similar_skips_all_stopword_existing() -> None:
+    """An existing memory whose body is pure filler shouldn't be a "match"
+    for any new write — its stripped token set is empty."""
+    a = _memory("the and or but is")
+    hits = find_similar("kubernetes ingress nginx", [a])
+    assert hits == []
+
+
+def test_find_similar_orders_by_similarity_desc() -> None:
+    a = _memory("kubernetes ingress nginx tls termination notes for cluster")
+    b = _memory("kubernetes ingress nginx tls termination configuration")
+    c = _memory("kubernetes ingress nginx general notes")
+
+    candidate = "kubernetes ingress nginx tls termination"
+    hits = find_similar(candidate, [a, b, c])
+    similarities = [h.similarity for h in hits]
+    assert similarities == sorted(similarities, reverse=True)
+
+
+def test_find_similar_kebab_expansion_is_symmetric() -> None:
+    """A body using kebab notation should match a body that spells it out
+    (and vice versa). The asymmetry in `score_memory` is for the search
+    direction; for dedup we want both sides expanded so equivalent phrasings
+    collapse together.
+    """
+    kebab = _memory("python-frontmatter library is unmaintained, vendored locally")
+    spaced_candidate = (
+        "python frontmatter library is unmaintained, vendored locally"
+    )
+    hits = find_similar(spaced_candidate, [kebab])
+    assert hits and hits[0].relevance in {"high", "medium"}
+
+
+def test_find_similar_ignores_recency() -> None:
+    """A year-old memory should still flag as a duplicate if the content
+    overlaps. Dedup is a content question, not a recency one.
+    """
+    old = _memory(
+        "vendored python-frontmatter to drop the deprecated codecs.open call",
+        created=datetime.now(timezone.utc) - timedelta(days=365),
+    )
+    candidate = (
+        "vendored python-frontmatter to drop the deprecated codecs.open call"
+    )
+    hits = find_similar(candidate, [old])
+    assert hits and hits[0].relevance == "high"

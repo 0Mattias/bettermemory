@@ -58,10 +58,15 @@ Writing and updating memory:
   timestamp and avoids littering the tombstone log with what are really
   edits. The `updated` field on list/search results is a staleness signal.
 
-- Search before writing. bettermemory does not deduplicate content, so the
-  discipline lives here. Before writing a memory that overlaps an existing
-  topic, run memory_search on the topic. If a similar memory already exists,
-  prefer memory_update on that one over creating a parallel entry.
+- Dedup is automatic at write time. memory_write returns
+  {status:"duplicate", matches:[...]} when the new body has high content
+  overlap with an existing memory; the right response is memory_update on
+  the matched id, not memory_write with force=True. Use force=True only
+  when you have inspected the matches and the new memory is meaningfully
+  different (adjacent topic, not a duplicate). Medium-overlap matches
+  don't block — they come back as `related` on a successful write —
+  inspect them and consider memory_update if one of them is the better
+  home for what you were going to write.
 
 - Confirmation policy is tiered:
   - For project, infrastructure, reference, and tooling memories — write

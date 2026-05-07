@@ -10,7 +10,7 @@ import math
 import re
 from datetime import datetime, timezone
 
-from .models import Memory, MemoryHit, snippet_for
+from .models import Memory, MemoryHit, SimilarHit, snippet_for
 
 
 # Strip punctuation, keep word characters (incl. unicode letters) and dashes
@@ -225,6 +225,97 @@ def search(
 
     hits.sort(key=lambda h: (h.score, h.created), reverse=True)
     return hits[:max_results]
+
+
+# ---------------------------------------------------------------------------
+# Dedup at write time
+# ---------------------------------------------------------------------------
+
+
+# Thresholds for find_similar. Calibrated against jaccard on stopword-stripped
+# kebab-expanded token sets:
+# - >= HIGH: block the write unless force=True. Two memories with this much
+#   token overlap are very likely about the same fact; the right move is
+#   memory_update on the existing entry.
+# - >= MEDIUM: surface as `related` but do not block. The new memory may add
+#   nuance worth keeping separate, but the writer should at least know the
+#   adjacent memory exists.
+# - <  MEDIUM: ignore.
+HIGH_SIMILARITY = 0.75
+MEDIUM_SIMILARITY = 0.40
+
+
+def _content_token_set(text: str) -> set[str]:
+    """Tokens used for similarity comparison: stopwords stripped, kebab/snake
+    components included on both sides.
+
+    Symmetric kebab expansion is the right move here (unlike search, where it
+    is asymmetric). Two memories where one says `python-frontmatter` and the
+    other says plain `python` are about overlapping topics; the dedup signal
+    should fire. Inflating set size on the kebab side is the cost — accepted
+    because the union grows in proportion and Jaccard stays well-behaved.
+    """
+    return set(_strip_stopwords(_expand_kebab(tokenize(text))))
+
+
+def find_similar(
+    new_body: str,
+    existing: list[Memory],
+    *,
+    high_threshold: float = HIGH_SIMILARITY,
+    medium_threshold: float = MEDIUM_SIMILARITY,
+) -> list[SimilarHit]:
+    """Find memories whose content overlaps `new_body` enough to flag.
+
+    Comparison is Jaccard similarity on stopword-stripped, kebab-expanded
+    token sets — symmetric and recency-free, unlike `score_memory`. Returns
+    hits with similarity >= `medium_threshold`, sorted descending by
+    similarity. Hits below `high_threshold` are labeled `"medium"`; at or
+    above, `"high"`.
+
+    Empty list if `new_body` has no content tokens after stopword stripping
+    (e.g. a body of pure filler) — there's nothing meaningful to dedup
+    against. Existing memories that are themselves all-filler are skipped.
+    """
+    new_tokens = _content_token_set(new_body)
+    if not new_tokens:
+        return []
+
+    hits: list[SimilarHit] = []
+    for memory in existing:
+        existing_tokens = _content_token_set(memory.body)
+        if not existing_tokens:
+            continue
+
+        intersection = new_tokens & existing_tokens
+        if not intersection:
+            continue
+
+        union = new_tokens | existing_tokens
+        similarity = len(intersection) / len(union)
+
+        if similarity >= high_threshold:
+            relevance = "high"
+        elif similarity >= medium_threshold:
+            relevance = "medium"
+        else:
+            continue
+
+        hits.append(
+            SimilarHit(
+                id=memory.id,
+                scopes=memory.scopes,
+                confidence=memory.confidence,
+                snippet=snippet_for(memory.body),
+                similarity=round(similarity, 4),
+                relevance=relevance,
+                created=memory.created,
+                updated=memory.updated,
+            )
+        )
+
+    hits.sort(key=lambda h: (h.similarity, h.updated), reverse=True)
+    return hits
 
 
 # ---------------------------------------------------------------------------
