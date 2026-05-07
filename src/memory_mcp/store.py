@@ -15,44 +15,22 @@ from datetime import datetime
 from pathlib import Path
 from typing import Iterator
 
-import frontmatter
-import yaml
-from frontmatter.default_handlers import YAMLHandler
+from . import _frontmatter as frontmatter
 
-
-# We deliberately use the pure-Python YAML implementation rather than the
-# libyaml-backed C extension. Two reasons:
+# We use a vendored frontmatter parser (`_frontmatter.py`) which pins the
+# pure-Python yaml.SafeLoader / yaml.SafeDumper. Two reasons:
 #
 # 1. CSafeDumper has a state-machine bug that surfaces under coverage
 #    instrumentation: it raises `EmitterError: expected SCALAR, ...` when
 #    coverage filters by a specific submodule (e.g. `--cov=memory_mcp.store`).
-#    Without coverage it works; with submodule-level coverage it doesn't.
-# 2. `frontmatter.load(path, Loader=...)` silently swallows the Loader kwarg
-#    (it gets stuffed into "default metadata"), so we can't override per-call.
-#    The only reliable way is to use a handler that pins the pure-Python
-#    implementations at construction time.
+#    Pure-Python yaml is unaffected.
+# 2. `python-frontmatter` 1.1.0 (current release) calls `codecs.open()`,
+#    which Python 3.14 emits a DeprecationWarning for. The library is
+#    effectively unmaintained. Vendoring is shorter than living with the
+#    warning or shimming around it.
 #
 # Memory frontmatter is dozens of bytes per write; the libyaml speedup is
 # irrelevant here. Robustness wins.
-
-
-class _PurePyYAMLHandler(YAMLHandler):
-    """YAML handler that pins the pure-Python loader/dumper.
-
-    Bypasses frontmatter's module-level `SafeLoader`/`SafeDumper` constants
-    which resolve to the C-extension classes when libyaml is available.
-    """
-
-    def load(self, fm: str, **kwargs: object) -> object:  # type: ignore[override]
-        return yaml.load(fm, Loader=yaml.SafeLoader)
-
-    def export(self, metadata: dict[str, object], **kwargs: object) -> str:  # type: ignore[override]
-        kwargs.setdefault("default_flow_style", False)
-        kwargs.setdefault("allow_unicode", True)
-        return yaml.dump(metadata, Dumper=yaml.SafeDumper, **kwargs).strip()
-
-
-_HANDLER = _PurePyYAMLHandler()
 
 
 from .models import (
@@ -206,7 +184,7 @@ class Store:
 
         # If it's tombstoned, give a clearer error so the model can say so.
         for path in self._iter_tombstone_paths():
-            post = frontmatter.load(path, handler=_HANDLER)
+            post = frontmatter.load(path)
             if post.metadata.get("id") == memory_id:
                 raise TombstonedError(
                     f"memory {memory_id} was removed: "
@@ -216,7 +194,7 @@ class Store:
         raise MemoryNotFoundError(f"no memory with id {memory_id}")
 
     def _load_path(self, path: Path) -> Memory:
-        post = frontmatter.load(path, handler=_HANDLER)
+        post = frontmatter.load(path)
         meta = post.metadata
         try:
             return Memory(
@@ -275,14 +253,14 @@ class Store:
         if path is None:
             # Maybe it's already tombstoned — bubble up a clearer error.
             for tpath in self._iter_tombstone_paths():
-                post = frontmatter.load(tpath, handler=_HANDLER)
+                post = frontmatter.load(tpath)
                 if post.metadata.get("id") == memory_id:
                     raise TombstonedError(
                         f"memory {memory_id} is already tombstoned"
                     )
             raise MemoryNotFoundError(f"no memory with id {memory_id}")
 
-        post = frontmatter.load(path, handler=_HANDLER)
+        post = frontmatter.load(path)
         post.metadata["removed"] = utcnow()
         post.metadata["removed_reason"] = reason
 
@@ -296,7 +274,7 @@ class Store:
 
         with _locked(path):
             target.write_bytes(
-                frontmatter.dumps(post, handler=_HANDLER).encode("utf-8")
+                frontmatter.dumps(post).encode("utf-8")
             )
             try:
                 path.unlink()
@@ -326,7 +304,7 @@ class Store:
             return None
         for path in self._iter_active_paths():
             try:
-                post = frontmatter.load(path, handler=_HANDLER)
+                post = frontmatter.load(path)
             except Exception:
                 continue
             if post.metadata.get("id") == memory_id:
@@ -345,7 +323,7 @@ class Store:
         }
         # Atomic-ish write: write to .tmp then rename.
         tmp = path.with_suffix(path.suffix + ".tmp")
-        tmp.write_bytes(frontmatter.dumps(post, handler=_HANDLER).encode("utf-8"))
+        tmp.write_bytes(frontmatter.dumps(post).encode("utf-8"))
         tmp.replace(path)
 
 

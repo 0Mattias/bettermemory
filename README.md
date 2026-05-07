@@ -146,23 +146,39 @@ Avoid the catch-all `general` scope — it defeats the whole point.
 ## Development
 
 ```sh
-uv venv
-uv pip install -e ".[dev]" pytest-cov
-uv run pytest -q
+# direnv users: just `cd` in — `.envrc` exports UV_PROJECT_ENVIRONMENT=venv.
+# Otherwise:
+export UV_PROJECT_ENVIRONMENT=venv
+
+uv sync --extra dev
+source venv/bin/activate
+pytest -q
 
 # With coverage (spec asks for >80% on store.py and search.py)
-uv run pytest --cov=memory_mcp.store --cov=memory_mcp.search --cov-report=term-missing
+pytest --cov=memory_mcp.store --cov=memory_mcp.search --cov-report=term-missing
 ```
 
-If `import memory_mcp` fails with `ModuleNotFoundError` despite a successful `uv pip install -e .`, the editable-install `.pth` file probably has the macOS `UF_HIDDEN` flag — Python 3.12+ silently skips hidden `.pth` files. One-line fix:
+`tests/conftest.py` puts `src/` on `sys.path` directly, so the suite passes even if the editable install is in a weird state. `pytest -q` is a sanity check that doesn't depend on `uv pip install -e .` succeeding.
 
-```sh
-chflags -R nohidden .venv
-```
+### macOS gotcha: the env is `venv/`, not `.venv/`
 
-(Tracked upstream as [astral-sh/uv#16977](https://github.com/astral-sh/uv/issues/16977).)
+macOS Sequoia auto-applies `UF_HIDDEN` to anything literally named `.venv` inside iCloud-synced folders (`~/Documents/`, `~/Desktop/`). Python 3.12+ then silently skips hidden `.pth` files, so `import memory_mcp` after an editable install fails with `ModuleNotFoundError`. A one-shot `chflags -R nohidden .venv` works for ~5 seconds before iCloud re-applies the flag — there is no good cure.
 
-The project also pins `yaml.SafeLoader` / `yaml.SafeDumper` (pure-Python) in [`store.py`](src/memory_mcp/store.py) rather than letting frontmatter pick libyaml's C versions. `CSafeDumper` has a state-machine bug under coverage instrumentation that surfaces when filtering by submodule (`--cov=memory_mcp.store`); writes are tiny so the libyaml speedup is irrelevant.
+Two clean ways to avoid it:
+
+1. **Name the venv anything else** — `venv`, `.env-mcp`, `env`. Only the literal `.venv` triggers the iCloud heuristic. This repo defaults to `venv/` via `.envrc` + `UV_PROJECT_ENVIRONMENT`.
+2. **Or keep the project outside `~/Documents/` / `~/Desktop/`** — the auto-hide doesn't fire elsewhere.
+
+This is not a uv bug. `uv venv .venv` in `/tmp/` or `~/projects/` stays clean. It's macOS being opinionated about virtualenvs in iCloud-synced trees.
+
+### YAML + frontmatter
+
+The on-disk format is YAML frontmatter inside a markdown file. We use a tiny vendored parser (`src/memory_mcp/_frontmatter.py`) instead of `python-frontmatter` for two reasons:
+
+1. **Python 3.14 compatibility.** `python-frontmatter` 1.1.0 (the current release) calls `codecs.open()`, which 3.14 emits a `DeprecationWarning` for. The library is effectively unmaintained.
+2. **Forced pure-Python YAML.** `yaml.CSafeDumper` has a state-machine bug under submodule coverage instrumentation (`--cov=memory_mcp.store`). The vendored parser pins `yaml.SafeLoader` / `yaml.SafeDumper` directly. Memory frontmatter is dozens of bytes per write, so the libyaml C speedup is irrelevant.
+
+Files written by the previous `python-frontmatter`-based code keep loading byte-for-byte; cross-tested against the upstream library before the swap.
 
 ## Limitations
 

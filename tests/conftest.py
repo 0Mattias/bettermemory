@@ -5,7 +5,16 @@ Each test gets a fresh temp memory directory so the tests stay hermetic.
 
 from __future__ import annotations
 
+import sys
 from pathlib import Path
+
+# Make `src/` importable without depending on the editable install. This is
+# belt-and-suspenders: if the venv's editable .pth file is unreadable for any
+# reason (macOS UF_HIDDEN propagation in iCloud-synced dirs, a stale env, a
+# tooling bug), tests still pass.
+_SRC = Path(__file__).resolve().parents[1] / "src"
+if str(_SRC) not in sys.path:
+    sys.path.insert(0, str(_SRC))
 
 import pytest
 

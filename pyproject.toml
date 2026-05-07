@@ -9,7 +9,7 @@ authors = [{ name = "memory-mcp contributors" }]
 dependencies = [
     "mcp>=1.0.0",
     "pydantic>=2.0",
-    "python-frontmatter>=1.0",
+    "pyyaml>=6.0",
     "platformdirs>=4.0",
 ]
 
@@ -30,3 +30,9 @@ packages = ["src/memory_mcp"]
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
 testpaths = ["tests"]
+# Surface DeprecationWarnings from our own code as errors. We do NOT silence
+# the python-frontmatter codecs.open() deprecation — instead we vendored our
+# own frontmatter handling in store.py to drop the dependency entirely.
+filterwarnings = [
+    "error::DeprecationWarning:memory_mcp",
+]
