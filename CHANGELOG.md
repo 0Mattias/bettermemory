@@ -9,6 +9,18 @@ fixes.
 
 ### Added
 
+- **Programmatic client example**
+  (`examples/programmatic_client.py`). A self-contained Python
+  script that spawns `bettermemory` over stdio (via the official
+  `mcp` SDK that's already a runtime dep, so no extra install)
+  and walks through write → search → show → remove. Useful as a
+  reference for integration tests, custom agents that want
+  memory tools without a third-party MCP host, and one-off
+  scripted curation passes. Defaults to a tmp dir for
+  `BETTERMEMORY_DIR` so it never touches the user's real
+  store; falls back to `python -m bettermemory` when no
+  installed `bettermemory` binary is on PATH.
+
 - **`CONTRIBUTING.md`**, with the explicit 1.x compatibility
   contract. Covers local dev setup, PR conventions, the
   versioning + deprecation policy, and the project values that
