@@ -21,14 +21,17 @@ This project takes the opposite tack:
 ## Install
 
 ```sh
-# from a clone
-uv pip install -e .
+# recommended — isolated install via uv tool
+uv tool install bettermemory
 
-# or as an isolated tool (recommended)
-uv tool install .
+# or pipx
+pipx install bettermemory
+
+# or pip into a venv
+pip install bettermemory
 ```
 
-Python ≥ 3.11.
+Python ≥ 3.11. From a clone (development): `uv pip install -e .` or `uv tool install .`.
 
 ## Quick start
 

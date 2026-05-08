@@ -3,14 +3,19 @@
 ## 1. Install the package
 
 ```sh
-# From a local clone
-uv pip install -e .
+# recommended — isolated install via uv tool
+uv tool install bettermemory
 
-# Or as an isolated tool (recommended)
-uv tool install .
+# or pipx
+pipx install bettermemory
+
+# or pip into a venv
+pip install bettermemory
 ```
 
-This puts a `bettermemory` script on your `$PATH`.
+From a development clone, swap the first line for `uv tool install .` (or `uv pip install -e .` if you want an editable install).
+
+Either path puts a `bettermemory` script on your `$PATH`.
 
 ```sh
 which bettermemory

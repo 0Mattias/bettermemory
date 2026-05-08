@@ -1,11 +1,54 @@
 # Changelog
 
 Notable changes between releases. Format follows
-[Keep a Changelog](https://keepachangelog.com/) loosely; the project uses
-0.x SemVer where minor bumps are additive feature drops and patches are
-fixes.
+[Keep a Changelog](https://keepachangelog.com/) loosely. From 1.0
+onward the project uses semver in the standard way: major bumps for
+breaking changes, minor for additive features, patch for fixes. The
+[1.x compatibility contract](CONTRIBUTING.md#versioning-and-the-1x-compatibility-contract)
+spells out exactly what's stable.
 
-## Unreleased
+## 1.0.0 — 2026-05-08
+
+The first stable release. Three things changed under the hood between
+the last 0.x and this one — they collectively retire every "but" the
+README used to publish.
+
+- **The system-prompt addendum is no longer required for correctness.**
+  The opt-in retrieval policy, transparency requirement, and
+  verification obligation now live in the MCP server's
+  `instructions` block, which clients surface at the system-prompt
+  level. Strangers who install bettermemory and skip the addendum get
+  the right behavior anyway. The addendum file remains as the
+  advanced tightening surface (full scope hygiene, confirmation-tier
+  policy, expanded record-use guidance), but nothing breaks without
+  it.
+
+- **One-command onboarding.** `bettermemory init --client X` writes
+  the right MCP config snippet into the right file for Claude Code,
+  Claude Desktop, Cursor, Continue, or Cline. Idempotent: re-run
+  with the same arguments is a no-op, with a different binary path
+  is an update. `bettermemory doctor` diagnoses the most common
+  install failures (binary on PATH, storage writable, MCP client
+  configs cross-checked against the resolved binary path) with a
+  one-line fix hint per check.
+
+- **The 1.x contract is contractual.** Every memory and tombstone
+  carries `schema_version: 1` in its frontmatter. Within 1.x the
+  on-disk format and the 17-tool surface (signatures, defaults,
+  return shapes — all pinned in `docs/api.md`) are stable. A
+  multi-process concurrency stress test exercises the cross-process
+  fcntl locks under contention to retire the previous "untested"
+  caveat. Property-based tests pin the store's identity / round-trip
+  / tombstone-restore invariants under random input.
+
+Other surface updates: storage benchmark + Performance section in
+the README documenting the practical ceiling (~50k memories before
+the no-index walk dominates), CONTRIBUTING.md with the explicit
+deprecation policy, programmatic-client example in
+`examples/programmatic_client.py`, PyPI release workflow with
+trusted publishing.
+
+### Added
 
 ### Added
 
@@ -196,9 +239,8 @@ fixes.
   pyproject.toml version matches the tag before any artifact ships,
   so an off-by-one tag fails fast. Process documented in
   `docs/release.md`, including the one-time PyPI-side trusted-publisher
-  setup. Until this lands on PyPI for real, install remains
-  clone-and-`uv tool install .`; the README install line will flip
-  to `uv tool install bettermemory` at the 1.0 release.
+  setup. The 1.0 tag uses this workflow to publish — strangers get
+  `uv tool install bettermemory` from PyPI directly.
 
 ### Changed
 
