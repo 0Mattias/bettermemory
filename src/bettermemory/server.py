@@ -21,6 +21,7 @@ from mcp.server.fastmcp import FastMCP
 from .config import Config, load_config
 from .durability import TransientMatch, find_transient_markers
 from .events import Recorder
+from .origin import Origin, capture as capture_origin
 from .models import (
     Confidence,
     MemoryHit,
@@ -111,7 +112,13 @@ def _register_tools(
             "Pass `expand_top=True` to inline the full body of the top hit "
             "when its relevance is \"high\" — collapses the common "
             "search-then-show round trip into one call. Skip it when you "
-            "only need to triage."
+            "only need to triage. "
+            "By default (`auto_scope=True`), results are filtered to "
+            "memories written from the current repository — cross-project "
+            "memories are excluded. Memories written outside any repo "
+            "(or before the auto-scope feature) are treated as global and "
+            "always pass. Set `auto_scope=False` for cross-project queries "
+            "(\"do you remember anything about X across all my projects\")."
         ),
     )
     async def memory_search(
@@ -119,6 +126,7 @@ def _register_tools(
         scopes: list[str] | None = None,
         max_results: int | None = None,
         expand_top: bool = False,
+        auto_scope: bool = True,
     ) -> list[dict[str, Any]]:
         if max_results is None:
             max_results = config.behavior.default_max_results
@@ -127,12 +135,21 @@ def _register_tools(
         if scopes:
             scopes = [validate_scope(s) for s in scopes]
 
+        # Auto-scope: capture the caller's current origin so we can drop
+        # memories from a different repo. None when the caller isn't in a
+        # repo (auto-scope is meaningless without a project boundary).
+        repo_filter: str | None = None
+        if auto_scope:
+            current_origin = capture_origin()
+            repo_filter = current_origin.repo
+
         memories = store.load_all()
         hits = run_search(
             memories,
             query,
             scopes=scopes,
             excluded_scopes=set(state.disabled_scopes),
+            repo_filter=repo_filter,
             max_results=max_results,
             half_life_days=config.behavior.recency_boost_half_life_days,
         )
@@ -162,6 +179,8 @@ def _register_tools(
             relevance=[h["relevance"] for h in out],
             expand_top=expand_top,
             expanded_id=expanded_id,
+            auto_scope=auto_scope,
+            repo_filter=repo_filter,
         )
         return out
 
@@ -191,6 +210,7 @@ def _register_tools(
             "created": _isoformat(memory.created),
             "updated": _isoformat(memory.updated),
             "body": memory.body,
+            "origin": _origin_to_dict(memory.origin),
         }
 
     # ---- memory_write ----------------------------------------------------
@@ -241,6 +261,13 @@ def _register_tools(
             source=source,
             allowed_scopes=config.scopes.allowed,
         )
+
+        # Origin is captured before the durability check so it's always
+        # part of the payload that flows into either staging or the direct
+        # write path. We never persist origin for a transient_warning — the
+        # write isn't happening — so the early return below short-circuits
+        # before any disk I/O.
+        payload["origin"] = capture_origin()
 
         # Durability check runs before dedup. A transient body shouldn't
         # become a duplicate of an existing transient memory — we'd just be
@@ -733,7 +760,22 @@ def _memory_to_dict(memory) -> dict[str, Any]:  # type: ignore[no-untyped-def]
         "body": memory.body,
         "created": _isoformat(memory.created),
         "updated": _isoformat(memory.updated),
+        "origin": _origin_to_dict(memory.origin),
     }
+
+
+def _origin_to_dict(origin: Origin | None) -> dict[str, Any] | None:
+    """Serialize an Origin for tool responses, or None if absent.
+
+    Empty fields are stripped so the response carries only the data that
+    was actually captured at write time. A memory written before this
+    feature shipped returns None; a memory written outside any git repo
+    returns `{"cwd": "..."}` without `repo` or `branch` keys.
+    """
+    if origin is None:
+        return None
+    payload = origin.model_dump(mode="json", exclude_none=True)
+    return payload or None
 
 
 # ---------------------------------------------------------------------------

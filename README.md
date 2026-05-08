@@ -115,6 +115,17 @@ Resolution order:
 
 Crossing projects is *not* default behavior. A memory written while working on Project A only appears when working on Project B if you stored it globally.
 
+In addition to the directory-based separation above, every memory carries an `origin` block recording the cwd, git remote URL, and branch at write time:
+
+```yaml
+origin:
+  cwd: /Users/me/projects/foo
+  repo: git@github.com:me/foo.git
+  branch: main
+```
+
+`memory_search` defaults to `auto_scope=true`, which filters results to memories whose `origin.repo` matches the caller's current repository. Legacy memories without an `origin` field, and writes from outside any git repo, are treated as global and surface from anywhere. Pass `auto_scope=false` for cross-project queries.
+
 ## Durability check
 
 Memory is for facts that will still be true in a week if nobody updates

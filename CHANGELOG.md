@@ -9,6 +9,20 @@ fixes.
 
 ### Added
 
+- **Auto-scope metadata.** `memory_write` captures the current cwd, git
+  remote URL, and branch at write time and persists them under an `origin:`
+  block in the memory's frontmatter. `memory_search(auto_scope=True)` (the
+  new default) filters results to memories whose `origin.repo` matches the
+  caller's current repo — addressing the cross-project leakage failure
+  mode where a memory written for Project A surfaces during Project B
+  conversations. Legacy memories (no `origin` field) and writes from
+  outside any repo are treated as global and always surface. `auto_scope`
+  is logged on each search event so the filter's behaviour is auditable.
+  `memory_show` and `memory_list(with_bodies=True)` surface the full
+  origin so a caller can verify which repo a memory came from.
+- New `bettermemory.origin` module: `Origin` (Pydantic model), `capture()`,
+  `repos_match()` (URL-form-agnostic equality — `git@github.com:o/r.git`
+  and `https://github.com/o/r` describe the same project).
 - **Append-only event log** at `<storage>/.events.jsonl`. Every tool call
   records one JSON line: query/returned IDs for searches, status/scopes for
   writes, ID for shows/updates/removes, etc. Auto-rotates (gzip) when the

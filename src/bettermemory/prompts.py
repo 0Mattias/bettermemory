@@ -20,6 +20,13 @@ When to call memory_search:
 - A request is ambiguous in a way that stored preferences could resolve.
 - The user explicitly asks "do you remember..." or "what did we...".
 
+memory_search is auto-scoped to the caller's current repository by default.
+Memories written from a different repo are filtered out automatically;
+memories with no recorded origin (legacy entries, or writes from outside
+any repo) are treated as "global" and always pass. If the user is asking
+across projects ("anything I've stored about X across all my work"), set
+auto_scope=False to bypass the filter.
+
 When NOT to call memory_search:
 - Generic factual questions ("what's the capital of France").
 - Self-contained technical questions ("how do I write a Python list comprehension").

@@ -11,6 +11,8 @@ from typing import Annotated
 
 from pydantic import BaseModel, Field, field_validator
 
+from .origin import Origin
+
 
 # ---------------------------------------------------------------------------
 # ULID generation
@@ -97,7 +99,12 @@ ScopesField = Annotated[list[str], Field(min_length=1)]
 
 
 class Memory(BaseModel):
-    """Full memory record, body included."""
+    """Full memory record, body included.
+
+    `origin` is optional and defaults to None. Memories written before the
+    auto-scope feature shipped have no origin and are treated as "global"
+    by `memory_search(auto_scope=True)`.
+    """
 
     id: str
     created: datetime
@@ -106,6 +113,7 @@ class Memory(BaseModel):
     confidence: Confidence
     source: Source
     body: str
+    origin: Origin | None = None
 
     @field_validator("scopes")
     @classmethod

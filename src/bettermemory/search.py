@@ -11,6 +11,7 @@ import re
 from datetime import datetime, timezone
 
 from .models import Memory, MemoryHit, SimilarHit, snippet_for
+from .origin import repos_match
 
 
 # Strip punctuation, keep word characters (incl. unicode letters) and dashes
@@ -168,6 +169,7 @@ def search(
     *,
     scopes: list[str] | None = None,
     excluded_scopes: set[str] | None = None,
+    repo_filter: str | None = None,
     max_results: int = 5,
     now: datetime | None = None,
     half_life_days: float = 30.0,
@@ -177,6 +179,10 @@ def search(
     - `scopes`: if given, only consider memories tagged with at least one.
     - `excluded_scopes`: any memory tagged with one of these is dropped.
       (Used for session-disabled scopes.)
+    - `repo_filter`: a remote URL. When provided, memories whose
+      `origin.repo` doesn't match (compared via `origin.repos_match`) are
+      dropped. Memories with no `origin.repo` (legacy or non-repo writes)
+      pass through — they're treated as global.
     """
     now = now or datetime.now(timezone.utc)
     raw_tokens = tokenize(query)
@@ -199,6 +205,14 @@ def search(
             continue
         if scope_filter is not None and not (memory_scope_set & scope_filter):
             continue
+
+        # Auto-scope filter: drop memories from a different repo. Memories
+        # without an origin.repo (legacy writes, non-repo writes) pass —
+        # they're "global" and always relevant to the current caller.
+        if repo_filter is not None:
+            memory_repo = memory.origin.repo if memory.origin else None
+            if not repos_match(memory_repo, repo_filter):
+                continue
 
         score, matched = score_memory(
             memory,
