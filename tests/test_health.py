@@ -11,6 +11,7 @@ from typing import Any
 
 from bettermemory.health import (
     MarkerStats,
+    _edit_distance_within,
     compute_health,
     render_json,
     render_text,
@@ -34,6 +35,7 @@ def _memory(
     scopes: list[str] | None = None,
     created: datetime | None = None,
     updated: datetime | None = None,
+    last_verified_at: datetime | None = None,
 ) -> Memory:
     """Build a Memory record for testing without going through the store."""
     now = created or _utc(2026, 1, 1)
@@ -45,6 +47,7 @@ def _memory(
         confidence=Confidence.MEDIUM,
         source=Source.EXPLICIT,
         body=body + "\n",
+        last_verified_at=last_verified_at,
     )
 
 
@@ -209,6 +212,57 @@ def test_contradicted_sorted_most_recent_first() -> None:
     ]
     report = compute_health([a, b], events, now=_utc(2026, 5, 1))
     assert [s.id for s in report.contradicted] == [b.id, a.id]
+
+
+def test_contradiction_resolved_by_later_verify() -> None:
+    """memory_verify after a contradiction is the second resolution path:
+    the body wasn't changed, but the user spot-checked reality and
+    confirmed the body still matches despite the contradiction event.
+    Treat as resolved — the contradicted bucket should not include it."""
+    m = _memory(
+        created=_utc(2026, 1, 1),
+        updated=_utc(2026, 1, 1),
+        last_verified_at=_utc(2026, 4, 15),  # AFTER the contradiction below
+    )
+    events = [
+        _event("use", ts=_utc(2026, 4, 1), ids=[m.id], outcome="contradicted"),
+    ]
+    report = compute_health([m], events, now=_utc(2026, 5, 1))
+    assert report.contradicted == []
+
+
+def test_contradiction_after_verify_remains_unresolved() -> None:
+    """A verify that *predates* the contradiction is not a resolution
+    — the contradiction is the most recent signal and outranks an
+    earlier spot-check. Without a *subsequent* update or verify, the
+    flag stays set."""
+    m = _memory(
+        created=_utc(2026, 1, 1),
+        updated=_utc(2026, 1, 1),
+        last_verified_at=_utc(2026, 3, 1),  # BEFORE the contradiction below
+    )
+    events = [
+        _event("use", ts=_utc(2026, 4, 1), ids=[m.id], outcome="contradicted"),
+    ]
+    report = compute_health([m], events, now=_utc(2026, 5, 1))
+    assert len(report.contradicted) == 1
+    assert report.contradicted[0].id == m.id
+
+
+def test_contradiction_resolved_by_update_even_if_verify_predates_it() -> None:
+    """The two resolution paths are independent: an `updated` newer
+    than the contradiction clears the flag regardless of where
+    `last_verified_at` sits."""
+    m = _memory(
+        created=_utc(2026, 1, 1),
+        updated=_utc(2026, 4, 15),  # AFTER the contradiction
+        last_verified_at=_utc(2026, 3, 1),  # BEFORE the contradiction
+    )
+    events = [
+        _event("use", ts=_utc(2026, 4, 1), ids=[m.id], outcome="contradicted"),
+    ]
+    report = compute_health([m], events, now=_utc(2026, 5, 1))
+    assert report.contradicted == []
 
 
 # ---------------------------------------------------------------------------
@@ -412,12 +466,16 @@ def test_scope_health_sorted_by_active_desc() -> None:
     assert scopes_in_order[0] == "tools"
 
 
-def test_rare_scopes_surfaces_singletons() -> None:
-    a = _memory(scopes=["tools"])
-    b = _memory(scopes=["tools"])
-    c = _memory(scopes=["projct"])  # typo — singleton
-    report = compute_health([a, b, c], [], now=_utc(2026, 5, 1))
-    assert report.rare_scopes == ["projct"]
+def test_rare_scopes_surfaces_singleton_with_near_neighbor() -> None:
+    """A singleton at small edit distance (<= 2) from another scope is
+    almost always a typo and gets flagged. `projct:foo` is two
+    deletions away from `projects:foo` — the bucket's job is to surface
+    exactly this case."""
+    a = _memory(scopes=["projects:foo"])
+    b = _memory(scopes=["projects:foo"])
+    typo = _memory(scopes=["projct:foo"])  # two deletions from projects:foo
+    report = compute_health([a, b, typo], [], now=_utc(2026, 5, 1))
+    assert report.rare_scopes == ["projct:foo"]
 
 
 def test_rare_scopes_excludes_repeated() -> None:
@@ -425,6 +483,96 @@ def test_rare_scopes_excludes_repeated() -> None:
     b = _memory(scopes=["tools"])
     report = compute_health([a, b], [], now=_utc(2026, 5, 1))
     assert report.rare_scopes == []
+
+
+def test_rare_scopes_excludes_singleton_with_no_near_neighbor() -> None:
+    """A legitimate narrow singleton — no scope within 2 edits — is
+    not flagged. This is the false-positive fix: scopes like
+    `personal-context` or `career` are intentionally narrow and should
+    not be mistaken for typos just because they happen to be n=1."""
+    a = _memory(scopes=["tools"])
+    b = _memory(scopes=["tools"])
+    standalone = _memory(scopes=["career"])  # far from "tools"
+    report = compute_health([a, b, standalone], [], now=_utc(2026, 5, 1))
+    assert report.rare_scopes == []
+
+
+def test_rare_scopes_flags_two_close_singletons() -> None:
+    """Two singletons at small edit distance flag each other. The
+    curator decides which is canonical; the report's job is just to
+    make the pair visible."""
+    a = _memory(scopes=["bug"])
+    b = _memory(scopes=["bugs"])  # distance 1 from "bug"
+    report = compute_health([a, b], [], now=_utc(2026, 5, 1))
+    assert sorted(report.rare_scopes) == ["bug", "bugs"]
+
+
+def test_rare_scopes_distance_three_not_flagged() -> None:
+    """Edit distance 3 isn't 'typo' territory anymore — flagging at
+    distance 3+ would re-introduce the false-positive noise the
+    neighbor check exists to suppress. `bug` -> `xyz` is 3 substitutions."""
+    a = _memory(scopes=["bug"])
+    b = _memory(scopes=["bug"])
+    far = _memory(scopes=["xyz"])  # 3 substitutions away from "bug"
+    report = compute_health([a, b, far], [], now=_utc(2026, 5, 1))
+    assert report.rare_scopes == []
+
+
+def test_edit_distance_within_threshold_cases() -> None:
+    """Tight unit tests on the helper that backs the rare_scopes
+    neighbor check, so a regression in the distance function shows up
+    here rather than leaking through as a noisy rare_scopes report.
+    Covers identical strings, the length-difference shortcut, distances
+    1 and 2 (substitution / insertion / deletion / mixed), the at/just-
+    over-threshold boundary, and an empty-string edge."""
+    # Identical → distance 0, within any non-negative threshold.
+    assert _edit_distance_within("tools", "tools", 0) is True
+    assert _edit_distance_within("tools", "tools", 2) is True
+
+    # Length-difference shortcut: |len(a) - len(b)| > max_dist → False
+    # without running the table.
+    assert _edit_distance_within("a", "abcdef", 2) is False
+
+    # Distance 1: single substitution / insertion / deletion.
+    assert _edit_distance_within("bag", "bug", 1) is True  # sub
+    assert _edit_distance_within("bug", "bugs", 1) is True  # ins
+    assert _edit_distance_within("bugs", "bug", 1) is True  # del
+
+    # Distance 2: two edits, mixed kinds.
+    assert _edit_distance_within("projects:foo", "projct:foo", 2) is True
+
+    # At threshold: distance == max_dist returns True (inclusive bound).
+    # `cat` -> `bag`: c→b, a→a, t→g — 2 substitutions, distance 2.
+    assert _edit_distance_within("cat", "bag", 2) is True
+
+    # Just over threshold: distance 3 against max_dist 2 returns False.
+    # `bug` -> `xyz`: 3 substitutions, distance 3.
+    assert _edit_distance_within("bug", "xyz", 2) is False
+
+    # Empty string against an N-char string has distance N.
+    assert _edit_distance_within("", "ab", 2) is True
+    assert _edit_distance_within("", "abc", 2) is False
+    assert _edit_distance_within("", "", 0) is True
+
+
+def test_rare_scopes_neighbor_can_be_high_count_or_singleton() -> None:
+    """The neighbor a singleton matches against can itself be either
+    a multi-count scope (the typical typo-of-a-real-scope case) or
+    another singleton (the typo-pair case). The fixture covers both
+    in one shot — `tool` matches the high-count `tools`, `bug` and
+    `bugs` match each other."""
+    a = _memory(scopes=["tools"])
+    b = _memory(scopes=["tools"])
+    typo_of_high_count = _memory(scopes=["tool"])
+    pair_a = _memory(scopes=["bug"])
+    pair_b = _memory(scopes=["bugs"])
+    standalone = _memory(scopes=["career"])
+    report = compute_health(
+        [a, b, typo_of_high_count, pair_a, pair_b, standalone],
+        [],
+        now=_utc(2026, 5, 1),
+    )
+    assert sorted(report.rare_scopes) == ["bug", "bugs", "tool"]
 
 
 def test_orphan_use_events_count_unknown_ids() -> None:

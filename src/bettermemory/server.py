@@ -955,11 +955,15 @@ def _register_tools(
             "unresolved contradictions, transient-marker fire/override "
             "rates, the scope distribution, a per-scope rollup "
             "(`scope_health`) showing where dead weight and contradictions "
-            "concentrate, singleton scopes (`rare_scopes`, likely typos), "
-            "and an `orphan_use_events` counter (memory_record_use calls "
-            "whose ids resolved to no record — a fabrication smoke test). "
-            "Use this to drive curation passes — prune dead weight, "
-            "refresh contradicted memories via memory_update, trim "
+            "concentrate, singleton scopes that look like typos of an "
+            "existing scope (`rare_scopes` — Levenshtein distance <= 2 from "
+            "another scope; legitimate narrow singletons no longer trip "
+            "the bucket), and an `orphan_use_events` counter "
+            "(memory_record_use calls whose ids resolved to no record — a "
+            "fabrication smoke test). Use this to drive curation passes — "
+            "prune dead weight, refresh contradicted memories via "
+            "memory_update *or* re-confirm them via memory_verify "
+            "(either resolution path clears the unresolved flag), trim "
             "transient markers whose override rate is high, fix typo "
             "scopes via memory_rename_scope. The corresponding CLI is "
             "`bettermemory health`. `min_applied` floors the heavily_used "
@@ -1067,7 +1071,12 @@ def _register_tools(
             "to close the loop — memory_update resets last_verified_at "
             "to null because the prior verification was for prose that "
             "no longer exists, so a verify after the corrected version "
-            'is what restores the "checked against reality" state.'
+            'is what restores the "checked against reality" state. '
+            "Verify is also a resolution path for an unresolved "
+            "contradiction in `memory_health`: if the body still matches "
+            "reality despite an earlier `record_use(contradicted)` event, "
+            "calling memory_verify after the contradiction clears the "
+            "flag (the same way memory_update would)."
         ),
     )
     async def memory_verify(

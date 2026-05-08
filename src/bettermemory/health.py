@@ -17,9 +17,11 @@ project is trying to detect:
   prune candidates.
 - **heavily_used**: memories with high applied-count. These are working;
   don't touch them.
-- **contradicted**: memories with a `contradicted` use event whose
-  timestamp is after the memory's `updated`. Either correct via
-  `memory_update` or tombstone.
+- **contradicted**: memories with a `contradicted` use event newer than
+  both the last `updated` (body refresh via `memory_update`) and the
+  last `last_verified_at` (explicit re-check via `memory_verify`). Either
+  resolution path clears the flag, so a sticky entry can be cleared by
+  re-running the appropriate one.
 - **marker_stats**: the transient-marker override rate, per marker. A
   high override rate is the signal to remove the marker from the list,
   not vibes. A near-zero rate with non-zero fires is a healthy marker.
@@ -71,12 +73,33 @@ class MemoryStats:
 
     @property
     def has_unresolved_contradiction(self) -> bool:
-        """True if there's been a contradiction since the memory was last
-        updated. memory_update bumps `updated`, so a refresh resolves the
-        contradiction signal."""
+        """True if there's been a contradiction since the memory was
+        last touched by either resolution path.
+
+        Two ways to clear a contradiction:
+        - **memory_update** bumps `updated` — the body has been refreshed
+          in response to the contradiction.
+        - **memory_verify** bumps `last_verified_at` — the body wasn't
+          changed, but the caller spot-checked reality and confirmed it
+          still matches despite the earlier contradiction event.
+
+        Either action is a legitimate resolution, so the flag clears as
+        soon as the later of the two timestamps surpasses the
+        contradiction. This also gives the caller an out for the case
+        where the `record_use(contradicted)` event is logged *after*
+        the body was already corrected — re-running `memory_verify`
+        slides the timestamp forward past the contradiction and the
+        flag clears.
+        """
         if self.last_contradicted_at is None:
             return False
-        return self.last_contradicted_at > self.updated
+        last_resolved_at = self.updated
+        if (
+            self.last_verified_at is not None
+            and self.last_verified_at > last_resolved_at
+        ):
+            last_resolved_at = self.last_verified_at
+        return self.last_contradicted_at > last_resolved_at
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -179,10 +202,13 @@ class HealthReport:
     # than asking the model to fold scope_distribution and dead_weight
     # together every time.
     scope_health: list[ScopeHealth] = field(default_factory=list)
-    # Singleton scopes — likely typos worth reviewing. A scope on exactly
-    # one memory is suspicious in a curated store; either the user meant
-    # to use a more common scope, or this is a legitimate one-off that
-    # should be promoted (or merged) deliberately.
+    # Singleton scopes that look like typos of another scope — flagged
+    # only when there's a near neighbor (Levenshtein distance <= 2). A
+    # singleton in isolation ("career", "personal-context") is usually
+    # a legitimate narrow tag, not a misspell, so flagging every
+    # singleton produced too many false positives in practice. The
+    # neighbor check keeps the bucket actionable: if it fires, there's
+    # almost always a real typo to fix.
     rare_scopes: list[str] = field(default_factory=list)
     # Use-events whose memory_id resolved to nothing (neither active nor
     # tombstoned). High counts hint at the model fabricating ULIDs in
@@ -370,11 +396,24 @@ def compute_health(
         key=lambda s: (-s.active, s.scope),
     )
 
-    # Rare scopes — singletons. Most often these are typos ("projct:foo"
-    # for "projects:foo") that escaped review; occasionally legitimate
-    # one-offs. Either way a curation pass should look at them.
+    # Rare scopes — singletons that look like typos of another scope.
+    # The heuristic used to flag every singleton, but most singletons
+    # in practice are legitimate narrow tags ("career", "personal-context")
+    # rather than misspells, and flagging them produced enough false
+    # positives that the bucket stopped being actionable. The neighbor
+    # check (Levenshtein distance <= 2 against any other scope, including
+    # other singletons) restricts the bucket to scopes that almost
+    # certainly *are* typos: "projct:foo" against an existing
+    # "projects:foo", "tool" against "tools", "bug"/"bugs" pairs.
+    all_scopes = list(scope_distribution.keys())
     rare_scopes = sorted(
-        [scope for scope, count in scope_distribution.items() if count == 1]
+        scope
+        for scope, count in scope_distribution.items()
+        if count == 1
+        and any(
+            other != scope and _edit_distance_within(scope, other, 2)
+            for other in all_scopes
+        )
     )
 
     return HealthReport(
@@ -465,7 +504,10 @@ def render_text(report: HealthReport) -> str:
         )
 
     lines.append("")
-    lines.append(f"Rare scopes ({len(report.rare_scopes)}) — n=1, likely typos:")
+    lines.append(
+        f"Rare scopes ({len(report.rare_scopes)}) — singletons within "
+        "2 edits of another scope, likely typos:"
+    )
     if not report.rare_scopes:
         lines.append("  (none)")
     for scope in report.rare_scopes:
@@ -506,6 +548,41 @@ def _parse_ts(value: object) -> datetime | None:
         return datetime.fromisoformat(s)
     except ValueError:
         return None
+
+
+def _edit_distance_within(a: str, b: str, max_dist: int) -> bool:
+    """True iff Levenshtein(a, b) <= max_dist.
+
+    Standard Wagner-Fischer DP, two-row variant. We don't need the
+    actual distance — only whether it falls within the threshold —
+    but scope names are short enough (typically <30 chars) that the
+    full table is cheap and the early-exit machinery isn't worth its
+    complexity. The length-difference shortcut catches the obviously
+    far cases without running the table at all.
+
+    Used by the `rare_scopes` neighbor check; lifted out as a helper
+    so it stays testable in isolation if we ever need to tune the
+    threshold or swap algorithms.
+    """
+    if abs(len(a) - len(b)) > max_dist:
+        return False
+    if a == b:
+        return True
+    # Ensure |a| <= |b| so the inner row stays small.
+    if len(a) > len(b):
+        a, b = b, a
+    prev = list(range(len(a) + 1))
+    for i, cb in enumerate(b, 1):
+        curr = [i] + [0] * len(a)
+        for j, ca in enumerate(a, 1):
+            cost = 0 if ca == cb else 1
+            curr[j] = min(
+                curr[j - 1] + 1,
+                prev[j] + 1,
+                prev[j - 1] + cost,
+            )
+        prev = curr
+    return prev[-1] <= max_dist
 
 
 # ---------------------------------------------------------------------------

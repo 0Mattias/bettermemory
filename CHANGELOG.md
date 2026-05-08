@@ -7,6 +7,34 @@ breaking changes, minor for additive features, patch for fixes. The
 [1.x compatibility contract](CONTRIBUTING.md#versioning-and-the-1x-compatibility-contract)
 spells out exactly what's stable.
 
+## Unreleased
+
+Two `memory_health` curation-bucket fixes from a real-world audit pass.
+Both are pure refinements to which memories the buckets surface — no
+change to the JSON shape, no change to which tools or fields exist.
+
+- **`memory_verify` now resolves an unresolved contradiction.** Before
+  this, only `memory_update` (which bumps `updated`) cleared the
+  `has_unresolved_contradiction` flag. That left a sticky-flag failure
+  mode: when a session detects a contradiction, fixes the body in
+  place, calls `memory_verify` to re-confirm, and *then* logs the
+  `record_use(contradicted)` event after the fact, the event's
+  timestamp lands later than the verify, so the flag never clears.
+  The new rule treats either `updated` *or* `last_verified_at` newer
+  than `last_contradicted_at` as resolution. A user with a sticky
+  flag can clear it by re-running `memory_verify` after the
+  contradiction event.
+
+- **`rare_scopes` only flags singletons that look like typos.** The
+  previous heuristic flagged every n=1 scope, which produced too many
+  false positives in practice — narrow legitimate scopes like
+  `career` or `personal-context` got reported as suspect. The bucket
+  now requires the singleton to be within Levenshtein distance 2 of
+  another scope (`projct:foo` against `projects:foo`, `tool` against
+  `tools`, `bug`/`bugs` pairs). Standalone narrow singletons no
+  longer trip the bucket. Implemented via a new module-private
+  `_edit_distance_within(a, b, max_dist)` helper in `health.py`.
+
 ## 1.0.0 — 2026-05-08
 
 The first stable release. Three things changed under the hood between

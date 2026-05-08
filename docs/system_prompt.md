@@ -182,12 +182,14 @@ Writing and updating memory:
   removed memories; memory_restore brings one back without losing
   timestamps.
 
-- Scope hygiene. memory_health surfaces `rare_scopes` (n=1, often typos)
-  and `scope_health` (per-scope active/dead/contradicted counts). Use
-  memory_rename_scope(old, new) to fix typo'd or deprecated scopes
-  across active memories and tombstones in one shot — it preserves
-  body content and `last_verified_at` (the body's claims didn't change,
-  only the tag).
+- Scope hygiene. memory_health surfaces `rare_scopes` (singletons within
+  Levenshtein distance 2 of another scope — almost always real typos;
+  legitimate narrow singletons like `career` or `personal-context` no
+  longer trip the bucket) and `scope_health` (per-scope active/dead/
+  contradicted counts). Use memory_rename_scope(old, new) to fix typo'd
+  or deprecated scopes across active memories and tombstones in one
+  shot — it preserves body content and `last_verified_at` (the body's
+  claims didn't change, only the tag).
 
 - Confirmation policy is tiered:
   - For project, infrastructure, reference, and tooling memories — write
