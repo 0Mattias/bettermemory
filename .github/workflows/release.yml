@@ -1,0 +1,164 @@
+name: Release
+
+# Two ways to fire this workflow:
+#
+# 1. Push a `v<X.Y.Z>` tag — builds, runs the full gating suite, publishes
+#    to PyPI via trusted publishing, and creates a GitHub release with
+#    auto-generated notes.
+#
+# 2. Manually trigger via the Actions tab (workflow_dispatch) — useful for
+#    publishing to TestPyPI ahead of the real release, so you can verify
+#    the rendered project page and the install path before committing.
+#
+# Trusted publishing is configured per-target on the PyPI side (see
+# `docs/release.md`); no API tokens live in repo secrets.
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+    inputs:
+      target:
+        description: 'Where to publish'
+        required: true
+        default: 'testpypi'
+        type: choice
+        options:
+          - testpypi
+          - pypi
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: Build sdist + wheel
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v7
+        with:
+          enable-cache: true
+
+      - name: Set up Python 3.13
+        run: uv python install 3.13
+
+      - name: Resolve version and verify it matches the tag
+        id: version
+        # On a tag push (`refs/tags/v1.2.3`), the pyproject.toml version
+        # must match the tag — otherwise we'd ship a wheel labelled with
+        # the wrong version. workflow_dispatch builds skip the match
+        # check (no tag to match against).
+        run: |
+          VERSION=$(python3 -c "import tomllib; print(tomllib.load(open('pyproject.toml','rb'))['project']['version'])")
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+          echo "pyproject version: $VERSION"
+          if [[ "$GITHUB_REF" == refs/tags/v* ]]; then
+            TAG_VERSION="${GITHUB_REF#refs/tags/v}"
+            echo "tag version:       $TAG_VERSION"
+            if [[ "$VERSION" != "$TAG_VERSION" ]]; then
+              echo "::error::pyproject.toml version ($VERSION) does not match tag ($TAG_VERSION)"
+              exit 1
+            fi
+          fi
+
+      - name: Sync dependencies
+        run: uv sync --extra dev
+
+      - name: Lint
+        run: uv run ruff check .
+
+      - name: Format check
+        run: uv run ruff format --check .
+
+      - name: Type check
+        run: uv run mypy
+
+      - name: Test
+        run: uv run pytest --cov=bettermemory --cov-report=term-missing --cov-fail-under=80 -q
+
+      - name: Build distributions
+        run: uv build
+
+      - name: Upload distributions
+        uses: actions/upload-artifact@v4
+        with:
+          name: dist
+          path: dist/
+          if-no-files-found: error
+
+  publish-pypi:
+    name: Publish to PyPI
+    needs: build
+    # Tag push goes straight to PyPI; workflow_dispatch with target=pypi
+    # is the manual-promotion escape hatch.
+    if: github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && inputs.target == 'pypi')
+    runs-on: ubuntu-latest
+    environment:
+      name: pypi
+      url: https://pypi.org/p/bettermemory
+    permissions:
+      # Required for PyPI trusted publishing (OIDC token exchange).
+      id-token: write
+    steps:
+      - name: Download distributions
+        uses: actions/download-artifact@v4
+        with:
+          name: dist
+          path: dist/
+
+      - name: Publish to PyPI
+        uses: pypa/gh-action-pypi-publish@release/v1
+
+  publish-testpypi:
+    name: Publish to TestPyPI
+    needs: build
+    if: github.event_name == 'workflow_dispatch' && inputs.target == 'testpypi'
+    runs-on: ubuntu-latest
+    environment:
+      name: testpypi
+      url: https://test.pypi.org/p/bettermemory
+    permissions:
+      id-token: write
+    steps:
+      - name: Download distributions
+        uses: actions/download-artifact@v4
+        with:
+          name: dist
+          path: dist/
+
+      - name: Publish to TestPyPI
+        uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          repository-url: https://test.pypi.org/legacy/
+
+  github-release:
+    name: Create GitHub release
+    needs: publish-pypi
+    if: github.event_name == 'push'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          # Need full history so auto-generated release notes can compute
+          # the changelog window from the previous tag.
+          fetch-depth: 0
+
+      - name: Download distributions
+        uses: actions/download-artifact@v4
+        with:
+          name: dist
+          path: dist/
+
+      - name: Create release
+        uses: softprops/action-gh-release@v2
+        with:
+          generate_release_notes: true
+          files: dist/*

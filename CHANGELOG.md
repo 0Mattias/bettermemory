@@ -7,6 +7,22 @@ fixes.
 
 ## Unreleased
 
+### Added
+
+- **PyPI release workflow** (`.github/workflows/release.yml`).
+  Tag-triggered: pushing `v<X.Y.Z>` runs the full gating suite (ruff,
+  format, mypy strict, pytest with coverage floor), builds the wheel
+  + sdist via `uv build`, publishes to PyPI through trusted
+  publishing (no API tokens in repo secrets), and creates a GitHub
+  release with auto-generated notes. Manual `workflow_dispatch`
+  trigger supports a TestPyPI dry-run path. The build job verifies
+  pyproject.toml version matches the tag before any artifact ships,
+  so an off-by-one tag fails fast. Process documented in
+  `docs/release.md`, including the one-time PyPI-side trusted-publisher
+  setup. Until this lands on PyPI for real, install remains
+  clone-and-`uv tool install .`; the README install line will flip
+  to `uv tool install bettermemory` at the 1.0 release.
+
 ### Changed
 
 - **System-prompt addendum is no longer required for correctness.**
