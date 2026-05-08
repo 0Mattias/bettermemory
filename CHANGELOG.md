@@ -9,6 +9,21 @@ fixes.
 
 ### Added
 
+- **Cline support in `bettermemory init`** plus a comprehensive
+  per-client setup doc at `docs/clients.md`.
+  - Cline (the VS Code extension by `saoudrizwan.claude-dev`)
+    joins the `--client` choices alongside claude-code,
+    claude-desktop, cursor, and continue. Default target is the
+    standard VS Code `globalStorage` path; Code-Insiders /
+    Codium / VSCodium variants override via `--config-path`.
+  - `docs/clients.md` collects the canonical config snippet and
+    config-file location for each supported client, plus the
+    expected restart behavior (Claude Desktop loads at startup
+    and needs a restart; Continue auto-reloads; Cursor reloads
+    per-window). The "snippet shape" is the same `mcpServers`
+    map for every client because that's what the MCP spec
+    standardizes — only the file path varies.
+
 - **Programmatic client example**
   (`examples/programmatic_client.py`). A self-contained Python
   script that spawns `bettermemory` over stdio (via the official

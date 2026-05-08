@@ -126,6 +126,38 @@ def _continue_paths() -> ClientPaths:
     )
 
 
+def _cline_paths() -> ClientPaths:
+    """Cline (VS Code extension by saoudrizwan). The MCP settings
+    path lives inside VS Code's `globalStorage`. We default to the
+    standard VS Code path; users on Code-Insiders / Codium /
+    Cursor-as-VS-Code can override via `--config-path` if their
+    editor variant uses a different prefix."""
+    home = Path.home()
+    sys_name = platform.system()
+    if sys_name == "Darwin":
+        prefix = home / "Library" / "Application Support" / "Code"
+    elif sys_name == "Windows":
+        appdata = os.environ.get("APPDATA")
+        prefix = (
+            Path(appdata) / "Code" if appdata else home / "AppData" / "Roaming" / "Code"
+        )
+    else:
+        prefix = home / ".config" / "Code"
+    cline = (
+        prefix
+        / "User"
+        / "globalStorage"
+        / "saoudrizwan.claude-dev"
+        / "settings"
+        / "cline_mcp_settings.json"
+    )
+    return ClientPaths(
+        name="cline",
+        description="Cline (VS Code extension)",
+        paths=(cline,),
+    )
+
+
 # Registry. Keys are the values accepted by `--client`. Adding a new
 # client is one entry here plus a getter above.
 KNOWN_CLIENTS: dict[str, Callable[[], ClientPaths]] = {
@@ -133,6 +165,7 @@ KNOWN_CLIENTS: dict[str, Callable[[], ClientPaths]] = {
     "claude-desktop": _claude_desktop_paths,
     "cursor": _cursor_paths,
     "continue": _continue_paths,
+    "cline": _cline_paths,
 }
 
 
@@ -281,6 +314,7 @@ def _print_show_and_tell(
     print("  bettermemory init --client claude-desktop")
     print("  bettermemory init --client cursor")
     print("  bettermemory init --client continue")
+    print("  bettermemory init --client cline")
     print()
     print("Verify the install once you've restarted the client:")
     print('  ask the model "what memory tools do you have?"')

@@ -35,14 +35,14 @@ Python ≥ 3.11.
 After installing, run:
 
 ```sh
-bettermemory init --client claude-code      # or: claude-desktop, cursor, continue
+bettermemory init --client claude-code      # or: claude-desktop, cursor, continue, cline
 ```
 
 That idempotently writes the MCP server entry into the right config file for your client. Restart the client and ask:
 
 > What memory tools do you have?
 
-If your client isn't in that list (or you'd rather copy by hand), run `bettermemory init` with no flags — it prints the canonical JSON snippet plus the common config locations, with `[✓]` markers showing which already exist on your machine.
+Per-client setup details (config paths, restart requirements, gotchas for Code-Insiders / Codium variants of Cline, project-scoped vs user-scoped patching) live in [`docs/clients.md`](docs/clients.md). If your client isn't in the supported list (or you'd rather copy by hand), run `bettermemory init` with no flags — it prints the canonical JSON snippet plus the common config locations, with `[✓]` markers showing which already exist on your machine.
 
 That's it — defaults are sane. The opt-in policy, transparency requirement, and verification obligation now live in the server's MCP `instructions` block (which every client surfaces at the system-prompt level) and in each tool's description, so a fresh install behaves correctly without further configuration.
 
@@ -251,6 +251,7 @@ bettermemory init --client claude-code           # auto-patch a known client (id
 bettermemory init --client claude-desktop
 bettermemory init --client cursor
 bettermemory init --client continue
+bettermemory init --client cline
 bettermemory init --client cursor --print-only   # print snippet without writing
 bettermemory init --json                         # structured output for tooling
 bettermemory init --with-addendum                # also print the optional advanced addendum

@@ -1598,7 +1598,7 @@ def main() -> None:
         "--client",
         type=str,
         default=None,
-        choices=["claude-code", "claude-desktop", "cursor", "continue"],
+        choices=["claude-code", "claude-desktop", "cursor", "continue", "cline"],
         help=(
             "Auto-patch the named client's MCP config. Without this "
             "flag, init runs in show-and-tell mode: prints the snippet "

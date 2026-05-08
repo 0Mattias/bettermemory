@@ -254,6 +254,7 @@ def test_cli_init_show_and_tell_prints_snippet_and_locations(
     assert "claude-desktop" in out
     assert "cursor" in out
     assert "continue" in out
+    assert "cline" in out
     assert "--client" in out
 
 
@@ -288,6 +289,7 @@ def test_cli_init_json_output_is_machine_readable(
         "claude-desktop",
         "cursor",
         "continue",
+        "cline",
     }
 
 
