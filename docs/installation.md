@@ -78,7 +78,17 @@ For an additional layer of discipline (more elaborate scope hygiene reminders, t
 
 ## Troubleshooting
 
-- **`bettermemory` not found** when Claude tries to start the server: use the absolute path in the config.
-- **Memories aren't being found by `memory_search`**: check `BETTERMEMORY_DIR` env var, then look at the directory the server logs at startup ("memory directory: …"). Project-scoped `./.claude-memory/` overrides global `~/.claude-memory/`.
+Before reading the list below, run:
+
+```sh
+bettermemory doctor
+```
+
+That checks the most common breakage points — binary on PATH, config loadable, storage directory writable, memories parse cleanly, event log writable, semantic-dedup extras present (when enabled), and any MCP client config that references a stale or non-existent binary path. Each check that fails or warns includes a one-line fix hint. Use `--json` for machine-readable output; exit codes are `0` (ok), `1` (warn), `2` (fail) so the command is scriptable.
+
+Common failures it catches:
+
+- **`bettermemory` not found** when Claude tries to start the server: use the absolute path in the config (`bettermemory init --client X` does this automatically; `bettermemory doctor` flags it).
+- **Memories aren't being found by `memory_search`**: check `BETTERMEMORY_DIR` env var, then look at the directory the server logs at startup ("memory directory: …"). Project-scoped `./.claude-memory/` overrides global `~/.claude-memory/`. Doctor's `storage_directory` check shows the resolved path explicitly.
 - **The server isn't picking up changes after I edit a memory file**: it should — there's no in-memory cache. If you see staleness, restart Claude Code.
 - **Claude is over-calling `memory_search`**: check that your client is surfacing the server's `instructions` block in the system prompt. Most MCP clients do this automatically; if yours doesn't, paste `docs/system_prompt.md` into your `CLAUDE.md` as a fallback.

@@ -229,6 +229,10 @@ bettermemory init --client cursor --print-only   # print snippet without writing
 bettermemory init --json                         # structured output for tooling
 bettermemory init --with-addendum                # also print the optional advanced addendum
 
+bettermemory doctor                  # diagnose install state (binary, config, storage,
+                                     #   memory parse, event log, MCP client configs)
+bettermemory doctor --json           # ...as JSON. Exit code: 0=ok, 1=warn, 2=fail.
+
 bettermemory health                  # aggregate report (text)
 bettermemory health --json           # ...as JSON
 bettermemory health --days 60 --top-k 20

@@ -9,6 +9,30 @@ fixes.
 
 ### Added
 
+- **`bettermemory doctor` subcommand.** Self-diagnostic for the
+  install: a series of independent checks that each return an
+  `ok` / `warn` / `fail` verdict with an actionable fix hint when
+  not ok. Exit code is `0` / `1` / `2` so the command is
+  scriptable.
+
+  Checks: Python version, binary on `$PATH` (warn when missing —
+  GUI MCP clients spawn with a minimal PATH), config loadable,
+  storage directory exists/writable (probe-write a sentinel file),
+  memory frontmatter parses on every active memory, event log
+  writable, semantic-dedup extras present when `semantic_dedup =
+  true`, and a cross-check of every known MCP client's config file
+  against the resolved binary path (catches the "I reinstalled
+  bettermemory into a different venv and now nothing works"
+  failure mode — the registered command path is stale).
+
+  Each check is wrapped in `try/except` so a single broken probe
+  surfaces as a `fail` diagnosis rather than crashing the whole
+  report. JSON output (`--json`) is the machine-readable view for
+  tooling; text output uses ✓ / ⚠ / ✗ glyphs and includes the fix
+  hint inline. The `docs/installation.md` troubleshooting section
+  now leads with `bettermemory doctor` rather than walking down
+  the failure list manually.
+
 - **`bettermemory init` subcommand.** One-shot onboarding that
   replaces the old "find your client's MCP config file, hand-edit
   the JSON" step. Two modes:

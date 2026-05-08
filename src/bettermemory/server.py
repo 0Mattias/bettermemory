@@ -1571,6 +1571,22 @@ def main() -> None:
         ),
     )
 
+    doctor_parser = sub.add_parser(
+        "doctor",
+        help=(
+            "Diagnose install state. Runs a series of checks: binary on "
+            "PATH, config loadable, storage dir writable, memories parse, "
+            "event log writable, semantic-dedup extras present (when "
+            "enabled), MCP client configs cross-checked against the "
+            "currently-resolved binary path. Exits 0/1/2 for ok/warn/fail."
+        ),
+    )
+    doctor_parser.add_argument(
+        "--json",
+        action="store_true",
+        help="Emit JSON (machine-readable) instead of human-readable text.",
+    )
+
     init_parser = sub.add_parser(
         "init",
         help=(
@@ -1751,6 +1767,10 @@ def main() -> None:
             min_applied=args.min_applied,
         )
         return
+    if args.cmd == "doctor":
+        from .doctor import cli_doctor
+
+        raise SystemExit(cli_doctor(json_out=args.json))
     if args.cmd == "init":
         from pathlib import Path as _Path
 
