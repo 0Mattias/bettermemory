@@ -4,16 +4,13 @@ HealthReport."""
 from __future__ import annotations
 
 import json
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-import pytest
 
 from bettermemory.health import (
-    HealthReport,
     MarkerStats,
-    MemoryStats,
     compute_health,
     render_json,
     render_text,
