@@ -44,8 +44,11 @@ Python ≥ 3.11.
      }
    }
    ```
-3. Add the system-prompt addendum (in [`docs/system_prompt.md`](docs/system_prompt.md)) to your project's `CLAUDE.md` or system prompt. **Without this, the model will overuse memory** — the addendum is what flips it into opt-in mode.
-4. Sanity-check: ask Claude *"what memory tools do you have?"*
+3. Sanity-check: ask Claude *"what memory tools do you have?"*
+
+That's it — defaults are sane. The opt-in policy, transparency requirement, and verification obligation now live in the server's MCP `instructions` block (which every client surfaces at the system-prompt level) and in each tool's description, so a fresh install behaves correctly without further configuration.
+
+**Optional tightening.** [`docs/system_prompt.md`](docs/system_prompt.md) is the longer-form addendum — paste it into your project's `CLAUDE.md` for additional discipline around scope hygiene, the record-use loop, and confirmation-tier policy. It's no longer load-bearing for correctness; treat it as the advanced tuning document, not a required setup step.
 
 See [`docs/installation.md`](docs/installation.md) for more detail.
 

@@ -1,17 +1,29 @@
-"""The system-prompt addendum that consumers should prepend.
+"""The optional advanced tightening addendum.
 
-This is the most important file in the project after store.py. The whole
-point of bettermemory is to flip memory from forced context to opt-in
-retrieval, and the model only behaves that way if it reads these
-instructions.
+The load-bearing parts of this text — the filesystem-memory override,
+opt-in retrieval policy, transparency requirement, and verification
+obligation — also live in the server-level `instructions` block on
+the FastMCP instance (see `server._build_mcp`), which every MCP client
+surfaces at the system-prompt level. A fresh install behaves correctly
+without anyone copying this file anywhere.
 
-The first paragraph is load-bearing: any client harness that ships its
-own file-based memory system will inject prompts that conflict with
-ours, and the conflict has to resolve our way before the rest of the
-addendum can do useful work. Hoisting the "MCP tools are the only
-memory store" claim above the rest of the prose is deliberate — top-down
-readers settle the question before they encounter any guidance that
-might re-frame the model into filesystem mode.
+This addendum remains the canonical surface for advanced tightening:
+fuller scope hygiene reminders, the confirmation-tier policy for
+preferences-vs-facts, expanded record-use guidance, and the
+detailed verification ceremony. Power users paste it into their
+project's `CLAUDE.md`; programmatic clients can embed
+`SYSTEM_PROMPT_ADDENDUM` directly.
+
+The first paragraph remains the highest-leverage paragraph even in
+the addendum role: any client harness that ships its own
+file-based memory system will inject prompts that conflict with
+ours, and the conflict has to resolve our way before the rest of
+the addendum can do useful work. Hoisting the "MCP tools are the
+only memory store" claim above the rest of the prose is deliberate
+— top-down readers settle the question before they encounter any
+guidance that might re-frame the model into filesystem mode.
+Belt-and-suspenders with the server `instructions` block is fine;
+neither layer is wasted.
 """
 
 SYSTEM_PROMPT_ADDENDUM = """\

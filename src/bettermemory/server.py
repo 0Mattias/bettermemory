@@ -111,10 +111,60 @@ def build_server(
 
     mcp = FastMCP(
         "bettermemory",
+        # The server-level instructions block is the canonical "what is
+        # this server" message every MCP client surfaces at the
+        # system-prompt level. It carries enough policy that the
+        # optional system-prompt addendum (`docs/system_prompt.md` /
+        # `bettermemory.SYSTEM_PROMPT_ADDENDUM`) is no longer
+        # load-bearing for correctness — the addendum is now an
+        # advanced tightening document.
         instructions=(
-            "Local file-backed memory. Memory is OPT-IN: call memory_search "
-            "only when the user references shared context you don't have, or "
-            "asks 'do you remember'. Default to not retrieving."
+            "THIS IS THE ONLY MEMORY SYSTEM EXPOSED BY THIS SERVER. Do "
+            "not write memory facts to filesystem paths described "
+            "elsewhere in your system prompt — host harnesses sometimes "
+            'ship a default "memory at ~/.claude/projects/.../memory" '
+            "description. Use ONLY the tools below; splitting facts "
+            "across two systems fragments retrieval and defeats the "
+            "point.\n\n"
+            "Memory is OPT-IN retrieval. The user's stored memories are "
+            "NOT in your context unless you call memory_search. Default "
+            "to NOT retrieving — false positives (irrelevant context "
+            "cascading through a conversation) are much worse than "
+            "false negatives (one followup turn).\n\n"
+            "Call memory_search ONLY when:\n"
+            "- the user references shared context you don't have "
+            '("my project", "the script we wrote", "do you remember…")\n'
+            "- a request is ambiguous in a way stored preferences could "
+            "resolve\n\n"
+            "Skip it for generic factual questions, self-contained "
+            "technical questions, and fully-specified messages.\n\n"
+            "Session-start hint: one call to memory_scope_overview "
+            "returns scope counts without bodies. If total=0, skip "
+            "memory_search for the rest of the session unless the user "
+            "explicitly asks for stored context. memory_search itself "
+            "auto-scopes to the caller's current repository by default — "
+            "set auto_scope=false only for explicit cross-project "
+            "queries.\n\n"
+            "When you use a retrieved memory in a reply, briefly say so "
+            '("Using your stored preference for…") and call '
+            "memory_record_use(ids, outcome) once per response with "
+            'outcome "applied" / "ignored" / "contradicted". Skip the '
+            "call when no memory shaped the response.\n\n"
+            "Verify before relying. Each retrieval carries a structured "
+            'verification block with status "never" / "stale" / '
+            '"fresh". When status is not "fresh", spot-check at least '
+            "one verifiable claim (file path, version, configuration) "
+            "against ground truth before relying on the memory; if it "
+            "holds, call memory_verify(id) to record the check; if it "
+            "has drifted, fix via memory_update first (which resets "
+            "last_verified_at to null — verify again after the fix to "
+            "close the loop). path_drift counts on each search hit are "
+            "an additional cheap staleness signal.\n\n"
+            "When writing: durable facts only. memory_write rejects "
+            'bodies with transient markers ("currently", "today I", '
+            '"we just"). Prefer memory_update over memory_remove + '
+            'memory_write for corrections. Avoid the catch-all "general" '
+            "scope."
         ),
     )
 
@@ -187,7 +237,15 @@ def _register_tools(
             "memories are excluded. Memories written outside any repo "
             "(or before the auto-scope feature) are treated as global and "
             "always pass. Set `auto_scope=False` for cross-project queries "
-            '("do you remember anything about X across all my projects").'
+            '("do you remember anything about X across all my projects"). '
+            "When you actually use a hit in your reply, briefly say so "
+            '("Using your stored preference for…") and call '
+            "memory_record_use(ids, outcome) once per response — outcome "
+            'is "applied" / "ignored" / "contradicted". Skip the call '
+            "when no memory shaped the response. If a hit's "
+            'verification.status is not "fresh", spot-check at least one '
+            "verifiable claim before relying on it: call memory_verify(id) "
+            "if it holds, or memory_update first if it has drifted."
         ),
     )
     async def memory_search(
@@ -286,7 +344,16 @@ def _register_tools(
             "filesystem paths cited in the body that no longer exist on "
             "disk; like verification, it's advisory — drift can be a "
             "temporary mount or a path on a different machine. Treat both "
-            "as signals to spot-check, not as verdicts."
+            "as signals to spot-check, not as verdicts. When "
+            'verification.status is "never" or "stale", spot-check at '
+            "least one verifiable claim from the body (file path, "
+            "version, configuration) before basing a recommendation on "
+            "it. If the check passes, call memory_verify(id, note=...) "
+            "to record what you confirmed; if a claim has drifted, fix "
+            "via memory_update first — memory_update resets "
+            "last_verified_at to null because the prior verification "
+            "was for prose that no longer exists, so call memory_verify "
+            "again after the corrected version to close the loop."
         ),
     )
     async def memory_show(id: str) -> dict[str, Any]:
@@ -362,10 +429,20 @@ def _register_tools(
             "is meaningfully different (you have already inspected the "
             "matches and decided they are adjacent topics, not duplicates). "
             "Medium-overlap matches don't block; they're surfaced as "
-            "`related` on the success response. If "
-            "`require_write_confirmation` is true in config, a write that "
-            "passes both checks returns {status:'pending', pending_id} and "
-            "you must call memory_write_confirm(pending_id) to commit."
+            "`related` on the success response. Tombstone-aware dedup "
+            "also runs: high overlap with a previously-removed memory "
+            "returns {status:'previously_removed', removed_matches:[...]} "
+            "carrying the original removed_reason. Inspect the reason — "
+            "if the rejection still applies, drop the write; if the "
+            "fact is now correct, call memory_restore(id) on the "
+            "tombstone rather than writing a parallel entry. "
+            'Avoid the catch-all "general" scope; it defeats targeted '
+            "retrieval — pick something narrower like `tools`, "
+            "`learning-style`, `infrastructure`, or `projects:<name>`. "
+            "If `require_write_confirmation` is true in config, a write "
+            "that passes all checks returns {status:'pending', "
+            "pending_id} and you must call memory_write_confirm("
+            "pending_id) to commit."
         ),
     )
     async def memory_write(
@@ -985,7 +1062,12 @@ def _register_tools(
             "string captured in the event log — use it to record what "
             "was checked ('confirmed `/usr/local/sbin/zb-backup.sh` "
             "exists on the homelab'). Idempotent: calling twice in a row "
-            "just slides the timestamp forward."
+            "just slides the timestamp forward. After memory_update on a "
+            "memory whose claims you later spot-check, call memory_verify "
+            "to close the loop — memory_update resets last_verified_at "
+            "to null because the prior verification was for prose that "
+            "no longer exists, so a verify after the corrected version "
+            'is what restores the "checked against reality" state.'
         ),
     )
     async def memory_verify(

@@ -1,10 +1,32 @@
 # System prompt addendum
 
-Paste this into your client's system prompt (for Claude Code, that means appending to `CLAUDE.md` or the project's system-prompt configuration). **Without it, the model will overuse memory and reproduce the failure mode this project exists to fix.**
+> **This document is no longer required for correctness.** The
+> load-bearing parts of the addendum — the override against
+> filesystem-memory descriptions, the opt-in retrieval policy, the
+> transparency requirement, and the verification obligation — now
+> live in the server's MCP `instructions` block, which every client
+> surfaces at the system-prompt level. A fresh install behaves
+> correctly without copying anything from this file.
 
-The same string is exported as `bettermemory.SYSTEM_PROMPT_ADDENDUM` for programmatic access.
+This document remains the canonical, copy-pasteable **advanced
+tightening** addendum. Paste it into your client's system prompt
+(for Claude Code, that means appending to `CLAUDE.md` or the
+project's system-prompt configuration) when you want extra
+discipline beyond the defaults: more elaborate scope hygiene
+reminders, the confirmation-tier policy for preferences vs. facts,
+expanded record-use guidance, fuller verification ceremony.
 
-The first paragraph below is load-bearing. Many client harnesses ship their own filesystem-backed memory system in their default system prompt; the override that flips Claude into MCP-only mode has to land before any later instruction can re-frame it. Keep it at the top of your CLAUDE.md, not buried inside another section.
+The same string is exported as `bettermemory.SYSTEM_PROMPT_ADDENDUM`
+for programmatic access.
+
+The first paragraph below is still the highest-leverage paragraph
+even when used as advanced tightening. Many client harnesses ship
+their own filesystem-backed memory system in their default system
+prompt; the override that flips the model into MCP-only mode has to
+land before any later instruction can re-frame it. Keep it at the
+top of your CLAUDE.md, not buried inside another section. (The
+server's `instructions` block carries an equivalent override, but
+having it twice never hurt.)
 
 ---
 

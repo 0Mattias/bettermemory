@@ -7,6 +7,34 @@ fixes.
 
 ## Unreleased
 
+### Changed
+
+- **System-prompt addendum is no longer required for correctness.**
+  Previously, `docs/system_prompt.md` was an explicit setup step
+  (README "Quick start" step 3, with a bold warning that *"without
+  this, the model will overuse memory"*). The opt-in policy,
+  transparency requirement, and verification obligation now live in
+  the server-level FastMCP `instructions` block — which every MCP
+  client surfaces at the system-prompt level — and in each tool's
+  `description`, refreshed per-call. A fresh install of bettermemory
+  behaves correctly without copying anything from
+  `docs/system_prompt.md`.
+
+  The addendum file remains the canonical surface for **advanced
+  tightening**: fuller scope hygiene, the confirmation-tier policy
+  for preferences vs. facts, expanded record-use guidance,
+  detailed verification ceremony. It complements the server
+  `instructions`; it does not replace them.
+
+  Touched: `src/bettermemory/server.py` (instructions block expanded
+  from a 3-sentence hint to the full opt-in / transparency / verify
+  briefing; per-tool descriptions on `memory_search`, `memory_show`,
+  `memory_write`, and `memory_verify` extended to carry the
+  obligations alongside their parameter docs). No behavior change in
+  handlers; this is documentation-surface only. README and
+  `docs/installation.md` updated to reframe the addendum as
+  optional.
+
 ### Added
 
 - **Structured `verification` block on every retrieval.** `last_verified_at`
