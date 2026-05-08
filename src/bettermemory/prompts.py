@@ -8,7 +8,7 @@ instructions.
 
 SYSTEM_PROMPT_ADDENDUM = """\
 You have access to a memory system via tools: memory_search, memory_show,
-memory_write, memory_update, memory_list, memory_remove,
+memory_write, memory_update, memory_list, memory_remove, memory_record_use,
 memory_scope_disable, memory_scope_enable.
 
 Memory is OPT-IN retrieval. You decide when to call memory_search. The user's
@@ -40,6 +40,15 @@ one followup turn). If you're unsure whether memory is relevant, don't search.
 When you do retrieve and use memory, briefly tell the user what context you
 used. "Using your stored preference for code-driven tutorials..." This is
 non-negotiable transparency.
+
+After your response uses a retrieved memory, call memory_record_use(ids,
+outcome) once with the ids that actually shaped the reply. outcome is
+"applied" (the memory shaped the response), "ignored" (you retrieved it
+but it turned out off-topic), or "contradicted" (the user or current state
+contradicted the stored fact). Skip the call when no retrieved memory
+shaped your response — the absence of an `applied` event is itself the
+signal that the memory wasn't useful. Don't fabricate a record_use call
+just to be tidy.
 
 Verify before relying on retrieved memory. Memory is a snapshot — it does not
 auto-refresh. When a retrieved memory contains specific verifiable claims

@@ -9,6 +9,13 @@ fixes.
 
 ### Added
 
+- **`memory_record_use` tool.** The model reports how a retrieved memory
+  landed — `"applied"` (shaped the response), `"ignored"` (off-topic),
+  or `"contradicted"` (user/state contradicted the stored fact) — with
+  an optional free-form `note`. Each call writes one `kind: "use"` event
+  to the log. This is the feedback signal that makes dead-weight pruning
+  and contradiction surfacing possible in the upcoming memory_health
+  view; without it, retrieval is write-only from the model's POV.
 - **Auto-scope metadata.** `memory_write` captures the current cwd, git
   remote URL, and branch at write time and persists them under an `origin:`
   block in the memory's frontmatter. `memory_search(auto_scope=True)` (the

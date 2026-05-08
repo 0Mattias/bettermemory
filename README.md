@@ -59,6 +59,7 @@ See [`docs/installation.md`](docs/installation.md) for more detail.
 | `memory_update(id, content?, scopes?, confidence?)` | Refine an existing memory in place. Preserves `id`, `created`, and `source`; bumps `updated`. Use this instead of `memory_remove` + `memory_write` when correcting or extending a stored fact — that round-trip would lose the original timestamp and litter the tombstone log with non-deletes. Replace semantics for `scopes` (provide the full new list). |
 | `memory_list(scopes?, with_bodies?)` | List active memories — IDs and one-line summaries by default. Pass `with_bodies=true` for a single-call corpus dump (full body on every result); useful for small stores where N round trips of `list → show → show` would be wasteful. |
 | `memory_remove(id, reason)` | Tombstone a memory. |
+| `memory_record_use(memory_ids, outcome, note?)` | Record how a retrieved memory landed: `"applied"`, `"ignored"`, or `"contradicted"`. Feeds the memory_health view; lets you spot dead-weight or stale memories. |
 | `memory_scope_disable(scope)` | Mute a scope for the rest of this session. |
 | `memory_scope_enable(scope)` | Re-enable a previously muted scope. |
 | `memory_write_confirm(pending_id)` | Commit a pending write (when confirmation is required). |

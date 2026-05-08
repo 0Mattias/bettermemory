@@ -28,6 +28,7 @@ from .models import (
     MemorySummary,
     SimilarHit,
     Source,
+    is_valid_ulid,
     validate_scope,
 )
 from .prompts import SYSTEM_PROMPT_ADDENDUM
@@ -41,6 +42,22 @@ from .store import (
 
 
 log = logging.getLogger("bettermemory")
+
+
+# ---------------------------------------------------------------------------
+# Use-recording outcomes — values land verbatim in the event log so the
+# health view can aggregate them. Add new outcomes by extending this set;
+# don't rename existing values without a migration story.
+# ---------------------------------------------------------------------------
+
+
+_USE_OUTCOMES: frozenset[str] = frozenset(
+    {
+        "applied",       # The retrieved memory shaped the response.
+        "ignored",       # Retrieved but turned out off-topic.
+        "contradicted",  # The user or current state contradicted the memory.
+    }
+)
 
 
 # ---------------------------------------------------------------------------
@@ -587,6 +604,57 @@ def _register_tools(
         }
 
     # ---- memory_scope_disable / enable -----------------------------------
+
+    # ---- memory_record_use ----------------------------------------------
+
+    @mcp.tool(
+        name="memory_record_use",
+        description=(
+            "Record how a retrieved memory was used in your response. Call "
+            "this once per response that consumed memory output, with the "
+            "ids you actually relied on and an outcome of \"applied\" "
+            "(the memory shaped the reply), \"ignored\" (you retrieved it "
+            "but it turned out off-topic), or \"contradicted\" (the user "
+            "or current state contradicted the stored fact). The event "
+            "feeds the memory_health view so dead-weight memories can be "
+            "pruned and stale ones can be flagged. `note` is an optional "
+            "free-form string for context. Skip the call when no retrieved "
+            "memory shaped your response — silence is also signal, as the "
+            "absence of `applied` events for a recently-retrieved id is "
+            "what tells us the memory wasn't useful."
+        ),
+    )
+    async def memory_record_use(
+        memory_ids: list[str],
+        outcome: str,
+        note: str | None = None,
+    ) -> dict[str, Any]:
+        if not memory_ids:
+            raise ValueError("memory_ids must contain at least one entry")
+        if outcome not in _USE_OUTCOMES:
+            raise ValueError(
+                f"outcome must be one of {sorted(_USE_OUTCOMES)}"
+            )
+        # ULID-format check only — we don't load the store to confirm the
+        # id exists. Recording a use against a just-tombstoned memory is a
+        # legitimate signal (the user contradicted it, we removed it),
+        # and a load_all on every record_use call is wasteful.
+        for mid in memory_ids:
+            if not is_valid_ulid(mid):
+                raise ValueError(f"invalid memory id: {mid!r}")
+        if note is not None and not isinstance(note, str):
+            raise ValueError("note must be a string if provided")
+
+        recorder.record(
+            "use",
+            ids=list(memory_ids),
+            outcome=outcome,
+            note=note,
+        )
+        return {
+            "recorded": list(memory_ids),
+            "outcome": outcome,
+        }
 
     @mcp.tool(
         name="memory_scope_disable",
