@@ -9,6 +9,17 @@ fixes.
 
 ### Added
 
+- **`CONTRIBUTING.md`**, with the explicit 1.x compatibility
+  contract. Covers local dev setup, PR conventions, the
+  versioning + deprecation policy, and the project values that
+  shape review judgment. Headline: within 1.x, the surface in
+  `docs/api.md` and the on-disk format pinned by
+  `models.SCHEMA_VERSION` are stable; renames / removals /
+  semantic redefinitions land at 2.0 with a documented
+  migration path. Deprecation cycle requires at least one
+  minor's notice in the changelog plus a one-time WARNING log
+  per process before any 2.0 removal.
+
 - **API surface document** (`docs/api.md`) pinning the 17-tool
   surface as the 1.0 contract. Covers signatures, defaults,
   return-status shapes (e.g. memory_write's
