@@ -258,12 +258,35 @@ The on-disk format is YAML frontmatter inside a markdown file. We use a tiny ven
 
 Files written by the previous `python-frontmatter`-based code keep loading byte-for-byte; cross-tested against the upstream library before the swap.
 
+## Optional: semantic dedup
+
+By default, `memory_write` dedup uses Jaccard on stopword-stripped, kebab-expanded token sets — fast, deterministic, no extra deps. It catches lexical overlap well but misses paraphrases (`"the database"` vs `"Postgres"`, `"shipped"` vs `"released"`).
+
+To catch paraphrases too, install the `embeddings` extra and flip the toggle:
+
+```sh
+uv pip install -e ".[embeddings]"
+```
+
+```toml
+# config.toml
+[behavior]
+semantic_dedup = true
+semantic_model_name = "all-MiniLM-L6-v2"     # default; smaller models start faster
+semantic_high_threshold = 0.85
+semantic_medium_threshold = 0.65
+```
+
+Behavior unchanged when the toggle is off, so existing setups are untouched. If you flip the toggle without installing the extra, the server logs one WARNING and falls back to Jaccard — no errors, no surprises.
+
+Embeddings are cached per-process keyed by `(memory_id, updated)`, so an updated memory busts its own cache entry. The first dedup call after server start pays the model load (~1-2s for `all-MiniLM-L6-v2`); subsequent calls are fast.
+
 ## Limitations
 
 1. **Single-process access.** Concurrent writes from two MCP servers pointed at the same directory may corrupt files. A file-lock guard is in place; multi-process is still untested.
 2. **No conflict resolution.** If you edit a memory file by hand while the server is running, the next read will pick up your change but there's no merge story.
 3. **No encryption.** Memories are plaintext on disk. Don't store secrets — use OS-level disk encryption if you need it.
-4. **Search is keyword-only.** Synonyms, paraphrases, semantic similarity — not handled. Embeddings are a Phase 2 feature. A short stopword list is stripped from the *query* (so "how to bake sourdough" doesn't match every memory on shared filler tokens), but bodies stay unfiltered. Hits are returned with a `relevance` label calibrated on coverage — distinguish "1 of 4 query words matched" (low) from "all 3 matched" (high) without inventing a score threshold. The recency boost reads `max(created, updated)`, so editing a fact via `memory_update` ranks it as fresh.
+4. **memory_search is keyword-only.** Synonyms and paraphrases are not handled by `memory_search`. (`memory_write` dedup can use semantic similarity — see "Optional: semantic dedup" above.) A short stopword list is stripped from the *query* (so "how to bake sourdough" doesn't match every memory on shared filler tokens), but bodies stay unfiltered. Hits are returned with a `relevance` label calibrated on coverage — distinguish "1 of 4 query words matched" (low) from "all 3 matched" (high) without inventing a score threshold. The recency boost reads `max(created, updated)`, so editing a fact via `memory_update` ranks it as fresh.
 5. **Disabled scopes don't survive restart.** Intentional — start each session fresh.
 
 ## What's out of scope

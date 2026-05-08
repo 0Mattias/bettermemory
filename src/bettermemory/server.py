@@ -106,6 +106,20 @@ def build_server(
     return mcp
 
 
+def _semantic_model_or_none(config: Config) -> Any:
+    """Lazy load the embedding model when `semantic_dedup = true` and the
+    extras are installed. Returns None otherwise — callers treat None as
+    the Jaccard fallback signal. The first call after `semantic_dedup`
+    is enabled pays the model-load cost (~1-2s); subsequent calls hit
+    `semantic.get_model`'s in-memory cache.
+    """
+    if not config.behavior.semantic_dedup:
+        return None
+    from .semantic import get_model
+
+    return get_model(config.behavior.semantic_model_name)
+
+
 def _register_tools(
     mcp: FastMCP,
     *,
@@ -319,7 +333,21 @@ def _register_tools(
         # and decided this entry is meaningfully different.
         related: list[SimilarHit] = []
         if not force:
-            similar = find_similar(payload["content"], store.load_all())
+            similar = find_similar(
+                payload["content"],
+                store.load_all(),
+                semantic_model=_semantic_model_or_none(config),
+                high_threshold=(
+                    config.behavior.semantic_high_threshold
+                    if config.behavior.semantic_dedup
+                    else None
+                ),
+                medium_threshold=(
+                    config.behavior.semantic_medium_threshold
+                    if config.behavior.semantic_dedup
+                    else None
+                ),
+            )
             high = [h for h in similar if h.relevance == "high"]
             if high:
                 recorder.record(

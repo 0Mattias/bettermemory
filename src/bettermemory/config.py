@@ -51,6 +51,26 @@ default_max_results = 5
 # Recency boost decay. Larger = older memories get a meaningful bump.
 recency_boost_half_life_days = 30
 
+# When true, memory_write dedup uses sentence-transformers cosine
+# similarity instead of Jaccard on token sets — catches paraphrases like
+# "the database" / "Postgres" that lexical overlap misses. Requires the
+# `embeddings` extra: `pip install bettermemory[embeddings]`. Falls back
+# to Jaccard with a WARNING log line when the extra isn't installed, so
+# flipping the bit without the deps is safe.
+semantic_dedup = false
+
+# Embedding model name for semantic dedup. all-MiniLM-L6-v2 is the small
+# default; replace with a larger model if you need better paraphrase
+# detection and have CPU/RAM headroom.
+semantic_model_name = "all-MiniLM-L6-v2"
+
+# Cosine thresholds for the semantic path. Cosine on normalized
+# embeddings tends to land 0.5-0.9 for semantically similar sentences,
+# 0.1-0.3 for unrelated, so the cutoffs sit higher than the Jaccard
+# defaults (0.75 / 0.40).
+semantic_high_threshold = 0.85
+semantic_medium_threshold = 0.65
+
 [scopes]
 # If non-empty, writes with scopes outside this list fail. Empty = anything.
 allowed = []
@@ -80,6 +100,11 @@ class BehaviorConfig:
     require_write_confirmation: bool = False
     default_max_results: int = 5
     recency_boost_half_life_days: float = 30.0
+    # Semantic dedup is opt-in — see DEFAULT_CONFIG for prose.
+    semantic_dedup: bool = False
+    semantic_model_name: str = "all-MiniLM-L6-v2"
+    semantic_high_threshold: float = 0.85
+    semantic_medium_threshold: float = 0.65
 
 
 @dataclass
@@ -160,6 +185,16 @@ def load_config(path: Path | None = None) -> Config:
             default_max_results=int(behavior_raw.get("default_max_results", 5)),
             recency_boost_half_life_days=float(
                 behavior_raw.get("recency_boost_half_life_days", 30.0)
+            ),
+            semantic_dedup=bool(behavior_raw.get("semantic_dedup", False)),
+            semantic_model_name=str(
+                behavior_raw.get("semantic_model_name", "all-MiniLM-L6-v2")
+            ),
+            semantic_high_threshold=float(
+                behavior_raw.get("semantic_high_threshold", 0.85)
+            ),
+            semantic_medium_threshold=float(
+                behavior_raw.get("semantic_medium_threshold", 0.65)
             ),
         ),
         scopes=ScopesConfig(

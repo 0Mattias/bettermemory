@@ -9,6 +9,20 @@ fixes.
 
 ### Added
 
+- **Semantic dedup (opt-in).** Behind `[behavior] semantic_dedup = true`,
+  `memory_write` dedup uses sentence-transformers cosine similarity
+  instead of Jaccard on token sets — catches paraphrases ("the database"
+  vs "Postgres") that lexical overlap misses. Requires the `embeddings`
+  extra (`pip install bettermemory[embeddings]`); falls back to Jaccard
+  with a single WARNING log if the extra isn't installed, so flipping
+  the toggle without the deps is safe. Embeddings are cached per-process
+  keyed by `(memory_id, updated)`, so an updated memory busts its own
+  cache entry. New config knobs: `semantic_model_name` (default
+  `"all-MiniLM-L6-v2"`), `semantic_high_threshold` (0.85),
+  `semantic_medium_threshold` (0.65).
+- New `bettermemory.semantic` module: `get_model()`, `cached_embed()`,
+  `cosine_similarity_normalized()`, `reset_caches()`. Imports of the
+  optional extra are lazy — the module loads cleanly without it.
 - **`memory_health` tool + `bettermemory health` CLI subcommand.**
   Aggregates the event log against the active store and returns a
   structured report: dead-weight memories (created beyond `window_days`
