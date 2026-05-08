@@ -9,6 +9,18 @@ fixes.
 
 ### Added
 
+- **API surface document** (`docs/api.md`) pinning the 17-tool
+  surface as the 1.0 contract. Covers signatures, defaults,
+  return-status shapes (e.g. memory_write's
+  `ok` / `transient_warning` / `duplicate` /
+  `previously_removed` / `pending` discrimination), and the
+  audit conclusions for each consistency dimension we checked
+  (naming, plural-vs-singular, required-vs-optional,
+  enums-as-strings, mutually-exclusive optionals). Findings:
+  no signature requires a rename or default change before 1.0;
+  the surface is frozen. README links to the doc from the
+  Tools section.
+
 - **Property-based tests for `Store` invariants**
   (`tests/test_store_properties.py`, six properties under
   `hypothesis`). Each property mints its own per-example subdir

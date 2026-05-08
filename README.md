@@ -52,6 +52,8 @@ See [`docs/installation.md`](docs/installation.md) for more detail.
 
 ## Tools
 
+The full surface contract — signatures, defaults, return shapes, audit notes — lives in [`docs/api.md`](docs/api.md). The table below is the at-a-glance summary.
+
 | Tool | What it does |
 |---|---|
 | `memory_search(query, scopes?, max_results?, expand_top?, auto_scope?)` | Rank and return memory hits with snippets. Each hit carries `relevance: "high" \| "medium" \| "low"` and `match_terms` (the query words that actually hit) — branch on `relevance`, not the raw `score`. Hits also include `created`, `updated`, `last_verified_at`, and cheap `path_drift_checked`/`path_drift_missing` integers so stale hits are obvious without a `memory_show` round-trip. Pass `expand_top=true` to inline the full body of the top hit when its relevance is `"high"` (collapses search→show into one call on confident hits, and surfaces the full `path_drift` report on the expanded hit). |
