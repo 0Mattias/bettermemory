@@ -113,6 +113,16 @@ fixes.
   structural enforcement rather than enumerating markers. The model gets
   the principle from the prompt and the specific marker that fired from
   the tool response. `docs/system_prompt.md` updated to match.
+- `SYSTEM_PROMPT_ADDENDUM` lists the full current tool surface
+  (`memory_health`, `memory_write_confirm`, `memory_write_cancel` were
+  missing) and explicitly overrides any harness-injected file-based
+  memory directory (e.g. `~/.claude/projects/*/memory/` or a `MEMORY.md`
+  index). The Claude Code harness injects a `# Memory` section pointing
+  at a per-project filesystem path; without an explicit override in the
+  addendum the model sees two memory systems and splits facts between
+  them. The `memory_record_use` paragraph now also references
+  `memory_health` so the dead-weight feedback loop is visible from the
+  prompt itself. `docs/system_prompt.md` updated to match.
 - `build_server()` accepts an optional `recorder=` argument. When omitted,
   a `Recorder` is constructed from the resolved `Config`.
 - `SessionState` now carries a stable `session_id` for the lifetime of the
