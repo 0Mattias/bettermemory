@@ -35,6 +35,7 @@ from . import _frontmatter as frontmatter
 
 
 from .models import (
+    SCHEMA_VERSION,
     Confidence,
     Memory,
     MemorySummary,
@@ -222,6 +223,27 @@ class Store:
     def _load_path(self, path: Path) -> Memory:
         post = frontmatter.load(path)
         meta = post.metadata
+        # Schema-version gate. Memories without `schema_version` are
+        # implicitly version 1 (the format predates the field). Anything
+        # *higher* than what this reader supports is refused — the caller
+        # (`load_all`, etc.) catches ValueError and skips the file with a
+        # logged warning, so a user who downgrades bettermemory after
+        # writing memories under a newer minor sees them drop out of the
+        # retrieval surface rather than risk the reader misinterpreting
+        # fields whose semantics changed.
+        on_disk_version = meta.get("schema_version", 1)
+        try:
+            on_disk_int = int(on_disk_version)
+        except (TypeError, ValueError) as exc:
+            raise ValueError(
+                f"{path}: schema_version is not an integer: {on_disk_version!r}"
+            ) from exc
+        if on_disk_int > SCHEMA_VERSION:
+            raise ValueError(
+                f"{path}: schema_version {on_disk_int} is newer than this "
+                f"reader supports (max {SCHEMA_VERSION}); upgrade bettermemory "
+                f"or remove the file from the active set."
+            )
         try:
             # `origin` is additive — memories written before this field
             # existed have no entry, and that's intentionally fine: they're
@@ -461,6 +483,24 @@ class Store:
     def _load_tombstone_path(self, path: Path) -> TombstonedMemory:
         post = frontmatter.load(path)
         meta = post.metadata
+        # Schema-version gate, mirroring `_load_path` for active
+        # memories. Tombstones share the on-disk format with active
+        # memories (they're the same files moved into .tombstones/
+        # with `removed` + `removed_reason` appended), so the same
+        # rule applies — refuse forward-version files rather than
+        # risk misinterpreting changed semantics.
+        on_disk_version = meta.get("schema_version", 1)
+        try:
+            on_disk_int = int(on_disk_version)
+        except (TypeError, ValueError) as exc:
+            raise ValueError(
+                f"{path}: schema_version is not an integer: {on_disk_version!r}"
+            ) from exc
+        if on_disk_int > SCHEMA_VERSION:
+            raise ValueError(
+                f"{path}: schema_version {on_disk_int} is newer than this "
+                f"reader supports (max {SCHEMA_VERSION}); upgrade bettermemory."
+            )
         try:
             origin_raw = meta.get("origin")
             origin = (
@@ -739,6 +779,12 @@ class Store:
     def _write_path(self, path: Path, memory: Memory) -> None:
         post = frontmatter.Post(memory.body.strip() + "\n")
         meta: dict[str, object] = {
+            # `schema_version` is the first key so it's visible at the top
+            # of the file and unambiguously associated with the format
+            # rather than the memory's content. Readers that don't know
+            # this field default it to 1; readers that don't *recognize*
+            # the value refuse to load the file.
+            "schema_version": SCHEMA_VERSION,
             "id": memory.id,
             "created": memory.created,
             "updated": memory.updated,

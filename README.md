@@ -99,6 +99,7 @@ Each memory is one file:
 
 ```markdown
 ---
+schema_version: 1
 id: 01HXYZ123ABC
 created: 2025-03-14T10:23:00+00:00
 updated: 2025-03-14T10:23:00+00:00
@@ -112,6 +113,8 @@ or interface chrome.
 ```
 
 Tombstones move to `.tombstones/` with `removed:` and `removed_reason:` added — the body is preserved.
+
+**Schema version.** `schema_version: 1` is emitted by every new write. Memories without the field load implicitly as version 1 (the format predates the constant). A reader that encounters a memory with a *higher* version refuses it (`load_all` skips with a logged warning, `bettermemory doctor` surfaces the count gap) — graceful degradation rather than risk misinterpreting fields whose semantics changed under a downgrade. Within a major version, bumps are additive-only: new optional fields, never renamed, never removed, never re-defined. A major bump (1 → 2) is reserved for breaking changes and would ship with a `bettermemory migrate` subcommand.
 
 ## Where memories live
 

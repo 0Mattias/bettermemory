@@ -9,6 +9,33 @@ fixes.
 
 ### Added
 
+- **`schema_version` on frontmatter** (`models.SCHEMA_VERSION`,
+  currently `1`). Every new memory and tombstone written by the
+  store carries `schema_version: 1` as the first frontmatter
+  key. Readers default to `1` when the field is absent — that's
+  the implicit version of memories written before this constant
+  existed (additive-fields-only era, where backward compat held
+  by virtue of every new field being `Optional`).
+
+  Forward-compatibility rule (now contractual rather than
+  implicit): a reader that sees a memory whose `schema_version`
+  is *strictly greater* than its own `SCHEMA_VERSION` raises
+  `ValueError` on load. `Store.load_all` and
+  `Store.load_tombstones` catch that and skip the file with a
+  logged warning; `bettermemory doctor`'s `memory_parse_health`
+  check surfaces the count gap. Net effect: a user who downgrades
+  bettermemory after writing some memories under a newer minor
+  sees those memories drop out of the retrieval surface (and
+  flagged by doctor) rather than risk silent semantic
+  misinterpretation. Tombstones share the same gate.
+
+  Within a major version, bumps remain additive-only — new
+  optional fields, never renamed, never removed, never
+  re-defined. A *major* bump (1 → 2) is reserved for genuinely
+  breaking format changes and will ship alongside a
+  `bettermemory migrate` subcommand. The constant stays at 1
+  until that day.
+
 - **Multi-process concurrency stress test** (`tests/test_concurrency.py`).
   The README previously hedged: *"A file-lock guard is in place;
   multi-process is still untested."* This test spawns four worker
