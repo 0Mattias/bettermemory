@@ -53,14 +53,19 @@ See [`docs/installation.md`](docs/installation.md) for more detail.
 
 | Tool | What it does |
 |---|---|
-| `memory_search(query, scopes?, max_results?, expand_top?)` | Rank and return memory hits with snippets. Each hit carries `relevance: "high" \| "medium" \| "low"` and `match_terms` (the query words that actually hit) — branch on `relevance`, not the raw `score`. Hits also include `created` and `updated` timestamps so a stale-but-relevant memory is visible at a glance. Pass `expand_top=true` to inline the full body of the top hit when its relevance is `"high"` (collapses search→show into one call on confident hits). |
-| `memory_show(id)` | Full body of one memory. |
-| `memory_write(content, scopes, confidence?, source?, force?, acknowledge_transient?)` | Create a new memory. Runs a structural durability check before dedup — see "Durability check" below. |
+| `memory_search(query, scopes?, max_results?, expand_top?, auto_scope?)` | Rank and return memory hits with snippets. Each hit carries `relevance: "high" \| "medium" \| "low"` and `match_terms` (the query words that actually hit) — branch on `relevance`, not the raw `score`. Hits also include `created`, `updated`, `last_verified_at`, and cheap `path_drift_checked`/`path_drift_missing` integers so stale hits are obvious without a `memory_show` round-trip. Pass `expand_top=true` to inline the full body of the top hit when its relevance is `"high"` (collapses search→show into one call on confident hits, and surfaces the full `path_drift` report on the expanded hit). |
+| `memory_show(id)` | Full body of one memory, plus the full `path_drift` report. |
+| `memory_write(content, scopes, confidence?, source?, force?, acknowledge_transient?)` | Create a new memory. Runs the structural durability check, then dedup against active memories (`status="duplicate"`), then dedup against tombstones (`status="previously_removed"`, carrying the original `removed_reason`). `force=true` overrides both gates. |
 | `memory_update(id, content?, scopes?, confidence?)` | Refine an existing memory in place. Preserves `id`, `created`, and `source`; bumps `updated`. Use this instead of `memory_remove` + `memory_write` when correcting or extending a stored fact — that round-trip would lose the original timestamp and litter the tombstone log with non-deletes. Replace semantics for `scopes` (provide the full new list). |
-| `memory_list(scopes?, with_bodies?)` | List active memories — IDs and one-line summaries by default. Pass `with_bodies=true` for a single-call corpus dump (full body on every result); useful for small stores where N round trips of `list → show → show` would be wasteful. |
-| `memory_remove(id, reason)` | Tombstone a memory. |
-| `memory_record_use(memory_ids, outcome, note?)` | Record how a retrieved memory landed: `"applied"`, `"ignored"`, or `"contradicted"`. Feeds the memory_health view; lets you spot dead-weight or stale memories. |
-| `memory_health(window_days?, heavily_used_top_k?)` | Aggregate health view: dead-weight memories, heavily-used memories, unresolved contradictions, transient-marker fire/override rates, scope distribution. Same data as the `bettermemory health` CLI. |
+| `memory_verify(id, note?)` | Bump `last_verified_at` after spot-checking that the body's claims still match reality. Orthogonal to `memory_update`: a typo fix bumps `updated` but not `last_verified_at`; a verify call bumps `last_verified_at` but not `updated`. |
+| `memory_list(scopes?, with_bodies?)` | List active memories — IDs and one-line summaries by default. Pass `with_bodies=true` for a single-call corpus dump; useful for small stores where N round trips of `list → show → show` would be wasteful. Race-safe against concurrent tombstoning (a file disappearing mid-iteration is skipped, not crashed). |
+| `memory_remove(id, reason)` | Tombstone a memory. The originating session id is captured into the tombstone frontmatter so the link to the removal session survives event-log rotation. |
+| `memory_restore(id)` | Bring a tombstoned memory back to the active set. Strips the removal frontmatter, preserves `created` / `updated` / `last_verified_at` (the body didn't change while it was gone). Errors loudly if the id is active or unknown. |
+| `memory_list_tombstones(scopes?)` | List removed memories with their removal metadata. The curation surface for "what did I clear out?" and the investigation surface for "I think I had a memory about X — what happened?" |
+| `memory_rename_scope(old_scope, new_scope, include_tombstones?)` | Replace `old_scope` with `new_scope` across active memories (and tombstones, by default). The cheap fix for typo'd or deprecated scopes surfaced via `memory_health.rare_scopes`. Bumps `updated`; preserves `last_verified_at`. |
+| `memory_record_use(memory_ids, outcome, note?)` | Record how a retrieved memory landed: `"applied"`, `"ignored"`, or `"contradicted"`. Feeds the memory_health view; lets you spot dead-weight, stale, or hallucinated memories. |
+| `memory_health(window_days?, heavily_used_top_k?, min_applied?)` | Aggregate health view: dead-weight memories, heavily-used memories, unresolved contradictions, transient-marker fire/override rates, scope distribution, per-scope `scope_health` rollup, singleton `rare_scopes` likely-typos, and `orphan_use_events` (a fabricated-id smoke test). Same data as the `bettermemory health` CLI. |
+| `memory_scope_overview(auto_scope?)` | Cheap session-start hint: counts of memories per scope. `total=0` means `memory_search` is unlikely to be fruitful. |
 | `memory_scope_disable(scope)` | Mute a scope for the rest of this session. |
 | `memory_scope_enable(scope)` | Re-enable a previously muted scope. |
 | `memory_write_confirm(pending_id)` | Commit a pending write (when confirmation is required). |
@@ -225,6 +230,11 @@ bettermemory migrate origin \
   --scope-repo projects:foo=git@github.com:me/foo.git \
   --scope-repo projects:bar=git@github.com:me/bar.git
                                                  # route by scope (preferred for global dirs)
+
+bettermemory tombstones list                     # all removed memories
+bettermemory tombstones list --json --scope tools
+bettermemory tombstones prune --older-than 365   # hard-delete year-old removals
+bettermemory tombstones prune --older-than 365 --dry-run
 ```
 
 `health` returns the same data as the `memory_health` MCP tool — drive curation passes outside any conversation: prune dead-weight memories, refresh contradicted ones, trim transient markers whose override rate is high.
@@ -234,6 +244,22 @@ bettermemory migrate origin \
 For a global directory whose memories already use `projects:<name>` scopes, `--scope-repo SCOPE=URL` (repeatable) routes by tag. The first matching scope wins; memories that match no entry in the map fall through to `--repo` (if given) or are left untagged. `cwd` is left null on these paths since we don't know per-memory cwd retroactively — only the auto-inferred path (project-scoped dir) sets cwd.
 
 The migration is idempotent (re-running is safe), atomic per file (`.tmp` + rename), and skips tombstones.
+
+`tombstones list` enumerates removed memories with their removal metadata (`removed`, `removed_reason`, `removed_session`). The same data is available to the model via the `memory_list_tombstones` MCP tool. `tombstones prune --older-than DAYS` is a hard delete — pruned tombstones are gone from disk with no further audit trail beyond what the event log captured. `behavior.tombstone_retention_days` in `config.toml` sets a default cutoff; with the default of `0`, the flag is required explicitly.
+
+### Tombstone lifecycle
+
+Tombstones are first-class records, not deletions. The lifecycle:
+
+1. **`memory_remove(id, reason)`** moves the file to `.tombstones/`, stamps `removed`, `removed_reason`, and the originating `removed_session` into the frontmatter.
+2. **`memory_write` checks tombstones at dedup time.** If a new body has high overlap with a tombstone, the write returns `status="previously_removed"` carrying the original `removed_reason` — the lesson encoded in the removal isn't lost. `force=true` overrides; `memory_restore(id)` brings the original record back if the rejection no longer applies.
+3. **`memory_list_tombstones`** is the curation surface. The same data on the CLI is `bettermemory tombstones list`.
+4. **`memory_restore(id)`** strips the removal frontmatter and moves the file back. `created`, `updated`, and `last_verified_at` are preserved — the body didn't change while the record was tombstoned, so a freshly-restored ten-year-old memory ranks like a ten-year-old memory in the recency boost.
+5. **`bettermemory tombstones prune --older-than DAYS`** is the only path that hard-deletes. Active memories are unaffected.
+
+### Auto-scope is a UX filter, not access control
+
+`memory_search(auto_scope=True)` and `memory_scope_overview(auto_scope=True)` filter their *defaults* by the caller's current repo so the first-look surface stays focused. They do not gate `memory_show(id)`, which serves any active id verbatim. The threat model is "don't accidentally surface irrelevant memories", not "prevent information flow across project boundaries". For real isolation, use separate stores via the project-scoped resolution rule (`./.claude-memory/`) or `BETTERMEMORY_DIR`.
 
 ## Development
 

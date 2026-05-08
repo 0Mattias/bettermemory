@@ -22,7 +22,8 @@ listed below — splitting facts across two systems fragments retrieval and
 defeats the point.
 
 Available tools: memory_search, memory_show, memory_write, memory_update,
-memory_list, memory_remove, memory_verify, memory_record_use, memory_health,
+memory_list, memory_remove, memory_restore, memory_list_tombstones,
+memory_verify, memory_record_use, memory_health, memory_rename_scope,
 memory_scope_overview, memory_scope_disable, memory_scope_enable, plus
 memory_write_confirm / memory_write_cancel for the staged-write flow.
 
@@ -126,6 +127,31 @@ Writing and updating memory:
   don't block — they come back as `related` on a successful write —
   inspect them and consider memory_update if one of them is the better
   home for what you were going to write.
+
+- Tombstone-aware dedup also runs. If the new body has high overlap with
+  a *previously-removed* memory, memory_write returns
+  {status:"previously_removed", removed_matches:[...]} carrying the
+  `removed_reason` from the original tombstone. The lesson encoded in
+  that reason is the whole point — don't rubber-stamp force=True past it.
+  Inspect the reason: if the rejection still applies, drop the write; if
+  the fact is now correct, call memory_restore(id) on the tombstone
+  rather than writing a parallel entry. memory_list_tombstones lists
+  removed memories; memory_restore brings one back without losing
+  timestamps.
+
+- path_drift on retrieval. memory_search returns `path_drift_checked`
+  and `path_drift_missing` on every hit (counts only); memory_show and
+  memory_search(expand_top=True) surface the full PathDriftReport. A
+  hit with `path_drift_missing > 0` cites filesystem paths that no
+  longer exist — your cue to expand the hit and consider memory_update
+  / memory_verify before basing a recommendation on it.
+
+- Scope hygiene. memory_health surfaces `rare_scopes` (n=1, often typos)
+  and `scope_health` (per-scope active/dead/contradicted counts). Use
+  memory_rename_scope(old, new) to fix typo'd or deprecated scopes
+  across active memories and tombstones in one shot — it preserves
+  body content and `last_verified_at` (the body's claims didn't change,
+  only the tag).
 
 - Confirmation policy is tiered:
   - For project, infrastructure, reference, and tooling memories — write

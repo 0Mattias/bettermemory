@@ -11,8 +11,9 @@ import re
 from datetime import datetime, timezone
 from typing import Any, NoReturn
 
-from .models import Memory, MemoryHit, SimilarHit, snippet_for
+from .models import Memory, MemoryHit, SimilarHit, TombstonedMemory, snippet_for
 from .origin import repos_match
+from .verify import detect_path_drift
 
 
 # Strip punctuation, keep word characters (incl. unicode letters) and dashes
@@ -277,6 +278,16 @@ def search(
         if score <= 0:
             continue
 
+        # Drift counts on every hit so the model can self-triage at a
+        # glance — high `path_drift_missing` flags a hit worth
+        # expanding via memory_show, low/zero is reassurance the
+        # cited paths still exist. The body is already in memory at
+        # this point (load_all has been called); the marginal cost is
+        # one regex pass + up to 8 stat() calls per matched memory.
+        # `expand_top=True` continues to surface the full path lists
+        # alongside these counts via the `path_drift` field.
+        drift = detect_path_drift(memory.body)
+
         hits.append(
             MemoryHit(
                 id=memory.id,
@@ -289,6 +300,8 @@ def search(
                 created=memory.created,
                 updated=memory.updated,
                 last_verified_at=memory.last_verified_at,
+                path_drift_checked=len(drift.checked),
+                path_drift_missing=len(drift.missing),
             )
         )
 
@@ -441,7 +454,11 @@ def _find_similar_semantic(
     embeddings extra isn't installed — a caller who never passes a
     `semantic_model` won't trigger the import path.
     """
-    from .semantic import cached_embed, cosine_similarity_normalized
+    from .semantic import (
+        cached_embed,
+        cosine_similarity_normalized,
+        flush_persistent_cache,
+    )
 
     new_body_clean = new_body.strip()
     if not new_body_clean:
@@ -483,6 +500,191 @@ def _find_similar_semantic(
         )
 
     hits.sort(key=lambda h: (h.similarity, h.updated), reverse=True)
+    # End-of-batch hook: persist any newly-computed embeddings as a
+    # single atomic write. No-op when persistence isn't configured or
+    # nothing changed since the last flush.
+    flush_persistent_cache()
+    return hits
+
+
+# ---------------------------------------------------------------------------
+# Tombstone-aware dedup
+# ---------------------------------------------------------------------------
+#
+# `find_similar` only walks the active set, which means the durability gate
+# never fires when the writer is about to re-create a fact they previously
+# removed. The lesson encoded in the tombstone's removal_reason is lost on
+# the next write. `find_similar_tombstones` closes that loop: it scores
+# the same body against tombstoned candidates and returns hits with
+# `relevance="high-removed"` / `"medium-removed"` plus the removal
+# metadata, so memory_write can warn ("you removed a 0.91-similar memory
+# three weeks ago because 'turned out wrong'").
+#
+# Implementation note: we intentionally re-compute similarity here rather
+# than calling find_similar(existing=tombstoned). The SimilarHit shape
+# carries different metadata in each case (active hits have no removal
+# fields; tombstone hits do), and TombstonedMemory is a distinct type
+# from Memory so the type checker catches accidental mixing.
+
+
+def find_similar_tombstones(
+    new_body: str,
+    tombstoned: list[TombstonedMemory],
+    *,
+    semantic_model: Any | None = None,
+    high_threshold: float | None = None,
+    medium_threshold: float | None = None,
+) -> list[SimilarHit]:
+    """Like `find_similar`, but scored against tombstoned memories and
+    returning hits labeled with the `-removed` relevance suffix.
+
+    Threshold defaults match the active path: 0.75/0.40 for Jaccard,
+    0.85/0.65 for cosine. Empty input or empty body returns []. Hits
+    are sorted descending by similarity, like `find_similar`.
+    """
+    if not tombstoned:
+        return []
+
+    if semantic_model is not None:
+        return _find_similar_tombstones_semantic(
+            new_body,
+            tombstoned,
+            semantic_model,
+            high_threshold=(high_threshold if high_threshold is not None else 0.85),
+            medium_threshold=(
+                medium_threshold if medium_threshold is not None else 0.65
+            ),
+        )
+
+    return _find_similar_tombstones_jaccard(
+        new_body,
+        tombstoned,
+        high_threshold=(
+            high_threshold if high_threshold is not None else HIGH_SIMILARITY
+        ),
+        medium_threshold=(
+            medium_threshold if medium_threshold is not None else MEDIUM_SIMILARITY
+        ),
+    )
+
+
+def _find_similar_tombstones_jaccard(
+    new_body: str,
+    tombstoned: list[TombstonedMemory],
+    *,
+    high_threshold: float,
+    medium_threshold: float,
+) -> list[SimilarHit]:
+    new_tokens = _content_token_set(new_body)
+    if not new_tokens:
+        return []
+
+    hits: list[SimilarHit] = []
+    for memory in tombstoned:
+        existing_tokens = _content_token_set(memory.body)
+        if not existing_tokens:
+            continue
+
+        intersection = new_tokens & existing_tokens
+        if not intersection:
+            continue
+
+        union = new_tokens | existing_tokens
+        similarity = len(intersection) / len(union)
+
+        if similarity >= high_threshold:
+            relevance = "high-removed"
+        elif similarity >= medium_threshold:
+            relevance = "medium-removed"
+        else:
+            continue
+
+        hits.append(
+            SimilarHit(
+                id=memory.id,
+                scopes=memory.scopes,
+                confidence=memory.confidence,
+                snippet=snippet_for(memory.body),
+                similarity=round(similarity, 4),
+                relevance=relevance,
+                created=memory.created,
+                updated=memory.updated,
+                removed_at=memory.removed,
+                removed_reason=memory.removed_reason,
+            )
+        )
+
+    hits.sort(key=lambda h: (h.similarity, h.removed_at or h.updated), reverse=True)
+    return hits
+
+
+def _find_similar_tombstones_semantic(
+    new_body: str,
+    tombstoned: list[TombstonedMemory],
+    model: Any,
+    *,
+    high_threshold: float,
+    medium_threshold: float,
+) -> list[SimilarHit]:
+    """Cosine similarity over sentence-transformers embeddings, against
+    tombstoned bodies. Mirrors `_find_similar_semantic` for the active path.
+
+    Cache key uses `removed` rather than `updated` for tombstones: a
+    tombstone's body is frozen post-removal (we don't bump `updated`
+    on removal), so `removed` is the natural freshness handle and
+    distinguishes the cache entry from any active-side cache that
+    might exist for the same memory_id (e.g. immediately after a
+    restore-then-tombstone cycle).
+    """
+    from .semantic import (
+        cached_embed,
+        cosine_similarity_normalized,
+        flush_persistent_cache,
+    )
+
+    new_body_clean = new_body.strip()
+    if not new_body_clean:
+        return []
+
+    new_vec = model.encode(new_body_clean, normalize_embeddings=True)
+
+    hits: list[SimilarHit] = []
+    for memory in tombstoned:
+        body_clean = memory.body.strip()
+        if not body_clean:
+            continue
+        existing_vec = cached_embed(
+            model,
+            f"tomb:{memory.id}",
+            memory.removed.isoformat(),
+            body_clean,
+        )
+        similarity = cosine_similarity_normalized(new_vec, existing_vec)
+
+        if similarity >= high_threshold:
+            relevance = "high-removed"
+        elif similarity >= medium_threshold:
+            relevance = "medium-removed"
+        else:
+            continue
+
+        hits.append(
+            SimilarHit(
+                id=memory.id,
+                scopes=memory.scopes,
+                confidence=memory.confidence,
+                snippet=snippet_for(memory.body),
+                similarity=round(similarity, 4),
+                relevance=relevance,
+                created=memory.created,
+                updated=memory.updated,
+                removed_at=memory.removed,
+                removed_reason=memory.removed_reason,
+            )
+        )
+
+    hits.sort(key=lambda h: (h.similarity, h.removed_at or h.updated), reverse=True)
+    flush_persistent_cache()
     return hits
 
 

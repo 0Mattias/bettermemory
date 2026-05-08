@@ -17,6 +17,19 @@ Existing memories on disk have no `origin` field. They're treated as
 "global" — they pass the auto-scope filter regardless of the caller's
 current repo, because we have no evidence of a project boundary. The
 file format is additive only.
+
+**Auto-scope is a UX filter, not access control.** It governs the
+*defaults* of `memory_search` and `memory_scope_overview` so the
+model's first-look surface stays focused on the current project. It
+does NOT gate `memory_show(id)`, which serves any active id verbatim
+regardless of the caller's repo. That asymmetry is intentional: if
+the model already has an id (from a cross-project search with
+`auto_scope=False`, from a previous conversation, or from the user
+pasting one in), retrieval should work. The threat model here is
+"don't surface irrelevant memories by accident", not "prevent
+information flow across project boundaries". For real isolation,
+use separate stores via the project-scoped resolution rule
+(`./.claude-memory/`) or the `BETTERMEMORY_DIR` env var.
 """
 
 from __future__ import annotations

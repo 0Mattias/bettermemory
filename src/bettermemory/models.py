@@ -152,6 +152,16 @@ class MemoryHit(BaseModel):
     glance — bumped by `memory_update`, equal to `created` on first write.
     `last_verified_at` is the orthogonal verification timestamp — None when
     the memory has never been spot-checked since it was written.
+
+    `path_drift_checked` / `path_drift_missing` are cheap drift signals
+    surfaced on every hit (not just the expanded top hit). The integers
+    let the caller decide whether to spend a memory_show round-trip on a
+    given hit — high `path_drift_missing` is the cue. A nominal hit
+    with `path_drift_missing=0` and a non-zero `path_drift_checked` is
+    a positive signal: the memory cites real paths that still exist.
+    Both default to 0 (the load path doesn't run drift detection in
+    other contexts, e.g. memory_show, where the full PathDriftReport
+    is the right surface).
     """
 
     id: str
@@ -164,6 +174,8 @@ class MemoryHit(BaseModel):
     created: datetime
     updated: datetime
     last_verified_at: datetime | None = None
+    path_drift_checked: int = 0
+    path_drift_missing: int = 0
 
 
 class MemorySummary(BaseModel):
@@ -178,15 +190,83 @@ class MemorySummary(BaseModel):
     last_verified_at: datetime | None = None
 
 
+class TombstonedMemory(BaseModel):
+    """A removed memory loaded from `.tombstones/`.
+
+    Carries the same content fields as `Memory` plus removal metadata.
+    Kept as a separate type (not a subclass of `Memory`) so callers can't
+    accidentally mix active records and tombstones — typing catches it
+    statically, and the dedup pass that walks both can branch explicitly.
+
+    `removed_session` is additive: tombstones written before that field
+    shipped have `None` here and the load path silently fills in the
+    default. The lookup-by-session join (event log → tombstone) only
+    works for tombstones written after the upgrade; older ones still
+    carry `removed` / `removed_reason` for human-readable audit.
+    """
+
+    id: str
+    created: datetime
+    updated: datetime
+    scopes: ScopesField
+    confidence: Confidence
+    source: Source
+    body: str
+    origin: Origin | None = None
+    last_verified_at: datetime | None = None
+
+    # Removal metadata. `removed` and `removed_reason` are required —
+    # a tombstone without them is malformed and won't load.
+    removed: datetime
+    removed_reason: str
+    removed_session: str | None = None
+
+    @field_validator("scopes")
+    @classmethod
+    def _check_scopes(cls, v: list[str]) -> list[str]:
+        return _validate_scopes_list(v)
+
+    @field_validator("id")
+    @classmethod
+    def _check_id(cls, v: str) -> str:
+        if not is_valid_ulid(v):
+            raise ValueError(f"invalid ULID: {v!r}")
+        return v
+
+
+class TombstonedSummary(BaseModel):
+    """One row from `memory_list_tombstones` — body stripped, plus removal
+    metadata. Mirrors `MemorySummary` in shape so triage tooling can treat
+    the two uniformly modulo the extra `removed_*` fields."""
+
+    id: str
+    scopes: list[str]
+    confidence: Confidence
+    summary: str
+    created: datetime
+    updated: datetime
+    last_verified_at: datetime | None = None
+    removed: datetime
+    removed_reason: str
+    removed_session: str | None = None
+
+
 class SimilarHit(BaseModel):
     """One existing memory that overlaps a candidate write.
 
-    Surfaced by `find_similar` and by `memory_write` when it refuses to create
-    a parallel entry. `similarity` is Jaccard on stopword-stripped, kebab-
-    expanded token sets — symmetric, unlike `MemoryHit.score`. `relevance` is
-    the same `"high" | "medium"` ladder that drives the decision: high
-    overlap blocks the write (unless `force=True`), medium overlap is
-    surfaced as `related` but does not block.
+    Surfaced by `find_similar` and by `memory_write` when it refuses to
+    create a parallel entry. `similarity` is Jaccard on stopword-stripped,
+    kebab-expanded token sets (or cosine when semantic dedup is on) —
+    symmetric, unlike `MemoryHit.score`.
+
+    `relevance` is one of `"high" | "medium" | "high-removed" | "medium-
+    removed"`. The `-removed` suffix means the matched record is a
+    tombstone, not an active memory: the user explicitly removed a
+    similar fact at some point. The dedup gate treats `high-removed`
+    differently from `high` — it warns the writer about a previously-
+    rejected fact rather than just routing them to memory_update on an
+    active id. `removed_at` and `removed_reason` are populated only for
+    tombstone matches; they are `None` on hits against active memories.
     """
 
     id: str
@@ -197,6 +277,8 @@ class SimilarHit(BaseModel):
     relevance: str
     created: datetime
     updated: datetime
+    removed_at: datetime | None = None
+    removed_reason: str | None = None
 
 
 # ---------------------------------------------------------------------------
@@ -352,6 +434,8 @@ __all__ = [
     "MemoryHit",
     "MemorySummary",
     "SimilarHit",
+    "TombstonedMemory",
+    "TombstonedSummary",
     "generate_ulid",
     "is_valid_ulid",
     "validate_scope",

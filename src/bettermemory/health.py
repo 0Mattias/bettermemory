@@ -130,6 +130,37 @@ class MarkerStats:
 
 
 @dataclass
+class ScopeHealth:
+    """Per-scope curation pivot.
+
+    A flat dead_weight/heavily_used/contradicted view doesn't tell you
+    whether the rot is concentrated in one scope. With per-scope counts
+    you can drive a focused curation pass — "projects:foo has 4
+    dead-weight memories out of 6 total, time to revisit" — without
+    re-pivoting the flat lists by hand.
+
+    Counts are over the same windowed event log as the flat view, so
+    the numbers reconcile: sum of `active` across scopes >= total active
+    (a memory tagged with N scopes is counted in each, by design).
+    """
+
+    scope: str
+    active: int = 0
+    dead: int = 0
+    contradicted: int = 0
+    applied_total: int = 0
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "scope": self.scope,
+            "active": self.active,
+            "dead": self.dead,
+            "contradicted": self.contradicted,
+            "applied_total": self.applied_total,
+        }
+
+
+@dataclass
 class HealthReport:
     """The full aggregate view returned by `memory_health`."""
 
@@ -144,6 +175,19 @@ class HealthReport:
     contradicted: list[MemoryStats] = field(default_factory=list)
     marker_stats: list[MarkerStats] = field(default_factory=list)
     scope_distribution: dict[str, int] = field(default_factory=dict)
+    # Per-scope curation pivot — "where is the rot concentrated?" Cheaper
+    # than asking the model to fold scope_distribution and dead_weight
+    # together every time.
+    scope_health: list[ScopeHealth] = field(default_factory=list)
+    # Singleton scopes — likely typos worth reviewing. A scope on exactly
+    # one memory is suspicious in a curated store; either the user meant
+    # to use a more common scope, or this is a legitimate one-off that
+    # should be promoted (or merged) deliberately.
+    rare_scopes: list[str] = field(default_factory=list)
+    # Use-events whose memory_id resolved to nothing (neither active nor
+    # tombstoned). High counts hint at the model fabricating ULIDs in
+    # `memory_record_use` — a quality signal worth surfacing.
+    orphan_use_events: int = 0
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -157,6 +201,9 @@ class HealthReport:
             "contradicted": [s.to_dict() for s in self.contradicted],
             "marker_stats": [m.to_dict() for m in self.marker_stats],
             "scope_distribution": dict(self.scope_distribution),
+            "scope_health": [s.to_dict() for s in self.scope_health],
+            "rare_scopes": list(self.rare_scopes),
+            "orphan_use_events": self.orphan_use_events,
         }
 
 
@@ -217,6 +264,7 @@ def compute_health(
 
     sessions: set[str] = set()
     total_events = 0
+    orphan_use_events = 0
 
     for ev in events:
         total_events += 1
@@ -242,9 +290,13 @@ def compute_health(
                 stats = by_id.get(mid)
                 if stats is None:
                     # Memory may have been tombstoned after the use was
-                    # recorded — skip silently. The event is still in the
-                    # log for the curious; we just can't attach it to an
-                    # active record.
+                    # recorded, or — more concerningly — the writer may
+                    # have fabricated the ULID. We can't tell from the
+                    # event alone (a tombstoned memory's id is a valid
+                    # ULID just like any other), so we count both cases
+                    # in `orphan_use_events`. A growing count is the
+                    # "model is hallucinating ids" smoke test.
+                    orphan_use_events += 1
                     continue
                 if outcome == "applied":
                     stats.applied_count += 1
@@ -296,6 +348,35 @@ def compute_health(
     contradicted = [s for s in by_id.values() if s.has_unresolved_contradiction]
     contradicted.sort(key=lambda s: s.last_contradicted_at or s.updated, reverse=True)
 
+    # Per-scope rollup. A memory tagged with N scopes is counted once per
+    # scope — `sum(scope.active for scope in scope_health)` will exceed
+    # `total_active_memories` when scopes overlap, which is the right shape
+    # for "where is the rot concentrated?". We sort by total count
+    # descending so the heaviest-trafficked scopes lead.
+    scope_health_map: dict[str, ScopeHealth] = {}
+    dead_ids = {s.id for s in dead_weight}
+    contradicted_ids = {s.id for s in contradicted}
+    for stats in by_id.values():
+        for scope in stats.scopes:
+            entry = scope_health_map.setdefault(scope, ScopeHealth(scope=scope))
+            entry.active += 1
+            entry.applied_total += stats.applied_count
+            if stats.id in dead_ids:
+                entry.dead += 1
+            if stats.id in contradicted_ids:
+                entry.contradicted += 1
+    scope_health = sorted(
+        scope_health_map.values(),
+        key=lambda s: (-s.active, s.scope),
+    )
+
+    # Rare scopes — singletons. Most often these are typos ("projct:foo"
+    # for "projects:foo") that escaped review; occasionally legitimate
+    # one-offs. Either way a curation pass should look at them.
+    rare_scopes = sorted(
+        [scope for scope, count in scope_distribution.items() if count == 1]
+    )
+
     return HealthReport(
         generated_at=now,
         window_days=window_days,
@@ -307,6 +388,9 @@ def compute_health(
         contradicted=contradicted,
         marker_stats=marker_stats,
         scope_distribution=dict(scope_distribution),
+        scope_health=scope_health,
+        rare_scopes=rare_scopes,
+        orphan_use_events=orphan_use_events,
     )
 
 
@@ -368,6 +452,32 @@ def render_text(report: HealthReport) -> str:
         lines.append(
             f"  {m.marker:<24} fires={m.fire_count}  "
             f"overrides={m.override_count}  rate={rate_pct}%"
+        )
+
+    lines.append("")
+    lines.append(f"Scope health ({len(report.scope_health)}):")
+    if not report.scope_health:
+        lines.append("  (none)")
+    for sh in report.scope_health:
+        lines.append(
+            f"  {sh.scope:<28} active={sh.active:<3} dead={sh.dead:<3} "
+            f"contradicted={sh.contradicted:<3} applied={sh.applied_total}"
+        )
+
+    lines.append("")
+    lines.append(f"Rare scopes ({len(report.rare_scopes)}) — n=1, likely typos:")
+    if not report.rare_scopes:
+        lines.append("  (none)")
+    for scope in report.rare_scopes:
+        lines.append(f"  {scope}")
+
+    if report.orphan_use_events:
+        lines.append("")
+        lines.append(
+            f"Orphan use events: {report.orphan_use_events} — "
+            "memory_record_use events whose ids resolved to neither active "
+            "nor tombstoned memories. A growing count is the smoke test for "
+            "fabricated ULIDs."
         )
 
     return "\n".join(lines) + "\n"

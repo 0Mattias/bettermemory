@@ -77,6 +77,14 @@ semantic_medium_threshold = 0.65
 # once the event log has weeks of data.
 heavily_used_min_applied = 3
 
+# Default retention for `bettermemory tombstones prune` (days). Tombstones
+# are never auto-pruned; this is just the default for the CLI subcommand,
+# which still requires an explicit invocation. 0 means "no default" — the
+# CLI requires --older-than to be passed. Set this to e.g. 365 if you want
+# `bettermemory tombstones prune` with no flag to default to one-year
+# retention. Active memories are unaffected.
+tombstone_retention_days = 0
+
 [scopes]
 # If non-empty, writes with scopes outside this list fail. Empty = anything.
 allowed = []
@@ -117,6 +125,11 @@ class BehaviorConfig:
     # of seeing fewer rows when the event log is young; lowering it makes
     # the bucket more inclusive for fresh stores. Tune to taste.
     heavily_used_min_applied: int = 3
+    # Default --older-than (days) for `bettermemory tombstones prune`.
+    # 0 means "no default" — the CLI requires the flag explicitly.
+    # Tombstones are never auto-pruned at runtime; this only affects
+    # the human-driven CLI subcommand.
+    tombstone_retention_days: int = 0
 
 
 @dataclass
@@ -210,6 +223,9 @@ def load_config(path: Path | None = None) -> Config:
             ),
             heavily_used_min_applied=int(
                 behavior_raw.get("heavily_used_min_applied", 3)
+            ),
+            tombstone_retention_days=int(
+                behavior_raw.get("tombstone_retention_days", 0)
             ),
         ),
         scopes=ScopesConfig(

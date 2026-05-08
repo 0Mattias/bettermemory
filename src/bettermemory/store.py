@@ -12,7 +12,7 @@ import errno
 import os
 import sys
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Iterator
 
@@ -39,6 +39,8 @@ from .models import (
     Memory,
     MemorySummary,
     Source,
+    TombstonedMemory,
+    TombstonedSummary,
     build_filename,
     first_summary_line,
     generate_ulid,
@@ -60,6 +62,10 @@ class MemoryNotFoundError(KeyError):
 
 class TombstonedError(KeyError):
     """ID exists but the memory is tombstoned."""
+
+
+class NotTombstonedError(KeyError):
+    """`restore` was called on an active memory, not a tombstone."""
 
 
 # ---------------------------------------------------------------------------
@@ -143,14 +149,29 @@ class Store:
     # ---- read -------------------------------------------------------------
 
     def load_all(self) -> list[Memory]:
-        """All active (non-tombstoned) memories. Sort by `created` desc."""
+        """All active (non-tombstoned) memories. Sort by `created` desc.
+
+        Defensive against three failure modes:
+        - **Malformed file** (ValueError, KeyError): skip and continue.
+          Better to operate on the rest of the store than refuse to
+          start because of one bad memory.
+        - **Concurrent tombstone race** (FileNotFoundError): skip and
+          continue. `_iter_active_paths` lists the dir, then `_load_path`
+          opens each file; another writer can move a file to
+          `.tombstones/` in between. The right answer is to act as if
+          we'd listed the dir one moment later, not to crash whatever
+          callable triggered the load (memory_search, memory_list,
+          memory_health all call this).
+        - **Other I/O errors** (PermissionError, etc.): skip too. A
+          single inaccessible file shouldn't blind the rest of the
+          store; the OS-level cause is logged via the file's absence
+          from the result, and a fresh load picks up changes.
+        """
         memories: list[Memory] = []
         for path in self._iter_active_paths():
             try:
                 memories.append(self._load_path(path))
-            except (ValueError, KeyError):
-                # Skip malformed files rather than refusing to start.
-                # The model can still operate on the rest.
+            except (ValueError, KeyError, OSError):
                 continue
         memories.sort(key=lambda m: m.created, reverse=True)
         return memories
@@ -306,8 +327,27 @@ class Store:
             self._write_path(existing_path, new_memory)
         return new_memory
 
-    def tombstone(self, memory_id: str, reason: str) -> Path:
-        """Move a memory to `.tombstones/`, adding removal frontmatter."""
+    def tombstone(
+        self,
+        memory_id: str,
+        reason: str,
+        *,
+        session_id: str | None = None,
+    ) -> Path:
+        """Move a memory to `.tombstones/`, adding removal frontmatter.
+
+        `session_id` is captured into the tombstone frontmatter so the
+        removal can be joined to the session that produced it without
+        consulting the event log. The event log is still the canonical
+        audit trail, but log archives can be pruned independently of
+        the tombstone files; recording the session id on the file
+        itself keeps the link durable across log rotation.
+
+        Tombstones written before this field shipped have no
+        `removed_session` and load with `None` in that slot — the
+        join is unavailable for legacy entries but the rest of the
+        record is intact.
+        """
         path = self._find_path_for_id(memory_id)
         if path is None:
             # Maybe it's already tombstoned — bubble up a clearer error.
@@ -320,6 +360,11 @@ class Store:
         post = frontmatter.load(path)
         post.metadata["removed"] = utcnow()
         post.metadata["removed_reason"] = reason
+        # Only emit the field when a session_id was passed — keeps legacy
+        # tests and ad-hoc callers from getting an opaque `None` lying in
+        # frontmatter. The reader treats missing-or-None identically.
+        if session_id is not None:
+            post.metadata["removed_session"] = session_id
 
         target = self.tombstone_dir / f"{path.stem}.tombstone.md"
         # If a same-named tombstone already exists, append the ULID for
@@ -335,6 +380,335 @@ class Store:
                 if exc.errno != errno.ENOENT:
                     raise
         return target
+
+    # ---- tombstone read paths --------------------------------------------
+
+    def load_tombstones(self) -> list[TombstonedMemory]:
+        """All tombstoned memories, sorted by `removed` descending.
+
+        Skips malformed files defensively, the same way `load_all` does
+        for active memories — one corrupt removal record shouldn't blind
+        the curation tooling to all the others. Tombstones without a
+        `removed` timestamp (extremely unusual, but possible from a
+        hand-edited file) are skipped: every legitimate tombstone
+        produced by `Store.tombstone` carries the field.
+        """
+        out: list[TombstonedMemory] = []
+        for path in self._iter_tombstone_paths():
+            try:
+                tombstone = self._load_tombstone_path(path)
+            except (ValueError, KeyError, OSError):
+                # Same race rationale as load_all: a concurrent
+                # `prune_tombstones` could delete a file between
+                # listdir and read.
+                continue
+            out.append(tombstone)
+        out.sort(key=lambda t: t.removed, reverse=True)
+        return out
+
+    def list_tombstones(
+        self, scopes: list[str] | None = None
+    ) -> list[TombstonedSummary]:
+        """Body-stripped tombstones for triage. Scope filter is
+        intersection like `list_summaries`."""
+        out: list[TombstonedSummary] = []
+        for tombstone in self.load_tombstones():
+            if scopes and not _scope_intersect(tombstone.scopes, scopes):
+                continue
+            out.append(
+                TombstonedSummary(
+                    id=tombstone.id,
+                    scopes=tombstone.scopes,
+                    confidence=tombstone.confidence,
+                    summary=first_summary_line(tombstone.body),
+                    created=tombstone.created,
+                    updated=tombstone.updated,
+                    last_verified_at=tombstone.last_verified_at,
+                    removed=tombstone.removed,
+                    removed_reason=tombstone.removed_reason,
+                    removed_session=tombstone.removed_session,
+                )
+            )
+        return out
+
+    def load_tombstone(self, memory_id: str) -> TombstonedMemory:
+        """Load one tombstone by ID. Raises if missing."""
+        if not is_valid_ulid(memory_id):
+            raise MemoryNotFoundError(f"invalid id: {memory_id!r}")
+
+        for path in self._iter_tombstone_paths():
+            try:
+                tombstone = self._load_tombstone_path(path)
+            except (ValueError, KeyError):
+                continue
+            if tombstone.id == memory_id:
+                return tombstone
+
+        raise MemoryNotFoundError(f"no tombstone with id {memory_id}")
+
+    def _find_tombstone_path_for_id(self, memory_id: str) -> Path | None:
+        if not is_valid_ulid(memory_id):
+            return None
+        for path in self._iter_tombstone_paths():
+            try:
+                post = frontmatter.load(path)
+            except Exception:
+                continue
+            if post.metadata.get("id") == memory_id:
+                return path
+        return None
+
+    def _load_tombstone_path(self, path: Path) -> TombstonedMemory:
+        post = frontmatter.load(path)
+        meta = post.metadata
+        try:
+            origin_raw = meta.get("origin")
+            origin = (
+                Origin.model_validate(origin_raw)
+                if isinstance(origin_raw, dict)
+                else None
+            )
+            verified_raw = meta.get("last_verified_at")
+            last_verified_at: datetime | None
+            if verified_raw is None:
+                last_verified_at = None
+            else:
+                try:
+                    last_verified_at = _as_dt(verified_raw)
+                except ValueError:
+                    last_verified_at = None
+            removed_session = meta.get("removed_session")
+            return TombstonedMemory(
+                id=str(meta["id"]),
+                created=_as_dt(meta["created"]),
+                updated=_as_dt(meta["updated"]),
+                scopes=list(meta["scopes"]),
+                confidence=Confidence(meta["confidence"]),
+                source=Source(meta["source"]),
+                body=post.content.strip() + "\n",
+                origin=origin,
+                last_verified_at=last_verified_at,
+                removed=_as_dt(meta["removed"]),
+                removed_reason=str(meta["removed_reason"]),
+                removed_session=(
+                    str(removed_session) if removed_session is not None else None
+                ),
+            )
+        except KeyError as exc:
+            raise ValueError(f"{path}: missing field {exc.args[0]}") from exc
+
+    # ---- restore ---------------------------------------------------------
+
+    def restore(self, memory_id: str) -> Memory:
+        """Move a tombstone back to the active set, stripping removal
+        frontmatter. The body and timestamps are preserved as-is — the
+        body didn't change while it was tombstoned, and bumping
+        `updated` on restore would let a freshly-restored ten-year-old
+        memory rank like a new write in the recency boost.
+
+        The event log is the audit trail for restore actions; we do
+        not stamp a `restored_at` field on the file itself, which
+        would accumulate over repeat tombstone/restore cycles.
+
+        Raises:
+            MemoryNotFoundError: no record (active or tombstoned) with
+              that id.
+            NotTombstonedError: id is active. The caller probably meant
+              `memory_update`; restore is only for tombstones.
+        """
+        if not is_valid_ulid(memory_id):
+            raise MemoryNotFoundError(f"invalid id: {memory_id!r}")
+
+        # If the id resolves to an active memory, surface a distinct
+        # error rather than silently returning it. "Restoring" something
+        # that isn't gone is the kind of mistake worth flagging.
+        if self._find_path_for_id(memory_id) is not None:
+            raise NotTombstonedError(
+                f"memory {memory_id} is active; nothing to restore"
+            )
+
+        tombstone_path = self._find_tombstone_path_for_id(memory_id)
+        if tombstone_path is None:
+            raise MemoryNotFoundError(f"no tombstone with id {memory_id}")
+
+        post = frontmatter.load(tombstone_path)
+        post.metadata.pop("removed", None)
+        post.metadata.pop("removed_reason", None)
+        post.metadata.pop("removed_session", None)
+
+        # Reuse the active-side path-builder so a restore lands at the
+        # same shape as a fresh write — date-prefixed slug filename in
+        # the root, no `.tombstone.md` suffix. The slug is regenerated
+        # from the body to handle the (unusual) case where the original
+        # filename collided and got a short-id suffix; the restored
+        # name may differ slightly but that's fine — filenames are
+        # advisory, not part of the identity.
+        try:
+            created = _as_dt(post.metadata["created"])
+        except (KeyError, ValueError) as exc:
+            raise ValueError(
+                f"{tombstone_path}: cannot restore — missing/invalid created"
+            ) from exc
+        slug = make_slug(post.content)
+        active_filename = build_filename(created, slug)
+        active_path = self.root / active_filename
+        if active_path.exists():
+            short = memory_id[-6:].lower()
+            active_path = self.root / build_filename(created, f"{slug}-{short}")
+
+        with _locked(active_path):
+            active_path.write_bytes(frontmatter.dumps(post).encode("utf-8"))
+            try:
+                tombstone_path.unlink()
+            except OSError as exc:
+                if exc.errno != errno.ENOENT:
+                    # Active file already written; orphaning the tombstone
+                    # is recoverable but we still want to surface the IO
+                    # error so the caller doesn't think the move was clean.
+                    raise
+
+        return self._load_path(active_path)
+
+    # ---- scope rename ----------------------------------------------------
+
+    def rename_scope(
+        self,
+        old: str,
+        new: str,
+        *,
+        include_tombstones: bool = True,
+    ) -> dict[str, list[str]]:
+        """Replace `old` with `new` across active memories' scope lists.
+
+        Renaming is the cheap fix for typo'd or deprecated scopes —
+        e.g. `projct:foo` → `projects:foo` after a misspell, or
+        `infra` → `infrastructure` after deciding the long form is the
+        canonical one. The body is unchanged, so `updated` is bumped
+        (the metadata moved) but `last_verified_at` is preserved
+        (the body's claims weren't touched).
+
+        Tombstones are renamed too by default so the curation view
+        (memory_list_tombstones, memory_health) stays consistent —
+        otherwise a renamed scope would re-appear in `rare_scopes`
+        every time a removed memory is the last carrier of the old
+        spelling. Pass `include_tombstones=False` to leave the
+        removal audit log unchanged.
+
+        Returns `{"active": [ids], "tombstoned": [ids]}` — the lists
+        of memory ids whose scope sets actually changed. A memory
+        that already had `new` and didn't have `old` is not touched
+        (and not listed). A memory whose only effect would be
+        de-duplication of the new scope IS counted, since the on-disk
+        list shrank.
+        """
+        if old == new:
+            return {"active": [], "tombstoned": []}
+
+        active_changed: list[str] = []
+        for path in self._iter_active_paths():
+            try:
+                memory = self._load_path(path)
+            except (ValueError, KeyError):
+                continue
+            new_scopes = self._scopes_after_rename(memory.scopes, old, new)
+            if new_scopes is None:
+                continue
+            # Bump `updated` because the metadata moved. `last_verified_at`
+            # is preserved — the body's claims are untouched, so the
+            # verification (if any) still applies.
+            refreshed = memory.model_copy(
+                update={"scopes": new_scopes, "updated": utcnow()}
+            )
+            with _locked(path):
+                self._write_path(path, refreshed)
+            active_changed.append(memory.id)
+
+        tombstoned_changed: list[str] = []
+        if include_tombstones:
+            for tpath in self._iter_tombstone_paths():
+                try:
+                    post = frontmatter.load(tpath)
+                except Exception:
+                    continue
+                raw_scopes = post.metadata.get("scopes")
+                if not isinstance(raw_scopes, list):
+                    continue
+                new_scopes_or_none = self._scopes_after_rename(
+                    [str(s) for s in raw_scopes], old, new
+                )
+                if new_scopes_or_none is None:
+                    continue
+                post.metadata["scopes"] = new_scopes_or_none
+                with _locked(tpath):
+                    tpath.write_bytes(frontmatter.dumps(post).encode("utf-8"))
+                tombstoned_changed.append(str(post.metadata.get("id")))
+
+        return {"active": active_changed, "tombstoned": tombstoned_changed}
+
+    @staticmethod
+    def _scopes_after_rename(scopes: list[str], old: str, new: str) -> list[str] | None:
+        """Return the new scope list if `old` appears, else None.
+
+        Order of remaining scopes is preserved. If `new` is already
+        present, `old` is removed and `new` is not duplicated. If the
+        memory carried `old` only, the result is `[new]`.
+        """
+        if old not in scopes:
+            return None
+        out: list[str] = []
+        seen: set[str] = set()
+        for s in scopes:
+            if s == old:
+                if new not in seen:
+                    out.append(new)
+                    seen.add(new)
+                continue
+            if s in seen:
+                continue
+            out.append(s)
+            seen.add(s)
+        return out
+
+    # ---- prune -----------------------------------------------------------
+
+    def prune_tombstones(
+        self,
+        older_than: timedelta,
+        *,
+        now: datetime | None = None,
+    ) -> list[str]:
+        """Delete tombstones whose `removed` timestamp is older than the
+        cutoff. Returns the list of pruned memory ids in chronological
+        (oldest-first) removal order so the caller can log them.
+
+        This is a hard delete — pruned tombstones are gone from disk
+        with no further audit trail beyond whatever the event log
+        already captured. The retention knob is per-user policy, not
+        per-memory; if you want to keep a specific tombstone forever,
+        either bump the retention window or restore it before pruning.
+        """
+        cutoff = (now or utcnow()) - older_than
+        pruned: list[tuple[datetime, str]] = []
+        for path in self._iter_tombstone_paths():
+            try:
+                tombstone = self._load_tombstone_path(path)
+            except (ValueError, KeyError):
+                # Malformed tombstones are left alone — pruning them
+                # would silently drop possibly-recoverable history.
+                continue
+            if tombstone.removed >= cutoff:
+                continue
+            try:
+                path.unlink()
+            except OSError:
+                # Best-effort: a tombstone we can't delete (perms,
+                # mid-rotation race) will be retried on the next prune
+                # call. Don't kill the loop.
+                continue
+            pruned.append((tombstone.removed, tombstone.id))
+
+        pruned.sort(key=lambda item: item[0])
+        return [memory_id for _, memory_id in pruned]
 
     # ---- internals --------------------------------------------------------
 

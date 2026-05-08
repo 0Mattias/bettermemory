@@ -754,16 +754,62 @@ async def test_dedup_force_override_creates_new_memory(server: Any) -> None:
     assert second["id"] != first["id"]
 
 
-async def test_dedup_ignores_tombstoned_memories(server: Any) -> None:
-    """A removed memory shouldn't keep blocking new writes on the same topic.
-    Store.load_all already excludes tombstones; this test pins that behavior
-    end-to-end through memory_write."""
+async def test_dedup_warns_on_previously_removed_memory(server: Any) -> None:
+    """A removed memory's body still informs dedup. Re-writing the same fact
+    after tombstoning surfaces `status="previously_removed"` with the
+    original removal_reason — the lesson encoded in the removal isn't lost.
+    The writer can either drop the write, restore the tombstone, or pass
+    force=True to override."""
     body = "vendored python-frontmatter to drop the deprecated codecs.open call"
     first = await _call(server, "memory_write", content=body, scopes=["tools"])
-    await _call(server, "memory_remove", id=first["id"], reason="testing dedup")
+    await _call(server, "memory_remove", id=first["id"], reason="turned out wrong")
 
     second = await _call(server, "memory_write", content=body, scopes=["tools"])
+    assert second["status"] == "previously_removed"
+    assert "removed_matches" in second
+    assert len(second["removed_matches"]) >= 1
+    match = second["removed_matches"][0]
+    assert match["id"] == first["id"]
+    assert match["relevance"] == "high-removed"
+    assert match["removed_reason"] == "turned out wrong"
+    assert "removed_at" in match
+
+
+async def test_dedup_force_overrides_previously_removed(server: Any) -> None:
+    """force=True is the explicit "I've read the removal_reason and the new
+    write is meaningfully different" override for the tombstone-aware path,
+    just like for the active-side dedup."""
+    body = "vendored python-frontmatter to drop the deprecated codecs.open call"
+    first = await _call(server, "memory_write", content=body, scopes=["tools"])
+    await _call(server, "memory_remove", id=first["id"], reason="testing")
+
+    second = await _call(
+        server, "memory_write", content=body, scopes=["tools"], force=True
+    )
     assert second["status"] == "committed"
+    assert second["id"] != first["id"]
+
+
+async def test_dedup_active_high_match_wins_over_tombstone(server: Any) -> None:
+    """When an active memory and a tombstone both match, the active path
+    wins — there's a live record to update, which is more actionable than
+    discussing the removed one."""
+    body = "vendored python-frontmatter to drop the deprecated codecs.open call"
+    removed = await _call(server, "memory_write", content=body, scopes=["tools"])
+    await _call(server, "memory_remove", id=removed["id"], reason="testing")
+
+    # Re-create the active form via force=True.
+    active = await _call(
+        server, "memory_write", content=body, scopes=["tools"], force=True
+    )
+
+    # Now a third write of the same body should hit the active dedup.
+    third = await _call(server, "memory_write", content=body, scopes=["tools"])
+    assert third["status"] == "duplicate"
+    matches = third["matches"]
+    assert any(m["id"] == active["id"] for m in matches)
+    # No removed_matches surfaced when active path short-circuited.
+    assert "removed_matches" not in third
 
 
 async def test_dedup_match_carries_metadata(server: Any) -> None:

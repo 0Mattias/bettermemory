@@ -9,6 +9,147 @@ fixes.
 
 ### Added
 
+- **First-class tombstone lifecycle.** Removed memories used to be a
+  black hole on the read side — invisible to dedup, invisible to search,
+  with no path to restore short of hand-editing files. They now have a
+  full lifecycle:
+  - **`memory_list_tombstones(scopes?)`** lists removed records with
+    their full removal metadata (`removed`, `removed_reason`,
+    `removed_session`). Mirrors `memory_list` body-stripping for
+    cheap triage. Sorted most-recent-first.
+  - **`memory_restore(id)`** brings a tombstone back to the active
+    set. Strips the removal frontmatter, preserves `created`,
+    `updated`, and `last_verified_at` — the body didn't change while
+    the record was gone, so the recency boost stays honest. Raises
+    `NotTombstonedError` on active ids and `MemoryNotFoundError` on
+    unknown ones; the asymmetry routes the caller to `memory_update`
+    when they actually meant to edit.
+  - **`bettermemory tombstones list` / `prune` CLI subcommands.**
+    `list` mirrors the MCP tool. `prune --older-than DAYS` is the
+    only path that hard-deletes tombstones; the default cutoff comes
+    from new config knob `behavior.tombstone_retention_days` (0 means
+    "no default — the flag is required"). Active memories are
+    untouched. `--dry-run` previews; the prune is atomic and returns
+    pruned ids in chronological order.
+  - **`removed_session` frontmatter on tombstones.** The originating
+    session id is now stamped into the file itself, so the join from
+    a tombstone back to the session that produced it survives event-
+    log rotation. Additive: legacy tombstones load with
+    `removed_session=None`.
+  - **`Store.restore`, `Store.list_tombstones`, `Store.load_tombstone`,
+    `Store.prune_tombstones`** as the underlying API. The `restore`
+    path handles active-filename collisions (when a new memory has
+    squatted the slug since removal) by falling back to a short-id
+    suffix, the same rule the active write path already uses.
+- **Tombstone-aware dedup.** `memory_write` now scores the new body
+  against the tombstone set in addition to active memories. A high
+  overlap with a removed memory returns `status="previously_removed"`
+  carrying the original `removed_reason` — the lesson encoded in the
+  removal isn't silently re-discarded on re-write. The model can
+  inspect the reason and either drop the write, call
+  `memory_restore(id)` if the fact is now correct, or pass `force=true`
+  if the new memory is meaningfully different. Medium-overlap
+  tombstone matches surface as `removed_related` on a successful
+  write, parallel to the active-side `related`. `SimilarHit` grew
+  optional `removed_at` and `removed_reason` fields populated only
+  for tombstone matches; the `relevance` ladder gained
+  `"high-removed"` and `"medium-removed"` labels.
+- **New `find_similar_tombstones` in `bettermemory.search`.** Mirrors
+  `find_similar` for the tombstone path with both Jaccard and
+  semantic-cosine modes. The semantic cache key uses the tombstone's
+  `removed` timestamp, distinct from the active path's `updated`,
+  so a restore-then-tombstone cycle produces correct cache
+  invalidation.
+- **`memory_rename_scope(old, new, include_tombstones?)`.** The cheap
+  fix for typo'd or deprecated scopes (`projct:foo` -> `projects:foo`,
+  `infra` -> `infrastructure`). Walks active memories — and
+  tombstones, by default — and replaces the old scope with the new
+  one, deduplicating if the new scope was already present. Bumps
+  `updated` (metadata moved); preserves `last_verified_at` (the body
+  didn't change). Validates both scopes against the standard scope
+  format; rejects renames into a non-allowed scope when
+  `[scopes] allowed` is non-empty. Returns
+  `{active: [ids], tombstoned: [ids]}` for records actually modified.
+- **`memory_health` observability extensions:**
+  - **`scope_health`**, a per-scope rollup with active/dead/contradicted
+    counts and an applied-events sum. Sorted by `active` descending so
+    the heaviest-trafficked scopes lead. Sum of `active` across scopes
+    can exceed `total_active_memories` because a memory tagged with N
+    scopes is counted in each — that's the right shape for "where is
+    the rot concentrated?"
+  - **`rare_scopes`**, the singleton-scope bucket. Most often these
+    are typos worth fixing via `memory_rename_scope`; occasionally
+    they're legitimate one-offs to promote deliberately.
+  - **`orphan_use_events`**, a counter of `memory_record_use` events
+    whose memory_ids resolved to neither active nor tombstoned
+    records. Growing counts are the smoke test for fabricated ULIDs
+    on the model side.
+- **Path-drift counts on every search hit.** `MemoryHit` carries
+  `path_drift_checked` and `path_drift_missing` integers regardless
+  of `expand_top`. The model can self-triage without a memory_show
+  round-trip — high `path_drift_missing` is the cue to expand.
+  `expand_top=True` continues to surface the full `PathDriftReport`
+  on the top hit. Cost: one regex pass + up to 8 stat() calls per
+  matched memory; the bodies are already in memory at search time.
+- **Persistent embedding cache.** Behind
+  `configure_persistent_cache(root, model_name)`, the in-process
+  semantic-dedup cache flushes to
+  `<root>/.embeddings.<safe_model>.npz` at the end of each
+  `find_similar` call and rehydrates lazily on first use. A fresh
+  MCP server doesn't have to re-embed the whole store. Wired up
+  automatically when `[behavior] semantic_dedup = true`. Atomic
+  `.tmp` + rename for crash safety; corrupt files log a WARNING
+  and fall back to in-memory only. Model name is namespaced into
+  the filename so swapping models produces a new file rather than
+  mixing incompatible vectors. Numpy-only — degrades gracefully
+  when the embeddings extra isn't installed.
+- **`load_all` and `load_tombstones` are race-safe.** Both now catch
+  `OSError` (notably `FileNotFoundError`) in addition to
+  `ValueError`/`KeyError`, so a concurrent tombstone or prune that
+  moves a file out from under the iteration yields the surviving
+  records rather than crashing the call. Closes the gap where
+  `memory_list(with_bodies=True)` could blow up mid-iteration.
+- New `bettermemory.models.TombstonedMemory` and `TombstonedSummary`
+  Pydantic models. Distinct types from `Memory` / `MemorySummary`
+  so the type checker catches accidental mixing of active and
+  removed records in callers walking both.
+- New `bettermemory.store.NotTombstonedError` for the
+  active-id-on-restore path.
+
+### Changed
+
+- **`memory_remove` stamps `removed_session` on tombstones.** The
+  active session id is captured at removal time via the new
+  `Store.tombstone(..., session_id=...)` keyword argument. Existing
+  callers that don't pass `session_id` still work; the field is
+  omitted from frontmatter when absent.
+- **Auto-scope filter documented as a UX filter, not access control.**
+  `memory_show(id)` doesn't auto-scope, by design — the threat model
+  is "don't surface irrelevant memories by accident", not "prevent
+  cross-project information flow". For real isolation, use
+  project-scoped stores via `./.claude-memory/` or `BETTERMEMORY_DIR`.
+  Clarified in `origin.py` module docstring and the README.
+- **`memory_write` dedup short-circuit order:** active high-overlap
+  match wins over tombstone high-overlap match, since there's a live
+  record to update. Medium matches from both passes surface as
+  `related` and `removed_related` respectively. `force=true`
+  bypasses both gates as before.
+- **`memory_search` description updated** to advertise
+  `path_drift_checked` / `path_drift_missing` on every hit.
+- **`memory_health` description updated** to advertise `scope_health`,
+  `rare_scopes`, and `orphan_use_events`.
+- **`SYSTEM_PROMPT_ADDENDUM` updated** with the new tools, the
+  tombstone-aware dedup contract, and scope-hygiene guidance.
+
+### Behavior changes worth flagging
+
+- A `memory_write` whose body re-creates a previously-removed memory
+  no longer commits silently. It returns `status="previously_removed"`.
+  This is intentional and is the whole point of tombstone-aware
+  dedup. The `force=true` override is the same one used for active
+  duplicates. Tests that asserted the old "tombstones are ignored"
+  invariant have been rewritten.
+
 - **`memory_verify` tool + `last_verified_at` field.** The orthogonal
   axis to content edits: `memory_verify(id, note=...)` bumps
   `last_verified_at` to now after the caller has spot-checked the body's

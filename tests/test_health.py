@@ -339,6 +339,132 @@ def test_render_text_does_not_raise_on_empty() -> None:
     text = render_text(report)
     assert "Memory health" in text
     assert "Active memories: 0" in text
+    # New sections render even when empty.
+    assert "Scope health" in text
+    assert "Rare scopes" in text
+
+
+# ---------------------------------------------------------------------------
+# Scope health pivot, rare scopes, orphan use events
+# ---------------------------------------------------------------------------
+
+
+def test_scope_health_counts_active_per_scope() -> None:
+    a = _memory(scopes=["tools"])
+    b = _memory(scopes=["tools", "infrastructure"])
+    c = _memory(scopes=["infrastructure"])
+    report = compute_health([a, b, c], [], now=_utc(2026, 5, 1))
+    by_scope = {sh.scope: sh for sh in report.scope_health}
+    assert by_scope["tools"].active == 2
+    assert by_scope["infrastructure"].active == 2
+
+
+def test_scope_health_counts_dead_per_scope() -> None:
+    """A memory created beyond `window_days` ago with no `applied` events
+    is dead in every scope it carries."""
+    old_a = _memory(scopes=["tools"], created=_utc(2026, 1, 1))
+    old_b = _memory(scopes=["tools"], created=_utc(2026, 1, 1))
+    fresh = _memory(scopes=["tools"], created=_utc(2026, 4, 30))
+    report = compute_health(
+        [old_a, old_b, fresh], [], window_days=30, now=_utc(2026, 5, 1)
+    )
+    by_scope = {sh.scope: sh for sh in report.scope_health}
+    assert by_scope["tools"].active == 3
+    assert by_scope["tools"].dead == 2
+
+
+def test_scope_health_counts_contradictions_per_scope() -> None:
+    a = _memory(scopes=["projects:foo"], updated=_utc(2026, 1, 1))
+    events = [
+        _event(
+            "use",
+            ts=_utc(2026, 2, 1),
+            ids=[a.id],
+            outcome="contradicted",
+        ),
+    ]
+    report = compute_health([a], events, now=_utc(2026, 5, 1))
+    by_scope = {sh.scope: sh for sh in report.scope_health}
+    assert by_scope["projects:foo"].contradicted == 1
+
+
+def test_scope_health_sums_applied_per_scope() -> None:
+    a = _memory(scopes=["tools"])
+    b = _memory(scopes=["tools"])
+    events = [
+        _event("use", ids=[a.id], outcome="applied"),
+        _event("use", ids=[a.id], outcome="applied"),
+        _event("use", ids=[b.id], outcome="applied"),
+    ]
+    report = compute_health([a, b], events, now=_utc(2026, 5, 1))
+    by_scope = {sh.scope: sh for sh in report.scope_health}
+    assert by_scope["tools"].applied_total == 3
+
+
+def test_scope_health_sorted_by_active_desc() -> None:
+    """Heavier-trafficked scopes lead — easier visual scan during curation."""
+    big_a = _memory(scopes=["tools"])
+    big_b = _memory(scopes=["tools"])
+    big_c = _memory(scopes=["tools"])
+    small = _memory(scopes=["career"])
+    report = compute_health([big_a, big_b, big_c, small], [], now=_utc(2026, 5, 1))
+    scopes_in_order = [sh.scope for sh in report.scope_health]
+    assert scopes_in_order[0] == "tools"
+
+
+def test_rare_scopes_surfaces_singletons() -> None:
+    a = _memory(scopes=["tools"])
+    b = _memory(scopes=["tools"])
+    c = _memory(scopes=["projct"])  # typo — singleton
+    report = compute_health([a, b, c], [], now=_utc(2026, 5, 1))
+    assert report.rare_scopes == ["projct"]
+
+
+def test_rare_scopes_excludes_repeated() -> None:
+    a = _memory(scopes=["tools"])
+    b = _memory(scopes=["tools"])
+    report = compute_health([a, b], [], now=_utc(2026, 5, 1))
+    assert report.rare_scopes == []
+
+
+def test_orphan_use_events_count_unknown_ids() -> None:
+    """A memory_record_use referencing a fabricated/unknown ULID gets
+    counted in `orphan_use_events`. The count is the smoke test for
+    model-side hallucination."""
+    a = _memory()
+    events = [
+        _event("use", ids=[a.id], outcome="applied"),  # known
+        _event("use", ids=[generate_ulid()], outcome="applied"),  # orphan
+        _event(
+            "use", ids=[generate_ulid(), generate_ulid()], outcome="ignored"
+        ),  # 2 orphans
+    ]
+    report = compute_health([a], events, now=_utc(2026, 5, 1))
+    assert report.orphan_use_events == 3
+
+
+def test_orphan_use_events_zero_when_all_ids_known() -> None:
+    a = _memory()
+    events = [_event("use", ids=[a.id], outcome="applied")]
+    report = compute_health([a], events, now=_utc(2026, 5, 1))
+    assert report.orphan_use_events == 0
+
+
+def test_render_text_includes_orphan_section_when_nonzero() -> None:
+    a = _memory()
+    events = [_event("use", ids=[generate_ulid()], outcome="applied")]
+    report = compute_health([a], events, now=_utc(2026, 5, 1))
+    text = render_text(report)
+    assert "Orphan use events: 1" in text
+
+
+def test_render_text_omits_orphan_section_when_zero() -> None:
+    """When the count is zero we don't print the section — keeps the
+    happy-path report shorter and the smoke-test signal more salient
+    when it does appear."""
+    report = compute_health([], [], now=_utc(2026, 5, 1))
+    text = render_text(report)
+    assert "Orphan use events" not in text
 
 
 def test_render_json_round_trips() -> None:

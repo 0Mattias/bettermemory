@@ -1,12 +1,20 @@
 """MCP server entry point and tool registration.
 
-Six tools are exposed: memory_search, memory_show, memory_write, memory_list,
-memory_remove, memory_scope_disable (plus a companion memory_scope_enable).
+The full tool surface (mirrored in `prompts.SYSTEM_PROMPT_ADDENDUM` so
+the consuming model sees an identical list):
 
-Each handler is thin: validate the input via the Pydantic models, call into
-`store` / `search`, emit one event to the `Recorder`, return a
-JSON-serializable result. The recorder is best-effort — telemetry failures
-are logged but never propagate up into a tool call.
+- Retrieval: memory_search, memory_show, memory_list, memory_scope_overview
+- Writing:   memory_write (+ _confirm / _cancel staged-write pair),
+             memory_update
+- Lifecycle: memory_remove, memory_restore, memory_list_tombstones
+- Verification: memory_verify
+- Curation:  memory_record_use, memory_health, memory_rename_scope
+- Session:   memory_scope_disable / memory_scope_enable
+
+Each handler is thin: validate the input via the Pydantic models, call
+into `store` / `search`, emit one event to the `Recorder`, return a
+JSON-serializable result. The recorder is best-effort — telemetry
+failures are logged but never propagate up into a tool call.
 """
 
 from __future__ import annotations
@@ -29,14 +37,16 @@ from .models import (
     MemorySummary,
     SimilarHit,
     Source,
+    TombstonedSummary,
     is_valid_ulid,
     validate_scope,
 )
 from .prompts import SYSTEM_PROMPT_ADDENDUM
-from .search import find_similar, search as run_search
+from .search import find_similar, find_similar_tombstones, search as run_search
 from .session import SessionState, get_state
 from .store import (
     MemoryNotFoundError,
+    NotTombstonedError,
     Store,
     TombstonedError,
 )
@@ -92,6 +102,12 @@ def build_server(
             max_bytes=config.telemetry.max_bytes,
         )
 
+    # Wire the persistent embedding cache to this store's directory. The
+    # configure call doesn't load anything from disk yet; hydration is
+    # lazy on the first cached_embed call so non-semantic-dedup sessions
+    # never touch the file.
+    _configure_persistent_embeddings(config, store)
+
     mcp = FastMCP(
         "bettermemory",
         instructions=(
@@ -119,6 +135,20 @@ def _semantic_model_or_none(config: Config) -> Any:
     return get_model(config.behavior.semantic_model_name)
 
 
+def _configure_persistent_embeddings(config: Config, store: Store) -> None:
+    """Hook the persistent embedding cache to the active store dir when
+    semantic dedup is enabled. The cache file lives next to the events
+    log and the memory bodies so it shares the same trust boundary —
+    nothing new in the permissions story. No-op when semantic dedup is
+    off; when off, the in-memory cache is unused too, so persistence
+    would be a write-only cycle."""
+    if not config.behavior.semantic_dedup:
+        return
+    from .semantic import configure_persistent_cache
+
+    configure_persistent_cache(store.root, config.behavior.semantic_model_name)
+
+
 def _register_tools(
     mcp: FastMCP,
     *,
@@ -140,10 +170,17 @@ def _register_tools(
             "`match_terms` (which query words actually hit). Branch on "
             '`relevance`, not the raw `score` — and treat "low" hits as '
             "probable noise unless you have a reason to use them. "
+            "Each hit also carries `path_drift_checked` and "
+            "`path_drift_missing` integer counts so you can self-triage "
+            "stale hits without a memory_show round-trip — a hit with "
+            "`path_drift_missing > 0` cites filesystem paths that no "
+            "longer exist on disk, which is your cue to expand and "
+            "consider memory_update or memory_verify. "
             "Pass `expand_top=True` to inline the full body of the top hit "
             'when its relevance is "high" — collapses the common '
-            "search-then-show round trip into one call. Skip it when you "
-            "only need to triage. "
+            "search-then-show round trip into one call, and surfaces the "
+            "full `path_drift` report (with the actual missing paths) on "
+            "the expanded hit. Skip it when you only need to triage. "
             "By default (`auto_scope=True`), results are filtered to "
             "memories written from the current repository — cross-project "
             "memories are excluded. Memories written outside any repo "
@@ -361,22 +398,36 @@ def _register_tools(
         # isn't a high-overlap duplicate of an existing memory. `force=True`
         # is the override path: the caller has already looked at the matches
         # and decided this entry is meaningfully different.
+        #
+        # Two passes: active memories (returns "high"/"medium" relevance) and
+        # tombstoned memories (returns "high-removed"/"medium-removed"). An
+        # active high match is the strongest signal — there's a live record
+        # to update — and short-circuits with status="duplicate". A
+        # tombstone high match (without an active high) becomes
+        # status="previously_removed", carrying the original removal_reason
+        # so the writer can decide whether the rejection still applies.
+        # Medium hits from either pass are surfaced as `related` /
+        # `removed_related` and don't block.
         related: list[SimilarHit] = []
+        removed_related: list[SimilarHit] = []
         if not force:
+            semantic_model = _semantic_model_or_none(config)
+            high_threshold = (
+                config.behavior.semantic_high_threshold
+                if config.behavior.semantic_dedup
+                else None
+            )
+            medium_threshold = (
+                config.behavior.semantic_medium_threshold
+                if config.behavior.semantic_dedup
+                else None
+            )
             similar = find_similar(
                 payload["content"],
                 store.load_all(),
-                semantic_model=_semantic_model_or_none(config),
-                high_threshold=(
-                    config.behavior.semantic_high_threshold
-                    if config.behavior.semantic_dedup
-                    else None
-                ),
-                medium_threshold=(
-                    config.behavior.semantic_medium_threshold
-                    if config.behavior.semantic_dedup
-                    else None
-                ),
+                semantic_model=semantic_model,
+                high_threshold=high_threshold,
+                medium_threshold=medium_threshold,
             )
             high = [h for h in similar if h.relevance == "high"]
             if high:
@@ -398,6 +449,45 @@ def _register_tools(
                     ),
                 }
             related = [h for h in similar if h.relevance == "medium"]
+
+            # Tombstone-aware dedup. Only runs when no active high-overlap
+            # match was found — otherwise the active path is the better
+            # answer (update the live entry rather than discussing the
+            # removed one).
+            tombstone_similar = find_similar_tombstones(
+                payload["content"],
+                store.load_tombstones(),
+                semantic_model=semantic_model,
+                high_threshold=high_threshold,
+                medium_threshold=medium_threshold,
+            )
+            high_removed = [
+                h for h in tombstone_similar if h.relevance == "high-removed"
+            ]
+            if high_removed:
+                recorder.record(
+                    "write",
+                    status="previously_removed",
+                    scopes=payload["scopes"],
+                    forced=False,
+                    removed_matches=[h.id for h in high_removed],
+                )
+                return {
+                    "status": "previously_removed",
+                    "removed_matches": [_similar_to_dict(h) for h in high_removed],
+                    "hint": (
+                        "A previously-removed memory has high content overlap "
+                        "with this write. Inspect each `removed_reason` — if "
+                        "the rejection still applies, drop the write; if the "
+                        "fact is now correct, call memory_restore(id) on the "
+                        "tombstone instead of writing a parallel entry. Pass "
+                        "force=True to bypass when the new memory is "
+                        "meaningfully different from the removed one."
+                    ),
+                }
+            removed_related = [
+                h for h in tombstone_similar if h.relevance == "medium-removed"
+            ]
 
         # Capture which markers (if any) were overridden by
         # acknowledge_transient — feeds the override-rate signal in the
@@ -427,6 +517,10 @@ def _register_tools(
             }
             if related:
                 response["related"] = [_similar_to_dict(h) for h in related]
+            if removed_related:
+                response["removed_related"] = [
+                    _similar_to_dict(h) for h in removed_related
+                ]
             recorder.record(
                 "write",
                 status="pending",
@@ -434,6 +528,7 @@ def _register_tools(
                 scopes=payload["scopes"],
                 forced=force,
                 related=[h.id for h in related],
+                removed_related=[h.id for h in removed_related],
                 markers_acknowledged=acknowledged,
             )
             return response
@@ -448,9 +543,10 @@ def _register_tools(
             source=memory.source.value,
             forced=force,
             related=[h.id for h in related],
+            removed_related=[h.id for h in removed_related],
             markers_acknowledged=acknowledged,
         )
-        return _committed(memory, related=related)
+        return _committed(memory, related=related, removed_related=removed_related)
 
     @mcp.tool(
         name="memory_write_confirm",
@@ -645,15 +741,20 @@ def _register_tools(
         name="memory_remove",
         description=(
             "Tombstone a memory. The file is moved to .tombstones/ with a "
-            "removal reason — never hard-deleted. Use when a stored fact "
-            "is wrong or no longer relevant."
+            "removal reason and the originating session id — never hard-"
+            "deleted. Use when a stored fact is wrong or no longer relevant. "
+            "Tombstones remain searchable via memory_list_tombstones and "
+            "are surfaced as `removed_matches` on memory_write when a new "
+            "body looks similar to a previously-removed fact, so the "
+            "lesson encoded in the removal reason isn't lost. Use "
+            "memory_restore(id) to undo an accidental removal."
         ),
     )
     async def memory_remove(id: str, reason: str) -> dict[str, Any]:
         if not reason or not reason.strip():
             raise ValueError("reason must be a non-empty string")
         try:
-            tombstone_path = store.tombstone(id, reason)
+            tombstone_path = store.tombstone(id, reason, session_id=state.session_id)
         except TombstonedError as exc:
             raise ValueError(str(exc)) from exc
         except MemoryNotFoundError as exc:
@@ -663,6 +764,74 @@ def _register_tools(
             "removed": id,
             "tombstone_path": str(tombstone_path),
         }
+
+    # ---- memory_list_tombstones ------------------------------------------
+
+    @mcp.tool(
+        name="memory_list_tombstones",
+        description=(
+            "List removed (tombstoned) memories. One-line summaries plus "
+            "removal metadata (`removed`, `removed_reason`, "
+            "`removed_session`) — body stripped, like memory_list. Use "
+            'for curation passes ("what did I clear out last month?") or '
+            "to investigate when the user asks 'I think I had a memory "
+            "about X — what happened?'. Pass `scopes` to filter, like "
+            "memory_list. Tombstones are sorted by `removed` descending — "
+            "most-recently-removed first."
+        ),
+    )
+    async def memory_list_tombstones(
+        scopes: list[str] | None = None,
+    ) -> list[dict[str, Any]]:
+        if scopes:
+            scopes = [validate_scope(s) for s in scopes]
+        excluded = set(state.disabled_scopes)
+        out: list[dict[str, Any]] = []
+        for summary in store.list_tombstones(scopes=scopes):
+            if excluded and (set(summary.scopes) & excluded):
+                continue
+            out.append(_tombstone_summary_to_dict(summary))
+        recorder.record(
+            "list_tombstones",
+            scopes_filter=scopes,
+            count=len(out),
+            returned=[s["id"] for s in out],
+        )
+        return out
+
+    # ---- memory_restore --------------------------------------------------
+
+    @mcp.tool(
+        name="memory_restore",
+        description=(
+            "Bring a tombstoned memory back to the active set. Strips the "
+            "removal frontmatter, moves the file out of .tombstones/, and "
+            "preserves the original `created`, `updated`, and "
+            "`last_verified_at` timestamps — the body didn't change while "
+            "it was tombstoned, so the recency boost stays honest. Raises "
+            "if the id is active (use memory_update for edits) or unknown. "
+            "The original removal reason and session live on in the event "
+            "log even after restore."
+        ),
+    )
+    async def memory_restore(id: str) -> dict[str, Any]:
+        try:
+            memory = store.restore(id)
+        except NotTombstonedError as exc:
+            raise ValueError(str(exc)) from exc
+        except MemoryNotFoundError as exc:
+            raise ValueError(str(exc)) from exc
+        except ValueError:
+            # _load_tombstone_path raises ValueError on a malformed file
+            # (e.g. missing `created`). Surface verbatim — the message
+            # tells the caller which field is missing.
+            raise
+        recorder.record(
+            "restore",
+            id=memory.id,
+            scopes=memory.scopes,
+        )
+        return _committed(memory)
 
     # ---- memory_scope_disable / enable -----------------------------------
 
@@ -676,15 +845,21 @@ def _register_tools(
             "more than `window_days` ago, never `applied` according to "
             "memory_record_use), heavily-used memories, memories with "
             "unresolved contradictions, transient-marker fire/override "
-            "rates, and the scope distribution. Use this to drive curation "
-            "passes — prune dead weight, refresh contradicted memories via "
-            "memory_update, trim transient markers whose override rate is "
-            "high. The corresponding CLI is `bettermemory health`. "
-            "`min_applied` floors the heavily_used bucket on applied_count "
-            "(default comes from config.toml — typically 3 — to keep the "
-            "bucket out of one-off-acknowledgement noise). Per-row stats "
-            "include `last_verified_at` so a curation pass can flag rows "
-            "that haven't been spot-checked recently."
+            "rates, the scope distribution, a per-scope rollup "
+            "(`scope_health`) showing where dead weight and contradictions "
+            "concentrate, singleton scopes (`rare_scopes`, likely typos), "
+            "and an `orphan_use_events` counter (memory_record_use calls "
+            "whose ids resolved to no record — a fabrication smoke test). "
+            "Use this to drive curation passes — prune dead weight, "
+            "refresh contradicted memories via memory_update, trim "
+            "transient markers whose override rate is high, fix typo "
+            "scopes via memory_rename_scope. The corresponding CLI is "
+            "`bettermemory health`. `min_applied` floors the heavily_used "
+            "bucket on applied_count (default comes from config.toml — "
+            "typically 3 — to keep the bucket out of one-off-"
+            "acknowledgement noise). Per-row stats include "
+            "`last_verified_at` so a curation pass can flag rows that "
+            "haven't been spot-checked recently."
         ),
     )
     async def memory_health(
@@ -906,6 +1081,58 @@ def _register_tools(
         recorder.record("scope_enable", scope=clean)
         return {"disabled_scopes": sorted(state.disabled_scopes)}
 
+    # ---- memory_rename_scope ---------------------------------------------
+
+    @mcp.tool(
+        name="memory_rename_scope",
+        description=(
+            "Replace `old_scope` with `new_scope` across active memories "
+            "(and tombstones, by default). The cheap fix for typo'd or "
+            "deprecated scopes — e.g. `projct:foo` -> `projects:foo` "
+            "after a misspell, or `infra` -> `infrastructure` after "
+            "settling on the long form. Bumps `updated` on each touched "
+            "memory; preserves `last_verified_at` (the body's claims "
+            "didn't change, only the tag did). Memories that already "
+            "carry `new_scope` get `old_scope` removed without "
+            "duplicating `new_scope`. Returns "
+            "`{active: [ids], tombstoned: [ids]}` for the records that "
+            "were actually modified. Pass `include_tombstones=False` to "
+            "leave the removal audit log untouched. Use after "
+            "memory_health surfaces a typo in `rare_scopes`."
+        ),
+    )
+    async def memory_rename_scope(
+        old_scope: str,
+        new_scope: str,
+        include_tombstones: bool = True,
+    ) -> dict[str, Any]:
+        clean_old = validate_scope(old_scope)
+        clean_new = validate_scope(new_scope)
+        if clean_old == clean_new:
+            raise ValueError("old_scope and new_scope must differ")
+        if config.scopes.allowed and clean_new not in set(config.scopes.allowed):
+            raise ValueError(
+                f"new_scope {clean_new!r} is not in the allowed list: "
+                f"{sorted(config.scopes.allowed)}"
+            )
+        result = store.rename_scope(
+            clean_old, clean_new, include_tombstones=include_tombstones
+        )
+        recorder.record(
+            "rename_scope",
+            old=clean_old,
+            new=clean_new,
+            include_tombstones=include_tombstones,
+            active_count=len(result["active"]),
+            tombstoned_count=len(result["tombstoned"]),
+        )
+        return {
+            "old_scope": clean_old,
+            "new_scope": clean_new,
+            "active": result["active"],
+            "tombstoned": result["tombstoned"],
+        }
+
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -964,12 +1191,19 @@ def _committed(  # type: ignore[no-untyped-def]
     memory,
     *,
     related: list[SimilarHit] | None = None,
+    removed_related: list[SimilarHit] | None = None,
 ) -> dict[str, Any]:
     """Serialise a freshly-written Memory into the tool response shape.
 
-    `related` carries any medium-overlap matches that didn't block the write
-    — surfaced so the caller can still consider memory_update on a similar
-    existing entry, just without a hard refusal.
+    `related` carries any medium-overlap matches that didn't block the
+    write — surfaced so the caller can still consider memory_update on a
+    similar existing entry, just without a hard refusal.
+
+    `removed_related` carries medium-overlap matches against tombstoned
+    memories. Same shape as `related` plus the populated `removed_at` /
+    `removed_reason` fields. Surfaced advisorily — the writer hasn't
+    duplicated a previously-removed fact, but they're working in the
+    same neighbourhood and may want to consult the removal reason.
     """
     out: dict[str, Any] = {
         "status": "committed",
@@ -983,11 +1217,19 @@ def _committed(  # type: ignore[no-untyped-def]
     }
     if related:
         out["related"] = [_similar_to_dict(h) for h in related]
+    if removed_related:
+        out["removed_related"] = [_similar_to_dict(h) for h in removed_related]
     return out
 
 
 def _similar_to_dict(hit: SimilarHit) -> dict[str, Any]:
-    return {
+    """Serialise a SimilarHit to the tool response shape.
+
+    `removed_at` / `removed_reason` are emitted only when populated —
+    active hits keep the response shape lean by omitting the keys, while
+    tombstone hits carry both. Consumers can branch on
+    `"removed_reason" in hit` or on `relevance.endswith("-removed")`."""
+    out: dict[str, Any] = {
         "id": hit.id,
         "scopes": hit.scopes,
         "confidence": hit.confidence.value,
@@ -997,6 +1239,11 @@ def _similar_to_dict(hit: SimilarHit) -> dict[str, Any]:
         "created": _isoformat(hit.created),
         "updated": _isoformat(hit.updated),
     }
+    if hit.removed_at is not None:
+        out["removed_at"] = _isoformat(hit.removed_at)
+    if hit.removed_reason is not None:
+        out["removed_reason"] = hit.removed_reason
+    return out
 
 
 def _transient_to_dict(hit: TransientMatch) -> dict[str, Any]:
@@ -1031,6 +1278,8 @@ def _hit_to_dict(hit: MemoryHit) -> dict[str, Any]:
         "created": _isoformat(hit.created),
         "updated": _isoformat(hit.updated),
         "last_verified_at": _isoformat_optional(hit.last_verified_at),
+        "path_drift_checked": hit.path_drift_checked,
+        "path_drift_missing": hit.path_drift_missing,
     }
 
 
@@ -1043,6 +1292,27 @@ def _summary_to_dict(summary: MemorySummary) -> dict[str, Any]:
         "created": _isoformat(summary.created),
         "updated": _isoformat(summary.updated),
         "last_verified_at": _isoformat_optional(summary.last_verified_at),
+    }
+
+
+def _tombstone_summary_to_dict(summary: TombstonedSummary) -> dict[str, Any]:
+    """Same shape as `_summary_to_dict` plus removal metadata.
+
+    Mirroring the active shape lets a curator iterate uniformly: a row
+    has `removed` set if and only if it's a tombstone. `removed_session`
+    is `null` for legacy tombstones written before that field shipped.
+    """
+    return {
+        "id": summary.id,
+        "scopes": summary.scopes,
+        "confidence": summary.confidence.value,
+        "summary": summary.summary,
+        "created": _isoformat(summary.created),
+        "updated": _isoformat(summary.updated),
+        "last_verified_at": _isoformat_optional(summary.last_verified_at),
+        "removed": _isoformat(summary.removed),
+        "removed_reason": summary.removed_reason,
+        "removed_session": summary.removed_session,
     }
 
 
@@ -1188,6 +1458,64 @@ def main() -> None:
         ),
     )
 
+    tombstones_parser = sub.add_parser(
+        "tombstones",
+        help=(
+            "Inspect and prune the tombstone (removed-memory) audit log. "
+            "Subcommands: list, prune."
+        ),
+    )
+    tombstones_sub = tombstones_parser.add_subparsers(dest="tombstones_cmd")
+
+    tlist_parser = tombstones_sub.add_parser(
+        "list", help="Print all tombstones with removal metadata."
+    )
+    tlist_parser.add_argument(
+        "--json",
+        action="store_true",
+        help="Emit JSON instead of human-readable text.",
+    )
+    tlist_parser.add_argument(
+        "--scope",
+        action="append",
+        default=[],
+        metavar="SCOPE",
+        help=(
+            "Filter to tombstones tagged with at least one of the given "
+            "scopes. Repeat to widen the filter."
+        ),
+    )
+
+    tprune_parser = tombstones_sub.add_parser(
+        "prune",
+        help=(
+            "Hard-delete tombstones older than --older-than days. "
+            "Active memories are unaffected. Default value comes from "
+            "config.toml `behavior.tombstone_retention_days`; if that's 0 "
+            "(the default), --older-than is required."
+        ),
+    )
+    tprune_parser.add_argument(
+        "--older-than",
+        type=int,
+        default=None,
+        metavar="DAYS",
+        help=(
+            "Cutoff in days. Tombstones whose `removed` timestamp is older "
+            "than this are deleted. Required if no default is configured."
+        ),
+    )
+    tprune_parser.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="Print what would be deleted without touching disk.",
+    )
+    tprune_parser.add_argument(
+        "--json",
+        action="store_true",
+        help="Emit JSON instead of human-readable text.",
+    )
+
     args = parser.parse_args()
     if args.cmd == "health":
         _cli_health(
@@ -1218,6 +1546,20 @@ def main() -> None:
             )
             return
         migrate_parser.print_help()
+        return
+    if args.cmd == "tombstones":
+        if args.tombstones_cmd == "list":
+            _cli_tombstones_list(json_out=args.json, scopes=args.scope or None)
+            return
+        if args.tombstones_cmd == "prune":
+            _cli_tombstones_prune(
+                older_than_days=args.older_than,
+                dry_run=args.dry_run,
+                json_out=args.json,
+                parser=parser,
+            )
+            return
+        tombstones_parser.print_help()
         return
 
     _cli_serve()
@@ -1276,6 +1618,120 @@ def _cli_health(
         heavily_used_min_applied=threshold,
     )
     sys.stdout.write(render_json(report) if json_out else render_text(report))
+
+
+def _cli_tombstones_list(*, json_out: bool, scopes: list[str] | None) -> None:
+    """`bettermemory tombstones list` — print removed memories."""
+    import json as _json
+
+    config = load_config()
+    store = Store(config.resolved_directory())
+    if scopes:
+        scopes = [validate_scope(s) for s in scopes]
+    summaries = store.list_tombstones(scopes=scopes)
+
+    if json_out:
+        sys.stdout.write(
+            _json.dumps(
+                [
+                    {
+                        "id": s.id,
+                        "scopes": s.scopes,
+                        "summary": s.summary,
+                        "created": _isoformat(s.created),
+                        "removed": _isoformat(s.removed),
+                        "removed_reason": s.removed_reason,
+                        "removed_session": s.removed_session,
+                    }
+                    for s in summaries
+                ],
+                indent=2,
+            )
+            + "\n"
+        )
+        return
+
+    if not summaries:
+        sys.stdout.write("No tombstones.\n")
+        return
+
+    sys.stdout.write(f"Tombstones ({len(summaries)}):\n")
+    for s in summaries:
+        sess = s.removed_session or "<no session>"
+        sys.stdout.write(
+            f"  {s.id} [removed={_isoformat(s.removed)}, "
+            f"session={sess}] {','.join(s.scopes)}: {s.summary}\n"
+            f"    reason: {s.removed_reason}\n"
+        )
+
+
+def _cli_tombstones_prune(
+    *,
+    older_than_days: int | None,
+    dry_run: bool,
+    json_out: bool,
+    parser: Any,
+) -> None:
+    """`bettermemory tombstones prune` — hard-delete old tombstones."""
+    import json as _json
+    from datetime import timedelta
+
+    config = load_config()
+    days = (
+        older_than_days
+        if older_than_days is not None
+        else config.behavior.tombstone_retention_days
+    )
+    if days is None or days <= 0:
+        # Hard refusal — pruning everything by accident would be a foot-gun.
+        parser.error(
+            "--older-than is required (no default configured). Pass an "
+            "explicit cutoff in days, or set "
+            "`behavior.tombstone_retention_days` in config.toml."
+        )
+    cutoff = timedelta(days=days)
+
+    store = Store(config.resolved_directory())
+
+    if dry_run:
+        # Use load_tombstones to inspect; don't call prune which deletes.
+        from .models import utcnow
+
+        now = utcnow()
+        candidates = [t for t in store.load_tombstones() if t.removed < (now - cutoff)]
+        ids = [t.id for t in candidates]
+        if json_out:
+            sys.stdout.write(
+                _json.dumps({"would_delete": ids, "cutoff_days": days}, indent=2) + "\n"
+            )
+            return
+        if not ids:
+            sys.stdout.write(f"No tombstones older than {days} days.\n")
+            return
+        sys.stdout.write(
+            f"Would delete {len(ids)} tombstone(s) older than {days} days:\n"
+        )
+        for t in candidates:
+            sys.stdout.write(
+                f"  {t.id} [removed={_isoformat(t.removed)}]: {t.removed_reason}\n"
+            )
+        sys.stdout.write("(Dry run — re-run without --dry-run to apply.)\n")
+        return
+
+    pruned_ids = store.prune_tombstones(cutoff)
+    if json_out:
+        sys.stdout.write(
+            _json.dumps({"deleted": pruned_ids, "cutoff_days": days}, indent=2) + "\n"
+        )
+        return
+    if not pruned_ids:
+        sys.stdout.write(f"No tombstones older than {days} days.\n")
+        return
+    sys.stdout.write(
+        f"Deleted {len(pruned_ids)} tombstone(s) older than {days} days:\n"
+    )
+    for memory_id in pruned_ids:
+        sys.stdout.write(f"  {memory_id}\n")
 
 
 def _cli_migrate_origin(
