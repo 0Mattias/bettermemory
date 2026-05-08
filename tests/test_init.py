@@ -59,12 +59,17 @@ def test_server_snippet_uses_find_binary_when_unset(
 # ---------------------------------------------------------------------------
 
 
-def test_find_binary_uses_path_when_present(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(
-        "bettermemory.init.shutil.which",
-        lambda _name: "/usr/local/bin/bettermemory",
-    )
-    assert find_binary() == "/usr/local/bin/bettermemory"
+def test_find_binary_uses_path_when_present(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    # Use a real on-disk path so `Path(...).resolve()` inside find_binary
+    # behaves consistently across platforms — a hardcoded POSIX string like
+    # "/usr/local/bin/bettermemory" gets rewritten to "D:\usr\local\bin\..."
+    # on Windows because resolve() anchors to the current drive.
+    fake = tmp_path / "bettermemory"
+    fake.write_text("#!/bin/sh\n", encoding="utf-8")
+    monkeypatch.setattr("bettermemory.init.shutil.which", lambda _name: str(fake))
+    assert find_binary() == str(fake.resolve())
 
 
 def test_find_binary_falls_back_to_argv_when_path_misses(
