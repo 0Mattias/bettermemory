@@ -4,7 +4,9 @@ Six tools are exposed: memory_search, memory_show, memory_write, memory_list,
 memory_remove, memory_scope_disable (plus a companion memory_scope_enable).
 
 Each handler is thin: validate the input via the Pydantic models, call into
-`store` / `search`, return a JSON-serializable result.
+`store` / `search`, emit one event to the `Recorder`, return a
+JSON-serializable result. The recorder is best-effort — telemetry failures
+are logged but never propagate up into a tool call.
 """
 
 from __future__ import annotations
@@ -17,12 +19,17 @@ from typing import Any
 from mcp.server.fastmcp import FastMCP
 
 from .config import Config, load_config
+from .durability import TransientMatch, find_transient_markers
+from .events import Recorder
+from .health import report_for_directory
+from .origin import Origin, capture as capture_origin
 from .models import (
     Confidence,
     MemoryHit,
     MemorySummary,
     SimilarHit,
     Source,
+    is_valid_ulid,
     validate_scope,
 )
 from .prompts import SYSTEM_PROMPT_ADDENDUM
@@ -39,6 +46,22 @@ log = logging.getLogger("bettermemory")
 
 
 # ---------------------------------------------------------------------------
+# Use-recording outcomes — values land verbatim in the event log so the
+# health view can aggregate them. Add new outcomes by extending this set;
+# don't rename existing values without a migration story.
+# ---------------------------------------------------------------------------
+
+
+_USE_OUTCOMES: frozenset[str] = frozenset(
+    {
+        "applied",       # The retrieved memory shaped the response.
+        "ignored",       # Retrieved but turned out off-topic.
+        "contradicted",  # The user or current state contradicted the memory.
+    }
+)
+
+
+# ---------------------------------------------------------------------------
 # Wiring
 # ---------------------------------------------------------------------------
 
@@ -48,15 +71,25 @@ def build_server(
     config: Config | None = None,
     store: Store | None = None,
     state: SessionState | None = None,
+    recorder: Recorder | None = None,
 ) -> FastMCP:
     """Return a configured FastMCP instance.
 
-    Tests pass in their own `store` and `state` to keep things hermetic.
-    The real entry point in `main()` lets `load_config` resolve everything.
+    Tests pass in their own `store`, `state`, and `recorder` to keep things
+    hermetic. The real entry point in `main()` lets `load_config` resolve
+    everything. When `recorder` is None, one is constructed from `config` —
+    `enabled=False` in the telemetry config makes every event a no-op.
     """
     config = config or load_config()
     store = store or Store(config.resolved_directory())
     state = state or get_state()
+    if recorder is None:
+        recorder = Recorder(
+            root=config.resolved_directory(),
+            session_id=state.session_id,
+            enabled=config.telemetry.enabled,
+            max_bytes=config.telemetry.max_bytes,
+        )
 
     mcp = FastMCP(
         "bettermemory",
@@ -67,8 +100,24 @@ def build_server(
         ),
     )
 
-    _register_tools(mcp, config=config, store=store, state=state)
+    _register_tools(
+        mcp, config=config, store=store, state=state, recorder=recorder
+    )
     return mcp
+
+
+def _semantic_model_or_none(config: Config) -> Any:
+    """Lazy load the embedding model when `semantic_dedup = true` and the
+    extras are installed. Returns None otherwise — callers treat None as
+    the Jaccard fallback signal. The first call after `semantic_dedup`
+    is enabled pays the model-load cost (~1-2s); subsequent calls hit
+    `semantic.get_model`'s in-memory cache.
+    """
+    if not config.behavior.semantic_dedup:
+        return None
+    from .semantic import get_model
+
+    return get_model(config.behavior.semantic_model_name)
 
 
 def _register_tools(
@@ -77,6 +126,7 @@ def _register_tools(
     config: Config,
     store: Store,
     state: SessionState,
+    recorder: Recorder,
 ) -> None:
     # ---- memory_search ---------------------------------------------------
 
@@ -94,7 +144,13 @@ def _register_tools(
             "Pass `expand_top=True` to inline the full body of the top hit "
             "when its relevance is \"high\" — collapses the common "
             "search-then-show round trip into one call. Skip it when you "
-            "only need to triage."
+            "only need to triage. "
+            "By default (`auto_scope=True`), results are filtered to "
+            "memories written from the current repository — cross-project "
+            "memories are excluded. Memories written outside any repo "
+            "(or before the auto-scope feature) are treated as global and "
+            "always pass. Set `auto_scope=False` for cross-project queries "
+            "(\"do you remember anything about X across all my projects\")."
         ),
     )
     async def memory_search(
@@ -102,6 +158,7 @@ def _register_tools(
         scopes: list[str] | None = None,
         max_results: int | None = None,
         expand_top: bool = False,
+        auto_scope: bool = True,
     ) -> list[dict[str, Any]]:
         if max_results is None:
             max_results = config.behavior.default_max_results
@@ -110,12 +167,21 @@ def _register_tools(
         if scopes:
             scopes = [validate_scope(s) for s in scopes]
 
+        # Auto-scope: capture the caller's current origin so we can drop
+        # memories from a different repo. None when the caller isn't in a
+        # repo (auto-scope is meaningless without a project boundary).
+        repo_filter: str | None = None
+        if auto_scope:
+            current_origin = capture_origin()
+            repo_filter = current_origin.repo
+
         memories = store.load_all()
         hits = run_search(
             memories,
             query,
             scopes=scopes,
             excluded_scopes=set(state.disabled_scopes),
+            repo_filter=repo_filter,
             max_results=max_results,
             half_life_days=config.behavior.recency_boost_half_life_days,
         )
@@ -124,6 +190,7 @@ def _register_tools(
         # Optional auto-expansion of the top hit. Conservative: only fires
         # when the top hit clearly wins ("high" relevance) so the model
         # doesn't get hosed with full bodies it didn't really need.
+        expanded_id: str | None = None
         if expand_top and out and out[0]["relevance"] == "high":
             try:
                 memory = store.load_one(hits[0].id)
@@ -133,7 +200,20 @@ def _register_tools(
                 pass
             else:
                 out[0]["body"] = memory.body
+                expanded_id = memory.id
 
+        recorder.record(
+            "search",
+            query=query,
+            scopes_filter=scopes,
+            max_results=max_results,
+            returned=[h["id"] for h in out],
+            relevance=[h["relevance"] for h in out],
+            expand_top=expand_top,
+            expanded_id=expanded_id,
+            auto_scope=auto_scope,
+            repo_filter=repo_filter,
+        )
         return out
 
     # ---- memory_show -----------------------------------------------------
@@ -153,6 +233,7 @@ def _register_tools(
             raise ValueError(str(exc)) from exc
         except MemoryNotFoundError as exc:
             raise ValueError(str(exc)) from exc
+        recorder.record("show", id=memory.id)
         return {
             "id": memory.id,
             "scopes": memory.scopes,
@@ -161,6 +242,7 @@ def _register_tools(
             "created": _isoformat(memory.created),
             "updated": _isoformat(memory.updated),
             "body": memory.body,
+            "origin": _origin_to_dict(memory.origin),
         }
 
     # ---- memory_write ----------------------------------------------------
@@ -168,26 +250,32 @@ def _register_tools(
     @mcp.tool(
         name="memory_write",
         description=(
-            "Create a new memory. Durable facts only — scan the body for "
-            "transient-state markers (\"currently\", \"N commits ahead\", "
-            "\"today I\", \"as of now\") and reject the write if you spot "
-            "them; the durable fact is one level up. Confirm with the user "
-            "only when the memory captures an inference about them "
-            "(preferences, beliefs); for project / infra / reference / "
-            "tooling memories, write directly and announce the save. "
-            "Provide non-empty scopes (e.g. ['tools', 'learning-style']). "
-            "Content dedup runs at write time: if an existing memory has "
-            "high overlap with the new body, this returns "
-            "{status:'duplicate', matches:[...]} instead of creating a "
-            "parallel entry — prefer memory_update on the matched id. Pass "
-            "`force=True` to override when the new memory is meaningfully "
-            "different (you have already inspected the matches and decided "
-            "they are adjacent topics, not duplicates). Medium-overlap "
-            "matches don't block; they're surfaced as `related` on the "
-            "success response. If `require_write_confirmation` is true in "
-            "config, a write that passes dedup returns "
-            "{status:'pending', pending_id} and you must call "
-            "memory_write_confirm(pending_id) to commit."
+            "Create a new memory. Durable facts only. The tool runs a "
+            "structural durability check on the body before writing: any "
+            "transient-state marker (\"currently\", \"today I\", \"we just\", "
+            "\"the new\", commit-SHA-like hex tokens, etc.) returns "
+            "{status:'transient_warning', markers:[...]} instead of "
+            "committing. Either rephrase the body to extract the level-up "
+            "durable form (the architectural decision, the why, the "
+            "what-was-built — discard the timestamp/state) or pass "
+            "`acknowledge_transient=True` if the marker is genuinely "
+            "durable in this case (rare — most fires are real). "
+            "Confirm with the user only when the memory captures an "
+            "inference about them (preferences, beliefs); for project / "
+            "infra / reference / tooling memories, write directly and "
+            "announce the save. Provide non-empty scopes (e.g. ['tools', "
+            "'learning-style']). Content dedup runs after the durability "
+            "check: if an existing memory has high overlap with the new "
+            "body, this returns {status:'duplicate', matches:[...]} instead "
+            "of creating a parallel entry — prefer memory_update on the "
+            "matched id. Pass `force=True` to override when the new memory "
+            "is meaningfully different (you have already inspected the "
+            "matches and decided they are adjacent topics, not duplicates). "
+            "Medium-overlap matches don't block; they're surfaced as "
+            "`related` on the success response. If "
+            "`require_write_confirmation` is true in config, a write that "
+            "passes both checks returns {status:'pending', pending_id} and "
+            "you must call memory_write_confirm(pending_id) to commit."
         ),
     )
     async def memory_write(
@@ -196,6 +284,7 @@ def _register_tools(
         confidence: str = "medium",
         source: str = "explicit-statement",
         force: bool = False,
+        acknowledge_transient: bool = False,
     ) -> dict[str, Any]:
         payload = _validate_write_payload(
             content=content,
@@ -205,15 +294,69 @@ def _register_tools(
             allowed_scopes=config.scopes.allowed,
         )
 
-        # Dedup runs first — staging or writing happens only if the new body
+        # Origin is captured before the durability check so it's always
+        # part of the payload that flows into either staging or the direct
+        # write path. We never persist origin for a transient_warning — the
+        # write isn't happening — so the early return below short-circuits
+        # before any disk I/O.
+        payload["origin"] = capture_origin()
+
+        # Durability check runs before dedup. A transient body shouldn't
+        # become a duplicate of an existing transient memory — we'd just be
+        # routing the caller toward memory_update on a fact that itself
+        # shouldn't have been written. Catch transience first.
+        transient_hits = find_transient_markers(payload["content"])
+        if transient_hits and not acknowledge_transient:
+            recorder.record(
+                "write",
+                status="transient_warning",
+                scopes=payload["scopes"],
+                forced=False,
+                markers=[h.marker for h in transient_hits],
+            )
+            return {
+                "status": "transient_warning",
+                "markers": [_transient_to_dict(h) for h in transient_hits],
+                "hint": (
+                    "The body contains transient-state markers that won't "
+                    "be true in a week. Either rephrase to the durable "
+                    "level-up version (extract the architectural decision, "
+                    "the why, what-was-built — discard the timestamp/state) "
+                    "or pass acknowledge_transient=True if the marker is "
+                    "genuinely durable in context."
+                ),
+            }
+
+        # Dedup runs second — staging or writing happens only if the new body
         # isn't a high-overlap duplicate of an existing memory. `force=True`
         # is the override path: the caller has already looked at the matches
         # and decided this entry is meaningfully different.
         related: list[SimilarHit] = []
         if not force:
-            similar = find_similar(payload["content"], store.load_all())
+            similar = find_similar(
+                payload["content"],
+                store.load_all(),
+                semantic_model=_semantic_model_or_none(config),
+                high_threshold=(
+                    config.behavior.semantic_high_threshold
+                    if config.behavior.semantic_dedup
+                    else None
+                ),
+                medium_threshold=(
+                    config.behavior.semantic_medium_threshold
+                    if config.behavior.semantic_dedup
+                    else None
+                ),
+            )
             high = [h for h in similar if h.relevance == "high"]
             if high:
+                recorder.record(
+                    "write",
+                    status="duplicate",
+                    scopes=payload["scopes"],
+                    forced=False,
+                    matches=[h.id for h in high],
+                )
                 return {
                     "status": "duplicate",
                     "matches": [_similar_to_dict(h) for h in high],
@@ -225,6 +368,16 @@ def _register_tools(
                     ),
                 }
             related = [h for h in similar if h.relevance == "medium"]
+
+        # Capture which markers (if any) were overridden by
+        # acknowledge_transient — feeds the override-rate signal in the
+        # event log so we can tell whether a marker is producing too many
+        # false positives.
+        acknowledged = (
+            [h.marker for h in transient_hits]
+            if transient_hits and acknowledge_transient
+            else []
+        )
 
         if config.behavior.require_write_confirmation:
             pending = state.stage_write(payload)
@@ -244,9 +397,29 @@ def _register_tools(
             }
             if related:
                 response["related"] = [_similar_to_dict(h) for h in related]
+            recorder.record(
+                "write",
+                status="pending",
+                pending_id=pending.pending_id,
+                scopes=payload["scopes"],
+                forced=force,
+                related=[h.id for h in related],
+                markers_acknowledged=acknowledged,
+            )
             return response
 
         memory = store.write(**payload)
+        recorder.record(
+            "write",
+            status="committed",
+            id=memory.id,
+            scopes=memory.scopes,
+            confidence=memory.confidence.value,
+            source=memory.source.value,
+            forced=force,
+            related=[h.id for h in related],
+            markers_acknowledged=acknowledged,
+        )
         return _committed(memory, related=related)
 
     @mcp.tool(
@@ -264,6 +437,12 @@ def _register_tools(
                 "expired or been already committed)"
             )
         memory = store.write(**pending.payload)
+        recorder.record(
+            "write_confirm",
+            pending_id=pending_id,
+            id=memory.id,
+            scopes=memory.scopes,
+        )
         return _committed(memory)
 
     @mcp.tool(
@@ -275,6 +454,9 @@ def _register_tools(
     )
     async def memory_write_cancel(pending_id: str) -> dict[str, Any]:
         existed = state.cancel_pending(pending_id)
+        recorder.record(
+            "write_cancel", pending_id=pending_id, existed=existed
+        )
         return {"cancelled": pending_id, "existed": existed}
 
     # ---- memory_update ---------------------------------------------------
@@ -351,6 +533,22 @@ def _register_tools(
             }
         )
         updated = store.update(merged)
+        fields_changed = [
+            name
+            for name, value in (
+                ("content", content),
+                ("scopes", scopes),
+                ("confidence", confidence),
+            )
+            if value is not None
+        ]
+        recorder.record(
+            "update",
+            id=updated.id,
+            fields=fields_changed,
+            scopes=updated.scopes,
+            confidence=updated.confidence.value,
+        )
         return _committed(updated)
 
     # ---- memory_list -----------------------------------------------------
@@ -386,6 +584,13 @@ def _register_tools(
                 if scopes and not (memory_scopes & set(scopes)):
                     continue
                 out.append(_memory_to_dict(memory))
+            recorder.record(
+                "list",
+                scopes_filter=scopes,
+                with_bodies=True,
+                count=len(out),
+                returned=[m["id"] for m in out],
+            )
             return out
 
         out_summary: list[dict[str, Any]] = []
@@ -393,6 +598,13 @@ def _register_tools(
             if excluded and (set(summary.scopes) & excluded):
                 continue
             out_summary.append(_summary_to_dict(summary))
+        recorder.record(
+            "list",
+            scopes_filter=scopes,
+            with_bodies=False,
+            count=len(out_summary),
+            returned=[s["id"] for s in out_summary],
+        )
         return out_summary
 
     # ---- memory_remove ---------------------------------------------------
@@ -414,12 +626,91 @@ def _register_tools(
             raise ValueError(str(exc)) from exc
         except MemoryNotFoundError as exc:
             raise ValueError(str(exc)) from exc
+        recorder.record("remove", id=id, reason=reason)
         return {
             "removed": id,
             "tombstone_path": str(tombstone_path),
         }
 
     # ---- memory_scope_disable / enable -----------------------------------
+
+    # ---- memory_health ---------------------------------------------------
+
+    @mcp.tool(
+        name="memory_health",
+        description=(
+            "Aggregate health view over the event log + active memories. "
+            "Returns a structured report with dead-weight memories (created "
+            "more than `window_days` ago, never `applied` according to "
+            "memory_record_use), heavily-used memories, memories with "
+            "unresolved contradictions, transient-marker fire/override "
+            "rates, and the scope distribution. Use this to drive curation "
+            "passes — prune dead weight, refresh contradicted memories via "
+            "memory_update, trim transient markers whose override rate is "
+            "high. The corresponding CLI is `bettermemory health`."
+        ),
+    )
+    async def memory_health(
+        window_days: int = 30,
+        heavily_used_top_k: int = 10,
+    ) -> dict[str, Any]:
+        report = report_for_directory(
+            store.root,
+            window_days=int(window_days),
+            heavily_used_top_k=int(heavily_used_top_k),
+        )
+        return report.to_dict()
+
+    # ---- memory_record_use ----------------------------------------------
+
+    @mcp.tool(
+        name="memory_record_use",
+        description=(
+            "Record how a retrieved memory was used in your response. Call "
+            "this once per response that consumed memory output, with the "
+            "ids you actually relied on and an outcome of \"applied\" "
+            "(the memory shaped the reply), \"ignored\" (you retrieved it "
+            "but it turned out off-topic), or \"contradicted\" (the user "
+            "or current state contradicted the stored fact). The event "
+            "feeds the memory_health view so dead-weight memories can be "
+            "pruned and stale ones can be flagged. `note` is an optional "
+            "free-form string for context. Skip the call when no retrieved "
+            "memory shaped your response — silence is also signal, as the "
+            "absence of `applied` events for a recently-retrieved id is "
+            "what tells us the memory wasn't useful."
+        ),
+    )
+    async def memory_record_use(
+        memory_ids: list[str],
+        outcome: str,
+        note: str | None = None,
+    ) -> dict[str, Any]:
+        if not memory_ids:
+            raise ValueError("memory_ids must contain at least one entry")
+        if outcome not in _USE_OUTCOMES:
+            raise ValueError(
+                f"outcome must be one of {sorted(_USE_OUTCOMES)}"
+            )
+        # ULID-format check only — we don't load the store to confirm the
+        # id exists. Recording a use against a just-tombstoned memory is a
+        # legitimate signal (the user contradicted it, we removed it),
+        # and a load_all on every record_use call is wasteful.
+        for mid in memory_ids:
+            if not is_valid_ulid(mid):
+                raise ValueError(f"invalid memory id: {mid!r}")
+        if note is not None and not isinstance(note, str):
+            raise ValueError("note must be a string if provided")
+
+        recorder.record(
+            "use",
+            ids=list(memory_ids),
+            outcome=outcome,
+            note=note,
+        )
+        return {
+            "recorded": list(memory_ids),
+            "outcome": outcome,
+        }
 
     @mcp.tool(
         name="memory_scope_disable",
@@ -433,6 +724,7 @@ def _register_tools(
     async def memory_scope_disable(scope: str) -> dict[str, Any]:
         clean = validate_scope(scope)
         state.disable(clean)
+        recorder.record("scope_disable", scope=clean)
         return {"disabled_scopes": sorted(state.disabled_scopes)}
 
     @mcp.tool(
@@ -444,6 +736,7 @@ def _register_tools(
     async def memory_scope_enable(scope: str) -> dict[str, Any]:
         clean = validate_scope(scope)
         state.enable(clean)
+        recorder.record("scope_enable", scope=clean)
         return {"disabled_scopes": sorted(state.disabled_scopes)}
 
 
@@ -540,6 +833,11 @@ def _similar_to_dict(hit: SimilarHit) -> dict[str, Any]:
     }
 
 
+def _transient_to_dict(hit: TransientMatch) -> dict[str, Any]:
+    """Serialize a transient-marker match for the tool response."""
+    return {"marker": hit.marker, "snippet": hit.snippet}
+
+
 def _isoformat(dt: datetime) -> str:
     return dt.isoformat().replace("+00:00", "Z")
 
@@ -586,7 +884,22 @@ def _memory_to_dict(memory) -> dict[str, Any]:  # type: ignore[no-untyped-def]
         "body": memory.body,
         "created": _isoformat(memory.created),
         "updated": _isoformat(memory.updated),
+        "origin": _origin_to_dict(memory.origin),
     }
+
+
+def _origin_to_dict(origin: Origin | None) -> dict[str, Any] | None:
+    """Serialize an Origin for tool responses, or None if absent.
+
+    Empty fields are stripped so the response carries only the data that
+    was actually captured at write time. A memory written before this
+    feature shipped returns None; a memory written outside any git repo
+    returns `{"cwd": "..."}` without `repo` or `branch` keys.
+    """
+    if origin is None:
+        return None
+    payload = origin.model_dump(mode="json", exclude_none=True)
+    return payload or None
 
 
 # ---------------------------------------------------------------------------
@@ -595,7 +908,130 @@ def _memory_to_dict(memory) -> dict[str, Any]:  # type: ignore[no-untyped-def]
 
 
 def main() -> None:
-    """CLI entry point — `bettermemory` runs this. Stdio transport."""
+    """CLI entry point. By default runs the MCP server over stdio
+    (`bettermemory`). Subcommands provide offline tooling: `bettermemory
+    health` prints the aggregate report, mirroring the `memory_health`
+    tool in human-readable form."""
+    import argparse
+
+    parser = argparse.ArgumentParser(
+        prog="bettermemory",
+        description=(
+            "Local file-backed memory MCP server with retrieval-on-demand. "
+            "Run with no arguments to start the MCP server over stdio."
+        ),
+    )
+    sub = parser.add_subparsers(dest="cmd")
+
+    health_parser = sub.add_parser(
+        "health", help="Print the aggregate memory health report."
+    )
+    health_parser.add_argument(
+        "--json",
+        action="store_true",
+        help="Emit JSON instead of human-readable text.",
+    )
+    health_parser.add_argument(
+        "--days",
+        type=int,
+        default=30,
+        help=(
+            "Window in days for the dead-weight cutoff. Memories created "
+            "more than this many days ago with no `applied` events are "
+            "flagged. Default: 30."
+        ),
+    )
+    health_parser.add_argument(
+        "--top-k",
+        type=int,
+        default=10,
+        help="How many heavily-used memories to list. Default: 10.",
+    )
+
+    migrate_parser = sub.add_parser(
+        "migrate",
+        help=(
+            "One-shot data migrations. Use `migrate origin` to backfill "
+            "the origin field on memories written before that field "
+            "existed."
+        ),
+    )
+    migrate_sub = migrate_parser.add_subparsers(dest="migrate_cmd")
+    origin_parser = migrate_sub.add_parser(
+        "origin",
+        help=(
+            "Backfill origin frontmatter on legacy memories. Idempotent: "
+            "memories that already have an origin field are skipped."
+        ),
+    )
+    origin_parser.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="Show what would change without writing.",
+    )
+    origin_parser.add_argument(
+        "--repo",
+        type=str,
+        default=None,
+        help=(
+            "Force-tag every legacy memory with this remote URL. Use "
+            "when the auto-inference from the parent directory isn't "
+            "right (e.g. global memory dir that you know belongs to one "
+            "repo)."
+        ),
+    )
+    origin_parser.add_argument(
+        "--scope-repo",
+        action="append",
+        default=[],
+        metavar="SCOPE=URL",
+        help=(
+            "Route memories by scope: tag any memory carrying SCOPE "
+            "with the given remote URL. Repeat for multiple scopes "
+            "(e.g. --scope-repo projects:foo=git@github.com:me/foo.git "
+            "--scope-repo projects:bar=git@github.com:me/bar.git). "
+            "Memories whose scopes match nothing in the map fall through "
+            "to --repo (if given) or are left untagged. The right tool "
+            "for a global memory dir whose memories already use "
+            "projects:<name> tags."
+        ),
+    )
+
+    args = parser.parse_args()
+    if args.cmd == "health":
+        _cli_health(json_out=args.json, days=args.days, top_k=args.top_k)
+        return
+    if args.cmd == "migrate":
+        if args.migrate_cmd == "origin":
+            scope_repo_map: dict[str, str] = {}
+            for entry in args.scope_repo:
+                if "=" not in entry:
+                    parser.error(
+                        f"--scope-repo expects SCOPE=URL, got: {entry!r}"
+                    )
+                scope, url = entry.split("=", 1)
+                scope = scope.strip()
+                url = url.strip()
+                if not scope or not url:
+                    parser.error(
+                        f"--scope-repo expects non-empty SCOPE and URL, "
+                        f"got: {entry!r}"
+                    )
+                scope_repo_map[scope] = url
+            _cli_migrate_origin(
+                dry_run=args.dry_run,
+                force_repo=args.repo,
+                scope_repo_map=scope_repo_map,
+            )
+            return
+        migrate_parser.print_help()
+        return
+
+    _cli_serve()
+
+
+def _cli_serve() -> None:
+    """The default no-arg behaviour: run the MCP server over stdio."""
     logging.basicConfig(
         level=logging.INFO,
         stream=sys.stderr,
@@ -607,12 +1043,116 @@ def main() -> None:
 
     log.info("memory directory: %s", directory)
     log.info(
+        "telemetry: %s (event log at %s/.events.jsonl)",
+        "on" if config.telemetry.enabled else "off",
+        directory,
+    )
+    log.info(
         "reminder: include the SYSTEM_PROMPT_ADDENDUM in your client's "
         "system prompt — see docs/system_prompt.md"
     )
 
     mcp = build_server(config=config, store=store, state=get_state())
     mcp.run("stdio")
+
+
+def _cli_health(*, json_out: bool, days: int, top_k: int) -> None:
+    """`bettermemory health` — print the aggregate report."""
+    from .health import render_json, render_text
+
+    config = load_config()
+    directory = config.resolved_directory()
+    report = report_for_directory(
+        directory, window_days=days, heavily_used_top_k=top_k
+    )
+    sys.stdout.write(render_json(report) if json_out else render_text(report))
+
+
+def _cli_migrate_origin(
+    *,
+    dry_run: bool,
+    force_repo: str | None,
+    scope_repo_map: dict[str, str],
+) -> None:
+    """`bettermemory migrate origin` — backfill origin on legacy memories."""
+    from .migrate import (
+        infer_origin_for_memory_dir,
+        migrate_origin_in_directory,
+    )
+
+    config = load_config()
+    memory_dir = config.resolved_directory()
+
+    print(f"Scanning {memory_dir}...")
+    print()
+
+    if scope_repo_map:
+        print("Routing by scope:")
+        for scope, url in scope_repo_map.items():
+            print(f"  {scope:<32} -> {url}")
+        print()
+
+    if force_repo is not None:
+        print(f"Fallback: untagged memories -> {force_repo!r}")
+    else:
+        inferred = infer_origin_for_memory_dir(memory_dir)
+        if scope_repo_map and inferred is None:
+            print(
+                "Fallback: untagged memories left alone "
+                "(no --repo and no auto-inference)."
+            )
+        elif scope_repo_map is None or not scope_repo_map:
+            if inferred is None:
+                print(
+                    f"  Parent of memory dir: {memory_dir.parent}\n"
+                    f"  No git remote detected.\n"
+                    f"\n"
+                    f"This appears to be a global memory directory — "
+                    f"memories here probably came from many projects, "
+                    f"and tagging them all with one repo would be "
+                    f"misinformation. Nothing to do.\n"
+                    f"\n"
+                    f"Options:\n"
+                    f"  --repo <url>                       "
+                    f"force-tag every memory\n"
+                    f"  --scope-repo projects:foo=<url>    "
+                    f"route by scope (multi)"
+                )
+                return
+            print(f"  Inferred repo:   {inferred.repo}")
+            print(f"  cwd:             {inferred.cwd}")
+            print(
+                "  branch:          (left null — original branch unknown)"
+            )
+
+    print()
+    report = migrate_origin_in_directory(
+        memory_dir,
+        force_repo=force_repo,
+        scope_repo_map=scope_repo_map or None,
+        dry_run=dry_run,
+    )
+
+    print("Results:")
+    print(f"  Scanned:           {report.scanned}")
+    print(f"  Already had origin: {report.already_had_origin}")
+    print(
+        f"  {'Would update' if dry_run else 'Updated':<18} "
+        f"{report.updated}"
+    )
+    if report.malformed:
+        print(f"  Malformed (skipped): {len(report.malformed)}")
+        for path in report.malformed[:5]:
+            print(f"    - {path}")
+        if len(report.malformed) > 5:
+            print(f"    ... and {len(report.malformed) - 5} more")
+
+    if dry_run and report.updated:
+        print()
+        print(
+            "(Dry run — no changes written. Re-run without --dry-run to "
+            "apply.)"
+        )
 
 
 # Re-export the prompt for consumers who import the package.

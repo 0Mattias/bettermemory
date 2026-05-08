@@ -9,8 +9,10 @@ from __future__ import annotations
 import math
 import re
 from datetime import datetime, timezone
+from typing import Any
 
 from .models import Memory, MemoryHit, SimilarHit, snippet_for
+from .origin import repos_match
 
 
 # Strip punctuation, keep word characters (incl. unicode letters) and dashes
@@ -168,6 +170,7 @@ def search(
     *,
     scopes: list[str] | None = None,
     excluded_scopes: set[str] | None = None,
+    repo_filter: str | None = None,
     max_results: int = 5,
     now: datetime | None = None,
     half_life_days: float = 30.0,
@@ -177,6 +180,10 @@ def search(
     - `scopes`: if given, only consider memories tagged with at least one.
     - `excluded_scopes`: any memory tagged with one of these is dropped.
       (Used for session-disabled scopes.)
+    - `repo_filter`: a remote URL. When provided, memories whose
+      `origin.repo` doesn't match (compared via `origin.repos_match`) are
+      dropped. Memories with no `origin.repo` (legacy or non-repo writes)
+      pass through — they're treated as global.
     """
     now = now or datetime.now(timezone.utc)
     raw_tokens = tokenize(query)
@@ -199,6 +206,14 @@ def search(
             continue
         if scope_filter is not None and not (memory_scope_set & scope_filter):
             continue
+
+        # Auto-scope filter: drop memories from a different repo. Memories
+        # without an origin.repo (legacy writes, non-repo writes) pass —
+        # they're "global" and always relevant to the current caller.
+        if repo_filter is not None:
+            memory_repo = memory.origin.repo if memory.origin else None
+            if not repos_match(memory_repo, repo_filter):
+                continue
 
         score, matched = score_memory(
             memory,
@@ -262,21 +277,65 @@ def find_similar(
     new_body: str,
     existing: list[Memory],
     *,
-    high_threshold: float = HIGH_SIMILARITY,
-    medium_threshold: float = MEDIUM_SIMILARITY,
+    semantic_model: Any | None = None,
+    high_threshold: float | None = None,
+    medium_threshold: float | None = None,
 ) -> list[SimilarHit]:
     """Find memories whose content overlaps `new_body` enough to flag.
 
-    Comparison is Jaccard similarity on stopword-stripped, kebab-expanded
-    token sets — symmetric and recency-free, unlike `score_memory`. Returns
-    hits with similarity >= `medium_threshold`, sorted descending by
-    similarity. Hits below `high_threshold` are labeled `"medium"`; at or
-    above, `"high"`.
+    Default mode: Jaccard similarity on stopword-stripped, kebab-expanded
+    token sets — symmetric and recency-free, unlike `score_memory`. Fast,
+    deterministic, no extra deps.
 
-    Empty list if `new_body` has no content tokens after stopword stripping
-    (e.g. a body of pure filler) — there's nothing meaningful to dedup
-    against. Existing memories that are themselves all-filler are skipped.
+    Semantic mode (when `semantic_model` is non-None): cosine similarity
+    on sentence-transformers embeddings. Catches paraphrases that share
+    no tokens — "the database" vs "Postgres", "shipped" vs "released".
+    Pass a model object with an `encode(text, normalize_embeddings=True)`
+    method (e.g. `sentence_transformers.SentenceTransformer`) — see
+    `bettermemory.semantic.get_model()` for the loader.
+
+    Thresholds default to the mode's natural range when None: 0.75/0.40
+    for Jaccard, 0.85/0.65 for cosine. Pass explicit thresholds to tune.
+
+    Returns hits with similarity >= medium_threshold, sorted descending
+    by similarity. Hits below high_threshold are labeled `"medium"`; at
+    or above, `"high"`. Empty when `new_body` has no content (or no
+    tokens, in Jaccard mode).
     """
+    if semantic_model is not None:
+        return _find_similar_semantic(
+            new_body,
+            existing,
+            semantic_model,
+            high_threshold=(
+                high_threshold if high_threshold is not None else 0.85
+            ),
+            medium_threshold=(
+                medium_threshold if medium_threshold is not None else 0.65
+            ),
+        )
+
+    return _find_similar_jaccard(
+        new_body,
+        existing,
+        high_threshold=(
+            high_threshold if high_threshold is not None else HIGH_SIMILARITY
+        ),
+        medium_threshold=(
+            medium_threshold
+            if medium_threshold is not None
+            else MEDIUM_SIMILARITY
+        ),
+    )
+
+
+def _find_similar_jaccard(
+    new_body: str,
+    existing: list[Memory],
+    *,
+    high_threshold: float,
+    medium_threshold: float,
+) -> list[SimilarHit]:
     new_tokens = _content_token_set(new_body)
     if not new_tokens:
         return []
@@ -293,6 +352,65 @@ def find_similar(
 
         union = new_tokens | existing_tokens
         similarity = len(intersection) / len(union)
+
+        if similarity >= high_threshold:
+            relevance = "high"
+        elif similarity >= medium_threshold:
+            relevance = "medium"
+        else:
+            continue
+
+        hits.append(
+            SimilarHit(
+                id=memory.id,
+                scopes=memory.scopes,
+                confidence=memory.confidence,
+                snippet=snippet_for(memory.body),
+                similarity=round(similarity, 4),
+                relevance=relevance,
+                created=memory.created,
+                updated=memory.updated,
+            )
+        )
+
+    hits.sort(key=lambda h: (h.similarity, h.updated), reverse=True)
+    return hits
+
+
+def _find_similar_semantic(
+    new_body: str,
+    existing: list[Memory],
+    model: Any,
+    *,
+    high_threshold: float,
+    medium_threshold: float,
+) -> list[SimilarHit]:
+    """Cosine similarity over sentence-transformers embeddings.
+
+    Imports `semantic` lazily so this module loads cleanly even when the
+    embeddings extra isn't installed — a caller who never passes a
+    `semantic_model` won't trigger the import path.
+    """
+    from .semantic import cached_embed, cosine_similarity_normalized
+
+    new_body_clean = new_body.strip()
+    if not new_body_clean:
+        return []
+
+    new_vec = model.encode(new_body_clean, normalize_embeddings=True)
+
+    hits: list[SimilarHit] = []
+    for memory in existing:
+        body_clean = memory.body.strip()
+        if not body_clean:
+            continue
+        existing_vec = cached_embed(
+            model,
+            memory.id,
+            memory.updated.isoformat(),
+            body_clean,
+        )
+        similarity = cosine_similarity_normalized(new_vec, existing_vec)
 
         if similarity >= high_threshold:
             relevance = "high"

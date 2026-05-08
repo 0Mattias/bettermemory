@@ -45,6 +45,7 @@ from .models import (
     make_slug,
     utcnow,
 )
+from .origin import Origin
 
 
 # ---------------------------------------------------------------------------
@@ -198,6 +199,15 @@ class Store:
         post = frontmatter.load(path)
         meta = post.metadata
         try:
+            # `origin` is additive — memories written before this field
+            # existed have no entry, and that's intentionally fine: they're
+            # treated as "global" by the auto-scope filter.
+            origin_raw = meta.get("origin")
+            origin = (
+                Origin.model_validate(origin_raw)
+                if isinstance(origin_raw, dict)
+                else None
+            )
             return Memory(
                 id=str(meta["id"]),
                 created=_as_dt(meta["created"]),
@@ -206,6 +216,7 @@ class Store:
                 confidence=Confidence(meta["confidence"]),
                 source=Source(meta["source"]),
                 body=post.content.strip() + "\n",
+                origin=origin,
             )
         except KeyError as exc:
             raise ValueError(f"{path}: missing field {exc.args[0]}") from exc
@@ -219,6 +230,7 @@ class Store:
         scopes: list[str],
         confidence: Confidence = Confidence.MEDIUM,
         source: Source = Source.EXPLICIT,
+        origin: Origin | None = None,
     ) -> Memory:
         """Create a new memory. Generates ID, slug, filename."""
         now = utcnow()
@@ -230,6 +242,7 @@ class Store:
             confidence=confidence,
             source=source,
             body=content.strip() + "\n",
+            origin=origin,
         )
         path = self._path_for(memory)
         with _locked(path):
@@ -314,7 +327,7 @@ class Store:
 
     def _write_path(self, path: Path, memory: Memory) -> None:
         post = frontmatter.Post(memory.body.strip() + "\n")
-        post.metadata = {
+        meta: dict[str, object] = {
             "id": memory.id,
             "created": memory.created,
             "updated": memory.updated,
@@ -322,6 +335,16 @@ class Store:
             "confidence": memory.confidence.value,
             "source": memory.source.value,
         }
+        # Origin is optional and only written when populated. We emit a
+        # nested mapping with `exclude_none` so we never write
+        # `origin: {cwd: null, repo: null, branch: null}` — that's noise.
+        if memory.origin is not None:
+            origin_dict = memory.origin.model_dump(
+                mode="json", exclude_none=True
+            )
+            if origin_dict:
+                meta["origin"] = origin_dict
+        post.metadata = meta
         # Atomic-ish write: write to .tmp then rename.
         tmp = path.with_suffix(path.suffix + ".tmp")
         tmp.write_bytes(frontmatter.dumps(post).encode("utf-8"))

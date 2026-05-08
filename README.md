@@ -55,10 +55,12 @@ See [`docs/installation.md`](docs/installation.md) for more detail.
 |---|---|
 | `memory_search(query, scopes?, max_results?, expand_top?)` | Rank and return memory hits with snippets. Each hit carries `relevance: "high" \| "medium" \| "low"` and `match_terms` (the query words that actually hit) — branch on `relevance`, not the raw `score`. Hits also include `created` and `updated` timestamps so a stale-but-relevant memory is visible at a glance. Pass `expand_top=true` to inline the full body of the top hit when its relevance is `"high"` (collapses search→show into one call on confident hits). |
 | `memory_show(id)` | Full body of one memory. |
-| `memory_write(content, scopes, confidence?, source?)` | Create a new memory. |
+| `memory_write(content, scopes, confidence?, source?, force?, acknowledge_transient?)` | Create a new memory. Runs a structural durability check before dedup — see "Durability check" below. |
 | `memory_update(id, content?, scopes?, confidence?)` | Refine an existing memory in place. Preserves `id`, `created`, and `source`; bumps `updated`. Use this instead of `memory_remove` + `memory_write` when correcting or extending a stored fact — that round-trip would lose the original timestamp and litter the tombstone log with non-deletes. Replace semantics for `scopes` (provide the full new list). |
 | `memory_list(scopes?, with_bodies?)` | List active memories — IDs and one-line summaries by default. Pass `with_bodies=true` for a single-call corpus dump (full body on every result); useful for small stores where N round trips of `list → show → show` would be wasteful. |
 | `memory_remove(id, reason)` | Tombstone a memory. |
+| `memory_record_use(memory_ids, outcome, note?)` | Record how a retrieved memory landed: `"applied"`, `"ignored"`, or `"contradicted"`. Feeds the memory_health view; lets you spot dead-weight or stale memories. |
+| `memory_health(window_days?, heavily_used_top_k?)` | Aggregate health view: dead-weight memories, heavily-used memories, unresolved contradictions, transient-marker fire/override rates, scope distribution. Same data as the `bettermemory health` CLI. |
 | `memory_scope_disable(scope)` | Mute a scope for the rest of this session. |
 | `memory_scope_enable(scope)` | Re-enable a previously muted scope. |
 | `memory_write_confirm(pending_id)` | Commit a pending write (when confirmation is required). |
@@ -115,6 +117,61 @@ Resolution order:
 
 Crossing projects is *not* default behavior. A memory written while working on Project A only appears when working on Project B if you stored it globally.
 
+In addition to the directory-based separation above, every memory carries an `origin` block recording the cwd, git remote URL, and branch at write time:
+
+```yaml
+origin:
+  cwd: /Users/me/projects/foo
+  repo: git@github.com:me/foo.git
+  branch: main
+```
+
+`memory_search` defaults to `auto_scope=true`, which filters results to memories whose `origin.repo` matches the caller's current repository. Legacy memories without an `origin` field, and writes from outside any git repo, are treated as global and surface from anywhere. Pass `auto_scope=false` for cross-project queries.
+
+## Durability check
+
+Memory is for facts that will still be true in a week if nobody updates
+them. The tool enforces this structurally: `memory_write` scans the body
+for transient-state markers — `currently`, `today I`, `we just`, `the
+new`, commit-SHA-like hex tokens, and friends — and returns
+
+```json
+{
+  "status": "transient_warning",
+  "markers": [
+    {"marker": "currently", "snippet": "...currently using GitHub Actions..."}
+  ],
+  "hint": "..."
+}
+```
+
+instead of writing. Either rephrase the body to extract the level-up
+durable form (the architectural decision, the why, the what-was-built —
+discard the timestamp/state) or pass `acknowledge_transient=true` to
+override. The override is recorded in the event log so the false-positive
+rate per marker is observable; high-override markers are candidates for
+trimming.
+
+The full marker list is in `src/bettermemory/durability.py`. Adding to it
+costs one false-positive slot — a phrase that's transient in some contexts
+and durable in others will trip writes that shouldn't be tripped, and the
+caller will learn to rubber-stamp `acknowledge_transient`. That's worse
+than not having the marker. Watch override rates before extending.
+
+## Event log
+
+Every tool call appends one JSON line to `<storage>/.events.jsonl`:
+
+```jsonl
+{"ts":"2026-05-07T19:00:00Z","session":"sess_a1b2","kind":"search","query":"home lab","scopes_filter":null,"max_results":5,"returned":["01H..","01H.."],"relevance":["high","low"],"expand_top":false,"expanded_id":null}
+{"ts":"2026-05-07T19:00:01Z","session":"sess_a1b2","kind":"write","status":"committed","id":"01H..","scopes":["projects:foo"],"forced":false,"related":[]}
+{"ts":"2026-05-07T19:00:02Z","session":"sess_a1b2","kind":"show","id":"01H.."}
+```
+
+The log is the substrate the `memory_health` view, the use-recording feedback signal, and the durability marker tuner all read from. It rotates to `.events-<timestamp>.jsonl.gz` once the active file crosses `[telemetry] max_bytes` (default 10 MB). Archives are kept indefinitely — prune by hand if disk pressure matters.
+
+Search queries are recorded verbatim. The log lives in the same directory as the memories themselves, so it shares the same trust boundary — but if you don't want this behavior set `[telemetry] enabled = false` in `config.toml`.
+
 ## Config
 
 The config file is created on first run at the platform-standard config dir
@@ -137,6 +194,10 @@ recency_boost_half_life_days = 30
 
 [scopes]
 allowed = []   # if non-empty, writes with unknown scopes fail
+
+[telemetry]
+enabled = true                # see "Event log" below; flip to false to opt out
+max_bytes = 10000000          # rotate the active log at this size
 ```
 
 ## Scopes
@@ -147,6 +208,32 @@ Scopes are lowercase, alphanumeric, with hyphens or colons (for nesting). Exampl
 - `projects:foo`, `projects:bar:subsystem`
 
 Avoid the catch-all `general` scope — it defeats the whole point.
+
+## CLI
+
+The `bettermemory` script is the MCP server entry point by default — running it with no arguments launches over stdio, which is what your client expects. It also exposes offline tooling:
+
+```sh
+bettermemory health                  # aggregate report (text)
+bettermemory health --json           # ...as JSON
+bettermemory health --days 60 --top-k 20
+
+bettermemory migrate origin --dry-run            # preview the backfill
+bettermemory migrate origin                      # apply (project-scoped dir)
+bettermemory migrate origin --repo <url>         # force-tag (global dir)
+bettermemory migrate origin \
+  --scope-repo projects:foo=git@github.com:me/foo.git \
+  --scope-repo projects:bar=git@github.com:me/bar.git
+                                                 # route by scope (preferred for global dirs)
+```
+
+`health` returns the same data as the `memory_health` MCP tool — drive curation passes outside any conversation: prune dead-weight memories, refresh contradicted ones, trim transient markers whose override rate is high.
+
+`migrate origin` is a one-shot backfill for memories written before the auto-scope feature shipped (no `origin:` block in their frontmatter). For project-scoped directories (`./.claude-memory/` next to a git repo) the inference is automatic. For global directories (`~/.claude-memory/`) the migration deliberately does nothing without an explicit routing flag — the memories there came from many projects and stamping them with one repo URL would be misinformation.
+
+For a global directory whose memories already use `projects:<name>` scopes, `--scope-repo SCOPE=URL` (repeatable) routes by tag. The first matching scope wins; memories that match no entry in the map fall through to `--repo` (if given) or are left untagged. `cwd` is left null on these paths since we don't know per-memory cwd retroactively — only the auto-inferred path (project-scoped dir) sets cwd.
+
+The migration is idempotent (re-running is safe), atomic per file (`.tmp` + rename), and skips tombstones.
 
 ## Development
 
@@ -185,12 +272,35 @@ The on-disk format is YAML frontmatter inside a markdown file. We use a tiny ven
 
 Files written by the previous `python-frontmatter`-based code keep loading byte-for-byte; cross-tested against the upstream library before the swap.
 
+## Optional: semantic dedup
+
+By default, `memory_write` dedup uses Jaccard on stopword-stripped, kebab-expanded token sets — fast, deterministic, no extra deps. It catches lexical overlap well but misses paraphrases (`"the database"` vs `"Postgres"`, `"shipped"` vs `"released"`).
+
+To catch paraphrases too, install the `embeddings` extra and flip the toggle:
+
+```sh
+uv pip install -e ".[embeddings]"
+```
+
+```toml
+# config.toml
+[behavior]
+semantic_dedup = true
+semantic_model_name = "all-MiniLM-L6-v2"     # default; smaller models start faster
+semantic_high_threshold = 0.85
+semantic_medium_threshold = 0.65
+```
+
+Behavior unchanged when the toggle is off, so existing setups are untouched. If you flip the toggle without installing the extra, the server logs one WARNING and falls back to Jaccard — no errors, no surprises.
+
+Embeddings are cached per-process keyed by `(memory_id, updated)`, so an updated memory busts its own cache entry. The first dedup call after server start pays the model load (~1-2s for `all-MiniLM-L6-v2`); subsequent calls are fast.
+
 ## Limitations
 
 1. **Single-process access.** Concurrent writes from two MCP servers pointed at the same directory may corrupt files. A file-lock guard is in place; multi-process is still untested.
 2. **No conflict resolution.** If you edit a memory file by hand while the server is running, the next read will pick up your change but there's no merge story.
 3. **No encryption.** Memories are plaintext on disk. Don't store secrets — use OS-level disk encryption if you need it.
-4. **Search is keyword-only.** Synonyms, paraphrases, semantic similarity — not handled. Embeddings are a Phase 2 feature. A short stopword list is stripped from the *query* (so "how to bake sourdough" doesn't match every memory on shared filler tokens), but bodies stay unfiltered. Hits are returned with a `relevance` label calibrated on coverage — distinguish "1 of 4 query words matched" (low) from "all 3 matched" (high) without inventing a score threshold. The recency boost reads `max(created, updated)`, so editing a fact via `memory_update` ranks it as fresh.
+4. **memory_search is keyword-only.** Synonyms and paraphrases are not handled by `memory_search`. (`memory_write` dedup can use semantic similarity — see "Optional: semantic dedup" above.) A short stopword list is stripped from the *query* (so "how to bake sourdough" doesn't match every memory on shared filler tokens), but bodies stay unfiltered. Hits are returned with a `relevance` label calibrated on coverage — distinguish "1 of 4 query words matched" (low) from "all 3 matched" (high) without inventing a score threshold. The recency boost reads `max(created, updated)`, so editing a fact via `memory_update` ranks it as fresh.
 5. **Disabled scopes don't survive restart.** Intentional — start each session fresh.
 
 ## What's out of scope

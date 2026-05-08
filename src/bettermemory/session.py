@@ -22,6 +22,12 @@ from typing import Any
 _PENDING_TTL_SECONDS = 60 * 60  # 1 hour
 
 
+def _new_session_id() -> str:
+    """Per-process session identifier. Stamped onto every event in the log
+    so retrieval-vs-write streams can be correlated to a single client."""
+    return "sess_" + secrets.token_hex(8)
+
+
 @dataclass
 class PendingWrite:
     """A `memory_write` call awaiting confirmation."""
@@ -35,6 +41,7 @@ class PendingWrite:
 class SessionState:
     """Mutable per-session state. Resets when the server restarts."""
 
+    session_id: str = field(default_factory=_new_session_id)
     disabled_scopes: set[str] = field(default_factory=set)
     pending_writes: dict[str, PendingWrite] = field(default_factory=dict)
 
@@ -80,6 +87,10 @@ class SessionState:
     # ---- lifecycle -------------------------------------------------------
 
     def reset(self) -> None:
+        # `session_id` is intentionally NOT reset — it's a stable per-process
+        # tag used in the event log, and a reset() is meant to clear in-memory
+        # session state (disabled scopes, pending writes), not to "rotate" the
+        # process identity.
         self.disabled_scopes.clear()
         self.pending_writes.clear()
 
