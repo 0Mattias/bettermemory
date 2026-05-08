@@ -17,20 +17,29 @@ jobs:
       fail-fast: false
       matrix:
         os: [ubuntu-latest]
-        python-version: ["3.11", "3.12", "3.13", "3.14"]
-        # One macOS and one Windows slot for platform coverage:
+        # 3.15 is still pre-release (Oct 2026 final); uv resolves the bare
+        # "3.15" spec to the latest python-build-standalone build, which
+        # tracks the upstream RCs. Keep 3.11 — the pyproject floor.
+        python-version: ["3.11", "3.12", "3.13", "3.14", "3.15"]
+        # macOS and Windows slots for platform coverage:
         #   - platformdirs returns different paths per OS
         #   - the fcntl-based file locking in store.py / events.py only
         #     applies on POSIX; the no-op fallback runs on Windows
         #   - conftest.py works around macOS-specific UF_HIDDEN
         #     propagation in iCloud-synced dirs
-        # Pinning each platform slot to one Python version keeps the
-        # cross-product manageable (8 jobs, not 12).
+        # Each non-Linux platform runs the current stable (3.14) and the
+        # in-development next (3.15) — enough to catch OS-specific
+        # regressions on the versions users will actually run, without
+        # blowing the matrix up to a full 3 × 5 = 15 cross-product.
         include:
           - os: macos-latest
-            python-version: "3.13"
+            python-version: "3.14"
+          - os: macos-latest
+            python-version: "3.15"
           - os: windows-latest
-            python-version: "3.13"
+            python-version: "3.14"
+          - os: windows-latest
+            python-version: "3.15"
 
     steps:
       - uses: actions/checkout@v6
@@ -69,8 +78,12 @@ jobs:
         with:
           enable-cache: true
 
-      - name: Set up Python 3.13
-        run: uv python install 3.13
+      # Pinned to 3.14 (current stable): sentence-transformers + torch
+      # wheels lag the Python release cadence, so chasing 3.15 here just
+      # means falling back to source builds and breaking CI for reasons
+      # unrelated to bettermemory.
+      - name: Set up Python 3.14
+        run: uv python install 3.14
 
       - name: Sync dependencies (with embeddings extra)
         run: uv sync --extra dev --extra embeddings
