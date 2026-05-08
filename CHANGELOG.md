@@ -9,6 +9,22 @@ fixes.
 
 ### Added
 
+- **Property-based tests for `Store` invariants**
+  (`tests/test_store_properties.py`, six properties under
+  `hypothesis`). Each property mints its own per-example subdir
+  under `tmp_path` so hypothesis's fixture-reuse model doesn't
+  accumulate disk state across examples. Properties under test:
+  write round-trip identity (body and scopes survive); update
+  preserves `id` + `created` and bumps `updated` monotonically;
+  tombstone-then-restore is body- and timestamp-preserving;
+  `mark_verified` is idempotent and monotonic; `load_all` is
+  order-deterministic across consecutive calls; independent
+  writes don't pollute each other on disk. `max_examples=10` per
+  property — each example does real disk I/O, so the goal is
+  breadth of input space (Unicode, near-empty strings, scope
+  shapes that pass the regex but stress the formatter), not
+  exhaustive enumeration. Adds `hypothesis>=6.0` to dev deps.
+
 - **Storage benchmark** (`bench/storage.py`) and a **Performance
   characteristics** section in the README. Bench measures `Store.write`
   throughput, `Store.load_all` full-corpus scan, and `search()` keyword
