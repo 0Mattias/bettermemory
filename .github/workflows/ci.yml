@@ -18,12 +18,18 @@ jobs:
       matrix:
         os: [ubuntu-latest]
         python-version: ["3.11", "3.12", "3.13", "3.14"]
-        # One macOS slot for platform coverage (platformdirs differs per
-        # OS, and conftest.py works around macOS-specific UF_HIDDEN
-        # propagation in iCloud-synced dirs). Pin to the version most
-        # likely to be on developer machines rather than 6×-ing runtime.
+        # One macOS and one Windows slot for platform coverage:
+        #   - platformdirs returns different paths per OS
+        #   - the fcntl-based file locking in store.py / events.py only
+        #     applies on POSIX; the no-op fallback runs on Windows
+        #   - conftest.py works around macOS-specific UF_HIDDEN
+        #     propagation in iCloud-synced dirs
+        # Pinning each platform slot to one Python version keeps the
+        # cross-product manageable (8 jobs, not 12).
         include:
           - os: macos-latest
+            python-version: "3.13"
+          - os: windows-latest
             python-version: "3.13"
 
     steps:
@@ -43,5 +49,36 @@ jobs:
       - name: Lint
         run: uv run ruff check .
 
+      - name: Format check
+        run: uv run ruff format --check .
+
+      - name: Type check
+        run: uv run mypy
+
       - name: Test
         run: uv run pytest --cov=bettermemory --cov-report=term-missing --cov-fail-under=80 -q
+
+  test-embeddings:
+    name: test (embeddings extra)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v3
+        with:
+          enable-cache: true
+
+      - name: Set up Python 3.13
+        run: uv python install 3.13
+
+      - name: Sync dependencies (with embeddings extra)
+        run: uv sync --extra dev --extra embeddings
+
+      # The "no_extras" marker covers the three tests in test_semantic.py
+      # that assert the extras are *absent*. Skipping them in this job
+      # leaves the rest of the suite — including the cosine-similarity
+      # paths — running against a real sentence-transformers install,
+      # which is otherwise never exercised in CI.
+      - name: Test (skipping no_extras-marked tests)
+        run: uv run pytest -m "not no_extras" -q

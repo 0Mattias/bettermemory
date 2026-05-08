@@ -128,7 +128,7 @@ def test_dumps_emits_literal_values_not_yaml_aliases() -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_load_reads_file(tmp_path) -> None:  # type: ignore[no-untyped-def]
+def test_load_reads_file(tmp_path) -> None:
     p = tmp_path / "memo.md"
     p.write_text("---\nid: y\n---\n\nfile body\n", encoding="utf-8")
     post = load(p)
@@ -136,7 +136,7 @@ def test_load_reads_file(tmp_path) -> None:  # type: ignore[no-untyped-def]
     assert post.content == "file body\n"
 
 
-def test_load_round_trip_through_disk(tmp_path) -> None:  # type: ignore[no-untyped-def]
+def test_load_round_trip_through_disk(tmp_path) -> None:
     p = tmp_path / "memo.md"
     original = Post(content="body line\n", metadata={"id": "z", "tag": "ok"})
     p.write_text(dumps(original), encoding="utf-8")

@@ -61,7 +61,7 @@ def get_model(model_name: str = DEFAULT_MODEL_NAME) -> Any | None:
     try:
         # Lazy import: the module loads cleanly without the extra. The
         # ImportError below is the user-friendly path.
-        from sentence_transformers import SentenceTransformer  # type: ignore[import-not-found]
+        from sentence_transformers import SentenceTransformer
     except ImportError:
         if model_name not in _LOAD_FAILED_LOGGED:
             log.warning(

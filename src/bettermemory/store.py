@@ -72,7 +72,7 @@ class TombstonedError(KeyError):
 @contextlib.contextmanager
 def _locked(path: Path) -> Iterator[None]:
     try:
-        import fcntl  # type: ignore[import-not-found]
+        import fcntl  # type: ignore[import-not-found, unused-ignore]
     except ImportError:  # pragma: no cover - non-unix
         yield
         return

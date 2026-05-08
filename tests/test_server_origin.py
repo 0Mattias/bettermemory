@@ -45,14 +45,16 @@ def server_factory(memory_dir: Path):
             recorder=rec,
         )
         # Override the imported reference so the handlers see our fake.
-        server_module.capture_origin = fake_capture  # type: ignore[attr-defined]
+        # setattr keeps mypy happy without a per-line ignore — capture_origin
+        # is a module-level binding the handlers re-resolve at call time.
+        setattr(server_module, "capture_origin", fake_capture)
         return server, captured
 
     return make
 
 
 async def _call(server: Any, name: str, **kwargs: Any) -> Any:
-    content, structured = await server.call_tool(name, kwargs)  # type: ignore[attr-defined]
+    content, structured = await server.call_tool(name, kwargs)
     if structured is not None:
         return structured
     if content and hasattr(content[0], "text"):

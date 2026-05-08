@@ -47,7 +47,7 @@ async def _call(server: Any, name: str, **kwargs: Any) -> Any:
     FastMCP returns a list[ContentBlock]; for our tools the structured
     result is what we care about, available via `call_tool`'s second value.
     """
-    content, structured = await server.call_tool(name, kwargs)  # type: ignore[attr-defined]
+    content, structured = await server.call_tool(name, kwargs)
     if structured is not None:
         return structured
     # Fallback: parse text content.

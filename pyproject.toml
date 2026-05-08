@@ -15,7 +15,14 @@ dependencies = [
 
 [project.optional-dependencies]
 embeddings = ["sentence-transformers>=2.2", "numpy>=1.24"]
-dev = ["pytest>=7.0", "pytest-asyncio>=0.21", "pytest-cov>=4.0", "ruff>=0.1"]
+dev = [
+    "pytest>=7.0",
+    "pytest-asyncio>=0.21",
+    "pytest-cov>=4.0",
+    "ruff>=0.1",
+    "mypy>=1.10",
+    "types-PyYAML>=6.0",
+]
 
 [project.scripts]
 bettermemory = "bettermemory.server:main"
@@ -27,6 +34,33 @@ build-backend = "hatchling.build"
 [tool.hatch.build.targets.wheel]
 packages = ["src/bettermemory"]
 
+[tool.mypy]
+# Strict on the package itself — surfaces missing annotations and unused
+# ignores immediately. Tests are looser: pytest fixtures and parametrize
+# generate enough Any-typed scaffolding that strict-on-tests is mostly
+# noise without much safety win.
+files = ["src/bettermemory", "tests"]
+python_version = "3.11"
+strict = true
+# Pydantic v2 ships its own mypy plugin for BaseModel field validation.
+plugins = ["pydantic.mypy"]
+
+[[tool.mypy.overrides]]
+module = "tests.*"
+disallow_untyped_defs = false
+disallow_incomplete_defs = false
+disallow_untyped_decorators = false
+warn_return_any = false
+# Pytest fixture composition produces a lot of "missing type arguments
+# for generic dict" noise — silence it for tests only.
+disable_error_code = ["type-arg", "no-untyped-def", "no-untyped-call"]
+
+[[tool.mypy.overrides]]
+# Optional extra. Without `embeddings` installed the import is missing
+# at type-check time; the runtime path already handles ImportError.
+module = ["sentence_transformers", "sentence_transformers.*", "numpy", "numpy.*"]
+ignore_missing_imports = true
+
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
 testpaths = ["tests"]
@@ -35,6 +69,13 @@ testpaths = ["tests"]
 # own frontmatter handling in store.py to drop the dependency entirely.
 filterwarnings = [
     "error::DeprecationWarning:bettermemory",
+]
+markers = [
+    # Tests that assert behavior when the `embeddings` extra is *not*
+    # installed (e.g. get_model() returning None on ImportError). The
+    # test-embeddings CI job runs `pytest -m \"not no_extras\"` so these
+    # are skipped when sentence-transformers is present.
+    "no_extras: requires the embeddings extra to be absent",
 ]
 
 [tool.ruff.lint.per-file-ignores]

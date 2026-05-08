@@ -7,6 +7,7 @@ that satisfy the `encode(text, normalize_embeddings=True)` interface.
 from __future__ import annotations
 
 import logging
+from collections.abc import Iterator
 from datetime import datetime, timezone
 
 import pytest
@@ -27,7 +28,7 @@ from bettermemory.semantic import (
 
 
 @pytest.fixture(autouse=True)
-def _reset_semantic_caches() -> None:
+def _reset_semantic_caches() -> Iterator[None]:
     """Each test gets a fresh module-level cache state."""
     reset_caches()
     yield
@@ -36,9 +37,15 @@ def _reset_semantic_caches() -> None:
 
 # ---------------------------------------------------------------------------
 # get_model — fail-soft when extras aren't installed
+#
+# These three tests assert the absence of the `embeddings` extra, so they
+# must be skipped in the CI job that installs it. The marker is registered
+# in pyproject.toml; the test-embeddings CI job runs `pytest -m "not
+# no_extras"` to exclude them.
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.no_extras
 def test_get_model_returns_none_without_extras(
     caplog: pytest.LogCaptureFixture,
 ) -> None:
@@ -54,6 +61,7 @@ def test_get_model_returns_none_without_extras(
     )
 
 
+@pytest.mark.no_extras
 def test_get_model_only_logs_load_failure_once(
     caplog: pytest.LogCaptureFixture,
 ) -> None:
@@ -67,6 +75,7 @@ def test_get_model_only_logs_load_failure_once(
     assert len(warnings) == 1
 
 
+@pytest.mark.no_extras
 def test_get_model_caches_failure(
     caplog: pytest.LogCaptureFixture,
 ) -> None:

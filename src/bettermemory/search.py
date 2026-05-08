@@ -9,7 +9,7 @@ from __future__ import annotations
 import math
 import re
 from datetime import datetime, timezone
-from typing import Any
+from typing import Any, NoReturn
 
 from .models import Memory, MemoryHit, SimilarHit, snippet_for
 from .origin import repos_match
@@ -490,7 +490,7 @@ def _find_similar_semantic(
 # ---------------------------------------------------------------------------
 
 
-def embeddings_search(*_args, **_kwargs):  # noqa: D401
+def embeddings_search(*_args: Any, **_kwargs: Any) -> NoReturn:  # noqa: D401
     """Reserved for embeddings-based search; install with extras."""
     raise NotImplementedError(
         "embeddings search not implemented in the MVP. "

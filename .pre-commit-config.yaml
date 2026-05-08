@@ -1,0 +1,30 @@
+# Mirrors the cheap CI checks so they fail locally before push.
+#
+# mypy and pytest are intentionally omitted — both want a configured
+# Python env (the embeddings stub world, in mypy's case) and are slow
+# enough that running them on every commit is friction. CI catches them.
+#
+# Usage:
+#   uv tool install pre-commit  # once per machine
+#   pre-commit install          # once per clone
+#
+# Skip a hook for one commit with `SKIP=ruff git commit -m '…'`.
+
+repos:
+  - repo: https://github.com/astral-sh/ruff-pre-commit
+    rev: v0.14.5
+    hooks:
+      - id: ruff-format
+      - id: ruff
+        args: [--fix]
+
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v6.0.0
+    hooks:
+      - id: check-yaml
+      - id: check-toml
+      - id: end-of-file-fixer
+      - id: trailing-whitespace
+      - id: check-merge-conflict
+      - id: check-added-large-files
+        args: [--maxkb=500]

@@ -24,7 +24,7 @@ def server(memory_dir: Path) -> Any:
 
 
 async def _call(server: Any, name: str, **kwargs: Any) -> Any:
-    content, structured = await server.call_tool(name, kwargs)  # type: ignore[attr-defined]
+    content, structured = await server.call_tool(name, kwargs)
     if structured is not None:
         return structured
     if content and hasattr(content[0], "text"):
@@ -33,7 +33,7 @@ async def _call(server: Any, name: str, **kwargs: Any) -> Any:
 
 
 async def test_memory_health_is_registered(server: Any) -> None:
-    tools = await server.list_tools()  # type: ignore[attr-defined]
+    tools = await server.list_tools()
     names = {t.name for t in tools}
     assert "memory_health" in names
 

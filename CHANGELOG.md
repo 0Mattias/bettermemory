@@ -127,3 +127,27 @@ fixes.
   a `Recorder` is constructed from the resolved `Config`.
 - `SessionState` now carries a stable `session_id` for the lifetime of the
   process. `state.reset()` deliberately preserves it.
+- **Testing & CI hardening.** Several gaps caught in one sweep:
+  - Python 3.14 added to the matrix (was 3.11–3.13). macOS and Windows
+    slots added (one Python version each, 3.13) for platform coverage —
+    `platformdirs`, `fcntl`-based locking, and the macOS UF_HIDDEN
+    workaround in `tests/conftest.py` are all platform-sensitive.
+  - `--cov-fail-under=80` enforces a coverage floor (current 85.32%).
+  - `ruff format --check` runs in CI; the tree was reformatted to bring
+    26 previously-unchecked files into compliance.
+  - `mypy --strict` runs in CI, configured in `pyproject.toml` (strict
+    on `src/bettermemory`, looser on `tests/` to avoid pytest-fixture
+    `Any` noise). A `py.typed` marker ships with the package so
+    consumers get types. `types-PyYAML` and `mypy` added to the `dev`
+    extra.
+  - New `test-embeddings` CI job installs `--extra embeddings` and
+    runs `pytest -m "not no_extras"` so the cosine-similarity code
+    path is exercised against a real `sentence-transformers` install.
+    The three `test_semantic.py` tests that assert *absence* of the
+    extra are tagged `@pytest.mark.no_extras` (registered in
+    `pyproject.toml`).
+  - `.pre-commit-config.yaml` mirrors the cheap CI checks (ruff,
+    end-of-file-fixer, trailing-whitespace, yaml/toml syntax) for
+    local pre-push catch.
+  - `.github/dependabot.yml` keeps `github-actions` and `pip` deps
+    current on a weekly cadence with grouped runtime/dev PRs.

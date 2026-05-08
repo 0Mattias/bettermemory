@@ -28,7 +28,7 @@ def server_with_events(memory_dir: Path) -> tuple[Any, Path]:
 
 
 async def _call(server: Any, name: str, **kwargs: Any) -> Any:
-    content, structured = await server.call_tool(name, kwargs)  # type: ignore[attr-defined]
+    content, structured = await server.call_tool(name, kwargs)
     if structured is not None:
         return structured
     if content and hasattr(content[0], "text"):
@@ -45,7 +45,7 @@ async def test_memory_record_use_is_registered(
     server_with_events: tuple[Any, Path],
 ) -> None:
     server, _ = server_with_events
-    tools = await server.list_tools()  # type: ignore[attr-defined]
+    tools = await server.list_tools()
     names = {t.name for t in tools}
     assert "memory_record_use" in names
 
