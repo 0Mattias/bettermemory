@@ -948,9 +948,48 @@ def main() -> None:
         help="How many heavily-used memories to list. Default: 10.",
     )
 
+    migrate_parser = sub.add_parser(
+        "migrate",
+        help=(
+            "One-shot data migrations. Use `migrate origin` to backfill "
+            "the origin field on memories written before that field "
+            "existed."
+        ),
+    )
+    migrate_sub = migrate_parser.add_subparsers(dest="migrate_cmd")
+    origin_parser = migrate_sub.add_parser(
+        "origin",
+        help=(
+            "Backfill origin frontmatter on legacy memories. Idempotent: "
+            "memories that already have an origin field are skipped."
+        ),
+    )
+    origin_parser.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="Show what would change without writing.",
+    )
+    origin_parser.add_argument(
+        "--repo",
+        type=str,
+        default=None,
+        help=(
+            "Force-tag every legacy memory with this remote URL. Use "
+            "when the auto-inference from the parent directory isn't "
+            "right (e.g. global memory dir that you know belongs to one "
+            "repo)."
+        ),
+    )
+
     args = parser.parse_args()
     if args.cmd == "health":
         _cli_health(json_out=args.json, days=args.days, top_k=args.top_k)
+        return
+    if args.cmd == "migrate":
+        if args.migrate_cmd == "origin":
+            _cli_migrate_origin(dry_run=args.dry_run, force_repo=args.repo)
+            return
+        migrate_parser.print_help()
         return
 
     _cli_serve()
@@ -992,6 +1031,68 @@ def _cli_health(*, json_out: bool, days: int, top_k: int) -> None:
         directory, window_days=days, heavily_used_top_k=top_k
     )
     sys.stdout.write(render_json(report) if json_out else render_text(report))
+
+
+def _cli_migrate_origin(*, dry_run: bool, force_repo: str | None) -> None:
+    """`bettermemory migrate origin` — backfill origin on legacy memories."""
+    from .migrate import (
+        infer_origin_for_memory_dir,
+        migrate_origin_in_directory,
+    )
+
+    config = load_config()
+    memory_dir = config.resolved_directory()
+
+    print(f"Scanning {memory_dir}...")
+    print()
+
+    if force_repo is not None:
+        print(f"Force-tagging all legacy memories with repo={force_repo!r}.")
+    else:
+        inferred = infer_origin_for_memory_dir(memory_dir)
+        if inferred is None:
+            print(
+                f"  Parent of memory dir: {memory_dir.parent}\n"
+                f"  No git remote detected.\n"
+                f"\n"
+                f"This appears to be a global memory directory — memories "
+                f"here probably came from many projects, and tagging them "
+                f"all with one repo would be misinformation. Nothing to "
+                f"do.\n"
+                f"\n"
+                f"Pass --repo <url> if you know all memories here should "
+                f"be tagged with a specific repo."
+            )
+            return
+        print(f"  Inferred repo:   {inferred.repo}")
+        print(f"  cwd:             {inferred.cwd}")
+        print(f"  branch:          (left null — original branch unknown)")
+
+    print()
+    report = migrate_origin_in_directory(
+        memory_dir, force_repo=force_repo, dry_run=dry_run
+    )
+
+    print("Results:")
+    print(f"  Scanned:           {report.scanned}")
+    print(f"  Already had origin: {report.already_had_origin}")
+    print(
+        f"  {'Would update' if dry_run else 'Updated':<18} "
+        f"{report.updated}"
+    )
+    if report.malformed:
+        print(f"  Malformed (skipped): {len(report.malformed)}")
+        for path in report.malformed[:5]:
+            print(f"    - {path}")
+        if len(report.malformed) > 5:
+            print(f"    ... and {len(report.malformed) - 5} more")
+
+    if dry_run and report.updated:
+        print()
+        print(
+            "(Dry run — no changes written. Re-run without --dry-run to "
+            "apply.)"
+        )
 
 
 # Re-export the prompt for consumers who import the package.

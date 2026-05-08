@@ -211,15 +211,21 @@ Avoid the catch-all `general` scope — it defeats the whole point.
 
 ## CLI
 
-The `bettermemory` script is the MCP server entry point by default — running it with no arguments launches over stdio, which is what your client expects. It also has a `health` subcommand for offline audit:
+The `bettermemory` script is the MCP server entry point by default — running it with no arguments launches over stdio, which is what your client expects. It also exposes offline tooling:
 
 ```sh
-bettermemory health                  # human-readable
-bettermemory health --json           # machine-readable
+bettermemory health                  # aggregate report (text)
+bettermemory health --json           # ...as JSON
 bettermemory health --days 60 --top-k 20
+
+bettermemory migrate origin --dry-run            # preview the backfill
+bettermemory migrate origin                      # apply (project-scoped dir)
+bettermemory migrate origin --repo <url>         # force-tag (global dir)
 ```
 
-The `health` subcommand is the same data the `memory_health` MCP tool returns. Use the CLI to drive curation passes outside any conversation — prune dead-weight memories, refresh contradicted ones, trim transient markers whose override rate is high.
+`health` returns the same data as the `memory_health` MCP tool — drive curation passes outside any conversation: prune dead-weight memories, refresh contradicted ones, trim transient markers whose override rate is high.
+
+`migrate origin` is a one-shot backfill for memories written before the auto-scope feature shipped (no `origin:` block in their frontmatter). For project-scoped directories (`./.claude-memory/` next to a git repo) the inference is automatic. For global directories (`~/.claude-memory/`) the migration deliberately does nothing without `--repo` — the memories there came from many projects and stamping them with one repo URL would be misinformation. The migration is idempotent (re-running is safe), atomic per file (`.tmp` + rename), and skips tombstones.
 
 ## Development
 

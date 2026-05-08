@@ -9,6 +9,20 @@ fixes.
 
 ### Added
 
+- **`bettermemory migrate origin` CLI subcommand.** One-shot backfill for
+  legacy memories that pre-date the auto-scope feature (no `origin:`
+  block in frontmatter). For project-scoped memory directories the
+  inference is automatic — repo URL comes from the parent dir's git
+  config, cwd is that parent. Branch is deliberately left null since
+  we don't know the original. For global memory directories the
+  migration is a no-op unless `--repo <url>` is passed (default
+  behaviour respects that mixed-project directories shouldn't be
+  force-tagged with one repo). Idempotent, atomic per file (`.tmp` +
+  rename), `--dry-run` to preview. Tombstones are skipped — backfilling
+  origin into a removal record would change the on-disk audit log
+  retroactively.
+- New `bettermemory.migrate` module: `infer_origin_for_memory_dir`,
+  `migrate_origin_in_directory`, `MigrationReport`.
 - **Semantic dedup (opt-in).** Behind `[behavior] semantic_dedup = true`,
   `memory_write` dedup uses sentence-transformers cosine similarity
   instead of Jaccard on token sets — catches paraphrases ("the database"
