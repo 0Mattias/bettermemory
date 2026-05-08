@@ -5,6 +5,14 @@ Releases are cut by pushing an annotated `v<X.Y.Z>` tag — the
 build, full gating suite, PyPI publish, GitHub release. No tokens; no
 manual `twine upload` step.
 
+> **Before you push the very first tag, configure PyPI trusted
+> publishing first** (next section). Without it, the workflow builds
+> the wheel cleanly and then fails the publish step with
+> `invalid-publisher: valid token, but no corresponding publisher`.
+> The build itself succeeds, so re-running the workflow after the
+> PyPI-side setup is straightforward — but it's strictly less painful
+> to set up the publisher record before tagging.
+
 ## One-time setup: PyPI trusted publishing
 
 Trusted publishing replaces long-lived API tokens with short-lived
@@ -100,3 +108,61 @@ page → "Manage" → "Releases" → "Options" on the bad version → "Yank".
 Yanked releases are still installable when pinned exactly but stop
 being chosen by `pip install bettermemory` resolvers, which is the
 right behavior for "this version was published by accident."
+
+## Troubleshooting
+
+### `invalid-publisher: valid token, but no corresponding publisher`
+
+The workflow built the wheel and sdist successfully, then the
+`Publish to PyPI` job failed at the OIDC token exchange. PyPI logs
+the OIDC claims it received — they look right (`repository`:
+`0Mattias/bettermemory`, `workflow_ref`:
+`.../release.yml@refs/tags/v<X.Y.Z>`, `environment`: `pypi`) — but no
+trusted-publisher record on PyPI matches.
+
+Cause: the PyPI-side trusted-publisher record (the "One-time setup"
+section above) hasn't been created yet, or one of the field values
+was entered wrong. The most common typos:
+
+- Repository name has a stray prefix or the wrong casing
+  (PyPI's matcher is case-sensitive on the repo name; not on the
+  owner).
+- `Workflow name` field set to the path (`.github/workflows/release.yml`)
+  rather than the basename (`release.yml`).
+- `Environment name` mismatched: the workflow uses `pypi` for prod
+  PyPI and `testpypi` for TestPyPI. If you typed `production` or
+  similar in the PyPI form, no match.
+
+Fix:
+
+1. Go to <https://pypi.org/manage/account/publishing/>.
+2. If the project doesn't exist on PyPI yet, register a **Pending
+   Publisher** with the exact field values from the "One-time setup"
+   section. If it does exist, edit the existing publisher under that
+   project to match.
+3. Re-run the publish without re-tagging — the build artifact is
+   still good. From the GitHub Actions tab → "Release" workflow →
+   "Run workflow" button → set `target=pypi` → run. This dispatches
+   the workflow on the same `main` HEAD; the build job re-runs (cheap)
+   and the publish step exchanges the new OIDC token, which now has
+   a matching trusted-publisher record. The `github-release` job is
+   skipped on dispatch (it only fires on tag push), so you'll need to
+   create the GitHub release by hand from the tag if you want one —
+   or push a fresh patch tag (`v<X.Y.Z+1>`) once you're happy the
+   trust setup works.
+
+### `version mismatch` build-job failure
+
+The build job verifies that the version in `pyproject.toml` matches
+the tag (`v1.2.3` → `1.2.3`). If they disagree, the run aborts before
+any artifact ships.
+
+Fix: bump `pyproject.toml` to match the tag and force-update the tag
+to the new commit:
+
+```sh
+git tag -f v<X.Y.Z>
+git push --force origin v<X.Y.Z>
+```
+
+The forced re-push fires the workflow again.

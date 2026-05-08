@@ -428,6 +428,27 @@ def _check_mcp_client_configs() -> Diagnosis:
                 matches = command == resolved_binary or (
                     not Path(command).is_absolute() and command == "bettermemory"
                 )
+                # Symlink-aware fallback: a `~/.local/bin/bettermemory`
+                # symlink in the config and a
+                # `~/.local/share/uv/tools/bettermemory/bin/bettermemory`
+                # canonical install (the standard `uv tool install`
+                # layout) compare unequal as strings but resolve to the
+                # same inode. Only follow up the realpath when the
+                # cheap string check missed AND the file actually
+                # exists, so we don't burn syscalls on every healthy
+                # match or every genuinely-broken stale path.
+                if not matches and exists_on_disk:
+                    try:
+                        same_target = (
+                            Path(command).resolve() == Path(resolved_binary).resolve()
+                        )
+                        if same_target:
+                            matches = True
+                    except OSError:
+                        # `resolve()` can raise on broken symlinks etc.;
+                        # leave `matches=False` and let the existing
+                        # has_mismatch branch fire.
+                        pass
                 findings.append(
                     {
                         "client": client_name,
