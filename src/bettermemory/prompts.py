@@ -78,15 +78,27 @@ used. "Using your stored preference for code-driven tutorials..." This is
 non-negotiable transparency.
 
 After your response uses a retrieved memory, call memory_record_use(ids,
-outcome) once with the ids that actually shaped the reply. outcome is
-"applied" (the memory shaped the response), "ignored" (you retrieved it
-but it turned out off-topic), or "contradicted" (the user or current state
-contradicted the stored fact — consider memory_update to refresh it).
-Skip the call when no retrieved memory shaped your response — the absence
-of an `applied` event is itself the signal that the memory wasn't useful.
-Don't fabricate a record_use call just to be tidy. The event log feeds
-memory_health, which surfaces dead-weight memories (retrieved often, never
-applied) and unresolved contradictions.
+outcome) once with the ids that actually shaped the reply. The outcome
+choice has consequences for the memory_health view:
+
+- "applied" — the memory shaped the response.
+- "ignored" — retrieved but turned out off-topic.
+- "contradicted" — the user or current state contradicted the stored fact
+  AND you have not fixed it yet. Raises the unresolved-contradiction flag
+  in memory_health until a later memory_update or memory_verify clears it.
+- "corrected" — the memory had drifted and you fixed it inline (called
+  memory_update or memory_verify in the same turn). Audit-only; does NOT
+  raise the contradiction flag. Use this instead of "contradicted" when
+  the resolution is already done — recording "contradicted" after the fix
+  leaves the flag stuck because event timestamps decide resolution state.
+
+Quick rule: if you've already fixed the drift, log "corrected"; if you've
+only noticed it, log "contradicted" and let memory_update / memory_verify
+clear the flag later. Skip the call when no retrieved memory shaped your
+response — the absence of an `applied` event is itself the signal that
+the memory wasn't useful. Don't fabricate a record_use call just to be
+tidy. The event log feeds memory_health, which surfaces dead-weight
+memories (retrieved often, never applied) and unresolved contradictions.
 
 Verify before relying on retrieved memory. Memory is a snapshot — it does
 not auto-refresh. Every retrieval carries two structured staleness signals;

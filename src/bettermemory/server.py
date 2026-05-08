@@ -69,6 +69,12 @@ _USE_OUTCOMES: frozenset[str] = frozenset(
         "applied",  # The retrieved memory shaped the response.
         "ignored",  # Retrieved but turned out off-topic.
         "contradicted",  # The user or current state contradicted the memory.
+        # The retrieved memory had drifted and was fixed in the same turn
+        # (memory_update / memory_verify already called). Audit-only — does
+        # not raise the unresolved-contradiction flag the way `contradicted`
+        # does. Use this for the post-fix log entry; use `contradicted` when
+        # you've noticed a conflict but haven't fixed it yet.
+        "corrected",
     }
 )
 
@@ -148,8 +154,14 @@ def build_server(
             "When you use a retrieved memory in a reply, briefly say so "
             '("Using your stored preference for…") and call '
             "memory_record_use(ids, outcome) once per response with "
-            'outcome "applied" / "ignored" / "contradicted". Skip the '
-            "call when no memory shaped the response.\n\n"
+            'outcome "applied" / "ignored" / "contradicted" / '
+            '"corrected". Use "contradicted" when you noticed a conflict '
+            'but did NOT fix it; use "corrected" when you fixed the drift '
+            "inline (called memory_update or memory_verify in the same "
+            "turn). Recording `contradicted` after a fix leaves the "
+            "memory_health flag stuck — `corrected` is the audit-only "
+            "outcome for that case. Skip the call when no memory shaped "
+            "the response.\n\n"
             "Verify before relying. Each retrieval carries a structured "
             'verification block with status "never" / "stale" / '
             '"fresh". When status is not "fresh", spot-check at least '
@@ -241,8 +253,10 @@ def _register_tools(
             "When you actually use a hit in your reply, briefly say so "
             '("Using your stored preference for…") and call '
             "memory_record_use(ids, outcome) once per response — outcome "
-            'is "applied" / "ignored" / "contradicted". Skip the call '
-            "when no memory shaped the response. If a hit's "
+            'is "applied" / "ignored" / "contradicted" / "corrected" '
+            "(the last is for noticed-and-fixed-inline; see the "
+            "memory_record_use tool for the full distinction). Skip the "
+            "call when no memory shaped the response. If a hit's "
             'verification.status is not "fresh", spot-check at least one '
             "verifiable claim before relying on it: call memory_verify(id) "
             "if it holds, or memory_update first if it has drifted."
@@ -958,20 +972,31 @@ def _register_tools(
             "concentrate, singleton scopes that look like typos of an "
             "existing scope (`rare_scopes` — Levenshtein distance <= 2 from "
             "another scope; legitimate narrow singletons no longer trip "
-            "the bucket), and an `orphan_use_events` counter "
+            "the bucket), an `orphan_use_events` counter "
             "(memory_record_use calls whose ids resolved to no record — a "
-            "fabrication smoke test). Use this to drive curation passes — "
-            "prune dead weight, refresh contradicted memories via "
-            "memory_update *or* re-confirm them via memory_verify "
-            "(either resolution path clears the unresolved flag), trim "
-            "transient markers whose override rate is high, fix typo "
-            "scopes via memory_rename_scope. The corresponding CLI is "
-            "`bettermemory health`. `min_applied` floors the heavily_used "
-            "bucket on applied_count (default comes from config.toml — "
-            "typically 3 — to keep the bucket out of one-off-"
-            "acknowledgement noise). Per-row stats include "
-            "`last_verified_at` so a curation pass can flag rows that "
-            "haven't been spot-checked recently."
+            "fabrication smoke test), and a `verification_debt` rollup "
+            "partitioning memories by verification status "
+            "(never_verified / stale / fresh against the configured "
+            "`verification_stale_days` threshold; capped row lists for "
+            "inline display, uncapped totals for the bucket sizes). Use "
+            "this to drive curation passes — prune dead weight, refresh "
+            "contradicted memories via memory_update *or* re-confirm them "
+            "via memory_verify (either resolution path clears the "
+            "unresolved flag), spot-check the never_verified / stale "
+            "buckets and call memory_verify on the ones whose claims "
+            "still hold, trim transient markers whose override rate is "
+            "high, fix typo scopes via memory_rename_scope. Each row in "
+            "the contradicted bucket carries a `resolution_timeline` — "
+            "the chronological log of update / verify / contradicted / "
+            "corrected events for that memory — so a stuck flag can be "
+            "self-diagnosed as out-of-order audit logging vs genuinely "
+            "unresolved without grepping the event log by hand. The "
+            "corresponding CLI is `bettermemory health`. `min_applied` "
+            "floors the heavily_used bucket on applied_count (default "
+            "comes from config.toml — typically 3 — to keep the bucket "
+            "out of one-off-acknowledgement noise). Per-row stats "
+            "include `last_verified_at` so a curation pass can flag "
+            "rows that haven't been spot-checked recently."
         ),
     )
     async def memory_health(
@@ -994,6 +1019,7 @@ def _register_tools(
             window_days=int(window_days),
             heavily_used_top_k=int(heavily_used_top_k),
             heavily_used_min_applied=threshold,
+            verification_stale_days=config.behavior.verification_stale_days,
         )
         return report.to_dict()
 
@@ -1004,16 +1030,26 @@ def _register_tools(
         description=(
             "Record how a retrieved memory was used in your response. Call "
             "this once per response that consumed memory output, with the "
-            'ids you actually relied on and an outcome of "applied" '
-            '(the memory shaped the reply), "ignored" (you retrieved it '
-            'but it turned out off-topic), or "contradicted" (the user '
-            "or current state contradicted the stored fact). The event "
-            "feeds the memory_health view so dead-weight memories can be "
-            "pruned and stale ones can be flagged. `note` is an optional "
-            "free-form string for context. Skip the call when no retrieved "
-            "memory shaped your response — silence is also signal, as the "
-            "absence of `applied` events for a recently-retrieved id is "
-            "what tells us the memory wasn't useful."
+            "ids you actually relied on. Outcomes:\n"
+            '- "applied" — the memory shaped the reply.\n'
+            '- "ignored" — retrieved but turned out off-topic.\n'
+            '- "contradicted" — the user or current state contradicted the '
+            "stored fact AND you have not fixed it yet. Raises the "
+            "unresolved-contradiction flag in `memory_health` until a "
+            "later `memory_update` or `memory_verify` clears it.\n"
+            '- "corrected" — the memory had drifted and you fixed it '
+            "inline in the same turn (`memory_update` and/or "
+            "`memory_verify` already called before this record_use call). "
+            "Audit-only; does NOT raise the contradiction flag. Use this "
+            "instead of `contradicted` when the resolution is already "
+            "done — recording `contradicted` after the fix leaves the "
+            "flag stuck because event timestamps decide resolution state.\n"
+            "The event feeds `memory_health` so dead-weight memories can be "
+            "pruned and stale ones flagged. `note` is an optional free-form "
+            "string for context. Skip the call when no retrieved memory "
+            "shaped your response — silence is also signal, as the absence "
+            "of `applied` events for a recently-retrieved id is what tells "
+            "us the memory wasn't useful."
         ),
     )
     async def memory_record_use(
@@ -1886,6 +1922,7 @@ def _cli_health(
         window_days=days,
         heavily_used_top_k=top_k,
         heavily_used_min_applied=threshold,
+        verification_stale_days=config.behavior.verification_stale_days,
     )
     sys.stdout.write(render_json(report) if json_out else render_text(report))
 

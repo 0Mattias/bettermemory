@@ -305,6 +305,7 @@ def test_use_outcome_counters() -> None:
             ids=[m.id],
             outcome="contradicted",
         ),
+        _event("use", ids=[m.id], outcome="corrected"),
     ]
     report = compute_health([m], events, now=_utc(2026, 5, 2))
     stats = next(
@@ -315,6 +316,161 @@ def test_use_outcome_counters() -> None:
     assert stats.applied_count == 2
     assert stats.ignored_count == 1
     assert stats.contradicted_count == 1
+    assert stats.corrected_count == 1
+
+
+def test_corrected_does_not_raise_contradiction_flag() -> None:
+    """`corrected` is the audit-only outcome for the
+    noticed-and-fixed-inline workflow: the caller has already run
+    memory_update / memory_verify before recording the use event.
+    A `corrected` event must not push `last_contradicted_at` forward,
+    because doing so would re-create the exact stuck-flag failure
+    mode the new outcome was added to fix.
+    """
+    m = _memory(
+        created=_utc(2026, 1, 1),
+        updated=_utc(2026, 4, 14),
+        last_verified_at=_utc(2026, 4, 15),
+    )
+    events = [
+        # The audit log entry lands AFTER the resolution events. With
+        # the old `contradicted` outcome this would keep the flag set
+        # because event ts > last_verified_at; with `corrected` it
+        # must not.
+        _event(
+            "use",
+            ts=_utc(2026, 4, 16),
+            ids=[m.id],
+            outcome="corrected",
+            note="noticed drift mid-turn, ran memory_update + memory_verify",
+        ),
+    ]
+    report = compute_health([m], events, now=_utc(2026, 5, 1))
+    assert report.contradicted == []
+    # The counter still increments even though the flag stays clear —
+    # otherwise a curation pass loses sight of how often a memory
+    # has needed inline repair.
+    stats = next(
+        s
+        for s in (report.heavily_used + report.contradicted + report.dead_weight)
+        if s.id == m.id
+    )
+    assert stats.corrected_count == 1
+    assert stats.contradicted_count == 0
+
+
+def test_corrected_after_genuine_contradiction_clears_flag_only_via_update_or_verify() -> (
+    None
+):
+    """A real contradicted event followed by a corrected event does
+    NOT clear the unresolved flag — `corrected` is audit signal, not
+    a resolution path. The actual resolution paths remain
+    memory_update and memory_verify (whose timestamps live on the
+    memory record, not in the event log). Recording `corrected`
+    without a prior update/verify is a caller error; we don't try
+    to silently paper over it.
+    """
+    m = _memory(
+        created=_utc(2026, 1, 1),
+        updated=_utc(2026, 1, 1),  # never updated since
+        last_verified_at=None,  # never verified
+    )
+    events = [
+        _event("use", ts=_utc(2026, 4, 1), ids=[m.id], outcome="contradicted"),
+        _event("use", ts=_utc(2026, 4, 2), ids=[m.id], outcome="corrected"),
+    ]
+    report = compute_health([m], events, now=_utc(2026, 5, 1))
+    assert len(report.contradicted) == 1, (
+        "corrected event without a real update/verify must not clear "
+        "the flag — otherwise the outcome becomes a free pass."
+    )
+
+
+# ---------------------------------------------------------------------------
+# Resolution timeline — chronological event log on contradicted rows
+# ---------------------------------------------------------------------------
+
+
+def test_resolution_timeline_attached_to_contradicted_rows() -> None:
+    """A row in the contradicted bucket carries the chronological log of
+    its resolution-relevant events (update / verify / contradicted /
+    corrected). The model uses this to self-diagnose stuck-flag cases
+    without grepping `.events.jsonl` by hand."""
+    m = _memory(created=_utc(2026, 1, 1), updated=_utc(2026, 1, 1))
+    events = [
+        _event("update", ts=_utc(2026, 4, 1), id=m.id),
+        _event(
+            "verify",
+            ts=_utc(2026, 4, 2),
+            id=m.id,
+            note="confirmed",
+        ),
+        _event(
+            "use",
+            ts=_utc(2026, 4, 3),
+            ids=[m.id],
+            outcome="contradicted",
+            note="logged after the fix — this is the stuck-flag pattern",
+        ),
+    ]
+    report = compute_health([m], events, now=_utc(2026, 5, 1))
+    assert len(report.contradicted) == 1
+    timeline = report.contradicted[0].resolution_timeline
+    kinds = [entry["kind"] for entry in timeline]
+    assert kinds == ["update", "verify", "contradicted"]
+    # Notes pass through; missing notes render as None rather than being
+    # dropped (the kind alone is informative).
+    assert timeline[1]["note"] == "confirmed"
+    assert timeline[0]["note"] is None
+    assert "stuck-flag" in timeline[2]["note"]
+
+
+def test_resolution_timeline_empty_for_non_contradicted_rows() -> None:
+    """The timeline is opt-in — only contradicted rows carry it. Other
+    rows keep the field empty so the JSON output stays compact for the
+    common case where the bucket is clean."""
+    m = _memory(created=_utc(2026, 1, 1))
+    events = [
+        _event("use", ids=[m.id], outcome="applied"),
+        _event("update", ts=_utc(2026, 2, 1), id=m.id),
+    ]
+    report = compute_health(
+        [m], events, heavily_used_min_applied=1, now=_utc(2026, 5, 1)
+    )
+    assert report.contradicted == []
+    assert len(report.heavily_used) == 1
+    assert report.heavily_used[0].resolution_timeline == []
+
+
+def test_resolution_timeline_includes_corrected_events() -> None:
+    """A `corrected` event lives in the audit trail too, even though it
+    doesn't drive the flag. If a memory ends up contradicted later via
+    a different event, the timeline shows the full history."""
+    m = _memory(
+        created=_utc(2026, 1, 1),
+        updated=_utc(2026, 1, 1),
+        last_verified_at=None,
+    )
+    events = [
+        _event(
+            "use",
+            ts=_utc(2026, 4, 1),
+            ids=[m.id],
+            outcome="corrected",
+            note="early audit fix",
+        ),
+        _event(
+            "use",
+            ts=_utc(2026, 4, 20),
+            ids=[m.id],
+            outcome="contradicted",
+            note="this one is real",
+        ),
+    ]
+    report = compute_health([m], events, now=_utc(2026, 5, 1))
+    assert len(report.contradicted) == 1
+    timeline = report.contradicted[0].resolution_timeline
+    assert [e["kind"] for e in timeline] == ["corrected", "contradicted"]
 
 
 # ---------------------------------------------------------------------------
@@ -346,6 +502,152 @@ def test_marker_override_rate() -> None:
     m = MarkerStats(marker="x", fire_count=8, override_count=2)
     assert m.override_rate == 0.2
     assert MarkerStats(marker="y", fire_count=0, override_count=0).override_rate == 0.0
+
+
+# ---------------------------------------------------------------------------
+# Verification debt — never / stale / fresh rollup
+# ---------------------------------------------------------------------------
+
+
+def test_verification_debt_partitions_active_memories() -> None:
+    """Every active memory ends up in exactly one of the three buckets:
+    never_verified (last_verified_at is None), stale (verified more
+    than `verification_stale_days` ago), or fresh (verified within the
+    window). The three counts must sum to total_active_memories — the
+    invariant the curation pass relies on to read percentages without
+    re-counting."""
+    never = _memory(created=_utc(2026, 1, 1), last_verified_at=None)
+    stale = _memory(
+        created=_utc(2026, 1, 1),
+        last_verified_at=_utc(2026, 2, 1),  # 90 days before now
+    )
+    fresh = _memory(
+        created=_utc(2026, 1, 1),
+        last_verified_at=_utc(2026, 4, 25),  # 6 days before now
+    )
+    report = compute_health(
+        [never, stale, fresh],
+        [],
+        verification_stale_days=30,
+        now=_utc(2026, 5, 1),
+    )
+    debt = report.verification_debt
+    assert debt.never_verified_total == 1
+    assert debt.stale_total == 1
+    assert debt.fresh_count == 1
+    assert (
+        debt.never_verified_total + debt.stale_total + debt.fresh_count
+        == report.total_active_memories
+    )
+    assert {s.id for s in debt.never_verified} == {never.id}
+    assert {s.id for s in debt.stale} == {stale.id}
+
+
+def test_verification_debt_sorts_oldest_first() -> None:
+    """never_verified rows sort by `created` ascending (oldest first —
+    that's the highest-risk because the body has had the most time to
+    drift). stale rows sort by `last_verified_at` ascending for the
+    same reason."""
+    young_never = _memory(created=_utc(2026, 4, 1), last_verified_at=None)
+    old_never = _memory(created=_utc(2026, 1, 1), last_verified_at=None)
+    recent_stale = _memory(
+        created=_utc(2026, 1, 1),
+        last_verified_at=_utc(2026, 3, 1),
+    )
+    ancient_stale = _memory(
+        created=_utc(2026, 1, 1),
+        last_verified_at=_utc(2026, 1, 15),
+    )
+    report = compute_health(
+        [young_never, old_never, recent_stale, ancient_stale],
+        [],
+        verification_stale_days=30,
+        now=_utc(2026, 5, 1),
+    )
+    debt = report.verification_debt
+    assert [s.id for s in debt.never_verified] == [old_never.id, young_never.id]
+    assert [s.id for s in debt.stale] == [ancient_stale.id, recent_stale.id]
+
+
+def test_verification_debt_threshold_respected() -> None:
+    """The staleness boundary is exactly `verification_stale_days` —
+    a memory verified at the boundary is fresh, one verified just
+    before it is stale."""
+    boundary = _memory(
+        created=_utc(2026, 1, 1),
+        last_verified_at=_utc(2026, 4, 1),  # exactly 30 days before now
+    )
+    just_past = _memory(
+        created=_utc(2026, 1, 1),
+        last_verified_at=_utc(2026, 3, 31),  # 31 days
+    )
+    report = compute_health(
+        [boundary, just_past],
+        [],
+        verification_stale_days=30,
+        now=_utc(2026, 5, 1),
+    )
+    # `last_verified_at < verification_cutoff` is the stale predicate;
+    # the boundary case is on the fresh side.
+    assert {s.id for s in report.verification_debt.stale} == {just_past.id}
+    assert report.verification_debt.fresh_count == 1
+
+
+def test_verification_debt_caps_row_lists_at_20() -> None:
+    """When the buckets blow past the cap, the inline row lists are
+    truncated to keep JSON output bounded, while the totals stay
+    uncapped so a downstream reader can tell '5 stale' from '500 stale'
+    without re-counting."""
+    many = [
+        _memory(created=_utc(2026, 1, i + 1), last_verified_at=None) for i in range(25)
+    ]
+    report = compute_health(many, [], now=_utc(2026, 5, 1))
+    debt = report.verification_debt
+    assert debt.never_verified_total == 25
+    assert len(debt.never_verified) == 20  # capped
+
+
+def test_verification_debt_to_dict_shape() -> None:
+    """JSON shape is stable: `{stale_after_days, *_total, fresh_count,
+    never_verified, stale}`. Asserting the shape so downstream consumers
+    don't drift relative to it without us noticing."""
+    m = _memory(created=_utc(2026, 1, 1), last_verified_at=None)
+    report = compute_health([m], [], now=_utc(2026, 5, 1))
+    payload = report.to_dict()["verification_debt"]
+    assert set(payload) == {
+        "stale_after_days",
+        "never_verified_total",
+        "stale_total",
+        "fresh_count",
+        "never_verified",
+        "stale",
+    }
+    assert payload["never_verified_total"] == 1
+    assert len(payload["never_verified"]) == 1
+
+
+def test_verification_debt_render_text_section_present() -> None:
+    """The CLI renderer surfaces the debt section. We don't pin exact
+    formatting; just confirm the section appears with the relevant
+    counts so a human running `bettermemory health` sees it."""
+    m = _memory(created=_utc(2026, 1, 1), last_verified_at=None)
+    report = compute_health([m], [], now=_utc(2026, 5, 1))
+    text = render_text(report)
+    assert "Verification debt" in text
+    assert "never=1" in text
+
+
+def test_verification_debt_empty_store() -> None:
+    """An empty store returns a zeroed bucket — no exceptions, no
+    div-by-zero, just the default-shape bucket so callers can render
+    the section unconditionally."""
+    report = compute_health([], [], now=_utc(2026, 5, 1))
+    debt = report.verification_debt
+    assert debt.never_verified_total == 0
+    assert debt.stale_total == 0
+    assert debt.fresh_count == 0
+    assert debt.never_verified == []
+    assert debt.stale == []
 
 
 # ---------------------------------------------------------------------------

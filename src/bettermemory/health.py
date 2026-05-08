@@ -21,7 +21,9 @@ project is trying to detect:
   both the last `updated` (body refresh via `memory_update`) and the
   last `last_verified_at` (explicit re-check via `memory_verify`). Either
   resolution path clears the flag, so a sticky entry can be cleared by
-  re-running the appropriate one.
+  re-running the appropriate one. The sibling `corrected` outcome (for
+  noticed-and-fixed-inline) is audit-only — it increments
+  `corrected_count` but never raises this flag.
 - **marker_stats**: the transient-marker override rate, per marker. A
   high override rate is the signal to remove the marker from the list,
   not vibes. A near-zero rate with non-zero fires is a healthy marker.
@@ -67,9 +69,24 @@ class MemoryStats:
     applied_count: int = 0
     ignored_count: int = 0
     contradicted_count: int = 0
+    # `corrected` is the audit-only sibling of `contradicted`: the caller
+    # noticed drift and fixed it inline (memory_update / memory_verify
+    # already called) before logging the use event. Counted here so a
+    # curation pass can see how often each memory has needed an inline
+    # repair without conflating it with truly unresolved contradictions.
+    corrected_count: int = 0
     last_used_at: datetime | None = None
     last_contradicted_at: datetime | None = None
     last_verified_at: datetime | None = None
+    # Chronological list of resolution-relevant events for this memory:
+    # each entry is `{kind: "update"|"verify"|"contradicted"|"corrected",
+    # ts: "iso", note: str | None}`. Populated only for rows that land in
+    # `HealthReport.contradicted` — most rows have nothing useful to say
+    # and the field would just bloat the output. Lets the model see at a
+    # glance whether a stuck flag is "out-of-order audit log" (resolution
+    # events present but predate the contradicted event) or "genuinely
+    # unresolved" (no resolution events after the contradiction).
+    resolution_timeline: list[dict[str, Any]] = field(default_factory=list)
 
     @property
     def has_unresolved_contradiction(self) -> bool:
@@ -113,11 +130,13 @@ class MemoryStats:
             "applied_count": self.applied_count,
             "ignored_count": self.ignored_count,
             "contradicted_count": self.contradicted_count,
+            "corrected_count": self.corrected_count,
             "last_used_at": _iso(self.last_used_at) if self.last_used_at else None,
             "last_verified_at": (
                 _iso(self.last_verified_at) if self.last_verified_at else None
             ),
             "has_unresolved_contradiction": self.has_unresolved_contradiction,
+            "resolution_timeline": list(self.resolution_timeline),
         }
 
 
@@ -184,6 +203,43 @@ class ScopeHealth:
 
 
 @dataclass
+class VerificationDebt:
+    """Curation pivot for verification staleness.
+
+    Mirrors the shape of `dead_weight` / `heavily_used`: capped row
+    lists for inline display plus uncapped totals so the consumer can
+    distinguish "5 never verified" from "500 never verified" without
+    enumerating. The `fresh_count` is the residual — memories whose
+    `last_verified_at` is within the staleness window — so
+    `never_verified_total + stale_total + fresh_count` always equals
+    the total number of active memories.
+    """
+
+    stale_after_days: int
+    never_verified: list[MemoryStats] = field(default_factory=list)
+    never_verified_total: int = 0
+    stale: list[MemoryStats] = field(default_factory=list)
+    stale_total: int = 0
+    fresh_count: int = 0
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "stale_after_days": self.stale_after_days,
+            "never_verified_total": self.never_verified_total,
+            "stale_total": self.stale_total,
+            "fresh_count": self.fresh_count,
+            "never_verified": [s.to_dict() for s in self.never_verified],
+            "stale": [s.to_dict() for s in self.stale],
+        }
+
+
+# Cap the inline row lists so the JSON stays bounded on big stores. The
+# uncapped totals on VerificationDebt let a curation pass tell whether
+# the bucket is small (handle now) or huge (schedule a session).
+_VERIFICATION_DEBT_CAP = 20
+
+
+@dataclass
 class HealthReport:
     """The full aggregate view returned by `memory_health`."""
 
@@ -214,6 +270,15 @@ class HealthReport:
     # tombstoned). High counts hint at the model fabricating ULIDs in
     # `memory_record_use` — a quality signal worth surfacing.
     orphan_use_events: int = 0
+    # Verification staleness rollup — never-verified vs stale vs fresh,
+    # plus capped row lists for the rot. Unlike `dead_weight` and
+    # `heavily_used`, this bucket is dominated by *young* memories on
+    # any active store (every fresh write starts in `never_verified`
+    # until something spot-checks it). The default field initializes
+    # to an empty bucket; compute_health populates it during the run.
+    verification_debt: VerificationDebt = field(
+        default_factory=lambda: VerificationDebt(stale_after_days=30)
+    )
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -230,6 +295,7 @@ class HealthReport:
             "scope_health": [s.to_dict() for s in self.scope_health],
             "rare_scopes": list(self.rare_scopes),
             "orphan_use_events": self.orphan_use_events,
+            "verification_debt": self.verification_debt.to_dict(),
         }
 
 
@@ -245,6 +311,7 @@ def compute_health(
     window_days: int = 30,
     heavily_used_top_k: int = 10,
     heavily_used_min_applied: int = 3,
+    verification_stale_days: int = 30,
     now: datetime | None = None,
 ) -> HealthReport:
     """Build a `HealthReport` from active memories + the event stream.
@@ -265,11 +332,21 @@ def compute_health(
     actively load-bearing. Lower to 1 on a fresh store if you want to see
     everything that's been touched at least once. Always >= 1 — a value of
     0 would dump every memory into the bucket and defeat the report.
+
+    `verification_stale_days` controls the staleness threshold for the
+    `verification_debt` bucket: a memory whose `last_verified_at` is older
+    than this many days lands in the `stale` list; never-verified memories
+    land in `never_verified` regardless of age. Should match the
+    `behavior.verification_stale_days` config value the rest of the system
+    uses for the per-row `verification.status` field, so a "stale" hit
+    in search results and a "stale" entry in this bucket mean the same
+    thing.
     """
     if heavily_used_min_applied < 1:
         heavily_used_min_applied = 1
     now = now or datetime.now(timezone.utc)
     cutoff = now - timedelta(days=window_days)
+    verification_cutoff = now - timedelta(days=verification_stale_days)
 
     by_id: dict[str, MemoryStats] = {}
     for m in memories:
@@ -291,6 +368,33 @@ def compute_health(
     sessions: set[str] = set()
     total_events = 0
     orphan_use_events = 0
+
+    # Per-id chronological log of resolution-relevant events
+    # (update / verify / use[contradicted|corrected]). Accumulated for
+    # every memory while we walk the event stream once; attached only to
+    # rows that end up in the contradicted bucket (so we don't bloat the
+    # output for rows that have nothing interesting to say). Cheaper than
+    # re-iterating the events twice and bounded by the per-memory event
+    # count, which is small in practice.
+    resolution_events_by_id: dict[str, list[dict[str, Any]]] = {
+        mid: [] for mid in by_id
+    }
+
+    def _append_resolution(mid: str, kind: str, ts_str: str | None, note: Any) -> None:
+        # Defensive against malformed events: a missing or non-string
+        # timestamp would still be useful in the timeline (the kind alone
+        # tells you something happened), but we render it as None so the
+        # consumer can skip unsorted entries cleanly.
+        bucket = resolution_events_by_id.get(mid)
+        if bucket is None:
+            return
+        bucket.append(
+            {
+                "kind": kind,
+                "ts": ts_str if isinstance(ts_str, str) else None,
+                "note": note if isinstance(note, str) else None,
+            }
+        )
 
     for ev in events:
         total_events += 1
@@ -335,10 +439,30 @@ def compute_health(
                         or ts > stats.last_contradicted_at
                     ):
                         stats.last_contradicted_at = ts
+                    _append_resolution(
+                        mid, "contradicted", ev.get("ts"), ev.get("note")
+                    )
+                elif outcome == "corrected":
+                    # Audit-only: the caller has already resolved via
+                    # memory_update / memory_verify earlier in the turn.
+                    # Increment the counter and bump last_used_at like
+                    # any other use, but deliberately do NOT touch
+                    # last_contradicted_at — that field is reserved for
+                    # the unresolved-contradiction signal.
+                    stats.corrected_count += 1
+                    _append_resolution(mid, "corrected", ev.get("ts"), ev.get("note"))
                 if ts is not None and (
                     stats.last_used_at is None or ts > stats.last_used_at
                 ):
                     stats.last_used_at = ts
+        elif kind == "update":
+            mid = ev.get("id", "")
+            if isinstance(mid, str) and mid:
+                _append_resolution(mid, "update", ev.get("ts"), ev.get("note"))
+        elif kind == "verify":
+            mid = ev.get("id", "")
+            if isinstance(mid, str) and mid:
+                _append_resolution(mid, "verify", ev.get("ts"), ev.get("note"))
         elif kind == "write":
             for marker in ev.get("markers", []) or []:
                 marker_fires[marker] += 1
@@ -373,6 +497,12 @@ def compute_health(
 
     contradicted = [s for s in by_id.values() if s.has_unresolved_contradiction]
     contradicted.sort(key=lambda s: s.last_contradicted_at or s.updated, reverse=True)
+    # Attach the resolution timeline to each contradicted row. Cheap because
+    # the bucket is typically empty or small. We slice the per-id event list
+    # rather than re-iterating the events stream — the accumulator was built
+    # in the same pass that produced the counters above.
+    for stats in contradicted:
+        stats.resolution_timeline = list(resolution_events_by_id.get(stats.id, []))
 
     # Per-scope rollup. A memory tagged with N scopes is counted once per
     # scope — `sum(scope.active for scope in scope_health)` will exceed
@@ -416,6 +546,38 @@ def compute_health(
         )
     )
 
+    # Verification debt — partition active memories into never_verified /
+    # stale / fresh against the staleness threshold. Sort each bucket by
+    # the timestamp that's most actionable for a curation pass:
+    # never_verified by `created` (oldest unverified first — those are
+    # the highest-risk because they've had the most time to drift), and
+    # stale by `last_verified_at` (oldest verification first — same
+    # rationale, applied to memories that have at least been spot-checked
+    # once). The capped `_VERIFICATION_DEBT_CAP` rows are inlined for
+    # display; the totals are always uncapped so a downstream reader can
+    # tell "5 stale" from "500 stale" without re-counting.
+    never_verified_all: list[MemoryStats] = []
+    stale_all: list[MemoryStats] = []
+    fresh_count = 0
+    for stats in by_id.values():
+        if stats.last_verified_at is None:
+            never_verified_all.append(stats)
+        elif stats.last_verified_at < verification_cutoff:
+            stale_all.append(stats)
+        else:
+            fresh_count += 1
+    never_verified_all.sort(key=lambda s: s.created)
+    stale_all.sort(key=lambda s: s.last_verified_at or s.created)
+
+    verification_debt = VerificationDebt(
+        stale_after_days=verification_stale_days,
+        never_verified=never_verified_all[:_VERIFICATION_DEBT_CAP],
+        never_verified_total=len(never_verified_all),
+        stale=stale_all[:_VERIFICATION_DEBT_CAP],
+        stale_total=len(stale_all),
+        fresh_count=fresh_count,
+    )
+
     return HealthReport(
         generated_at=now,
         window_days=window_days,
@@ -430,6 +592,7 @@ def compute_health(
         scope_health=scope_health,
         rare_scopes=rare_scopes,
         orphan_use_events=orphan_use_events,
+        verification_debt=verification_debt,
     )
 
 
@@ -522,6 +685,33 @@ def render_text(report: HealthReport) -> str:
             "fabricated ULIDs."
         )
 
+    debt = report.verification_debt
+    lines.append("")
+    lines.append(
+        f"Verification debt — never={debt.never_verified_total}  "
+        f"stale={debt.stale_total}  fresh={debt.fresh_count}  "
+        f"(stale after {debt.stale_after_days} days):"
+    )
+    if debt.never_verified_total == 0 and debt.stale_total == 0:
+        lines.append("  (none)")
+    if debt.never_verified:
+        lines.append(f"  never-verified ({debt.never_verified_total}, oldest first):")
+        for s in debt.never_verified:
+            lines.append(f"    {s.id} {','.join(s.scopes)}: {s.summary}")
+        if debt.never_verified_total > len(debt.never_verified):
+            lines.append(
+                f"    ... and {debt.never_verified_total - len(debt.never_verified)} more"
+            )
+    if debt.stale:
+        lines.append(f"  stale ({debt.stale_total}, oldest verification first):")
+        for s in debt.stale:
+            verified = _iso(s.last_verified_at) or "?"
+            lines.append(
+                f"    {s.id} [verified={verified}] {','.join(s.scopes)}: {s.summary}"
+            )
+        if debt.stale_total > len(debt.stale):
+            lines.append(f"    ... and {debt.stale_total - len(debt.stale)} more")
+
     return "\n".join(lines) + "\n"
 
 
@@ -596,6 +786,7 @@ def report_for_directory(
     window_days: int = 30,
     heavily_used_top_k: int = 10,
     heavily_used_min_applied: int = 3,
+    verification_stale_days: int = 30,
     now: datetime | None = None,
 ) -> HealthReport:
     """Convenience: load memories from `root`, walk the event log, return
@@ -609,6 +800,7 @@ def report_for_directory(
         window_days=window_days,
         heavily_used_top_k=heavily_used_top_k,
         heavily_used_min_applied=heavily_used_min_applied,
+        verification_stale_days=verification_stale_days,
         now=now,
     )
 
@@ -616,6 +808,8 @@ def report_for_directory(
 __all__ = [
     "MemoryStats",
     "MarkerStats",
+    "ScopeHealth",
+    "VerificationDebt",
     "HealthReport",
     "compute_health",
     "render_text",

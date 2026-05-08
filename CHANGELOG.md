@@ -9,9 +9,51 @@ spells out exactly what's stable.
 
 ## Unreleased
 
-Two `memory_health` curation-bucket fixes from a real-world audit pass.
-Both are pure refinements to which memories the buckets surface — no
-change to the JSON shape, no change to which tools or fields exist.
+Three additions plus the prior two fixes. The additions land in
+`memory_record_use` and `memory_health` and address the
+audit-after-fix workflow that left the `has_unresolved_contradiction`
+flag stuck in real use, plus add introspection to make the next
+mis-step self-diagnosable.
+
+### Added
+
+- **`corrected` outcome on `memory_record_use`.** A fourth value
+  alongside `applied` / `ignored` / `contradicted`, distinct in
+  meaning rather than a flag tweak. Use `corrected` for the
+  noticed-and-fixed-inline workflow: the caller has already run
+  `memory_update` and/or `memory_verify` in the same turn, and this
+  event is the audit-trail entry. Audit-only — `corrected` increments
+  a new `corrected_count` on `MemoryStats` but never raises the
+  `has_unresolved_contradiction` flag, so the previous foot-gun
+  ("logged contradicted after the fix → flag stuck because event
+  ts > resolution ts") is gone structurally. Use `contradicted` only
+  when the conflict is genuinely unresolved; switch to `corrected`
+  once you've fixed it.
+
+- **`resolution_timeline` on each `memory_health.contradicted` row.**
+  Chronological list of the resolution-relevant events for that
+  memory: every `update`, `verify`, `contradicted`, and `corrected`
+  event from the log, in order, with their notes. Lets a model
+  self-diagnose a stuck flag as out-of-order audit logging
+  (resolution events present but predate the contradicted event)
+  vs. genuinely unresolved (no resolution events after the
+  contradiction) without grepping `.events.jsonl`. Cheap — only
+  populated for rows actually in the contradicted bucket; other rows
+  keep an empty list.
+
+- **`verification_debt` rollup on `memory_health`.** Partitions
+  active memories into `never_verified` / `stale` / `fresh` against
+  the configured `behavior.verification_stale_days` threshold.
+  Capped row lists (top 20, oldest-first) for inline display, plus
+  uncapped totals so a curation pass can tell "5 stale" from "500
+  stale" without enumerating. The three counts always sum to
+  `total_active_memories`. Surfaced in both the JSON tool output
+  and the `bettermemory health` CLI's text rendering. Threaded a
+  new `verification_stale_days` parameter through `compute_health`
+  and `report_for_directory`; the server tool reads
+  `config.behavior.verification_stale_days` for the default.
+
+### Fixed (carried forward from the earlier Unreleased section)
 
 - **`memory_verify` now resolves an unresolved contradiction.** Before
   this, only `memory_update` (which bumps `updated`) cleared the
@@ -23,7 +65,9 @@ change to the JSON shape, no change to which tools or fields exist.
   The new rule treats either `updated` *or* `last_verified_at` newer
   than `last_contradicted_at` as resolution. A user with a sticky
   flag can clear it by re-running `memory_verify` after the
-  contradiction event.
+  contradiction event. The new `corrected` outcome above is the
+  forward-looking fix for the same workflow — this rule remains as
+  the cleanup path for legacy stuck flags.
 
 - **`rare_scopes` only flags singletons that look like typos.** The
   previous heuristic flagged every n=1 scope, which produced too many

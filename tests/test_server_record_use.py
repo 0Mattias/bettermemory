@@ -118,6 +118,32 @@ async def test_record_contradicted_with_note(
     assert "Postgres" in e["note"]
 
 
+async def test_record_corrected_emits_event(
+    server_with_events: tuple[Any, Path],
+) -> None:
+    """`corrected` is the audit-after-fix outcome: the caller already
+    resolved the drift via memory_update / memory_verify in the same
+    turn, and this event is the audit-trail entry. The handler accepts
+    it the same way as any other outcome — the behavioral difference
+    (no contradiction-flag bump) lives in health.py, exercised by the
+    test_health.py suite."""
+    server, memory_dir = server_with_events
+    written = await _call(
+        server, "memory_write", content="durable fact", scopes=["tools"]
+    )
+    await _call(
+        server,
+        "memory_record_use",
+        memory_ids=[written["id"]],
+        outcome="corrected",
+        note="Tool list was missing memory_restore; updated body and re-verified.",
+    )
+
+    e = [e for e in iter_events(memory_dir) if e["kind"] == "use"][-1]
+    assert e["outcome"] == "corrected"
+    assert "memory_restore" in e["note"]
+
+
 async def test_record_use_multiple_ids_at_once(
     server_with_events: tuple[Any, Path],
 ) -> None:
