@@ -9,6 +9,21 @@ fixes.
 
 ### Added
 
+- **Storage benchmark** (`bench/storage.py`) and a **Performance
+  characteristics** section in the README. Bench measures `Store.write`
+  throughput, `Store.load_all` full-corpus scan, and `search()` keyword
+  scoring across configurable corpus sizes. Default sizes are
+  `1000,10000,50000`; output is a markdown table or `--json`. Bench
+  runs in a `tempfile.mkdtemp` directory and tears it down on exit
+  rather than ever touching the user's real `~/.claude-memory/`.
+
+  Numbers from one run on Apple Silicon ship in the README so users
+  have a reference shape for the latency curve before doing the bench
+  themselves: ~16 ms search median at 1k memories, ~170 ms at 10k,
+  ~1 s at 50k. Practical ceiling for the current
+  no-index-walk-every-file architecture sits around 50k memories,
+  which is far past where most stores ever grow if curated.
+
 - **`schema_version` on frontmatter** (`models.SCHEMA_VERSION`,
   currently `1`). Every new memory and tombstone written by the
   store carries `schema_version: 1` as the first frontmatter

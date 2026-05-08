@@ -116,6 +116,27 @@ Tombstones move to `.tombstones/` with `removed:` and `removed_reason:` added �
 
 **Schema version.** `schema_version: 1` is emitted by every new write. Memories without the field load implicitly as version 1 (the format predates the constant). A reader that encounters a memory with a *higher* version refuses it (`load_all` skips with a logged warning, `bettermemory doctor` surfaces the count gap) — graceful degradation rather than risk misinterpreting fields whose semantics changed under a downgrade. Within a major version, bumps are additive-only: new optional fields, never renamed, never removed, never re-defined. A major bump (1 → 2) is reserved for breaking changes and would ship with a `bettermemory migrate` subcommand.
 
+## Performance characteristics
+
+`Store.load_all` walks every file every time `memory_search` is called — there's no in-memory index, no incremental refresh. That's deliberate (simpler invariants, no cache-coherence story), but it sets a practical ceiling on corpus size.
+
+Numbers from `bench/storage.py` on an Apple Silicon laptop (your hardware will differ; the *shape* of the curve is what to plan around):
+
+| n      | disk MB | load_all median | search median | search p95 |
+|--------|---------|-----------------|---------------|------------|
+|  1,000 |   0.5   |    276 ms       |    16 ms      |    17 ms   |
+| 10,000 |   4.8   |    2.8 s        |   168 ms      |   189 ms   |
+| 50,000 |  23.8   |    23 s         |   956 ms      |  1.08 s    |
+
+Read this as roughly linear in N. Practical guidance:
+
+- **Up to ~5,000 memories**: comfortable. `memory_search` returns in well under 100 ms; you'll never feel the latency.
+- **5,000–10,000**: still fine. ~150–200 ms per `memory_search`; perceptible but not annoying.
+- **10,000–50,000**: usable but starting to drag. ~0.5–1 s per `memory_search`; one second is the rough threshold where the model's tool-call latency starts being noticeable in conversation.
+- **Beyond 50,000**: the architecture would need an index. We're not there, and your store probably won't be either — the project encourages curation (`memory_health`, dead-weight pruning, scope hygiene, tombstone-aware dedup) precisely so the corpus stays small and useful rather than ever growing into the tens of thousands.
+
+Re-run the bench yourself with `venv/bin/python bench/storage.py --sizes 1000,10000,50000` if you want numbers for your own hardware.
+
 ## Where memories live
 
 Resolution order:
