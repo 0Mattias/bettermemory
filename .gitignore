@@ -11,9 +11,9 @@ venv/
 
 # Test / coverage artifacts
 .pytest_cache/
-.coverage
-.coverage.*
-.coverage *
+# Glob covers .coverage, .coverage.host.42, and the space-suffixed
+# ".coverage 2" macOS sometimes leaves behind from parallel test runs.
+.coverage*
 htmlcov/
 
 # Editor / IDE

@@ -11,12 +11,20 @@ permissions:
 
 jobs:
   test:
-    name: test (py${{ matrix.python-version }})
-    runs-on: ubuntu-latest
+    name: test (${{ matrix.os }}, py${{ matrix.python-version }})
+    runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
       matrix:
-        python-version: ["3.11", "3.12", "3.13"]
+        os: [ubuntu-latest]
+        python-version: ["3.11", "3.12", "3.13", "3.14"]
+        # One macOS slot for platform coverage (platformdirs differs per
+        # OS, and conftest.py works around macOS-specific UF_HIDDEN
+        # propagation in iCloud-synced dirs). Pin to the version most
+        # likely to be on developer machines rather than 6×-ing runtime.
+        include:
+          - os: macos-latest
+            python-version: "3.13"
 
     steps:
       - uses: actions/checkout@v4
@@ -36,4 +44,4 @@ jobs:
         run: uv run ruff check .
 
       - name: Test
-        run: uv run pytest --cov=bettermemory --cov-report=term-missing -q
+        run: uv run pytest --cov=bettermemory --cov-report=term-missing --cov-fail-under=80 -q

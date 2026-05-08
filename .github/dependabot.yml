@@ -1,0 +1,23 @@
+# Keep CI actions and Python deps current. Both updaters are weekly to
+# avoid a noisy daily PR stream; the package is small enough that monthly
+# would let easy security patches sit too long.
+
+version: 2
+updates:
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+    groups:
+      actions:
+        patterns: ["*"]
+
+  - package-ecosystem: "pip"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+    groups:
+      runtime:
+        dependency-type: "production"
+      dev:
+        dependency-type: "development"
