@@ -13,33 +13,44 @@ jobs:
   test:
     name: test (${{ matrix.os }}, py${{ matrix.python-version }})
     runs-on: ${{ matrix.os }}
+    # Experimental jobs (currently py3.15) report failures in the matrix
+    # view but don't block the overall CI status. The pre-release ecosystem
+    # is the bottleneck, not us — see the python-version comment below.
+    continue-on-error: ${{ matrix.experimental || false }}
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest]
-        # 3.15 is still pre-release (Oct 2026 final); uv resolves the bare
+        # Spelled out as include entries (rather than os × python-version
+        # cross + extra includes) so each slot can carry an `experimental`
+        # flag without GitHub Actions' awkward matrix-overlay rules.
+        #
+        # 3.15 is still pre-release (Oct 2026 final). uv resolves the bare
         # "3.15" spec to the latest python-build-standalone build, which
-        # tracks the upstream RCs. Keep 3.11 — the pyproject floor.
-        python-version: ["3.11", "3.12", "3.13", "3.14", "3.15"]
-        # macOS and Windows slots for platform coverage:
+        # tracks the upstream RCs — but pydantic-core's prebuilt wheels for
+        # 3.15 only land once it ships a release built on PyO3 ≥ 0.28
+        # (PyO3 0.27.x caps at 3.14). Until then, ubuntu/macos 3.15 fall
+        # back to a source build and fail; Windows happens to have wheels
+        # earlier. Mark 3.15 jobs experimental so the matrix surfaces the
+        # state without blocking merges. Drop `experimental: true` once
+        # `uv sync` succeeds on 3.15 across all three OSes.
+        #
+        # Platform coverage rationale (why mac + win at all):
         #   - platformdirs returns different paths per OS
-        #   - the fcntl-based file locking in store.py / events.py only
-        #     applies on POSIX; the no-op fallback runs on Windows
-        #   - conftest.py works around macOS-specific UF_HIDDEN
-        #     propagation in iCloud-synced dirs
-        # Each non-Linux platform runs the current stable (3.14) and the
-        # in-development next (3.15) — enough to catch OS-specific
-        # regressions on the versions users will actually run, without
-        # blowing the matrix up to a full 3 × 5 = 15 cross-product.
+        #   - fcntl file locking in store.py / events.py is POSIX-only;
+        #     Windows runs the no-op fallback
+        #   - conftest.py works around macOS UF_HIDDEN in iCloud-synced
+        #     dirs
+        # 3.11 is the pyproject floor; we keep it pinned to ubuntu only.
         include:
-          - os: macos-latest
-            python-version: "3.14"
-          - os: macos-latest
-            python-version: "3.15"
-          - os: windows-latest
-            python-version: "3.14"
-          - os: windows-latest
-            python-version: "3.15"
+          - {os: ubuntu-latest,  python-version: "3.11"}
+          - {os: ubuntu-latest,  python-version: "3.12"}
+          - {os: ubuntu-latest,  python-version: "3.13"}
+          - {os: ubuntu-latest,  python-version: "3.14"}
+          - {os: ubuntu-latest,  python-version: "3.15", experimental: true}
+          - {os: macos-latest,   python-version: "3.14"}
+          - {os: macos-latest,   python-version: "3.15", experimental: true}
+          - {os: windows-latest, python-version: "3.14"}
+          - {os: windows-latest, python-version: "3.15", experimental: true}
 
     steps:
       - uses: actions/checkout@v6
