@@ -4,7 +4,9 @@ Six tools are exposed: memory_search, memory_show, memory_write, memory_list,
 memory_remove, memory_scope_disable (plus a companion memory_scope_enable).
 
 Each handler is thin: validate the input via the Pydantic models, call into
-`store` / `search`, return a JSON-serializable result.
+`store` / `search`, emit one event to the `Recorder`, return a
+JSON-serializable result. The recorder is best-effort — telemetry failures
+are logged but never propagate up into a tool call.
 """
 
 from __future__ import annotations
@@ -17,6 +19,7 @@ from typing import Any
 from mcp.server.fastmcp import FastMCP
 
 from .config import Config, load_config
+from .events import Recorder
 from .models import (
     Confidence,
     MemoryHit,
@@ -48,15 +51,25 @@ def build_server(
     config: Config | None = None,
     store: Store | None = None,
     state: SessionState | None = None,
+    recorder: Recorder | None = None,
 ) -> FastMCP:
     """Return a configured FastMCP instance.
 
-    Tests pass in their own `store` and `state` to keep things hermetic.
-    The real entry point in `main()` lets `load_config` resolve everything.
+    Tests pass in their own `store`, `state`, and `recorder` to keep things
+    hermetic. The real entry point in `main()` lets `load_config` resolve
+    everything. When `recorder` is None, one is constructed from `config` —
+    `enabled=False` in the telemetry config makes every event a no-op.
     """
     config = config or load_config()
     store = store or Store(config.resolved_directory())
     state = state or get_state()
+    if recorder is None:
+        recorder = Recorder(
+            root=config.resolved_directory(),
+            session_id=state.session_id,
+            enabled=config.telemetry.enabled,
+            max_bytes=config.telemetry.max_bytes,
+        )
 
     mcp = FastMCP(
         "bettermemory",
@@ -67,7 +80,9 @@ def build_server(
         ),
     )
 
-    _register_tools(mcp, config=config, store=store, state=state)
+    _register_tools(
+        mcp, config=config, store=store, state=state, recorder=recorder
+    )
     return mcp
 
 
@@ -77,6 +92,7 @@ def _register_tools(
     config: Config,
     store: Store,
     state: SessionState,
+    recorder: Recorder,
 ) -> None:
     # ---- memory_search ---------------------------------------------------
 
@@ -124,6 +140,7 @@ def _register_tools(
         # Optional auto-expansion of the top hit. Conservative: only fires
         # when the top hit clearly wins ("high" relevance) so the model
         # doesn't get hosed with full bodies it didn't really need.
+        expanded_id: str | None = None
         if expand_top and out and out[0]["relevance"] == "high":
             try:
                 memory = store.load_one(hits[0].id)
@@ -133,7 +150,18 @@ def _register_tools(
                 pass
             else:
                 out[0]["body"] = memory.body
+                expanded_id = memory.id
 
+        recorder.record(
+            "search",
+            query=query,
+            scopes_filter=scopes,
+            max_results=max_results,
+            returned=[h["id"] for h in out],
+            relevance=[h["relevance"] for h in out],
+            expand_top=expand_top,
+            expanded_id=expanded_id,
+        )
         return out
 
     # ---- memory_show -----------------------------------------------------
@@ -153,6 +181,7 @@ def _register_tools(
             raise ValueError(str(exc)) from exc
         except MemoryNotFoundError as exc:
             raise ValueError(str(exc)) from exc
+        recorder.record("show", id=memory.id)
         return {
             "id": memory.id,
             "scopes": memory.scopes,
@@ -214,6 +243,13 @@ def _register_tools(
             similar = find_similar(payload["content"], store.load_all())
             high = [h for h in similar if h.relevance == "high"]
             if high:
+                recorder.record(
+                    "write",
+                    status="duplicate",
+                    scopes=payload["scopes"],
+                    forced=False,
+                    matches=[h.id for h in high],
+                )
                 return {
                     "status": "duplicate",
                     "matches": [_similar_to_dict(h) for h in high],
@@ -244,9 +280,27 @@ def _register_tools(
             }
             if related:
                 response["related"] = [_similar_to_dict(h) for h in related]
+            recorder.record(
+                "write",
+                status="pending",
+                pending_id=pending.pending_id,
+                scopes=payload["scopes"],
+                forced=force,
+                related=[h.id for h in related],
+            )
             return response
 
         memory = store.write(**payload)
+        recorder.record(
+            "write",
+            status="committed",
+            id=memory.id,
+            scopes=memory.scopes,
+            confidence=memory.confidence.value,
+            source=memory.source.value,
+            forced=force,
+            related=[h.id for h in related],
+        )
         return _committed(memory, related=related)
 
     @mcp.tool(
@@ -264,6 +318,12 @@ def _register_tools(
                 "expired or been already committed)"
             )
         memory = store.write(**pending.payload)
+        recorder.record(
+            "write_confirm",
+            pending_id=pending_id,
+            id=memory.id,
+            scopes=memory.scopes,
+        )
         return _committed(memory)
 
     @mcp.tool(
@@ -275,6 +335,9 @@ def _register_tools(
     )
     async def memory_write_cancel(pending_id: str) -> dict[str, Any]:
         existed = state.cancel_pending(pending_id)
+        recorder.record(
+            "write_cancel", pending_id=pending_id, existed=existed
+        )
         return {"cancelled": pending_id, "existed": existed}
 
     # ---- memory_update ---------------------------------------------------
@@ -351,6 +414,22 @@ def _register_tools(
             }
         )
         updated = store.update(merged)
+        fields_changed = [
+            name
+            for name, value in (
+                ("content", content),
+                ("scopes", scopes),
+                ("confidence", confidence),
+            )
+            if value is not None
+        ]
+        recorder.record(
+            "update",
+            id=updated.id,
+            fields=fields_changed,
+            scopes=updated.scopes,
+            confidence=updated.confidence.value,
+        )
         return _committed(updated)
 
     # ---- memory_list -----------------------------------------------------
@@ -386,6 +465,13 @@ def _register_tools(
                 if scopes and not (memory_scopes & set(scopes)):
                     continue
                 out.append(_memory_to_dict(memory))
+            recorder.record(
+                "list",
+                scopes_filter=scopes,
+                with_bodies=True,
+                count=len(out),
+                returned=[m["id"] for m in out],
+            )
             return out
 
         out_summary: list[dict[str, Any]] = []
@@ -393,6 +479,13 @@ def _register_tools(
             if excluded and (set(summary.scopes) & excluded):
                 continue
             out_summary.append(_summary_to_dict(summary))
+        recorder.record(
+            "list",
+            scopes_filter=scopes,
+            with_bodies=False,
+            count=len(out_summary),
+            returned=[s["id"] for s in out_summary],
+        )
         return out_summary
 
     # ---- memory_remove ---------------------------------------------------
@@ -414,6 +507,7 @@ def _register_tools(
             raise ValueError(str(exc)) from exc
         except MemoryNotFoundError as exc:
             raise ValueError(str(exc)) from exc
+        recorder.record("remove", id=id, reason=reason)
         return {
             "removed": id,
             "tombstone_path": str(tombstone_path),
@@ -433,6 +527,7 @@ def _register_tools(
     async def memory_scope_disable(scope: str) -> dict[str, Any]:
         clean = validate_scope(scope)
         state.disable(clean)
+        recorder.record("scope_disable", scope=clean)
         return {"disabled_scopes": sorted(state.disabled_scopes)}
 
     @mcp.tool(
@@ -444,6 +539,7 @@ def _register_tools(
     async def memory_scope_enable(scope: str) -> dict[str, Any]:
         clean = validate_scope(scope)
         state.enable(clean)
+        recorder.record("scope_enable", scope=clean)
         return {"disabled_scopes": sorted(state.disabled_scopes)}
 
 
@@ -606,6 +702,11 @@ def main() -> None:
     store = Store(directory)
 
     log.info("memory directory: %s", directory)
+    log.info(
+        "telemetry: %s (event log at %s/.events.jsonl)",
+        "on" if config.telemetry.enabled else "off",
+        directory,
+    )
     log.info(
         "reminder: include the SYSTEM_PROMPT_ADDENDUM in your client's "
         "system prompt — see docs/system_prompt.md"

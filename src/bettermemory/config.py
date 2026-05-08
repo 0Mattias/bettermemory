@@ -54,6 +54,19 @@ recency_boost_half_life_days = 30
 [scopes]
 # If non-empty, writes with scopes outside this list fail. Empty = anything.
 allowed = []
+
+[telemetry]
+# Append-only JSONL event log at <storage>/.events.jsonl. One line per tool
+# call: search queries, returned IDs, write/update/remove events. Used by the
+# memory_health view, by use-recording feedback, and to tune the durability
+# marker list against real traffic. Lives next to the memories — same trust
+# boundary, no new permissions story. Search queries are recorded verbatim;
+# set `enabled = false` to opt out.
+enabled = true
+
+# Rotate (gzip) the active log when it crosses this many bytes. Archives are
+# kept indefinitely — prune by hand if disk pressure matters.
+max_bytes = 10000000
 """
 
 
@@ -75,10 +88,19 @@ class ScopesConfig:
 
 
 @dataclass
+class TelemetryConfig:
+    """Event-log toggles. See DEFAULT_CONFIG for prose."""
+
+    enabled: bool = True
+    max_bytes: int = 10_000_000
+
+
+@dataclass
 class Config:
     storage: StorageConfig = field(default_factory=StorageConfig)
     behavior: BehaviorConfig = field(default_factory=BehaviorConfig)
     scopes: ScopesConfig = field(default_factory=ScopesConfig)
+    telemetry: TelemetryConfig = field(default_factory=TelemetryConfig)
     config_path: Path | None = None
 
     # ---- methods ----------------------------------------------------------
@@ -127,6 +149,7 @@ def load_config(path: Path | None = None) -> Config:
     storage_raw = data.get("storage", {})
     behavior_raw = data.get("behavior", {})
     scopes_raw = data.get("scopes", {})
+    telemetry_raw = data.get("telemetry", {})
 
     return Config(
         storage=StorageConfig(directory=storage_raw.get("directory")),
@@ -141,6 +164,10 @@ def load_config(path: Path | None = None) -> Config:
         ),
         scopes=ScopesConfig(
             allowed=list(scopes_raw.get("allowed", [])),
+        ),
+        telemetry=TelemetryConfig(
+            enabled=bool(telemetry_raw.get("enabled", True)),
+            max_bytes=int(telemetry_raw.get("max_bytes", 10_000_000)),
         ),
         config_path=config_path,
     )

@@ -115,6 +115,20 @@ Resolution order:
 
 Crossing projects is *not* default behavior. A memory written while working on Project A only appears when working on Project B if you stored it globally.
 
+## Event log
+
+Every tool call appends one JSON line to `<storage>/.events.jsonl`:
+
+```jsonl
+{"ts":"2026-05-07T19:00:00Z","session":"sess_a1b2","kind":"search","query":"home lab","scopes_filter":null,"max_results":5,"returned":["01H..","01H.."],"relevance":["high","low"],"expand_top":false,"expanded_id":null}
+{"ts":"2026-05-07T19:00:01Z","session":"sess_a1b2","kind":"write","status":"committed","id":"01H..","scopes":["projects:foo"],"forced":false,"related":[]}
+{"ts":"2026-05-07T19:00:02Z","session":"sess_a1b2","kind":"show","id":"01H.."}
+```
+
+The log is the substrate the `memory_health` view, the use-recording feedback signal, and the durability marker tuner all read from. It rotates to `.events-<timestamp>.jsonl.gz` once the active file crosses `[telemetry] max_bytes` (default 10 MB). Archives are kept indefinitely — prune by hand if disk pressure matters.
+
+Search queries are recorded verbatim. The log lives in the same directory as the memories themselves, so it shares the same trust boundary — but if you don't want this behavior set `[telemetry] enabled = false` in `config.toml`.
+
 ## Config
 
 The config file is created on first run at the platform-standard config dir
@@ -137,6 +151,10 @@ recency_boost_half_life_days = 30
 
 [scopes]
 allowed = []   # if non-empty, writes with unknown scopes fail
+
+[telemetry]
+enabled = true                # see "Event log" below; flip to false to opt out
+max_bytes = 10000000          # rotate the active log at this size
 ```
 
 ## Scopes
