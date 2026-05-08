@@ -200,6 +200,41 @@ def iter_events(root: Path) -> Iterator[dict[str, Any]]:
                 continue
 
 
+def _archive_sort_key(path: Path) -> tuple[int, int]:
+    """Sort key for `iter_all_events` archive ordering.
+
+    Primary: mtime_ns. Secondary: write-order index parsed from the
+    filename. The secondary tiebreak only matters when the filesystem
+    timestamp resolution is too coarse to separate rapid rotations
+    within a single UTC second — Windows in particular records mtime
+    at ~10ms granularity, so a test that calls `record()` 15 times in
+    a row with `max_bytes=120` can produce multiple archives sharing
+    one `mtime_ns`.
+
+    The index is derived from the filename suffix structure; see the
+    `_rotate_if_needed` collision-handling for the producer side.
+    Bare `{ts}` -> 0, `{ts}-{session}` -> 1, `{ts}-{session}-N` -> 1+N.
+    """
+    try:
+        mtime = path.stat().st_mtime_ns
+    except OSError:
+        mtime = 0
+    inner = path.name[len(ARCHIVE_PREFIX) : -len(ARCHIVE_SUFFIX)]
+    parts = inner.split("-")
+    # parts[0] is the timestamp; subsequent parts are session/counter.
+    if len(parts) <= 1:
+        return (mtime, 0)
+    if len(parts) == 2:
+        # `.events-{ts}-{session}.jsonl.gz` — second-write-of-second.
+        return (mtime, 1)
+    # `.events-{ts}-{session}-N.jsonl.gz` — third or later.
+    try:
+        return (mtime, 1 + int(parts[-1]))
+    except ValueError:
+        # Malformed counter — fall back to "after the bare/single forms".
+        return (mtime, 2)
+
+
 def iter_all_events(root: Path) -> Iterator[dict[str, Any]]:
     """Yield events from rotated archives + active log, in chronological order.
 
@@ -221,13 +256,20 @@ def iter_all_events(root: Path) -> Iterator[dict[str, Any]]:
         and p.name.startswith(ARCHIVE_PREFIX)
         and p.name.endswith(ARCHIVE_SUFFIX)
     ]
-    # Sort by mtime, not filename. Filename sort is unreliable because
-    # collision-handling produces names like `.events-{ts}-N.jsonl.gz` that
-    # lex-sort *before* the bare `.events-{ts}.jsonl.gz` (since `-` < `.`).
-    # mtime is set when the archive is written and gives correct chronological
-    # order on any filesystem with sub-second resolution (essentially all
-    # modern ones).
-    archives.sort(key=lambda p: p.stat().st_mtime_ns)
+    # Sort by (mtime, in-second-counter). Naive filename sort is wrong
+    # because collision-handling produces names like
+    # `.events-{ts}-N.jsonl.gz` that lex-sort *before* the bare
+    # `.events-{ts}.jsonl.gz` (since `-` < `.`). And mtime alone is
+    # unreliable on Windows, where the filesystem timestamp resolution is
+    # coarse enough that several rapid rotations land on the same
+    # mtime_ns and the secondary sort is undefined. Parsing the suffix
+    # counter out of the filename gives the right write-order tiebreak
+    # within a single UTC second:
+    #   .events-{ts}.jsonl.gz                  -> 0
+    #   .events-{ts}-{session}.jsonl.gz        -> 1
+    #   .events-{ts}-{session}-1.jsonl.gz      -> 2
+    #   .events-{ts}-{session}-N.jsonl.gz      -> 1+N
+    archives.sort(key=_archive_sort_key)
     for archive in archives:
         try:
             with gzip.open(archive, "rt", encoding="utf-8") as f:

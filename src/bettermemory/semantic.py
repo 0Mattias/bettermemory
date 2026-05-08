@@ -158,15 +158,29 @@ def configure_persistent_cache(root: Path | None, model_name: str) -> None:
     Calling this doesn't trigger a load; the next `cached_embed` call
     hydrates lazily so we don't pay the disk hit when semantic dedup
     is never used in a session.
+
+    When the resolved path differs from the previously-configured one
+    (including the disable -> enable transition), the in-memory cache
+    is cleared so a stale entry from a different model can't hit on
+    the next lookup. Without that, swapping models would silently
+    return the old model's vector for the same `(memory_id,
+    updated_key)` and leave `_DIRTY=False`, so the new model's
+    persistent file would never be written.
     """
     global _PERSISTENT_PATH, _HYDRATED, _DIRTY
-    if root is None:
-        _PERSISTENT_PATH = None
-        _HYDRATED = False
-        _DIRTY = False
-        return
-    safe = re.sub(r"[^a-zA-Z0-9._-]", "_", model_name)
-    _PERSISTENT_PATH = Path(root) / f".embeddings.{safe}.npz"
+    new_path: Path | None = None
+    if root is not None:
+        safe = re.sub(r"[^a-zA-Z0-9._-]", "_", model_name)
+        new_path = Path(root) / f".embeddings.{safe}.npz"
+
+    if new_path != _PERSISTENT_PATH:
+        # Drop the in-memory cache; vectors keyed under the old model
+        # name aren't valid lookup hits for the new one, and any
+        # already-flushed entries can be re-hydrated from the new
+        # model's file (or recomputed if no file exists yet).
+        _EMBEDDING_CACHE.clear()
+
+    _PERSISTENT_PATH = new_path
     _HYDRATED = False
     _DIRTY = False
 
