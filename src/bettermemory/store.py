@@ -10,6 +10,7 @@ from __future__ import annotations
 import contextlib
 import errno
 import os
+import sys
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
@@ -65,17 +66,20 @@ class TombstonedError(KeyError):
 # File locking
 # ---------------------------------------------------------------------------
 #
-# fcntl.flock on Unix; on systems without fcntl we fall back to a no-op so the
-# code at least runs. The MVP assumes single-process access — see README.
+# fcntl.flock on Unix; on Windows there's no fcntl so we fall back to a no-op.
+# The MVP assumes single-process access — see README. The sys.platform guard
+# is the form mypy understands as platform narrowing; a try/except ImportError
+# also works at runtime but mypy still type-checks the unreachable Windows
+# path against the linux fcntl stubs.
 
 
 @contextlib.contextmanager
 def _locked(path: Path) -> Iterator[None]:
-    try:
-        import fcntl  # type: ignore[import-not-found, unused-ignore]
-    except ImportError:  # pragma: no cover - non-unix
+    if sys.platform == "win32":  # pragma: no cover - non-unix
         yield
         return
+
+    import fcntl
 
     path.parent.mkdir(parents=True, exist_ok=True)
     lock_path = path.with_suffix(path.suffix + ".lock")

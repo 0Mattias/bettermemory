@@ -28,6 +28,7 @@ import gzip
 import json
 import logging
 import os
+import sys
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
@@ -49,13 +50,18 @@ def _utcnow_iso() -> str:
 # Same lock pattern as store.py — duplicated rather than shared because
 # the two modules have different invariants (the store locks per-memory-file;
 # events locks the single append log) and a shared helper would obscure that.
+#
+# Windows doesn't have fcntl; we no-op the lock there. The MVP single-process
+# assumption (see store.py) means concurrent appends shouldn't happen anyway;
+# the lock is belt-and-suspenders against a future async/multi-process world.
+# The sys.platform guard is the form mypy understands as platform narrowing.
 @contextlib.contextmanager
 def _locked(path: Path) -> Iterator[None]:
-    try:
-        import fcntl  # type: ignore[import-not-found, unused-ignore]
-    except ImportError:  # pragma: no cover - non-unix
+    if sys.platform == "win32":  # pragma: no cover - non-unix
         yield
         return
+
+    import fcntl
 
     path.parent.mkdir(parents=True, exist_ok=True)
     lock_path = path.with_suffix(path.suffix + ".lock")
