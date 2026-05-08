@@ -151,10 +151,12 @@ async def test_disabled_scope_hidden_from_search_and_list(server: Any) -> None:
         scopes=["tools"],
     )
 
-    state = await _call(
-        server, "memory_scope_disable", scope="projects:alpha"
+    state = await _call(server, "memory_scope_disable", scope="projects:alpha")
+    state = (
+        state.get("result", state)
+        if isinstance(state, dict) and "result" in state
+        else state
     )
-    state = state.get("result", state) if isinstance(state, dict) and "result" in state else state
     assert "projects:alpha" in state["disabled_scopes"]
 
     hits = await _call(server, "memory_search", query="alpha")
@@ -273,16 +275,12 @@ async def test_confirm_unknown_id_errors(
 ) -> None:
     server, _ = confirming_server
     with pytest.raises(Exception):
-        await _call(
-            server, "memory_write_confirm", pending_id="pending_deadbeef0000"
-        )
+        await _call(server, "memory_write_confirm", pending_id="pending_deadbeef0000")
 
 
 async def test_confirmation_disabled_writes_immediately(server: Any) -> None:
     """The default config commits immediately — no pending state."""
-    res = await _call(
-        server, "memory_write", content="immediate", scopes=["tools"]
-    )
+    res = await _call(server, "memory_write", content="immediate", scopes=["tools"])
     assert res["status"] == "committed"
     assert "pending_id" not in res
 
@@ -297,9 +295,7 @@ def _unwrap(res: Any) -> Any:
 
 
 async def test_list_default_excludes_body(server: Any) -> None:
-    await _call(
-        server, "memory_write", content="alpha body content", scopes=["tools"]
-    )
+    await _call(server, "memory_write", content="alpha body content", scopes=["tools"])
     listing = _unwrap(await _call(server, "memory_list"))
     assert len(listing) == 1
     assert "body" not in listing[0]
@@ -464,9 +460,7 @@ async def test_search_expand_top_default_false_keeps_old_shape(server: Any) -> N
 
 
 async def test_list_summary_includes_updated_timestamp(server: Any) -> None:
-    written = await _call(
-        server, "memory_write", content="x", scopes=["tools"]
-    )
+    written = await _call(server, "memory_write", content="x", scopes=["tools"])
     listing = _unwrap(await _call(server, "memory_list"))
     assert len(listing) == 1
     assert listing[0]["id"] == written["id"]
@@ -482,9 +476,7 @@ async def test_search_hit_includes_updated_timestamp(server: Any) -> None:
         content="kubernetes networking notes",
         scopes=["infrastructure"],
     )
-    hits = _unwrap(
-        await _call(server, "memory_search", query="kubernetes networking")
-    )
+    hits = _unwrap(await _call(server, "memory_search", query="kubernetes networking"))
     assert len(hits) == 1
     assert "updated" in hits[0]
     assert hits[0]["updated"] == hits[0]["created"]
@@ -517,7 +509,7 @@ async def test_update_changes_content_and_bumps_updated(server: Any) -> None:
     assert res["status"] == "committed"
     assert res["id"] == written["id"]
     assert res["created"] == written["created"]  # preserved
-    assert res["updated"] > written["updated"]   # bumped
+    assert res["updated"] > written["updated"]  # bumped
 
     # Disk reflects the change.
     shown = await _call(server, "memory_show", id=written["id"])
@@ -599,37 +591,25 @@ async def test_update_combines_multiple_fields(server: Any) -> None:
 
 
 async def test_update_rejects_no_fields(server: Any) -> None:
-    written = await _call(
-        server, "memory_write", content="x", scopes=["tools"]
-    )
+    written = await _call(server, "memory_write", content="x", scopes=["tools"])
     with pytest.raises(Exception):
         await _call(server, "memory_update", id=written["id"])
 
 
 async def test_update_rejects_empty_content(server: Any) -> None:
-    written = await _call(
-        server, "memory_write", content="x", scopes=["tools"]
-    )
+    written = await _call(server, "memory_write", content="x", scopes=["tools"])
     with pytest.raises(Exception):
-        await _call(
-            server, "memory_update", id=written["id"], content="   "
-        )
+        await _call(server, "memory_update", id=written["id"], content="   ")
 
 
 async def test_update_rejects_empty_scopes(server: Any) -> None:
-    written = await _call(
-        server, "memory_write", content="x", scopes=["tools"]
-    )
+    written = await _call(server, "memory_write", content="x", scopes=["tools"])
     with pytest.raises(Exception):
-        await _call(
-            server, "memory_update", id=written["id"], scopes=[]
-        )
+        await _call(server, "memory_update", id=written["id"], scopes=[])
 
 
 async def test_update_rejects_invalid_scope(server: Any) -> None:
-    written = await _call(
-        server, "memory_write", content="x", scopes=["tools"]
-    )
+    written = await _call(server, "memory_write", content="x", scopes=["tools"])
     with pytest.raises(Exception):
         await _call(
             server,
@@ -640,9 +620,7 @@ async def test_update_rejects_invalid_scope(server: Any) -> None:
 
 
 async def test_update_rejects_invalid_confidence(server: Any) -> None:
-    written = await _call(
-        server, "memory_write", content="x", scopes=["tools"]
-    )
+    written = await _call(server, "memory_write", content="x", scopes=["tools"])
     with pytest.raises(Exception):
         await _call(
             server,
@@ -663,12 +641,8 @@ async def test_update_unknown_id_errors(server: Any) -> None:
 
 
 async def test_update_tombstoned_id_errors(server: Any) -> None:
-    written = await _call(
-        server, "memory_write", content="x", scopes=["tools"]
-    )
-    await _call(
-        server, "memory_remove", id=written["id"], reason="superseded"
-    )
+    written = await _call(server, "memory_write", content="x", scopes=["tools"])
+    await _call(server, "memory_remove", id=written["id"], reason="superseded")
     with pytest.raises(Exception):
         await _call(
             server,
@@ -708,9 +682,7 @@ async def test_dedup_blocks_near_duplicate(server: Any) -> None:
     await _call(
         server,
         "memory_write",
-        content=(
-            "vendored python-frontmatter to drop the deprecated codecs.open call"
-        ),
+        content=("vendored python-frontmatter to drop the deprecated codecs.open call"),
         scopes=["tools"],
     )
     second = await _call(
@@ -788,9 +760,7 @@ async def test_dedup_ignores_tombstoned_memories(server: Any) -> None:
     end-to-end through memory_write."""
     body = "vendored python-frontmatter to drop the deprecated codecs.open call"
     first = await _call(server, "memory_write", content=body, scopes=["tools"])
-    await _call(
-        server, "memory_remove", id=first["id"], reason="testing dedup"
-    )
+    await _call(server, "memory_remove", id=first["id"], reason="testing dedup")
 
     second = await _call(server, "memory_write", content=body, scopes=["tools"])
     assert second["status"] == "committed"

@@ -70,7 +70,7 @@ def loads(text: str) -> Post:
         return Post(content=text, metadata={})
 
     yaml_text = "\n".join(lines[1:close_idx])
-    body_lines = lines[close_idx + 1:]
+    body_lines = lines[close_idx + 1 :]
     # Drop a single separator blank line, mirroring python-frontmatter's
     # `---\n\n<body>` shape.
     if body_lines and body_lines[0] == "":

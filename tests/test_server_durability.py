@@ -76,7 +76,11 @@ async def test_transient_warning_does_not_persist(
         scopes=["projects:auth"],
     )
     listing = await _call(server, "memory_list")
-    listing = listing.get("result", listing) if isinstance(listing, dict) and "result" in listing else listing
+    listing = (
+        listing.get("result", listing)
+        if isinstance(listing, dict) and "result" in listing
+        else listing
+    )
     assert listing == []
 
 
@@ -148,9 +152,7 @@ async def test_acknowledge_transient_records_overridden_markers(
         scopes=["learning-style"],
         acknowledge_transient=True,
     )
-    write_events = [
-        e for e in iter_events(memory_dir) if e["kind"] == "write"
-    ]
+    write_events = [e for e in iter_events(memory_dir) if e["kind"] == "write"]
     assert write_events
     e = write_events[-1]
     assert e["status"] == "committed"
@@ -169,9 +171,7 @@ async def test_clean_body_records_empty_acknowledged_list(
         content="The auth service uses JWT with rotating refresh tokens.",
         scopes=["projects:auth"],
     )
-    write_events = [
-        e for e in iter_events(memory_dir) if e["kind"] == "write"
-    ]
+    write_events = [e for e in iter_events(memory_dir) if e["kind"] == "write"]
     assert write_events[-1]["status"] == "committed"
     assert write_events[-1]["markers_acknowledged"] == []
 
@@ -191,9 +191,7 @@ async def test_durability_fires_before_dedup(
     server, _ = server_with_events
     body = "Currently the queue depth is around 200 messages."
     # First write: transient_warning, nothing persisted.
-    first = await _call(
-        server, "memory_write", content=body, scopes=["projects:queue"]
-    )
+    first = await _call(server, "memory_write", content=body, scopes=["projects:queue"])
     assert first["status"] == "transient_warning"
 
     # Second write: still transient_warning, not duplicate (since the first
@@ -246,9 +244,7 @@ async def test_transient_warning_logs_event_with_markers(
         content="Currently shipping a fix for the login bug.",
         scopes=["projects:auth"],
     )
-    write_events = [
-        e for e in iter_events(memory_dir) if e["kind"] == "write"
-    ]
+    write_events = [e for e in iter_events(memory_dir) if e["kind"] == "write"]
     assert len(write_events) == 1
     e = write_events[0]
     assert e["status"] == "transient_warning"

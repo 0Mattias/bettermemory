@@ -131,9 +131,7 @@ def migrate_origin_in_directory(
         # memory_dir is project-scoped, parent IS the project root.
         inferred = infer_origin_for_memory_dir(memory_dir)
 
-    report = MigrationReport(
-        memory_dir=memory_dir, inferred=inferred, dry_run=dry_run
-    )
+    report = MigrationReport(memory_dir=memory_dir, inferred=inferred, dry_run=dry_run)
 
     # Pre-compute the per-mapping origin payloads so we don't rebuild
     # the dict on every memory. Like `force_repo`, scope-mapped writes
@@ -141,9 +139,9 @@ def migrate_origin_in_directory(
     mapped_payloads: dict[str, dict[str, object]] = {}
     if scope_repo_map:
         for scope, url in scope_repo_map.items():
-            mapped_payloads[scope] = Origin(
-                cwd=None, repo=url, branch=None
-            ).model_dump(mode="json", exclude_none=True)
+            mapped_payloads[scope] = Origin(cwd=None, repo=url, branch=None).model_dump(
+                mode="json", exclude_none=True
+            )
 
     fallback_payload: dict[str, object] | None = None
     if inferred is not None:

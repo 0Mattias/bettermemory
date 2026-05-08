@@ -151,9 +151,7 @@ class Store:
         memories.sort(key=lambda m: m.created, reverse=True)
         return memories
 
-    def list_summaries(
-        self, scopes: list[str] | None = None
-    ) -> list[MemorySummary]:
+    def list_summaries(self, scopes: list[str] | None = None) -> list[MemorySummary]:
         """Like `load_all` but body-stripped, filtered by scope match."""
         out: list[MemorySummary] = []
         for memory in self.load_all():
@@ -269,9 +267,7 @@ class Store:
             for tpath in self._iter_tombstone_paths():
                 post = frontmatter.load(tpath)
                 if post.metadata.get("id") == memory_id:
-                    raise TombstonedError(
-                        f"memory {memory_id} is already tombstoned"
-                    )
+                    raise TombstonedError(f"memory {memory_id} is already tombstoned")
             raise MemoryNotFoundError(f"no memory with id {memory_id}")
 
         post = frontmatter.load(path)
@@ -282,14 +278,10 @@ class Store:
         # If a same-named tombstone already exists, append the ULID for
         # uniqueness rather than overwriting history.
         if target.exists():
-            target = self.tombstone_dir / (
-                f"{path.stem}.{memory_id}.tombstone.md"
-            )
+            target = self.tombstone_dir / (f"{path.stem}.{memory_id}.tombstone.md")
 
         with _locked(path):
-            target.write_bytes(
-                frontmatter.dumps(post).encode("utf-8")
-            )
+            target.write_bytes(frontmatter.dumps(post).encode("utf-8"))
             try:
                 path.unlink()
             except OSError as exc:
@@ -308,9 +300,7 @@ class Store:
         # short ID suffix.
         if candidate.exists():
             short = memory.id[-6:].lower()
-            candidate = self.root / build_filename(
-                memory.created, f"{slug}-{short}"
-            )
+            candidate = self.root / build_filename(memory.created, f"{slug}-{short}")
         return candidate
 
     def _find_path_for_id(self, memory_id: str) -> Path | None:
@@ -339,9 +329,7 @@ class Store:
         # nested mapping with `exclude_none` so we never write
         # `origin: {cwd: null, repo: null, branch: null}` — that's noise.
         if memory.origin is not None:
-            origin_dict = memory.origin.model_dump(
-                mode="json", exclude_none=True
-            )
+            origin_dict = memory.origin.model_dump(mode="json", exclude_none=True)
             if origin_dict:
                 meta["origin"] = origin_dict
         post.metadata = meta

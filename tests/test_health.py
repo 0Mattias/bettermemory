@@ -86,9 +86,7 @@ def test_empty_store_and_events() -> None:
 
 def test_old_memory_with_no_applied_is_dead_weight() -> None:
     old = _memory(created=_utc(2026, 1, 1))
-    report = compute_health(
-        [old], [], window_days=30, now=_utc(2026, 5, 1)
-    )
+    report = compute_health([old], [], window_days=30, now=_utc(2026, 5, 1))
     assert len(report.dead_weight) == 1
     assert report.dead_weight[0].id == old.id
 
@@ -96,22 +94,16 @@ def test_old_memory_with_no_applied_is_dead_weight() -> None:
 def test_recent_memory_with_no_applied_is_NOT_dead_weight() -> None:
     """Within the window — not enough time to judge."""
     fresh = _memory(created=_utc(2026, 4, 25))
-    report = compute_health(
-        [fresh], [], window_days=30, now=_utc(2026, 5, 1)
-    )
+    report = compute_health([fresh], [], window_days=30, now=_utc(2026, 5, 1))
     assert report.dead_weight == []
 
 
 def test_old_memory_with_applied_event_is_NOT_dead_weight() -> None:
     m = _memory(created=_utc(2026, 1, 1))
     events = [
-        _event(
-            "use", ts=_utc(2026, 4, 1), ids=[m.id], outcome="applied"
-        ),
+        _event("use", ts=_utc(2026, 4, 1), ids=[m.id], outcome="applied"),
     ]
-    report = compute_health(
-        [m], events, window_days=30, now=_utc(2026, 5, 1)
-    )
+    report = compute_health([m], events, window_days=30, now=_utc(2026, 5, 1))
     assert report.dead_weight == []
     assert len(report.heavily_used) == 1
 
@@ -120,9 +112,7 @@ def test_dead_weight_sorted_by_created_ascending() -> None:
     a = _memory(created=_utc(2026, 1, 5))
     b = _memory(created=_utc(2026, 1, 1))
     c = _memory(created=_utc(2026, 1, 10))
-    report = compute_health(
-        [a, b, c], [], window_days=30, now=_utc(2026, 5, 1)
-    )
+    report = compute_health([a, b, c], [], window_days=30, now=_utc(2026, 5, 1))
     assert [s.id for s in report.dead_weight] == [b.id, a.id, c.id]
 
 
@@ -143,17 +133,13 @@ def test_heavily_used_orders_by_applied_count() -> None:
         _event("use", ids=[c.id], outcome="applied"),
         _event("use", ids=[c.id], outcome="applied"),
     ]
-    report = compute_health(
-        [a, b, c], events, now=_utc(2026, 5, 1)
-    )
+    report = compute_health([a, b, c], events, now=_utc(2026, 5, 1))
     assert [s.id for s in report.heavily_used] == [c.id, b.id, a.id]
 
 
 def test_heavily_used_top_k_truncates() -> None:
     memories = [_memory() for _ in range(15)]
-    events = [
-        _event("use", ids=[m.id], outcome="applied") for m in memories
-    ]
+    events = [_event("use", ids=[m.id], outcome="applied") for m in memories]
     report = compute_health(
         memories, events, heavily_used_top_k=5, now=_utc(2026, 5, 1)
     )
@@ -251,11 +237,7 @@ def test_use_outcome_counters() -> None:
     report = compute_health([m], events, now=_utc(2026, 5, 2))
     stats = next(
         s
-        for s in (
-            report.heavily_used
-            + report.contradicted
-            + report.dead_weight
-        )
+        for s in (report.heavily_used + report.contradicted + report.dead_weight)
         if s.id == m.id
     )
     assert stats.applied_count == 2

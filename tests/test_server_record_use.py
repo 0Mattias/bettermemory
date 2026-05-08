@@ -122,12 +122,8 @@ async def test_record_use_multiple_ids_at_once(
     server_with_events: tuple[Any, Path],
 ) -> None:
     server, memory_dir = server_with_events
-    a = await _call(
-        server, "memory_write", content="alpha fact", scopes=["tools"]
-    )
-    b = await _call(
-        server, "memory_write", content="beta fact", scopes=["tools"]
-    )
+    a = await _call(server, "memory_write", content="alpha fact", scopes=["tools"])
+    b = await _call(server, "memory_write", content="beta fact", scopes=["tools"])
     await _call(
         server,
         "memory_record_use",

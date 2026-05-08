@@ -141,8 +141,7 @@ def test_multiple_shas_reported_once_under_one_marker() -> None:
 
 def test_snippet_includes_match_and_surrounding_context() -> None:
     body = (
-        "The deployment pipeline is currently using GitHub Actions for "
-        "the runner pool."
+        "The deployment pipeline is currently using GitHub Actions for the runner pool."
     )
     hits = find_transient_markers(body)
     currently = next(h for h in hits if h.marker == "currently")

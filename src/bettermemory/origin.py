@@ -150,9 +150,7 @@ def _git_branch(cwd: Path) -> str | None:
 #   https://github.com/owner/name.git       (HTTPS)
 # plus a few less-common variants.
 
-_SSH_REMOTE_RE = re.compile(
-    r"^[a-zA-Z0-9_.+-]+@([^:]+):/?([^/]+)/(.+?)(?:\.git)?/?$"
-)
+_SSH_REMOTE_RE = re.compile(r"^[a-zA-Z0-9_.+-]+@([^:]+):/?([^/]+)/(.+?)(?:\.git)?/?$")
 
 
 def _parse_remote(url: str) -> tuple[str, str, str] | None:

@@ -21,9 +21,7 @@ _DOC_FENCE_RE = re.compile(r"```\n(.*?)```", re.DOTALL)
 
 
 def test_addendum_matches_docs() -> None:
-    doc_path = (
-        Path(__file__).resolve().parents[1] / "docs" / "system_prompt.md"
-    )
+    doc_path = Path(__file__).resolve().parents[1] / "docs" / "system_prompt.md"
     text = doc_path.read_text(encoding="utf-8")
     matches = _DOC_FENCE_RE.findall(text)
     assert matches, f"no fenced code block in {doc_path}"

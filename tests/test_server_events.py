@@ -25,9 +25,7 @@ def server_with_events(memory_dir: Path) -> tuple[Any, Path, SessionState]:
     """A live server whose recorder writes into `memory_dir/.events.jsonl`."""
     cfg = Config(storage=StorageConfig(directory=str(memory_dir)))
     state = SessionState()
-    rec = Recorder(
-        root=memory_dir, session_id=state.session_id, enabled=True
-    )
+    rec = Recorder(root=memory_dir, session_id=state.session_id, enabled=True)
     server = build_server(
         config=cfg,
         store=Store(memory_dir),
@@ -93,9 +91,7 @@ async def test_write_force_records_forced_true(
     server, memory_dir, _ = server_with_events
     body = "vendored python-frontmatter"
     await _call(server, "memory_write", content=body, scopes=["tools"])
-    await _call(
-        server, "memory_write", content=body, scopes=["tools"], force=True
-    )
+    await _call(server, "memory_write", content=body, scopes=["tools"], force=True)
 
     forced_events = [
         e
@@ -152,9 +148,7 @@ async def test_show_emits_event(
     server_with_events: tuple[Any, Path, SessionState],
 ) -> None:
     server, memory_dir, _ = server_with_events
-    written = await _call(
-        server, "memory_write", content="x", scopes=["tools"]
-    )
+    written = await _call(server, "memory_write", content="x", scopes=["tools"])
     await _call(server, "memory_show", id=written["id"])
 
     show_events = [e for e in _events(memory_dir) if e["kind"] == "show"]
@@ -166,9 +160,7 @@ async def test_update_records_fields_changed(
     server_with_events: tuple[Any, Path, SessionState],
 ) -> None:
     server, memory_dir, _ = server_with_events
-    written = await _call(
-        server, "memory_write", content="initial", scopes=["tools"]
-    )
+    written = await _call(server, "memory_write", content="initial", scopes=["tools"])
     await _call(
         server,
         "memory_update",
@@ -188,12 +180,8 @@ async def test_list_records_count_and_returned(
     server_with_events: tuple[Any, Path, SessionState],
 ) -> None:
     server, memory_dir, _ = server_with_events
-    a = await _call(
-        server, "memory_write", content="alpha", scopes=["tools"]
-    )
-    b = await _call(
-        server, "memory_write", content="beta", scopes=["tools"]
-    )
+    a = await _call(server, "memory_write", content="alpha", scopes=["tools"])
+    b = await _call(server, "memory_write", content="beta", scopes=["tools"])
     await _call(server, "memory_list")
 
     list_events = [e for e in _events(memory_dir) if e["kind"] == "list"]
@@ -207,12 +195,8 @@ async def test_remove_records_reason(
     server_with_events: tuple[Any, Path, SessionState],
 ) -> None:
     server, memory_dir, _ = server_with_events
-    written = await _call(
-        server, "memory_write", content="x", scopes=["tools"]
-    )
-    await _call(
-        server, "memory_remove", id=written["id"], reason="superseded"
-    )
+    written = await _call(server, "memory_write", content="x", scopes=["tools"])
+    await _call(server, "memory_remove", id=written["id"], reason="superseded")
 
     rm = [e for e in _events(memory_dir) if e["kind"] == "remove"]
     assert len(rm) == 1
@@ -253,9 +237,7 @@ async def test_pending_then_confirm_records_both(
     pending = await _call(
         server, "memory_write", content="pending fact", scopes=["tools"]
     )
-    await _call(
-        server, "memory_write_confirm", pending_id=pending["pending_id"]
-    )
+    await _call(server, "memory_write_confirm", pending_id=pending["pending_id"])
 
     events = list(iter_events(memory_dir))
     kinds = [e["kind"] for e in events]
@@ -281,13 +263,9 @@ async def test_pending_then_cancel_records_existed_true(
     pending = await _call(
         server, "memory_write", content="reconsider", scopes=["tools"]
     )
-    await _call(
-        server, "memory_write_cancel", pending_id=pending["pending_id"]
-    )
+    await _call(server, "memory_write_cancel", pending_id=pending["pending_id"])
 
-    cancel_events = [
-        e for e in iter_events(memory_dir) if e["kind"] == "write_cancel"
-    ]
+    cancel_events = [e for e in iter_events(memory_dir) if e["kind"] == "write_cancel"]
     assert len(cancel_events) == 1
     assert cancel_events[0]["existed"] is True
 
@@ -323,9 +301,7 @@ async def test_all_events_carry_same_session_id(
     server_with_events: tuple[Any, Path, SessionState],
 ) -> None:
     server, memory_dir, state = server_with_events
-    written = await _call(
-        server, "memory_write", content="x", scopes=["tools"]
-    )
+    written = await _call(server, "memory_write", content="x", scopes=["tools"])
     await _call(server, "memory_show", id=written["id"])
     await _call(server, "memory_search", query="x")
 

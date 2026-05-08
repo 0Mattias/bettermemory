@@ -68,7 +68,7 @@ def get_model(model_name: str = DEFAULT_MODEL_NAME) -> Any | None:
                 "semantic_dedup is enabled but the embeddings extra is "
                 "not installed. Install with "
                 "`pip install bettermemory[embeddings]` (or "
-                "`uv pip install -e \".[embeddings]\"`). Falling back to "
+                '`uv pip install -e ".[embeddings]"`). Falling back to '
                 "Jaccard similarity."
             )
             _LOAD_FAILED_LOGGED.add(model_name)

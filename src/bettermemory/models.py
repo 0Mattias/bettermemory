@@ -230,10 +230,30 @@ _SENTENCE_END_RE = re.compile(r"[.!?](?=\s|$)")
 # never consult this list.
 _ABBREVIATIONS = frozenset(
     {
-        "e.g", "i.e", "etc", "vs", "cf", "viz",
-        "mr", "mrs", "ms", "dr", "prof", "jr", "sr", "st",
-        "u.s", "u.k", "a.k.a", "a.m", "p.m",
-        "fig", "no", "vol", "ca", "approx",
+        "e.g",
+        "i.e",
+        "etc",
+        "vs",
+        "cf",
+        "viz",
+        "mr",
+        "mrs",
+        "ms",
+        "dr",
+        "prof",
+        "jr",
+        "sr",
+        "st",
+        "u.s",
+        "u.k",
+        "a.k.a",
+        "a.m",
+        "p.m",
+        "fig",
+        "no",
+        "vol",
+        "ca",
+        "approx",
     }
 )
 

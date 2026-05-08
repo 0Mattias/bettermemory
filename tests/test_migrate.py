@@ -129,9 +129,7 @@ def test_migration_backfills_legacy_memory(tmp_path: Path) -> None:
         id_=_LEGACY_IDS[0],
     )
 
-    inferred = Origin(
-        cwd="/projects/foo", repo="git@github.com:example/foo.git"
-    )
+    inferred = Origin(cwd="/projects/foo", repo="git@github.com:example/foo.git")
     report = migrate_origin_in_directory(memory_dir, inferred=inferred)
 
     assert report.scanned == 1
@@ -167,15 +165,11 @@ def test_migration_is_idempotent(tmp_path: Path) -> None:
 def test_migration_dry_run_writes_nothing(tmp_path: Path) -> None:
     memory_dir = tmp_path / ".claude-memory"
     memory_dir.mkdir()
-    path = _write_legacy(
-        memory_dir, name="legacy", body="x", id_=_LEGACY_IDS[0]
-    )
+    path = _write_legacy(memory_dir, name="legacy", body="x", id_=_LEGACY_IDS[0])
     original = path.read_text(encoding="utf-8")
 
     inferred = Origin(repo="git@github.com:example/foo.git")
-    report = migrate_origin_in_directory(
-        memory_dir, inferred=inferred, dry_run=True
-    )
+    report = migrate_origin_in_directory(memory_dir, inferred=inferred, dry_run=True)
 
     assert report.updated == 1  # would update
     assert path.read_text(encoding="utf-8") == original  # but didn't
@@ -185,9 +179,7 @@ def test_migration_skips_memories_with_existing_origin(tmp_path: Path) -> None:
     memory_dir = tmp_path / ".claude-memory"
     memory_dir.mkdir()
 
-    legacy = _write_legacy(
-        memory_dir, name="legacy", body="x", id_=_LEGACY_IDS[0]
-    )
+    legacy = _write_legacy(memory_dir, name="legacy", body="x", id_=_LEGACY_IDS[0])
     # Manually add origin so the file looks "modern".
     post = frontmatter.load(legacy)
     post.metadata["origin"] = {
@@ -212,14 +204,11 @@ def test_migration_handles_mixed_directory(tmp_path: Path) -> None:
     memory_dir = tmp_path / ".claude-memory"
     memory_dir.mkdir()
     for i, body in enumerate(("alpha", "beta", "gamma")):
-        _write_legacy(
-            memory_dir, name=body, body=body, id_=_LEGACY_IDS[i]
-        )
+        _write_legacy(memory_dir, name=body, body=body, id_=_LEGACY_IDS[i])
     # And one already-tagged one.
     tagged_path = memory_dir / "2025-01-02-tagged.md"
     tagged_path.write_text(
-        _LEGACY_TEMPLATE.format(id="01HXYZKEGACYTAGGED0000000Z", body="tagged")
-        + "",
+        _LEGACY_TEMPLATE.format(id="01HXYZKEGACYTAGGED0000000Z", body="tagged") + "",
         encoding="utf-8",
     )
     post = frontmatter.load(tagged_path)
@@ -239,9 +228,7 @@ def test_migration_no_inferred_origin_is_a_noop(tmp_path: Path) -> None:
     migration is a no-op rather than a destructive null-write."""
     memory_dir = tmp_path / ".claude-memory"
     memory_dir.mkdir()
-    path = _write_legacy(
-        memory_dir, name="legacy", body="x", id_=_LEGACY_IDS[0]
-    )
+    path = _write_legacy(memory_dir, name="legacy", body="x", id_=_LEGACY_IDS[0])
     original = path.read_text(encoding="utf-8")
 
     report = migrate_origin_in_directory(memory_dir)
@@ -254,9 +241,7 @@ def test_migration_no_inferred_origin_is_a_noop(tmp_path: Path) -> None:
 def test_migration_force_repo_takes_precedence(tmp_path: Path) -> None:
     memory_dir = tmp_path / ".claude-memory"
     memory_dir.mkdir()
-    path = _write_legacy(
-        memory_dir, name="legacy", body="x", id_=_LEGACY_IDS[0]
-    )
+    path = _write_legacy(memory_dir, name="legacy", body="x", id_=_LEGACY_IDS[0])
 
     report = migrate_origin_in_directory(
         memory_dir,
@@ -276,13 +261,9 @@ def test_force_repo_does_not_fabricate_cwd(tmp_path: Path) -> None:
     cwd value."""
     memory_dir = tmp_path / ".claude-memory"
     memory_dir.mkdir()
-    path = _write_legacy(
-        memory_dir, name="legacy", body="x", id_=_LEGACY_IDS[0]
-    )
+    path = _write_legacy(memory_dir, name="legacy", body="x", id_=_LEGACY_IDS[0])
 
-    migrate_origin_in_directory(
-        memory_dir, force_repo="git@github.com:me/foo.git"
-    )
+    migrate_origin_in_directory(memory_dir, force_repo="git@github.com:me/foo.git")
 
     origin = _read_metadata(path)["origin"]
     assert origin["repo"] == "git@github.com:me/foo.git"
@@ -316,9 +297,7 @@ def test_inferred_path_keeps_cwd(tmp_path: Path) -> None:
     it's the project root. Verify cwd survives in that path."""
     memory_dir = tmp_path / ".claude-memory"
     memory_dir.mkdir()
-    path = _write_legacy(
-        memory_dir, name="legacy", body="x", id_=_LEGACY_IDS[0]
-    )
+    path = _write_legacy(memory_dir, name="legacy", body="x", id_=_LEGACY_IDS[0])
 
     migrate_origin_in_directory(
         memory_dir,
@@ -336,9 +315,7 @@ def test_inferred_path_keeps_cwd(tmp_path: Path) -> None:
 def test_migration_skips_malformed_files(tmp_path: Path) -> None:
     memory_dir = tmp_path / ".claude-memory"
     memory_dir.mkdir()
-    good = _write_legacy(
-        memory_dir, name="good", body="ok", id_=_LEGACY_IDS[0]
-    )
+    good = _write_legacy(memory_dir, name="good", body="ok", id_=_LEGACY_IDS[0])
     bad = memory_dir / "2025-01-01-broken.md"
     bad.write_text("not yaml at all\n", encoding="utf-8")
 
@@ -366,9 +343,7 @@ def test_migration_skips_tombstone_directory(tmp_path: Path) -> None:
     )
 
     # And one active memory at the top level.
-    active = _write_legacy(
-        memory_dir, name="active", body="alive", id_=_LEGACY_IDS[1]
-    )
+    active = _write_legacy(memory_dir, name="active", body="alive", id_=_LEGACY_IDS[1])
 
     inferred = Origin(repo="git@github.com:example/foo.git")
     report = migrate_origin_in_directory(memory_dir, inferred=inferred)
@@ -386,9 +361,7 @@ def test_migration_skips_tombstone_directory(tmp_path: Path) -> None:
 def test_migration_preserves_all_other_frontmatter_fields(tmp_path: Path) -> None:
     memory_dir = tmp_path / ".claude-memory"
     memory_dir.mkdir()
-    path = _write_legacy(
-        memory_dir, name="legacy", body="x", id_=_LEGACY_IDS[0]
-    )
+    path = _write_legacy(memory_dir, name="legacy", body="x", id_=_LEGACY_IDS[0])
 
     before = _read_metadata(path)
 
@@ -421,9 +394,7 @@ def _write_legacy_with_scopes(
         f"id: {id_}\n"
         "created: 2025-01-01T00:00:00+00:00\n"
         "updated: 2025-01-01T00:00:00+00:00\n"
-        "scopes:\n"
-        + "".join(f"- {s}\n" for s in scopes)
-        + "confidence: medium\n"
+        "scopes:\n" + "".join(f"- {s}\n" for s in scopes) + "confidence: medium\n"
         "source: explicit-statement\n"
         "---\n"
         f"{body}\n"
@@ -583,9 +554,7 @@ def test_migrated_memory_loads_correctly_via_store(tmp_path: Path) -> None:
 
     memory_dir = tmp_path / ".claude-memory"
     memory_dir.mkdir()
-    _write_legacy(
-        memory_dir, name="legacy", body="durable fact", id_=_LEGACY_IDS[0]
-    )
+    _write_legacy(memory_dir, name="legacy", body="durable fact", id_=_LEGACY_IDS[0])
 
     inferred = Origin(
         cwd="/projects/foo",

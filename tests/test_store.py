@@ -31,7 +31,10 @@ def test_write_and_read_back(store: Store) -> None:
     assert loaded.source is Source.EXPLICIT
     assert "code-driven tutorials" in loaded.body
     # Filename embeds the date.
-    assert any(p.name.startswith(memory.created.strftime("%Y-%m-%d")) for p in store.root.iterdir())
+    assert any(
+        p.name.startswith(memory.created.strftime("%Y-%m-%d"))
+        for p in store.root.iterdir()
+    )
 
 
 def test_write_records_creation_and_update_timestamps(store: Store) -> None:
@@ -106,7 +109,9 @@ def test_empty_scopes_rejected(store: Store) -> None:
         store.write(content="x", scopes=[])
 
 
-def test_filename_collision_doesnt_clobber(store: Store, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_filename_collision_doesnt_clobber(
+    store: Store, monkeypatch: pytest.MonkeyPatch
+) -> None:
     # Force two writes to the same date+slug.
     fixed = datetime(2025, 3, 14, 10, tzinfo=timezone.utc)
     monkeypatch.setattr("bettermemory.store.utcnow", lambda: fixed)
@@ -183,10 +188,7 @@ def test_summary_uses_first_real_sentence_when_short_enough(store: Store) -> Non
 def test_summary_walks_past_eg_abbreviation(store: Store) -> None:
     """`e.g.` opening a body shouldn't chop the summary to "e.g"."""
     store.write(
-        content=(
-            "e.g. always lower-case scope names. "
-            "Otherwise validation fails."
-        ),
+        content=("e.g. always lower-case scope names. Otherwise validation fails."),
         scopes=["tools"],
     )
     summary = store.list_summaries()[0].summary
@@ -197,8 +199,7 @@ def test_summary_walks_past_eg_abbreviation(store: Store) -> None:
 def test_summary_walks_past_ie_abbreviation(store: Store) -> None:
     store.write(
         content=(
-            "i.e. one memory per fact. "
-            "Combining unrelated bullets defeats the search."
+            "i.e. one memory per fact. Combining unrelated bullets defeats the search."
         ),
         scopes=["tools"],
     )

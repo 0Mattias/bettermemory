@@ -20,9 +20,7 @@ def server(memory_dir: Path) -> Any:
     cfg = Config(storage=StorageConfig(directory=str(memory_dir)))
     state = SessionState()
     rec = Recorder(root=memory_dir, session_id=state.session_id)
-    return build_server(
-        config=cfg, store=Store(memory_dir), state=state, recorder=rec
-    )
+    return build_server(config=cfg, store=Store(memory_dir), state=state, recorder=rec)
 
 
 async def _call(server: Any, name: str, **kwargs: Any) -> Any:
@@ -69,9 +67,7 @@ async def test_memory_health_reflects_recent_activity(server: Any) -> None:
         outcome="applied",
     )
 
-    res = await _call(
-        server, "memory_health", window_days=0, heavily_used_top_k=10
-    )
+    res = await _call(server, "memory_health", window_days=0, heavily_used_top_k=10)
     assert res["total_active_memories"] >= 1
     # The just-written memory should have applied=1.
     used_ids = [m["id"] for m in res["heavily_used"]]
@@ -83,9 +79,7 @@ async def test_memory_health_window_days_filters_dead_weight(
 ) -> None:
     """A freshly-written memory shouldn't be flagged as dead weight when
     the window is generous, but should be when the window is zero days."""
-    await _call(
-        server, "memory_write", content="freshly written", scopes=["tools"]
-    )
+    await _call(server, "memory_write", content="freshly written", scopes=["tools"])
 
     big_window = await _call(server, "memory_health", window_days=30)
     zero_window = await _call(server, "memory_health", window_days=0)

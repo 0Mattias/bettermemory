@@ -85,9 +85,7 @@ class MemoryStats:
             "applied_count": self.applied_count,
             "ignored_count": self.ignored_count,
             "contradicted_count": self.contradicted_count,
-            "last_used_at": _iso(self.last_used_at)
-            if self.last_used_at
-            else None,
+            "last_used_at": _iso(self.last_used_at) if self.last_used_at else None,
             "has_unresolved_contradiction": self.has_unresolved_contradiction,
         }
 
@@ -266,9 +264,7 @@ def compute_health(
     )
 
     dead_weight = [
-        s
-        for s in by_id.values()
-        if s.created < cutoff and s.applied_count == 0
+        s for s in by_id.values() if s.created < cutoff and s.applied_count == 0
     ]
     dead_weight.sort(key=lambda s: s.created)
 
@@ -278,12 +274,8 @@ def compute_health(
         reverse=True,
     )[:heavily_used_top_k]
 
-    contradicted = [
-        s for s in by_id.values() if s.has_unresolved_contradiction
-    ]
-    contradicted.sort(
-        key=lambda s: s.last_contradicted_at or s.updated, reverse=True
-    )
+    contradicted = [s for s in by_id.values() if s.has_unresolved_contradiction]
+    contradicted.sort(key=lambda s: s.last_contradicted_at or s.updated, reverse=True)
 
     return HealthReport(
         generated_at=now,

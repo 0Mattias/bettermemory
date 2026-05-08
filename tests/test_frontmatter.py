@@ -156,7 +156,12 @@ def test_loads_existing_example_file() -> None:
     by python-frontmatter — make sure the vendored parser reads them."""
     from pathlib import Path
 
-    example = Path(__file__).resolve().parents[1] / "examples" / "memories" / "2025-03-14-tutorial-style.md"
+    example = (
+        Path(__file__).resolve().parents[1]
+        / "examples"
+        / "memories"
+        / "2025-03-14-tutorial-style.md"
+    )
     p = load(example)
     assert "id" in p.metadata
     assert isinstance(p.metadata.get("scopes"), list)

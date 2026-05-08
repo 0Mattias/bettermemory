@@ -54,8 +54,8 @@ log = logging.getLogger("bettermemory")
 
 _USE_OUTCOMES: frozenset[str] = frozenset(
     {
-        "applied",       # The retrieved memory shaped the response.
-        "ignored",       # Retrieved but turned out off-topic.
+        "applied",  # The retrieved memory shaped the response.
+        "ignored",  # Retrieved but turned out off-topic.
         "contradicted",  # The user or current state contradicted the memory.
     }
 )
@@ -100,9 +100,7 @@ def build_server(
         ),
     )
 
-    _register_tools(
-        mcp, config=config, store=store, state=state, recorder=recorder
-    )
+    _register_tools(mcp, config=config, store=store, state=state, recorder=recorder)
     return mcp
 
 
@@ -139,10 +137,10 @@ def _register_tools(
             "ranked hits with snippets — call memory_show for full content. "
             "Each hit includes `relevance` (high/medium/low) and "
             "`match_terms` (which query words actually hit). Branch on "
-            "`relevance`, not the raw `score` — and treat \"low\" hits as "
+            '`relevance`, not the raw `score` — and treat "low" hits as '
             "probable noise unless you have a reason to use them. "
             "Pass `expand_top=True` to inline the full body of the top hit "
-            "when its relevance is \"high\" — collapses the common "
+            'when its relevance is "high" — collapses the common '
             "search-then-show round trip into one call. Skip it when you "
             "only need to triage. "
             "By default (`auto_scope=True`), results are filtered to "
@@ -150,7 +148,7 @@ def _register_tools(
             "memories are excluded. Memories written outside any repo "
             "(or before the auto-scope feature) are treated as global and "
             "always pass. Set `auto_scope=False` for cross-project queries "
-            "(\"do you remember anything about X across all my projects\")."
+            '("do you remember anything about X across all my projects").'
         ),
     )
     async def memory_search(
@@ -252,8 +250,8 @@ def _register_tools(
         description=(
             "Create a new memory. Durable facts only. The tool runs a "
             "structural durability check on the body before writing: any "
-            "transient-state marker (\"currently\", \"today I\", \"we just\", "
-            "\"the new\", commit-SHA-like hex tokens, etc.) returns "
+            'transient-state marker ("currently", "today I", "we just", '
+            '"the new", commit-SHA-like hex tokens, etc.) returns '
             "{status:'transient_warning', markers:[...]} instead of "
             "committing. Either rephrase the body to extract the level-up "
             "durable form (the architectural decision, the why, the "
@@ -454,9 +452,7 @@ def _register_tools(
     )
     async def memory_write_cancel(pending_id: str) -> dict[str, Any]:
         existed = state.cancel_pending(pending_id)
-        recorder.record(
-            "write_cancel", pending_id=pending_id, existed=existed
-        )
+        recorder.record("write_cancel", pending_id=pending_id, existed=existed)
         return {"cancelled": pending_id, "existed": existed}
 
     # ---- memory_update ---------------------------------------------------
@@ -482,8 +478,7 @@ def _register_tools(
     ) -> dict[str, Any]:
         if content is None and scopes is None and confidence is None:
             raise ValueError(
-                "memory_update needs at least one of content, scopes, "
-                "or confidence"
+                "memory_update needs at least one of content, scopes, or confidence"
             )
         if content is not None and not content.strip():
             raise ValueError("content must be non-empty if provided")
@@ -498,9 +493,7 @@ def _register_tools(
         new_scopes = existing.scopes
         if scopes is not None:
             if not scopes:
-                raise ValueError(
-                    "scopes must contain at least one entry if provided"
-                )
+                raise ValueError("scopes must contain at least one entry if provided")
             new_scopes = [validate_scope(s) for s in scopes]
             if config.scopes.allowed:
                 allowed = set(config.scopes.allowed)
@@ -517,8 +510,7 @@ def _register_tools(
                 new_confidence = Confidence(confidence)
             except ValueError as exc:
                 raise ValueError(
-                    f"confidence must be one of "
-                    f"{[c.value for c in Confidence]}"
+                    f"confidence must be one of {[c.value for c in Confidence]}"
                 ) from exc
 
         new_body = existing.body
@@ -668,9 +660,9 @@ def _register_tools(
         description=(
             "Record how a retrieved memory was used in your response. Call "
             "this once per response that consumed memory output, with the "
-            "ids you actually relied on and an outcome of \"applied\" "
-            "(the memory shaped the reply), \"ignored\" (you retrieved it "
-            "but it turned out off-topic), or \"contradicted\" (the user "
+            'ids you actually relied on and an outcome of "applied" '
+            '(the memory shaped the reply), "ignored" (you retrieved it '
+            'but it turned out off-topic), or "contradicted" (the user '
             "or current state contradicted the stored fact). The event "
             "feeds the memory_health view so dead-weight memories can be "
             "pruned and stale ones can be flagged. `note` is an optional "
@@ -688,9 +680,7 @@ def _register_tools(
         if not memory_ids:
             raise ValueError("memory_ids must contain at least one entry")
         if outcome not in _USE_OUTCOMES:
-            raise ValueError(
-                f"outcome must be one of {sorted(_USE_OUTCOMES)}"
-            )
+            raise ValueError(f"outcome must be one of {sorted(_USE_OUTCOMES)}")
         # ULID-format check only — we don't load the store to confirm the
         # id exists. Recording a use against a just-tombstoned memory is a
         # legitimate signal (the user contradicted it, we removed it),
@@ -729,9 +719,7 @@ def _register_tools(
 
     @mcp.tool(
         name="memory_scope_enable",
-        description=(
-            "Re-enable a previously disabled scope for this session."
-        ),
+        description=("Re-enable a previously disabled scope for this session."),
     )
     async def memory_scope_enable(scope: str) -> dict[str, Any]:
         clean = validate_scope(scope)
@@ -783,9 +771,7 @@ def _validate_write_payload(
     try:
         src_enum = Source(source)
     except ValueError as exc:
-        raise ValueError(
-            f"source must be one of {[s.value for s in Source]}"
-        ) from exc
+        raise ValueError(f"source must be one of {[s.value for s in Source]}") from exc
 
     return {
         "content": content,
@@ -1006,16 +992,13 @@ def main() -> None:
             scope_repo_map: dict[str, str] = {}
             for entry in args.scope_repo:
                 if "=" not in entry:
-                    parser.error(
-                        f"--scope-repo expects SCOPE=URL, got: {entry!r}"
-                    )
+                    parser.error(f"--scope-repo expects SCOPE=URL, got: {entry!r}")
                 scope, url = entry.split("=", 1)
                 scope = scope.strip()
                 url = url.strip()
                 if not scope or not url:
                     parser.error(
-                        f"--scope-repo expects non-empty SCOPE and URL, "
-                        f"got: {entry!r}"
+                        f"--scope-repo expects non-empty SCOPE and URL, got: {entry!r}"
                     )
                 scope_repo_map[scope] = url
             _cli_migrate_origin(
@@ -1062,9 +1045,7 @@ def _cli_health(*, json_out: bool, days: int, top_k: int) -> None:
 
     config = load_config()
     directory = config.resolved_directory()
-    report = report_for_directory(
-        directory, window_days=days, heavily_used_top_k=top_k
-    )
+    report = report_for_directory(directory, window_days=days, heavily_used_top_k=top_k)
     sys.stdout.write(render_json(report) if json_out else render_text(report))
 
 
@@ -1121,9 +1102,7 @@ def _cli_migrate_origin(
                 return
             print(f"  Inferred repo:   {inferred.repo}")
             print(f"  cwd:             {inferred.cwd}")
-            print(
-                "  branch:          (left null — original branch unknown)"
-            )
+            print("  branch:          (left null — original branch unknown)")
 
     print()
     report = migrate_origin_in_directory(
@@ -1136,10 +1115,7 @@ def _cli_migrate_origin(
     print("Results:")
     print(f"  Scanned:           {report.scanned}")
     print(f"  Already had origin: {report.already_had_origin}")
-    print(
-        f"  {'Would update' if dry_run else 'Updated':<18} "
-        f"{report.updated}"
-    )
+    print(f"  {'Would update' if dry_run else 'Updated':<18} {report.updated}")
     if report.malformed:
         print(f"  Malformed (skipped): {len(report.malformed)}")
         for path in report.malformed[:5]:
@@ -1149,10 +1125,7 @@ def _cli_migrate_origin(
 
     if dry_run and report.updated:
         print()
-        print(
-            "(Dry run — no changes written. Re-run without --dry-run to "
-            "apply.)"
-        )
+        print("(Dry run — no changes written. Re-run without --dry-run to apply.)")
 
 
 # Re-export the prompt for consumers who import the package.

@@ -50,8 +50,7 @@ def test_get_model_returns_none_without_extras(
     assert model is None
     # And we logged a single helpful warning so the user sees the hint.
     assert any(
-        "embeddings extra is not installed" in rec.message
-        for rec in caplog.records
+        "embeddings extra is not installed" in rec.message for rec in caplog.records
     )
 
 
@@ -63,9 +62,7 @@ def test_get_model_only_logs_load_failure_once(
     get_model()
     get_model()
     warnings = [
-        r
-        for r in caplog.records
-        if "embeddings extra is not installed" in r.message
+        r for r in caplog.records if "embeddings extra is not installed" in r.message
     ]
     assert len(warnings) == 1
 
@@ -93,9 +90,7 @@ class _FakeModel:
         self.vectors = vectors or {}
         self.encode_calls = 0
 
-    def encode(
-        self, text: str, normalize_embeddings: bool = True
-    ) -> list[float]:
+    def encode(self, text: str, normalize_embeddings: bool = True) -> list[float]:
         self.encode_calls += 1
         # Default to a constant vector when no override; tests can supply
         # specific bodies to control the result.

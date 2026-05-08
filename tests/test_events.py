@@ -133,9 +133,7 @@ def test_record_handles_unserializable_field_via_default(tmp_path: Path) -> None
 
 def test_rotation_archives_when_max_bytes_exceeded(tmp_path: Path) -> None:
     # Tiny max_bytes so a single write trips it after one prior write.
-    rec = Recorder(
-        root=tmp_path, session_id="sess_test", max_bytes=200
-    )
+    rec = Recorder(root=tmp_path, session_id="sess_test", max_bytes=200)
     # First write fills well under 200 bytes. Active log present, no archive.
     rec.record("write", id="01HXYZ", scopes=["tools"])
     assert (tmp_path / EVENT_LOG_FILENAME).stat().st_size > 0
@@ -164,9 +162,7 @@ def test_rotation_archives_when_max_bytes_exceeded(tmp_path: Path) -> None:
 def test_rotation_collision_uses_session_suffix(tmp_path: Path) -> None:
     """Many rotations in the same UTC second mustn't clobber each other —
     the collision counter should ensure every archive name is unique."""
-    rec = Recorder(
-        root=tmp_path, session_id="sess_collision", max_bytes=80
-    )
+    rec = Recorder(root=tmp_path, session_id="sess_collision", max_bytes=80)
     # Tiny max_bytes means almost every write triggers a rotation.
     for i in range(40):
         rec.record("write", id=f"01HXYZ{i:03d}", scopes=["tools"])
@@ -194,9 +190,7 @@ def test_rotation_collision_uses_session_suffix(tmp_path: Path) -> None:
 
 def test_iter_all_events_reads_archives_then_active(tmp_path: Path) -> None:
     # First batch: small max_bytes triggers rotation.
-    rec = Recorder(
-        root=tmp_path, session_id="sess_test", max_bytes=120
-    )
+    rec = Recorder(root=tmp_path, session_id="sess_test", max_bytes=120)
     for i in range(15):
         rec.record("write", id=f"01HXYZ{i:03d}", scopes=["tools"])
 

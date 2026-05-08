@@ -111,9 +111,7 @@ async def test_origin_persists_through_disk_roundtrip(
             branch="dev",
         )
     )
-    written = await _call(
-        server, "memory_write", content="x", scopes=["tools"]
-    )
+    written = await _call(server, "memory_write", content="x", scopes=["tools"])
 
     # Load via a fresh Store — proves origin was persisted, not just held
     # in memory.
@@ -133,12 +131,8 @@ async def test_origin_survives_memory_update(
             branch="main",
         )
     )
-    written = await _call(
-        server, "memory_write", content="initial", scopes=["tools"]
-    )
-    await _call(
-        server, "memory_update", id=written["id"], content="refined"
-    )
+    written = await _call(server, "memory_write", content="initial", scopes=["tools"])
+    await _call(server, "memory_update", id=written["id"], content="refined")
     shown = await _call(server, "memory_show", id=written["id"])
     # Update preserves origin — it's a property of the original write.
     assert shown["origin"]["repo"] == "git@github.com:example/foo.git"
@@ -154,9 +148,7 @@ async def test_search_auto_scope_filters_other_repos(
 ) -> None:
     """A memory written from repo A should not surface during a search
     from repo B when auto_scope=True (the default)."""
-    server, captured = server_factory(
-        Origin(repo="git@github.com:example/repo-a.git")
-    )
+    server, captured = server_factory(Origin(repo="git@github.com:example/repo-a.git"))
 
     # Write while "in" repo A.
     await _call(
@@ -168,31 +160,21 @@ async def test_search_auto_scope_filters_other_repos(
 
     # Switch to "repo B" and search.
     captured["value"] = Origin(repo="git@github.com:example/repo-b.git")
-    hits = _unwrap(
-        await _call(
-            server, "memory_search", query="kubernetes networking"
-        )
-    )
+    hits = _unwrap(await _call(server, "memory_search", query="kubernetes networking"))
     assert hits == []
 
 
 async def test_search_auto_scope_includes_same_repo(
     server_factory,
 ) -> None:
-    server, _ = server_factory(
-        Origin(repo="git@github.com:example/foo.git")
-    )
+    server, _ = server_factory(Origin(repo="git@github.com:example/foo.git"))
     written = await _call(
         server,
         "memory_write",
         content="kubernetes networking notes",
         scopes=["infrastructure"],
     )
-    hits = _unwrap(
-        await _call(
-            server, "memory_search", query="kubernetes networking"
-        )
-    )
+    hits = _unwrap(await _call(server, "memory_search", query="kubernetes networking"))
     assert any(h["id"] == written["id"] for h in hits)
 
 
@@ -211,18 +193,14 @@ async def test_search_auto_scope_includes_global_memories(
     )
 
     captured["value"] = Origin(repo="git@github.com:example/anything.git")
-    hits = _unwrap(
-        await _call(server, "memory_search", query="tabs over spaces")
-    )
+    hits = _unwrap(await _call(server, "memory_search", query="tabs over spaces"))
     assert any(h["id"] == written["id"] for h in hits)
 
 
 async def test_search_auto_scope_false_returns_cross_project(
     server_factory,
 ) -> None:
-    server, captured = server_factory(
-        Origin(repo="git@github.com:example/repo-a.git")
-    )
+    server, captured = server_factory(Origin(repo="git@github.com:example/repo-a.git"))
     written = await _call(
         server,
         "memory_write",
@@ -247,9 +225,7 @@ async def test_search_caller_outside_repo_does_not_filter(
 ) -> None:
     """When the caller is not in a repo (origin.repo = None), there's no
     project boundary to enforce — everything passes the auto-scope filter."""
-    server, captured = server_factory(
-        Origin(repo="git@github.com:example/foo.git")
-    )
+    server, captured = server_factory(Origin(repo="git@github.com:example/foo.git"))
     written = await _call(
         server,
         "memory_write",
@@ -259,9 +235,7 @@ async def test_search_caller_outside_repo_does_not_filter(
 
     # Caller is not in a repo.
     captured["value"] = Origin(cwd="/projects/scratch")
-    hits = _unwrap(
-        await _call(server, "memory_search", query="kubernetes networking")
-    )
+    hits = _unwrap(await _call(server, "memory_search", query="kubernetes networking"))
     assert any(h["id"] == written["id"] for h in hits)
 
 
@@ -270,9 +244,7 @@ async def test_legacy_memory_without_origin_passes_filter(
 ) -> None:
     """An existing on-disk memory that was written before the auto-scope
     feature shipped (no `origin` frontmatter) is global by definition."""
-    server, _ = server_factory(
-        Origin(repo="git@github.com:example/foo.git")
-    )
+    server, _ = server_factory(Origin(repo="git@github.com:example/foo.git"))
 
     # Hand-craft a memory file without an `origin` block — the format we
     # had before this phase.
@@ -291,9 +263,7 @@ async def test_legacy_memory_without_origin_passes_filter(
         encoding="utf-8",
     )
 
-    hits = _unwrap(
-        await _call(server, "memory_search", query="kubernetes networking")
-    )
+    hits = _unwrap(await _call(server, "memory_search", query="kubernetes networking"))
     assert any(h["id"] == "01HXYZKEGACYJDKEGACY00000Z" for h in hits)
 
 
@@ -305,14 +275,10 @@ async def test_legacy_memory_without_origin_passes_filter(
 async def test_search_records_auto_scope_and_repo_filter(
     server_factory, memory_dir: Path
 ) -> None:
-    server, _ = server_factory(
-        Origin(repo="git@github.com:example/foo.git")
-    )
+    server, _ = server_factory(Origin(repo="git@github.com:example/foo.git"))
     await _call(server, "memory_search", query="anything")
 
-    search_events = [
-        e for e in iter_events(memory_dir) if e["kind"] == "search"
-    ]
+    search_events = [e for e in iter_events(memory_dir) if e["kind"] == "search"]
     assert search_events
     e = search_events[-1]
     assert e["auto_scope"] is True
@@ -322,15 +288,9 @@ async def test_search_records_auto_scope_and_repo_filter(
 async def test_search_with_auto_scope_false_records_null_filter(
     server_factory, memory_dir: Path
 ) -> None:
-    server, _ = server_factory(
-        Origin(repo="git@github.com:example/foo.git")
-    )
-    await _call(
-        server, "memory_search", query="anything", auto_scope=False
-    )
-    search_events = [
-        e for e in iter_events(memory_dir) if e["kind"] == "search"
-    ]
+    server, _ = server_factory(Origin(repo="git@github.com:example/foo.git"))
+    await _call(server, "memory_search", query="anything", auto_scope=False)
+    search_events = [e for e in iter_events(memory_dir) if e["kind"] == "search"]
     e = search_events[-1]
     assert e["auto_scope"] is False
     assert e["repo_filter"] is None

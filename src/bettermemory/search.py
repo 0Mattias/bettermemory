@@ -31,13 +31,66 @@ _KEBAB_SPLIT_RE = re.compile(r"[-_]+")
 # because they often *are* what the user is searching for.
 _STOPWORDS = frozenset(
     {
-        "a", "an", "and", "are", "as", "at", "be", "but", "by", "can", "do",
-        "does", "for", "from", "had", "has", "have", "how", "i", "if", "in",
-        "into", "is", "it", "its", "me", "my", "no", "not", "of", "on", "or",
-        "so", "than", "that", "the", "their", "them", "then", "there",
-        "these", "they", "this", "to", "too", "us", "was", "we", "were",
-        "what", "when", "where", "which", "who", "why", "will", "with",
-        "would", "you", "your",
+        "a",
+        "an",
+        "and",
+        "are",
+        "as",
+        "at",
+        "be",
+        "but",
+        "by",
+        "can",
+        "do",
+        "does",
+        "for",
+        "from",
+        "had",
+        "has",
+        "have",
+        "how",
+        "i",
+        "if",
+        "in",
+        "into",
+        "is",
+        "it",
+        "its",
+        "me",
+        "my",
+        "no",
+        "not",
+        "of",
+        "on",
+        "or",
+        "so",
+        "than",
+        "that",
+        "the",
+        "their",
+        "them",
+        "then",
+        "there",
+        "these",
+        "they",
+        "this",
+        "to",
+        "too",
+        "us",
+        "was",
+        "we",
+        "were",
+        "what",
+        "when",
+        "where",
+        "which",
+        "who",
+        "why",
+        "will",
+        "with",
+        "would",
+        "you",
+        "your",
     }
 )
 
@@ -307,9 +360,7 @@ def find_similar(
             new_body,
             existing,
             semantic_model,
-            high_threshold=(
-                high_threshold if high_threshold is not None else 0.85
-            ),
+            high_threshold=(high_threshold if high_threshold is not None else 0.85),
             medium_threshold=(
                 medium_threshold if medium_threshold is not None else 0.65
             ),
@@ -322,9 +373,7 @@ def find_similar(
             high_threshold if high_threshold is not None else HIGH_SIMILARITY
         ),
         medium_threshold=(
-            medium_threshold
-            if medium_threshold is not None
-            else MEDIUM_SIMILARITY
+            medium_threshold if medium_threshold is not None else MEDIUM_SIMILARITY
         ),
     )
 

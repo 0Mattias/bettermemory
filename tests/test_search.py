@@ -302,12 +302,8 @@ def test_find_similar_identical_body_is_high() -> None:
 
 def test_find_similar_near_duplicate_is_high() -> None:
     """Bodies that share most content tokens should still be flagged high."""
-    a = _memory(
-        "vendored python-frontmatter to drop the deprecated codecs.open call"
-    )
-    candidate = (
-        "vendored python-frontmatter so we can drop the deprecated codecs.open"
-    )
+    a = _memory("vendored python-frontmatter to drop the deprecated codecs.open call")
+    candidate = "vendored python-frontmatter so we can drop the deprecated codecs.open"
     hits = find_similar(candidate, [a])
     assert hits and hits[0].relevance == "high"
 
@@ -363,9 +359,7 @@ def test_find_similar_kebab_expansion_is_symmetric() -> None:
     collapse together.
     """
     kebab = _memory("python-frontmatter library is unmaintained, vendored locally")
-    spaced_candidate = (
-        "python frontmatter library is unmaintained, vendored locally"
-    )
+    spaced_candidate = "python frontmatter library is unmaintained, vendored locally"
     hits = find_similar(spaced_candidate, [kebab])
     assert hits and hits[0].relevance in {"high", "medium"}
 
@@ -378,8 +372,6 @@ def test_find_similar_ignores_recency() -> None:
         "vendored python-frontmatter to drop the deprecated codecs.open call",
         created=datetime.now(timezone.utc) - timedelta(days=365),
     )
-    candidate = (
-        "vendored python-frontmatter to drop the deprecated codecs.open call"
-    )
+    candidate = "vendored python-frontmatter to drop the deprecated codecs.open call"
     hits = find_similar(candidate, [old])
     assert hits and hits[0].relevance == "high"

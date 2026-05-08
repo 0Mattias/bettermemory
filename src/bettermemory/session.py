@@ -33,8 +33,8 @@ class PendingWrite:
     """A `memory_write` call awaiting confirmation."""
 
     pending_id: str
-    payload: dict[str, Any]   # the kwargs to pass to Store.write
-    created_at: float          # monotonic-ish epoch seconds
+    payload: dict[str, Any]  # the kwargs to pass to Store.write
+    created_at: float  # monotonic-ish epoch seconds
 
 
 @dataclass

@@ -130,7 +130,9 @@ class Recorder:
             size = self.path.stat().st_size
         except FileNotFoundError:
             return
-        except OSError as exc:  # pragma: no cover — disk issues shouldn't kill the recorder.
+        except (
+            OSError
+        ) as exc:  # pragma: no cover — disk issues shouldn't kill the recorder.
             log.warning("event log stat failed: %s", exc)
             return
 
@@ -151,8 +153,7 @@ class Recorder:
         counter = 1
         while archive.exists():
             archive = self.root / (
-                f"{ARCHIVE_PREFIX}{ts}-{self.session_id}-{counter}"
-                f"{ARCHIVE_SUFFIX}"
+                f"{ARCHIVE_PREFIX}{ts}-{self.session_id}-{counter}{ARCHIVE_SUFFIX}"
             )
             counter += 1
         try:
