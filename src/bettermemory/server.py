@@ -19,6 +19,7 @@ from typing import Any
 from mcp.server.fastmcp import FastMCP
 
 from .config import Config, load_config
+from .durability import TransientMatch, find_transient_markers
 from .events import Recorder
 from .models import (
     Confidence,
@@ -197,26 +198,32 @@ def _register_tools(
     @mcp.tool(
         name="memory_write",
         description=(
-            "Create a new memory. Durable facts only — scan the body for "
-            "transient-state markers (\"currently\", \"N commits ahead\", "
-            "\"today I\", \"as of now\") and reject the write if you spot "
-            "them; the durable fact is one level up. Confirm with the user "
-            "only when the memory captures an inference about them "
-            "(preferences, beliefs); for project / infra / reference / "
-            "tooling memories, write directly and announce the save. "
-            "Provide non-empty scopes (e.g. ['tools', 'learning-style']). "
-            "Content dedup runs at write time: if an existing memory has "
-            "high overlap with the new body, this returns "
-            "{status:'duplicate', matches:[...]} instead of creating a "
-            "parallel entry — prefer memory_update on the matched id. Pass "
-            "`force=True` to override when the new memory is meaningfully "
-            "different (you have already inspected the matches and decided "
-            "they are adjacent topics, not duplicates). Medium-overlap "
-            "matches don't block; they're surfaced as `related` on the "
-            "success response. If `require_write_confirmation` is true in "
-            "config, a write that passes dedup returns "
-            "{status:'pending', pending_id} and you must call "
-            "memory_write_confirm(pending_id) to commit."
+            "Create a new memory. Durable facts only. The tool runs a "
+            "structural durability check on the body before writing: any "
+            "transient-state marker (\"currently\", \"today I\", \"we just\", "
+            "\"the new\", commit-SHA-like hex tokens, etc.) returns "
+            "{status:'transient_warning', markers:[...]} instead of "
+            "committing. Either rephrase the body to extract the level-up "
+            "durable form (the architectural decision, the why, the "
+            "what-was-built — discard the timestamp/state) or pass "
+            "`acknowledge_transient=True` if the marker is genuinely "
+            "durable in this case (rare — most fires are real). "
+            "Confirm with the user only when the memory captures an "
+            "inference about them (preferences, beliefs); for project / "
+            "infra / reference / tooling memories, write directly and "
+            "announce the save. Provide non-empty scopes (e.g. ['tools', "
+            "'learning-style']). Content dedup runs after the durability "
+            "check: if an existing memory has high overlap with the new "
+            "body, this returns {status:'duplicate', matches:[...]} instead "
+            "of creating a parallel entry — prefer memory_update on the "
+            "matched id. Pass `force=True` to override when the new memory "
+            "is meaningfully different (you have already inspected the "
+            "matches and decided they are adjacent topics, not duplicates). "
+            "Medium-overlap matches don't block; they're surfaced as "
+            "`related` on the success response. If "
+            "`require_write_confirmation` is true in config, a write that "
+            "passes both checks returns {status:'pending', pending_id} and "
+            "you must call memory_write_confirm(pending_id) to commit."
         ),
     )
     async def memory_write(
@@ -225,6 +232,7 @@ def _register_tools(
         confidence: str = "medium",
         source: str = "explicit-statement",
         force: bool = False,
+        acknowledge_transient: bool = False,
     ) -> dict[str, Any]:
         payload = _validate_write_payload(
             content=content,
@@ -234,7 +242,33 @@ def _register_tools(
             allowed_scopes=config.scopes.allowed,
         )
 
-        # Dedup runs first — staging or writing happens only if the new body
+        # Durability check runs before dedup. A transient body shouldn't
+        # become a duplicate of an existing transient memory — we'd just be
+        # routing the caller toward memory_update on a fact that itself
+        # shouldn't have been written. Catch transience first.
+        transient_hits = find_transient_markers(payload["content"])
+        if transient_hits and not acknowledge_transient:
+            recorder.record(
+                "write",
+                status="transient_warning",
+                scopes=payload["scopes"],
+                forced=False,
+                markers=[h.marker for h in transient_hits],
+            )
+            return {
+                "status": "transient_warning",
+                "markers": [_transient_to_dict(h) for h in transient_hits],
+                "hint": (
+                    "The body contains transient-state markers that won't "
+                    "be true in a week. Either rephrase to the durable "
+                    "level-up version (extract the architectural decision, "
+                    "the why, what-was-built — discard the timestamp/state) "
+                    "or pass acknowledge_transient=True if the marker is "
+                    "genuinely durable in context."
+                ),
+            }
+
+        # Dedup runs second — staging or writing happens only if the new body
         # isn't a high-overlap duplicate of an existing memory. `force=True`
         # is the override path: the caller has already looked at the matches
         # and decided this entry is meaningfully different.
@@ -262,6 +296,16 @@ def _register_tools(
                 }
             related = [h for h in similar if h.relevance == "medium"]
 
+        # Capture which markers (if any) were overridden by
+        # acknowledge_transient — feeds the override-rate signal in the
+        # event log so we can tell whether a marker is producing too many
+        # false positives.
+        acknowledged = (
+            [h.marker for h in transient_hits]
+            if transient_hits and acknowledge_transient
+            else []
+        )
+
         if config.behavior.require_write_confirmation:
             pending = state.stage_write(payload)
             response: dict[str, Any] = {
@@ -287,6 +331,7 @@ def _register_tools(
                 scopes=payload["scopes"],
                 forced=force,
                 related=[h.id for h in related],
+                markers_acknowledged=acknowledged,
             )
             return response
 
@@ -300,6 +345,7 @@ def _register_tools(
             source=memory.source.value,
             forced=force,
             related=[h.id for h in related],
+            markers_acknowledged=acknowledged,
         )
         return _committed(memory, related=related)
 
@@ -634,6 +680,11 @@ def _similar_to_dict(hit: SimilarHit) -> dict[str, Any]:
         "created": _isoformat(hit.created),
         "updated": _isoformat(hit.updated),
     }
+
+
+def _transient_to_dict(hit: TransientMatch) -> dict[str, Any]:
+    """Serialize a transient-marker match for the tool response."""
+    return {"marker": hit.marker, "snippet": hit.snippet}
 
 
 def _isoformat(dt: datetime) -> str:

@@ -44,14 +44,17 @@ this turn — don't pass the staleness on to the user.
 Writing and updating memory:
 
 - Durable only. Memory is for facts that will still be true in a week if
-  nobody updates them. Before writing, scan the candidate body for
-  transient-state markers: "N commits ahead", "currently", "today I",
-  "the latest", "as of now", "is unpushed", "shipped today", specific commit
-  SHAs as identifiers of what's-on-the-branch. If any are present, the
-  durable fact you actually want is one level up — extract the architectural
-  decision, the why, the what-was-built — and discard the timestamp/state.
-  Git, the filesystem, and live tools know transient state; memory shouldn't
-  duplicate them.
+  nobody updates them. The tool enforces this structurally: memory_write
+  scans the body for transient-state markers ("currently", "today I", "we
+  just", "the new", commit-SHA-like hex tokens, etc.) and returns
+  status="transient_warning" instead of committing if any fire. When that
+  happens, the durable fact is one level up — extract the architectural
+  decision, the why, the what-was-built, and discard the timestamp/state.
+  Git, the filesystem, and live tools know transient state; memory
+  shouldn't duplicate them. Pass `acknowledge_transient=True` only when
+  the marker is genuinely durable in context (rare); the override is
+  logged so we can tell whether a marker is producing too many false
+  positives.
 
 - Refining or correcting a stored fact? Call memory_update(id, ...) instead
   of memory_remove + memory_write. That preserves the original `created`

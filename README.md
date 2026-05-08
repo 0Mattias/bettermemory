@@ -55,7 +55,7 @@ See [`docs/installation.md`](docs/installation.md) for more detail.
 |---|---|
 | `memory_search(query, scopes?, max_results?, expand_top?)` | Rank and return memory hits with snippets. Each hit carries `relevance: "high" \| "medium" \| "low"` and `match_terms` (the query words that actually hit) — branch on `relevance`, not the raw `score`. Hits also include `created` and `updated` timestamps so a stale-but-relevant memory is visible at a glance. Pass `expand_top=true` to inline the full body of the top hit when its relevance is `"high"` (collapses search→show into one call on confident hits). |
 | `memory_show(id)` | Full body of one memory. |
-| `memory_write(content, scopes, confidence?, source?)` | Create a new memory. |
+| `memory_write(content, scopes, confidence?, source?, force?, acknowledge_transient?)` | Create a new memory. Runs a structural durability check before dedup — see "Durability check" below. |
 | `memory_update(id, content?, scopes?, confidence?)` | Refine an existing memory in place. Preserves `id`, `created`, and `source`; bumps `updated`. Use this instead of `memory_remove` + `memory_write` when correcting or extending a stored fact — that round-trip would lose the original timestamp and litter the tombstone log with non-deletes. Replace semantics for `scopes` (provide the full new list). |
 | `memory_list(scopes?, with_bodies?)` | List active memories — IDs and one-line summaries by default. Pass `with_bodies=true` for a single-call corpus dump (full body on every result); useful for small stores where N round trips of `list → show → show` would be wasteful. |
 | `memory_remove(id, reason)` | Tombstone a memory. |
@@ -114,6 +114,36 @@ Resolution order:
 3. `~/.claude-memory/` (global).
 
 Crossing projects is *not* default behavior. A memory written while working on Project A only appears when working on Project B if you stored it globally.
+
+## Durability check
+
+Memory is for facts that will still be true in a week if nobody updates
+them. The tool enforces this structurally: `memory_write` scans the body
+for transient-state markers — `currently`, `today I`, `we just`, `the
+new`, commit-SHA-like hex tokens, and friends — and returns
+
+```json
+{
+  "status": "transient_warning",
+  "markers": [
+    {"marker": "currently", "snippet": "...currently using GitHub Actions..."}
+  ],
+  "hint": "..."
+}
+```
+
+instead of writing. Either rephrase the body to extract the level-up
+durable form (the architectural decision, the why, the what-was-built —
+discard the timestamp/state) or pass `acknowledge_transient=true` to
+override. The override is recorded in the event log so the false-positive
+rate per marker is observable; high-override markers are candidates for
+trimming.
+
+The full marker list is in `src/bettermemory/durability.py`. Adding to it
+costs one false-positive slot — a phrase that's transient in some contexts
+and durable in others will trip writes that shouldn't be tripped, and the
+caller will learn to rubber-stamp `acknowledge_transient`. That's worse
+than not having the marker. Watch override rates before extending.
 
 ## Event log
 
