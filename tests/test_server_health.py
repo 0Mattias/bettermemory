@@ -67,7 +67,17 @@ async def test_memory_health_reflects_recent_activity(server: Any) -> None:
         outcome="applied",
     )
 
-    res = await _call(server, "memory_health", window_days=0, heavily_used_top_k=10)
+    # min_applied=1 lowers the heavily_used floor for this test — the
+    # default threshold of 3 would correctly exclude a single applied
+    # event, but we want to assert that the plumbing works (write →
+    # search → use → health), not the threshold itself.
+    res = await _call(
+        server,
+        "memory_health",
+        window_days=0,
+        heavily_used_top_k=10,
+        min_applied=1,
+    )
     assert res["total_active_memories"] >= 1
     # The just-written memory should have applied=1.
     used_ids = [m["id"] for m in res["heavily_used"]]

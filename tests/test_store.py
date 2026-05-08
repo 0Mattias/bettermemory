@@ -257,3 +257,158 @@ def test_round_trip_through_disk(memory_dir: Path) -> None:
 
     s2 = Store(memory_dir)
     assert s2.load_one(a.id).body.strip() == "persistent"
+
+
+# ---------------------------------------------------------------------------
+# last_verified_at — orthogonal verification timestamp
+# ---------------------------------------------------------------------------
+
+
+def test_fresh_write_has_null_last_verified_at(store: Store) -> None:
+    """A new memory hasn't been spot-checked yet — null, not the
+    write timestamp. Conflating those would make every memory appear
+    "verified" the moment it's written, which defeats the signal."""
+    memory = store.write(content="x", scopes=["tools"])
+    assert memory.last_verified_at is None
+    assert store.load_one(memory.id).last_verified_at is None
+
+
+def test_mark_verified_sets_timestamp(store: Store) -> None:
+    memory = store.write(content="x", scopes=["tools"])
+    verified = store.mark_verified(memory.id)
+    assert verified.last_verified_at is not None
+    assert verified.last_verified_at.tzinfo is not None  # aware
+
+
+def test_mark_verified_does_not_bump_updated(store: Store) -> None:
+    """Verification is the orthogonal axis to content edits. A spot-check
+    that confirms reality matched the body shouldn't make the body look
+    edited — `updated` should be unchanged."""
+    memory = store.write(content="x", scopes=["tools"])
+    time.sleep(0.01)
+    verified = store.mark_verified(memory.id)
+    assert verified.updated == memory.updated
+    assert verified.created == memory.created
+
+
+def test_mark_verified_persists_to_disk(memory_dir: Path) -> None:
+    s1 = Store(memory_dir)
+    memory = s1.write(content="x", scopes=["tools"])
+    s1.mark_verified(memory.id)
+
+    # Fresh store reads the same data.
+    s2 = Store(memory_dir)
+    reloaded = s2.load_one(memory.id)
+    assert reloaded.last_verified_at is not None
+
+
+def test_mark_verified_idempotent_slides_timestamp_forward(store: Store) -> None:
+    memory = store.write(content="x", scopes=["tools"])
+    first = store.mark_verified(memory.id)
+    time.sleep(0.01)
+    second = store.mark_verified(memory.id)
+    assert second.last_verified_at is not None
+    assert first.last_verified_at is not None
+    assert second.last_verified_at >= first.last_verified_at
+
+
+def test_mark_verified_missing_id_raises(store: Store) -> None:
+    with pytest.raises(MemoryNotFoundError):
+        store.mark_verified(generate_ulid())
+
+
+def test_mark_verified_tombstoned_raises(store: Store) -> None:
+    memory = store.write(content="x", scopes=["tools"])
+    store.tombstone(memory.id, reason="bad")
+    with pytest.raises(TombstonedError):
+        store.mark_verified(memory.id)
+
+
+def test_store_update_preserves_last_verified_at(store: Store) -> None:
+    """The Store layer is content-blind: it preserves whatever
+    last_verified_at the caller passed in. The semantic decision to reset
+    on content edits lives in the server tool layer (memory_update); the
+    store just persists what it's handed."""
+    memory = store.write(content="x", scopes=["tools"])
+    verified = store.mark_verified(memory.id)
+    edited = verified.model_copy(update={"body": "edited\n"})
+    saved = store.update(edited)
+    assert saved.last_verified_at == verified.last_verified_at
+
+
+def test_list_summaries_carries_last_verified_at(store: Store) -> None:
+    memory = store.write(content="x", scopes=["tools"])
+    store.mark_verified(memory.id)
+    summaries = store.list_summaries()
+    assert len(summaries) == 1
+    assert summaries[0].last_verified_at is not None
+
+
+def test_legacy_memory_without_last_verified_at_field_loads(memory_dir: Path) -> None:
+    """A frontmatter file written by an older bettermemory has no
+    `last_verified_at` key. Loading must not raise — the field is
+    additive, missing means "never verified"."""
+    legacy = memory_dir / "2025-01-01-legacy.md"
+    legacy.write_text(
+        "---\n"
+        f"id: {generate_ulid()}\n"
+        "created: 2025-01-01T00:00:00Z\n"
+        "updated: 2025-01-01T00:00:00Z\n"
+        "scopes:\n  - tools\n"
+        "confidence: medium\n"
+        "source: explicit-statement\n"
+        "---\n"
+        "legacy body\n"
+    )
+    store = Store(memory_dir)
+    loaded = store.load_all()
+    assert len(loaded) == 1
+    assert loaded[0].last_verified_at is None
+
+
+def test_malformed_last_verified_at_silently_falls_back_to_none(
+    memory_dir: Path,
+) -> None:
+    """A typo'd timestamp in frontmatter shouldn't render the whole memory
+    unloadable. Treat malformed the same as missing — the rest of the
+    memory is still useful, and the next memory_verify call will write a
+    valid timestamp."""
+    legacy = memory_dir / "2025-01-01-malformed.md"
+    legacy.write_text(
+        "---\n"
+        f"id: {generate_ulid()}\n"
+        "created: 2025-01-01T00:00:00Z\n"
+        "updated: 2025-01-01T00:00:00Z\n"
+        "last_verified_at: not-a-date\n"
+        "scopes:\n  - tools\n"
+        "confidence: medium\n"
+        "source: explicit-statement\n"
+        "---\n"
+        "body\n"
+    )
+    store = Store(memory_dir)
+    loaded = store.load_all()
+    assert len(loaded) == 1
+    assert loaded[0].last_verified_at is None
+
+
+def test_mark_verified_emits_field_into_frontmatter(memory_dir: Path) -> None:
+    """Once verified, the field shows up in the on-disk frontmatter."""
+    store = Store(memory_dir)
+    memory = store.write(content="x", scopes=["tools"])
+    store.mark_verified(memory.id)
+    md_files = [p for p in memory_dir.iterdir() if p.suffix == ".md"]
+    assert len(md_files) == 1
+    text = md_files[0].read_text()
+    assert "last_verified_at:" in text
+
+
+def test_unverified_memory_omits_field_from_frontmatter(memory_dir: Path) -> None:
+    """Newly-written memories shouldn't carry a `last_verified_at: null`
+    placeholder line — visual noise on every file."""
+    store = Store(memory_dir)
+    store.write(content="x", scopes=["tools"])
+    md_files = [p for p in memory_dir.iterdir() if p.suffix == ".md"]
+    assert len(md_files) == 1
+    text = md_files[0].read_text()
+    assert "last_verified_at" not in text

@@ -71,6 +71,12 @@ semantic_model_name = "all-MiniLM-L6-v2"
 semantic_high_threshold = 0.85
 semantic_medium_threshold = 0.65
 
+# Floor on `applied_count` for inclusion in `memory_health.heavily_used`.
+# Default 3 — at 1 the bucket is dominated by one-off acknowledgements
+# rather than repeat-use patterns. Lower it on a fresh store; raise it
+# once the event log has weeks of data.
+heavily_used_min_applied = 3
+
 [scopes]
 # If non-empty, writes with scopes outside this list fail. Empty = anything.
 allowed = []
@@ -105,6 +111,12 @@ class BehaviorConfig:
     semantic_model_name: str = "all-MiniLM-L6-v2"
     semantic_high_threshold: float = 0.85
     semantic_medium_threshold: float = 0.65
+    # Floor on `applied_count` for inclusion in the heavily_used report.
+    # Default is 3 — at 1 the bucket is mostly noise (one acknowledgement
+    # is not a usage pattern). Raising it sharpens the signal at the cost
+    # of seeing fewer rows when the event log is young; lowering it makes
+    # the bucket more inclusive for fresh stores. Tune to taste.
+    heavily_used_min_applied: int = 3
 
 
 @dataclass
@@ -195,6 +207,9 @@ def load_config(path: Path | None = None) -> Config:
             ),
             semantic_medium_threshold=float(
                 behavior_raw.get("semantic_medium_threshold", 0.65)
+            ),
+            heavily_used_min_applied=int(
+                behavior_raw.get("heavily_used_min_applied", 3)
             ),
         ),
         scopes=ScopesConfig(

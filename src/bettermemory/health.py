@@ -48,7 +48,11 @@ class MemoryStats:
     """All the event-driven metrics for one memory.
 
     These are derived purely from the event log + the live memory record;
-    nothing here is persisted on the memory itself.
+    nothing here is persisted on the memory itself. `last_verified_at` is
+    the only field that comes off the memory record itself rather than
+    the event stream — surfacing it here lets a curation pass treat
+    "applied count" and "verification age" as orthogonal staleness axes
+    without a second round-trip through the store.
     """
 
     id: str
@@ -63,6 +67,7 @@ class MemoryStats:
     contradicted_count: int = 0
     last_used_at: datetime | None = None
     last_contradicted_at: datetime | None = None
+    last_verified_at: datetime | None = None
 
     @property
     def has_unresolved_contradiction(self) -> bool:
@@ -86,6 +91,9 @@ class MemoryStats:
             "ignored_count": self.ignored_count,
             "contradicted_count": self.contradicted_count,
             "last_used_at": _iso(self.last_used_at) if self.last_used_at else None,
+            "last_verified_at": (
+                _iso(self.last_verified_at) if self.last_verified_at else None
+            ),
             "has_unresolved_contradiction": self.has_unresolved_contradiction,
         }
 
@@ -163,6 +171,7 @@ def compute_health(
     *,
     window_days: int = 30,
     heavily_used_top_k: int = 10,
+    heavily_used_min_applied: int = 3,
     now: datetime | None = None,
 ) -> HealthReport:
     """Build a `HealthReport` from active memories + the event stream.
@@ -176,7 +185,16 @@ def compute_health(
     if it was created more than `window_days` ago AND has no `applied`
     events. The window keeps recently-written memories from being flagged
     before they've had a chance to be retrieved.
+
+    `heavily_used_min_applied` is the floor on `applied_count` for inclusion
+    in `heavily_used`. Default 3: a single acknowledgement is acknowledgement,
+    not a usage pattern, and the bucket is meant to surface memories that are
+    actively load-bearing. Lower to 1 on a fresh store if you want to see
+    everything that's been touched at least once. Always >= 1 — a value of
+    0 would dump every memory into the bucket and defeat the report.
     """
+    if heavily_used_min_applied < 1:
+        heavily_used_min_applied = 1
     now = now or datetime.now(timezone.utc)
     cutoff = now - timedelta(days=window_days)
 
@@ -188,6 +206,7 @@ def compute_health(
             summary=first_summary_line(m.body),
             created=m.created,
             updated=m.updated,
+            last_verified_at=m.last_verified_at,
         )
 
     # Marker stats are accumulated by canonical marker name. Both
@@ -269,7 +288,7 @@ def compute_health(
     dead_weight.sort(key=lambda s: s.created)
 
     heavily_used = sorted(
-        (s for s in by_id.values() if s.applied_count > 0),
+        (s for s in by_id.values() if s.applied_count >= heavily_used_min_applied),
         key=lambda s: (s.applied_count, s.last_used_at or s.updated),
         reverse=True,
     )[:heavily_used_top_k]
@@ -389,6 +408,7 @@ def report_for_directory(
     *,
     window_days: int = 30,
     heavily_used_top_k: int = 10,
+    heavily_used_min_applied: int = 3,
     now: datetime | None = None,
 ) -> HealthReport:
     """Convenience: load memories from `root`, walk the event log, return
@@ -401,6 +421,7 @@ def report_for_directory(
         iter_all_events(root),
         window_days=window_days,
         heavily_used_top_k=heavily_used_top_k,
+        heavily_used_min_applied=heavily_used_min_applied,
         now=now,
     )
 

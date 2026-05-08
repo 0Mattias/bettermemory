@@ -40,6 +40,7 @@ from .store import (
     Store,
     TombstonedError,
 )
+from .verify import detect_path_drift
 
 
 log = logging.getLogger("bettermemory")
@@ -188,7 +189,11 @@ def _register_tools(
         # Optional auto-expansion of the top hit. Conservative: only fires
         # when the top hit clearly wins ("high" relevance) so the model
         # doesn't get hosed with full bodies it didn't really need.
+        # Path-drift runs against the expanded body — if we're already
+        # paying the load cost, surfacing drift here saves a memory_show
+        # round-trip when the model needs to act on it.
         expanded_id: str | None = None
+        expanded_drift_missing = 0
         if expand_top and out and out[0]["relevance"] == "high":
             try:
                 memory = store.load_one(hits[0].id)
@@ -198,6 +203,10 @@ def _register_tools(
                 pass
             else:
                 out[0]["body"] = memory.body
+                drift = detect_path_drift(memory.body)
+                if drift.has_drift:
+                    out[0]["path_drift"] = drift.to_dict()
+                    expanded_drift_missing = len(drift.missing)
                 expanded_id = memory.id
 
         recorder.record(
@@ -209,6 +218,7 @@ def _register_tools(
             relevance=[h["relevance"] for h in out],
             expand_top=expand_top,
             expanded_id=expanded_id,
+            expanded_drift_missing=expanded_drift_missing,
             auto_scope=auto_scope,
             repo_filter=repo_filter,
         )
@@ -221,7 +231,14 @@ def _register_tools(
         description=(
             "Fetch a single memory's full content by ID. Use after "
             "memory_search when a snippet looks relevant and you want the "
-            "full body."
+            "full body. The response includes `last_verified_at` (null if "
+            "the memory has never been spot-checked since write — call "
+            "memory_verify after confirming the body still matches reality) "
+            "and `path_drift` when the body cites filesystem paths that no "
+            "longer exist on disk. Drift is advisory: it may indicate a "
+            "stale memory, but it can also be a temporary mount or a path "
+            "from a different machine. Treat it as a signal to spot-check, "
+            "not a verdict."
         ),
     )
     async def memory_show(id: str) -> dict[str, Any]:
@@ -231,7 +248,20 @@ def _register_tools(
             raise ValueError(str(exc)) from exc
         except MemoryNotFoundError as exc:
             raise ValueError(str(exc)) from exc
-        recorder.record("show", id=memory.id)
+        # Path-drift runs against the full body. We surface `path_drift`
+        # only when there's something actionable: a memory with no path
+        # claims (or all-healthy paths) returns the field as null so the
+        # consumer can branch on `if path_drift is not None`. Without
+        # that, every memory_show would carry an empty `path_drift` dict
+        # and the model would learn to ignore the field even when it
+        # mattered.
+        drift = detect_path_drift(memory.body)
+        recorder.record(
+            "show",
+            id=memory.id,
+            path_drift_checked=len(drift.checked),
+            path_drift_missing=len(drift.missing),
+        )
         return {
             "id": memory.id,
             "scopes": memory.scopes,
@@ -239,8 +269,10 @@ def _register_tools(
             "source": memory.source.value,
             "created": _isoformat(memory.created),
             "updated": _isoformat(memory.updated),
+            "last_verified_at": _isoformat_optional(memory.last_verified_at),
             "body": memory.body,
             "origin": _origin_to_dict(memory.origin),
+            "path_drift": drift.to_dict() if drift.has_drift else None,
         }
 
     # ---- memory_write ----------------------------------------------------
@@ -517,13 +549,21 @@ def _register_tools(
         if content is not None:
             new_body = content.strip() + "\n"
 
-        merged = existing.model_copy(
-            update={
-                "body": new_body,
-                "scopes": new_scopes,
-                "confidence": new_confidence,
-            }
-        )
+        # When `content` changes, the prior verification was for prose
+        # that no longer exists — reset `last_verified_at` to None so the
+        # caller has to re-confirm against the new body. Scope/confidence
+        # edits don't touch the body's claims, so the verification stays
+        # intact for those. This matches the intuition that verification
+        # is a property of body content, not of metadata.
+        update_fields: dict[str, Any] = {
+            "body": new_body,
+            "scopes": new_scopes,
+            "confidence": new_confidence,
+        }
+        if content is not None:
+            update_fields["last_verified_at"] = None
+
+        merged = existing.model_copy(update=update_fields)
         updated = store.update(merged)
         fields_changed = [
             name
@@ -639,17 +679,34 @@ def _register_tools(
             "rates, and the scope distribution. Use this to drive curation "
             "passes — prune dead weight, refresh contradicted memories via "
             "memory_update, trim transient markers whose override rate is "
-            "high. The corresponding CLI is `bettermemory health`."
+            "high. The corresponding CLI is `bettermemory health`. "
+            "`min_applied` floors the heavily_used bucket on applied_count "
+            "(default comes from config.toml — typically 3 — to keep the "
+            "bucket out of one-off-acknowledgement noise). Per-row stats "
+            "include `last_verified_at` so a curation pass can flag rows "
+            "that haven't been spot-checked recently."
         ),
     )
     async def memory_health(
         window_days: int = 30,
         heavily_used_top_k: int = 10,
+        min_applied: int | None = None,
     ) -> dict[str, Any]:
+        # Falling through to the configured default lets the tool stay
+        # ergonomic for the common case (don't pass anything, get the
+        # tuned threshold) while still allowing a per-call override
+        # ("show me everything that's been applied at least once on this
+        # young store").
+        threshold = (
+            int(min_applied)
+            if min_applied is not None
+            else config.behavior.heavily_used_min_applied
+        )
         report = report_for_directory(
             store.root,
             window_days=int(window_days),
             heavily_used_top_k=int(heavily_used_top_k),
+            heavily_used_min_applied=threshold,
         )
         return report.to_dict()
 
@@ -700,6 +757,128 @@ def _register_tools(
         return {
             "recorded": list(memory_ids),
             "outcome": outcome,
+        }
+
+    # ---- memory_verify ---------------------------------------------------
+
+    @mcp.tool(
+        name="memory_verify",
+        description=(
+            "Bump `last_verified_at` to now after spot-checking that a "
+            "memory's claims still match reality. Call this when you have "
+            "actively confirmed the body's verifiable content — file paths "
+            "still exist, the version number still matches, the script is "
+            "still where it says, the configuration is still what it says. "
+            "Verification is the orthogonal axis to content edits: this "
+            "tool does not touch `updated`, and `memory_update` does not "
+            "touch `last_verified_at`. A typo fix bumps `updated` (the "
+            "body changed) but not `last_verified_at` (no claim to have "
+            "spot-checked the world); a verify call bumps "
+            "`last_verified_at` (you confirmed reality) but not `updated` "
+            "(the body is unchanged). `note` is an optional free-form "
+            "string captured in the event log — use it to record what "
+            "was checked ('confirmed `/usr/local/sbin/zb-backup.sh` "
+            "exists on the homelab'). Idempotent: calling twice in a row "
+            "just slides the timestamp forward."
+        ),
+    )
+    async def memory_verify(
+        id: str,
+        note: str | None = None,
+    ) -> dict[str, Any]:
+        if note is not None and not isinstance(note, str):
+            raise ValueError("note must be a string if provided")
+        try:
+            memory = store.mark_verified(id)
+        except TombstonedError as exc:
+            raise ValueError(str(exc)) from exc
+        except MemoryNotFoundError as exc:
+            raise ValueError(str(exc)) from exc
+        recorder.record(
+            "verify",
+            id=memory.id,
+            last_verified_at=_isoformat_optional(memory.last_verified_at),
+            note=note,
+        )
+        return {
+            "verified": memory.id,
+            "last_verified_at": _isoformat_optional(memory.last_verified_at),
+            "updated": _isoformat(memory.updated),
+        }
+
+    # ---- memory_scope_overview ------------------------------------------
+
+    @mcp.tool(
+        name="memory_scope_overview",
+        description=(
+            "Cheap session-start hint: counts of memories per scope, "
+            "without bodies, IDs, or summaries. Default-scoped to the "
+            "caller's current repository (memories with no origin pass as "
+            "global). Returns `{current_repo, scopes: {scope: count}, "
+            "total}`. Use this once at the start of a conversation to see "
+            "whether stored memory exists for the current project — if "
+            "`total` is 0, you can skip memory_search for the rest of the "
+            "session unless the user explicitly asks. If the count is "
+            "non-zero, memory_search remains the way to retrieve content; "
+            "this tool only tells you whether searching is likely to be "
+            "fruitful. Set `auto_scope=False` to count across all stored "
+            "memory regardless of origin (the cross-project view). Counts "
+            "respect session-disabled scopes."
+        ),
+    )
+    async def memory_scope_overview(
+        auto_scope: bool = True,
+    ) -> dict[str, Any]:
+        repo_filter: str | None = None
+        current_origin: Origin | None = None
+        if auto_scope:
+            current_origin = capture_origin()
+            repo_filter = current_origin.repo
+
+        excluded = set(state.disabled_scopes)
+        scope_counts: dict[str, int] = {}
+        total = 0
+        for memory in store.load_all():
+            memory_scope_set = set(memory.scopes)
+            if excluded and (memory_scope_set & excluded):
+                continue
+            if repo_filter is not None:
+                memory_repo = memory.origin.repo if memory.origin else None
+                # Reuse the same repos_match semantics as memory_search so
+                # this tool's `current_repo` filter is bit-identical to
+                # the search filter — otherwise the model would see
+                # "5 memories tagged projects:foo" here and zero hits in
+                # search and have no way to reconcile that.
+                from .origin import repos_match
+
+                if not repos_match(memory_repo, repo_filter):
+                    continue
+            total += 1
+            for scope in memory.scopes:
+                if scope in excluded:
+                    continue
+                scope_counts[scope] = scope_counts.get(scope, 0) + 1
+
+        # Sort scopes by count desc, then name for determinism. Important
+        # for tests and for the model — a stable ordering means a "if the
+        # top scope is X" branch behaves consistently across calls.
+        sorted_scopes = dict(
+            sorted(scope_counts.items(), key=lambda kv: (-kv[1], kv[0]))
+        )
+        recorder.record(
+            "scope_overview",
+            auto_scope=auto_scope,
+            current_repo=repo_filter,
+            total=total,
+            scope_count=len(sorted_scopes),
+        )
+        return {
+            "current_repo": repo_filter,
+            "current_cwd": current_origin.cwd if current_origin else None,
+            "auto_scope": auto_scope,
+            "scopes": sorted_scopes,
+            "total": total,
+            "disabled_scopes": sorted(state.disabled_scopes),
         }
 
     @mcp.tool(
@@ -800,6 +979,7 @@ def _committed(  # type: ignore[no-untyped-def]
         "source": memory.source.value,
         "created": _isoformat(memory.created),
         "updated": _isoformat(memory.updated),
+        "last_verified_at": _isoformat_optional(memory.last_verified_at),
     }
     if related:
         out["related"] = [_similar_to_dict(h) for h in related]
@@ -828,6 +1008,17 @@ def _isoformat(dt: datetime) -> str:
     return dt.isoformat().replace("+00:00", "Z")
 
 
+def _isoformat_optional(dt: datetime | None) -> str | None:
+    """ISO-format `dt`, returning None when the input is None.
+
+    Distinct from `_isoformat` because `None` is a meaningful response
+    value for `last_verified_at` — "never verified" is a valid state, not
+    an error. Returning the literal None lets JSON-serialisation produce
+    `"last_verified_at": null` which the caller can branch on directly.
+    """
+    return None if dt is None else _isoformat(dt)
+
+
 def _hit_to_dict(hit: MemoryHit) -> dict[str, Any]:
     return {
         "id": hit.id,
@@ -839,6 +1030,7 @@ def _hit_to_dict(hit: MemoryHit) -> dict[str, Any]:
         "match_terms": hit.match_terms,
         "created": _isoformat(hit.created),
         "updated": _isoformat(hit.updated),
+        "last_verified_at": _isoformat_optional(hit.last_verified_at),
     }
 
 
@@ -850,6 +1042,7 @@ def _summary_to_dict(summary: MemorySummary) -> dict[str, Any]:
         "summary": summary.summary,
         "created": _isoformat(summary.created),
         "updated": _isoformat(summary.updated),
+        "last_verified_at": _isoformat_optional(summary.last_verified_at),
     }
 
 
@@ -870,6 +1063,7 @@ def _memory_to_dict(memory) -> dict[str, Any]:  # type: ignore[no-untyped-def]
         "body": memory.body,
         "created": _isoformat(memory.created),
         "updated": _isoformat(memory.updated),
+        "last_verified_at": _isoformat_optional(memory.last_verified_at),
         "origin": _origin_to_dict(memory.origin),
     }
 
@@ -933,6 +1127,17 @@ def main() -> None:
         default=10,
         help="How many heavily-used memories to list. Default: 10.",
     )
+    health_parser.add_argument(
+        "--min-applied",
+        type=int,
+        default=None,
+        help=(
+            "Minimum applied_count for inclusion in heavily_used. Default "
+            "comes from config.toml `behavior.heavily_used_min_applied` "
+            "(typically 3). Lower to 1 on a fresh store to see anything "
+            "that's been applied at least once."
+        ),
+    )
 
     migrate_parser = sub.add_parser(
         "migrate",
@@ -985,7 +1190,12 @@ def main() -> None:
 
     args = parser.parse_args()
     if args.cmd == "health":
-        _cli_health(json_out=args.json, days=args.days, top_k=args.top_k)
+        _cli_health(
+            json_out=args.json,
+            days=args.days,
+            top_k=args.top_k,
+            min_applied=args.min_applied,
+        )
         return
     if args.cmd == "migrate":
         if args.migrate_cmd == "origin":
@@ -1039,13 +1249,32 @@ def _cli_serve() -> None:
     mcp.run("stdio")
 
 
-def _cli_health(*, json_out: bool, days: int, top_k: int) -> None:
+def _cli_health(
+    *,
+    json_out: bool,
+    days: int,
+    top_k: int,
+    min_applied: int | None = None,
+) -> None:
     """`bettermemory health` — print the aggregate report."""
     from .health import render_json, render_text
 
     config = load_config()
     directory = config.resolved_directory()
-    report = report_for_directory(directory, window_days=days, heavily_used_top_k=top_k)
+    # `--min-applied` overrides the config default; fall through to the
+    # configured value when the flag wasn't passed. Avoids forcing the user
+    # to pass the same number to every CLI invocation.
+    threshold = (
+        min_applied
+        if min_applied is not None
+        else config.behavior.heavily_used_min_applied
+    )
+    report = report_for_directory(
+        directory,
+        window_days=days,
+        heavily_used_top_k=top_k,
+        heavily_used_min_applied=threshold,
+    )
     sys.stdout.write(render_json(report) if json_out else render_text(report))
 
 

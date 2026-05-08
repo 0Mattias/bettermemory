@@ -103,7 +103,15 @@ def test_old_memory_with_applied_event_is_NOT_dead_weight() -> None:
     events = [
         _event("use", ts=_utc(2026, 4, 1), ids=[m.id], outcome="applied"),
     ]
-    report = compute_health([m], events, window_days=30, now=_utc(2026, 5, 1))
+    # Lower the threshold so a single application still surfaces — this
+    # test is about the dead-weight rule, not the heavily_used one.
+    report = compute_health(
+        [m],
+        events,
+        window_days=30,
+        heavily_used_min_applied=1,
+        now=_utc(2026, 5, 1),
+    )
     assert report.dead_weight == []
     assert len(report.heavily_used) == 1
 
@@ -133,7 +141,13 @@ def test_heavily_used_orders_by_applied_count() -> None:
         _event("use", ids=[c.id], outcome="applied"),
         _event("use", ids=[c.id], outcome="applied"),
     ]
-    report = compute_health([a, b, c], events, now=_utc(2026, 5, 1))
+    # Threshold lowered so all three rank — the test is about ordering.
+    report = compute_health(
+        [a, b, c],
+        events,
+        heavily_used_min_applied=1,
+        now=_utc(2026, 5, 1),
+    )
     assert [s.id for s in report.heavily_used] == [c.id, b.id, a.id]
 
 
@@ -141,7 +155,11 @@ def test_heavily_used_top_k_truncates() -> None:
     memories = [_memory() for _ in range(15)]
     events = [_event("use", ids=[m.id], outcome="applied") for m in memories]
     report = compute_health(
-        memories, events, heavily_used_top_k=5, now=_utc(2026, 5, 1)
+        memories,
+        events,
+        heavily_used_top_k=5,
+        heavily_used_min_applied=1,
+        now=_utc(2026, 5, 1),
     )
     assert len(report.heavily_used) == 5
 
@@ -328,6 +346,7 @@ def test_render_json_round_trips() -> None:
     report = compute_health(
         [m],
         [_event("use", ids=[m.id], outcome="applied")],
+        heavily_used_min_applied=1,
         now=_utc(2026, 5, 1),
     )
     parsed = json.loads(render_json(report))
@@ -338,6 +357,124 @@ def test_render_json_round_trips() -> None:
 # ---------------------------------------------------------------------------
 # report_for_directory — end-to-end against a real Store + event log
 # ---------------------------------------------------------------------------
+
+
+# ---------------------------------------------------------------------------
+# heavily_used_min_applied threshold
+# ---------------------------------------------------------------------------
+
+
+def test_heavily_used_default_threshold_excludes_single_applies() -> None:
+    """The default threshold is 3 — one acknowledgement is acknowledgement,
+    not a usage pattern, and the heavily_used bucket is meant to surface
+    repeat-use signal."""
+    a = _memory()
+    b = _memory()
+    events = [
+        _event("use", ids=[a.id], outcome="applied"),  # 1
+        _event("use", ids=[b.id], outcome="applied"),  # 1
+        _event("use", ids=[b.id], outcome="applied"),  # 2
+    ]
+    report = compute_health([a, b], events, now=_utc(2026, 5, 1))
+    assert report.heavily_used == []
+
+
+def test_heavily_used_default_threshold_includes_three_applies() -> None:
+    a = _memory()
+    events = [_event("use", ids=[a.id], outcome="applied") for _ in range(3)]
+    report = compute_health([a], events, now=_utc(2026, 5, 1))
+    assert len(report.heavily_used) == 1
+    assert report.heavily_used[0].id == a.id
+    assert report.heavily_used[0].applied_count == 3
+
+
+def test_heavily_used_min_applied_one_includes_singletons() -> None:
+    """A young store may want to see anything that's been applied at all
+    — explicit min_applied=1 reproduces the pre-threshold behavior."""
+    a = _memory()
+    events = [_event("use", ids=[a.id], outcome="applied")]
+    report = compute_health(
+        [a], events, heavily_used_min_applied=1, now=_utc(2026, 5, 1)
+    )
+    assert len(report.heavily_used) == 1
+
+
+def test_heavily_used_min_applied_clamped_to_one() -> None:
+    """A 0 threshold would dump every memory — clamp up to 1 so the
+    bucket stays meaningful even on a misconfigured client."""
+    a = _memory()  # never applied
+    b = _memory()
+    events = [_event("use", ids=[b.id], outcome="applied")]
+    report = compute_health(
+        [a, b], events, heavily_used_min_applied=0, now=_utc(2026, 5, 1)
+    )
+    assert {s.id for s in report.heavily_used} == {b.id}
+
+
+def test_heavily_used_min_applied_high_filters_aggressively() -> None:
+    a = _memory()
+    b = _memory()
+    events = [_event("use", ids=[a.id], outcome="applied") for _ in range(2)]
+    events += [_event("use", ids=[b.id], outcome="applied") for _ in range(5)]
+    report = compute_health(
+        [a, b], events, heavily_used_min_applied=5, now=_utc(2026, 5, 1)
+    )
+    assert {s.id for s in report.heavily_used} == {b.id}
+
+
+def test_min_applied_does_not_change_dead_weight_logic() -> None:
+    """Raising the heavily_used floor must not promote a memory into
+    dead_weight — dead_weight is purely "no applied events ever AND old"."""
+    old_with_two_applies = _memory(created=_utc(2026, 1, 1))
+    events = [
+        _event(
+            "use",
+            ts=_utc(2026, 4, 1),
+            ids=[old_with_two_applies.id],
+            outcome="applied",
+        ),
+        _event(
+            "use",
+            ts=_utc(2026, 4, 2),
+            ids=[old_with_two_applies.id],
+            outcome="applied",
+        ),
+    ]
+    report = compute_health(
+        [old_with_two_applies],
+        events,
+        window_days=30,
+        heavily_used_min_applied=10,  # excludes from heavily_used
+        now=_utc(2026, 5, 1),
+    )
+    # Out of heavily_used (didn't clear the floor)…
+    assert report.heavily_used == []
+    # …but NOT dead-weight either, because applied_count > 0.
+    assert report.dead_weight == []
+
+
+# ---------------------------------------------------------------------------
+# last_verified_at threaded through MemoryStats
+# ---------------------------------------------------------------------------
+
+
+def test_memory_stats_carries_last_verified_at() -> None:
+    verified_at = _utc(2026, 4, 15)
+    m = _memory(created=_utc(2026, 1, 1))
+    m_with_verify = m.model_copy(update={"last_verified_at": verified_at})
+    events = [_event("use", ids=[m.id], outcome="applied") for _ in range(3)]
+    report = compute_health([m_with_verify], events, now=_utc(2026, 5, 1))
+    assert len(report.heavily_used) == 1
+    assert report.heavily_used[0].last_verified_at == verified_at
+    # Surfaces in to_dict for the JSON view too.
+    assert report.heavily_used[0].to_dict()["last_verified_at"] is not None
+
+
+def test_memory_stats_last_verified_at_none_serialised_as_null() -> None:
+    m = _memory()
+    events = [_event("use", ids=[m.id], outcome="applied") for _ in range(3)]
+    report = compute_health([m], events, now=_utc(2026, 5, 1))
+    assert report.heavily_used[0].to_dict()["last_verified_at"] is None
 
 
 def test_report_for_directory_loads_store_and_events(
@@ -353,7 +490,9 @@ def test_report_for_directory_loads_store_and_events(
     rec.record("search", query="anything", returned=[m.id], relevance=["high"])
     rec.record("use", ids=[m.id], outcome="applied")
 
-    report = report_for_directory(memory_dir)
+    # Min applied at 1 so a single applied event still surfaces — this
+    # test is about plumbing, not the threshold tuning.
+    report = report_for_directory(memory_dir, heavily_used_min_applied=1)
     assert report.total_active_memories == 1
     assert len(report.heavily_used) == 1
     assert report.heavily_used[0].id == m.id

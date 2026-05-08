@@ -9,6 +9,51 @@ fixes.
 
 ### Added
 
+- **`memory_verify` tool + `last_verified_at` field.** The orthogonal
+  axis to content edits: `memory_verify(id, note=...)` bumps
+  `last_verified_at` to now after the caller has spot-checked the body's
+  claims against ground truth. Distinct from `updated`, which moves
+  whenever `memory_update` rewrites content — verification is "a
+  human/agent confirmed reality matched the body on this date", editing
+  is "the body changed on this date". A typo fix bumps `updated` but
+  not `last_verified_at`; a verify call bumps `last_verified_at` but
+  not `updated`. The field is surfaced on every retrieval response
+  (`memory_show`, `memory_search` hits, `memory_list`, `_committed`,
+  `MemoryStats`) so staleness is visible at a glance — `null` means
+  "never verified since write". Frontmatter is additive: legacy
+  memories without the field load fine; malformed values silently fall
+  back to `None` rather than crashing the load. Idempotent (calling
+  twice slides the timestamp forward); records a `kind: "verify"` event
+  with the optional note.
+- **`memory_scope_overview` tool.** Cheap session-start hint —
+  per-scope counts (no bodies, IDs, or summaries) so the model can
+  decide whether `memory_search` is likely to be fruitful before
+  spending tokens on it. Auto-scoped to the current repo by default
+  (uses bit-identical `repos_match` semantics as `memory_search`, so
+  "5 here" reconciles with "5 in search"). Returns
+  `{current_repo, current_cwd, auto_scope, scopes, total,
+  disabled_scopes}` with scopes sorted count-desc then name-asc for
+  determinism. Respects session-disabled scopes. Pass
+  `auto_scope=False` for the cross-project view.
+- **Path-drift detection on retrieval.** `memory_show` and
+  `memory_search(expand_top=True)` extract path-shaped tokens from the
+  body and stat them. Drift is surfaced as `path_drift.missing` —
+  advisory, not a verdict (could be a temporary mount or a path on a
+  different machine). `path_drift` is `null` when no drift is found so
+  the consumer branches cleanly. Detection covers backtick-wrapped
+  paths (highest precision), bare absolute Unix paths, `~/`-rooted
+  paths, and Windows drive-letter paths; URLs, SSH remotes,
+  `user@host:path`, and short paths (`/x`) are filtered. Two-pass
+  extraction with backtick spans masked before the bare scan avoids
+  double-counting. Capped at 8 paths per body and 512 chars per path.
+  `OSError` from `Path.exists()` (permission denied, ELOOP, etc.) is
+  treated as missing — semantically correct for a staleness signal.
+- New `bettermemory.verify` module: `PathDriftReport`,
+  `detect_path_drift()`.
+- `Store.mark_verified(id)` — bumps `last_verified_at` without
+  touching `updated`.
+- **`bettermemory health --min-applied N` CLI flag** to override the
+  configured `heavily_used_min_applied` floor for one invocation.
 - **`bettermemory migrate origin` CLI subcommand.** One-shot backfill for
   legacy memories that pre-date the auto-scope feature (no `origin:`
   block in frontmatter). Three routing modes, in priority order:
@@ -109,6 +154,31 @@ fixes.
 
 ### Changed
 
+- **`heavily_used_min_applied` threshold (default 3).** New config knob
+  in `[behavior]` floors the `heavily_used` bucket on `applied_count` —
+  at 1 the bucket was dominated by one-off acknowledgements rather than
+  repeat-use signal. Threaded through `compute_health`,
+  `report_for_directory`, the `memory_health` tool (`min_applied` arg),
+  and the `bettermemory health --min-applied` CLI flag. Clamped to ≥1
+  internally so a misconfigured `0` doesn't dump every memory into the
+  bucket. Lower it to 1 on a fresh store; raise it as the event log
+  matures.
+- **`MemoryStats` carries `last_verified_at`** so a curation pass can
+  treat applied count and verification age as orthogonal staleness axes
+  without a second round-trip through the store.
+- **`memory_update` resets `last_verified_at` when content changes.**
+  The prior verification was for prose that no longer exists; resetting
+  forces the caller to spot-check the new body before a downstream
+  consumer trusts the timestamp. Scope-only or confidence-only updates
+  preserve `last_verified_at` since the body's claims didn't move.
+- **`SYSTEM_PROMPT_ADDENDUM` hoists the no-filesystem-memory override
+  to the first paragraph.** Many client harnesses ship their own
+  filesystem-backed memory description in their default system prompt;
+  the override has to land at the top so it wins before any later
+  instruction can re-frame the model into filesystem mode. Also
+  documents the new tools (`memory_verify`, `memory_scope_overview`),
+  the staleness signals (`last_verified_at`, `path_drift`), and the
+  session-start hint pattern. `docs/system_prompt.md` updated to match.
 - `SYSTEM_PROMPT_ADDENDUM` rewritten so the durability rule references the
   structural enforcement rather than enumerating markers. The model gets
   the principle from the prompt and the specific marker that fired from

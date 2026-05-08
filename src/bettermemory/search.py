@@ -288,6 +288,7 @@ def search(
                 match_terms=matched,
                 created=memory.created,
                 updated=memory.updated,
+                last_verified_at=memory.last_verified_at,
             )
         )
 

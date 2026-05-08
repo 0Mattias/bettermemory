@@ -169,6 +169,7 @@ class Store:
                     summary=first_summary_line(memory.body),
                     created=memory.created,
                     updated=memory.updated,
+                    last_verified_at=memory.last_verified_at,
                 )
             )
         return out
@@ -210,6 +211,19 @@ class Store:
                 if isinstance(origin_raw, dict)
                 else None
             )
+            # `last_verified_at` is also additive — older memories have no
+            # entry and read as "never verified". A malformed timestamp is
+            # treated the same as missing (rather than raising) so a typo
+            # in the file doesn't render the whole memory unloadable.
+            verified_raw = meta.get("last_verified_at")
+            last_verified_at: datetime | None
+            if verified_raw is None:
+                last_verified_at = None
+            else:
+                try:
+                    last_verified_at = _as_dt(verified_raw)
+                except ValueError:
+                    last_verified_at = None
             return Memory(
                 id=str(meta["id"]),
                 created=_as_dt(meta["created"]),
@@ -219,6 +233,7 @@ class Store:
                 source=Source(meta["source"]),
                 body=post.content.strip() + "\n",
                 origin=origin,
+                last_verified_at=last_verified_at,
             )
         except KeyError as exc:
             raise ValueError(f"{path}: missing field {exc.args[0]}") from exc
@@ -259,6 +274,34 @@ class Store:
 
         now = utcnow()
         new_memory = memory.model_copy(update={"updated": now})
+        with _locked(existing_path):
+            self._write_path(existing_path, new_memory)
+        return new_memory
+
+    def mark_verified(self, memory_id: str) -> Memory:
+        """Bump `last_verified_at` to now without touching `updated`.
+
+        Verification is the orthogonal axis to content edits: a typo fix
+        bumps `updated` (the body changed) but not `last_verified_at`
+        (no claim to have spot-checked reality). A `memory_verify` call
+        bumps `last_verified_at` (a human/agent confirmed reality matched
+        the body) without bumping `updated` (the body itself didn't move).
+        Calling this on a memory that's already verified-now is a no-op
+        from the caller's perspective — the timestamp just slides forward.
+        """
+        existing_path = self._find_path_for_id(memory_id)
+        if existing_path is None:
+            for tpath in self._iter_tombstone_paths():
+                post = frontmatter.load(tpath)
+                if post.metadata.get("id") == memory_id:
+                    raise TombstonedError(
+                        f"memory {memory_id} was removed: "
+                        f"{post.metadata.get('removed_reason', '<no reason>')}"
+                    )
+            raise MemoryNotFoundError(f"no memory with id {memory_id}")
+
+        existing = self._load_path(existing_path)
+        new_memory = existing.model_copy(update={"last_verified_at": utcnow()})
         with _locked(existing_path):
             self._write_path(existing_path, new_memory)
         return new_memory
@@ -336,6 +379,12 @@ class Store:
             origin_dict = memory.origin.model_dump(mode="json", exclude_none=True)
             if origin_dict:
                 meta["origin"] = origin_dict
+        # `last_verified_at` is omitted from frontmatter when None — keeps
+        # newly-written memories from carrying a `last_verified_at: null`
+        # placeholder, which would be visual noise on every file. Once the
+        # field is populated by `mark_verified`, the key is written.
+        if memory.last_verified_at is not None:
+            meta["last_verified_at"] = memory.last_verified_at
         post.metadata = meta
         # Atomic-ish write: write to .tmp then rename.
         tmp = path.with_suffix(path.suffix + ".tmp")

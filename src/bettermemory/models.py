@@ -104,6 +104,16 @@ class Memory(BaseModel):
     `origin` is optional and defaults to None. Memories written before the
     auto-scope feature shipped have no origin and are treated as "global"
     by `memory_search(auto_scope=True)`.
+
+    `last_verified_at` is bumped by `memory_verify` (and only that tool) when
+    the caller has spot-checked the body's claims against ground truth — file
+    paths still exist, version numbers still match, etc. None means "never
+    verified since write". Distinct from `updated`, which moves whenever
+    `memory_update` rewrites content. Editing isn't verifying: a typo fix or
+    a scope retag shouldn't pretend the body has been re-checked. The two
+    fields together form a staleness signal — `updated` is "the body changed
+    on this date", `last_verified_at` is "a human/agent confirmed the body
+    matched reality on this date".
     """
 
     id: str
@@ -114,6 +124,7 @@ class Memory(BaseModel):
     source: Source
     body: str
     origin: Origin | None = None
+    last_verified_at: datetime | None = None
 
     @field_validator("scopes")
     @classmethod
@@ -139,6 +150,8 @@ class MemoryHit(BaseModel):
     scopes, so the caller can sanity-check whether a hit is meaningful or
     stopword noise. `updated` lets a consumer spot stale memories at a
     glance — bumped by `memory_update`, equal to `created` on first write.
+    `last_verified_at` is the orthogonal verification timestamp — None when
+    the memory has never been spot-checked since it was written.
     """
 
     id: str
@@ -150,6 +163,7 @@ class MemoryHit(BaseModel):
     match_terms: list[str] = []
     created: datetime
     updated: datetime
+    last_verified_at: datetime | None = None
 
 
 class MemorySummary(BaseModel):
@@ -161,6 +175,7 @@ class MemorySummary(BaseModel):
     summary: str
     created: datetime
     updated: datetime
+    last_verified_at: datetime | None = None
 
 
 class SimilarHit(BaseModel):

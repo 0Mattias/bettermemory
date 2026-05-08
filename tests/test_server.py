@@ -861,3 +861,332 @@ async def test_memory_update_unaffected_by_dedup(server: Any) -> None:
     assert updated["status"] == "committed"
     assert updated["id"] == b["id"]
     assert updated["id"] != a["id"]
+
+
+# ---------------------------------------------------------------------------
+# memory_verify — orthogonal verification timestamp
+# ---------------------------------------------------------------------------
+
+
+async def test_memory_verify_bumps_last_verified_at(server: Any) -> None:
+    written = await _call(
+        server, "memory_write", content="durable claim", scopes=["tools"]
+    )
+    assert written["last_verified_at"] is None
+
+    verified = await _call(server, "memory_verify", id=written["id"])
+    assert verified["verified"] == written["id"]
+    assert verified["last_verified_at"] is not None
+
+    shown = await _call(server, "memory_show", id=written["id"])
+    assert shown["last_verified_at"] == verified["last_verified_at"]
+
+
+async def test_memory_verify_does_not_bump_updated(server: Any) -> None:
+    """Verification is the orthogonal axis: confirming reality matched the
+    body should not make the body look edited."""
+    written = await _call(
+        server, "memory_write", content="durable claim", scopes=["tools"]
+    )
+    verified = await _call(server, "memory_verify", id=written["id"])
+    assert verified["updated"] == written["updated"]
+
+
+async def test_memory_verify_unknown_id_errors(server: Any) -> None:
+    with pytest.raises(Exception):
+        await _call(server, "memory_verify", id="01HXYZNOTAREALIDOK000000ZZ")
+
+
+async def test_memory_verify_tombstoned_errors(server: Any) -> None:
+    written = await _call(
+        server, "memory_write", content="durable claim", scopes=["tools"]
+    )
+    await _call(server, "memory_remove", id=written["id"], reason="superseded")
+    with pytest.raises(Exception):
+        await _call(server, "memory_verify", id=written["id"])
+
+
+async def test_memory_verify_idempotent(server: Any) -> None:
+    written = await _call(
+        server, "memory_write", content="durable claim", scopes=["tools"]
+    )
+    first = await _call(server, "memory_verify", id=written["id"])
+    second = await _call(server, "memory_verify", id=written["id"])
+    assert first["last_verified_at"] is not None
+    assert second["last_verified_at"] is not None
+    # Second timestamp >= first (it slid forward, didn't go backwards).
+    assert second["last_verified_at"] >= first["last_verified_at"]
+
+
+async def test_memory_update_content_resets_last_verified_at(server: Any) -> None:
+    """Editing the body invalidates the prior verification — your spot-check
+    was for prose that no longer exists."""
+    written = await _call(
+        server, "memory_write", content="original body", scopes=["tools"]
+    )
+    await _call(server, "memory_verify", id=written["id"])
+    pre = await _call(server, "memory_show", id=written["id"])
+    assert pre["last_verified_at"] is not None
+
+    await _call(server, "memory_update", id=written["id"], content="rewritten body")
+    post = await _call(server, "memory_show", id=written["id"])
+    assert post["last_verified_at"] is None
+
+
+async def test_memory_update_scope_only_preserves_last_verified_at(
+    server: Any,
+) -> None:
+    """Scope changes don't touch the body's claims; verification stands."""
+    written = await _call(
+        server, "memory_write", content="durable claim", scopes=["tools"]
+    )
+    await _call(server, "memory_verify", id=written["id"])
+    pre = await _call(server, "memory_show", id=written["id"])
+
+    await _call(
+        server,
+        "memory_update",
+        id=written["id"],
+        scopes=["tools", "infrastructure"],
+    )
+    post = await _call(server, "memory_show", id=written["id"])
+    assert post["last_verified_at"] == pre["last_verified_at"]
+
+
+async def test_memory_update_confidence_only_preserves_last_verified_at(
+    server: Any,
+) -> None:
+    written = await _call(
+        server, "memory_write", content="durable claim", scopes=["tools"]
+    )
+    await _call(server, "memory_verify", id=written["id"])
+    pre = await _call(server, "memory_show", id=written["id"])
+
+    await _call(server, "memory_update", id=written["id"], confidence="high")
+    post = await _call(server, "memory_show", id=written["id"])
+    assert post["last_verified_at"] == pre["last_verified_at"]
+
+
+# ---------------------------------------------------------------------------
+# memory_show response — last_verified_at + path_drift
+# ---------------------------------------------------------------------------
+
+
+async def test_memory_show_includes_last_verified_at_null_default(
+    server: Any,
+) -> None:
+    written = await _call(server, "memory_write", content="x", scopes=["tools"])
+    shown = await _call(server, "memory_show", id=written["id"])
+    assert "last_verified_at" in shown
+    assert shown["last_verified_at"] is None
+
+
+async def test_memory_show_omits_path_drift_when_no_paths(server: Any) -> None:
+    """A body without filesystem paths should produce path_drift: null,
+    not an empty dict — the consumer branches on `if path_drift is not
+    None` to decide whether to surface drift to the user."""
+    written = await _call(
+        server, "memory_write", content="just prose, no paths.", scopes=["tools"]
+    )
+    shown = await _call(server, "memory_show", id=written["id"])
+    assert shown["path_drift"] is None
+
+
+async def test_memory_show_surfaces_path_drift_when_path_missing(
+    server: Any, tmp_path: Path
+) -> None:
+    missing = tmp_path / "definitely-not-here.txt"
+    written = await _call(
+        server,
+        "memory_write",
+        content=f"The script lived at `{missing}` for years.",
+        scopes=["tools"],
+    )
+    shown = await _call(server, "memory_show", id=written["id"])
+    assert shown["path_drift"] is not None
+    assert str(missing) in shown["path_drift"]["missing"]
+
+
+async def test_memory_show_omits_path_drift_when_paths_healthy(
+    server: Any, tmp_path: Path
+) -> None:
+    real = tmp_path / "alive.txt"
+    real.write_text("x")
+    written = await _call(
+        server,
+        "memory_write",
+        content=f"Config at `{real}` on this box.",
+        scopes=["tools"],
+    )
+    shown = await _call(server, "memory_show", id=written["id"])
+    # Healthy paths still get checked, but path_drift is null because
+    # nothing's actionable. The model shouldn't be nudged on healthy state.
+    assert shown["path_drift"] is None
+
+
+# ---------------------------------------------------------------------------
+# memory_search response — last_verified_at on hits, path_drift on expanded
+# ---------------------------------------------------------------------------
+
+
+async def test_memory_search_hits_carry_last_verified_at(server: Any) -> None:
+    written = await _call(
+        server, "memory_write", content="searchable durable fact", scopes=["tools"]
+    )
+    await _call(server, "memory_verify", id=written["id"])
+
+    hits = _unwrap(await _call(server, "memory_search", query="searchable durable"))
+    assert len(hits) >= 1
+    assert hits[0]["last_verified_at"] is not None
+
+
+async def test_memory_search_expand_top_surfaces_path_drift(
+    server: Any, tmp_path: Path
+) -> None:
+    missing = tmp_path / "expand-target.txt"
+    await _call(
+        server,
+        "memory_write",
+        content=f"kubernetes networking config at `{missing}` reference",
+        scopes=["infrastructure"],
+    )
+    hits = _unwrap(
+        await _call(
+            server,
+            "memory_search",
+            query="kubernetes networking config",
+            expand_top=True,
+        )
+    )
+    assert len(hits) >= 1
+    assert hits[0]["relevance"] == "high"
+    assert hits[0].get("path_drift") is not None
+    assert str(missing) in hits[0]["path_drift"]["missing"]
+
+
+async def test_memory_search_no_path_drift_when_top_not_expanded(
+    server: Any, tmp_path: Path
+) -> None:
+    """Without expand_top, path_drift shouldn't appear — we haven't loaded
+    the body, so we have nothing to scan against."""
+    missing = tmp_path / "not-expanded.txt"
+    await _call(
+        server,
+        "memory_write",
+        content=f"something at `{missing}` reference",
+        scopes=["tools"],
+    )
+    hits = _unwrap(await _call(server, "memory_search", query="something reference"))
+    assert len(hits) >= 1
+    assert "path_drift" not in hits[0]
+
+
+# ---------------------------------------------------------------------------
+# memory_list — last_verified_at threaded through
+# ---------------------------------------------------------------------------
+
+
+async def test_memory_list_summary_carries_last_verified_at(server: Any) -> None:
+    written = await _call(server, "memory_write", content="x", scopes=["tools"])
+    await _call(server, "memory_verify", id=written["id"])
+    listing = _unwrap(await _call(server, "memory_list"))
+    assert len(listing) == 1
+    assert listing[0]["last_verified_at"] is not None
+
+
+async def test_memory_list_with_bodies_carries_last_verified_at(
+    server: Any,
+) -> None:
+    written = await _call(server, "memory_write", content="x", scopes=["tools"])
+    await _call(server, "memory_verify", id=written["id"])
+    listing = _unwrap(await _call(server, "memory_list", with_bodies=True))
+    assert listing[0]["last_verified_at"] is not None
+
+
+# ---------------------------------------------------------------------------
+# memory_scope_overview — counts only, respects auto_scope and disabled scopes
+# ---------------------------------------------------------------------------
+
+
+async def test_scope_overview_empty_store(server: Any) -> None:
+    overview = await _call(server, "memory_scope_overview", auto_scope=False)
+    assert overview["total"] == 0
+    assert overview["scopes"] == {}
+
+
+async def test_scope_overview_counts_per_scope(server: Any) -> None:
+    """auto_scope=False counts everything regardless of origin — useful for
+    the cross-project view, and avoids needing a fake repo in test setup."""
+    await _call(server, "memory_write", content="alpha 1", scopes=["projects:alpha"])
+    await _call(server, "memory_write", content="alpha 2", scopes=["projects:alpha"])
+    await _call(
+        server,
+        "memory_write",
+        content="alpha + tools",
+        scopes=["projects:alpha", "tools"],
+    )
+    await _call(server, "memory_write", content="just tools", scopes=["tools"])
+
+    overview = await _call(server, "memory_scope_overview", auto_scope=False)
+    assert overview["total"] == 4
+    assert overview["scopes"] == {"projects:alpha": 3, "tools": 2}
+
+
+async def test_scope_overview_orders_by_count_desc_then_name(server: Any) -> None:
+    """Stable ordering: count desc, ties broken by name asc. The model
+    should be able to count on `scopes.popitem()` returning the busiest
+    scope across calls."""
+    await _call(server, "memory_write", content="a", scopes=["tools"])
+    await _call(server, "memory_write", content="b", scopes=["zeta"])
+    await _call(server, "memory_write", content="c", scopes=["tools"])
+    await _call(server, "memory_write", content="d", scopes=["alpha"])
+    await _call(server, "memory_write", content="e", scopes=["alpha"])
+
+    overview = await _call(server, "memory_scope_overview", auto_scope=False)
+    keys = list(overview["scopes"].keys())
+    assert keys == ["alpha", "tools", "zeta"]
+
+
+async def test_scope_overview_omits_no_bodies_or_ids(server: Any) -> None:
+    """The whole point of this tool is that it's a cheap session-start
+    hint — no bodies, no IDs, no summaries. Adding any of those would
+    re-introduce the auto-context-load failure mode bettermemory exists
+    to avoid."""
+    await _call(server, "memory_write", content="secret body", scopes=["tools"])
+    overview = await _call(server, "memory_scope_overview", auto_scope=False)
+    payload = json.dumps(overview)
+    assert "secret body" not in payload
+    # Returned object never carries IDs or summaries on the per-scope rows.
+    for value in overview["scopes"].values():
+        assert isinstance(value, int)
+
+
+async def test_scope_overview_respects_disabled_scopes(server: Any) -> None:
+    await _call(server, "memory_write", content="alpha", scopes=["projects:alpha"])
+    await _call(server, "memory_write", content="tools", scopes=["tools"])
+    await _call(server, "memory_scope_disable", scope="projects:alpha")
+
+    overview = await _call(server, "memory_scope_overview", auto_scope=False)
+    assert "projects:alpha" not in overview["scopes"]
+    assert "projects:alpha" in overview["disabled_scopes"]
+    assert overview["total"] == 1
+
+
+async def test_scope_overview_returns_current_repo_field(server: Any) -> None:
+    """The field is always present even when null, so the model can branch
+    on `overview['current_repo']` without a KeyError."""
+    overview = await _call(server, "memory_scope_overview", auto_scope=True)
+    assert "current_repo" in overview
+    assert "current_cwd" in overview
+
+
+# ---------------------------------------------------------------------------
+# Tools list — new tools registered
+# ---------------------------------------------------------------------------
+
+
+async def test_new_tools_registered(server: Any) -> None:
+    tools = await server.list_tools()
+    names = {t.name for t in tools}
+    assert "memory_verify" in names
+    assert "memory_scope_overview" in names
