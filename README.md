@@ -205,7 +205,7 @@ I started building this because the existing memory feature in Claude Code at th
 
 The project was originally called `bettermemory`. Mid-build the auto-injecting memory feature kept overriding my stated preference and renaming the package `memory-mcp` in conversation. The irony was sufficient motivation to finish.
 
-Built by [Mattias Rask](https://0mattias.github.io) — Anthropic Cyber Verification Program participant.
+Built by Mattias Rask.
 
 ## License
 

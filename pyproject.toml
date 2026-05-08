@@ -5,7 +5,7 @@ description = "Local file-backed memory MCP server with retrieval-on-demand"
 readme = "README.md"
 requires-python = ">=3.11"
 license = { text = "MIT" }
-authors = [{ name = "Mattias Rask", email = "rask@duck.com" }]
+authors = [{ name = "Mattias Rask" }]
 dependencies = [
     "mcp>=1.0.0",
     "pydantic>=2.0",
