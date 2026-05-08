@@ -60,6 +60,7 @@ See [`docs/installation.md`](docs/installation.md) for more detail.
 | `memory_list(scopes?, with_bodies?)` | List active memories — IDs and one-line summaries by default. Pass `with_bodies=true` for a single-call corpus dump (full body on every result); useful for small stores where N round trips of `list → show → show` would be wasteful. |
 | `memory_remove(id, reason)` | Tombstone a memory. |
 | `memory_record_use(memory_ids, outcome, note?)` | Record how a retrieved memory landed: `"applied"`, `"ignored"`, or `"contradicted"`. Feeds the memory_health view; lets you spot dead-weight or stale memories. |
+| `memory_health(window_days?, heavily_used_top_k?)` | Aggregate health view: dead-weight memories, heavily-used memories, unresolved contradictions, transient-marker fire/override rates, scope distribution. Same data as the `bettermemory health` CLI. |
 | `memory_scope_disable(scope)` | Mute a scope for the rest of this session. |
 | `memory_scope_enable(scope)` | Re-enable a previously muted scope. |
 | `memory_write_confirm(pending_id)` | Commit a pending write (when confirmation is required). |
@@ -207,6 +208,18 @@ Scopes are lowercase, alphanumeric, with hyphens or colons (for nesting). Exampl
 - `projects:foo`, `projects:bar:subsystem`
 
 Avoid the catch-all `general` scope — it defeats the whole point.
+
+## CLI
+
+The `bettermemory` script is the MCP server entry point by default — running it with no arguments launches over stdio, which is what your client expects. It also has a `health` subcommand for offline audit:
+
+```sh
+bettermemory health                  # human-readable
+bettermemory health --json           # machine-readable
+bettermemory health --days 60 --top-k 20
+```
+
+The `health` subcommand is the same data the `memory_health` MCP tool returns. Use the CLI to drive curation passes outside any conversation — prune dead-weight memories, refresh contradicted ones, trim transient markers whose override rate is high.
 
 ## Development
 

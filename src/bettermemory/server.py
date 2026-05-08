@@ -21,6 +21,7 @@ from mcp.server.fastmcp import FastMCP
 from .config import Config, load_config
 from .durability import TransientMatch, find_transient_markers
 from .events import Recorder
+from .health import report_for_directory
 from .origin import Origin, capture as capture_origin
 from .models import (
     Confidence,
@@ -605,6 +606,33 @@ def _register_tools(
 
     # ---- memory_scope_disable / enable -----------------------------------
 
+    # ---- memory_health ---------------------------------------------------
+
+    @mcp.tool(
+        name="memory_health",
+        description=(
+            "Aggregate health view over the event log + active memories. "
+            "Returns a structured report with dead-weight memories (created "
+            "more than `window_days` ago, never `applied` according to "
+            "memory_record_use), heavily-used memories, memories with "
+            "unresolved contradictions, transient-marker fire/override "
+            "rates, and the scope distribution. Use this to drive curation "
+            "passes — prune dead weight, refresh contradicted memories via "
+            "memory_update, trim transient markers whose override rate is "
+            "high. The corresponding CLI is `bettermemory health`."
+        ),
+    )
+    async def memory_health(
+        window_days: int = 30,
+        heavily_used_top_k: int = 10,
+    ) -> dict[str, Any]:
+        report = report_for_directory(
+            store.root,
+            window_days=int(window_days),
+            heavily_used_top_k=int(heavily_used_top_k),
+        )
+        return report.to_dict()
+
     # ---- memory_record_use ----------------------------------------------
 
     @mcp.tool(
@@ -852,7 +880,56 @@ def _origin_to_dict(origin: Origin | None) -> dict[str, Any] | None:
 
 
 def main() -> None:
-    """CLI entry point — `bettermemory` runs this. Stdio transport."""
+    """CLI entry point. By default runs the MCP server over stdio
+    (`bettermemory`). Subcommands provide offline tooling: `bettermemory
+    health` prints the aggregate report, mirroring the `memory_health`
+    tool in human-readable form."""
+    import argparse
+
+    parser = argparse.ArgumentParser(
+        prog="bettermemory",
+        description=(
+            "Local file-backed memory MCP server with retrieval-on-demand. "
+            "Run with no arguments to start the MCP server over stdio."
+        ),
+    )
+    sub = parser.add_subparsers(dest="cmd")
+
+    health_parser = sub.add_parser(
+        "health", help="Print the aggregate memory health report."
+    )
+    health_parser.add_argument(
+        "--json",
+        action="store_true",
+        help="Emit JSON instead of human-readable text.",
+    )
+    health_parser.add_argument(
+        "--days",
+        type=int,
+        default=30,
+        help=(
+            "Window in days for the dead-weight cutoff. Memories created "
+            "more than this many days ago with no `applied` events are "
+            "flagged. Default: 30."
+        ),
+    )
+    health_parser.add_argument(
+        "--top-k",
+        type=int,
+        default=10,
+        help="How many heavily-used memories to list. Default: 10.",
+    )
+
+    args = parser.parse_args()
+    if args.cmd == "health":
+        _cli_health(json_out=args.json, days=args.days, top_k=args.top_k)
+        return
+
+    _cli_serve()
+
+
+def _cli_serve() -> None:
+    """The default no-arg behaviour: run the MCP server over stdio."""
     logging.basicConfig(
         level=logging.INFO,
         stream=sys.stderr,
@@ -875,6 +952,18 @@ def main() -> None:
 
     mcp = build_server(config=config, store=store, state=get_state())
     mcp.run("stdio")
+
+
+def _cli_health(*, json_out: bool, days: int, top_k: int) -> None:
+    """`bettermemory health` — print the aggregate report."""
+    from .health import render_json, render_text
+
+    config = load_config()
+    directory = config.resolved_directory()
+    report = report_for_directory(
+        directory, window_days=days, heavily_used_top_k=top_k
+    )
+    sys.stdout.write(render_json(report) if json_out else render_text(report))
 
 
 # Re-export the prompt for consumers who import the package.

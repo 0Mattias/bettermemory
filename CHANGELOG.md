@@ -9,6 +9,22 @@ fixes.
 
 ### Added
 
+- **`memory_health` tool + `bettermemory health` CLI subcommand.**
+  Aggregates the event log against the active store and returns a
+  structured report: dead-weight memories (created beyond `window_days`
+  ago, never `applied`), heavily-used memories (top-K by `applied`
+  count), unresolved contradictions (memories with a `contradicted`
+  event whose timestamp is after their last `updated`), per-marker fire
+  and override rates for the durability gate, and the scope distribution
+  histogram. The CLI mirrors the tool — `bettermemory health` for
+  human-readable text, `bettermemory health --json` for machine-readable.
+  Use the CLI for offline curation; use the tool for in-conversation
+  introspection.
+- New `bettermemory.health` module: `compute_health()`, `HealthReport`,
+  `MemoryStats`, `MarkerStats`, `render_text()`, `render_json()`,
+  `report_for_directory()`.
+- `bettermemory.__main__` shim so `python -m bettermemory` mirrors the
+  installed `bettermemory` script.
 - **`memory_record_use` tool.** The model reports how a retrieved memory
   landed — `"applied"` (shaped the response), `"ignored"` (off-topic),
   or `"contradicted"` (user/state contradicted the stored fact) — with
