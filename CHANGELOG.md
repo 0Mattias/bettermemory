@@ -9,6 +9,23 @@ fixes.
 
 ### Added
 
+- **Multi-process concurrency stress test** (`tests/test_concurrency.py`).
+  The README previously hedged: *"A file-lock guard is in place;
+  multi-process is still untested."* This test spawns four worker
+  processes (each its own Python interpreter via `spawn`, not `fork`,
+  so the cross-process fcntl lock is actually exercised) and runs 50
+  random write / update / remove / restore operations per worker on a
+  shared store directory. Post-conditions assert: every active `.md`
+  file parses cleanly (no torn writes), every tombstone carries the
+  expected removal frontmatter, the event log is fully parseable JSONL
+  (no half-line corruption at the append boundary), the active +
+  tombstoned file count matches the worker write totals (no lost or
+  duplicated IDs), and the lock isn't pathologically over-contended
+  (concurrency_errors stay below ~25% of total attempts). The README
+  caveat is updated accordingly: multi-process on Unix is now an
+  exercised guarantee. Windows still falls back to a no-op lock — the
+  MVP single-process recommendation stands there.
+
 - **`bettermemory doctor` subcommand.** Self-diagnostic for the
   install: a series of independent checks that each return an
   `ok` / `warn` / `fail` verdict with an actionable fix hint when

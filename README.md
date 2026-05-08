@@ -337,7 +337,7 @@ Embeddings are cached per-process keyed by `(memory_id, updated)`, so an updated
 
 ## Limitations
 
-1. **Single-process access.** Concurrent writes from two MCP servers pointed at the same directory may corrupt files. A file-lock guard is in place; multi-process is still untested.
+1. **Multi-process access on Unix is exercised.** The fcntl-based per-file locking in `store.py` and the parallel lock on the event log in `events.py` are stress-tested under contention by `tests/test_concurrency.py` (four worker processes, mixed write/update/remove/restore on a shared root, post-condition asserts no torn writes, no orphan tombstones, no malformed JSONL). Windows uses a no-op fallback (no `fcntl`); on Windows the recommendation is single-process.
 2. **No conflict resolution.** If you edit a memory file by hand while the server is running, the next read will pick up your change but there's no merge story.
 3. **No encryption.** Memories are plaintext on disk. Don't store secrets — use OS-level disk encryption if you need it.
 4. **memory_search is keyword-only.** Synonyms and paraphrases are not handled by `memory_search`. (`memory_write` dedup can use semantic similarity — see "Optional: semantic dedup" above.) A short stopword list is stripped from the *query* (so "how to bake sourdough" doesn't match every memory on shared filler tokens), but bodies stay unfiltered. Hits are returned with a `relevance` label calibrated on coverage — distinguish "1 of 4 query words matched" (low) from "all 3 matched" (high) without inventing a score threshold. The recency boost reads `max(created, updated)`, so editing a fact via `memory_update` ranks it as fresh.
