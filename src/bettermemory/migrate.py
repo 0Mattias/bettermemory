@@ -90,40 +90,69 @@ def migrate_origin_in_directory(
     *,
     inferred: Origin | None = None,
     force_repo: str | None = None,
+    scope_repo_map: dict[str, str] | None = None,
     dry_run: bool = False,
 ) -> MigrationReport:
     """Backfill `origin` frontmatter on legacy memories.
 
-    `inferred` (if provided) overrides automatic inference; otherwise we
-    derive an Origin from `infer_origin_for_memory_dir(memory_dir)`.
-    `force_repo` is a higher-priority shortcut: if given, we build an
-    Origin around `(memory_dir.parent, force_repo, None)` regardless of
-    whether the parent is itself a git repo.
+    Three layered routing rules, in priority order per memory:
+
+    1. **`scope_repo_map`** (highest priority, applied per memory):
+       a mapping of scope → repo URL. If any of the memory's scopes
+       appears in the map, that scope's URL wins. This is the right
+       answer for global memory directories whose memories are already
+       tagged with `projects:<name>` style scopes — route by tag rather
+       than force-tagging everything with one repo.
+    2. **`force_repo`**: if no `scope_repo_map` entry matches, every
+       memory still missing origin is tagged with this URL.
+    3. **`inferred`** (lowest priority): the auto-inferred Origin from
+       `infer_origin_for_memory_dir`. Used when neither of the above
+       gives a match. None when `memory_dir` is global and the parent
+       isn't a git repo.
+
+    Memories whose scopes don't match any map entry, when there's also
+    no `force_repo` and no `inferred`, are left alone — no origin is
+    written. That's the safe default for "I don't know which repo this
+    came from."
 
     Idempotent: memories that already have an `origin` field are
     skipped. Atomic per-file: each write goes via `.tmp` + rename so a
     crash mid-migration leaves no corrupt files.
     """
     if force_repo is not None:
-        inferred = Origin(
-            cwd=str(memory_dir.parent.resolve()),
-            repo=force_repo,
-            branch=None,
-        )
+        # `force_repo` is a coarse override — the caller is asserting "all
+        # memories here came from this repo" but doesn't know the per-memory
+        # cwd. We deliberately leave cwd null rather than fabricating one
+        # from `memory_dir.parent`, which for a global memory dir would
+        # resolve to `~/` and would be actively misleading.
+        inferred = Origin(cwd=None, repo=force_repo, branch=None)
     elif inferred is None:
+        # The auto-inference path *can* set a meaningful cwd: when
+        # memory_dir is project-scoped, parent IS the project root.
         inferred = infer_origin_for_memory_dir(memory_dir)
 
     report = MigrationReport(
         memory_dir=memory_dir, inferred=inferred, dry_run=dry_run
     )
 
-    if inferred is None:
-        # Nothing to do — no inference possible. Caller logs the why.
-        return report
+    # Pre-compute the per-mapping origin payloads so we don't rebuild
+    # the dict on every memory. Like `force_repo`, scope-mapped writes
+    # leave cwd null — we know the repo, not the cwd.
+    mapped_payloads: dict[str, dict[str, object]] = {}
+    if scope_repo_map:
+        for scope, url in scope_repo_map.items():
+            mapped_payloads[scope] = Origin(
+                cwd=None, repo=url, branch=None
+            ).model_dump(mode="json", exclude_none=True)
 
-    origin_payload = inferred.model_dump(mode="json", exclude_none=True)
-    if not origin_payload:
-        # All-null origin would be useless; treat as no-op.
+    fallback_payload: dict[str, object] | None = None
+    if inferred is not None:
+        candidate = inferred.model_dump(mode="json", exclude_none=True)
+        if candidate:
+            fallback_payload = candidate
+
+    # If neither route can ever fire, we can shortcut to "nothing to do".
+    if not mapped_payloads and fallback_payload is None:
         return report
 
     for path in _iter_active_memory_files(memory_dir):
@@ -152,7 +181,27 @@ def migrate_origin_in_directory(
             report.already_had_origin += 1
             continue
 
-        post.metadata["origin"] = dict(origin_payload)
+        # Route this memory: scope-map first, then fallback. The first
+        # matching scope wins — order is determined by Python dict
+        # insertion order, which is the order the caller passed flags.
+        chosen: dict[str, object] | None = None
+        if mapped_payloads:
+            memory_scopes = post.metadata.get("scopes") or []
+            for scope, payload in mapped_payloads.items():
+                if scope in memory_scopes:
+                    chosen = payload
+                    break
+        if chosen is None:
+            chosen = fallback_payload
+        if chosen is None:
+            # No rule fired for this memory — leave alone. This is the
+            # common case for a global directory where the user only
+            # passed `--scope-repo` for some scopes; un-routed memories
+            # stay un-tagged rather than getting force-tagged with a
+            # wrong URL.
+            continue
+
+        post.metadata["origin"] = dict(chosen)
         report.updated += 1
 
         if dry_run:

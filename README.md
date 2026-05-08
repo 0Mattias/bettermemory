@@ -221,11 +221,19 @@ bettermemory health --days 60 --top-k 20
 bettermemory migrate origin --dry-run            # preview the backfill
 bettermemory migrate origin                      # apply (project-scoped dir)
 bettermemory migrate origin --repo <url>         # force-tag (global dir)
+bettermemory migrate origin \
+  --scope-repo projects:foo=git@github.com:me/foo.git \
+  --scope-repo projects:bar=git@github.com:me/bar.git
+                                                 # route by scope (preferred for global dirs)
 ```
 
 `health` returns the same data as the `memory_health` MCP tool — drive curation passes outside any conversation: prune dead-weight memories, refresh contradicted ones, trim transient markers whose override rate is high.
 
-`migrate origin` is a one-shot backfill for memories written before the auto-scope feature shipped (no `origin:` block in their frontmatter). For project-scoped directories (`./.claude-memory/` next to a git repo) the inference is automatic. For global directories (`~/.claude-memory/`) the migration deliberately does nothing without `--repo` — the memories there came from many projects and stamping them with one repo URL would be misinformation. The migration is idempotent (re-running is safe), atomic per file (`.tmp` + rename), and skips tombstones.
+`migrate origin` is a one-shot backfill for memories written before the auto-scope feature shipped (no `origin:` block in their frontmatter). For project-scoped directories (`./.claude-memory/` next to a git repo) the inference is automatic. For global directories (`~/.claude-memory/`) the migration deliberately does nothing without an explicit routing flag — the memories there came from many projects and stamping them with one repo URL would be misinformation.
+
+For a global directory whose memories already use `projects:<name>` scopes, `--scope-repo SCOPE=URL` (repeatable) routes by tag. The first matching scope wins; memories that match no entry in the map fall through to `--repo` (if given) or are left untagged. `cwd` is left null on these paths since we don't know per-memory cwd retroactively — only the auto-inferred path (project-scoped dir) sets cwd.
+
+The migration is idempotent (re-running is safe), atomic per file (`.tmp` + rename), and skips tombstones.
 
 ## Development
 

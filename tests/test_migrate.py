@@ -269,6 +269,70 @@ def test_migration_force_repo_takes_precedence(tmp_path: Path) -> None:
     assert meta["origin"]["repo"] == "git@github.com:explicit/override.git"
 
 
+def test_force_repo_does_not_fabricate_cwd(tmp_path: Path) -> None:
+    """When the caller passes --repo on a global directory, cwd should
+    stay null in the written origin. The memory_dir.parent on a global
+    dir is `~/`, which would be actively misleading as a per-memory
+    cwd value."""
+    memory_dir = tmp_path / ".claude-memory"
+    memory_dir.mkdir()
+    path = _write_legacy(
+        memory_dir, name="legacy", body="x", id_=_LEGACY_IDS[0]
+    )
+
+    migrate_origin_in_directory(
+        memory_dir, force_repo="git@github.com:me/foo.git"
+    )
+
+    origin = _read_metadata(path)["origin"]
+    assert origin["repo"] == "git@github.com:me/foo.git"
+    assert "cwd" not in origin
+
+
+def test_scope_map_does_not_fabricate_cwd(tmp_path: Path) -> None:
+    memory_dir = tmp_path / ".claude-memory"
+    memory_dir.mkdir()
+    path = _write_legacy_with_scopes(
+        memory_dir,
+        name="alpha",
+        body="x",
+        id_=_LEGACY_IDS[0],
+        scopes=["projects:alpha"],
+    )
+
+    migrate_origin_in_directory(
+        memory_dir,
+        scope_repo_map={"projects:alpha": "git@github.com:me/alpha.git"},
+    )
+
+    origin = _read_metadata(path)["origin"]
+    assert origin["repo"] == "git@github.com:me/alpha.git"
+    assert "cwd" not in origin
+
+
+def test_inferred_path_keeps_cwd(tmp_path: Path) -> None:
+    """The auto-inferred path (project-scoped dir whose parent is a real
+    git repo) is the *one* place we have legitimate evidence for cwd —
+    it's the project root. Verify cwd survives in that path."""
+    memory_dir = tmp_path / ".claude-memory"
+    memory_dir.mkdir()
+    path = _write_legacy(
+        memory_dir, name="legacy", body="x", id_=_LEGACY_IDS[0]
+    )
+
+    migrate_origin_in_directory(
+        memory_dir,
+        inferred=Origin(
+            cwd="/projects/foo",
+            repo="git@github.com:example/foo.git",
+        ),
+    )
+
+    origin = _read_metadata(path)["origin"]
+    assert origin["cwd"] == "/projects/foo"
+    assert origin["repo"] == "git@github.com:example/foo.git"
+
+
 def test_migration_skips_malformed_files(tmp_path: Path) -> None:
     memory_dir = tmp_path / ".claude-memory"
     memory_dir.mkdir()
@@ -337,6 +401,179 @@ def test_migration_preserves_all_other_frontmatter_fields(tmp_path: Path) -> Non
         assert after[key] == before[key], f"field {key} should not change"
     # And origin was added.
     assert "origin" in after
+
+
+# ---------------------------------------------------------------------------
+# Scope-based routing
+# ---------------------------------------------------------------------------
+
+
+def _write_legacy_with_scopes(
+    memory_dir: Path,
+    *,
+    name: str,
+    body: str,
+    id_: str,
+    scopes: list[str],
+) -> Path:
+    template = (
+        "---\n"
+        f"id: {id_}\n"
+        "created: 2025-01-01T00:00:00+00:00\n"
+        "updated: 2025-01-01T00:00:00+00:00\n"
+        "scopes:\n"
+        + "".join(f"- {s}\n" for s in scopes)
+        + "confidence: medium\n"
+        "source: explicit-statement\n"
+        "---\n"
+        f"{body}\n"
+    )
+    path = memory_dir / f"2025-01-01-{name}.md"
+    path.write_text(template, encoding="utf-8")
+    return path
+
+
+def test_scope_repo_map_routes_by_scope(tmp_path: Path) -> None:
+    memory_dir = tmp_path / ".claude-memory"
+    memory_dir.mkdir()
+
+    a = _write_legacy_with_scopes(
+        memory_dir,
+        name="alpha",
+        body="alpha",
+        id_=_LEGACY_IDS[0],
+        scopes=["projects:alpha"],
+    )
+    b = _write_legacy_with_scopes(
+        memory_dir,
+        name="beta",
+        body="beta",
+        id_=_LEGACY_IDS[1],
+        scopes=["projects:beta"],
+    )
+
+    report = migrate_origin_in_directory(
+        memory_dir,
+        scope_repo_map={
+            "projects:alpha": "git@github.com:me/alpha.git",
+            "projects:beta": "git@github.com:me/beta.git",
+        },
+    )
+
+    assert report.updated == 2
+    assert _read_metadata(a)["origin"]["repo"] == "git@github.com:me/alpha.git"
+    assert _read_metadata(b)["origin"]["repo"] == "git@github.com:me/beta.git"
+
+
+def test_scope_map_first_match_wins(tmp_path: Path) -> None:
+    """A memory with multiple scopes routes to the first map entry that
+    matches one of them. Insertion order of the dict determines priority."""
+    memory_dir = tmp_path / ".claude-memory"
+    memory_dir.mkdir()
+
+    path = _write_legacy_with_scopes(
+        memory_dir,
+        name="multi",
+        body="x",
+        id_=_LEGACY_IDS[0],
+        scopes=["infra", "projects:foo"],
+    )
+
+    report = migrate_origin_in_directory(
+        memory_dir,
+        # `projects:foo` comes first → that wins even though the memory
+        # also has `infra`.
+        scope_repo_map={
+            "projects:foo": "git@github.com:me/foo.git",
+            "infra": "git@github.com:me/infrastructure.git",
+        },
+    )
+    assert report.updated == 1
+    assert _read_metadata(path)["origin"]["repo"] == "git@github.com:me/foo.git"
+
+
+def test_scope_map_misses_leave_memory_alone(tmp_path: Path) -> None:
+    """When no map entry matches and there's no force_repo / inferred
+    fallback, the memory keeps its (lack of) origin — no destructive
+    default tagging."""
+    memory_dir = tmp_path / ".claude-memory"
+    memory_dir.mkdir()
+
+    matched = _write_legacy_with_scopes(
+        memory_dir,
+        name="matched",
+        body="x",
+        id_=_LEGACY_IDS[0],
+        scopes=["projects:foo"],
+    )
+    unmatched = _write_legacy_with_scopes(
+        memory_dir,
+        name="unmatched",
+        body="y",
+        id_=_LEGACY_IDS[1],
+        scopes=["personal-context"],
+    )
+
+    report = migrate_origin_in_directory(
+        memory_dir,
+        scope_repo_map={"projects:foo": "git@github.com:me/foo.git"},
+    )
+
+    assert report.updated == 1
+    assert "origin" in _read_metadata(matched)
+    assert "origin" not in _read_metadata(unmatched)
+
+
+def test_scope_map_misses_fall_through_to_force_repo(tmp_path: Path) -> None:
+    """If --scope-repo doesn't match but --repo is given, the unmatched
+    memory still gets tagged."""
+    memory_dir = tmp_path / ".claude-memory"
+    memory_dir.mkdir()
+
+    matched = _write_legacy_with_scopes(
+        memory_dir,
+        name="matched",
+        body="x",
+        id_=_LEGACY_IDS[0],
+        scopes=["projects:foo"],
+    )
+    fallback = _write_legacy_with_scopes(
+        memory_dir,
+        name="fallback",
+        body="y",
+        id_=_LEGACY_IDS[1],
+        scopes=["personal-context"],
+    )
+
+    report = migrate_origin_in_directory(
+        memory_dir,
+        scope_repo_map={"projects:foo": "git@github.com:me/foo.git"},
+        force_repo="git@github.com:me/global.git",
+    )
+
+    assert report.updated == 2
+    assert _read_metadata(matched)["origin"]["repo"] == "git@github.com:me/foo.git"
+    assert _read_metadata(fallback)["origin"]["repo"] == "git@github.com:me/global.git"
+
+
+def test_scope_map_idempotent(tmp_path: Path) -> None:
+    memory_dir = tmp_path / ".claude-memory"
+    memory_dir.mkdir()
+    _write_legacy_with_scopes(
+        memory_dir,
+        name="alpha",
+        body="x",
+        id_=_LEGACY_IDS[0],
+        scopes=["projects:alpha"],
+    )
+    mapping = {"projects:alpha": "git@github.com:me/alpha.git"}
+
+    first = migrate_origin_in_directory(memory_dir, scope_repo_map=mapping)
+    second = migrate_origin_in_directory(memory_dir, scope_repo_map=mapping)
+
+    assert first.updated == 1
+    assert second.updated == 0
+    assert second.already_had_origin == 1
 
 
 def test_migrated_memory_loads_correctly_via_store(tmp_path: Path) -> None:

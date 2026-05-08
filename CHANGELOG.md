@@ -11,16 +11,27 @@ fixes.
 
 - **`bettermemory migrate origin` CLI subcommand.** One-shot backfill for
   legacy memories that pre-date the auto-scope feature (no `origin:`
-  block in frontmatter). For project-scoped memory directories the
-  inference is automatic — repo URL comes from the parent dir's git
-  config, cwd is that parent. Branch is deliberately left null since
-  we don't know the original. For global memory directories the
-  migration is a no-op unless `--repo <url>` is passed (default
-  behaviour respects that mixed-project directories shouldn't be
-  force-tagged with one repo). Idempotent, atomic per file (`.tmp` +
-  rename), `--dry-run` to preview. Tombstones are skipped — backfilling
-  origin into a removal record would change the on-disk audit log
-  retroactively.
+  block in frontmatter). Three routing modes, in priority order:
+  - **`--scope-repo SCOPE=URL`** (repeatable): route by tag. Right tool
+    for global memory directories whose memories already carry
+    `projects:<name>` scopes — first matching scope wins. Memories
+    matching nothing in the map fall through.
+  - **`--repo URL`**: force-tag every legacy memory with this URL.
+    Coarse — only right when you know all memories in the dir really
+    do come from one repo.
+  - **Auto-inference**: when memory_dir's parent is itself a git repo
+    (project-scoped layout), the repo URL is read from `git config`
+    and the parent path becomes the origin's cwd.
+
+  `cwd` is set only on the auto-inferred path — that's the only mode
+  where we have legitimate evidence for a per-memory cwd. The other
+  modes leave it null rather than fabricating one. Branch is always
+  null since we don't know the original.
+
+  Idempotent (memories with existing origin are skipped), atomic per
+  file (`.tmp` + rename), `--dry-run` to preview. Tombstones are
+  skipped — backfilling origin into a removal record would change the
+  audit log retroactively.
 - New `bettermemory.migrate` module: `infer_origin_for_memory_dir`,
   `migrate_origin_in_directory`, `MigrationReport`.
 - **Semantic dedup (opt-in).** Behind `[behavior] semantic_dedup = true`,
