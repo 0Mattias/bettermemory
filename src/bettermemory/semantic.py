@@ -258,12 +258,19 @@ def flush_persistent_cache() -> None:
         # they're short ULID-shaped strings.
         _PERSISTENT_PATH.parent.mkdir(parents=True, exist_ok=True)
         tmp = _PERSISTENT_PATH.with_suffix(_PERSISTENT_PATH.suffix + ".tmp")
-        np.savez_compressed(
-            tmp,
-            ids=np.array(ids),
-            keys=np.array(keys),
-            vectors=np.stack(vectors),
-        )
+        # Pass an open file handle rather than the path. np.savez_compressed
+        # auto-appends `.npz` to a path string that doesn't already end in
+        # it — which would turn our `.npz.tmp` into `.npz.tmp.npz` and
+        # break the atomic rename below. Writing to a file object bypasses
+        # that suffix-mangling. The handle is closed before the rename so
+        # the on-disk bytes are flushed to the kernel.
+        with open(tmp, "wb") as f:
+            np.savez_compressed(
+                f,
+                ids=np.array(ids),
+                keys=np.array(keys),
+                vectors=np.stack(vectors),
+            )
         tmp.replace(_PERSISTENT_PATH)
         _DIRTY = False
     except Exception as exc:  # noqa: BLE001 — never break the dedup path
