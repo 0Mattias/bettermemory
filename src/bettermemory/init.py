@@ -1,0 +1,383 @@
+"""`bettermemory init` — onboard a fresh install in one command.
+
+Two modes:
+
+1. **Show-and-tell** (no `--client` flag). Prints the detected
+   `bettermemory` binary path, the canonical MCP config snippet, the
+   common per-client config-file locations (with existence markers), and
+   the post-install verification ping. The user copies the snippet into
+   their client by hand. Useful for clients we don't auto-patch and for
+   "just tell me what to do" exploration.
+
+2. **Patch** (`--client X`). Idempotently merges the bettermemory entry
+   into the named client's MCP config file, creating parent dirs and
+   the file if missing. Existing entries with identical content become
+   no-ops; a different entry under the same name is updated rather than
+   duplicated. Stranger-friendly install: one command and the client is
+   wired up.
+
+`--print-only` short-circuits to "just dump the JSON snippet" — useful
+for pipelines like `bettermemory init --client cursor --print-only |
+jq …`. `--json` returns a structured machine-readable view of all of
+the above (binary path, snippet, known client paths, optional patch
+result, and the addendum if requested) for tooling that wants to
+introspect.
+
+The addendum is `--with-addendum`-gated rather than printed by default
+because the server-level MCP `instructions` block already carries the
+load-bearing parts (see `prompts.py` + `server._build_mcp`); the
+addendum is now an optional tightening document, not part of the
+required setup.
+"""
+
+from __future__ import annotations
+
+import json
+import os
+import platform
+import shutil
+import sys
+from dataclasses import dataclass
+from pathlib import Path
+from typing import Any, Callable
+
+from .prompts import SYSTEM_PROMPT_ADDENDUM
+
+
+# ---------------------------------------------------------------------------
+# Per-client config locations
+# ---------------------------------------------------------------------------
+
+
+@dataclass(frozen=True)
+class ClientPaths:
+    """A known MCP client and the candidate config paths we know about
+    for it. `paths[0]` is the default target when `--client` is set
+    without `--config-path`; later entries are alternatives surfaced in
+    show-and-tell mode so the user knows their options."""
+
+    name: str
+    description: str
+    paths: tuple[Path, ...]
+
+
+def _claude_code_paths() -> ClientPaths:
+    # Claude Code reads `~/.claude.json` for user-scope MCP servers, and
+    # `./.mcp.json` (project root) for project-scope. We default to user
+    # scope on auto-patch — most strangers want "this works everywhere",
+    # not "this works in one repo".
+    return ClientPaths(
+        name="claude-code",
+        description="Claude Code CLI",
+        paths=(
+            Path.home() / ".claude.json",
+            Path.cwd() / ".mcp.json",
+        ),
+    )
+
+
+def _claude_desktop_paths() -> ClientPaths:
+    home = Path.home()
+    sys_name = platform.system()
+    # Per-platform Claude Desktop config locations. Documented at
+    # https://modelcontextprotocol.io/quickstart/user — we mirror those
+    # rather than re-derive via platformdirs because Claude Desktop
+    # ignores the freedesktop spec on Linux (it uses `~/.config/Claude`
+    # rather than `$XDG_CONFIG_HOME/Claude`).
+    if sys_name == "Darwin":
+        path = (
+            home
+            / "Library"
+            / "Application Support"
+            / "Claude"
+            / "claude_desktop_config.json"
+        )
+    elif sys_name == "Windows":
+        appdata = os.environ.get("APPDATA")
+        roaming = Path(appdata) if appdata else home / "AppData" / "Roaming"
+        path = roaming / "Claude" / "claude_desktop_config.json"
+    else:
+        path = home / ".config" / "Claude" / "claude_desktop_config.json"
+    return ClientPaths(
+        name="claude-desktop",
+        description="Claude Desktop",
+        paths=(path,),
+    )
+
+
+def _cursor_paths() -> ClientPaths:
+    # Cursor: user-scope at `~/.cursor/mcp.json`; project-scope at
+    # `<repo>/.cursor/mcp.json`. Same pattern as Claude Code.
+    return ClientPaths(
+        name="cursor",
+        description="Cursor",
+        paths=(
+            Path.home() / ".cursor" / "mcp.json",
+            Path.cwd() / ".cursor" / "mcp.json",
+        ),
+    )
+
+
+def _continue_paths() -> ClientPaths:
+    return ClientPaths(
+        name="continue",
+        description="Continue",
+        paths=(Path.home() / ".continue" / "config.json",),
+    )
+
+
+# Registry. Keys are the values accepted by `--client`. Adding a new
+# client is one entry here plus a getter above.
+KNOWN_CLIENTS: dict[str, Callable[[], ClientPaths]] = {
+    "claude-code": _claude_code_paths,
+    "claude-desktop": _claude_desktop_paths,
+    "cursor": _cursor_paths,
+    "continue": _continue_paths,
+}
+
+
+# ---------------------------------------------------------------------------
+# Binary resolution
+# ---------------------------------------------------------------------------
+
+
+def find_binary() -> str:
+    """Resolve the absolute path to the `bettermemory` binary as a fresh
+    shell would see it. The result is what we'd write into the MCP
+    client's config — clients spawn the server in their own process,
+    not ours, so a relative path or shell alias would fail at runtime.
+
+    Resolution order:
+    1. `shutil.which("bettermemory")` on the user's PATH.
+    2. `sys.argv[0]` if it's already absolute and exists (covers
+       `python -m bettermemory init` invocations from a venv).
+    3. Bare `"bettermemory"` as a last-resort fallback — assumes the
+       user can fix PATH themselves.
+    """
+    binary = shutil.which("bettermemory")
+    if binary:
+        return str(Path(binary).resolve())
+
+    candidate = Path(sys.argv[0])
+    if candidate.is_absolute() and candidate.exists():
+        return str(candidate.resolve())
+
+    return "bettermemory"
+
+
+# ---------------------------------------------------------------------------
+# Snippet & patch
+# ---------------------------------------------------------------------------
+
+
+def server_snippet(
+    *,
+    name: str = "memory",
+    binary: str | None = None,
+) -> dict[str, Any]:
+    """Return the canonical `mcpServers` entry for bettermemory. Suitable
+    for direct embedding in any MCP client's config file."""
+    if binary is None:
+        binary = find_binary()
+    return {
+        "mcpServers": {
+            name: {
+                "command": binary,
+                "args": [],
+            }
+        }
+    }
+
+
+def patch_client_config(
+    target_path: Path,
+    *,
+    name: str = "memory",
+    binary: str | None = None,
+) -> dict[str, Any]:
+    """Idempotently merge the bettermemory entry into the named MCP
+    client config file. Creates parent dirs and the file if missing.
+    Returns a result dict: `{action, path, name, binary?}` where action
+    is one of `"added"`, `"updated"`, or `"noop"`.
+
+    Raises ValueError when the existing file is not valid JSON or does
+    not have an object at the root or at `mcpServers`. We deliberately
+    refuse to touch a malformed config rather than overwrite it — fixing
+    the file by hand is the right move."""
+    if binary is None:
+        binary = find_binary()
+
+    target_path.parent.mkdir(parents=True, exist_ok=True)
+
+    if target_path.exists():
+        try:
+            text = target_path.read_text(encoding="utf-8")
+            existing = json.loads(text) if text.strip() else {}
+        except json.JSONDecodeError as exc:
+            raise ValueError(
+                f"existing config at {target_path} is not valid JSON: {exc.msg} "
+                f"(line {exc.lineno}, col {exc.colno}). Fix the file by hand "
+                f"or remove it before re-running init."
+            ) from exc
+        if not isinstance(existing, dict):
+            raise ValueError(
+                f"existing config at {target_path} has a non-object root; "
+                f"expected `{{...}}`."
+            )
+    else:
+        existing = {}
+
+    mcp_servers = existing.setdefault("mcpServers", {})
+    if not isinstance(mcp_servers, dict):
+        raise ValueError(
+            f"existing `mcpServers` field in {target_path} is not an object; "
+            f"expected `{{...}}`."
+        )
+
+    new_entry: dict[str, Any] = {"command": binary, "args": []}
+
+    if name in mcp_servers and mcp_servers[name] == new_entry:
+        return {"action": "noop", "path": str(target_path), "name": name}
+
+    action = "updated" if name in mcp_servers else "added"
+    mcp_servers[name] = new_entry
+
+    target_path.write_text(json.dumps(existing, indent=2) + "\n", encoding="utf-8")
+    return {
+        "action": action,
+        "path": str(target_path),
+        "name": name,
+        "binary": binary,
+    }
+
+
+# ---------------------------------------------------------------------------
+# CLI entry
+# ---------------------------------------------------------------------------
+
+
+def _print_show_and_tell(
+    *,
+    binary: str,
+    snippet: dict[str, Any],
+    with_addendum: bool,
+) -> None:
+    print(f"bettermemory binary: {binary}")
+    print()
+    print("Add this to your MCP client's config:")
+    print()
+    print(json.dumps(snippet, indent=2))
+    print()
+    print("Common config locations (✓ = file exists):")
+    for key, getter in KNOWN_CLIENTS.items():
+        cp = getter()
+        print(f"  {key} — {cp.description}")
+        for p in cp.paths:
+            mark = "✓" if p.exists() else " "
+            print(f"    [{mark}] {p}")
+    print()
+    print("To auto-patch one of these, re-run with --client:")
+    print("  bettermemory init --client claude-code")
+    print("  bettermemory init --client claude-desktop")
+    print("  bettermemory init --client cursor")
+    print("  bettermemory init --client continue")
+    print()
+    print("Verify the install once you've restarted the client:")
+    print('  ask the model "what memory tools do you have?"')
+    if with_addendum:
+        print()
+        print("--- Optional advanced-tightening addendum ---")
+        print("(server-level MCP instructions already carry the load-bearing")
+        print(" policy; this addendum is for tighter scope hygiene and")
+        print(" expanded record-use guidance — paste into your CLAUDE.md)")
+        print()
+        print(SYSTEM_PROMPT_ADDENDUM)
+
+
+def _print_patch_summary(
+    *,
+    result: dict[str, Any],
+    binary: str,
+    with_addendum: bool,
+) -> None:
+    if result["action"] == "noop":
+        print(f"already configured at {result['path']} (no change)")
+    elif result["action"] == "updated":
+        print(f"updated existing `{result['name']}` entry in {result['path']}")
+    else:
+        print(f"added `{result['name']}` to {result['path']}")
+    print(f"binary: {binary}")
+    print()
+    print("Restart your MCP client to pick up the change, then ask the")
+    print('model: "what memory tools do you have?"')
+    if with_addendum:
+        print()
+        print("--- Optional advanced-tightening addendum ---")
+        print("(server-level MCP instructions already carry the load-bearing")
+        print(" policy; paste this into your CLAUDE.md only if you want the")
+        print(" expanded discipline)")
+        print()
+        print(SYSTEM_PROMPT_ADDENDUM)
+
+
+def cli_init(
+    *,
+    client: str | None,
+    print_only: bool,
+    json_out: bool,
+    name: str,
+    with_addendum: bool,
+    config_path: Path | None,
+) -> None:
+    """Entry point invoked from `server.main()` argparse dispatch."""
+    binary = find_binary()
+    snippet = server_snippet(name=name, binary=binary)
+
+    if json_out:
+        out: dict[str, Any] = {
+            "binary": binary,
+            "snippet": snippet,
+            "clients": {
+                key: {
+                    "description": getter().description,
+                    "paths": [str(p) for p in getter().paths],
+                    "default_target": str(getter().paths[0]),
+                }
+                for key, getter in KNOWN_CLIENTS.items()
+            },
+        }
+        if with_addendum:
+            out["system_prompt_addendum"] = SYSTEM_PROMPT_ADDENDUM
+        if client is not None and not print_only:
+            target = config_path or KNOWN_CLIENTS[client]().paths[0]
+            out["patch"] = patch_client_config(target, name=name, binary=binary)
+        print(json.dumps(out, indent=2))
+        return
+
+    if client is None:
+        _print_show_and_tell(
+            binary=binary,
+            snippet=snippet,
+            with_addendum=with_addendum,
+        )
+        return
+
+    if client not in KNOWN_CLIENTS:
+        # argparse choices= should catch this, but stay defensive.
+        raise ValueError(
+            f"unknown client {client!r}; choose from {sorted(KNOWN_CLIENTS.keys())}"
+        )
+
+    target = config_path or KNOWN_CLIENTS[client]().paths[0]
+
+    if print_only:
+        print(json.dumps(snippet, indent=2))
+        print(f"\n# Save the above to: {target}")
+        return
+
+    result = patch_client_config(target, name=name, binary=binary)
+    _print_patch_summary(
+        result=result,
+        binary=binary,
+        with_addendum=with_addendum,
+    )

@@ -9,6 +9,34 @@ fixes.
 
 ### Added
 
+- **`bettermemory init` subcommand.** One-shot onboarding that
+  replaces the old "find your client's MCP config file, hand-edit
+  the JSON" step. Two modes:
+  - Show-and-tell (no flag): prints the resolved `bettermemory`
+    binary path, the canonical `mcpServers` snippet, and a list of
+    common per-client config locations with `[✓]` markers showing
+    which already exist on the machine.
+  - Patch (`--client X`): idempotently merges the bettermemory entry
+    into the named client's MCP config file (creating parents and
+    the file if missing). Re-running with an unchanged target is a
+    no-op; a stale binary path is updated rather than duplicated;
+    other entries in `mcpServers` are preserved.
+
+  Supported clients: `claude-code`, `claude-desktop`, `cursor`,
+  `continue`. Each entry is one getter function in `init.py`'s
+  registry; adding a new client is a single-file change.
+
+  Additional flags: `--print-only` (dump snippet without writing,
+  useful for `| jq`), `--json` (structured output for tooling),
+  `--name` (override the `mcpServers` key, default `memory`),
+  `--config-path` (override the default target path for `--client`),
+  `--with-addendum` (also print the optional advanced-tightening
+  addendum from `docs/system_prompt.md`).
+
+  README install instructions now lead with `bettermemory init
+  --client X` rather than walking through manual JSON editing.
+  `docs/installation.md` reframed in the same shape.
+
 - **PyPI release workflow** (`.github/workflows/release.yml`).
   Tag-triggered: pushing `v<X.Y.Z>` runs the full gating suite (ruff,
   format, mypy strict, pytest with coverage floor), builds the wheel

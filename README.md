@@ -30,25 +30,23 @@ uv tool install .
 
 Python ≥ 3.11.
 
-## Quick start with Claude Code
+## Quick start
 
-1. Install (above).
-2. Register the MCP server. Add to Claude Code's MCP config:
-   ```json
-   {
-     "mcpServers": {
-       "memory": {
-         "command": "bettermemory",
-         "args": []
-       }
-     }
-   }
-   ```
-3. Sanity-check: ask Claude *"what memory tools do you have?"*
+After installing, run:
+
+```sh
+bettermemory init --client claude-code      # or: claude-desktop, cursor, continue
+```
+
+That idempotently writes the MCP server entry into the right config file for your client. Restart the client and ask:
+
+> What memory tools do you have?
+
+If your client isn't in that list (or you'd rather copy by hand), run `bettermemory init` with no flags — it prints the canonical JSON snippet plus the common config locations, with `[✓]` markers showing which already exist on your machine.
 
 That's it — defaults are sane. The opt-in policy, transparency requirement, and verification obligation now live in the server's MCP `instructions` block (which every client surfaces at the system-prompt level) and in each tool's description, so a fresh install behaves correctly without further configuration.
 
-**Optional tightening.** [`docs/system_prompt.md`](docs/system_prompt.md) is the longer-form addendum — paste it into your project's `CLAUDE.md` for additional discipline around scope hygiene, the record-use loop, and confirmation-tier policy. It's no longer load-bearing for correctness; treat it as the advanced tuning document, not a required setup step.
+**Optional tightening.** [`docs/system_prompt.md`](docs/system_prompt.md) is the longer-form addendum — paste it into your project's `CLAUDE.md` for additional discipline around scope hygiene, the record-use loop, and confirmation-tier policy. It's no longer load-bearing for correctness; treat it as the advanced tuning document, not a required setup step. (Pass `--with-addendum` to `bettermemory init` to print the block.)
 
 See [`docs/installation.md`](docs/installation.md) for more detail.
 
@@ -222,6 +220,15 @@ Avoid the catch-all `general` scope — it defeats the whole point.
 The `bettermemory` script is the MCP server entry point by default — running it with no arguments launches over stdio, which is what your client expects. It also exposes offline tooling:
 
 ```sh
+bettermemory init                                # show-and-tell: print snippet + locations
+bettermemory init --client claude-code           # auto-patch a known client (idempotent)
+bettermemory init --client claude-desktop
+bettermemory init --client cursor
+bettermemory init --client continue
+bettermemory init --client cursor --print-only   # print snippet without writing
+bettermemory init --json                         # structured output for tooling
+bettermemory init --with-addendum                # also print the optional advanced addendum
+
 bettermemory health                  # aggregate report (text)
 bettermemory health --json           # ...as JSON
 bettermemory health --days 60 --top-k 20

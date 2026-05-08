@@ -1571,6 +1571,70 @@ def main() -> None:
         ),
     )
 
+    init_parser = sub.add_parser(
+        "init",
+        help=(
+            "Onboard a fresh install: print the MCP config snippet, or "
+            "auto-patch a known client's config. Idempotent."
+        ),
+    )
+    init_parser.add_argument(
+        "--client",
+        type=str,
+        default=None,
+        choices=["claude-code", "claude-desktop", "cursor", "continue"],
+        help=(
+            "Auto-patch the named client's MCP config. Without this "
+            "flag, init runs in show-and-tell mode: prints the snippet "
+            "and the common config locations so you can copy by hand."
+        ),
+    )
+    init_parser.add_argument(
+        "--print-only",
+        action="store_true",
+        help=(
+            "Just print the JSON snippet (and target path, when --client "
+            "is set) without writing anything. Useful for piping into "
+            "jq or for review before applying."
+        ),
+    )
+    init_parser.add_argument(
+        "--json",
+        action="store_true",
+        help="Emit a structured JSON view (binary path, snippet, known clients).",
+    )
+    init_parser.add_argument(
+        "--name",
+        type=str,
+        default="memory",
+        help=(
+            "Server key under `mcpServers`. Default: `memory` (matches "
+            "the README/docs). Override only if you're already using "
+            "`memory` for a different MCP server."
+        ),
+    )
+    init_parser.add_argument(
+        "--with-addendum",
+        action="store_true",
+        help=(
+            "Also print docs/system_prompt.md (the optional advanced "
+            "tightening addendum). Off by default — the load-bearing "
+            "policy lives in the server-level MCP `instructions` block, "
+            "so the addendum is no longer part of required setup."
+        ),
+    )
+    init_parser.add_argument(
+        "--config-path",
+        type=str,
+        default=None,
+        metavar="PATH",
+        help=(
+            "Override the default target file for --client. Use this "
+            "to write into a project-scoped MCP config instead of the "
+            "user-scoped default."
+        ),
+    )
+
     migrate_parser = sub.add_parser(
         "migrate",
         help=(
@@ -1687,6 +1751,20 @@ def main() -> None:
             min_applied=args.min_applied,
         )
         return
+    if args.cmd == "init":
+        from pathlib import Path as _Path
+
+        from .init import cli_init
+
+        cli_init(
+            client=args.client,
+            print_only=args.print_only,
+            json_out=args.json,
+            name=args.name,
+            with_addendum=args.with_addendum,
+            config_path=_Path(args.config_path) if args.config_path else None,
+        )
+        return
     if args.cmd == "migrate":
         if args.migrate_cmd == "origin":
             scope_repo_map: dict[str, str] = {}
@@ -1745,8 +1823,9 @@ def _cli_serve() -> None:
         directory,
     )
     log.info(
-        "reminder: include the SYSTEM_PROMPT_ADDENDUM in your client's "
-        "system prompt — see docs/system_prompt.md"
+        "system prompt: server-level MCP `instructions` block carries "
+        "the load-bearing policy; copy docs/system_prompt.md into your "
+        "CLAUDE.md only for advanced tightening (no longer required)"
     )
 
     mcp = build_server(config=config, store=store, state=get_state())

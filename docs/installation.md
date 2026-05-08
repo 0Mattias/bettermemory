@@ -17,17 +17,25 @@ which bettermemory
 # → /Users/<you>/.local/bin/bettermemory  (or similar)
 ```
 
-## 2. Register with Claude Code
+## 2. Register with your MCP client
 
-Add the server to your Claude Code MCP config.
+Run:
 
-The config location depends on your platform — see the [Claude Code docs on MCP servers](https://docs.claude.com/en/docs/claude-code/mcp). Typical locations include:
+```sh
+bettermemory init --client claude-code      # or: claude-desktop, cursor, continue
+```
 
-- macOS: `~/Library/Application Support/Claude/claude_desktop_config.json` (Claude Desktop)
-- A project-level `.mcp.json` in the repo root (Claude Code)
-- Or via `claude mcp add memory bettermemory` if your version of the CLI supports it.
+This idempotently merges the bettermemory entry into the right config file for your client (creating the file if needed). Re-running is safe — an unchanged entry is a no-op, a stale binary path is updated.
 
-Whichever config file you edit, add:
+If `init` doesn't know your client, run it with no flags for show-and-tell mode:
+
+```sh
+bettermemory init
+```
+
+This prints the canonical JSON snippet plus a list of common per-client config-file locations, with `[✓]` markers showing which exist on your machine. Copy the snippet into the right file by hand.
+
+For the curious, the snippet itself is:
 
 ```json
 {
@@ -40,18 +48,7 @@ Whichever config file you edit, add:
 }
 ```
 
-If the binary isn't on `$PATH` for the Claude process, give the absolute path:
-
-```json
-{
-  "mcpServers": {
-    "memory": {
-      "command": "/Users/you/.local/bin/bettermemory",
-      "args": []
-    }
-  }
-}
-```
+If `bettermemory` isn't on the spawned client process's `$PATH` (a common failure mode for GUI clients launched from Finder/Launchpad on macOS), `init` substitutes the absolute path — that's the same path you'd write by hand. `bettermemory init --print-only --client <name>` shows you exactly what would be written.
 
 ## 3. Verify
 
