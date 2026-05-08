@@ -1236,3 +1236,142 @@ async def test_new_tools_registered(server: Any) -> None:
     names = {t.name for t in tools}
     assert "memory_verify" in names
     assert "memory_scope_overview" in names
+
+
+# ---------------------------------------------------------------------------
+# verification block on retrieval — the structural staleness signal
+# ---------------------------------------------------------------------------
+#
+# These tests pin the contract that motivated the structural change: a
+# `last_verified_at: null` timestamp was too easy for the consuming model
+# to skim past, so retrieval responses now carry a structured
+# `verification` block whose `recommendation` is non-null on never/stale
+# memories. Asserting at the server boundary (rather than only at the
+# unit level on compute_verification_status) catches plumbing regressions
+# — a future refactor that drops the field from one of the three
+# retrieval surfaces would otherwise pass the unit tests silently.
+
+
+async def test_memory_show_includes_verification_block_never(server: Any) -> None:
+    """A fresh write has never been verified — memory_show must
+    surface the never-recommendation. This is the regression we're
+    fixing: a model retrieving a memory like this should see an
+    explicit prompt to spot-check, not a quiet null timestamp."""
+    written = await _call(
+        server,
+        "memory_write",
+        content="durable fact about the home lab",
+        scopes=["tools"],
+    )
+    shown = await _call(server, "memory_show", id=written["id"])
+    assert "verification" in shown
+    block = shown["verification"]
+    assert block["status"] == "never"
+    assert block["last_verified_at"] is None
+    assert block["age_days"] is None
+    assert block["recommendation"] is not None
+    assert "spot-check" in block["recommendation"].lower()
+
+
+async def test_memory_show_includes_verification_block_fresh(server: Any) -> None:
+    """After memory_verify, the same retrieval flips to fresh with
+    a null recommendation — the absence of a recommendation is the
+    "nothing to do" signal."""
+    written = await _call(
+        server, "memory_write", content="another durable fact", scopes=["tools"]
+    )
+    await _call(server, "memory_verify", id=written["id"])
+    shown = await _call(server, "memory_show", id=written["id"])
+    block = shown["verification"]
+    assert block["status"] == "fresh"
+    assert block["last_verified_at"] is not None
+    assert block["recommendation"] is None
+
+
+async def test_memory_search_hits_carry_verification_block(server: Any) -> None:
+    """Every search hit carries the verification block. A hit on a
+    never-verified memory must have a populated recommendation —
+    otherwise a model could triage from search results without ever
+    paying the spot-check cost."""
+    await _call(
+        server,
+        "memory_write",
+        content="searchable claim about kafka topics",
+        scopes=["tools"],
+    )
+    hits = _unwrap(await _call(server, "memory_search", query="kafka topics"))
+    assert len(hits) >= 1
+    block = hits[0]["verification"]
+    assert block["status"] == "never"
+    assert block["recommendation"] is not None
+
+
+async def test_memory_list_summary_carries_verification_block(server: Any) -> None:
+    """memory_list (cheap-triage view) must also expose the block —
+    a curator scrolling the list shouldn't have to call memory_show
+    just to see whether a row is fresh."""
+    await _call(server, "memory_write", content="unverified entry", scopes=["tools"])
+    listing = _unwrap(await _call(server, "memory_list"))
+    assert len(listing) >= 1
+    assert "verification" in listing[0]
+    assert listing[0]["verification"]["status"] == "never"
+
+
+async def test_memory_list_with_bodies_carries_verification_block(
+    server: Any,
+) -> None:
+    """The with_bodies=True variant uses a different serialiser
+    internally; assert the block appears there too."""
+    await _call(
+        server, "memory_write", content="another unverified entry", scopes=["tools"]
+    )
+    listing = _unwrap(await _call(server, "memory_list", with_bodies=True))
+    assert len(listing) >= 1
+    assert "verification" in listing[0]
+    assert listing[0]["verification"]["status"] == "never"
+
+
+async def test_verification_block_uses_config_threshold(memory_dir: Path) -> None:
+    """Wire-through: the per-server `verification_stale_days` config
+    knob actually shapes the verdict. With threshold=0 every verified
+    memory should immediately read as stale."""
+    from bettermemory.config import BehaviorConfig
+
+    cfg = Config(
+        storage=StorageConfig(directory=str(memory_dir)),
+        behavior=BehaviorConfig(verification_stale_days=0),
+    )
+    srv = build_server(config=cfg, store=Store(memory_dir), state=SessionState())
+
+    written = await _call(
+        srv,
+        "memory_write",
+        content="another durable fact about disk usage",
+        scopes=["tools"],
+    )
+    await _call(srv, "memory_verify", id=written["id"])
+    shown = await _call(srv, "memory_show", id=written["id"])
+    block = shown["verification"]
+    assert block["status"] == "stale"
+    assert block["recommendation"] is not None
+    assert block["stale_after_days"] == 0
+
+
+async def test_verification_block_path_drift_coexist(
+    server: Any, tmp_path: Path
+) -> None:
+    """The two staleness signals are independent. A never-verified
+    memory whose body cites a missing path shows both — the model's
+    payload carries `verification.status='never'` and a populated
+    `path_drift.missing`."""
+    missing = tmp_path / "drifted.txt"
+    written = await _call(
+        server,
+        "memory_write",
+        content=f"production config used to live at `{missing}` for years",
+        scopes=["tools"],
+    )
+    shown = await _call(server, "memory_show", id=written["id"])
+    assert shown["verification"]["status"] == "never"
+    assert shown["path_drift"] is not None
+    assert str(missing) in shown["path_drift"]["missing"]

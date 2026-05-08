@@ -77,6 +77,14 @@ semantic_medium_threshold = 0.65
 # once the event log has weeks of data.
 heavily_used_min_applied = 3
 
+# Days after `last_verified_at` past which a memory's verification is
+# considered "stale" — the retrieval surface attaches a re-spot-check
+# recommendation to the response. 30 days mirrors the recency-boost
+# half-life: memories the ranker no longer treats as fresh for ordering
+# also stop counting as fresh for verification. Set 0 to mark every
+# verified memory stale immediately (useful in tests, rarely in practice).
+verification_stale_days = 30
+
 # Default retention for `bettermemory tombstones prune` (days). Tombstones
 # are never auto-pruned; this is just the default for the CLI subcommand,
 # which still requires an explicit invocation. 0 means "no default" — the
@@ -130,6 +138,12 @@ class BehaviorConfig:
     # Tombstones are never auto-pruned at runtime; this only affects
     # the human-driven CLI subcommand.
     tombstone_retention_days: int = 0
+    # Days after `last_verified_at` past which the retrieval surface
+    # marks a memory's verification "stale" and attaches a spot-check
+    # recommendation. See `verify.compute_verification_status`. The
+    # default mirrors `recency_boost_half_life_days` so freshness for
+    # ranking and freshness for verification stay aligned.
+    verification_stale_days: int = 30
 
 
 @dataclass
@@ -226,6 +240,9 @@ def load_config(path: Path | None = None) -> Config:
             ),
             tombstone_retention_days=int(
                 behavior_raw.get("tombstone_retention_days", 0)
+            ),
+            verification_stale_days=int(
+                behavior_raw.get("verification_stale_days", 30)
             ),
         ),
         scopes=ScopesConfig(

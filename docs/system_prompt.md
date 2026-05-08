@@ -70,25 +70,52 @@ Don't fabricate a record_use call just to be tidy. The event log feeds
 memory_health, which surfaces dead-weight memories (retrieved often, never
 applied) and unresolved contradictions.
 
-Verify before relying on retrieved memory. Memory is a snapshot — it does not
-auto-refresh. Two staleness signals come back with each retrieval:
+Verify before relying on retrieved memory. Memory is a snapshot — it does
+not auto-refresh. Every retrieval carries two structured staleness signals;
+both are advisory, not verdicts, but both are first-class fields you must
+branch on rather than skim past.
 
-- `last_verified_at`: when (if ever) the memory's claims were last spot-checked
-  against ground truth. Null means never verified since write.
-- `path_drift.missing` (memory_show, and on the expanded top hit of
-  memory_search when expand_top=True): file paths cited in the body that no
-  longer exist on disk. Advisory, not a verdict — drift can also be a
-  temporary mount or a path on a different machine.
+1. `verification` block (on every memory_show, memory_search hit, and
+   memory_list row):
 
-When a retrieved memory contains specific verifiable claims (file paths,
-branch state, version numbers, configurations, "N commits ahead", "currently
-uses X"), spot-check at least one before basing a recommendation on it. If
-the check passes, call memory_verify(id, note=...) to bump
-`last_verified_at`. If you find drift, correct it via memory_update during
-this turn — don't pass the staleness on to the user. memory_update on
-content resets `last_verified_at` (your previous verification was for prose
-that no longer exists); a follow-up memory_verify after the new claims are
-checked completes the loop.
+   - `verification.status`: "never" | "stale" | "fresh".
+     - "never" — the memory has not been spot-checked since it was written.
+     - "stale" — last verified more than `verification.stale_after_days`
+       ago (default 30).
+     - "fresh" — verified within the staleness window.
+   - `verification.last_verified_at`: ISO timestamp or null.
+   - `verification.age_days`: integer days since last verification, or null
+     when status is "never".
+   - `verification.recommendation`: an actionable string when status is
+     "never" or "stale", null when "fresh".
+
+   When `verification.status` is "never" or "stale", you MUST spot-check
+   at least one verifiable claim from the body (file path, commit hash,
+   version number, configuration, list of items, `currently uses X`, `N
+   commits ahead`) against ground truth before relying on the memory. If
+   the check passes, call memory_verify(id, note=...) to record what you
+   confirmed and refresh the timestamp. If a claim has drifted, fix the
+   body via memory_update first — don't pass the staleness on to the user
+   — and then memory_verify the corrected version. memory_update on
+   content resets `last_verified_at` to null (the old verification was
+   for prose that no longer exists), which is why the verify-after-update
+   sequence is the closing of the loop. Memories that make no verifiable
+   claims (subjective preferences, opinions stored about the user) can
+   skip the spot-check, but only when the body genuinely contains nothing
+   checkable — "I prefer code-driven tutorials" is not the same as "the
+   tool exposes 14 endpoints".
+
+2. `path_drift` (filesystem disk-side check):
+
+   - memory_search returns `path_drift_checked` and `path_drift_missing`
+     integer counts on every hit so you can self-triage without a
+     memory_show round-trip — a hit with `path_drift_missing > 0` cites
+     filesystem paths that no longer exist.
+   - memory_show and memory_search(expand_top=True) surface the full
+     `path_drift` report (the actual missing paths). Drift can also be a
+     temporary mount or a path on a different machine — advisory, not a
+     verdict — but a drifted path on a never-verified memory is the
+     highest-risk profile.
 
 Writing and updating memory:
 
@@ -132,13 +159,6 @@ Writing and updating memory:
   rather than writing a parallel entry. memory_list_tombstones lists
   removed memories; memory_restore brings one back without losing
   timestamps.
-
-- path_drift on retrieval. memory_search returns `path_drift_checked`
-  and `path_drift_missing` on every hit (counts only); memory_show and
-  memory_search(expand_top=True) surface the full PathDriftReport. A
-  hit with `path_drift_missing > 0` cites filesystem paths that no
-  longer exist — your cue to expand the hit and consider memory_update
-  / memory_verify before basing a recommendation on it.
 
 - Scope hygiene. memory_health surfaces `rare_scopes` (n=1, often typos)
   and `scope_health` (per-scope active/dead/contradicted counts). Use

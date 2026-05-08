@@ -39,6 +39,7 @@ from .models import (
     Source,
     TombstonedSummary,
     is_valid_ulid,
+    utcnow,
     validate_scope,
 )
 from .prompts import SYSTEM_PROMPT_ADDENDUM
@@ -50,7 +51,7 @@ from .store import (
     Store,
     TombstonedError,
 )
-from .verify import detect_path_drift
+from .verify import compute_verification_status, detect_path_drift
 
 
 log = logging.getLogger("bettermemory")
@@ -221,7 +222,15 @@ def _register_tools(
             max_results=max_results,
             half_life_days=config.behavior.recency_boost_half_life_days,
         )
-        out = [_hit_to_dict(h) for h in hits]
+        # Pin one `now` for the whole response so the verification verdict
+        # is consistent across hits — the alternative (let each helper
+        # call utcnow()) could land different status labels on adjacent
+        # hits if we crossed a day boundary mid-loop.
+        now = utcnow()
+        stale_after_days = config.behavior.verification_stale_days
+        out = [
+            _hit_to_dict(h, now=now, stale_after_days=stale_after_days) for h in hits
+        ]
 
         # Optional auto-expansion of the top hit. Conservative: only fires
         # when the top hit clearly wins ("high" relevance) so the model
@@ -268,14 +277,16 @@ def _register_tools(
         description=(
             "Fetch a single memory's full content by ID. Use after "
             "memory_search when a snippet looks relevant and you want the "
-            "full body. The response includes `last_verified_at` (null if "
-            "the memory has never been spot-checked since write — call "
-            "memory_verify after confirming the body still matches reality) "
-            "and `path_drift` when the body cites filesystem paths that no "
-            "longer exist on disk. Drift is advisory: it may indicate a "
-            "stale memory, but it can also be a temporary mount or a path "
-            "from a different machine. Treat it as a signal to spot-check, "
-            "not a verdict."
+            "full body. The response includes a structured `verification` "
+            "block (status: 'never' | 'stale' | 'fresh', plus an "
+            "actionable `recommendation` when not fresh) — branch on "
+            "`verification.status` to decide whether to spot-check before "
+            "relying on the body. `last_verified_at` is preserved as a "
+            "raw timestamp for back-compat. `path_drift` surfaces "
+            "filesystem paths cited in the body that no longer exist on "
+            "disk; like verification, it's advisory — drift can be a "
+            "temporary mount or a path on a different machine. Treat both "
+            "as signals to spot-check, not as verdicts."
         ),
     )
     async def memory_show(id: str) -> dict[str, Any]:
@@ -293,11 +304,22 @@ def _register_tools(
         # and the model would learn to ignore the field even when it
         # mattered.
         drift = detect_path_drift(memory.body)
+        # Verification staleness is structurally always present — emitted
+        # even for "fresh" memories — because consistent shape means the
+        # consumer can branch on `verification.status` without an
+        # existence check. The recommendation field is null on fresh,
+        # populated otherwise; that's the actionable handle.
+        verification = compute_verification_status(
+            memory.last_verified_at,
+            now=utcnow(),
+            stale_after_days=config.behavior.verification_stale_days,
+        )
         recorder.record(
             "show",
             id=memory.id,
             path_drift_checked=len(drift.checked),
             path_drift_missing=len(drift.missing),
+            verification_status=verification.status,
         )
         return {
             "id": memory.id,
@@ -307,6 +329,7 @@ def _register_tools(
             "created": _isoformat(memory.created),
             "updated": _isoformat(memory.updated),
             "last_verified_at": _isoformat_optional(memory.last_verified_at),
+            "verification": verification.to_dict(),
             "body": memory.body,
             "origin": _origin_to_dict(memory.origin),
             "path_drift": drift.to_dict() if drift.has_drift else None,
@@ -702,6 +725,10 @@ def _register_tools(
             scopes = [validate_scope(s) for s in scopes]
         # Apply session-disabled scopes to listing too — consistency.
         excluded = set(state.disabled_scopes)
+        # Single `now` for the whole listing — same reasoning as in
+        # memory_search: consistent verification verdict across rows.
+        now = utcnow()
+        stale_after_days = config.behavior.verification_stale_days
 
         if with_bodies:
             out: list[dict[str, Any]] = []
@@ -711,7 +738,9 @@ def _register_tools(
                     continue
                 if scopes and not (memory_scopes & set(scopes)):
                     continue
-                out.append(_memory_to_dict(memory))
+                out.append(
+                    _memory_to_dict(memory, now=now, stale_after_days=stale_after_days)
+                )
             recorder.record(
                 "list",
                 scopes_filter=scopes,
@@ -725,7 +754,9 @@ def _register_tools(
         for summary in store.list_summaries(scopes=scopes):
             if excluded and (set(summary.scopes) & excluded):
                 continue
-            out_summary.append(_summary_to_dict(summary))
+            out_summary.append(
+                _summary_to_dict(summary, now=now, stale_after_days=stale_after_days)
+            )
         recorder.record(
             "list",
             scopes_filter=scopes,
@@ -1266,7 +1297,25 @@ def _isoformat_optional(dt: datetime | None) -> str | None:
     return None if dt is None else _isoformat(dt)
 
 
-def _hit_to_dict(hit: MemoryHit) -> dict[str, Any]:
+def _hit_to_dict(
+    hit: MemoryHit,
+    *,
+    now: datetime,
+    stale_after_days: int,
+) -> dict[str, Any]:
+    """Serialise a search hit, including the structured verification block.
+
+    `now` and `stale_after_days` are threaded in (rather than being read
+    from the clock here) so a multi-hit response uses one consistent
+    "now" — preventing the awkward case where the first hit in a result
+    set is judged fresh and the last is judged stale because we crossed
+    a day boundary mid-loop. `last_verified_at` stays in the response
+    as a raw timestamp for callers that already branch on it; the new
+    `verification` field is the structured replacement.
+    """
+    verification = compute_verification_status(
+        hit.last_verified_at, now=now, stale_after_days=stale_after_days
+    )
     return {
         "id": hit.id,
         "scopes": hit.scopes,
@@ -1278,12 +1327,30 @@ def _hit_to_dict(hit: MemoryHit) -> dict[str, Any]:
         "created": _isoformat(hit.created),
         "updated": _isoformat(hit.updated),
         "last_verified_at": _isoformat_optional(hit.last_verified_at),
+        "verification": verification.to_dict(),
         "path_drift_checked": hit.path_drift_checked,
         "path_drift_missing": hit.path_drift_missing,
     }
 
 
-def _summary_to_dict(summary: MemorySummary) -> dict[str, Any]:
+def _summary_to_dict(
+    summary: MemorySummary,
+    *,
+    now: datetime,
+    stale_after_days: int,
+) -> dict[str, Any]:
+    """Serialise a memory_list summary with verification status attached.
+
+    Same contract as `_hit_to_dict`: `now` injected for consistency,
+    `verification` carries the actionable signal, raw `last_verified_at`
+    kept for back-compat. Listing is the cheap-triage view, exactly the
+    surface where staleness should be visible — a curator scrolling the
+    list shouldn't have to call memory_show to see whether a row is
+    fresh.
+    """
+    verification = compute_verification_status(
+        summary.last_verified_at, now=now, stale_after_days=stale_after_days
+    )
     return {
         "id": summary.id,
         "scopes": summary.scopes,
@@ -1292,6 +1359,7 @@ def _summary_to_dict(summary: MemorySummary) -> dict[str, Any]:
         "created": _isoformat(summary.created),
         "updated": _isoformat(summary.updated),
         "last_verified_at": _isoformat_optional(summary.last_verified_at),
+        "verification": verification.to_dict(),
     }
 
 
@@ -1316,14 +1384,25 @@ def _tombstone_summary_to_dict(summary: TombstonedSummary) -> dict[str, Any]:
     }
 
 
-def _memory_to_dict(memory) -> dict[str, Any]:  # type: ignore[no-untyped-def]
+def _memory_to_dict(  # type: ignore[no-untyped-def]
+    memory,
+    *,
+    now: datetime,
+    stale_after_days: int,
+) -> dict[str, Any]:
     """Full memory shape used by `memory_list(with_bodies=True)`.
 
-    Same fields as `memory_show` plus the `summary` line so a consumer can
-    treat the response uniformly with the body-less `memory_list` shape.
+    Same fields as `memory_show` plus the `summary` line so a consumer
+    can treat the response uniformly with the body-less `memory_list`
+    shape. Includes the `verification` block for parity with the rest
+    of the retrieval surface — a `with_bodies=True` listing carries the
+    same staleness signal a `memory_show` would.
     """
     from .models import first_summary_line
 
+    verification = compute_verification_status(
+        memory.last_verified_at, now=now, stale_after_days=stale_after_days
+    )
     return {
         "id": memory.id,
         "scopes": memory.scopes,
@@ -1334,6 +1413,7 @@ def _memory_to_dict(memory) -> dict[str, Any]:  # type: ignore[no-untyped-def]
         "created": _isoformat(memory.created),
         "updated": _isoformat(memory.updated),
         "last_verified_at": _isoformat_optional(memory.last_verified_at),
+        "verification": verification.to_dict(),
         "origin": _origin_to_dict(memory.origin),
     }
 

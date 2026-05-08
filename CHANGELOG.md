@@ -9,6 +9,47 @@ fixes.
 
 ### Added
 
+- **Structured `verification` block on every retrieval.** `last_verified_at`
+  used to be a raw timestamp the consuming model had to do staleness
+  arithmetic on — and prose-only guidance ("spot-check before relying")
+  failed open whenever the model's attention wavered. A real-world
+  drift escaped the system this way (a memory whose tool list lagged
+  the code by three new tools went undetected because the consumer
+  didn't notice `last_verified_at: null`). Retrieval responses now
+  carry a structured verdict the model cannot easily skim past:
+
+  ```json
+  "verification": {
+    "status": "never" | "stale" | "fresh",
+    "last_verified_at": "<iso>" | null,
+    "age_days": <int> | null,
+    "recommendation": "<actionable string>" | null,
+    "stale_after_days": <int>
+  }
+  ```
+
+  - `status="never"` when the memory has not been spot-checked since
+    write — `recommendation` carries an explicit "spot-check before
+    relying, then call memory_verify" instruction.
+  - `status="stale"` past `behavior.verification_stale_days` (default
+    30, mirroring `recency_boost_half_life_days`) — `recommendation`
+    names the age in days and asks for a re-spot-check.
+  - `status="fresh"` within the window — `recommendation: null` is
+    the explicit "nothing to do" signal so consumers branch on a
+    stable shape.
+
+  Surfaced on `memory_show`, every `memory_search` hit, every
+  `memory_list` row (both summary and `with_bodies=True` variants).
+  `last_verified_at` is preserved as a top-level field for back-compat;
+  the new block is the structured replacement. The system-prompt
+  addendum was rewritten to direct the model to branch on
+  `verification.status` rather than read the prose. New
+  `compute_verification_status` / `VerificationStatus` exports in
+  `bettermemory.verify`. New `behavior.verification_stale_days` config
+  knob — set to 0 to mark every verified memory stale immediately
+  (test affordance), or raise the threshold for caches of facts whose
+  ground truth changes slowly.
+
 - **First-class tombstone lifecycle.** Removed memories used to be a
   black hole on the read side — invisible to dedup, invisible to search,
   with no path to restore short of hand-editing files. They now have a

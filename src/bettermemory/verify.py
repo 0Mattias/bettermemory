@@ -1,20 +1,33 @@
-"""Path-drift detection for retrieved memories.
+"""Staleness signals for retrieved memories.
 
-A memory body that names a file path is making a verifiable claim: "this
-path exists on disk and is the thing I'm describing." Filesystems move on,
-projects reorganise, scripts get renamed — claims like that go stale long
-before the memory's `updated` timestamp would suggest. We can catch a class
-of those drifts cheaply at retrieval time by extracting path-shaped tokens
-from the body and stat'ing them.
+Two concepts live here, both surfaced on retrieval so a consuming model
+can self-triage before relying on stored content:
 
-The check is advisory, not blocking. A missing path is surfaced as
-`path_drift.missing`; the model decides whether to flag the staleness to
-the user, follow up with `memory_verify`, or `memory_update` to correct it.
-We never auto-tombstone — drift can be a temporary mount, a cwd we don't
-have access to, or a path on a different machine entirely.
+1. **Path drift** (`detect_path_drift`, `PathDriftReport`). A memory body
+   that names a file path is making a verifiable claim — "this path
+   exists on disk and is the thing I'm describing." Filesystems move on,
+   projects reorganise, scripts get renamed — claims like that go stale
+   long before the memory's `updated` timestamp would suggest. We catch
+   the easy cases by extracting path-shaped tokens and stat'ing them.
 
-Detection coverage is deliberately conservative — better to miss a real
-path than chase ghosts:
+2. **Verification staleness** (`compute_verification_status`,
+   `VerificationStatus`). A memory's `last_verified_at` timestamp records
+   the last time its claims were spot-checked against ground truth.
+   Null means never verified; an old timestamp means the world may have
+   moved on since. Path drift is per-claim; verification staleness is
+   the umbrella signal — useful for facts whose claims aren't filesystem
+   paths (commit hashes, version numbers, tool lists, configurations).
+
+Both are advisory. They never block; they shape a structured payload that
+the retrieval surface (memory_show, memory_search, memory_list) attaches
+to its responses, so the model receives a recommendation as a first-class
+field rather than having to do timestamp arithmetic on a raw datetime.
+The cost of a false positive (a small extra prompt asking the model to
+spot-check) is much lower than the cost of a false negative (the model
+treats a stale fact as ground truth).
+
+Detection coverage for path drift is deliberately conservative — better
+to miss a real path than chase ghosts:
 
 - Backtick-wrapped paths: ```/etc/foo``` or ```~/Downloads```.
   Highest precision because the author chose to set the path off as code.
@@ -37,7 +50,9 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass
+from datetime import datetime, timezone
 from pathlib import Path
+from typing import Any
 
 
 # ---------------------------------------------------------------------------
@@ -249,7 +264,175 @@ def _path_exists(candidate: str) -> bool:
         return False
 
 
+# ---------------------------------------------------------------------------
+# Verification staleness
+# ---------------------------------------------------------------------------
+#
+# `last_verified_at` is the timestamp the `memory_verify` tool stamps when an
+# agent has confirmed a memory's body still matches reality. Null means
+# never verified. The retrieval surface used to expose the raw timestamp
+# and lean on prose guidance to make the consuming model do the staleness
+# arithmetic — which fails open whenever the model's attention wavers.
+#
+# Replacing the raw timestamp with a structured `verification` block (status,
+# age, recommendation) puts the staleness verdict in the response payload
+# itself. The model can ignore prose; it cannot easily ignore a literal
+# `recommendation` string sitting next to the body it just retrieved. That
+# inversion — from "model decides whether to spot-check" to "tool decides
+# whether to ask the model to spot-check" — is the whole point. This caught
+# a real-world drift in the field (a memory whose tool list lagged the code
+# by three new tools). The cost of being too cautious here is one extra
+# spot-check per retrieval; the cost of being too lax is exactly the kind
+# of stale-memory incident this project exists to prevent.
+
+
+# Default freshness window. After this many days, a verified memory flips
+# from "fresh" to "stale" and gets a re-spot-check recommendation. 30 days
+# matches the recency-boost half-life (`recency_boost_half_life_days`) —
+# memories the ranker is no longer treating as "fresh" for ordering also
+# stop counting as "fresh" for verification. Override via
+# `behavior.verification_stale_days` in config.toml.
+DEFAULT_VERIFICATION_STALE_DAYS = 30
+
+
+@dataclass(frozen=True)
+class VerificationStatus:
+    """Structured staleness verdict for a memory's `last_verified_at`.
+
+    `status` is one of:
+
+    - ``"never"``: `last_verified_at` is None — the memory has not been
+      spot-checked since it was written. Highest-risk profile; the body
+      may have been wrong on day 1, may have drifted since, and no
+      human/agent has confirmed otherwise.
+    - ``"stale"``: `last_verified_at` is set, but more than
+      `stale_after_days` ago. The world may have moved on since the
+      last spot-check.
+    - ``"fresh"``: verified within the staleness window. No action
+      needed beyond the usual path-drift triage.
+
+    `age_days` is the integer day count since the last verification, or
+    None when status is ``"never"``. `recommendation` is a short
+    actionable string aimed at the retrieving model — non-None for
+    ``"never"`` and ``"stale"``, None for ``"fresh"``. Putting the
+    recommendation in the payload (rather than only in the prose system
+    prompt) is the load-bearing piece: a model scanning structured
+    fields cannot miss the explicit ask to spot-check.
+    """
+
+    status: str
+    last_verified_at: datetime | None
+    age_days: int | None
+    recommendation: str | None
+    stale_after_days: int
+
+    def to_dict(self) -> dict[str, Any]:
+        """JSON-friendly serialization for the tool response.
+
+        `last_verified_at` is rendered ISO-8601 with the `+00:00` suffix
+        normalised to ``Z`` to match the rest of the server's datetime
+        formatting. The block is emitted in full on every retrieval
+        (including ``"fresh"``) so a consumer can branch on a stable
+        shape — `recommendation: null` is the explicit "nothing to do"
+        signal.
+        """
+        return {
+            "status": self.status,
+            "last_verified_at": (
+                None
+                if self.last_verified_at is None
+                else self.last_verified_at.isoformat().replace("+00:00", "Z")
+            ),
+            "age_days": self.age_days,
+            "recommendation": self.recommendation,
+            "stale_after_days": self.stale_after_days,
+        }
+
+
+# Recommendation strings live as module constants so tests can match on
+# them without duplicating prose, and so future tone tweaks happen in one
+# place. Both end with the concrete tool call to make next-step routing
+# unambiguous from the model's side.
+_NEVER_RECOMMENDATION = (
+    "This memory has never been spot-checked since it was written. Before "
+    "relying on any specific claim it makes (file path, commit hash, "
+    "version, configuration, list of items), confirm at least one against "
+    "ground truth. If the claim still holds, call memory_verify(id, "
+    "note=...) to record the check. If it has drifted, fix the body via "
+    "memory_update first, then memory_verify the corrected memory."
+)
+
+
+def _stale_recommendation(age_days: int) -> str:
+    return (
+        f"Last spot-checked {age_days} days ago — past the freshness window. "
+        "Re-confirm at least one verifiable claim (path, commit, version, "
+        "config, list) and call memory_verify(id, note=...) to refresh, or "
+        "memory_update if a claim has drifted."
+    )
+
+
+def compute_verification_status(
+    last_verified_at: datetime | None,
+    *,
+    now: datetime,
+    stale_after_days: int = DEFAULT_VERIFICATION_STALE_DAYS,
+) -> VerificationStatus:
+    """Classify a memory's verification staleness.
+
+    `now` is injected rather than read from the clock so callers can fix
+    a single timestamp across a multi-hit retrieval (consistent with how
+    `search.search` threads its own `now`) and tests can pin time. A
+    timezone-naive `last_verified_at` is treated as UTC, matching the
+    convention `search._recency_factor` uses — every datetime in the
+    store is UTC-aware in practice, but defensive normalisation keeps a
+    legacy file from raising.
+
+    `stale_after_days <= 0` collapses the "fresh" window to nothing —
+    every verified memory becomes "stale" immediately. Useful for tests
+    that want the stale-recommendation branch without sleeping. A
+    negative value behaves the same as 0 (clamped), to avoid a silent
+    inverted comparison.
+    """
+    threshold = max(0, stale_after_days)
+
+    if last_verified_at is None:
+        return VerificationStatus(
+            status="never",
+            last_verified_at=None,
+            age_days=None,
+            recommendation=_NEVER_RECOMMENDATION,
+            stale_after_days=threshold,
+        )
+
+    if last_verified_at.tzinfo is None:
+        last_verified_at = last_verified_at.replace(tzinfo=timezone.utc)
+
+    age_seconds = max(0.0, (now - last_verified_at).total_seconds())
+    age_days = int(age_seconds // 86400)
+
+    if age_days >= threshold:
+        return VerificationStatus(
+            status="stale",
+            last_verified_at=last_verified_at,
+            age_days=age_days,
+            recommendation=_stale_recommendation(age_days),
+            stale_after_days=threshold,
+        )
+
+    return VerificationStatus(
+        status="fresh",
+        last_verified_at=last_verified_at,
+        age_days=age_days,
+        recommendation=None,
+        stale_after_days=threshold,
+    )
+
+
 __all__ = [
+    "DEFAULT_VERIFICATION_STALE_DAYS",
     "PathDriftReport",
+    "VerificationStatus",
+    "compute_verification_status",
     "detect_path_drift",
 ]

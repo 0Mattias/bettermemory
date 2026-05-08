@@ -3,15 +3,25 @@
 Detection is the load-bearing piece. Existence checks against the real
 filesystem use temp paths fixture-style (paths created/deleted in the
 test) to keep behaviour deterministic across machines.
+
+Also exercises `compute_verification_status` — the structural staleness
+verdict the retrieval surface attaches to every response. The point of
+the test class is to lock in that "never" / "stale" both populate the
+`recommendation` field so a model receiving the payload can't miss the
+ask to spot-check.
 """
 
 from __future__ import annotations
 
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from unittest.mock import patch
 
 from bettermemory.verify import (
+    DEFAULT_VERIFICATION_STALE_DAYS,
     PathDriftReport,
+    VerificationStatus,
+    compute_verification_status,
     detect_path_drift,
 )
 
@@ -336,3 +346,153 @@ def test_bare_path_cap_reached(tmp_path: Path) -> None:
     body = "see " + ", ".join(str(p) for p in paths) + " for details"
     report = detect_path_drift(body)
     assert len(report.checked) <= 8
+
+
+# ---------------------------------------------------------------------------
+# compute_verification_status — structural staleness verdict
+# ---------------------------------------------------------------------------
+#
+# The "never" and "stale" branches are the load-bearing ones — they each
+# populate `recommendation`, which is the field a retrieving model is
+# expected to act on. The "fresh" branch carries `recommendation=None`
+# so a consumer can branch on truthiness without timestamp arithmetic.
+
+
+_NOW = datetime(2026, 5, 8, 12, 0, 0, tzinfo=timezone.utc)
+
+
+def test_verification_never_when_last_verified_is_none() -> None:
+    """A memory that has never been verified produces status='never'
+    with a non-empty recommendation. This is the case that motivated
+    the structural change — a `last_verified_at: null` timestamp was
+    too easy for the consuming model to skim past."""
+    status = compute_verification_status(None, now=_NOW)
+    assert status.status == "never"
+    assert status.last_verified_at is None
+    assert status.age_days is None
+    assert status.recommendation is not None
+    assert "spot-check" in status.recommendation.lower()
+    assert "memory_verify" in status.recommendation
+
+
+def test_verification_fresh_within_window() -> None:
+    """A recently-verified memory produces status='fresh' with no
+    recommendation — the absence of a recommendation is the signal
+    that no spot-check is needed."""
+    last_verified = _NOW - timedelta(days=5)
+    status = compute_verification_status(last_verified, now=_NOW)
+    assert status.status == "fresh"
+    assert status.age_days == 5
+    assert status.recommendation is None
+
+
+def test_verification_stale_past_default_window() -> None:
+    """Past the default 30-day window, a verified memory flips to
+    stale and gets a re-spot-check recommendation that names the
+    age in days — making the staleness concrete in the response."""
+    last_verified = _NOW - timedelta(days=45)
+    status = compute_verification_status(last_verified, now=_NOW)
+    assert status.status == "stale"
+    assert status.age_days == 45
+    assert status.recommendation is not None
+    assert "45" in status.recommendation
+    assert "memory_verify" in status.recommendation
+
+
+def test_verification_boundary_at_threshold_is_stale() -> None:
+    """Exactly at the threshold boundary the memory is stale, not
+    fresh — the fresh window is strictly less-than. Pin the
+    contract so a future tweak can't quietly invert the sign."""
+    last_verified = _NOW - timedelta(days=DEFAULT_VERIFICATION_STALE_DAYS)
+    status = compute_verification_status(last_verified, now=_NOW)
+    assert status.status == "stale"
+
+
+def test_verification_just_under_threshold_is_fresh() -> None:
+    """One second under the threshold is still fresh."""
+    threshold = DEFAULT_VERIFICATION_STALE_DAYS
+    last_verified = _NOW - timedelta(days=threshold) + timedelta(seconds=1)
+    status = compute_verification_status(last_verified, now=_NOW)
+    assert status.status == "fresh"
+
+
+def test_verification_naive_datetime_treated_as_utc() -> None:
+    """A timezone-naive last_verified_at (legacy frontmatter, hand
+    edits) doesn't blow up — it's treated as UTC for the comparison.
+    Mirrors the convention search._recency_factor uses for the same
+    reason."""
+    naive = (_NOW - timedelta(days=10)).replace(tzinfo=None)
+    status = compute_verification_status(naive, now=_NOW)
+    assert status.status == "fresh"
+    assert status.age_days == 10
+
+
+def test_verification_zero_threshold_marks_everything_stale() -> None:
+    """`stale_after_days=0` collapses the fresh window — every
+    verified memory becomes stale immediately. Useful in tests
+    that want the stale branch without sleeping."""
+    last_verified = _NOW - timedelta(seconds=1)
+    status = compute_verification_status(last_verified, now=_NOW, stale_after_days=0)
+    assert status.status == "stale"
+
+
+def test_verification_negative_threshold_clamped_to_zero() -> None:
+    """A negative threshold is clamped to 0 rather than producing an
+    inverted comparison. Cheap defensive guard so a config typo can't
+    flip every memory to fresh."""
+    last_verified = _NOW - timedelta(days=10)
+    status = compute_verification_status(last_verified, now=_NOW, stale_after_days=-5)
+    assert status.status == "stale"
+    # The reported threshold is the clamped value, not the raw input —
+    # consumers should see the actual cutoff used.
+    assert status.stale_after_days == 0
+
+
+def test_verification_future_timestamp_does_not_crash() -> None:
+    """A clock skew that puts last_verified_at in the future shouldn't
+    raise — age clamps at 0 and the memory reads as fresh."""
+    last_verified = _NOW + timedelta(days=1)
+    status = compute_verification_status(last_verified, now=_NOW)
+    assert status.status == "fresh"
+    assert status.age_days == 0
+
+
+def test_verification_to_dict_shape_fresh() -> None:
+    """Fresh memories serialise with `recommendation: None` so the
+    consumer can branch on truthiness — null is the explicit
+    "nothing to do" signal."""
+    last_verified = _NOW - timedelta(days=2)
+    status = compute_verification_status(last_verified, now=_NOW)
+    payload = status.to_dict()
+    assert payload["status"] == "fresh"
+    assert payload["recommendation"] is None
+    assert payload["last_verified_at"].endswith("Z")
+    assert payload["age_days"] == 2
+    assert payload["stale_after_days"] == DEFAULT_VERIFICATION_STALE_DAYS
+
+
+def test_verification_to_dict_shape_never() -> None:
+    """Never-verified serialises last_verified_at and age_days as
+    null, with a populated recommendation. Same key set as the
+    other branches — uniform shape lets consumers branch on the
+    `status` field alone."""
+    payload = compute_verification_status(None, now=_NOW).to_dict()
+    assert payload["status"] == "never"
+    assert payload["last_verified_at"] is None
+    assert payload["age_days"] is None
+    assert payload["recommendation"] is not None
+    assert "stale_after_days" in payload
+
+
+def test_verification_status_is_immutable_dataclass() -> None:
+    """Frozen dataclass — accidental mutation by a consumer would
+    silently corrupt the verdict on subsequent reads if it weren't."""
+    status = compute_verification_status(None, now=_NOW)
+    assert isinstance(status, VerificationStatus)
+    import dataclasses as _dc
+
+    try:
+        status.status = "fresh"  # type: ignore[misc]
+    except _dc.FrozenInstanceError:
+        return
+    raise AssertionError("VerificationStatus should be frozen")
