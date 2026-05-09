@@ -1,33 +1,27 @@
 # bettermemory
 
+[![Claude Code plugin](https://img.shields.io/badge/Claude%20Code-plugin-d97757)](plugin/README.md)
+[![PyPI](https://img.shields.io/pypi/v/bettermemory.svg)](https://pypi.org/project/bettermemory/)
 [![CI](https://github.com/0Mattias/bettermemory/actions/workflows/ci.yml/badge.svg)](https://github.com/0Mattias/bettermemory/actions/workflows/ci.yml)
+[![Python](https://img.shields.io/badge/python-3.11%E2%80%933.14-blue.svg)](https://www.python.org/downloads/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
-[![Python](https://img.shields.io/badge/python-3.11%2B-blue.svg)](https://www.python.org/downloads/)
 
-**Memory the model can actually trust — and you can actually curate.**
+**Persistent memory for Claude Code — retrieved on demand, not force-fed into every prompt.**
 
-A local, file-backed memory MCP server for Claude. Memories are plain markdown on disk, the model retrieves them on demand instead of having them force-fed into every prompt, and every retrieval comes with structured staleness signals so the model spot-checks before relying.
+bettermemory is a [Claude Code plugin](plugin/README.md) (and a standalone MCP server for any other client) that fixes the failure mode common to every existing LLM memory feature: auto-injecting every stored fact into every conversation, with no sense of which are stale, which are relevant, or which you'd rather forget. The longer you use those, the more polluted every unrelated conversation becomes — ask for a Python tutorial, get answers tinted by your home-lab notes; ask a generic shell question, get advice coloured by a preference you stated months ago. Stale facts get dispensed confidently.
 
-## Why
+bettermemory inverts the contract. The model calls `memory_search` only when it needs to. Every retrieval ships with three structured staleness signals (`verification`, `path_drift`, `commit_drift`) so the model spot-checks before relying. Memories live as plain markdown + YAML on disk — `grep` it, `git log` it, hand-edit it. A separate health surface tells *you* what's dead weight and what's drifted, instead of the store growing into a haunted closet of half-true notes.
 
-Memory features in current LLM tooling have a uniform failure mode: they auto-inject every stored fact into every system prompt, with no sense of which ones are stale, which ones are relevant, or which ones you'd rather forget. The longer you use it, the more polluted every unrelated conversation becomes. Ask for a Python tutorial and the answer comes pre-flavored by your home-lab notes. Ask a generic shell question and you get advice biased by a preference you stated months ago. The model dispenses stored facts confidently even when they haven't been true since the last refactor.
+## Install in Claude Code
 
-The diagnosis isn't "we need better facts." It's that **memory should be a tool, not a system-prompt injection.** The model knows when context is relevant and asks for it; you know when stored facts are stale and can curate them. Both sides need agency over what enters the conversation — and structured signals to act on.
+```text
+/plugin marketplace add 0Mattias/bettermemory
+/plugin install bettermemory@bettermemory
+```
 
-That's what bettermemory provides:
+That's it. Claude Code starts the MCP server, loads a system-prompt-level [skill](plugin/skills/bettermemory/SKILL.md) carrying the opt-in retrieval policy, and on the next turn the model has all 17 memory tools and the discipline to use them correctly. Other clients (Claude Desktop, Cursor, Continue, Cline) and manual setup: [§ Other MCP clients](#other-mcp-clients) below.
 
-- **Retrieval is opt-in.** `memory_search` is a tool the model calls when it needs to. Default is not to call it. Generic questions stay generic; "tell me about pandas" doesn't drag in home-lab notes.
-- **Three structured staleness signals on every retrieval.** Calendar age (`verification`), filesystem path drift (`path_drift` — cited paths still on disk?), and repo commit drift (`commit_drift` — commits since the last verify in the same project). When a signal fires, the model spot-checks before relying — and either confirms via `memory_verify` or fixes the body via `memory_update` + verify. This is the part most memory systems don't have at all.
-- **Hand-editable storage.** Memories live as markdown + YAML in `~/.claude-memory/`. `grep` it. `git log` it. Edit it in your editor. No database, no opaque blob, no vendor lock-in. The on-disk format is the user's data.
-- **A curation surface.** `memory_health` reports dead weight (memories the model has retrieved often but never marked `applied`), heavily-used items, unresolved contradictions, scope typos (singletons within Levenshtein distance 2 of an existing scope), and verification debt (never-verified vs. stale vs. fresh counts). Most memory systems just grow; this one tells you what to prune.
-- **Tombstones, not deletes.** Removed memories keep their `removed_reason`; tombstone-aware dedup catches the case where a fact you decided to drop tries to sneak back in on a paraphrase six months later. Reversible via `memory_restore`.
-- **Auto-scoped by project.** Memories written from inside a git checkout carry the repo URL; `memory_search` defaults to filtering by the caller's current repo. Cross-project queries are explicit (`auto_scope=False`), not the default.
-- **The model asks before saving claims about you.** A structural confirmation tier (`category="user-inference"` on `memory_write`) means the model commits project / infrastructure / tooling facts directly but has to confirm conversationally before saving any preference or belief about *you*. Misattribution sticks; the user always gets the veto.
-- **A feedback loop that improves curation over time.** After a retrieved memory shapes a response, the model logs the outcome (`applied` / `ignored` / `contradicted` / `corrected`). `memory_health` reads the event log to surface dead weight without you having to look — the system tells you what to clean up instead of the other way around.
-
-The practical result: conversations stay focused, the model stops being confidently wrong about stale facts, and the storage stays small and useful instead of growing into a haunted closet of half-true notes.
-
-### How it compares
+## How it compares
 
 |                              | Most memory features | bettermemory |
 |------------------------------|----------------------|--------------|
@@ -40,57 +34,69 @@ The practical result: conversations stay focused, the model stops being confiden
 | **Inferences about you**     | Saved silently                   | Structural confirmation tier — model asks before saving |
 | **Feedback loop**            | None                             | `memory_record_use` outcomes feed `memory_health` so dead weight surfaces automatically |
 
-## Install
+## What it looks like in practice
 
-### Claude Code (plugin — recommended)
+Day one — you tell Claude something:
 
-```text
-/plugin marketplace add 0Mattias/bettermemory
-/plugin install bettermemory@bettermemory
-```
+> *"When I ask for a tutorial, I want runnable code, not screenshots of an IDE."*
 
-That installs the [Claude Code plugin](plugin/README.md), which bundles
-the MCP server registration AND a system-prompt-level skill carrying
-the opt-in retrieval policy. The plugin's `.mcp.json` uses
-`uvx bettermemory`, so you only need [`uv`](https://docs.astral.sh/uv/)
-on your PATH — uvx fetches bettermemory from PyPI on first run.
+Claude calls `memory_write(category="user-inference", scopes=["learning-style"], …)`. Because the memory captures a claim about *you*, the write goes pending. Claude asks: *"Want me to remember that you prefer hands-on tutorials with runnable code?"* You confirm. The fact lands at `~/.claude-memory/` as a markdown file you can read, edit, or delete.
 
-### Any other MCP client (or if you prefer the manual install)
+Week two, in a fresh session — you ask:
+
+> *"Walk me through pandas from zero to hero."*
+
+The phrase *"zero to hero tutorial"* is the kind of ambiguity stored preferences could resolve, so Claude calls `memory_search`, surfaces the stored learning-style memory, and tells you up front: *"Using your stored preference for code-driven tutorials…"* before answering. Compare with auto-injection memory, which would have done the same thing — silently — even on *"what's the capital of France?"*
+
+Month three — you ask about an unrelated tool:
+
+> *"What's the difference between `find` and `fd`?"*
+
+This is generic. Claude doesn't call `memory_search`. The reply is pristine generic-shell prose, untainted by months of accumulated personal context. That's the whole design.
+
+## What you get
+
+- **Opt-in retrieval.** `memory_search` is a tool the model calls when it needs context. Default is not to call it. Generic questions stay generic.
+- **Three staleness signals on every retrieval.** Calendar age (`verification`: never / stale / fresh), filesystem path drift (`path_drift`: cited paths still on disk?), and repo commit drift (`commit_drift`: commits since the last `memory_verify` in the matching repo). When a signal fires the model spot-checks before relying, then either confirms via `memory_verify` or fixes the body via `memory_update` + verify. Most memory systems don't have *any* staleness story.
+- **Hand-editable storage.** Memories are markdown + YAML files in `~/.claude-memory/` (or `./.claude-memory/` for project-scoped, or `$BETTERMEMORY_DIR`). No database. No opaque blob. The on-disk format is your data.
+- **A curation surface.** `memory_health` reports dead weight (retrieved often, never marked `applied`), heavily-used items, unresolved contradictions, scope typos (singletons within Levenshtein distance 2 of an existing scope), and verification debt (never-verified / stale / fresh counts). Both as an MCP tool the model calls and a `bettermemory health` CLI you run by hand.
+- **Tombstones, not deletes.** Removed memories keep their `removed_reason`; tombstone-aware dedup catches the paraphrase six months later that tries to sneak the same wrong fact back in. Reversible via `memory_restore`.
+- **Auto-scoped by project.** Memories written from inside a git checkout carry the repo URL. `memory_search` defaults to filtering by the caller's current repo; cross-project queries are explicit (`auto_scope=false`), not the default.
+- **A confirmation tier for claims about you.** `memory_write(category="user-inference")` always goes pending and requires confirmation before commit, regardless of global config — the user always gets the veto on misattribution. Project / infrastructure / tooling facts (the default `category="fact"`) commit immediately.
+- **A feedback loop.** `memory_record_use(ids, outcome)` after each response logs whether retrieved memories were `applied` / `ignored` / `contradicted` / `corrected`. `memory_health` reads the event log so dead weight surfaces automatically — the system tells you what to prune instead of the other way around.
+
+## Other MCP clients
+
+The plugin install above is the easy path for Claude Code. Equivalent setups exist for every other MCP client.
 
 ```sh
-# recommended — isolated install via uv tool
-uv tool install bettermemory
-
-# or pipx
-pipx install bettermemory
-
-# or pip into a venv
-pip install bettermemory
+# Pick one:
+uv tool install bettermemory       # recommended — isolated tool install via uv
+pipx install bettermemory          # or pipx
+pip install bettermemory           # or plain pip into a venv
 ```
 
-Python ≥ 3.11. From a clone (development): `uv pip install -e .` or `uv tool install .`.
+Python ≥ 3.11, ≤ 3.14. From a clone (development): `uv pip install -e .` or `uv tool install .`.
 
-Then register with your client:
+Then register with your client in one command:
 
 ```sh
 bettermemory init --client claude-code      # or: claude-desktop, cursor, continue, cline
 ```
 
-That idempotently writes the MCP server entry into the right config file for your client. Restart the client and ask:
+That idempotently merges the MCP server entry into the right config file. Re-running is safe — unchanged entries are no-ops, stale binary paths are repaired. Restart the client and ask: *"What memory tools do you have?"*
 
-> What memory tools do you have?
+If your client isn't in the supported list, run `bettermemory init` with no flags — it prints the canonical JSON snippet plus the common config locations with `[✓]` markers showing which already exist on your machine. Per-client gotchas (config paths, restart behavior, Code-Insiders / Codium / Cline variants, project-scoped vs user-scoped patching) live in [`docs/clients.md`](docs/clients.md); the long-form install reference is in [`docs/installation.md`](docs/installation.md).
 
-Per-client setup details (config paths, restart requirements, gotchas for Code-Insiders / Codium variants of Cline, project-scoped vs user-scoped patching) live in [`docs/clients.md`](docs/clients.md). If your client isn't in the supported list (or you'd rather copy by hand), run `bettermemory init` with no flags — it prints the canonical JSON snippet plus the common config locations, with `[✓]` markers showing which already exist on your machine.
+### How the policy lands at the system-prompt level
 
-The MCP `instructions` block ships the core opt-in retrieval policy at the system-prompt level on every compliant client (verified against Claude Code 2.1.x, where the block lands in the "MCP Server Instructions" section). Claude Code truncates that block at roughly 1.8KB, so the body is sized to fit comfortably under that ceiling. The longer-form policy (writing discipline, scope hygiene, confirmation-tier guidance) lives in [`docs/system_prompt.md`](docs/system_prompt.md) for clients that want it pasted into a project `CLAUDE.md`. The plugin install path bypasses all of that — its [`SKILL.md`](plugin/skills/bettermemory/SKILL.md) carries the long form as a Claude Code skill, which loads into the system prompt without the truncation cap.
+Every compliant MCP client surfaces the server's `instructions` block in its system prompt — verified empirically on Claude Code 2.1.x, where it appears under "MCP Server Instructions". The block carries the core opt-in retrieval contract: when to call `memory_search`, when not to, the transparency requirement, the verification obligation, the confirmation-tier policy. Claude Code truncates that block at ~1.8 KB, so the body is sized to fit comfortably under the cap with detail pushed into per-tool descriptions.
 
-See [`docs/installation.md`](docs/installation.md) for more detail.
+The Claude Code plugin path bypasses the truncation entirely: its [`SKILL.md`](plugin/skills/bettermemory/SKILL.md) carries the long-form policy as a system-prompt-level skill, no cap. For other clients that want the long form, [`docs/system_prompt.md`](docs/system_prompt.md) is the canonical copy-pasteable addendum (also exported as `bettermemory.SYSTEM_PROMPT_ADDENDUM` for programmatic access).
 
-## Coexistence with Claude Code's built-in memory feature
+## Coexistence with Claude Code's built-in memory
 
-Claude Code 2.x ships its own filesystem-backed memory feature that auto-injects stored facts into the system prompt. **bettermemory takes the opposite approach** — same physical pattern (markdown files on disk), opposite retrieval contract (model decides when to read them, not the harness). The two can coexist on a single machine, but they fragment recall: a fact stored via Claude Code's built-in memory is invisible to bettermemory's `memory_search`, and vice versa.
-
-The plugin's `SKILL.md` and the [`docs/system_prompt.md`](docs/system_prompt.md) addendum both lead with the same anchor: *"Persistent memory between sessions lives in this server's MCP tools. Don't fragment memory across ad-hoc files alongside."* That single sentence is what keeps the model from drifting back to the built-in memory directory mid-conversation. If you've adopted bettermemory, **install the plugin (or paste the addendum into your `CLAUDE.md`)** so the model has a clear "use only these tools" instruction.
+Claude Code 2.x ships its own filesystem-backed memory that auto-injects stored facts into the system prompt — the exact failure mode bettermemory exists to fix. The two can sit on disk together, but they fragment recall: a fact stored in one is invisible to the other's tools. If you adopt bettermemory, **install the plugin** (which lands the *"persistent memory between sessions lives in this server's MCP tools — don't fragment it across ad-hoc files alongside"* anchor in the system prompt) or paste the [addendum](docs/system_prompt.md) into your `CLAUDE.md`. That one sentence is what keeps the model from drifting back to the built-in memory directory mid-conversation.
 
 ## Tools
 
