@@ -9,122 +9,229 @@ spells out exactly what's stable.
 
 ## Unreleased
 
-Four additions plus the prior two fixes. The newest addition is a
-third staleness axis — repo-aware commit drift — that catches the
-failure mode where a memory's calendar verification looks fresh but
-the repo it describes has moved past `last_verified_at`. The other
-three additions (carried from the earlier Unreleased section) land
-in `memory_record_use` and `memory_health` and address the
-audit-after-fix workflow that left the `has_unresolved_contradiction`
-flag stuck in real use, plus add introspection to make the next
-mis-step self-diagnosable.
+(Empty — accumulate entries here between tags.)
+
+## 1.1.0 — 2026-05-09
+
+Three themes:
+
+1. **A third staleness axis on every retrieval** — repo-aware
+   commit-drift, the cwd-aware sibling of `verification` and
+   `path_drift`. Catches the failure mode where calendar verification
+   reads fresh but the project the memory describes has moved on.
+2. **Structural fixes for the audit-after-fix workflow** that left
+   `has_unresolved_contradiction` stuck — a new `corrected` outcome
+   on `memory_record_use`, plus a `resolution_timeline` on each stuck
+   row so the next mis-step is self-diagnosable.
+3. **Distribution** — a Claude Code plugin (`/plugin install
+   bettermemory@bettermemory`) that bundles the MCP server
+   registration with a system-prompt-level skill, plus install-friction
+   cleanup (canonical snippet shape, namespaced default entry name,
+   `--version` flag, `importlib.metadata`-sourced `__version__`,
+   trimmed MCP `instructions` block that fits under Claude Code's
+   truncation cap).
 
 ### Added
 
-- **`commit_drift` advisory on retrieval.** A repo-aware sibling of
-  `verification` and `path_drift`. When the caller is currently inside
-  a checkout of the same repo a memory was written from, `memory_show`
-  and `memory_search(expand_top=True)` attach a structured
-  `commit_drift` block: `status` is `"clean"` (zero commits since the
-  last `memory_verify`) or `"drift"` (the count is positive). On
-  `"drift"`, `recommendation` is the actionable string
-  ("N commits landed since the last memory_verify, spot-check…");
-  `"clean"` rows leave it null. Closes the gap where
-  `verification.status == "fresh"` only proves the calendar is fresh
-  while the repo can sit several commits ahead — the calendar lag
-  doesn't catch up by itself, so a structural signal in the response
-  is the only way the consumer notices without doing timestamp
-  arithmetic. Absent (the field is null on `memory_show`, omitted on
-  search hits) when the caller isn't in any repo, is in a different
-  repo, or the memory has never been verified — silence beats a noisy
-  "unknown" branch every consumer would have to filter.
+#### Retrieval & verification
 
-  Implemented as `verify.compute_commit_drift` plus two new helpers in
-  `origin.py`: `commits_since(cwd, since)` (per-memory cost) and
+- **`commit_drift` advisory on retrieval.** Repo-aware sibling of
+  `verification` and `path_drift`. When the caller is in a checkout of
+  a memory's origin repo, `memory_show` and
+  `memory_search(expand_top=True)` attach a `commit_drift` block:
+  `status` is `"clean"` (zero commits since the last `memory_verify`)
+  or `"drift"` (the count is positive). On `"drift"`, `recommendation`
+  is an actionable string. Absent on the response when the caller
+  isn't in any repo, is in a different repo, or the memory was never
+  verified — silence beats a noisy "unknown" branch every consumer
+  would have to filter. `memory_search` hits also carry a cheap
+  per-row `commit_drift_count` integer for triage without an
+  `expand_top` round-trip. Closes the gap where
+  `verification.status == "fresh"` only proves calendar freshness
+  while the repo can sit several commits ahead. Implemented as
+  `verify.compute_commit_drift` plus two helpers in `origin.py`:
+  `commits_since(cwd, since)` (per-memory cost) and
   `commit_author_timestamps(cwd)` (one git call + bisect, used by the
-  health rollup so the cost is independent of memory count). The
-  retrieval surface threads `caller_origin` from the existing
-  `capture_origin()` site that already drives `auto_scope`.
+  health rollup so the cost is independent of memory count).
 
-- **`commit_drift_debt` rollup on `memory_health`.** Curation pivot
-  for the per-row signal above. When the server is running inside a
-  repo whose memories live in this store, `memory_health` populates
-  a new `commit_drift_debt` field with the rows whose verification
-  anchor sits behind HEAD, sorted most-commits-ahead first.
-  `current_repo` and `current_cwd` are echoed back so a consumer can
-  see which repo the rollup is anchored to. Capped inline row list
-  (top 20) plus an uncapped `total_drifted` count, matching the
-  `verification_debt` shape. Null on the report when the server isn't
-  in a repo, when git was unreachable, or when no memory's origin
-  matches the current repo. Distinct from `verification_debt`: that
-  bucket asks "how long since I checked?", this one asks "did the
-  world I was checking against move?" — a row can land in
-  `commit_drift_debt.rows` while still counting toward
-  `verification_debt.fresh_count` because the calendar window hasn't
-  elapsed. Threaded a new `caller_origin` parameter through
-  `compute_health` and `report_for_directory`; both the MCP tool and
-  the `bettermemory health` CLI pass `capture_origin()`'s output.
+#### Curation
+
+- **`commit_drift_debt` rollup on `memory_health`.** When the server
+  is in a repo whose memories live in this store, surfaces rows whose
+  verification anchor sits behind HEAD, sorted most-commits-ahead
+  first. Capped row list (top 20) plus an uncapped `total_drifted`
+  count, matching the `verification_debt` shape. `current_repo` and
+  `current_cwd` are echoed back. Null when the server isn't in a
+  repo, git is unreachable, or no memory's origin matches the current
+  repo. Distinct from `verification_debt`: that bucket asks "how long
+  since I checked?", this one asks "did the world I was checking
+  against move?".
+
+- **`verification_debt` rollup on `memory_health`.** Partitions active
+  memories into `never_verified` / `stale` / `fresh` against the
+  configured `behavior.verification_stale_days` threshold. Capped row
+  lists (top 20, oldest-first) for inline display, plus uncapped
+  totals so a curation pass can tell "5 stale" from "500 stale"
+  without enumerating. The three counts always sum to
+  `total_active_memories`. Surfaced in both the JSON tool output and
+  the `bettermemory health` CLI's text rendering.
 
 - **`corrected` outcome on `memory_record_use`.** A fourth value
-  alongside `applied` / `ignored` / `contradicted`, distinct in
-  meaning rather than a flag tweak. Use `corrected` for the
+  alongside `applied` / `ignored` / `contradicted`, for the
   noticed-and-fixed-inline workflow: the caller has already run
   `memory_update` and/or `memory_verify` in the same turn, and this
-  event is the audit-trail entry. Audit-only — `corrected` increments
-  a new `corrected_count` on `MemoryStats` but never raises the
+  event is the audit-trail entry. Audit-only — increments a new
+  `corrected_count` on `MemoryStats` but never raises the
   `has_unresolved_contradiction` flag, so the previous foot-gun
-  ("logged contradicted after the fix → flag stuck because event
-  ts > resolution ts") is gone structurally. Use `contradicted` only
-  when the conflict is genuinely unresolved; switch to `corrected`
-  once you've fixed it.
+  (`contradicted` logged *after* the fix → flag stuck because the
+  event timestamp landed later than the resolution) is gone
+  structurally.
 
 - **`resolution_timeline` on each `memory_health.contradicted` row.**
-  Chronological list of the resolution-relevant events for that
-  memory: every `update`, `verify`, `contradicted`, and `corrected`
-  event from the log, in order, with their notes. Lets a model
-  self-diagnose a stuck flag as out-of-order audit logging
-  (resolution events present but predate the contradicted event)
-  vs. genuinely unresolved (no resolution events after the
-  contradiction) without grepping `.events.jsonl`. Cheap — only
-  populated for rows actually in the contradicted bucket; other rows
-  keep an empty list.
+  Chronological list of `update` / `verify` / `contradicted` /
+  `corrected` events for the memory, with their notes. Lets the model
+  self-diagnose a stuck flag as out-of-order audit logging (resolution
+  events present but predating the contradicted event) vs. genuinely
+  unresolved (no resolution events after the contradiction) without
+  grepping `.events.jsonl`. Only populated for rows in the
+  contradicted bucket; other rows keep an empty list.
 
-- **`verification_debt` rollup on `memory_health`.** Partitions
-  active memories into `never_verified` / `stale` / `fresh` against
-  the configured `behavior.verification_stale_days` threshold.
-  Capped row lists (top 20, oldest-first) for inline display, plus
-  uncapped totals so a curation pass can tell "5 stale" from "500
-  stale" without enumerating. The three counts always sum to
-  `total_active_memories`. Surfaced in both the JSON tool output
-  and the `bettermemory health` CLI's text rendering. Threaded a
-  new `verification_stale_days` parameter through `compute_health`
-  and `report_for_directory`; the server tool reads
-  `config.behavior.verification_stale_days` for the default.
+#### Writing
 
-### Fixed (carried forward from the earlier Unreleased section)
+- **`category="user-inference"` structural confirmation tier on
+  `memory_write`.** A second value alongside the default
+  `category="fact"`. When the caller passes `"user-inference"` the
+  write goes pending and returns
+  `{status:"pending", pending_id, pending_reason:"user-inference"}`
+  instead of committing — the consumer is expected to ask the user
+  conversationally before calling `memory_write_confirm(pending_id)`
+  (or `memory_write_cancel(pending_id)` if the user declines). Fires
+  regardless of the global `behavior.require_write_confirmation`
+  config: misattribution sticks, so the user always gets the veto on
+  claims about themselves. Project / infra / reference / tooling
+  facts continue to commit immediately under the default category.
+
+#### CLI
+
+- **`bettermemory export`** dumps the active memory store (and
+  tombstones, by default) as a single self-describing JSON document.
+  Round-trippable; intended for backup, machine-to-machine migration,
+  or feeding an external indexer. Writes to stdout unless `--output`
+  is given.
+
+- **`bettermemory --version`** prints `bettermemory <version>` and
+  exits 0. The version is sourced from `importlib.metadata`, so it
+  matches whatever `pip show bettermemory` reports — single source of
+  truth, no drift.
+
+#### Distribution
+
+- **Claude Code plugin** (`/plugin marketplace add 0Mattias/bettermemory`
+  → `/plugin install bettermemory@bettermemory`). The repo doubles as
+  a plugin marketplace; `.claude-plugin/marketplace.json` at the root
+  lists `plugin/` as the plugin source. The plugin bundles
+  `plugin/.mcp.json` (registers the MCP server via `uvx bettermemory`,
+  so users only need `uv` on PATH) plus
+  `plugin/skills/bettermemory/SKILL.md` (the long-form policy as a
+  Claude Code skill, which loads into the system prompt without the
+  truncation cap that limits the MCP `instructions` block). Manual
+  install (`bettermemory init --client claude-code`) remains supported
+  and unchanged in shape.
+
+- **Public-repo hygiene files**: `SECURITY.md` (threat model + private
+  disclosure flow + supported-versions matrix), `CODE_OF_CONDUCT.md`
+  (Contributor Covenant 2.1), `.github/ISSUE_TEMPLATE/` (install
+  failure, bug report, feature request — install failure asks for
+  `bettermemory doctor --json` output up front),
+  `.github/pull_request_template.md`.
+
+#### Tests
+
+- **CLI smoke tests** (`tests/test_cli_smoke.py`). 17 tests pinning
+  the argparse glue: `--help`, `--version`, every subcommand's
+  `--help`, in-process invocations of `health` / `doctor` / `init` /
+  unknown-subcommand exit code, plus two subprocess tests that pin
+  the `python -m bettermemory` packaging path. Lifts `server.py`
+  coverage from 65 % → 74 %.
+
+- **Plugin manifest tests** (`tests/test_plugin.py`). Cheap validation
+  guards: every plugin file exists, every JSON manifest parses,
+  `marketplace.json` lists the plugin under the expected source path,
+  the plugin manifest carries the conventional fields,
+  `plugin/.mcp.json` registers the server under the canonical
+  `bettermemory` key, the `SKILL.md` frontmatter has a non-trivial
+  description and references the load-bearing tools. Plus
+  version-sync tests that catch the case where `pyproject.toml`,
+  `plugin/.claude-plugin/plugin.json`, and
+  `.claude-plugin/marketplace.json` drift apart.
+
+- **Version + instructions-budget regression tests**
+  (`tests/test_version.py`, two checks in `tests/test_server.py`).
+  Pin `bettermemory.__version__ == importlib.metadata.version("bettermemory")`,
+  pin the `--version` output prefix, pin the MCP `instructions` body
+  length under Claude Code's ~1.8KB truncation budget with both an
+  upper bound (regrowth catch) and a lower bound (accidental wipe
+  catch), pin a small set of load-bearing phrases in the body so a
+  trimming pass that drops one shows up in CI.
+
+### Changed
+
+- **Default MCP entry name renamed `memory` → `bettermemory`.** The
+  1.0 default was generic enough to collide with other MCP servers
+  and with Claude Code's evolving built-in memory features; the new
+  default is unambiguous. `bettermemory init --client X` detects a
+  legacy `memory` entry whose `command` resolves to the same binary
+  and removes it as part of the patch — upgrading users don't end up
+  with the server registered twice. Migration is binary-equality
+  gated, so a `memory` entry pointing at a different memory MCP
+  server is left alone. The `--name` flag still overrides the default
+  if you want the short name back.
+
+- **MCP snippet shape includes `type: "stdio"` and `env: {}`.** Both
+  optional in the MCP spec but match what `claude mcp add` and Claude
+  Code 2.x write — the snippet now looks the same as the user's
+  hand-added entries instead of looking deliberately minimal.
+
+- **`bettermemory.__version__` reads from `importlib.metadata`.** The
+  prior 0.x-era hard-coded literal had drifted past 1.0; switching to
+  the metadata source makes drift structurally impossible. Falls back
+  to `"0+unknown"` only when the package is imported from a source
+  tree without an install (rare); a regression test pins the equality
+  to `pip show`'s reported version.
+
+- **MCP `instructions` block trimmed to ~1.6KB.** Claude Code 2.1.x
+  truncates the block at roughly 1.8KB and renders an ellipsis
+  mid-sentence; the previous body was over the cap and lost the
+  writing-discipline tail to truncation. The trimmed body keeps the
+  load-bearing parts (opt-in retrieval, when to / when not to call
+  `memory_search`, the session-start hint, the transparency
+  requirement, the verification rule) and pushes structural detail
+  down to the individual tool descriptions, which are not subject to
+  the same truncation. The longer-form policy lives in
+  `docs/system_prompt.md` and in the plugin's `SKILL.md`.
+
+### Fixed
 
 - **`memory_verify` now resolves an unresolved contradiction.** Before
   this, only `memory_update` (which bumps `updated`) cleared the
   `has_unresolved_contradiction` flag. That left a sticky-flag failure
-  mode: when a session detects a contradiction, fixes the body in
-  place, calls `memory_verify` to re-confirm, and *then* logs the
-  `record_use(contradicted)` event after the fact, the event's
-  timestamp lands later than the verify, so the flag never clears.
-  The new rule treats either `updated` *or* `last_verified_at` newer
-  than `last_contradicted_at` as resolution. A user with a sticky
-  flag can clear it by re-running `memory_verify` after the
-  contradiction event. The new `corrected` outcome above is the
-  forward-looking fix for the same workflow — this rule remains as
-  the cleanup path for legacy stuck flags.
+  mode: a session detects a contradiction, fixes the body, calls
+  `memory_verify`, and *then* logs `record_use(contradicted)` after
+  the fact — the event's timestamp lands later than the verify, so
+  the flag never clears. The new rule treats either `updated` *or*
+  `last_verified_at` newer than `last_contradicted_at` as resolution.
+  Legacy stuck flags clear by re-running `memory_verify` after the
+  contradiction event. The new `corrected` outcome (above) is the
+  forward-looking fix for the same workflow.
 
 - **`rare_scopes` only flags singletons that look like typos.** The
-  previous heuristic flagged every n=1 scope, which produced too many
-  false positives in practice — narrow legitimate scopes like
-  `career` or `personal-context` got reported as suspect. The bucket
-  now requires the singleton to be within Levenshtein distance 2 of
-  another scope (`projct:foo` against `projects:foo`, `tool` against
-  `tools`, `bug`/`bugs` pairs). Standalone narrow singletons no
-  longer trip the bucket. Implemented via a new module-private
+  previous heuristic flagged every `n=1` scope, which produced too
+  many false positives — narrow legitimate scopes like `career` or
+  `personal-context` got reported as suspect. The bucket now requires
+  the singleton to be within Levenshtein distance 2 of another scope
+  (`projct:foo` against `projects:foo`, `tool` against `tools`,
+  `bug` / `bugs` pairs). Standalone narrow singletons no longer trip
+  the bucket. Implemented via a new module-private
   `_edit_distance_within(a, b, max_dist)` helper in `health.py`.
 
 ## 1.0.0 — 2026-05-08
