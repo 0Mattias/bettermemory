@@ -1,0 +1,21 @@
+{
+  "name": "bettermemory",
+  "owner": {
+    "name": "Mattias Rask",
+    "url": "https://github.com/0Mattias"
+  },
+  "metadata": {
+    "description": "Memory MCP for Claude Code — retrieval-on-demand, not auto-injected context.",
+    "version": "1.1.0"
+  },
+  "plugins": [
+    {
+      "name": "bettermemory",
+      "source": "./plugin",
+      "description": "Local file-backed memory MCP server. Memories live as plain markdown + YAML in ~/.claude-memory/. The model retrieves them on demand via memory_search; the default is to NOT retrieve, so unrelated context never leaks across conversations. Includes a memory-discipline skill that lands the policy in the system prompt.",
+      "category": "memory",
+      "tags": ["memory", "mcp", "retrieval"],
+      "homepage": "https://github.com/0Mattias/bettermemory"
+    }
+  ]
+}

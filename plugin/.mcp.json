@@ -1,0 +1,10 @@
+{
+  "mcpServers": {
+    "bettermemory": {
+      "type": "stdio",
+      "command": "uvx",
+      "args": ["bettermemory"],
+      "env": {}
+    }
+  }
+}
