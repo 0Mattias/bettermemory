@@ -13,22 +13,10 @@ jobs:
   test:
     name: test (${{ matrix.os }}, py${{ matrix.python-version }})
     runs-on: ${{ matrix.os }}
-    # Experimental jobs (currently py3.15) report failures in the matrix
-    # view but don't block the overall CI status. The pre-release ecosystem
-    # is the bottleneck, not us — see the python-version comment below.
+    # `experimental` is wired up so we can re-add pre-release Pythons
+    # later without having to rebuild the workflow scaffolding around
+    # `continue-on-error`. None of the current entries set it.
     continue-on-error: ${{ matrix.experimental || false }}
-    env:
-      # PyO3 0.27.x (the version pydantic-core / rpds-py currently ship)
-      # refuses to build against Pythons newer than 3.14. On py3.15 that
-      # means `uv sync` falls back to a source build and dies. The
-      # PyO3-recommended workaround for newer-than-supported Pythons is
-      # to set this env var, which routes the build to the stable ABI
-      # (abi3) instead of the version-specific ABI. It's a no-op on
-      # Pythons PyO3 supports natively (3.11-3.14), so we set it
-      # unconditionally rather than gating on matrix.python-version.
-      # Drop this once pydantic-core / rpds-py ship releases built on
-      # PyO3 ≥ 0.28 with prebuilt 3.15 wheels.
-      PYO3_USE_ABI3_FORWARD_COMPATIBILITY: "1"
     strategy:
       fail-fast: false
       matrix:
@@ -36,14 +24,21 @@ jobs:
         # cross + extra includes) so each slot can carry an `experimental`
         # flag without GitHub Actions' awkward matrix-overlay rules.
         #
-        # 3.15 is still pre-release (Oct 2026 final). uv resolves the bare
-        # "3.15" spec to the latest python-build-standalone build, which
-        # tracks the upstream RCs. With the PYO3_USE_ABI3_FORWARD_COMPATIBILITY
-        # env var above, pydantic-core / rpds-py source builds against 3.15
-        # succeed via the stable ABI. `experimental: true` is kept as a
-        # safety net for the case where some other transitive dep regresses
-        # against pre-release Python; drop it once the workaround has been
-        # green for a few weeks across all three OSes.
+        # py3.15 is intentionally absent. Two failure modes blocked it:
+        #   - pydantic-core / rpds-py ship with PyO3 0.27.x, which caps
+        #     at Python 3.14. uv falls back to a source build and the
+        #     compile rejects 3.15.
+        #   - PYO3_USE_ABI3_FORWARD_COMPATIBILITY=1 (PyO3's documented
+        #     workaround) pulls in PyO3 0.28, but pydantic-core 2.46.4's
+        #     source uses #[pyclass(extends=PyTzInfo)] which abi3 mode
+        #     doesn't allow ("PyO3 does not support subclassing native
+        #     types").
+        # Both directions need an upstream pydantic-core release built
+        # on PyO3 ≥ 0.28 without abi3-incompatible subclassing. Until
+        # that ships, py3.15 has no path to passing — there's nothing
+        # we can do from here, so we don't pretend by carrying a red
+        # experimental slot. Re-add the entries once a compatible
+        # pydantic-core release lands.
         #
         # Platform coverage rationale (why mac + win at all):
         #   - platformdirs returns different paths per OS
@@ -57,11 +52,8 @@ jobs:
           - {os: ubuntu-latest,  python-version: "3.12"}
           - {os: ubuntu-latest,  python-version: "3.13"}
           - {os: ubuntu-latest,  python-version: "3.14"}
-          - {os: ubuntu-latest,  python-version: "3.15", experimental: true}
           - {os: macos-latest,   python-version: "3.14"}
-          - {os: macos-latest,   python-version: "3.15", experimental: true}
           - {os: windows-latest, python-version: "3.14"}
-          - {os: windows-latest, python-version: "3.15", experimental: true}
 
     steps:
       - uses: actions/checkout@v6
