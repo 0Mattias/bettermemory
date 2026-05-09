@@ -1,6 +1,6 @@
 """Staleness signals for retrieved memories.
 
-Two concepts live here, both surfaced on retrieval so a consuming model
+Three concepts live here, all surfaced on retrieval so a consuming model
 can self-triage before relying on stored content:
 
 1. **Path drift** (`detect_path_drift`, `PathDriftReport`). A memory body
@@ -18,13 +18,24 @@ can self-triage before relying on stored content:
    the umbrella signal — useful for facts whose claims aren't filesystem
    paths (commit hashes, version numbers, tool lists, configurations).
 
-Both are advisory. They never block; they shape a structured payload that
-the retrieval surface (memory_show, memory_search, memory_list) attaches
-to its responses, so the model receives a recommendation as a first-class
-field rather than having to do timestamp arithmetic on a raw datetime.
-The cost of a false positive (a small extra prompt asking the model to
-spot-check) is much lower than the cost of a false negative (the model
-treats a stale fact as ground truth).
+3. **Commit drift** (`compute_commit_drift`, `CommitDriftStatus`). The
+   calendar staleness in (2) doesn't notice when a project moves faster
+   than the user re-verifies. A memory whose `last_verified_at` is "two
+   hours ago" reads as fresh while the repo it describes can sit six
+   commits ahead of HEAD. When the caller is currently inside a checkout
+   of the same repo the memory was written from, we count commits in
+   that repo since `last_verified_at` and surface a `commit_drift`
+   advisory alongside `verification`. Cwd-aware by design: if the user
+   is not in the matching project, the signal stays silent rather than
+   guessing about a remote we have no checkout for.
+
+All three are advisory. They never block; they shape a structured payload
+that the retrieval surface (memory_show, memory_search, memory_list)
+attaches to its responses, so the model receives a recommendation as a
+first-class field rather than having to do timestamp arithmetic on a raw
+datetime. The cost of a false positive (a small extra prompt asking the
+model to spot-check) is much lower than the cost of a false negative (the
+model treats a stale fact as ground truth).
 
 Detection coverage for path drift is deliberately conservative — better
 to miss a real path than chase ghosts:
@@ -53,6 +64,8 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
+
+from .origin import Origin, commits_since, repos_match
 
 
 # ---------------------------------------------------------------------------
@@ -429,10 +442,123 @@ def compute_verification_status(
     )
 
 
+# ---------------------------------------------------------------------------
+# Commit drift — repo-aware staleness
+# ---------------------------------------------------------------------------
+#
+# Calendar verification staleness ((2) above) misses the case the project
+# was actually built to catch: a memory describes the state of the repo
+# the user is currently working on, the user just rewrote half of it, and
+# the calendar still says "fresh" because they verified the row two hours
+# ago. The repo itself is the source of truth — if commits landed since
+# `last_verified_at`, the verification verdict is lagging reality even
+# when the calendar disagrees.
+#
+# We only emit this signal when the caller is *currently* inside a
+# checkout of the memory's origin repo. Trying to be helpful when the
+# user is somewhere else (mapping a remote URL to a local clone via some
+# global registry) overreaches into ground we can't trust. A memory might
+# describe a repo the user has cloned in three places; guessing which is
+# canonical is worse than staying quiet. Silence is the correct default.
+
+
+@dataclass(frozen=True)
+class CommitDriftStatus:
+    """Repo-aware staleness verdict.
+
+    `status` is one of:
+
+    - ``"clean"``: zero commits authored after `last_verified_at`. The
+      project hasn't moved; the existing verification still reflects the
+      repo state the caller is sitting in.
+    - ``"drift"``: at least one commit authored after `last_verified_at`.
+      The calendar `verification.status` may say "fresh," but the repo
+      has moved on. Spot-check before relying on the body.
+
+    `commits_since_verify` is the integer count (always 0 for ``"clean"``,
+    positive for ``"drift"``). `recommendation` is a short actionable
+    string for the model on ``"drift"``, None on ``"clean"``.
+    """
+
+    status: str
+    commits_since_verify: int
+    recommendation: str | None
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "status": self.status,
+            "commits_since_verify": self.commits_since_verify,
+            "recommendation": self.recommendation,
+        }
+
+
+def _drift_recommendation(count: int) -> str:
+    plural = "" if count == 1 else "s"
+    return (
+        f"{count} commit{plural} landed in this repo since the last "
+        "memory_verify — calendar verification looks fresh but the "
+        "project has moved. Spot-check at least one verifiable claim "
+        "against the current HEAD; call memory_verify(id, note=...) "
+        "if it still holds, or memory_update first if it has drifted."
+    )
+
+
+def compute_commit_drift(
+    last_verified_at: datetime | None,
+    memory_origin_repo: str | None,
+    *,
+    caller_origin: Origin | None,
+) -> CommitDriftStatus | None:
+    """Return a commit-drift verdict, or None when the signal isn't useful.
+
+    The signal is emitted only when:
+
+    - the memory has been verified at some point (`last_verified_at` is
+      not None — without an anchor we have nothing to count from, and
+      `verification.status == "never"` already maxes the alarm);
+    - the memory carries an `origin.repo` (no remote, no project
+      identity);
+    - the caller is currently inside a repo (`caller_origin.cwd` and
+      `caller_origin.repo` both set);
+    - the caller's repo matches the memory's `origin.repo` via
+      `repos_match` (host/owner/name normalisation, not raw URL);
+    - `commits_since` returned a parseable integer (git was reachable).
+
+    Otherwise None — emit nothing rather than a noisy "unknown" branch
+    every consumer would have to filter. This mirrors `path_drift`'s
+    pattern: advisory signals stay invisible when they have nothing
+    to advise.
+    """
+    if last_verified_at is None:
+        return None
+    if memory_origin_repo is None or caller_origin is None:
+        return None
+    if caller_origin.cwd is None or caller_origin.repo is None:
+        return None
+    if not repos_match(memory_origin_repo, caller_origin.repo):
+        return None
+    count = commits_since(Path(caller_origin.cwd), last_verified_at)
+    if count is None:
+        return None
+    if count == 0:
+        return CommitDriftStatus(
+            status="clean",
+            commits_since_verify=0,
+            recommendation=None,
+        )
+    return CommitDriftStatus(
+        status="drift",
+        commits_since_verify=count,
+        recommendation=_drift_recommendation(count),
+    )
+
+
 __all__ = [
     "DEFAULT_VERIFICATION_STALE_DAYS",
+    "CommitDriftStatus",
     "PathDriftReport",
     "VerificationStatus",
+    "compute_commit_drift",
     "compute_verification_status",
     "detect_path_drift",
 ]

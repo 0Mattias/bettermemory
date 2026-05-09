@@ -51,7 +51,11 @@ from .store import (
     Store,
     TombstonedError,
 )
-from .verify import compute_verification_status, detect_path_drift
+from .verify import (
+    compute_commit_drift,
+    compute_verification_status,
+    detect_path_drift,
+)
 
 
 log = logging.getLogger("bettermemory")
@@ -266,7 +270,13 @@ def _register_tools(
             'when its relevance is "high" — collapses the common '
             "search-then-show round trip into one call, and surfaces the "
             "full `path_drift` report (with the actual missing paths) on "
-            "the expanded hit. Skip it when you only need to triage. "
+            "the expanded hit. The expanded hit also carries a "
+            "`commit_drift` block (`status: 'clean' | 'drift'` plus a "
+            "`commits_since_verify` count) when the caller's current "
+            "repo matches the memory's origin — non-zero is the cue to "
+            "spot-check even when `verification.status` reads fresh, "
+            "because the project has moved since the last memory_verify. "
+            "Skip `expand_top` when you only need to triage. "
             "By default (`auto_scope=True`), results are filtered to "
             "memories written from the current repository — cross-project "
             "memories are excluded. Memories written outside any repo "
@@ -299,13 +309,16 @@ def _register_tools(
         if scopes:
             scopes = [validate_scope(s) for s in scopes]
 
-        # Auto-scope: capture the caller's current origin so we can drop
-        # memories from a different repo. None when the caller isn't in a
-        # repo (auto-scope is meaningless without a project boundary).
-        repo_filter: str | None = None
-        if auto_scope:
-            current_origin = capture_origin()
-            repo_filter = current_origin.repo
+        # Capture caller origin once: it serves both the auto-scope filter
+        # (drop memories from a different repo) and the commit_drift signal
+        # on an expanded top hit (count repo-local commits since the last
+        # verify of the matching memory). When the caller isn't in a repo,
+        # `current_origin.repo` is None — auto-scope becomes a no-op and
+        # commit_drift stays silent. Calling capture_origin once keeps the
+        # subprocess cost paid in one place and makes the two consumers
+        # agree on what "current repo" means for this request.
+        current_origin = capture_origin()
+        repo_filter: str | None = current_origin.repo if auto_scope else None
 
         memories = store.load_all()
         hits = run_search(
@@ -332,9 +345,13 @@ def _register_tools(
         # doesn't get hosed with full bodies it didn't really need.
         # Path-drift runs against the expanded body — if we're already
         # paying the load cost, surfacing drift here saves a memory_show
-        # round-trip when the model needs to act on it.
+        # round-trip when the model needs to act on it. Commit-drift is
+        # bundled here too: same logic, same one-call-per-search budget,
+        # only emitted when the caller's repo matches the memory's origin.
         expanded_id: str | None = None
         expanded_drift_missing = 0
+        expanded_commit_drift_status: str | None = None
+        expanded_commits_since_verify: int | None = None
         if expand_top and out and out[0]["relevance"] == "high":
             try:
                 memory = store.load_one(hits[0].id)
@@ -348,6 +365,15 @@ def _register_tools(
                 if drift.has_drift:
                     out[0]["path_drift"] = drift.to_dict()
                     expanded_drift_missing = len(drift.missing)
+                commit_drift = compute_commit_drift(
+                    memory.last_verified_at,
+                    memory.origin.repo if memory.origin else None,
+                    caller_origin=current_origin,
+                )
+                if commit_drift is not None:
+                    out[0]["commit_drift"] = commit_drift.to_dict()
+                    expanded_commit_drift_status = commit_drift.status
+                    expanded_commits_since_verify = commit_drift.commits_since_verify
                 expanded_id = memory.id
 
         recorder.record(
@@ -360,6 +386,8 @@ def _register_tools(
             expand_top=expand_top,
             expanded_id=expanded_id,
             expanded_drift_missing=expanded_drift_missing,
+            expanded_commit_drift_status=expanded_commit_drift_status,
+            expanded_commits_since_verify=expanded_commits_since_verify,
             auto_scope=auto_scope,
             repo_filter=repo_filter,
         )
@@ -390,7 +418,16 @@ def _register_tools(
             "via memory_update first — memory_update resets "
             "last_verified_at to null because the prior verification "
             "was for prose that no longer exists, so call memory_verify "
-            "again after the corrected version to close the loop."
+            "again after the corrected version to close the loop. "
+            "When the caller is currently inside a checkout of the "
+            "same repo this memory was written from, the response also "
+            "carries a `commit_drift` block: "
+            "`status: 'clean' | 'drift'` plus a `commits_since_verify` "
+            "count. `verification.status == 'fresh'` only proves the "
+            "calendar is fresh; a non-zero commit_drift is the cue to "
+            "spot-check anyway because the project has moved since the "
+            "last memory_verify. Absent when the caller is not in the "
+            "matching repo or the memory has never been verified."
         ),
     )
     async def memory_show(id: str) -> dict[str, Any]:
@@ -418,12 +455,30 @@ def _register_tools(
             now=utcnow(),
             stale_after_days=config.behavior.verification_stale_days,
         )
+        # Commit-drift is the cwd-aware sibling of verification: when the
+        # caller is currently inside a checkout of the same repo the
+        # memory came from, count commits authored since the last verify.
+        # Stays null when the caller isn't in the matching repo or the
+        # memory has no anchor to count from — emitting an "unknown"
+        # branch every consumer would have to filter is worse than
+        # silence, mirroring path_drift's null-when-clean contract.
+        commit_drift = compute_commit_drift(
+            memory.last_verified_at,
+            memory.origin.repo if memory.origin else None,
+            caller_origin=capture_origin(),
+        )
         recorder.record(
             "show",
             id=memory.id,
             path_drift_checked=len(drift.checked),
             path_drift_missing=len(drift.missing),
             verification_status=verification.status,
+            commit_drift_status=(
+                commit_drift.status if commit_drift is not None else None
+            ),
+            commits_since_verify=(
+                commit_drift.commits_since_verify if commit_drift is not None else None
+            ),
         )
         return {
             "id": memory.id,
@@ -437,6 +492,9 @@ def _register_tools(
             "body": memory.body,
             "origin": _origin_to_dict(memory.origin),
             "path_drift": drift.to_dict() if drift.has_drift else None,
+            "commit_drift": (
+                commit_drift.to_dict() if commit_drift is not None else None
+            ),
         }
 
     # ---- memory_write ----------------------------------------------------
@@ -1058,7 +1116,13 @@ def _register_tools(
             "comes from config.toml — typically 3 — to keep the bucket "
             "out of one-off-acknowledgement noise). Per-row stats "
             "include `last_verified_at` so a curation pass can flag "
-            "rows that haven't been spot-checked recently."
+            "rows that haven't been spot-checked recently. The cwd-aware "
+            "`commit_drift_debt` rollup is populated when the server is "
+            "running inside a repo whose memories live in this store: "
+            "rows are memories whose origin matches the current repo "
+            "and whose `last_verified_at` precedes commits in the "
+            "current HEAD, sorted most-commits-ahead first. Null when "
+            "the server isn't in a repo or no anchored memories exist."
         ),
     )
     async def memory_health(
@@ -1082,6 +1146,10 @@ def _register_tools(
             heavily_used_top_k=int(heavily_used_top_k),
             heavily_used_min_applied=threshold,
             verification_stale_days=config.behavior.verification_stale_days,
+            # Pass caller_origin so the cwd-aware `commit_drift_debt`
+            # rollup populates when the server is running inside a repo
+            # whose memories live in this store.
+            caller_origin=capture_origin(),
         )
         return report.to_dict()
 
@@ -2034,6 +2102,10 @@ def _cli_health(
         heavily_used_top_k=top_k,
         heavily_used_min_applied=threshold,
         verification_stale_days=config.behavior.verification_stale_days,
+        # Capture caller origin so the CLI rendering picks up the
+        # commit-drift bucket when run from inside a project whose
+        # memories live in this store.
+        caller_origin=capture_origin(),
     )
     sys.stdout.write(render_json(report) if json_out else render_text(report))
 

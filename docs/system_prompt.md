@@ -104,9 +104,9 @@ tidy. The event log feeds memory_health, which surfaces dead-weight
 memories (retrieved often, never applied) and unresolved contradictions.
 
 Verify before relying on retrieved memory. Memory is a snapshot — it does
-not auto-refresh. Every retrieval carries two structured staleness signals;
-both are advisory, not verdicts, but both are first-class fields you must
-branch on rather than skim past.
+not auto-refresh. Every retrieval carries up to three structured staleness
+signals; all are advisory, not verdicts, but each is a first-class field
+you must branch on rather than skim past.
 
 1. `verification` block (on every memory_show, memory_search hit, and
    memory_list row):
@@ -149,6 +149,30 @@ branch on rather than skim past.
      temporary mount or a path on a different machine — advisory, not a
      verdict — but a drifted path on a never-verified memory is the
      highest-risk profile.
+
+3. `commit_drift` (repo-aware staleness):
+
+   - Surfaced on memory_show and on the expanded hit of
+     memory_search(expand_top=True) when the caller is currently inside
+     a checkout of the same repo the memory was written from. Absent in
+     all other cases — including caller not in any repo, caller in a
+     different repo, and memory never verified.
+   - Shape: `commit_drift.status` is "clean" (zero commits since the
+     last memory_verify) or "drift" (one or more commits landed since).
+     `commit_drift.commits_since_verify` is the count;
+     `commit_drift.recommendation` is null on "clean", actionable on
+     "drift".
+   - The load-bearing case: `verification.status == "fresh"` only
+     proves the calendar is fresh. A non-zero commit_drift is the cue
+     to spot-check anyway — the project has moved since the last
+     memory_verify and the calendar lag will not catch up. Treat it
+     the same as a "stale" verification verdict: spot-check, then
+     memory_verify (if claims still hold) or memory_update +
+     memory_verify (if a claim has drifted).
+   - memory_health rolls these per-row signals into a `commit_drift_debt`
+     bucket so a curation pass can fix many at once. The rollup is
+     populated only when the server is in a repo whose memories live
+     in this store; null otherwise.
 
 Writing and updating memory:
 

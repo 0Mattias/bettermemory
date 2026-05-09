@@ -13,17 +13,61 @@ ask to spot-check.
 
 from __future__ import annotations
 
+import os
+import shutil
+import subprocess
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from unittest.mock import patch
 
+import pytest
+
+from bettermemory.origin import Origin
 from bettermemory.verify import (
     DEFAULT_VERIFICATION_STALE_DAYS,
+    CommitDriftStatus,
     PathDriftReport,
     VerificationStatus,
+    compute_commit_drift,
     compute_verification_status,
     detect_path_drift,
 )
+
+
+_GIT_AVAILABLE = shutil.which("git") is not None
+
+
+def _init_repo_with_remote(path: Path, *, remote: str) -> None:
+    subprocess.run(
+        ["git", "init", "--initial-branch=main"],
+        cwd=path,
+        check=True,
+        capture_output=True,
+    )
+    subprocess.run(
+        ["git", "remote", "add", "origin", remote],
+        cwd=path,
+        check=True,
+        capture_output=True,
+    )
+
+
+def _commit_at(path: Path, message: str, *, when: datetime) -> None:
+    iso = when.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S+00:00")
+    env = os.environ.copy()
+    env["GIT_AUTHOR_DATE"] = iso
+    env["GIT_COMMITTER_DATE"] = iso
+    env["GIT_AUTHOR_NAME"] = "Test"
+    env["GIT_AUTHOR_EMAIL"] = "test@example.com"
+    env["GIT_COMMITTER_NAME"] = "Test"
+    env["GIT_COMMITTER_EMAIL"] = "test@example.com"
+    subprocess.run(
+        ["git", "commit", "--allow-empty", "-m", message],
+        cwd=path,
+        check=True,
+        capture_output=True,
+        env=env,
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -496,3 +540,214 @@ def test_verification_status_is_immutable_dataclass() -> None:
     except _dc.FrozenInstanceError:
         return
     raise AssertionError("VerificationStatus should be frozen")
+
+
+# ---------------------------------------------------------------------------
+# compute_commit_drift — repo-aware staleness
+# ---------------------------------------------------------------------------
+#
+# The function only emits a verdict when every precondition holds: the
+# memory has been verified, has an origin.repo, the caller is in a repo,
+# the repos match, and git was reachable. Each test below pins one
+# precondition false so the silence-on-no-signal contract is locked in;
+# the "happy path" tests then check the two non-null branches (`clean`
+# and `drift`) against a real fixture repo.
+
+_REMOTE = "git@github.com:example/foo.git"
+
+
+def test_commit_drift_returns_none_when_never_verified(tmp_path: Path) -> None:
+    """No anchor to count from — the verification.status="never" branch
+    already maxes the alarm; emitting commit_drift here would be noise."""
+    result = compute_commit_drift(
+        last_verified_at=None,
+        memory_origin_repo=_REMOTE,
+        caller_origin=Origin(cwd=str(tmp_path), repo=_REMOTE, branch="main"),
+    )
+    assert result is None
+
+
+def test_commit_drift_returns_none_when_memory_has_no_origin_repo() -> None:
+    """A memory written outside any repo has no project identity to anchor
+    against — silence rather than guess."""
+    result = compute_commit_drift(
+        last_verified_at=datetime(2026, 1, 1, tzinfo=timezone.utc),
+        memory_origin_repo=None,
+        caller_origin=Origin(cwd="/projects/foo", repo=_REMOTE, branch="main"),
+    )
+    assert result is None
+
+
+def test_commit_drift_returns_none_when_caller_origin_is_none() -> None:
+    result = compute_commit_drift(
+        last_verified_at=datetime(2026, 1, 1, tzinfo=timezone.utc),
+        memory_origin_repo=_REMOTE,
+        caller_origin=None,
+    )
+    assert result is None
+
+
+def test_commit_drift_returns_none_when_caller_not_in_a_repo() -> None:
+    """Origin with no repo means the caller is outside any project — the
+    auto-scope filter already drops cross-project memories on this branch,
+    and commit_drift has nothing to count against."""
+    result = compute_commit_drift(
+        last_verified_at=datetime(2026, 1, 1, tzinfo=timezone.utc),
+        memory_origin_repo=_REMOTE,
+        caller_origin=Origin(cwd="/projects/foo", repo=None, branch=None),
+    )
+    assert result is None
+
+
+def test_commit_drift_returns_none_when_repos_dont_match(tmp_path: Path) -> None:
+    """Memory written from repo A, caller in repo B — the auto-scope
+    filter already keeps that memory out of search results, but
+    memory_show is unrestricted by id and could still surface it.
+    Stay silent rather than count commits in the wrong repo."""
+    other_remote = "git@github.com:example/other.git"
+    result = compute_commit_drift(
+        last_verified_at=datetime(2026, 1, 1, tzinfo=timezone.utc),
+        memory_origin_repo=_REMOTE,
+        caller_origin=Origin(cwd=str(tmp_path), repo=other_remote, branch="main"),
+    )
+    assert result is None
+
+
+def test_commit_drift_returns_none_when_git_unreachable(tmp_path: Path) -> None:
+    """Caller cwd isn't a git repo — no .git, no log to count. The
+    function bails to None rather than reporting a misleading clean/drift."""
+    result = compute_commit_drift(
+        last_verified_at=datetime(2026, 1, 1, tzinfo=timezone.utc),
+        memory_origin_repo=_REMOTE,
+        caller_origin=Origin(cwd=str(tmp_path), repo=_REMOTE, branch="main"),
+    )
+    assert result is None
+
+
+@pytest.mark.skipif(not _GIT_AVAILABLE, reason="git not on PATH")
+def test_commit_drift_status_clean_when_no_commits_after_verify(
+    tmp_path: Path,
+) -> None:
+    """Repo exists and matches, the verify anchor is after the last commit:
+    status is 'clean', count is 0, recommendation is None. The clean
+    branch is the positive evidence the consumer needs to trust the
+    calendar verification."""
+    _init_repo_with_remote(tmp_path, remote=_REMOTE)
+    _commit_at(tmp_path, "older", when=datetime(2026, 1, 1, tzinfo=timezone.utc))
+    result = compute_commit_drift(
+        last_verified_at=datetime(2026, 6, 1, tzinfo=timezone.utc),
+        memory_origin_repo=_REMOTE,
+        caller_origin=Origin(cwd=str(tmp_path), repo=_REMOTE, branch="main"),
+    )
+    assert result is not None
+    assert result.status == "clean"
+    assert result.commits_since_verify == 0
+    assert result.recommendation is None
+
+
+@pytest.mark.skipif(not _GIT_AVAILABLE, reason="git not on PATH")
+def test_commit_drift_status_drift_when_commits_after_verify(
+    tmp_path: Path,
+) -> None:
+    """The load-bearing case: commits landed since the last verify, so
+    the calendar may say 'fresh' but the project has moved. Status is
+    'drift', count matches, recommendation includes the count and
+    actionable next steps (memory_verify / memory_update)."""
+    _init_repo_with_remote(tmp_path, remote=_REMOTE)
+    _commit_at(tmp_path, "anchor", when=datetime(2026, 1, 1, tzinfo=timezone.utc))
+    _commit_at(tmp_path, "after-1", when=datetime(2026, 2, 1, tzinfo=timezone.utc))
+    _commit_at(tmp_path, "after-2", when=datetime(2026, 2, 2, tzinfo=timezone.utc))
+    _commit_at(tmp_path, "after-3", when=datetime(2026, 2, 3, tzinfo=timezone.utc))
+    result = compute_commit_drift(
+        last_verified_at=datetime(2026, 1, 15, tzinfo=timezone.utc),
+        memory_origin_repo=_REMOTE,
+        caller_origin=Origin(cwd=str(tmp_path), repo=_REMOTE, branch="main"),
+    )
+    assert result is not None
+    assert result.status == "drift"
+    assert result.commits_since_verify == 3
+    assert result.recommendation is not None
+    assert "3 commits" in result.recommendation
+    assert "memory_verify" in result.recommendation
+    assert "memory_update" in result.recommendation
+
+
+@pytest.mark.skipif(not _GIT_AVAILABLE, reason="git not on PATH")
+def test_commit_drift_recommendation_singular_for_one_commit(
+    tmp_path: Path,
+) -> None:
+    """Off-by-one cosmetic: pluralisation should be correct so the
+    rendered recommendation reads as English, not template-debug
+    output ('1 commits' would be a tell)."""
+    _init_repo_with_remote(tmp_path, remote=_REMOTE)
+    _commit_at(tmp_path, "anchor", when=datetime(2026, 1, 1, tzinfo=timezone.utc))
+    _commit_at(tmp_path, "after", when=datetime(2026, 2, 1, tzinfo=timezone.utc))
+    result = compute_commit_drift(
+        last_verified_at=datetime(2026, 1, 15, tzinfo=timezone.utc),
+        memory_origin_repo=_REMOTE,
+        caller_origin=Origin(cwd=str(tmp_path), repo=_REMOTE, branch="main"),
+    )
+    assert result is not None
+    assert result.commits_since_verify == 1
+    assert result.recommendation is not None
+    assert "1 commit landed" in result.recommendation
+    assert "1 commits" not in result.recommendation
+
+
+@pytest.mark.skipif(not _GIT_AVAILABLE, reason="git not on PATH")
+def test_commit_drift_to_dict_shape_clean(tmp_path: Path) -> None:
+    """JSON shape is uniform across status values so consumers can branch
+    on `status` alone without an existence check on every field."""
+    _init_repo_with_remote(tmp_path, remote=_REMOTE)
+    _commit_at(tmp_path, "older", when=datetime(2026, 1, 1, tzinfo=timezone.utc))
+    result = compute_commit_drift(
+        last_verified_at=datetime(2026, 6, 1, tzinfo=timezone.utc),
+        memory_origin_repo=_REMOTE,
+        caller_origin=Origin(cwd=str(tmp_path), repo=_REMOTE, branch="main"),
+    )
+    assert result is not None
+    payload = result.to_dict()
+    assert payload == {
+        "status": "clean",
+        "commits_since_verify": 0,
+        "recommendation": None,
+    }
+
+
+@pytest.mark.skipif(not _GIT_AVAILABLE, reason="git not on PATH")
+def test_commit_drift_normalised_repo_url_still_matches(tmp_path: Path) -> None:
+    """Memory's origin.repo is the SSH form; caller's is HTTPS. They
+    describe the same project — repos_match should normalise away the
+    surface form and commit_drift should fire."""
+    _init_repo_with_remote(tmp_path, remote="https://github.com/example/foo.git")
+    _commit_at(tmp_path, "anchor", when=datetime(2026, 1, 1, tzinfo=timezone.utc))
+    _commit_at(tmp_path, "after", when=datetime(2026, 2, 1, tzinfo=timezone.utc))
+    result = compute_commit_drift(
+        last_verified_at=datetime(2026, 1, 15, tzinfo=timezone.utc),
+        memory_origin_repo="git@github.com:example/foo.git",
+        caller_origin=Origin(
+            cwd=str(tmp_path),
+            repo="https://github.com/example/foo.git",
+            branch="main",
+        ),
+    )
+    assert result is not None
+    assert result.status == "drift"
+    assert result.commits_since_verify == 1
+
+
+def test_commit_drift_status_is_immutable_dataclass(tmp_path: Path) -> None:
+    """Frozen — same rationale as VerificationStatus: a consumer that
+    mutates the verdict could silently corrupt later reads when the
+    object is reused (which the server doesn't do today, but the
+    contract should not depend on that)."""
+    status = CommitDriftStatus(
+        status="clean", commits_since_verify=0, recommendation=None
+    )
+    import dataclasses as _dc
+
+    try:
+        status.status = "drift"  # type: ignore[misc]
+    except _dc.FrozenInstanceError:
+        return
+    raise AssertionError("CommitDriftStatus should be frozen")

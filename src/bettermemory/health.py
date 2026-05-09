@@ -31,6 +31,7 @@ project is trying to detect:
 
 from __future__ import annotations
 
+import bisect
 import json
 from collections import Counter
 from dataclasses import dataclass, field
@@ -40,6 +41,7 @@ from typing import Any, Iterable
 
 from .events import iter_all_events
 from .models import Memory, first_summary_line
+from .origin import Origin, commit_author_timestamps, repos_match
 
 
 # ---------------------------------------------------------------------------
@@ -240,6 +242,71 @@ _VERIFICATION_DEBT_CAP = 20
 
 
 @dataclass
+class CommitDriftRow:
+    """One memory whose verification anchor sits behind the current HEAD.
+
+    Carries enough identity (`id`, `scopes`, `summary`) for a curation
+    pass to act on the row without a follow-up `memory_show`. The
+    `commits_since_verify` count is the actionable handle: high values
+    (or values close to the total commit count of the repo) mean the
+    memory has been verified for a snapshot the project has long since
+    moved past.
+    """
+
+    id: str
+    scopes: list[str]
+    summary: str
+    last_verified_at: datetime | None
+    commits_since_verify: int
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "id": self.id,
+            "scopes": list(self.scopes),
+            "summary": self.summary,
+            "last_verified_at": (
+                _iso(self.last_verified_at) if self.last_verified_at else None
+            ),
+            "commits_since_verify": self.commits_since_verify,
+        }
+
+
+@dataclass
+class CommitDriftDebt:
+    """Curation pivot for repo-aware staleness.
+
+    Same shape philosophy as `VerificationDebt`: a capped `rows` list
+    for inline display plus an uncapped `total_drifted`. Only meaningful
+    when the health caller is currently inside a checkout of a repo
+    matching at least one memory's origin — `current_repo` echoes back
+    which repo this rollup is anchored to so a consumer doesn't have to
+    guess. None on the `HealthReport` (rather than an empty `CommitDriftDebt`)
+    when the caller wasn't in a repo, when git was unreachable, or when
+    no memory's origin matched the current repo at all.
+
+    Cwd-scoped by design: a health run from one repo answers a different
+    question than the same run from another. Don't compare rows across
+    runs from different cwds.
+    """
+
+    current_repo: str | None
+    current_cwd: str | None
+    rows: list[CommitDriftRow] = field(default_factory=list)
+    total_drifted: int = 0
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "current_repo": self.current_repo,
+            "current_cwd": self.current_cwd,
+            "total_drifted": self.total_drifted,
+            "rows": [r.to_dict() for r in self.rows],
+        }
+
+
+_COMMIT_DRIFT_DEBT_CAP = 20
+
+
+@dataclass
 class HealthReport:
     """The full aggregate view returned by `memory_health`."""
 
@@ -279,6 +346,15 @@ class HealthReport:
     verification_debt: VerificationDebt = field(
         default_factory=lambda: VerificationDebt(stale_after_days=30)
     )
+    # Commit-drift rollup — memories whose verification anchor sits
+    # behind the HEAD of the caller's current repo. Null when the caller
+    # wasn't in a repo, when git was unreachable, or when no memory's
+    # origin matched the current repo. Distinct from VerificationDebt:
+    # that bucket asks "how long since I checked?", this one asks "did
+    # the world I was checking against move?". A row can appear here
+    # while still landing in `verification_debt.fresh_count` because the
+    # calendar window hasn't elapsed.
+    commit_drift_debt: CommitDriftDebt | None = None
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -296,6 +372,11 @@ class HealthReport:
             "rare_scopes": list(self.rare_scopes),
             "orphan_use_events": self.orphan_use_events,
             "verification_debt": self.verification_debt.to_dict(),
+            "commit_drift_debt": (
+                self.commit_drift_debt.to_dict()
+                if self.commit_drift_debt is not None
+                else None
+            ),
         }
 
 
@@ -312,6 +393,7 @@ def compute_health(
     heavily_used_top_k: int = 10,
     heavily_used_min_applied: int = 3,
     verification_stale_days: int = 30,
+    caller_origin: Origin | None = None,
     now: datetime | None = None,
 ) -> HealthReport:
     """Build a `HealthReport` from active memories + the event stream.
@@ -341,6 +423,15 @@ def compute_health(
     uses for the per-row `verification.status` field, so a "stale" hit
     in search results and a "stale" entry in this bucket mean the same
     thing.
+
+    `caller_origin`, when provided, drives the optional `commit_drift_debt`
+    rollup: memories whose origin repo matches `caller_origin.repo` and
+    whose `last_verified_at` precedes commits in the current HEAD are
+    surfaced as drifted. The rollup is bounded to one git invocation
+    (`commit_author_timestamps` + bisect) regardless of memory count,
+    so calling it on a large store is cheap. Pass None (the default) to
+    skip the rollup — production callers from the MCP tool / CLI thread
+    in `capture()`'s output; tests and offline tooling can opt out.
     """
     if heavily_used_min_applied < 1:
         heavily_used_min_applied = 1
@@ -349,6 +440,11 @@ def compute_health(
     verification_cutoff = now - timedelta(days=verification_stale_days)
 
     by_id: dict[str, MemoryStats] = {}
+    # Parallel mapping of memory id -> origin.repo, kept separately so we
+    # don't have to add a field to MemoryStats just for the commit-drift
+    # rollup. Captured during the same pass that builds `by_id` because
+    # `memories` is an Iterable and we don't want to assume re-iterability.
+    origin_repo_by_id: dict[str, str | None] = {}
     for m in memories:
         by_id[m.id] = MemoryStats(
             id=m.id,
@@ -358,6 +454,7 @@ def compute_health(
             updated=m.updated,
             last_verified_at=m.last_verified_at,
         )
+        origin_repo_by_id[m.id] = m.origin.repo if m.origin else None
 
     # Marker stats are accumulated by canonical marker name. Both
     # `markers` (transient_warning fires) and `markers_acknowledged`
@@ -578,6 +675,12 @@ def compute_health(
         fresh_count=fresh_count,
     )
 
+    commit_drift_debt = _compute_commit_drift_debt(
+        by_id=by_id,
+        origin_repo_by_id=origin_repo_by_id,
+        caller_origin=caller_origin,
+    )
+
     return HealthReport(
         generated_at=now,
         window_days=window_days,
@@ -593,6 +696,102 @@ def compute_health(
         rare_scopes=rare_scopes,
         orphan_use_events=orphan_use_events,
         verification_debt=verification_debt,
+        commit_drift_debt=commit_drift_debt,
+    )
+
+
+def _compute_commit_drift_debt(
+    *,
+    by_id: dict[str, MemoryStats],
+    origin_repo_by_id: dict[str, str | None],
+    caller_origin: Origin | None,
+) -> CommitDriftDebt | None:
+    """Build the optional commit-drift rollup, or None when not applicable.
+
+    Emits None — rather than an empty `CommitDriftDebt` — when:
+    - `caller_origin` was not provided,
+    - the caller isn't currently inside a repo,
+    - git was unreachable (`commit_author_timestamps` returned None),
+    - or no memory's origin matches the caller's current repo.
+
+    The "no matches" case is silenced because surfacing an empty bucket
+    with a populated `current_repo` would be misleading for the model:
+    "this report is anchored to repo X, which has no anchored memories"
+    is technically true but invites the consumer to read meaning into a
+    structurally empty result. The other rollups (`dead_weight`,
+    `verification_debt`) always emit because their semantics are
+    well-defined for an empty store; commit drift only has meaning when
+    there's something to be drifted *from*.
+
+    Counted via one `git log --format=%aI` call + bisect — independent
+    of memory count.
+    """
+    if caller_origin is None:
+        return None
+    if not caller_origin.repo or not caller_origin.cwd:
+        return None
+    timestamps = commit_author_timestamps(Path(caller_origin.cwd))
+    if timestamps is None:
+        return None
+    timestamps_sorted = sorted(timestamps)
+
+    # Two-pass: filter by repo match first, then run the bisect. Lets us
+    # short-circuit the "no matching memories" case before any per-row
+    # work — keeps the rollup silent when it would have nothing to say.
+    candidates: list[MemoryStats] = []
+    for stats in by_id.values():
+        origin_repo = origin_repo_by_id.get(stats.id)
+        if origin_repo is None:
+            continue
+        if not repos_match(origin_repo, caller_origin.repo):
+            continue
+        if stats.last_verified_at is None:
+            continue
+        candidates.append(stats)
+    if not candidates:
+        return None
+
+    rows: list[CommitDriftRow] = []
+    for stats in candidates:
+        since = stats.last_verified_at
+        assert since is not None  # filtered above
+        if since.tzinfo is None:
+            since = since.replace(tzinfo=timezone.utc)
+        # bisect_right gives us the first index strictly greater than
+        # `since`; len - idx is then the count of timestamps after that
+        # cut. Equal timestamps fall before the cut on bisect_right
+        # semantics, which is what we want — a verify call that lands
+        # at the same instant as a commit doesn't count as drift.
+        idx = bisect.bisect_right(timestamps_sorted, since)
+        count = len(timestamps_sorted) - idx
+        if count > 0:
+            rows.append(
+                CommitDriftRow(
+                    id=stats.id,
+                    scopes=list(stats.scopes),
+                    summary=stats.summary,
+                    last_verified_at=stats.last_verified_at,
+                    commits_since_verify=count,
+                )
+            )
+
+    if not rows:
+        # All matching memories are caught up — emit the bucket with an
+        # empty rows list so the consumer can see we tried and the project
+        # is clean, distinct from the "didn't try" None.
+        return CommitDriftDebt(
+            current_repo=caller_origin.repo,
+            current_cwd=caller_origin.cwd,
+            rows=[],
+            total_drifted=0,
+        )
+
+    rows.sort(key=lambda r: r.commits_since_verify, reverse=True)
+    return CommitDriftDebt(
+        current_repo=caller_origin.repo,
+        current_cwd=caller_origin.cwd,
+        rows=rows[:_COMMIT_DRIFT_DEBT_CAP],
+        total_drifted=len(rows),
     )
 
 
@@ -712,6 +911,26 @@ def render_text(report: HealthReport) -> str:
         if debt.stale_total > len(debt.stale):
             lines.append(f"    ... and {debt.stale_total - len(debt.stale)} more")
 
+    cd = report.commit_drift_debt
+    if cd is not None:
+        lines.append("")
+        lines.append(
+            f"Commit drift — anchor={cd.current_repo or '?'}  "
+            f"drifted={cd.total_drifted}:"
+        )
+        if not cd.rows:
+            lines.append("  (none — anchored memories are caught up with HEAD)")
+        else:
+            lines.append(f"  drifted ({cd.total_drifted}, most commits-ahead first):")
+            for row in cd.rows:
+                verified = _iso(row.last_verified_at) or "?"
+                lines.append(
+                    f"    {row.id} [+{row.commits_since_verify} commits, "
+                    f"verified={verified}] {','.join(row.scopes)}: {row.summary}"
+                )
+            if cd.total_drifted > len(cd.rows):
+                lines.append(f"    ... and {cd.total_drifted - len(cd.rows)} more")
+
     return "\n".join(lines) + "\n"
 
 
@@ -787,10 +1006,16 @@ def report_for_directory(
     heavily_used_top_k: int = 10,
     heavily_used_min_applied: int = 3,
     verification_stale_days: int = 30,
+    caller_origin: Origin | None = None,
     now: datetime | None = None,
 ) -> HealthReport:
     """Convenience: load memories from `root`, walk the event log, return
-    the report. Used by both the MCP tool and the CLI subcommand."""
+    the report. Used by both the MCP tool and the CLI subcommand.
+
+    `caller_origin`, if provided, drives the cwd-aware `commit_drift_debt`
+    rollup. Production callers should pass `origin.capture()`'s result;
+    leaving it None skips the rollup, which is appropriate for offline
+    tooling that doesn't have a meaningful cwd to anchor against."""
     from .store import Store
 
     store = Store(root)
@@ -801,11 +1026,14 @@ def report_for_directory(
         heavily_used_top_k=heavily_used_top_k,
         heavily_used_min_applied=heavily_used_min_applied,
         verification_stale_days=verification_stale_days,
+        caller_origin=caller_origin,
         now=now,
     )
 
 
 __all__ = [
+    "CommitDriftDebt",
+    "CommitDriftRow",
     "MemoryStats",
     "MarkerStats",
     "ScopeHealth",
