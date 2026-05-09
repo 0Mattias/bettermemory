@@ -104,9 +104,9 @@ tidy. The event log feeds memory_health, which surfaces dead-weight
 memories (retrieved often, never applied) and unresolved contradictions.
 
 Verify before relying on retrieved memory. Memory is a snapshot — it does
-not auto-refresh. Every retrieval carries two structured staleness signals;
-both are advisory, not verdicts, but both are first-class fields you must
-branch on rather than skim past.
+not auto-refresh. Every retrieval carries up to three structured staleness
+signals; all are advisory, not verdicts, but each is a first-class field
+you must branch on rather than skim past.
 
 1. `verification` block (on every memory_show, memory_search hit, and
    memory_list row):
@@ -149,6 +149,34 @@ branch on rather than skim past.
      temporary mount or a path on a different machine — advisory, not a
      verdict — but a drifted path on a never-verified memory is the
      highest-risk profile.
+
+3. `commit_drift` (repo-aware staleness):
+
+   - memory_search returns a `commit_drift_count` integer on every hit
+     whose memory is anchored to your current repo and has been verified
+     at some point — the count of commits authored since the last
+     memory_verify. Triage signal: a non-zero count is the cue to expand
+     even when `verification.status` reads fresh, because the calendar
+     lag won't catch up by itself. The field is OMITTED (key absent
+     from the hit) when the signal isn't applicable: caller not in any
+     repo, hit from a different repo, hit never verified.
+   - memory_show and memory_search(expand_top=True) surface the full
+     `commit_drift` block: `status` is "clean" (zero commits) or
+     "drift" (one or more), `commits_since_verify` is the count, and
+     `recommendation` is the actionable string on "drift" (null on
+     "clean"). The block is null on the response when the caller isn't
+     in the matching repo or the memory was never verified — same
+     contract as the per-hit count, just with extra structure.
+   - The load-bearing case: `verification.status == "fresh"` only
+     proves the calendar is fresh. A non-zero commit_drift_count or a
+     `commit_drift.status == "drift"` is the cue to spot-check anyway.
+     Treat it the same as a "stale" verification verdict: spot-check,
+     then memory_verify (if claims still hold) or memory_update +
+     memory_verify (if a claim has drifted).
+   - memory_health rolls these per-row signals into a `commit_drift_debt`
+     bucket so a curation pass can fix many at once. The rollup is
+     populated only when the server is in a repo whose memories live
+     in this store; null otherwise.
 
 Writing and updating memory:
 

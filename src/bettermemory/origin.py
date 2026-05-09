@@ -36,6 +36,7 @@ from __future__ import annotations
 
 import re
 import subprocess
+from datetime import datetime, timezone
 from pathlib import Path
 from urllib.parse import urlparse
 
@@ -153,6 +154,77 @@ def _git_branch(cwd: Path) -> str | None:
     return _git(cwd, "symbolic-ref", "--short", "HEAD")
 
 
+def commits_since(cwd: Path | None, since: datetime) -> int | None:
+    """Count commits in `cwd`'s repo authored after `since`.
+
+    Returns the integer count when the directory is a git repo we can
+    read, None on any failure (cwd is None, git not on PATH, not a repo,
+    no commits, git timed out, output not parseable as an int). Zero is
+    a real value — the repo is fine, nothing has landed since.
+
+    Used by the commit-drift staleness signal in `verify.py`: a cwd-aware
+    advisory that surfaces "the project moved while this memory's
+    `last_verified_at` did not." `since` is normalised to UTC ISO-8601
+    before being handed to git so the comparison matches the timestamp
+    semantics elsewhere in the store. A naive `since` is treated as UTC.
+
+    Counted in author-date space (git's default for `--since`). The
+    distinction from commit-date rarely matters for an advisory signal
+    and matches what a human reading `git log --since` would expect.
+
+    For batch use against many `since` values from the same repo, prefer
+    `commit_author_timestamps` + bisect — one git call instead of N.
+    """
+    if cwd is None:
+        return None
+    if since.tzinfo is None:
+        since = since.replace(tzinfo=timezone.utc)
+    iso = since.astimezone(timezone.utc).isoformat()
+    raw = _git(cwd, "rev-list", "--count", f"--since={iso}", "HEAD")
+    if raw is None:
+        return None
+    try:
+        return int(raw)
+    except ValueError:
+        return None
+
+
+def commit_author_timestamps(cwd: Path | None) -> list[datetime] | None:
+    """All author timestamps from the HEAD history of `cwd`'s repo.
+
+    Returns a list of timezone-aware datetimes, or None on any failure
+    (cwd is None, git not on PATH, not a repo, no commits, parse error
+    on every line). An empty list is theoretically possible but almost
+    never happens — `git log` on a repo with no commits exits non-zero
+    and we surface that as None. Lines that fail to parse are skipped
+    individually rather than poisoning the whole result.
+
+    Sort order is whatever git emits (newest-first by default) — callers
+    that want sorted-ascending for bisect should sort explicitly. Used
+    by the health rollup to count commits-since for many memories from
+    one git invocation; the per-memory `commits_since` would otherwise
+    pay a fork+exec for every row.
+    """
+    if cwd is None:
+        return None
+    raw = _git(cwd, "log", "--format=%aI", "HEAD")
+    if raw is None:
+        return None
+    out: list[datetime] = []
+    for line in raw.splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            ts = datetime.fromisoformat(line)
+        except ValueError:
+            continue
+        if ts.tzinfo is None:
+            ts = ts.replace(tzinfo=timezone.utc)
+        out.append(ts)
+    return out if out else None
+
+
 # ---------------------------------------------------------------------------
 # Remote URL parsing
 # ---------------------------------------------------------------------------
@@ -202,5 +274,7 @@ def _parse_remote(url: str) -> tuple[str, str, str] | None:
 __all__ = [
     "Origin",
     "capture",
+    "commit_author_timestamps",
+    "commits_since",
     "repos_match",
 ]

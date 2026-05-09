@@ -9,13 +9,61 @@ spells out exactly what's stable.
 
 ## Unreleased
 
-Three additions plus the prior two fixes. The additions land in
-`memory_record_use` and `memory_health` and address the
+Four additions plus the prior two fixes. The newest addition is a
+third staleness axis — repo-aware commit drift — that catches the
+failure mode where a memory's calendar verification looks fresh but
+the repo it describes has moved past `last_verified_at`. The other
+three additions (carried from the earlier Unreleased section) land
+in `memory_record_use` and `memory_health` and address the
 audit-after-fix workflow that left the `has_unresolved_contradiction`
 flag stuck in real use, plus add introspection to make the next
 mis-step self-diagnosable.
 
 ### Added
+
+- **`commit_drift` advisory on retrieval.** A repo-aware sibling of
+  `verification` and `path_drift`. When the caller is currently inside
+  a checkout of the same repo a memory was written from, `memory_show`
+  and `memory_search(expand_top=True)` attach a structured
+  `commit_drift` block: `status` is `"clean"` (zero commits since the
+  last `memory_verify`) or `"drift"` (the count is positive). On
+  `"drift"`, `recommendation` is the actionable string
+  ("N commits landed since the last memory_verify, spot-check…");
+  `"clean"` rows leave it null. Closes the gap where
+  `verification.status == "fresh"` only proves the calendar is fresh
+  while the repo can sit several commits ahead — the calendar lag
+  doesn't catch up by itself, so a structural signal in the response
+  is the only way the consumer notices without doing timestamp
+  arithmetic. Absent (the field is null on `memory_show`, omitted on
+  search hits) when the caller isn't in any repo, is in a different
+  repo, or the memory has never been verified — silence beats a noisy
+  "unknown" branch every consumer would have to filter.
+
+  Implemented as `verify.compute_commit_drift` plus two new helpers in
+  `origin.py`: `commits_since(cwd, since)` (per-memory cost) and
+  `commit_author_timestamps(cwd)` (one git call + bisect, used by the
+  health rollup so the cost is independent of memory count). The
+  retrieval surface threads `caller_origin` from the existing
+  `capture_origin()` site that already drives `auto_scope`.
+
+- **`commit_drift_debt` rollup on `memory_health`.** Curation pivot
+  for the per-row signal above. When the server is running inside a
+  repo whose memories live in this store, `memory_health` populates
+  a new `commit_drift_debt` field with the rows whose verification
+  anchor sits behind HEAD, sorted most-commits-ahead first.
+  `current_repo` and `current_cwd` are echoed back so a consumer can
+  see which repo the rollup is anchored to. Capped inline row list
+  (top 20) plus an uncapped `total_drifted` count, matching the
+  `verification_debt` shape. Null on the report when the server isn't
+  in a repo, when git was unreachable, or when no memory's origin
+  matches the current repo. Distinct from `verification_debt`: that
+  bucket asks "how long since I checked?", this one asks "did the
+  world I was checking against move?" — a row can land in
+  `commit_drift_debt.rows` while still counting toward
+  `verification_debt.fresh_count` because the calendar window hasn't
+  elapsed. Threaded a new `caller_origin` parameter through
+  `compute_health` and `report_for_directory`; both the MCP tool and
+  the `bettermemory health` CLI pass `capture_origin()`'s output.
 
 - **`corrected` outcome on `memory_record_use`.** A fourth value
   alongside `applied` / `ignored` / `contradicted`, distinct in
