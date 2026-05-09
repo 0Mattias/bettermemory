@@ -285,11 +285,12 @@ async def test_memory_search_expand_top_includes_commit_drift_on_drift(
 
 
 @pytest.mark.skipif(not _GIT_AVAILABLE, reason="git not on PATH")
-async def test_memory_search_non_expanded_hits_do_not_carry_commit_drift(
+async def test_memory_search_non_expanded_hits_do_not_carry_full_commit_drift(
     server_with_fake_origin, tmp_path: Path
 ) -> None:
-    """Per-hit git is too expensive — commit_drift stays opt-in via
-    expand_top, mirroring the path_drift expansion contract for the body."""
+    """The full `commit_drift` block (status / recommendation) stays
+    opt-in via expand_top, mirroring `path_drift` — the lightweight
+    `commit_drift_count` integer is the per-hit triage signal instead."""
     repo = tmp_path / "repo"
     repo.mkdir()
     _init_repo(repo)
@@ -313,6 +314,136 @@ async def test_memory_search_non_expanded_hits_do_not_carry_commit_drift(
     assert hits
     for hit in hits:
         assert "commit_drift" not in hit
+
+
+@pytest.mark.skipif(not _GIT_AVAILABLE, reason="git not on PATH")
+async def test_memory_search_hits_carry_commit_drift_count_when_drifted(
+    server_with_fake_origin, tmp_path: Path
+) -> None:
+    """The cheap per-hit signal: `commit_drift_count` is attached to each
+    hit whose memory matches the caller's repo and has been verified.
+    Lets the model self-triage which hit to expand without a memory_show
+    round-trip — parallel to `path_drift_missing`."""
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    _init_repo(repo)
+    _commit_at(repo, "initial", when=datetime(2025, 1, 1, tzinfo=timezone.utc))
+
+    origin = Origin(cwd=str(repo), repo=_REMOTE, branch="main")
+    server = server_with_fake_origin(origin)
+
+    written = await _call(
+        server,
+        "memory_write",
+        content="durable thing about widgets",
+        scopes=["tools"],
+    )
+    await _call(server, "memory_verify", id=written["id"])
+    _commit_at(repo, "post-1", when=datetime(2099, 1, 1, tzinfo=timezone.utc))
+    _commit_at(repo, "post-2", when=datetime(2099, 2, 1, tzinfo=timezone.utc))
+
+    raw = await _call(
+        server, "memory_search", query="widgets durable", expand_top=False
+    )
+    hits = _unwrap(raw)
+    assert hits
+    # Exactly one matching memory; it should carry the count.
+    target = next(h for h in hits if h["id"] == written["id"])
+    assert target["commit_drift_count"] == 2
+
+
+@pytest.mark.skipif(not _GIT_AVAILABLE, reason="git not on PATH")
+async def test_memory_search_hits_carry_zero_commit_drift_count_when_clean(
+    server_with_fake_origin, tmp_path: Path
+) -> None:
+    """A hit anchored to the matching repo with no commits since verify
+    carries `commit_drift_count: 0` — positive evidence the calendar
+    verification still reflects reality, distinct from "field absent"."""
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    _init_repo(repo)
+    _commit_at(repo, "ancient", when=datetime(2020, 1, 1, tzinfo=timezone.utc))
+
+    origin = Origin(cwd=str(repo), repo=_REMOTE, branch="main")
+    server = server_with_fake_origin(origin)
+
+    written = await _call(
+        server, "memory_write", content="alpha widget", scopes=["tools"]
+    )
+    await _call(server, "memory_verify", id=written["id"])
+
+    raw = await _call(server, "memory_search", query="alpha widget", expand_top=False)
+    hits = _unwrap(raw)
+    target = next(h for h in hits if h["id"] == written["id"])
+    assert target["commit_drift_count"] == 0
+
+
+@pytest.mark.skipif(not _GIT_AVAILABLE, reason="git not on PATH")
+async def test_memory_search_hits_omit_commit_drift_count_when_caller_outside_repo(
+    server_with_fake_origin, tmp_path: Path
+) -> None:
+    """When the caller isn't in any repo, the field is OMITTED from
+    every hit (not set to null, not zero). Absence-as-signal mirrors
+    the path_drift contract and keeps the hit shape uniform — a
+    consumer can branch on `'commit_drift_count' in hit` cleanly."""
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    _init_repo(repo)
+    _commit_at(repo, "anchor", when=datetime(2025, 1, 1, tzinfo=timezone.utc))
+
+    # Write while "in" the repo so the memory has an origin.
+    server_in_repo = server_with_fake_origin(
+        Origin(cwd=str(repo), repo=_REMOTE, branch="main")
+    )
+    written = await _call(
+        server_in_repo, "memory_write", content="durable beta", scopes=["tools"]
+    )
+    await _call(server_in_repo, "memory_verify", id=written["id"])
+
+    # Now search while "not in any repo" — Origin with cwd but no repo.
+    server_no_repo = server_with_fake_origin(
+        Origin(cwd=str(tmp_path), repo=None, branch=None)
+    )
+    raw = await _call(
+        server_no_repo,
+        "memory_search",
+        query="beta durable",
+        expand_top=False,
+        auto_scope=False,
+    )
+    hits = _unwrap(raw)
+    assert hits
+    for hit in hits:
+        assert "commit_drift_count" not in hit
+
+
+@pytest.mark.skipif(not _GIT_AVAILABLE, reason="git not on PATH")
+async def test_memory_search_hits_omit_commit_drift_count_when_never_verified(
+    server_with_fake_origin, tmp_path: Path
+) -> None:
+    """A hit with no last_verified_at has no anchor — the field is
+    omitted (verification.status="never" already maxes the alarm, no
+    point duplicating)."""
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    _init_repo(repo)
+    _commit_at(repo, "anchor", when=datetime(2025, 1, 1, tzinfo=timezone.utc))
+
+    origin = Origin(cwd=str(repo), repo=_REMOTE, branch="main")
+    server = server_with_fake_origin(origin)
+
+    written = await _call(
+        server, "memory_write", content="unverified gamma", scopes=["tools"]
+    )
+    # Deliberately skip memory_verify.
+
+    raw = await _call(
+        server, "memory_search", query="gamma unverified", expand_top=False
+    )
+    hits = _unwrap(raw)
+    target = next(h for h in hits if h["id"] == written["id"])
+    assert target["verification"]["status"] == "never"
+    assert "commit_drift_count" not in target
 
 
 # ---------------------------------------------------------------------------

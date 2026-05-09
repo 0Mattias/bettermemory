@@ -19,9 +19,11 @@ failures are logged but never propagate up into a tool call.
 
 from __future__ import annotations
 
+import bisect
 import logging
 import sys
-from datetime import datetime
+from datetime import datetime, timezone
+from pathlib import Path
 from typing import Any
 
 from mcp.server.fastmcp import FastMCP
@@ -30,7 +32,12 @@ from .config import Config, load_config
 from .durability import TransientMatch, find_transient_markers
 from .events import Recorder
 from .health import report_for_directory
-from .origin import Origin, capture as capture_origin
+from .origin import (
+    Origin,
+    capture as capture_origin,
+    commit_author_timestamps,
+    repos_match,
+)
 from .models import (
     Confidence,
     MemoryHit,
@@ -266,6 +273,15 @@ def _register_tools(
             "`path_drift_missing > 0` cites filesystem paths that no "
             "longer exist on disk, which is your cue to expand and "
             "consider memory_update or memory_verify. "
+            "When the caller is currently inside a checkout of the "
+            "memory's origin repo, hits whose memory has been verified "
+            "at some point also carry a `commit_drift_count` integer — "
+            "the count of commits authored after `last_verified_at`. "
+            "Absent from the hit when the signal isn't applicable "
+            "(caller not in a repo, hit from a different repo, hit "
+            "never verified). A non-zero count is the cue to expand "
+            "even when `verification.status` reads fresh: the calendar "
+            "is fresh but the project has moved. "
             "Pass `expand_top=True` to inline the full body of the top hit "
             'when its relevance is "high" — collapses the common '
             "search-then-show round trip into one call, and surfaces the "
@@ -339,6 +355,20 @@ def _register_tools(
         out = [
             _hit_to_dict(h, now=now, stale_after_days=stale_after_days) for h in hits
         ]
+
+        # Per-hit `commit_drift_count`: cheap repo-aware staleness signal
+        # surfaced on every hit (parallel to `path_drift_checked` /
+        # `path_drift_missing`) so the model can self-triage which hit to
+        # expand without a memory_show round-trip. One git call here
+        # (`commit_author_timestamps`) + bisect per hit — the cost is
+        # bounded regardless of result count. Omitted from the hit JSON
+        # when the signal isn't applicable (caller not in a repo, hit's
+        # memory from a different repo, hit's memory never verified)
+        # rather than emitting a noisy "unknown" branch every consumer
+        # would have to filter. The full `commit_drift` block (with
+        # status / recommendation) is still attached to the expanded top
+        # hit below; the count here is the lightweight triage signal.
+        _attach_commit_drift_counts(out, hits, memories, caller_origin=current_origin)
 
         # Optional auto-expansion of the top hit. Conservative: only fires
         # when the top hit clearly wins ("high" relevance) so the model
@@ -1588,6 +1618,68 @@ def _hit_to_dict(
         "path_drift_checked": hit.path_drift_checked,
         "path_drift_missing": hit.path_drift_missing,
     }
+
+
+def _attach_commit_drift_counts(  # type: ignore[no-untyped-def]
+    out: list[dict[str, Any]],
+    hits: list[MemoryHit],
+    memories,
+    *,
+    caller_origin: Origin,
+) -> None:
+    """Mutate `out` in-place, adding `commit_drift_count` to each hit
+    whose memory is anchored to the caller's current repo and has been
+    verified at some point.
+
+    The signal mirrors `path_drift_checked` / `path_drift_missing`: a
+    cheap integer surfaced on every hit so the model can self-triage
+    which hit to expand without a memory_show round-trip. Cost is
+    bounded — one `commit_author_timestamps` call for the whole search,
+    then a per-hit `bisect_right` against the sorted timestamp list.
+    Independent of result count.
+
+    Omitted (key absent from the dict, not set to null) when:
+
+    - caller is not currently in any repo (`caller_origin.repo` is None),
+    - git was unreachable in the caller's cwd,
+    - the hit's memory has no `origin.repo` (legacy / global memory),
+    - the hit's memory's repo doesn't match the caller's,
+    - the hit's memory has never been verified (no anchor to count from).
+
+    Absence-as-signal mirrors `path_drift`'s null-when-clean contract
+    and keeps the hit shape uniform: a consumer either sees the field
+    or doesn't, no third "unknown" branch to filter.
+    """
+    if caller_origin.repo is None or caller_origin.cwd is None:
+        return
+    timestamps = commit_author_timestamps(Path(caller_origin.cwd))
+    if timestamps is None:
+        return
+    timestamps_sorted = sorted(timestamps)
+    # Build the id → origin.repo side-map from the in-memory `memories`
+    # list (already loaded by the caller for the search itself), avoiding
+    # a second store round-trip per hit.
+    origin_repo_by_id: dict[str, str | None] = {
+        m.id: (m.origin.repo if m.origin else None) for m in memories
+    }
+    for hit_dict, hit in zip(out, hits):
+        if hit.last_verified_at is None:
+            continue
+        origin_repo = origin_repo_by_id.get(hit.id)
+        if origin_repo is None:
+            continue
+        if not repos_match(origin_repo, caller_origin.repo):
+            continue
+        since = hit.last_verified_at
+        if since.tzinfo is None:
+            since = since.replace(tzinfo=timezone.utc)
+        # bisect_right on the ascending list gives the first index
+        # strictly greater than `since`; len - idx is the count of
+        # commits strictly after the verify timestamp. Equal-timestamp
+        # commits are not counted as drift, matching the health
+        # rollup's semantics.
+        idx = bisect.bisect_right(timestamps_sorted, since)
+        hit_dict["commit_drift_count"] = len(timestamps_sorted) - idx
 
 
 def _summary_to_dict(
