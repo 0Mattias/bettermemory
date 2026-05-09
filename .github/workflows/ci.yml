@@ -17,6 +17,18 @@ jobs:
     # view but don't block the overall CI status. The pre-release ecosystem
     # is the bottleneck, not us — see the python-version comment below.
     continue-on-error: ${{ matrix.experimental || false }}
+    env:
+      # PyO3 0.27.x (the version pydantic-core / rpds-py currently ship)
+      # refuses to build against Pythons newer than 3.14. On py3.15 that
+      # means `uv sync` falls back to a source build and dies. The
+      # PyO3-recommended workaround for newer-than-supported Pythons is
+      # to set this env var, which routes the build to the stable ABI
+      # (abi3) instead of the version-specific ABI. It's a no-op on
+      # Pythons PyO3 supports natively (3.11-3.14), so we set it
+      # unconditionally rather than gating on matrix.python-version.
+      # Drop this once pydantic-core / rpds-py ship releases built on
+      # PyO3 ≥ 0.28 with prebuilt 3.15 wheels.
+      PYO3_USE_ABI3_FORWARD_COMPATIBILITY: "1"
     strategy:
       fail-fast: false
       matrix:
@@ -26,13 +38,12 @@ jobs:
         #
         # 3.15 is still pre-release (Oct 2026 final). uv resolves the bare
         # "3.15" spec to the latest python-build-standalone build, which
-        # tracks the upstream RCs — but pydantic-core's prebuilt wheels for
-        # 3.15 only land once it ships a release built on PyO3 ≥ 0.28
-        # (PyO3 0.27.x caps at 3.14). Until then, ubuntu/macos 3.15 fall
-        # back to a source build and fail; Windows happens to have wheels
-        # earlier. Mark 3.15 jobs experimental so the matrix surfaces the
-        # state without blocking merges. Drop `experimental: true` once
-        # `uv sync` succeeds on 3.15 across all three OSes.
+        # tracks the upstream RCs. With the PYO3_USE_ABI3_FORWARD_COMPATIBILITY
+        # env var above, pydantic-core / rpds-py source builds against 3.15
+        # succeed via the stable ABI. `experimental: true` is kept as a
+        # safety net for the case where some other transitive dep regresses
+        # against pre-release Python; drop it once the workaround has been
+        # green for a few weeks across all three OSes.
         #
         # Platform coverage rationale (why mac + win at all):
         #   - platformdirs returns different paths per OS
