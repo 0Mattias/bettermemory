@@ -15,12 +15,23 @@ from typing import Any
 import pytest
 
 from bettermemory.init import (
+    DEFAULT_SERVER_NAME,
     KNOWN_CLIENTS,
+    LEGACY_SERVER_NAME,
     cli_init,
     find_binary,
     patch_client_config,
     server_snippet,
 )
+
+# The canonical entry shape patch_client_config writes. Stays in one
+# place so tests don't all have to be edited when the shape evolves
+# (e.g. when a future Claude Code version expects a new optional field).
+CANONICAL_ENTRY_KEYS = {"type", "command", "args", "env"}
+
+
+def _canonical_entry(binary: str) -> dict[str, Any]:
+    return {"type": "stdio", "command": binary, "args": [], "env": {}}
 
 
 # ---------------------------------------------------------------------------
@@ -29,21 +40,33 @@ from bettermemory.init import (
 
 
 def test_server_snippet_default_shape() -> None:
+    """Default shape includes `type: stdio` and `env: {}` even though
+    both are optional in the MCP spec — they match what `claude mcp add`
+    produces and what Claude Code 2.x writes by default, so the snippet
+    looks the same as the user's hand-added entries."""
     out = server_snippet(binary="/usr/local/bin/bettermemory")
     assert out == {
         "mcpServers": {
-            "memory": {
-                "command": "/usr/local/bin/bettermemory",
-                "args": [],
-            }
+            DEFAULT_SERVER_NAME: _canonical_entry("/usr/local/bin/bettermemory"),
         }
     }
 
 
-def test_server_snippet_custom_name() -> None:
-    out = server_snippet(name="bettermemory", binary="/x/bm")
-    assert "bettermemory" in out["mcpServers"]
+def test_server_snippet_default_name_is_specific_not_generic() -> None:
+    """1.0 used `memory` as the default key, which collided with other
+    MCP servers and Claude Code's evolving built-in memory features.
+    1.1 default is `bettermemory`. This guard catches an accidental
+    revert."""
+    out = server_snippet(binary="/x/bm")
+    assert DEFAULT_SERVER_NAME in out["mcpServers"]
+    assert DEFAULT_SERVER_NAME == "bettermemory"
     assert "memory" not in out["mcpServers"]
+
+
+def test_server_snippet_custom_name() -> None:
+    out = server_snippet(name="something-else", binary="/x/bm")
+    assert "something-else" in out["mcpServers"]
+    assert DEFAULT_SERVER_NAME not in out["mcpServers"]
 
 
 def test_server_snippet_uses_find_binary_when_unset(
@@ -51,7 +74,7 @@ def test_server_snippet_uses_find_binary_when_unset(
 ) -> None:
     monkeypatch.setattr("bettermemory.init.find_binary", lambda: "/fake/bm")
     out = server_snippet()
-    assert out["mcpServers"]["memory"]["command"] == "/fake/bm"
+    assert out["mcpServers"][DEFAULT_SERVER_NAME]["command"] == "/fake/bm"
 
 
 # ---------------------------------------------------------------------------
@@ -102,7 +125,7 @@ def test_patch_creates_file_when_missing(tmp_path: Path) -> None:
     assert result["action"] == "added"
     assert target.exists()
     body = json.loads(target.read_text(encoding="utf-8"))
-    assert body == {"mcpServers": {"memory": {"command": "/x/bm", "args": []}}}
+    assert body == {"mcpServers": {DEFAULT_SERVER_NAME: _canonical_entry("/x/bm")}}
 
 
 def test_patch_merges_into_existing_mcp_servers(tmp_path: Path) -> None:
@@ -120,10 +143,11 @@ def test_patch_merges_into_existing_mcp_servers(tmp_path: Path) -> None:
     result = patch_client_config(target, binary="/x/bm")
     assert result["action"] == "added"
     body = json.loads(target.read_text(encoding="utf-8"))
-    # Existing entry untouched.
+    # Existing entry untouched (we don't pad foreign entries with the
+    # canonical shape).
     assert body["mcpServers"]["filesystem"] == {"command": "fs-mcp", "args": []}
-    # New entry added.
-    assert body["mcpServers"]["memory"] == {"command": "/x/bm", "args": []}
+    # New entry added with the canonical shape.
+    assert body["mcpServers"][DEFAULT_SERVER_NAME] == _canonical_entry("/x/bm")
 
 
 def test_patch_preserves_non_mcp_keys(tmp_path: Path) -> None:
@@ -139,7 +163,7 @@ def test_patch_preserves_non_mcp_keys(tmp_path: Path) -> None:
 
 def test_patch_noop_when_entry_matches(tmp_path: Path) -> None:
     target = tmp_path / "config.json"
-    initial = {"mcpServers": {"memory": {"command": "/x/bm", "args": []}}}
+    initial = {"mcpServers": {DEFAULT_SERVER_NAME: _canonical_entry("/x/bm")}}
     target.write_text(json.dumps(initial), encoding="utf-8")
     mtime_before = target.stat().st_mtime_ns
     result = patch_client_config(target, binary="/x/bm")
@@ -151,13 +175,13 @@ def test_patch_noop_when_entry_matches(tmp_path: Path) -> None:
 def test_patch_updates_when_binary_path_changed(tmp_path: Path) -> None:
     target = tmp_path / "config.json"
     target.write_text(
-        json.dumps({"mcpServers": {"memory": {"command": "/old/bm", "args": []}}}),
+        json.dumps({"mcpServers": {DEFAULT_SERVER_NAME: _canonical_entry("/old/bm")}}),
         encoding="utf-8",
     )
     result = patch_client_config(target, binary="/new/bm")
     assert result["action"] == "updated"
     body = json.loads(target.read_text(encoding="utf-8"))
-    assert body["mcpServers"]["memory"]["command"] == "/new/bm"
+    assert body["mcpServers"][DEFAULT_SERVER_NAME]["command"] == "/new/bm"
 
 
 def test_patch_rejects_malformed_json(tmp_path: Path) -> None:
@@ -199,7 +223,122 @@ def test_patch_uses_find_binary_when_unset(
     target = tmp_path / "config.json"
     patch_client_config(target)
     body = json.loads(target.read_text(encoding="utf-8"))
-    assert body["mcpServers"]["memory"]["command"] == "/auto/detected/bm"
+    assert body["mcpServers"][DEFAULT_SERVER_NAME]["command"] == "/auto/detected/bm"
+
+
+# ---------------------------------------------------------------------------
+# Legacy `memory` → `bettermemory` migration (1.0 → 1.1 default rename)
+# ---------------------------------------------------------------------------
+
+
+def test_patch_migrates_legacy_memory_entry_with_matching_binary(
+    tmp_path: Path,
+) -> None:
+    """A user upgrading from 1.0 has a `memory` entry pointing at our
+    binary. Adding a `bettermemory` entry under the new default would
+    leave both registered, doubling every tool in the model's tool
+    list. Migrate by removing the legacy entry."""
+    target = tmp_path / "config.json"
+    target.write_text(
+        json.dumps(
+            {
+                "mcpServers": {
+                    LEGACY_SERVER_NAME: {"command": "/x/bm", "args": []},
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+    result = patch_client_config(target, binary="/x/bm")
+    assert result["action"] == "added"
+    assert result["migrated_from_legacy"] is True
+    body = json.loads(target.read_text(encoding="utf-8"))
+    # New entry is present under the new key…
+    assert body["mcpServers"][DEFAULT_SERVER_NAME] == _canonical_entry("/x/bm")
+    # …and the legacy entry is gone.
+    assert LEGACY_SERVER_NAME not in body["mcpServers"]
+
+
+def test_patch_does_not_migrate_legacy_memory_with_different_binary(
+    tmp_path: Path,
+) -> None:
+    """If the user is intentionally hosting a `memory` server pointing
+    at something else (a different memory MCP), the migration does NOT
+    fire — both entries coexist. Migration is binary-equality gated."""
+    target = tmp_path / "config.json"
+    target.write_text(
+        json.dumps(
+            {
+                "mcpServers": {
+                    LEGACY_SERVER_NAME: {
+                        "command": "/some/other/memory-server",
+                        "args": [],
+                    },
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+    result = patch_client_config(target, binary="/x/bm")
+    assert result["action"] == "added"
+    assert "migrated_from_legacy" not in result
+    body = json.loads(target.read_text(encoding="utf-8"))
+    # New entry added.
+    assert body["mcpServers"][DEFAULT_SERVER_NAME] == _canonical_entry("/x/bm")
+    # Legacy untouched — we don't second-guess the user's other server.
+    assert body["mcpServers"][LEGACY_SERVER_NAME]["command"] == (
+        "/some/other/memory-server"
+    )
+
+
+def test_patch_does_not_migrate_when_explicit_legacy_name_passed(
+    tmp_path: Path,
+) -> None:
+    """Migration only triggers when writing under the new default name.
+    A user who passes `--name memory` explicitly is opinionated; honor
+    that and skip the migration."""
+    target = tmp_path / "config.json"
+    target.write_text(
+        json.dumps(
+            {
+                "mcpServers": {
+                    LEGACY_SERVER_NAME: {"command": "/old/bm", "args": []},
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+    result = patch_client_config(target, binary="/new/bm", name=LEGACY_SERVER_NAME)
+    # Updates the legacy entry in place; doesn't introduce the new one
+    # nor flag a migration.
+    assert result["action"] == "updated"
+    assert "migrated_from_legacy" not in result
+    body = json.loads(target.read_text(encoding="utf-8"))
+    assert body["mcpServers"][LEGACY_SERVER_NAME]["command"] == "/new/bm"
+    assert DEFAULT_SERVER_NAME not in body["mcpServers"]
+
+
+def test_patch_migration_idempotent_after_first_run(tmp_path: Path) -> None:
+    """Running init twice in a row should be a noop on the second call,
+    even though the first call performed a legacy migration."""
+    target = tmp_path / "config.json"
+    target.write_text(
+        json.dumps(
+            {
+                "mcpServers": {
+                    LEGACY_SERVER_NAME: {"command": "/x/bm", "args": []},
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+    first = patch_client_config(target, binary="/x/bm")
+    assert first["action"] == "added"
+    assert first["migrated_from_legacy"] is True
+
+    second = patch_client_config(target, binary="/x/bm")
+    assert second["action"] == "noop"
+    assert "migrated_from_legacy" not in second
 
 
 # ---------------------------------------------------------------------------
@@ -238,7 +377,9 @@ def _shared_kwargs(**overrides: Any) -> dict[str, Any]:
         "client": None,
         "print_only": False,
         "json_out": False,
-        "name": "memory",
+        # `None` means "use module default" — same shape as argparse
+        # passing the flag's `default=None`.
+        "name": None,
         "with_addendum": False,
         "config_path": None,
     }
@@ -294,7 +435,7 @@ def test_cli_init_json_output_is_machine_readable(
     out = capsys.readouterr().out
     parsed = json.loads(out)
     assert parsed["binary"] == "/fake/bm"
-    assert parsed["snippet"]["mcpServers"]["memory"]["command"] == "/fake/bm"
+    assert parsed["snippet"]["mcpServers"][DEFAULT_SERVER_NAME]["command"] == "/fake/bm"
     assert set(parsed["clients"].keys()) == {
         "claude-code",
         "claude-desktop",
@@ -315,7 +456,7 @@ def test_cli_init_patch_mode_writes_config(
     out = capsys.readouterr().out
     assert str(target) in out
     body = json.loads(target.read_text(encoding="utf-8"))
-    assert body["mcpServers"]["memory"]["command"] == "/fake/bm"
+    assert body["mcpServers"][DEFAULT_SERVER_NAME]["command"] == "/fake/bm"
 
 
 def test_cli_init_print_only_does_not_write(
@@ -335,7 +476,7 @@ def test_cli_init_print_only_does_not_write(
     assert not target.exists()
     out = capsys.readouterr().out
     parsed = json.loads(out.split("\n#")[0])
-    assert parsed["mcpServers"]["memory"]["command"] == "/fake/bm"
+    assert parsed["mcpServers"][DEFAULT_SERVER_NAME]["command"] == "/fake/bm"
 
 
 def test_cli_init_json_with_patch_includes_patch_result(
@@ -369,3 +510,29 @@ def test_cli_init_patch_idempotent_says_noop(
     cli_init(**_shared_kwargs(client="claude-desktop", config_path=target))
     out = capsys.readouterr().out
     assert "no change" in out or "already configured" in out
+
+
+def test_cli_init_legacy_migration_surfaces_in_human_output(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """When the patch removes a legacy `memory` entry, the human-readable
+    summary tells the user — otherwise a quiet rename of the tool prefix
+    looks like a bug ("why are my tools named differently now?")."""
+    monkeypatch.setattr("bettermemory.init.find_binary", lambda: "/x/bm")
+    target = tmp_path / "config.json"
+    target.write_text(
+        json.dumps(
+            {
+                "mcpServers": {
+                    LEGACY_SERVER_NAME: {"command": "/x/bm", "args": []},
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+    cli_init(**_shared_kwargs(client="claude-desktop", config_path=target))
+    out = capsys.readouterr().out
+    assert "legacy" in out.lower()
+    assert LEGACY_SERVER_NAME in out

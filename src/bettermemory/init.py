@@ -203,20 +203,39 @@ def find_binary() -> str:
 # ---------------------------------------------------------------------------
 
 
+DEFAULT_SERVER_NAME = "bettermemory"
+"""Default key under `mcpServers`. Was `memory` in 1.0; renamed in 1.1
+because `memory` is a generic word that collides with other MCP servers
+(and with Claude Code's own evolving memory features). Patch_client_config
+detects a legacy `memory` entry pointing at our binary and migrates it
+forward — the rename is invisible to existing users."""
+
+LEGACY_SERVER_NAME = "memory"
+"""The 1.0 default. Migrated forward by patch_client_config when an
+upgrade lands."""
+
+
 def server_snippet(
     *,
-    name: str = "memory",
+    name: str = DEFAULT_SERVER_NAME,
     binary: str | None = None,
 ) -> dict[str, Any]:
     """Return the canonical `mcpServers` entry for bettermemory. Suitable
-    for direct embedding in any MCP client's config file."""
+    for direct embedding in any MCP client's config file.
+
+    The shape includes `type: "stdio"` and `env: {}` even though both are
+    optional — they match what `claude mcp add` produces and what Claude
+    Code 2.x writes by default, so the snippet is recognizable next to
+    the user's other entries instead of looking deliberately minimal."""
     if binary is None:
         binary = find_binary()
     return {
         "mcpServers": {
             name: {
+                "type": "stdio",
                 "command": binary,
                 "args": [],
+                "env": {},
             }
         }
     }
@@ -225,13 +244,24 @@ def server_snippet(
 def patch_client_config(
     target_path: Path,
     *,
-    name: str = "memory",
+    name: str = DEFAULT_SERVER_NAME,
     binary: str | None = None,
 ) -> dict[str, Any]:
     """Idempotently merge the bettermemory entry into the named MCP
     client config file. Creates parent dirs and the file if missing.
-    Returns a result dict: `{action, path, name, binary?}` where action
-    is one of `"added"`, `"updated"`, or `"noop"`.
+    Returns a result dict with `{action, path, name, binary?,
+    migrated_from_legacy?}`. `action` is one of `"added"`, `"updated"`,
+    or `"noop"`.
+
+    Legacy migration: when writing under the new default name
+    (`bettermemory`) and a stale `memory` entry whose `command` resolves
+    to the same binary already exists, the legacy entry is removed and
+    the result includes `migrated_from_legacy=True`. This keeps users
+    upgrading from 1.0 from ending up with the server registered twice
+    (which would surface every tool twice in the model's tool list).
+    Migration only triggers on exact-binary match — a `memory` entry
+    pointing at a different binary is left alone in case the user is
+    intentionally hosting two memory servers.
 
     Raises ValueError when the existing file is not valid JSON or does
     not have an object at the root or at `mcpServers`. We deliberately
@@ -267,21 +297,49 @@ def patch_client_config(
             f"expected `{{...}}`."
         )
 
-    new_entry: dict[str, Any] = {"command": binary, "args": []}
+    new_entry: dict[str, Any] = {
+        "type": "stdio",
+        "command": binary,
+        "args": [],
+        "env": {},
+    }
 
-    if name in mcp_servers and mcp_servers[name] == new_entry:
-        return {"action": "noop", "path": str(target_path), "name": name}
+    # Legacy-name migration: only when writing under the new default
+    # name. A user who explicitly passes `--name memory` (or some other
+    # string) has opinions; don't second-guess. The match is on `command`
+    # alone — a legacy entry pointing at a different binary stays put.
+    legacy_present = (
+        name == DEFAULT_SERVER_NAME
+        and LEGACY_SERVER_NAME in mcp_servers
+        and isinstance(mcp_servers[LEGACY_SERVER_NAME], dict)
+        and mcp_servers[LEGACY_SERVER_NAME].get("command") == binary
+    )
+
+    # Idempotency check: same name, same shape, no legacy to migrate →
+    # no rewrite needed.
+    if name in mcp_servers and mcp_servers[name] == new_entry and not legacy_present:
+        return {
+            "action": "noop",
+            "path": str(target_path),
+            "name": name,
+        }
 
     action = "updated" if name in mcp_servers else "added"
     mcp_servers[name] = new_entry
 
+    if legacy_present:
+        del mcp_servers[LEGACY_SERVER_NAME]
+
     target_path.write_text(json.dumps(existing, indent=2) + "\n", encoding="utf-8")
-    return {
+    result: dict[str, Any] = {
         "action": action,
         "path": str(target_path),
         "name": name,
         "binary": binary,
     }
+    if legacy_present:
+        result["migrated_from_legacy"] = True
+    return result
 
 
 # ---------------------------------------------------------------------------
@@ -340,6 +398,13 @@ def _print_patch_summary(
         print(f"updated existing `{result['name']}` entry in {result['path']}")
     else:
         print(f"added `{result['name']}` to {result['path']}")
+    if result.get("migrated_from_legacy"):
+        # 1.0 → 1.1 rename of the default key. Tell the user we cleaned
+        # up the old entry so they don't see two registrations.
+        print(
+            f"removed legacy `{LEGACY_SERVER_NAME}` entry pointing at the "
+            f"same binary (1.0 → 1.1 default-name rename)."
+        )
     print(f"binary: {binary}")
     print()
     print("Restart your MCP client to pick up the change, then ask the")
@@ -359,11 +424,18 @@ def cli_init(
     client: str | None,
     print_only: bool,
     json_out: bool,
-    name: str,
+    name: str | None,
     with_addendum: bool,
     config_path: Path | None,
 ) -> None:
-    """Entry point invoked from `server.main()` argparse dispatch."""
+    """Entry point invoked from `server.main()` argparse dispatch.
+
+    `name=None` resolves to `DEFAULT_SERVER_NAME`. Keeping the default
+    in the module-level constant rather than the argparse layer means
+    the snippet/patch helpers and the CLI agree on what "default" means
+    even when callers don't go through argparse."""
+    if name is None:
+        name = DEFAULT_SERVER_NAME
     binary = find_binary()
     snippet = server_snippet(name=name, binary=binary)
 

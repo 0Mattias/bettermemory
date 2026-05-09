@@ -1476,3 +1476,63 @@ async def test_verification_block_path_drift_coexist(
     assert shown["verification"]["status"] == "never"
     assert shown["path_drift"] is not None
     assert str(missing) in shown["path_drift"]["missing"]
+
+
+# ---------------------------------------------------------------------------
+# MCP `instructions` block — length budget regression
+# ---------------------------------------------------------------------------
+
+
+def test_instructions_block_fits_under_truncation_budget(server: Any) -> None:
+    """Claude Code (empirically validated against 2.1.x) truncates the
+    server-level MCP `instructions` block at roughly 1.8KB and renders
+    "…" plus a `[truncated]` marker after the cut. The current copy is
+    sized for ~1500 chars to leave headroom; re-growing it past 1700 is
+    the regression this guard catches.
+
+    The truncation is consumer-side (Claude Code, not bettermemory),
+    so the only fix when this fires is to shorten the body — push the
+    detail down into individual tool descriptions, which are NOT
+    subject to the same truncation. The optional system-prompt
+    addendum (`docs/system_prompt.md`) carries the long-form policy
+    for clients whose users want to paste it into a project CLAUDE.md.
+
+    Anything is accessible at `server.instructions` and is the same
+    string FastMCP advertises over the wire."""
+    body = server.instructions or ""
+    # Hard ceiling: comfortably below the empirical 1830-char cut.
+    assert len(body) <= 1700, (
+        f"instructions block grew to {len(body)} chars; Claude Code's "
+        f"~1.8KB truncation will cut mid-sentence. Trim or move detail "
+        f"into tool descriptions."
+    )
+    # Soft floor: catch an accidental wipe of the policy.
+    assert len(body) >= 800, (
+        f"instructions block shrank to {len(body)} chars — the load-bearing "
+        f"opt-in retrieval / verification policy is gone."
+    )
+    # Byte length matters too on clients that count bytes; the body uses
+    # a few non-ASCII characters (em-dashes, ellipsis) so it's slightly
+    # longer in UTF-8.
+    assert len(body.encode("utf-8")) <= 1750
+
+
+def test_instructions_block_carries_load_bearing_phrases(server: Any) -> None:
+    """A trimming pass that drops one of these kills the policy. The
+    list is deliberately short — the rules we cannot afford to lose if
+    a future edit is told only "make it shorter"."""
+    body = server.instructions or ""
+    must_have = [
+        "OPT-IN retrieval",
+        "memory_search",
+        "memory_scope_overview",
+        "memory_record_use",
+        "memory_verify",
+        # The transparency rule — without it the user never knows when
+        # stored context shaped a reply.
+        "Using your stored preference",
+        # The verification rule.
+        "spot-check",
+    ]
+    missing = [p for p in must_have if p not in body]
+    assert not missing, f"instructions lost load-bearing phrases: {missing}"

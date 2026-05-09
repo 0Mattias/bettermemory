@@ -156,11 +156,19 @@ def build_server(
         "bettermemory",
         # The server-level instructions block is the canonical "what is
         # this server" message every MCP client surfaces at the
-        # system-prompt level. It carries enough policy that the
-        # optional system-prompt addendum (`docs/system_prompt.md` /
-        # `bettermemory.SYSTEM_PROMPT_ADDENDUM`) is not required for
-        # correctness — the addendum is the advanced tightening
-        # document.
+        # system-prompt level. Empirically validated on Claude Code
+        # 2.1.x: the block lands in the "MCP Server Instructions"
+        # section of the system prompt. Claude Code truncates the block
+        # if it exceeds roughly 1.8KB — the cut is mid-sentence, with
+        # an ellipsis. Keep this body comfortably under that ceiling
+        # (~1500 chars is the working budget). Detail beyond what fits
+        # belongs on the individual tool descriptions, which are not
+        # subject to the same truncation; the optional system-prompt
+        # addendum (`docs/system_prompt.md` /
+        # `bettermemory.SYSTEM_PROMPT_ADDENDUM`) carries the long form
+        # for clients that want it pasted into a project CLAUDE.md.
+        # The instructions-length regression test in tests/test_server.py
+        # guards the budget.
         instructions=(
             "Persistent memory between sessions lives in this server's "
             "MCP tools (listed below). Don't fragment memory across "
@@ -178,39 +186,22 @@ def build_server(
             "resolve\n\n"
             "Skip it for generic factual questions, self-contained "
             "technical questions, and fully-specified messages.\n\n"
-            "Session-start hint: one call to memory_scope_overview "
-            "returns scope counts without bodies. If total=0, skip "
-            "memory_search for the rest of the session unless the user "
-            "explicitly asks for stored context. memory_search itself "
-            "auto-scopes to the caller's current repository by default — "
-            "set auto_scope=false only for explicit cross-project "
-            "queries.\n\n"
-            "When you use a retrieved memory in a reply, briefly say so "
+            "Session-start hint: one memory_scope_overview call returns "
+            "scope counts without bodies. If total=0, skip memory_search "
+            "for the rest of the session unless the user explicitly "
+            "asks. memory_search auto-scopes to the caller's repo by "
+            "default; set auto_scope=false for cross-project queries.\n\n"
+            "When a retrieved memory shapes your reply, briefly say so "
             '("Using your stored preference for…") and call '
-            "memory_record_use(ids, outcome) once per response with "
-            'outcome "applied" / "ignored" / "contradicted" / '
-            '"corrected". Use "contradicted" when you noticed a conflict '
-            'but did NOT fix it; use "corrected" when you fixed the drift '
-            "inline (called memory_update or memory_verify in the same "
-            "turn). Recording `contradicted` after a fix leaves the "
-            "memory_health flag stuck — `corrected` is the audit-only "
-            "outcome for that case. Skip the call when no memory shaped "
-            "the response.\n\n"
-            "Verify before relying. Each retrieval carries a structured "
-            'verification block with status "never" / "stale" / '
-            '"fresh". When status is not "fresh", spot-check at least '
-            "one verifiable claim (file path, version, configuration) "
-            "against ground truth before relying on the memory; if it "
-            "holds, call memory_verify(id) to record the check; if it "
-            "has drifted, fix via memory_update first (which resets "
-            "last_verified_at to null — verify again after the fix to "
-            "close the loop). path_drift counts on each search hit are "
-            "an additional cheap staleness signal.\n\n"
-            "When writing: durable facts only. memory_write rejects "
-            'bodies with transient markers ("currently", "today I", '
-            '"we just"). Prefer memory_update over memory_remove + '
-            'memory_write for corrections. Avoid the catch-all "general" '
-            "scope."
+            "memory_record_use(ids, outcome) once per response. Outcome "
+            "semantics live on the tool.\n\n"
+            "Verify before relying. Each retrieval carries a verification "
+            "block (status: never/stale/fresh) plus path_drift and "
+            'commit_drift counts. When status is not "fresh", '
+            "spot-check one verifiable claim against ground truth; if it "
+            "holds, call memory_verify(id); if it has drifted, "
+            "memory_update first then memory_verify the fix. Writing "
+            "discipline lives on memory_write."
         ),
     )
 
@@ -1793,12 +1784,19 @@ def main() -> None:
     tool in human-readable form."""
     import argparse
 
+    from . import __version__
+
     parser = argparse.ArgumentParser(
         prog="bettermemory",
         description=(
             "Local file-backed memory MCP server with retrieval-on-demand. "
             "Run with no arguments to start the MCP server over stdio."
         ),
+    )
+    parser.add_argument(
+        "--version",
+        action="version",
+        version=f"bettermemory {__version__}",
     )
     sub = parser.add_subparsers(dest="cmd")
 
@@ -1889,11 +1887,12 @@ def main() -> None:
     init_parser.add_argument(
         "--name",
         type=str,
-        default="memory",
+        default=None,
         help=(
-            "Server key under `mcpServers`. Default: `memory` (matches "
-            "the README/docs). Override only if you're already using "
-            "`memory` for a different MCP server."
+            "Server key under `mcpServers`. Default: `bettermemory` "
+            "(specific enough to never collide with another MCP server). "
+            "Override only if you have a strong reason — Claude Code's "
+            "tool names are prefixed with this key."
         ),
     )
     init_parser.add_argument(
