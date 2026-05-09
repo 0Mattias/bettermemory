@@ -1,0 +1,63 @@
+name: Feature request
+description: Suggest a new tool, a new option on an existing tool, or a behavior change.
+labels: ["enhancement"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        bettermemory has a 1.x compatibility contract — see
+        [CONTRIBUTING.md](https://github.com/0Mattias/bettermemory/blob/main/CONTRIBUTING.md#versioning-and-the-1x-compatibility-contract)
+        for what's pinned. Additive features (new tools, new optional
+        arguments) land easily; renames, removals, and semantic
+        redefinitions are 2.0 material.
+
+        Before opening: scan
+        [docs/api.md](https://github.com/0Mattias/bettermemory/blob/main/docs/api.md)
+        and the [closed issues](https://github.com/0Mattias/bettermemory/issues?q=is%3Aissue+is%3Aclosed)
+        — many "rejected on purpose" design choices live in the README's
+        *Limitations* and *What's out of scope* sections.
+
+  - type: textarea
+    id: problem
+    attributes:
+      label: What problem does this solve?
+      description: |
+        The user-facing scenario, not the implementation. *"Walk me
+        through the happy path you wish were possible today but isn't."*
+    validations:
+      required: true
+
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed shape
+      description: |
+        What would the tool signature, CLI flag, or config option
+        look like? Rough is fine — the proposal is a starting point
+        for design discussion, not a spec.
+    validations:
+      required: true
+
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered
+      description: |
+        Have you tried any workarounds with the current 1.x surface?
+        Why are they insufficient? This is the section that most
+        clearly distinguishes "needs a feature" from "needs a docs
+        clarification".
+
+  - type: dropdown
+    id: breaking
+    attributes:
+      label: Compatibility
+      description: |
+        Is this additive (compatible with 1.x) or does it require
+        breaking an existing behavior?
+      options:
+        - Additive (new tool, new optional argument, new config)
+        - Behavior change (could break existing users)
+        - Not sure
+    validations:
+      required: true

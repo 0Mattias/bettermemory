@@ -1,0 +1,80 @@
+name: Bug report
+description: bettermemory is installed and the MCP server starts, but a tool misbehaves or returns the wrong thing.
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        For install / setup failures (server doesn't start, tools not
+        visible to the model, doctor reports a fail), use the **Install
+        failure** template instead — it asks for the doctor output
+        which is the right starting point for that class of issue.
+
+  - type: textarea
+    id: what_happened
+    attributes:
+      label: What happened?
+      description: |
+        A clear, minimal description of the misbehavior. Include the
+        exact tool call (memory_search / memory_write / …), the
+        arguments you (or the model) passed, and what came back. Paste
+        from the MCP client's tool-call log if available.
+      placeholder: |
+        Called memory_search(query="x", auto_scope=False) and got back
+        an empty list, but `memory_list` shows 5 memories matching the
+        query. Expected at least one hit.
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected
+    attributes:
+      label: What did you expect?
+      description: How should the call have behaved?
+    validations:
+      required: true
+
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: Reproduction
+      description: |
+        Smallest sequence of tool calls (or `bettermemory` CLI commands)
+        that triggers the bug from a clean store. The
+        `examples/programmatic_client.py` shape is a good starting
+        point if you want to script it.
+      render: shell
+      placeholder: |
+        export BETTERMEMORY_DIR=/tmp/repro
+        rm -rf "$BETTERMEMORY_DIR"
+        bettermemory health  # confirms empty store
+        # ... the failing sequence
+    validations:
+      required: true
+
+  - type: input
+    id: version
+    attributes:
+      label: bettermemory version
+      description: Output of `bettermemory --version`.
+      placeholder: bettermemory 1.1.0
+    validations:
+      required: true
+
+  - type: input
+    id: os
+    attributes:
+      label: OS / Python version
+      placeholder: macOS 14.5 / Python 3.13.1
+    validations:
+      required: true
+
+  - type: textarea
+    id: doctor
+    attributes:
+      label: bettermemory doctor output (optional)
+      description: |
+        Paste `bettermemory doctor --json` if you have a hunch the
+        environment is involved. Skip if the bug clearly reproduces in
+        a clean tmp store.
+      render: json

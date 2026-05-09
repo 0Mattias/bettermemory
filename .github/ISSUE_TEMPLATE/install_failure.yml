@@ -1,0 +1,92 @@
+name: Install / setup failure
+description: bettermemory installs, but the MCP server doesn't start, or the model doesn't see the tools.
+labels: ["install"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Most install failures are diagnosed by `bettermemory doctor`.
+        **Run it first** and paste the output below — that catches
+        nine in ten common breakage modes (binary not on PATH, stale
+        client config pointing at a moved binary, storage dir not
+        writable, etc.).
+
+  - type: textarea
+    id: doctor
+    attributes:
+      label: bettermemory doctor output
+      description: |
+        Run `bettermemory doctor --json` and paste the full output
+        here. The JSON form is preferred — it's machine-readable so
+        we can spot the failing check at a glance.
+      render: json
+      placeholder: |
+        {
+          "checks": [
+            {"name": "python_version", "status": "ok", ...},
+            ...
+          ]
+        }
+    validations:
+      required: true
+
+  - type: dropdown
+    id: client
+    attributes:
+      label: MCP client
+      description: Which client are you trying to register bettermemory with?
+      options:
+        - Claude Code (CLI)
+        - Claude Code (plugin install)
+        - Claude Desktop
+        - Cursor
+        - Continue
+        - Cline
+        - Other (describe in "What happened?")
+    validations:
+      required: true
+
+  - type: input
+    id: install_command
+    attributes:
+      label: How did you install bettermemory?
+      description: e.g. `uv tool install bettermemory`, `pipx install bettermemory`, `pip install -e .` from a clone
+      placeholder: uv tool install bettermemory
+    validations:
+      required: true
+
+  - type: input
+    id: version
+    attributes:
+      label: bettermemory version
+      description: Output of `bettermemory --version`.
+      placeholder: bettermemory 1.1.0
+    validations:
+      required: true
+
+  - type: input
+    id: os
+    attributes:
+      label: OS / Python version
+      description: e.g. macOS 14.5 / Python 3.13.1
+      placeholder: macOS 14.5 / Python 3.13.1
+    validations:
+      required: true
+
+  - type: textarea
+    id: what_happened
+    attributes:
+      label: What happened?
+      description: |
+        What did you try, what did you expect, what did you see
+        instead? Include exact error messages, log lines from your
+        MCP client (Claude Desktop's `mcp.log`, Cursor's developer
+        tools console, etc.), and any commands you ran by hand.
+    validations:
+      required: true
+
+  - type: textarea
+    id: anything_else
+    attributes:
+      label: Anything else
+      description: Other context that might help. Optional.
