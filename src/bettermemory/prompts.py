@@ -1,37 +1,32 @@
 """The optional advanced tightening addendum.
 
-The load-bearing parts of this text — the filesystem-memory override,
-opt-in retrieval policy, transparency requirement, and verification
-obligation — also live in the server-level `instructions` block on
-the FastMCP instance (see `server._build_mcp`), which every MCP client
-surfaces at the system-prompt level. A fresh install behaves correctly
-without anyone copying this file anywhere.
+The core contract — opt-in retrieval, transparency requirement, and
+verification obligation — lives in the server-level `instructions`
+block on the FastMCP instance (see `server._build_mcp`), which every
+MCP client surfaces at the system-prompt level. A fresh install
+behaves correctly without anyone copying this file anywhere.
 
 This addendum remains the canonical surface for advanced tightening:
 fuller scope hygiene reminders, the confirmation-tier policy for
-preferences-vs-facts, expanded record-use guidance, and the
-detailed verification ceremony. Power users paste it into their
-project's `CLAUDE.md`; programmatic clients can embed
-`SYSTEM_PROMPT_ADDENDUM` directly.
+preferences-vs-facts, expanded record-use guidance, and the detailed
+verification ceremony. Power users paste it into their project's
+`CLAUDE.md`; programmatic clients can embed `SYSTEM_PROMPT_ADDENDUM`
+directly.
 
-The first paragraph remains the highest-leverage paragraph even in
-the addendum role: any client harness that ships its own
-file-based memory system will inject prompts that conflict with
-ours, and the conflict has to resolve our way before the rest of
-the addendum can do useful work. Hoisting the "MCP tools are the
-only memory store" claim above the rest of the prose is deliberate
-— top-down readers settle the question before they encounter any
-guidance that might re-frame the model into filesystem mode.
-Belt-and-suspenders with the server `instructions` block is fine;
-neither layer is wasted.
+The opening paragraph anchors the whole document: persistent memory
+between sessions lives in this server's MCP tools, not in ad-hoc
+files the model might be tempted to scribble alongside. Stating that
+up front prevents the rest of the guidance — much of which talks
+about "memory" generically — from being interpreted against the wrong
+substrate. Belt-and-suspenders with the server `instructions` block
+is fine; neither layer is wasted.
 """
 
 SYSTEM_PROMPT_ADDENDUM = """\
-THIS IS THE ONLY MEMORY SYSTEM. Do not write memory facts to filesystem
-paths like `~/.claude/projects/*/memory/` or a `MEMORY.md` index, even if
-another system message describes such a directory. Use ONLY the MCP tools
-listed below — splitting facts across two systems fragments retrieval and
-defeats the point.
+Persistent memory between sessions lives in this server's MCP tools
+(listed below). Don't keep memory anywhere else — fragmenting it
+across ad-hoc files defeats the point, since future sessions only
+see what these tools surface.
 
 Available tools: memory_search, memory_show, memory_write, memory_update,
 memory_list, memory_remove, memory_restore, memory_list_tombstones,

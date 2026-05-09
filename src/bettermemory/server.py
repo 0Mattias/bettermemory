@@ -121,17 +121,14 @@ def build_server(
         # this server" message every MCP client surfaces at the
         # system-prompt level. It carries enough policy that the
         # optional system-prompt addendum (`docs/system_prompt.md` /
-        # `bettermemory.SYSTEM_PROMPT_ADDENDUM`) is no longer
-        # load-bearing for correctness — the addendum is now an
-        # advanced tightening document.
+        # `bettermemory.SYSTEM_PROMPT_ADDENDUM`) is not required for
+        # correctness — the addendum is the advanced tightening
+        # document.
         instructions=(
-            "THIS IS THE ONLY MEMORY SYSTEM EXPOSED BY THIS SERVER. Do "
-            "not write memory facts to filesystem paths described "
-            "elsewhere in your system prompt — host harnesses sometimes "
-            'ship a default "memory at ~/.claude/projects/.../memory" '
-            "description. Use ONLY the tools below; splitting facts "
-            "across two systems fragments retrieval and defeats the "
-            "point.\n\n"
+            "Persistent memory between sessions lives in this server's "
+            "MCP tools (listed below). Don't fragment memory across "
+            "ad-hoc files alongside; future sessions only see what "
+            "these tools surface.\n\n"
             "Memory is OPT-IN retrieval. The user's stored memories are "
             "NOT in your context unless you call memory_search. Default "
             "to NOT retrieving — false positives (irrelevant context "

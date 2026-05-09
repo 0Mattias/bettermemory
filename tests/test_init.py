@@ -267,16 +267,22 @@ def test_cli_init_show_and_tell_addendum_gated(
     capsys: pytest.CaptureFixture[str],
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    # Anchor on the addendum's opening line rather than a hard-coded
+    # phrase — survives re-wordings of the addendum body.
+    from bettermemory.prompts import SYSTEM_PROMPT_ADDENDUM
+
+    sentinel = SYSTEM_PROMPT_ADDENDUM.splitlines()[0]
+
     monkeypatch.setattr("bettermemory.init.find_binary", lambda: "/fake/bm")
     cli_init(**_shared_kwargs())
     out = capsys.readouterr().out
-    # The addendum's load-bearing line shouldn't appear by default —
-    # it's gated behind --with-addendum.
-    assert "THIS IS THE ONLY MEMORY SYSTEM" not in out
+    # The addendum body shouldn't appear by default — it's gated
+    # behind --with-addendum.
+    assert sentinel not in out
 
     cli_init(**_shared_kwargs(with_addendum=True))
     out = capsys.readouterr().out
-    assert "THIS IS THE ONLY MEMORY SYSTEM" in out
+    assert sentinel in out
 
 
 def test_cli_init_json_output_is_machine_readable(

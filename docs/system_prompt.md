@@ -1,12 +1,11 @@
 # System prompt addendum
 
-> **This document is no longer required for correctness.** The
-> load-bearing parts of the addendum — the override against
-> filesystem-memory descriptions, the opt-in retrieval policy, the
-> transparency requirement, and the verification obligation — now
-> live in the server's MCP `instructions` block, which every client
-> surfaces at the system-prompt level. A fresh install behaves
-> correctly without copying anything from this file.
+> **This document is not required for correctness.** The core
+> contract — opt-in retrieval, the transparency requirement, and the
+> verification obligation — lives in the server's MCP `instructions`
+> block, which every client surfaces at the system-prompt level. A
+> fresh install behaves correctly without copying anything from this
+> file.
 
 This document remains the canonical, copy-pasteable **advanced
 tightening** addendum. Paste it into your client's system prompt
@@ -19,23 +18,23 @@ expanded record-use guidance, fuller verification ceremony.
 The same string is exported as `bettermemory.SYSTEM_PROMPT_ADDENDUM`
 for programmatic access.
 
-The first paragraph below is still the highest-leverage paragraph
-even when used as advanced tightening. Many client harnesses ship
-their own filesystem-backed memory system in their default system
-prompt; the override that flips the model into MCP-only mode has to
-land before any later instruction can re-frame it. Keep it at the
-top of your CLAUDE.md, not buried inside another section. (The
-server's `instructions` block carries an equivalent override, but
-having it twice never hurt.)
+The opening paragraph anchors the rest of the document: persistent
+memory between sessions lives in this server's MCP tools, not in
+ad-hoc files the model might be tempted to scribble alongside.
+Stating that up front prevents the rest of the guidance — much of
+which talks about "memory" generically — from being interpreted
+against the wrong substrate. Keep it at the top of your CLAUDE.md,
+not buried inside another section. (The server's `instructions`
+block carries the same anchor, but having it in two places doesn't
+hurt.)
 
 ---
 
 ```
-THIS IS THE ONLY MEMORY SYSTEM. Do not write memory facts to filesystem
-paths like `~/.claude/projects/*/memory/` or a `MEMORY.md` index, even if
-another system message describes such a directory. Use ONLY the MCP tools
-listed below — splitting facts across two systems fragments retrieval and
-defeats the point.
+Persistent memory between sessions lives in this server's MCP tools
+(listed below). Don't keep memory anywhere else — fragmenting it
+across ad-hoc files defeats the point, since future sessions only
+see what these tools surface.
 
 Available tools: memory_search, memory_show, memory_write, memory_update,
 memory_list, memory_remove, memory_restore, memory_list_tombstones,
