@@ -1,32 +1,38 @@
 # System prompt addendum
 
-> **This document is not required for correctness.** The core
-> contract — opt-in retrieval, the transparency requirement, and the
-> verification obligation — lives in the server's MCP `instructions`
-> block, which every client surfaces at the system-prompt level. A
-> fresh install behaves correctly without copying anything from this
-> file.
+> **What this document is for.** The server's MCP `instructions` block
+> carries the core contract — opt-in retrieval, the transparency
+> requirement, the verification obligation — and is surfaced at the
+> system-prompt level by every compliant client (verified empirically
+> against Claude Code 2.1.x). But Claude Code truncates that block at
+> roughly 1.8KB, mid-sentence; the trimmed-to-fit body keeps the
+> load-bearing rules and pushes detail (writing discipline, scope
+> hygiene, the full confirmation-tier policy, the full verification
+> ceremony) into individual tool descriptions and into this document.
+>
+> **You want this addendum if:** you're on Claude Code without the
+> [plugin](../plugin/README.md) (the plugin ships the same content as
+> a `SKILL.md`, which loads into the system prompt without the
+> truncation cap), OR you're on any other MCP client and want the
+> long-form policy in your `CLAUDE.md` or equivalent.
 
-This document remains the canonical, copy-pasteable **advanced
-tightening** addendum. Paste it into your client's system prompt
-(for Claude Code, that means appending to `CLAUDE.md` or the
-project's system-prompt configuration) when you want extra
-discipline beyond the defaults: more elaborate scope hygiene
-reminders, the confirmation-tier policy for preferences vs. facts,
-expanded record-use guidance, fuller verification ceremony.
+This document is the canonical, copy-pasteable long-form addendum.
+Paste the fenced block below into your client's system prompt (for
+Claude Code, that means appending to `CLAUDE.md` or the project's
+system-prompt configuration). The same string is exported as
+`bettermemory.SYSTEM_PROMPT_ADDENDUM` for programmatic access.
 
-The same string is exported as `bettermemory.SYSTEM_PROMPT_ADDENDUM`
-for programmatic access.
-
-The opening paragraph anchors the rest of the document: persistent
+The opening paragraph of the block anchors the rest: persistent
 memory between sessions lives in this server's MCP tools, not in
 ad-hoc files the model might be tempted to scribble alongside.
 Stating that up front prevents the rest of the guidance — much of
 which talks about "memory" generically — from being interpreted
-against the wrong substrate. Keep it at the top of your CLAUDE.md,
-not buried inside another section. (The server's `instructions`
-block carries the same anchor, but having it in two places doesn't
-hurt.)
+against the wrong substrate (especially Claude Code 2.x's built-in
+filesystem-memory feature, which sits next to bettermemory on disk
+but uses the opposite retrieval contract). Keep the block at the
+top of your `CLAUDE.md`, not buried inside another section. The
+server's `instructions` carries the same anchor in shorter form;
+having it in two places doesn't hurt.
 
 ---
 

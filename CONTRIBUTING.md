@@ -68,6 +68,14 @@ anything that fails CI is blocking on merge.
 - Tests are required for new behavior. The
   [`tests/`](tests/) directory has good examples of the
   hand-written + property-based mix the project aims for.
+- The Claude Code plugin scaffold at the repo root
+  (`.claude-plugin/marketplace.json` + `plugin/`) carries its own
+  version number that has to stay in sync with `pyproject.toml`.
+  Bumping `pyproject.toml` without bumping
+  `plugin/.claude-plugin/plugin.json` and
+  `.claude-plugin/marketplace.json` lights up the version-sync
+  tests in [`tests/test_plugin.py`](tests/test_plugin.py); fix
+  the manifest before pushing.
 
 ## Versioning and the 1.x compatibility contract
 
@@ -89,7 +97,8 @@ Stable within 1.x:
   defaults to `False` in 1.x.
 - Closed-set string values for enum-typed parameters. `confidence`
   is `"low"` / `"medium"` / `"high"` in 1.x; `outcome` is
-  `"applied"` / `"ignored"` / `"contradicted"` in 1.x.
+  `"applied"` / `"ignored"` / `"contradicted"` / `"corrected"` in
+  1.x; `category` is `"fact"` / `"user-inference"` in 1.x.
 - Return-shape keys for the same status. A
   `memory_write` response with `status="duplicate"` will continue
   to carry a `matches` list in 1.x.

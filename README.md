@@ -4,19 +4,41 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 [![Python](https://img.shields.io/badge/python-3.11%2B-blue.svg)](https://www.python.org/downloads/)
 
-A local, file-backed memory MCP server for Claude — built around the principle that **memory is a tool the model retrieves on demand, not context auto-injected into every prompt.**
+**Memory the model can actually trust — and you can actually curate.**
+
+A local, file-backed memory MCP server for Claude. Memories are plain markdown on disk, the model retrieves them on demand instead of having them force-fed into every prompt, and every retrieval comes with structured staleness signals so the model spot-checks before relying.
 
 ## Why
 
-Cloud-style memory features tend to over-apply. They dump stored "facts" into every system prompt, and the model then drags irrelevant context into unrelated conversations. Asking for a Python tutorial pulls in your home-lab notes; a generic question gets coloured by some preference you stated months ago.
+Memory features in current LLM tooling have a uniform failure mode: they auto-inject every stored fact into every system prompt, with no sense of which ones are stale, which ones are relevant, or which ones you'd rather forget. The longer you use it, the more polluted every unrelated conversation becomes. Ask for a Python tutorial and the answer comes pre-flavored by your home-lab notes. Ask a generic shell question and you get advice biased by a preference you stated months ago. The model dispenses stored facts confidently even when they haven't been true since the last refactor.
 
-This project takes the opposite tack:
+The diagnosis isn't "we need better facts." It's that **memory should be a tool, not a system-prompt injection.** The model knows when context is relevant and asks for it; you know when stored facts are stale and can curate them. Both sides need agency over what enters the conversation — and structured signals to act on.
 
-- The model **only sees memories when it actively calls `memory_search`.**
-- The default is to *not* retrieve. False negatives (forgot something, ask once) beat false positives (irrelevant context, cascades for the whole conversation).
-- Memories are **plain markdown files with YAML frontmatter** in a directory you can `grep`, `git log`, and edit by hand.
-- Removal is a **tombstone**, not a delete. Audit trail.
-- Per-session **scope disable** lets the user say "this conversation is unrelated to project X" and shut off a slice of memory until the server restarts.
+That's what bettermemory provides:
+
+- **Retrieval is opt-in.** `memory_search` is a tool the model calls when it needs to. Default is not to call it. Generic questions stay generic; "tell me about pandas" doesn't drag in home-lab notes.
+- **Three structured staleness signals on every retrieval.** Calendar age (`verification`), filesystem path drift (`path_drift` — cited paths still on disk?), and repo commit drift (`commit_drift` — commits since the last verify in the same project). When a signal fires, the model spot-checks before relying — and either confirms via `memory_verify` or fixes the body via `memory_update` + verify. This is the part most memory systems don't have at all.
+- **Hand-editable storage.** Memories live as markdown + YAML in `~/.claude-memory/`. `grep` it. `git log` it. Edit it in your editor. No database, no opaque blob, no vendor lock-in. The on-disk format is the user's data.
+- **A curation surface.** `memory_health` reports dead weight (memories the model has retrieved often but never marked `applied`), heavily-used items, unresolved contradictions, scope typos (singletons within Levenshtein distance 2 of an existing scope), and verification debt (never-verified vs. stale vs. fresh counts). Most memory systems just grow; this one tells you what to prune.
+- **Tombstones, not deletes.** Removed memories keep their `removed_reason`; tombstone-aware dedup catches the case where a fact you decided to drop tries to sneak back in on a paraphrase six months later. Reversible via `memory_restore`.
+- **Auto-scoped by project.** Memories written from inside a git checkout carry the repo URL; `memory_search` defaults to filtering by the caller's current repo. Cross-project queries are explicit (`auto_scope=False`), not the default.
+- **The model asks before saving claims about you.** A structural confirmation tier (`category="user-inference"` on `memory_write`) means the model commits project / infrastructure / tooling facts directly but has to confirm conversationally before saving any preference or belief about *you*. Misattribution sticks; the user always gets the veto.
+- **A feedback loop that improves curation over time.** After a retrieved memory shapes a response, the model logs the outcome (`applied` / `ignored` / `contradicted` / `corrected`). `memory_health` reads the event log to surface dead weight without you having to look — the system tells you what to clean up instead of the other way around.
+
+The practical result: conversations stay focused, the model stops being confidently wrong about stale facts, and the storage stays small and useful instead of growing into a haunted closet of half-true notes.
+
+### How it compares
+
+|                              | Most memory features | bettermemory |
+|------------------------------|----------------------|--------------|
+| **Retrieval**                | Auto-injected into every prompt | Model calls `memory_search` only when needed |
+| **Staleness awareness**      | None — facts surfaced as current | Three structured signals (`verification` / `path_drift` / `commit_drift`) on every retrieval |
+| **Storage**                  | Opaque database                  | Plain markdown + YAML on disk; `grep` / `git` / hand-edit |
+| **Curation tools**           | None — memory just grows         | `memory_health` surfaces dead weight, contradictions, typo scopes, verification debt |
+| **Deletes**                  | Gone forever                     | Tombstones with reason; tombstone-aware dedup; reversible via `memory_restore` |
+| **Project scoping**          | Everything mixed together        | Auto-scoped by git repo; cross-project queries explicit |
+| **Inferences about you**     | Saved silently                   | Structural confirmation tier — model asks before saving |
+| **Feedback loop**            | None                             | `memory_record_use` outcomes feed `memory_health` so dead weight surfaces automatically |
 
 ## Install
 
@@ -76,9 +98,9 @@ The full surface contract — signatures, defaults, return shapes, audit notes �
 
 | Tool | What it does |
 |---|---|
-| `memory_search(query, scopes?, max_results?, expand_top?, auto_scope?)` | Rank and return memory hits with snippets. Each hit carries `relevance: "high" \| "medium" \| "low"` and `match_terms` (the query words that actually hit) — branch on `relevance`, not the raw `score`. Hits also include `created`, `updated`, `last_verified_at`, and cheap `path_drift_checked`/`path_drift_missing` integers so stale hits are obvious without a `memory_show` round-trip. Pass `expand_top=true` to inline the full body of the top hit when its relevance is `"high"` (collapses search→show into one call on confident hits, and surfaces the full `path_drift` report on the expanded hit). |
-| `memory_show(id)` | Full body of one memory, plus the full `path_drift` report. |
-| `memory_write(content, scopes, confidence?, source?, force?, acknowledge_transient?)` | Create a new memory. Runs the structural durability check, then dedup against active memories (`status="duplicate"`), then dedup against tombstones (`status="previously_removed"`, carrying the original `removed_reason`). `force=true` overrides both gates. |
+| `memory_search(query, scopes?, max_results?, expand_top?, auto_scope?)` | Rank and return memory hits with snippets. Each hit carries `relevance: "high" \| "medium" \| "low"` and `match_terms` (the query words that actually hit) — branch on `relevance`, not the raw `score`. Hits also include `created`, `updated`, `last_verified_at`, cheap `path_drift_checked` / `path_drift_missing` integers, and (when applicable) a `commit_drift_count` integer so stale hits are obvious without a `memory_show` round-trip. Pass `expand_top=true` to inline the full body of the top hit when its relevance is `"high"` (collapses search→show into one call and surfaces the full `path_drift` and `commit_drift` blocks on the expanded hit). |
+| `memory_show(id)` | Full body of one memory, plus the full `verification` block, `path_drift` report, and `commit_drift` block (when the caller is in the matching repo). |
+| `memory_write(content, scopes, confidence?, source?, category?, force?, acknowledge_transient?)` | Create a new memory. Runs the structural durability check, then dedup against active memories (`status="duplicate"`), then dedup against tombstones (`status="previously_removed"`, carrying the original `removed_reason`). `category="user-inference"` (vs the default `"fact"`) routes the write through a structural confirmation tier — returns `status="pending"` regardless of the global confirmation config so the user always vetoes claims about themselves. `force=true` overrides both dedup gates. |
 | `memory_update(id, content?, scopes?, confidence?)` | Refine an existing memory in place. Preserves `id`, `created`, and `source`; bumps `updated`. Use this instead of `memory_remove` + `memory_write` when correcting or extending a stored fact — that round-trip would lose the original timestamp and litter the tombstone log with non-deletes. Replace semantics for `scopes` (provide the full new list). |
 | `memory_verify(id, note?)` | Bump `last_verified_at` after spot-checking that the body's claims still match reality. Orthogonal to `memory_update`: a typo fix bumps `updated` but not `last_verified_at`; a verify call bumps `last_verified_at` but not `updated`. |
 | `memory_list(scopes?, with_bodies?)` | List active memories — IDs and one-line summaries by default. Pass `with_bodies=true` for a single-call corpus dump; useful for small stores where N round trips of `list → show → show` would be wasteful. Race-safe against concurrent tombstoning (a file disappearing mid-iteration is skipped, not crashed). |
@@ -86,12 +108,12 @@ The full surface contract — signatures, defaults, return shapes, audit notes �
 | `memory_restore(id)` | Bring a tombstoned memory back to the active set. Strips the removal frontmatter, preserves `created` / `updated` / `last_verified_at` (the body didn't change while it was gone). Errors loudly if the id is active or unknown. |
 | `memory_list_tombstones(scopes?)` | List removed memories with their removal metadata. The curation surface for "what did I clear out?" and the investigation surface for "I think I had a memory about X — what happened?" |
 | `memory_rename_scope(old_scope, new_scope, include_tombstones?)` | Replace `old_scope` with `new_scope` across active memories (and tombstones, by default). The cheap fix for typo'd or deprecated scopes surfaced via `memory_health.rare_scopes`. Bumps `updated`; preserves `last_verified_at`. |
-| `memory_record_use(memory_ids, outcome, note?)` | Record how a retrieved memory landed: `"applied"`, `"ignored"`, or `"contradicted"`. Feeds the memory_health view; lets you spot dead-weight, stale, or hallucinated memories. |
-| `memory_health(window_days?, heavily_used_top_k?, min_applied?)` | Aggregate health view: dead-weight memories, heavily-used memories, unresolved contradictions (cleared by either `memory_update` or `memory_verify` after the contradiction event), transient-marker fire/override rates, scope distribution, per-scope `scope_health` rollup, `rare_scopes` (singletons within Levenshtein distance 2 of another scope — likely typos), and `orphan_use_events` (a fabricated-id smoke test). Same data as the `bettermemory health` CLI. |
+| `memory_record_use(memory_ids, outcome, note?)` | Record how a retrieved memory landed: `"applied"`, `"ignored"`, `"contradicted"`, or `"corrected"`. `"corrected"` is the audit-only sibling of `"contradicted"` — for the noticed-and-fixed-inline workflow where the caller already ran `memory_update` or `memory_verify` in the same turn. Feeds the `memory_health` view; lets you spot dead weight, stale memories, and stuck contradictions. |
+| `memory_health(window_days?, heavily_used_top_k?, min_applied?)` | Aggregate health view: dead-weight memories, heavily-used memories, unresolved contradictions (each row carries a `resolution_timeline` so a stuck flag can be self-diagnosed; cleared by either `memory_update` or `memory_verify` after the contradiction event), transient-marker fire/override rates, scope distribution, per-scope `scope_health` rollup, `rare_scopes` (singletons within Levenshtein distance 2 of another scope — likely typos), `orphan_use_events` (a fabricated-id smoke test), `verification_debt` (`never_verified` / `stale` / `fresh` partition against the configured threshold), and `commit_drift_debt` (rows whose verification anchor sits behind HEAD when the server is in a repo whose memories live in this store). Same data as the `bettermemory health` CLI. |
 | `memory_scope_overview(auto_scope?)` | Cheap session-start hint: counts of memories per scope. `total=0` means `memory_search` is unlikely to be fruitful. |
 | `memory_scope_disable(scope)` | Mute a scope for the rest of this session. |
 | `memory_scope_enable(scope)` | Re-enable a previously muted scope. |
-| `memory_write_confirm(pending_id)` | Commit a pending write (when confirmation is required). |
+| `memory_write_confirm(pending_id)` | Commit a pending write (returned when `category="user-inference"` was passed, or when `behavior.require_write_confirmation = true` in config). |
 | `memory_write_cancel(pending_id)` | Drop a pending write without committing. |
 
 ### Pending-write flow
@@ -266,6 +288,8 @@ Avoid the catch-all `general` scope — it defeats the whole point.
 The `bettermemory` script is the MCP server entry point by default — running it with no arguments launches over stdio, which is what your client expects. It also exposes offline tooling:
 
 ```sh
+bettermemory --version                           # print version and exit
+
 bettermemory init                                # show-and-tell: print snippet + locations
 bettermemory init --client claude-code           # auto-patch a known client (idempotent)
 bettermemory init --client claude-desktop
@@ -274,7 +298,7 @@ bettermemory init --client continue
 bettermemory init --client cline
 bettermemory init --client cursor --print-only   # print snippet without writing
 bettermemory init --json                         # structured output for tooling
-bettermemory init --with-addendum                # also print the optional advanced addendum
+bettermemory init --with-addendum                # also print the long-form policy addendum
 
 bettermemory doctor                  # diagnose install state (binary, config, storage,
                                      #   memory parse, event log, MCP client configs)

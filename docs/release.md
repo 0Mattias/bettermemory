@@ -53,11 +53,21 @@ Working tree clean, on `main`, all CI green:
 #    surfaces noise in the diff.
 $EDITOR pyproject.toml
 
-# 2. Move the relevant entries from the "Unreleased" section of
+# 2. Bump the SAME version in the two plugin manifests. The
+#    version-sync tests in tests/test_plugin.py will fail if these
+#    drift apart — they're the guardrail for the release ritual.
+$EDITOR plugin/.claude-plugin/plugin.json    # `.version`
+$EDITOR .claude-plugin/marketplace.json      # `.metadata.version`
+
+# 3. Move the relevant entries from the "Unreleased" section of
 #    CHANGELOG.md into a new `## <X.Y.Z> — <date>` heading.
 $EDITOR CHANGELOG.md
 
-# 3. Commit, tag, push.
+# 4. Run the suite locally; the version-sync tests are the cheapest
+#    check that all four files agree.
+pytest tests/test_plugin.py tests/test_version.py -q
+
+# 5. Commit, tag, push.
 git commit -am "release: <X.Y.Z>"
 git tag -a v<X.Y.Z> -m "v<X.Y.Z>"
 git push origin main

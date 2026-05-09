@@ -21,5 +21,8 @@ htmlcov/
 .vscode/
 *.swp
 
+# macOS Finder droppings
+.DS_Store
+
 # Local Claude Code settings (keep settings.json shared, ignore the per-machine one)
 .claude/settings.local.json

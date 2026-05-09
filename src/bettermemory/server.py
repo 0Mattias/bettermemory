@@ -1899,10 +1899,14 @@ def main() -> None:
         "--with-addendum",
         action="store_true",
         help=(
-            "Also print docs/system_prompt.md (the optional advanced "
-            "tightening addendum). Off by default — the load-bearing "
-            "policy lives in the server-level MCP `instructions` block, "
-            "so the addendum is no longer part of required setup."
+            "Also print docs/system_prompt.md (the long-form policy). "
+            "The MCP `instructions` block carries the core rules at "
+            "the system-prompt level on every compliant client, but "
+            "Claude Code truncates it at ~1.8KB. Print the addendum "
+            "and paste into your CLAUDE.md to keep the writing-"
+            "discipline / scope-hygiene / verification-ceremony "
+            "detail in scope. The Claude Code plugin ships the same "
+            "content as a SKILL.md — you don't need both."
         ),
     )
     init_parser.add_argument(
@@ -2159,8 +2163,10 @@ def _cli_serve() -> None:
     )
     log.info(
         "system prompt: server-level MCP `instructions` block carries "
-        "the load-bearing policy; copy docs/system_prompt.md into your "
-        "CLAUDE.md only for advanced tightening (no longer required)"
+        "the core policy; on Claude Code the block is truncated at "
+        "~1.8KB so the long-form addendum (docs/system_prompt.md) or "
+        "the plugin's SKILL.md carries the writing-discipline / "
+        "scope-hygiene tail"
     )
 
     mcp = build_server(config=config, store=store, state=get_state())
