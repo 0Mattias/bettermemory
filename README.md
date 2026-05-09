@@ -279,6 +279,11 @@ bettermemory tombstones list                     # all removed memories
 bettermemory tombstones list --json --scope tools
 bettermemory tombstones prune --older-than 365   # hard-delete year-old removals
 bettermemory tombstones prune --older-than 365 --dry-run
+
+bettermemory export                              # dump active + tombstones to stdout
+bettermemory export -o backup.json               # ...or to a file (status on stderr)
+bettermemory export --no-tombstones              # active set only
+bettermemory export --scope projects:demo        # filter by scope (repeatable)
 ```
 
 `health` returns the same data as the `memory_health` MCP tool — drive curation passes outside any conversation: prune dead-weight memories, refresh contradicted ones, trim transient markers whose override rate is high.
