@@ -286,6 +286,107 @@ async def test_confirmation_disabled_writes_immediately(server: Any) -> None:
 
 
 # ---------------------------------------------------------------------------
+# memory_write category="user-inference" — structural confirmation tier
+#
+# A claim *about* the user (preferences, beliefs, working style) is always
+# routed through the pending-write flow, regardless of the global
+# `require_write_confirmation` config. Misattribution sticks; the user
+# gets the veto.
+# ---------------------------------------------------------------------------
+
+
+async def test_user_inference_category_stages_even_without_global_flag(
+    server: Any,
+) -> None:
+    """category='user-inference' triggers pending on a default-config server
+    where global require_write_confirmation is off."""
+    res = await _call(
+        server,
+        "memory_write",
+        content="Prefers code-driven tutorials over walkthroughs.",
+        scopes=["learning-style"],
+        category="user-inference",
+    )
+    assert res["status"] == "pending"
+    assert res["pending_reason"] == "user-inference"
+    assert res["pending_id"].startswith("pending_")
+    assert res["preview"]["category"] == "user-inference"
+    # Hint should explicitly tell the model to ask the user first.
+    assert "ask the user" in res["hint"].lower()
+
+
+async def test_user_inference_pending_commits_after_confirm(server: Any) -> None:
+    pending = await _call(
+        server,
+        "memory_write",
+        content="Prefers terse responses over verbose explanations.",
+        scopes=["learning-style"],
+        category="user-inference",
+    )
+    committed = await _call(
+        server, "memory_write_confirm", pending_id=pending["pending_id"]
+    )
+    assert committed["status"] == "committed"
+    assert committed["id"]
+
+
+async def test_user_inference_pending_can_be_cancelled(server: Any) -> None:
+    pending = await _call(
+        server,
+        "memory_write",
+        content="Allegedly hates dark mode.",
+        scopes=["learning-style"],
+        category="user-inference",
+    )
+    res = await _call(server, "memory_write_cancel", pending_id=pending["pending_id"])
+    assert res["existed"] is True
+    listing = await _call(server, "memory_list")
+    listing = listing.get("result", listing) if isinstance(listing, dict) else listing
+    assert listing == []  # cancelled write never landed
+
+
+async def test_default_category_fact_commits_immediately(server: Any) -> None:
+    """Explicit category='fact' is the same path as omitting the parameter."""
+    res = await _call(
+        server,
+        "memory_write",
+        content="Project uses Postgres in prod.",
+        scopes=["projects:demo"],
+        category="fact",
+    )
+    assert res["status"] == "committed"
+    assert "pending_id" not in res
+
+
+async def test_invalid_category_raises(server: Any) -> None:
+    with pytest.raises(Exception):
+        await _call(
+            server,
+            "memory_write",
+            content="something",
+            scopes=["tools"],
+            category="not-a-valid-category",
+        )
+
+
+async def test_global_config_flag_records_pending_reason_config(
+    confirming_server: tuple[Any, SessionState],
+) -> None:
+    """When the pending flow fires because of the global config flag (not
+    because of category), the response carries pending_reason='config'."""
+    server, _ = confirming_server
+    res = await _call(
+        server,
+        "memory_write",
+        content="some durable fact",
+        scopes=["tools"],
+    )
+    assert res["status"] == "pending"
+    assert res["pending_reason"] == "config"
+    assert res["preview"]["category"] == "fact"
+
+
+# ---------------------------------------------------------------------------
 # memory_list(with_bodies=True)
 # ---------------------------------------------------------------------------
 

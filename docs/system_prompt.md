@@ -202,16 +202,24 @@ Writing and updating memory:
   shot — it preserves body content and `last_verified_at` (the body's
   claims didn't change, only the tag).
 
-- Confirmation policy is tiered:
-  - For project, infrastructure, reference, and tooling memories — write
-    directly. Announce the save in one line so the user can object
+- Confirmation policy is tiered, and the user-inference tier is
+  structurally enforced via the `category` parameter on memory_write:
+  - For project, infrastructure, reference, and tooling memories — call
+    memory_write with the default `category="fact"`. The write commits
+    immediately; announce the save in one line so the user can object
     ("Saved: bettermemory env var rename to BETTERMEMORY_DIR"). The MCP
     permission gate is the user's primary veto point; a second
     conversational gate is friction without leverage.
   - For memories that capture inferences about the user (preferences,
-    beliefs, claims about how they want to work) — confirm first ("Want
-    me to remember that you prefer X?"). Misattribution sticks; the
-    friction is worth it for this category only.
+    beliefs, claims about how they want to work) — pass
+    `category="user-inference"` to memory_write. The server returns
+    {status:"pending", pending_id, pending_reason:"user-inference"}
+    instead of committing. Ask the user in plain language ("want me to
+    remember that you prefer X?") and only then call
+    memory_write_confirm(pending_id), or memory_write_cancel(pending_id)
+    if they decline. The pending gate fires regardless of the global
+    `require_write_confirmation` config flag — misattribution sticks,
+    so the user always gets the veto on claims about themselves.
 
 - Tag with appropriate scopes. Avoid the catch-all "general" scope.
 

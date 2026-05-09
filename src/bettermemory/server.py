@@ -80,6 +80,32 @@ _USE_OUTCOMES: frozenset[str] = frozenset(
 
 
 # ---------------------------------------------------------------------------
+# memory_write categories. Orthogonal to `confidence` (how sure) and
+# `source` (where the fact came from): `category` is what kind of claim
+# the memory makes.
+#
+# - "fact" — the default; project / infrastructure / reference / tooling
+#   facts about the world. Writes commit immediately (subject to the
+#   global `require_write_confirmation` flag).
+# - "user-inference" — a claim about the user themselves (preferences,
+#   beliefs, working style). Always routed through the pending-write
+#   flow regardless of the global flag, so the user gets to confirm
+#   before a sticky misattribution lands. Structural enforcement of
+#   the confirmation-tier policy: the model can't shortcut it by
+#   omitting a confirm-first conversational turn.
+#
+# Not persisted to the on-disk memory frontmatter — this is a write-time
+# routing signal, not a queryable attribute. If aggregate analysis ever
+# needs it (e.g. "what fraction of pending writes were user-inference?"),
+# the event log already records it via the `category` field on each
+# write event.
+# ---------------------------------------------------------------------------
+
+
+_WRITE_CATEGORIES: frozenset[str] = frozenset({"fact", "user-inference"})
+
+
+# ---------------------------------------------------------------------------
 # Wiring
 # ---------------------------------------------------------------------------
 
@@ -450,10 +476,17 @@ def _register_tools(
             'Avoid the catch-all "general" scope; it defeats targeted '
             "retrieval — pick something narrower like `tools`, "
             "`learning-style`, `infrastructure`, or `projects:<name>`. "
-            "If `require_write_confirmation` is true in config, a write "
-            "that passes all checks returns {status:'pending', "
-            "pending_id} and you must call memory_write_confirm("
-            "pending_id) to commit."
+            "Pass `category=\"user-inference\"` when the memory captures "
+            "a claim about the user themselves (preferences, beliefs, "
+            "working style); that always returns {status:'pending', "
+            "pending_id} regardless of config so the user gets to "
+            "confirm before a sticky misattribution lands. Ask the user "
+            "in plain language ('want me to remember that you prefer X?') "
+            "and only then call memory_write_confirm(pending_id), or "
+            "memory_write_cancel(pending_id) if they decline. The "
+            'default category "fact" covers project / infrastructure / '
+            "reference / tooling memories and commits immediately "
+            "unless `require_write_confirmation` is true in config."
         ),
     )
     async def memory_write(
@@ -463,7 +496,10 @@ def _register_tools(
         source: str = "explicit-statement",
         force: bool = False,
         acknowledge_transient: bool = False,
+        category: str = "fact",
     ) -> dict[str, Any]:
+        if category not in _WRITE_CATEGORIES:
+            raise ValueError(f"category must be one of {sorted(_WRITE_CATEGORIES)}")
         payload = _validate_write_payload(
             content=content,
             scopes=scopes,
@@ -610,21 +646,47 @@ def _register_tools(
             else []
         )
 
+        # Two independent triggers for the pending-write flow:
+        #   1. Global config flag (`require_write_confirmation`) — opts the
+        #      whole install into staged writes.
+        #   2. Category == "user-inference" — structural enforcement of the
+        #      confirmation-tier policy. A claim *about* the user is never
+        #      a silent write, regardless of the global flag, because
+        #      misattribution sticks.
+        # `pending_reason` is recorded in the event log so health/analysis
+        # can distinguish the two triggers later.
         if config.behavior.require_write_confirmation:
+            pending_reason = "config"
+        elif category == "user-inference":
+            pending_reason = "user-inference"
+        else:
+            pending_reason = None
+
+        if pending_reason is not None:
             pending = state.stage_write(payload)
+            hint = (
+                "User-inference category — ask the user in plain "
+                "language ('want me to remember that you prefer X?') "
+                "and only then call memory_write_confirm(pending_id), "
+                "or memory_write_cancel(pending_id) if they decline."
+                if pending_reason == "user-inference"
+                else (
+                    "Confirm with memory_write_confirm(pending_id) or "
+                    "drop with memory_write_cancel(pending_id)."
+                )
+            )
             response: dict[str, Any] = {
                 "status": "pending",
                 "pending_id": pending.pending_id,
+                "pending_reason": pending_reason,
                 "preview": {
                     "content": payload["content"],
                     "scopes": payload["scopes"],
                     "confidence": payload["confidence"].value,
                     "source": payload["source"].value,
+                    "category": category,
                 },
-                "hint": (
-                    "Confirm with memory_write_confirm(pending_id) or "
-                    "drop with memory_write_cancel(pending_id)."
-                ),
+                "hint": hint,
             }
             if related:
                 response["related"] = [_similar_to_dict(h) for h in related]
@@ -636,6 +698,8 @@ def _register_tools(
                 "write",
                 status="pending",
                 pending_id=pending.pending_id,
+                pending_reason=pending_reason,
+                category=category,
                 scopes=payload["scopes"],
                 forced=force,
                 related=[h.id for h in related],
@@ -649,6 +713,7 @@ def _register_tools(
             "write",
             status="committed",
             id=memory.id,
+            category=category,
             scopes=memory.scopes,
             confidence=memory.confidence.value,
             source=memory.source.value,
