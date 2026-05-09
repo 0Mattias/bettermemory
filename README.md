@@ -20,6 +20,21 @@ This project takes the opposite tack:
 
 ## Install
 
+### Claude Code (plugin — recommended)
+
+```text
+/plugin marketplace add 0Mattias/bettermemory
+/plugin install bettermemory@bettermemory
+```
+
+That installs the [Claude Code plugin](plugin/README.md), which bundles
+the MCP server registration AND a system-prompt-level skill carrying
+the opt-in retrieval policy. The plugin's `.mcp.json` uses
+`uvx bettermemory`, so you only need [`uv`](https://docs.astral.sh/uv/)
+on your PATH — uvx fetches bettermemory from PyPI on first run.
+
+### Any other MCP client (or if you prefer the manual install)
+
 ```sh
 # recommended — isolated install via uv tool
 uv tool install bettermemory
@@ -33,9 +48,7 @@ pip install bettermemory
 
 Python ≥ 3.11. From a clone (development): `uv pip install -e .` or `uv tool install .`.
 
-## Quick start
-
-After installing, run:
+Then register with your client:
 
 ```sh
 bettermemory init --client claude-code      # or: claude-desktop, cursor, continue, cline
@@ -47,11 +60,15 @@ That idempotently writes the MCP server entry into the right config file for you
 
 Per-client setup details (config paths, restart requirements, gotchas for Code-Insiders / Codium variants of Cline, project-scoped vs user-scoped patching) live in [`docs/clients.md`](docs/clients.md). If your client isn't in the supported list (or you'd rather copy by hand), run `bettermemory init` with no flags — it prints the canonical JSON snippet plus the common config locations, with `[✓]` markers showing which already exist on your machine.
 
-That's it — defaults are sane. The opt-in policy, transparency requirement, and verification obligation now live in the server's MCP `instructions` block (which every client surfaces at the system-prompt level) and in each tool's description, so a fresh install behaves correctly without further configuration.
-
-**Optional tightening.** [`docs/system_prompt.md`](docs/system_prompt.md) is the longer-form addendum — paste it into your project's `CLAUDE.md` for additional discipline around scope hygiene, the record-use loop, and confirmation-tier policy. It's no longer load-bearing for correctness; treat it as the advanced tuning document, not a required setup step. (Pass `--with-addendum` to `bettermemory init` to print the block.)
+The MCP `instructions` block ships the core opt-in retrieval policy at the system-prompt level on every compliant client (verified against Claude Code 2.1.x, where the block lands in the "MCP Server Instructions" section). Claude Code truncates that block at roughly 1.8KB, so the body is sized to fit comfortably under that ceiling. The longer-form policy (writing discipline, scope hygiene, confirmation-tier guidance) lives in [`docs/system_prompt.md`](docs/system_prompt.md) for clients that want it pasted into a project `CLAUDE.md`. The plugin install path bypasses all of that — its [`SKILL.md`](plugin/skills/bettermemory/SKILL.md) carries the long form as a Claude Code skill, which loads into the system prompt without the truncation cap.
 
 See [`docs/installation.md`](docs/installation.md) for more detail.
+
+## Coexistence with Claude Code's built-in memory feature
+
+Claude Code 2.x ships its own filesystem-backed memory feature that auto-injects stored facts into the system prompt. **bettermemory takes the opposite approach** — same physical pattern (markdown files on disk), opposite retrieval contract (model decides when to read them, not the harness). The two can coexist on a single machine, but they fragment recall: a fact stored via Claude Code's built-in memory is invisible to bettermemory's `memory_search`, and vice versa.
+
+The plugin's `SKILL.md` and the [`docs/system_prompt.md`](docs/system_prompt.md) addendum both lead with the same anchor: *"Persistent memory between sessions lives in this server's MCP tools. Don't fragment memory across ad-hoc files alongside."* That single sentence is what keeps the model from drifting back to the built-in memory directory mid-conversation. If you've adopted bettermemory, **install the plugin (or paste the addendum into your `CLAUDE.md`)** so the model has a clear "use only these tools" instruction.
 
 ## Tools
 

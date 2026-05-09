@@ -15,14 +15,29 @@ machine.
 After any setup change, restart the client process so it picks up the
 new MCP server entry.
 
-## Claude Code (CLI)
+## Claude Code (CLI) — plugin path
+
+```text
+/plugin marketplace add 0Mattias/bettermemory
+/plugin install bettermemory@bettermemory
+```
+
+This is the easiest path for Claude Code 2.x. The plugin bundles the
+MCP server registration AND a system-prompt-level skill carrying the
+opt-in retrieval policy. The plugin uses `uvx bettermemory`, so the
+only prerequisite on your machine is [`uv`](https://docs.astral.sh/uv/)
+— uvx fetches bettermemory from PyPI on first run and caches it for
+subsequent invocations. See [`../plugin/README.md`](../plugin/README.md)
+for the full plugin documentation.
+
+## Claude Code (CLI) — manual path
 
 ```sh
 bettermemory init --client claude-code
 ```
 
-Patches `~/.claude.json` (user scope). For project scope, point at the
-repo's `.mcp.json` instead:
+Patches `~/.claude.json` (user scope) — the same file `claude mcp add`
+writes to. For project scope, point at the repo's `.mcp.json` instead:
 
 ```sh
 bettermemory init --client claude-code --config-path .mcp.json
@@ -30,6 +45,13 @@ bettermemory init --client claude-code --config-path .mcp.json
 
 Project-scope wins when both are present, and that's usually what you
 want for a project-scoped store (`./.claude-memory/`).
+
+The manual path doesn't include the system-prompt-level skill the
+plugin ships. If you want the long-form policy (writing discipline,
+scope hygiene, confirmation-tier guidance) with the manual install,
+paste [`system_prompt.md`](system_prompt.md) into your project's
+`CLAUDE.md` — or pass `--with-addendum` to `bettermemory init` to
+print it.
 
 ## Claude Desktop
 
@@ -146,14 +168,26 @@ against:
 
 | Client          | Snippet shape | Path | Init auto-patch |
 |-----------------|---------------|------|-----------------|
-| Claude Code     | `mcpServers` map | user `~/.claude.json` or project `.mcp.json` | yes |
+| Claude Code (plugin) | bundled `.mcp.json` + `SKILL.md` | `/plugin install bettermemory@bettermemory` | n/a — managed by the plugin system |
+| Claude Code (manual) | `mcpServers` map | user `~/.claude.json` or project `.mcp.json` | yes |
 | Claude Desktop  | `mcpServers` map | platform-standard `claude_desktop_config.json` | yes |
 | Cursor          | `mcpServers` map | `~/.cursor/mcp.json` or `<repo>/.cursor/mcp.json` | yes |
 | Continue        | `mcpServers` map | `~/.continue/config.json` | yes |
 | Cline           | `mcpServers` map | VS Code `globalStorage/saoudrizwan.claude-dev/...` | yes (default VS Code only) |
 
-The "snippet shape" is the same `{"mcpServers": {"memory": {"command":
-"...", "args": []}}}` for every supported client because that's the
-shape the MCP spec standardizes. Differences are entirely in *where*
-the file lives. If you find a client whose snippet shape *isn't* this
-— file an issue; we'll add support.
+The "snippet shape" is the same `{"mcpServers": {"bettermemory":
+{"type": "stdio", "command": "...", "args": [], "env": {}}}}` for every
+supported client because that's the shape the MCP spec standardizes
+(`type` and `env` are optional but match what `claude mcp add` writes
+by default). Differences are entirely in *where* the file lives. If
+you find a client whose snippet shape *isn't* this — file an issue;
+we'll add support.
+
+The 1.0 default for the server key was the shorter `memory`. 1.1
+defaults to `bettermemory` because the shorter name collided with
+other MCP servers and Claude Code's evolving built-in memory features.
+`bettermemory init` detects a legacy `memory` entry pointing at the
+same binary and removes it as part of the patch — you don't end up
+with the server registered twice. If you have a hand-written `memory`
+entry pointing at a *different* binary (some other memory MCP
+server), `init` leaves it alone.

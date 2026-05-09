@@ -45,13 +45,19 @@ For the curious, the snippet itself is:
 ```json
 {
   "mcpServers": {
-    "memory": {
+    "bettermemory": {
+      "type": "stdio",
       "command": "bettermemory",
-      "args": []
+      "args": [],
+      "env": {}
     }
   }
 }
 ```
+
+The `type: "stdio"` and `env: {}` fields are optional in the MCP spec but match what `claude mcp add` and Claude Code 2.x write by default — keeping the snippet shape recognizable next to your other MCP entries.
+
+The `bettermemory` key under `mcpServers` becomes the prefix on the model's tool names (`mcp__bettermemory__memory_search`, etc.). It used to default to the shorter `memory` in 1.0; that name was generic enough to collide with other MCP servers and with Claude Code's evolving built-in memory features, so the 1.1 default is the longer-but-unambiguous `bettermemory`. If you're upgrading from 1.0, `bettermemory init --client X` detects a legacy `memory` entry pointing at the same binary and removes it as part of the patch — you don't end up with the server registered twice.
 
 If `bettermemory` isn't on the spawned client process's `$PATH` (a common failure mode for GUI clients launched from Finder/Launchpad on macOS), `init` substitutes the absolute path — that's the same path you'd write by hand. `bettermemory init --print-only --client <name>` shows you exactly what would be written.
 
@@ -75,11 +81,15 @@ In a *new* session, ask:
 
 Claude should call `memory_search`, surface the stored preference, and tell you ("using your stored preference for code-driven tutorials…") before answering — that last sentence is the transparency requirement, baked into the server's MCP `instructions` block.
 
-## 4. Optional: tighten with the system-prompt addendum
+## 4. Optional: tighten with the system-prompt addendum (or use the plugin)
 
-The server's MCP `instructions` block already carries the load-bearing policy: opt-in retrieval, the when-to-search rules, the transparency requirement, and the verification obligation. A fresh install behaves correctly without further configuration.
+The server's MCP `instructions` block carries the core policy — opt-in retrieval, the when-to-search rules, the transparency requirement, and the verification obligation — and is surfaced at the system-prompt level by every compliant client (verified against Claude Code 2.1.x). A fresh install behaves correctly out of the box for most workflows.
 
-For an additional layer of discipline (more elaborate scope hygiene reminders, the confirmation-tier policy for preferences vs. facts, expanded record-use guidance), open [`../docs/system_prompt.md`](system_prompt.md), copy the fenced block, and paste it into your project's `CLAUDE.md` or your global system prompt. The addendum complements the server `instructions`; it does not replace them.
+There are two cases where you want more than the `instructions` block carries:
+
+- **You're on Claude Code and want the long-form policy.** Claude Code truncates the MCP `instructions` block at roughly 1.8KB. The body is sized to fit comfortably under that cap; the writing-discipline tail, scope hygiene, confirmation-tier policy, and expanded verification ceremony don't make the cut. The cleanest path is to install the [Claude Code plugin](../plugin/README.md) — its `SKILL.md` ships the long-form policy as a Claude Code skill, which loads into the system prompt without the truncation cap.
+
+- **You're on any other client (or you don't want the plugin).** Open [`../docs/system_prompt.md`](system_prompt.md), copy the fenced block, and paste it into your project's `CLAUDE.md` or your global system prompt. The addendum complements the server `instructions` rather than replacing them.
 
 ## Troubleshooting
 
