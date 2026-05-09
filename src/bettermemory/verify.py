@@ -55,6 +55,14 @@ Excluded by design:
   parse as bare paths; filtered via an ``@`` check on the leading run.
 - Paths shorter than 3 characters (``/x``) — the false-positive rate at
   that length is too high (``/`` alone, ``/n`` from prose, etc.).
+- CLI / slash-command invocations (``/plugin install foo``,
+  ``/usr/bin/env python -m bettermemory``) — a slash-prefixed token
+  followed by space-delimited arguments looks path-shaped to the
+  extractor but maps to no file on disk. Distinguished from a real path
+  with internal spaces (rare but legal: ``/Users/Some User/x``) by
+  counting slashes in the first whitespace-separated chunk: a true path
+  crosses directory boundaries and so contains multiple slashes there,
+  while a command name is a single ``/word`` chunk.
 """
 
 from __future__ import annotations
@@ -253,6 +261,41 @@ def _normalize_candidate(raw: str) -> str | None:
     # extracted from backticks could still contain one — be explicit.
     if "@" in s and ":" in s and s.index("@") < s.index(":"):
         return None
+
+    # CLI / slash-command shape: a real path with internal whitespace has
+    # `/` separating each directory boundary, so the first whitespace-
+    # separated chunk crosses multiple boundaries and contains multiple
+    # slashes (`/Users/My Stuff/file` → first chunk `/Users/My`, two `/`).
+    # CLI invocations don't look like that:
+    #
+    # 1. Slash commands have a single-slash command name as their first
+    #    chunk (`/plugin install foo` → first chunk `/plugin`, one `/`;
+    #    `/plugin install owner/repo` → also one — even when an argument
+    #    contains `/`, the leading command name does not).
+    #
+    # 2. Shell invocations starting at an absolute binary path (`/usr/bin/env
+    #    python -m bettermemory`) defeat the first-chunk rule because
+    #    `/usr/bin/env` has multiple slashes — but they always have 2+
+    #    adjacent slashless tokens after the binary (`python`, `-m`,
+    #    `bettermemory`). A path with internal whitespace can have one
+    #    slashless component (`/Users/My Stuff` → `Stuff` has no slash)
+    #    but rarely two adjacent — every directory boundary is a `/`.
+    #
+    # Combining the two rules catches both shapes without over-rejecting
+    # the rare-but-legal "path with internal whitespace". Counts `\` as
+    # well as `/` so Windows paths with internal spaces (`C:\Users\Me My
+    # Stuff\file`) still pass.
+    #
+    # Without this filter, backtick-wrapped Claude Code slash commands
+    # quoted in prose ended up in `path_drift_missing` because no such
+    # file existed on disk — noisy false positives on any memory
+    # describing the install path.
+    if " " in s or "\t" in s:
+        parts = s.split()
+        first = parts[0]
+        slashless = sum(1 for p in parts if "/" not in p and "\\" not in p)
+        if first.count("/") + first.count("\\") <= 1 or slashless >= 2:
+            return None
 
     if s.startswith("~/"):
         return s if len(s) > 2 else None

@@ -234,6 +234,24 @@ Three themes:
   the bucket. Implemented via a new module-private
   `_edit_distance_within(a, b, max_dist)` helper in `health.py`.
 
+- **`path_drift` no longer flags slash-prefixed CLI invocations as
+  missing paths.** The extractor was treating backtick-wrapped Claude
+  Code slash commands (`/plugin marketplace add owner/repo`,
+  `/plugin install foo@bar`) and shell invocations starting at an
+  absolute binary (`/usr/bin/env python -m bettermemory`) as path
+  candidates, then routing them to `path_drift_missing` when the
+  whole-string `Path.exists()` returned False — noisy false positives
+  on any memory that quoted the install path or a shell example. The
+  extractor now distinguishes command shape from real-paths-with-
+  internal-whitespace by counting slashes: a CLI has either a
+  single-slash command name as its first whitespace-separated chunk
+  (`/plugin install …`) or 2+ adjacent slashless argument tokens
+  (`/usr/bin/env python -m foo`), while a real path with internal
+  whitespace (`/Users/Some User/file`) has slashes separating each
+  directory boundary, so neither pattern fires. Counts `\` as well
+  as `/` so Windows paths with internal spaces still pass. Five new
+  regression tests in `tests/test_verify.py`.
+
 ## 1.0.0 — 2026-05-08
 
 The first stable release. Three things changed under the hood between

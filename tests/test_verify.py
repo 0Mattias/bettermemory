@@ -219,6 +219,55 @@ def test_user_at_host_path_not_treated_as_path() -> None:
     assert all("@" not in c for c in report.checked)
 
 
+def test_claude_code_slash_command_not_treated_as_path() -> None:
+    """`/plugin marketplace add owner/repo` is a Claude Code slash command,
+    not a path. It would otherwise get extracted from backticks and end
+    up in `missing` because no such file exists on disk — a false
+    positive on any memory that quotes the plugin install command."""
+    body = (
+        "Install path: `/plugin marketplace add 0Mattias/bettermemory` "
+        "then `/plugin install bettermemory@bettermemory`."
+    )
+    report = detect_path_drift(body)
+    assert report.checked == ()
+    assert report.missing == ()
+
+
+def test_shell_invocation_not_treated_as_path() -> None:
+    """A backtick-wrapped shell invocation starting with an absolute path
+    to a binary still has command shape — slash + command name + space-
+    separated arguments. The disk would say "missing" for the whole
+    string, which is the false positive we want to avoid."""
+    body = "Run `/usr/bin/env python -m bettermemory` to start the server."
+    report = detect_path_drift(body)
+    assert report.checked == ()
+    assert report.missing == ()
+
+
+def test_path_with_internal_spaces_still_detected(tmp_path: Path) -> None:
+    """A real path with internal whitespace crosses directory boundaries,
+    so its first whitespace-separated chunk contains multiple slashes —
+    distinguishing it from a CLI invocation. Make sure the command-shape
+    filter doesn't reject these."""
+    target = tmp_path / "Some User" / "file.txt"
+    target.parent.mkdir(parents=True)
+    target.write_text("x")
+    body = f"Stored at `{target}`."
+    report = detect_path_drift(body)
+    assert str(target) in report.checked
+    assert str(target) not in report.missing
+
+
+def test_two_token_slash_command_not_treated_as_path() -> None:
+    """The minimal command shape `/cmd arg` — two whitespace-separated
+    tokens, the first a single-slash command name. We catch it via the
+    same heuristic as longer commands."""
+    body = "Just run `/plugin install` and you're done."
+    report = detect_path_drift(body)
+    assert "/plugin install" not in report.checked
+    assert "/plugin install" not in report.missing
+
+
 def test_short_paths_excluded() -> None:
     """`/x` is too short to be a meaningful claim — too many false positives
     in prose like "see the / divider"."""
