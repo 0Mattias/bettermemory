@@ -93,6 +93,30 @@ class Source(str, Enum):
     CORRECTION = "user-correction"
 
 
+class Category(str, Enum):
+    """What kind of claim a memory makes.
+
+    - ``"fact"``: project / infrastructure / reference / tooling facts
+      about the world. Default. Counts toward dead-weight curation.
+    - ``"user-inference"``: a claim about the user themselves
+      (preferences, beliefs, working style). Routed through the
+      pending-write flow so the user can confirm before commit.
+    - ``"ambient"``: response-shaping context that informs every reply
+      without being cited (user identity, persistent environment
+      quirks). Excluded from the dead-weight rule because its value
+      is implicit. Long-body warned at write time so they don't drift
+      into catch-all dumps.
+
+    Persisted on the memory record (additive frontmatter field —
+    legacy memories without it load as `None` and are treated as
+    ``"fact"`` for runtime semantics).
+    """
+
+    FACT = "fact"
+    USER_INFERENCE = "user-inference"
+    AMBIENT = "ambient"
+
+
 # ---------------------------------------------------------------------------
 # Scope validation
 # ---------------------------------------------------------------------------
@@ -142,6 +166,19 @@ class Memory(BaseModel):
     fields together form a staleness signal — `updated` is "the body changed
     on this date", `last_verified_at` is "a human/agent confirmed the body
     matched reality on this date".
+
+    `category` is the kind-of-claim axis (``fact`` / ``user-inference`` /
+    ``ambient``). None on legacy memories written before the field shipped;
+    runtime treats None as ``fact``. Persisted to frontmatter when set.
+
+    `verified_paths` / `verified_commits` / `verified_versions` are the
+    structured claims the caller attested when running `memory_verify`.
+    They feed the staleness verdict's path-drift / commit-drift
+    short-circuit: if a `path_drift` candidate appears in
+    `verified_paths` and still exists, drift downgrades; if commits
+    since `last_verified_at` didn't touch any of `verified_paths`, the
+    commit-drift signal can stay clean. Empty by default; legacy
+    memories load as empty lists.
     """
 
     id: str
@@ -153,6 +190,10 @@ class Memory(BaseModel):
     body: str
     origin: Origin | None = None
     last_verified_at: datetime | None = None
+    category: Category | None = None
+    verified_paths: list[str] = Field(default_factory=list)
+    verified_commits: list[str] = Field(default_factory=list)
+    verified_versions: list[str] = Field(default_factory=list)
 
     @field_validator("scopes")
     @classmethod
@@ -165,6 +206,20 @@ class Memory(BaseModel):
         if not is_valid_ulid(v):
             raise ValueError(f"invalid ULID: {v!r}")
         return v
+
+    @field_validator("verified_paths", "verified_commits", "verified_versions")
+    @classmethod
+    def _cap_verified_list(cls, v: list[str]) -> list[str]:
+        # Defensive cap — a runaway frontmatter list shouldn't grow without
+        # bound. 64 is well above any realistic per-memory claim count
+        # (the largest in practice cite 5-10 paths) but low enough that
+        # a regression that started appending uncontrollably surfaces as
+        # an immediate write-time failure rather than a slow file bloat.
+        if len(v) > 64:
+            raise ValueError(
+                f"verified-claims list capped at 64 entries (got {len(v)})"
+            )
+        return [str(item) for item in v]
 
 
 class MemoryHit(BaseModel):
@@ -190,6 +245,9 @@ class MemoryHit(BaseModel):
     Both default to 0 (the load path doesn't run drift detection in
     other contexts, e.g. memory_show, where the full PathDriftReport
     is the right surface).
+
+    `category` mirrors the persisted memory field; surfaced on every hit
+    so triage can spot ambient context without expanding.
     """
 
     id: str
@@ -204,6 +262,7 @@ class MemoryHit(BaseModel):
     last_verified_at: datetime | None = None
     path_drift_checked: int = 0
     path_drift_missing: int = 0
+    category: Category | None = None
 
 
 class MemorySummary(BaseModel):
@@ -216,6 +275,7 @@ class MemorySummary(BaseModel):
     created: datetime
     updated: datetime
     last_verified_at: datetime | None = None
+    category: Category | None = None
 
 
 class TombstonedMemory(BaseModel):
@@ -242,6 +302,10 @@ class TombstonedMemory(BaseModel):
     body: str
     origin: Origin | None = None
     last_verified_at: datetime | None = None
+    category: Category | None = None
+    verified_paths: list[str] = Field(default_factory=list)
+    verified_commits: list[str] = Field(default_factory=list)
+    verified_versions: list[str] = Field(default_factory=list)
 
     # Removal metadata. `removed` and `removed_reason` are required —
     # a tombstone without them is malformed and won't load.
@@ -261,6 +325,15 @@ class TombstonedMemory(BaseModel):
             raise ValueError(f"invalid ULID: {v!r}")
         return v
 
+    @field_validator("verified_paths", "verified_commits", "verified_versions")
+    @classmethod
+    def _cap_verified_list(cls, v: list[str]) -> list[str]:
+        if len(v) > 64:
+            raise ValueError(
+                f"verified-claims list capped at 64 entries (got {len(v)})"
+            )
+        return [str(item) for item in v]
+
 
 class TombstonedSummary(BaseModel):
     """One row from `memory_list_tombstones` — body stripped, plus removal
@@ -274,6 +347,7 @@ class TombstonedSummary(BaseModel):
     created: datetime
     updated: datetime
     last_verified_at: datetime | None = None
+    category: Category | None = None
     removed: datetime
     removed_reason: str
     removed_session: str | None = None
@@ -456,6 +530,7 @@ def _truncate_at_word(text: str, max_chars: int) -> str:
 
 # Re-export so callers don't import from os.
 __all__ = [
+    "Category",
     "Confidence",
     "Source",
     "Memory",

@@ -189,6 +189,93 @@ def commits_since(cwd: Path | None, since: datetime) -> int | None:
         return None
 
 
+def commits_since_touching_paths(
+    cwd: Path | None,
+    since: datetime,
+    paths: list[str],
+) -> int | None:
+    """Count commits in `cwd`'s repo authored after `since` that touched
+    any of `paths`.
+
+    `paths` may contain absolute paths, ``~/``-prefixed paths, or paths
+    relative to the repo root. We expand ``~`` and resolve absolute
+    paths against the repo root so git sees a relative pathspec — git
+    won't filter on absolute paths that escape the repo. Paths outside
+    the repo (or that don't resolve) are dropped silently; if everything
+    drops, we return None to signal "no useful filter, fall back to the
+    unfiltered count".
+
+    Returns the integer count when git is reachable and produced a
+    parseable result, None on any failure (cwd is None, git not on
+    PATH, not a repo, all paths filtered out, parse error). The
+    semantics mirror `commits_since` so the verified-paths
+    short-circuit in `verify.compute_commit_drift` can drop in cleanly.
+
+    Used by the change-7 path-filtered drift downgrade: when a memory
+    was verified for a known set of paths, commits that don't touch any
+    of them shouldn't trip the drift signal — the world the memory was
+    checking against hasn't moved even if the project as a whole has.
+    """
+    if cwd is None or not paths:
+        return None
+    if since.tzinfo is None:
+        since = since.replace(tzinfo=timezone.utc)
+    iso = since.astimezone(timezone.utc).isoformat()
+
+    # Resolve the repo root once. `git rev-parse --show-toplevel` returns
+    # the repo's root absolute path; we compare each pathspec against it
+    # so anything outside the repo is dropped before reaching git (git
+    # would otherwise raise "ambiguous argument" or silently produce no
+    # output, depending on the form).
+    toplevel_raw = _git(cwd, "rev-parse", "--show-toplevel")
+    if toplevel_raw is None:
+        return None
+    try:
+        toplevel = Path(toplevel_raw).resolve()
+    except OSError:
+        return None
+
+    pathspecs: list[str] = []
+    for raw in paths:
+        if not isinstance(raw, str) or not raw:
+            continue
+        try:
+            resolved = Path(raw).expanduser()
+            if not resolved.is_absolute():
+                # Treat a relative path as already-relative-to-repo-root.
+                pathspecs.append(str(resolved))
+                continue
+            resolved = resolved.resolve()
+        except (OSError, ValueError):
+            continue
+        try:
+            rel = resolved.relative_to(toplevel)
+        except ValueError:
+            # Path escapes the repo — drop it. Git can't filter on
+            # something outside its working tree.
+            continue
+        pathspecs.append(str(rel))
+
+    if not pathspecs:
+        return None
+
+    raw_count = _git(
+        cwd,
+        "rev-list",
+        "--count",
+        f"--since={iso}",
+        "HEAD",
+        "--",
+        *pathspecs,
+    )
+    if raw_count is None:
+        return None
+    try:
+        return int(raw_count)
+    except ValueError:
+        return None
+
+
 def commit_author_timestamps(cwd: Path | None) -> list[datetime] | None:
     """All author timestamps from the HEAD history of `cwd`'s repo.
 
@@ -276,5 +363,6 @@ __all__ = [
     "capture",
     "commit_author_timestamps",
     "commits_since",
+    "commits_since_touching_paths",
     "repos_match",
 ]

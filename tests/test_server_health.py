@@ -84,18 +84,34 @@ async def test_memory_health_reflects_recent_activity(server: Any) -> None:
     assert written["id"] in used_ids
 
 
-async def test_memory_health_window_days_filters_dead_weight(
+async def test_memory_health_window_days_filters_dead_and_cold(
     server: Any,
 ) -> None:
-    """A freshly-written memory shouldn't be flagged as dead weight when
-    the window is generous, but should be when the window is zero days."""
-    await _call(server, "memory_write", content="freshly written", scopes=["tools"])
-
+    """A freshly-written memory shouldn't appear in either curation bucket
+    when the window is generous; with window=0 it's eligible. Under the
+    new rule a memory with zero retrievals lands in `cold_memories`,
+    not `dead_weight`. To land in dead_weight we need a retrieval
+    event with no applied — exercise both."""
+    written = await _call(
+        server, "memory_write", content="freshly written body", scopes=["tools"]
+    )
     big_window = await _call(server, "memory_health", window_days=30)
     zero_window = await _call(server, "memory_health", window_days=0)
 
     assert len(big_window["dead_weight"]) == 0
-    assert len(zero_window["dead_weight"]) == 1
+    assert len(big_window["cold_memories"]) == 0
+    # Without a retrieval event, a "stale" memory is cold, not dead.
+    assert len(zero_window["dead_weight"]) == 0
+    assert len(zero_window["cold_memories"]) == 1
+    assert zero_window["cold_memories"][0]["id"] == written["id"]
+
+    # Now retrieve the memory once (no record_use → no applied) so it
+    # crosses into the dead-weight bucket the next time we check.
+    await _call(server, "memory_search", query="freshly written body")
+    after_retrieval = await _call(server, "memory_health", window_days=0)
+    assert len(after_retrieval["dead_weight"]) == 1
+    assert after_retrieval["dead_weight"][0]["id"] == written["id"]
+    assert len(after_retrieval["cold_memories"]) == 0
 
 
 async def test_memory_health_surfaces_marker_overrides(server: Any) -> None:

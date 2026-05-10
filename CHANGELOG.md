@@ -11,6 +11,118 @@ spells out exactly what's stable.
 
 (Empty — accumulate entries here between tags.)
 
+## 1.2.0 — 2026-05-10
+
+Seven additive surface changes targeting the curation-and-feedback
+loop. All purely additive on disk (`SCHEMA_VERSION` stays at 1) and
+on the wire (legacy clients still get the same shape modulo the new
+fields). Two themes: making the use-recording flow opt-out instead
+of opt-in, and tightening the staleness-and-curation signal so the
+model can self-prioritise without paying the full `memory_health`
+cost on every turn.
+
+### Added
+
+- **`category="ambient"` on `memory_write`.** Joins `fact` (default,
+  unchanged) and `user-inference` (existing pending-write gate). Use
+  for atmospheric / response-shaping memories that don't make crisp
+  verifiable claims (user identity, persistent environment quirks).
+  Persisted on the memory record (legacy memories load with
+  `category=None`; runtime treats that as the legacy fact-default).
+  Ambient memories are excluded from the dead-weight curation rule
+  because their value is implicit. A non-blocking
+  `ambient_body_long` warning attaches to commits whose body exceeds
+  500 words, so ambient memories don't drift into catch-all dumps.
+- **`cold_memories` bucket on `memory_health`.** Memories created
+  before the window with zero retrievals — distinct from
+  `dead_weight`, which now means "retrieved but never `applied`".
+  The two together separate "ranker isn't surfacing this memory"
+  from "model retrieves but never gets value", so a curation pass
+  can act on the right axis. `ScopeHealth.cold` mirrors `dead` for
+  the per-scope rollup; `bettermemory health` text rendering shows
+  both sections.
+- **`staleness_verdict` derived field on every retrieval.** One of
+  `"fresh" | "spot_check_recommended" | "spot_check_required"`,
+  rolled up from `verification.status`, `path_drift_missing`, and
+  `commit_drift_count`. Surfaced on `memory_show`, every
+  `memory_search` hit (re-derived for the expanded top hit once
+  body-level drift is known), `memory_list`, and the `with_bodies`
+  list shape. The underlying signals stay; the verdict is the
+  load-bearing field consumers should branch on first.
+- **Auto-`record_use` via `use_token`.** Every `memory_search` hit and
+  `memory_show` response now includes an opaque `use_token`. If the
+  model doesn't call `memory_record_use` within ~2 turns, the server
+  auto-commits the retrieval as `outcome="applied"` on the next
+  memory_* call (logged with `auto=true`). The mechanical
+  bookkeeping that was the most-forgotten step is now opt-out
+  instead of opt-in. Explicit `memory_record_use(memory_ids=[...],
+  outcome="ignored"|"contradicted"|"corrected")` still wins — the
+  override path purges the pending token before recording so the
+  auto-commit can't shadow the explicit outcome.
+- **`curation_pending` rollup on `memory_scope_overview`.** Five
+  integer counts — `{stale, never_verified, drifted, cold, dead}`
+  — derived from the same logic as `memory_health` but without
+  row materialisation. Lets the model spot pending curation at
+  session start without paying the full health cost.
+- **`scope_mismatch` warning at `memory_write` time.** Same design
+  family as `transient_warning` and `duplicate`. If the body cites a
+  known `projects:<name>` scope's name token (or a path under
+  another project's tree) AND that scope isn't in the declared
+  scope list, the write returns
+  `{status:"scope_mismatch", suggested_scopes:[...], matches:[...]}`
+  instead of committing. Override via
+  `acknowledge_scope_mismatch=True` for legitimate cross-project
+  references.
+- **Structured `verified_claims` on `memory_verify`.**
+  `verified_paths`, `verified_commits`, and `verified_versions`
+  optional list parameters (caller passes the actual claims they
+  spot-checked). Persisted on the memory record. The path-drift
+  detector now surfaces a `verified` set on `PathDriftReport` (paths
+  in the body that the caller previously attested AND that still
+  exist on disk). The commit-drift signal narrows the count to
+  commits that actually touched any of `verified_paths` — a memory
+  verified for `[/etc/foo]` reads as `clean` even when the
+  surrounding project moved, as long as `/etc/foo` itself didn't.
+  `commits_since_touching_paths` in `origin.py` is the new git
+  helper underneath. Calling `memory_verify` with `verified_paths=None`
+  preserves any prior attestation; an explicit empty list `[]` clears
+  it.
+
+### Changed
+
+- **`dead_weight` rule.** Was: `created_before_window AND applied_count == 0`.
+  Now: `created_before_window AND retrieval_count > 0 AND applied_count == 0`,
+  with ambient-category memories excluded entirely. Memories that aren't
+  being retrieved are no longer mis-classified as dead — they go to the
+  new `cold_memories` bucket where the curation question is "does the
+  trigger for this memory still exist?", not "is the body misleading?".
+- **`Memory` frontmatter.** New optional fields: `category`,
+  `verified_paths`, `verified_commits`, `verified_versions`. Additive;
+  legacy memories load cleanly with default values. Unknown category
+  values fall back to `None` rather than raising — older readers
+  encountering a future-introduced category degrade to fact semantics.
+
+### Internal
+
+- New `scope_match.py` module with `detect_scope_mismatch`,
+  `collect_project_scopes`, `collect_project_roots`. Mirrors the
+  shape of `durability.py`'s transient-marker module.
+- New `compute_staleness_verdict` helper in `verify.py`. Single
+  source of truth for the three-valued rollup.
+- New `curation_counts` helper in `health.py`. Reuses the partitioning
+  logic from `compute_health` but skips row materialisation; numerical
+  contract locked in via tests.
+- New `commits_since_touching_paths` helper in `origin.py`. Path-filtered
+  variant of `commits_since`; returns `None` (not 0) when no useful
+  filter survives the repo-root resolve, so the verified-paths
+  short-circuit falls back to the unfiltered count rather than
+  under-reporting drift.
+- `SessionState` extended with `pending_use_tokens`, `turn_counter`,
+  `issue_use_tokens`, `consume_old_tokens`, `purge_use_token`,
+  `advance_turn`. The auto-`record_use` flow is implemented as a
+  per-handler `_advance_turn(state, recorder)` call at every
+  memory_* tool entry.
+
 ## 1.1.1 — 2026-05-09
 
 Packaging metadata patch. The 1.1.0 PyPI listing rendered without a

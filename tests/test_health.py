@@ -13,11 +13,13 @@ from bettermemory.health import (
     MarkerStats,
     _edit_distance_within,
     compute_health,
+    curation_counts,
     render_json,
     render_text,
     report_for_directory,
 )
 from bettermemory.models import (
+    Category,
     Confidence,
     Memory,
     Source,
@@ -36,6 +38,7 @@ def _memory(
     created: datetime | None = None,
     updated: datetime | None = None,
     last_verified_at: datetime | None = None,
+    category: Category | None = None,
 ) -> Memory:
     """Build a Memory record for testing without going through the store."""
     now = created or _utc(2026, 1, 1)
@@ -48,6 +51,7 @@ def _memory(
         source=Source.EXPLICIT,
         body=body + "\n",
         last_verified_at=last_verified_at,
+        category=category,
     )
 
 
@@ -83,27 +87,48 @@ def test_empty_store_and_events() -> None:
 
 
 # ---------------------------------------------------------------------------
-# Dead weight
+# Dead weight (new definition: retrieved>0 AND applied=0) + Cold memories
 # ---------------------------------------------------------------------------
 
 
-def test_old_memory_with_no_applied_is_dead_weight() -> None:
+def test_old_memory_with_retrievals_but_no_applied_is_dead_weight() -> None:
+    """The new dead-weight rule: the memory IS being retrieved but the
+    model is never recording `applied`. That's the actionable signal."""
     old = _memory(created=_utc(2026, 1, 1))
-    report = compute_health([old], [], window_days=30, now=_utc(2026, 5, 1))
+    events = [
+        _event("search", ts=_utc(2026, 4, 1), returned=[old.id]),
+        _event("search", ts=_utc(2026, 4, 5), returned=[old.id]),
+    ]
+    report = compute_health([old], events, window_days=30, now=_utc(2026, 5, 1))
     assert len(report.dead_weight) == 1
     assert report.dead_weight[0].id == old.id
+    assert report.cold_memories == []
 
 
-def test_recent_memory_with_no_applied_is_NOT_dead_weight() -> None:
+def test_old_memory_never_retrieved_is_cold_not_dead() -> None:
+    """Under the new rule, a memory with zero retrievals is cold, not
+    dead — the ranker isn't surfacing it, which is a different
+    curation question than dead-weight (which is "model retrieves but
+    never applies")."""
+    old = _memory(created=_utc(2026, 1, 1))
+    report = compute_health([old], [], window_days=30, now=_utc(2026, 5, 1))
+    assert report.dead_weight == []
+    assert len(report.cold_memories) == 1
+    assert report.cold_memories[0].id == old.id
+
+
+def test_recent_memory_with_no_events_is_NOT_dead_or_cold() -> None:
     """Within the window — not enough time to judge."""
     fresh = _memory(created=_utc(2026, 4, 25))
     report = compute_health([fresh], [], window_days=30, now=_utc(2026, 5, 1))
     assert report.dead_weight == []
+    assert report.cold_memories == []
 
 
-def test_old_memory_with_applied_event_is_NOT_dead_weight() -> None:
+def test_old_memory_with_applied_event_is_NOT_dead_or_cold() -> None:
     m = _memory(created=_utc(2026, 1, 1))
     events = [
+        _event("search", ts=_utc(2026, 3, 1), returned=[m.id]),
         _event("use", ts=_utc(2026, 4, 1), ids=[m.id], outcome="applied"),
     ]
     # Lower the threshold so a single application still surfaces — this
@@ -116,6 +141,7 @@ def test_old_memory_with_applied_event_is_NOT_dead_weight() -> None:
         now=_utc(2026, 5, 1),
     )
     assert report.dead_weight == []
+    assert report.cold_memories == []
     assert len(report.heavily_used) == 1
 
 
@@ -123,8 +149,152 @@ def test_dead_weight_sorted_by_created_ascending() -> None:
     a = _memory(created=_utc(2026, 1, 5))
     b = _memory(created=_utc(2026, 1, 1))
     c = _memory(created=_utc(2026, 1, 10))
-    report = compute_health([a, b, c], [], window_days=30, now=_utc(2026, 5, 1))
+    events = [
+        _event("search", ts=_utc(2026, 4, 1), returned=[a.id]),
+        _event("search", ts=_utc(2026, 4, 1), returned=[b.id]),
+        _event("search", ts=_utc(2026, 4, 1), returned=[c.id]),
+    ]
+    report = compute_health(
+        [a, b, c], events, window_days=30, now=_utc(2026, 5, 1)
+    )
     assert [s.id for s in report.dead_weight] == [b.id, a.id, c.id]
+
+
+def test_cold_memories_sorted_by_created_ascending() -> None:
+    a = _memory(created=_utc(2026, 1, 5))
+    b = _memory(created=_utc(2026, 1, 1))
+    c = _memory(created=_utc(2026, 1, 10))
+    report = compute_health([a, b, c], [], window_days=30, now=_utc(2026, 5, 1))
+    assert [s.id for s in report.cold_memories] == [b.id, a.id, c.id]
+
+
+def test_ambient_excluded_from_dead_weight() -> None:
+    """Ambient memories shape responses without being cited; the use
+    signal is structurally absent there. They must NEVER land in
+    dead_weight, regardless of retrieval/applied counts."""
+    m = _memory(
+        created=_utc(2026, 1, 1),
+        category=Category.AMBIENT,
+    )
+    events = [
+        _event("search", ts=_utc(2026, 4, 1), returned=[m.id]),
+        _event("search", ts=_utc(2026, 4, 5), returned=[m.id]),
+    ]
+    report = compute_health([m], events, window_days=30, now=_utc(2026, 5, 1))
+    assert report.dead_weight == []
+
+
+def test_ambient_excluded_from_cold_memories() -> None:
+    """Mirror test for the cold bucket — same exclusion principle."""
+    m = _memory(created=_utc(2026, 1, 1), category=Category.AMBIENT)
+    report = compute_health([m], [], window_days=30, now=_utc(2026, 5, 1))
+    assert report.cold_memories == []
+
+
+def test_fact_category_treated_like_legacy_for_buckets() -> None:
+    """A memory with category=FACT participates in dead/cold like a
+    legacy memory (where category is None)."""
+    legacy = _memory(created=_utc(2026, 1, 1))  # category is None
+    fact = _memory(created=_utc(2026, 1, 1), category=Category.FACT)
+    report = compute_health([legacy, fact], [], window_days=30, now=_utc(2026, 5, 1))
+    assert {s.id for s in report.cold_memories} == {legacy.id, fact.id}
+
+
+def test_scope_health_includes_cold_count() -> None:
+    """The per-scope rollup gets a `cold` field paralleling `dead`."""
+    a = _memory(created=_utc(2026, 1, 1), scopes=["tools"])
+    b = _memory(created=_utc(2026, 1, 1), scopes=["tools"])
+    events = [
+        _event("search", ts=_utc(2026, 4, 1), returned=[a.id]),
+    ]
+    report = compute_health([a, b], events, window_days=30, now=_utc(2026, 5, 1))
+    sh = next(s for s in report.scope_health if s.scope == "tools")
+    assert sh.dead == 1
+    assert sh.cold == 1
+    assert sh.active == 2
+
+
+def test_health_to_dict_carries_cold_memories_key() -> None:
+    """The serialised JSON shape must expose cold_memories so external
+    consumers can read it without re-deriving."""
+    m = _memory(created=_utc(2026, 1, 1))
+    report = compute_health([m], [], window_days=30, now=_utc(2026, 5, 1))
+    payload = report.to_dict()
+    assert "cold_memories" in payload
+    assert len(payload["cold_memories"]) == 1
+
+
+def test_render_text_shows_cold_memories_section() -> None:
+    """CLI rendering surfaces the new bucket."""
+    m = _memory(created=_utc(2026, 1, 1))
+    report = compute_health([m], [], window_days=30, now=_utc(2026, 5, 1))
+    text = render_text(report)
+    assert "Cold memories" in text
+
+
+# ---------------------------------------------------------------------------
+# curation_counts — fast helper used by memory_scope_overview
+# ---------------------------------------------------------------------------
+
+
+def test_curation_counts_zero_on_empty_store() -> None:
+    out = curation_counts([], [], window_days=30, now=_utc(2026, 5, 1))
+    assert out == {
+        "stale": 0,
+        "never_verified": 0,
+        "drifted": 0,
+        "cold": 0,
+        "dead": 0,
+    }
+
+
+def test_curation_counts_matches_compute_health_buckets() -> None:
+    """Numerical contract: counts agree with bucket sizes from
+    compute_health over the same inputs."""
+    cold = _memory(created=_utc(2026, 1, 1))
+    dead = _memory(created=_utc(2026, 1, 1))
+    fresh_verified = _memory(
+        created=_utc(2026, 1, 1),
+        last_verified_at=_utc(2026, 4, 25),
+    )
+    never = _memory(created=_utc(2026, 4, 1))  # never_verified, recent
+    stale_v = _memory(
+        created=_utc(2026, 1, 1),
+        last_verified_at=_utc(2026, 1, 5),  # stale at threshold 30
+    )
+    events = [
+        _event("search", ts=_utc(2026, 4, 1), returned=[dead.id]),
+    ]
+    mems = [cold, dead, fresh_verified, never, stale_v]
+    report = compute_health(
+        mems,
+        events,
+        window_days=30,
+        verification_stale_days=30,
+        now=_utc(2026, 5, 1),
+    )
+    counts = curation_counts(
+        mems,
+        events,
+        window_days=30,
+        verification_stale_days=30,
+        now=_utc(2026, 5, 1),
+    )
+    assert counts["dead"] == len(report.dead_weight)
+    assert counts["cold"] == len(report.cold_memories)
+    assert counts["never_verified"] == report.verification_debt.never_verified_total
+    assert counts["stale"] == report.verification_debt.stale_total
+
+
+def test_curation_counts_excludes_ambient_from_dead_and_cold() -> None:
+    cold = _memory(created=_utc(2026, 1, 1), category=Category.AMBIENT)
+    dead = _memory(created=_utc(2026, 1, 1), category=Category.AMBIENT)
+    events = [_event("search", ts=_utc(2026, 4, 1), returned=[dead.id])]
+    counts = curation_counts(
+        [cold, dead], events, window_days=30, now=_utc(2026, 5, 1)
+    )
+    assert counts["dead"] == 0
+    assert counts["cold"] == 0
 
 
 # ---------------------------------------------------------------------------
@@ -289,7 +459,9 @@ def test_show_count_increments() -> None:
         _event("show", id=m.id),
     ]
     report = compute_health([m], events, now=_utc(2026, 5, 1))
-    stats = next(s for s in report.dead_weight if s.id == m.id)
+    # show events alone don't bump retrieval_count, so under the new rule
+    # this memory is `cold` (created old + zero retrievals), not dead.
+    stats = next(s for s in report.cold_memories if s.id == m.id)
     assert stats.show_count == 3
 
 
@@ -310,7 +482,12 @@ def test_use_outcome_counters() -> None:
     report = compute_health([m], events, now=_utc(2026, 5, 2))
     stats = next(
         s
-        for s in (report.heavily_used + report.contradicted + report.dead_weight)
+        for s in (
+            report.heavily_used
+            + report.contradicted
+            + report.dead_weight
+            + report.cold_memories
+        )
         if s.id == m.id
     )
     assert stats.applied_count == 2
@@ -352,7 +529,12 @@ def test_corrected_does_not_raise_contradiction_flag() -> None:
     # has needed inline repair.
     stats = next(
         s
-        for s in (report.heavily_used + report.contradicted + report.dead_weight)
+        for s in (
+            report.heavily_used
+            + report.contradicted
+            + report.dead_weight
+            + report.cold_memories
+        )
         if s.id == m.id
     )
     assert stats.corrected_count == 1
@@ -716,17 +898,22 @@ def test_scope_health_counts_active_per_scope() -> None:
 
 
 def test_scope_health_counts_dead_per_scope() -> None:
-    """A memory created beyond `window_days` ago with no `applied` events
-    is dead in every scope it carries."""
+    """A memory created beyond `window_days` ago with retrievals but no
+    `applied` is dead in every scope it carries."""
     old_a = _memory(scopes=["tools"], created=_utc(2026, 1, 1))
     old_b = _memory(scopes=["tools"], created=_utc(2026, 1, 1))
     fresh = _memory(scopes=["tools"], created=_utc(2026, 4, 30))
+    events = [
+        _event("search", ts=_utc(2026, 4, 1), returned=[old_a.id]),
+        _event("search", ts=_utc(2026, 4, 1), returned=[old_b.id]),
+    ]
     report = compute_health(
-        [old_a, old_b, fresh], [], window_days=30, now=_utc(2026, 5, 1)
+        [old_a, old_b, fresh], events, window_days=30, now=_utc(2026, 5, 1)
     )
     by_scope = {sh.scope: sh for sh in report.scope_health}
     assert by_scope["tools"].active == 3
     assert by_scope["tools"].dead == 2
+    assert by_scope["tools"].cold == 0
 
 
 def test_scope_health_counts_contradictions_per_scope() -> None:
