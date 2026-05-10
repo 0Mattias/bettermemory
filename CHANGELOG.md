@@ -11,6 +11,57 @@ spells out exactly what's stable.
 
 (Empty — accumulate entries here between tags.)
 
+## 1.3.0 — 2026-05-10
+
+Same-day minor following 1.2.2. Two surface changes shaken out by a
+maintenance audit pass: an additive `category` parameter on
+`memory_update` (so legacy memories written before the `ambient`
+tier can be retagged without remove+rewrite) and a slug-builder fix
+for bodies that begin with their own date. Both are purely
+additive on the wire — legacy clients never pass `category` to
+`memory_update`, and the slug change only fires when the body's
+first line starts with an ISO date.
+
+### Added
+
+- **`category` parameter on `memory_update`.** Joins `content`,
+  `scopes`, and `confidence` as an updatable field. Accepts
+  `"fact"` and `"ambient"` (the same values `memory_write` accepts
+  except `"user-inference"`, which is rejected here — that
+  category gates the pending-confirm WRITE flow and there is no
+  equivalent gate on update). The motivating case: legacy
+  memories written before 1.2.0 carry no category and read as
+  `fact` for runtime semantics, but ambient-class memories
+  (user-identity blurbs, persistent-environment quirks) really
+  belong in the `ambient` bucket so they're excluded from the
+  dead-weight curation rule. Pre-1.3 the only retag path was
+  remove+rewrite, which lost the original `created` timestamp and
+  littered `.tombstones/`. Category retags are metadata-only —
+  `last_verified_at` is preserved across the change, the same way
+  scope and confidence edits preserve it. Seven new regression
+  tests in `tests/test_server.py` cover retag-to-ambient,
+  retag-back-to-fact, verification-preserved, omission-preserves,
+  user-inference rejected, unknown rejected, and category-only
+  satisfying the at-least-one-field guard.
+
+### Fixed
+
+- **Slug builder no longer duplicates a leading ISO date.**
+  `make_slug` in `src/bettermemory/models.py` now strips a leading
+  `YYYY-MM-DD` (and the optional `Thh:mm[:ss][Z|±hh:mm]` time
+  fragment) from the first line of the body before word-splitting.
+  Without the strip, a body starting with "2026-05-07 tightened
+  the mvp" produced a slug `2026-05-07-tightened-the-mvp` which
+  `build_filename` then prefixed *again* with the memory's
+  `created` date — the maintainer's own store had a real
+  `2026-05-07-2026-05-07-tightened-the-mvp.md` file as evidence.
+  The strip is conservative: only a leading date is touched, so a
+  date in the middle of a title (`released 2026-05-07 cut`)
+  survives, a bare year (`2026 retro`) is left alone, and a partial
+  date (`2026-05 monthly review`) is preserved. New
+  `tests/test_models_slug.py` (18 tests) covers the regression
+  plus the keep-existing-behaviour cases.
+
 ## 1.2.2 — 2026-05-10
 
 Same-day patch following 1.2.1. The path-drift extractor was firing

@@ -754,6 +754,148 @@ async def test_update_tombstoned_id_errors(server: Any) -> None:
 
 
 # ---------------------------------------------------------------------------
+# memory_update — category retag (added 1.3.0)
+#
+# Pre-1.3 the only way to change a memory's category was remove+rewrite,
+# which wasted the original `created` timestamp and littered .tombstones/
+# with edits. The new `category` parameter on memory_update lets callers
+# retag a `fact` memory as `ambient` (or back) without that round trip,
+# which matters for legacy memories written before the `ambient` tier
+# existed in 1.2.0. `user-inference` is deliberately rejected here:
+# that category gates the pending-confirm WRITE flow, and there is no
+# equivalent gate on update.
+# ---------------------------------------------------------------------------
+
+
+async def test_update_can_retag_to_ambient(server: Any) -> None:
+    written = await _call(
+        server,
+        "memory_write",
+        content="user identity-ish ambient memory",
+        scopes=["personal-context"],
+    )
+    # Default category for a fresh write is `fact`.
+    shown_before = await _call(server, "memory_show", id=written["id"])
+    assert shown_before["category"] == "fact"
+
+    res = await _call(
+        server,
+        "memory_update",
+        id=written["id"],
+        category="ambient",
+    )
+    assert res["status"] == "committed"
+    assert res["category"] == "ambient"
+
+    # Persists across reload.
+    shown_after = await _call(server, "memory_show", id=written["id"])
+    assert shown_after["category"] == "ambient"
+
+
+async def test_update_can_retag_back_to_fact(server: Any) -> None:
+    written = await _call(
+        server,
+        "memory_write",
+        content="started ambient by mistake",
+        scopes=["tools"],
+        category="ambient",
+    )
+    res = await _call(
+        server,
+        "memory_update",
+        id=written["id"],
+        category="fact",
+    )
+    assert res["category"] == "fact"
+
+
+async def test_update_category_change_preserves_last_verified_at(
+    server: Any,
+) -> None:
+    # category is metadata, not a body claim — verification stays valid.
+    written = await _call(
+        server,
+        "memory_write",
+        content="will be retagged",
+        scopes=["tools"],
+    )
+    await _call(
+        server,
+        "memory_verify",
+        id=written["id"],
+        note="spot-checked before retag",
+    )
+    shown_before = await _call(server, "memory_show", id=written["id"])
+    verified_before = shown_before["last_verified_at"]
+    assert verified_before is not None
+
+    await _call(
+        server,
+        "memory_update",
+        id=written["id"],
+        category="ambient",
+    )
+    shown_after = await _call(server, "memory_show", id=written["id"])
+    assert shown_after["last_verified_at"] == verified_before
+
+
+async def test_update_omitting_category_preserves_existing(server: Any) -> None:
+    written = await _call(
+        server,
+        "memory_write",
+        content="ambient from the start",
+        scopes=["tools"],
+        category="ambient",
+    )
+    # Update something else; category should stay `ambient`.
+    res = await _call(
+        server,
+        "memory_update",
+        id=written["id"],
+        confidence="high",
+    )
+    assert res["category"] == "ambient"
+
+
+async def test_update_rejects_user_inference_category(server: Any) -> None:
+    written = await _call(server, "memory_write", content="x", scopes=["tools"])
+    with pytest.raises(Exception):
+        await _call(
+            server,
+            "memory_update",
+            id=written["id"],
+            category="user-inference",
+        )
+
+
+async def test_update_rejects_unknown_category(server: Any) -> None:
+    written = await _call(server, "memory_write", content="x", scopes=["tools"])
+    with pytest.raises(Exception):
+        await _call(
+            server,
+            "memory_update",
+            id=written["id"],
+            category="nonsense",
+        )
+
+
+async def test_update_category_only_satisfies_at_least_one_field(
+    server: Any,
+) -> None:
+    # `category` should count as a real field for the
+    # "needs at least one of …" guard — passing only `category` must
+    # commit, not raise.
+    written = await _call(server, "memory_write", content="x", scopes=["tools"])
+    res = await _call(
+        server,
+        "memory_update",
+        id=written["id"],
+        category="ambient",
+    )
+    assert res["status"] == "committed"
+
+
+# ---------------------------------------------------------------------------
 # Content dedup at write time
 #
 # memory_write runs find_similar against the current store before staging or

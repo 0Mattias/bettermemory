@@ -990,13 +990,19 @@ def _register_tools(
         name="memory_update",
         description=(
             "Refine an existing memory in place. Pass the memory id and any "
-            "of `content`, `scopes`, `confidence` to change. Preserves `id`, "
-            "`created`, and `source`; bumps `updated`. Prefer this over "
-            "memory_remove + memory_write when correcting or refining a "
-            "stored fact — delete-and-recreate loses the original timestamp "
-            "and litters .tombstones/ with what are really edits. Pass at "
-            "least one field; replace semantics for `scopes` (provide the "
-            "full new list, not a delta)."
+            "of `content`, `scopes`, `confidence`, `category` to change. "
+            "Preserves `id`, `created`, and `source`; bumps `updated`. "
+            "Prefer this over memory_remove + memory_write when correcting "
+            "or refining a stored fact — delete-and-recreate loses the "
+            "original timestamp and litters .tombstones/ with what are "
+            "really edits. Pass at least one field; replace semantics for "
+            "`scopes` (provide the full new list, not a delta). `category` "
+            "accepts the same values as `memory_write` (`fact`, `ambient`); "
+            "use this to retag legacy memories written before the "
+            "`ambient` tier existed without round-tripping through "
+            "remove+rewrite. `user-inference` is rejected here — that "
+            "category exists to gate WRITES through the pending-confirm "
+            "flow, and there is no equivalent gate on update."
         ),
     )
     async def memory_update(
@@ -1004,11 +1010,18 @@ def _register_tools(
         content: str | None = None,
         scopes: list[str] | None = None,
         confidence: str | None = None,
+        category: str | None = None,
     ) -> dict[str, Any]:
         _advance_turn(state, recorder)
-        if content is None and scopes is None and confidence is None:
+        if (
+            content is None
+            and scopes is None
+            and confidence is None
+            and category is None
+        ):
             raise ValueError(
-                "memory_update needs at least one of content, scopes, or confidence"
+                "memory_update needs at least one of content, scopes, "
+                "confidence, or category"
             )
         if content is not None and not content.strip():
             raise ValueError("content must be non-empty if provided")
@@ -1043,20 +1056,37 @@ def _register_tools(
                     f"confidence must be one of {[c.value for c in Confidence]}"
                 ) from exc
 
+        new_category = existing.category
+        if category is not None:
+            # `user-inference` is a write-time gate (pending-confirm flow);
+            # there's no analogous gate on update, so allowing a retag
+            # *into* `user-inference` would silently bypass that gate.
+            # Allow `fact` and `ambient` only.
+            allowed_update_categories = {Category.FACT.value, Category.AMBIENT.value}
+            if category not in allowed_update_categories:
+                raise ValueError(
+                    "category must be one of "
+                    f"{sorted(allowed_update_categories)} on update "
+                    "(`user-inference` is write-only — it gates the "
+                    "pending-confirm flow which has no equivalent here)"
+                )
+            new_category = Category(category)
+
         new_body = existing.body
         if content is not None:
             new_body = content.strip() + "\n"
 
         # When `content` changes, the prior verification was for prose
         # that no longer exists — reset `last_verified_at` to None so the
-        # caller has to re-confirm against the new body. Scope/confidence
-        # edits don't touch the body's claims, so the verification stays
-        # intact for those. This matches the intuition that verification
-        # is a property of body content, not of metadata.
+        # caller has to re-confirm against the new body. Scope/confidence/
+        # category edits don't touch the body's claims, so the verification
+        # stays intact for those. This matches the intuition that
+        # verification is a property of body content, not of metadata.
         update_fields: dict[str, Any] = {
             "body": new_body,
             "scopes": new_scopes,
             "confidence": new_confidence,
+            "category": new_category,
         }
         if content is not None:
             update_fields["last_verified_at"] = None
@@ -1069,6 +1099,7 @@ def _register_tools(
                 ("content", content),
                 ("scopes", scopes),
                 ("confidence", confidence),
+                ("category", category),
             )
             if value is not None
         ]
@@ -1078,6 +1109,7 @@ def _register_tools(
             fields=fields_changed,
             scopes=updated.scopes,
             confidence=updated.confidence.value,
+            category=updated.category.value if updated.category is not None else None,
         )
         return _committed(updated)
 

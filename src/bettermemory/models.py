@@ -394,6 +394,14 @@ def utcnow() -> datetime:
 
 
 _SLUG_RE = re.compile(r"[^a-z0-9]+")
+# Leading ISO-8601 date (with optional time) at the start of the first line.
+# `build_filename` already prepends the memory's `created` date, so a body
+# beginning with its own date would otherwise produce a doubled prefix
+# (`2026-05-07-2026-05-07-tightened-the-mvp.md`).
+_LEADING_DATE_RE = re.compile(
+    r"^\d{4}-\d{2}-\d{2}(?:[ tT]\d{2}:\d{2}(?::\d{2})?(?:[zZ]|[+\-]\d{2}:?\d{2})?)?"
+    r"[\s\-_:.,;|/]*"
+)
 
 
 def make_slug(content: str, max_words: int = 6, max_chars: int = 60) -> str:
@@ -401,6 +409,10 @@ def make_slug(content: str, max_words: int = 6, max_chars: int = 60) -> str:
     text = content.strip().lower()
     # Take first line — multi-line bodies often have a leading title.
     text = text.splitlines()[0] if text else ""
+    # Strip a leading ISO date so we don't double up with `build_filename`'s
+    # date prefix. If the body is *only* a date, fall through to the
+    # `["memory"]` fallback below.
+    text = _LEADING_DATE_RE.sub("", text)
     words = [w for w in _SLUG_RE.split(text) if w]
     if not words:
         words = ["memory"]
