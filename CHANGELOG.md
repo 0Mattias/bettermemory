@@ -11,7 +11,35 @@ spells out exactly what's stable.
 
 (Empty — accumulate entries here between tags.)
 
-## 1.2.1 — 2026-05-10
+## 1.2.2 — 2026-05-10
+
+Same-day patch following 1.2.1. The path-drift extractor was firing
+phantom `path_drift_missing` entries on memories whose bodies use
+documentation-placeholder paths (`/etc/foo`, `/path/to/file`,
+`/foo/bar`) to illustrate path-typed APIs — discovered when the
+project's own overview memory documented `verified_paths` semantics
+with `/etc/foo` as the example path and read back as
+`staleness_verdict: "spot_check_recommended"` immediately after
+being verified.
+
+### Fixed
+
+- **Documentation-placeholder paths no longer trigger phantom drift.**
+  `_normalize_candidate` in `verify.py` now consults a small frozen
+  set of canonical placeholder paths (`/etc/foo`, `/etc/bar`,
+  `/etc/baz`, `/foo`, `/foo/bar`, `/foo/baz`, `/foo/bar/baz`,
+  `/path/to`) plus two prefix patterns (`/path/to/...`,
+  `~/path/to/...`). Candidates that match are dropped before disk
+  stat, the same way URLs and SSH-style remotes are. Single-extension
+  variants are also dropped — `/etc/foo.conf` reads as a placeholder
+  via the `/etc/foo` entry. The list is deliberately narrow:
+  terminal-component `foo` / `bar` are NOT filtered, so the
+  `/tmp/foo`-shaped tmp-path test fixtures real test suites use
+  remain valid path candidates. Seven new regression tests in
+  `tests/test_verify.py` lock the contract — including a
+  `test_dot_prefixed_real_path_not_misclassified_as_placeholder`
+  test pinning that `~/.claude-memory` and similar leading-dot
+  paths don't trip the extension-stripping branch.
 
 Same-day docs-surface follow-up to 1.2.0. The v1.2.0 release added
 `staleness_verdict`, auto-`record_use` via `use_token`,

@@ -284,6 +284,92 @@ def test_root_alone_excluded() -> None:
 
 
 # ---------------------------------------------------------------------------
+# Documentation-placeholder paths
+#
+# Memories that document a path-typed API ("a memory verified for
+# `/etc/foo`") use illustrative placeholder paths in prose. The extractor
+# would otherwise drag those into `path_drift_missing` because no such
+# file exists on disk — a phantom drift signal on every retrieval, with
+# the same `staleness_verdict: "spot_check_recommended"` payload as a
+# real broken-path drift. Filter them out at extraction time.
+# ---------------------------------------------------------------------------
+
+
+def test_etc_foo_placeholder_skipped() -> None:
+    """The canonical Stevens-K&R-ish doc placeholder. Standalone backtick-
+    wrapped — exactly the shape that bit a memory verifying a path-typed
+    API in v1.2.1."""
+    body = (
+        "A memory verified for `/etc/foo` reads as `clean` even when the "
+        "surrounding project moved, as long as `/etc/foo` itself didn't."
+    )
+    report = detect_path_drift(body)
+    assert "/etc/foo" not in report.checked
+    assert "/etc/foo" not in report.missing
+
+
+def test_path_to_prefix_placeholder_skipped() -> None:
+    """`/path/to/X` is the universal documentation placeholder; treat
+    anything under it as an example, not a citation."""
+    body = "Pass `/path/to/file` to the `--config` flag."
+    report = detect_path_drift(body)
+    assert all("/path/to/" not in c for c in report.checked)
+    assert all("/path/to/" not in m for m in report.missing)
+
+
+def test_home_path_to_prefix_placeholder_skipped() -> None:
+    """`~/path/to/...` is the home-relative form of the same convention."""
+    body = "Drop the file at `~/path/to/somewhere` for the loader to pick it up."
+    report = detect_path_drift(body)
+    assert all("path/to" not in c for c in report.checked)
+
+
+def test_foo_bar_placeholder_skipped() -> None:
+    """`/foo/bar` style minimalist placeholder."""
+    body = "Map mounts like `/foo/bar` and `/foo/baz` into the container."
+    report = detect_path_drift(body)
+    assert "/foo/bar" not in report.checked
+    assert "/foo/baz" not in report.checked
+
+
+def test_placeholder_with_extension_skipped() -> None:
+    """`/etc/foo.conf` is a placeholder too — strip the final extension
+    before matching against the placeholder set."""
+    body = "Rename `/etc/foo.conf` to your real config name before running."
+    report = detect_path_drift(body)
+    assert "/etc/foo.conf" not in report.checked
+
+
+def test_dot_prefixed_real_path_not_misclassified_as_placeholder(
+    tmp_path: Path,
+) -> None:
+    """`~/.claude-memory` and similar dot-prefixed home-relative paths
+    must NOT trip the extension-stripping placeholder branch — stripping
+    `.claude-memory` would leave the stem `~/`, which is not a
+    placeholder, but the regression risk is real enough to pin."""
+    target = tmp_path / ".claude-memory"
+    target.mkdir()
+    body = f"Memories live at `{target}`."
+    report = detect_path_drift(body)
+    assert str(target) in report.checked
+    assert str(target) not in report.missing
+
+
+def test_tmp_foo_test_fixture_still_valid_path(tmp_path: Path) -> None:
+    """`/tmp/foo`-shaped tmp-path fixtures are widely used in real test
+    suites and frequently exist briefly during a test run. The
+    placeholder filter is deliberately narrow enough that they pass
+    through — only `/foo` / `/foo/bar` etc. and the `/etc/foo` family
+    are skipped, NOT every terminal-component `foo`."""
+    target = tmp_path / "foo"
+    target.write_text("real")
+    body = f"Created at `{target}`."
+    report = detect_path_drift(body)
+    assert str(target) in report.checked
+    assert str(target) not in report.missing
+
+
+# ---------------------------------------------------------------------------
 # Caps on per-body work
 # ---------------------------------------------------------------------------
 

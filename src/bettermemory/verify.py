@@ -124,6 +124,38 @@ _BARE_RE = re.compile(
 _TRAILING_PUNCT = ".,;:!?)>]}\"'"
 
 
+# Documentation-placeholder paths that authors use in prose to demonstrate
+# path-shape without citing a real file. Treating these as drift candidates
+# produces a phantom `path_drift_missing` entry on every memory whose body
+# documents a path-typed API ("a memory verified for `/etc/foo` reads as
+# clean…"). The list is deliberately narrow — broader filters
+# (terminal-component `foo` / `bar`) overlap with legitimate tmp-path
+# test fixtures and would suppress real drift signals there. We trade a
+# negligible false-negative risk (a real `/etc/foo` script existing on
+# someone's machine) for fixing the reliable false-positive on
+# documentation prose.
+_PLACEHOLDER_PATHS = frozenset(
+    {
+        "/etc/foo",
+        "/etc/bar",
+        "/etc/baz",
+        "/foo",
+        "/foo/bar",
+        "/foo/baz",
+        "/foo/bar/baz",
+        "/path/to",
+    }
+)
+
+# Anything under these prefixes is also a placeholder. `/path/to/...` is
+# the universal placeholder convention; the home-relative variant catches
+# `~/path/to/...` for the same reason.
+_PLACEHOLDER_PREFIXES: tuple[str, ...] = (
+    "/path/to/",
+    "~/path/to/",
+)
+
+
 # ---------------------------------------------------------------------------
 # Public API
 # ---------------------------------------------------------------------------
@@ -358,14 +390,47 @@ def _normalize_candidate(raw: str) -> str | None:
             return None
 
     if s.startswith("~/"):
-        return s if len(s) > 2 else None
+        if len(s) <= 2:
+            return None
+        return None if _is_placeholder_path(s) else s
     if s.startswith("/"):
         # `/x` is too short to be a meaningful claim; `/` alone is the root.
-        return s if len(s) >= 3 else None
+        if len(s) < 3:
+            return None
+        return None if _is_placeholder_path(s) else s
     # Windows drive: `C:\` or `C:/`
     if len(s) >= 3 and s[0].isalpha() and s[1] == ":" and s[2] in "/\\":
         return s
     return None
+
+
+def _is_placeholder_path(s: str) -> bool:
+    """True when `s` is a documentation-placeholder path the author used
+    to illustrate path-shape rather than to cite a real filesystem entry.
+
+    Match strategy: exact membership in `_PLACEHOLDER_PATHS`, or under one
+    of `_PLACEHOLDER_PREFIXES`. A single trailing extension on the
+    candidate is stripped before matching so `/etc/foo.conf` reads as a
+    placeholder via the `/etc/foo` entry; multi-dotted paths
+    (`/etc/foo.bar.baz`) only strip the final `.baz` and are deliberately
+    not unfolded further — the false-positive surface gets too wide.
+
+    The `~/.X` case (`~/.claude-memory`, `~/.config`) is safe: stripping
+    the trailing extension off a leading-dot terminal segment leaves a
+    stem that doesn't match any placeholder.
+    """
+    if s in _PLACEHOLDER_PATHS or s.startswith(_PLACEHOLDER_PREFIXES):
+        return True
+    # Strip a single trailing extension (only when there's a `.` in the
+    # final path component) and re-test.
+    last_segment = s.rsplit("/", 1)[-1]
+    if "." in last_segment:
+        stem = s.rsplit(".", 1)[0]
+        if stem != s and (
+            stem in _PLACEHOLDER_PATHS or stem.startswith(_PLACEHOLDER_PREFIXES)
+        ):
+            return True
+    return False
 
 
 def _path_exists(candidate: str) -> bool:
