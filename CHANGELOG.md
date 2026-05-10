@@ -9,6 +9,19 @@ spells out exactly what's stable.
 
 ## Unreleased
 
+(Empty — accumulate entries here between tags.)
+
+## 1.2.1 — 2026-05-10
+
+Same-day docs-surface follow-up to 1.2.0. The v1.2.0 release added
+`staleness_verdict`, auto-`record_use` via `use_token`,
+`curation_pending` rollup, `category="ambient"`, `scope_mismatch`
+warning, and `verified_claims` on `memory_verify`, but the doc
+surfaces that ship to clients (the FastMCP `instructions` block, the
+plugin `SKILL.md`) hadn't been updated to mention them. A model
+installing 1.2.0 would still see the v1.1 contract and miss the
+headline UX wins. 1.2.1 brings both surfaces in line.
+
 ### Changed
 
 - **MCP `instructions` block (`src/bettermemory/server.py`).** Rewritten
@@ -39,7 +52,7 @@ spells out exactly what's stable.
 
 - **Stale `uv.lock` package version.** The lockfile still pinned
   `bettermemory==0.1.0` from before the 1.0 release; refreshed to
-  match `pyproject.toml`'s `1.2.0`. No dependency changes.
+  match `pyproject.toml`. No dependency changes.
 
 ## 1.2.0 — 2026-05-10
 

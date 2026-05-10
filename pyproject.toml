@@ -1,6 +1,6 @@
 [project]
 name = "bettermemory"
-version = "1.2.0"
+version = "1.2.1"
 description = "Local file-backed memory MCP server with retrieval-on-demand"
 readme = "README.md"
 requires-python = ">=3.11"
