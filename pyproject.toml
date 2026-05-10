@@ -31,6 +31,14 @@ dev = [
 [project.scripts]
 bettermemory = "bettermemory.server:main"
 
+[project.urls]
+# Surfaced as the "Project links" rail on PyPI — without these the
+# package page has no path back to source, issues, or release notes.
+Homepage = "https://github.com/0Mattias/bettermemory"
+Repository = "https://github.com/0Mattias/bettermemory"
+Issues = "https://github.com/0Mattias/bettermemory/issues"
+Changelog = "https://github.com/0Mattias/bettermemory/blob/main/CHANGELOG.md"
+
 [build-system]
 requires = ["hatchling"]
 build-backend = "hatchling.build"

@@ -9,7 +9,13 @@ spells out exactly what's stable.
 
 ## Unreleased
 
-(Empty — accumulate entries here between tags.)
+### Added
+
+- **`[project.urls]` table in `pyproject.toml`.** Surfaces Homepage,
+  Repository, Issues, and Changelog links on the PyPI project page's
+  "Project links" rail. Without these, the package page on PyPI had no
+  path back to GitHub, the issue tracker, or the changelog. Picked up
+  automatically at wheel-build time — no other plumbing required.
 
 ## 1.1.0 — 2026-05-09
 
