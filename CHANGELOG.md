@@ -9,6 +9,10 @@ spells out exactly what's stable.
 
 ## Unreleased
 
+(Empty — accumulate entries here between tags.)
+
+## 1.2.0 — 2026-05-10
+
 Seven additive surface changes targeting the curation-and-feedback
 loop. All purely additive on disk (`SCHEMA_VERSION` stays at 1) and
 on the wire (legacy clients still get the same shape modulo the new
