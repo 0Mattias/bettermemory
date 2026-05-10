@@ -1,6 +1,6 @@
 {
   "name": "bettermemory",
-  "version": "1.1.0",
+  "version": "1.1.1",
   "description": "Local file-backed memory MCP server with retrieval-on-demand. Memory is opt-in retrieval, not auto-injected context.",
   "author": {
     "name": "Mattias Rask",

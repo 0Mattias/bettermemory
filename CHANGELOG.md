@@ -9,6 +9,15 @@ spells out exactly what's stable.
 
 ## Unreleased
 
+(Empty — accumulate entries here between tags.)
+
+## 1.1.1 — 2026-05-09
+
+Packaging metadata patch. The 1.1.0 PyPI listing rendered without a
+"Project links" sidebar because `pyproject.toml` had no `[project.urls]`
+table — visitors landed on the package page with no path back to source,
+issues, or release notes. No code changes; PyPI re-publish only.
+
 ### Added
 
 - **`[project.urls]` table in `pyproject.toml`.** Surfaces Homepage,
