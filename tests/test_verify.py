@@ -364,9 +364,7 @@ def test_report_to_dict_round_trips() -> None:
 
 
 def test_report_to_dict_includes_verified_paths() -> None:
-    r = PathDriftReport(
-        checked=("/a", "/b"), missing=("/b",), verified=("/a",)
-    )
+    r = PathDriftReport(checked=("/a", "/b"), missing=("/b",), verified=("/a",))
     d = r.to_dict()
     assert d == {"checked": ["/a", "/b"], "missing": ["/b"], "verified": ["/a"]}
 

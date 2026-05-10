@@ -518,9 +518,7 @@ def _register_tools(
         # mattered. `verified_paths` is threaded in so a path the user
         # has previously attested gets surfaced in `path_drift.verified`
         # even when no other claims drift.
-        drift = detect_path_drift(
-            memory.body, verified_paths=memory.verified_paths
-        )
+        drift = detect_path_drift(memory.body, verified_paths=memory.verified_paths)
         # Verification staleness is structurally always present — emitted
         # even for "fresh" memories — because consistent shape means the
         # consumer can branch on `verification.status` without an

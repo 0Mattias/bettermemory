@@ -154,9 +154,7 @@ def test_dead_weight_sorted_by_created_ascending() -> None:
         _event("search", ts=_utc(2026, 4, 1), returned=[b.id]),
         _event("search", ts=_utc(2026, 4, 1), returned=[c.id]),
     ]
-    report = compute_health(
-        [a, b, c], events, window_days=30, now=_utc(2026, 5, 1)
-    )
+    report = compute_health([a, b, c], events, window_days=30, now=_utc(2026, 5, 1))
     assert [s.id for s in report.dead_weight] == [b.id, a.id, c.id]
 
 
@@ -290,9 +288,7 @@ def test_curation_counts_excludes_ambient_from_dead_and_cold() -> None:
     cold = _memory(created=_utc(2026, 1, 1), category=Category.AMBIENT)
     dead = _memory(created=_utc(2026, 1, 1), category=Category.AMBIENT)
     events = [_event("search", ts=_utc(2026, 4, 1), returned=[dead.id])]
-    counts = curation_counts(
-        [cold, dead], events, window_days=30, now=_utc(2026, 5, 1)
-    )
+    counts = curation_counts([cold, dead], events, window_days=30, now=_utc(2026, 5, 1))
     assert counts["dead"] == 0
     assert counts["cold"] == 0
 

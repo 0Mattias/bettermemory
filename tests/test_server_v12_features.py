@@ -74,9 +74,7 @@ async def _call(server: Any, name: str, **kwargs: Any) -> Any:
 def _unwrap(res: Any) -> Any:
     """FastMCP wraps `list[...]` tool responses as `{"result": [...]}` on
     the structured side. Mirror the helper from `test_server.py`."""
-    return (
-        res.get("result", res) if isinstance(res, dict) and "result" in res else res
-    )
+    return res.get("result", res) if isinstance(res, dict) and "result" in res else res
 
 
 # ---------------------------------------------------------------------------
@@ -206,18 +204,14 @@ async def test_cold_memories_field_returned_by_health(server: Any) -> None:
 
 
 async def test_memory_show_includes_staleness_verdict(server: Any) -> None:
-    res = await _call(
-        server, "memory_write", content="A claim.", scopes=["tools"]
-    )
+    res = await _call(server, "memory_write", content="A claim.", scopes=["tools"])
     shown = await _call(server, "memory_show", id=res["id"])
     # Never-verified memory → spot_check_required.
     assert shown["staleness_verdict"] == "spot_check_required"
 
 
 async def test_memory_show_verdict_fresh_after_verify(server: Any) -> None:
-    res = await _call(
-        server, "memory_write", content="A claim.", scopes=["tools"]
-    )
+    res = await _call(server, "memory_write", content="A claim.", scopes=["tools"])
     await _call(server, "memory_verify", id=res["id"], note="checked")
     shown = await _call(server, "memory_show", id=res["id"])
     assert shown["staleness_verdict"] == "fresh"
@@ -232,9 +226,7 @@ async def test_memory_search_hit_includes_staleness_verdict(
         content="The widget configuration lives in /etc/widget.toml.",
         scopes=["tools"],
     )
-    hits = _unwrap(
-        await _call(server, "memory_search", query="widget configuration")
-    )
+    hits = _unwrap(await _call(server, "memory_search", query="widget configuration"))
     assert hits, "expected at least one hit"
     for hit in hits:
         assert "staleness_verdict" in hit
@@ -293,9 +285,7 @@ async def test_search_response_includes_use_token_per_hit(server: Any) -> None:
 
 
 async def test_show_response_includes_use_token(server: Any) -> None:
-    res = await _call(
-        server, "memory_write", content="x", scopes=["tools"]
-    )
+    res = await _call(server, "memory_write", content="x", scopes=["tools"])
     shown = await _call(server, "memory_show", id=res["id"])
     assert "use_token" in shown
     assert shown["use_token"].startswith("use_")
@@ -341,9 +331,7 @@ async def test_explicit_record_use_overrides_pending_auto_commit(
         srv, "memory_write", content="A retrievable fact.", scopes=["tools"]
     )
     await _call(srv, "memory_search", query="retrievable fact")
-    await _call(
-        srv, "memory_record_use", memory_ids=[res["id"]], outcome="ignored"
-    )
+    await _call(srv, "memory_record_use", memory_ids=[res["id"]], outcome="ignored")
 
     # Advance enough turns for any rogue auto-commit to fire.
     await _call(srv, "memory_list")
@@ -357,9 +345,7 @@ async def test_explicit_record_use_overrides_pending_auto_commit(
         if res["id"] in (e.get("ids") or []):
             # Should be the explicit `ignored`, never `applied`+auto.
             if e.get("outcome") == "applied" and e.get("auto") is True:
-                pytest.fail(
-                    f"explicit override leaked an auto-applied event: {e}"
-                )
+                pytest.fail(f"explicit override leaked an auto-applied event: {e}")
 
 
 async def test_explicit_record_use_purges_token(
@@ -373,9 +359,7 @@ async def test_explicit_record_use_purges_token(
     )
     await _call(srv, "memory_search", query="retrievable fact")
     assert res["id"] in state.pending_use_tokens
-    await _call(
-        srv, "memory_record_use", memory_ids=[res["id"]], outcome="applied"
-    )
+    await _call(srv, "memory_record_use", memory_ids=[res["id"]], outcome="applied")
     assert res["id"] not in state.pending_use_tokens
 
 
@@ -463,18 +447,14 @@ async def test_scope_mismatch_fires_when_body_cites_other_project_name(
     res = await _call(
         server,
         "memory_write",
-        content=(
-            "When working on foo, the build script lives at scripts/build.sh."
-        ),
+        content=("When working on foo, the build script lives at scripts/build.sh."),
         scopes=["tools"],
     )
     assert res["status"] == "scope_mismatch"
     assert "projects:foo" in res["suggested_scopes"]
 
 
-async def test_scope_mismatch_does_not_persist(
-    server: Any, memory_dir: Path
-) -> None:
+async def test_scope_mismatch_does_not_persist(server: Any, memory_dir: Path) -> None:
     """A scope_mismatch return must not commit the body."""
     await _call(
         server,
@@ -555,9 +535,7 @@ async def test_scope_mismatch_silent_when_no_project_scopes(server: Any) -> None
 # ---------------------------------------------------------------------------
 
 
-async def test_verify_accepts_structured_claims(
-    server: Any, memory_dir: Path
-) -> None:
+async def test_verify_accepts_structured_claims(server: Any, memory_dir: Path) -> None:
     res = await _call(
         server,
         "memory_write",
@@ -575,9 +553,7 @@ async def test_verify_accepts_structured_claims(
     assert verified["verified_versions"] == ["macOS-15.0"]
 
 
-async def test_verify_persists_structured_claims(
-    server: Any, memory_dir: Path
-) -> None:
+async def test_verify_persists_structured_claims(server: Any, memory_dir: Path) -> None:
     res = await _call(
         server,
         "memory_write",
@@ -626,9 +602,7 @@ async def test_verify_passing_none_preserves_prior_lists(
     """Calling memory_verify a second time without verified_paths
     preserves the previously-attested list — None means 'no change',
     not 'clear'."""
-    res = await _call(
-        server, "memory_write", content="A claim.", scopes=["tools"]
-    )
+    res = await _call(server, "memory_write", content="A claim.", scopes=["tools"])
     await _call(
         server,
         "memory_verify",
@@ -642,16 +616,12 @@ async def test_verify_passing_none_preserves_prior_lists(
 async def test_verify_passing_empty_list_clears_prior(server: Any) -> None:
     """An explicit empty list is the 'clear' signal — distinct from
     None."""
-    res = await _call(
-        server, "memory_write", content="A claim.", scopes=["tools"]
-    )
+    res = await _call(server, "memory_write", content="A claim.", scopes=["tools"])
     await _call(
         server,
         "memory_verify",
         id=res["id"],
         verified_paths=["/etc/hosts"],
     )
-    cleared = await _call(
-        server, "memory_verify", id=res["id"], verified_paths=[]
-    )
+    cleared = await _call(server, "memory_verify", id=res["id"], verified_paths=[])
     assert cleared["verified_paths"] == []
