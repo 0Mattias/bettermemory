@@ -7,5 +7,5 @@ confidence: high
 source: user-correction
 ---
 Project "foo" is a FastAPI + SQLAlchemy + Postgres stack.
-We do NOT use Alembic — migrations are hand-rolled SQL
+We do NOT use Alembic. Migrations are hand-rolled SQL
 files in db/migrations/, applied by a small bash runner.

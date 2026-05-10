@@ -1,7 +1,7 @@
 """Programmatic client example: drive bettermemory from Python.
 
 Most users interact with bettermemory through an MCP-aware host (Claude
-Code, Cursor, etc.) — the host spawns the server and routes the model's
+Code, Cursor, etc.). The host spawns the server and routes the model's
 tool calls to it. This script shows the other path: connecting to the
 server directly from your own code, for use cases like:
 
@@ -94,7 +94,7 @@ async def _walk_through_one_session(storage_dir: Path) -> None:
             await session.initialize()
 
             # ---- Step 1: list tools ---------------------------------
-            print("# 1. list_tools — what does the server expose?")
+            print("# 1. list_tools: what does the server expose?")
             tools_result = await session.list_tools()
             tool_names = sorted(tool.name for tool in tools_result.tools)
             print(f"   {len(tool_names)} tools:")
@@ -103,7 +103,7 @@ async def _walk_through_one_session(storage_dir: Path) -> None:
             print()
 
             # ---- Step 2: write a memory -----------------------------
-            print("# 2. memory_write — durable architectural decision")
+            print("# 2. memory_write: durable architectural decision")
             write_result = await session.call_tool(
                 "memory_write",
                 {
@@ -128,7 +128,7 @@ async def _walk_through_one_session(storage_dir: Path) -> None:
             assert new_id, f"memory_write didn't return an id: {written!r}"
 
             # ---- Step 3: search for it ------------------------------
-            print("# 3. memory_search — looking for the fact we just wrote")
+            print("# 3. memory_search: looking for the fact we just wrote")
             search_result = await session.call_tool(
                 "memory_search",
                 {"query": "fcntl locking concurrency", "max_results": 3},
@@ -137,7 +137,7 @@ async def _walk_through_one_session(storage_dir: Path) -> None:
             print()
 
             # ---- Step 4: fetch full body ----------------------------
-            print(f"# 4. memory_show — fetch the full body for {new_id}")
+            print(f"# 4. memory_show: fetch the full body for {new_id}")
             show_result = await session.call_tool(
                 "memory_show",
                 {"id": new_id},
@@ -146,7 +146,7 @@ async def _walk_through_one_session(storage_dir: Path) -> None:
             print()
 
             # ---- Step 5: tombstone it -------------------------------
-            print("# 5. memory_remove — tidy up after the demo")
+            print("# 5. memory_remove: tidy up after the demo")
             remove_result = await session.call_tool(
                 "memory_remove",
                 {"id": new_id, "reason": "programmatic-client demo cleanup"},

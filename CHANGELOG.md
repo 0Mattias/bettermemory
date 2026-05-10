@@ -9,9 +9,47 @@ spells out exactly what's stable.
 
 ## Unreleased
 
-(Empty — accumulate entries here between tags.)
+(Empty. Accumulate entries here between tags.)
 
-## 1.3.0 — 2026-05-10
+## 1.3.1 - 2026-05-10
+
+Documentation and prose pass. The on-disk format, the wire surface,
+and every public default are unchanged. Two shipped strings did
+change content (the FastMCP `instructions` block and
+`SYSTEM_PROMPT_ADDENDUM` in `prompts.py`), which is why this rides
+as a patch release rather than a docs-only commit. Both still pass
+the byte-budget regression test and carry the same load-bearing
+phrases.
+
+### Changed
+
+- **README, `docs/`, `plugin/README.md`, `plugin/skills/bettermemory/SKILL.md`,
+  `CONTRIBUTING.md`, `SECURITY.md`, `CODE_OF_CONDUCT.md`.** Rewritten
+  to drop em dashes throughout and to read in shorter, more direct
+  sentences. Same content, different prose. The audit pass also
+  added `category="ambient"` to the listed stable enum values in
+  `CONTRIBUTING.md` (it was already shipped in 1.2 but missing from
+  the compatibility-contract list), the `category` parameter on
+  `memory_update` and the `verified_paths` / `verified_commits` /
+  `verified_versions` parameters on `memory_verify` to the README's
+  tool table (additions in 1.2 and 1.3 that the previous table
+  omitted), and the v1.2 / v1.3 surface entries to `docs/api.md`
+  (`staleness_verdict`, auto-`record_use`, `cold_memories`,
+  `curation_pending`, `acknowledge_scope_mismatch`, the structured
+  `verified_*` parameters, and the additional update flow).
+- **`SYSTEM_PROMPT_ADDENDUM` in `src/bettermemory/prompts.py` and
+  the matching fenced block in `docs/system_prompt.md`.** Same
+  policy, em dashes removed. The drift test in `tests/test_prompts.py`
+  still pins these to byte-equality.
+- **MCP `instructions` block in `src/bettermemory/server.py`.** One
+  em dash replaced with a sentence break; final body stays well
+  inside the 1700-char regression budget.
+- **CHANGELOG version headings.** Switched from `## X.Y.Z — date`
+  to `## X.Y.Z - date` so future entries match the project's
+  no-em-dash style. Historical entry bodies were left alone (they
+  are immutable release records).
+
+
 
 Same-day minor following 1.2.2. Two surface changes shaken out by a
 maintenance audit pass: an additive `category` parameter on
@@ -62,7 +100,7 @@ first line starts with an ISO date.
   `tests/test_models_slug.py` (18 tests) covers the regression
   plus the keep-existing-behaviour cases.
 
-## 1.2.2 — 2026-05-10
+## 1.2.2 - 2026-05-10
 
 Same-day patch following 1.2.1. The path-drift extractor was firing
 phantom `path_drift_missing` entries on memories whose bodies use
@@ -133,7 +171,7 @@ headline UX wins. 1.2.1 brings both surfaces in line.
   `bettermemory==0.1.0` from before the 1.0 release; refreshed to
   match `pyproject.toml`. No dependency changes.
 
-## 1.2.0 — 2026-05-10
+## 1.2.0 - 2026-05-10
 
 Seven additive surface changes targeting the curation-and-feedback
 loop. All purely additive on disk (`SCHEMA_VERSION` stays at 1) and
@@ -245,7 +283,7 @@ cost on every turn.
   per-handler `_advance_turn(state, recorder)` call at every
   memory_* tool entry.
 
-## 1.1.1 — 2026-05-09
+## 1.1.1 - 2026-05-09
 
 Packaging metadata patch. The 1.1.0 PyPI listing rendered without a
 "Project links" sidebar because `pyproject.toml` had no `[project.urls]`
@@ -260,7 +298,7 @@ issues, or release notes. No code changes; PyPI re-publish only.
   path back to GitHub, the issue tracker, or the changelog. Picked up
   automatically at wheel-build time — no other plumbing required.
 
-## 1.1.0 — 2026-05-09
+## 1.1.0 - 2026-05-09
 
 Three themes:
 
@@ -501,7 +539,7 @@ Three themes:
   as `/` so Windows paths with internal spaces still pass. Five new
   regression tests in `tests/test_verify.py`.
 
-## 1.0.0 — 2026-05-08
+## 1.0.0 - 2026-05-08
 
 The first stable release. Three things changed under the hood between
 the last 0.x and this one — they collectively retire every "but" the

@@ -183,11 +183,11 @@ def build_server(
         # system-prompt level. Empirically validated on Claude Code
         # 2.1.x: the block lands in the "MCP Server Instructions"
         # section of the system prompt. Claude Code truncates the block
-        # if it exceeds roughly 1.8KB — the cut is mid-sentence, with
+        # if it exceeds roughly 1.8KB. The cut is mid-sentence, with
         # an ellipsis. Keep this body comfortably under that ceiling
         # (~1500 chars is the working budget). Detail beyond what fits
         # belongs on the individual tool descriptions, which are not
-        # subject to the same truncation; the optional system-prompt
+        # subject to the same truncation. The optional system-prompt
         # addendum (`docs/system_prompt.md` /
         # `bettermemory.SYSTEM_PROMPT_ADDENDUM`) carries the long form
         # for clients that want it pasted into a project CLAUDE.md.
@@ -200,7 +200,7 @@ def build_server(
             "these tools surface.\n\n"
             "Memory is OPT-IN retrieval. The user's stored memories are "
             "NOT in your context unless you call memory_search. Default "
-            "to NOT retrieving — false positives (irrelevant context "
+            "to NOT retrieving. False positives (irrelevant context "
             "cascading) hurt more than false negatives (one followup "
             "turn).\n\n"
             "Call memory_search ONLY when:\n"
