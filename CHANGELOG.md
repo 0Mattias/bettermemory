@@ -9,7 +9,37 @@ spells out exactly what's stable.
 
 ## Unreleased
 
-(Empty — accumulate entries here between tags.)
+### Changed
+
+- **MCP `instructions` block (`src/bettermemory/server.py`).** Rewritten
+  to surface the v1.2 headline UX wins where every compliant client
+  sees them: `staleness_verdict` (the rolled-up branch-on-this-first
+  field) and the auto-`record_use` flow (the most-forgotten step is
+  now opt-out). Previously the block named the three underlying
+  staleness signals individually and described `memory_record_use` as
+  a per-response obligation, neither of which matched the v1.2
+  surface. Tightened the false-positives sentence and the
+  session-start hint to make room for the new content under the
+  1700-char regression budget (final body 1681 chars / 1687 utf-8
+  bytes; all must-have phrases preserved). Also adds the
+  `curation_pending` rollup mention to the session-start paragraph
+  and `verified_paths` to the verify guidance.
+- **Plugin `SKILL.md`.** Now opens with a six-row quick-card
+  (Search? / Write? / Category? / Outcome? / Verify? / Scope?) so the
+  decision rules are cheap to keep in working memory; the
+  prose-heavy reference moves below it. Updated to the full v1.2
+  surface throughout: `staleness_verdict` rollup as the
+  branch-on-this-first field, auto-`record_use` via `use_token`,
+  `category="ambient"`, `scope_mismatch` warning at write time,
+  structured `verified_claims` on `memory_verify`, and the
+  `dead_weight` / `cold_memories` split with the matching
+  `curation_pending` rollup on `memory_scope_overview`.
+
+### Fixed
+
+- **Stale `uv.lock` package version.** The lockfile still pinned
+  `bettermemory==0.1.0` from before the 1.0 release; refreshed to
+  match `pyproject.toml`'s `1.2.0`. No dependency changes.
 
 ## 1.2.0 — 2026-05-10
 

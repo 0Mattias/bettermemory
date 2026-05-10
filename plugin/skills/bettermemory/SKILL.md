@@ -11,6 +11,20 @@ Persistent memory between sessions lives in this plugin's MCP tools.
 sessions only see what these tools surface, so anything stored
 elsewhere is invisible to next-week's-you.
 
+## Quick card
+
+| Decide | Rule |
+|---|---|
+| Search? | shared-context reference or ambiguity → yes. Otherwise no. |
+| Write? | durable in a week with no maintenance → yes. State / timestamps → no (the tool will reject). |
+| Category? | claim about the user → `user-inference`. Atmospheric / no verifiable claims → `ambient`. Else → `fact`. |
+| Outcome? | retrieval shaped reply → silence (auto-commits as `applied`). Off-topic / wrong → explicit `ignored` / `contradicted` / `corrected`. |
+| Verify? | `staleness_verdict != "fresh"` → spot-check one claim before relying; pass `verified_paths` to `memory_verify`. |
+| Scope? | project name if obvious; never `general`. |
+
+The rest of this document is reference for when one of those answers
+needs more context.
+
 ## Available tools
 
 - **Retrieval**: `memory_search`, `memory_show`, `memory_list`, `memory_scope_overview`
@@ -42,10 +56,15 @@ Skip it for:
 
 ### Session-start hint
 
-One call to `memory_scope_overview` returns scope counts without
-bodies. If `total=0`, skip `memory_search` for the rest of the session
-unless the user explicitly asks for stored context. If non-zero,
-`memory_search` is the way to retrieve content. Use this once per
+One call to `memory_scope_overview` returns scope counts plus a
+`curation_pending` rollup (`{stale, never_verified, drifted, cold,
+dead}` integer counts only — no row materialisation). If `total=0`,
+skip `memory_search` for the rest of the session unless the user
+explicitly asks. If counts are non-zero, `memory_search` is the way
+to retrieve content. The `curation_pending` rollup tells you whether
+the store has anything worth a curation pass without paying the
+`memory_health` cost — non-zero `dead` or `drifted` is the cue to
+suggest one when the conversation has time. Use this once per
 conversation — it's a yes/no signal, not something to poll.
 
 ### Auto-scoping
@@ -68,55 +87,84 @@ response:
 This is non-negotiable. The user needs to know when stored context
 shaped a reply.
 
-## Recording use
+## Recording use (auto-commit + override)
 
-After your response uses a retrieved memory, call
-`memory_record_use(ids, outcome)` once with the ids that actually
-shaped the reply. Outcomes:
+Every `memory_search` hit and `memory_show` response carries an
+opaque `use_token`. **If you don't call `memory_record_use` within
+~2 turns, the server auto-commits the retrieval as
+`outcome="applied"`** on the next `memory_*` call (logged with
+`auto=true` for audit). Bookkeeping for the most-forgotten step is
+opt-out instead of opt-in — the common case (retrieval shaped the
+response, you'd record `applied`) handles itself.
 
-- `"applied"` — the memory shaped the response.
+Call `memory_record_use(memory_ids=[…], outcome=…)` explicitly only
+when you want to override the auto-commit:
+
 - `"ignored"` — retrieved but turned out off-topic.
-- `"contradicted"` — the user or current state contradicted the stored
-  fact AND you have not fixed it yet. Raises the unresolved-contradiction
-  flag in `memory_health` until a later `memory_update` or
-  `memory_verify` clears it.
+- `"contradicted"` — the user or current state contradicted the
+  stored fact AND you have not fixed it yet. Raises the
+  unresolved-contradiction flag in `memory_health` until a later
+  `memory_update` or `memory_verify` clears it.
 - `"corrected"` — the memory had drifted and you fixed it inline
   (called `memory_update` and/or `memory_verify` in the same turn).
   Audit-only — does NOT raise the contradiction flag. Use this
   instead of `"contradicted"` when the resolution is already done.
 
-Quick rule: if you've already fixed the drift, log `"corrected"`; if
-you've only noticed it, log `"contradicted"` and let
-`memory_update` / `memory_verify` clear the flag later. **Skip the call
-entirely** when no retrieved memory shaped your response — the absence
-of an `applied` event is itself the signal that the memory wasn't
-useful. Don't fabricate a `record_use` call just to be tidy.
+The explicit override wins via override semantics: the server
+purges the pending token before recording the explicit outcome, so
+the auto-commit cannot shadow it. `"applied"` can also be passed
+explicitly when you want the audit trail; it just happens to also
+be the default.
 
 ## Verify before relying
 
 Memory is a snapshot — it does not auto-refresh. Every retrieval
-carries up to three structured staleness signals:
+carries a derived `staleness_verdict` plus the underlying signals
+it's computed from. **Branch on the verdict first**; consult the
+underlying signals only when you need to know which axis tripped.
 
-1. **`verification` block** (status: `"never"` / `"stale"` / `"fresh"`).
-   When status is not `"fresh"`, spot-check at least one verifiable
-   claim from the body (file path, version number, configuration)
-   against ground truth. If the check passes, call `memory_verify(id,
-   note=...)` to record what you confirmed. If a claim has drifted,
-   fix the body via `memory_update` first — then `memory_verify` the
-   corrected version (the update resets `last_verified_at` to null
-   because the prior verification was for prose that no longer
-   exists).
+`staleness_verdict` is one of:
 
-2. **`path_drift`** counts. Filesystem paths cited in the body that no
-   longer exist on disk. Advisory — drift can be a temporary mount
-   or a path on a different machine — but a drifted path on a
-   never-verified memory is the highest-risk profile.
+- `"fresh"` — verification is fresh AND no path/commit drift. The
+  body's claims are presumed current.
+- `"spot_check_recommended"` — verification is calendar-fresh but the
+  world has moved (a path went missing, or the repo has commits since
+  the last verify). Worth a quick check before relying on the body.
+- `"spot_check_required"` — `verification.status` is `"never"` or
+  `"stale"`. Pre-empts the drift inputs because the verification
+  anchor itself is missing or expired.
 
-3. **`commit_drift`** counts (when caller is in the memory's origin
-   repo). Commits authored after `last_verified_at`. The load-bearing
-   case: `verification.status == "fresh"` only proves the calendar is
-   fresh. A non-zero `commit_drift` is the cue to spot-check anyway —
-   the project moved since the last `memory_verify`.
+Beyond the verdict, three structured signals are available:
+
+1. **`verification` block** (status: `"never"` / `"stale"` / `"fresh"`)
+   on every `memory_show`, `memory_search` hit, and `memory_list` row.
+2. **`path_drift`** counts (`path_drift_checked` /
+   `path_drift_missing` per hit, full report on `memory_show`).
+   Filesystem paths cited in the body that no longer exist on disk.
+   Advisory — drift can be a temporary mount or a path on a different
+   machine — but a drifted path on a never-verified memory is the
+   highest-risk profile.
+3. **`commit_drift`** counts (`commit_drift_count` per hit when the
+   caller is in the memory's origin repo, full block on
+   `memory_show`). Commits authored after `last_verified_at`. The
+   load-bearing case: `verification.status == "fresh"` only proves
+   the calendar is fresh. A non-zero `commit_drift` is the cue to
+   spot-check anyway — the project moved since the last
+   `memory_verify`.
+
+When the verdict is not `"fresh"`, spot-check at least one verifiable
+claim from the body (file path, version number, configuration)
+against ground truth. If the check passes, call `memory_verify(id,
+verified_paths=[…], verified_commits=[…], verified_versions=[…],
+note="…")` — passing the actual claims you spot-checked. The server
+uses these to short-circuit later drift signals: future retrievals
+of the same memory whose path_drift would have flagged a path in
+`verified_paths` (and the path still exists) downgrade the verdict,
+and `commit_drift` narrows the count to commits that actually
+touched any of `verified_paths`. If a claim has drifted, fix the
+body via `memory_update` first — then `memory_verify` the corrected
+version (the update resets `last_verified_at` to null because the
+prior verification was for prose that no longer exists).
 
 ## Writing memory
 
@@ -144,20 +192,39 @@ removed_matches:[…]}` carrying the original `removed_reason`. Inspect
 the reason — if the rejection still applies, drop the write; if the
 fact is now correct, call `memory_restore(id)` on the tombstone.
 
-**Confirmation policy is tiered**, structurally enforced via
-`category`:
+**Scope mismatch is also caught at write time.** If the body cites a
+known `projects:<name>` scope's name token (or a path under another
+project's tree) AND that scope isn't in the declared scope list,
+`memory_write` returns `{status:"scope_mismatch",
+suggested_scopes:[…], matches:[…]}` instead of committing. Pick a
+suggestion and re-write, or pass `acknowledge_scope_mismatch=True`
+when the cross-reference is intentional (an infrastructure note that
+mentions multiple projects by design).
 
-- For project, infrastructure, reference, and tooling memories — call
-  `memory_write` with the default `category="fact"`. The write commits
-  immediately; announce the save in one line so the user can object
-  (*"Saved: bettermemory env var rename to BETTERMEMORY_DIR"*).
-- For memories that capture inferences about the user (preferences,
-  beliefs, claims about how they want to work) — pass
-  `category="user-inference"`. The server returns `{status:"pending",
-  pending_id, pending_reason:"user-inference"}` instead of committing.
-  Ask the user in plain language (*"Want me to remember that you
-  prefer X?"*) and only then call `memory_write_confirm(pending_id)`,
-  or `memory_write_cancel(pending_id)` if they decline.
+### Confirmation policy is tiered
+
+Structurally enforced via the `category` parameter on `memory_write`:
+
+- `category="fact"` (default) — project / infrastructure / reference /
+  tooling facts about the world. Commits immediately; announce the
+  save in one line so the user can object (*"Saved: bettermemory env
+  var rename to BETTERMEMORY_DIR"*).
+- `category="user-inference"` — claims *about* the user themselves
+  (preferences, beliefs, working style). The server returns
+  `{status:"pending", pending_id, pending_reason:"user-inference"}`
+  instead of committing. Ask the user in plain language (*"Want me to
+  remember that you prefer X?"*) and only then call
+  `memory_write_confirm(pending_id)`, or
+  `memory_write_cancel(pending_id)` if they decline. Fires regardless
+  of the global `require_write_confirmation` config — misattribution
+  sticks, so the user always gets the veto on claims about themselves.
+- `category="ambient"` — atmospheric, response-shaping context that
+  informs every reply without being cited (user identity, persistent
+  environment quirks). Commits immediately like `fact`, but the
+  dead-weight curation rule excludes ambient memories — their value
+  is implicit, so a count of zero `applied` events is not an
+  indictment. Long bodies (>500 words) attach a non-blocking
+  `ambient_body_long` warning so you can decide whether to split.
 
 ## Scopes
 
@@ -172,9 +239,29 @@ If the user says *"this is unrelated to project X"*, call
 ## Scope hygiene and curation
 
 `memory_health` aggregates over the event log + active memories.
-Surfaces dead-weight memories (retrieved often, never `applied`),
-heavily-used memories, unresolved contradictions, transient-marker
-fire/override rates, scope distribution, `rare_scopes` (singletons
-within Levenshtein distance 2 of another scope — likely typos), and
-`verification_debt` / `commit_drift_debt` rollups. Use it for periodic
-curation passes; fix typos via `memory_rename_scope(old, new)`.
+Surfaces:
+
+- **`dead_weight`** — created before the window, retrieved at least
+  once, never `applied`. The body is misleading enough that retrieval
+  doesn't help.
+- **`cold_memories`** — created before the window, never retrieved at
+  all. Distinct from `dead_weight`: the body might be fine, but the
+  trigger isn't firing. Different curation question.
+- **`heavily_used`** — frequently `applied`. Worth keeping fresh.
+- **`contradicted`** — unresolved contradictions. Each carries a
+  `resolution_timeline` (chronological log of `update` / `verify` /
+  `contradicted` / `corrected` events) so a stuck flag can be
+  self-diagnosed without grepping the event log.
+- **`verification_debt`** / **`commit_drift_debt`** — calendar-stale
+  vs. world-moved buckets, partitioned for batch curation.
+- **`rare_scopes`** — singletons within Levenshtein distance 2 of
+  another scope (likely typos). Fix via
+  `memory_rename_scope(old, new)`.
+- **`marker_stats`** — transient-marker fire/override counts. High
+  override rate means the marker is producing too many false
+  positives and should be trimmed.
+
+The lighter `curation_pending` rollup on `memory_scope_overview`
+(five integer counts, no row materialisation) is the cheap
+session-start triage; reach for `memory_health` when one of those
+counts is non-zero and you want the actual rows.

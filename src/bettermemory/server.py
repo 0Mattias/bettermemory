@@ -201,8 +201,8 @@ def build_server(
             "Memory is OPT-IN retrieval. The user's stored memories are "
             "NOT in your context unless you call memory_search. Default "
             "to NOT retrieving — false positives (irrelevant context "
-            "cascading through a conversation) are much worse than "
-            "false negatives (one followup turn).\n\n"
+            "cascading) hurt more than false negatives (one followup "
+            "turn).\n\n"
             "Call memory_search ONLY when:\n"
             "- the user references shared context you don't have "
             '("my project", "the script we wrote", "do you remember…")\n'
@@ -210,22 +210,23 @@ def build_server(
             "resolve\n\n"
             "Skip it for generic factual questions, self-contained "
             "technical questions, and fully-specified messages.\n\n"
-            "Session-start hint: one memory_scope_overview call returns "
-            "scope counts without bodies. If total=0, skip memory_search "
-            "for the rest of the session unless the user explicitly "
-            "asks. memory_search auto-scopes to the caller's repo by "
-            "default; set auto_scope=false for cross-project queries.\n\n"
+            "Session-start: one memory_scope_overview returns scope "
+            "counts plus a curation_pending rollup, no bodies. If "
+            "total=0, skip memory_search for the rest of the session "
+            "unless the user asks. memory_search auto-scopes to the "
+            "caller's repo; set auto_scope=false for cross-project.\n\n"
             "When a retrieved memory shapes your reply, briefly say so "
-            '("Using your stored preference for…") and call '
-            "memory_record_use(ids, outcome) once per response. Outcome "
-            "semantics live on the tool.\n\n"
-            "Verify before relying. Each retrieval carries a verification "
-            "block (status: never/stale/fresh) plus path_drift and "
-            'commit_drift counts. When status is not "fresh", '
-            "spot-check one verifiable claim against ground truth; if it "
-            "holds, call memory_verify(id); if it has drifted, "
-            "memory_update first then memory_verify the fix. Writing "
-            "discipline lives on memory_write."
+            '("Using your stored preference for…"). memory_record_use '
+            "auto-commits as `applied` ~2 turns after retrieval; call "
+            "explicitly only to override (ignored/contradicted/corrected).\n\n"
+            "Verify before relying. Each retrieval carries a "
+            "`staleness_verdict` (fresh / spot_check_recommended / "
+            "spot_check_required) rolled up from verification, "
+            "path_drift, and commit_drift. When the verdict is not "
+            '"fresh", spot-check one verifiable claim; if it holds, '
+            "call memory_verify(id) (pass verified_paths for structured "
+            "attestation); if it drifted, memory_update first then "
+            "memory_verify. Writing discipline lives on memory_write."
         ),
     )
 
