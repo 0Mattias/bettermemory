@@ -40,7 +40,7 @@ from pathlib import Path
 from typing import Any, Iterable
 
 from .events import iter_all_events
-from .models import Memory, first_summary_line
+from .models import Category, Memory, first_summary_line
 from .origin import Origin, commit_author_timestamps, repos_match
 
 
@@ -59,6 +59,11 @@ class MemoryStats:
     the event stream — surfacing it here lets a curation pass treat
     "applied count" and "verification age" as orthogonal staleness axes
     without a second round-trip through the store.
+
+    `category` mirrors the persisted memory field. Surfaced so the
+    dead-weight / cold-memories filters can exclude ambient rows
+    (their value is implicit and not visible in the use signal) and
+    so the JSON consumer can spot ambient context at a glance.
     """
 
     id: str
@@ -80,6 +85,7 @@ class MemoryStats:
     last_used_at: datetime | None = None
     last_contradicted_at: datetime | None = None
     last_verified_at: datetime | None = None
+    category: Category | None = None
     # Chronological list of resolution-relevant events for this memory:
     # each entry is `{kind: "update"|"verify"|"contradicted"|"corrected",
     # ts: "iso", note: str | None}`. Populated only for rows that land in
@@ -137,6 +143,7 @@ class MemoryStats:
             "last_verified_at": (
                 _iso(self.last_verified_at) if self.last_verified_at else None
             ),
+            "category": self.category.value if self.category is not None else None,
             "has_unresolved_contradiction": self.has_unresolved_contradiction,
             "resolution_timeline": list(self.resolution_timeline),
         }
@@ -186,11 +193,18 @@ class ScopeHealth:
     Counts are over the same windowed event log as the flat view, so
     the numbers reconcile: sum of `active` across scopes >= total active
     (a memory tagged with N scopes is counted in each, by design).
+
+    `cold` mirrors the new top-level cold_memories bucket: never
+    retrieved within the window. Distinct from `dead` (which is now
+    "retrieved but never applied"), so the two together tell the
+    operator whether a scope's rot is "ranker not surfacing" (cold)
+    or "model retrieving but not using" (dead).
     """
 
     scope: str
     active: int = 0
     dead: int = 0
+    cold: int = 0
     contradicted: int = 0
     applied_total: int = 0
 
@@ -199,6 +213,7 @@ class ScopeHealth:
             "scope": self.scope,
             "active": self.active,
             "dead": self.dead,
+            "cold": self.cold,
             "contradicted": self.contradicted,
             "applied_total": self.applied_total,
         }
@@ -317,6 +332,16 @@ class HealthReport:
     distinct_sessions: int
 
     dead_weight: list[MemoryStats] = field(default_factory=list)
+    # Memories created before the window that have NEVER been retrieved
+    # (search hit count of zero in the window). Distinct from dead_weight,
+    # which now requires `retrieval_count > 0 AND applied_count == 0` —
+    # cold means "the ranker hasn't surfaced this for anyone to apply or
+    # ignore in the window", which is a different curation question
+    # ("does the trigger for this memory still exist?") than dead-weight's
+    # ("is the model getting nothing from a memory it does retrieve?").
+    # Ambient-category memories are excluded from both buckets — their
+    # value is implicit and rarely shows up as a use event.
+    cold_memories: list[MemoryStats] = field(default_factory=list)
     heavily_used: list[MemoryStats] = field(default_factory=list)
     contradicted: list[MemoryStats] = field(default_factory=list)
     marker_stats: list[MarkerStats] = field(default_factory=list)
@@ -364,6 +389,7 @@ class HealthReport:
             "total_events": self.total_events,
             "distinct_sessions": self.distinct_sessions,
             "dead_weight": [s.to_dict() for s in self.dead_weight],
+            "cold_memories": [s.to_dict() for s in self.cold_memories],
             "heavily_used": [s.to_dict() for s in self.heavily_used],
             "contradicted": [s.to_dict() for s in self.contradicted],
             "marker_stats": [m.to_dict() for m in self.marker_stats],
@@ -453,6 +479,7 @@ def compute_health(
             created=m.created,
             updated=m.updated,
             last_verified_at=m.last_verified_at,
+            category=m.category,
         )
         origin_repo_by_id[m.id] = m.origin.repo if m.origin else None
 
@@ -581,10 +608,43 @@ def compute_health(
         scope for stats in by_id.values() for scope in stats.scopes
     )
 
+    # Dead weight: the memory IS being retrieved within the window but
+    # nothing the model produced ever called `record_use(applied)`. That's
+    # the actionable signal — the ranker is surfacing the memory but the
+    # model isn't getting value from it. Either the body is misleading,
+    # the scopes are wrong, or the content is duplicate-noise. Either way,
+    # a curation pass should look.
+    #
+    # Memories with `retrieval_count == 0` move into `cold_memories`
+    # below. Ambient-category memories are excluded from both buckets:
+    # their value is implicit (they shape responses without being cited),
+    # so the use signal is structurally absent and a count of zero
+    # there is not an indictment.
     dead_weight = [
-        s for s in by_id.values() if s.created < cutoff and s.applied_count == 0
+        s
+        for s in by_id.values()
+        if s.category != Category.AMBIENT
+        and s.created < cutoff
+        and s.retrieval_count > 0
+        and s.applied_count == 0
     ]
     dead_weight.sort(key=lambda s: s.created)
+
+    # Cold memories: never retrieved at all in the window. Either nobody is
+    # asking the kind of question this memory answers, or the ranker isn't
+    # surfacing it. Distinct from dead weight — a cold memory hasn't had
+    # the chance to be "applied" or "ignored", so a curation pass should
+    # ask "is the trigger for this memory still real?", not "is the body
+    # misleading?". Sorted oldest-first like dead_weight; same ambient
+    # exclusion.
+    cold_memories = [
+        s
+        for s in by_id.values()
+        if s.category != Category.AMBIENT
+        and s.created < cutoff
+        and s.retrieval_count == 0
+    ]
+    cold_memories.sort(key=lambda s: s.created)
 
     heavily_used = sorted(
         (s for s in by_id.values() if s.applied_count >= heavily_used_min_applied),
@@ -608,6 +668,7 @@ def compute_health(
     # descending so the heaviest-trafficked scopes lead.
     scope_health_map: dict[str, ScopeHealth] = {}
     dead_ids = {s.id for s in dead_weight}
+    cold_ids = {s.id for s in cold_memories}
     contradicted_ids = {s.id for s in contradicted}
     for stats in by_id.values():
         for scope in stats.scopes:
@@ -616,6 +677,8 @@ def compute_health(
             entry.applied_total += stats.applied_count
             if stats.id in dead_ids:
                 entry.dead += 1
+            if stats.id in cold_ids:
+                entry.cold += 1
             if stats.id in contradicted_ids:
                 entry.contradicted += 1
     scope_health = sorted(
@@ -688,6 +751,7 @@ def compute_health(
         total_events=total_events,
         distinct_sessions=len(sessions),
         dead_weight=dead_weight,
+        cold_memories=cold_memories,
         heavily_used=heavily_used,
         contradicted=contradicted,
         marker_stats=marker_stats,
@@ -815,7 +879,8 @@ def render_text(report: HealthReport) -> str:
 
     lines.append("")
     lines.append(
-        f"Dead weight ({len(report.dead_weight)}) — never `applied`, older than {report.window_days} days:"
+        f"Dead weight ({len(report.dead_weight)}) — retrieved but never "
+        f"`applied`, older than {report.window_days} days:"
     )
     if not report.dead_weight:
         lines.append("  (none)")
@@ -825,6 +890,18 @@ def render_text(report: HealthReport) -> str:
         )
     if len(report.dead_weight) > 20:
         lines.append(f"  ... and {len(report.dead_weight) - 20} more")
+
+    lines.append("")
+    lines.append(
+        f"Cold memories ({len(report.cold_memories)}) — never retrieved, "
+        f"older than {report.window_days} days:"
+    )
+    if not report.cold_memories:
+        lines.append("  (none)")
+    for s in report.cold_memories[:20]:
+        lines.append(f"  {s.id} {','.join(s.scopes)}: {s.summary}")
+    if len(report.cold_memories) > 20:
+        lines.append(f"  ... and {len(report.cold_memories) - 20} more")
 
     lines.append("")
     lines.append(f"Heavily used ({len(report.heavily_used)}):")
@@ -862,7 +939,8 @@ def render_text(report: HealthReport) -> str:
     for sh in report.scope_health:
         lines.append(
             f"  {sh.scope:<28} active={sh.active:<3} dead={sh.dead:<3} "
-            f"contradicted={sh.contradicted:<3} applied={sh.applied_total}"
+            f"cold={sh.cold:<3} contradicted={sh.contradicted:<3} "
+            f"applied={sh.applied_total}"
         )
 
     lines.append("")
@@ -999,6 +1077,105 @@ def _edit_distance_within(a: str, b: str, max_dist: int) -> bool:
 # ---------------------------------------------------------------------------
 
 
+def curation_counts(
+    memories: Iterable[Memory],
+    events: Iterable[dict[str, Any]],
+    *,
+    window_days: int = 30,
+    verification_stale_days: int = 30,
+    caller_origin: Origin | None = None,
+    now: datetime | None = None,
+) -> dict[str, int]:
+    """Cheap summary of curation pressure.
+
+    Returns
+    ``{"stale", "never_verified", "drifted", "cold", "dead"}`` —
+    integer counts only, no row materialisation. Used by
+    `memory_scope_overview` so the model can see at a glance whether
+    the store has anything worth a curation pass without paying the
+    full `compute_health` cost (which materialises and sorts every
+    bucket and walks the event log to build resolution timelines).
+
+    Numerical contract: each count must agree with the corresponding
+    bucket size from `compute_health` over the same memories/events
+    and same parameters. The tests in `tests/test_health.py` lock
+    that in. We intentionally walk the event log here too — the
+    "cheap" comes from skipping row construction, not from skipping
+    the event walk (the walk is bounded and a session-start hint
+    pays it once per session, which is the right cost).
+
+    `caller_origin` drives the `drifted` count, mirroring
+    `_compute_commit_drift_debt`. Pass None to skip the
+    repo-aware portion (the count stays at zero).
+    """
+    now = now or datetime.now(timezone.utc)
+    cutoff = now - timedelta(days=window_days)
+    verification_cutoff = now - timedelta(days=verification_stale_days)
+
+    # Re-iterate only once over `memories` — pull the slim bookkeeping
+    # we need.
+    mem_list: list[Memory] = list(memories)
+
+    retrieval_counts: dict[str, int] = {m.id: 0 for m in mem_list}
+    applied_counts: dict[str, int] = {m.id: 0 for m in mem_list}
+    for ev in events:
+        kind = ev.get("kind")
+        if kind == "search":
+            for mid in ev.get("returned", []) or []:
+                if mid in retrieval_counts:
+                    retrieval_counts[mid] += 1
+        elif kind == "use" and ev.get("outcome") == "applied":
+            for mid in ev.get("ids", []) or []:
+                if mid in applied_counts:
+                    applied_counts[mid] += 1
+
+    never_verified = 0
+    stale = 0
+    cold = 0
+    dead = 0
+    for m in mem_list:
+        is_ambient = m.category == Category.AMBIENT
+        if m.last_verified_at is None:
+            never_verified += 1
+        elif m.last_verified_at < verification_cutoff:
+            stale += 1
+        if not is_ambient and m.created < cutoff:
+            r = retrieval_counts.get(m.id, 0)
+            a = applied_counts.get(m.id, 0)
+            if r == 0:
+                cold += 1
+            elif a == 0:
+                dead += 1
+
+    drifted = 0
+    if caller_origin is not None and caller_origin.repo and caller_origin.cwd:
+        timestamps = commit_author_timestamps(Path(caller_origin.cwd))
+        if timestamps is not None:
+            timestamps_sorted = sorted(timestamps)
+            for m in mem_list:
+                if m.last_verified_at is None:
+                    continue
+                origin_repo = m.origin.repo if m.origin else None
+                if origin_repo is None:
+                    continue
+                if not repos_match(origin_repo, caller_origin.repo):
+                    continue
+                since = m.last_verified_at
+                if since.tzinfo is None:
+                    since = since.replace(tzinfo=timezone.utc)
+                idx = bisect.bisect_right(timestamps_sorted, since)
+                if len(timestamps_sorted) - idx > 0:
+                    drifted += 1
+
+    return {
+        "stale": stale,
+        "never_verified": never_verified,
+        "drifted": drifted,
+        "cold": cold,
+        "dead": dead,
+    }
+
+
 def report_for_directory(
     root: Path,
     *,
@@ -1040,6 +1217,7 @@ __all__ = [
     "VerificationDebt",
     "HealthReport",
     "compute_health",
+    "curation_counts",
     "render_text",
     "render_json",
     "report_for_directory",

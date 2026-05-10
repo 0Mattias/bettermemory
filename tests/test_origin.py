@@ -15,6 +15,7 @@ from bettermemory.origin import (
     capture,
     commit_author_timestamps,
     commits_since,
+    commits_since_touching_paths,
     repos_match,
 )
 
@@ -293,3 +294,151 @@ def test_commit_author_timestamps_returns_none_on_empty_repo(tmp_path: Path) -> 
     to parse" edge case that's hard to provoke in real life."""
     _init_repo(tmp_path)
     assert commit_author_timestamps(tmp_path) is None
+
+
+# ---------------------------------------------------------------------------
+# commits_since_touching_paths — path-filtered count for verified_claims
+# ---------------------------------------------------------------------------
+
+
+def _commit_file(
+    cwd: Path,
+    relpath: str,
+    *,
+    content: str,
+    when: datetime,
+) -> None:
+    """Create or modify a file and commit it at the given timestamp."""
+    target = cwd / relpath
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_text(content)
+    subprocess.run(
+        ["git", "add", relpath],
+        cwd=cwd,
+        check=True,
+        capture_output=True,
+    )
+    iso = when.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S+00:00")
+    env = os.environ.copy()
+    env["GIT_AUTHOR_DATE"] = iso
+    env["GIT_COMMITTER_DATE"] = iso
+    env["GIT_AUTHOR_NAME"] = "Test"
+    env["GIT_AUTHOR_EMAIL"] = "test@example.com"
+    env["GIT_COMMITTER_NAME"] = "Test"
+    env["GIT_COMMITTER_EMAIL"] = "test@example.com"
+    subprocess.run(
+        ["git", "commit", "-m", f"touch {relpath}"],
+        cwd=cwd,
+        check=True,
+        capture_output=True,
+        env=env,
+    )
+
+
+def test_commits_since_touching_paths_returns_none_for_none_cwd() -> None:
+    assert (
+        commits_since_touching_paths(
+            None,
+            datetime(2026, 1, 1, tzinfo=timezone.utc),
+            ["/tmp/x"],
+        )
+        is None
+    )
+
+
+def test_commits_since_touching_paths_returns_none_for_empty_paths(
+    tmp_path: Path,
+) -> None:
+    """No paths means no useful filter — the caller falls back to the
+    unfiltered count via the verify.py wrapper."""
+    assert (
+        commits_since_touching_paths(
+            tmp_path,
+            datetime(2026, 1, 1, tzinfo=timezone.utc),
+            [],
+        )
+        is None
+    )
+
+
+@pytest.mark.skipif(not _GIT_AVAILABLE, reason="git not on PATH")
+def test_commits_since_touching_paths_zero_when_unrelated_files_changed(
+    tmp_path: Path,
+) -> None:
+    """A path-filter that targets a file no commit has touched returns 0,
+    even when other files have moved."""
+    _init_repo(tmp_path)
+    _commit_file(
+        tmp_path,
+        "other.txt",
+        content="initial",
+        when=datetime(2026, 1, 1, tzinfo=timezone.utc),
+    )
+    _commit_file(
+        tmp_path,
+        "other.txt",
+        content="changed",
+        when=datetime(2026, 2, 1, tzinfo=timezone.utc),
+    )
+    target_path = str(tmp_path / "tracked.txt")
+    out = commits_since_touching_paths(
+        tmp_path,
+        datetime(2026, 1, 15, tzinfo=timezone.utc),
+        [target_path],
+    )
+    assert out == 0
+
+
+@pytest.mark.skipif(not _GIT_AVAILABLE, reason="git not on PATH")
+def test_commits_since_touching_paths_counts_relevant_commits(
+    tmp_path: Path,
+) -> None:
+    """Commits that touched the named path get counted; others don't."""
+    _init_repo(tmp_path)
+    _commit_file(
+        tmp_path,
+        "tracked.txt",
+        content="initial",
+        when=datetime(2026, 1, 1, tzinfo=timezone.utc),
+    )
+    _commit_file(
+        tmp_path,
+        "other.txt",
+        content="initial",
+        when=datetime(2026, 2, 1, tzinfo=timezone.utc),
+    )
+    _commit_file(
+        tmp_path,
+        "tracked.txt",
+        content="updated",
+        when=datetime(2026, 3, 1, tzinfo=timezone.utc),
+    )
+    out = commits_since_touching_paths(
+        tmp_path,
+        datetime(2026, 1, 15, tzinfo=timezone.utc),
+        [str(tmp_path / "tracked.txt")],
+    )
+    assert out == 1
+
+
+@pytest.mark.skipif(not _GIT_AVAILABLE, reason="git not on PATH")
+def test_commits_since_touching_paths_drops_paths_outside_repo(
+    tmp_path: Path,
+) -> None:
+    """A path that resolves outside the repo can't be filtered on; the
+    function returns None so the caller falls back to the unfiltered
+    count rather than under-reporting."""
+    _init_repo(tmp_path)
+    _commit_file(
+        tmp_path,
+        "tracked.txt",
+        content="x",
+        when=datetime(2026, 1, 1, tzinfo=timezone.utc),
+    )
+    # Path outside the repo.
+    out = commits_since_touching_paths(
+        tmp_path,
+        datetime(2025, 12, 1, tzinfo=timezone.utc),
+        ["/nonexistent/outside-repo.txt"],
+    )
+    assert out is None

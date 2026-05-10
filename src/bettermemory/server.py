@@ -30,8 +30,8 @@ from mcp.server.fastmcp import FastMCP
 
 from .config import Config, load_config
 from .durability import TransientMatch, find_transient_markers
-from .events import Recorder
-from .health import report_for_directory
+from .events import Recorder, iter_all_events
+from .health import curation_counts, report_for_directory
 from .origin import (
     Origin,
     capture as capture_origin,
@@ -39,6 +39,7 @@ from .origin import (
     repos_match,
 )
 from .models import (
+    Category,
     Confidence,
     MemoryHit,
     MemorySummary,
@@ -50,6 +51,11 @@ from .models import (
     validate_scope,
 )
 from .prompts import SYSTEM_PROMPT_ADDENDUM
+from .scope_match import (
+    collect_project_roots,
+    collect_project_scopes,
+    detect_scope_mismatch,
+)
 from .search import find_similar, find_similar_tombstones, search as run_search
 from .session import SessionState, get_state
 from .store import (
@@ -60,6 +66,7 @@ from .store import (
 )
 from .verify import (
     compute_commit_drift,
+    compute_staleness_verdict,
     compute_verification_status,
     detect_path_drift,
 )
@@ -104,16 +111,33 @@ _USE_OUTCOMES: frozenset[str] = frozenset(
 #   before a sticky misattribution lands. Structural enforcement of
 #   the confirmation-tier policy: the model can't shortcut it by
 #   omitting a confirm-first conversational turn.
+# - "ambient" — atmospheric / response-shaping memories that don't make
+#   crisp verifiable claims and aren't expected to be cited via
+#   `record_use`. The user's identity, persistent environment quirks,
+#   that sort of thing. Persisted on the memory record so the dead-weight
+#   curation rule can exclude them: their value is implicit, so a count
+#   of zero `applied` events is not an indictment. Long bodies (>500
+#   words) emit a warning on write — ambient memories tend to drift
+#   into catch-all dumps when they get too big, and a forced split is
+#   the cheap fix.
 #
-# Not persisted to the on-disk memory frontmatter — this is a write-time
-# routing signal, not a queryable attribute. If aggregate analysis ever
-# needs it (e.g. "what fraction of pending writes were user-inference?"),
-# the event log already records it via the `category` field on each
-# write event.
+# Persisted to frontmatter as the `category` field. Legacy memories
+# without it load with `category=None`, which the runtime treats as the
+# legacy "fact" default — same dead-weight semantics as before, no
+# silent shape change for old stores.
 # ---------------------------------------------------------------------------
 
 
-_WRITE_CATEGORIES: frozenset[str] = frozenset({"fact", "user-inference"})
+_WRITE_CATEGORIES: frozenset[str] = frozenset({c.value for c in Category})
+
+
+# Ambient memories that grow past this word count get a non-blocking
+# warning attached to the committed response. We don't refuse the
+# write — ambient is a soft category and a long body is sometimes
+# correct (e.g. a curated user-context dump) — but the warning gives
+# the writer a chance to decide whether to split. Mirrors the way
+# `transient_warning` is firm but `ambient_body_long` is advisory.
+_AMBIENT_LONG_BODY_WORDS = 500
 
 
 # ---------------------------------------------------------------------------
@@ -309,6 +333,7 @@ def _register_tools(
         expand_top: bool = False,
         auto_scope: bool = True,
     ) -> list[dict[str, Any]]:
+        _advance_turn(state, recorder)
         if max_results is None:
             max_results = config.behavior.default_max_results
         max_results = max(1, min(int(max_results), 50))
@@ -382,20 +407,45 @@ def _register_tools(
                 pass
             else:
                 out[0]["body"] = memory.body
-                drift = detect_path_drift(memory.body)
-                if drift.has_drift:
+                drift = detect_path_drift(
+                    memory.body, verified_paths=memory.verified_paths
+                )
+                if drift.has_drift or drift.verified:
                     out[0]["path_drift"] = drift.to_dict()
-                    expanded_drift_missing = len(drift.missing)
+                expanded_drift_missing = len(drift.missing)
                 commit_drift = compute_commit_drift(
                     memory.last_verified_at,
                     memory.origin.repo if memory.origin else None,
                     caller_origin=current_origin,
+                    verified_paths=memory.verified_paths,
                 )
+                commit_drift_count_for_verdict: int | None = None
                 if commit_drift is not None:
                     out[0]["commit_drift"] = commit_drift.to_dict()
                     expanded_commit_drift_status = commit_drift.status
                     expanded_commits_since_verify = commit_drift.commits_since_verify
+                    commit_drift_count_for_verdict = commit_drift.commits_since_verify
+                # Re-derive the top hit's verdict from the just-computed
+                # body-level signals — the verdict that landed via
+                # `_hit_to_dict` was based on `path_drift_missing` from
+                # the search index (unloaded body) and may have skipped
+                # claims surfaced by the actual body-level detection.
+                top_verification = compute_verification_status(
+                    memory.last_verified_at,
+                    now=now,
+                    stale_after_days=stale_after_days,
+                )
+                out[0]["staleness_verdict"] = compute_staleness_verdict(
+                    verification=top_verification,
+                    path_drift_missing=expanded_drift_missing,
+                    commit_drift_count=commit_drift_count_for_verdict,
+                )
                 expanded_id = memory.id
+
+        # Issue use-tokens after every other field is in place so the
+        # bookkeeping reflects the canonical response shape the model
+        # is about to act on.
+        _attach_use_tokens(out, state)
 
         recorder.record(
             "search",
@@ -452,6 +502,7 @@ def _register_tools(
         ),
     )
     async def memory_show(id: str) -> dict[str, Any]:
+        _advance_turn(state, recorder)
         try:
             memory = store.load_one(id)
         except TombstonedError as exc:
@@ -464,8 +515,12 @@ def _register_tools(
         # consumer can branch on `if path_drift is not None`. Without
         # that, every memory_show would carry an empty `path_drift` dict
         # and the model would learn to ignore the field even when it
-        # mattered.
-        drift = detect_path_drift(memory.body)
+        # mattered. `verified_paths` is threaded in so a path the user
+        # has previously attested gets surfaced in `path_drift.verified`
+        # even when no other claims drift.
+        drift = detect_path_drift(
+            memory.body, verified_paths=memory.verified_paths
+        )
         # Verification staleness is structurally always present — emitted
         # even for "fresh" memories — because consistent shape means the
         # consumer can branch on `verification.status` without an
@@ -483,17 +538,35 @@ def _register_tools(
         # memory has no anchor to count from — emitting an "unknown"
         # branch every consumer would have to filter is worse than
         # silence, mirroring path_drift's null-when-clean contract.
+        # Verified paths narrow the count to commits that touched at
+        # least one of those paths — a memory verified for `[/etc/foo]`
+        # reads as `clean` when the project moved but `/etc/foo`
+        # didn't.
         commit_drift = compute_commit_drift(
             memory.last_verified_at,
             memory.origin.repo if memory.origin else None,
             caller_origin=capture_origin(),
+            verified_paths=memory.verified_paths,
         )
+        commit_drift_count_for_verdict: int | None = (
+            commit_drift.commits_since_verify if commit_drift is not None else None
+        )
+        verdict = compute_staleness_verdict(
+            verification=verification,
+            path_drift_missing=len(drift.missing),
+            commit_drift_count=commit_drift_count_for_verdict,
+        )
+        # Issue a use-token for this show before returning so the
+        # auto-`record_use` flow has something to commit on the next
+        # turn if the model doesn't override.
+        token_map = state.issue_use_tokens([memory.id])
         recorder.record(
             "show",
             id=memory.id,
             path_drift_checked=len(drift.checked),
             path_drift_missing=len(drift.missing),
             verification_status=verification.status,
+            staleness_verdict=verdict,
             commit_drift_status=(
                 commit_drift.status if commit_drift is not None else None
             ),
@@ -506,16 +579,26 @@ def _register_tools(
             "scopes": memory.scopes,
             "confidence": memory.confidence.value,
             "source": memory.source.value,
+            "category": (
+                memory.category.value if memory.category is not None else None
+            ),
             "created": _isoformat(memory.created),
             "updated": _isoformat(memory.updated),
             "last_verified_at": _isoformat_optional(memory.last_verified_at),
             "verification": verification.to_dict(),
+            "staleness_verdict": verdict,
             "body": memory.body,
             "origin": _origin_to_dict(memory.origin),
-            "path_drift": drift.to_dict() if drift.has_drift else None,
+            "path_drift": (
+                drift.to_dict() if (drift.has_drift or drift.verified) else None
+            ),
             "commit_drift": (
                 commit_drift.to_dict() if commit_drift is not None else None
             ),
+            "use_token": token_map[memory.id],
+            "verified_paths": list(memory.verified_paths),
+            "verified_commits": list(memory.verified_commits),
+            "verified_versions": list(memory.verified_versions),
         }
 
     # ---- memory_write ----------------------------------------------------
@@ -575,16 +658,22 @@ def _register_tools(
         source: str = "explicit-statement",
         force: bool = False,
         acknowledge_transient: bool = False,
+        acknowledge_scope_mismatch: bool = False,
         category: str = "fact",
     ) -> dict[str, Any]:
-        if category not in _WRITE_CATEGORIES:
-            raise ValueError(f"category must be one of {sorted(_WRITE_CATEGORIES)}")
+        # `_advance_turn` keeps the per-session turn counter monotonic
+        # for the auto-`record_use` flow even on calls that don't touch
+        # search/show. We bump first so any pending use-tokens that
+        # crossed their TTL get auto-committed before this write fires
+        # its own event.
+        _advance_turn(state, recorder)
         payload = _validate_write_payload(
             content=content,
             scopes=scopes,
             confidence=confidence,
             source=source,
             allowed_scopes=config.scopes.allowed,
+            category=category,
         )
 
         # Origin is captured before the durability check so it's always
@@ -619,6 +708,43 @@ def _register_tools(
                     "genuinely durable in context."
                 ),
             }
+
+        # Scope-mismatch check runs after transient. Cheap heuristic: if
+        # the body cites a known `projects:<name>` scope's name token or
+        # a path under another project's root and that scope isn't in the
+        # declared scope list, surface the mismatch so the writer can
+        # either retag or override. Mirrors the transient_warning shape.
+        if not acknowledge_scope_mismatch:
+            existing_memories = store.load_all()
+            mismatch = detect_scope_mismatch(
+                body=payload["content"],
+                declared_scopes=payload["scopes"],
+                project_scopes=collect_project_scopes(existing_memories),
+                project_roots=collect_project_roots(existing_memories),
+            )
+            if mismatch.has_mismatch:
+                recorder.record(
+                    "write",
+                    status="scope_mismatch",
+                    scopes=payload["scopes"],
+                    forced=False,
+                    suggested_scopes=list(mismatch.suggested_scopes),
+                    mismatch_kinds=[m.kind for m in mismatch.matches],
+                )
+                return {
+                    "status": "scope_mismatch",
+                    "matches": [m.to_dict() for m in mismatch.matches],
+                    "suggested_scopes": list(mismatch.suggested_scopes),
+                    "hint": (
+                        "The body cites paths or project names that suggest "
+                        "this memory belongs to a different scope. Either "
+                        "add one of `suggested_scopes` to the declared "
+                        "scope list, or pass acknowledge_scope_mismatch=True "
+                        "if the cross-reference is intentional (e.g. an "
+                        "infrastructure note that mentions multiple "
+                        "projects by design)."
+                    ),
+                }
 
         # Dedup runs second — staging or writing happens only if the new body
         # isn't a high-overlap duplicate of an existing memory. `force=True`
@@ -733,10 +859,13 @@ def _register_tools(
         #      a silent write, regardless of the global flag, because
         #      misattribution sticks.
         # `pending_reason` is recorded in the event log so health/analysis
-        # can distinguish the two triggers later.
+        # can distinguish the two triggers later. Ambient memories take
+        # the same fast path as fact (no pending gate), but they may
+        # acquire a non-blocking long-body warning below.
+        category_enum: Category = payload["category"]
         if config.behavior.require_write_confirmation:
             pending_reason = "config"
-        elif category == "user-inference":
+        elif category_enum == Category.USER_INFERENCE:
             pending_reason = "user-inference"
         else:
             pending_reason = None
@@ -763,7 +892,7 @@ def _register_tools(
                     "scopes": payload["scopes"],
                     "confidence": payload["confidence"].value,
                     "source": payload["source"].value,
-                    "category": category,
+                    "category": category_enum.value,
                 },
                 "hint": hint,
             }
@@ -778,7 +907,7 @@ def _register_tools(
                 status="pending",
                 pending_id=pending.pending_id,
                 pending_reason=pending_reason,
-                category=category,
+                category=category_enum.value,
                 scopes=payload["scopes"],
                 forced=force,
                 related=[h.id for h in related],
@@ -788,11 +917,21 @@ def _register_tools(
             return response
 
         memory = store.write(**payload)
+        # Ambient long-body advisory — non-blocking. Surfaced after the
+        # commit so the caller still gets the id but sees a structured
+        # warning they can act on (split, prune, leave). Fires on the
+        # post-strip word count of the persisted body.
+        warnings: list[str] = []
+        if (
+            category_enum == Category.AMBIENT
+            and len(memory.body.split()) > _AMBIENT_LONG_BODY_WORDS
+        ):
+            warnings.append("ambient_body_long")
         recorder.record(
             "write",
             status="committed",
             id=memory.id,
-            category=category,
+            category=category_enum.value,
             scopes=memory.scopes,
             confidence=memory.confidence.value,
             source=memory.source.value,
@@ -800,8 +939,14 @@ def _register_tools(
             related=[h.id for h in related],
             removed_related=[h.id for h in removed_related],
             markers_acknowledged=acknowledged,
+            warnings=warnings,
         )
-        return _committed(memory, related=related, removed_related=removed_related)
+        return _committed(
+            memory,
+            related=related,
+            removed_related=removed_related,
+            warnings=warnings,
+        )
 
     @mcp.tool(
         name="memory_write_confirm",
@@ -811,6 +956,7 @@ def _register_tools(
         ),
     )
     async def memory_write_confirm(pending_id: str) -> dict[str, Any]:
+        _advance_turn(state, recorder)
         pending = state.take_pending(pending_id)
         if pending is None:
             raise ValueError(
@@ -834,6 +980,7 @@ def _register_tools(
         ),
     )
     async def memory_write_cancel(pending_id: str) -> dict[str, Any]:
+        _advance_turn(state, recorder)
         existed = state.cancel_pending(pending_id)
         recorder.record("write_cancel", pending_id=pending_id, existed=existed)
         return {"cancelled": pending_id, "existed": existed}
@@ -859,6 +1006,7 @@ def _register_tools(
         scopes: list[str] | None = None,
         confidence: str | None = None,
     ) -> dict[str, Any]:
+        _advance_turn(state, recorder)
         if content is None and scopes is None and confidence is None:
             raise ValueError(
                 "memory_update needs at least one of content, scopes, or confidence"
@@ -953,6 +1101,7 @@ def _register_tools(
         scopes: list[str] | None = None,
         with_bodies: bool = False,
     ) -> list[dict[str, Any]]:
+        _advance_turn(state, recorder)
         if scopes:
             scopes = [validate_scope(s) for s in scopes]
         # Apply session-disabled scopes to listing too — consistency.
@@ -1014,6 +1163,7 @@ def _register_tools(
         ),
     )
     async def memory_remove(id: str, reason: str) -> dict[str, Any]:
+        _advance_turn(state, recorder)
         if not reason or not reason.strip():
             raise ValueError("reason must be a non-empty string")
         try:
@@ -1046,6 +1196,7 @@ def _register_tools(
     async def memory_list_tombstones(
         scopes: list[str] | None = None,
     ) -> list[dict[str, Any]]:
+        _advance_turn(state, recorder)
         if scopes:
             scopes = [validate_scope(s) for s in scopes]
         excluded = set(state.disabled_scopes)
@@ -1078,6 +1229,7 @@ def _register_tools(
         ),
     )
     async def memory_restore(id: str) -> dict[str, Any]:
+        _advance_turn(state, recorder)
         try:
             memory = store.restore(id)
         except NotTombstonedError as exc:
@@ -1151,6 +1303,7 @@ def _register_tools(
         heavily_used_top_k: int = 10,
         min_applied: int | None = None,
     ) -> dict[str, Any]:
+        _advance_turn(state, recorder)
         # Falling through to the configured default lets the tool stay
         # ergonomic for the common case (don't pass anything, get the
         # tuned threshold) while still allowing a per-call override
@@ -1222,6 +1375,16 @@ def _register_tools(
         if note is not None and not isinstance(note, str):
             raise ValueError("note must be a string if provided")
 
+        # The explicit outcome overrides any pending auto-commit. Pass
+        # the ids through `_advance_turn` so the auto pass that would
+        # otherwise have fired skips them, then purge their tokens so a
+        # *future* auto-commit for the same id doesn't fire either —
+        # the model has spoken, the auto-commit is settled.
+        override_set = set(memory_ids)
+        _advance_turn(state, recorder, override_ids=override_set)
+        for mid in memory_ids:
+            state.purge_use_token(mid)
+
         recorder.record(
             "use",
             ids=list(memory_ids),
@@ -1269,11 +1432,31 @@ def _register_tools(
     async def memory_verify(
         id: str,
         note: str | None = None,
+        verified_paths: list[str] | None = None,
+        verified_commits: list[str] | None = None,
+        verified_versions: list[str] | None = None,
     ) -> dict[str, Any]:
+        _advance_turn(state, recorder)
         if note is not None and not isinstance(note, str):
             raise ValueError("note must be a string if provided")
+        for label, value in (
+            ("verified_paths", verified_paths),
+            ("verified_commits", verified_commits),
+            ("verified_versions", verified_versions),
+        ):
+            if value is None:
+                continue
+            if not isinstance(value, list) or not all(
+                isinstance(s, str) for s in value
+            ):
+                raise ValueError(f"{label} must be a list of strings if provided")
         try:
-            memory = store.mark_verified(id)
+            memory = store.mark_verified(
+                id,
+                verified_paths=verified_paths,
+                verified_commits=verified_commits,
+                verified_versions=verified_versions,
+            )
         except TombstonedError as exc:
             raise ValueError(str(exc)) from exc
         except MemoryNotFoundError as exc:
@@ -1283,11 +1466,17 @@ def _register_tools(
             id=memory.id,
             last_verified_at=_isoformat_optional(memory.last_verified_at),
             note=note,
+            verified_paths=list(memory.verified_paths),
+            verified_commits=list(memory.verified_commits),
+            verified_versions=list(memory.verified_versions),
         )
         return {
             "verified": memory.id,
             "last_verified_at": _isoformat_optional(memory.last_verified_at),
             "updated": _isoformat(memory.updated),
+            "verified_paths": list(memory.verified_paths),
+            "verified_commits": list(memory.verified_commits),
+            "verified_versions": list(memory.verified_versions),
         }
 
     # ---- memory_scope_overview ------------------------------------------
@@ -1313,6 +1502,7 @@ def _register_tools(
     async def memory_scope_overview(
         auto_scope: bool = True,
     ) -> dict[str, Any]:
+        _advance_turn(state, recorder)
         repo_filter: str | None = None
         current_origin: Origin | None = None
         if auto_scope:
@@ -1322,7 +1512,8 @@ def _register_tools(
         excluded = set(state.disabled_scopes)
         scope_counts: dict[str, int] = {}
         total = 0
-        for memory in store.load_all():
+        all_memories = store.load_all()
+        for memory in all_memories:
             memory_scope_set = set(memory.scopes)
             if excluded and (memory_scope_set & excluded):
                 continue
@@ -1333,8 +1524,6 @@ def _register_tools(
                 # the search filter — otherwise the model would see
                 # "5 memories tagged projects:foo" here and zero hits in
                 # search and have no way to reconcile that.
-                from .origin import repos_match
-
                 if not repos_match(memory_repo, repo_filter):
                     continue
             total += 1
@@ -1349,12 +1538,30 @@ def _register_tools(
         sorted_scopes = dict(
             sorted(scope_counts.items(), key=lambda kv: (-kv[1], kv[0]))
         )
+
+        # Curation pending — five integer counts that surface "is there
+        # anything worth a curation pass right now?" without the full
+        # `memory_health` cost. Walks the event log once (same shape
+        # health.compute_health does) but skips row materialisation.
+        # Globally scoped — `auto_scope=True` only filters the per-repo
+        # totals above; curation is always cross-repo because rot in
+        # another scope is still rot. The caller-origin we feed in
+        # drives the `drifted` count when available.
+        curation = curation_counts(
+            all_memories,
+            iter_all_events(store.root),
+            window_days=30,
+            verification_stale_days=config.behavior.verification_stale_days,
+            caller_origin=current_origin,
+        )
+
         recorder.record(
             "scope_overview",
             auto_scope=auto_scope,
             current_repo=repo_filter,
             total=total,
             scope_count=len(sorted_scopes),
+            curation_pending=curation,
         )
         return {
             "current_repo": repo_filter,
@@ -1363,6 +1570,7 @@ def _register_tools(
             "scopes": sorted_scopes,
             "total": total,
             "disabled_scopes": sorted(state.disabled_scopes),
+            "curation_pending": curation,
         }
 
     @mcp.tool(
@@ -1375,6 +1583,7 @@ def _register_tools(
         ),
     )
     async def memory_scope_disable(scope: str) -> dict[str, Any]:
+        _advance_turn(state, recorder)
         clean = validate_scope(scope)
         state.disable(clean)
         recorder.record("scope_disable", scope=clean)
@@ -1385,6 +1594,7 @@ def _register_tools(
         description=("Re-enable a previously disabled scope for this session."),
     )
     async def memory_scope_enable(scope: str) -> dict[str, Any]:
+        _advance_turn(state, recorder)
         clean = validate_scope(scope)
         state.enable(clean)
         recorder.record("scope_enable", scope=clean)
@@ -1415,6 +1625,7 @@ def _register_tools(
         new_scope: str,
         include_tombstones: bool = True,
     ) -> dict[str, Any]:
+        _advance_turn(state, recorder)
         clean_old = validate_scope(old_scope)
         clean_new = validate_scope(new_scope)
         if clean_old == clean_new:
@@ -1455,6 +1666,7 @@ def _validate_write_payload(
     confidence: str,
     source: str,
     allowed_scopes: list[str],
+    category: str = "fact",
 ) -> dict[str, Any]:
     """Validate and normalise the kwargs for `Store.write`.
 
@@ -1488,11 +1700,16 @@ def _validate_write_payload(
     except ValueError as exc:
         raise ValueError(f"source must be one of {[s.value for s in Source]}") from exc
 
+    if category not in _WRITE_CATEGORIES:
+        raise ValueError(f"category must be one of {sorted(_WRITE_CATEGORIES)}")
+    cat_enum = Category(category)
+
     return {
         "content": content,
         "scopes": clean_scopes,
         "confidence": conf_enum,
         "source": src_enum,
+        "category": cat_enum,
     }
 
 
@@ -1501,6 +1718,7 @@ def _committed(  # type: ignore[no-untyped-def]
     *,
     related: list[SimilarHit] | None = None,
     removed_related: list[SimilarHit] | None = None,
+    warnings: list[str] | None = None,
 ) -> dict[str, Any]:
     """Serialise a freshly-written Memory into the tool response shape.
 
@@ -1513,6 +1731,13 @@ def _committed(  # type: ignore[no-untyped-def]
     `removed_reason` fields. Surfaced advisorily — the writer hasn't
     duplicated a previously-removed fact, but they're working in the
     same neighbourhood and may want to consult the removal reason.
+
+    `warnings` is a list of canonical advisory codes — non-blocking
+    flags surfaced on a successful commit. Currently:
+    - ``"ambient_body_long"``: an ambient memory exceeded the
+      `_AMBIENT_LONG_BODY_WORDS` threshold; consider splitting.
+    Empty list omitted from the response so the shape stays minimal
+    on the common no-warning case.
     """
     out: dict[str, Any] = {
         "status": "committed",
@@ -1520,6 +1745,7 @@ def _committed(  # type: ignore[no-untyped-def]
         "scopes": memory.scopes,
         "confidence": memory.confidence.value,
         "source": memory.source.value,
+        "category": memory.category.value if memory.category is not None else None,
         "created": _isoformat(memory.created),
         "updated": _isoformat(memory.updated),
         "last_verified_at": _isoformat_optional(memory.last_verified_at),
@@ -1528,6 +1754,8 @@ def _committed(  # type: ignore[no-untyped-def]
         out["related"] = [_similar_to_dict(h) for h in related]
     if removed_related:
         out["removed_related"] = [_similar_to_dict(h) for h in removed_related]
+    if warnings:
+        out["warnings"] = list(warnings)
     return out
 
 
@@ -1590,14 +1818,28 @@ def _hit_to_dict(
     a day boundary mid-loop. `last_verified_at` stays in the response
     as a raw timestamp for callers that already branch on it; the new
     `verification` field is the structured replacement.
+
+    `staleness_verdict` is initialised here from verification +
+    path_drift only; the commit-drift contribution is folded in by
+    `_attach_commit_drift_counts` once the per-search timestamp list
+    has been read. Initial verdict is correct for hits where commit
+    drift isn't applicable (caller not in a repo, hit from a
+    different repo, hit never verified) — those verdicts never get
+    revisited.
     """
     verification = compute_verification_status(
         hit.last_verified_at, now=now, stale_after_days=stale_after_days
+    )
+    verdict = compute_staleness_verdict(
+        verification=verification,
+        path_drift_missing=hit.path_drift_missing,
+        commit_drift_count=None,
     )
     return {
         "id": hit.id,
         "scopes": hit.scopes,
         "confidence": hit.confidence.value,
+        "category": hit.category.value if hit.category is not None else None,
         "snippet": hit.snippet,
         "score": hit.score,
         "relevance": hit.relevance,
@@ -1608,6 +1850,7 @@ def _hit_to_dict(
         "verification": verification.to_dict(),
         "path_drift_checked": hit.path_drift_checked,
         "path_drift_missing": hit.path_drift_missing,
+        "staleness_verdict": verdict,
     }
 
 
@@ -1670,7 +1913,21 @@ def _attach_commit_drift_counts(  # type: ignore[no-untyped-def]
         # commits are not counted as drift, matching the health
         # rollup's semantics.
         idx = bisect.bisect_right(timestamps_sorted, since)
-        hit_dict["commit_drift_count"] = len(timestamps_sorted) - idx
+        count = len(timestamps_sorted) - idx
+        hit_dict["commit_drift_count"] = count
+        # Recompute the verdict now that we have the commit-drift
+        # contribution. `_hit_to_dict` initialised it without that
+        # input; the upgrade only fires for hits where the count was
+        # actually applicable.
+        verification_dict = hit_dict["verification"]
+        verification_status = verification_dict["status"]
+        verdict_required = verification_status in {"never", "stale"}
+        if verdict_required:
+            hit_dict["staleness_verdict"] = "spot_check_required"
+        elif count > 0 or hit_dict["path_drift_missing"] > 0:
+            hit_dict["staleness_verdict"] = "spot_check_recommended"
+        else:
+            hit_dict["staleness_verdict"] = "fresh"
 
 
 def _summary_to_dict(
@@ -1687,19 +1944,36 @@ def _summary_to_dict(
     surface where staleness should be visible — a curator scrolling the
     list shouldn't have to call memory_show to see whether a row is
     fresh.
+
+    `staleness_verdict` here intentionally only reflects verification
+    + the commit-drift signal isn't computed at the list level (the
+    list view never loads bodies for path_drift, never resolves the
+    per-row repo for commit_drift). A list-row verdict of "fresh"
+    therefore means "calendar-fresh"; a row landing in
+    spot_check_recommended via the list view would imply the
+    body-level drift signal was already known, which it isn't here.
+    Effectively the list verdict collapses to fresh ↔ verification
+    fresh, spot_check_required ↔ never|stale.
     """
     verification = compute_verification_status(
         summary.last_verified_at, now=now, stale_after_days=stale_after_days
+    )
+    verdict = compute_staleness_verdict(
+        verification=verification,
+        path_drift_missing=0,
+        commit_drift_count=None,
     )
     return {
         "id": summary.id,
         "scopes": summary.scopes,
         "confidence": summary.confidence.value,
+        "category": summary.category.value if summary.category is not None else None,
         "summary": summary.summary,
         "created": _isoformat(summary.created),
         "updated": _isoformat(summary.updated),
         "last_verified_at": _isoformat_optional(summary.last_verified_at),
         "verification": verification.to_dict(),
+        "staleness_verdict": verdict,
     }
 
 
@@ -1714,6 +1988,7 @@ def _tombstone_summary_to_dict(summary: TombstonedSummary) -> dict[str, Any]:
         "id": summary.id,
         "scopes": summary.scopes,
         "confidence": summary.confidence.value,
+        "category": summary.category.value if summary.category is not None else None,
         "summary": summary.summary,
         "created": _isoformat(summary.created),
         "updated": _isoformat(summary.updated),
@@ -1743,19 +2018,87 @@ def _memory_to_dict(  # type: ignore[no-untyped-def]
     verification = compute_verification_status(
         memory.last_verified_at, now=now, stale_after_days=stale_after_days
     )
+    drift = detect_path_drift(memory.body, verified_paths=memory.verified_paths)
+    verdict = compute_staleness_verdict(
+        verification=verification,
+        path_drift_missing=len(drift.missing),
+        commit_drift_count=None,
+    )
     return {
         "id": memory.id,
         "scopes": memory.scopes,
         "confidence": memory.confidence.value,
         "source": memory.source.value,
+        "category": memory.category.value if memory.category is not None else None,
         "summary": first_summary_line(memory.body),
         "body": memory.body,
         "created": _isoformat(memory.created),
         "updated": _isoformat(memory.updated),
         "last_verified_at": _isoformat_optional(memory.last_verified_at),
         "verification": verification.to_dict(),
+        "staleness_verdict": verdict,
         "origin": _origin_to_dict(memory.origin),
     }
+
+
+def _advance_turn(
+    state: SessionState,
+    recorder: Recorder,
+    *,
+    override_ids: set[str] | None = None,
+) -> None:
+    """Bump the per-session turn counter and auto-commit any use-tokens
+    that crossed their TTL.
+
+    Called at the entry of every memory_* tool handler so the
+    auto-`record_use` flow has a stable monotonic clock and the
+    bookkeeping fires even on calls that don't issue new tokens
+    (e.g. `memory_write`, `memory_health`). Telemetry-disabled
+    recorders no-op, so this is safe to call unconditionally.
+
+    `override_ids` is used by the `memory_record_use` path: ids the
+    caller is explicitly recording for shouldn't be auto-committed
+    as `applied` first — the explicit outcome wins. The session's
+    `consume_old_tokens` accepts the same set so the exclusion is
+    structural rather than racey.
+
+    Auto-committed ids land in the event log under
+    `kind="use", outcome="applied", auto=True` so health analysis
+    can distinguish auto-applied from explicit-applied if a future
+    rollup wants to. The current `compute_health` already counts them
+    in the same `applied_count` slot — auto IS the signal that the
+    model probably used the memory, the same as if it had called
+    record_use itself.
+    """
+    state.advance_turn()
+    auto_ids = state.consume_old_tokens(override_ids=override_ids)
+    if auto_ids:
+        recorder.record(
+            "use",
+            ids=list(auto_ids),
+            outcome="applied",
+            auto=True,
+        )
+
+
+def _attach_use_tokens(
+    out: list[dict[str, Any]],
+    state: SessionState,
+) -> None:
+    """Mint a `use_token` for each hit dict and inject it into the dict.
+
+    Tokens are minted in bulk (`state.issue_use_tokens`) rather than
+    per-hit to keep the secret-generation cost off the response's
+    critical path on large result sets. Re-issuing for an id whose
+    previous token is still pending is fine — the new token replaces
+    the old, and the old one can never be exchanged.
+    """
+    if not out:
+        return
+    ids = [h["id"] for h in out]
+    tokens = state.issue_use_tokens(ids)
+    for h in out:
+        h["use_token"] = tokens[h["id"]]
 
 
 def _origin_to_dict(origin: Origin | None) -> dict[str, Any] | None:

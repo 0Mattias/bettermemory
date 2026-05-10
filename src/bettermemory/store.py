@@ -36,6 +36,7 @@ from . import _frontmatter as frontmatter
 
 from .models import (
     SCHEMA_VERSION,
+    Category,
     Confidence,
     Memory,
     MemorySummary,
@@ -192,6 +193,7 @@ class Store:
                     created=memory.created,
                     updated=memory.updated,
                     last_verified_at=memory.last_verified_at,
+                    category=memory.category,
                 )
             )
         return out
@@ -267,6 +269,22 @@ class Store:
                     last_verified_at = _as_dt(verified_raw)
                 except ValueError:
                     last_verified_at = None
+            # `category`, `verified_paths`, `verified_commits`,
+            # `verified_versions` are additive — legacy memories load
+            # with None / empty lists. Unknown category values fall back
+            # to None rather than raising; the runtime treats None as
+            # the legacy "fact" default, so a memory written by a newer
+            # bettermemory that introduces a new category still loads
+            # cleanly under an older reader (semantics revert to fact).
+            category_raw = meta.get("category")
+            category: Category | None
+            if category_raw is None:
+                category = None
+            else:
+                try:
+                    category = Category(str(category_raw))
+                except ValueError:
+                    category = None
             return Memory(
                 id=str(meta["id"]),
                 created=_as_dt(meta["created"]),
@@ -277,6 +295,10 @@ class Store:
                 body=post.content.strip() + "\n",
                 origin=origin,
                 last_verified_at=last_verified_at,
+                category=category,
+                verified_paths=_load_str_list(meta.get("verified_paths")),
+                verified_commits=_load_str_list(meta.get("verified_commits")),
+                verified_versions=_load_str_list(meta.get("verified_versions")),
             )
         except KeyError as exc:
             raise ValueError(f"{path}: missing field {exc.args[0]}") from exc
@@ -291,8 +313,15 @@ class Store:
         confidence: Confidence = Confidence.MEDIUM,
         source: Source = Source.EXPLICIT,
         origin: Origin | None = None,
+        category: Category | None = None,
     ) -> Memory:
-        """Create a new memory. Generates ID, slug, filename."""
+        """Create a new memory. Generates ID, slug, filename.
+
+        `category` is persisted on the record. Legacy callers that don't
+        pass it land with `category=None`, which the runtime treats as
+        the fact-default — same behavior as memories written before the
+        field existed.
+        """
         now = utcnow()
         memory = Memory(
             id=generate_ulid(),
@@ -303,6 +332,7 @@ class Store:
             source=source,
             body=content.strip() + "\n",
             origin=origin,
+            category=category,
         )
         path = self._path_for(memory)
         with _locked(path):
@@ -321,7 +351,14 @@ class Store:
             self._write_path(existing_path, new_memory)
         return new_memory
 
-    def mark_verified(self, memory_id: str) -> Memory:
+    def mark_verified(
+        self,
+        memory_id: str,
+        *,
+        verified_paths: list[str] | None = None,
+        verified_commits: list[str] | None = None,
+        verified_versions: list[str] | None = None,
+    ) -> Memory:
         """Bump `last_verified_at` to now without touching `updated`.
 
         Verification is the orthogonal axis to content edits: a typo fix
@@ -331,6 +368,14 @@ class Store:
         the body) without bumping `updated` (the body itself didn't move).
         Calling this on a memory that's already verified-now is a no-op
         from the caller's perspective — the timestamp just slides forward.
+
+        `verified_paths` / `verified_commits` / `verified_versions` carry
+        the structured claims the caller attested. Passing None preserves
+        whatever was previously stored (so a no-arg `mark_verified` keeps
+        the prior attestation list); passing an explicit `[]` clears it.
+        Passing a populated list replaces the prior list — verification
+        is per-event, not append-only, and the event log is the audit
+        trail for the history.
         """
         existing_path = self._find_path_for_id(memory_id)
         if existing_path is None:
@@ -344,7 +389,14 @@ class Store:
             raise MemoryNotFoundError(f"no memory with id {memory_id}")
 
         existing = self._load_path(existing_path)
-        new_memory = existing.model_copy(update={"last_verified_at": utcnow()})
+        update: dict[str, object] = {"last_verified_at": utcnow()}
+        if verified_paths is not None:
+            update["verified_paths"] = list(verified_paths)
+        if verified_commits is not None:
+            update["verified_commits"] = list(verified_commits)
+        if verified_versions is not None:
+            update["verified_versions"] = list(verified_versions)
+        new_memory = existing.model_copy(update=update)
         with _locked(existing_path):
             self._write_path(existing_path, new_memory)
         return new_memory
@@ -446,6 +498,7 @@ class Store:
                     created=tombstone.created,
                     updated=tombstone.updated,
                     last_verified_at=tombstone.last_verified_at,
+                    category=tombstone.category,
                     removed=tombstone.removed,
                     removed_reason=tombstone.removed_reason,
                     removed_session=tombstone.removed_session,
@@ -518,6 +571,15 @@ class Store:
                 except ValueError:
                     last_verified_at = None
             removed_session = meta.get("removed_session")
+            category_raw = meta.get("category")
+            category: Category | None
+            if category_raw is None:
+                category = None
+            else:
+                try:
+                    category = Category(str(category_raw))
+                except ValueError:
+                    category = None
             return TombstonedMemory(
                 id=str(meta["id"]),
                 created=_as_dt(meta["created"]),
@@ -528,6 +590,10 @@ class Store:
                 body=post.content.strip() + "\n",
                 origin=origin,
                 last_verified_at=last_verified_at,
+                category=category,
+                verified_paths=_load_str_list(meta.get("verified_paths")),
+                verified_commits=_load_str_list(meta.get("verified_commits")),
+                verified_versions=_load_str_list(meta.get("verified_versions")),
                 removed=_as_dt(meta["removed"]),
                 removed_reason=str(meta["removed_reason"]),
                 removed_session=(
@@ -805,6 +871,21 @@ class Store:
         # field is populated by `mark_verified`, the key is written.
         if memory.last_verified_at is not None:
             meta["last_verified_at"] = memory.last_verified_at
+        # `category` is omitted when None (the legacy default — runtime
+        # treats it as fact). Writing the key only when the caller
+        # explicitly chose a category keeps fact memories visually
+        # identical to legacy ones on disk.
+        if memory.category is not None:
+            meta["category"] = memory.category.value
+        # Verified-claims lists are omitted when empty — same noise-floor
+        # rationale as `last_verified_at`. They populate as a unit on
+        # the `memory_verify` event that captured them.
+        if memory.verified_paths:
+            meta["verified_paths"] = list(memory.verified_paths)
+        if memory.verified_commits:
+            meta["verified_commits"] = list(memory.verified_commits)
+        if memory.verified_versions:
+            meta["verified_versions"] = list(memory.verified_versions)
         post.metadata = meta
         # Atomic-ish write: write to .tmp then rename.
         tmp = path.with_suffix(path.suffix + ".tmp")
@@ -835,3 +916,18 @@ def _as_dt(value: object) -> datetime:
 def _scope_intersect(memory_scopes: list[str], filter_scopes: list[str]) -> bool:
     """True if memory has at least one of the requested scopes."""
     return bool(set(memory_scopes) & set(filter_scopes))
+
+
+def _load_str_list(value: object) -> list[str]:
+    """Coerce a frontmatter value to a list[str].
+
+    Accepts None (legacy entry, no field) and missing keys via the
+    `meta.get(...)` callsite, returning the empty list. Any non-list
+    or non-string element is silently dropped — defensive against a
+    hand-edited file that put `~` or a YAML alias in there. The
+    write path emits well-formed lists; this is the symmetric "be
+    liberal in what we read" policy.
+    """
+    if not isinstance(value, list):
+        return []
+    return [str(item) for item in value if isinstance(item, (str, int, float))]

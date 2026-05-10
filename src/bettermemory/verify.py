@@ -73,7 +73,12 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-from .origin import Origin, commits_since, repos_match
+from .origin import (
+    Origin,
+    commits_since,
+    commits_since_touching_paths,
+    repos_match,
+)
 
 
 # ---------------------------------------------------------------------------
@@ -134,10 +139,21 @@ class PathDriftReport:
     `checked` means the memory's path claims look healthy as of right now.
     Both empty means no path-shaped tokens were found in the body — the
     memory makes no checkable filesystem claims.
+
+    `verified` is the subset of `checked` that the caller previously
+    attested via `memory_verify(verified_paths=[...])` AND that still
+    exists on disk. Membership in `verified` does NOT exempt a path
+    from `missing` if it has since disappeared — verified-then-deleted
+    is a real drift signal — but it lets downstream logic distinguish
+    "the body cites a path that exists" from "the body cites a path
+    the user spot-checked and which still exists." Empty when the
+    caller passed no `verified_paths` or none of them appeared in the
+    body's candidate set.
     """
 
     checked: tuple[str, ...]
     missing: tuple[str, ...]
+    verified: tuple[str, ...] = ()
 
     @property
     def has_drift(self) -> bool:
@@ -147,10 +163,15 @@ class PathDriftReport:
         return {
             "checked": list(self.checked),
             "missing": list(self.missing),
+            "verified": list(self.verified),
         }
 
 
-def detect_path_drift(body: str) -> PathDriftReport:
+def detect_path_drift(
+    body: str,
+    *,
+    verified_paths: tuple[str, ...] | list[str] = (),
+) -> PathDriftReport:
     """Extract path-shaped tokens from `body` and check them on disk.
 
     Returns an empty report when the body is empty, contains no path
@@ -163,18 +184,57 @@ def detect_path_drift(body: str) -> PathDriftReport:
     Order in `checked` and `missing` is deterministic: paths appear in
     the order they were first encountered in the body, which makes the
     report stable for snapshot tests.
+
+    `verified_paths` is an optional set of paths the caller has
+    previously attested via `memory_verify`. When a candidate from the
+    body is in that set AND still exists, it lands in `report.verified`
+    (in addition to the usual `checked` slot). A verified path that's
+    since disappeared still lands in `missing` — verification doesn't
+    paper over deletion.
     """
     candidates = _extract_candidates(body)
     if not candidates:
-        return PathDriftReport(checked=(), missing=())
+        return PathDriftReport(checked=(), missing=(), verified=())
+
+    verified_set = {_normalize_for_compare(p) for p in verified_paths if p}
+    verified_set.discard("")
 
     checked: list[str] = []
     missing: list[str] = []
+    verified: list[str] = []
     for path in candidates:
         checked.append(path)
-        if not _path_exists(path):
+        exists = _path_exists(path)
+        if not exists:
             missing.append(path)
-    return PathDriftReport(checked=tuple(checked), missing=tuple(missing))
+            continue
+        if _normalize_for_compare(path) in verified_set:
+            verified.append(path)
+    return PathDriftReport(
+        checked=tuple(checked),
+        missing=tuple(missing),
+        verified=tuple(verified),
+    )
+
+
+def _normalize_for_compare(raw: str) -> str:
+    """Normalise a path for set membership across `verified_paths` and the
+    body's extracted candidates.
+
+    Both sides may carry ``~/``-prefixed or absolute forms; we expand
+    ``~`` to the user's home before comparing. We do NOT call
+    ``Path.resolve()`` — that would follow symlinks and require the
+    path to exist, which a user-attested verified path is allowed not
+    to (it could have been verified from a different machine; its
+    existence is the responsibility of the disk check that runs
+    separately).
+    """
+    if not raw:
+        return ""
+    try:
+        return str(Path(raw).expanduser())
+    except (OSError, ValueError):
+        return raw
 
 
 # ---------------------------------------------------------------------------
@@ -551,6 +611,7 @@ def compute_commit_drift(
     memory_origin_repo: str | None,
     *,
     caller_origin: Origin | None,
+    verified_paths: list[str] | tuple[str, ...] = (),
 ) -> CommitDriftStatus | None:
     """Return a commit-drift verdict, or None when the signal isn't useful.
 
@@ -571,6 +632,15 @@ def compute_commit_drift(
     every consumer would have to filter. This mirrors `path_drift`'s
     pattern: advisory signals stay invisible when they have nothing
     to advise.
+
+    `verified_paths`, when non-empty, narrows the count to commits
+    that touched at least one of those paths since
+    `last_verified_at`. The path-filtered count subsumes the
+    unfiltered one: a memory verified for ``[/etc/foo]`` reports
+    drift only when commits touched ``/etc/foo``, not when other
+    parts of the repo moved. Falls back to the unfiltered count
+    when the path-filtered query fails (git error, no paths
+    resolved inside the repo, etc.) so we never under-count drift.
     """
     if last_verified_at is None:
         return None
@@ -580,7 +650,14 @@ def compute_commit_drift(
         return None
     if not repos_match(memory_origin_repo, caller_origin.repo):
         return None
-    count = commits_since(Path(caller_origin.cwd), last_verified_at)
+    cwd_path = Path(caller_origin.cwd)
+    count: int | None = None
+    if verified_paths:
+        count = commits_since_touching_paths(
+            cwd_path, last_verified_at, list(verified_paths)
+        )
+    if count is None:
+        count = commits_since(cwd_path, last_verified_at)
     if count is None:
         return None
     if count == 0:
@@ -596,12 +673,64 @@ def compute_commit_drift(
     )
 
 
+# ---------------------------------------------------------------------------
+# Staleness verdict — one rollup over verification + path drift + commit drift
+# ---------------------------------------------------------------------------
+#
+# Three independent staleness signals (verification.status, path_drift_missing,
+# commit_drift_count) produce real cognitive load when consumers need to OR
+# them together every time. The verdict is the derived rollup: one field per
+# retrieval that branches into "fresh" / "spot_check_recommended" /
+# "spot_check_required". The underlying fields stay; the verdict is the
+# load-bearing one consumers should branch on first.
+
+
+_VERDICT_FRESH = "fresh"
+_VERDICT_RECOMMENDED = "spot_check_recommended"
+_VERDICT_REQUIRED = "spot_check_required"
+
+
+def compute_staleness_verdict(
+    *,
+    verification: VerificationStatus,
+    path_drift_missing: int,
+    commit_drift_count: int | None,
+) -> str:
+    """Three-valued rollup over verification + path drift + commit drift.
+
+    Returns one of:
+
+    - ``"fresh"``: ``verification.status == "fresh"`` AND no drift on
+      either axis. Nothing to do; the body's claims are presumed
+      current.
+    - ``"spot_check_recommended"``: verification is calendar-fresh but
+      the world has moved — a path went missing on disk, or the repo
+      this memory came from has commits since the last verify. Worth
+      a quick check before relying on the body.
+    - ``"spot_check_required"``: ``verification.status`` in
+      ``{"never", "stale"}``. Pre-empts the drift inputs because the
+      verification anchor itself is missing or expired.
+
+    `commit_drift_count` is `None` when the signal isn't applicable
+    (caller not in a repo, hit from a different repo, hit never
+    verified). None never elevates the verdict on a fresh memory; it
+    behaves the same as 0.
+    """
+    if verification.status in {"never", "stale"}:
+        return _VERDICT_REQUIRED
+    drifty = path_drift_missing > 0 or (
+        commit_drift_count is not None and commit_drift_count > 0
+    )
+    return _VERDICT_RECOMMENDED if drifty else _VERDICT_FRESH
+
+
 __all__ = [
     "DEFAULT_VERIFICATION_STALE_DAYS",
     "CommitDriftStatus",
     "PathDriftReport",
     "VerificationStatus",
     "compute_commit_drift",
+    "compute_staleness_verdict",
     "compute_verification_status",
     "detect_path_drift",
 ]

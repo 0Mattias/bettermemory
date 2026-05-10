@@ -360,7 +360,15 @@ def test_oserror_during_exists_treated_as_missing() -> None:
 def test_report_to_dict_round_trips() -> None:
     r = PathDriftReport(checked=("/a", "/b"), missing=("/b",))
     d = r.to_dict()
-    assert d == {"checked": ["/a", "/b"], "missing": ["/b"]}
+    assert d == {"checked": ["/a", "/b"], "missing": ["/b"], "verified": []}
+
+
+def test_report_to_dict_includes_verified_paths() -> None:
+    r = PathDriftReport(
+        checked=("/a", "/b"), missing=("/b",), verified=("/a",)
+    )
+    d = r.to_dict()
+    assert d == {"checked": ["/a", "/b"], "missing": ["/b"], "verified": ["/a"]}
 
 
 def test_has_drift_only_when_missing_nonempty() -> None:

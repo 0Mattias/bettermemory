@@ -53,11 +53,16 @@ memories are NOT in your context unless you actively retrieve them.
 
 Session-start hint: if the conversation has a clear project context (cwd
 matches a repo, the user mentions a project by name), one call to
-memory_scope_overview returns counts per scope without bodies. If the total
-is 0, you can skip memory_search for the rest of the session unless the
-user explicitly asks for stored context. If the count is non-zero,
-memory_search remains the way to retrieve content. Use this once per
-conversation — it's a yes/no signal, not something to poll.
+memory_scope_overview returns counts per scope without bodies plus a
+`curation_pending` rollup ({stale, never_verified, drifted, cold, dead}
+— integer counts only, no row materialisation). If the `total` is 0,
+skip memory_search for the rest of the session unless the user
+explicitly asks. If counts are non-zero, memory_search remains the way
+to retrieve content. The `curation_pending` rollup tells you whether
+the store has anything worth a curation pass without paying the
+memory_health cost — non-zero `dead` or `drifted` is the cue to
+suggest one when the conversation has time. Use scope_overview once
+per conversation; it's a yes/no signal, not something to poll.
 
 When to call memory_search:
 - User references something with definite articles or possessives that imply
@@ -86,33 +91,61 @@ When you do retrieve and use memory, briefly tell the user what context you
 used. "Using your stored preference for code-driven tutorials..." This is
 non-negotiable transparency.
 
-After your response uses a retrieved memory, call memory_record_use(ids,
-outcome) once with the ids that actually shaped the reply. The outcome
-choice has consequences for the memory_health view:
+Auto-`record_use`. Every memory_search hit and memory_show response
+carries a `use_token`. If you don't call memory_record_use within ~2
+turns, the server auto-commits the retrieval as `outcome="applied"`
+on the next memory_* call (logged with `auto=true` for audit). This
+matches actual usage — most retrievals do shape responses, and the
+mechanical bookkeeping is the most-forgotten step. So:
 
-- "applied" — the memory shaped the response.
-- "ignored" — retrieved but turned out off-topic.
-- "contradicted" — the user or current state contradicted the stored fact
-  AND you have not fixed it yet. Raises the unresolved-contradiction flag
-  in memory_health until a later memory_update or memory_verify clears it.
+- For the common case (retrieval shaped the response, you'd record
+  `applied`): you can skip the explicit call. Auto-commit will land it.
+- For overrides (`ignored`, `contradicted`, `corrected`): call
+  memory_record_use(memory_ids=[...], outcome=...) explicitly. The
+  explicit outcome wins over the auto pass — the server purges the
+  pending token before recording.
+
+Outcomes:
+
+- "applied" — the memory shaped the response. Default when auto-commit
+  fires; explicit if you want the audit trail.
+- "ignored" — retrieved but turned out off-topic. Always explicit.
+- "contradicted" — the user or current state contradicted the stored
+  fact AND you have not fixed it yet. Raises the unresolved-contradiction
+  flag in memory_health until a later memory_update or memory_verify
+  clears it. Always explicit.
 - "corrected" — the memory had drifted and you fixed it inline (called
   memory_update or memory_verify in the same turn). Audit-only; does NOT
   raise the contradiction flag. Use this instead of "contradicted" when
   the resolution is already done — recording "contradicted" after the fix
   leaves the flag stuck because event timestamps decide resolution state.
+  Always explicit.
 
-Quick rule: if you've already fixed the drift, log "corrected"; if you've
-only noticed it, log "contradicted" and let memory_update / memory_verify
-clear the flag later. Skip the call when no retrieved memory shaped your
-response — the absence of an `applied` event is itself the signal that
-the memory wasn't useful. Don't fabricate a record_use call just to be
-tidy. The event log feeds memory_health, which surfaces dead-weight
-memories (retrieved often, never applied) and unresolved contradictions.
+Quick rule: if a retrieval was actually wrong or off-topic, override
+explicitly so the auto-commit doesn't shadow the truth. If it just
+worked, the silent auto-commit is the signal. The event log feeds
+memory_health, which surfaces dead-weight memories (retrieved but
+never `applied`) and cold memories (never retrieved at all in the
+window — distinct from dead-weight), so the curation rollup
+distinguishes "ranker not surfacing" from "model not getting value".
 
 Verify before relying on retrieved memory. Memory is a snapshot — it does
-not auto-refresh. Every retrieval carries up to three structured staleness
-signals; all are advisory, not verdicts, but each is a first-class field
-you must branch on rather than skim past.
+not auto-refresh. Every retrieval carries a derived `staleness_verdict`
+plus the underlying signals it's computed from. Branch on the verdict
+first; consult the underlying fields when you need to know which axis
+tripped.
+
+`staleness_verdict` is one of:
+- "fresh" — verification is fresh AND no path/commit drift. The body's
+  claims are presumed current.
+- "spot_check_recommended" — verification is calendar-fresh but the
+  world has moved (a path went missing, or the repo has commits since
+  the last verify). Worth a quick check before relying on the body.
+- "spot_check_required" — verification.status is "never" or "stale".
+  Pre-empts the drift inputs because the verification anchor itself
+  is missing or expired.
+
+Beyond the verdict, three structured signals are available:
 
 1. `verification` block (on every memory_show, memory_search hit, and
    memory_list row):
@@ -128,21 +161,30 @@ you must branch on rather than skim past.
    - `verification.recommendation`: an actionable string when status is
      "never" or "stale", null when "fresh".
 
-   When `verification.status` is "never" or "stale", you MUST spot-check
+   When `verification.status` is "never" or "stale" (or
+   `staleness_verdict` reads "spot_check_required"), you MUST spot-check
    at least one verifiable claim from the body (file path, commit hash,
    version number, configuration, list of items, `currently uses X`, `N
-   commits ahead`) against ground truth before relying on the memory. If
-   the check passes, call memory_verify(id, note=...) to record what you
-   confirmed and refresh the timestamp. If a claim has drifted, fix the
-   body via memory_update first — don't pass the staleness on to the user
-   — and then memory_verify the corrected version. memory_update on
-   content resets `last_verified_at` to null (the old verification was
-   for prose that no longer exists), which is why the verify-after-update
-   sequence is the closing of the loop. Memories that make no verifiable
-   claims (subjective preferences, opinions stored about the user) can
-   skip the spot-check, but only when the body genuinely contains nothing
-   checkable — "I prefer code-driven tutorials" is not the same as "the
-   tool exposes 14 endpoints".
+   commits ahead`) against ground truth before relying on the memory.
+   memory_verify accepts structured attestation — pass the actual paths /
+   commits / versions you checked via verified_paths, verified_commits,
+   verified_versions. The server uses these to short-circuit later
+   drift signals: a future retrieval of the same memory whose
+   path_drift would have flagged a path appearing in verified_paths
+   (and the path still exists) will downgrade the verdict, and a
+   commit_drift count is narrowed to commits that actually touched
+   the verified paths. If the body's claims still hold, call
+   memory_verify(id, verified_paths=[...], note=...). If a claim has
+   drifted, fix the body via memory_update first — don't pass the
+   staleness on to the user — and then memory_verify the corrected
+   version. memory_update on content resets `last_verified_at` to null
+   (the old verification was for prose that no longer exists), which
+   is why the verify-after-update sequence is the closing of the loop.
+   Memories that make no verifiable claims (subjective preferences,
+   opinions stored about the user) can skip the spot-check, but only
+   when the body genuinely contains nothing checkable — "I prefer
+   code-driven tutorials" is not the same as "the tool exposes 14
+   endpoints".
 
 2. `path_drift` (filesystem disk-side check):
 
@@ -236,17 +278,15 @@ Writing and updating memory:
   shot — it preserves body content and `last_verified_at` (the body's
   claims didn't change, only the tag).
 
-- Confirmation policy is tiered, and the user-inference tier is
-  structurally enforced via the `category` parameter on memory_write:
-  - For project, infrastructure, reference, and tooling memories — call
-    memory_write with the default `category="fact"`. The write commits
-    immediately; announce the save in one line so the user can object
-    ("Saved: bettermemory env var rename to BETTERMEMORY_DIR"). The MCP
-    permission gate is the user's primary veto point; a second
-    conversational gate is friction without leverage.
-  - For memories that capture inferences about the user (preferences,
-    beliefs, claims about how they want to work) — pass
-    `category="user-inference"` to memory_write. The server returns
+- Confirmation policy is tiered, and the policy is structurally
+  enforced via the `category` parameter on memory_write. Three values:
+  - `category="fact"` (default) — project / infrastructure / reference
+    / tooling facts about the world. The write commits immediately;
+    announce the save in one line so the user can object ("Saved:
+    bettermemory env var rename to BETTERMEMORY_DIR"). The MCP
+    permission gate is the user's primary veto point.
+  - `category="user-inference"` — claims *about* the user themselves
+    (preferences, beliefs, working style). The server returns
     {status:"pending", pending_id, pending_reason:"user-inference"}
     instead of committing. Ask the user in plain language ("want me to
     remember that you prefer X?") and only then call
@@ -254,6 +294,22 @@ Writing and updating memory:
     if they decline. The pending gate fires regardless of the global
     `require_write_confirmation` config flag — misattribution sticks,
     so the user always gets the veto on claims about themselves.
+  - `category="ambient"` — atmospheric, response-shaping context that
+    informs every reply without being cited (user identity, persistent
+    environment quirks). Commits immediately like fact, but the dead-
+    weight curation rule excludes ambient memories — their value is
+    implicit, so a count of zero `applied` events is not an indictment.
+    Long bodies (>500 words) attach a non-blocking `ambient_body_long`
+    warning to the response so you can decide whether to split.
+
+- Scope hygiene at write time. memory_write also runs a scope-mismatch
+  check: if the body cites the name of a known `projects:<name>` scope
+  (or a path under another project's tree) AND that scope isn't in the
+  declared scope list, the write returns
+  {status:"scope_mismatch", suggested_scopes:[...], matches:[...]}
+  instead of committing. Pick a suggestion and re-write, or pass
+  acknowledge_scope_mismatch=True if the cross-reference is intentional
+  (an infrastructure note that mentions multiple projects by design).
 
 - Tag with appropriate scopes. Avoid the catch-all "general" scope.
 
