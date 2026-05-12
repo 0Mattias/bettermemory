@@ -1675,6 +1675,18 @@ def test_instructions_block_carries_load_bearing_phrases(server: Any) -> None:
         "Using your stored preference",
         # The verification rule.
         "spot-check",
+        # The proactive-writing axis. Retrieval is opt-in; writing is
+        # the opposite — a routine reflex the model should reach for
+        # whenever something durable lands in the conversation. Without
+        # these phrases the block reads as if only retrieval is policed
+        # and writing is left undefined, which the previous "lock writing
+        # down further" regression demonstrated is misinterpreted as
+        # "default to NOT writing either". Keeping these load-bearing
+        # prevents a future trimming pass from silently un-doing the
+        # write-side calibration.
+        "memory_write",
+        "PROACTIVE",
+        "your job is to capture",
     ]
     missing = [p for p in must_have if p not in body]
     assert not missing, f"instructions lost load-bearing phrases: {missing}"

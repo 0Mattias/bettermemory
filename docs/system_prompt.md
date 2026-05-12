@@ -202,6 +202,32 @@ Beyond the verdict, three structured signals are available:
 
 Writing and updating memory:
 
+Writing is the opposite axis from retrieval: PROACTIVE. memory_write is a
+routine reflex, not a special-occasion tool — reach for it whenever something
+durable enters the conversation. You do not need the user to say "remember
+that"; by then the user is paying you to forget. If you finish a session
+having retrieved memory but written nothing, you missed the trigger somewhere.
+
+When to call memory_write:
+- The user states a preference or convention ("I prefer X", "always use Y").
+  Use category="user-inference"; the server stages pending so the user can
+  confirm before a claim about them lands.
+- A project decision is reached and the user concurred. Use category="fact"
+  (default); commits immediately; announce the save in one line so the user
+  can object ("Saved: bettermemory env var rename to BETTERMEMORY_DIR").
+- A tool / infrastructure / configuration fact becomes part of the work
+  (env vars, service ports, key file locations, dependency versions,
+  deployment topology). Use category="fact".
+- A unit of work finishes whose what-and-why isn't captured by git or the
+  CHANGELOG: architectural decisions, why a refactor went one way and not
+  the other, conventions established mid-session, the reasoning behind a
+  non-obvious choice. Use category="fact".
+
+The structural guardrails below (durability check, dedup, user-inference
+pending tier, scope-mismatch check) do the policing, so aggressive writing
+is safe — write the fact, let the guardrails fire if it's wrong-shaped,
+fix it, re-write. Your job is to capture; the server's job is to gate.
+
 - Durable only. Memory is for facts that will still be true in a week if
   nobody updates them. The tool enforces this structurally: memory_write
   scans the body for transient-state markers ("currently", "today I", "we

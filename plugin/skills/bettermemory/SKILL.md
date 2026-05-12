@@ -12,7 +12,7 @@ Persistent memory between sessions lives in this plugin's MCP tools. **Do not fr
 | Decide | Rule |
 |---|---|
 | Search? | shared-context reference or ambiguity, then yes. Otherwise no. |
-| Write? | durable in a week with no maintenance, then yes. State or timestamps, then no (the tool will reject). |
+| Write? | proactive — something durable just entered the conversation, then yes. Don't wait for *"remember that"*. State or timestamps, then no (the tool will reject). |
 | Category? | claim about the user, then `user-inference`. Atmospheric or no verifiable claims, then `ambient`. Else, `fact`. |
 | Outcome? | retrieval shaped reply, then silence (auto-commits as `applied`). Off-topic or wrong, then explicit `ignored` / `contradicted` / `corrected`. |
 | Verify? | `staleness_verdict != "fresh"`, then spot-check one claim before relying; pass `verified_paths` to `memory_verify`. |
@@ -89,6 +89,26 @@ Beyond the verdict, three structured signals are available:
 3. **`commit_drift`** counts (`commit_drift_count` per hit when the caller is in the memory's origin repo, full block on `memory_show`). Commits authored after `last_verified_at`. The load-bearing case: `verification.status == "fresh"` only proves the calendar is fresh. A non-zero `commit_drift` is the cue to spot-check anyway, because the project moved since the last `memory_verify`.
 
 When the verdict is not `"fresh"`, spot-check at least one verifiable claim from the body (file path, version number, configuration) against ground truth. If the check passes, call `memory_verify(id, verified_paths=[…], verified_commits=[…], verified_versions=[…], note="…")`, passing the actual claims you spot-checked. The server uses these to short-circuit later drift signals: future retrievals of the same memory whose path_drift would have flagged a path in `verified_paths` (and the path still exists) downgrade the verdict, and `commit_drift` narrows the count to commits that actually touched any of `verified_paths`. If a claim has drifted, fix the body via `memory_update` first, then `memory_verify` the corrected version. The update resets `last_verified_at` to null because the prior verification was for prose that no longer exists.
+
+## When to write
+
+Writing is the opposite axis from retrieval: **PROACTIVE**. `memory_write` is a routine reflex, not a special-occasion tool — reach for it whenever something durable enters the conversation. Don't wait for the user to say *"remember that"*; by then the user is paying you to forget. If you finish a session having retrieved memory but written nothing, you missed the trigger somewhere.
+
+Call `memory_write` when:
+
+- the user states a preference or convention (*"I prefer X"*, *"always use Y"*) — `category="user-inference"`, the server stages pending so the user can confirm before a claim about them lands.
+- a project decision is reached and the user concurred — `category="fact"`, commits immediately, announce the save in one line so the user can object (*"Saved: bettermemory env var rename to BETTERMEMORY_DIR"*).
+- a tool / infrastructure / configuration fact becomes part of the work (env vars, service ports, key file locations, dependency versions, deployment topology) — `category="fact"`.
+- a unit of work finishes whose what-and-why isn't captured by git or the CHANGELOG (architectural decisions, why a refactor went one way and not the other, conventions established mid-session, the reasoning behind a non-obvious choice) — `category="fact"`.
+
+The structural guardrails do the policing for you, so aggressive writing is safe:
+
+- **Durability check** rejects transient state (*"currently"*, *"today I"*, *"we just"*, *"the new"*, commit-SHA-like hex tokens). When it fires, the durable fact is one level up — extract the decision and the why, drop the timestamp.
+- **Dedup** catches duplicates and routes you to `memory_update` on the matched id instead of letting a parallel entry land.
+- **User-inference pending tier** stages every `category="user-inference"` write for confirmation regardless of config, so claims about the user can't sneak in.
+- **Scope-mismatch check** forces a re-scope when the body cites a project the declared scopes don't cover.
+
+Your job is to capture; the server's job is to gate. Write the fact, let the guardrails fire if it's wrong-shaped, fix it, re-write.
 
 ## Writing memory
 
