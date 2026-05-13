@@ -11,6 +11,14 @@ spells out exactly what's stable.
 
 (Empty. Accumulate entries here between tags.)
 
+## 1.4.1 - 2026-05-13
+
+Republish from cleaned history. No code, behavior, wire-shape, or
+on-disk format changes versus 1.4.0 — pyproject `version` bumped so a
+fresh PyPI artifact can be published after the project's release
+history was reset. Any consumer pinned to `>=1.4.0` upgrades
+transparently.
+
 ## 1.4.0 - 2026-05-13
 
 Audit-fixes release. Internal hardening across durability, the
