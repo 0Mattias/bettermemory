@@ -11,6 +11,109 @@ spells out exactly what's stable.
 
 (Empty. Accumulate entries here between tags.)
 
+## 1.4.0 - 2026-05-13
+
+Audit-fixes release. Internal hardening across durability, the
+server-side state shape, the surface-filter callsites, and the
+2972-line server module. The wire surface (17 MCP tools, names,
+schemas, JSON shapes) is unchanged from 1.3.x; every public default
+is preserved. Most installs will notice nothing — that's the
+intended shape for a minor bump driven by infrastructure work.
+
+The one user-facing addition: a `SessionRegistry` routing layer that
+makes a single long-running server process safe to serve multiple
+MCP clients (each `Context.client_id` resolves to its own
+`SessionState`, so pending writes / disabled scopes / use-tokens
+never leak between clients). For stdio (the primary transport,
+one client per process), this collapses to a single state under a
+default-bucket key — same observable behavior as before.
+`build_server(state=...)` still accepts a bare `SessionState` for
+back-compat with the existing single-client test surface.
+
+### Added
+
+- **`SessionRegistry` for multi-client server processes**
+  (`src/bettermemory/session.py`). New `SessionSource` protocol;
+  `SessionState` (single client) and `SessionRegistry` (multi
+  client) both satisfy it. `build_server` defaults to the
+  process-wide `get_default_registry()`. All 17 tool handlers
+  gained `ctx: Context | None = None` and resolve their per-request
+  state via `sessions.for_request(ctx)` at entry. Ten new unit +
+  end-to-end isolation tests in `tests/test_session_registry.py`.
+  The unbounded `_states` dict is a documented trade-off matched
+  to the current stdio-primary deployment; revisit if HTTP/SSE
+  becomes a supported transport.
+- **`should_include_for_caller`** in `origin.py` — the canonical
+  surface-filter for "this memory belongs to this caller's
+  project," shared between `memory_search` and
+  `memory_scope_overview`. Commit-drift callsites continue to
+  use the stricter `repos_match` (no global-memory pass-through),
+  documented in the helper docstring.
+- New `tests/test_config.py` with 18 unit tests covering TOML
+  coercion (bool/int/float/str) and the `resolved_directory`
+  resolution tree (env / explicit / project-scoped / global
+  fallback, plus the `~`-expansion and defensive-against-a-file
+  cases).
+- New `tests/test_addendum_tool_names_exist_on_server`: parses
+  every `memory_*` ref out of `SYSTEM_PROMPT_ADDENDUM` and asserts
+  it exists as a registered tool on `build_server()`. Catches
+  doc-drift between the prompt addendum and the actual tool
+  surface before it ships.
+- New `tests/test_events.py::test_rotation_fsyncs_archive_after_
+  gzip_trailer_is_flushed`: pins the structural shape of the
+  rotation fsync (see the durability fix below).
+
+### Changed
+
+- **Server split** (`src/bettermemory/server.py` → `_handlers.py` +
+  `_response.py`). The 2972-line `server.py` shrinks to 1014 lines
+  of wiring + CLI; the 17 tool handlers move to a `ToolHandlers`
+  class on `_handlers.py`, the JSON-shaping helpers move to a
+  `ResponseBuilder` class on `_response.py`. Wiring is unchanged —
+  every tool name, every schema, every response shape is identical
+  to 1.3.x; tests reach handlers the same way (via
+  `mcp._tool_manager.get_tool(name).fn`, which resolves to the
+  bound method post-split). Pure refactor; the only visible delta
+  is `find handlers/ -size` is now actually a useful operation.
+- **Tiered git logging** (`src/bettermemory/origin.py:_git`). The
+  common "not a git repository" case now logs at DEBUG instead of
+  WARNING — clears the noise on installs where memories live in a
+  non-repo directory. Real failure modes (missing binary, command
+  timeout, OSError) stay at WARNING.
+
+### Fixed
+
+- **fsync on every persistent write**
+  (`src/bettermemory/_fsutil.py`, `store.py`, `events.py`). Atomic
+  writes were tmp-file + rename, but the actual data and the
+  directory inode were left for the kernel's writeback to flush at
+  its own pace. A power-loss between rename and the next writeback
+  could leave a zero-length file or a missing entry in the parent
+  directory. All four persistent-write paths in store.py now route
+  through a single `_atomic_write_post` that fsyncs the file before
+  the rename and the parent directory after; the event log fsyncs
+  each append and the rotation archive. Side-fix: `rename_scope`'s
+  tombstone overwrite was previously a non-atomic in-place
+  truncating write — now goes through tmp+rename like the other
+  persistent paths.
+- **Rotation fsync runs after the gzip trailer is flushed**
+  (`src/bettermemory/events.py`). The initial durability commit
+  fsynced the gzip write fd from inside the `with gzip.open(...)
+  as dst:` block, but `GzipFile.close()` writes the CRC32+ISIZE
+  trailer at `with` exit — so the fsync race could leave a body-
+  only archive that `gzip.open(...)` rejects on read. Now re-opens
+  the archive read-only after the `with` block and fsyncs that
+  fresh fd. Source memory files were never affected; bounded to
+  archived-audit-log corruption.
+
+### Internal
+
+- The `_FakeCtx` duck-type in `tests/test_session_registry.py`
+  picked up a `_fake_ctx` `Any`-typed helper so strict mypy
+  accepts it where `for_request` expects a `Context[Any, Any, Any]`
+  — clears nine pre-existing arg-type errors without changing the
+  test semantics.
+
 ## 1.3.2 - 2026-05-13
 
 Writing-policy calibration. The on-disk format, the wire surface,
