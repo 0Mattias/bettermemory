@@ -4,9 +4,11 @@ from __future__ import annotations
 
 import gzip
 import json
+import sys
 from pathlib import Path
 from unittest.mock import patch
 
+import pytest
 
 from bettermemory.events import (
     EVENT_LOG_FILENAME,
@@ -159,6 +161,12 @@ def test_rotation_archives_when_max_bytes_exceeded(tmp_path: Path) -> None:
     assert all(e["kind"] == "write" for e in archived_lines)
 
 
+@pytest.mark.skipif(
+    sys.platform == "win32",
+    reason="fcntl.F_GETFL / O_ACCMODE are POSIX-only; the fsync-ordering "
+    "invariant is structurally moot on Windows because the underlying "
+    "fcntl-based fd-mode introspection isn't available",
+)
 def test_rotation_fsyncs_archive_after_gzip_trailer_is_flushed(
     tmp_path: Path,
 ) -> None:
@@ -176,6 +184,14 @@ def test_rotation_fsyncs_archive_after_gzip_trailer_is_flushed(
     the fsync ran on the write fd from inside the `with` block; after,
     it runs on a fresh read fd opened against the closed-and-flushed
     archive."""
+    # POSIX-only imports. The `sys.platform` narrowing is what tells
+    # mypy not to type-check this branch on Windows — without it,
+    # strict mode flags `fcntl.fcntl`, `fcntl.F_GETFL`, and
+    # `os.O_ACCMODE` as missing attributes on the win32 stubs. The
+    # outer `skipif` already guarantees the test is skipped on
+    # Windows; the narrowing is purely for the type checker.
+    if sys.platform == "win32":  # pragma: no cover - skipped on Windows
+        return
     import fcntl
     import os
 
