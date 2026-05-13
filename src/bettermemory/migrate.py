@@ -26,6 +26,7 @@ from pathlib import Path
 from typing import Iterator
 
 from . import _frontmatter as frontmatter
+from ._fsutil import fsync_dir, fsync_file
 from .origin import Origin, capture
 from .store import TOMBSTONE_DIR
 
@@ -205,9 +206,20 @@ def migrate_origin_in_directory(
         if dry_run:
             continue
 
+        # Mirror the durability discipline of `store._atomic_write_post`:
+        # tmp.write/flush/fsync, atomic rename, fsync the parent directory.
+        # Without these fsyncs a power loss between `replace` and the next
+        # background flush leaves a zero-byte file at `path` — the audit
+        # caught this gap because the bare `write_bytes`+`replace` pattern
+        # used here predated the helper that hardened the rest of the store.
         tmp = path.with_suffix(path.suffix + ".tmp")
-        tmp.write_bytes(frontmatter.dumps(post).encode("utf-8"))
+        data = frontmatter.dumps(post).encode("utf-8")
+        with tmp.open("wb") as f:
+            f.write(data)
+            f.flush()
+            fsync_file(f.fileno())
         tmp.replace(path)
+        fsync_dir(path.parent)
 
     return report
 
