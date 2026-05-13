@@ -12,7 +12,7 @@ from datetime import datetime, timezone
 from typing import Any, NoReturn
 
 from .models import Memory, MemoryHit, SimilarHit, TombstonedMemory, snippet_for
-from .origin import repos_match
+from .origin import should_include_for_caller
 from .verify import detect_path_drift
 
 
@@ -265,8 +265,7 @@ def search(
         # without an origin.repo (legacy writes, non-repo writes) pass —
         # they're "global" and always relevant to the current caller.
         if repo_filter is not None:
-            memory_repo = memory.origin.repo if memory.origin else None
-            if not repos_match(memory_repo, repo_filter):
+            if not should_include_for_caller(memory.origin, repo_filter):
                 continue
 
         score, matched = score_memory(

@@ -34,6 +34,7 @@ use separate stores via the project-scoped resolution rule
 
 from __future__ import annotations
 
+import logging
 import re
 import subprocess
 from datetime import datetime, timezone
@@ -41,6 +42,8 @@ from pathlib import Path
 from urllib.parse import urlparse
 
 from pydantic import BaseModel
+
+log = logging.getLogger("bettermemory.origin")
 
 
 class Origin(BaseModel):
@@ -113,6 +116,41 @@ def repos_match(memory_repo: str | None, current_repo: str | None) -> bool:
     return a == b
 
 
+def should_include_for_caller(
+    memory_origin: Origin | None,
+    caller_repo: str | None,
+) -> bool:
+    """True if a memory with this origin should surface for a caller in `caller_repo`.
+
+    Thin wrapper over `repos_match` that handles the
+    `memory.origin.repo if memory.origin else None` extraction once. Every
+    *surface* filter — `memory_search`'s auto-scope and the matching
+    branch in `memory_scope_overview` — was repeating this pattern,
+    with the scope-overview callsite explicitly noting that it was
+    reimplementing the search filter to stay in sync. Folding the
+    extraction-plus-match into one named helper means there is exactly
+    one place that defines "this memory belongs to this caller's
+    project", so the surface filter is provably consistent.
+
+    Auto-scope semantics flow through `repos_match`: a null
+    `memory_origin` (legacy file with no origin block, or a write from
+    outside any repo) is treated as global and matches every caller;
+    likewise a null `caller_repo` (running outside any repo) matches
+    every memory.
+
+    **Not the right helper for commit-drift**: the commit-drift path in
+    `verify`, `server._attach_commit_drift_counts`, and the
+    `health.compute_commit_drift_*` rollups need a stricter check that
+    rejects global memories (no repo anchor means nothing to count
+    commits against). Those sites call `repos_match` directly after a
+    `null → return None` check. Mixing the two would silently start
+    reporting drift counts of "all commits since verify" for global
+    memories, which would be both wrong and very noisy.
+    """
+    memory_repo = memory_origin.repo if memory_origin else None
+    return repos_match(memory_repo, caller_repo)
+
+
 # ---------------------------------------------------------------------------
 # Git helpers — shell out, swallow failures
 # ---------------------------------------------------------------------------
@@ -122,7 +160,24 @@ def _git(cwd: Path, *args: str, timeout: float = 1.0) -> str | None:
     """Run a git command from `cwd`. Returns trimmed stdout on success,
     None on any failure. Short timeout so a hanging git never stalls a
     memory_write — the write is the user-facing operation; origin is
-    nice-to-have."""
+    nice-to-have.
+
+    Failure logging is tiered so the common "not a repo" case stays
+    silent while operationally interesting failures (missing binary,
+    timeouts, safe.directory rejection, corrupted .git) reach the log:
+
+    * `FileNotFoundError` / `OSError` → WARNING. The git binary isn't
+      reachable; every origin capture for this process will fail the
+      same way. `doctor` and verbose-mode users want to see this.
+    * `subprocess.TimeoutExpired` → WARNING. A hanging git is rare
+      enough that surfacing it is worth more than the noise.
+    * Non-zero exit → DEBUG with stderr. The vast majority of these are
+      "fatal: not a git repository" from a non-repo cwd, which is fully
+      expected (memories written outside any repo get `repo=None`).
+      DEBUG keeps the signal available to anyone who flips the log
+      level (or to `doctor`) without spamming WARNING for every memory
+      written from a home directory or a freshly-cloned scratch dir.
+    """
     try:
         result = subprocess.run(
             ["git", *args],
@@ -132,9 +187,34 @@ def _git(cwd: Path, *args: str, timeout: float = 1.0) -> str | None:
             timeout=timeout,
             check=False,
         )
-    except (FileNotFoundError, subprocess.TimeoutExpired, OSError):
+    except FileNotFoundError as exc:
+        log.warning("git binary not found on PATH: %s", exc)
+        return None
+    except subprocess.TimeoutExpired:
+        log.warning(
+            "git %s timed out after %ss in %s",
+            args[0] if args else "",
+            timeout,
+            cwd,
+        )
+        return None
+    except OSError as exc:
+        log.warning("git invocation failed in %s: %s", cwd, exc)
         return None
     if result.returncode != 0:
+        # Trim stderr to the first line — git's "fatal: ..." messages are
+        # one-liners; deeper output is rare and not worth flooding the log
+        # with. Empty stderr is still logged so the returncode itself is
+        # at least visible at DEBUG.
+        stderr = (result.stderr or "").strip().splitlines()
+        first = stderr[0] if stderr else ""
+        log.debug(
+            "git %s exited %s in %s: %s",
+            args[0] if args else "",
+            result.returncode,
+            cwd,
+            first,
+        )
         return None
     out = result.stdout.strip()
     return out or None
@@ -365,4 +445,5 @@ __all__ = [
     "commits_since",
     "commits_since_touching_paths",
     "repos_match",
+    "should_include_for_caller",
 ]
