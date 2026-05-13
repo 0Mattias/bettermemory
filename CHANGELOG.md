@@ -11,6 +11,31 @@ spells out exactly what's stable.
 
 (Empty. Accumulate entries here between tags.)
 
+## 1.4.2 - 2026-05-13
+
+Metadata and CI hygiene. No runtime, wire-shape, or on-disk format
+changes versus 1.4.1; consumers pinned to `>=1.4.1` upgrade
+transparently.
+
+- pyproject `description` (PyPI's "summary" field) and the plugin
+  manifest description now read "Persistent memory for Claude Code,
+  retrieved on demand." — matching the GitHub About text. The old
+  string ("Local file-backed memory MCP server with retrieval-on-demand")
+  was correct but mechanical; the new line is the project's actual
+  positioning.
+- `tests/test_events.py::test_rotation_fsyncs_archive_after_gzip_trailer_is_flushed`
+  now gates its `fcntl` block behind `sys.platform == "win32"` so
+  `mypy --strict` resolves the body under POSIX stubs on Linux/macOS
+  and skips it on win32. The `@pytest.mark.skipif` decorator already
+  prevented runtime execution; only the type-checker pass needed the
+  narrowing.
+- `tests/test_config.py` `resolved_directory` tests now redirect
+  `Path.home()` via a `_set_fake_home(monkeypatch, home)` helper that
+  sets both `HOME` (POSIX) and `USERPROFILE` (Windows). Setting only
+  `HOME` was a no-op on Windows — `ntpath.expanduser` reads
+  `USERPROFILE` first — so three tests had been silently asserting
+  against the runner's real home directory.
+
 ## 1.4.1 - 2026-05-13
 
 Republish from cleaned history. No code, behavior, wire-shape, or

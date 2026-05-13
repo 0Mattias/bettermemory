@@ -318,7 +318,7 @@ def main() -> None:
     parser = argparse.ArgumentParser(
         prog="bettermemory",
         description=(
-            "Local file-backed memory MCP server with retrieval-on-demand. "
+            "Persistent memory for Claude Code, retrieved on demand. "
             "Run with no arguments to start the MCP server over stdio."
         ),
     )

@@ -1,6 +1,6 @@
 # bettermemory: Claude Code plugin
 
-This is the Claude Code plugin wrapper for [bettermemory](https://github.com/0Mattias/bettermemory), a local file-backed memory MCP server with retrieval-on-demand.
+This is the Claude Code plugin wrapper for [bettermemory](https://github.com/0Mattias/bettermemory): persistent memory for Claude Code, retrieved on demand. Local file-backed MCP server, memories on disk as markdown + YAML.
 
 The plugin bundles two things:
 
