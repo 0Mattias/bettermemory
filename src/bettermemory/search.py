@@ -18,7 +18,19 @@ from .verify import detect_path_drift
 
 # Strip punctuation, keep word characters (incl. unicode letters) and dashes
 # inside tokens. Lowercase before tokenizing.
-_TOKEN_RE = re.compile(r"[a-z0-9][a-z0-9\-_]*", re.UNICODE)
+#
+# `\w` (with `re.UNICODE`, which is the default in Python 3) is the right
+# character class here: it covers ASCII alphanumerics plus the rest of
+# Unicode's letters and digits, so a body like "Niño café Mañana" tokenizes
+# correctly instead of fragmenting on each accented letter. The naive
+# `[a-z0-9]` alternative — what this regex used to be — silently dropped
+# every non-ASCII run after `.lower()` reduced the casing, which made
+# non-English memories effectively unsearchable.
+#
+# `\w` also matches `_`, which we want to keep as token-internal anyway
+# (it's how snake_case identifiers stay one token); the `[\w\-]` body just
+# extends that with the literal hyphen so kebab-case stays whole too.
+_TOKEN_RE = re.compile(r"\w[\w\-]*", re.UNICODE)
 
 # Used by `_expand_kebab` to peel off sub-tokens from a kebab/snake compound.
 _KEBAB_SPLIT_RE = re.compile(r"[-_]+")
@@ -225,6 +237,7 @@ def search(
     scopes: list[str] | None = None,
     excluded_scopes: set[str] | None = None,
     repo_filter: str | None = None,
+    worktree_filter: str | None = None,
     max_results: int = 5,
     now: datetime | None = None,
     half_life_days: float = 30.0,
@@ -238,6 +251,14 @@ def search(
       `origin.repo` doesn't match (compared via `origin.repos_match`) are
       dropped. Memories with no `origin.repo` (legacy or non-repo writes)
       pass through — they're treated as global.
+    - `worktree_filter`: the caller's `git rev-parse --show-toplevel`
+      path. Layered on top of `repo_filter` to catch worktree leakage:
+      a memory written from one worktree of a repo (`~/repo-feature/`)
+      shouldn't surface in a search run from a sibling worktree of the
+      same repo (`~/repo-bugfix/`). Memories with no `worktree_root`
+      (legacy or non-repo writes) pass through. No-op without
+      `repo_filter` — a worktree path without a repo identifier
+      doesn't carry enough context to filter on.
     """
     now = now or datetime.now(timezone.utc)
     raw_tokens = tokenize(query)
@@ -261,11 +282,19 @@ def search(
         if scope_filter is not None and not (memory_scope_set & scope_filter):
             continue
 
-        # Auto-scope filter: drop memories from a different repo. Memories
+        # Auto-scope filter: drop memories from a different repo, and
+        # within the same repo from a different worktree. Memories
         # without an origin.repo (legacy writes, non-repo writes) pass —
         # they're "global" and always relevant to the current caller.
+        # `worktree_filter` is a no-op when the memory has no
+        # `worktree_root`, so legacy memories never get hidden by the
+        # newer secondary filter.
         if repo_filter is not None:
-            if not should_include_for_caller(memory.origin, repo_filter):
+            if not should_include_for_caller(
+                memory.origin,
+                repo_filter,
+                caller_worktree_root=worktree_filter,
+            ):
                 continue
 
         score, matched = score_memory(
@@ -304,7 +333,15 @@ def search(
             )
         )
 
-    hits.sort(key=lambda h: (h.score, h.created), reverse=True)
+    # Sort by score, then created (newer wins on tie), then id as the
+    # final discriminator. Without `id` the tiebreaker is undefined for
+    # two memories that share both score and created timestamp — a real
+    # case under microsecond-tied writes or under tests that mock the
+    # clock — and the result order would silently depend on the load
+    # iteration. ULID-shaped ids are lexically time-ordered, so the
+    # final tiebreaker also gives "newer wins" semantics rather than
+    # arbitrary insertion order.
+    hits.sort(key=lambda h: (h.score, h.created, h.id), reverse=True)
     return hits[:max_results]
 
 

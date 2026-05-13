@@ -32,6 +32,50 @@ def test_tokenize_basic() -> None:
     assert tokenize("python-frontmatter") == ["python-frontmatter"]
 
 
+def test_tokenize_preserves_unicode_letters() -> None:
+    """Non-ASCII letters must survive tokenization. The pre-audit
+    `[a-z0-9]`-anchored regex silently dropped accented characters
+    because `.lower()` produced them but the character class didn't
+    accept them — `Niño` came out as ['ni', 'o']. Switching the class
+    to `\\w` keeps the codepoints whole, so a memory body in any
+    language stays searchable. Pin the regression so a future
+    "tighten the token regex" change can't quietly re-break it."""
+    assert tokenize("Niño café") == ["niño", "café"]
+    assert tokenize("Mañana 2026 Zürich") == ["mañana", "2026", "zürich"]
+    # Mixed ASCII + non-ASCII inside one kebab token also stays whole.
+    assert tokenize("café-bar") == ["café-bar"]
+
+
+def test_unicode_query_finds_unicode_body() -> None:
+    """End-to-end version of the tokenize check: a user storing a
+    memory in their native language can still surface it by query."""
+    a = _memory("café del puerto opens at six")
+    b = _memory("airport monorail timetable changes")
+    hits = search([a, b], "café")
+    assert hits and hits[0].id == a.id
+
+
+def test_search_tiebreaker_is_deterministic_on_equal_score_and_created() -> None:
+    """Two memories with identical score AND identical `created`
+    timestamp must still sort deterministically. Without `id` in the
+    tiebreaker the order silently depended on `load_all` iteration —
+    fine in practice today, fragile under clock-mocked tests and
+    microsecond-tied writes. ULID-shaped ids sort lexically by time,
+    so the final discriminator also gives "newer wins" semantics.
+    Sort the same input twice in independent search() calls to lock
+    the output ordering in."""
+    same_time = datetime(2026, 1, 1, 12, 0, 0, tzinfo=timezone.utc)
+    a = _memory("alpha beta gamma", created=same_time)
+    b = _memory("alpha beta gamma", created=same_time)
+    # Force `id` ordering: lower id sorts first under the desc sort,
+    # so the higher id should top the result list every call.
+    higher, lower = sorted([a, b], key=lambda m: m.id, reverse=True)
+    hits1 = search([a, b], "alpha beta gamma")
+    hits2 = search([b, a], "alpha beta gamma")
+    assert hits1[0].id == hits2[0].id == higher.id
+    assert hits1[1].id == hits2[1].id == lower.id
+
+
 def test_exact_match_outranks_partial() -> None:
     a = _memory("python python python list comprehension")
     b = _memory("kubernetes networking notes")
