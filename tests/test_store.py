@@ -392,6 +392,45 @@ def test_malformed_last_verified_at_silently_falls_back_to_none(
     assert loaded[0].last_verified_at is None
 
 
+def test_quoted_naive_iso_string_loads_as_utc_aware(
+    memory_dir: Path,
+) -> None:
+    """A hand-edited frontmatter with `last_verified_at` written as a
+    quoted ISO string with no offset (e.g. `"2025-01-01T10:00:00"`)
+    must load as a UTC-aware datetime — not naive. The audit caught
+    that the str-branch of `_as_dt` skipped the tz-coercion step the
+    datetime branch already had, so a naive value flowed through and
+    crashed `health.compute_health` on the first comparison against
+    an aware `now`. Pin the round-trip so both branches stay
+    symmetric."""
+    legacy = memory_dir / "2025-01-01-naive.md"
+    legacy.write_text(
+        "---\n"
+        f"id: {generate_ulid()}\n"
+        "created: 2025-01-01T00:00:00Z\n"
+        "updated: 2025-01-01T00:00:00Z\n"
+        # Quoted forces YAML to keep it as a string; without quotes
+        # PyYAML parses it natively as a (naive) datetime, which the
+        # *other* branch of `_as_dt` already coerced. Quoting is the
+        # path that was broken.
+        '"last_verified_at": "2025-01-01T10:00:00"\n'
+        "scopes:\n  - tools\n"
+        "confidence: medium\n"
+        "source: explicit-statement\n"
+        "---\n"
+        "body\n"
+    )
+    store = Store(memory_dir)
+    loaded = store.load_all()
+    assert len(loaded) == 1
+    lva = loaded[0].last_verified_at
+    assert lva is not None
+    assert lva.tzinfo is not None  # would have been None before the fix
+    # Comparable against an aware now without TypeError — the actual
+    # symptom that surfaced from the broken path.
+    _ = lva < datetime.now(timezone.utc)
+
+
 def test_mark_verified_emits_field_into_frontmatter(memory_dir: Path) -> None:
     """Once verified, the field shows up in the on-disk frontmatter."""
     store = Store(memory_dir)

@@ -937,7 +937,18 @@ def _atomic_write_post(path: Path, post: frontmatter.Post) -> None:
 
 
 def _as_dt(value: object) -> datetime:
-    """Coerce a frontmatter value to an aware datetime."""
+    """Coerce a frontmatter value to an aware datetime.
+
+    Both branches normalise to UTC-aware. The `datetime` branch covers
+    PyYAML's native timestamp parsing (unquoted ISO strings round-trip
+    as `datetime` objects, which may be naive when no offset was
+    written); the `str` branch covers any value YAML preserved as a
+    quoted string. Without coercion in the `str` branch a hand-edited
+    file with `last_verified_at: "2025-01-01T10:00:00"` (quoted, no
+    offset) loaded as a naive datetime, then crashed downstream on the
+    first comparison against an aware `now` — surfaced by the audit on
+    `health.compute_health`'s verification-debt partition.
+    """
     if isinstance(value, datetime):
         if value.tzinfo is None:
             from datetime import timezone
@@ -947,7 +958,12 @@ def _as_dt(value: object) -> datetime:
     if isinstance(value, str):
         # Allow trailing 'Z'.
         s = value.replace("Z", "+00:00")
-        return datetime.fromisoformat(s)
+        dt = datetime.fromisoformat(s)
+        if dt.tzinfo is None:
+            from datetime import timezone
+
+            dt = dt.replace(tzinfo=timezone.utc)
+        return dt
     raise ValueError(f"cannot parse datetime from {value!r}")
 
 
