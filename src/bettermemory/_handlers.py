@@ -140,24 +140,32 @@ DESC_MEMORY_SEARCH = (
     "even when `verification.status` reads fresh: the calendar "
     "is fresh but the project has moved. "
     "Pass `expand_top=True` to inline the full body of the top hit "
-    'when its relevance is "high" — collapses the common search-then-show '
-    "round trip into one call, and surfaces the full `path_drift` "
-    "report (with the actual missing paths) on the expanded hit. "
-    "The expanded hit also carries a `commit_drift` block "
-    "(`status: 'clean' | 'drift'` plus a `commits_since_verify` "
-    "count) when the caller's current repo matches the memory's "
-    "origin — non-zero is the cue to spot-check even when "
-    "`verification.status` reads fresh, because the project has "
-    "moved since the last memory_verify. Skip `expand_top` when "
-    "you only need to triage. "
+    'when its relevance is "high" — collapses the common '
+    "search-then-show round trip into one call, and surfaces the "
+    "full `path_drift` report (with the actual missing paths) on "
+    "the expanded hit. The expanded hit also carries a "
+    "`commit_drift` block (`status: 'clean' | 'drift'` plus a "
+    "`commits_since_verify` count) when the caller's current "
+    "repo matches the memory's origin — non-zero is the cue to "
+    "spot-check even when `verification.status` reads fresh, "
+    "because the project has moved since the last memory_verify. "
+    "Skip `expand_top` when you only need to triage. "
     "By default (`auto_scope=True`), results are filtered to "
     "memories written from the current repository — cross-project "
     "memories are excluded. Memories written outside any repo "
-    "(`origin.repo is None`) pass through as global. Set "
-    "`auto_scope=False` to explicitly include cross-project "
-    "matches — say so in the reply so the user knows you reached "
-    "outside the current scope. Honors session-disabled scopes "
-    "set via memory_scope_disable."
+    "(or before the auto-scope feature) are treated as global and "
+    "always pass. Set `auto_scope=False` for cross-project queries "
+    '("do you remember anything about X across all my projects"). '
+    "When you actually use a hit in your reply, briefly say so "
+    '("Using your stored preference for…") and call '
+    "memory_record_use(ids, outcome) once per response — outcome "
+    'is "applied" / "ignored" / "contradicted" / "corrected" '
+    "(the last is for noticed-and-fixed-inline; see the "
+    "memory_record_use tool for the full distinction). Skip the "
+    "call when no memory shaped the response. If a hit's "
+    'verification.status is not "fresh", spot-check at least one '
+    "verifiable claim before relying on it: call memory_verify(id) "
+    "if it holds, or memory_update first if it has drifted."
 )
 
 

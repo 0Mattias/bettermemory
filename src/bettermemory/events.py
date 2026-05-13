@@ -177,16 +177,22 @@ class Recorder:
                     if not chunk:
                         break
                     dst.write(chunk)
-                # fsync the archive's underlying file before unlinking the
-                # source — losing the archive after the unlink would mean
-                # losing rotated events to a crash. `gzip.open` returns a
-                # GzipFile wrapping a real file; `.fileno()` is the wrapped
-                # fd. Best-effort; if the wrapper doesn't expose a fileno
-                # on this Python/gzip version, swallow and proceed.
-                try:
-                    fsync_file(dst.fileno())
-                except (AttributeError, OSError):
-                    pass
+            # fsync the archive AFTER `gzip.open(...) as dst` exits, so the
+            # gzip trailer (CRC32 + ISIZE) — written by `GzipFile.close()`
+            # at `with` exit — is part of what gets pushed to disk. An
+            # earlier version fsynced `dst.fileno()` from inside the `with`
+            # block, which flushed the body but raced the trailer; a crash
+            # at that point could leave a body-only archive that gzip.open
+            # would reject on read with a CRC error. Re-open the file to
+            # get a clean fd for the fsync. Best-effort; pseudo-filesystems
+            # may not support fsync, and a failure here doesn't change the
+            # durability of the source `.jsonl` — that one isn't unlinked
+            # until below.
+            try:
+                with archive.open("rb") as fsynced:
+                    fsync_file(fsynced.fileno())
+            except OSError:
+                pass
             self.path.unlink()
             # fsync the directory so the unlink + archive creation are
             # both durable. Without this, a crash here could leave us

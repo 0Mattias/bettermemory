@@ -159,6 +159,83 @@ def test_rotation_archives_when_max_bytes_exceeded(tmp_path: Path) -> None:
     assert all(e["kind"] == "write" for e in archived_lines)
 
 
+def test_rotation_fsyncs_archive_after_gzip_trailer_is_flushed(
+    tmp_path: Path,
+) -> None:
+    """Pin the fsync ordering: the archive fsync must run AFTER the
+    `gzip.open(...) as dst` block exits, because the gzip trailer
+    (CRC32 + ISIZE) is written by `GzipFile.close()` at `with` exit. If
+    the fsync runs from inside the `with` block, only the body bytes
+    get pushed to disk; a crash after the unlink could leave a
+    body-only archive that `gzip.open` rejects on read with a CRC
+    error.
+
+    The structural assertion: at fsync time, the fd's open mode is
+    `O_RDONLY` (the file was re-opened to fsync the trailer-inclusive
+    bytes), not the write fd of an active GzipFile. Before the fix,
+    the fsync ran on the write fd from inside the `with` block; after,
+    it runs on a fresh read fd opened against the closed-and-flushed
+    archive."""
+    import fcntl
+    import os
+
+    from bettermemory import events as events_mod
+
+    fsync_modes: list[int] = []
+    # events_mod re-exports fsync_file from _fsutil but doesn't list it
+    # in `__all__` (it's an implementation detail). getattr keeps mypy
+    # off the attr-defined complaint without polluting the public surface.
+    real_fsync_file = getattr(events_mod, "fsync_file")
+
+    def hooked_fsync_file(fd: int) -> None:
+        # F_GETFL returns the access-mode flags. O_RDONLY = 0,
+        # O_WRONLY = 1, O_RDWR = 2 — a write fd from gzip.open(...,
+        # "wb") would be O_WRONLY or O_RDWR; a read fd from
+        # archive.open("rb") is O_RDONLY. The masking against O_ACCMODE
+        # isolates the access-mode bits from the rest of the flag set.
+        flags = fcntl.fcntl(fd, fcntl.F_GETFL)
+        fsync_modes.append(flags & os.O_ACCMODE)
+        real_fsync_file(fd)
+
+    with patch.object(events_mod, "fsync_file", hooked_fsync_file):
+        rec = Recorder(root=tmp_path, session_id="sess_trailer", max_bytes=200)
+        rec.record("write", id="01HXYZ", scopes=["tools"])
+        # Pad past the 200-byte threshold to trigger rotation. Mirror
+        # the existing rotation-archives test's loop so the trigger
+        # shape is identical.
+        for i in range(20):
+            rec.record(
+                "write",
+                id=f"01HXYZ{i:03d}",
+                scopes=["tools"],
+                note="filler text to push the log past the threshold",
+            )
+
+    archives = sorted(tmp_path.glob(".events-*.jsonl.gz"))
+    assert archives, "rotation should have produced at least one archive"
+
+    # `fsync_modes` should contain at least one O_RDONLY entry — that's
+    # the rotation's archive fsync, structurally proving it happened
+    # against a fresh read fd opened after gzip.close() wrote the
+    # trailer. The per-append fsyncs (line 135) are also captured here;
+    # those go through the same hook on an O_RDWR fd. The presence of
+    # the O_RDONLY entry is the load-bearing signal.
+    assert os.O_RDONLY in fsync_modes, (
+        "rotation fsync should run on a read-only fd opened against the "
+        "fully-closed archive — fsync_modes only contains write modes, "
+        "which means the fsync still races the gzip trailer write: "
+        f"{fsync_modes}"
+    )
+
+    # And the archive round-trips as a valid gzip stream — proves the
+    # trailer was written and decodable. (Doesn't prove the fix on its
+    # own; gzip in-memory close always writes a trailer. This is the
+    # belt to the structural suspenders above.)
+    with gzip.open(archives[0], "rt", encoding="utf-8") as f:
+        decoded = [json.loads(line) for line in f if line.strip()]
+    assert decoded, "archive should decode to at least one event"
+
+
 def test_rotation_collision_uses_session_suffix(tmp_path: Path) -> None:
     """Many rotations in the same UTC second mustn't clobber each other —
     the collision counter should ensure every archive name is unique."""
