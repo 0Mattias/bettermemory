@@ -44,6 +44,14 @@ class _FakeCtx:
     client_id: str | None = None
 
 
+def _fake_ctx(*, client_id: str | None = None) -> Any:
+    """Return a `_FakeCtx` typed as `Any` so strict mypy accepts it where
+    `for_request` expects a real FastMCP `Context`. The registry only
+    reads `.client_id`, so the duck-typed stand-in is structurally
+    compatible; the cast is purely a type-checker concession."""
+    return _FakeCtx(client_id=client_id)
+
+
 # ---------------------------------------------------------------------------
 # Unit: SessionRegistry routing
 # ---------------------------------------------------------------------------
@@ -55,8 +63,8 @@ def test_registry_returns_same_state_for_same_client_id() -> None:
     pending writes / use-tokens would never carry between calls within
     one client session."""
     registry = SessionRegistry()
-    ctx_a1 = _FakeCtx(client_id="client-A")
-    ctx_a2 = _FakeCtx(client_id="client-A")
+    ctx_a1 = _fake_ctx(client_id="client-A")
+    ctx_a2 = _fake_ctx(client_id="client-A")
 
     state1 = registry.for_request(ctx_a1)
     state2 = registry.for_request(ctx_a2)
@@ -69,8 +77,8 @@ def test_registry_returns_distinct_states_for_distinct_client_ids() -> None:
     isolated state. Identity (not just equality) — the SessionState
     objects must be different instances so mutations on one don't bleed."""
     registry = SessionRegistry()
-    state_a = registry.for_request(_FakeCtx(client_id="A"))
-    state_b = registry.for_request(_FakeCtx(client_id="B"))
+    state_a = registry.for_request(_fake_ctx(client_id="A"))
+    state_b = registry.for_request(_fake_ctx(client_id="B"))
 
     assert state_a is not state_b
     assert state_a.session_id != state_b.session_id
@@ -93,7 +101,7 @@ def test_registry_falls_back_to_default_state_when_client_id_is_empty() -> None:
     all; treat absence the same as None rather than minting a new
     state for every empty-id request."""
     registry = SessionRegistry()
-    state_empty = registry.for_request(_FakeCtx(client_id=""))
+    state_empty = registry.for_request(_fake_ctx(client_id=""))
     state_none_ctx = registry.for_request(None)
 
     assert state_empty is state_none_ctx
@@ -108,7 +116,7 @@ def test_registry_does_not_collide_default_key_with_real_client_id() -> None:
     accidental."""
     registry = SessionRegistry()
     default_state = registry.for_request(None)
-    spoof_state = registry.for_request(_FakeCtx(client_id="__default__"))
+    spoof_state = registry.for_request(_fake_ctx(client_id="__default__"))
 
     # Today the keys collide (both bucket into the same sentinel).
     # If that ever changes, this assertion flips — fine, just be
@@ -118,8 +126,8 @@ def test_registry_does_not_collide_default_key_with_real_client_id() -> None:
 
 def test_registry_known_keys_reflects_inserted_clients() -> None:
     registry = SessionRegistry()
-    registry.for_request(_FakeCtx(client_id="A"))
-    registry.for_request(_FakeCtx(client_id="B"))
+    registry.for_request(_fake_ctx(client_id="A"))
+    registry.for_request(_fake_ctx(client_id="B"))
     registry.for_request(None)
 
     keys = registry.known_keys()
@@ -136,7 +144,7 @@ def test_session_state_satisfies_session_source_protocol() -> None:
     `state=SessionState()` to `build_server` and keep working."""
     shared = SessionState()
     assert shared.for_request(None) is shared
-    assert shared.for_request(_FakeCtx(client_id="anyone")) is shared
+    assert shared.for_request(_fake_ctx(client_id="anyone")) is shared
 
 
 def test_get_default_registry_is_a_stable_singleton() -> None:
@@ -213,7 +221,7 @@ async def test_pending_write_is_isolated_between_clients(
     server, registry, ids = two_client_server
 
     # Alice opens a pending write under her client_id.
-    alice_ctx = _FakeCtx(client_id=ids["alice"])
+    alice_ctx = _fake_ctx(client_id=ids["alice"])
     pending = await _call(
         server,
         "memory_write",
@@ -228,7 +236,7 @@ async def test_pending_write_is_isolated_between_clients(
     # him a separate SessionState that knows nothing about alice's
     # pending. The cancel reports "existed=False", confirming the
     # isolation.
-    bob_ctx = _FakeCtx(client_id=ids["bob"])
+    bob_ctx = _fake_ctx(client_id=ids["bob"])
     bob_cancel = await _call(
         server,
         "memory_write_cancel",
@@ -272,8 +280,8 @@ async def test_disabled_scopes_are_isolated_between_clients(
     consent. The registry isolates `disabled_scopes` per client.
     """
     server, registry, ids = two_client_server
-    alice_ctx = _FakeCtx(client_id=ids["alice"])
-    bob_ctx = _FakeCtx(client_id=ids["bob"])
+    alice_ctx = _fake_ctx(client_id=ids["alice"])
+    bob_ctx = _fake_ctx(client_id=ids["bob"])
 
     # Alice disables `tools`.
     alice_disable = await _call(

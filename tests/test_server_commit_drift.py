@@ -88,6 +88,10 @@ def server_with_fake_origin(memory_dir: Path):
     cfg = Config(storage=StorageConfig(directory=str(memory_dir)))
 
     def make(origin: Origin):
+        # `capture_origin` is imported into `_handlers` where the tool
+        # handler bodies live, and into `server` for `_cli_health`. Patch
+        # both bindings so a server built by either path sees the mock.
+        import bettermemory._handlers as handlers_module
         import bettermemory.server as server_module
 
         rec = Recorder(root=memory_dir, session_id=state.session_id)
@@ -101,6 +105,7 @@ def server_with_fake_origin(memory_dir: Path):
         def fake_capture(cwd: Path | None = None) -> Origin:
             return origin
 
+        setattr(handlers_module, "capture_origin", fake_capture)
         setattr(server_module, "capture_origin", fake_capture)
         return server
 

@@ -28,10 +28,13 @@ def server_factory(memory_dir: Path):
     cfg = Config(storage=StorageConfig(directory=str(memory_dir)))
 
     def make(origin: Origin):
+        # `capture_origin` is imported into `_handlers` where the tool
+        # handler bodies live, and into `server` for `_cli_health`. Patch
+        # both bindings so a server built by either path sees the mock.
+        # Patching the name as imported, not `origin.capture` itself.
+        import bettermemory._handlers as handlers_module
         import bettermemory.server as server_module
 
-        # Patch the capture function the server imported. We patch the
-        # name as imported (capture_origin), not origin.capture itself.
         captured = {"value": origin}
 
         def fake_capture(cwd: Path | None = None) -> Origin:
@@ -44,9 +47,10 @@ def server_factory(memory_dir: Path):
             state=state,
             recorder=rec,
         )
-        # Override the imported reference so the handlers see our fake.
+        # Override the imported references so the handlers see our fake.
         # setattr keeps mypy happy without a per-line ignore — capture_origin
         # is a module-level binding the handlers re-resolve at call time.
+        setattr(handlers_module, "capture_origin", fake_capture)
         setattr(server_module, "capture_origin", fake_capture)
         return server, captured
 
