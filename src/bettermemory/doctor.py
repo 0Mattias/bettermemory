@@ -229,10 +229,19 @@ def _check_storage_directory(cfg: Config) -> tuple[Diagnosis, Path | None]:
     # Probe write a sentinel file. Cheap insurance against weird FS
     # situations (read-only mounts, NFS quirks) that pass os.access but
     # fail on actual write.
+    #
+    # The cleanup is in `finally` with `missing_ok=True` so an ENOSPC
+    # mid-write (which can leave a zero-byte sentinel before raising)
+    # doesn't strand `.doctor-probe` in the user's store directory.
+    # Without the finally arm a subsequent `doctor` run would still
+    # report `fail`, but the user would also be wondering where that
+    # stray file came from.
     probe = directory / ".doctor-probe"
     try:
-        probe.write_text("ok", encoding="utf-8")
-        probe.unlink()
+        try:
+            probe.write_text("ok", encoding="utf-8")
+        finally:
+            probe.unlink(missing_ok=True)
     except OSError as exc:
         return (
             Diagnosis(

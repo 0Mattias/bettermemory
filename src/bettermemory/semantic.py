@@ -38,6 +38,7 @@ Cache invalidation hierarchy (most-frequent first):
 
 from __future__ import annotations
 
+import contextlib
 import logging
 import re
 from dataclasses import dataclass
@@ -257,27 +258,28 @@ def flush_persistent_cache() -> None:
         _DIRTY = False
         return
 
+    if not _EMBEDDING_CACHE:
+        return
+    ids = []
+    keys = []
+    vectors = []
+    for memory_id, cached in _EMBEDDING_CACHE.items():
+        ids.append(memory_id)
+        keys.append(cached.updated_key)
+        vectors.append(cached.vector)
+    # Stack into a 2D array for compact storage; np.savez_compressed
+    # handles the rest. Object arrays for ids/keys are fine —
+    # they're short ULID-shaped strings.
+    _PERSISTENT_PATH.parent.mkdir(parents=True, exist_ok=True)
+    tmp = _PERSISTENT_PATH.with_suffix(_PERSISTENT_PATH.suffix + ".tmp")
     try:
-        if not _EMBEDDING_CACHE:
-            return
-        ids = []
-        keys = []
-        vectors = []
-        for memory_id, cached in _EMBEDDING_CACHE.items():
-            ids.append(memory_id)
-            keys.append(cached.updated_key)
-            vectors.append(cached.vector)
-        # Stack into a 2D array for compact storage; np.savez_compressed
-        # handles the rest. Object arrays for ids/keys are fine —
-        # they're short ULID-shaped strings.
-        _PERSISTENT_PATH.parent.mkdir(parents=True, exist_ok=True)
-        tmp = _PERSISTENT_PATH.with_suffix(_PERSISTENT_PATH.suffix + ".tmp")
         # Pass an open file handle rather than the path. np.savez_compressed
         # auto-appends `.npz` to a path string that doesn't already end in
         # it — which would turn our `.npz.tmp` into `.npz.tmp.npz` and
         # break the atomic rename below. Writing to a file object bypasses
-        # that suffix-mangling. The handle is closed before the rename so
-        # the on-disk bytes are flushed to the kernel.
+        # that suffix-mangling. fsync the file before closing so the bytes
+        # backing the rename are durable, mirroring `_atomic_write_post`'s
+        # discipline in the main store.
         with open(tmp, "wb") as f:
             np.savez_compressed(
                 f,
@@ -285,9 +287,19 @@ def flush_persistent_cache() -> None:
                 keys=np.array(keys),
                 vectors=np.stack(vectors),
             )
+            f.flush()
+            from ._fsutil import fsync_file
+
+            fsync_file(f.fileno())
         tmp.replace(_PERSISTENT_PATH)
         _DIRTY = False
     except Exception as exc:  # noqa: BLE001 — never break the dedup path
+        # Clean up the orphaned tmp so a half-written cache doesn't sit
+        # in the persistence directory until the next successful flush
+        # rolls over it. `missing_ok` covers the case where the failure
+        # happened before the file was created (or after the rename).
+        with contextlib.suppress(OSError):
+            tmp.unlink(missing_ok=True)
         log.warning(
             "failed to persist embedding cache to %s: %s",
             _PERSISTENT_PATH,
