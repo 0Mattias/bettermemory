@@ -17,6 +17,8 @@ from bettermemory.origin import (
     commits_since,
     commits_since_touching_paths,
     repos_match,
+    should_include_for_caller,
+    worktrees_match,
 )
 
 
@@ -442,3 +444,168 @@ def test_commits_since_touching_paths_drops_paths_outside_repo(
         ["/nonexistent/outside-repo.txt"],
     )
     assert out is None
+
+
+# ---------------------------------------------------------------------------
+# Worktree isolation — `worktree_root` capture and the secondary filter
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.skipif(not _GIT_AVAILABLE, reason="git not on PATH")
+def test_capture_populates_worktree_root_in_repo(tmp_path: Path) -> None:
+    """Inside a primary checkout, `worktree_root` matches the repo's
+    own root — `git rev-parse --show-toplevel`. Pin so the additive
+    field actually shows up at write time, not just in tests that
+    construct Origin by hand."""
+    _init_repo(tmp_path, remote="git@github.com:example/repo.git")
+    origin = capture(cwd=tmp_path)
+    assert origin.worktree_root == str(tmp_path.resolve())
+
+
+@pytest.mark.skipif(not _GIT_AVAILABLE, reason="git not on PATH")
+def test_capture_worktree_null_outside_repo(tmp_path: Path) -> None:
+    """Without a repo there's no worktree to capture — keeps the field
+    null instead of falling back to cwd, so the auto-scope filter's
+    "both sides set → strict-equal" gate stays a no-op for non-repo
+    callers."""
+    origin = capture(cwd=tmp_path)
+    assert origin.worktree_root is None
+
+
+@pytest.mark.skipif(not _GIT_AVAILABLE, reason="git not on PATH")
+def test_capture_distinguishes_two_worktrees_of_one_repo(
+    tmp_path: Path,
+) -> None:
+    """The headline of the audit-flagged worktree-leakage scenario:
+    two `git worktree add` checkouts of one repo share `repo` but
+    have *different* `worktree_root` paths, which is what lets the
+    secondary filter tell them apart."""
+    primary = tmp_path / "primary"
+    primary.mkdir()
+    _init_repo(primary, remote="git@github.com:example/repo.git")
+    # Need at least one commit before `git worktree add` will work.
+    (primary / "README.md").write_text("hello\n")
+    subprocess.run(
+        ["git", "-c", "user.email=t@t", "-c", "user.name=t", "add", "README.md"],
+        cwd=primary,
+        check=True,
+        capture_output=True,
+    )
+    subprocess.run(
+        ["git", "-c", "user.email=t@t", "-c", "user.name=t", "commit", "-m", "init"],
+        cwd=primary,
+        check=True,
+        capture_output=True,
+    )
+    secondary = tmp_path / "secondary"
+    subprocess.run(
+        ["git", "worktree", "add", "-b", "feature-x", str(secondary)],
+        cwd=primary,
+        check=True,
+        capture_output=True,
+    )
+    primary_origin = capture(cwd=primary)
+    secondary_origin = capture(cwd=secondary)
+    # Same repo URL on both sides.
+    assert primary_origin.repo == secondary_origin.repo
+    # But distinct worktree roots — the discriminator the filter rides on.
+    assert primary_origin.worktree_root != secondary_origin.worktree_root
+    assert primary_origin.worktree_root == str(primary.resolve())
+    assert secondary_origin.worktree_root == str(secondary.resolve())
+
+
+def test_worktrees_match_null_either_side_is_global() -> None:
+    """Legacy memory (no `worktree_root`) or caller outside any
+    repo — either case has no boundary to enforce, so the filter
+    falls back to repo-only matching."""
+    assert worktrees_match(None, "/some/worktree")
+    assert worktrees_match("/some/worktree", None)
+    assert worktrees_match(None, None)
+
+
+def test_worktrees_match_equal_paths() -> None:
+    assert worktrees_match("/a/b/c", "/a/b/c")
+
+
+def test_worktrees_match_different_paths() -> None:
+    assert not worktrees_match("/repo/main", "/repo/feature-x")
+
+
+def test_should_include_filters_cross_worktree_same_repo() -> None:
+    """The integration: same repo, different worktree → exclude.
+    Without the worktree layer this returned True (auditable as
+    repo-only matching), letting feature-branch memories leak into
+    the bug-fix worktree."""
+    memory_origin = Origin(
+        cwd="/Users/me/repo-feature/src/foo.py",
+        repo="git@github.com:example/repo.git",
+        branch="feature-x",
+        worktree_root="/Users/me/repo-feature",
+    )
+    assert not should_include_for_caller(
+        memory_origin,
+        "git@github.com:example/repo.git",
+        caller_worktree_root="/Users/me/repo-bugfix",
+    )
+
+
+def test_should_include_passes_same_worktree() -> None:
+    """Inverse of the cross-worktree test — same worktree must still
+    surface its own memories. Guards against an over-aggressive
+    filter that would silently hide everything."""
+    memory_origin = Origin(
+        repo="git@github.com:example/repo.git",
+        worktree_root="/Users/me/repo-feature",
+    )
+    assert should_include_for_caller(
+        memory_origin,
+        "git@github.com:example/repo.git",
+        caller_worktree_root="/Users/me/repo-feature",
+    )
+
+
+def test_should_include_legacy_memory_passes_worktree_filter() -> None:
+    """A legacy memory with no `worktree_root` field must still
+    surface — the new filter is additive and may not silently hide
+    writes that predate it."""
+    memory_origin = Origin(
+        repo="git@github.com:example/repo.git",
+        worktree_root=None,  # legacy
+    )
+    assert should_include_for_caller(
+        memory_origin,
+        "git@github.com:example/repo.git",
+        caller_worktree_root="/Users/me/repo-feature",
+    )
+
+
+def test_should_include_caller_without_worktree_passes_through() -> None:
+    """Caller hasn't captured a worktree (e.g. running outside a git
+    checkout, or a search call that didn't pass `caller_worktree_root`).
+    The filter falls back to repo-only matching — the `caller_worktree_root`
+    default of None preserves pre-audit behaviour."""
+    memory_origin = Origin(
+        repo="git@github.com:example/repo.git",
+        worktree_root="/Users/me/repo-feature",
+    )
+    assert should_include_for_caller(
+        memory_origin,
+        "git@github.com:example/repo.git",
+        # caller_worktree_root omitted entirely
+    )
+
+
+def test_should_include_cross_repo_still_filters_first() -> None:
+    """Worktree filter is layered *after* the repo check. Cross-repo
+    memories must still be excluded, even if they happen to share a
+    worktree path with the caller (vanishingly unlikely in practice
+    but we lock the ordering anyway)."""
+    memory_origin = Origin(
+        repo="git@github.com:other/different.git",
+        worktree_root="/Users/me/repo-feature",
+    )
+    assert not should_include_for_caller(
+        memory_origin,
+        "git@github.com:example/repo.git",
+        caller_worktree_root="/Users/me/repo-feature",
+    )

@@ -54,11 +54,27 @@ class Origin(BaseModel):
     null was written outside any git repo. A memory with `origin.repo`
     set but a different value from the caller's current repo is
     cross-project and gets filtered out by `auto_scope=True`.
+
+    `worktree_root` is the path of the git worktree the write happened
+    in — `git rev-parse --show-toplevel` from the cwd. Repo URL
+    matching alone treats two worktrees of the same repository as the
+    same workspace, which means notes written while debugging
+    `feature-x` in `~/repo-feature-x/` would surface for the user when
+    they switch to `~/repo-bug-fix/` and trigger an unrelated search.
+    The audit named that "worktree leakage" — capturing the worktree
+    root and using it as a secondary discriminator in the auto-scope
+    filter closes the hole without forcing the user to re-tag every
+    write. Null when the write didn't happen inside a git checkout
+    (then there's no worktree distinction to draw) or for memories
+    written before this field shipped (legacy memories pass through
+    the worktree filter, mirroring how legacy `repo`-less memories
+    are treated as global).
     """
 
     cwd: str | None = None
     repo: str | None = None  # raw remote URL or null
     branch: str | None = None  # current branch or null (detached HEAD → null)
+    worktree_root: str | None = None  # `git rev-parse --show-toplevel` or null
 
 
 # ---------------------------------------------------------------------------
@@ -73,14 +89,28 @@ def capture(cwd: Path | None = None) -> Origin:
     and we read `Path.cwd()`. If git isn't on PATH or the directory isn't
     a repo, `repo` and `branch` come back null; `cwd` is always populated
     when the directory exists.
+
+    `worktree_root` is captured whenever we're inside any git directory
+    (gated on `repo_url` so the helper bails on the same `_git` failure
+    instead of paying a second subprocess). Two worktrees of the same
+    repository will have the same `repo` but different `worktree_root`,
+    which is what the auto-scope filter uses to keep a memory written
+    from one worktree from leaking into a search run from a sibling
+    worktree.
     """
     resolved = (cwd or Path.cwd()).resolve()
     cwd_str = str(resolved)
 
     repo_url = _git_remote_url(resolved)
     branch = _git_branch(resolved) if repo_url else None
+    worktree_root = _git_worktree_root(resolved) if repo_url else None
 
-    return Origin(cwd=cwd_str, repo=repo_url, branch=branch)
+    return Origin(
+        cwd=cwd_str,
+        repo=repo_url,
+        branch=branch,
+        worktree_root=worktree_root,
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -116,9 +146,27 @@ def repos_match(memory_repo: str | None, current_repo: str | None) -> bool:
     return a == b
 
 
+def worktrees_match(memory_worktree: str | None, caller_worktree: str | None) -> bool:
+    """True if a memory whose origin.worktree_root is `memory_worktree`
+    belongs to a caller currently in `caller_worktree`.
+
+    Either side null → True. A legacy memory has no `worktree_root`
+    field; a caller running outside any git checkout has no worktree
+    to compare against; in either case we have no boundary to
+    enforce, and the auto-scope filter falls back to repo-only
+    matching. Both sides set → string equality on the resolved
+    paths captured by `_git_worktree_root`.
+    """
+    if memory_worktree is None or caller_worktree is None:
+        return True
+    return memory_worktree == caller_worktree
+
+
 def should_include_for_caller(
     memory_origin: Origin | None,
     caller_repo: str | None,
+    *,
+    caller_worktree_root: str | None = None,
 ) -> bool:
     """True if a memory with this origin should surface for a caller in `caller_repo`.
 
@@ -138,6 +186,17 @@ def should_include_for_caller(
     likewise a null `caller_repo` (running outside any repo) matches
     every memory.
 
+    `caller_worktree_root` opts into the secondary worktree filter: when
+    both the memory and the caller carry a populated `worktree_root` and
+    the two differ, the memory is excluded even if `repos_match` says
+    yes. This is what keeps notes written in one worktree of a
+    repository (`~/repo-feature-x/`) from leaking into searches run
+    from a sibling worktree of the same repository
+    (`~/repo-bug-fix/`); a single-tree checkout never has two
+    worktree roots in play, so the secondary filter is a no-op there.
+    Legacy memories (no `worktree_root`) always pass — adding the
+    filter must not silently hide writes that predate it.
+
     **Not the right helper for commit-drift**: the commit-drift path in
     `verify`, `server._attach_commit_drift_counts`, and the
     `health.compute_commit_drift_*` rollups need a stricter check that
@@ -148,7 +207,10 @@ def should_include_for_caller(
     memories, which would be both wrong and very noisy.
     """
     memory_repo = memory_origin.repo if memory_origin else None
-    return repos_match(memory_repo, caller_repo)
+    if not repos_match(memory_repo, caller_repo):
+        return False
+    memory_worktree = memory_origin.worktree_root if memory_origin else None
+    return worktrees_match(memory_worktree, caller_worktree_root)
 
 
 # ---------------------------------------------------------------------------
@@ -232,6 +294,25 @@ def _git_branch(cwd: Path) -> str | None:
     # is the more common idiom but it returns the literal "HEAD" before
     # the first commit, which we'd incorrectly interpret as detached.
     return _git(cwd, "symbolic-ref", "--short", "HEAD")
+
+
+def _git_worktree_root(cwd: Path) -> str | None:
+    # `rev-parse --show-toplevel` returns the absolute path of the
+    # working tree root — for a primary checkout, the repo root; for
+    # a worktree (`git worktree add`), the worktree's own root, which
+    # *differs* between sibling worktrees of the same repository.
+    # That difference is exactly what the auto-scope filter needs to
+    # tell two worktrees of one repo apart. Resolved through `Path`
+    # to normalise symlink hops on macOS' `/var` → `/private/var`
+    # idiom, so a memory captured under one symlink form still
+    # compares equal to a caller that resolves the other.
+    raw = _git(cwd, "rev-parse", "--show-toplevel")
+    if raw is None:
+        return None
+    try:
+        return str(Path(raw).resolve())
+    except OSError:
+        return raw
 
 
 def commits_since(cwd: Path | None, since: datetime) -> int | None:
@@ -446,4 +527,5 @@ __all__ = [
     "commits_since_touching_paths",
     "repos_match",
     "should_include_for_caller",
+    "worktrees_match",
 ]

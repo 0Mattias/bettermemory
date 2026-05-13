@@ -669,6 +669,13 @@ class ToolHandlers:
         # agree on what "current repo" means for this request.
         current_origin = capture_origin()
         repo_filter: str | None = current_origin.repo if auto_scope else None
+        # Worktree filter rides along on the same auto_scope toggle as the
+        # repo filter — both are pieces of the same "drop cross-context
+        # memories" defaults pass. Disabling auto_scope drops both, so a
+        # cross-project search keeps working without needing a second flag.
+        worktree_filter: str | None = (
+            current_origin.worktree_root if auto_scope else None
+        )
 
         memories = self.store.load_all()
         hits = run_search(
@@ -677,6 +684,7 @@ class ToolHandlers:
             scopes=scopes,
             excluded_scopes=set(state.disabled_scopes),
             repo_filter=repo_filter,
+            worktree_filter=worktree_filter,
             max_results=max_results,
             half_life_days=self.config.behavior.recency_boost_half_life_days,
         )
@@ -1603,10 +1611,12 @@ class ToolHandlers:
         state = self.sessions.for_request(ctx)
         _advance_turn(state, self.recorder)
         repo_filter: str | None = None
+        worktree_filter: str | None = None
         current_origin: Origin | None = None
         if auto_scope:
             current_origin = capture_origin()
             repo_filter = current_origin.repo
+            worktree_filter = current_origin.worktree_root
 
         excluded = set(state.disabled_scopes)
         scope_counts: dict[str, int] = {}
@@ -1622,7 +1632,16 @@ class ToolHandlers:
                 # with memory_search and the health rollups so the model
                 # can't see "5 memories tagged projects:foo" here and
                 # zero hits in search and have no way to reconcile that.
-                if not should_include_for_caller(memory.origin, repo_filter):
+                # Worktree filter rides through the same helper so the
+                # two surface filters stay in sync; without it, two
+                # worktrees of one repo would disagree about scope counts
+                # vs. search hits, exactly the symmetry this helper exists
+                # to enforce.
+                if not should_include_for_caller(
+                    memory.origin,
+                    repo_filter,
+                    caller_worktree_root=worktree_filter,
+                ):
                     continue
             total += 1
             for scope in memory.scopes:
