@@ -11,6 +11,89 @@ spells out exactly what's stable.
 
 (Empty. Accumulate entries here between tags.)
 
+## 1.5.0 - 2026-05-13
+
+A multi-agent audit pass surfaced six bugs and one missing feature
+spread across the data, search, verify, and origin layers. Six fix
+commits and one feature commit landed off that audit. No on-disk
+format changes — `Origin.worktree_root` is an additive optional field
+and legacy memories without it pass through every new filter
+unchanged. Consumers pinned to `>=1.4.2` upgrade transparently;
+behaviour changes are observable but each one is a bug fix in the
+direction the docstring already promised.
+
+### Added
+
+- `Origin.worktree_root` is captured at write time via
+  `git rev-parse --show-toplevel` and threaded through the auto-scope
+  filter on `memory_search` and `memory_scope_overview`. Fixes the
+  audit's "worktree leakage" scenario where two `git worktree add`
+  checkouts of one repo shared `origin.repo` and so cross-contaminated
+  each other's search results — repo-only matching had no signal to
+  tell sibling worktrees apart, and a memory written from
+  `~/repo-feature/` would surface in a search run from
+  `~/repo-bugfix/`. Worktree filtering rides on the same
+  `auto_scope` toggle as repo filtering (one knob, not two), and a
+  legacy memory with no `worktree_root` field always passes the new
+  filter, so nothing pre-existing gets silently hidden.
+
+### Fixed
+
+- **`migrate.py` durability**: `migrate_origin_in_directory` was the
+  only persistent-write site that bypassed
+  `store._atomic_write_post`'s fsync discipline — bare `write_bytes`
+  + `replace`. POSIX guarantees the rename is atomic but doesn't
+  guarantee the data backing it is on disk; a power loss between
+  rename and the next background flush could leave a zero-byte file
+  at the target path. Now mirrors the helper's flush + fsync_file +
+  rename + fsync_dir sequence.
+- **Unicode tokenization**: `_TOKEN_RE = r"[a-z0-9][a-z0-9\-_]*"`
+  was ASCII-only after `.lower()` reduced casing, so accented
+  codepoints fell out of the character class and `tokenize("Niño café")`
+  returned `['ni', 'o', 'caf']`. Any non-English memory body was
+  effectively unsearchable. Switched to `\w[\w\-]*` so the codepoints
+  stay whole; a query for "café" now finds a memory body about the
+  café del puerto.
+- **Search tiebreaker**: `hits.sort(key=lambda h: (h.score, h.created),
+  reverse=True)` left ordering undefined for two memories sharing
+  both score AND created timestamp — a real case under
+  microsecond-tied writes and clock-mocked tests. Added `h.id` as
+  the final discriminator; ULID-shaped ids sort lexically by time so
+  the tiebreaker also gives "newer wins" semantics.
+- **`store._as_dt` naive-string branch**: the `datetime` branch
+  coerced naive values to UTC-aware before returning, but the `str`
+  branch handed back whatever `datetime.fromisoformat` produced. A
+  hand-edited frontmatter with a *quoted* timestamp like
+  `'last_verified_at: "2025-01-01T10:00:00"'` flowed through the str
+  branch as a naive datetime, then crashed
+  `health.compute_health` on the first `naive < aware_cutoff`
+  comparison. Both branches now coerce to UTC-aware.
+- **Verify staleness boundary**: `age_days >= threshold` made a
+  memory at exactly `stale_after_days` flip from fresh to stale at
+  midnight UTC on the boundary day. The intuitive reading of "fresh
+  for 30 days, then stale" naturally means "stale starts on day 31",
+  so the comparison is now strict-greater on actual elapsed seconds.
+  The `stale_after_days=0` carve-out still works because any
+  measurable elapsed time satisfies `age_seconds > 0`.
+- **`verify.detect_path_drift` `verified_paths` normalisation**:
+  body candidates passed through `_normalize_candidate` (trims
+  trailing punctuation) before the set-membership check, but
+  `verified_paths` only went through `_normalize_for_compare`. So an
+  attestation like `verified_paths=["/path/to/foo,"]` (trailing
+  comma copied from prose) failed to match the body candidate
+  `/path/to/foo` that had already been trimmed. Both sides now run
+  through the same trim/validate pipeline.
+- **`doctor.py` probe-write cleanup**: ENOSPC mid-write could leave
+  a zero-byte `.doctor-probe` file in the user's store directory
+  because the `unlink` was reached only on the success path. Moved
+  to a `finally` arm with `missing_ok=True`.
+- **`semantic.py` flush durability**: `flush_persistent_cache`
+  renamed `.npz.tmp` into place without an explicit `fsync` and
+  orphaned the `.tmp` if `np.savez_compressed` raised mid-write.
+  Added `fsync_file` before close and a cleanup arm on failure;
+  brings the cache flush in line with the rest of the store's
+  durability discipline.
+
 ## 1.4.2 - 2026-05-13
 
 Metadata and CI hygiene. No runtime, wire-shape, or on-disk format
