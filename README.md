@@ -19,7 +19,7 @@ bettermemory inverts the contract. The model calls `memory_search` only when it 
 /plugin install bettermemory@bettermemory
 ```
 
-That is it. Claude Code starts the MCP server, loads a system-prompt-level [skill](plugin/skills/bettermemory/SKILL.md) carrying the opt-in retrieval policy, and on the next turn the model has all 17 memory tools and the discipline to use them correctly. For other clients (Claude Desktop, Cursor, Continue, Cline) and manual setup, see [§ Other MCP clients](#other-mcp-clients) below.
+That is it. Claude Code starts the MCP server, loads a system-prompt-level [skill](plugin/skills/bettermemory/SKILL.md) carrying the opt-in retrieval and proactive writing policies, and on the next turn the model has all 17 memory tools and the discipline to use them correctly. For other clients (Claude Desktop, Cursor, Continue, Cline) and manual setup, see [§ Other MCP clients](#other-mcp-clients) below.
 
 ## How it compares
 
@@ -57,6 +57,7 @@ This question is generic. Claude does not call `memory_search`. The reply is pri
 ## What you get
 
 - **Opt-in retrieval.** `memory_search` is a tool the model calls when it needs context. The default is not to call it. Generic questions stay generic.
+- **Proactive writing.** `memory_write` is a routine reflex, not a special-occasion tool. Four explicit triggers (user states a preference or convention, a project decision the user concurred with, a tool or infrastructure fact entering the work, a unit of work finishing with a why git would not capture) feed into the structural guardrails (durability check, dedup, user-inference pending tier, scope-mismatch check) that make aggressive writing safe. Retrieval is opt-in; writing is the opposite axis. Both calibrated so the model does the right thing without ceremony.
 - **Three staleness signals on every retrieval.** Calendar age (`verification`: never, stale, or fresh), filesystem path drift (`path_drift`: are cited paths still on disk?), and repo commit drift (`commit_drift`: how many commits since the last `memory_verify` in the matching repo). When a signal fires, the model spot-checks before relying. It then either confirms via `memory_verify` or fixes the body via `memory_update` followed by verify. Most memory systems do not have *any* staleness story.
 - **Hand-editable storage.** Memories are markdown and YAML files in `~/.claude-memory/` (or `./.claude-memory/` for project-scoped, or `$BETTERMEMORY_DIR`). No database. No opaque blob. The on-disk format is your data.
 - **A curation surface.** `memory_health` reports dead weight (memories retrieved often but never marked `applied`), heavily-used items, unresolved contradictions, scope typos (singletons within Levenshtein distance 2 of an existing scope), and verification debt (counts of never-verified, stale, and fresh memories). Available as both an MCP tool the model calls and a `bettermemory health` CLI you run by hand.
@@ -90,7 +91,7 @@ If your client is not in the supported list, run `bettermemory init` with no fla
 
 ### How the policy lands at the system-prompt level
 
-Every compliant MCP client surfaces the server's `instructions` block in its system prompt. This is verified empirically on Claude Code 2.1.x, where it appears under "MCP Server Instructions". The block carries the core opt-in retrieval contract: when to call `memory_search`, when not to, the transparency requirement, the verification obligation, and the confirmation-tier policy. Claude Code truncates that block at roughly 1.8 KB, so the body is sized to fit comfortably under the cap with detail pushed into per-tool descriptions.
+Every compliant MCP client surfaces the server's `instructions` block in its system prompt. This is verified empirically on Claude Code 2.1.x, where it appears under "MCP Server Instructions". The block carries the core policy on both axes: opt-in retrieval (when to call `memory_search`, when not to, plus the transparency and verification obligations) and proactive writing (the four triggers and the load-bearing "your job is to capture" summary), together with the confirmation-tier policy for claims about the user. Claude Code truncates that block at roughly 1.8 KB, so the body is sized to fit comfortably under the cap with detail pushed into per-tool descriptions.
 
 The Claude Code plugin path bypasses the truncation entirely. Its [`SKILL.md`](plugin/skills/bettermemory/SKILL.md) carries the long-form policy as a system-prompt-level skill with no cap. For other clients that want the long form, [`docs/system_prompt.md`](docs/system_prompt.md) is the canonical copy-pasteable addendum (also exported as `bettermemory.SYSTEM_PROMPT_ADDENDUM` for programmatic access).
 

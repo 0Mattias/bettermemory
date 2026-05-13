@@ -11,6 +11,92 @@ spells out exactly what's stable.
 
 (Empty. Accumulate entries here between tags.)
 
+## 1.3.2 - 2026-05-13
+
+Writing-policy calibration. The on-disk format, the wire surface,
+every public default, and the 17-tool count are unchanged. Four
+shipped strings did change content (the FastMCP `instructions`
+block, the `memory_write` tool description, the plugin `SKILL.md`,
+and `SYSTEM_PROMPT_ADDENDUM` with the matching fenced block in
+`docs/system_prompt.md`), which is why this rides as a patch
+release rather than a docs-only commit, matching the precedent
+set by 1.3.1. The README was brought up to date alongside, so the
+at-a-glance pitch surfaces the new write-side axis.
+
+Pre-1.3.2 the docs carried the mechanics of writing (durability
+check, dedup, confirmation tiers) but no positive triggers, no
+text telling the model WHEN to write. A reading model defaulted
+to not writing, producing the failure mode where a session
+retrieves memory but records nothing, and the user re-explains
+the same project context every chat. This release adds an
+explicit, symmetric "writing is PROACTIVE" rule to every
+model-facing surface, parallel to the existing "retrieval is
+OPT-IN" rule. The opt-in retrieval contract is preserved verbatim;
+only the write-side calibration changed.
+
+### Changed
+
+- **MCP `instructions` block (`src/bettermemory/server.py`).** Adds
+  a "Writing is the OPPOSITE axis: PROACTIVE" paragraph with the
+  four triggers (user states a preference; a project decision the
+  user concurred with; a tool / infra / config fact entering the
+  work; a unit of work finishing with a why git won't capture) and
+  the load-bearing summary "your job is to capture". The retrieval
+  paragraph was compressed to keep the full block under the
+  1700-char Claude Code truncation budget (1672 chars / 1686 bytes
+  post-edit, 28 chars headroom). The opt-in retrieval contract
+  phrasing ("Memory is OPT-IN retrieval... Default to NOT
+  retrieving.") is preserved verbatim.
+- **`memory_write` tool description (`src/bettermemory/server.py`).**
+  Leads with "Call this PROACTIVELY whenever something durable
+  enters the conversation" and the same four triggers. The previous
+  opening ("Durable facts only") moves to a second paragraph behind
+  the trigger guidance so the trigger lands first on a reading
+  model.
+- **Plugin `SKILL.md` (`plugin/skills/bettermemory/SKILL.md`).**
+  Adds a "When to write" section paralleling the existing "When to
+  retrieve" section, with the same four triggers and an explanation
+  of how the structural guardrails (durability, dedup, pending tier,
+  scope-mismatch) make aggressive writing safe. The Quick-card
+  "Write?" row leads with "proactive, something durable just
+  entered the conversation, then yes."
+- **`SYSTEM_PROMPT_ADDENDUM` (`src/bettermemory/prompts.py`) and the
+  matching fenced block in `docs/system_prompt.md`.** Adds the
+  identical PROACTIVE-writing preamble and four-trigger list at the
+  top of the "Writing and updating memory" section, before the
+  existing mechanics bullets. The drift test in
+  `tests/test_prompts.py` continues to pin these to byte-equality.
+- **`README.md`.** "What you get" gains a sibling **Proactive
+  writing** bullet next to the existing **Opt-in retrieval**
+  bullet so the dual-axis framing is visible on the at-a-glance
+  pitch. The "Install in Claude Code" line names both policies the
+  SKILL carries (previously: just "the opt-in retrieval policy"),
+  and the "How the policy lands at the system-prompt level"
+  paragraph names the proactive-writing rule alongside the
+  retrieval contract.
+
+### Added
+
+- **`must_have` regression in `tests/test_server.py` for the
+  writing-side calibration.** The existing instructions-block
+  regression test now asserts the rendered block contains the
+  load-bearing write-side phrases (`"memory_write"`, `"PROACTIVE"`,
+  and `"your job is to capture"`) alongside the existing
+  retrieval-side phrases. Without this, a future shorten-pass could
+  silently un-do the write-side calibration the way the project's
+  previous "lock writing down further" regression nearly did on the
+  retrieval side.
+
+### Fixed
+
+- **`CHANGELOG.md` 1.3.0 heading restored.** The
+  `## 1.3.0 - 2026-05-10` heading went missing in an earlier edit,
+  leaving the 1.3.0 entry's body content (the `category` parameter
+  on `memory_update` and the slug-builder double-date fix) visually
+  merged into the 1.3.1 entry. The heading is restored above the
+  orphaned "Same-day minor following 1.2.2" rationale paragraph; no
+  entry body content changed.
+
 ## 1.3.1 - 2026-05-10
 
 Documentation and prose pass. The on-disk format, the wire surface,
@@ -49,7 +135,7 @@ phrases.
   no-em-dash style. Historical entry bodies were left alone (they
   are immutable release records).
 
-
+## 1.3.0 - 2026-05-10
 
 Same-day minor following 1.2.2. Two surface changes shaken out by a
 maintenance audit pass: an additive `category` parameter on
