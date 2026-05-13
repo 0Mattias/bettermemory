@@ -32,6 +32,26 @@ from bettermemory.config import (
 )
 
 
+def _set_fake_home(monkeypatch: pytest.MonkeyPatch, home: Path) -> None:
+    """Cross-platform `~` redirect.
+
+    `Path.home()` and `Path.expanduser()` consult different env vars per
+    platform: POSIX reads `HOME`; Windows reads `USERPROFILE` first, then
+    falls back to `HOMEDRIVE` + `HOMEPATH`. Setting only `HOME` works on
+    Linux and macOS but is a no-op on Windows — `~` still expands to the
+    real `C:\\Users\\runneradmin`, which is why the CI Windows jobs were
+    hitting assertion failures against the runner's actual home.
+
+    Set all three so the redirect is hermetic on every supported runner,
+    and clear `HOMEDRIVE`/`HOMEPATH` to avoid the documented Windows
+    fallback override when `USERPROFILE` is somehow ignored.
+    """
+    monkeypatch.setenv("HOME", str(home))
+    monkeypatch.setenv("USERPROFILE", str(home))
+    monkeypatch.delenv("HOMEDRIVE", raising=False)
+    monkeypatch.delenv("HOMEPATH", raising=False)
+
+
 # ---------------------------------------------------------------------------
 # DEFAULT_CONFIG sanity
 # ---------------------------------------------------------------------------
@@ -272,7 +292,7 @@ def test_resolved_directory_env_var_expands_user(
     """`~` in the env override expands via `Path.expanduser()` — otherwise
     it would be taken as a literal directory name and create a stray
     `./~` on the user's machine."""
-    monkeypatch.setenv("HOME", str(tmp_path))
+    _set_fake_home(monkeypatch, tmp_path)
     monkeypatch.setenv(ENV_DIR_OVERRIDE, "~/from-env")
 
     cfg = Config()
@@ -305,7 +325,7 @@ def test_resolved_directory_project_scoped_wins_over_global(
     monkeypatch.delenv(ENV_DIR_OVERRIDE, raising=False)
     fake_home = tmp_path / "home"
     fake_home.mkdir()
-    monkeypatch.setenv("HOME", str(fake_home))
+    _set_fake_home(monkeypatch, fake_home)
 
     project = tmp_path / "project"
     project.mkdir()
@@ -324,7 +344,7 @@ def test_resolved_directory_falls_back_to_global(
     monkeypatch.delenv(ENV_DIR_OVERRIDE, raising=False)
     fake_home = tmp_path / "home"
     fake_home.mkdir()
-    monkeypatch.setenv("HOME", str(fake_home))
+    _set_fake_home(monkeypatch, fake_home)
     cwd = tmp_path / "cwd"
     cwd.mkdir()  # no .claude-memory subdir
 
@@ -342,7 +362,7 @@ def test_resolved_directory_ignores_project_dir_that_is_a_file(
     monkeypatch.delenv(ENV_DIR_OVERRIDE, raising=False)
     fake_home = tmp_path / "home"
     fake_home.mkdir()
-    monkeypatch.setenv("HOME", str(fake_home))
+    _set_fake_home(monkeypatch, fake_home)
     cwd = tmp_path / "cwd"
     cwd.mkdir()
     (cwd / ".claude-memory").write_text("not a directory", encoding="utf-8")
