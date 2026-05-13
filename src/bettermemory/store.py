@@ -17,6 +17,7 @@ from pathlib import Path
 from typing import Iterator
 
 from . import _frontmatter as frontmatter
+from ._fsutil import fsync_dir, fsync_file
 
 # We use a vendored frontmatter parser (`_frontmatter.py`) which pins the
 # pure-Python yaml.SafeLoader / yaml.SafeDumper. Two reasons:
@@ -447,12 +448,17 @@ class Store:
             target = self.tombstone_dir / (f"{path.stem}.{memory_id}.tombstone.md")
 
         with _locked(path):
-            target.write_bytes(frontmatter.dumps(post).encode("utf-8"))
+            _atomic_write_post(target, post)
             try:
                 path.unlink()
             except OSError as exc:
                 if exc.errno != errno.ENOENT:
                     raise
+            # fsync the source directory too: the unlink is a metadata
+            # change that needs to survive a crash, otherwise we could
+            # come back to BOTH the tombstone and the original active
+            # file existing (a soft form of double-bookkeeping).
+            fsync_dir(path.parent)
         return target
 
     # ---- tombstone read paths --------------------------------------------
@@ -663,7 +669,7 @@ class Store:
             active_path = self.root / build_filename(created, f"{slug}-{short}")
 
         with _locked(active_path):
-            active_path.write_bytes(frontmatter.dumps(post).encode("utf-8"))
+            _atomic_write_post(active_path, post)
             try:
                 tombstone_path.unlink()
             except OSError as exc:
@@ -672,6 +678,10 @@ class Store:
                     # is recoverable but we still want to surface the IO
                     # error so the caller doesn't think the move was clean.
                     raise
+            # Symmetric to tombstone(): fsync the tombstone dir so the
+            # unlink is durable. Without this, a crash could resurrect
+            # the tombstone alongside the restored active file.
+            fsync_dir(tombstone_path.parent)
 
         return self._load_path(active_path)
 
@@ -746,7 +756,13 @@ class Store:
                     continue
                 post.metadata["scopes"] = new_scopes_or_none
                 with _locked(tpath):
-                    tpath.write_bytes(frontmatter.dumps(post).encode("utf-8"))
+                    # Atomic in-place rewrite via tmp+rename. The previous
+                    # implementation used `write_bytes`, which truncates
+                    # and rewrites in place — a crash mid-write would leave
+                    # the tombstone partially written. The active-side
+                    # rename_scope path goes through `_write_path` which
+                    # already does this; mirror it here.
+                    _atomic_write_post(tpath, post)
                 tombstoned_changed.append(str(post.metadata.get("id")))
 
         return {"active": active_changed, "tombstoned": tombstoned_changed}
@@ -887,15 +903,37 @@ class Store:
         if memory.verified_versions:
             meta["verified_versions"] = list(memory.verified_versions)
         post.metadata = meta
-        # Atomic-ish write: write to .tmp then rename.
-        tmp = path.with_suffix(path.suffix + ".tmp")
-        tmp.write_bytes(frontmatter.dumps(post).encode("utf-8"))
-        tmp.replace(path)
+        _atomic_write_post(path, post)
 
 
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
+
+def _atomic_write_post(path: Path, post: frontmatter.Post) -> None:
+    """Atomic, durable write of a frontmatter Post to `path`.
+
+    Write-to-tmp, fsync the file, rename into place, fsync the parent
+    directory. The rename alone is POSIX-atomic for the directory entry,
+    but without fsync on the file we can end up with a renamed-but-empty
+    file after power loss (the entry exists, the bytes never reached
+    disk); without fsync on the directory the rename itself isn't
+    durable past a crash. Both fsyncs are best-effort — see `_fsutil`
+    for the platform/filesystem caveats.
+
+    One helper, one definition of "durable write" for every persistent
+    write in the store: new memories, tombstones, restores, and
+    rename_scope in-place edits all share this pattern.
+    """
+    tmp = path.with_suffix(path.suffix + ".tmp")
+    data = frontmatter.dumps(post).encode("utf-8")
+    with tmp.open("wb") as f:
+        f.write(data)
+        f.flush()
+        fsync_file(f.fileno())
+    tmp.replace(path)
+    fsync_dir(path.parent)
 
 
 def _as_dt(value: object) -> datetime:

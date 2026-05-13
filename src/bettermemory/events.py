@@ -34,6 +34,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Iterator
 
+from ._fsutil import fsync_dir, fsync_file
+
 log = logging.getLogger("bettermemory.events")
 
 
@@ -123,8 +125,14 @@ class Recorder:
                 self._rotate_if_needed()
                 # Append-binary so we control line endings explicitly across
                 # platforms and don't fight Python's text-mode translation.
+                # fsync the file after each event so the audit log survives
+                # a crash. One event per tool call, so the fsync cost is
+                # negligible compared to the value of not losing audit
+                # records in a power-loss scenario.
                 with self.path.open("ab") as f:
                     f.write(line.encode("utf-8"))
+                    f.flush()
+                    fsync_file(f.fileno())
         except Exception as exc:  # noqa: BLE001 — never break the caller.
             log.warning("event log write failed (kind=%s): %s", kind, exc)
 
@@ -169,7 +177,22 @@ class Recorder:
                     if not chunk:
                         break
                     dst.write(chunk)
+                # fsync the archive's underlying file before unlinking the
+                # source — losing the archive after the unlink would mean
+                # losing rotated events to a crash. `gzip.open` returns a
+                # GzipFile wrapping a real file; `.fileno()` is the wrapped
+                # fd. Best-effort; if the wrapper doesn't expose a fileno
+                # on this Python/gzip version, swallow and proceed.
+                try:
+                    fsync_file(dst.fileno())
+                except (AttributeError, OSError):
+                    pass
             self.path.unlink()
+            # fsync the directory so the unlink + archive creation are
+            # both durable. Without this, a crash here could leave us
+            # with the original log still present AND the archive, or
+            # with neither (depending on what was flushed first).
+            fsync_dir(self.root)
         except OSError as exc:
             log.warning("event log rotation failed: %s", exc)
 
