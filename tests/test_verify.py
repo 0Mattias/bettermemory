@@ -462,6 +462,32 @@ def test_has_drift_only_when_missing_nonempty() -> None:
     assert drifted.has_drift is True
 
 
+def test_verified_paths_match_after_extractor_normalises_body_candidate(
+    tmp_path: Path,
+) -> None:
+    """The audit caught an asymmetry: body candidates pass through
+    `_normalize_candidate` (which trims trailing punctuation) before
+    the `_normalize_for_compare` set-membership check, but
+    `verified_paths` only went through the latter. So a perfectly
+    valid attestation like `verified_paths=["/path/to/foo,"]` (with a
+    trailing comma copied from prose) failed to match a body
+    candidate `/path/to/foo` (already trimmed). After the fix both
+    sides go through the same trim/validate pipeline."""
+    real = tmp_path / "config"
+    real.mkdir()
+    body = f"see `{real}` for the layout"
+    # Caller attests with a trailing comma — what naturally happens
+    # when copying a path out of prose.
+    report = detect_path_drift(
+        body,
+        verified_paths=[f"{real},"],
+    )
+    assert tuple(report.verified) == (str(real),)
+    # And the inverse — without the fix, the verified set would have
+    # been empty and `verified` would be `()`.
+    assert report.has_drift is False
+
+
 # ---------------------------------------------------------------------------
 # Backtick-extraction edge cases — the validator runs against any string
 # inside backticks, so it has to defend against shapes the bare regex
@@ -584,11 +610,27 @@ def test_verification_stale_past_default_window() -> None:
     assert "memory_verify" in status.recommendation
 
 
-def test_verification_boundary_at_threshold_is_stale() -> None:
-    """Exactly at the threshold boundary the memory is stale, not
-    fresh — the fresh window is strictly less-than. Pin the
-    contract so a future tweak can't quietly invert the sign."""
+def test_verification_boundary_at_threshold_is_fresh() -> None:
+    """Exactly at the threshold boundary the memory is still fresh —
+    the stale window is strictly greater-than, so a memory with
+    `last_verified_at == now - 30 days` reads as fresh and only flips
+    to stale once it crosses the threshold by any measurable amount.
+    The audit reframed this from the previous "stale at the boundary"
+    semantic because the calendar reading of "fresh for 30 days, then
+    stale" naturally means "stale starts on day 31", and the previous
+    behaviour produced a midnight-UTC verdict flip on day 30 instead.
+    Pin the contract so a future tweak can't quietly invert the sign."""
     last_verified = _NOW - timedelta(days=DEFAULT_VERIFICATION_STALE_DAYS)
+    status = compute_verification_status(last_verified, now=_NOW)
+    assert status.status == "fresh"
+
+
+def test_verification_just_over_threshold_is_stale() -> None:
+    """One second past the threshold flips to stale — pairs with
+    `boundary_at_threshold_is_fresh` to lock the strict-greater
+    boundary on the seconds-resolution comparison."""
+    threshold = DEFAULT_VERIFICATION_STALE_DAYS
+    last_verified = _NOW - timedelta(days=threshold) - timedelta(seconds=1)
     status = compute_verification_status(last_verified, now=_NOW)
     assert status.status == "stale"
 

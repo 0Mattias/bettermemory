@@ -228,7 +228,23 @@ def detect_path_drift(
     if not candidates:
         return PathDriftReport(checked=(), missing=(), verified=())
 
-    verified_set = {_normalize_for_compare(p) for p in verified_paths if p}
+    # Run verified_paths through the same trim/validate pipeline the body
+    # candidates pass through (`_normalize_candidate`) before the
+    # `_normalize_for_compare` pass that handles `~`-expansion. Without
+    # this, an attestation like `/etc/foo.conf,` (extracted from prose
+    # with a trailing comma) would not match the body candidate
+    # `/etc/foo.conf` (already trimmed) — the audit flagged the
+    # asymmetry between the two normalisation paths. We keep the
+    # validator's `None` rejection in the same step so `verified_paths`
+    # can't introduce shapes the extractor would itself have dropped.
+    verified_set: set[str] = set()
+    for raw in verified_paths:
+        if not raw:
+            continue
+        candidate = _normalize_candidate(raw)
+        if candidate is None:
+            continue
+        verified_set.add(_normalize_for_compare(candidate))
     verified_set.discard("")
 
     checked: list[str] = []
@@ -574,6 +590,18 @@ def compute_verification_status(
     that want the stale-recommendation branch without sleeping. A
     negative value behaves the same as 0 (clamped), to avoid a silent
     inverted comparison.
+
+    Boundary semantic: the comparison is strict-greater on the actual
+    elapsed seconds (not the floored day count), so a memory at
+    exactly `stale_after_days` of age is still fresh and only flips
+    to stale once it crosses the threshold. The intuitive reading of
+    "fresh for 30 days, then stale" then matches the implementation —
+    without the strict boundary the verdict flipped at midnight UTC
+    on day 30 instead of day 31, the audit's "fresh at 23:59, stale
+    at 00:01" surprise. Comparing in seconds (rather than the floored
+    `age_days`) keeps the zero-threshold carve-out intact: any
+    measurable elapsed time satisfies `age_seconds > 0`, so
+    `stale_after_days=0` still flips immediately.
     """
     threshold = max(0, stale_after_days)
 
@@ -591,8 +619,9 @@ def compute_verification_status(
 
     age_seconds = max(0.0, (now - last_verified_at).total_seconds())
     age_days = int(age_seconds // 86400)
+    threshold_seconds = threshold * 86400
 
-    if age_days >= threshold:
+    if age_seconds > threshold_seconds:
         return VerificationStatus(
             status="stale",
             last_verified_at=last_verified_at,
