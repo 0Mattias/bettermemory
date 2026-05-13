@@ -9,9 +9,23 @@ Tracked here:
   outcome by calling `memory_record_use(memory_ids=[...], outcome=...)`
   before the token expires.
 
-MCP servers run one process per client, so a module-level singleton is fine
-for the MVP — see Limitations in README. Phase 2 may push this into SQLite
-if multi-session sharing becomes useful.
+For the stdio transport (one MCP client per server process), a single
+`SessionState` is correct: there's exactly one client to track. For
+transports that serve multiple clients from one server process (HTTP,
+SSE), each client needs its own state — otherwise client A's pending
+write could be confirmed by client B, and client A's `disabled_scopes`
+would silently bleed into client B's searches. The `SessionRegistry`
+in this module is the routing layer: it hands out (and lazily creates)
+a distinct `SessionState` per client identifier.
+
+The single-state and registry shapes are unified through the
+`SessionSource` protocol so tests can pass a concrete `SessionState`
+directly (no per-client routing needed when there's only one) and
+production can pass a `SessionRegistry` (per-client when a stable
+client_id is available, falling back to a shared "default" state when
+not). `server._register_tools` calls `sessions.for_request(ctx)` at
+the entry of every tool handler; the resolution layer is invisible
+to the handler bodies.
 """
 
 from __future__ import annotations
@@ -19,7 +33,20 @@ from __future__ import annotations
 import secrets
 import time
 from dataclasses import dataclass, field
-from typing import Any
+from typing import TYPE_CHECKING, Any, Protocol, TypeAlias
+
+if TYPE_CHECKING:
+    # `mcp.server.fastmcp.Context` is the FastMCP request-scoped context
+    # that exposes `client_id` and `request_id`. It's imported under
+    # TYPE_CHECKING so the session module stays usable in environments
+    # that don't have the MCP server extras loaded (the same way the
+    # rest of the package handles optional imports). `Context` is
+    # generic over three type parameters that callers here don't
+    # constrain — alias it as `_Ctx` so mypy gets the explicit
+    # `Any, Any, Any` once instead of every annotation site repeating it.
+    from mcp.server.fastmcp import Context
+
+    _Ctx: TypeAlias = Context[Any, Any, Any]
 
 
 # Pending writes expire after this many seconds — keeps stale entries from
@@ -236,10 +263,120 @@ class SessionState:
         self.pending_writes.clear()
         self.pending_use_tokens.clear()
 
+    # ---- SessionSource protocol -----------------------------------------
 
-# Singleton — server.py imports this and threads it into tool handlers.
-_state = SessionState()
+    def for_request(self, ctx: "_Ctx | None") -> "SessionState":
+        """Return this state regardless of `ctx`.
+
+        Lets a bare `SessionState` satisfy the `SessionSource` protocol,
+        so tests that construct a single state and pass it into
+        `build_server(state=...)` keep working — the handlers call
+        `state.for_request(ctx)` uniformly and get the same instance
+        back. Per-client routing only kicks in when a `SessionRegistry`
+        is used instead.
+        """
+        return self
+
+
+class SessionSource(Protocol):
+    """The minimum interface every tool handler depends on for state.
+
+    Both `SessionState` (single-state, test-friendly) and
+    `SessionRegistry` (per-client routing, production-friendly) satisfy
+    this protocol, so `_register_tools` can take either without
+    branching. `for_request(ctx)` is the entry point: pass the
+    FastMCP `Context` (or `None` when not running under FastMCP) and
+    receive the right `SessionState` for this request.
+    """
+
+    def for_request(self, ctx: "_Ctx | None") -> SessionState: ...
+
+
+# Key under which clients that don't expose a stable identifier (e.g.
+# stdio transport, where `ctx.client_id` may be None) share a single
+# SessionState. Anything else opts into per-client isolation by passing
+# a real client_id through.
+_DEFAULT_CLIENT_KEY = "__default__"
+
+
+@dataclass
+class SessionRegistry:
+    """Per-client `SessionState` map for multi-client server processes.
+
+    Keys are FastMCP `client_id` strings (or `_DEFAULT_CLIENT_KEY` when
+    the transport doesn't supply one). States are created lazily on
+    first `for_request` for a given key, so an idle client doesn't
+    pre-allocate anything. Eviction is not currently performed — the
+    state objects are small (a handful of dicts) and the realistic
+    fan-out is one-digit clients per server process. If a long-running
+    server starts seeing hundreds of distinct client_ids, swap the
+    plain dict for an LRU.
+
+    The registry is intentionally a stateful object rather than a
+    module-level singleton: tests construct fresh ones via
+    `SessionRegistry()`, and the package-level `get_default_registry()`
+    is the single production instance shared across `main()` calls in
+    the same process.
+    """
+
+    _states: dict[str, SessionState] = field(default_factory=dict)
+
+    def for_request(self, ctx: "_Ctx | None") -> SessionState:
+        key = self._key_for_ctx(ctx)
+        state = self._states.get(key)
+        if state is None:
+            state = SessionState()
+            self._states[key] = state
+        return state
+
+    @staticmethod
+    def _key_for_ctx(ctx: "_Ctx | None") -> str:
+        if ctx is None:
+            return _DEFAULT_CLIENT_KEY
+        try:
+            client_id = ctx.client_id
+        except (AttributeError, ValueError):
+            # `ctx.client_id` reads the request context and may raise
+            # ValueError if no request is in progress (FastMCP construct
+            # outside a tool call). Treat that as "no identifier" and
+            # bucket into the default; the alternative would be to
+            # crash the tool call for a degenerate context shape.
+            return _DEFAULT_CLIENT_KEY
+        if not client_id:
+            return _DEFAULT_CLIENT_KEY
+        return str(client_id)
+
+    def known_keys(self) -> set[str]:
+        """Snapshot of the registered session keys. Test-only; lets
+        suites assert that two distinct clients produced two distinct
+        states, or that one client reused the same state across calls."""
+        return set(self._states)
+
+
+# Process-wide default registry. `main()` uses this; tests that want
+# isolation construct their own via `SessionRegistry()`.
+_default_registry = SessionRegistry()
+
+
+def get_default_registry() -> SessionRegistry:
+    """Return the process-wide default registry.
+
+    Production code reaches for this when no explicit registry was
+    passed; tests construct their own to keep per-test state
+    isolated. The registry is mutable, so callers that depend on
+    starting clean should construct their own — don't rely on
+    `get_default_registry()` being empty.
+    """
+    return _default_registry
 
 
 def get_state() -> SessionState:
-    return _state
+    """Back-compat shim for callers that want a single `SessionState`.
+
+    Equivalent to `get_default_registry().for_request(None)` — returns
+    the "no-client-id" entry of the process-wide registry. Existing
+    tests and the stdio-transport entry point keep working; new code
+    that wants per-client isolation should call `for_request(ctx)` on
+    a registry instead.
+    """
+    return _default_registry.for_request(None)

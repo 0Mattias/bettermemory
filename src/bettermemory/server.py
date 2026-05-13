@@ -24,9 +24,9 @@ import logging
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any
+from typing import Any, TypeAlias
 
-from mcp.server.fastmcp import FastMCP
+from mcp.server.fastmcp import Context as _FastMCPContext, FastMCP
 
 from .config import Config, load_config
 from .durability import TransientMatch, find_transient_markers
@@ -36,7 +36,15 @@ from .origin import (
     Origin,
     capture as capture_origin,
     commit_author_timestamps,
+    # `should_include_for_caller` for "should this memory surface to a
+    # caller in repo X" filtering (auto-scope on search / scope_overview);
+    # `repos_match` for "is this memory anchored to the caller's repo so
+    # we can compute commit drift against it" (a stricter check that
+    # rejects global memories, since there's nothing to count commits
+    # against). Mixing the two would either over-surface drift signals
+    # for global memories or under-surface global memories on search.
     repos_match,
+    should_include_for_caller,
 )
 from .models import (
     Category,
@@ -57,7 +65,11 @@ from .scope_match import (
     detect_scope_mismatch,
 )
 from .search import find_similar, find_similar_tombstones, search as run_search
-from .session import SessionState, get_state
+from .session import (
+    SessionSource,
+    SessionState,
+    get_default_registry,
+)
 from .store import (
     MemoryNotFoundError,
     NotTombstonedError,
@@ -73,6 +85,17 @@ from .verify import (
 
 
 log = logging.getLogger("bettermemory")
+
+
+# Local alias filling FastMCP's three generic params with Any — the handlers
+# only ever read `ctx.client_id`, never the typed lifespan/request/session
+# data, so unconstrained generics are the right shape. Aliasing once via
+# `TypeAlias` (not a bare runtime assignment) keeps every handler
+# signature readable AND keeps strict checkers happy — a plain
+# `Context = X[Any, ...]` would type-check on mypy but trip
+# "Variable not allowed in type expression" on Pyright/Pylance. Kept
+# below the import block to satisfy ruff's E402 (imports first).
+Context: TypeAlias = _FastMCPContext[Any, Any, Any]
 
 
 # ---------------------------------------------------------------------------
@@ -149,23 +172,49 @@ def build_server(
     *,
     config: Config | None = None,
     store: Store | None = None,
-    state: SessionState | None = None,
+    state: SessionState | SessionSource | None = None,
     recorder: Recorder | None = None,
 ) -> FastMCP:
     """Return a configured FastMCP instance.
 
-    Tests pass in their own `store`, `state`, and `recorder` to keep things
-    hermetic. The real entry point in `main()` lets `load_config` resolve
-    everything. When `recorder` is None, one is constructed from `config` —
-    `enabled=False` in the telemetry config makes every event a no-op.
+    Tests pass in their own `store`, `state`, and `recorder` to keep
+    things hermetic. The real entry point in `main()` lets
+    `load_config` resolve everything. When `recorder` is None, one is
+    constructed from `config` — `enabled=False` in the telemetry
+    config makes every event a no-op.
+
+    The `state` argument accepts two shapes:
+
+    * A bare `SessionState` (back-compat / single-client tests):
+      every request resolves to the same state regardless of the
+      FastMCP `Context.client_id`. The MVP single-process/stdio
+      assumption — what every test in the suite still uses.
+    * A `SessionRegistry` (multi-client): each distinct
+      `Context.client_id` gets its own `SessionState`, so pending
+      writes / disabled scopes / use-tokens from one MCP client
+      can't leak into another. `main()` uses the
+      process-wide `get_default_registry()` for production runs.
+
+    Passing `state=None` defaults to the process-wide registry. The
+    recorder's `session_id` is still a process-level audit tag
+    (per-client event correlation is a separate concern); for the
+    common stdio case the recorder session_id matches the resolved
+    state's session_id, so this is identical to the old behavior.
     """
     config = config or load_config()
     store = store or Store(config.resolved_directory())
-    state = state or get_state()
+    sessions: SessionSource = state if state is not None else get_default_registry()
     if recorder is None:
+        # The recorder needs a stable session_id at construction time;
+        # in the multi-client SessionRegistry case there isn't one
+        # canonical session_id (each client has its own), so we read
+        # the "default" (no-ctx) state to get something stable. Single-
+        # client tests pass a SessionState directly and get that same
+        # state's session_id — unchanged from the pre-registry behavior.
+        recorder_session_id = sessions.for_request(None).session_id
         recorder = Recorder(
             root=config.resolved_directory(),
-            session_id=state.session_id,
+            session_id=recorder_session_id,
             enabled=config.telemetry.enabled,
             max_bytes=config.telemetry.max_bytes,
         )
@@ -231,7 +280,9 @@ def build_server(
         ),
     )
 
-    _register_tools(mcp, config=config, store=store, state=state, recorder=recorder)
+    _register_tools(
+        mcp, config=config, store=store, sessions=sessions, recorder=recorder
+    )
     return mcp
 
 
@@ -268,9 +319,16 @@ def _register_tools(
     *,
     config: Config,
     store: Store,
-    state: SessionState,
+    sessions: SessionSource,
     recorder: Recorder,
 ) -> None:
+    # `sessions` is the SessionSource captured by every handler. Each
+    # handler resolves its per-request `state` by calling
+    # `sessions.for_request(ctx)` at entry, before `_advance_turn` —
+    # either the same shared SessionState (when a bare SessionState
+    # is passed) or the per-client SessionState (when a SessionRegistry
+    # is passed). The handler body uses the resolved `state` exactly
+    # as before; the routing layer is invisible past the entry line.
     # ---- memory_search ---------------------------------------------------
 
     @mcp.tool(
@@ -334,7 +392,9 @@ def _register_tools(
         max_results: int | None = None,
         expand_top: bool = False,
         auto_scope: bool = True,
+        ctx: Context | None = None,
     ) -> list[dict[str, Any]]:
+        state = sessions.for_request(ctx)
         _advance_turn(state, recorder)
         if max_results is None:
             max_results = config.behavior.default_max_results
@@ -503,7 +563,8 @@ def _register_tools(
             "matching repo or the memory has never been verified."
         ),
     )
-    async def memory_show(id: str) -> dict[str, Any]:
+    async def memory_show(id: str, ctx: Context | None = None) -> dict[str, Any]:
+        state = sessions.for_request(ctx)
         _advance_turn(state, recorder)
         try:
             memory = store.load_one(id)
@@ -676,12 +737,14 @@ def _register_tools(
         acknowledge_transient: bool = False,
         acknowledge_scope_mismatch: bool = False,
         category: str = "fact",
+        ctx: Context | None = None,
     ) -> dict[str, Any]:
         # `_advance_turn` keeps the per-session turn counter monotonic
         # for the auto-`record_use` flow even on calls that don't touch
         # search/show. We bump first so any pending use-tokens that
         # crossed their TTL get auto-committed before this write fires
         # its own event.
+        state = sessions.for_request(ctx)
         _advance_turn(state, recorder)
         payload = _validate_write_payload(
             content=content,
@@ -971,7 +1034,10 @@ def _register_tools(
             "Pass the pending_id from that response."
         ),
     )
-    async def memory_write_confirm(pending_id: str) -> dict[str, Any]:
+    async def memory_write_confirm(
+        pending_id: str, ctx: Context | None = None
+    ) -> dict[str, Any]:
+        state = sessions.for_request(ctx)
         _advance_turn(state, recorder)
         pending = state.take_pending(pending_id)
         if pending is None:
@@ -995,7 +1061,10 @@ def _register_tools(
             "Pass the pending_id from the original write response."
         ),
     )
-    async def memory_write_cancel(pending_id: str) -> dict[str, Any]:
+    async def memory_write_cancel(
+        pending_id: str, ctx: Context | None = None
+    ) -> dict[str, Any]:
+        state = sessions.for_request(ctx)
         _advance_turn(state, recorder)
         existed = state.cancel_pending(pending_id)
         recorder.record("write_cancel", pending_id=pending_id, existed=existed)
@@ -1028,7 +1097,9 @@ def _register_tools(
         scopes: list[str] | None = None,
         confidence: str | None = None,
         category: str | None = None,
+        ctx: Context | None = None,
     ) -> dict[str, Any]:
+        state = sessions.for_request(ctx)
         _advance_turn(state, recorder)
         if (
             content is None
@@ -1148,7 +1219,9 @@ def _register_tools(
     async def memory_list(
         scopes: list[str] | None = None,
         with_bodies: bool = False,
+        ctx: Context | None = None,
     ) -> list[dict[str, Any]]:
+        state = sessions.for_request(ctx)
         _advance_turn(state, recorder)
         if scopes:
             scopes = [validate_scope(s) for s in scopes]
@@ -1210,7 +1283,10 @@ def _register_tools(
             "memory_restore(id) to undo an accidental removal."
         ),
     )
-    async def memory_remove(id: str, reason: str) -> dict[str, Any]:
+    async def memory_remove(
+        id: str, reason: str, ctx: Context | None = None
+    ) -> dict[str, Any]:
+        state = sessions.for_request(ctx)
         _advance_turn(state, recorder)
         if not reason or not reason.strip():
             raise ValueError("reason must be a non-empty string")
@@ -1243,7 +1319,9 @@ def _register_tools(
     )
     async def memory_list_tombstones(
         scopes: list[str] | None = None,
+        ctx: Context | None = None,
     ) -> list[dict[str, Any]]:
+        state = sessions.for_request(ctx)
         _advance_turn(state, recorder)
         if scopes:
             scopes = [validate_scope(s) for s in scopes]
@@ -1276,7 +1354,8 @@ def _register_tools(
             "log even after restore."
         ),
     )
-    async def memory_restore(id: str) -> dict[str, Any]:
+    async def memory_restore(id: str, ctx: Context | None = None) -> dict[str, Any]:
+        state = sessions.for_request(ctx)
         _advance_turn(state, recorder)
         try:
             memory = store.restore(id)
@@ -1350,7 +1429,9 @@ def _register_tools(
         window_days: int = 30,
         heavily_used_top_k: int = 10,
         min_applied: int | None = None,
+        ctx: Context | None = None,
     ) -> dict[str, Any]:
+        state = sessions.for_request(ctx)
         _advance_turn(state, recorder)
         # Falling through to the configured default lets the tool stay
         # ergonomic for the common case (don't pass anything, get the
@@ -1408,6 +1489,7 @@ def _register_tools(
         memory_ids: list[str],
         outcome: str,
         note: str | None = None,
+        ctx: Context | None = None,
     ) -> dict[str, Any]:
         if not memory_ids:
             raise ValueError("memory_ids must contain at least one entry")
@@ -1429,6 +1511,7 @@ def _register_tools(
         # *future* auto-commit for the same id doesn't fire either —
         # the model has spoken, the auto-commit is settled.
         override_set = set(memory_ids)
+        state = sessions.for_request(ctx)
         _advance_turn(state, recorder, override_ids=override_set)
         for mid in memory_ids:
             state.purge_use_token(mid)
@@ -1483,7 +1566,9 @@ def _register_tools(
         verified_paths: list[str] | None = None,
         verified_commits: list[str] | None = None,
         verified_versions: list[str] | None = None,
+        ctx: Context | None = None,
     ) -> dict[str, Any]:
+        state = sessions.for_request(ctx)
         _advance_turn(state, recorder)
         if note is not None and not isinstance(note, str):
             raise ValueError("note must be a string if provided")
@@ -1549,7 +1634,9 @@ def _register_tools(
     )
     async def memory_scope_overview(
         auto_scope: bool = True,
+        ctx: Context | None = None,
     ) -> dict[str, Any]:
+        state = sessions.for_request(ctx)
         _advance_turn(state, recorder)
         repo_filter: str | None = None
         current_origin: Origin | None = None
@@ -1566,13 +1653,12 @@ def _register_tools(
             if excluded and (memory_scope_set & excluded):
                 continue
             if repo_filter is not None:
-                memory_repo = memory.origin.repo if memory.origin else None
-                # Reuse the same repos_match semantics as memory_search so
-                # this tool's `current_repo` filter is bit-identical to
-                # the search filter — otherwise the model would see
-                # "5 memories tagged projects:foo" here and zero hits in
-                # search and have no way to reconcile that.
-                if not repos_match(memory_repo, repo_filter):
+                # `should_include_for_caller` is the single definition of
+                # "this memory belongs to this caller's project" — shared
+                # with memory_search and the health rollups so the model
+                # can't see "5 memories tagged projects:foo" here and
+                # zero hits in search and have no way to reconcile that.
+                if not should_include_for_caller(memory.origin, repo_filter):
                     continue
             total += 1
             for scope in memory.scopes:
@@ -1630,7 +1716,10 @@ def _register_tools(
             "unrelated to project X'. Resets when the server restarts."
         ),
     )
-    async def memory_scope_disable(scope: str) -> dict[str, Any]:
+    async def memory_scope_disable(
+        scope: str, ctx: Context | None = None
+    ) -> dict[str, Any]:
+        state = sessions.for_request(ctx)
         _advance_turn(state, recorder)
         clean = validate_scope(scope)
         state.disable(clean)
@@ -1641,7 +1730,10 @@ def _register_tools(
         name="memory_scope_enable",
         description=("Re-enable a previously disabled scope for this session."),
     )
-    async def memory_scope_enable(scope: str) -> dict[str, Any]:
+    async def memory_scope_enable(
+        scope: str, ctx: Context | None = None
+    ) -> dict[str, Any]:
+        state = sessions.for_request(ctx)
         _advance_turn(state, recorder)
         clean = validate_scope(scope)
         state.enable(clean)
@@ -1672,7 +1764,9 @@ def _register_tools(
         old_scope: str,
         new_scope: str,
         include_tombstones: bool = True,
+        ctx: Context | None = None,
     ) -> dict[str, Any]:
+        state = sessions.for_request(ctx)
         _advance_turn(state, recorder)
         clean_old = validate_scope(old_scope)
         clean_new = validate_scope(new_scope)
@@ -2560,7 +2654,12 @@ def _cli_serve() -> None:
         "scope-hygiene tail"
     )
 
-    mcp = build_server(config=config, store=store, state=get_state())
+    # No explicit `state=` — `build_server` defaults to the process-wide
+    # `SessionRegistry`, which routes per `Context.client_id` so a single
+    # long-running server process can safely serve multiple MCP clients.
+    # For stdio (one client per process) this collapses to a single state
+    # under the default key — same observable behavior as before.
+    mcp = build_server(config=config, store=store)
     mcp.run("stdio")
 
 
