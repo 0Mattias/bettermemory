@@ -26,6 +26,8 @@ Rank stored memories against a free-text query.
 
 Returns a list of hits. Each hit carries `id`, `scopes`, `relevance` (`"high"`, `"medium"`, or `"low"`), `match_terms`, `snippet`, `created`, `updated`, `last_verified_at`, `verification`, `path_drift_checked` and `path_drift_missing` integer counts, `staleness_verdict`, a `use_token`, and (when applicable) a `commit_drift_count` integer. The `commit_drift_count` field is OMITTED from the hit when the signal is not applicable: caller not in any repo, hit from a different repo, or hit has never been verified. A non-zero value is the cue to spot-check the memory even when `verification.status == "fresh"`, because the project has moved since the last `memory_verify`.
 
+Negative-outcome annotations (T2.3): when a hit's memory has been `ignored` or `contradicted` within the last 30 days AND not since `applied`, the hit also carries a `recent_negative_outcomes` list. Each entry has shape `{outcome, most_recent_ts, count_in_window, session_id, note, claim_excerpt}` — at most one entry per outcome type, so two entries maximum (one for `ignored`, one for `contradicted`). The supersession rule is the load-bearing semantic: an `applied` event after a negative event clears the negative-bucket entries, because the user already validated the memory after the rejection. The `claim_excerpt` field (T1.1) is the load-bearing claim recorded at rejection time, when present, so the caller can rephrase or skip just the offending sentence rather than the whole body. The field is OMITTED from the hit (rather than emitted as null) when no qualifying negatives exist — absence is the default.
+
 ### `memory_show(id)`
 
 - `id: str`. Required, the memory's ULID.

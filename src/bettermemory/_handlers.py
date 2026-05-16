@@ -175,7 +175,18 @@ DESC_MEMORY_SEARCH = (
     "the extra is installed). Use `hybrid` when the query is a "
     "paraphrase of what you expect the memory to say; stick with "
     "`keyword` when the query contains literal identifiers, file "
-    "paths, or unique tokens you remember writing down."
+    "paths, or unique tokens you remember writing down. "
+    "When a hit was previously ignored or contradicted AND not "
+    "since applied, the hit carries `recent_negative_outcomes` — a "
+    "list (max two entries, one per outcome type) describing the "
+    "rejection. Each entry has `outcome`, `most_recent_ts`, "
+    "`count_in_window`, `session_id`, `note`, and `claim_excerpt` "
+    "(when the original `record_use` carried one). Treat this as a "
+    "strong signal: the user already rejected the memory recently, "
+    "so don't surface the same claim again unless you have new "
+    "reason to think the rejection no longer applies. The field is "
+    "OMITTED when no qualifying negatives exist — absence is the "
+    "default, no third 'no data' branch to handle."
 )
 
 
@@ -767,6 +778,24 @@ class ToolHandlers:
         self.responses.attach_commit_drift_counts(
             out, hits, memories, caller_origin=current_origin
         )
+
+        # Per-hit `recent_negative_outcomes` (T2.3): walk the event log
+        # once for the recent window and annotate any hit that was
+        # ignored or contradicted AND not since validated. The lookup is
+        # bounded — one event-log iteration filtered to the hit ids,
+        # then per-id bucketing. The annotation tells the model "this
+        # was rejected on date X" so it doesn't keep re-suggesting the
+        # same junk; cheap to compute, high signal-to-noise. Skip when
+        # the hit list is empty (nothing to annotate). Loading events
+        # lazily here rather than at handler construction time keeps
+        # the cost off searches that produce no hits.
+        if out:
+            from .events import iter_events
+
+            recent_events = list(iter_events(self.store.root))
+            self.responses.attach_recent_negative_outcomes(
+                out, hits, recent_events, now=now
+            )
 
         # Optional auto-expansion of the top hit. Conservative: only fires
         # when the top hit clearly wins ("high" relevance) so the model

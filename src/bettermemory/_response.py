@@ -397,3 +397,149 @@ class ResponseBuilder:
                 hit_dict["staleness_verdict"] = "spot_check_recommended"
             else:
                 hit_dict["staleness_verdict"] = "fresh"
+
+    def attach_recent_negative_outcomes(
+        self,
+        out: list[dict[str, Any]],
+        hits: list[MemoryHit],
+        events: list[dict[str, Any]],
+        *,
+        now: datetime,
+        window_days: int = 30,
+    ) -> None:
+        """Mutate `out` in-place, adding `recent_negative_outcomes` to any
+        hit whose memory has been ignored or contradicted within the
+        window AND not since been applied.
+
+        Negative outcomes that have been superseded by a later applied
+        event are filtered out — the user already validated the memory
+        after the rejection, surfacing the rejection would be misleading.
+        Only "ignored" and "contradicted" count as negative; "corrected"
+        is audit-only (the model fixed and moved on); "applied" is the
+        positive case.
+
+        Shape per hit (when present):
+
+            "recent_negative_outcomes": [
+                {
+                    "outcome": "ignored" | "contradicted",
+                    "most_recent_ts": "...",
+                    "count_in_window": N,
+                    "session_id": "...",
+                    "note": str | None,
+                    "claim_excerpt": str | None,
+                }
+            ]
+
+        Keyed by `outcome` so each hit gets at most one entry per outcome
+        type (so 2 entries max — one ignored, one contradicted). The
+        `claim_excerpt` field (T1.1) is the load-bearing claim recorded
+        at rejection time, when present — it tells the model not just
+        "this was rejected" but "*this specific claim* was rejected",
+        which it can use to rephrase or skip the body's bad sentence.
+
+        The field is OMITTED (key absent from the dict, not null) when
+        no qualifying negative outcomes exist — same absence-as-signal
+        contract as `commit_drift_count`.
+        """
+        if not out or not hits or not events:
+            return
+
+        hit_ids = {hit.id for hit in hits}
+        cutoff = now.timestamp() - window_days * 86400
+
+        # Walk events once. Build per-id timelines of use events filtered
+        # to the window and to the hit ids — we don't care about events
+        # for memories that aren't in this result set.
+        per_id_events: dict[str, list[dict[str, Any]]] = {}
+        for event in events:
+            if event.get("kind") != "use":
+                continue
+            ts_str = event.get("ts")
+            if not isinstance(ts_str, str):
+                continue
+            ts = _parse_iso_ts(ts_str)
+            if ts is None or ts.timestamp() < cutoff:
+                continue
+            ids = event.get("ids") or []
+            for i, mid in enumerate(ids):
+                if mid not in hit_ids:
+                    continue
+                per_id_events.setdefault(mid, []).append(
+                    {
+                        "ts": ts,
+                        "outcome": event.get("outcome"),
+                        "session": event.get("session"),
+                        "note": event.get("note"),
+                        "claim_excerpt": _claim_at_index(event, i),
+                    }
+                )
+
+        for hit_dict, hit in zip(out, hits):
+            timeline = per_id_events.get(hit.id)
+            if not timeline:
+                continue
+            timeline.sort(key=lambda e: e["ts"])
+
+            # Walk timeline chronologically. An applied event after a
+            # negative supersedes it: the user validated the memory
+            # after rejecting it earlier, so the rejection no longer
+            # tells us anything actionable. Clear the active buckets
+            # on each applied event so only post-applied negatives
+            # surface.
+            ignored_active: list[dict[str, Any]] = []
+            contradicted_active: list[dict[str, Any]] = []
+            for entry in timeline:
+                outcome = entry["outcome"]
+                if outcome == "applied":
+                    ignored_active.clear()
+                    contradicted_active.clear()
+                elif outcome == "ignored":
+                    ignored_active.append(entry)
+                elif outcome == "contradicted":
+                    contradicted_active.append(entry)
+                # "corrected" is audit-only; skip.
+
+            entries: list[dict[str, Any]] = []
+            for bucket, outcome_label in (
+                (ignored_active, "ignored"),
+                (contradicted_active, "contradicted"),
+            ):
+                if not bucket:
+                    continue
+                most_recent = bucket[-1]
+                entries.append(
+                    {
+                        "outcome": outcome_label,
+                        "most_recent_ts": isoformat(most_recent["ts"]),
+                        "count_in_window": len(bucket),
+                        "session_id": most_recent.get("session"),
+                        "note": most_recent.get("note"),
+                        "claim_excerpt": most_recent.get("claim_excerpt"),
+                    }
+                )
+
+            if entries:
+                hit_dict["recent_negative_outcomes"] = entries
+
+
+def _parse_iso_ts(value: str) -> datetime | None:
+    """Parse an ISO timestamp tolerant of the `Z` suffix used in event
+    logs. Returns None on malformed input rather than raising — a single
+    bad event shouldn't break the whole annotation pass."""
+    try:
+        return datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except (ValueError, AttributeError):
+        return None
+
+
+def _claim_at_index(event: dict[str, Any], index: int) -> str | None:
+    """Pluck the `claim_excerpts[index]` entry from a use event if the
+    event carries the field (T1.1). Returns None when claim_excerpts
+    is absent or the index is out of range — both legitimate states
+    for older events written before T1.1 landed."""
+    excerpts = event.get("claim_excerpts")
+    if not isinstance(excerpts, list) or index >= len(excerpts):
+        return None
+    value = excerpts[index]
+    return value if isinstance(value, str) else None

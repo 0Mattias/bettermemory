@@ -11,6 +11,25 @@ spells out exactly what's stable.
 
 ### Added
 
+- Negative-outcome annotations on `memory_search` hits (T2.3 of the
+  1.6 plan in `docs/v1.6-plan.md`). When a hit's memory has been
+  `ignored` or `contradicted` within the last 30 days AND not since
+  been `applied`, the hit carries a `recent_negative_outcomes` field
+  — a list (at most one entry per outcome type, so two entries max)
+  describing the rejection. Each entry has `outcome`,
+  `most_recent_ts`, `count_in_window`, `session_id`, `note`, and
+  `claim_excerpt` (when the original record_use carried one — T1.1
+  integration). The supersession rule is the load-bearing semantic:
+  an `applied` event after a negative event clears the negative-
+  bucket entries, because the user already validated the memory
+  after the rejection; surfacing the rejection then would be
+  misleading. `corrected` outcomes never surface (audit-only — the
+  drift was salvaged inline). The field is OMITTED from the hit when
+  no qualifying negatives exist — absence is the default. Stops the
+  "model keeps re-suggesting memories the user already rejected"
+  failure mode without any state on the client side. One event-log
+  iteration per search call, then per-id bucketing; cost is bounded
+  regardless of result count.
 - `bettermemory consolidate` CLI subcommand (T2.1 of the 1.6 plan in
   `docs/v1.6-plan.md`). Offline curation pass over the store with
   four operations: near-duplicate dedup (semantic when the
