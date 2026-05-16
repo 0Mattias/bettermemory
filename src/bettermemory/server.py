@@ -599,6 +599,24 @@ def main() -> None:
         help="Emit JSON instead of human-readable text.",
     )
 
+    reindex_parser = sub.add_parser(
+        "reindex",
+        help=(
+            "Rebuild the SQLite FTS5 index from the on-disk memories. "
+            "The index is normally kept live by Store hooks on every "
+            "write / update / tombstone; rerun this when the memory "
+            "directory was edited outside the runtime (hand-edits, "
+            "external sync, restored backup) so the index catches up. "
+            "Safe to run anytime — atomic, transactional, leaves the "
+            "prior index intact on partial failure."
+        ),
+    )
+    reindex_parser.add_argument(
+        "--json",
+        action="store_true",
+        help="Emit JSON instead of human-readable text.",
+    )
+
     consolidate_parser = sub.add_parser(
         "consolidate",
         help=(
@@ -737,6 +755,9 @@ def main() -> None:
             include_tombstones=not args.no_tombstones,
             scopes=args.scope or None,
         )
+        return
+    if args.cmd == "reindex":
+        _cli_reindex(json_out=args.json)
         return
     if args.cmd == "consolidate":
         _cli_consolidate(
@@ -930,6 +951,52 @@ def _cli_tombstones_prune(
     )
     for memory_id in pruned_ids:
         sys.stdout.write(f"  {memory_id}\n")
+
+
+def _cli_reindex(*, json_out: bool) -> None:
+    """`bettermemory reindex` — drop and rebuild the FTS5 index from
+    the on-disk memories.
+
+    Reports before/after counts so a partial corruption shows up as
+    "indexed 234 of 250" instead of silently. The rebuild itself is
+    transactional — if it fails partway, the prior index is intact
+    and the caller sees the failure rather than a half-built index.
+    """
+    import json as _json
+
+    from . import index as _index
+
+    config = load_config()
+    directory = config.resolved_directory()
+    store = Store(directory)
+
+    before = _index.status(directory)
+    memories = store.load_all()
+    count = _index.rebuild(directory, memories)
+    after = _index.status(directory)
+
+    if json_out:
+        sys.stdout.write(
+            _json.dumps(
+                {
+                    "indexed": count,
+                    "before": before,
+                    "after": after,
+                    "directory": str(directory),
+                },
+                indent=2,
+            )
+            + "\n"
+        )
+        return
+
+    sys.stdout.write(
+        f"Reindexed {count} memories from {directory}.\n"
+        f"  before: {before.get('indexed_count', 0)} indexed, "
+        f"{before.get('size_bytes', 0)} bytes\n"
+        f"  after:  {after.get('indexed_count', 0)} indexed, "
+        f"{after.get('size_bytes', 0)} bytes\n"
+    )
 
 
 def _cli_consolidate(

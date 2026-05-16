@@ -357,6 +357,7 @@ class Store:
         path = self._path_for(memory)
         with _locked(path):
             self._write_path(path, memory)
+        _index_upsert_quietly(self.root, memory)
         return memory
 
     def update(self, memory: Memory) -> Memory:
@@ -369,6 +370,7 @@ class Store:
         new_memory = memory.model_copy(update={"updated": now})
         with _locked(existing_path):
             self._write_path(existing_path, new_memory)
+        _index_upsert_quietly(self.root, new_memory)
         return new_memory
 
     def mark_verified(
@@ -419,6 +421,7 @@ class Store:
         new_memory = existing.model_copy(update=update)
         with _locked(existing_path):
             self._write_path(existing_path, new_memory)
+        _index_upsert_quietly(self.root, new_memory)
         return new_memory
 
     def tombstone(
@@ -478,6 +481,7 @@ class Store:
             # come back to BOTH the tombstone and the original active
             # file existing (a soft form of double-bookkeeping).
             fsync_dir(path.parent)
+        _index_remove_quietly(self.root, memory_id)
         return target
 
     # ---- tombstone read paths --------------------------------------------
@@ -941,6 +945,48 @@ class Store:
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
+
+def _index_upsert_quietly(root: Path, memory: Memory) -> None:
+    """Update the FTS5 index for one memory. Best-effort: a failure
+    here (corrupt index, locked database, missing SQLite extension)
+    logs a warning and continues so the on-disk write — the canonical
+    record — still succeeds. The next ``bettermemory reindex`` will
+    repair any drift.
+
+    Lazy import so this module loads cleanly even when callers don't
+    actually use the index (e.g. pure-Python tests against the file
+    store directly)."""
+    try:
+        from . import index as _index
+
+        _index.upsert(root, memory)
+    except Exception as exc:  # noqa: BLE001 — never break the write
+        import logging
+
+        logging.getLogger("bettermemory.store").warning(
+            "index upsert failed for %s: %s. Run `bettermemory reindex` to repair.",
+            memory.id,
+            exc,
+        )
+
+
+def _index_remove_quietly(root: Path, memory_id: str) -> None:
+    """Drop one memory from the FTS5 index. Same best-effort contract
+    as the upsert: never block the on-disk tombstone on an index
+    failure."""
+    try:
+        from . import index as _index
+
+        _index.remove(root, memory_id)
+    except Exception as exc:  # noqa: BLE001
+        import logging
+
+        logging.getLogger("bettermemory.store").warning(
+            "index remove failed for %s: %s. Run `bettermemory reindex` to repair.",
+            memory_id,
+            exc,
+        )
 
 
 def _atomic_write_post(path: Path, post: frontmatter.Post) -> None:
