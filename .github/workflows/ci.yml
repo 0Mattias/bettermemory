@@ -67,7 +67,14 @@ jobs:
         run: uv python install ${{ matrix.python-version }}
 
       - name: Sync dependencies
-        run: uv sync --extra dev
+        # `[ui]` is installed alongside `[dev]` so mypy can resolve the
+        # `fastapi` / `uvicorn` imports in `src/bettermemory/web.py`
+        # (strict mode flags missing types on imported decorators) and
+        # so `tests/test_web.py` runs as actual coverage instead of
+        # being skipped via `pytest.importorskip("fastapi")`. The
+        # `[embeddings]` extra stays in the dedicated `test-embeddings`
+        # job — it pulls torch which dominates install time.
+        run: uv sync --extra dev --extra ui
 
       - name: Lint
         run: uv run ruff check .

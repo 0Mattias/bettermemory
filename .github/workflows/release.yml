@@ -68,7 +68,10 @@ jobs:
           fi
 
       - name: Sync dependencies
-        run: uv sync --extra dev
+        # `[ui]` mirrors the main CI matrix — mypy needs `fastapi` /
+        # `uvicorn` to resolve the types referenced by web.py, and the
+        # release build should exercise the same surface CI does.
+        run: uv sync --extra dev --extra ui
 
       - name: Lint
         run: uv run ruff check .
