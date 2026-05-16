@@ -599,6 +599,75 @@ def main() -> None:
         help="Emit JSON instead of human-readable text.",
     )
 
+    consolidate_parser = sub.add_parser(
+        "consolidate",
+        help=(
+            "Offline consolidation: dedup near-duplicates, demote "
+            "never-applied memories to ambient, suggest cold-scope "
+            "archival and scope-typo renames. Dry-run by default; "
+            "--apply commits dedup tombstones and demotions. Cold-"
+            "scope and scope-typo passes stay suggest-only."
+        ),
+    )
+    consolidate_parser.add_argument(
+        "--apply",
+        action="store_true",
+        help=(
+            "Actually commit dedup tombstones and category demotions "
+            "to disk. Without this flag, the command prints what it "
+            "would do without touching the store."
+        ),
+    )
+    consolidate_parser.add_argument(
+        "--json",
+        action="store_true",
+        help="Emit JSON instead of human-readable text.",
+    )
+    consolidate_parser.add_argument(
+        "--window-days",
+        type=int,
+        default=30,
+        help=(
+            "Demotion window in days. Memories created more than this "
+            "many days ago with retrieval count greater than zero and "
+            "applied count of zero are proposed for demotion to ambient. "
+            "Default: 30 (matches the dead-weight rule in memory_health)."
+        ),
+    )
+    consolidate_parser.add_argument(
+        "--cold-scope-days",
+        type=int,
+        default=180,
+        help=(
+            "Cold-scope cutoff in days. A scope whose newest memory is "
+            "older than this AND with no applied events on any memory "
+            "in the scope is suggested for archival. Suggest-only; "
+            "auto-archiving a scope is too blunt without review. "
+            "Default: 180."
+        ),
+    )
+    consolidate_parser.add_argument(
+        "--semantic-threshold",
+        type=float,
+        default=None,
+        help=(
+            "Cosine threshold for the semantic dedup pass (default 0.85). "
+            "When the embeddings extra is not installed the pass falls "
+            "back to Jaccard at 0.75 — this flag is ignored in that case."
+        ),
+    )
+    consolidate_parser.add_argument(
+        "--typo-distance",
+        type=int,
+        default=2,
+        help=(
+            "Levenshtein cutoff for the scope-typo detector. Default 2 "
+            "catches one-character typos and small transpositions; "
+            "raise to 3 to surface more pairs at the cost of false "
+            "positives."
+        ),
+    )
+
     args = parser.parse_args()
     if args.cmd == "health":
         _cli_health(
@@ -667,6 +736,16 @@ def main() -> None:
             output=args.output,
             include_tombstones=not args.no_tombstones,
             scopes=args.scope or None,
+        )
+        return
+    if args.cmd == "consolidate":
+        _cli_consolidate(
+            apply=args.apply,
+            json_out=args.json,
+            window_days=args.window_days,
+            cold_scope_days=args.cold_scope_days,
+            semantic_threshold=args.semantic_threshold,
+            typo_distance=args.typo_distance,
         )
         return
 
@@ -851,6 +930,59 @@ def _cli_tombstones_prune(
     )
     for memory_id in pruned_ids:
         sys.stdout.write(f"  {memory_id}\n")
+
+
+def _cli_consolidate(
+    *,
+    apply: bool,
+    json_out: bool,
+    window_days: int,
+    cold_scope_days: int,
+    semantic_threshold: float | None,
+    typo_distance: int,
+) -> None:
+    """`bettermemory consolidate` — offline curation pass.
+
+    Runs four passes: near-duplicate dedup, demote-never-applied,
+    cold-scope suggestions, scope-typo suggestions. Dry-run by
+    default; `--apply` commits dedup tombstones and category
+    demotions. Cold-scope and scope-typo passes stay suggest-only
+    regardless — they touch shape that a human should review.
+    """
+    from .consolidate import consolidate, render_json, render_text
+    from .semantic import get_model
+
+    config = load_config()
+    store = Store(config.resolved_directory())
+
+    # Resolve the semantic model if the embeddings extra is installed.
+    # `get_model` returns None on a clean install without the extra,
+    # which the dedup pass treats as the "fall back to Jaccard" signal.
+    semantic_model = (
+        get_model(config.behavior.semantic_model_name)
+        if config.behavior.semantic_dedup
+        else None
+    )
+
+    # Build a session id so tombstones produced by --apply carry a
+    # caller-attributable record. Matches the SessionState pattern used
+    # by `_cli_serve`; here we don't need the full state object, just
+    # the id field for the tombstone frontmatter.
+    from .session import SessionState as _SessionState
+
+    session_id = _SessionState().session_id
+
+    report = consolidate(
+        store,
+        semantic_model=semantic_model,
+        semantic_threshold=semantic_threshold,
+        window_days=window_days,
+        cold_scope_days=cold_scope_days,
+        typo_distance=typo_distance,
+        apply=apply,
+        session_id=session_id,
+    )
+    sys.stdout.write(render_json(report) if json_out else render_text(report))
 
 
 def _cli_export(

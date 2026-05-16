@@ -11,6 +11,27 @@ spells out exactly what's stable.
 
 ### Added
 
+- `bettermemory consolidate` CLI subcommand (T2.1 of the 1.6 plan in
+  `docs/v1.6-plan.md`). Offline curation pass over the store with
+  four operations: near-duplicate dedup (semantic when the
+  embeddings extra is installed, Jaccard otherwise — the newer-
+  `updated` member wins, ties broken by `verified_paths` attestation
+  then ULID), demote-never-applied (mirrors `memory_health`'s
+  dead-weight rule; retags `category=ambient` so the memory stops
+  appearing in the dead-weight bucket without losing the body),
+  cold-scope suggestions (scopes whose newest memory has aged past
+  `--cold-scope-days` AND with no `applied` events on any member),
+  and scope-typo pairs (Levenshtein ≤ `--typo-distance` neighbors;
+  the scope with more memories is the keeper, the lesser is the
+  proposed typo). Dry-run by default; `--apply` commits dedup
+  tombstones and category demotions (cold scopes and typo pairs
+  stay suggest-only regardless — they touch shape that needs human
+  review). `--json` for machine consumption. Closes the Letta-style
+  sleep-time consolidation gap without the dual-agent topology.
+  Surface: `bettermemory.consolidate` module exports
+  `consolidate()`, the per-pass `find_*` helpers, the
+  `ConsolidateReport` dataclass, and `render_text` / `render_json`
+  for callers that want the data without going through the CLI.
 - Claim-level provenance on `memory_record_use` (T1.1 of the 1.6 plan
   in `docs/v1.6-plan.md`). New optional `claim_excerpts` parameter —
   a list parallel to `memory_ids` (same length, one entry per id, or
