@@ -585,14 +585,25 @@ def consolidate(
         return report
 
     # Apply: tombstone duplicates first, then demote.
+    #
+    # `keepers_so_far` tracks every id that's been crowned as the keeper
+    # of some earlier pair. In a 3+ way cluster, the same memory can be
+    # the keeper of pair A↔B and then the *duplicate* in pair B↔C — if
+    # we tombstoned B in that second pair we'd be deleting the canonical
+    # member of the first pair, leaving A's "keeper of B" tombstone
+    # reason dangling. Preserve the earlier-crowned keeper.
     tombstoned_ids: set[str] = set()
+    keepers_so_far: set[str] = set()
     for candidate in dedup_candidates:
         if candidate.duplicate_id in tombstoned_ids:
+            continue
+        if candidate.duplicate_id in keepers_so_far:
             continue
         if candidate.duplicate_id == candidate.keeper_id:
             # Defensive: shouldn't happen, but a malformed pair
             # shouldn't tombstone the keeper.
             continue
+        keepers_so_far.add(candidate.keeper_id)
         try:
             reason = (
                 f"consolidate: near-duplicate of {candidate.keeper_id}, "
