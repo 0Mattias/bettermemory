@@ -28,6 +28,16 @@ Returns a list of hits. Each hit carries `id`, `scopes`, `relevance` (`"high"`, 
 
 Negative-outcome annotations (T2.3): when a hit's memory has been `ignored` or `contradicted` within the last 30 days AND not since `applied`, the hit also carries a `recent_negative_outcomes` list. Each entry has shape `{outcome, most_recent_ts, count_in_window, session_id, note, claim_excerpt}` — at most one entry per outcome type, so two entries maximum (one for `ignored`, one for `contradicted`). The supersession rule is the load-bearing semantic: an `applied` event after a negative event clears the negative-bucket entries, because the user already validated the memory after the rejection. The `claim_excerpt` field (T1.1) is the load-bearing claim recorded at rejection time, when present, so the caller can rephrase or skip just the offending sentence rather than the whole body. The field is OMITTED from the hit (rather than emitted as null) when no qualifying negatives exist — absence is the default.
 
+### `memory_write(content, scopes, ...)`
+
+Beyond the existing parameters (`confidence`, `source`, `force`, `acknowledge_transient`, `acknowledge_scope_mismatch`, `category`), `memory_write` accepts an opt-in groundedness check (T1.3):
+
+- `groundedness_check: bool = False`. Opt-in. When True (and `source_transcript` is provided), the server walks the proposed body sentence-by-sentence, checking each sentence's content tokens against the transcript's token set. A sentence whose overlap ratio falls below 30% is flagged as ungrounded.
+- `source_transcript: str | None = None`. The recent conversation turns that motivated this write — a free-form string concatenating whatever the caller considers the grounding source. Required for the gate to fire (otherwise the gate is a no-op).
+- `acknowledge_ungrounded: bool = False`. Override the gate when the caller has other grounding sources (file reads, tool results) that aren't represented in the transcript. Same family as `acknowledge_transient` and `acknowledge_scope_mismatch`.
+
+On failure: `{status: "ungrounded", claims: [{sentence, overlap_ratio}, ...], hint: "..."}` — the write does not commit. Each `claim` entry carries the verbatim flagged sentence and its `overlap_ratio` (the fraction of the sentence's content tokens that appeared in the transcript). Operationalises the HaluMem benchmark inline; no competitor in the May 2026 landscape runs a write-time groundedness gate.
+
 ### `memory_show(id)`
 
 - `id: str`. Required, the memory's ULID.

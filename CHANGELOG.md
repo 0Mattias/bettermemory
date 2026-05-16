@@ -11,6 +11,27 @@ spells out exactly what's stable.
 
 ### Added
 
+- Write-time groundedness gate on `memory_write` (T1.3 of the 1.6
+  plan in `docs/v1.6-plan.md`). Optional, opt-in via the new
+  `groundedness_check=True` parameter plus a `source_transcript`
+  (recent conversation turns). The server walks the body sentence-
+  by-sentence and flags any sentence whose stopword-stripped, kebab-
+  expanded content tokens overlap the transcript's token set by less
+  than 30% — the "fact pulled from thin air" failure mode mem0's
+  97.8%-junk audit (issue #4573) traces back to. Returns
+  `{status: "ungrounded", claims: [{sentence, overlap_ratio}, ...]}`
+  instead of committing; the caller can rephrase or pass the new
+  `acknowledge_ungrounded=True` override (same family as
+  `acknowledge_transient` and `acknowledge_scope_mismatch`) when
+  they have other grounding sources (a file read, a tool result)
+  not represented in the transcript. Off by default — back-compat
+  for every existing caller. Implements HaluMem-style operation-
+  level write-time hallucination evaluation inline; no competitor
+  in the May 2026 landscape runs a write-time groundedness gate.
+  Surface: `bettermemory.groundedness` module exports
+  `check_groundedness()`, the `UngroundedClaim` dataclass, and the
+  threshold constants for callers wanting to wire the gate into
+  alternate flows.
 - Negative-outcome annotations on `memory_search` hits (T2.3 of the
   1.6 plan in `docs/v1.6-plan.md`). When a hit's memory has been
   `ignored` or `contradicted` within the last 30 days AND not since

@@ -283,7 +283,18 @@ DESC_MEMORY_WRITE = (
     "memory_write_cancel(pending_id) if they decline. The "
     'default category "fact" covers project / infrastructure / '
     "reference / tooling memories and commits immediately "
-    "unless `require_write_confirmation` is true in config."
+    "unless `require_write_confirmation` is true in config. "
+    "Optional groundedness gate: pass `groundedness_check=True` "
+    "with a `source_transcript` (a string of the recent "
+    "conversation turns that motivated the write) and the server "
+    "walks the body sentence-by-sentence checking each anchors to "
+    "the transcript. Sentences with no meaningful overlap return "
+    "{status:'ungrounded', claims:[...]} so you can rephrase or "
+    "pass `acknowledge_ungrounded=True` if you have other "
+    "grounding sources (a file read, a tool result) not in the "
+    "transcript. Off by default; opt in when you want a paper "
+    "trail proving the memory came from the conversation, not "
+    "from training-data confabulation."
 )
 
 
@@ -987,7 +998,10 @@ class ToolHandlers:
         force: bool = False,
         acknowledge_transient: bool = False,
         acknowledge_scope_mismatch: bool = False,
+        acknowledge_ungrounded: bool = False,
         category: str = "fact",
+        groundedness_check: bool = False,
+        source_transcript: str | None = None,
         ctx: Context | None = None,
     ) -> dict[str, Any]:
         # `_advance_turn` keeps the per-session turn counter monotonic
@@ -1075,6 +1089,50 @@ class ToolHandlers:
                         "if the cross-reference is intentional (e.g. an "
                         "infrastructure note that mentions multiple "
                         "projects by design)."
+                    ),
+                }
+
+        # Groundedness check runs after scope_mismatch and before dedup
+        # (T1.3). Opt-in via `groundedness_check=True` plus a non-empty
+        # `source_transcript`. Sentence-level overlap of the proposed
+        # body against the transcript's token set — sentences that
+        # don't anchor to the conversation come back as "ungrounded".
+        # Returns `status: "ungrounded"` with the offending sentences
+        # so the caller can rephrase or pass `acknowledge_ungrounded`.
+        # Mirrors the transient_warning shape exactly. Closes the
+        # hallucinate-at-write-time failure mode that mem0's 97.8%-junk
+        # audit (issue #4573) documented. No competitor in the May 2026
+        # landscape runs a write-time groundedness gate; this is the
+        # HaluMem benchmark operationalised inline.
+        if (
+            groundedness_check
+            and source_transcript is not None
+            and not acknowledge_ungrounded
+        ):
+            from .groundedness import check_groundedness
+
+            ungrounded = check_groundedness(payload["content"], source_transcript)
+            if ungrounded:
+                self.recorder.record(
+                    "write",
+                    status="ungrounded",
+                    scopes=payload["scopes"],
+                    forced=False,
+                    ungrounded_count=len(ungrounded),
+                )
+                return {
+                    "status": "ungrounded",
+                    "claims": [c.to_dict() for c in ungrounded],
+                    "hint": (
+                        "The body contains sentences that don't share enough "
+                        "vocabulary with the source transcript to count as "
+                        "grounded — the model may have hallucinated them, "
+                        "or paraphrased so heavily that the audit trail is "
+                        "lost. Either rephrase to keep the load-bearing "
+                        "tokens close to the transcript, or pass "
+                        "`acknowledge_ungrounded=True` if you have other "
+                        "grounding sources (a file read, a tool result) "
+                        "that aren't represented in this transcript."
                     ),
                 }
 
