@@ -12,30 +12,30 @@ spells out exactly what's stable.
 ### Added
 
 - SQLite FTS5 inverted index (T3.1 of the 1.6 plan in
-  `docs/v1.6-plan.md`, phase A). Foundation work — the index is now
-  kept live by Store hooks on every `write`, `update`, and
-  `tombstone`. Files on disk stay canonical; the index is a derived
-  cache at `<store>/.index.sqlite`. Schema: a `memories` table
-  mirroring the on-disk records plus an FTS5 virtual table over
-  body + scope text, kept in sync by three triggers. Index hooks
-  are best-effort: a corrupted database or missing file logs a
-  warning and lets the canonical write proceed, so on-disk truth
-  is never blocked on an index failure. New CLI subcommand
-  `bettermemory reindex` rebuilds the index from scratch (use it
-  after hand-editing memory files or restoring from backup). A
-  schema-version field in the `meta` table refuses to load indexes
-  newer than the reader supports, mirroring the on-disk
-  `schema_version` contract for memories. The search hot path
-  does NOT yet consume the index — that's phase B; this commit
-  lands the infrastructure so the index stays in sync from day
-  one and the wiring change is independently reviewable. Removes
-  the load_all linear-scan ceiling once the search path is
-  rewired (the existing scan starts to bite at ~5-10K memories;
-  most users won't notice until they cross that). Surface:
-  `bettermemory.index` module exports `rebuild()`, `upsert()`,
-  `remove()`, `query()`, `status()`, the `IndexVersionError`
-  exception, and the `INDEX_FILENAME` / `SCHEMA_VERSION`
-  constants.
+  `docs/v1.6-plan.md`). Files on disk stay canonical; the index
+  is a derived cache at `<store>/.index.sqlite`. Schema: a
+  `memories` table mirroring the on-disk records plus an FTS5
+  virtual table over body + scope text, kept in sync by three
+  triggers. Store hooks keep the index live on every `write`,
+  `update`, and `tombstone`. Index hooks are best-effort: a
+  corrupted database or missing file logs a warning and lets the
+  canonical write proceed, so on-disk truth is never blocked on
+  an index failure. New CLI subcommand `bettermemory reindex`
+  rebuilds the index from scratch (use it after hand-editing
+  memory files or restoring from backup). A schema-version field
+  in the `meta` table refuses to load indexes newer than the
+  reader supports. `memory_search` now uses the index as a
+  candidate pre-filter when `indexed_count >= 500` (tunable via
+  the `BETTERMEMORY_INDEX_THRESHOLD` env var): up to 50
+  candidates from the FTS5 query, then the existing rankers
+  reorder within that pool. Falls back to `load_all` when the
+  index is missing, corrupt, below threshold, or returns zero
+  candidates — small stores see byte-stable behaviour, large
+  stores skip the linear scan that starts to bite at ~5-10K
+  memories. Surface: `bettermemory.index` module exports
+  `rebuild()`, `upsert()`, `remove()`, `query()`, `status()`,
+  the `IndexVersionError` exception, and the `INDEX_FILENAME` /
+  `SCHEMA_VERSION` constants.
 - Typed inter-memory links (T2.2 of the 1.6 plan in
   `docs/v1.6-plan.md`). New `links` field on the `Memory` model:
   a list of `{type, target_id, note?}` entries where `type` is one

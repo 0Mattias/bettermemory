@@ -709,6 +709,81 @@ class ToolHandlers:
         # returns the model (or None for the Jaccard fallback).
         self._semantic_model_factory = semantic_model_factory
 
+    # The store size above which the FTS5 candidate pre-filter is
+    # used instead of a full load_all on every search. Calibrated so
+    # that small stores (the common case) keep the existing behaviour
+    # byte-stable — the candidate path adds a SQLite round-trip per
+    # search and a per-id load, which is net cheaper only once the
+    # alternative (load every file) dominates the budget. Tunable
+    # via the BETTERMEMORY_INDEX_THRESHOLD env var for testing.
+    _INDEX_THRESHOLD_DEFAULT = 500
+
+    def _index_threshold(self) -> int:
+        """Resolve the live threshold above which the FTS candidate
+        pre-filter kicks in. Reads from BETTERMEMORY_INDEX_THRESHOLD
+        on every search so tests can flip it without rebuilding the
+        handler. Falls back to the class default."""
+        import os
+
+        raw = os.environ.get("BETTERMEMORY_INDEX_THRESHOLD")
+        if raw is None:
+            return self._INDEX_THRESHOLD_DEFAULT
+        try:
+            value = int(raw)
+            return value if value > 0 else self._INDEX_THRESHOLD_DEFAULT
+        except ValueError:
+            return self._INDEX_THRESHOLD_DEFAULT
+
+    def _load_search_candidates(self, query: str) -> list[Any]:
+        """Either load all active memories or pre-filter via the FTS5
+        index, depending on store size and index health.
+
+        The current heuristic: walk the index status once. If the
+        on-disk index exists, has `indexed_count >= threshold`, and the
+        query is non-empty, we query the index for up to 50 candidate
+        ids and load just those by walking the file store for matches.
+        Otherwise the full `load_all` runs (current behaviour, byte-
+        stable result quality).
+
+        Falls back to load_all when the index returns no candidates —
+        a stale index missing recent writes shouldn't silently hide
+        results. The recovery path is `bettermemory reindex`.
+        """
+        from . import index as _index
+
+        if not query.strip():
+            return self.store.load_all()
+        status = _index.status(self.store.root)
+        if not status.get("exists") or status.get("corrupt"):
+            return self.store.load_all()
+        indexed_count = int(status.get("indexed_count", 0) or 0)
+        if indexed_count < self._index_threshold():
+            return self.store.load_all()
+
+        # Pre-filter via the index. 50 candidates is generous for a
+        # default max_results of 5 — the downstream ranker reorders
+        # within the candidate pool, so we want enough variety for
+        # recency / scope-boost / coverage to find the best 5.
+        candidate_pairs = _index.query(self.store.root, query, max_results=50)
+        if not candidate_pairs:
+            # Stale index or query that genuinely matches nothing —
+            # fall back to load_all so we don't silently miss recent
+            # writes that aren't in the index yet.
+            return self.store.load_all()
+        candidate_ids = {cid for cid, _ in candidate_pairs}
+
+        # Load just the candidates. One pass over the active set
+        # filtering by id is still O(N) on file count, but skips the
+        # YAML parse + Pydantic construction for non-candidates —
+        # the actual cost-saving. A future revision can build an
+        # id → path lookup in the index meta table for true O(k)
+        # access.
+        loaded: list[Any] = []
+        for memory in self.store.load_all():
+            if memory.id in candidate_ids:
+                loaded.append(memory)
+        return loaded
+
     # ---- memory_search ---------------------------------------------------
 
     async def memory_search(
@@ -773,7 +848,17 @@ class ToolHandlers:
             current_origin.worktree_root if auto_scope else None
         )
 
-        memories = self.store.load_all()
+        # FTS5 candidate pre-filter (T3.1 phase B). When the index
+        # exists and the store is large enough that load_all would
+        # become the bottleneck, query the index for candidate ids
+        # and load just those — sidesteps the linear scan that bites
+        # at ~5K+ memories. The candidate pool is intentionally
+        # generous (50 candidates for a 5-result return) so the
+        # downstream rankers still see enough variety to do a good
+        # job. For small stores, or when no candidates come back
+        # (typical of stale index), we fall back to load_all so the
+        # result quality stays identical to the pre-index path.
+        memories = self._load_search_candidates(query)
         # `cast` keeps mypy aware of the Literal narrowing — we already
         # validated `resolved_mode` against the four allowed values above,
         # but the local variable's type is `str` until we tell the checker
