@@ -11,6 +11,24 @@ spells out exactly what's stable.
 
 ### Added
 
+- Claim-level provenance on `memory_record_use` (T1.1 of the 1.6 plan
+  in `docs/v1.6-plan.md`). New optional `claim_excerpts` parameter —
+  a list parallel to `memory_ids` (same length, one entry per id, or
+  `None` per slot for "no specific claim noted") carrying the
+  load-bearing phrase the model applied, ignored, contradicted, or
+  corrected from each memory. Stored in the event log so a later
+  audit can trace any response back to the specific claim, not just
+  the memory id. Excerpts strip surrounding whitespace, reject empty
+  strings (use `None` for "no claim"), and cap at 500 chars to keep
+  the audit log small and discourage dumping bodies. Byte-stable on
+  the wire when not used: existing event-log readers don't see a new
+  null key on every old event. Works for all four record_use
+  outcomes; especially useful for `contradicted` and `corrected` so
+  the audit log records which claim was wrong, not just that the
+  memory had drift. Closes the provenance gap that turns mem0-style
+  auto-extraction systems into hallucination-amplifiers; no
+  competitor in the May-2026 landscape records structured
+  claim-level attribution.
 - Hybrid retrieval for `memory_search` (T1.2 of the 1.6 plan in
   `docs/v1.6-plan.md`). The original keyword scorer (TF + coverage +
   recency) is now one of four selectable rankers; the new ones are

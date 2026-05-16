@@ -111,11 +111,12 @@ Bumps `last_verified_at` to now without touching `updated`. Idempotent. The stru
 
 ## Curation
 
-### `memory_record_use(memory_ids, outcome, note?)`
+### `memory_record_use(memory_ids, outcome, note?, claim_excerpts?)`
 
 - `memory_ids: list[str]`. IDs that shaped the consuming response. Always plural, even for a single memory.
 - `outcome: str`. One of `"applied"`, `"ignored"`, `"contradicted"`, or `"corrected"`. `"corrected"` is the audit-only sibling of `"contradicted"` for the noticed-and-fixed-inline workflow where the caller has already run `memory_update` or `memory_verify` in the same turn. `"corrected"` increments a separate `corrected_count` on `MemoryStats` and never raises the `has_unresolved_contradiction` flag, so the previous foot-gun ("logged contradicted after the fix, flag stuck because event ts was greater than resolution ts") is gone structurally.
 - `note: str | None = None`.
+- `claim_excerpts: list[str | None] | None = None`. Optional provenance signal — a list parallel to `memory_ids` (same length) carrying the specific claim the caller applied / ignored / contradicted / corrected from each memory. Each entry is the load-bearing phrase quoted from the body (max 500 chars), or `None` for "no specific claim noted for this id". Surrounding whitespace is stripped; empty strings are rejected (pass `None` instead). Recorded in the event log so a later audit can trace any response back to the specific claim, not just the memory id. Recommended whenever the memory shaped a user-visible sentence; especially useful for `contradicted` and `corrected` outcomes so the audit log records which claim was wrong, not just that the memory had drift. Byte-stable on the wire: the event-log entry omits the field entirely (rather than emitting a null value) when `claim_excerpts` isn't passed, so existing log readers and health rollups keep working untouched.
 
 Auto-commit semantics: every `memory_search` hit and `memory_show` response carries an opaque `use_token`. If `memory_record_use` is not called within roughly 2 turns, the server auto-commits the retrieval as `outcome="applied"` on the next `memory_*` call (logged with `auto=true`). Explicit calls win over the auto pass: the server purges the pending token before recording so the auto-commit cannot shadow the explicit outcome.
 

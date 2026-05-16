@@ -421,7 +421,18 @@ DESC_MEMORY_RECORD_USE = (
     "string for context. Skip the call when no retrieved memory "
     "shaped your response — silence is also signal, as the absence "
     "of `applied` events for a recently-retrieved id is what tells "
-    "us the memory wasn't useful."
+    "us the memory wasn't useful. "
+    "Optional `claim_excerpts` is a list parallel to `memory_ids` "
+    "(same length, one per id) carrying the specific claim you "
+    "applied / ignored / contradicted / corrected from each "
+    "memory — a quote of the load-bearing phrase, max 500 chars, "
+    'or `None` for "no specific claim noted". Provenance: the '
+    "excerpts land in the event log so a later audit can trace "
+    "your response back to the exact claim, not just the memory "
+    "id. Recommended whenever the memory actually shaped a "
+    "user-visible sentence; especially useful for `contradicted` "
+    "and `corrected` outcomes so the audit log records which "
+    "claim was wrong, not just that the memory had drift."
 )
 
 
@@ -1554,6 +1565,7 @@ class ToolHandlers:
         memory_ids: list[str],
         outcome: str,
         note: str | None = None,
+        claim_excerpts: list[str | None] | None = None,
         ctx: Context | None = None,
     ) -> dict[str, Any]:
         if not memory_ids:
@@ -1570,6 +1582,51 @@ class ToolHandlers:
         if note is not None and not isinstance(note, str):
             raise ValueError("note must be a string if provided")
 
+        # `claim_excerpts` is the provenance signal (T1.1 of the 1.6 plan).
+        # When provided, it's a list parallel to `memory_ids` with one
+        # entry per id — the specific claim the model applied (or ignored
+        # / contradicted / corrected) from that memory. `None` in a slot
+        # means "no specific claim noted for this id, just the outcome".
+        # Length must match exactly so the audit log can pair claims to
+        # ids without ambiguity; the alternative (sparse dict keyed by id)
+        # is harder for the model to assemble and clutters small calls.
+        # Empty-string claims are rejected — pass `None` for "no claim".
+        # Excerpts are capped at 500 chars to keep the event log small
+        # and discourage dumping whole bodies (the body's already on disk;
+        # the excerpt is supposed to be a quote, not a copy).
+        recorded_excerpts: list[str | None] | None = None
+        if claim_excerpts is not None:
+            if not isinstance(claim_excerpts, list):
+                raise ValueError("claim_excerpts must be a list of strings or None")
+            if len(claim_excerpts) != len(memory_ids):
+                raise ValueError(
+                    f"claim_excerpts length {len(claim_excerpts)} does not "
+                    f"match memory_ids length {len(memory_ids)}"
+                )
+            recorded_excerpts = []
+            for i, excerpt in enumerate(claim_excerpts):
+                if excerpt is None:
+                    recorded_excerpts.append(None)
+                    continue
+                if not isinstance(excerpt, str):
+                    raise ValueError(
+                        f"claim_excerpts[{i}] must be a string or None, "
+                        f"got {type(excerpt).__name__}"
+                    )
+                excerpt = excerpt.strip()
+                if not excerpt:
+                    raise ValueError(
+                        f"claim_excerpts[{i}] is empty — pass None for "
+                        "'no specific claim' instead of an empty string"
+                    )
+                if len(excerpt) > 500:
+                    raise ValueError(
+                        f"claim_excerpts[{i}] is {len(excerpt)} chars — "
+                        "cap is 500. Quote the load-bearing phrase, not "
+                        "the whole body."
+                    )
+                recorded_excerpts.append(excerpt)
+
         # The explicit outcome overrides any pending auto-commit. Pass
         # the ids through `_advance_turn` so the auto pass that would
         # otherwise have fired skips them, then purge their tokens so a
@@ -1581,16 +1638,27 @@ class ToolHandlers:
         for mid in memory_ids:
             state.purge_use_token(mid)
 
-        self.recorder.record(
-            "use",
-            ids=list(memory_ids),
-            outcome=outcome,
-            note=note,
-        )
-        return {
+        # Build the event payload conditionally so the on-disk shape is
+        # byte-stable for calls that don't use the new field — existing
+        # log parsers / tests that key off the kind="use" event keep
+        # working without seeing a new claim_excerpts key with a null
+        # value on every old event.
+        event_fields: dict[str, Any] = {
+            "ids": list(memory_ids),
+            "outcome": outcome,
+            "note": note,
+        }
+        if recorded_excerpts is not None:
+            event_fields["claim_excerpts"] = recorded_excerpts
+        self.recorder.record("use", **event_fields)
+
+        result: dict[str, Any] = {
             "recorded": list(memory_ids),
             "outcome": outcome,
         }
+        if recorded_excerpts is not None:
+            result["claim_excerpts"] = recorded_excerpts
+        return result
 
     # ---- memory_verify ---------------------------------------------------
 
