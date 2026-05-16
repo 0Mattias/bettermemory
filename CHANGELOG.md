@@ -219,7 +219,7 @@ The competitive landscape (May 2026) is detailed in
   when available). Selection is per-call via the new `mode` parameter
   on `memory_search` (`"keyword"` | `"bm25"` | `"semantic"` |
   `"hybrid"`) or globally via `[behavior] search_mode` in config. The
-  default stays `keyword` in 1.6.0 to keep ranking byte-stable; the
+  default stays `keyword` in 2.0.0 to keep ranking byte-stable; the
   flip to `hybrid` is planned for a later release once dogfooding
   shakes out regressions. Hybrid mode without the embeddings extra
   degrades gracefully to keyword + BM25 fusion; `mode="semantic"`

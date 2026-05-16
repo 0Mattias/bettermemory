@@ -27,10 +27,20 @@ Lifecycle:
   entrypoint. The hooks keep the index live; reindex is the recovery
   path for "I edited files outside the runtime".
 
-Concurrency: SQLite's default file lock handles multiple readers and
-one writer per process. The Store API serializes writes already (via
-``fcntl.flock`` on the per-memory file), so the index write happens
-inside the same critical section.
+Concurrency: SQLite's WAL mode plus a 5-second busy timeout (set in
+``_connect``) lets multiple processes share the index — readers don't
+block writers and vice versa, and contending writers retry rather
+than fail. The index upsert is deliberately *outside* the per-memory
+``fcntl.flock`` critical section in the Store — pulling SQLite I/O
+inside a file lock would serialize one writer's index write against
+every other writer's file write, with no consistency win because the
+index is a derived cache. The trade-off: if two writers race on the
+same memory id and one SQLite upsert fails past the busy timeout,
+the index drifts from the canonical file. Hooks log a warning and
+let the canonical write proceed (`_index_upsert_quietly` in
+``store.py``); the recovery path is ``bettermemory reindex``, which
+rebuilds the index from the on-disk truth. Files are canonical, the
+index is regenerable.
 
 This module is intentionally narrow: schema, lifecycle, and a thin
 ``query`` surface returning ranked memory IDs. The search ranker
