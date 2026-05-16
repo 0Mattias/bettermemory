@@ -232,6 +232,65 @@ The competitive landscape (May 2026) is detailed in
   Literal type are exported for callers that want to wire the
   rankers directly without going through `search()`.
 
+### Fixed
+
+Five fixes landed inside the v2.0.0 tag window: the initial
+`release: 2.0.0` commit went out, two CI failures (sdist excludes
+and a ruff format miss) blocked the Release workflow, and during
+the retag cycle these five fixes were picked up before the green
+tag landed. All are documented here for the audit trail.
+
+- `memory_write` and `bettermemory consolidate`: in 3+ way duplicate
+  clusters, the dedup pass could tombstone a memory it had crowned
+  as the keeper of an earlier pair (when the same id appeared as
+  the duplicate in a later pair), leaving the first pair's
+  "near-duplicate of X" tombstone reason dangling against a
+  now-tombstoned X. The apply loop now tracks `keepers_so_far`
+  alongside `tombstoned_ids` and skips any pair that names a prior
+  keeper as its duplicate.
+- `memory_update`: editing the body reset `last_verified_at` to
+  null but left `verified_paths`, `verified_commits`, and
+  `verified_versions` populated from the prior content. Those
+  attestations were attached to prose that no longer exists, so a
+  later `memory_search` could read a stale `verified_paths` set
+  against new body text and suppress the path-drift signal it
+  should have produced. Body-edit updates now clear the structured
+  attestation lists in lockstep with `last_verified_at`. Scope,
+  confidence, category, and links edits still preserve the
+  attestation (they don't touch the body's claims).
+- `memory_search`: `MemoryHit.category` is declared as
+  `Category | None` on the model, but `_build_hit` constructed the
+  hit without the field, so every result silently carried
+  `category=None` regardless of the stored memory's actual category.
+  Hits now carry the persisted category, surfacing ambient and
+  user-inference markers to callers that filter on it.
+- `bettermemory sync status`: `git status --porcelain` v1 uses a
+  fixed-width `XY␣path` shape where the X char is a space for
+  modified-not-staged files. The previous `line.partition(" ")`
+  split dropped the status char into the path, recording the
+  modified file as `"M filename"` in `SyncStatus.modified`. Now
+  parsed by position. Separately, `init` action strings,
+  `SyncStatus.remote_url`, and `SyncError` messages echoed credentialed
+  HTTPS remote URLs (`https://user:token@github.com/...`) verbatim,
+  so a piped `bettermemory sync status --json` or a `git push`
+  failure surfaced the token. Added `_redact_url` and `_redact_text`
+  helpers that mask the userinfo segment while leaving SSH URLs
+  (`git@host:path`) alone.
+- `bettermemory ui`: the one state-changing endpoint
+  (`POST /memories/{id}/verify`) now requires the request's Origin
+  (preferred) or Referer header to point at a loopback host —
+  loopback binding alone doesn't stop a malicious page in another
+  browser tab from POSTing to localhost and forging a verify event,
+  which would corrupt a load-bearing trust signal. Header-less POSTs
+  (server-rendered classic forms under stricter referrer-policy
+  settings) still fall through, since refusing every header-less
+  POST would break the normal in-UI flow; the guard catches the
+  case where a third-party origin actively attaches its own header
+  (the default cross-site form behaviour in mainstream browsers).
+  The `note` form field is also now capped at 500 chars (matching
+  `claim_excerpts` on `memory_record_use`) so a paste-bomb can't
+  inflate the event log.
+
 ## 1.5.0 - 2026-05-13
 
 A multi-agent audit pass surfaced six bugs and one missing feature

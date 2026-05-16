@@ -34,7 +34,7 @@ mypy
 python bench/storage.py --sizes 1000,10000,50000
 ```
 
-CI runs `ruff check . && ruff format --check . && mypy && pytest -q` on Python 3.11, 3.12, 3.13, and 3.14 (Ubuntu) plus 3.13 macOS and Windows slots, with an 80% coverage floor enforced via `--cov-fail-under`. Anything that passes locally should pass CI; anything that fails CI is blocking on merge.
+CI runs `uv sync --extra dev --extra ui` followed by `ruff check . && ruff format --check . && mypy && pytest -q` on Python 3.11, 3.12, 3.13, and 3.14 (Ubuntu) plus 3.14 macOS and Windows slots, with an 80% coverage floor enforced via `--cov-fail-under`. The `[ui]` extra is installed alongside `[dev]` so mypy can resolve the `fastapi` / `uvicorn` imports in `src/bettermemory/web.py` (strict mode flags missing types on imported decorators) and so `tests/test_web.py` runs as actual coverage. Anything that passes locally with that exact sync command should pass CI; anything that fails CI is blocking on merge.
 
 ## Pull request conventions
 
@@ -45,29 +45,32 @@ CI runs `ruff check . && ruff format --check . && mypy && pytest -q` on Python 3
 - Tests are required for new behavior. The [`tests/`](tests/) directory has good examples of the hand-written plus property-based mix the project aims for.
 - The Claude Code plugin scaffold at the repo root (`.claude-plugin/marketplace.json` and `plugin/`) carries its own version number that has to stay in sync with `pyproject.toml`. Bumping `pyproject.toml` without bumping `plugin/.claude-plugin/plugin.json` and `.claude-plugin/marketplace.json` lights up the version-sync tests in [`tests/test_plugin.py`](tests/test_plugin.py); fix the manifest before pushing.
 
-## Versioning and the 1.x compatibility contract
+## Versioning and the compatibility contract
 
-The project uses semver with the conventions below. The headline: **within a 1.x line, the surface defined in [`docs/api.md`](docs/api.md) and the on-disk format defined by `models.SCHEMA_VERSION` are stable.** Strangers who pin `bettermemory==1.x` get a contract they can rely on.
+The project uses semver with the conventions below. The headline: **within a major line, the surface defined in [`docs/api.md`](docs/api.md) and the on-disk format defined by `models.SCHEMA_VERSION` are stable.** Strangers who pin `bettermemory==2.x` get a contract they can rely on. The current major is 2; the same shape held for 1.x and will hold for any future major line.
+
+The 2.0 bump itself was a scope-only bump — nine 1.6-plan features shipped in one release. SCHEMA_VERSION stayed at 1, every new wire field is opt-in or absence-as-signal, and no 1.x surface was renamed or removed. Treat the rules below as continuous across the 1→2 boundary; they describe the project's stance on stability, not a one-off cleanup.
 
 ### Surface (the 17 MCP tools)
 
-Stable within 1.x:
+Stable within the current major (2.x):
 
-- Tool names. `memory_search` will not be renamed to `mem_search` in 1.x.
-- Required parameter names and positions. `memory_remove(id, reason)` will not flip to `(reason, id)` in 1.x.
-- Default values for optional parameters. `memory_search.expand_top` defaults to `False` in 1.x.
-- Closed-set string values for enum-typed parameters. `confidence` is `"low"` / `"medium"` / `"high"` in 1.x; `outcome` is `"applied"` / `"ignored"` / `"contradicted"` / `"corrected"` in 1.x; `category` is `"fact"` / `"user-inference"` / `"ambient"` in 1.x.
-- Return-shape keys for the same status. A `memory_write` response with `status="duplicate"` will continue to carry a `matches` list in 1.x.
+- Tool names. `memory_search` will not be renamed to `mem_search`.
+- Required parameter names and positions. `memory_remove(id, reason)` will not flip to `(reason, id)`.
+- Default values for optional parameters. `memory_search.expand_top` defaults to `False`; `memory_search.mode` defaults to `"keyword"` (new in 2.0); `memory_write.groundedness_check` defaults to `False` (new in 2.0).
+- Closed-set string values for enum-typed parameters. `confidence` is `"low"` / `"medium"` / `"high"`; `outcome` is `"applied"` / `"ignored"` / `"contradicted"` / `"corrected"`; `category` is `"fact"` / `"user-inference"` / `"ambient"`; `mode` is `"keyword"` / `"bm25"` / `"semantic"` / `"hybrid"`; `link.type` is `"supersedes"` / `"contradicts"` / `"extends"` / `"depends_on"`.
+- Return-shape keys for the same status. A `memory_write` response with `status="duplicate"` will continue to carry a `matches` list; the new `status="ungrounded"` (from the optional groundedness gate) will continue to carry `claims`.
 
-Permitted within 1.x:
+Permitted within a major:
 
 - Adding new tools. Strangers do not break when their pinned client ignores tools it does not know about.
 - Adding new optional parameters to existing tools, with defaults that preserve current behavior.
 - Adding new fields to return shapes.
 - Adding new return-status values to existing tools (clients should treat unknown status strings as a soft error and fall back to `memory_show`-style verification).
+- Adding new enum values to the closed-set parameters above. Forward-compat: e.g. a future `link.type` like `"refines"` would load as an unknown link type on older readers without failing the whole record (the policy enforced by 2.0's `MemoryLink` loader).
 - Tightening validation in ways that turn previously-undefined inputs into clear errors. Loosening validation in ways that accept previously-rejected inputs is also permitted.
 
-Forbidden within 1.x:
+Forbidden within a major:
 
 - Renaming a tool or parameter.
 - Removing a tool or parameter.
@@ -77,28 +80,30 @@ Forbidden within 1.x:
 
 ### On-disk format (`models.SCHEMA_VERSION`)
 
-`SCHEMA_VERSION = 1` is the constant in `src/bettermemory/models.py`. Every memory and tombstone written by 1.x carries `schema_version: 1` in its frontmatter. Readers default to `1` when the field is missing (the implicit version of memories written before the constant existed).
+`SCHEMA_VERSION = 1` is the constant in `src/bettermemory/models.py`. Every memory and tombstone written by 1.x and 2.x carries `schema_version: 1` in its frontmatter. Readers default to `1` when the field is missing (the implicit version of memories written before the constant existed). 2.0 added several optional frontmatter fields (the typed `links` list, the parallel `verified_paths` / `verified_commits` / `verified_versions` attestation lists, `origin.worktree_root`) but every one is purely additive: legacy memories load unchanged, and the constant stays at 1.
 
-Within 1.x, all changes to the on-disk format are **additive only**: new optional frontmatter fields, never renamed, never removed, never re-defined. A reader from a later 1.x minor will load files written by an earlier minor without any migration step. A reader from an earlier minor will load files written by a later minor as long as the later minor only added fields the earlier reader does not recognize (and tolerates), which is the rule above.
+Within a major, all changes to the on-disk format are **additive only**: new optional frontmatter fields, never renamed, never removed, never re-defined. A reader from a later minor will load files written by an earlier minor without any migration step. A reader from an earlier minor will load files written by a later minor as long as the later minor only added fields the earlier reader does not recognize (and tolerates), which is the rule above.
 
 ### Deprecation cycle
 
 When a tool, parameter, or field is destined for removal at the next major bump:
 
-1. The deprecation lands in a 1.x minor with a `Deprecated` entry in the changelog. The entry names the deprecated surface, the replacement (if any), and the planned-removal target version.
+1. The deprecation lands in a minor of the current major with a `Deprecated` entry in the changelog. The entry names the deprecated surface, the replacement (if any), and the planned-removal target version.
 2. The implementation logs a one-time WARNING per process when the deprecated surface is used, with the same replacement pointer.
-3. The deprecated surface continues to function, since semver says so, until the next major bump (2.0).
-4. At 2.0, the surface is removed. The 2.0 release notes reiterate every removed item.
+3. The deprecated surface continues to function, since semver says so, until the next major bump (3.0).
+4. At 3.0, the surface is removed. The 3.0 release notes reiterate every removed item.
 
 Patches and bug fixes do not count as "uses" of the deprecated surface for the WARNING; the warning fires when *callers* use the surface. The implementation may continue to call into the deprecated path internally for compatibility.
 
-### Major bumps (2.0 and beyond)
+### Major bumps (3.0 and beyond)
 
 A major bump is reserved for genuinely breaking changes:
 
-- Any of the "forbidden within 1.x" list above.
-- A non-additive on-disk format change (renamed or removed frontmatter fields, changed serialization for an existing field, change in the `.tombstones/` layout).
+- Any of the "forbidden within a major" list above.
+- A non-additive on-disk format change (renamed or removed frontmatter fields, changed serialization for an existing field, change in the `.tombstones/` layout, a `SCHEMA_VERSION` bump).
 - A change in the relationship between tools (for example, requiring `memory_write` to be paired with a `memory_record_use` call that is currently optional).
+
+The 2.0 release is the example of what does *not* require a major bump: nine additive features, no renames, SCHEMA_VERSION stayed at 1. The bump there was a scope signal to consumers ("the surface meaningfully grew") rather than a compatibility break. A future major would carry an actual break.
 
 Every major bump ships with:
 

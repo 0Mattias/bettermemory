@@ -2,13 +2,14 @@
 
 ## Supported versions
 
-bettermemory follows semver from 1.0 onward. The latest 1.x line gets security fixes; older minor releases do not. Concretely:
+bettermemory follows semver from 1.0 onward. The latest minor of the current major gets security fixes; older majors and earlier minors do not. Concretely:
 
 | Version | Status |
 |---------|--------|
-| 1.x latest | Supported |
-| 1.x earlier minor | Upgrade to latest 1.x |
-| 0.x | Unsupported (pre-1.0; no users expected) |
+| 2.x latest | Supported |
+| 2.x earlier minor | Upgrade to latest 2.x |
+| 1.x | Unsupported; upgrade to 2.x (no on-disk migration required — SCHEMA_VERSION stayed at 1) |
+| 0.x | Unsupported (pre-1.0) |
 
 ## Reporting a vulnerability
 
@@ -45,7 +46,9 @@ bettermemory is a single-user, local-first tool. The threat model is correspondi
 
 - The fcntl-based per-file locking in `store.py` and the parallel lock on the event log in `events.py` are stress-tested under multi-process contention by `tests/test_concurrency.py`. On Windows, fcntl is unavailable and the locks fall back to no-ops; the recommendation on Windows is single-process use.
 - The semantic-dedup cache (`semantic.py`) uses `np.load` with `allow_pickle=False`. A maliciously-crafted cache file cannot trigger arbitrary code execution.
-- The git-shelling in `origin.py` calls `subprocess.run` without `shell=True` and with an explicit argv list. The output is parsed defensively (the git remote URL is run through `urlparse`).
+- The git-shelling in `origin.py` and `sync.py` calls `subprocess.run` without `shell=True` and with an explicit argv list. The output is parsed defensively (the git remote URL is run through `urlparse`).
+- **Web UI CSRF gate** (2.0+, `bettermemory ui`). The one state-changing endpoint (`POST /memories/{id}/verify`) requires the request's `Origin` (preferred) or `Referer` header to point at a loopback host (`localhost`, `127.0.0.1`, `::1`) — the gate rejects cross-site form submissions that mainstream browsers auto-attach headers to. Header-less POSTs fall through (some referrer-policy configurations strip both headers from same-origin classic forms; refusing every header-less POST would break the normal in-UI flow). The gate is intentionally port-agnostic — any loopback origin passes, so a co-resident local web service on `localhost:3000` could in principle POST to the UI on `localhost:8765`. This is the design trade-off: same-machine trust is the entire trust model for a tool that binds loopback by default. The `note` form field is capped at 500 chars to bound event-log inflation. The UI exposes no editing surface beyond verify; writes happen in-conversation via `memory_write`. Binding non-loopback via `--host` logs a warning since the UI exposes curation surfaces.
+- **Credential redaction in `bettermemory sync`** (2.0+). Git accepts HTTPS remote URLs with embedded auth (`https://user:token@github.com/...`). `_redact_url` and `_redact_text` in `sync.py` mask the userinfo segment in `init` action strings, `SyncStatus.remote_url` (visible in `bettermemory sync status --json`), and `SyncError` messages built from `git push` failures. SSH URLs (`git@host:path`) are left alone — the `git@` is a username, not a token. The user's git config itself is untouched; redaction is purely on the wrapper's output surface.
 
 ## Disclosure timeline
 

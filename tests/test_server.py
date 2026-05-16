@@ -1256,6 +1256,69 @@ async def test_memory_update_confidence_only_preserves_last_verified_at(
     assert post["last_verified_at"] == pre["last_verified_at"]
 
 
+async def test_memory_update_content_clears_verified_attestation(
+    server: Any,
+) -> None:
+    """Body edits invalidate the structured attestation in lockstep with
+    last_verified_at. Carrying verified_paths / verified_commits /
+    verified_versions forward across a body rewrite would let a later
+    memory_search read e.g. verified_paths=['/etc/foo'] against new
+    prose that no longer mentions /etc/foo, suppressing the path-drift
+    signal it should have produced."""
+    written = await _call(
+        server, "memory_write", content="claim about /etc/foo", scopes=["tools"]
+    )
+    await _call(
+        server,
+        "memory_verify",
+        id=written["id"],
+        verified_paths=["/etc/foo"],
+        verified_commits=["abc1234"],
+        verified_versions=["1.2.3"],
+    )
+    pre = await _call(server, "memory_show", id=written["id"])
+    assert pre["verified_paths"] == ["/etc/foo"]
+    assert pre["verified_commits"] == ["abc1234"]
+    assert pre["verified_versions"] == ["1.2.3"]
+
+    await _call(server, "memory_update", id=written["id"], content="rewritten body")
+    post = await _call(server, "memory_show", id=written["id"])
+    assert post["last_verified_at"] is None
+    assert post["verified_paths"] == []
+    assert post["verified_commits"] == []
+    assert post["verified_versions"] == []
+
+
+async def test_memory_update_scope_only_preserves_verified_attestation(
+    server: Any,
+) -> None:
+    """Scope / confidence / category / links edits don't touch the body's
+    claims; the structured attestation must survive alongside
+    last_verified_at."""
+    written = await _call(
+        server, "memory_write", content="claim about /etc/foo", scopes=["tools"]
+    )
+    await _call(
+        server,
+        "memory_verify",
+        id=written["id"],
+        verified_paths=["/etc/foo"],
+        verified_versions=["1.2.3"],
+    )
+    pre = await _call(server, "memory_show", id=written["id"])
+
+    await _call(
+        server,
+        "memory_update",
+        id=written["id"],
+        scopes=["tools", "infrastructure"],
+    )
+    post = await _call(server, "memory_show", id=written["id"])
+    assert post["last_verified_at"] == pre["last_verified_at"]
+    assert post["verified_paths"] == ["/etc/foo"]
+    assert post["verified_versions"] == ["1.2.3"]
+
+
 # ---------------------------------------------------------------------------
 # memory_show response — last_verified_at + path_drift
 # ---------------------------------------------------------------------------

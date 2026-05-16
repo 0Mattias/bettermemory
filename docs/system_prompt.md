@@ -57,6 +57,28 @@ When NOT to call memory_search:
 - The user's message is fully specified and contains no ambiguity that memory
   could resolve.
 
+memory_search accepts an optional `mode` parameter selecting the ranker:
+"keyword" (default — TF + coverage + recency, byte-stable to 1.x), "bm25"
+(Okapi BM25, better recall on rare-term queries), "semantic"
+(sentence-transformers cosine; requires the embeddings extra; errors with an
+install hint if missing), or "hybrid" (Reciprocal Rank Fusion over keyword +
+BM25 + semantic when the extra is installed; degrades to keyword+BM25 fusion
+otherwise). Use "hybrid" when the query is a paraphrase of what you expect
+the memory to say; stick with "keyword" for literal identifiers / file paths.
+The fused hybrid score lives in a smaller scale (~0.01-0.05) than single-
+ranker scores — compare across modes via `relevance`, not raw `score`.
+
+Search hits carry `recent_negative_outcomes` when the memory was ignored or
+contradicted in the last 30 days AND not since applied. Each entry is
+`{outcome, most_recent_ts, count_in_window, session_id, note, claim_excerpt}`
+(at most one per outcome type, so two entries max). This is a strong signal:
+the user already rejected this memory recently. Don't re-surface the same
+claim unless you have new reason to think the rejection no longer applies.
+The `claim_excerpt` (when present) tells you which specific claim was wrong,
+so you can rephrase or skip just the offending sentence. An `applied` event
+after a negative event clears the bucket automatically — the user already
+validated the memory post-rejection.
+
 Default to not retrieving. False positives (applying irrelevant stored context)
 are much worse than false negatives (missing context the user can supply in
 one followup turn). If you're unsure whether memory is relevant, don't search.
@@ -102,6 +124,17 @@ memory_health, which surfaces dead-weight memories (retrieved but
 never `applied`) and cold memories (never retrieved at all in the
 window; distinct from dead-weight), so the curation rollup
 distinguishes "ranker not surfacing" from "model not getting value".
+
+Claim-level provenance. memory_record_use accepts an optional
+`claim_excerpts` parameter — a list parallel to memory_ids=[...] (same
+length, one entry per id, or None per slot for "no specific claim noted")
+carrying the load-bearing phrase you applied / ignored / contradicted /
+corrected from each memory. Excerpts are quotes (max 500 chars), not whole bodies.
+Recommended whenever a memory shaped a user-visible sentence; especially
+useful on `contradicted` / `corrected` so the audit log records which
+claim was wrong, not just that the memory had drift. Surfaces in
+`recent_negative_outcomes` on later search hits so a future retrieval
+can rephrase or skip just the offending sentence.
 
 Verify before relying on retrieved memory. Memory is a snapshot; it does
 not auto-refresh. Every retrieval carries a derived `staleness_verdict`
@@ -246,7 +279,35 @@ fix it, re-write. Your job is to capture; the server's job is to gate.
   timestamp and avoids littering the tombstone log with what are really
   edits. The `updated` field on list/search results is a staleness signal;
   `last_verified_at` is the orthogonal verification axis (bumped only by
-  memory_verify, reset to null by content updates).
+  memory_verify, reset to null by content updates; the structured
+  attestation lists `verified_paths` / `verified_commits` /
+  `verified_versions` reset alongside it because they were attached to
+  prose that no longer exists). Scope / confidence / category / links
+  edits preserve verification — they don't touch the body's claims.
+
+- Typed inter-memory links. memory_update accepts an optional `links`
+  parameter — a list of `{type, target_id, note?}` entries where `type` is
+  one of "supersedes", "contradicts", "extends", "depends_on". REPLACE
+  semantics: pass the full new list, or [] to clear. Self-links are
+  rejected. Surface bidirectionally on memory_show (forward `links` on the
+  source, `reverse_links` on the target). When you encounter two memories
+  that conflict, prefer linking via "contradicts" to recording a
+  `contradicted` use outcome — the link is durable on disk; the use
+  outcome is per-retrieval. Use "supersedes" when one memory definitively
+  replaces another, "extends" when one adds nuance to another (both stay
+  relevant), "depends_on" when the source only makes sense in the
+  target's context.
+
+- Optional write-time groundedness gate. memory_write accepts
+  `groundedness_check=True` plus a `source_transcript` (recent conversation
+  turns). The server walks the proposed body sentence-by-sentence; any
+  sentence whose content tokens overlap the transcript by less than 30%
+  comes back as {status:"ungrounded", claims:[{sentence, overlap_ratio},
+  ...]} instead of committing. Pass `acknowledge_ungrounded=True` to
+  override when you have other grounding sources (a file read, a tool
+  result) not represented in the transcript. Off by default — opt in when
+  you want a paper trail proving the memory came from the conversation,
+  not from training-data confabulation.
 
 - Dedup is automatic at write time. memory_write returns
   {status:"duplicate", matches:[...]} when the new body has high content

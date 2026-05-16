@@ -1,6 +1,6 @@
-# API surface (1.x)
+# API surface (2.x)
 
-This document is the contractual list of MCP tools bettermemory exposes. Signatures, defaults, and return shapes are stable within the 1.x line. See [`CONTRIBUTING.md`](../CONTRIBUTING.md) for the deprecation policy. The 1.x surface was frozen at 1.0; subsequent additions are permitted (and several have landed in 1.1, 1.2, and 1.3: the `commit_drift` block on retrieval hits, the `category` parameter on `memory_write` and `memory_update`, the `corrected` outcome on `memory_record_use`, the `verification_debt` and `commit_drift_debt` rollups on `memory_health`, the `staleness_verdict` on every retrieval, auto-`record_use` via `use_token`, and the `verified_paths` / `verified_commits` / `verified_versions` parameters on `memory_verify`). Renames, removals, and semantic redefinitions are forbidden until a 2.0 bump.
+This document is the contractual list of MCP tools bettermemory exposes. Signatures, defaults, and return shapes are stable within the 2.x line. See [`CONTRIBUTING.md`](../CONTRIBUTING.md) for the deprecation policy. The 1.x surface was frozen at 1.0 and accumulated additions through 1.5 (the `commit_drift` block on retrieval hits, the `category` parameter on `memory_write` and `memory_update`, the `corrected` outcome on `memory_record_use`, the `verification_debt` and `commit_drift_debt` rollups on `memory_health`, the `staleness_verdict` on every retrieval, auto-`record_use` via `use_token`, the `verified_paths` / `verified_commits` / `verified_versions` parameters on `memory_verify`, and worktree-aware auto-scoping). 2.0 bumped the major version to gate the 1.6 plan's nine-feature surface (claim-level provenance on `memory_record_use`, hybrid retrieval via `mode` on `memory_search`, write-time groundedness gate on `memory_write`, typed inter-memory `links`, `recent_negative_outcomes` on search hits, plus the FTS5 index, `bettermemory consolidate`, `bettermemory sync`, and `bettermemory ui` CLIs) — every new wire field is opt-in or absence-as-signal, so the bump reflects scope, not on-disk incompatibility (SCHEMA_VERSION stays at 1). Renames, removals, and semantic redefinitions of the 2.x surface are forbidden until a 3.0 bump.
 
 The 17 tools group naturally:
 
@@ -73,7 +73,7 @@ Returns `{current_repo, scopes: {scope: count}, total, curation_pending}`. The `
 
 ## Writing
 
-### `memory_write(content, scopes, confidence?, source?, category?, force?, acknowledge_transient?, acknowledge_scope_mismatch?)`
+### `memory_write(content, scopes, confidence?, source?, category?, force?, acknowledge_transient?, acknowledge_scope_mismatch?, groundedness_check?, source_transcript?, acknowledge_ungrounded?)`
 
 - `content: str`. Required.
 - `scopes: list[str]`. Required, non-empty.
@@ -97,12 +97,12 @@ Possible result statuses:
 
 - `pending_id: str`. Returned by a `memory_write` whose result was `"pending"`. Pending entries expire after one hour.
 
-### `memory_update(id, content?, scopes?, confidence?, category?)`
+### `memory_update(id, content?, scopes?, confidence?, category?, links?)`
 
 - `id: str`. Required.
-- `content`, `scopes`, `confidence`, `category`. At least one must be provided. `scopes` has replace semantics (provide the full new list, not a delta). `category` accepts `"fact"` and `"ambient"`; `"user-inference"` is rejected because that category gates the pending-confirm WRITE flow and there is no equivalent gate on update.
+- `content`, `scopes`, `confidence`, `category`, `links`. At least one must be provided. `scopes` has replace semantics (provide the full new list, not a delta). `category` accepts `"fact"` and `"ambient"`; `"user-inference"` is rejected because that category gates the pending-confirm WRITE flow and there is no equivalent gate on update. `links` (added in 2.0) is the typed inter-memory edge list — REPLACE semantics, see the "Inter-memory links" section above for the schema; pass `[]` to clear.
 
-Preserves `id`, `created`, and `source`. Bumps `updated`. Resets `last_verified_at` to `null` on content change (the old verification was for prose that no longer exists). Category, scope, and confidence-only edits preserve `last_verified_at`.
+Preserves `id`, `created`, and `source`. Bumps `updated`. Resets `last_verified_at` to `null` on content change AND clears the `verified_paths` / `verified_commits` / `verified_versions` attestation lists in lockstep — the old attestation was for prose that no longer exists, and carrying it forward would suppress later drift signals against new body text. Scope, confidence, category, and links edits preserve `last_verified_at` and the attestation (they don't touch the body's claims).
 
 ## Lifecycle
 
@@ -169,9 +169,9 @@ Returns `{active: [ids], tombstoned: [ids]}` for the records that were actually 
 
 Resets when the server process restarts. Disabled scopes are filtered from `memory_search`, `memory_list`, and `memory_scope_overview`.
 
-## Audit conclusions (recorded for the 1.0 freeze, still applicable in 1.x)
+## Audit conclusions (recorded for the 1.0 freeze, still applicable in 2.x)
 
-The 1.0 surface audit deliberately compared every signature against the patterns elsewhere in the API. The conclusions still hold for the 1.x line:
+The 1.0 surface audit deliberately compared every signature against the patterns elsewhere in the API. The conclusions still hold for the 2.x line (every 2.0 addition was either a new parameter with a defaulted opt-in or a new tool, so the audit's invariants are intact):
 
 - **Naming consistency.** `id` is always the positional first argument when a tool acts on one memory. `scopes` is always the parameter name for a list filter; `scope` (singular) is always the parameter name for a single-scope action. No hidden synonyms.
 - **Plural vs singular.** `memory_record_use(memory_ids: list)` is plural even for the single-id case so the JSON surface is consistent with batch use. The cost is one extra `[…]` in the most common call shape, which is mild.
@@ -179,4 +179,4 @@ The 1.0 surface audit deliberately compared every signature against the patterns
 - **Enums-as-strings.** `confidence`, `source`, `category`, and `outcome` are typed as `str` in the JSON surface and validated against closed sets at the handler. JSON Schema cannot model Python enums in a way most MCP clients render well; the closed-set validation gives equivalent safety with a friendlier wire format.
 - **Mutually-exclusive optionals.** `memory_update` requires at least one of `content`, `scopes`, `confidence`, or `category` at runtime. This is not expressible in the JSON Schema published to clients, but the handler returns a clear error message when no field is set.
 
-The 1.x surface is the contract. Additions follow the permitted-within-1.x rules in `CONTRIBUTING.md`. Removals or renames wait for 2.0.
+The 2.x surface is the contract. Additions follow the permitted-within-major rules in `CONTRIBUTING.md`. Removals or renames wait for 3.0.
