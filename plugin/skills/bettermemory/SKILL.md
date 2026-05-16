@@ -22,11 +22,11 @@ The rest of this document is reference for when one of those answers needs more 
 
 ## Available tools
 
-- **Retrieval**: `memory_search`, `memory_show`, `memory_list`, `memory_scope_overview`
-- **Writing**: `memory_write` (plus `memory_write_confirm` and `memory_write_cancel` for the staged-write flow), `memory_update`
+- **Retrieval**: `memory_search` (with optional `mode` parameter: `keyword` default, `bm25`, `semantic`, or `hybrid`), `memory_show`, `memory_list`, `memory_scope_overview`
+- **Writing**: `memory_write` (with optional `groundedness_check` + `source_transcript` for the HaluMem-style write-time gate), `memory_update` (now accepts typed `links` for inter-memory edges), plus `memory_write_confirm` and `memory_write_cancel` for the staged-write flow
 - **Lifecycle**: `memory_remove`, `memory_restore`, `memory_list_tombstones`
 - **Verification**: `memory_verify`
-- **Curation**: `memory_record_use`, `memory_health`, `memory_rename_scope`
+- **Curation**: `memory_record_use` (with optional `claim_excerpts` for claim-level provenance), `memory_health`, `memory_rename_scope`
 - **Session-local**: `memory_scope_disable`, `memory_scope_enable`
 
 ## When to retrieve
@@ -135,6 +135,55 @@ Tag with appropriate scopes. Avoid the catch-all `general` scope.
 Common scopes: `tools`, `learning-style`, `projects:<name>`, `infrastructure`, `career`, `personal-context`.
 
 If the user says *"this is unrelated to project X"*, call `memory_scope_disable("projects:X")` for the rest of the session.
+
+## Claim-level provenance (when applicable)
+
+When recording an `applied` (or `ignored` / `contradicted` / `corrected`) outcome on a memory whose claim actually shaped a user-visible sentence in your reply, pass the load-bearing phrase as `claim_excerpts` — a list parallel to `memory_ids` with one entry per id (`None` for "no specific claim noted"). The audit log captures *which* claim was used, not just *that* one was. Especially useful on `contradicted` / `corrected` so the audit records which claim was wrong, not just that the memory had drift.
+
+```text
+memory_record_use(
+    memory_ids=[mem_id],
+    outcome="applied",
+    claim_excerpts=["the user prefers terse code-driven explanations"],
+)
+```
+
+Excerpts are quotes (max 500 chars), not whole bodies. The body is already on disk; the excerpt is the audit trail.
+
+## Negative-results suppression
+
+When a `memory_search` hit's memory was previously ignored or contradicted in the last 30 days AND not since applied, the hit carries `recent_negative_outcomes`. This is a strong signal: the user already rejected this memory recently. Don't surface the same claim again unless you have new reason to think the rejection no longer applies. The `claim_excerpt` field on each entry (when present) tells you not just *that* the memory was rejected but *which specific claim* — so you can rephrase or skip just the offending sentence rather than the whole body. `applied` events after a negative event clear the negative-bucket entries automatically, since the user already validated the memory after the rejection.
+
+## Hybrid retrieval
+
+`memory_search` accepts an optional `mode` parameter. Defaults to `keyword` (the original TF + coverage + recency scorer, byte-stable to 1.x). Other modes:
+
+- `bm25`: Okapi BM25 with the same scope-bonus + recency. Better recall on rare-term queries.
+- `semantic`: sentence-transformers cosine; requires the embeddings extra. Errors with an install hint if missing.
+- `hybrid`: Reciprocal Rank Fusion over keyword + BM25 (plus semantic when the extra is installed). Gracefully degrades to keyword+BM25 fusion when no model is available.
+
+Use `hybrid` when the query is a paraphrase of what you expect the memory to say. Stick with `keyword` when the query contains literal identifiers, file paths, or unique tokens you remember writing down. The fused hybrid score lives in a much smaller scale (~`0.01-0.05` from RRF) than single-ranker scores — compare across modes via `relevance`, not raw `score`.
+
+## Typed inter-memory links
+
+Memories can carry `links` of type `supersedes`, `contradicts`, `extends`, or `depends_on`, each pointing at another memory's id with an optional `note`. Set via `memory_update(id, links=[...])` — REPLACE semantics; pass the full new list, or `[]` to clear. Self-links are rejected. `memory_show` surfaces both the forward `links` on the source memory and `reverse_links` on the target (with `source_id` in place of `target_id`).
+
+When you encounter two memories that conflict, prefer linking them via `contradicts` to recording a `contradicted` use outcome — the link is durable on disk; the use outcome is per-retrieval. Use `supersedes` when one memory definitively replaces another; the retrieval consumer can suppress the superseded one. Use `extends` when one adds nuance to another (both stay relevant). Use `depends_on` when the source only makes sense in the target's context.
+
+## Optional: write-time groundedness gate
+
+When a write captures a claim sourced from the current conversation, you can opt into the structural check:
+
+```text
+memory_write(
+    content="The user prefers terse code-driven explanations.",
+    scopes=["learning-style"],
+    groundedness_check=True,
+    source_transcript="user: I want terse code-driven explanations, no prose.",
+)
+```
+
+The server walks the proposed body sentence-by-sentence and flags any sentence whose content tokens overlap the transcript by less than 30%. Returns `{status: "ungrounded", claims: [...]}` with the offending sentences. The override is `acknowledge_ungrounded=True`, used when you have other grounding sources (a file read, a tool result) not represented in the transcript. Off by default; opt in when you want a paper trail proving the memory came from the conversation, not from training-data confabulation.
 
 ## Scope hygiene and curation
 

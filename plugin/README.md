@@ -1,6 +1,6 @@
 # bettermemory: Claude Code plugin
 
-This is the Claude Code plugin wrapper for [bettermemory](https://github.com/0Mattias/bettermemory): persistent memory for Claude Code, retrieved on demand. Local file-backed MCP server, memories on disk as markdown + YAML.
+This is the Claude Code plugin wrapper for [bettermemory](https://github.com/0Mattias/bettermemory): **verification-grade persistent memory** for Claude Code, retrieved on demand. Local file-backed MCP server, memories on disk as markdown + YAML, with claim-level provenance, write-time hallucination detection, hybrid retrieval, an FTS5 inverted index, typed inter-memory links, git-based cross-host sync, and a local web UI for curation (new in 2.0).
 
 The plugin bundles two things:
 
@@ -47,13 +47,15 @@ That is it. Claude Code starts the MCP server, loads the skill, and on the next 
 
 After install, Claude has access to:
 
-- `memory_search`, `memory_show`, `memory_list`, `memory_scope_overview` for retrieval.
-- `memory_write`, `memory_update`, `memory_write_confirm`, `memory_write_cancel` for writing.
+- `memory_search` (now with optional `mode` parameter for hybrid retrieval), `memory_show`, `memory_list`, `memory_scope_overview` for retrieval.
+- `memory_write` (now with optional `groundedness_check` + `source_transcript` for the HaluMem-style write-time gate), `memory_update` (now accepting typed `links`), `memory_write_confirm`, `memory_write_cancel` for writing.
 - `memory_remove`, `memory_restore`, `memory_list_tombstones` for lifecycle.
-- `memory_verify`, `memory_record_use`, `memory_health`, `memory_rename_scope` for verification and curation.
+- `memory_verify`, `memory_record_use` (now accepting `claim_excerpts` for claim-level provenance), `memory_health`, `memory_rename_scope` for verification and curation.
 - `memory_scope_disable`, `memory_scope_enable` for session-local muting.
 
 Memories live in `~/.claude-memory/` as plain markdown plus YAML frontmatter. They are `grep`-able, `git`-versionable, and hand-editable. Override the location with the `$BETTERMEMORY_DIR` environment variable, or drop a `./.claude-memory/` directory in any project for project-scoped memory.
+
+Beyond the MCP tools, bettermemory ships a small CLI surface for offline curation: `bettermemory health` (aggregate health report), `bettermemory consolidate` (offline dedup + demotion + scope-typo pass), `bettermemory reindex` (rebuild the FTS5 index from on-disk files), `bettermemory sync init/push/pull/auto` (git-based cross-host replication), and `bettermemory ui` (local web UI for curation; requires the `[ui]` extra).
 
 ## Verify
 

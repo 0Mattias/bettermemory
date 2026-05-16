@@ -9,6 +9,37 @@ spells out exactly what's stable.
 
 ## Unreleased
 
+(Empty. Accumulate entries here between tags.)
+
+## 2.0.0 - 2026-05-16
+
+**Verification-grade memory.** The 1.6 plan in `docs/v1.6-plan.md`
+shipped as one major release: nine features in three tiers turn
+bettermemory into the only memory MCP with claim-level provenance,
+write-time hallucination detection, an FTS5 inverted index over the
+file-backed store, git-based cross-host sync, and a local web UI for
+curation. Test count: 821 → 970 (+149). No on-disk breaking changes
+— legacy memories load unchanged, every new wire field is opt-in or
+absence-as-signal, and the SCHEMA_VERSION stays at 1. The 2.0 bump
+reflects scope, not incompatibility.
+
+What's new at a glance:
+
+| Tier | Feature | Closes |
+|---|---|---|
+| T1.1 | Claim-level provenance (`claim_excerpts` on `memory_record_use`) | the mem0 hallucination-amplification gap |
+| T1.2 | Hybrid retrieval (BM25 + Jaccard + semantic via RRF) | the "keyword-only search" rebuttal |
+| T1.3 | Write-time groundedness gate on `memory_write` | the HaluMem benchmark, operationalised |
+| T2.1 | `bettermemory consolidate` CLI | the Letta sleep-time gap, no dual-agent topology |
+| T2.2 | Typed inter-memory links (supersedes / contradicts / extends / depends_on) | graph-lite without graph DB infra |
+| T2.3 | `recent_negative_outcomes` annotation on search hits | "model keeps re-suggesting rejected memories" |
+| T3.1 | SQLite FTS5 inverted index + `bettermemory reindex` CLI | the load_all linear-scan ceiling at ~5-10K |
+| T4.1 | `bettermemory sync` (git-based) | cross-host replication without a custom protocol |
+| T4.3 | `bettermemory ui` local web UI | curation surfaces where a UI beats tool calls |
+
+The competitive landscape (May 2026) is detailed in
+`docs/v1.6-plan.md`. Per-feature detail follows.
+
 ### Added
 
 - Local web UI (T4.3 of the 1.6 plan in `docs/v1.6-plan.md`). A

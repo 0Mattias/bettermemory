@@ -13,6 +13,19 @@ pipx install bettermemory
 pip install bettermemory
 ```
 
+Optional extras:
+
+```sh
+# Semantic dedup at write time + semantic / hybrid search modes
+uv tool install 'bettermemory[embeddings]'
+
+# Local web UI for curation (`bettermemory ui`)
+uv tool install 'bettermemory[ui]'
+
+# Both
+uv tool install 'bettermemory[embeddings,ui]'
+```
+
 From a development clone, swap the first line for `uv tool install .` (or `uv pip install -e .` if you want an editable install).
 
 Either path puts a `bettermemory` script on your `$PATH`.
