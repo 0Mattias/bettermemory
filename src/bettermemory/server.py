@@ -599,6 +599,31 @@ def main() -> None:
         help="Emit JSON instead of human-readable text.",
     )
 
+    ui_parser = sub.add_parser(
+        "ui",
+        help=(
+            "Run the local web UI (FastAPI). Read-mostly: browse "
+            "memories, run memory_verify, see memory_health rollups. "
+            "Requires the `[ui]` extra: pip install bettermemory[ui]."
+        ),
+    )
+    ui_parser.add_argument(
+        "--host",
+        type=str,
+        default="127.0.0.1",
+        help=(
+            "Bind host. Default 127.0.0.1 (local only). Pass 0.0.0.0 "
+            "to expose on a trusted network (the server logs a warning "
+            "in that case since the UI surfaces curation data)."
+        ),
+    )
+    ui_parser.add_argument(
+        "--port",
+        type=int,
+        default=8765,
+        help="Bind port. Default: 8765.",
+    )
+
     sync_parser = sub.add_parser(
         "sync",
         help=(
@@ -867,6 +892,9 @@ def main() -> None:
             scopes=args.scope or None,
         )
         return
+    if args.cmd == "ui":
+        _cli_ui(host=args.host, port=args.port)
+        return
     if args.cmd == "reindex":
         _cli_reindex(json_out=args.json)
         return
@@ -1092,6 +1120,31 @@ def _cli_tombstones_prune(
     )
     for memory_id in pruned_ids:
         sys.stdout.write(f"  {memory_id}\n")
+
+
+def _cli_ui(*, host: str, port: int) -> None:
+    """`bettermemory ui` — run the local web UI.
+
+    Catches the ImportError raised when the [ui] extra is missing and
+    renders a clean install hint instead of a Python traceback.
+    """
+    logging.basicConfig(
+        level=logging.INFO,
+        stream=sys.stderr,
+        format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
+    )
+    config = load_config()
+    try:
+        from . import web as _web
+
+        _web.serve(config, host=host, port=port)
+    except ImportError as exc:
+        sys.stderr.write(
+            "bettermemory ui requires the [ui] extra. Install with:\n"
+            "  pip install 'bettermemory[ui]'\n"
+            f"(original error: {exc})\n"
+        )
+        raise SystemExit(2) from exc
 
 
 def _cli_sync_init(*, remote: str | None, default_branch: str, json_out: bool) -> None:

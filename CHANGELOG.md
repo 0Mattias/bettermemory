@@ -11,6 +11,30 @@ spells out exactly what's stable.
 
 ### Added
 
+- Local web UI (T4.3 of the 1.6 plan in `docs/v1.6-plan.md`). A
+  small FastAPI app surfacing the curation surfaces that beat
+  tool calls in a browser: memory_health rollups (active count,
+  never-verified, stale verifications, dead-weight, cold,
+  unresolved contradictions), a searchable memory list with scope
+  filter, per-memory detail view showing body / scopes /
+  timestamps / verified paths / typed links, and a one-click
+  "Mark verified now" form that bumps `last_verified_at` and 303s
+  back to the detail page (PRG pattern — refreshes don't repeat
+  the verify). Tombstone browser with removal reasons. Run via
+  `bettermemory ui --host 127.0.0.1 --port 8765` (local-only by
+  default; binding non-loopback logs a warning since the UI
+  exposes curation surfaces). The handler renders inline HTML
+  with `html.escape` everywhere — no template engine, no JS
+  framework, no XSS via memory_write. Gated behind a new
+  optional `[ui]` extra (fastapi + uvicorn + httpx); the CLI
+  prints a clean install hint when the extra is missing. No
+  editing surface — writes happen in-conversation, the UI is
+  read-mostly with verify as the one mutation since "I just
+  spot-checked this" is a natural human action. Surface:
+  `bettermemory.web` module exports `build_app(config, store)`
+  for callers who want to mount the app under their own server
+  and `serve(config, host=, port=)` for the standard uvicorn
+  case.
 - `bettermemory sync` CLI subcommand for cross-host replication
   (T4.1 of the 1.6 plan in `docs/v1.6-plan.md`). Thin wrapper over
   git — the memory directory is already plain markdown, so git's
