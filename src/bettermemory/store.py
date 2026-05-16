@@ -40,6 +40,7 @@ from .models import (
     Category,
     Confidence,
     Memory,
+    MemoryLink,
     MemorySummary,
     Source,
     TombstonedMemory,
@@ -286,6 +287,23 @@ class Store:
                     category = Category(str(category_raw))
                 except ValueError:
                     category = None
+            # `links` is additive (T2.2). Legacy memories load with [].
+            # Each entry must be a dict with `type` and `target_id`;
+            # entries with unknown type or invalid target_id are
+            # silently dropped rather than raising, so a forward-compat
+            # downgrade (memory written under a newer reader that
+            # introduced a new link type) doesn't break the older
+            # reader for the whole file.
+            links_raw = meta.get("links")
+            links: list[MemoryLink] = []
+            if isinstance(links_raw, list):
+                for entry in links_raw:
+                    if not isinstance(entry, dict):
+                        continue
+                    try:
+                        links.append(MemoryLink.model_validate(entry))
+                    except (ValueError, KeyError):
+                        continue
             return Memory(
                 id=str(meta["id"]),
                 created=_as_dt(meta["created"]),
@@ -300,6 +318,7 @@ class Store:
                 verified_paths=_load_str_list(meta.get("verified_paths")),
                 verified_commits=_load_str_list(meta.get("verified_commits")),
                 verified_versions=_load_str_list(meta.get("verified_versions")),
+                links=links,
             )
         except KeyError as exc:
             raise ValueError(f"{path}: missing field {exc.args[0]}") from exc
@@ -902,6 +921,19 @@ class Store:
             meta["verified_commits"] = list(memory.verified_commits)
         if memory.verified_versions:
             meta["verified_versions"] = list(memory.verified_versions)
+        # `links` is omitted when empty — same noise-floor rationale as
+        # `verified_paths`. Each link is serialized as a plain dict
+        # (`type` is the enum value, not the Python name) so a hand-
+        # editing user can read and edit the frontmatter directly.
+        if memory.links:
+            meta["links"] = [
+                {
+                    "type": link.type.value,
+                    "target_id": link.target_id,
+                    **({"note": link.note} if link.note is not None else {}),
+                }
+                for link in memory.links
+            ]
         post.metadata = meta
         _atomic_write_post(path, post)
 

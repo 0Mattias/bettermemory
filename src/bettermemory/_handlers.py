@@ -304,27 +304,54 @@ DESC_MEMORY_WRITE_CONFIRM = (
 )
 
 
+# Append the links tail to the canonical memory_update description.
+# (Done at module load time so the resulting constant is itself
+# top-level and the FastMCP framework's description-binding picks
+# up the full text.)
+
+
 DESC_MEMORY_WRITE_CANCEL = (
     "Drop a pending memory_write without committing. "
     "Pass the pending_id from the original write response."
 )
 
 
+DESC_MEMORY_LINKS_TAIL = (
+    " Optional `links` parameter sets the typed inter-memory edge "
+    "list. Each entry is a dict with `type` (one of `supersedes`, "
+    "`contradicts`, `extends`, `depends_on`), `target_id` (a valid "
+    "ULID — the other memory this one relates to), and an optional "
+    "`note` (free-form, why the link exists). REPLACE semantics: "
+    "pass the full new list, not a delta; pass `links=[]` to clear "
+    "all links atomically. Self-links are rejected. Links surface "
+    "bidirectionally at retrieval: memory_show on the source "
+    "carries `links`; memory_show on the target carries "
+    "`reverse_links`. Use `supersedes` when this memory replaces "
+    "the target (the retrieval consumer should prefer this one "
+    "and demote the target); `contradicts` when both can't be "
+    "true (consumer should reconcile via memory_verify); "
+    "`extends` when this memory adds nuance to the target; "
+    "`depends_on` when this memory only makes sense in the "
+    "target's context."
+)
+
+
 DESC_MEMORY_UPDATE = (
     "Refine an existing memory in place. Pass the memory id and any "
-    "of `content`, `scopes`, `confidence`, `category` to change. "
-    "Preserves `id`, `created`, and `source`; bumps `updated`. "
-    "Prefer this over memory_remove + memory_write when correcting "
-    "or refining a stored fact — delete-and-recreate loses the "
-    "original timestamp and litters .tombstones/ with what are "
-    "really edits. Pass at least one field; replace semantics for "
-    "`scopes` (provide the full new list, not a delta). `category` "
-    "accepts the same values as `memory_write` (`fact`, `ambient`); "
-    "use this to retag legacy memories written before the "
-    "`ambient` tier existed without round-tripping through "
-    "remove+rewrite. `user-inference` is rejected here — that "
-    "category exists to gate WRITES through the pending-confirm "
-    "flow, and there is no equivalent gate on update."
+    "of `content`, `scopes`, `confidence`, `category`, `links` to "
+    "change. Preserves `id`, `created`, and `source`; bumps "
+    "`updated`. Prefer this over memory_remove + memory_write when "
+    "correcting or refining a stored fact — delete-and-recreate "
+    "loses the original timestamp and litters .tombstones/ with "
+    "what are really edits. Pass at least one field; replace "
+    "semantics for `scopes` and `links` (provide the full new "
+    "list, not a delta). `category` accepts the same values as "
+    "`memory_write` (`fact`, `ambient`); use this to retag legacy "
+    "memories written before the `ambient` tier existed without "
+    "round-tripping through remove+rewrite. `user-inference` is "
+    "rejected here — that category exists to gate WRITES through "
+    "the pending-confirm flow, and there is no equivalent gate on "
+    "update." + DESC_MEMORY_LINKS_TAIL
 )
 
 
@@ -985,7 +1012,52 @@ class ToolHandlers:
             "verified_paths": list(memory.verified_paths),
             "verified_commits": list(memory.verified_commits),
             "verified_versions": list(memory.verified_versions),
+            **self._links_payload(memory),
         }
+
+    def _links_payload(self, memory: Any) -> dict[str, Any]:
+        """Build the `links` + `reverse_links` payload for memory_show.
+
+        Forward `links` come from the memory's own frontmatter. Reverse
+        `reverse_links` are computed by scanning the active set for any
+        memory whose links point at this memory's id — surfaced so a
+        retrieval consumer sees the relationship both ways (e.g. "this
+        memory is superseded by X" alongside "X supersedes this").
+
+        Both lists are omitted when empty (absence-as-signal contract,
+        matches `path_drift` / `commit_drift`). Reverse links carry the
+        source `memory_id` so the consumer can navigate to the linking
+        memory; forward links carry the `target_id`.
+        """
+        out: dict[str, Any] = {}
+        if memory.links:
+            out["links"] = [
+                {
+                    "type": link.type.value,
+                    "target_id": link.target_id,
+                    **({"note": link.note} if link.note is not None else {}),
+                }
+                for link in memory.links
+            ]
+        # Reverse-link scan. One pass over the active set per show;
+        # cheap given the typical store size. For the FTS-indexed
+        # path (T3.1) this becomes an index lookup.
+        reverse: list[dict[str, Any]] = []
+        for other in self.store.load_all():
+            if other.id == memory.id:
+                continue
+            for link in other.links:
+                if link.target_id == memory.id:
+                    reverse.append(
+                        {
+                            "type": link.type.value,
+                            "source_id": other.id,
+                            **({"note": link.note} if link.note is not None else {}),
+                        }
+                    )
+        if reverse:
+            out["reverse_links"] = reverse
+        return out
 
     # ---- memory_write ----------------------------------------------------
 
@@ -1384,6 +1456,7 @@ class ToolHandlers:
         scopes: list[str] | None = None,
         confidence: str | None = None,
         category: str | None = None,
+        links: list[dict[str, Any]] | None = None,
         ctx: Context | None = None,
     ) -> dict[str, Any]:
         state = self.sessions.for_request(ctx)
@@ -1393,10 +1466,11 @@ class ToolHandlers:
             and scopes is None
             and confidence is None
             and category is None
+            and links is None
         ):
             raise ValueError(
                 "memory_update needs at least one of content, scopes, "
-                "confidence, or category"
+                "confidence, category, or links"
             )
         if content is not None and not content.strip():
             raise ValueError("content must be non-empty if provided")
@@ -1451,6 +1525,32 @@ class ToolHandlers:
         if content is not None:
             new_body = content.strip() + "\n"
 
+        # `links` is REPLACE semantics — the caller passes the full new
+        # list. Same shape as the `scopes` parameter: simpler than
+        # diffing add/remove, and lets the caller atomically clear all
+        # links with `links=[]`. None means "leave existing links
+        # unchanged".
+        new_links = existing.links
+        if links is not None:
+            from .models import MemoryLink as _MemoryLink
+
+            parsed_links: list[_MemoryLink] = []
+            for i, entry in enumerate(links):
+                if not isinstance(entry, dict):
+                    raise ValueError(
+                        f"links[{i}] must be a dict with 'type' and 'target_id'"
+                    )
+                try:
+                    parsed_links.append(_MemoryLink.model_validate(entry))
+                except (ValueError, KeyError) as exc:
+                    raise ValueError(f"links[{i}] invalid: {exc}") from exc
+                if parsed_links[-1].target_id == id:
+                    raise ValueError(
+                        f"links[{i}].target_id cannot equal the memory's own id "
+                        f"(self-links are incoherent)"
+                    )
+            new_links = parsed_links
+
         # When `content` changes, the prior verification was for prose
         # that no longer exists — reset `last_verified_at` to None so the
         # caller has to re-confirm against the new body. Scope/confidence/
@@ -1462,6 +1562,7 @@ class ToolHandlers:
             "scopes": new_scopes,
             "confidence": new_confidence,
             "category": new_category,
+            "links": new_links,
         }
         if content is not None:
             update_fields["last_verified_at"] = None
@@ -1475,6 +1576,7 @@ class ToolHandlers:
                 ("scopes", scopes),
                 ("confidence", confidence),
                 ("category", category),
+                ("links", links),
             )
             if value is not None
         ]

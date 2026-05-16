@@ -7,7 +7,7 @@ import secrets
 import time
 from datetime import datetime, timezone
 from enum import Enum
-from typing import Annotated
+from typing import Annotated, Any
 
 from pydantic import BaseModel, Field, field_validator
 
@@ -143,6 +143,68 @@ def _validate_scopes_list(scopes: list[str]) -> list[str]:
 
 
 # ---------------------------------------------------------------------------
+# Inter-memory link type
+# ---------------------------------------------------------------------------
+
+
+class LinkType(str, Enum):
+    """How one memory relates to another (T2.2 of the 1.6 plan).
+
+    Adopted from `mcp-memory-service`'s typed-edges idea but plumbed
+    into retrieval so consumers can act on the relationship, not just
+    inspect it.
+
+    - ``"supersedes"``: this memory replaces the target. Retrieval-side
+      consumers should prefer this memory and demote / suppress the
+      target.
+    - ``"contradicts"``: this memory contradicts the target. Both
+      surface in retrieval; consumer should reconcile, typically by
+      running memory_verify to attest which one matches reality.
+    - ``"extends"``: this memory adds nuance / detail to the target.
+      Both stay relevant; consumer might want to read both together.
+    - ``"depends_on"``: this memory is meaningful only in the context
+      of the target. A consumer retrieving this should consider
+      pulling the target too.
+    """
+
+    SUPERSEDES = "supersedes"
+    CONTRADICTS = "contradicts"
+    EXTENDS = "extends"
+    DEPENDS_ON = "depends_on"
+
+
+class MemoryLink(BaseModel):
+    """One typed edge from one memory to another. The source memory
+    holds the link in its `links` field; the relationship is one-way
+    on disk but exposed bidirectionally at retrieval (both the source
+    memory and the target memory see the link, the target via a
+    `reverse_links` field).
+
+    `target_id` must be a valid ULID. The runtime does NOT enforce
+    that the target exists at write time — a broken link (target
+    tombstoned or never written) is surfaced as a `broken_link` flag
+    on the retrieval side rather than blocking the write, so a
+    consolidation pass that tombstones the source half of a pair
+    can't accidentally orphan the surviving half.
+
+    `note` is an optional free-form string capturing *why* the link
+    exists. Important for `contradicts` and `supersedes` where the
+    relationship's motivation matters to a future curator.
+    """
+
+    type: LinkType
+    target_id: str
+    note: str | None = None
+
+    @field_validator("target_id")
+    @classmethod
+    def _check_target_id(cls, v: str) -> str:
+        if not is_valid_ulid(v):
+            raise ValueError(f"target_id must be a valid ULID, got {v!r}")
+        return v
+
+
+# ---------------------------------------------------------------------------
 # Models
 # ---------------------------------------------------------------------------
 
@@ -194,6 +256,7 @@ class Memory(BaseModel):
     verified_paths: list[str] = Field(default_factory=list)
     verified_commits: list[str] = Field(default_factory=list)
     verified_versions: list[str] = Field(default_factory=list)
+    links: list[MemoryLink] = Field(default_factory=list)
 
     @field_validator("scopes")
     @classmethod
@@ -220,6 +283,27 @@ class Memory(BaseModel):
                 f"verified-claims list capped at 64 entries (got {len(v)})"
             )
         return [str(item) for item in v]
+
+    @field_validator("links")
+    @classmethod
+    def _check_links(cls, v: list[MemoryLink], info: Any) -> list[MemoryLink]:
+        # Reject self-links: a memory shouldn't supersede or contradict
+        # itself, that's incoherent and would foul up the retrieval-side
+        # suppression logic. We can't easily access `id` from a field
+        # validator unless we go through `info.data`, which is the
+        # pydantic v2 idiom for cross-field validation.
+        memory_id = info.data.get("id") if info.data else None
+        for link in v:
+            if memory_id is not None and link.target_id == memory_id:
+                raise ValueError(
+                    f"memory {memory_id} cannot link to itself (type={link.type.value})"
+                )
+        # Cap to keep frontmatter small and defensive. Same rationale as
+        # verified-claims list — a hand-edited file or buggy migration
+        # shouldn't grow this without bound.
+        if len(v) > 64:
+            raise ValueError(f"links list capped at 64 entries (got {len(v)})")
+        return v
 
 
 class MemoryHit(BaseModel):

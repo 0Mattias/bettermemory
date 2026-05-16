@@ -11,6 +11,22 @@ spells out exactly what's stable.
 
 ### Added
 
+- Typed inter-memory links (T2.2 of the 1.6 plan in
+  `docs/v1.6-plan.md`). New `links` field on the `Memory` model:
+  a list of `{type, target_id, note?}` entries where `type` is one
+  of `supersedes`, `contradicts`, `extends`, `depends_on`.
+  Persisted in YAML frontmatter; legacy memories load with an empty
+  list. Settable via the new `links` parameter on `memory_update`
+  (REPLACE semantics: pass the full new list, or `[]` to clear).
+  Self-links are rejected; target_id must be a valid ULID. Surface
+  at retrieval is bidirectional: `memory_show` on a source memory
+  returns the forward `links`; `memory_show` on the target carries
+  `reverse_links` (with `source_id` instead of `target_id`) so the
+  consumer sees the relationship from either side. Forward-compat
+  guarantee: unknown link types on disk load silently as empty
+  rather than failing the whole record. Graph-lite without the
+  graph DB infra burden — adopted from mcp-memory-service's typed-
+  edges idea but plumbed into retrieval, not just storage.
 - Write-time groundedness gate on `memory_write` (T1.3 of the 1.6
   plan in `docs/v1.6-plan.md`). Optional, opt-in via the new
   `groundedness_check=True` parameter plus a `source_transcript`

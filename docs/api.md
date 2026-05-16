@@ -28,6 +28,18 @@ Returns a list of hits. Each hit carries `id`, `scopes`, `relevance` (`"high"`, 
 
 Negative-outcome annotations (T2.3): when a hit's memory has been `ignored` or `contradicted` within the last 30 days AND not since `applied`, the hit also carries a `recent_negative_outcomes` list. Each entry has shape `{outcome, most_recent_ts, count_in_window, session_id, note, claim_excerpt}` — at most one entry per outcome type, so two entries maximum (one for `ignored`, one for `contradicted`). The supersession rule is the load-bearing semantic: an `applied` event after a negative event clears the negative-bucket entries, because the user already validated the memory after the rejection. The `claim_excerpt` field (T1.1) is the load-bearing claim recorded at rejection time, when present, so the caller can rephrase or skip just the offending sentence rather than the whole body. The field is OMITTED from the hit (rather than emitted as null) when no qualifying negatives exist — absence is the default.
 
+### Inter-memory links (T2.2)
+
+Memories can carry typed links to other memories. The schema lives on the `Memory` model as `links: list[MemoryLink]` (persisted in YAML frontmatter; legacy memories load with `[]`).
+
+Each `MemoryLink` is `{type, target_id, note?}`:
+
+- `type`: one of `"supersedes"`, `"contradicts"`, `"extends"`, `"depends_on"`.
+- `target_id`: a valid ULID — the other memory this one relates to.
+- `note`: optional free-form string capturing *why* the link exists.
+
+Set via `memory_update(id, links=[...])` — REPLACE semantics, pass the full new list. `links=[]` clears all links atomically. Self-links are rejected. Surface at retrieval is bidirectional: `memory_show` on the source memory carries the forward `links` list; `memory_show` on the target carries `reverse_links` (with `source_id` in place of `target_id`). Forward-compat: an unknown link type on disk loads as `[]` rather than failing the whole memory record.
+
 ### `memory_write(content, scopes, ...)`
 
 Beyond the existing parameters (`confidence`, `source`, `force`, `acknowledge_transient`, `acknowledge_scope_mismatch`, `category`), `memory_write` accepts an opt-in groundedness check (T1.3):
