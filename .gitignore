@@ -15,6 +15,16 @@ venv/
 # ".coverage 2" macOS sometimes leaves behind from parallel test runs.
 .coverage*
 htmlcov/
+# Hypothesis writes machine-local fuzz-corpora here under
+# .hypothesis/examples and .hypothesis/constants. Non-deterministic
+# across machines; would bloat the sdist and harm reproducibility if
+# it leaked into a build. The hatch sdist-exclude in pyproject.toml is
+# the second line of defence.
+.hypothesis/
+
+# Type-checker / linter caches.
+.mypy_cache/
+.ruff_cache/
 
 # Editor / IDE
 .idea/

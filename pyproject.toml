@@ -15,7 +15,12 @@ dependencies = [
 
 [project.optional-dependencies]
 embeddings = ["sentence-transformers>=2.2", "numpy>=1.24"]
-ui = ["fastapi>=0.110", "uvicorn>=0.27", "httpx>=0.27"]
+# The web UI imports `fastapi` and `uvicorn` directly — that's the
+# whole runtime surface. `httpx` is *not* a runtime dep; it's only
+# needed by FastAPI's TestClient (lives in `dev`). Shipping it in
+# `[ui]` made every `pip install bettermemory[ui]` drag an extra dep
+# with no runtime use.
+ui = ["fastapi>=0.110", "uvicorn>=0.27"]
 dev = [
     "pytest>=7.0",
     "pytest-asyncio>=0.21",
@@ -27,6 +32,9 @@ dev = [
     # Pinned only on the lower bound; any reasonably modern hypothesis
     # has the strategies we use.
     "hypothesis>=6.0",
+    # FastAPI's TestClient is implemented on top of httpx — needed
+    # for tests/test_web.py only. Not a runtime dep of `[ui]`.
+    "httpx>=0.27",
 ]
 
 [project.scripts]
@@ -46,6 +54,28 @@ build-backend = "hatchling.build"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/bettermemory"]
+
+[tool.hatch.build.targets.sdist]
+# Explicit exclude — hatch defaults to `git ls-files` when in a repo,
+# but a release built from a clean checkout of an unindexed tree (e.g.
+# a CI runner that does `git clone --filter=blob:none && uv build`)
+# falls back to "everything not gitignored". These caches are not
+# tracked but the gitignore alone isn't a hard guarantee; spell out
+# the dev/test cruft so the sdist on PyPI stays tight and
+# reproducible.
+exclude = [
+    ".hypothesis",
+    ".mypy_cache",
+    ".ruff_cache",
+    ".pytest_cache",
+    ".coverage*",
+    ".DS_Store",
+    ".envrc",
+    "dist",
+    "venv",
+    ".venv",
+    "htmlcov",
+]
 
 [tool.mypy]
 # Strict on the package itself — surfaces missing annotations and unused
