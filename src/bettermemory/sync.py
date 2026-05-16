@@ -189,10 +189,7 @@ def _run_git(
         # full remote URL, which for HTTPS auth includes the token.
         stderr = _redact_text(result.stderr.strip())
         stdout = _redact_text(result.stdout.strip())
-        raise SyncError(
-            f"`git {' '.join(args)}` failed in {root}: "
-            f"{stderr or stdout}"
-        )
+        raise SyncError(f"`git {' '.join(args)}` failed in {root}: {stderr or stdout}")
     return result
 
 
