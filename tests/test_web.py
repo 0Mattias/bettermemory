@@ -141,6 +141,50 @@ def test_verify_404_when_missing(client: Any) -> None:
     assert r.status_code == 404
 
 
+def test_verify_rejects_cross_origin(client: Any, store: Store) -> None:
+    """A POST carrying an Origin / Referer that doesn't point at
+    loopback is rejected as a cross-site forgery. Defends against a
+    malicious page submitting a form to the localhost UI from another
+    open tab."""
+    m = store.write(content="some claim", scopes=["tools"])
+    r = client.post(
+        f"/memories/{m.id}/verify",
+        data={"note": ""},
+        headers={"Origin": "https://evil.example.com"},
+        follow_redirects=False,
+    )
+    assert r.status_code == 403
+    reloaded = store.load_one(m.id)
+    assert reloaded.last_verified_at is None
+
+
+def test_verify_accepts_loopback_origin(client: Any, store: Store) -> None:
+    """A POST with an Origin pointing at this UI's own loopback host
+    passes the CSRF check. Mirrors the normal in-UI form submission."""
+    m = store.write(content="some claim", scopes=["tools"])
+    r = client.post(
+        f"/memories/{m.id}/verify",
+        data={"note": ""},
+        headers={"Origin": "http://127.0.0.1:8765"},
+        follow_redirects=False,
+    )
+    assert r.status_code == 303
+
+
+def test_verify_rejects_oversized_note(client: Any, store: Store) -> None:
+    """A note longer than 500 chars returns 400 without bumping
+    last_verified_at — same cap discipline as `claim_excerpts`."""
+    m = store.write(content="some claim", scopes=["tools"])
+    r = client.post(
+        f"/memories/{m.id}/verify",
+        data={"note": "x" * 501},
+        follow_redirects=False,
+    )
+    assert r.status_code == 400
+    reloaded = store.load_one(m.id)
+    assert reloaded.last_verified_at is None
+
+
 def test_health_renders(client: Any, store: Store) -> None:
     """/health surfaces the memory_health buckets. With one memory in
     the store, the active count should show as 1."""

@@ -403,6 +403,39 @@ def _render_tombstones(tombstones: list[Any]) -> str:
 # ---------------------------------------------------------------------------
 
 
+def _same_origin(origin: str | None, referer: str | None) -> bool:
+    """Decide whether a state-changing POST originated from the UI itself.
+
+    Returns True when either header points at a loopback host
+    (`localhost`, `127.0.0.1`, `[::1]`) on any port. Same-machine
+    coverage is the entire trust model — the UI binds loopback by
+    default, and a user who deliberately exposes it to a LAN is
+    accepting the implied trust of every browser on that LAN.
+
+    Returns True when both headers are absent — same-origin classic
+    form POSTs from server-rendered HTML strip Referer under stricter
+    referrer-policy settings, and Origin is only sent on cross-origin
+    or POST in some configurations. Refusing every header-less POST
+    would break the normal in-UI flow. The risk we're guarding against
+    is a third-party origin actively *attaching* its own Origin /
+    Referer — which browsers do automatically for cross-site form
+    submissions.
+    """
+    from urllib.parse import urlparse
+
+    candidates = [h for h in (origin, referer) if h]
+    if not candidates:
+        return True
+    for header in candidates:
+        try:
+            host = (urlparse(header).hostname or "").lower()
+        except ValueError:
+            return False
+        if host not in {"localhost", "127.0.0.1", "::1"}:
+            return False
+    return True
+
+
 def build_app(config: Config, store: Store | None = None) -> "FastAPI":
     """Build a FastAPI app wired to the given store. The factory
     pattern lets tests inject a hermetic store; production code uses
@@ -412,7 +445,7 @@ def build_app(config: Config, store: Store | None = None) -> "FastAPI":
     CLI catches this and renders a clean install hint.
     """
     try:
-        from fastapi import FastAPI, Form, HTTPException
+        from fastapi import FastAPI, Form, Header, HTTPException
         from fastapi.responses import HTMLResponse, RedirectResponse
     except ImportError as exc:
         raise ImportError(
@@ -422,6 +455,12 @@ def build_app(config: Config, store: Store | None = None) -> "FastAPI":
 
     store = store or Store(config.resolved_directory())
     app = FastAPI(title="bettermemory")
+
+    # Cap the verify note at 500 chars — same discipline as
+    # `claim_excerpts` on `memory_record_use`. The UI's note field is a
+    # short "what did I check" prompt, not a free-form blob; bounding
+    # it here keeps a paste-bomb from inflating the event log.
+    _NOTE_MAX_CHARS = 500
 
     def _layout_resp(title: str, body: str) -> HTMLResponse:
         return HTMLResponse(_layout(title, body, store.root))
@@ -461,7 +500,29 @@ def build_app(config: Config, store: Store | None = None) -> "FastAPI":
         )
 
     @app.post("/memories/{memory_id}/verify")
-    def memory_verify(memory_id: str, note: str = Form(default="")) -> RedirectResponse:
+    def memory_verify(
+        memory_id: str,
+        note: str = Form(default=""),
+        origin: str | None = Header(default=None),
+        referer: str | None = Header(default=None),
+    ) -> RedirectResponse:
+        # CSRF defence: even though the UI binds to 127.0.0.1 by default,
+        # any open browser tab on the user's machine can submit a form
+        # against localhost — a malicious page could forge a bump to
+        # `last_verified_at` and corrupt the trust signal. Require the
+        # request's Origin (preferred) or Referer to point at this same
+        # UI so cross-site forms are rejected. Both headers are sent by
+        # mainstream browsers on form POSTs.
+        if not _same_origin(origin, referer):
+            raise HTTPException(
+                status_code=403,
+                detail="cross-origin form submission rejected",
+            )
+        if len(note) > _NOTE_MAX_CHARS:
+            raise HTTPException(
+                status_code=400,
+                detail=f"note too long ({len(note)} > {_NOTE_MAX_CHARS} chars)",
+            )
         try:
             store.mark_verified(memory_id)
         except (MemoryNotFoundError, TombstonedError) as exc:
