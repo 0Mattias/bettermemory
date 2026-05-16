@@ -512,6 +512,7 @@ def _build_hit(
         id=memory.id,
         scopes=memory.scopes,
         confidence=memory.confidence,
+        category=memory.category,
         snippet=snippet_for(memory.body),
         score=round(score, 4),
         relevance=_relevance_label(len(matched), query_unique),
