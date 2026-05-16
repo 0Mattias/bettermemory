@@ -9,7 +9,30 @@ spells out exactly what's stable.
 
 ## Unreleased
 
-(Empty. Accumulate entries here between tags.)
+### Added
+
+- Hybrid retrieval for `memory_search` (T1.2 of the 1.6 plan in
+  `docs/v1.6-plan.md`). The original keyword scorer (TF + coverage +
+  recency) is now one of four selectable rankers; the new ones are
+  Okapi BM25 (IDF-weighted, TF-saturated, length-normalised — closes
+  the recall gap on rare-term queries), sentence-transformers cosine
+  (paraphrase matching when the embeddings extra is installed), and
+  hybrid (Reciprocal Rank Fusion over keyword + BM25, plus semantic
+  when available). Selection is per-call via the new `mode` parameter
+  on `memory_search` (`"keyword"` | `"bm25"` | `"semantic"` |
+  `"hybrid"`) or globally via `[behavior] search_mode` in config. The
+  default stays `keyword` in 1.6.0 to keep ranking byte-stable; the
+  flip to `hybrid` is planned for a later release once dogfooding
+  shakes out regressions. Hybrid mode without the embeddings extra
+  degrades gracefully to keyword + BM25 fusion; `mode="semantic"`
+  without the extra raises with an install hint. The fused-score
+  scale (~0.01 – 0.05 from `1/(k+rank)` summed) differs from the
+  single-ranker scales, so consumers should keep using the
+  `relevance` label, not the raw `score`, for cross-mode comparison.
+  Surface: `bettermemory.search.compute_idf`,
+  `score_memory_bm25`, `reciprocal_rank_fusion`, and the `SearchMode`
+  Literal type are exported for callers that want to wire the
+  rankers directly without going through `search()`.
 
 ## 1.5.0 - 2026-05-13
 

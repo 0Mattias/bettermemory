@@ -165,7 +165,17 @@ DESC_MEMORY_SEARCH = (
     "call when no memory shaped the response. If a hit's "
     'verification.status is not "fresh", spot-check at least one '
     "verifiable claim before relying on it: call memory_verify(id) "
-    "if it holds, or memory_update first if it has drifted."
+    "if it holds, or memory_update first if it has drifted. "
+    "Optional `mode` parameter (default from config, falls back to "
+    "`keyword`) selects the ranker: `keyword` (TF + coverage + "
+    "recency, the original scorer), `bm25` (Okapi BM25 with the "
+    "same scope-bonus + recency), `semantic` (sentence-transformers "
+    "cosine; requires the embeddings extra and errors if missing), "
+    "or `hybrid` (RRF fusion of keyword + BM25, plus semantic when "
+    "the extra is installed). Use `hybrid` when the query is a "
+    "paraphrase of what you expect the memory to say; stick with "
+    "`keyword` when the query contains literal identifiers, file "
+    "paths, or unique tokens you remember writing down."
 )
 
 
@@ -648,6 +658,7 @@ class ToolHandlers:
         max_results: int | None = None,
         expand_top: bool = False,
         auto_scope: bool = True,
+        mode: str | None = None,
         ctx: Context | None = None,
     ) -> list[dict[str, Any]]:
         state = self.sessions.for_request(ctx)
@@ -655,6 +666,31 @@ class ToolHandlers:
         if max_results is None:
             max_results = self.config.behavior.default_max_results
         max_results = max(1, min(int(max_results), 50))
+
+        # Resolve search mode: per-call override > config default > "keyword".
+        # Validation happens via the Literal narrowing in search() — any
+        # other value will raise ValueError at the dispatch boundary,
+        # which the handler propagates to the caller as a tool error.
+        resolved_mode = mode or self.config.behavior.search_mode or "keyword"
+        if resolved_mode not in ("keyword", "bm25", "semantic", "hybrid"):
+            raise ValueError(
+                f"unknown search mode {resolved_mode!r}; "
+                "must be one of: keyword, bm25, semantic, hybrid"
+            )
+        # Semantic model is resolved only when the mode needs it. The
+        # factory returns None when the embeddings extra isn't installed;
+        # for `semantic` mode that's a hard error (the caller asked for
+        # it specifically), for `hybrid` it's a graceful degrade to
+        # keyword+bm25 fusion.
+        semantic_model: Any | None = None
+        if resolved_mode in ("semantic", "hybrid"):
+            semantic_model = self._semantic_model_factory(self.config)
+            if resolved_mode == "semantic" and semantic_model is None:
+                raise ValueError(
+                    "mode='semantic' requires the embeddings extra. "
+                    "Install with `pip install bettermemory[embeddings]` "
+                    "or use mode='hybrid' for graceful keyword+bm25 fallback."
+                )
 
         if scopes:
             scopes = [validate_scope(s) for s in scopes]
@@ -678,6 +714,14 @@ class ToolHandlers:
         )
 
         memories = self.store.load_all()
+        # `cast` keeps mypy aware of the Literal narrowing — we already
+        # validated `resolved_mode` against the four allowed values above,
+        # but the local variable's type is `str` until we tell the checker
+        # otherwise.
+        from typing import cast
+
+        from .search import SearchMode
+
         hits = run_search(
             memories,
             query,
@@ -687,6 +731,8 @@ class ToolHandlers:
             worktree_filter=worktree_filter,
             max_results=max_results,
             half_life_days=self.config.behavior.recency_boost_half_life_days,
+            mode=cast(SearchMode, resolved_mode),
+            semantic_model=semantic_model,
         )
         # Pin one `now` for the whole response so the verification verdict
         # is consistent across hits — the alternative (let each helper

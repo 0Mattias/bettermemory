@@ -13,7 +13,7 @@ The 17 tools group naturally:
 
 ## Retrieval
 
-### `memory_search(query, scopes?, max_results?, expand_top?, auto_scope?)`
+### `memory_search(query, scopes?, max_results?, expand_top?, auto_scope?, mode?)`
 
 Rank stored memories against a free-text query.
 
@@ -22,6 +22,7 @@ Rank stored memories against a free-text query.
 - `max_results: int | None = None`. Falls through to `behavior.default_max_results` (config default `5`). Capped at 50.
 - `expand_top: bool = False`. When the top hit's relevance is `"high"`, inline its full body and `path_drift` report so the caller can act without a `memory_show` round-trip. No-op for non-`"high"` top hits.
 - `auto_scope: bool = True`. Filter by the caller's current git repo. Memories with no recorded `origin` (legacy entries or writes from outside any repo) are treated as global and always pass.
+- `mode: str | None = None`. Ranker selection — one of `"keyword"` (TF + coverage + recency; the original scorer), `"bm25"` (Okapi BM25 with the same scope-bonus + recency), `"semantic"` (sentence-transformers cosine; requires the embeddings extra and raises if missing), or `"hybrid"` (RRF fusion of keyword + BM25, plus semantic when the extra is installed). Per-call override beats the config default `[behavior] search_mode`, which itself falls back to `"keyword"` in 1.6.0 for byte-stable ranking. Use `"hybrid"` when the query paraphrases what you expect the memory to say; stick with `"keyword"` for literal identifiers or file paths. The fused hybrid score lives in a smaller scale (~`0.01–0.05` from RRF) than single-ranker scores — compare across modes via `relevance`, not raw `score`.
 
 Returns a list of hits. Each hit carries `id`, `scopes`, `relevance` (`"high"`, `"medium"`, or `"low"`), `match_terms`, `snippet`, `created`, `updated`, `last_verified_at`, `verification`, `path_drift_checked` and `path_drift_missing` integer counts, `staleness_verdict`, a `use_token`, and (when applicable) a `commit_drift_count` integer. The `commit_drift_count` field is OMITTED from the hit when the signal is not applicable: caller not in any repo, hit from a different repo, or hit has never been verified. A non-zero value is the cue to spot-check the memory even when `verification.status == "fresh"`, because the project has moved since the last `memory_verify`.
 

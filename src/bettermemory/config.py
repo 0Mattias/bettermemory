@@ -51,6 +51,20 @@ default_max_results = 5
 # Recency boost decay. Larger = older memories get a meaningful bump.
 recency_boost_half_life_days = 30
 
+# Retrieval ranker for memory_search. One of:
+#   "keyword" — the original TF + coverage + recency scorer (default; 1.6.0
+#       stays byte-stable with prior behaviour)
+#   "bm25"    — Okapi BM25 with the same scope-bonus + recency boost
+#   "semantic" — sentence-transformers cosine; requires the embeddings
+#       extra. Falls back to "keyword" with a WARNING log if the extra
+#       isn't installed.
+#   "hybrid"  — reciprocal-rank-fusion of keyword + BM25 (plus semantic
+#       when the embeddings extra is installed). Recommended once
+#       you've dogfooded; planned to become the default in a later
+#       release.
+# The MCP `mode` parameter on memory_search overrides this per-call.
+search_mode = "keyword"
+
 # When true, memory_write dedup uses sentence-transformers cosine
 # similarity instead of Jaccard on token sets — catches paraphrases like
 # "the database" / "Postgres" that lexical overlap misses. Requires the
@@ -122,6 +136,16 @@ class BehaviorConfig:
     require_write_confirmation: bool = False
     default_max_results: int = 5
     recency_boost_half_life_days: float = 30.0
+    # Retrieval ranker for `memory_search`. One of `keyword` (the
+    # original TF + coverage + recency scorer; default), `bm25` (Okapi
+    # BM25), `semantic` (sentence-transformers cosine; requires the
+    # embeddings extra), or `hybrid` (RRF fusion of keyword + BM25,
+    # plus semantic when the extra is installed). The MCP `mode`
+    # parameter on memory_search overrides this per-call. Default
+    # stays `keyword` in 1.6.0 so existing ranking behaviour is
+    # byte-stable; planned flip to `hybrid` in a later release once
+    # dogfooding has shaken out ranking regressions.
+    search_mode: str = "keyword"
     # Semantic dedup is opt-in — see DEFAULT_CONFIG for prose.
     semantic_dedup: bool = False
     semantic_model_name: str = "all-MiniLM-L6-v2"
@@ -222,6 +246,7 @@ def load_config(path: Path | None = None) -> Config:
                 behavior_raw.get("require_write_confirmation", False)
             ),
             default_max_results=int(behavior_raw.get("default_max_results", 5)),
+            search_mode=str(behavior_raw.get("search_mode", "keyword")),
             recency_boost_half_life_days=float(
                 behavior_raw.get("recency_boost_half_life_days", 30.0)
             ),

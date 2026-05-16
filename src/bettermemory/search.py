@@ -1,7 +1,28 @@
 """Ranking memories against a query.
 
-MVP scoring: keyword match + recency boost. Embeddings are an optional Phase 2
-feature; the stub raises so callers know to install the extras.
+Four selectable rankers, dispatched by `search(mode=...)`:
+
+- ``keyword`` (default in 1.6.0): the original TF + scope-weighted +
+  coverage + recency scorer. Cheap, deterministic, good on
+  identifier-heavy queries.
+- ``bm25``: Okapi BM25 with IDF weighting, TF saturation, length
+  normalisation, plus the same scope-bonus and recency multiplier as
+  the keyword scorer. Better recall on rare-term queries.
+- ``semantic``: sentence-transformers cosine over per-memory cached
+  embeddings (extras-gated; raises a clear error when the embeddings
+  extra isn't installed).
+- ``hybrid``: reciprocal rank fusion (Cormack et al., SIGIR 2009)
+  over keyword + BM25, plus semantic when a model is provided.
+  Gracefully degrades to keyword+BM25 fusion when no model is
+  available. The fused score lives in a different (much smaller)
+  scale than the single-ranker scores — branch on `relevance`, not
+  raw `score`, when comparing across modes.
+
+`compute_idf` and `reciprocal_rank_fusion` are exported alongside
+their per-mode scorers so callers can wire the rankers directly
+without going through `search()`. The dedup path (`find_similar`)
+is unchanged — it uses Jaccard or cosine over the existing
+`_content_token_set` tokenizer.
 """
 
 from __future__ import annotations
@@ -9,11 +30,16 @@ from __future__ import annotations
 import math
 import re
 from datetime import datetime, timezone
-from typing import Any, NoReturn
+from typing import Any, Literal
 
 from .models import Memory, MemoryHit, SimilarHit, TombstonedMemory, snippet_for
 from .origin import should_include_for_caller
 from .verify import detect_path_drift
+
+# Search modes exposed via `search(mode=...)`. Default stays `keyword` in
+# 1.6.0 to keep the existing behaviour byte-stable; the plan is to flip
+# to `hybrid` once dogfooding has shaken out any ranking regressions.
+SearchMode = Literal["keyword", "bm25", "semantic", "hybrid"]
 
 
 # Strip punctuation, keep word characters (incl. unicode letters) and dashes
@@ -176,6 +202,143 @@ def _recency_factor(created: datetime, now: datetime, half_life_days: float) -> 
     return 1.0 + 0.1 * math.exp(-age_days / max(half_life_days, 0.001))
 
 
+# ---------------------------------------------------------------------------
+# BM25 scorer (Okapi variant)
+# ---------------------------------------------------------------------------
+#
+# The Jaccard / TF-coverage scorer below (score_memory) treats every term
+# equally and adds a coverage multiplier. It works well for short, content-
+# rich queries but undervalues rare terms and overvalues repeated common
+# ones. BM25 corrects both: IDF weights rare terms higher, TF saturation
+# clips diminishing returns on repeats, and length normalisation gives a
+# small edge to focused short bodies over long ones with the same hit
+# count. We keep the scope-match bonus and recency factor on top so the
+# bettermemory-specific signals still apply — BM25 isn't a religion, it's
+# one of several signals fused by RRF in hybrid mode.
+#
+# `compute_idf` is a one-pass corpus walk run once per search() call; it's
+# O(total_tokens) and shows up nowhere on profiles for corpora under ~50K
+# memories. When we add an inverted index (T3.1), the same shape returns
+# directly from the index.
+
+
+_BM25_K1_DEFAULT = 1.2
+_BM25_B_DEFAULT = 0.75
+
+
+def compute_idf(memories: list[Memory]) -> tuple[dict[str, float], float]:
+    """Build a per-term IDF map and the average doc length for BM25.
+
+    `idf_map`: term -> log((N - df + 0.5) / (df + 0.5) + 1.0)`, the Okapi
+    BM25 IDF variant that stays non-negative (so terms appearing in
+    >half the corpus still contribute a tiny positive signal rather
+    than pushing scores down).
+
+    `avgdl`: average kebab-expanded stopword-stripped doc length across
+    the corpus. Length normalisation in BM25 reads from this.
+
+    Tokenisation here matches `_content_token_set` (the dedup path) on
+    the body side — kebab expansion symmetric, stopwords stripped. The
+    search-time query side strips stopwords too. Empty corpus returns
+    `({}, 0.0)` so callers can short-circuit.
+    """
+    n = len(memories)
+    if n == 0:
+        return {}, 0.0
+
+    df: dict[str, int] = {}
+    total_len = 0
+    for memory in memories:
+        toks = _strip_stopwords(_expand_kebab(tokenize(memory.body)))
+        total_len += len(toks)
+        # Count each term once per doc — that's document-frequency, not
+        # term-frequency. set() collapses repeats.
+        for term in set(toks):
+            df[term] = df.get(term, 0) + 1
+
+    avgdl = total_len / n if n else 0.0
+    idf_map: dict[str, float] = {
+        term: math.log((n - dfi + 0.5) / (dfi + 0.5) + 1.0) for term, dfi in df.items()
+    }
+    return idf_map, avgdl
+
+
+def score_memory_bm25(
+    memory: Memory,
+    query_tokens: list[str],
+    *,
+    idf_map: dict[str, float],
+    avgdl: float,
+    now: datetime,
+    half_life_days: float = 30.0,
+    k1: float = _BM25_K1_DEFAULT,
+    b: float = _BM25_B_DEFAULT,
+) -> tuple[float, list[str]]:
+    """BM25 score for one memory against a tokenized query.
+
+    Body terms scored via standard Okapi BM25: `idf * tf * (k1+1) /
+    (tf + k1 * (1 - b + b*dl/avgdl))`. Scope matches add `2.0 * idf` as
+    a fixed bonus, matching the keyword scorer's 2x scope weight so
+    fusing the two rankers doesn't reweight scopes accidentally. The
+    recency multiplier (`_recency_factor`) is applied at the end so a
+    recently-edited memory climbs the same way it does in the keyword
+    scorer.
+
+    Returns `(score, matched_terms)`. `matched_terms` is the unique
+    subset of `query_tokens` that hit body or scopes — used for the
+    `match_terms` field on `MemoryHit` so the consumer sees which
+    query words actually pulled the result up.
+
+    Empty `query_tokens` or `avgdl <= 0` (empty corpus) returns
+    `(0.0, [])`. Unknown terms (not in `idf_map`) contribute zero from
+    the body but can still match a scope; scope-only matches default to
+    `idf=1.0` since the term has no corpus statistics yet.
+    """
+    if not query_tokens or avgdl <= 0:
+        return 0.0, []
+
+    body_tokens = _strip_stopwords(_expand_kebab(tokenize(memory.body)))
+    body_count: dict[str, int] = {}
+    for tok in body_tokens:
+        body_count[tok] = body_count.get(tok, 0) + 1
+    dl = len(body_tokens)
+
+    scope_set: set[str] = set()
+    for scope in memory.scopes:
+        scope_set.update(_scope_tokens(scope))
+
+    score = 0.0
+    matched: list[str] = []
+    seen: set[str] = set()
+    length_norm = 1 - b + b * (dl / avgdl) if avgdl > 0 else 1.0
+    for tok in query_tokens:
+        contrib = 0.0
+
+        tf = body_count.get(tok, 0)
+        if tf > 0:
+            idf = idf_map.get(tok, 0.0)
+            denom = tf + k1 * length_norm
+            contrib += idf * tf * (k1 + 1) / denom if denom > 0 else 0.0
+
+        if tok in scope_set:
+            # Floor IDF at 1.0 for scope-only hits so a brand-new scope
+            # term (no body in the corpus yet) still contributes; the
+            # 2x factor keeps it aligned with the keyword scorer.
+            idf = idf_map.get(tok, 1.0)
+            contrib += 2.0 * idf
+
+        if contrib > 0 and tok not in seen:
+            matched.append(tok)
+            seen.add(tok)
+        score += contrib
+
+    if score <= 0:
+        return 0.0, []
+
+    freshness = max(memory.created, memory.updated)
+    return score * _recency_factor(freshness, now, half_life_days), matched
+
+
 def score_memory(
     memory: Memory,
     query_tokens: list[str],
@@ -230,6 +393,296 @@ def score_memory(
     return base * _recency_factor(freshness, now, half_life_days), matched
 
 
+# ---------------------------------------------------------------------------
+# Reciprocal Rank Fusion
+# ---------------------------------------------------------------------------
+#
+# RRF (Cormack, Clarke, Büttcher, SIGIR 2009) fuses multiple ranked lists
+# into one without needing the underlying scores to be on the same scale.
+# Each doc's fused score is the sum, over rankers, of `1 / (k + rank)`.
+# Docs absent from a ranker contribute nothing from that ranker. k=60 is
+# the original paper's recommendation and is the de-facto default across
+# implementations.
+#
+# Why RRF and not weighted score fusion: BM25 scores, Jaccard-style
+# coverage scores, and cosine scores live on different scales (BM25 is
+# unbounded, cosine is 0..1, the keyword scorer here mixes raw counts
+# with multiplicative coefficients). Adding them directly biases the
+# fused result toward whichever scale happens to be largest. Rank-only
+# fusion sidesteps the calibration problem entirely — only positions
+# matter, so a ranker can swap its scoring function without changing
+# the fused output as long as the order stays the same.
+#
+# Practical note: when only one ranker is provided, RRF degenerates to
+# `1 / (k + rank)` over that ranker — order is preserved, scores are
+# rescaled. Callers can use that as a sanity check.
+
+
+_RRF_K_DEFAULT = 60
+
+
+def reciprocal_rank_fusion(
+    ranking_lists: list[list[str]],
+    *,
+    k: int = _RRF_K_DEFAULT,
+) -> dict[str, float]:
+    """Fuse multiple ranked id-lists into one score-per-id map.
+
+    Each `ranking_lists[i]` is a list of memory ids in best-first order
+    for ranker i. The returned dict maps memory_id -> RRF score; sort
+    descending to get the fused ranking. Ids that appear in no list are
+    not present in the output. Duplicate ids within a single ranker's
+    list are unusual but tolerated — the first (best-ranked) position
+    wins for that ranker; later duplicates are ignored, matching the
+    "one rank per (ranker, doc)" reading of the original paper.
+
+    Empty `ranking_lists` returns an empty dict. `k` must be positive;
+    the default (60) matches the Cormack et al. paper.
+    """
+    if k <= 0:
+        raise ValueError(f"RRF k must be positive, got {k}")
+    if not ranking_lists:
+        return {}
+
+    fused: dict[str, float] = {}
+    for ranking in ranking_lists:
+        # Iterate with 1-indexed rank — the original formula assumes
+        # rank starts at 1. `seen` guards the dedup contract above.
+        seen: set[str] = set()
+        for rank, memory_id in enumerate(ranking, start=1):
+            if memory_id in seen:
+                continue
+            seen.add(memory_id)
+            fused[memory_id] = fused.get(memory_id, 0.0) + 1.0 / (k + rank)
+    return fused
+
+
+def _filter_candidates(
+    memories: list[Memory],
+    *,
+    scopes: list[str] | None,
+    excluded_scopes: set[str] | None,
+    repo_filter: str | None,
+    worktree_filter: str | None,
+) -> list[Memory]:
+    """Apply scope / excluded-scope / repo / worktree filters.
+
+    Extracted from `search()` so each search mode walks the same
+    pre-filtered candidate list — fairness across rankers requires it,
+    and it makes the per-mode scorers obviously equivalent on the
+    filtering side. Order of `memories` is preserved.
+    """
+    scope_filter = set(scopes) if scopes else None
+    excluded = excluded_scopes or set()
+    out: list[Memory] = []
+    for memory in memories:
+        memory_scope_set = set(memory.scopes)
+        if excluded and (memory_scope_set & excluded):
+            continue
+        if scope_filter is not None and not (memory_scope_set & scope_filter):
+            continue
+        if repo_filter is not None:
+            if not should_include_for_caller(
+                memory.origin,
+                repo_filter,
+                caller_worktree_root=worktree_filter,
+            ):
+                continue
+        out.append(memory)
+    return out
+
+
+def _build_hit(
+    memory: Memory,
+    score: float,
+    matched: list[str],
+    *,
+    query_unique: int,
+) -> MemoryHit:
+    """Construct a MemoryHit from a scored memory.
+
+    `detect_path_drift` is the only call here that touches the
+    filesystem — one regex pass + up to 8 stat() calls per hit. The
+    body's already in memory at this point (load_all already ran), so
+    the marginal cost is bounded by the cap inside `detect_path_drift`
+    rather than corpus size.
+    """
+    drift = detect_path_drift(memory.body)
+    return MemoryHit(
+        id=memory.id,
+        scopes=memory.scopes,
+        confidence=memory.confidence,
+        snippet=snippet_for(memory.body),
+        score=round(score, 4),
+        relevance=_relevance_label(len(matched), query_unique),
+        match_terms=matched,
+        created=memory.created,
+        updated=memory.updated,
+        last_verified_at=memory.last_verified_at,
+        path_drift_checked=len(drift.checked),
+        path_drift_missing=len(drift.missing),
+    )
+
+
+def _score_keyword(
+    candidates: list[Memory],
+    query_tokens: list[str],
+    *,
+    now: datetime,
+    half_life_days: float,
+) -> list[tuple[Memory, float, list[str]]]:
+    """Run the original keyword scorer across all candidates. Returns
+    `(memory, score, matched)` tuples for every candidate with `score > 0`.
+    Order preserved from the input — sorting happens at the caller."""
+    out: list[tuple[Memory, float, list[str]]] = []
+    for memory in candidates:
+        score, matched = score_memory(
+            memory, query_tokens, now=now, half_life_days=half_life_days
+        )
+        if score > 0:
+            out.append((memory, score, matched))
+    return out
+
+
+def _score_bm25(
+    candidates: list[Memory],
+    query_tokens: list[str],
+    *,
+    now: datetime,
+    half_life_days: float,
+) -> list[tuple[Memory, float, list[str]]]:
+    """Run the BM25 scorer across all candidates. Returns
+    `(memory, score, matched)` tuples for candidates with `score > 0`."""
+    idf_map, avgdl = compute_idf(candidates)
+    if avgdl <= 0:
+        return []
+    out: list[tuple[Memory, float, list[str]]] = []
+    for memory in candidates:
+        score, matched = score_memory_bm25(
+            memory,
+            query_tokens,
+            idf_map=idf_map,
+            avgdl=avgdl,
+            now=now,
+            half_life_days=half_life_days,
+        )
+        if score > 0:
+            out.append((memory, score, matched))
+    return out
+
+
+def _score_semantic(
+    candidates: list[Memory],
+    query: str,
+    semantic_model: Any,
+    *,
+    now: datetime,
+    half_life_days: float,
+    matched_terms_fallback: list[str],
+) -> list[tuple[Memory, float, list[str]]]:
+    """Cosine-similarity scoring over sentence-transformers embeddings.
+
+    Reuses the per-memory cache from `bettermemory.semantic` so a search
+    that runs alongside dedup shares vectors. `matched_terms_fallback`
+    fills the `matched` slot for hits that came purely from semantic
+    similarity — usually the stopword-stripped query tokens so the
+    `match_terms` field on the resulting MemoryHit stays consistent
+    with the keyword/BM25 paths.
+
+    Threshold: hits with cosine < 0.3 are dropped. Below that, the
+    similarity is noise — the model is matching style/structure rather
+    than meaning. The threshold is conservative on purpose; we'd
+    rather show fewer paraphrase hits than poison the result list
+    with off-topic ones.
+    """
+    from .semantic import (
+        cached_embed,
+        cosine_similarity_normalized,
+        flush_persistent_cache,
+    )
+
+    query_clean = query.strip()
+    if not query_clean:
+        return []
+    query_vec = semantic_model.encode(query_clean, normalize_embeddings=True)
+
+    threshold = 0.3
+    out: list[tuple[Memory, float, list[str]]] = []
+    for memory in candidates:
+        body_clean = memory.body.strip()
+        if not body_clean:
+            continue
+        body_vec = cached_embed(
+            semantic_model,
+            memory.id,
+            memory.updated.isoformat(),
+            body_clean,
+        )
+        sim = cosine_similarity_normalized(query_vec, body_vec)
+        if sim < threshold:
+            continue
+        # Apply the same recency multiplier the other rankers use so a
+        # stale paraphrase doesn't beat a fresh near-paraphrase.
+        freshness = max(memory.created, memory.updated)
+        score = sim * _recency_factor(freshness, now, half_life_days)
+        out.append((memory, score, list(matched_terms_fallback)))
+    flush_persistent_cache()
+    return out
+
+
+def _id_order(
+    scored: list[tuple[Memory, float, list[str]]],
+) -> list[str]:
+    """Return memory ids sorted desc by score, with (created, id) tiebreakers.
+    Matches the existing search() sort key so single-mode RRF degenerates
+    to the same order as direct scoring would produce."""
+    scored_sorted = sorted(
+        scored,
+        key=lambda x: (x[1], x[0].created, x[0].id),
+        reverse=True,
+    )
+    return [memory.id for memory, _, _ in scored_sorted]
+
+
+def _hybrid_fuse(
+    rankings: list[list[tuple[Memory, float, list[str]]]],
+    *,
+    rrf_k: int,
+) -> list[tuple[Memory, float, list[str]]]:
+    """Fuse multiple ranker outputs into one ranked list via RRF.
+
+    Each input is a per-ranker `[(memory, score, matched), ...]` list.
+    Output is `[(memory, rrf_score, matched_union), ...]` ordered desc
+    by RRF score. `matched_union` is the union of matched terms across
+    rankers that surfaced the memory, sorted for stability.
+    """
+    if not rankings:
+        return []
+
+    by_id: dict[str, Memory] = {}
+    matched_by_id: dict[str, set[str]] = {}
+    ranking_id_lists: list[list[str]] = []
+    for scored in rankings:
+        ranking_id_lists.append(_id_order(scored))
+        for memory, _, matched in scored:
+            by_id.setdefault(memory.id, memory)
+            matched_by_id.setdefault(memory.id, set()).update(matched)
+
+    fused = reciprocal_rank_fusion(ranking_id_lists, k=rrf_k)
+    if not fused:
+        return []
+
+    # Tiebreaker: equal RRF scores fall back to (created, id) desc, same
+    # as single-mode search — preserves deterministic ordering under
+    # microsecond-tied writes / mocked clocks.
+    ordered_ids = sorted(
+        fused.keys(),
+        key=lambda mid: (fused[mid], by_id[mid].created, mid),
+        reverse=True,
+    )
+    return [(by_id[mid], fused[mid], sorted(matched_by_id[mid])) for mid in ordered_ids]
+
+
 def search(
     memories: list[Memory],
     query: str,
@@ -241,6 +694,9 @@ def search(
     max_results: int = 5,
     now: datetime | None = None,
     half_life_days: float = 30.0,
+    mode: SearchMode = "keyword",
+    semantic_model: Any | None = None,
+    rrf_k: int = _RRF_K_DEFAULT,
 ) -> list[MemoryHit]:
     """Rank `memories` against `query` and return up to `max_results` hits.
 
@@ -253,13 +709,35 @@ def search(
       pass through — they're treated as global.
     - `worktree_filter`: the caller's `git rev-parse --show-toplevel`
       path. Layered on top of `repo_filter` to catch worktree leakage:
-      a memory written from one worktree of a repo (`~/repo-feature/`)
-      shouldn't surface in a search run from a sibling worktree of the
-      same repo (`~/repo-bugfix/`). Memories with no `worktree_root`
-      (legacy or non-repo writes) pass through. No-op without
-      `repo_filter` — a worktree path without a repo identifier
-      doesn't carry enough context to filter on.
+      a memory written from one worktree of a repo shouldn't surface
+      in a search run from a sibling worktree of the same repo.
+      Memories with no `worktree_root` (legacy or non-repo writes)
+      pass through. No-op without `repo_filter` — a worktree path
+      without a repo identifier doesn't carry enough context to
+      filter on.
+    - `mode`: ranker selection. `"keyword"` (default, the original
+      TF + coverage + recency scorer); `"bm25"` (Okapi BM25 with the
+      same scope-bonus + recency boost); `"semantic"` (sentence-
+      transformers cosine — requires `semantic_model`); `"hybrid"`
+      (RRF fusion of keyword + BM25, plus semantic when a model is
+      provided). The hybrid mode gracefully degrades when no
+      semantic_model is given: it fuses keyword + BM25 only.
+    - `semantic_model`: optional sentence-transformers model. Required
+      for `mode="semantic"`; optional for `mode="hybrid"` (semantic is
+      added to the fusion when present).
+    - `rrf_k`: smoothing constant for hybrid fusion. Larger spreads
+      weight further down the list; smaller makes top ranks dominate.
+      60 is the canonical default and almost always correct.
+
+    Score semantics vary by mode: keyword/BM25/semantic scores live on
+    different scales and are not comparable across modes. Hybrid scores
+    are RRF outputs (~0.01-0.05 range, summed `1/(k+rank)` over rankers).
+    Use the `relevance` label, not the raw score, when comparing hits
+    across modes.
     """
+    if mode == "semantic" and semantic_model is None:
+        raise ValueError("mode='semantic' requires semantic_model to be provided")
+
     now = now or datetime.now(timezone.utc)
     raw_tokens = tokenize(query)
     # Strip stopwords from the query — bodies stay unfiltered. If the query
@@ -270,79 +748,72 @@ def search(
         return []
 
     query_unique = len(set(query_tokens))
+    candidates = _filter_candidates(
+        memories,
+        scopes=scopes,
+        excluded_scopes=excluded_scopes,
+        repo_filter=repo_filter,
+        worktree_filter=worktree_filter,
+    )
+    if not candidates:
+        return []
 
-    scope_filter = set(scopes) if scopes else None
-    excluded = excluded_scopes or set()
-
-    hits: list[MemoryHit] = []
-    for memory in memories:
-        memory_scope_set = set(memory.scopes)
-        if excluded and (memory_scope_set & excluded):
-            continue
-        if scope_filter is not None and not (memory_scope_set & scope_filter):
-            continue
-
-        # Auto-scope filter: drop memories from a different repo, and
-        # within the same repo from a different worktree. Memories
-        # without an origin.repo (legacy writes, non-repo writes) pass —
-        # they're "global" and always relevant to the current caller.
-        # `worktree_filter` is a no-op when the memory has no
-        # `worktree_root`, so legacy memories never get hidden by the
-        # newer secondary filter.
-        if repo_filter is not None:
-            if not should_include_for_caller(
-                memory.origin,
-                repo_filter,
-                caller_worktree_root=worktree_filter,
-            ):
-                continue
-
-        score, matched = score_memory(
-            memory,
-            query_tokens,
+    if mode == "keyword":
+        scored = _score_keyword(
+            candidates, query_tokens, now=now, half_life_days=half_life_days
+        )
+        # Sort by score, then created (newer wins on tie), then id as the
+        # final discriminator. Without `id` the tiebreaker is undefined for
+        # two memories that share both score and created timestamp — a real
+        # case under microsecond-tied writes or under tests that mock the
+        # clock. ULID-shaped ids are lexically time-ordered, so the final
+        # tiebreaker also gives "newer wins" semantics.
+        scored.sort(key=lambda x: (x[1], x[0].created, x[0].id), reverse=True)
+    elif mode == "bm25":
+        scored = _score_bm25(
+            candidates, query_tokens, now=now, half_life_days=half_life_days
+        )
+        scored.sort(key=lambda x: (x[1], x[0].created, x[0].id), reverse=True)
+    elif mode == "semantic":
+        # mypy: semantic_model is not None here (guarded above), but the
+        # narrowing doesn't survive the assert-via-raise idiom across the
+        # block boundary. Re-assert for the type checker.
+        assert semantic_model is not None
+        scored = _score_semantic(
+            candidates,
+            query,
+            semantic_model,
             now=now,
             half_life_days=half_life_days,
+            matched_terms_fallback=list(dict.fromkeys(query_tokens)),
         )
-        if score <= 0:
-            continue
-
-        # Drift counts on every hit so the model can self-triage at a
-        # glance — high `path_drift_missing` flags a hit worth
-        # expanding via memory_show, low/zero is reassurance the
-        # cited paths still exist. The body is already in memory at
-        # this point (load_all has been called); the marginal cost is
-        # one regex pass + up to 8 stat() calls per matched memory.
-        # `expand_top=True` continues to surface the full path lists
-        # alongside these counts via the `path_drift` field.
-        drift = detect_path_drift(memory.body)
-
-        hits.append(
-            MemoryHit(
-                id=memory.id,
-                scopes=memory.scopes,
-                confidence=memory.confidence,
-                snippet=snippet_for(memory.body),
-                score=round(score, 4),
-                relevance=_relevance_label(len(matched), query_unique),
-                match_terms=matched,
-                created=memory.created,
-                updated=memory.updated,
-                last_verified_at=memory.last_verified_at,
-                path_drift_checked=len(drift.checked),
-                path_drift_missing=len(drift.missing),
+        scored.sort(key=lambda x: (x[1], x[0].created, x[0].id), reverse=True)
+    else:  # mode == "hybrid"
+        rankings: list[list[tuple[Memory, float, list[str]]]] = [
+            _score_keyword(
+                candidates, query_tokens, now=now, half_life_days=half_life_days
+            ),
+            _score_bm25(
+                candidates, query_tokens, now=now, half_life_days=half_life_days
+            ),
+        ]
+        if semantic_model is not None:
+            rankings.append(
+                _score_semantic(
+                    candidates,
+                    query,
+                    semantic_model,
+                    now=now,
+                    half_life_days=half_life_days,
+                    matched_terms_fallback=list(dict.fromkeys(query_tokens)),
+                )
             )
-        )
+        scored = _hybrid_fuse(rankings, rrf_k=rrf_k)
 
-    # Sort by score, then created (newer wins on tie), then id as the
-    # final discriminator. Without `id` the tiebreaker is undefined for
-    # two memories that share both score and created timestamp — a real
-    # case under microsecond-tied writes or under tests that mock the
-    # clock — and the result order would silently depend on the load
-    # iteration. ULID-shaped ids are lexically time-ordered, so the
-    # final tiebreaker also gives "newer wins" semantics rather than
-    # arbitrary insertion order.
-    hits.sort(key=lambda h: (h.score, h.created, h.id), reverse=True)
-    return hits[:max_results]
+    return [
+        _build_hit(memory, score, matched, query_unique=query_unique)
+        for memory, score, matched in scored[:max_results]
+    ]
 
 
 # ---------------------------------------------------------------------------
@@ -722,17 +1193,3 @@ def _find_similar_tombstones_semantic(
     hits.sort(key=lambda h: (h.similarity, h.removed_at or h.updated), reverse=True)
     flush_persistent_cache()
     return hits
-
-
-# ---------------------------------------------------------------------------
-# Phase-2 stub
-# ---------------------------------------------------------------------------
-
-
-def embeddings_search(*_args: Any, **_kwargs: Any) -> NoReturn:  # noqa: D401
-    """Reserved for embeddings-based search; install with extras."""
-    raise NotImplementedError(
-        "embeddings search not implemented in the MVP. "
-        "Install with `pip install bettermemory[embeddings]` and a future "
-        "release will enable this."
-    )
