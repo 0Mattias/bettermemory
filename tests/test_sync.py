@@ -142,6 +142,71 @@ def test_status_on_repo_reports_branch_and_changes(memory_dir: Path) -> None:
     assert st.has_changes is True
 
 
+def test_status_porcelain_parses_modified_path_cleanly(
+    memory_dir: Path,
+) -> None:
+    """Porcelain output is `XY␣path`. For modified-not-staged files
+    the X char is a space (` M filename`); a partition on the first
+    space would drop the status char into the path and store the
+    modified file as `"M filename"`. Lock in that the path is parsed
+    cleanly so the CLI shows the actual filename in `sync status`."""
+    sync.init(memory_dir)
+    store = Store(memory_dir)
+    memory = store.write(content="original body", scopes=["tools"])
+
+    # First commit so the file is tracked.
+    _git(memory_dir, "add", "-A")
+    _git(memory_dir, "commit", "-m", "seed")
+
+    # Modify in place — the resulting status code is " M" (space, M).
+    path = store._find_path_for_id(memory.id)
+    assert path is not None
+    path.write_text(path.read_text() + "\nappended line\n", encoding="utf-8")
+
+    st = sync.status(memory_dir)
+    assert st.is_repo is True
+    assert len(st.modified) == 1
+    parsed = st.modified[0]
+    # The path must NOT carry a leading "M " from the status code.
+    assert not parsed.startswith("M ")
+    assert parsed.endswith(".md")
+
+
+def test_status_redacts_credentialed_remote_url(memory_dir: Path) -> None:
+    """A remote URL with embedded credentials must not surface in
+    SyncStatus.remote_url. The credential lives in git config (where
+    it belongs); CLI output / `--json` payloads should not echo it."""
+    secret_url = "https://alice:ghp_topsecret@github.com/example/repo.git"
+    sync.init(memory_dir, remote=secret_url)
+    st = sync.status(memory_dir)
+    assert st.remote_url is not None
+    assert "ghp_topsecret" not in st.remote_url
+    assert "alice" not in st.remote_url
+    assert "github.com/example/repo.git" in st.remote_url
+
+
+def test_redact_url_helper_handles_common_shapes() -> None:
+    """Direct unit coverage on _redact_url for the cases the SyncStatus
+    test doesn't exercise: ssh URLs, anonymous HTTPS, malformed input."""
+    from bettermemory.sync import _redact_url
+
+    # SSH URL — `git@host:path` has no scheme; the `git@` is a username
+    # not a token, leave it alone.
+    assert _redact_url("git@github.com:foo/bar.git") == "git@github.com:foo/bar.git"
+    # Anonymous HTTPS — nothing to redact.
+    assert (
+        _redact_url("https://github.com/foo/bar.git")
+        == "https://github.com/foo/bar.git"
+    )
+    # Token-bearing HTTPS — strip the userinfo.
+    assert (
+        _redact_url("https://x-access-token:abc123@github.com/foo/bar.git")
+        == "https://github.com/foo/bar.git"
+    )
+    # None passthrough.
+    assert _redact_url(None) is None
+
+
 # ---------------------------------------------------------------------------
 # push
 # ---------------------------------------------------------------------------

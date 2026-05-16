@@ -131,6 +131,39 @@ def _require_git() -> str:
     return binary
 
 
+def _redact_url(url: str | None) -> str | None:
+    """Strip embedded credentials (``user:token@host``) from a remote
+    URL before it's printed to stdout / status JSON / error messages.
+
+    Git accepts URLs like ``https://user:ghp_token@github.com/...`` for
+    HTTPS auth. The credential lives in the user's git config (intended
+    storage) but our CLI was also surfacing it in init action strings
+    and status output — so a `bettermemory sync status --json` piped
+    into CI logs would leak the token. Redact the userinfo segment
+    while keeping enough of the URL to recognise which remote it is.
+    """
+    if url is None or "@" not in url:
+        return url
+    # Use urlparse rather than regex so e.g. ssh URLs (`git@host:path`)
+    # without a scheme are left alone — they don't have credentials to
+    # leak, the `git@` is a username not a token.
+    from urllib.parse import urlparse, urlunparse
+
+    try:
+        parsed = urlparse(url)
+    except ValueError:
+        return url
+    if not parsed.scheme or not parsed.hostname:
+        return url
+    if not (parsed.username or parsed.password):
+        return url
+    host = parsed.hostname
+    if parsed.port:
+        host = f"{host}:{parsed.port}"
+    redacted = parsed._replace(netloc=host)
+    return urlunparse(redacted)
+
+
 def _run_git(
     root: Path,
     args: list[str],
@@ -151,11 +184,34 @@ def _run_git(
         check=False,
     )
     if check and result.returncode != 0:
+        # Redact credentials from stderr / stdout before they land in
+        # the SyncError message — `git push` failures often echo the
+        # full remote URL, which for HTTPS auth includes the token.
+        stderr = _redact_text(result.stderr.strip())
+        stdout = _redact_text(result.stdout.strip())
         raise SyncError(
             f"`git {' '.join(args)}` failed in {root}: "
-            f"{result.stderr.strip() or result.stdout.strip()}"
+            f"{stderr or stdout}"
         )
     return result
+
+
+def _redact_text(text: str) -> str:
+    """Mask `scheme://user:token@host` patterns inside arbitrary text.
+
+    Git error output isn't structured, so we can't always isolate the
+    URL field — this is a regex fallback for the SyncError path. The
+    pattern is conservative: it only matches when both a scheme and
+    an `@` separator are present, so unrelated `@` characters in error
+    text (e.g. branch refs like `@{u}`) are untouched.
+    """
+    import re
+
+    return re.sub(
+        r"([a-zA-Z][a-zA-Z0-9+.-]*://)([^@\s/]+)@",
+        r"\1<redacted>@",
+        text,
+    )
 
 
 def _is_repo(root: Path) -> bool:
@@ -222,12 +278,13 @@ def init(
         # Replace any existing origin URL; we don't want stale remotes
         # silently overriding the user's most recent intent.
         existing = _run_git(root, ["remote"], check=False).stdout.split()
+        display = _redact_url(remote)
         if "origin" in existing:
             _run_git(root, ["remote", "set-url", "origin", remote])
-            actions.append(f"updated origin → {remote}")
+            actions.append(f"updated origin → {display}")
         else:
             _run_git(root, ["remote", "add", "origin", remote])
-            actions.append(f"added origin → {remote}")
+            actions.append(f"added origin → {display}")
 
     return {
         "root": str(root),
@@ -261,10 +318,17 @@ def status(root: Path) -> SyncStatus:
     untracked: list[str] = []
     modified: list[str] = []
     for line in porcelain.splitlines():
-        if not line.strip():
+        # Porcelain v1 format is fixed-width: chars 0-1 are the XY status
+        # code, char 2 is a separator space, the rest is the path. Splitting
+        # on the first space is wrong for codes like " M" (modified, not
+        # staged) where the first char is itself a space — that drops the
+        # leading status char into the path. Slice by position instead.
+        if len(line) < 4:
             continue
-        code, _, path = line.partition(" ")
-        path = path.strip()
+        code = line[:2]
+        path = line[3:].strip()
+        if not path:
+            continue
         if code == "??":
             untracked.append(path)
         else:
@@ -274,6 +338,9 @@ def status(root: Path) -> SyncStatus:
         _run_git(root, ["remote", "get-url", "origin"], check=False).stdout.strip()
         or None
     )
+    # SyncStatus surfaces in CLI output and `--json` payloads — strip
+    # embedded credentials so a piped status doesn't leak the token.
+    remote_url = _redact_url(remote_url)
 
     ahead = 0
     behind = 0
