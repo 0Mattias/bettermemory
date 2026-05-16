@@ -1638,10 +1638,15 @@ class ToolHandlers:
 
         # When `content` changes, the prior verification was for prose
         # that no longer exists — reset `last_verified_at` to None so the
-        # caller has to re-confirm against the new body. Scope/confidence/
-        # category edits don't touch the body's claims, so the verification
-        # stays intact for those. This matches the intuition that
-        # verification is a property of body content, not of metadata.
+        # caller has to re-confirm against the new body. The structured
+        # attestation lists (`verified_paths`, `verified_commits`,
+        # `verified_versions`) were also attached to the prior prose and
+        # would lie about the new body — clear them in lockstep so the
+        # staleness rollup doesn't read e.g. `verified_paths=["/etc/foo"]`
+        # against text that no longer mentions `/etc/foo`. Scope/confidence/
+        # category/links edits don't touch the body's claims, so the
+        # verification stays intact for those. This matches the intuition
+        # that verification is a property of body content, not of metadata.
         update_fields: dict[str, Any] = {
             "body": new_body,
             "scopes": new_scopes,
@@ -1651,6 +1656,9 @@ class ToolHandlers:
         }
         if content is not None:
             update_fields["last_verified_at"] = None
+            update_fields["verified_paths"] = []
+            update_fields["verified_commits"] = []
+            update_fields["verified_versions"] = []
 
         merged = existing.model_copy(update=update_fields)
         updated = self.store.update(merged)
