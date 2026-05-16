@@ -11,6 +11,29 @@ spells out exactly what's stable.
 
 ### Added
 
+- `bettermemory sync` CLI subcommand for cross-host replication
+  (T4.1 of the 1.6 plan in `docs/v1.6-plan.md`). Thin wrapper over
+  git — the memory directory is already plain markdown, so git's
+  history / distributed copies / three-way merge handle the
+  interesting cases without a custom protocol. Five subcommands:
+  `sync init [--remote URL]` initialises the dir as a git repo and
+  writes a `.gitignore` that excludes the regenerable caches
+  (`.index.sqlite`, `.events.jsonl`, `.embeddings.*.npz`, lock
+  files, doctor probes); `sync status` reports branch, pending
+  changes, and remote ahead/behind counts; `sync push` stages,
+  commits with a default `bettermemory: sync` message, and pushes
+  (no-op when nothing changed locally — the `committed=False`
+  signal in the response distinguishes this from "pushed prior
+  commits"); `sync pull` rebase-pulls and rebuilds the FTS5 index
+  so the runtime view matches the new file contents (Store hooks
+  bypassed during the merge); `sync auto` is pull-then-push, the
+  shell-alias / cron one-shot. `--set-upstream` is automatic on
+  the first push so a subsequent `pull` has a tracking branch.
+  Merge conflicts fall through to git's normal flow — `git
+  rebase --continue` from the memory directory once resolved.
+  Surface: `bettermemory.sync` module exports `init()`, `status()`,
+  `push()`, `pull()`, `auto()`, the `SyncStatus` dataclass, the
+  `SyncError` exception, and the `DEFAULT_COMMIT_MESSAGE` constant.
 - SQLite FTS5 inverted index (T3.1 of the 1.6 plan in
   `docs/v1.6-plan.md`). Files on disk stay canonical; the index
   is a derived cache at `<store>/.index.sqlite`. Schema: a
