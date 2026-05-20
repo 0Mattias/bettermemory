@@ -417,9 +417,18 @@ def push(
         root, ["push", "--set-upstream", remote, "HEAD"], check=False
     )
     if push_result.returncode != 0:
+        # Same redaction discipline as `_run_git`'s default error path:
+        # `git push` failures often echo the full remote URL, which
+        # for HTTPS auth includes the token. The push/pull paths build
+        # their own SyncError (because they want to attach the
+        # "rebase --continue" hint for the conflict case), so the
+        # redaction wrapper has to be applied here too — otherwise
+        # this branch is the one outlet that leaks credentials.
+        stderr = _redact_text(push_result.stderr.strip())
+        stdout = _redact_text(push_result.stdout.strip())
         raise SyncError(
             f"`git push --set-upstream {remote} HEAD` failed: "
-            f"{push_result.stderr.strip() or push_result.stdout.strip()}"
+            f"{stderr or stdout}"
         )
 
     return {
@@ -458,9 +467,14 @@ def pull(
 
     pull_result = _run_git(root, ["pull", "--rebase", remote], check=False)
     if pull_result.returncode != 0:
+        # See the redaction note on the push branch — credentialed
+        # URLs can land in pull stderr too (e.g. when the remote is
+        # unreachable git echoes the URL with the auth segment).
+        stderr = _redact_text(pull_result.stderr.strip())
+        stdout = _redact_text(pull_result.stdout.strip())
         raise SyncError(
             f"`git pull --rebase {remote}` failed: "
-            f"{pull_result.stderr.strip() or pull_result.stdout.strip()}\n"
+            f"{stderr or stdout}\n"
             "If the failure is a merge conflict, resolve it by hand and "
             "run `git rebase --continue` from the memory directory."
         )

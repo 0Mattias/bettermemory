@@ -273,6 +273,98 @@ def test_push_errors_on_non_repo(tmp_path: Path) -> None:
         sync.push(plain)
 
 
+def test_push_redacts_credentialed_url_in_error(
+    memory_dir: Path,
+    bare_remote: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Regression: a failed `git push` echoes the full remote URL into
+    stderr, including the userinfo segment for HTTPS-token auth. The
+    SyncError must redact that before raising — otherwise the
+    credential lands in CLI output and any log capture downstream.
+
+    The original `_run_git` already redacts via the default check=True
+    path; sync.push uses check=False (it wants to attach the
+    "rebase --continue" hint), so the redact wrapper has to be applied
+    in its own SyncError construction — which the fix added."""
+    sync.init(memory_dir, remote=str(bare_remote))
+    Store(memory_dir).write(content="x", scopes=["tools"])
+
+    secret_url = "https://alice:ghp_topsecret@github.com/example/repo.git"
+    fake_stderr = f"fatal: unable to access '{secret_url}': connection refused"
+    original_run_git = sync._run_git
+
+    def fake_run_git(
+        root: Path, args: list[str], *, check: bool = True
+    ) -> subprocess.CompletedProcess[str]:
+        if args and args[0] == "push":
+            return subprocess.CompletedProcess(
+                args=["git", *args],
+                returncode=1,
+                stdout="",
+                stderr=fake_stderr,
+            )
+        return original_run_git(root, args, check=check)
+
+    monkeypatch.setattr(sync, "_run_git", fake_run_git)
+
+    with pytest.raises(sync.SyncError) as excinfo:
+        sync.push(memory_dir)
+    error_text = str(excinfo.value)
+    assert "ghp_topsecret" not in error_text, (
+        f"token leaked into SyncError: {error_text}"
+    )
+    assert "alice" not in error_text, (
+        f"username leaked into SyncError: {error_text}"
+    )
+    # And confirm the redaction marker shows up — useful to debug the
+    # error without exposing what was hidden.
+    assert "<redacted>" in error_text or "redacted" in error_text
+
+
+def test_pull_redacts_credentialed_url_in_error(
+    memory_dir: Path,
+    bare_remote: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Symmetric to the push redaction test: a failed `git pull --rebase`
+    echoes the credentialed URL into stderr, and the SyncError must
+    redact it. The pull path attaches a conflict-resolution hint, so
+    like push it builds its own SyncError with the raw text — the
+    redact wrapper had to be applied there too."""
+    sync.init(memory_dir, remote=str(bare_remote))
+    Store(memory_dir).write(content="x", scopes=["tools"])
+    sync.push(memory_dir)
+
+    secret_url = "https://alice:ghp_topsecret@github.com/example/repo.git"
+    fake_stderr = f"fatal: unable to access '{secret_url}': connection refused"
+    original_run_git = sync._run_git
+
+    def fake_run_git(
+        root: Path, args: list[str], *, check: bool = True
+    ) -> subprocess.CompletedProcess[str]:
+        if args and args[0] == "pull":
+            return subprocess.CompletedProcess(
+                args=["git", *args],
+                returncode=1,
+                stdout="",
+                stderr=fake_stderr,
+            )
+        return original_run_git(root, args, check=check)
+
+    monkeypatch.setattr(sync, "_run_git", fake_run_git)
+
+    with pytest.raises(sync.SyncError) as excinfo:
+        sync.pull(memory_dir)
+    error_text = str(excinfo.value)
+    assert "ghp_topsecret" not in error_text, (
+        f"token leaked into SyncError: {error_text}"
+    )
+    assert "alice" not in error_text, (
+        f"username leaked into SyncError: {error_text}"
+    )
+
+
 # ---------------------------------------------------------------------------
 # pull
 # ---------------------------------------------------------------------------

@@ -451,3 +451,66 @@ def test_unverified_memory_omits_field_from_frontmatter(memory_dir: Path) -> Non
     assert len(md_files) == 1
     text = md_files[0].read_text()
     assert "last_verified_at" not in text
+
+
+# ---------------------------------------------------------------------------
+# Symlink rejection — sync trust boundary
+# ---------------------------------------------------------------------------
+
+
+def test_iter_active_paths_skips_symlinks(memory_dir: Path, tmp_path: Path) -> None:
+    """Regression: `_iter_active_paths` must reject symlinks. With
+    `sync pull` shipped, the memory directory is a worktree a remote
+    can push to — a `something.md` symlinked to an arbitrary file
+    elsewhere on disk would otherwise be loaded and parsed on the
+    next `load_all`. The parse would fail (the targeted file isn't
+    valid frontmatter) but the contract we want is "memories are
+    regular files in this directory, full stop"."""
+    import sys
+
+    if sys.platform == "win32":
+        pytest.skip("symlink semantics differ on Windows; POSIX-only test")
+
+    store = Store(memory_dir)
+    real_memory = store.write(content="real body", scopes=["tools"])
+
+    # Put a target file somewhere outside the memory dir, then symlink
+    # an `.md` entry inside the memory dir to it. The store must not
+    # surface it.
+    target = tmp_path / "secret.txt"
+    target.write_text("sensitive content elsewhere on disk")
+    rogue_link = memory_dir / "2026-01-01-rogue.md"
+    rogue_link.symlink_to(target)
+
+    paths = list(store._iter_active_paths())
+    assert len(paths) == 1, (
+        f"expected only the real memory file; got {[p.name for p in paths]}"
+    )
+    assert paths[0].name.endswith(".md")
+    assert real_memory.id == store._load_path(paths[0]).id
+
+
+def test_iter_tombstone_paths_skips_symlinks(
+    memory_dir: Path, tmp_path: Path
+) -> None:
+    """Same protection on the tombstone iterator. The tombstone dir
+    is part of the sync-able tree, so the same trust-boundary
+    argument applies."""
+    import sys
+
+    if sys.platform == "win32":
+        pytest.skip("symlink semantics differ on Windows; POSIX-only test")
+
+    store = Store(memory_dir)
+    real_memory = store.write(content="real body", scopes=["tools"])
+    store.tombstone(real_memory.id, reason="cleanup")
+
+    target = tmp_path / "secret.txt"
+    target.write_text("sensitive content elsewhere on disk")
+    rogue_link = store.tombstone_dir / "rogue.tombstone.md"
+    rogue_link.symlink_to(target)
+
+    paths = list(store._iter_tombstone_paths())
+    assert len(paths) == 1
+    assert ".tombstone.md" in paths[0].name
+    assert "rogue" not in paths[0].name

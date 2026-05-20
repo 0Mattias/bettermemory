@@ -35,6 +35,16 @@ import yaml
 
 _DELIM = "---"
 
+# YAML SafeLoader doesn't protect against alias-expansion DoS — the
+# classic "billion laughs" pattern where deeply-nested aliases expand
+# to a memory-pinning blob during parse. Memory frontmatter is dozens
+# to a few hundred bytes per record in normal use; capping the YAML
+# region at 64 KB neutralises the DoS without rejecting any real
+# memory file. The store widens its trust boundary once `sync pull`
+# is in use (a remote can push files into the memory directory), so
+# the cap is no longer purely a defence against local mistakes.
+_MAX_YAML_BYTES = 64 * 1024
+
 
 @dataclass
 class Post:
@@ -70,6 +80,16 @@ def loads(text: str) -> Post:
         return Post(content=text, metadata={})
 
     yaml_text = "\n".join(lines[1:close_idx])
+    if len(yaml_text.encode("utf-8")) > _MAX_YAML_BYTES:
+        # Pre-flight size check. Reject before yaml.load gets a chance
+        # to start expanding aliases. Real memories don't approach this
+        # ceiling — the largest legitimate frontmatter the project
+        # produces (a memory with dense `verified_paths` /
+        # `verified_commits` and several `links`) is a couple of KB.
+        raise ValueError(
+            f"frontmatter YAML exceeds {_MAX_YAML_BYTES}-byte cap "
+            f"({len(yaml_text)} chars); refusing to parse"
+        )
     body_lines = lines[close_idx + 1 :]
     # Drop a single separator blank line, mirroring python-frontmatter's
     # `---\n\n<body>` shape.

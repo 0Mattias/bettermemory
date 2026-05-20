@@ -139,15 +139,33 @@ class Store:
     # ---- iteration --------------------------------------------------------
 
     def _iter_active_paths(self) -> Iterator[Path]:
+        # `is_file()` follows symlinks; we explicitly reject them. With
+        # `sync pull`, the memory directory is a worktree that a remote
+        # can push to — a hostile remote pushing `something.md` that's
+        # a symlink to `/etc/passwd` (or any other readable file) would
+        # otherwise have its target loaded and parsed as frontmatter on
+        # the next `load_all`. The parse would fail and `load_all` would
+        # swallow it, so this isn't an exfiltration primitive today, but
+        # the narrower contract — memories are regular files in this
+        # directory, full stop — is what we want to enforce.
         for entry in self.root.iterdir():
-            if entry.is_file() and entry.suffix == ".md":
+            if (
+                entry.is_file()
+                and not entry.is_symlink()
+                and entry.suffix == ".md"
+            ):
                 yield entry
 
     def _iter_tombstone_paths(self) -> Iterator[Path]:
         if not self.tombstone_dir.exists():
             return
+        # Same symlink-rejection rule as `_iter_active_paths`.
         for entry in self.tombstone_dir.iterdir():
-            if entry.is_file() and entry.suffix == ".md":
+            if (
+                entry.is_file()
+                and not entry.is_symlink()
+                and entry.suffix == ".md"
+            ):
                 yield entry
 
     # ---- read -------------------------------------------------------------

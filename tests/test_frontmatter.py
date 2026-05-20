@@ -166,3 +166,56 @@ def test_loads_existing_example_file() -> None:
     assert "id" in p.metadata
     assert isinstance(p.metadata.get("scopes"), list)
     assert p.content.strip()
+
+
+# ---------------------------------------------------------------------------
+# YAML DoS guard — alias-expansion / oversize frontmatter
+# ---------------------------------------------------------------------------
+
+
+def test_loads_rejects_oversized_yaml_frontmatter() -> None:
+    """Regression: SafeLoader does not protect against YAML alias-bomb
+    DoS — a small input can expand to a memory-pinning blob during
+    parse. The store widens its trust boundary once `sync pull` is in
+    use (a remote can write into the memory directory), so we cap the
+    YAML region size before yaml.load gets a chance to start
+    expanding aliases. Real memory frontmatter is dozens to a few
+    hundred bytes; 64 KB is a generous ceiling that catches the
+    pathological case without rejecting any real memory."""
+    # Build a YAML region just over the 64 KB cap. The content doesn't
+    # need to be a real alias bomb — the size pre-flight rejects
+    # before any aliases are expanded, which is the protective barrier.
+    huge_value = "x" * (65 * 1024)
+    huge_yaml = f"---\nid: x\npadding: '{huge_value}'\n---\n\nbody\n"
+    with pytest.raises(ValueError, match="exceeds .*byte cap"):
+        loads(huge_yaml)
+
+
+def test_loads_accepts_normal_sized_frontmatter() -> None:
+    """Sanity check: normal-sized frontmatter (verified_paths, links,
+    etc. all populated) is well under the 64 KB cap. Lock the
+    headroom so a future tightening of the cap notices if it ever
+    starts catching real memories."""
+    metadata_yaml = (
+        "---\n"
+        "schema_version: 1\n"
+        "id: 01HXYZ123ABC\n"
+        "created: 2025-03-14T10:23:00+00:00\n"
+        "updated: 2025-03-14T10:23:00+00:00\n"
+        "scopes:\n- tools\n- learning-style\n- projects:bettermemory\n"
+        "confidence: high\n"
+        "source: explicit-statement\n"
+        "verified_paths:\n"
+        + "".join(f"- /path/to/file{i}.py\n" for i in range(50))
+        + "verified_commits:\n"
+        + "".join(f"- abc{i:04d}def\n" for i in range(50))
+        + "links:\n"
+        + "".join(
+            f"- {{type: extends, target: 01HXYZ{i:04d}}}\n" for i in range(30)
+        )
+        + "---\n\nbody text\n"
+    )
+    # Should parse cleanly — well under the cap.
+    p = loads(metadata_yaml)
+    assert p.metadata["id"] == "01HXYZ123ABC"
+    assert len(p.metadata["verified_paths"]) == 50
