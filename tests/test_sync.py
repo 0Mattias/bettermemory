@@ -35,9 +35,19 @@ def _git(cwd: Path, *args: str) -> str:
 
 
 @pytest.fixture
-def memory_dir(tmp_path: Path) -> Path:
+def memory_dir(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     d = tmp_path / "memories"
     d.mkdir()
+    # Redirect git's global config to a per-test tmp file. Without
+    # this, the `git config --global user.{email,name}` calls below
+    # silently overwrite the developer's ~/.gitconfig on every local
+    # run. `GIT_CONFIG_GLOBAL` is git's documented sandbox mechanism
+    # (since git 2.32) and is inherited by subprocesses through the
+    # process env, so the redirect covers every git invocation any
+    # test makes for the duration of the test.
+    global_config = tmp_path / "test.gitconfig"
+    global_config.touch()
+    monkeypatch.setenv("GIT_CONFIG_GLOBAL", str(global_config))
     # Identity so commits work in CI.
     _git(d.parent, "config", "--global", "user.email", "test@example.com")
     _git(d.parent, "config", "--global", "user.name", "Test")
