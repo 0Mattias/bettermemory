@@ -190,6 +190,21 @@ class Store:
         memories.sort(key=lambda m: m.created, reverse=True)
         return memories
 
+    def iter_active(self) -> Iterator[tuple[Path, Memory]]:
+        """`(path, memory)` pairs for every active (non-tombstoned)
+        memory. Skips malformed / racing files like `load_all` does.
+
+        Use this when the on-disk filename matters to the caller —
+        notably `index.rebuild`, which needs the actual filename (not
+        a re-derived one) so the `filename` column points at
+        collision-suffixed files correctly."""
+        for path in self._iter_active_paths():
+            try:
+                memory = self._load_path(path)
+            except (ValueError, KeyError, OSError):
+                continue
+            yield path, memory
+
     def list_summaries(self, scopes: list[str] | None = None) -> list[MemorySummary]:
         """Like `load_all` but body-stripped, filtered by scope match."""
         out: list[MemorySummary] = []
@@ -367,7 +382,7 @@ class Store:
         path = self._path_for(memory)
         with _locked(path):
             self._write_path(path, memory)
-        _index_upsert_quietly(self.root, memory)
+        _index_upsert_quietly(self.root, memory, filename=path.name)
         return memory
 
     def update(self, memory: Memory) -> Memory:
@@ -380,7 +395,7 @@ class Store:
         new_memory = memory.model_copy(update={"updated": now})
         with _locked(existing_path):
             self._write_path(existing_path, new_memory)
-        _index_upsert_quietly(self.root, new_memory)
+        _index_upsert_quietly(self.root, new_memory, filename=existing_path.name)
         return new_memory
 
     def mark_verified(
@@ -437,7 +452,7 @@ class Store:
                 update["verified_versions"] = list(verified_versions)
             new_memory = existing.model_copy(update=update)
             self._write_path(existing_path, new_memory)
-        _index_upsert_quietly(self.root, new_memory)
+        _index_upsert_quietly(self.root, new_memory, filename=existing_path.name)
         return new_memory
 
     def tombstone(
@@ -743,7 +758,7 @@ class Store:
         # Restored memories rejoin the searchable set — keep the FTS5
         # index in step with the file system. The remove-on-tombstone
         # call dropped this id; the restore is the symmetric upsert.
-        _index_upsert_quietly(self.root, restored)
+        _index_upsert_quietly(self.root, restored, filename=active_path.name)
         return restored
 
     # ---- scope rename ----------------------------------------------------
@@ -809,26 +824,31 @@ class Store:
                     update={"scopes": new_scopes, "updated": utcnow()}
                 )
                 self._write_path(path, refreshed)
-                _index_upsert_quietly(self.root, refreshed)
+                _index_upsert_quietly(self.root, refreshed, filename=path.name)
                 active_changed.append(refreshed.id)
 
         tombstoned_changed: list[str] = []
         if include_tombstones:
             for tpath in self._iter_tombstone_paths():
-                try:
-                    post = frontmatter.load(tpath)
-                except Exception:
-                    continue
-                raw_scopes = post.metadata.get("scopes")
-                if not isinstance(raw_scopes, list):
-                    continue
-                new_scopes_or_none = self._scopes_after_rename(
-                    [str(s) for s in raw_scopes], old, new
-                )
-                if new_scopes_or_none is None:
-                    continue
-                post.metadata["scopes"] = new_scopes_or_none
+                # Read-modify-write under the same lock — the active-side
+                # branch above already does this; the tombstone branch
+                # needs the same discipline. A concurrent `restore` can
+                # land between an unlocked read and a locked write and
+                # have its in-flight rewrite clobbered.
                 with _locked(tpath):
+                    try:
+                        post = frontmatter.load(tpath)
+                    except Exception:
+                        continue
+                    raw_scopes = post.metadata.get("scopes")
+                    if not isinstance(raw_scopes, list):
+                        continue
+                    new_scopes_or_none = self._scopes_after_rename(
+                        [str(s) for s in raw_scopes], old, new
+                    )
+                    if new_scopes_or_none is None:
+                        continue
+                    post.metadata["scopes"] = new_scopes_or_none
                     # Atomic in-place rewrite via tmp+rename. The previous
                     # implementation used `write_bytes`, which truncates
                     # and rewrites in place — a crash mid-write would leave
@@ -836,7 +856,7 @@ class Store:
                     # rename_scope path goes through `_write_path` which
                     # already does this; mirror it here.
                     _atomic_write_post(tpath, post)
-                tombstoned_changed.append(str(post.metadata.get("id")))
+                    tombstoned_changed.append(str(post.metadata.get("id")))
 
         return {"active": active_changed, "tombstoned": tombstoned_changed}
 
@@ -997,12 +1017,18 @@ class Store:
 # ---------------------------------------------------------------------------
 
 
-def _index_upsert_quietly(root: Path, memory: Memory) -> None:
+def _index_upsert_quietly(root: Path, memory: Memory, *, filename: str) -> None:
     """Update the FTS5 index for one memory. Best-effort: a failure
     here (corrupt index, locked database, missing SQLite extension)
     logs a warning and continues so the on-disk write — the canonical
     record — still succeeds. The next ``bettermemory reindex`` will
     repair any drift.
+
+    `filename` is the actual on-disk filename of the memory (the
+    caller just wrote to it, so it has the path). Threading it
+    through is what lets `filenames_for_ids` resolve
+    collision-suffixed names; re-deriving from the Memory fields
+    alone would silently point at the unsuffixed sibling.
 
     Lazy import so this module loads cleanly even when callers don't
     actually use the index (e.g. pure-Python tests against the file
@@ -1010,7 +1036,7 @@ def _index_upsert_quietly(root: Path, memory: Memory) -> None:
     try:
         from . import index as _index
 
-        _index.upsert(root, memory)
+        _index.upsert(root, memory, filename=filename)
     except Exception as exc:  # noqa: BLE001 — never break the write
         import logging
 

@@ -733,8 +733,9 @@ class ToolHandlers:
         # lookup — true O(k) on file IO. Candidates that aren't in
         # the lookup (a row written by a pre-v2 schema, an entry
         # that's been removed since the FTS pre-filter ran, etc.)
-        # are silently dropped; the fallback to `load_all` above
-        # handles the "index couldn't help at all" case.
+        # are skipped per-candidate. If every candidate misses we
+        # fall back to `load_all` below — search must never silently
+        # return empty when the FTS pre-filter actually matched.
         loaded: list[Any] = []
         ids = list(candidate_ids)
         filenames = _index.filenames_for_ids(self.store.root, ids)
@@ -749,8 +750,7 @@ class ToolHandlers:
                 # Stale filename (memory was moved / tombstoned
                 # between the index lookup and the read) or a
                 # malformed frontmatter row. Skip — the fallback
-                # shape in the rest of memory_search means a missed
-                # candidate degrades to "no hit", not to a crash.
+                # below covers the "every candidate failed" case.
                 continue
             # Index-drift defense: `sync pull` rewrites files in
             # place, so the filename column can briefly point at a
@@ -763,6 +763,15 @@ class ToolHandlers:
             if memory.id != cid:
                 continue
             loaded.append(memory)
+        if not loaded:
+            # FTS matched, but every candidate's filename lookup
+            # missed (pre-v2 schema rows, every match tombstoned
+            # between pre-filter and read, etc.). Fall back to
+            # `load_all` so the documented contract — "search keeps
+            # working through schema upgrades and stale-index
+            # windows" — actually holds. Hot path is the loaded
+            # branch above; this is the safety net.
+            return self.store.load_all()
         return loaded
 
     # ---- memory_search ---------------------------------------------------

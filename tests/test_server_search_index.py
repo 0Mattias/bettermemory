@@ -244,3 +244,46 @@ async def test_search_skips_candidate_when_index_filename_drifts(
             f"index drift produced a wrong hit: id={h['id']} surfaced "
             f"for query 'python' but body is not python-related"
         )
+
+
+async def test_search_falls_back_to_load_all_when_all_filenames_drift(
+    server: Any, memory_dir: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Regression for the audit finding that pairs with the H4 fix.
+
+    When `_index.query` returns candidate ids but the filename lookup
+    fails for *every* candidate (pre-v2 schema rows, the id-drift
+    defense above rejecting every load, etc.), the previous shape
+    returned an empty list — search silently missed results that
+    would have surfaced under `load_all`. The fallback now catches
+    this: empty `loaded` after a non-empty `candidate_pairs` routes
+    through `load_all` so the FTS hit isn't lost.
+    """
+    import sqlite3
+
+    from bettermemory import index as _index
+
+    monkeypatch.setenv("BETTERMEMORY_INDEX_THRESHOLD", "1")
+    await _call(
+        server,
+        "memory_write",
+        content="python list comprehension",
+        scopes=["tools"],
+    )
+
+    # Drift every filename: blank the column for every row. FTS still
+    # matches on body, but `filenames_for_ids` returns empty (the
+    # function skips rows with empty filenames). Pre-fix, the handler
+    # returned [] — the test would see zero hits despite the body
+    # matching.
+    db_path = _index.index_path(memory_dir)
+    with sqlite3.connect(str(db_path)) as conn:
+        conn.execute("UPDATE memories SET filename = ''")
+
+    hits = _unwrap(await _call(server, "memory_search", query="python"))
+    # Fallback to load_all must surface the matching memory.
+    assert hits, (
+        "search returned empty when every index filename was stale; "
+        "the load_all fallback should have caught this"
+    )
+    assert any("python" in h["match_terms"] for h in hits)

@@ -60,10 +60,12 @@ def traced(monkeypatch: pytest.MonkeyPatch) -> list[str]:
 
     monkeypatch.setattr(Store, "_load_path", traced_load_path)
     monkeypatch.setattr(store_module, "_locked", traced_locked)
-    # `store.py` does `from . import _frontmatter as frontmatter` — patch
-    # the alias on `store_module` so the calls inside tombstone/restore
-    # route through the trace.
-    monkeypatch.setattr(store_module.frontmatter, "load", traced_fm_load)
+    # `store.py` does `from . import _frontmatter as frontmatter`; that
+    # alias and `_fm` are the same module object, so patching `_fm.load`
+    # routes the tombstone/restore reads through the trace. (Patching
+    # via `store_module.frontmatter` works at runtime but trips mypy's
+    # strict re-export rule.)
+    monkeypatch.setattr(_fm, "load", traced_fm_load)
     return events
 
 
@@ -153,3 +155,18 @@ def test_rename_scope_loads_inside_lock(store: Store, traced: list[str]) -> None
     traced.clear()
     store.rename_scope("old-scope", "new-scope")
     _assert_one_event_inside_lock(traced, "load", path.name)
+
+
+def test_rename_scope_tombstone_reads_inside_lock(
+    store: Store, traced: list[str]
+) -> None:
+    """The tombstone branch of `rename_scope` has the same TOCTOU
+    surface as the active branch: a concurrent `restore` lands
+    between an unlocked read and a locked write and gets clobbered.
+    Symmetric fix — symmetric structural assertion."""
+    memory = store.write(content="body", scopes=["old-scope"])
+    store.tombstone(memory.id, reason="not needed")
+    tombstone_path = next(p for p in store._iter_tombstone_paths() if p.is_file())
+    traced.clear()
+    store.rename_scope("old-scope", "new-scope")
+    _assert_one_event_inside_lock(traced, "fm_load", tombstone_path.name)

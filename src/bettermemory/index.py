@@ -53,8 +53,10 @@ without changing the result shape.
 
 from __future__ import annotations
 
+import contextlib
 import json
 import logging
+import os
 import sqlite3
 from collections.abc import Iterable
 from datetime import datetime
@@ -205,9 +207,6 @@ def _connect(path: Path) -> sqlite3.Connection:
         conn.execute("PRAGMA foreign_keys = ON")
         conn.execute("PRAGMA journal_mode = WAL")
         conn.row_factory = sqlite3.Row
-        import contextlib
-        import os as _os
-
         for sibling in (
             path,
             path.with_suffix(path.suffix + "-wal"),
@@ -215,8 +214,8 @@ def _connect(path: Path) -> sqlite3.Connection:
         ):
             if sibling.exists():
                 with contextlib.suppress(OSError):
-                    _os.chmod(sibling, 0o600)
-    except BaseException:
+                    os.chmod(sibling, 0o600)
+    except Exception:
         conn.close()
         raise
     return conn
@@ -289,8 +288,8 @@ class IndexVersionError(RuntimeError):
 # ---------------------------------------------------------------------------
 
 
-def rebuild(root: Path, memories: Iterable[Memory]) -> int:
-    """Drop and rebuild the entire index from a memories iterable.
+def rebuild(root: Path, items: Iterable[tuple[Path, Memory]]) -> int:
+    """Drop and rebuild the entire index from a `(path, memory)` iterable.
 
     Returns the number of memories indexed. The data tables are
     truncated (not the schema) so triggers and indexes survive.
@@ -300,6 +299,10 @@ def rebuild(root: Path, memories: Iterable[Memory]) -> int:
     Idempotent — running twice produces the same final state. Safe
     against partial failures: the rebuild runs in a single
     transaction, so a mid-build crash leaves the prior index intact.
+
+    Each entry pairs the on-disk path with its parsed Memory so the
+    `filename` column can mirror the real file (collision-suffixed
+    names included). Callers typically pass `Store.iter_active()`.
     """
     path = index_path(root)
     conn = _connect(path)
@@ -308,8 +311,8 @@ def rebuild(root: Path, memories: Iterable[Memory]) -> int:
         with conn:
             conn.execute("DELETE FROM memories")
             count = 0
-            for memory in memories:
-                _insert_memory(conn, memory)
+            for entry_path, memory in items:
+                _insert_memory(conn, memory, entry_path.name)
                 count += 1
             conn.execute(
                 "INSERT OR REPLACE INTO meta(key, value) VALUES ('indexed_count', ?)",
@@ -320,16 +323,21 @@ def rebuild(root: Path, memories: Iterable[Memory]) -> int:
         conn.close()
 
 
-def upsert(root: Path, memory: Memory) -> None:
+def upsert(root: Path, memory: Memory, *, filename: str) -> None:
     """Insert or replace one memory in the index. Called by Store hooks
     on write / update. Safe to call before the index file exists — the
-    schema is created on demand."""
+    schema is created on demand.
+
+    `filename` is the on-disk filename (no leading directory) the
+    Store actually wrote. Threading it through — rather than
+    re-deriving — is what lets `filenames_for_ids` resolve
+    collision-suffixed names back to the correct path."""
     path = index_path(root)
     conn = _connect(path)
     try:
         _ensure_schema(conn)
         with conn:
-            _upsert_memory(conn, memory)
+            _upsert_memory(conn, memory, filename)
             _bump_count(conn)
     finally:
         conn.close()
@@ -555,23 +563,15 @@ def _isoformat_optional(dt: datetime | None) -> str | None:
     return dt.isoformat() if dt is not None else None
 
 
-def _filename_for(memory: Memory) -> str:
-    """Re-derive the on-disk filename for a memory. Same shape the
-    Store uses (`<created>-<slug>.md`); this is a pure function of
-    the memory's identity fields, so the index can reproduce it
-    without consulting the file system. Collision-suffixed filenames
-    aren't re-derivable here, but they're rare; `_load_search_candidates`
-    handles a missing file by skipping that candidate and falling
-    back to the load_all path."""
-    from .models import build_filename, make_slug
-
-    slug = make_slug(memory.body)
-    return build_filename(memory.created, slug)
-
-
-def _insert_memory(conn: sqlite3.Connection, memory: Memory) -> None:
+def _insert_memory(conn: sqlite3.Connection, memory: Memory, filename: str) -> None:
     """Insert a new row. Caller has already cleared the table or
-    confirmed no row with this id exists."""
+    confirmed no row with this id exists.
+
+    `filename` is the actual on-disk filename — the caller threads it
+    through from the path it just wrote. The store's collision suffix
+    (`<slug>-<short_id>.md`) means we can't re-derive this from the
+    Memory fields alone, and getting it wrong points `filenames_for_ids`
+    at the wrong file."""
     conn.execute(
         "INSERT INTO memories("
         "id, created, updated, last_verified_at, confidence, category, "
@@ -587,16 +587,18 @@ def _insert_memory(conn: sqlite3.Connection, memory: Memory) -> None:
             memory.body,
             _scopes_text(memory.scopes),
             json.dumps(memory.scopes),
-            _filename_for(memory),
+            filename,
         ),
     )
     _sync_links(conn, memory)
 
 
-def _upsert_memory(conn: sqlite3.Connection, memory: Memory) -> None:
+def _upsert_memory(conn: sqlite3.Connection, memory: Memory, filename: str) -> None:
     """INSERT OR REPLACE on the id key. Trigger logic keeps the FTS
     virtual table in sync — the AFTER UPDATE trigger handles the
-    delete-then-insert dance internally so callers don't have to."""
+    delete-then-insert dance internally so callers don't have to.
+
+    See `_insert_memory` for the `filename` contract."""
     conn.execute(
         "INSERT INTO memories("
         "id, created, updated, last_verified_at, confidence, category, "
@@ -622,7 +624,7 @@ def _upsert_memory(conn: sqlite3.Connection, memory: Memory) -> None:
             memory.body,
             _scopes_text(memory.scopes),
             json.dumps(memory.scopes),
-            _filename_for(memory),
+            filename,
         ),
     )
     _sync_links(conn, memory)

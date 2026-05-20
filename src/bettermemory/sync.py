@@ -518,7 +518,7 @@ def pull(
         from .store import Store
 
         store = Store(root)
-        indexed = _index.rebuild(root, store.load_all())
+        indexed = _index.rebuild(root, store.iter_active())
 
     return {
         "root": str(root),

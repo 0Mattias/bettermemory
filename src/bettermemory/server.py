@@ -1354,8 +1354,7 @@ def _cli_reindex(*, json_out: bool) -> None:
     store = Store(directory)
 
     before = _index.status(directory)
-    memories = store.load_all()
-    count = _index.rebuild(directory, memories)
+    count = _index.rebuild(directory, store.iter_active())
     after = _index.status(directory)
 
     if json_out:

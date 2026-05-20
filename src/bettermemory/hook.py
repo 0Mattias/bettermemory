@@ -196,6 +196,10 @@ def run_audit(
         verdict=report.verdict,
         threshold_rule=report.threshold_rule,
         recent_retrieval_count=report.recent_retrieval_count,
+        # Mirror the in-process handler's signal so a downstream rollup
+        # joining stop-hook events with model-side events sees the same
+        # field shape. `triggered_from` already distinguishes the source.
+        assistant_present=assistant_response is not None,
         triggered_from="stop_hook",
     )
     if report.is_miss:

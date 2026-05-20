@@ -138,7 +138,8 @@ def test_rename_scope_updates_fts5_index(store: Store) -> None:
     # write path didn't upsert because the index file didn't yet exist
     # — `_index_upsert_quietly` does upsert, but this also locks in
     # the precondition explicitly).
-    _index.upsert(store.root, memory)
+    path = next(p for p in store._iter_active_paths() if p.is_file())
+    _index.upsert(store.root, memory, filename=path.name)
 
     result = store.rename_scope("infra", "infrastructure")
     assert memory.id in result["active"]

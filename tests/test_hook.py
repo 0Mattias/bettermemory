@@ -271,10 +271,56 @@ def test_main_runs_audit_and_logs_turn_audited(
     assert "turn_audited" in kinds, f"no turn_audited event in {kinds}"
     audited = next(e for e in events if e["kind"] == "turn_audited")
     assert audited["triggered_from"] == "stop_hook"
+    # The hook mirrors the in-process handler's `assistant_present`
+    # signal — the transcript above carries an assistant text block,
+    # so the field must be True. Pre-fix the hook accepted
+    # `assistant_response` as a parameter and silently dropped it,
+    # leaving downstream rollups joining stop-hook and model-side
+    # events with an inconsistent field shape.
+    assert audited["assistant_present"] is True
     # The output (when --quiet wasn't passed) is a JSON summary.
     captured = capsys.readouterr()
     payload = json.loads(captured.out)
     assert payload["verdict"] in ("miss", "ok", "no_signal")
+
+
+def test_main_records_assistant_present_false_when_no_response(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Symmetric check: a transcript whose latest assistant turn has
+    only non-text blocks (thinking, tool_use) flattens to None — the
+    event must record `assistant_present=False` so the rollup can
+    distinguish 'no model response surfaced to user' from
+    'response present but empty'."""
+    mem_dir = tmp_path / "mem"
+    mem_dir.mkdir()
+    monkeypatch.setenv("BETTERMEMORY_DIR", str(mem_dir))
+
+    store = Store(mem_dir)
+    store.write(content="alpha note about postgres", scopes=["infrastructure"])
+
+    transcript = tmp_path / "t.jsonl"
+    _write_transcript(
+        transcript,
+        {"type": "user", "message": {"content": "what about postgres?"}},
+        {
+            "type": "assistant",
+            "message": {
+                "content": [
+                    {"type": "thinking", "thinking": "internal-only"},
+                    {"type": "tool_use", "name": "x", "input": {}},
+                ]
+            },
+        },
+    )
+
+    code = hook_main(
+        ["--transcript-path", str(transcript), "--session-id", "sess-q", "--quiet"]
+    )
+    assert code == 0
+    events = list(iter_events(mem_dir))
+    audited = next(e for e in events if e["kind"] == "turn_audited")
+    assert audited["assistant_present"] is False
 
 
 def test_main_swallows_unexpected_errors(

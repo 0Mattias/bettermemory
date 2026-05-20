@@ -10,6 +10,7 @@ contract when the file doesn't exist.
 from __future__ import annotations
 
 import sqlite3
+from datetime import datetime, timezone
 from pathlib import Path
 
 import pytest
@@ -50,7 +51,7 @@ def test_rebuild_creates_file_and_populates(store: Store, memory_dir: Path) -> N
     # The Store hook upserts as memories are written, so the index
     # already has data. Calling rebuild redoes it from scratch —
     # idempotent.
-    count = index.rebuild(memory_dir, store.load_all())
+    count = index.rebuild(memory_dir, store.iter_active())
     assert count == 2
 
     s = index.status(memory_dir)
@@ -64,8 +65,8 @@ def test_rebuild_is_idempotent(store: Store, memory_dir: Path) -> None:
     truncate-then-insert pattern is safe to repeat."""
     store.write(content="alpha", scopes=["tools"])
     store.write(content="beta", scopes=["tools"])
-    index.rebuild(memory_dir, store.load_all())
-    index.rebuild(memory_dir, store.load_all())
+    index.rebuild(memory_dir, store.iter_active())
+    index.rebuild(memory_dir, store.iter_active())
     assert index.status(memory_dir)["indexed_count"] == 2
 
 
@@ -79,7 +80,7 @@ def test_query_finds_matching_body(store: Store, memory_dir: Path) -> None:
     memories whose body contains that token, ranked by BM25."""
     a = store.write(content="python list comprehension", scopes=["tools"])
     b = store.write(content="kubernetes networking", scopes=["tools"])
-    index.rebuild(memory_dir, store.load_all())
+    index.rebuild(memory_dir, store.iter_active())
 
     results = index.query(memory_dir, "python")
     ids = [r[0] for r in results]
@@ -92,7 +93,7 @@ def test_query_scope_filter(store: Store, memory_dir: Path) -> None:
     carrying at least one of the named scopes appear."""
     a = store.write(content="python comprehension", scopes=["tools"])
     b = store.write(content="python comprehension", scopes=["learning-style"])
-    index.rebuild(memory_dir, store.load_all())
+    index.rebuild(memory_dir, store.iter_active())
 
     results = index.query(memory_dir, "python", scopes=["tools"])
     ids = [r[0] for r in results]
@@ -106,7 +107,7 @@ def test_query_returns_bm25_scores(store: Store, memory_dir: Path) -> None:
     Caller decides whether to invert or pass through."""
     store.write(content="python rare unique token", scopes=["tools"])
     store.write(content="python common common common", scopes=["tools"])
-    index.rebuild(memory_dir, store.load_all())
+    index.rebuild(memory_dir, store.iter_active())
 
     results = index.query(memory_dir, "python")
     assert len(results) == 2
@@ -124,7 +125,7 @@ def test_query_max_results_caps(store: Store, memory_dir: Path) -> None:
     materialize."""
     for i in range(10):
         store.write(content=f"python notes {i}", scopes=["tools"])
-    index.rebuild(memory_dir, store.load_all())
+    index.rebuild(memory_dir, store.iter_active())
 
     results = index.query(memory_dir, "python", max_results=3)
     assert len(results) == 3
@@ -134,7 +135,7 @@ def test_empty_query_returns_empty(store: Store, memory_dir: Path) -> None:
     """An empty or whitespace-only query is a no-op — FTS5 can't
     match on nothing, and the caller shouldn't have to check."""
     store.write(content="anything", scopes=["tools"])
-    index.rebuild(memory_dir, store.load_all())
+    index.rebuild(memory_dir, store.iter_active())
     assert index.query(memory_dir, "") == []
     assert index.query(memory_dir, "   ") == []
 
@@ -144,7 +145,7 @@ def test_query_escapes_fts_special_chars(store: Store, memory_dir: Path) -> None
     `^`, etc.) must not be interpreted as syntax. The escape wraps
     each term in quotes so it's treated as a literal phrase."""
     store.write(content="some text with :colon: chars", scopes=["tools"])
-    index.rebuild(memory_dir, store.load_all())
+    index.rebuild(memory_dir, store.iter_active())
 
     # A naive query for "scope:colon" would be parsed by FTS5 as a
     # column-prefix selector and either fail or match unexpected
@@ -284,6 +285,38 @@ def test_filenames_for_ids_empty_list_short_circuits(memory_dir: Path) -> None:
     assert index.filenames_for_ids(memory_dir, []) == {}
 
 
+def test_filenames_for_ids_resolves_collision_suffixed_files(
+    store: Store, memory_dir: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Regression: when two memories share a date+slug, the second
+    one lands at `<slug>-<short_id>.md`. The previous implementation
+    re-derived the index `filename` column from `(created, slug)`,
+    which silently pointed both index rows at the unsuffixed file —
+    a search hit on the collision-suffixed memory would resolve to
+    the *other* memory's body, then trip the `memory.id != cid`
+    guard and get dropped from results. With the threaded-through
+    filename, both memories are findable."""
+    # Force two writes onto the same date+slug.
+    fixed = datetime(2025, 3, 14, 10, tzinfo=timezone.utc)
+    monkeypatch.setattr("bettermemory.store.utcnow", lambda: fixed)
+    monkeypatch.setattr("bettermemory.models.utcnow", lambda: fixed)
+
+    a = store.write(content="hello world", scopes=["tools"])
+    b = store.write(content="hello world", scopes=["tools"])
+    assert a.id != b.id
+
+    filenames = index.filenames_for_ids(memory_dir, [a.id, b.id])
+    # Both ids resolve to actual files (one base, one suffixed).
+    assert set(filenames.keys()) == {a.id, b.id}
+    for fn in filenames.values():
+        assert (memory_dir / fn).exists(), (
+            f"filename {fn!r} stored in index doesn't exist on disk"
+        )
+    # The two filenames must be distinct — the bug was both pointing
+    # at the unsuffixed sibling.
+    assert filenames[a.id] != filenames[b.id]
+
+
 # ---------------------------------------------------------------------------
 # memory_links table (H1 — schema v2)
 # ---------------------------------------------------------------------------
@@ -383,7 +416,7 @@ def test_v1_index_downgraded_to_v2_via_drop_and_recreate(
         "the next write or explicit reindex"
     )
     # A subsequent reindex restores the row count.
-    index.rebuild(memory_dir, store.load_all())
+    index.rebuild(memory_dir, store.iter_active())
     s_after = index.status(memory_dir)
     assert s_after["indexed_count"] >= 1
     # And the H1 surfaces work again on the reindexed store.
