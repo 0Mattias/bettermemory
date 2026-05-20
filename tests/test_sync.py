@@ -314,9 +314,7 @@ def test_push_redacts_credentialed_url_in_error(
     assert "ghp_topsecret" not in error_text, (
         f"token leaked into SyncError: {error_text}"
     )
-    assert "alice" not in error_text, (
-        f"username leaked into SyncError: {error_text}"
-    )
+    assert "alice" not in error_text, f"username leaked into SyncError: {error_text}"
     # And confirm the redaction marker shows up — useful to debug the
     # error without exposing what was hidden.
     assert "<redacted>" in error_text or "redacted" in error_text
@@ -360,9 +358,7 @@ def test_pull_redacts_credentialed_url_in_error(
     assert "ghp_topsecret" not in error_text, (
         f"token leaked into SyncError: {error_text}"
     )
-    assert "alice" not in error_text, (
-        f"username leaked into SyncError: {error_text}"
-    )
+    assert "alice" not in error_text, f"username leaked into SyncError: {error_text}"
 
 
 # ---------------------------------------------------------------------------

@@ -266,9 +266,7 @@ def test_filenames_for_ids_resolves_written_memories(
         assert (memory_dir / fn).exists(), f"filename {fn!r} doesn't exist"
 
 
-def test_filenames_for_ids_omits_unknown_ids(
-    store: Store, memory_dir: Path
-) -> None:
+def test_filenames_for_ids_omits_unknown_ids(store: Store, memory_dir: Path) -> None:
     """An id that doesn't correspond to an index row is silently
     omitted — the caller (_load_search_candidates) falls back to
     load_all for those candidates."""
@@ -291,9 +289,7 @@ def test_filenames_for_ids_empty_list_short_circuits(memory_dir: Path) -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_links_for_returns_outbound_and_inbound(
-    store: Store, memory_dir: Path
-) -> None:
+def test_links_for_returns_outbound_and_inbound(store: Store, memory_dir: Path) -> None:
     """The reverse-link lookup that replaces _links_payload's
     load_all scan. A memory's links populate the index on write;
     the index then supports both directions."""
@@ -305,9 +301,7 @@ def test_links_for_returns_outbound_and_inbound(
     b_with_link = b.model_copy(
         update={
             "links": [
-                MemoryLink(
-                    type=LinkType.SUPERSEDES, target_id=a.id, note="reason"
-                )
+                MemoryLink(type=LinkType.SUPERSEDES, target_id=a.id, note="reason")
             ]
         }
     )
@@ -332,9 +326,7 @@ def test_links_for_returns_empty_when_no_index(tmp_path: Path) -> None:
     assert inbound == []
 
 
-def test_links_cleanup_on_tombstone(
-    store: Store, memory_dir: Path
-) -> None:
+def test_links_cleanup_on_tombstone(store: Store, memory_dir: Path) -> None:
     """Tombstoning a memory must drop all its rows from
     `memory_links` — both source-side and target-side. The DELETE
     trigger handles the cascade so reverse-link queries after a
@@ -344,9 +336,7 @@ def test_links_cleanup_on_tombstone(
     a = store.write(content="A body", scopes=["tools"])
     b = store.write(content="B body", scopes=["tools"])
     b_with_link = b.model_copy(
-        update=dict(
-            links=[MemoryLink(type=LinkType.EXTENDS, target_id=a.id)]
-        )
+        update=dict(links=[MemoryLink(type=LinkType.EXTENDS, target_id=a.id)])
     )
     store.update(b_with_link)
     # Pre-condition: link exists.
@@ -382,9 +372,7 @@ def test_v1_index_downgraded_to_v2_via_drop_and_recreate(
     # Force the on-disk version backwards to simulate a stale v1
     # index. The data tables look fine; only the meta version flips.
     with sqlite3.connect(db_path) as conn:
-        conn.execute(
-            "UPDATE meta SET value = '1' WHERE key = 'schema_version'"
-        )
+        conn.execute("UPDATE meta SET value = '1' WHERE key = 'schema_version'")
 
     # Status call triggers _ensure_schema, which sees v1 < v2 and
     # drops + recreates.

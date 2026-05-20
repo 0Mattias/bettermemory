@@ -1230,9 +1230,7 @@ async def test_memory_verify_rejects_oversized_note(server: Any) -> None:
         server, "memory_write", content="durable claim", scopes=["tools"]
     )
     with pytest.raises(Exception, match="cap is 500"):
-        await _call(
-            server, "memory_verify", id=written["id"], note="x" * 501
-        )
+        await _call(server, "memory_verify", id=written["id"], note="x" * 501)
 
 
 async def test_memory_verify_accepts_max_length_note(server: Any) -> None:
@@ -1240,9 +1238,7 @@ async def test_memory_verify_accepts_max_length_note(server: Any) -> None:
     written = await _call(
         server, "memory_write", content="durable claim", scopes=["tools"]
     )
-    res = await _call(
-        server, "memory_verify", id=written["id"], note="x" * 500
-    )
+    res = await _call(server, "memory_verify", id=written["id"], note="x" * 500)
     assert res["last_verified_at"] is not None
 
 

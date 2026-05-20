@@ -285,9 +285,7 @@ def test_consolidate_json_subcommand_emits_payload(
     """The `--json` flag emits parseable JSON with the expected top-
     level keys. Matches the surface the subprocess test pins but runs
     in-process so it counts toward server.py coverage."""
-    _run_main(
-        ["consolidate", "--json"], monkeypatch=monkeypatch, storage=tmp_path
-    )
+    _run_main(["consolidate", "--json"], monkeypatch=monkeypatch, storage=tmp_path)
     payload = json.loads(capsys.readouterr().out)
     for key in (
         "applied",
@@ -310,9 +308,7 @@ def test_tombstones_list_subcommand_runs_on_empty_store(
     """`tombstones list` against an empty store should not error — it
     should report zero tombstones cleanly. The CLI is a thin wrapper
     around `store.load_tombstones`; this pins the wiring."""
-    _run_main(
-        ["tombstones", "list"], monkeypatch=monkeypatch, storage=tmp_path
-    )
+    _run_main(["tombstones", "list"], monkeypatch=monkeypatch, storage=tmp_path)
     out = capsys.readouterr().out
     # Either an explicit "no tombstones" message or an empty body —
     # pin only that we don't crash and produce something coherent.
@@ -357,12 +353,9 @@ def test_export_subcommand_emits_json(
     assert payload.get("format_version") is not None, (
         f"export payload missing format_version; keys: {sorted(payload.keys())}"
     )
-    bodies = " ".join(
-        m.get("body", "") for m in payload.get("active_memories", [])
-    )
+    bodies = " ".join(m.get("body", "") for m in payload.get("active_memories", []))
     assert "archive me" in bodies, (
-        f"export payload missing the written body; got keys: "
-        f"{sorted(payload.keys())}"
+        f"export payload missing the written body; got keys: {sorted(payload.keys())}"
     )
 
 
@@ -394,9 +387,7 @@ def test_migrate_origin_subcommand_runs(
     """`migrate origin` is a no-op on a store with no pre-1.x memories.
     Run it against an empty store to exercise the dispatch arm; the
     test asserts a coherent report rather than a crash."""
-    _run_main(
-        ["migrate", "origin"], monkeypatch=monkeypatch, storage=tmp_path
-    )
+    _run_main(["migrate", "origin"], monkeypatch=monkeypatch, storage=tmp_path)
     out = capsys.readouterr().out
     # The output may contain "0 memories" or "no migrations needed" or
     # similar — we only check that the command ran without raising.

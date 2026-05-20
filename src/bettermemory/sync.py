@@ -452,8 +452,7 @@ def push(
         stderr = _redact_text(push_result.stderr.strip())
         stdout = _redact_text(push_result.stdout.strip())
         raise SyncError(
-            f"`git push --set-upstream {remote} HEAD` failed: "
-            f"{stderr or stdout}"
+            f"`git push --set-upstream {remote} HEAD` failed: {stderr or stdout}"
         )
 
     return {
@@ -496,9 +495,7 @@ def pull(
     # `.git/refs/tags/` clean — the memory store has no concept of tags,
     # so anything that lands there is at best clutter and at worst a
     # foot-gun ("git checkout main" picking up the wrong ref).
-    pull_result = _run_git(
-        root, ["pull", "--rebase", "--no-tags", remote], check=False
-    )
+    pull_result = _run_git(root, ["pull", "--rebase", "--no-tags", remote], check=False)
     if pull_result.returncode != 0:
         # See the redaction note on the push branch — credentialed
         # URLs can land in pull stderr too (e.g. when the remote is

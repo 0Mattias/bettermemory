@@ -490,9 +490,7 @@ def test_iter_active_paths_skips_symlinks(memory_dir: Path, tmp_path: Path) -> N
     assert real_memory.id == store._load_path(paths[0]).id
 
 
-def test_iter_tombstone_paths_skips_symlinks(
-    memory_dir: Path, tmp_path: Path
-) -> None:
+def test_iter_tombstone_paths_skips_symlinks(memory_dir: Path, tmp_path: Path) -> None:
     """Same protection on the tombstone iterator. The tombstone dir
     is part of the sync-able tree, so the same trust-boundary
     argument applies."""

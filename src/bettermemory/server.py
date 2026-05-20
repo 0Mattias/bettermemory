@@ -983,11 +983,7 @@ def main() -> None:
                         if args.transcript_path
                         else []
                     ),
-                    *(
-                        ["--session-id", args.session_id]
-                        if args.session_id
-                        else []
-                    ),
+                    *(["--session-id", args.session_id] if args.session_id else []),
                     *(["--quiet"] if args.quiet else []),
                 ]
             )

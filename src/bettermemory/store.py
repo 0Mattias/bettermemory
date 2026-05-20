@@ -149,11 +149,7 @@ class Store:
         # the narrower contract — memories are regular files in this
         # directory, full stop — is what we want to enforce.
         for entry in self.root.iterdir():
-            if (
-                entry.is_file()
-                and not entry.is_symlink()
-                and entry.suffix == ".md"
-            ):
+            if entry.is_file() and not entry.is_symlink() and entry.suffix == ".md":
                 yield entry
 
     def _iter_tombstone_paths(self) -> Iterator[Path]:
@@ -161,11 +157,7 @@ class Store:
             return
         # Same symlink-rejection rule as `_iter_active_paths`.
         for entry in self.tombstone_dir.iterdir():
-            if (
-                entry.is_file()
-                and not entry.is_symlink()
-                and entry.suffix == ".md"
-            ):
+            if entry.is_file() and not entry.is_symlink() and entry.suffix == ".md":
                 yield entry
 
     # ---- read -------------------------------------------------------------
@@ -708,9 +700,7 @@ class Store:
             try:
                 post = frontmatter.load(tombstone_path)
             except FileNotFoundError:
-                raise MemoryNotFoundError(
-                    f"no tombstone with id {memory_id}"
-                ) from None
+                raise MemoryNotFoundError(f"no tombstone with id {memory_id}") from None
             post.metadata.pop("removed", None)
             post.metadata.pop("removed_reason", None)
             post.metadata.pop("removed_session", None)
@@ -733,9 +723,7 @@ class Store:
             active_path = self.root / active_filename
             if active_path.exists():
                 short = memory_id[-6:].lower()
-                active_path = self.root / build_filename(
-                    created, f"{slug}-{short}"
-                )
+                active_path = self.root / build_filename(created, f"{slug}-{short}")
 
             _atomic_write_post(active_path, post)
             try:

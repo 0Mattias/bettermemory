@@ -242,9 +242,7 @@ def _ensure_schema(conn: sqlite3.Connection) -> None:
     # First-touch path: meta table may not exist yet. CREATE IF NOT
     # EXISTS is safe to run before the version check.
     conn.executescript(_SCHEMA)
-    row = conn.execute(
-        "SELECT value FROM meta WHERE key = 'schema_version'"
-    ).fetchone()
+    row = conn.execute("SELECT value FROM meta WHERE key = 'schema_version'").fetchone()
     if row is None:
         conn.execute(
             "INSERT INTO meta(key, value) VALUES ('schema_version', ?)",
@@ -278,9 +276,7 @@ def _ensure_schema(conn: sqlite3.Connection) -> None:
             "UPDATE meta SET value = ? WHERE key = 'schema_version'",
             (str(SCHEMA_VERSION),),
         )
-        conn.execute(
-            "UPDATE meta SET value = '0' WHERE key = 'indexed_count'"
-        )
+        conn.execute("UPDATE meta SET value = '0' WHERE key = 'indexed_count'")
     conn.commit()
 
 
@@ -447,20 +443,14 @@ def filenames_for_ids(root: Path, ids: list[str]) -> dict[str, str]:
         # pre-v2 schema. Drop those — the caller treats them as
         # "fall back to load_all" without trying to construct a
         # bogus path.
-        return {
-            row["id"]: row["filename"]
-            for row in rows
-            if row["filename"]
-        }
+        return {row["id"]: row["filename"] for row in rows if row["filename"]}
     finally:
         conn.close()
 
 
 def links_for(
     root: Path, memory_id: str
-) -> tuple[
-    list[tuple[str, str, str | None]], list[tuple[str, str, str | None]]
-]:
+) -> tuple[list[tuple[str, str, str | None]], list[tuple[str, str, str | None]]]:
     """Resolve outbound and inbound links for `memory_id`.
 
     Returns `(outbound, inbound)` where each entry is
@@ -644,9 +634,7 @@ def _sync_links(conn: sqlite3.Connection, memory: Memory) -> None:
     overwrites the full list), so the index mirror is the same: drop
     every row where this memory is the source, then insert the new
     list."""
-    conn.execute(
-        "DELETE FROM memory_links WHERE source_id = ?", (memory.id,)
-    )
+    conn.execute("DELETE FROM memory_links WHERE source_id = ?", (memory.id,))
     if not memory.links:
         return
     conn.executemany(

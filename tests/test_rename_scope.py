@@ -188,8 +188,7 @@ def test_rename_scope_restored_memory_searchable_by_new_scope(
     finally:
         conn.close()
     assert row is not None, (
-        "restored memory not re-added to the FTS5 index — "
-        "search would silently miss it"
+        "restored memory not re-added to the FTS5 index — search would silently miss it"
     )
     assert " alpha " in row[0]
 

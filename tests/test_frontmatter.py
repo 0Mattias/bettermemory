@@ -210,9 +210,7 @@ def test_loads_accepts_normal_sized_frontmatter() -> None:
         + "verified_commits:\n"
         + "".join(f"- abc{i:04d}def\n" for i in range(50))
         + "links:\n"
-        + "".join(
-            f"- {{type: extends, target: 01HXYZ{i:04d}}}\n" for i in range(30)
-        )
+        + "".join(f"- {{type: extends, target: 01HXYZ{i:04d}}}\n" for i in range(30))
         + "---\n\nbody text\n"
     )
     # Should parse cleanly — well under the cap.

@@ -419,6 +419,6 @@ def test_resolved_directory_no_warn_for_user_path(
 
     cfg = Config()
     cfg.resolved_directory()
-    assert not any(
-        "system directory" in record.message for record in caplog.records
-    ), f"unexpected warning on user path: {[r.message for r in caplog.records]}"
+    assert not any("system directory" in record.message for record in caplog.records), (
+        f"unexpected warning on user path: {[r.message for r in caplog.records]}"
+    )

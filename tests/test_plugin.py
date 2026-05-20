@@ -286,8 +286,7 @@ def test_plugin_ships_stop_hook() -> None:
     settings.json. The plugin now ships hooks/hooks.json declaring
     the Stop binding so plugin install is enough."""
     assert PLUGIN_HOOKS_PATH.exists(), (
-        f"plugin hooks manifest missing at "
-        f"{PLUGIN_HOOKS_PATH.relative_to(REPO_ROOT)}"
+        f"plugin hooks manifest missing at {PLUGIN_HOOKS_PATH.relative_to(REPO_ROOT)}"
     )
 
 
@@ -310,9 +309,7 @@ def test_stop_hook_calls_audit_turn() -> None:
     ]
     assert command_hooks, "no command-form hook under Stop"
     matched = [
-        h
-        for h in command_hooks
-        if "bettermemory audit-turn" in h.get("command", "")
+        h for h in command_hooks if "bettermemory audit-turn" in h.get("command", "")
     ]
     assert matched, (
         f"none of the Stop command hooks call `bettermemory audit-turn`; "
@@ -334,9 +331,7 @@ def test_stop_hook_has_reasonable_timeout() -> None:
     ]
     for hook in command_hooks:
         timeout = hook.get("timeout")
-        assert timeout is not None, (
-            f"Stop hook is missing a timeout field: {hook!r}"
-        )
+        assert timeout is not None, f"Stop hook is missing a timeout field: {hook!r}"
         assert 0 < timeout <= 60, (
             f"Stop hook timeout {timeout!r} is outside the 1..60s window "
             f"— hooks must not visibly block turn completion"

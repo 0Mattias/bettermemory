@@ -147,7 +147,7 @@ DESC_MEMORY_SEARCH = (
     "last_verified_at on the memory's origin repo. Non-zero means "
     "the project moved even if calendar-fresh.\n"
     "- `recent_negative_outcomes` (when present) — list of recent "
-    'ignored/contradicted events for this memory (max two, one '
+    "ignored/contradicted events for this memory (max two, one "
     "per outcome). The user already rejected this; don't re-surface "
     "unless you have new reason. OMITTED when none.\n\n"
     "Parameters:\n"

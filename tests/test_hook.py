@@ -70,9 +70,7 @@ def test_read_payload_returns_empty_on_non_dict_root() -> None:
 
 
 def _write_transcript(path: Path, *rows: dict[str, object]) -> None:
-    path.write_text(
-        "\n".join(json.dumps(r) for r in rows) + "\n", encoding="utf-8"
-    )
+    path.write_text("\n".join(json.dumps(r) for r in rows) + "\n", encoding="utf-8")
 
 
 def test_extract_last_exchange_finds_last_pair(tmp_path: Path) -> None:
@@ -89,9 +87,7 @@ def test_extract_last_exchange_finds_last_pair(tmp_path: Path) -> None:
         {"type": "user", "message": {"content": "latest ask"}},
         {
             "type": "assistant",
-            "message": {
-                "content": [{"type": "text", "text": "latest reply"}]
-            },
+            "message": {"content": [{"type": "text", "text": "latest reply"}]},
         },
     )
     user, assistant = _extract_last_exchange(transcript)
@@ -144,9 +140,7 @@ def test_extract_last_exchange_tolerates_malformed_lines(tmp_path: Path) -> None
                 json.dumps(
                     {
                         "type": "assistant",
-                        "message": {
-                            "content": [{"type": "text", "text": "reply"}]
-                        },
+                        "message": {"content": [{"type": "text", "text": "reply"}]},
                     }
                 ),
             ]
@@ -163,12 +157,15 @@ def test_flatten_assistant_content_returns_none_on_no_text() -> None:
     """An assistant turn with only thinking + tool_use returns None
     for the assistant surface — the audit can still proceed on user
     message alone."""
-    assert _flatten_assistant_content(
-        [
-            {"type": "thinking", "thinking": "..."},
-            {"type": "tool_use", "name": "Bash", "input": {}},
-        ]
-    ) is None
+    assert (
+        _flatten_assistant_content(
+            [
+                {"type": "thinking", "thinking": "..."},
+                {"type": "tool_use", "name": "Bash", "input": {}},
+            ]
+        )
+        is None
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -338,7 +335,7 @@ def test_main_respects_telemetry_disabled(
     config_dir = tmp_path / "cfg"
     config_dir.mkdir()
     (config_dir / "config.toml").write_text(
-        '[telemetry]\nenabled = false\n', encoding="utf-8"
+        "[telemetry]\nenabled = false\n", encoding="utf-8"
     )
     monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
     # Some platforms read platformdirs from different env vars;

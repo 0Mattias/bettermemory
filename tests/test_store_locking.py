@@ -128,9 +128,7 @@ def test_tombstone_reads_inside_lock(store: Store, traced: list[str]) -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_restore_reads_tombstone_inside_lock(
-    store: Store, traced: list[str]
-) -> None:
+def test_restore_reads_tombstone_inside_lock(store: Store, traced: list[str]) -> None:
     """`restore` locks on the tombstone path for the whole read +
     write + unlink sequence. The pre-fix code locked on the active
     path instead, leaving the tombstone read unguarded against a
@@ -138,9 +136,7 @@ def test_restore_reads_tombstone_inside_lock(
     file)."""
     memory = store.write(content="body", scopes=["tools"])
     store.tombstone(memory.id, reason="oops")
-    tombstone_path = next(
-        p for p in store._iter_tombstone_paths() if p.is_file()
-    )
+    tombstone_path = next(p for p in store._iter_tombstone_paths() if p.is_file())
     traced.clear()
     store.restore(memory.id)
     _assert_one_event_inside_lock(traced, "fm_load", tombstone_path.name)
