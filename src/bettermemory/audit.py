@@ -1,12 +1,12 @@
 """Silent retrieval-miss telemetry.
 
-The opt-in retrieval contract is bettermemory's load-bearing wager against
-mem0's 97.8% junk rate: the model searches when justified, never auto-loads.
-That contract has a known dark side. False positives (junk hits) are
-visible in `dead_weight` and `recent_negative_outcomes`. False negatives —
-turns where memory *should* have been retrieved but wasn't — are
-structurally invisible, because nothing in the event log records a search
-that didn't happen.
+The opt-in retrieval contract is bettermemory's load-bearing wager
+against auto-injection failure modes: the model searches when
+justified, never auto-loads. That contract has a known dark side.
+False positives (junk hits) are visible in `dead_weight` and
+`recent_negative_outcomes`. False negatives — turns where memory
+*should* have been retrieved but wasn't — are structurally invisible,
+because nothing in the event log records a search that didn't happen.
 
 This module closes that loop. `probe_for_miss` runs a cheap search
 sweep over the active store using a completed turn's user message and

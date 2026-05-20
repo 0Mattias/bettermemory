@@ -500,8 +500,8 @@ DESC_MEMORY_VERIFY = (
     "`last_verified_at` (you confirmed reality) but not `updated` "
     "(the body is unchanged). `note` is an optional free-form "
     "string captured in the event log — use it to record what "
-    "was checked ('confirmed `/usr/local/sbin/zb-backup.sh` "
-    "exists on the homelab'). Idempotent: calling twice in a row "
+    "was checked ('confirmed `src/foo.py:bar()` still has the "
+    "documented signature'). Idempotent: calling twice in a row "
     "just slides the timestamp forward. After memory_update on a "
     "memory whose claims you later spot-check, call memory_verify "
     "to close the loop — memory_update resets last_verified_at "
@@ -1282,10 +1282,10 @@ class ToolHandlers:
         # Returns `status: "ungrounded"` with the offending sentences
         # so the caller can rephrase or pass `acknowledge_ungrounded`.
         # Mirrors the transient_warning shape exactly. Closes the
-        # hallucinate-at-write-time failure mode that mem0's 97.8%-junk
-        # audit (issue #4573) documented. No competitor in the May 2026
-        # landscape runs a write-time groundedness gate; this is the
-        # HaluMem benchmark operationalised inline.
+        # hallucinate-at-write-time failure mode common to systems that
+        # auto-extract memories from conversation. Implements the
+        # HaluMem-style operation-level write-time grounding check
+        # inline.
         if (
             groundedness_check
             and source_transcript is not None

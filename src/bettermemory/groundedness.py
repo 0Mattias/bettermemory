@@ -8,8 +8,8 @@ have no meaningful overlap with the transcript.
 
 The signal isn't perfect — short factual claims may share tokens with
 unrelated transcript text, long sentences may legitimately introduce a
-new word — but it catches the failure mode mem0's 97.8% junk audit
-documented: models extracting "facts" from thin air. A grounded
+new word — but it catches the well-known failure mode of auto-extraction
+systems: models writing "facts" pulled from thin air. A grounded
 sentence has *some* anchor in the conversation; a hallucinated one
 typically has none.
 

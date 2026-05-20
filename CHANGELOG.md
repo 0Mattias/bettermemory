@@ -11,6 +11,50 @@ spells out exactly what's stable.
 
 (Empty. Accumulate entries here between tags.)
 
+## 2.2.0 - 2026-05-20
+
+**Documentation tone pass.** No code, on-disk format, or tool-surface
+changes; behaviour is byte-identical to 2.1.1. The release is cut as
+a minor bump rather than a patch because the public-facing language
+in `README.md` and `docs/v1.6-plan.md` changed materially — anyone
+linking to the prior README will land on a different framing of the
+project.
+
+### Changed
+
+- `README.md` comparison table reworked. The previous version
+  compared bettermemory to mem0 / Letta / Zep / Cognee / Anthropic
+  Memory Tool in a "Yes / No" scoreboard format, included a
+  "Production junk-rate report" row citing one specific issue in a
+  competitor's tracker, and several cells were stale or factually
+  off (the mem0 retrieval contract, mem0's typed graph edges, mem0's
+  temporal reasoning, Cognee's explicit `search()` API, the
+  cross-host sync "Cloud-only" framing for self-hostable
+  competitors). Rewritten as a neutral six-row design-space table
+  that describes each system in its own terms.
+- `README.md` opening framing and "Out of scope" section rewritten
+  to lead with what bettermemory *is*, not what other tools aren't.
+  Removed the "home-lab notes" example. The "Origins" personal
+  anecdote was condensed into a short "Design notes" paragraph
+  focused on the motivating problem and the design response.
+- `docs/v1.6-plan.md` rewritten as a clean historical planning
+  record. The May 2026 landscape snapshot now describes each related
+  project in its own design language; competitive-pitch and
+  weakness columns dropped. The tier-1 heading no longer reads as a
+  rebuttal frame.
+- `CHANGELOG.md` 2.0.0 entries cleaned. The descriptive prose for
+  T1.1 (provenance), T1.3 (groundedness gate), and the
+  claim-excerpts feature no longer names a specific competitor or
+  cites a specific issue number when describing the failure mode
+  these features address. The technical descriptions are preserved
+  verbatim.
+- `src/bettermemory/audit.py`, `src/bettermemory/groundedness.py`,
+  and `src/bettermemory/_handlers.py` (groundedness-check comment +
+  one tool-description example string) had the same scrubbing pass
+  applied — module docstrings now describe the auto-extraction
+  failure mode generically rather than via a competitor's bug
+  tracker.
+
 ## 2.1.1 - 2026-05-20
 
 **Documentation pass.** No code or on-disk format changes; the
@@ -118,7 +162,7 @@ What's new at a glance:
 
 | Tier | Feature | Closes |
 |---|---|---|
-| T1.1 | Claim-level provenance (`claim_excerpts` on `memory_record_use`) | the mem0 hallucination-amplification gap |
+| T1.1 | Claim-level provenance (`claim_excerpts` on `memory_record_use`) | the hallucination-amplification gap in auto-extracting systems |
 | T1.2 | Hybrid retrieval (BM25 + Jaccard + semantic via RRF) | the "keyword-only search" rebuttal |
 | T1.3 | Write-time groundedness gate on `memory_write` | the HaluMem benchmark, operationalised |
 | T2.1 | `bettermemory consolidate` CLI | the Letta sleep-time gap, no dual-agent topology |
@@ -227,8 +271,8 @@ The competitive landscape (May 2026) is detailed in
   (recent conversation turns). The server walks the body sentence-
   by-sentence and flags any sentence whose stopword-stripped, kebab-
   expanded content tokens overlap the transcript's token set by less
-  than 30% — the "fact pulled from thin air" failure mode mem0's
-  97.8%-junk audit (issue #4573) traces back to. Returns
+  than 30% — the "fact pulled from thin air" failure mode common to
+  auto-extracting memory systems. Returns
   `{status: "ungrounded", claims: [{sentence, overlap_ratio}, ...]}`
   instead of committing; the caller can rephrase or pass the new
   `acknowledge_ungrounded=True` override (same family as
@@ -236,8 +280,7 @@ The competitive landscape (May 2026) is detailed in
   they have other grounding sources (a file read, a tool result)
   not represented in the transcript. Off by default — back-compat
   for every existing caller. Implements HaluMem-style operation-
-  level write-time hallucination evaluation inline; no competitor
-  in the May 2026 landscape runs a write-time groundedness gate.
+  level write-time hallucination evaluation inline.
   Surface: `bettermemory.groundedness` module exports
   `check_groundedness()`, the `UngroundedClaim` dataclass, and the
   threshold constants for callers wanting to wire the gate into
@@ -296,10 +339,10 @@ The competitive landscape (May 2026) is detailed in
   null key on every old event. Works for all four record_use
   outcomes; especially useful for `contradicted` and `corrected` so
   the audit log records which claim was wrong, not just that the
-  memory had drift. Closes the provenance gap that turns mem0-style
-  auto-extraction systems into hallucination-amplifiers; no
-  competitor in the May-2026 landscape records structured
-  claim-level attribution.
+  memory had drift. Closes the provenance gap in auto-extraction
+  systems, which amplify hallucinations because the audit trail
+  doesn't tie a wrong response back to the specific stored claim
+  that caused it.
 - Hybrid retrieval for `memory_search` (T1.2 of the 1.6 plan in
   `docs/v1.6-plan.md`). The original keyword scorer (TF + coverage +
   recency) is now one of four selectable rankers; the new ones are

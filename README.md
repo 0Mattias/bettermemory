@@ -6,9 +6,9 @@
 [![Python](https://img.shields.io/badge/python-3.11%E2%80%933.14-blue.svg)](https://www.python.org/downloads/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
-**Persistent memory for Claude Code, retrieved on demand — not force-fed into every prompt.**
+**Persistent memory for Claude Code, retrieved on demand — not pre-loaded into every prompt.**
 
-Other LLM memory tools auto-inject stored facts into every conversation. Ask for a Python tutorial, get an answer tinted by your home-lab notes. Ask a generic shell question, get advice coloured by a preference you stated months ago. bettermemory inverts the contract: the model calls `memory_search` only when context is needed, and tells you when stored memory shaped a reply. Memories live as plain markdown on disk — `grep`-able, `git`-versionable, hand-editable.
+bettermemory stores memory as plain markdown on disk and exposes it through MCP tools the model calls when context is needed. The default is no retrieval per turn; when the model does pull a memory in, the contract is to say so in the reply. Files are `grep`-able, `git`-versionable, and hand-editable.
 
 ## Install
 
@@ -32,16 +32,16 @@ bettermemory init --client claude-desktop
 
 **Week two**, fresh session: *"Walk me through pandas from zero to hero."* The phrase is ambiguous in a way stored preferences could resolve, so Claude calls `memory_search`, surfaces the preference, and tells you up front: *"Using your stored preference for code-driven tutorials…"* before answering.
 
-**Month three:** *"What's the difference between `find` and `fd`?"* Generic question. Claude doesn't search. The reply is untainted by months of accumulated personal context. That's the whole design.
+**Month three:** *"What's the difference between `find` and `fd`?"* Generic question. Claude doesn't search. The reply isn't tinted by months of accumulated personal context. That's the design point.
 
 ## Features
 
-- **Opt-in retrieval.** `memory_search` is a tool the model calls when context is needed. The default is not to call it.
+- **Opt-in retrieval.** `memory_search` is a tool the model calls when context is needed. The default per turn is not to call it.
 - **Proactive writing with structural gates.** Aggressive writing is safe because a durability check, content/tombstone dedup, scope-mismatch check, and a `user-inference` pending tier guard the writes.
 - **Hybrid retrieval.** Four selectable rankers: `keyword` (default), `bm25`, `semantic` (sentence-transformers), or `hybrid` (Reciprocal Rank Fusion). Per-call or via config.
 - **Three staleness signals on every hit**, folded into a `staleness_verdict` ∈ {`fresh`, `spot_check_recommended`, `spot_check_required`}: calendar verification age, filesystem path drift, and commit drift against the memory's origin repo.
 - **Claim-level provenance.** `memory_record_use(claim_excerpts=[…])` logs the load-bearing claim each memory contributed. Audits trace a response back to a specific sentence.
-- **Write-time groundedness gate.** Opt-in `memory_write(groundedness_check=True, source_transcript=…)` flags sentences that don't anchor to the conversation that produced them. The HaluMem benchmark, made operational inline.
+- **Write-time groundedness gate.** Opt-in `memory_write(groundedness_check=True, source_transcript=…)` flags sentences that don't anchor to the conversation that produced them.
 - **Negative-results suppression.** When a hit was `ignored` or `contradicted` recently and not since `applied`, it carries `recent_negative_outcomes` so the model doesn't keep re-suggesting the same junk.
 - **Typed inter-memory links.** `supersedes` / `contradicts` / `extends` / `depends_on`. Surfaced bidirectionally on `memory_show`.
 - **Tombstones, not deletes.** Removed memories keep their `removed_reason`. Tombstone-aware dedup catches paraphrases six months later. Reversible via `memory_restore`.
@@ -49,26 +49,24 @@ bettermemory init --client claude-desktop
 - **Auto-scoped by repo and worktree.** Memories written from a git checkout carry the repo URL and worktree root. `memory_search` filters by both. Sibling worktrees of the same repo are isolated.
 - **Plain-text storage.** No database, no opaque blob.
 
-## How it compares
+## Where it fits
+
+bettermemory occupies the file-backed, retrieval-on-demand corner of the memory-system design space. Other open-source projects make different choices — graph or vector databases for richer joins, agent-routed tiered memory for context-window management, managed cloud for ops simplicity. The table below sketches those design choices in each system's own terms; it isn't a scorecard.
 
 | | bettermemory | mem0 | Letta (MemGPT) | Zep / Graphiti | Cognee | Anthropic Memory Tool |
 |---|---|---|---|---|---|---|
-| Retrieval contract | **Opt-in** | Auto-inject | Tool-routed | Auto-inject | Auto-inject | List+read, no search |
-| Claim-level provenance | **Yes** | No | No | No | No | No |
-| Write-time groundedness gate | **Yes** | No | No | No | No | No |
-| Staleness signals (calendar + path + commit) | **Yes** | No | No | Bi-temporal | No | No |
-| Negative-results suppression | **Yes** | No | No | No | No | No |
-| Typed inter-memory links | **Yes** | No | No | Graph edges | Graph edges | No |
-| Cross-host sync | git-based | Cloud-only | Cloud-only | Cloud-only | Cloud-only | No |
-| Plain-text storage | **Yes** | No | No | No | No | Yes |
-| Production junk-rate report | n/a | **97.8%** ([#4573](https://github.com/mem0ai/mem0/issues/4573)) | n/a | n/a | n/a | n/a |
+| Retrieval | Tool-call, off by default per turn | Explicit `search()` API | Tool-routed across tiered memory | Explicit `search()` over temporal graph | Explicit `search()` (multiple modes) | List + read, no search |
+| Storage | Markdown + YAML on disk | Vector DB (optional graph backend) | Core / recall / archival tiers | Temporal knowledge graph | Graph + vector | Plain-text on disk |
+| Verification signals | Calendar + path + commit drift, per-claim attestation | Temporal reasoning | — | Bi-temporal (`t_valid` + `t_created`) | — | — |
+| Inter-memory links | Typed (supersedes / contradicts / extends / depends_on) | Graph edges (optional Neo4j) | — | Graph edges (Graphiti episodic) | Graph edges | — |
+| Cross-host sync | Built-in git wrapper | Self-host (Docker) or managed cloud | Self-host or managed cloud | Self-host (Graphiti OSS) or managed | Self-host or managed | Provider-managed |
 | License | MIT | Apache-2.0 | Apache-2.0 | Apache-2.0 (Graphiti) | Apache-2.0 | Closed |
 
-Bold cells in the bettermemory column mark capabilities no other system in the field has.
+The differentiators bettermemory leans on — opt-in retrieval as a per-turn default, claim-level provenance on `memory_record_use`, and the path/commit drift signals folded into `staleness_verdict` — are spelled out in the Features list above. Other systems target different problems; pick the system whose default behaviour matches what you want.
 
 ## Coexistence with Claude Code's built-in memory
 
-Claude Code 2.x ships its own filesystem-backed memory that auto-injects into the system prompt. That's the exact failure mode bettermemory exists to fix. Installing the plugin lands the *"persistent memory between sessions lives in this server's MCP tools, do not fragment it across ad-hoc files alongside"* anchor in the system prompt, which keeps the model from drifting back to the built-in directory mid-conversation. Manual installs can paste [`docs/system_prompt.md`](docs/system_prompt.md) into `CLAUDE.md` for the same effect.
+Claude Code 2.x ships its own filesystem-backed memory that auto-injects into the system prompt. Installing the plugin lands the *"persistent memory between sessions lives in this server's MCP tools, do not fragment it across ad-hoc files alongside"* anchor in the system prompt, which keeps the model from drifting back to the built-in directory mid-conversation. Manual installs can paste [`docs/system_prompt.md`](docs/system_prompt.md) into `CLAUDE.md` for the same effect.
 
 ## On-disk format
 
@@ -153,12 +151,10 @@ Defaults are sensible — most users never edit it. Knobs that matter: `behavior
 
 - **Cloud sync as a service.** Sync is git-based; bring your own remote (GitHub, Forgejo, bare repo over SSH).
 - **Cross-user sharing.** Single-user tool. Team scopes are deferred.
-- **Automatic memory extraction from transcripts.** That's mem0's pitch and the source of its 97.8% junk problem. The opt-in retrieval contract loses meaning if you bolt on auto-write.
+- **Automatic memory extraction from transcripts.** The opt-in retrieval contract loses its meaning if writes happen behind the user's back; bettermemory's writes are always model-initiated and visible in the conversation.
 
-## Origins
+## Design notes
 
-I started building this because Claude Code's built-in memory at the time auto-injected every stored "fact" into every system prompt. The more I taught the model about my preferences, the more it dragged irrelevant context into unrelated conversations. I wanted memory the model retrieved on demand, like any other tool. That's the design.
-
-The project was originally called `bettermemory`. Mid-build, the auto-injecting memory feature kept overriding my stated preference and renaming the package `memory-mcp` in conversation. The irony was sufficient motivation to finish.
+The motivating problem is auto-injection: when stored facts get pre-loaded into every conversation, generic questions inherit context they shouldn't. bettermemory's response is to make retrieval a tool call the model makes deliberately, and to make every retrieval visible in the reply. Everything else — the staleness verdict, the user-inference pending tier, the typed links, the groundedness gate — exists to make that deliberate retrieval trustworthy enough to rely on.
 
 Built by Mattias Rask. MIT licensed — see [LICENSE](LICENSE).
