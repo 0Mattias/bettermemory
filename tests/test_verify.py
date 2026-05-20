@@ -428,16 +428,26 @@ def test_multi_segment_extensionless_still_extracted(tmp_path: Path) -> None:
     assert str(nested) not in report.missing
 
 
-def test_home_relative_single_segment_still_extracted(tmp_path: Path) -> None:
+def test_home_relative_single_segment_still_extracted(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     """`~/.zshrc`-shaped single-segment home-relative paths are real
     filesystem citations — they go through a different branch
     (`~/` prefix) and must not be affected by the narrowing."""
     home_file = tmp_path / ".some-rc"
     home_file.write_text("real")
-    # Patch home so the `~/` expansion in the extractor lands in tmp_path.
-    with patch.dict(os.environ, {"HOME": str(tmp_path)}):
-        body = "Config lives at `~/.some-rc`."
-        report = detect_path_drift(body)
+    # Cross-platform `~` redirect: POSIX reads `HOME`; Windows reads
+    # `USERPROFILE` first, then falls back to `HOMEDRIVE + HOMEPATH`.
+    # Setting only `HOME` works on Linux and macOS but is a no-op on
+    # Windows — `~` still expands to the runner's real home and the
+    # `.some-rc` stat fails. Same pattern v1.4.1 used for the three
+    # tests under tests/test_init.py.
+    monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.setenv("USERPROFILE", str(tmp_path))
+    monkeypatch.delenv("HOMEDRIVE", raising=False)
+    monkeypatch.delenv("HOMEPATH", raising=False)
+    body = "Config lives at `~/.some-rc`."
+    report = detect_path_drift(body)
     assert "~/.some-rc" in report.checked
     assert "~/.some-rc" not in report.missing
 
