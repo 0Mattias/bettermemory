@@ -9,6 +9,12 @@ spells out exactly what's stable.
 
 ## Unreleased
 
+## 2.3.2 - 2026-05-20
+
+**Polish release.** One model-facing terminology fix on top of
+2.3.1, plus dependabot bumps on the release workflow's action
+versions. No code-logic, schema, or surface changes.
+
 ### Fixed (housekeeping)
 
 - **`DESC_MEMORY_RECORD_USE` terminology drift.** The first sentence
@@ -16,6 +22,12 @@ spells out exactly what's stable.
   surface (docs, SKILL.md, this CHANGELOG) said "auto-committed".
   Model-facing string, so consistency lands every Claude session.
   Aligned to "auto-committed".
+
+### Chores
+
+- Bump CI release-workflow actions: `actions/upload-artifact` v4→v7,
+  `actions/download-artifact` v4→v8, `softprops/action-gh-release`
+  v2→v3. Workflow-only; no behavior change for downstream users.
 
 ## 2.3.1 - 2026-05-20
 
