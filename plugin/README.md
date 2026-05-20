@@ -1,6 +1,6 @@
 # bettermemory: Claude Code plugin
 
-The Claude Code plugin wrapper for [bettermemory](https://github.com/0Mattias/bettermemory) — persistent memory between sessions, retrieved on demand. Memories live on disk as markdown + YAML.
+The Claude Code plugin wrapper for [bettermemory](https://github.com/0Mattias/bettermemory) — **memory you can verify**. Every retrieved fact carries a staleness verdict (calendar age + filesystem path drift + git commit drift) so the model can spot-check before relying on it; every use leaves a claim-level audit trail. Memories live on disk as plain markdown + YAML.
 
 The plugin bundles two things:
 

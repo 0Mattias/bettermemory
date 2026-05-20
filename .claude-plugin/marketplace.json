@@ -5,14 +5,14 @@
     "url": "https://github.com/0Mattias"
   },
   "metadata": {
-    "description": "Memory MCP for Claude Code: retrieval-on-demand, not auto-injected context.",
-    "version": "2.4.0"
+    "description": "Memory you can verify — MCP-native memory with per-hit staleness verdicts and claim-level audit trails. Local-first, no cloud.",
+    "version": "2.5.0"
   },
   "plugins": [
     {
       "name": "bettermemory",
       "source": "./plugin",
-      "description": "Local file-backed memory MCP server. Memories live as plain markdown + YAML in ~/.claude-memory/. The model retrieves them on demand via memory_search; the default is to NOT retrieve, so unrelated context never leaks across conversations. Includes a memory-discipline skill that lands the policy in the system prompt.",
+      "description": "Verification-grade memory for Claude Code. Every retrieved fact carries a staleness verdict (calendar age + filesystem path drift + git commit drift) so the model knows when a stored memory has rotted before relying on it; every use is logged with a claim-level excerpt so retrievals stay auditable months later. Memories are plain markdown + YAML in ~/.claude-memory/; retrieval is opt-in per turn; writes about you always stage for confirmation. Bundles 18 MCP tools and a memory-discipline skill that lands the policy in the system prompt.",
       "category": "memory",
       "tags": [
         "memory",

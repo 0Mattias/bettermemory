@@ -109,10 +109,39 @@ jobs:
       - name: Sync dependencies (with embeddings extra)
         run: uv sync --extra dev --extra embeddings
 
-      # The "no_extras" marker covers the three tests in test_semantic.py
-      # that assert the extras are *absent*. Skipping them in this job
-      # leaves the rest of the suite — including the cosine-similarity
-      # paths — running against a real sentence-transformers install,
-      # which is otherwise never exercised in CI.
-      - name: Test (skipping no_extras-marked tests)
-        run: uv run pytest -m "not no_extras" -q
+      # The "no_extras" marker covers tests in test_semantic.py that
+      # assert *both* embedding extras are absent. The narrower
+      # "no_torch_embeddings" covers tests that assert specifically the
+      # sentence-transformers path isn't installed — those land here
+      # (torch IS installed in this job) so we deselect them too. Tests
+      # marked "no_fastembed" still run: fastembed isn't installed in
+      # this job, so the marker's assertion holds.
+      - name: Test (skipping no_extras + no_torch_embeddings tests)
+        run: uv run pytest -m "not no_extras and not no_torch_embeddings" -q
+
+  test-embeddings-fast:
+    name: test (embeddings-fast extra)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v7
+        with:
+          enable-cache: true
+
+      # Pinned to 3.13: fastembed's ONNX Runtime wheels lag the Python
+      # release cadence by roughly a version. Re-evaluate when fastembed
+      # ships 3.14 wheels and the bettermemory main matrix has moved on.
+      - name: Set up Python 3.13
+        run: uv python install 3.13
+
+      - name: Sync dependencies (with embeddings-fast extra)
+        run: uv sync --extra dev --extra embeddings-fast
+
+      # Same logic as test-embeddings but mirrored for fastembed:
+      # deselect no_fastembed tests (fastembed IS installed here) and
+      # the catch-all no_extras tests; leave no_torch_embeddings alone
+      # because torch is absent in this job.
+      - name: Test (skipping no_extras + no_fastembed tests)
+        run: uv run pytest -m "not no_extras and not no_fastembed" -q

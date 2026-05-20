@@ -1,6 +1,6 @@
 ---
 name: bettermemory
-description: Persistent memory between sessions, retrieved on demand. Use bettermemory's MCP tools (memory_search, memory_show, memory_write, etc.) instead of writing to files when the user asks you to "remember" something or references shared context from a past session. Default is to NOT call memory_search; only retrieve when the user references context you don't have ("my project", "the script we wrote") or a request is ambiguous in a way stored preferences could resolve.
+description: Verification-grade memory between sessions. Use bettermemory's MCP tools (memory_search, memory_show, memory_write, memory_verify, memory_record_use, etc.) instead of writing to files when the user asks you to "remember" something or references shared context from a past session. Default is to NOT call memory_search; only retrieve when the user references context you don't have ("my project", "the script we wrote") or a request is ambiguous in a way stored preferences could resolve. Every hit carries a staleness_verdict (calendar + path-drift + commit-drift); when it isn't "fresh", spot-check a claim before relying and call memory_verify to attest. Every use should record a claim_excerpt so retrievals stay auditable.
 ---
 
 # bettermemory: opt-in memory retrieval

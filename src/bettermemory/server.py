@@ -24,7 +24,7 @@ from __future__ import annotations
 
 import logging
 import sys
-from typing import Any
+from typing import Any, cast
 
 from mcp.server.fastmcp import FastMCP
 
@@ -190,18 +190,49 @@ def build_server(
     return mcp
 
 
+def _resolve_semantic_provider_and_model(
+    config: Config,
+) -> tuple[str | None, str | None]:
+    """Pick the active embedding provider + its model name from config.
+
+    Returns `(provider, model_name)` where provider is `"torch"` /
+    `"fastembed"` and model_name is the matching config knob's value.
+    Returns `(None, None)` when no provider is available (neither
+    extra installed AND `semantic_provider = "auto"`) — callers treat
+    that as the Jaccard fallback signal.
+
+    Honours `[behavior] semantic_provider` even when the corresponding
+    extra isn't installed; the per-provider WARNING fires in
+    `semantic.get_model` once the load attempt runs.
+    """
+    from .semantic import resolve_provider
+
+    chosen = resolve_provider(config.behavior.semantic_provider)
+    if chosen == "torch":
+        return chosen, config.behavior.semantic_model_name
+    if chosen == "fastembed":
+        return chosen, config.behavior.semantic_model_fastembed
+    return None, None
+
+
 def _semantic_model_or_none(config: Config) -> Any:
-    """Lazy load the embedding model when `semantic_dedup = true` and the
-    extras are installed. Returns None otherwise — callers treat None as
+    """Lazy load the embedding model when `semantic_dedup = true` and an
+    extra is installed. Returns None otherwise — callers treat None as
     the Jaccard fallback signal. The first call after `semantic_dedup`
     is enabled pays the model-load cost (~1-2s); subsequent calls hit
     `semantic.get_model`'s in-memory cache.
     """
     if not config.behavior.semantic_dedup:
         return None
-    from .semantic import get_model
+    from .semantic import Provider, get_model
 
-    return get_model(config.behavior.semantic_model_name)
+    provider, model_name = _resolve_semantic_provider_and_model(config)
+    if provider is None or model_name is None:
+        # No extra installed and no explicit provider preference; let
+        # get_model() emit its WARNING via the default torch path so
+        # the user sees the install hint.
+        return get_model(config.behavior.semantic_model_name)
+    return get_model(model_name, provider=cast(Provider, provider))
 
 
 def _configure_persistent_embeddings(config: Config, store: Store) -> None:
@@ -213,9 +244,17 @@ def _configure_persistent_embeddings(config: Config, store: Store) -> None:
     would be a write-only cycle."""
     if not config.behavior.semantic_dedup:
         return
-    from .semantic import configure_persistent_cache
+    from .semantic import Provider, configure_persistent_cache
 
-    configure_persistent_cache(store.root, config.behavior.semantic_model_name)
+    provider, model_name = _resolve_semantic_provider_and_model(config)
+    if provider is None or model_name is None:
+        # No active provider — leave the persistent cache disabled so
+        # we don't create a `.embeddings.<model>.npz` file we'd never
+        # hydrate from.
+        return
+    configure_persistent_cache(
+        store.root, model_name, provider=cast(Provider, provider)
+    )
 
 
 def _register_tools(
@@ -756,6 +795,20 @@ def main() -> None:
         action="store_true",
         help="Emit JSON instead of human-readable text.",
     )
+    reindex_parser.add_argument(
+        "--embeddings",
+        action="store_true",
+        help=(
+            "After rebuilding the FTS5 index, also re-embed every "
+            "active body into the persistent embedding cache. Useful "
+            "after switching `semantic_provider` or "
+            "`semantic_model_*` in config — the cache file is "
+            "provider+model namespaced, so a fresh one needs warming. "
+            "No-op when `semantic_dedup` is off in config. Requires "
+            "one of the embedding extras: when neither is installed "
+            "the rebuild logs a hint and exits cleanly."
+        ),
+    )
 
     audit_turn_parser = sub.add_parser(
         "audit-turn",
@@ -855,6 +908,121 @@ def main() -> None:
             "positives."
         ),
     )
+    consolidate_parser.add_argument(
+        "--llm",
+        action="store_true",
+        help=(
+            "Run the LLM-driven consolidation pass IN ADDITION to the "
+            "structural passes. Asks the configured provider (default "
+            "Ollama on localhost) to propose merges, contradiction "
+            "resolutions, relative-date rewrites, and tier demotions on "
+            "clusters of related memories. Dry-run by default; commits "
+            "require --apply AND either --yes (batch accept) or an "
+            "interactive terminal session (per-proposal prompt). The "
+            "audit-transparency contract: Anthropic's Dreaming "
+            "consolidates invisibly; bettermemory's --llm shows every "
+            "proposed diff and refuses to commit without your accept."
+        ),
+    )
+    consolidate_parser.add_argument(
+        "--llm-provider",
+        type=str,
+        default="ollama",
+        choices=["ollama", "anthropic", "openai"],
+        help=(
+            "LLM provider to use with --llm. `ollama` (default) talks "
+            "to a local Ollama instance at http://localhost:11434 — no "
+            "network egress beyond localhost, no API key required. "
+            "`anthropic` reads ANTHROPIC_API_KEY; `openai` reads "
+            "OPENAI_API_KEY. Both require the corresponding SDK "
+            "(`pip install anthropic` or `pip install openai`)."
+        ),
+    )
+    consolidate_parser.add_argument(
+        "--llm-model",
+        type=str,
+        default=None,
+        help=(
+            "Override the provider's default model. Ollama default: "
+            "`llama3.2:3b`. Anthropic default: `claude-haiku-4-5-20251001`. "
+            "OpenAI default: `gpt-4o-mini`."
+        ),
+    )
+    consolidate_parser.add_argument(
+        "--llm-url",
+        type=str,
+        default=None,
+        help=(
+            "Override the Ollama base URL. Default "
+            "http://localhost:11434. Ignored by the Anthropic and "
+            "OpenAI providers."
+        ),
+    )
+    consolidate_parser.add_argument(
+        "--yes",
+        action="store_true",
+        help=(
+            "Batch-accept every --llm proposal without interactive "
+            "prompts. Required for non-interactive --apply --llm runs "
+            "(scripts, CI). Without --yes and without a TTY, --apply "
+            "--llm refuses to commit anything."
+        ),
+    )
+
+    eval_parser = sub.add_parser(
+        "eval",
+        help=(
+            "Compute the three memory-effectiveness rates "
+            "(memory_helped_rate, endorsement_rate, silent_miss_rate) "
+            "from the event log + active store. Methodology in "
+            "docs/eval.md."
+        ),
+    )
+    eval_parser.add_argument(
+        "--since",
+        type=str,
+        default="30d",
+        help=(
+            "Window for events to include. Accepts 'Ns'/'Nm'/'Nh'/'Nd' "
+            "or 'all'. Default: 30d, mirroring the verification-staleness "
+            "default so the eval window and freshness threshold tell a "
+            "consistent story."
+        ),
+    )
+    eval_parser.add_argument(
+        "--scope",
+        type=str,
+        default=None,
+        help=(
+            "Filter to events that reference memories tagged with this "
+            "scope. The silent-miss rate is NOT filtered (it's per-turn, "
+            "not per-memory) and stays global regardless."
+        ),
+    )
+    eval_parser.add_argument(
+        "--min-retrievals",
+        type=int,
+        default=None,
+        help=(
+            "Floor for endorsement-debt row inclusion. Default 5; below "
+            "this, the absence of explicit endorsement is treated as "
+            "insufficient signal rather than debt."
+        ),
+    )
+    eval_parser.add_argument(
+        "--silent-miss-limit",
+        type=int,
+        default=20,
+        help=(
+            "How many recent silent-miss events to surface inline. "
+            "The full series stays in the event log. Default: 20."
+        ),
+    )
+    eval_parser.add_argument(
+        "--json",
+        action="store_true",
+        help="Emit JSON instead of human-readable text.",
+    )
 
     args = parser.parse_args()
     if args.cmd == "health":
@@ -930,7 +1098,7 @@ def main() -> None:
         _cli_ui(host=args.host, port=args.port)
         return
     if args.cmd == "reindex":
-        _cli_reindex(json_out=args.json)
+        _cli_reindex(json_out=args.json, embeddings=args.embeddings)
         return
     if args.cmd == "sync":
         if args.sync_cmd == "init":
@@ -970,6 +1138,11 @@ def main() -> None:
             cold_scope_days=args.cold_scope_days,
             semantic_threshold=args.semantic_threshold,
             typo_distance=args.typo_distance,
+            llm=args.llm,
+            llm_provider=args.llm_provider,
+            llm_model=args.llm_model,
+            llm_url=args.llm_url,
+            yes=args.yes,
         )
         return
     if args.cmd == "audit-turn":
@@ -988,6 +1161,16 @@ def main() -> None:
                 ]
             )
         )
+    if args.cmd == "eval":
+        _cli_eval(
+            since_spec=args.since,
+            scope=args.scope,
+            endorsement_min_retrievals=args.min_retrievals,
+            silent_miss_limit=args.silent_miss_limit,
+            json_out=args.json,
+            parser=eval_parser,
+        )
+        return
 
     _cli_serve()
 
@@ -1336,7 +1519,7 @@ def _cli_sync_auto(*, remote: str, json_out: bool) -> None:
     sys.stdout.write(f"Auto-sync complete (remote={remote}).\n")
 
 
-def _cli_reindex(*, json_out: bool) -> None:
+def _cli_reindex(*, json_out: bool, embeddings: bool = False) -> None:
     """`bettermemory reindex` — drop and rebuild the FTS5 index from
     the on-disk memories.
 
@@ -1344,6 +1527,16 @@ def _cli_reindex(*, json_out: bool) -> None:
     "indexed 234 of 250" instead of silently. The rebuild itself is
     transactional — if it fails partway, the prior index is intact
     and the caller sees the failure rather than a half-built index.
+
+    With `--embeddings` (`embeddings=True`), additionally re-embed
+    every active body into the persistent embedding cache. The cache
+    file is provider+model namespaced (see
+    `semantic.configure_persistent_cache`), so a config swap from
+    torch → fastembed (or any model change) leaves the old file as
+    dead weight and needs the new file populated. This step is opt-in
+    because torch loads can take 1-2s and the model download (when
+    not cached) is several hundred MB; running it implicitly on every
+    `reindex` would punish users who don't use semantic dedup at all.
     """
     import json as _json
 
@@ -1357,19 +1550,20 @@ def _cli_reindex(*, json_out: bool) -> None:
     count = _index.rebuild(directory, store.iter_active())
     after = _index.status(directory)
 
+    embeddings_report: dict[str, Any] | None = None
+    if embeddings:
+        embeddings_report = _reindex_embeddings(config, store)
+
     if json_out:
-        sys.stdout.write(
-            _json.dumps(
-                {
-                    "indexed": count,
-                    "before": before,
-                    "after": after,
-                    "directory": str(directory),
-                },
-                indent=2,
-            )
-            + "\n"
-        )
+        payload: dict[str, Any] = {
+            "indexed": count,
+            "before": before,
+            "after": after,
+            "directory": str(directory),
+        }
+        if embeddings_report is not None:
+            payload["embeddings"] = embeddings_report
+        sys.stdout.write(_json.dumps(payload, indent=2) + "\n")
         return
 
     sys.stdout.write(
@@ -1379,6 +1573,78 @@ def _cli_reindex(*, json_out: bool) -> None:
         f"  after:  {after.get('indexed_count', 0)} indexed, "
         f"{after.get('size_bytes', 0)} bytes\n"
     )
+    if embeddings_report is not None:
+        status = embeddings_report.get("status", "?")
+        if status == "ok":
+            sys.stdout.write(
+                "Re-embedded "
+                f"{embeddings_report.get('embedded', 0)} memories with "
+                f"provider {embeddings_report.get('provider')!r} "
+                f"(model {embeddings_report.get('model')!r}); "
+                f"cache flushed to {embeddings_report.get('cache_path')}.\n"
+            )
+        elif status == "disabled":
+            sys.stdout.write(
+                "Embedding re-build skipped: `[behavior] semantic_dedup` "
+                "is off in config.\n"
+            )
+        elif status == "no_provider":
+            sys.stdout.write(
+                "Embedding re-build skipped: neither [embeddings] nor "
+                "[embeddings-fast] is installed. Install one of them and "
+                "rerun with `--embeddings`.\n"
+            )
+        elif status == "load_failed":
+            sys.stdout.write(
+                "Embedding re-build aborted: the configured provider "
+                f"{embeddings_report.get('provider')!r} failed to load "
+                "its model. See WARNING logs above for the underlying "
+                "error.\n"
+            )
+
+
+def _reindex_embeddings(config: Config, store: Store) -> dict[str, Any]:
+    """Re-embed every active body into the persistent cache.
+
+    Helper for `bettermemory reindex --embeddings`. Returns a status
+    dict so the caller can render text or JSON without re-deriving
+    state. Stays close to the call site so the embedding work doesn't
+    leak into the FTS5-index code path.
+    """
+    from .semantic import cached_embed, flush_persistent_cache
+
+    if not config.behavior.semantic_dedup:
+        return {"status": "disabled"}
+
+    provider, model_name = _resolve_semantic_provider_and_model(config)
+    if provider is None or model_name is None:
+        return {"status": "no_provider"}
+
+    _configure_persistent_embeddings(config, store)
+    model = _semantic_model_or_none(config)
+    if model is None:
+        return {"status": "load_failed", "provider": provider, "model": model_name}
+
+    embedded = 0
+    for _path, memory in store.iter_active():
+        cached_embed(
+            model,
+            memory.id,
+            memory.updated.isoformat(),
+            memory.body,
+        )
+        embedded += 1
+    flush_persistent_cache()
+
+    from .semantic import _PERSISTENT_PATH
+
+    return {
+        "status": "ok",
+        "provider": provider,
+        "model": model_name,
+        "embedded": embedded,
+        "cache_path": str(_PERSISTENT_PATH) if _PERSISTENT_PATH else None,
+    }
 
 
 def _cli_consolidate(
@@ -1389,29 +1655,35 @@ def _cli_consolidate(
     cold_scope_days: int,
     semantic_threshold: float | None,
     typo_distance: int,
+    llm: bool = False,
+    llm_provider: str = "ollama",
+    llm_model: str | None = None,
+    llm_url: str | None = None,
+    yes: bool = False,
 ) -> None:
     """`bettermemory consolidate` — offline curation pass.
 
-    Runs four passes: near-duplicate dedup, demote-never-applied,
-    cold-scope suggestions, scope-typo suggestions. Dry-run by
-    default; `--apply` commits dedup tombstones and category
-    demotions. Cold-scope and scope-typo passes stay suggest-only
-    regardless — they touch shape that a human should review.
+    Runs four structural passes (dedup, demote-never-applied,
+    cold-scope, scope-typo). Dry-run by default; `--apply` commits
+    dedup tombstones and category demotions.
+
+    With `--llm`, additionally runs an LLM-driven pass that proposes
+    merges, contradiction resolutions, relative-date rewrites, and
+    tier demotions across clusters of related memories. Commits
+    require `--apply AND (--yes OR an interactive TTY)` — the
+    audit-transparency contract refuses silent batch commits from
+    untrusted reasoning.
     """
     from .consolidate import consolidate, render_json, render_text
-    from .semantic import get_model
 
     config = load_config()
     store = Store(config.resolved_directory())
 
-    # Resolve the semantic model if the embeddings extra is installed.
-    # `get_model` returns None on a clean install without the extra,
-    # which the dedup pass treats as the "fall back to Jaccard" signal.
-    semantic_model = (
-        get_model(config.behavior.semantic_model_name)
-        if config.behavior.semantic_dedup
-        else None
-    )
+    # Resolve the semantic model if an embedding extra is installed.
+    # `_semantic_model_or_none` honours `[behavior] semantic_provider`
+    # and returns None on a clean install without an extra, which the
+    # dedup pass treats as the "fall back to Jaccard" signal.
+    semantic_model = _semantic_model_or_none(config)
 
     # Build a session id so tombstones produced by --apply carry a
     # caller-attributable record. Matches the SessionState pattern used
@@ -1432,6 +1704,124 @@ def _cli_consolidate(
         session_id=session_id,
     )
     sys.stdout.write(render_json(report) if json_out else render_text(report))
+
+    if llm:
+        _cli_consolidate_llm(
+            store=store,
+            semantic_model=semantic_model,
+            semantic_threshold=semantic_threshold,
+            apply=apply,
+            yes=yes,
+            json_out=json_out,
+            session_id=session_id,
+            provider_name=llm_provider,
+            model=llm_model,
+            url=llm_url,
+        )
+
+
+def _cli_consolidate_llm(
+    *,
+    store: Store,
+    semantic_model: Any,
+    semantic_threshold: float | None,
+    apply: bool,
+    yes: bool,
+    json_out: bool,
+    session_id: str,
+    provider_name: str,
+    model: str | None,
+    url: str | None,
+) -> None:
+    """Run the --llm pass after the structural passes have rendered.
+
+    Kept separate from `_cli_consolidate` so the structural-only path
+    has zero LLM-related import cost on a clean run.
+    """
+    from . import llm as _llm
+    from .consolidate import consolidate_llm, render_llm_json, render_llm_text
+
+    provider_kwargs: dict[str, Any] = {}
+    if model is not None:
+        provider_kwargs["model"] = model
+    if url is not None and provider_name == "ollama":
+        provider_kwargs["url"] = url
+    provider = _llm.make_provider(provider_name, **provider_kwargs)
+
+    # Interactive prompt: only when a TTY is attached AND --yes wasn't
+    # passed. Non-TTY runs without --yes fall through to the in-module
+    # refuse-to-commit branch (logged with a clear message).
+    interactive_input: Any = (
+        input if (apply and not yes and sys.stdin.isatty()) else None
+    )
+
+    report = consolidate_llm(
+        store,
+        provider,
+        semantic_model=semantic_model,
+        semantic_threshold=semantic_threshold,
+        apply=apply,
+        accept=yes,
+        interactive_input=interactive_input,
+        session_id=session_id,
+    )
+    sys.stdout.write(render_llm_json(report) if json_out else render_llm_text(report))
+
+
+def _cli_eval(
+    *,
+    since_spec: str,
+    scope: str | None,
+    endorsement_min_retrievals: int | None,
+    silent_miss_limit: int,
+    json_out: bool,
+    parser: Any,
+) -> None:
+    """`bettermemory eval` — compute and render the three effectiveness rates.
+
+    Reads ``iter_all_events`` plus the active store, calls
+    ``compute_eval``, then renders text or JSON. The pure compute
+    layer lives in ``bettermemory.eval`` so tests can drive it
+    directly with synthetic events.
+    """
+    import json as _json
+
+    from .eval import (
+        DEFAULT_ENDORSEMENT_MIN_RETRIEVALS,
+        compute_eval,
+        parse_since,
+        render_text,
+    )
+    from .events import iter_all_events
+
+    try:
+        since = parse_since(since_spec)
+    except ValueError as exc:
+        parser.error(str(exc))
+        return  # pragma: no cover — parser.error raises SystemExit
+
+    config = load_config()
+    directory = config.resolved_directory()
+    store = Store(directory)
+
+    floor = (
+        endorsement_min_retrievals
+        if endorsement_min_retrievals is not None
+        else DEFAULT_ENDORSEMENT_MIN_RETRIEVALS
+    )
+
+    report = compute_eval(
+        memories=store.load_all(),
+        events=iter_all_events(directory),
+        since=since,
+        scope=scope,
+        endorsement_min_retrievals=floor,
+        silent_miss_limit=silent_miss_limit,
+    )
+    if json_out:
+        sys.stdout.write(_json.dumps(report.to_dict(), indent=2) + "\n")
+    else:
+        sys.stdout.write(render_text(report))
 
 
 def _cli_export(

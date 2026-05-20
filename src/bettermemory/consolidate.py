@@ -797,3 +797,354 @@ def render_json(report: ConsolidateReport) -> str:
     import json as _json
 
     return _json.dumps(report.to_dict(), indent=2) + "\n"
+
+
+# ---------------------------------------------------------------------------
+# LLM-driven consolidation (--llm)
+# ---------------------------------------------------------------------------
+#
+# `bettermemory consolidate --llm` extends the four non-LLM passes with a
+# fifth: cluster the active store, ask a local (or remote) LLM to propose
+# merges, contradiction resolutions, date rewrites, and tier demotions,
+# render each proposal as a diff for human review, and only commit on
+# explicit accept. The audit-transparency framing is the lane-claim:
+# Anthropic's Dreaming consolidates invisibly; bettermemory's --llm
+# refuses to commit without your accept.
+
+
+@dataclass
+class LLMProposalAction:
+    """Outcome of applying one Proposal. Mirrors `ConsolidateAction`'s
+    shape so renderers (and machine consumers) see a uniform
+    actions-taken stream regardless of which pass produced the
+    mutation."""
+
+    kind: str  # "llm_merge_tombstone" / "llm_resolve_tombstone" / ...
+    memory_id: str
+    detail: str
+
+
+@dataclass
+class LLMClusterFailure:
+    """One cluster's worth of LLM failure. Carries the cluster id and
+    the underlying error so the operator can re-run a specific cluster
+    after fixing whatever broke (network, key, model load, etc.)."""
+
+    cluster_id: str
+    reason: str
+
+
+@dataclass
+class LLMConsolidateReport:
+    """End-to-end report of an --llm pass."""
+
+    provider_name: str
+    cluster_count: int
+    proposals: list[Any] = field(default_factory=list)  # list[Proposal]
+    accepted: list[Any] = field(default_factory=list)  # list[Proposal]
+    rejected: list[Any] = field(default_factory=list)  # list[Proposal]
+    actions_taken: list[LLMProposalAction] = field(default_factory=list)
+    failures: list[LLMClusterFailure] = field(default_factory=list)
+    applied: bool = False
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "provider": self.provider_name,
+            "cluster_count": self.cluster_count,
+            "proposal_count": len(self.proposals),
+            "accepted_count": len(self.accepted),
+            "rejected_count": len(self.rejected),
+            "actions_taken": [
+                {"kind": a.kind, "memory_id": a.memory_id, "detail": a.detail}
+                for a in self.actions_taken
+            ],
+            "failures": [
+                {"cluster_id": f.cluster_id, "reason": f.reason} for f in self.failures
+            ],
+            "applied": self.applied,
+        }
+
+
+def consolidate_llm(
+    store: Store,
+    provider: Any,  # llm.LLMProvider — kept Any to avoid import cycle
+    *,
+    semantic_model: Any | None = None,
+    semantic_threshold: float | None = None,
+    today: str | None = None,
+    apply: bool = False,
+    accept: bool = False,
+    interactive_input: Any = None,
+    session_id: str | None = None,
+) -> LLMConsolidateReport:
+    """Run an LLM-driven consolidation pass.
+
+    Steps:
+
+    1. Use the existing `find_dedup_candidates` pass to seed
+       `near_duplicates` clusters — same threshold + same semantic /
+       Jaccard fallback.
+    2. Walk the event log to seed `contradiction_candidates` clusters
+       from any `record_use(outcome="contradicted")` events.
+    3. Ask `provider` for proposals on each cluster. Hallucinated
+       memory IDs are rejected at validation time by `llm.parse_and_validate`.
+    4. With `apply=False` (dry-run, the default): return the report
+       with every proposal but no mutations.
+    5. With `apply=True` AND `accept=True`: commit every validated
+       proposal silently (CI / scripted use).
+    6. With `apply=True` AND `interactive_input` provided (the
+       interactive path the CLI uses): prompt per proposal and only
+       commit the accepted ones.
+    7. With `apply=True` AND no accept AND no interactive_input:
+       refuse to commit — the audit-transparency contract requires an
+       explicit human accept.
+
+    `today` defaults to today's UTC date in ISO format; pass it
+    explicitly in tests for determinism.
+
+    `interactive_input` is a callable taking one positional argument
+    (the prompt text) returning the user's response — i.e. `input`
+    in interactive mode, a stub in tests. Pass `None` to mean
+    "non-interactive."
+    """
+    from . import llm as _llm
+
+    today = today or _llm.today_iso()
+    memories = store.load_all()
+    events = list(iter_events(store.root))
+    by_id = {m.id: m for m in memories}
+
+    # Seed near-duplicate clusters from the existing pass.
+    dedup_candidates, _method = find_dedup_candidates(
+        memories,
+        semantic_model=semantic_model,
+        threshold=semantic_threshold,
+    )
+    pairs = [(c.keeper_id, c.duplicate_id) for c in dedup_candidates]
+    clusters = _llm.build_clusters(memories, events=events, near_duplicate_pairs=pairs)
+
+    report = LLMConsolidateReport(
+        provider_name=getattr(provider, "name", "?"),
+        cluster_count=len(clusters),
+        applied=apply,
+    )
+
+    for cluster in clusters:
+        try:
+            cluster_proposals = provider.propose(cluster, today=today)
+        except Exception as exc:  # noqa: BLE001 — one bad cluster shouldn't tank the pass
+            log.warning(
+                "consolidate --llm: cluster %s failed: %s",
+                cluster.cluster_id,
+                exc,
+            )
+            report.failures.append(
+                LLMClusterFailure(cluster_id=cluster.cluster_id, reason=str(exc))
+            )
+            continue
+        report.proposals.extend(cluster_proposals)
+
+    if not apply:
+        return report
+
+    # Apply gate: require either non-interactive accept-all or an
+    # interactive prompt. Silent batch commits violate the
+    # audit-transparency contract.
+    if not accept and interactive_input is None:
+        log.warning(
+            "consolidate --llm --apply: refusing to commit without "
+            "either --yes or an interactive accept loop. Re-run with "
+            "--apply --yes for batch commit, or run interactively."
+        )
+        return report
+
+    for proposal in report.proposals:
+        if not accept and interactive_input is not None:
+            diff = _llm.render_proposal_diff(proposal, by_id)
+            print(diff)
+            response = interactive_input("Apply? [y/N]: ").strip().lower()
+            if response not in {"y", "yes"}:
+                report.rejected.append(proposal)
+                continue
+        report.accepted.append(proposal)
+        try:
+            actions = _apply_llm_proposal(store, proposal, by_id, session_id=session_id)
+            report.actions_taken.extend(actions)
+        except Exception as exc:  # noqa: BLE001
+            log.warning("consolidate --llm: apply failed: %s", exc)
+            report.failures.append(
+                LLMClusterFailure(
+                    cluster_id=str(
+                        getattr(proposal, "memory_id", None)
+                        or getattr(proposal, "keeper_id", "?")
+                    ),
+                    reason=str(exc),
+                )
+            )
+
+    return report
+
+
+def _apply_llm_proposal(
+    store: Store,
+    proposal: Any,
+    by_id: dict[str, Memory],
+    *,
+    session_id: str | None,
+) -> list[LLMProposalAction]:
+    """Translate a validated `Proposal` into store-level mutations.
+
+    Dispatches by type; each branch is a small, self-contained
+    application. The function is kept narrow so the audit story stays
+    legible — every code path that mutates the store on behalf of an
+    LLM is right here, and the surface area for "what can --llm
+    actually do" is short enough to scan.
+    """
+    from . import llm as _llm
+
+    actions: list[LLMProposalAction] = []
+    if isinstance(proposal, _llm.MergeProposal):
+        keeper = by_id.get(proposal.keeper_id)
+        if keeper is None:
+            raise RuntimeError(f"merge keeper {proposal.keeper_id} not found in store")
+        merged = keeper.model_copy(
+            update={"body": proposal.new_body, "updated": datetime.now(timezone.utc)}
+        )
+        store.update(merged)
+        actions.append(
+            LLMProposalAction(
+                kind="llm_merge_keeper",
+                memory_id=proposal.keeper_id,
+                detail=f"merged from {list(proposal.duplicate_ids)}",
+            )
+        )
+        for dup_id in proposal.duplicate_ids:
+            reason = (
+                f"consolidate --llm: merged into {proposal.keeper_id} "
+                f"({proposal.rationale})"
+            )
+            store.tombstone(dup_id, reason=reason, session_id=session_id)
+            actions.append(
+                LLMProposalAction(
+                    kind="llm_merge_tombstone",
+                    memory_id=dup_id,
+                    detail=reason,
+                )
+            )
+    elif isinstance(proposal, _llm.ResolveContradictionProposal):
+        reason = (
+            f"consolidate --llm: contradicted by {proposal.winner_id} "
+            f"({proposal.rationale})"
+        )
+        store.tombstone(proposal.loser_id, reason=reason, session_id=session_id)
+        actions.append(
+            LLMProposalAction(
+                kind="llm_resolve_tombstone",
+                memory_id=proposal.loser_id,
+                detail=reason,
+            )
+        )
+    elif isinstance(proposal, _llm.RewriteRelativeDateProposal):
+        memory = by_id.get(proposal.memory_id)
+        if memory is None:
+            raise RuntimeError(f"rewrite target {proposal.memory_id} not found")
+        rewritten = memory.model_copy(
+            update={
+                "body": proposal.new_body,
+                "updated": datetime.now(timezone.utc),
+            }
+        )
+        store.update(rewritten)
+        actions.append(
+            LLMProposalAction(
+                kind="llm_rewrite_date",
+                memory_id=proposal.memory_id,
+                detail=proposal.rationale,
+            )
+        )
+    elif isinstance(proposal, _llm.DemoteTierProposal):
+        memory = by_id.get(proposal.memory_id)
+        if memory is None:
+            raise RuntimeError(f"demote target {proposal.memory_id} not found")
+        new_category = (
+            Category.AMBIENT if proposal.new_category == "ambient" else Category.FACT
+        )
+        demoted = memory.model_copy(update={"category": new_category})
+        store.update(demoted)
+        actions.append(
+            LLMProposalAction(
+                kind="llm_demote_tier",
+                memory_id=proposal.memory_id,
+                detail=(
+                    f"{(memory.category or Category.FACT).value} -> "
+                    f"{proposal.new_category}: {proposal.rationale}"
+                ),
+            )
+        )
+    else:
+        raise RuntimeError(f"unknown proposal type: {type(proposal).__name__}")
+    return actions
+
+
+def render_llm_text(report: LLMConsolidateReport) -> str:
+    """Human-readable rendering of an --llm report. Used by the CLI
+    when --json isn't passed."""
+    from . import llm as _llm
+
+    lines: list[str] = []
+    title = f"Consolidate --llm report (provider={report.provider_name})"
+    if report.applied:
+        title += " (applied)"
+    else:
+        title += " (dry-run — pass --apply to commit, --yes to skip prompts)"
+    lines.append(title)
+    lines.append("=" * len(title))
+    lines.append("")
+    lines.append(
+        f"{report.cluster_count} clusters, {len(report.proposals)} proposals "
+        f"({len(report.accepted)} accepted, {len(report.rejected)} rejected)"
+    )
+    lines.append("")
+
+    if report.proposals:
+        # Rebuild by_id from proposals' referenced ids is impractical
+        # here without the store; the renderer is called from the CLI
+        # with by_id available, so consumers needing diffs use
+        # `llm.render_proposal_diff` directly. This text path lists
+        # rationales without diffs — keeps the report compact for
+        # batch use.
+        lines.append("Proposals:")
+        for proposal in report.proposals:
+            kind = getattr(proposal, "type", type(proposal).__name__)
+            target = (
+                getattr(proposal, "memory_id", None)
+                or getattr(proposal, "keeper_id", None)
+                or getattr(proposal, "winner_id", "?")
+            )
+            rationale = getattr(proposal, "rationale", "")
+            lines.append(f"  [{kind}] target={target}  rationale: {rationale}")
+        lines.append("")
+        del (
+            _llm
+        )  # silence "imported but unused" — the import is intentional for callers
+
+    if report.applied and report.actions_taken:
+        lines.append(f"Actions taken ({len(report.actions_taken)}):")
+        for action in report.actions_taken:
+            lines.append(f"  {action.kind}  {action.memory_id}  ({action.detail})")
+        lines.append("")
+
+    if report.failures:
+        lines.append(f"Failures ({len(report.failures)}):")
+        for failure in report.failures:
+            lines.append(f"  {failure.cluster_id}: {failure.reason}")
+        lines.append("")
+
+    return "\n".join(lines) + "\n"
+
+
+def render_llm_json(report: LLMConsolidateReport) -> str:
+    """JSON rendering for --llm reports."""
+    import json as _json
+
+    return _json.dumps(report.to_dict(), indent=2) + "\n"

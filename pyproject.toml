@@ -1,7 +1,7 @@
 [project]
 name = "bettermemory"
-version = "2.4.0"
-description = "Persistent memory for Claude Code, retrieved on demand."
+version = "2.5.0"
+description = "Memory you can verify — MCP-native memory for AI coding agents, with per-hit staleness verdicts and claim-level audit trails. Local-first, MIT, no cloud."
 readme = "README.md"
 requires-python = ">=3.11"
 license = { text = "MIT" }
@@ -15,6 +15,17 @@ dependencies = [
 
 [project.optional-dependencies]
 embeddings = ["sentence-transformers>=2.2", "numpy>=1.24"]
+# Lightweight alternative to `embeddings`: fastembed wraps ONNX Runtime
+# (~50 MB on disk) instead of PyTorch (~500 MB). Same retrieval surface,
+# same cache shape — different provider. When both extras are installed
+# sentence-transformers wins for cache byte-stability; pick fastembed via
+# `[behavior] semantic_provider = "fastembed"` when torch's footprint is
+# the wrong tradeoff (CI runners, small VMs, air-gapped installs).
+# fastembed wheels lag the latest Python by a release or two, so the
+# `test-embeddings-fast` CI job pins to 3.13 even when the main matrix
+# advances; users on 3.14 should install the standard `embeddings`
+# extra until upstream catches up.
+embeddings-fast = ["fastembed>=0.4", "numpy>=1.24"]
 # The web UI imports `fastapi` and `uvicorn` directly — that's the
 # whole runtime surface. `httpx` is *not* a runtime dep; it's only
 # needed by FastAPI's TestClient (lives in `dev`). Shipping it in
@@ -99,9 +110,24 @@ warn_return_any = false
 disable_error_code = ["type-arg", "no-untyped-def", "no-untyped-call"]
 
 [[tool.mypy.overrides]]
-# Optional extra. Without `embeddings` installed the import is missing
-# at type-check time; the runtime path already handles ImportError.
-module = ["sentence_transformers", "sentence_transformers.*", "numpy", "numpy.*"]
+# Optional extras. Without `embeddings` / `embeddings-fast` installed the
+# imports are missing at type-check time; the runtime path already handles
+# ImportError, returning None so the caller falls back to Jaccard / keyword.
+# `httpx` is in the [dev] extra (FastAPI's TestClient depends on it) but
+# `bettermemory.llm` reaches for it inside `OllamaProvider.propose()` so we
+# don't crash imports on a clean install missing dev. `anthropic` / `openai`
+# are runtime-optional SDKs guarded by the same lazy-import pattern.
+module = [
+    "sentence_transformers",
+    "sentence_transformers.*",
+    "fastembed",
+    "fastembed.*",
+    "numpy",
+    "numpy.*",
+    "httpx",
+    "anthropic",
+    "openai",
+]
 ignore_missing_imports = true
 
 [tool.pytest.ini_options]
@@ -119,6 +145,14 @@ markers = [
     # test-embeddings CI job runs `pytest -m \"not no_extras\"` so these
     # are skipped when sentence-transformers is present.
     "no_extras: requires the embeddings extra to be absent",
+    # Symmetric markers for the fastembed provider. The default test job
+    # has neither extra installed; `test-embeddings` runs with only the
+    # torch extra; `test-embeddings-fast` runs with only the fastembed
+    # extra; a future `test-embeddings-both` job would run with both and
+    # exercise the precedence rule (torch wins). Mark tests that require
+    # the absence of each extra so the relevant job can deselect them.
+    "no_torch_embeddings: requires the sentence-transformers extra to be absent",
+    "no_fastembed: requires the fastembed extra to be absent",
 ]
 
 [tool.ruff.lint.per-file-ignores]

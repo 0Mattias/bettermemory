@@ -1,0 +1,939 @@
+"""LLM-driven consolidation proposals.
+
+`bettermemory consolidate --llm` extends the existing offline curation
+pass (dedup, demote-never-applied, cold-scope, scope-typo) with a fifth
+pass that asks an LLM to propose merges, contradiction resolutions,
+relative-date rewrites, and tier demotions across clusters of related
+memories.
+
+**Why this matters.** Anthropic shipped "Dreaming" on Managed Agents
+2026-05-06 — async memory consolidation that runs invisibly behind the
+agent surface. As they roll it into Claude Code itself, the
+asynchronous-consolidation pitch closes for everyone but the local-
+first crowd. The defensible distinction isn't feature parity, it's
+**audit-transparency**: Anthropic's Dreaming consolidates invisibly;
+bettermemory's `--llm` shows every proposed diff and refuses to commit
+without your explicit accept. That moat is enforced at every layer of
+this module — proposals are typed, diffs are renderable, and `--apply`
+is gated.
+
+**Module shape.**
+
+- Four proposal dataclasses (`MergeProposal`,
+  `ResolveContradictionProposal`, `RewriteRelativeDateProposal`,
+  `DemoteTierProposal`) — discriminated by `type` so the renderer and
+  applier can branch cleanly.
+- `Cluster` is the input — a set of memories with their event
+  history (applied/ignored/contradicted/corrected counts plus
+  `claim_excerpts`) that the LLM reasons over.
+- `LLMProvider` protocol — `.propose(cluster) -> list[Proposal]`.
+  Three implementations: `OllamaProvider` (default, local HTTP on
+  port 11434), `AnthropicProvider` (env `ANTHROPIC_API_KEY`),
+  `OpenAIProvider` (env `OPENAI_API_KEY`). All three lazy-import their
+  SDKs so a clean install without API keys works fine.
+- `validate_proposals` rejects hallucinated memory IDs and other
+  malformed responses BEFORE the diff renderer sees them. An LLM
+  reaching for a memory that isn't in the cluster is a hallucination
+  signal worth refusing on principle.
+
+No memory mutations happen in this module — the applier lives in
+`consolidate.py` and reads through the same store-level helpers the
+non-LLM passes already use. This module's only job is to take a
+cluster, ask an LLM about it, and return a validated proposal list.
+"""
+
+from __future__ import annotations
+
+import json
+import logging
+import os
+from dataclasses import dataclass
+from datetime import datetime
+from typing import Any, Literal, Protocol, Union
+
+from .models import Memory
+
+
+log = logging.getLogger("bettermemory.llm")
+
+
+# Cap on bodies + excerpts sent to the LLM per cluster. The provider
+# may have higher context windows but trimming early keeps token usage
+# predictable and avoids prompt-injection-via-very-long-body footguns.
+MAX_BODY_CHARS = 4000
+MAX_EXCERPTS_PER_MEMORY = 3
+MAX_EXCERPT_CHARS = 200
+
+# Default Ollama settings. Local-first by design; nothing leaves the
+# machine unless the user explicitly switches to the Anthropic or
+# OpenAI provider.
+DEFAULT_OLLAMA_URL = "http://localhost:11434"
+DEFAULT_OLLAMA_MODEL = "llama3.2:3b"
+DEFAULT_OLLAMA_TIMEOUT_SECONDS = 60.0
+
+
+# ---------------------------------------------------------------------------
+# Cluster — input shape to the LLM
+# ---------------------------------------------------------------------------
+
+
+@dataclass(frozen=True)
+class MemoryExcerpt:
+    """One recorded `claim_excerpt` plus its outcome.
+
+    The LLM uses these to judge whether a memory has been used in
+    practice and how the model that used it described what it was
+    used for. A memory with claim_excerpts that contradict each other
+    is a strong contradiction-resolution candidate.
+    """
+
+    outcome: Literal["applied", "ignored", "contradicted", "corrected"]
+    excerpt: str
+    timestamp: str  # ISO 8601 string — opaque to the LLM
+
+
+@dataclass(frozen=True)
+class ClusterMember:
+    """One memory + its usage history, packaged for the LLM."""
+
+    memory: Memory
+    applied_count: int = 0
+    ignored_count: int = 0
+    contradicted_count: int = 0
+    corrected_count: int = 0
+    excerpts: tuple[MemoryExcerpt, ...] = ()
+
+
+@dataclass(frozen=True)
+class Cluster:
+    """A set of related memories the LLM should propose changes for.
+
+    `cluster_kind` tells the LLM what relationship the bettermemory
+    pre-pass detected (`near_duplicates` from semantic/Jaccard,
+    `contradiction_candidates` from negative-outcome history, etc.) so
+    the prompt can steer toward the relevant proposal types. The LLM
+    isn't constrained to one type — a near-duplicate cluster can still
+    yield a tier demotion if the members are stale.
+    """
+
+    cluster_id: str
+    cluster_kind: Literal[
+        "near_duplicates",
+        "contradiction_candidates",
+        "relative_dates",
+        "demotion_candidates",
+        "general",
+    ]
+    members: tuple[ClusterMember, ...]
+
+
+# ---------------------------------------------------------------------------
+# Proposal types — discriminated union
+# ---------------------------------------------------------------------------
+
+
+@dataclass(frozen=True)
+class MergeProposal:
+    """Combine `duplicate_ids` into `keeper_id`; install `new_body` on
+    the keeper. The duplicates get tombstoned by the applier with a
+    reason that points at the keeper, mirroring the non-LLM dedup pass.
+    """
+
+    keeper_id: str
+    duplicate_ids: tuple[str, ...]
+    new_body: str
+    rationale: str
+    type: Literal["merge"] = "merge"
+
+
+@dataclass(frozen=True)
+class ResolveContradictionProposal:
+    """Two memories disagree and the LLM has identified which one
+    matches current reality. The loser is tombstoned with a reason
+    pointing at the winner; the winner's body stays as-is (the LLM
+    didn't propose new text, just a verdict). Useful when both bodies
+    are individually plausible but logically inconsistent (different
+    versions of an architectural decision, etc.).
+    """
+
+    winner_id: str
+    loser_id: str
+    rationale: str
+    type: Literal["resolve_contradiction"] = "resolve_contradiction"
+
+
+@dataclass(frozen=True)
+class RewriteRelativeDateProposal:
+    """Replace relative phrases ("today", "last week", "this quarter")
+    in the body with absolute dates. The applier installs `new_body`
+    on the memory and bumps `updated`; `last_verified_at` is cleared
+    by the body change as usual.
+
+    The LLM is told today's date via the prompt — it does not infer
+    "today" from training data, where it would land somewhere stale.
+    """
+
+    memory_id: str
+    new_body: str
+    rationale: str
+    type: Literal["rewrite_relative_date"] = "rewrite_relative_date"
+
+
+@dataclass(frozen=True)
+class DemoteTierProposal:
+    """Retag the memory's category — typically `fact` -> `ambient` for
+    facts that have lost their verifiable claims (e.g. the project
+    decision they documented has been superseded but the surrounding
+    context is still useful for tone). Mirrors the non-LLM
+    demote-never-applied pass but on a richer signal (the LLM reads
+    the body, not just the retrieval count).
+    """
+
+    memory_id: str
+    new_category: Literal["fact", "ambient"]
+    rationale: str
+    type: Literal["demote_tier"] = "demote_tier"
+
+
+Proposal = Union[
+    MergeProposal,
+    ResolveContradictionProposal,
+    RewriteRelativeDateProposal,
+    DemoteTierProposal,
+]
+
+
+# ---------------------------------------------------------------------------
+# Provider protocol + lazy-imported implementations
+# ---------------------------------------------------------------------------
+
+
+class LLMProvider(Protocol):
+    """A backend that turns a `Cluster` into a list of `Proposal`s.
+
+    The contract is sync — `consolidate --llm` is offline, interactive,
+    and not on a hot path. Errors are raised; the CLI catches them per
+    cluster so one bad call doesn't tank the whole consolidation pass.
+    """
+
+    name: str
+
+    def propose(self, cluster: Cluster, today: str) -> list[Proposal]:
+        """Return a validated list of proposals for `cluster`. `today`
+        is an ISO-8601 date string (e.g. "2026-05-20") used by the
+        prompt to ground relative-date rewrites."""
+        ...
+
+
+@dataclass
+class OllamaProvider:
+    """Local-first default. Talks to a running Ollama instance via its
+    HTTP API on `url` (default `http://localhost:11434`). No network
+    egress beyond localhost; no API key required.
+
+    Lazy-imports `httpx` so the consolidate module loads even when the
+    HTTP client isn't installed. (`httpx` ships with `[dev]` for tests
+    and with `[ui]` for FastAPI's TestClient, so it's almost always
+    available; the lazy guard handles the rare clean-install case.)
+    """
+
+    name: str = "ollama"
+    url: str = DEFAULT_OLLAMA_URL
+    model: str = DEFAULT_OLLAMA_MODEL
+    timeout_seconds: float = DEFAULT_OLLAMA_TIMEOUT_SECONDS
+
+    def propose(self, cluster: Cluster, today: str) -> list[Proposal]:
+        try:
+            import httpx
+        except ImportError as exc:
+            raise RuntimeError(
+                "OllamaProvider requires httpx. Install with "
+                "`pip install bettermemory[dev]` or "
+                "`pip install httpx`."
+            ) from exc
+
+        prompt = build_prompt(cluster, today=today)
+        response = httpx.post(
+            f"{self.url.rstrip('/')}/api/generate",
+            json={
+                "model": self.model,
+                "prompt": prompt,
+                "stream": False,
+                # Force JSON output. Ollama's `format=json` hint
+                # constrains decoding to produce valid JSON — saves
+                # us regex-cleanup on the response side. Models that
+                # don't honour this still produce parseable text on
+                # most well-formed cases; the validator handles the
+                # rest.
+                "format": "json",
+                "options": {"temperature": 0.0},
+            },
+            timeout=self.timeout_seconds,
+        )
+        response.raise_for_status()
+        raw = response.json().get("response", "")
+        return parse_and_validate(raw, cluster)
+
+
+@dataclass
+class AnthropicProvider:
+    """Anthropic Claude provider. Reads `ANTHROPIC_API_KEY` from the
+    environment by default; pass `api_key` to override. Lazy-imports
+    the `anthropic` SDK — install `anthropic>=0.30` separately or via
+    a future `[llm-anthropic]` extra.
+
+    Defaults to a small-and-cheap model so a consolidation pass
+    doesn't accidentally cost a lot. Override `model` for higher
+    fidelity on complex clusters.
+    """
+
+    name: str = "anthropic"
+    api_key: str | None = None
+    model: str = "claude-haiku-4-5-20251001"
+
+    def propose(self, cluster: Cluster, today: str) -> list[Proposal]:
+        try:
+            import anthropic
+        except ImportError as exc:
+            raise RuntimeError(
+                "AnthropicProvider requires the `anthropic` SDK. "
+                "Install it with `pip install anthropic` and set "
+                "the ANTHROPIC_API_KEY environment variable."
+            ) from exc
+
+        key = self.api_key or os.environ.get("ANTHROPIC_API_KEY")
+        if not key:
+            raise RuntimeError(
+                "AnthropicProvider needs an API key. Set the "
+                "ANTHROPIC_API_KEY environment variable or pass "
+                "api_key=... explicitly."
+            )
+
+        client = anthropic.Anthropic(api_key=key)
+        prompt = build_prompt(cluster, today=today)
+        msg = client.messages.create(
+            model=self.model,
+            max_tokens=2048,
+            temperature=0.0,
+            messages=[{"role": "user", "content": prompt}],
+        )
+        # Anthropic returns a list of content blocks; we asked for a
+        # single text response.
+        raw = "".join(
+            block.text for block in msg.content if getattr(block, "type", "") == "text"
+        )
+        return parse_and_validate(raw, cluster)
+
+
+@dataclass
+class OpenAIProvider:
+    """OpenAI provider. Reads `OPENAI_API_KEY`. Lazy-imports `openai`
+    >= 1.0. Same shape as the Anthropic provider — different SDK,
+    different model id."""
+
+    name: str = "openai"
+    api_key: str | None = None
+    model: str = "gpt-4o-mini"
+
+    def propose(self, cluster: Cluster, today: str) -> list[Proposal]:
+        try:
+            import openai
+        except ImportError as exc:
+            raise RuntimeError(
+                "OpenAIProvider requires the `openai` SDK. Install "
+                "it with `pip install openai` and set the "
+                "OPENAI_API_KEY environment variable."
+            ) from exc
+
+        key = self.api_key or os.environ.get("OPENAI_API_KEY")
+        if not key:
+            raise RuntimeError(
+                "OpenAIProvider needs an API key. Set the "
+                "OPENAI_API_KEY environment variable or pass "
+                "api_key=... explicitly."
+            )
+
+        client = openai.OpenAI(api_key=key)
+        prompt = build_prompt(cluster, today=today)
+        response = client.chat.completions.create(
+            model=self.model,
+            temperature=0.0,
+            messages=[{"role": "user", "content": prompt}],
+            response_format={"type": "json_object"},
+        )
+        raw = response.choices[0].message.content or ""
+        return parse_and_validate(raw, cluster)
+
+
+def make_provider(name: str, **kwargs: Any) -> LLMProvider:
+    """Construct a provider by name. Used by the CLI to map a
+    `--llm-provider` flag (or config knob) to a concrete instance."""
+    name = name.strip().lower()
+    if name == "ollama":
+        return OllamaProvider(**kwargs)
+    if name == "anthropic":
+        return AnthropicProvider(**kwargs)
+    if name == "openai":
+        return OpenAIProvider(**kwargs)
+    raise ValueError(f"unknown LLM provider {name!r}; valid: ollama, anthropic, openai")
+
+
+# ---------------------------------------------------------------------------
+# Prompt construction
+# ---------------------------------------------------------------------------
+
+
+_SYSTEM_PROMPT = """You are a memory-consolidation assistant for the bettermemory project. Given a CLUSTER of related stored memories, propose between zero and N concrete consolidation actions on them. Today's date is provided so you can rewrite relative phrases ("today", "last week") into absolute dates.
+
+You may propose any combination of these four action types:
+
+1. "merge" — Two or more memories say substantially the same thing. Pick a "keeper_id" from the cluster; list the others as "duplicate_ids"; provide the merged "new_body" (single body that captures every load-bearing claim from all members).
+2. "resolve_contradiction" — Two memories disagree and one is clearly current. Pick a "winner_id" and a "loser_id" (both from the cluster); the loser will be tombstoned. Provide a one-line "rationale" naming the disagreement.
+3. "rewrite_relative_date" — A memory body contains relative phrases referencing dates that have drifted. Provide "memory_id" and the full "new_body" with absolute dates substituted. Do NOT propose this for bodies already using absolute dates.
+4. "demote_tier" — A memory's verifiable claims have been superseded but the surrounding context is still useful for response shaping. Provide "memory_id" and "new_category" (must be "fact" or "ambient"; almost always "ambient" for demotions). Do NOT propose demoting a memory that has any path/version/commit claim still valid against current reality.
+
+Strict rules:
+
+- Output ONE valid JSON object with a top-level "proposals" array. Nothing else — no preamble, no commentary, no markdown fences.
+- Every memory_id, keeper_id, duplicate_ids entry, winner_id, and loser_id MUST appear exactly as written in the cluster. Inventing an ID is a hallucination and will be rejected.
+- Each proposal MUST include a "type" field, the type-specific fields above, and a "rationale" string (at most 200 chars).
+- If the cluster doesn't need any action, output {"proposals": []}.
+- Do not propose changes that touch memories outside the cluster.
+- For "new_body" fields: preserve the markdown structure and any path/identifier tokens from the originals. Do not invent new facts; only re-arrange and condense what's there."""
+
+
+def build_prompt(cluster: Cluster, *, today: str) -> str:
+    """Render the cluster + system context into a single prompt string.
+
+    Format chosen for both Ollama (no system-prompt slot in the
+    generate endpoint by default) and chat APIs (Anthropic/OpenAI
+    accept it as a user-turn). Cluster members are presented as
+    delimited blocks with the memory id called out so it's visually
+    impossible to confuse with the body content.
+    """
+    lines: list[str] = [_SYSTEM_PROMPT, ""]
+    lines.append(f"Today is {today}.")
+    lines.append("")
+    lines.append(f"CLUSTER: {cluster.cluster_id}  (kind: {cluster.cluster_kind})")
+    lines.append("")
+    for member in cluster.members:
+        lines.append("--- BEGIN MEMORY ---")
+        lines.append(f"id: {member.memory.id}")
+        lines.append(f"scopes: {', '.join(member.memory.scopes)}")
+        category_text = (
+            member.memory.category.value if member.memory.category else "fact"
+        )
+        lines.append(f"category: {category_text}")
+        lines.append(f"created: {member.memory.created.isoformat()}")
+        lines.append(f"updated: {member.memory.updated.isoformat()}")
+        lines.append(
+            f"applied={member.applied_count}, "
+            f"ignored={member.ignored_count}, "
+            f"contradicted={member.contradicted_count}, "
+            f"corrected={member.corrected_count}"
+        )
+        if member.excerpts:
+            lines.append("recent claim_excerpts:")
+            for ex in member.excerpts[:MAX_EXCERPTS_PER_MEMORY]:
+                excerpt = ex.excerpt[:MAX_EXCERPT_CHARS]
+                lines.append(f"  - [{ex.outcome}] {excerpt}")
+        lines.append("body:")
+        body = member.memory.body.strip()
+        if len(body) > MAX_BODY_CHARS:
+            body = body[:MAX_BODY_CHARS] + "\n[...body truncated...]"
+        lines.append(body)
+        lines.append("--- END MEMORY ---")
+        lines.append("")
+    lines.append('Respond with {"proposals": [...]} only.')
+    return "\n".join(lines)
+
+
+# ---------------------------------------------------------------------------
+# Response parsing + validation
+# ---------------------------------------------------------------------------
+
+
+@dataclass
+class ProposalValidationError:
+    """One rejection reason. Held by `parse_and_validate` so the caller
+    can log every problem rather than stopping at the first; only the
+    valid proposals make it back to the renderer."""
+
+    raw: dict[str, Any]
+    reason: str
+
+
+def parse_and_validate(
+    raw_text: str,
+    cluster: Cluster,
+) -> list[Proposal]:
+    """Parse the LLM's JSON output and reject hallucinated IDs / wrong
+    shapes BEFORE any diff is rendered or commit is applied.
+
+    Returns only the valid proposals. Logs each rejected entry at
+    WARNING so the operator sees why the LLM's suggestion was dropped
+    — useful for prompt-tuning and for catching providers that don't
+    honour `response_format=json_object`.
+    """
+    cleaned = raw_text.strip()
+    # Some Ollama models wrap JSON in ```json fences despite the
+    # format=json hint; strip them defensively.
+    if cleaned.startswith("```"):
+        cleaned = cleaned.lstrip("`")
+        if cleaned.startswith("json"):
+            cleaned = cleaned[4:].lstrip()
+        if "```" in cleaned:
+            cleaned = cleaned.split("```", 1)[0].strip()
+
+    try:
+        payload = json.loads(cleaned)
+    except json.JSONDecodeError as exc:
+        log.warning("LLM response was not valid JSON: %s. Body: %.200s", exc, cleaned)
+        return []
+
+    proposals_raw = payload.get("proposals", [])
+    if not isinstance(proposals_raw, list):
+        log.warning(
+            "LLM response missing 'proposals' array; got %r", type(proposals_raw)
+        )
+        return []
+
+    valid_ids = {m.memory.id for m in cluster.members}
+    accepted: list[Proposal] = []
+    for entry in proposals_raw:
+        if not isinstance(entry, dict):
+            log.warning("proposal entry is not an object: %r", entry)
+            continue
+        kind = entry.get("type")
+        rationale = entry.get("rationale", "")
+        if not isinstance(rationale, str) or not rationale.strip():
+            log.warning("proposal %r missing rationale; skipping", entry)
+            continue
+        # Cap rationale length to match the constraint stated in the prompt.
+        rationale = rationale.strip()[:500]
+
+        proposal: Proposal | None = None
+        if kind == "merge":
+            proposal = _validate_merge(entry, rationale, valid_ids)
+        elif kind == "resolve_contradiction":
+            proposal = _validate_resolve(entry, rationale, valid_ids)
+        elif kind == "rewrite_relative_date":
+            proposal = _validate_rewrite_date(entry, rationale, valid_ids)
+        elif kind == "demote_tier":
+            proposal = _validate_demote(entry, rationale, valid_ids)
+        else:
+            log.warning("unknown proposal type %r; skipping", kind)
+            continue
+
+        if proposal is not None:
+            accepted.append(proposal)
+
+    return accepted
+
+
+def _validate_merge(
+    entry: dict[str, Any],
+    rationale: str,
+    valid_ids: set[str],
+) -> MergeProposal | None:
+    keeper_id = entry.get("keeper_id")
+    duplicate_ids = entry.get("duplicate_ids", [])
+    new_body = entry.get("new_body", "")
+
+    if not isinstance(keeper_id, str) or keeper_id not in valid_ids:
+        log.warning("merge: keeper_id %r not in cluster", keeper_id)
+        return None
+    if not isinstance(duplicate_ids, list) or not duplicate_ids:
+        log.warning(
+            "merge: duplicate_ids must be a non-empty list; got %r", duplicate_ids
+        )
+        return None
+    cleaned_dupes: list[str] = []
+    for dup in duplicate_ids:
+        if not isinstance(dup, str) or dup not in valid_ids:
+            log.warning("merge: duplicate_id %r not in cluster", dup)
+            return None
+        if dup == keeper_id:
+            log.warning("merge: duplicate %r same as keeper", dup)
+            return None
+        cleaned_dupes.append(dup)
+    if not isinstance(new_body, str) or not new_body.strip():
+        log.warning("merge: new_body empty for keeper %r", keeper_id)
+        return None
+
+    return MergeProposal(
+        keeper_id=keeper_id,
+        duplicate_ids=tuple(cleaned_dupes),
+        new_body=new_body.strip() + "\n",
+        rationale=rationale,
+    )
+
+
+def _validate_resolve(
+    entry: dict[str, Any],
+    rationale: str,
+    valid_ids: set[str],
+) -> ResolveContradictionProposal | None:
+    winner_id = entry.get("winner_id")
+    loser_id = entry.get("loser_id")
+    if not isinstance(winner_id, str) or winner_id not in valid_ids:
+        log.warning("resolve: winner_id %r not in cluster", winner_id)
+        return None
+    if not isinstance(loser_id, str) or loser_id not in valid_ids:
+        log.warning("resolve: loser_id %r not in cluster", loser_id)
+        return None
+    if winner_id == loser_id:
+        log.warning("resolve: winner and loser are the same id %r", winner_id)
+        return None
+    return ResolveContradictionProposal(
+        winner_id=winner_id,
+        loser_id=loser_id,
+        rationale=rationale,
+    )
+
+
+def _validate_rewrite_date(
+    entry: dict[str, Any],
+    rationale: str,
+    valid_ids: set[str],
+) -> RewriteRelativeDateProposal | None:
+    memory_id = entry.get("memory_id")
+    new_body = entry.get("new_body", "")
+    if not isinstance(memory_id, str) or memory_id not in valid_ids:
+        log.warning("rewrite_date: memory_id %r not in cluster", memory_id)
+        return None
+    if not isinstance(new_body, str) or not new_body.strip():
+        log.warning("rewrite_date: new_body empty for %r", memory_id)
+        return None
+    return RewriteRelativeDateProposal(
+        memory_id=memory_id,
+        new_body=new_body.strip() + "\n",
+        rationale=rationale,
+    )
+
+
+def _validate_demote(
+    entry: dict[str, Any],
+    rationale: str,
+    valid_ids: set[str],
+) -> DemoteTierProposal | None:
+    memory_id = entry.get("memory_id")
+    new_category = entry.get("new_category", "ambient")
+    if not isinstance(memory_id, str) or memory_id not in valid_ids:
+        log.warning("demote_tier: memory_id %r not in cluster", memory_id)
+        return None
+    if new_category not in {"fact", "ambient"}:
+        log.warning(
+            "demote_tier: new_category %r must be 'fact' or 'ambient'", new_category
+        )
+        return None
+    return DemoteTierProposal(
+        memory_id=memory_id,
+        new_category=new_category,
+        rationale=rationale,
+    )
+
+
+# ---------------------------------------------------------------------------
+# Cluster building from a Memory list + event log
+# ---------------------------------------------------------------------------
+
+
+def build_clusters(
+    memories: list[Memory],
+    *,
+    events: list[dict[str, Any]],
+    near_duplicate_pairs: list[tuple[str, str]] | None = None,
+) -> list[Cluster]:
+    """Group memories into clusters worth sending to an LLM.
+
+    Current heuristic:
+
+    - Each near-duplicate pair from the existing dedup pass becomes a
+      `near_duplicates` cluster. Pairs that share a member merge into
+      a single cluster (so 3-way clusters get one LLM call instead of
+      two, and the LLM sees all three bodies together).
+    - Memories with any `contradicted` event in the event log become
+      `contradiction_candidates` clusters paired with whatever the
+      retrieval that day brought back alongside them.
+
+    Lots of room to add cluster types (cold-scope rescue, date-rewrite
+    sweep). This is the foundation; new heuristics are additive.
+    """
+    by_id = {m.id: m for m in memories}
+    clusters: list[Cluster] = []
+
+    if near_duplicate_pairs:
+        clusters.extend(_cluster_near_duplicates(by_id, events, near_duplicate_pairs))
+
+    # contradiction_candidates: any memory with a contradicted event,
+    # paired with the most-recently-co-retrieved memory.
+    contradiction_ids = _collect_contradiction_targets(events, by_id)
+    for mid, partner_id in contradiction_ids:
+        members = (
+            _build_cluster_member(by_id[mid], events),
+            _build_cluster_member(by_id[partner_id], events),
+        )
+        clusters.append(
+            Cluster(
+                cluster_id=f"contradiction-{mid[:8]}-{partner_id[:8]}",
+                cluster_kind="contradiction_candidates",
+                members=members,
+            )
+        )
+
+    return clusters
+
+
+def _cluster_near_duplicates(
+    by_id: dict[str, Memory],
+    events: list[dict[str, Any]],
+    pairs: list[tuple[str, str]],
+) -> list[Cluster]:
+    """Union-find over the pair list: any two memories that share at
+    least one pairwise similarity end up in the same cluster.
+    """
+    parent: dict[str, str] = {}
+
+    def find(x: str) -> str:
+        while parent.setdefault(x, x) != x:
+            parent[x] = parent[parent[x]]
+            x = parent[x]
+        return x
+
+    def union(a: str, b: str) -> None:
+        ra, rb = find(a), find(b)
+        if ra != rb:
+            parent[ra] = rb
+
+    for a, b in pairs:
+        if a in by_id and b in by_id:
+            union(a, b)
+
+    groups: dict[str, list[str]] = {}
+    for member in parent:
+        root = find(member)
+        groups.setdefault(root, []).append(member)
+
+    clusters: list[Cluster] = []
+    for root, ids in groups.items():
+        if len(ids) < 2:
+            continue
+        members = tuple(_build_cluster_member(by_id[mid], events) for mid in ids)
+        clusters.append(
+            Cluster(
+                cluster_id=f"near-duplicates-{root[:8]}",
+                cluster_kind="near_duplicates",
+                members=members,
+            )
+        )
+    return clusters
+
+
+def _collect_contradiction_targets(
+    events: list[dict[str, Any]],
+    by_id: dict[str, Memory],
+) -> list[tuple[str, str]]:
+    """Build the contradiction-cluster seeds.
+
+    Per-memory: if there's a `contradicted` event, pair it with the
+    most-recently-co-retrieved memory id from the same session. This
+    is a heuristic — the LLM gets to judge whether the pair is
+    actually in contradiction or just adjacent.
+    """
+    contradicted_by_session: dict[str, list[tuple[str, str]]] = {}
+    last_retrieval_by_session: dict[str, list[str]] = {}
+
+    for event in events:
+        kind = event.get("kind", "")
+        session_id = event.get("session_id", "")
+        if kind == "memory_search":
+            ids = event.get("memory_ids") or []
+            if isinstance(ids, list):
+                last_retrieval_by_session[session_id] = [
+                    mid for mid in ids if isinstance(mid, str) and mid in by_id
+                ]
+        elif kind == "memory_record_use":
+            if event.get("outcome") != "contradicted":
+                continue
+            memory_ids = event.get("memory_ids") or []
+            if not isinstance(memory_ids, list):
+                continue
+            for mid in memory_ids:
+                if not isinstance(mid, str) or mid not in by_id:
+                    continue
+                last = last_retrieval_by_session.get(session_id, [])
+                partner = next((pid for pid in last if pid != mid), None)
+                if partner is None:
+                    continue
+                contradicted_by_session.setdefault(session_id, []).append(
+                    (mid, partner)
+                )
+
+    # Flatten and dedup pairs (a,b) and (b,a) are the same.
+    seen: set[tuple[str, str]] = set()
+    out: list[tuple[str, str]] = []
+    for pairs in contradicted_by_session.values():
+        for a, b in pairs:
+            key = tuple(sorted((a, b)))
+            if key in seen:
+                continue
+            seen.add(key)  # type: ignore[arg-type]
+            out.append((a, b))
+    return out
+
+
+def _build_cluster_member(
+    memory: Memory,
+    events: list[dict[str, Any]],
+) -> ClusterMember:
+    """Aggregate use-events for one memory into per-outcome counts +
+    a recent excerpt sample."""
+    counts = {
+        "applied": 0,
+        "ignored": 0,
+        "contradicted": 0,
+        "corrected": 0,
+    }
+    excerpts: list[MemoryExcerpt] = []
+    for event in events:
+        if event.get("kind") != "memory_record_use":
+            continue
+        if memory.id not in (event.get("memory_ids") or []):
+            continue
+        outcome = event.get("outcome", "")
+        if outcome not in counts:
+            continue
+        counts[outcome] += 1
+        excerpts_raw = event.get("claim_excerpts") or []
+        if isinstance(excerpts_raw, list):
+            ids = event.get("memory_ids") or []
+            try:
+                idx = ids.index(memory.id)
+                excerpt = excerpts_raw[idx] if idx < len(excerpts_raw) else None
+            except (ValueError, IndexError):
+                excerpt = None
+            if isinstance(excerpt, str) and excerpt.strip():
+                excerpts.append(
+                    MemoryExcerpt(
+                        outcome=outcome,
+                        excerpt=excerpt.strip(),
+                        timestamp=str(event.get("ts", "")),
+                    )
+                )
+    # Most recent first; cap to a reasonable number.
+    excerpts.sort(key=lambda e: e.timestamp, reverse=True)
+    return ClusterMember(
+        memory=memory,
+        applied_count=counts["applied"],
+        ignored_count=counts["ignored"],
+        contradicted_count=counts["contradicted"],
+        corrected_count=counts["corrected"],
+        excerpts=tuple(excerpts[:MAX_EXCERPTS_PER_MEMORY]),
+    )
+
+
+# ---------------------------------------------------------------------------
+# Diff rendering — the audit-transparency moat
+# ---------------------------------------------------------------------------
+
+
+def render_proposal_diff(proposal: Proposal, by_id: dict[str, Memory]) -> str:
+    """Render a single proposal as a human-reviewable block.
+
+    The narrative phrase: Anthropic's Dreaming consolidates invisibly;
+    bettermemory's `--llm` shows every proposed diff and refuses to
+    commit without your accept. This function is that "shows every
+    proposed diff" — `consolidate.py`'s applier is the "refuses to
+    commit without accept" half.
+    """
+    import difflib
+
+    lines: list[str] = []
+    if isinstance(proposal, MergeProposal):
+        lines.append(
+            f"[MERGE] keeper={proposal.keeper_id} "
+            f"duplicates={list(proposal.duplicate_ids)}"
+        )
+        lines.append(f"  rationale: {proposal.rationale}")
+        keeper = by_id.get(proposal.keeper_id)
+        if keeper is not None:
+            diff = difflib.unified_diff(
+                keeper.body.splitlines(keepends=False),
+                proposal.new_body.splitlines(keepends=False),
+                fromfile=f"{proposal.keeper_id} (current)",
+                tofile=f"{proposal.keeper_id} (merged)",
+                lineterm="",
+            )
+            lines.extend(diff)
+    elif isinstance(proposal, ResolveContradictionProposal):
+        lines.append(
+            f"[RESOLVE_CONTRADICTION] winner={proposal.winner_id} "
+            f"loser={proposal.loser_id} (loser will be tombstoned)"
+        )
+        lines.append(f"  rationale: {proposal.rationale}")
+    elif isinstance(proposal, RewriteRelativeDateProposal):
+        lines.append(f"[REWRITE_DATE] {proposal.memory_id}")
+        lines.append(f"  rationale: {proposal.rationale}")
+        memory = by_id.get(proposal.memory_id)
+        if memory is not None:
+            diff = difflib.unified_diff(
+                memory.body.splitlines(keepends=False),
+                proposal.new_body.splitlines(keepends=False),
+                fromfile=f"{proposal.memory_id} (current)",
+                tofile=f"{proposal.memory_id} (rewritten)",
+                lineterm="",
+            )
+            lines.extend(diff)
+    elif isinstance(proposal, DemoteTierProposal):
+        memory = by_id.get(proposal.memory_id)
+        if memory is None or memory.category is None:
+            current = "?"
+        else:
+            current = memory.category.value
+        lines.append(
+            f"[DEMOTE_TIER] {proposal.memory_id}: {current} -> {proposal.new_category}"
+        )
+        lines.append(f"  rationale: {proposal.rationale}")
+    return "\n".join(lines)
+
+
+# ---------------------------------------------------------------------------
+# Today helper
+# ---------------------------------------------------------------------------
+
+
+def today_iso(now: datetime | None = None) -> str:
+    """Return an ISO-8601 date string for the prompt. Centralised so
+    the same value flows to the LLM, to the rewritten bodies, and to
+    test stubs that pin the date for determinism."""
+    if now is None:
+        from datetime import timezone as _tz
+
+        now = datetime.now(_tz.utc)
+    return now.date().isoformat()
+
+
+__all__ = [
+    "Cluster",
+    "ClusterMember",
+    "MemoryExcerpt",
+    "MergeProposal",
+    "ResolveContradictionProposal",
+    "RewriteRelativeDateProposal",
+    "DemoteTierProposal",
+    "Proposal",
+    "LLMProvider",
+    "OllamaProvider",
+    "AnthropicProvider",
+    "OpenAIProvider",
+    "make_provider",
+    "build_prompt",
+    "parse_and_validate",
+    "build_clusters",
+    "render_proposal_diff",
+    "today_iso",
+    "DEFAULT_OLLAMA_URL",
+    "DEFAULT_OLLAMA_MODEL",
+    "DEFAULT_OLLAMA_TIMEOUT_SECONDS",
+]

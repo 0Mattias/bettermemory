@@ -7,7 +7,123 @@ breaking changes, minor for additive features, patch for fixes. The
 [compatibility contract](CONTRIBUTING.md#versioning-and-the-compatibility-contract)
 spells out exactly what's stable.
 
-## Unreleased
+## 2.5.0 - 2026-05-20
+
+**Verification-grade memory lane: positioning + eval CLI + recall fix +
+Dreaming defense.** The verification-first rebrand, the `bettermemory
+eval` CLI (`memory_helped_rate`, `endorsement_rate`, `silent_miss_rate`),
+the `[embeddings-fast]` extra that closes the recall objection without
+PyTorch, AND the `bettermemory consolidate --llm` Dreaming-defense pass
+that proposes merges / contradiction resolutions / relative-date rewrites
+/ tier demotions from a local Ollama model — refusing to commit any of
+them without your explicit accept. The narrative phrase: *Anthropic's
+Dreaming consolidates invisibly; bettermemory's `--llm` shows every
+proposed diff and refuses to commit without your accept.*
+
+### Added
+
+- **`bettermemory consolidate --llm`: LLM-driven consolidation pass.**
+  Extends the existing four offline passes (dedup, demote-never-applied,
+  cold-scope, scope-typo) with a fifth that clusters related memories
+  and asks an LLM to propose four kinds of mutation: `merge` (combine
+  near-duplicates into a single keeper, tombstone the rest),
+  `resolve_contradiction` (pick a winner from two memories that
+  disagree, tombstone the loser), `rewrite_relative_date` (substitute
+  absolute dates for "today" / "last week" phrases, with today's date
+  passed via the prompt so the model doesn't infer it from stale
+  training data), and `demote_tier` (retag `fact` -> `ambient` when
+  the verifiable claim has been superseded). The `--llm-provider` flag
+  picks between `ollama` (default — local HTTP on port 11434, no
+  egress, no API key), `anthropic` (env `ANTHROPIC_API_KEY`, lazy-
+  imports the `anthropic` SDK), and `openai` (env `OPENAI_API_KEY`,
+  lazy-imports `openai`). Dry-run by default; `--apply` requires
+  *either* `--yes` (batch accept) or an interactive TTY (per-proposal
+  prompt). Hallucinated memory IDs (LLM produces a memory_id not
+  in the cluster) are rejected at validation time *before* the diff
+  renderer sees them. New module `src/bettermemory/llm.py` carries the
+  proposal dataclasses, provider abstraction, prompt builder, validator,
+  cluster builder (union-find on near-duplicate pairs + contradiction-
+  event seeding), and the unified-diff renderer; `consolidate.py` gains
+  `consolidate_llm()`, `_apply_llm_proposal()`, and the
+  `LLMConsolidateReport` / `LLMProposalAction` / `LLMClusterFailure`
+  dataclasses. 38 tests across `tests/test_llm.py` and
+  `tests/test_consolidate_llm.py` cover validation, hallucination
+  rejection, the apply gate, each proposal-type application, and the
+  per-cluster failure-isolation contract.
+- **`[embeddings-fast]` extra: fastembed + ONNX Runtime.** Same
+  retrieval surface as `[embeddings]` (sentence-transformers), a tenth
+  the install size. Default model `BAAI/bge-small-en-v1.5` (384-dim,
+  ~33 MB ONNX) mirrors the dimensionality of `all-MiniLM-L6-v2` so
+  cosine thresholds remain comparable. `[behavior] semantic_provider`
+  picks between providers: `"auto"` (default) prefers torch when both
+  installed (existing `.embeddings.<model>.npz` caches stay
+  byte-stable), then fastembed, then Jaccard fallback. Explicit
+  `"torch"` or `"fastembed"` honoured even when the extra isn't
+  installed — the per-provider WARNING surfaces the missing-extra
+  hint. Persistent cache namespaces by provider:
+  `.embeddings.<model>.npz` (torch, legacy layout) vs
+  `.embeddings.fastembed.<model>.npz` so flipping providers produces
+  a fresh file rather than mixing incompatible vectors. CI gains a
+  `test-embeddings-fast` job pinned to Python 3.13 (fastembed wheels
+  lag 3.14); see `pyproject.toml` for the matching
+  `no_fastembed` / `no_torch_embeddings` pytest markers.
+- **`bettermemory reindex --embeddings`.** After rebuilding the FTS5
+  index, re-embed every active body into the persistent cache.
+  Provider+model-namespaced, so a config swap from torch to fastembed
+  needs warming the new cache file — this is the surface for that
+  warming pass. Reports `embedded` count, resolved provider/model,
+  and the cache path on success; clean exit with an actionable
+  message when the provider isn't available.
+- **`bettermemory eval` CLI subcommand**. Reads `iter_all_events`
+  output plus the active store, joins on memory id, and reports the
+  three rates with Wilson 95% confidence intervals. Flags:
+  `--since {N{s|m|h|d}|all}` (default `30d`, mirroring
+  `verification_stale_days`), `--scope SCOPE`, `--min-retrievals N`
+  (default 5, shared with `health._ENDORSEMENT_DEBT_MIN_RETRIEVALS`),
+  `--silent-miss-limit N` (default 20), `--json`. Text renderer
+  includes the rates, the endorsement-debt rows, and the recent
+  silent-miss candidates; JSON renderer carries every count + CI
+  bound for CI pipelines. Pure compute layer in
+  `src/bettermemory/eval.py` (`compute_eval`, `parse_since`,
+  `_wilson_interval`, `render_text`); 52 tests in
+  `tests/test_eval.py` cover each numerator/denominator path,
+  scope/since filtering, the ambient + tombstoned + has-explicit
+  endorsement-debt exclusions, the silent-miss buffer cap, and a
+  CLI smoke run.
+- **`docs/eval.md`** defines the three rates publicly so they're
+  citable by any system that exposes the right telemetry, not just
+  this one. Includes the 2×3 healthy-vs-pathological matrix,
+  comparison to LongMemEval, the CLI shape, and the calibration
+  caveats (the `v1_top1_high` threshold rule's behaviour on real
+  distributions is the open question).
+- **`docs/blog/memory-is-rotting.md`** standalone post draft on the
+  motivating problem (auth-middleware example), the staleness-verdict
+  trifecta, claim-level audit, and the endorsement-debt category.
+  Designed for HN / Lobsters / r/LocalLLaMA discussion.
+- **`docs/ROADMAP.md`** publicly commits the next four work items
+  (optional fastembed embeddings, the eval CLI shipped here, local
+  `consolidate --llm` Dreaming-equivalent, Claude Code auto-memory
+  ingest bridge) and the deliberately-out-of-scope list (managed
+  cloud, multi-user RBAC, graph backend, non-MCP SDK, LongMemEval
+  leaderboard chase).
+
+### Changed (positioning, no behaviour change)
+
+- **README, pyproject `description`, plugin marketplace, plugin
+  README, and SKILL frontmatter rebranded around verification.**
+  Hero line is now "Memory you can verify"; the comparison table
+  bolds the four rows where bettermemory uniquely runs (per-hit
+  staleness verdict, claim-level audit trail, user-inference
+  confirmation tier, endorsement-debt visibility); the Features
+  list leads with a "Verification surface" section. The previous
+  "persistent memory for Claude Code, retrieved on demand" framing
+  remained accurate but didn't differentiate from a now-commoditized
+  local-MCP memory market (claude-mem at 65k stars, a dozen
+  SQLite-FTS5 clones, Anthropic's free vendor-native auto-memory +
+  Dreaming). The verification surface is the lane no funded
+  competitor (Mem0, Zep, Letta, Cognee, Supermemory, claude-mem)
+  occupies; the rebrand makes that legible at the PyPI/GitHub
+  surface.
 
 ## 2.4.0 - 2026-05-20
 

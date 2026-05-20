@@ -65,18 +65,40 @@ recency_boost_half_life_days = 30
 # The MCP `mode` parameter on memory_search overrides this per-call.
 search_mode = "keyword"
 
-# When true, memory_write dedup uses sentence-transformers cosine
-# similarity instead of Jaccard on token sets — catches paraphrases like
-# "the database" / "Postgres" that lexical overlap misses. Requires the
-# `embeddings` extra: `pip install bettermemory[embeddings]`. Falls back
-# to Jaccard with a WARNING log line when the extra isn't installed, so
-# flipping the bit without the deps is safe.
+# When true, memory_write dedup uses cosine similarity on sentence
+# embeddings instead of Jaccard on token sets — catches paraphrases
+# like "the database" / "Postgres" that lexical overlap misses.
+# Requires one of the embedding extras (see `semantic_provider`). Falls
+# back to Jaccard with a WARNING log line when no extra is installed,
+# so flipping the bit without the deps is safe.
 semantic_dedup = false
 
-# Embedding model name for semantic dedup. all-MiniLM-L6-v2 is the small
-# default; replace with a larger model if you need better paraphrase
-# detection and have CPU/RAM headroom.
+# Which embedding provider to use. One of:
+#   "auto"      — pick torch when [embeddings] is installed, else
+#                 fastembed when [embeddings-fast] is installed, else
+#                 fall back to Jaccard. Default.
+#   "torch"     — sentence-transformers + PyTorch. Heavier install
+#                 (~500MB) but the well-trodden path.
+#   "fastembed" — fastembed + ONNX Runtime. ~50MB total. Same retrieval
+#                 surface, smaller footprint. Wheels lag the newest
+#                 Python by a release; use the torch extra on 3.14.
+# An explicit value is honoured even when the extra isn't installed —
+# you'll see a per-provider WARNING and the Jaccard fallback. Auto +
+# both installed prefers torch so existing `.embeddings.<model>.npz`
+# caches stay byte-stable.
+semantic_provider = "auto"
+
+# Embedding model for the torch provider. `all-MiniLM-L6-v2` is the
+# small default (~80MB); swap for a larger sentence-transformers
+# model if you need better paraphrase detection and have CPU/RAM
+# headroom. Read only when `semantic_provider` resolves to "torch".
 semantic_model_name = "all-MiniLM-L6-v2"
+
+# Embedding model for the fastembed provider. `BAAI/bge-small-en-v1.5`
+# is the 384-dim small default (~33MB ONNX); see the fastembed model
+# catalogue for alternatives. Read only when `semantic_provider`
+# resolves to "fastembed".
+semantic_model_fastembed = "BAAI/bge-small-en-v1.5"
 
 # Cosine thresholds for the semantic path. Cosine on normalized
 # embeddings tends to land 0.5-0.9 for semantically similar sentences,
@@ -148,7 +170,19 @@ class BehaviorConfig:
     search_mode: str = "keyword"
     # Semantic dedup is opt-in — see DEFAULT_CONFIG for prose.
     semantic_dedup: bool = False
+    # Provider selection — "auto" (default), "torch", or "fastembed".
+    # The resolver in `semantic.resolve_provider` honours an explicit
+    # value even when the corresponding extra isn't installed; auto-
+    # detection prefers torch when both extras are present so legacy
+    # `.embeddings.<model>.npz` caches stay byte-stable.
+    semantic_provider: str = "auto"
+    # Torch-provider model. Read when the resolved provider is "torch".
     semantic_model_name: str = "all-MiniLM-L6-v2"
+    # Fastembed-provider model. Read when the resolved provider is
+    # "fastembed". Default is the 384-dim BGE small variant — same
+    # vector dimensionality as all-MiniLM-L6-v2 so threshold settings
+    # are roughly interchangeable.
+    semantic_model_fastembed: str = "BAAI/bge-small-en-v1.5"
     semantic_high_threshold: float = 0.85
     semantic_medium_threshold: float = 0.65
     # Floor on `applied_count` for inclusion in the heavily_used report.
@@ -312,8 +346,12 @@ def load_config(path: Path | None = None) -> Config:
                 behavior_raw.get("recency_boost_half_life_days", 30.0)
             ),
             semantic_dedup=bool(behavior_raw.get("semantic_dedup", False)),
+            semantic_provider=str(behavior_raw.get("semantic_provider", "auto")),
             semantic_model_name=str(
                 behavior_raw.get("semantic_model_name", "all-MiniLM-L6-v2")
+            ),
+            semantic_model_fastembed=str(
+                behavior_raw.get("semantic_model_fastembed", "BAAI/bge-small-en-v1.5")
             ),
             semantic_high_threshold=float(
                 behavior_raw.get("semantic_high_threshold", 0.85)

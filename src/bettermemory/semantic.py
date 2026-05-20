@@ -4,25 +4,44 @@ The default `find_similar` is Jaccard on stopword-stripped, kebab-expanded
 token sets — fast, deterministic, no extra deps. It catches lexical
 overlap well but misses paraphrases ("the database" vs "Postgres",
 "shipped" vs "released"). When the user enables `[behavior]
-semantic_dedup = true` in config and has installed the `embeddings` extra,
-we add a sentence-transformers cosine pass that catches those.
+semantic_dedup = true` in config and has installed one of the embedding
+extras, we add a cosine-similarity pass that catches those.
 
-Imports are lazy — the module loads cleanly even when the extra isn't
-installed. A failed `get_model()` returns None and the caller falls back
-to Jaccard with a single WARNING log line, so a user who flipped the
-config bit without installing the extras is told plainly that they
-didn't get what they asked for.
+Two providers ship; both expose the same `.encode(body,
+normalize_embeddings=True) -> numpy.ndarray` shape so the dedup path is
+provider-agnostic:
+
+- **torch** (`[embeddings]` extra): sentence-transformers + PyTorch.
+  Default model `all-MiniLM-L6-v2` (~80 MB). Heavier disk + memory
+  footprint, but it's the well-trodden path with the broadest model
+  catalogue.
+- **fastembed** (`[embeddings-fast]` extra): fastembed + ONNX Runtime.
+  Default model `BAAI/bge-small-en-v1.5` (~33 MB ONNX, ~50 MB runtime
+  total). Same retrieval surface; smaller install for users who can't
+  afford ~500 MB of torch.
+
+When both extras are installed `torch` wins by default — existing
+`.embeddings.<model>.npz` caches stay byte-stable. Override the
+auto-detection precedence via `[behavior] semantic_provider = "fastembed"`.
+
+Imports are lazy — the module loads cleanly with neither extra installed.
+A failed `get_model()` returns None and the caller falls back to Jaccard
+with a single WARNING log line, so a user who flipped the config bit
+without installing the deps is told plainly.
 
 Caching: an in-process dict keyed by `memory_id` — when a memory is
 updated, its `updated` timestamp moves, the cache key (`updated_key`)
 mismatches, and we recompute. Optionally, a persistent layer flushes the
-cache to `<root>/.embeddings.<model>.npz` so a fresh MCP server doesn't
-have to re-embed the whole store on first use. The persistent layer is
-opt-in via `configure_persistent_cache(root, model_name)` and is a
-transparent layer on top of the in-memory cache: hydration happens
-lazily on first read, persistence happens at flush points (end of
-`find_similar` calls). No-op when the embeddings extra isn't installed
-— numpy is a transitive dep through sentence-transformers.
+cache to disk so a fresh MCP server doesn't have to re-embed the whole
+store on first use. The persistent layer is opt-in via
+`configure_persistent_cache(root, model_name, provider=...)`:
+
+- torch: `<root>/.embeddings.<safe_model>.npz` (legacy layout — keeps
+  existing caches working without migration).
+- fastembed: `<root>/.embeddings.fastembed.<safe_model>.npz`. Provider
+  namespacing prevents a vector produced by one provider from leaking
+  into the other's run — fastembed and torch vectors live in different
+  embedding spaces even at the same nominal dimensionality.
 
 Cache invalidation hierarchy (most-frequent first):
 - Body unchanged, in-memory hit: returns instantly.
@@ -31,9 +50,9 @@ Cache invalidation hierarchy (most-frequent first):
 - Server restart with persistent cache: hydrate from disk; entries
   whose memory_id no longer exists stay in the file but are inert
   (nothing to match against); a future migration may prune them.
-- Model swap: persistent file is namespaced by model name, so flipping
-  `semantic_model_name` in config produces a new file at first use
-  rather than mixing vectors from different models.
+- Provider/model swap: file is namespaced by both, so flipping
+  `semantic_provider` or `semantic_model_name` produces a fresh file
+  at first use rather than mixing incompatible vectors.
 """
 
 from __future__ import annotations
@@ -43,15 +62,26 @@ import logging
 import re
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
 log = logging.getLogger("bettermemory.semantic")
 
 
-# Default model. all-MiniLM-L6-v2 is the standard small choice — ~80 MB,
-# fast on CPU, decent quality for English short-text similarity. Override
-# via config.behavior.semantic_model_name when there's a reason.
+# Provider identifier. `torch` = sentence-transformers ([embeddings]
+# extra). `fastembed` = fastembed ([embeddings-fast] extra). Used by
+# the persistent-cache path-namespacing and the auto-detection rule.
+Provider = Literal["torch", "fastembed"]
+
+# Default model per provider. Override via the matching config knob
+# (`semantic_model_name` for torch, `semantic_model_fastembed` for
+# fastembed). Different providers use different model catalogues — same
+# nominal task, different identifiers.
+#
+# `DEFAULT_MODEL_NAME` is the torch default, kept under its historic
+# name for backwards-compatible callers that still pass it explicitly
+# (and the tests that reference the constant).
 DEFAULT_MODEL_NAME = "all-MiniLM-L6-v2"
+DEFAULT_FASTEMBED_MODEL_NAME = "BAAI/bge-small-en-v1.5"
 
 
 # ---------------------------------------------------------------------------
@@ -59,22 +89,52 @@ DEFAULT_MODEL_NAME = "all-MiniLM-L6-v2"
 # ---------------------------------------------------------------------------
 
 
-_MODEL_CACHE: dict[str, Any] = {}
-_LOAD_FAILED: set[str] = set()
-_LOAD_FAILED_LOGGED: set[str] = set()
+# Cache keys are `(provider, model_name)` tuples so a fastembed model
+# and a torch model that happen to share a name (rare in practice but
+# possible) don't collide. The legacy `_MODEL_CACHE: dict[str, Any]`
+# would have failed silently in that case — the new key shape makes
+# the provider distinction first-class.
+_MODEL_CACHE: dict[tuple[Provider, str], Any] = {}
+_LOAD_FAILED: set[tuple[Provider, str]] = set()
+_LOAD_FAILED_LOGGED: set[tuple[Provider, str]] = set()
 
 
-def get_model(model_name: str = DEFAULT_MODEL_NAME) -> Any | None:
-    """Return a cached `SentenceTransformer` instance, or None if the
-    extra isn't installed / the model can't be loaded.
+class _FastembedAdapter:
+    """Wraps a `fastembed.TextEmbedding` to expose the same `.encode`
+    surface that `sentence_transformers.SentenceTransformer` ships.
 
-    None is the "fall back to Jaccard" signal. We log the failure once
-    per (process, model_name) at WARNING so the user sees a clear hint
-    on the first call but doesn't get spammed.
+    The dedup path in `cached_embed` calls
+    `model.encode(text, normalize_embeddings=True)` and expects a 1-D
+    numpy array. fastembed returns a generator of vectors from
+    `model.embed([texts])` — already L2-normalised by default for the
+    BGE family — so the adapter wraps a single-text encode into the
+    list/generator dance and unboxes the first result.
     """
-    if model_name in _MODEL_CACHE:
-        return _MODEL_CACHE[model_name]
-    if model_name in _LOAD_FAILED:
+
+    def __init__(self, model: Any) -> None:
+        self._model = model
+
+    def encode(self, text: str, normalize_embeddings: bool = True) -> Any:
+        # fastembed returns a generator that yields numpy arrays. The
+        # BGE / E5 / nomic-embed families ship normalised by default;
+        # the kwarg is accepted for API parity with sentence-transformers
+        # but does not need to re-normalise here.
+        del normalize_embeddings  # API-parity placeholder; see above.
+        vectors = list(self._model.embed([text]))
+        return vectors[0]
+
+
+def _load_torch_model(model_name: str) -> Any | None:
+    """Best-effort load of a sentence-transformers model.
+
+    Returns the model on success, None when the extra is missing or the
+    model can't be loaded. Logs once per (process, "torch", model_name)
+    at WARNING.
+    """
+    key: tuple[Provider, str] = ("torch", model_name)
+    if key in _MODEL_CACHE:
+        return _MODEL_CACHE[key]
+    if key in _LOAD_FAILED:
         return None
 
     try:
@@ -82,34 +142,166 @@ def get_model(model_name: str = DEFAULT_MODEL_NAME) -> Any | None:
         # ImportError below is the user-friendly path.
         from sentence_transformers import SentenceTransformer
     except ImportError:
-        if model_name not in _LOAD_FAILED_LOGGED:
+        if key not in _LOAD_FAILED_LOGGED:
             log.warning(
-                "semantic_dedup is enabled but the embeddings extra is "
-                "not installed. Install with "
+                "semantic provider 'torch' requested but the "
+                "embeddings extra is not installed. Install with "
                 "`pip install bettermemory[embeddings]` (or "
                 '`uv pip install -e ".[embeddings]"`). Falling back to '
-                "Jaccard similarity."
+                "Jaccard / keyword."
             )
-            _LOAD_FAILED_LOGGED.add(model_name)
-        _LOAD_FAILED.add(model_name)
+            _LOAD_FAILED_LOGGED.add(key)
+        _LOAD_FAILED.add(key)
         return None
 
     try:
         model = SentenceTransformer(model_name)
     except Exception as exc:  # noqa: BLE001 — model load can fail many ways.
-        if model_name not in _LOAD_FAILED_LOGGED:
+        if key not in _LOAD_FAILED_LOGGED:
             log.warning(
-                "failed to load embedding model %r: %s. Falling back to "
-                "Jaccard similarity.",
+                "failed to load sentence-transformers model %r: %s. "
+                "Falling back to Jaccard / keyword.",
                 model_name,
                 exc,
             )
-            _LOAD_FAILED_LOGGED.add(model_name)
-        _LOAD_FAILED.add(model_name)
+            _LOAD_FAILED_LOGGED.add(key)
+        _LOAD_FAILED.add(key)
         return None
 
-    _MODEL_CACHE[model_name] = model
+    _MODEL_CACHE[key] = model
     return model
+
+
+def _load_fastembed_model(model_name: str) -> Any | None:
+    """Best-effort load of a fastembed model wrapped in
+    `_FastembedAdapter` so callers see the same `.encode` surface as the
+    torch path.
+
+    Returns the adapter on success, None when the extra is missing or
+    the model can't be loaded. Logs once per (process, "fastembed",
+    model_name).
+
+    Network: fastembed downloads ONNX weights to its own cache on first
+    use; air-gapped installs need to pre-stage the cache directory (see
+    fastembed docs for `FASTEMBED_CACHE_DIR`). The runtime path doesn't
+    gate on a network flag — that's left to the user's environment.
+    """
+    key: tuple[Provider, str] = ("fastembed", model_name)
+    if key in _MODEL_CACHE:
+        return _MODEL_CACHE[key]
+    if key in _LOAD_FAILED:
+        return None
+
+    try:
+        from fastembed import TextEmbedding
+    except ImportError:
+        if key not in _LOAD_FAILED_LOGGED:
+            log.warning(
+                "semantic provider 'fastembed' requested but the "
+                "embeddings-fast extra is not installed. Install with "
+                "`pip install bettermemory[embeddings-fast]` (or "
+                '`uv pip install -e ".[embeddings-fast]"`). Falling '
+                "back to Jaccard / keyword."
+            )
+            _LOAD_FAILED_LOGGED.add(key)
+        _LOAD_FAILED.add(key)
+        return None
+
+    try:
+        model: Any = TextEmbedding(model_name=model_name)
+    except Exception as exc:  # noqa: BLE001 — model load can fail many ways.
+        if key not in _LOAD_FAILED_LOGGED:
+            log.warning(
+                "failed to load fastembed model %r: %s. Falling back "
+                "to Jaccard / keyword.",
+                model_name,
+                exc,
+            )
+            _LOAD_FAILED_LOGGED.add(key)
+        _LOAD_FAILED.add(key)
+        return None
+
+    adapter = _FastembedAdapter(model)
+    _MODEL_CACHE[key] = adapter
+    return adapter
+
+
+def _torch_extra_installed() -> bool:
+    """Return True iff the sentence-transformers import resolves.
+
+    Uses `importlib.util.find_spec` so we never actually import the
+    module — checking the extra's presence shouldn't pay the import
+    cost. Same idiom for `_fastembed_extra_installed`.
+    """
+    import importlib.util
+
+    return importlib.util.find_spec("sentence_transformers") is not None
+
+
+def _fastembed_extra_installed() -> bool:
+    """Return True iff the fastembed import resolves. See
+    `_torch_extra_installed` for the spec-check rationale."""
+    import importlib.util
+
+    return importlib.util.find_spec("fastembed") is not None
+
+
+def resolve_provider(preference: str | None = None) -> Provider | None:
+    """Pick a provider given a config preference.
+
+    `preference` is the raw `[behavior] semantic_provider` value
+    (typically "auto" / "torch" / "fastembed" / None). The resolution
+    rule:
+
+    - Explicit "torch" or "fastembed": honour it, even if the extra
+      isn't installed. The caller then sees None from `get_model()`
+      and the per-provider warning explains the missing extra.
+    - "auto" or None: torch wins when installed (existing caches stay
+      byte-stable), then fastembed, then None (no extra installed).
+
+    Returns the chosen Provider, or None when no provider is available.
+    """
+    pref = (preference or "auto").strip().lower()
+    if pref == "torch":
+        return "torch"
+    if pref == "fastembed":
+        return "fastembed"
+    if pref not in {"auto", ""}:
+        log.warning(
+            "unknown semantic_provider %r; falling back to auto-detect.",
+            preference,
+        )
+    if _torch_extra_installed():
+        return "torch"
+    if _fastembed_extra_installed():
+        return "fastembed"
+    return None
+
+
+def get_model(
+    model_name: str = DEFAULT_MODEL_NAME,
+    *,
+    provider: Provider | None = None,
+) -> Any | None:
+    """Return a cached embedding model (or None for Jaccard fallback).
+
+    By default this is the legacy torch path — passing only
+    `model_name` keeps every existing call site (and every existing
+    test) byte-stable. Pass `provider="fastembed"` to opt into the
+    ONNX path explicitly, or `provider="torch"` to be explicit on the
+    legacy path.
+
+    The returned object exposes
+    `.encode(text, normalize_embeddings=True) -> numpy.ndarray` for both
+    providers. None is the "fall back to Jaccard" signal.
+    """
+    chosen: Provider = provider or "torch"
+    if chosen == "torch":
+        return _load_torch_model(model_name)
+    # The Provider Literal narrows to "fastembed" in the only remaining
+    # branch — no defensive else needed; mypy strict catches invalid
+    # providers at type-check time.
+    return _load_fastembed_model(model_name)
 
 
 # ---------------------------------------------------------------------------
@@ -142,18 +334,31 @@ _HYDRATED: bool = False
 _DIRTY: bool = False
 
 
-def configure_persistent_cache(root: Path | None, model_name: str) -> None:
+def configure_persistent_cache(
+    root: Path | None,
+    model_name: str,
+    *,
+    provider: Provider = "torch",
+) -> None:
     """Enable (or disable) on-disk persistence of the embedding cache.
 
     `root` is the memory store directory; the cache file lives next to
-    `.events.jsonl` at `<root>/.embeddings.<safe_model>.npz`. Pass None
-    for `root` to disable persistence — the in-memory cache continues
-    to work but a server restart recomputes everything.
+    `.events.jsonl`. Pass None for `root` to disable persistence — the
+    in-memory cache continues to work but a server restart recomputes
+    everything.
 
-    `model_name` is namespaced into the filename so swapping models in
-    config produces a fresh file rather than mixing incompatible
-    vectors. Characters not safe for filenames are replaced with
-    underscore (e.g. `sentence-transformers/all-MiniLM-L6-v2` becomes
+    File layout (per provider):
+    - torch: `<root>/.embeddings.<safe_model>.npz` (legacy — keeps
+      pre-2.5.0 caches loadable without migration).
+    - fastembed: `<root>/.embeddings.fastembed.<safe_model>.npz`. The
+      provider segment prevents fastembed vectors and torch vectors
+      (different embedding spaces) from being read into the same
+      run.
+
+    `model_name` is namespaced into the filename so swapping models
+    produces a fresh file rather than mixing incompatible vectors.
+    Characters not safe for filenames are replaced with underscore
+    (e.g. `sentence-transformers/all-MiniLM-L6-v2` becomes
     `sentence-transformers_all-MiniLM-L6-v2`).
 
     Calling this doesn't trigger a load; the next `cached_embed` call
@@ -161,24 +366,30 @@ def configure_persistent_cache(root: Path | None, model_name: str) -> None:
     is never used in a session.
 
     When the resolved path differs from the previously-configured one
-    (including the disable -> enable transition), the in-memory cache
-    is cleared so a stale entry from a different model can't hit on
-    the next lookup. Without that, swapping models would silently
-    return the old model's vector for the same `(memory_id,
-    updated_key)` and leave `_DIRTY=False`, so the new model's
-    persistent file would never be written.
+    (including the disable -> enable transition, OR a provider swap),
+    the in-memory cache is cleared so a stale entry from a different
+    provider/model can't hit on the next lookup. Without that,
+    swapping providers would silently return the old provider's
+    vector for the same `(memory_id, updated_key)` and leave
+    `_DIRTY=False`, so the new file would never be written.
     """
     global _PERSISTENT_PATH, _HYDRATED, _DIRTY
     new_path: Path | None = None
     if root is not None:
         safe = re.sub(r"[^a-zA-Z0-9._-]", "_", model_name)
-        new_path = Path(root) / f".embeddings.{safe}.npz"
+        if provider == "torch":
+            # Legacy layout — preserved verbatim so pre-2.5.0
+            # `.embeddings.<model>.npz` files keep loading without a
+            # migration step.
+            new_path = Path(root) / f".embeddings.{safe}.npz"
+        else:
+            new_path = Path(root) / f".embeddings.{provider}.{safe}.npz"
 
     if new_path != _PERSISTENT_PATH:
         # Drop the in-memory cache; vectors keyed under the old model
         # name aren't valid lookup hits for the new one, and any
         # already-flushed entries can be re-hydrated from the new
-        # model's file (or recomputed if no file exists yet).
+        # file (or recomputed if no file exists yet).
         _EMBEDDING_CACHE.clear()
 
     _PERSISTENT_PATH = new_path
@@ -377,10 +588,13 @@ def reset_caches() -> None:
 
 __all__ = [
     "DEFAULT_MODEL_NAME",
+    "DEFAULT_FASTEMBED_MODEL_NAME",
+    "Provider",
     "configure_persistent_cache",
     "flush_persistent_cache",
     "get_model",
     "cached_embed",
     "cosine_similarity_normalized",
+    "resolve_provider",
     "reset_caches",
 ]
