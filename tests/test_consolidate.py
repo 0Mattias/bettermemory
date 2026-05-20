@@ -10,6 +10,7 @@ from __future__ import annotations
 import json
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
+from typing import Any
 
 import pytest
 
@@ -506,6 +507,54 @@ def test_render_text_marks_dry_run_vs_applied() -> None:
     assert "dry-run" in render_text(dry).lower()
     applied = ConsolidateReport(applied=True)
     assert "applied" in render_text(applied).lower()
+
+
+def test_failures_aggregated_and_rendered(
+    store: Store,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Regression for the L5 audit finding. The dedup apply loop used
+    to log per-failure warnings but never aggregated them on the
+    report. Ten disk-full errors would scroll past the user's
+    terminal with no rollup. Now every failed `store.tombstone` is
+    captured in `report.failures` and surfaces in both the JSON
+    payload and the text rendering."""
+    import time
+
+    a = store.write(content="alpha beta gamma delta", scopes=["tools"])
+    time.sleep(0.01)
+    store.write(content="alpha beta gamma delta", scopes=["tools"])
+
+    original_tombstone = Store.tombstone
+
+    def failing_tombstone(self: Store, memory_id: str, **kwargs: Any) -> Any:
+        raise OSError("simulated disk-full")
+
+    monkeypatch.setattr(Store, "tombstone", failing_tombstone)
+
+    report = consolidate(store, apply=True)
+    # Restore so the test cleanup doesn't choke.
+    monkeypatch.setattr(Store, "tombstone", original_tombstone)
+
+    assert report.failures, "expected at least one captured failure"
+    failure = report.failures[0]
+    assert failure.kind == "tombstone"
+    assert "disk-full" in failure.reason
+
+    # The aggregated rollup must appear in the human-readable render.
+    text = render_text(report)
+    assert "Failures (" in text, f"failures section missing from render:\n{text}"
+    assert "disk-full" in text
+
+    # And in the JSON payload.
+    import json as _json
+    from bettermemory.consolidate import render_json
+
+    payload = _json.loads(render_json(report))
+    assert payload["failures"], "failures missing from JSON payload"
+    assert payload["failures"][0]["kind"] == "tombstone"
+    # The action that failed isn't recorded in actions_taken.
+    assert a.id not in {act["memory_id"] for act in payload["actions_taken"]}
 
 
 def test_render_json_is_valid_json_round_trippable() -> None:

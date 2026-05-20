@@ -173,6 +173,25 @@ class ConsolidateAction:
 
 
 @dataclass
+class ConsolidateFailure:
+    """A single action that the apply pass attempted but couldn't
+    complete. Aggregated so a run that hits 10 disk-full errors
+    surfaces as one rollup, not 10 stray warning lines that scroll
+    off the user's terminal."""
+
+    kind: str  # "tombstone" | "demote"
+    memory_id: str
+    reason: str
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "kind": self.kind,
+            "memory_id": self.memory_id,
+            "reason": self.reason,
+        }
+
+
+@dataclass
 class ConsolidateReport:
     dedup_candidates: list[DedupCandidate] = field(default_factory=list)
     demotion_candidates: list[DemotionCandidate] = field(default_factory=list)
@@ -180,6 +199,7 @@ class ConsolidateReport:
     scope_typo_pairs: list[ScopeTypoPair] = field(default_factory=list)
     applied: bool = False
     actions_taken: list[ConsolidateAction] = field(default_factory=list)
+    failures: list[ConsolidateFailure] = field(default_factory=list)
     dedup_method: str = "jaccard"  # "semantic" if the model was available
 
     def to_dict(self) -> dict[str, Any]:
@@ -193,6 +213,7 @@ class ConsolidateReport:
             ],
             "scope_typo_pairs": [p.to_dict() for p in self.scope_typo_pairs],
             "actions_taken": [a.to_dict() for a in self.actions_taken],
+            "failures": [f.to_dict() for f in self.failures],
         }
 
 
@@ -628,6 +649,13 @@ def consolidate(
                 candidate.duplicate_id,
                 exc,
             )
+            report.failures.append(
+                ConsolidateFailure(
+                    kind="tombstone",
+                    memory_id=candidate.duplicate_id,
+                    reason=str(exc),
+                )
+            )
 
     # Demotion: retag to category=ambient. Skip any memory that was
     # just tombstoned in the dedup pass — same id can't be both.
@@ -658,6 +686,13 @@ def consolidate(
                 "consolidate: failed to demote %s: %s",
                 demotion.memory_id,
                 exc,
+            )
+            report.failures.append(
+                ConsolidateFailure(
+                    kind="demote",
+                    memory_id=demotion.memory_id,
+                    reason=str(exc),
+                )
             )
 
     return report
@@ -741,6 +776,16 @@ def render_text(report: ConsolidateReport) -> str:
                 "or otherwise skipped)"
             )
         lines.append("")
+
+        if report.failures:
+            lines.append(f"Failures ({len(report.failures)})")
+            for f in report.failures:
+                lines.append(f"  {f.kind}  {f.memory_id}  ({f.reason})")
+            lines.append(
+                "  Investigate the underlying issue (disk space, "
+                "permissions, lock contention) before re-running."
+            )
+            lines.append("")
 
     return "\n".join(lines) + "\n"
 
