@@ -243,3 +243,161 @@ def test_status_returns_path_for_missing(tmp_path: Path) -> None:
     s = index.status(root)
     assert s["exists"] is False
     assert s["path"].endswith(".index.sqlite")
+
+
+# ---------------------------------------------------------------------------
+# id → filename lookup (H1 — schema v2)
+# ---------------------------------------------------------------------------
+
+
+def test_filenames_for_ids_resolves_written_memories(
+    store: Store, memory_dir: Path
+) -> None:
+    """The lookup that `_load_search_candidates` uses to skip
+    parsing the whole store. Every newly-written memory should
+    have a row populated on the same transaction."""
+    a = store.write(content="alpha", scopes=["tools"])
+    b = store.write(content="beta", scopes=["tools"])
+
+    filenames = index.filenames_for_ids(memory_dir, [a.id, b.id])
+    assert set(filenames.keys()) == {a.id, b.id}
+    # Filenames must resolve to real .md files in the store root.
+    for fn in filenames.values():
+        assert (memory_dir / fn).exists(), f"filename {fn!r} doesn't exist"
+
+
+def test_filenames_for_ids_omits_unknown_ids(
+    store: Store, memory_dir: Path
+) -> None:
+    """An id that doesn't correspond to an index row is silently
+    omitted — the caller (_load_search_candidates) falls back to
+    load_all for those candidates."""
+    a = store.write(content="something", scopes=["tools"])
+    filenames = index.filenames_for_ids(
+        memory_dir, [a.id, "01JUNKEEEEEEEEEEEEEEEEEEEE"]
+    )
+    assert a.id in filenames
+    assert "01JUNKEEEEEEEEEEEEEEEEEEEE" not in filenames
+
+
+def test_filenames_for_ids_empty_list_short_circuits(memory_dir: Path) -> None:
+    """No index touch on an empty input — keeps callers cheap
+    when the FTS pre-filter returned nothing."""
+    assert index.filenames_for_ids(memory_dir, []) == {}
+
+
+# ---------------------------------------------------------------------------
+# memory_links table (H1 — schema v2)
+# ---------------------------------------------------------------------------
+
+
+def test_links_for_returns_outbound_and_inbound(
+    store: Store, memory_dir: Path
+) -> None:
+    """The reverse-link lookup that replaces _links_payload's
+    load_all scan. A memory's links populate the index on write;
+    the index then supports both directions."""
+    from bettermemory.models import LinkType, MemoryLink
+
+    a = store.write(content="A body", scopes=["tools"])
+    b = store.write(content="B body", scopes=["tools"])
+    # B supersedes A — write B with a link pointing at A.
+    b_with_link = b.model_copy(
+        update={
+            "links": [
+                MemoryLink(
+                    type=LinkType.SUPERSEDES, target_id=a.id, note="reason"
+                )
+            ]
+        }
+    )
+    store.update(b_with_link)
+
+    outbound_a, inbound_a = index.links_for(memory_dir, a.id)
+    assert outbound_a == []
+    assert inbound_a == [("supersedes", b.id, "reason")]
+
+    outbound_b, inbound_b = index.links_for(memory_dir, b.id)
+    assert outbound_b == [("supersedes", a.id, "reason")]
+    assert inbound_b == []
+
+
+def test_links_for_returns_empty_when_no_index(tmp_path: Path) -> None:
+    """No index file → empty result. The handler falls back to
+    `load_all` in this case, so the empty return is the cue."""
+    root = tmp_path / "memories"
+    root.mkdir()
+    out, inbound = index.links_for(root, "01HXYZ000000000000000000ZZ")
+    assert out == []
+    assert inbound == []
+
+
+def test_links_cleanup_on_tombstone(
+    store: Store, memory_dir: Path
+) -> None:
+    """Tombstoning a memory must drop all its rows from
+    `memory_links` — both source-side and target-side. The DELETE
+    trigger handles the cascade so reverse-link queries after a
+    tombstone don't dangle."""
+    from bettermemory.models import LinkType, MemoryLink
+
+    a = store.write(content="A body", scopes=["tools"])
+    b = store.write(content="B body", scopes=["tools"])
+    b_with_link = b.model_copy(
+        update=dict(
+            links=[MemoryLink(type=LinkType.EXTENDS, target_id=a.id)]
+        )
+    )
+    store.update(b_with_link)
+    # Pre-condition: link exists.
+    _, inbound_a = index.links_for(memory_dir, a.id)
+    assert inbound_a, "test setup: link must be present before tombstone"
+
+    # Tombstone the *source* (B). The link row with source_id=B must go.
+    store.tombstone(b.id, reason="cleanup")
+    _, inbound_after = index.links_for(memory_dir, a.id)
+    assert inbound_after == [], (
+        f"reverse link not cleaned up after tombstone; got {inbound_after}"
+    )
+
+
+# ---------------------------------------------------------------------------
+# Schema version migration (H1)
+# ---------------------------------------------------------------------------
+
+
+def test_v1_index_downgraded_to_v2_via_drop_and_recreate(
+    store: Store, memory_dir: Path
+) -> None:
+    """Regression: an existing v1-schema index on disk must be
+    transparently upgraded to v2 on the next connect. The data
+    tables are dropped and recreated empty; store hooks repopulate
+    incrementally and `bettermemory reindex` does the explicit full
+    rebuild. The fallback in `_load_search_candidates` keeps search
+    working through the transition."""
+    import sqlite3
+
+    a = store.write(content="bridge", scopes=["tools"])
+    db_path = index.index_path(memory_dir)
+    # Force the on-disk version backwards to simulate a stale v1
+    # index. The data tables look fine; only the meta version flips.
+    with sqlite3.connect(db_path) as conn:
+        conn.execute(
+            "UPDATE meta SET value = '1' WHERE key = 'schema_version'"
+        )
+
+    # Status call triggers _ensure_schema, which sees v1 < v2 and
+    # drops + recreates.
+    s = index.status(memory_dir)
+    assert s["schema_version"] == index.SCHEMA_VERSION
+    assert s["indexed_count"] == 0, (
+        "after a v1→v2 migration the table should be empty until "
+        "the next write or explicit reindex"
+    )
+    # A subsequent reindex restores the row count.
+    index.rebuild(memory_dir, store.load_all())
+    s_after = index.status(memory_dir)
+    assert s_after["indexed_count"] >= 1
+    # And the H1 surfaces work again on the reindexed store.
+    filenames = index.filenames_for_ids(memory_dir, [a.id])
+    assert a.id in filenames

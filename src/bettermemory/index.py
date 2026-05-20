@@ -68,8 +68,25 @@ log = logging.getLogger("bettermemory.index")
 
 # Bump when the schema changes. A reader that sees a version it
 # doesn't support drops the file and forces a rebuild rather than
-# risk misinterpreting the rows.
-SCHEMA_VERSION = 1
+# risk misinterpreting the rows. Migration semantics:
+#
+#   - on-disk > code SCHEMA_VERSION: raise IndexVersionError. The
+#     caller (Store / CLI) should delete the index file and run
+#     `bettermemory reindex`. We don't downgrade because we don't
+#     know what newer columns the existing rows depend on.
+#   - on-disk < code SCHEMA_VERSION: drop the data tables and
+#     recreate empty. The Store hooks repopulate gradually as
+#     writes land; `bettermemory reindex` does the explicit
+#     full rebuild. The fallback path in `_load_search_candidates`
+#     handles the empty-index case by routing to `load_all`, so
+#     search keeps working while the index repopulates.
+#
+# Version 2: adds `memories.filename` for id → path lookup (so
+# `_load_search_candidates` can directly read the candidate set
+# instead of walking the whole store with `load_all`), and adds
+# the `memory_links` table so `_links_payload`'s reverse-link
+# scan stops being O(N) per `memory_show`.
+SCHEMA_VERSION = 2
 
 INDEX_FILENAME = ".index.sqlite"
 
@@ -95,7 +112,8 @@ CREATE TABLE IF NOT EXISTS memories (
     category TEXT,
     body TEXT NOT NULL,
     scopes_text TEXT NOT NULL,
-    scopes_json TEXT NOT NULL
+    scopes_json TEXT NOT NULL,
+    filename TEXT NOT NULL DEFAULT ''
 );
 
 CREATE VIRTUAL TABLE IF NOT EXISTS memories_fts USING fts5(
@@ -122,6 +140,30 @@ CREATE TRIGGER IF NOT EXISTS memories_au AFTER UPDATE ON memories BEGIN
 END;
 
 CREATE INDEX IF NOT EXISTS memories_by_updated ON memories(updated DESC);
+
+-- Inter-memory links. Keeps `_links_payload`'s reverse-link scan
+-- out of `load_all` — that path was O(N) per `memory_show` because
+-- finding "everyone who links AT this id" required walking every
+-- memory's `links` field on disk. Now it's an index lookup.
+CREATE TABLE IF NOT EXISTS memory_links (
+    source_id TEXT NOT NULL,
+    type TEXT NOT NULL,
+    target_id TEXT NOT NULL,
+    note TEXT,
+    PRIMARY KEY (source_id, type, target_id)
+);
+
+CREATE INDEX IF NOT EXISTS memory_links_by_target ON memory_links(target_id);
+
+-- Cascade link cleanup when a memory is removed. Both source-side
+-- (this memory's outbound links) and target-side (other memories
+-- linking AT this id) get dropped. The target-side cleanup keeps
+-- the reverse-link query honest: a hit against `target_id = X`
+-- after X is tombstoned would otherwise dangle.
+CREATE TRIGGER IF NOT EXISTS memory_links_cleanup AFTER DELETE ON memories BEGIN
+    DELETE FROM memory_links
+    WHERE source_id = old.id OR target_id = old.id;
+END;
 """
 
 
@@ -185,25 +227,60 @@ def _ensure_schema(conn: sqlite3.Connection) -> None:
     meta table with the current schema_version. Idempotent — repeat
     calls on the same connection are safe.
 
-    If the database carries a schema_version greater than this code's
-    `SCHEMA_VERSION`, raises `IndexVersionError`. Callers (Store / CLI)
-    should drop the file and call `rebuild` from scratch.
+    Version handling:
+    - On-disk > code SCHEMA_VERSION: raise `IndexVersionError`. Callers
+      (Store / CLI) should drop the file and call `rebuild` from
+      scratch.
+    - On-disk < code SCHEMA_VERSION: drop the data tables and recreate
+      them at the current schema. Memory data lives on disk in the .md
+      files; the Store hooks repopulate as writes happen, and
+      `bettermemory reindex` does the explicit full rebuild. The
+      `_load_search_candidates` fallback routes to `load_all` while
+      the index is empty, so search keeps working through the
+      transition.
     """
+    # First-touch path: meta table may not exist yet. CREATE IF NOT
+    # EXISTS is safe to run before the version check.
     conn.executescript(_SCHEMA)
-    row = conn.execute("SELECT value FROM meta WHERE key = 'schema_version'").fetchone()
+    row = conn.execute(
+        "SELECT value FROM meta WHERE key = 'schema_version'"
+    ).fetchone()
     if row is None:
         conn.execute(
             "INSERT INTO meta(key, value) VALUES ('schema_version', ?)",
             (str(SCHEMA_VERSION),),
         )
-    else:
-        on_disk = int(row[0])
-        if on_disk > SCHEMA_VERSION:
-            raise IndexVersionError(
-                f"index schema version {on_disk} is newer than this "
-                f"reader supports (max {SCHEMA_VERSION}); delete the "
-                f"index file and run `bettermemory reindex`"
-            )
+        conn.commit()
+        return
+    on_disk = int(row[0])
+    if on_disk > SCHEMA_VERSION:
+        raise IndexVersionError(
+            f"index schema version {on_disk} is newer than this "
+            f"reader supports (max {SCHEMA_VERSION}); delete the "
+            f"index file and run `bettermemory reindex`"
+        )
+    if on_disk < SCHEMA_VERSION:
+        log.warning(
+            "index schema version %s is older than current (%s); "
+            "dropping and recreating empty. Run `bettermemory reindex` "
+            "to fully repopulate, or let it fill incrementally as "
+            "memories are written.",
+            on_disk,
+            SCHEMA_VERSION,
+        )
+        conn.executescript(
+            "DROP TABLE IF EXISTS memory_links;"
+            "DROP TABLE IF EXISTS memories_fts;"
+            "DROP TABLE IF EXISTS memories;"
+        )
+        conn.executescript(_SCHEMA)
+        conn.execute(
+            "UPDATE meta SET value = ? WHERE key = 'schema_version'",
+            (str(SCHEMA_VERSION),),
+        )
+        conn.execute(
+            "UPDATE meta SET value = '0' WHERE key = 'indexed_count'"
+        )
     conn.commit()
 
 
@@ -343,6 +420,87 @@ def query(
         conn.close()
 
 
+def filenames_for_ids(root: Path, ids: list[str]) -> dict[str, str]:
+    """Resolve a batch of memory ids to their on-disk filenames via
+    the index. Returns `{id: filename}` for every id that has a row.
+    Ids without a row (newly written and not yet indexed, dropped on
+    a schema upgrade pending reindex) are omitted — the caller falls
+    back to the `load_all` path for those.
+
+    This is the lookup `_load_search_candidates` uses to avoid
+    parsing every memory's frontmatter when only a handful of
+    candidates from the FTS5 pre-filter are actually wanted."""
+    if not ids:
+        return {}
+    path = index_path(root)
+    if not path.exists():
+        return {}
+    conn = _connect(path)
+    try:
+        _ensure_schema(conn)
+        placeholders = ",".join("?" * len(ids))
+        rows = conn.execute(
+            f"SELECT id, filename FROM memories WHERE id IN ({placeholders})",
+            ids,
+        ).fetchall()
+        # An empty filename column means the row was written by a
+        # pre-v2 schema. Drop those — the caller treats them as
+        # "fall back to load_all" without trying to construct a
+        # bogus path.
+        return {
+            row["id"]: row["filename"]
+            for row in rows
+            if row["filename"]
+        }
+    finally:
+        conn.close()
+
+
+def links_for(
+    root: Path, memory_id: str
+) -> tuple[
+    list[tuple[str, str, str | None]], list[tuple[str, str, str | None]]
+]:
+    """Resolve outbound and inbound links for `memory_id`.
+
+    Returns `(outbound, inbound)` where each entry is
+    `(type, other_id, note)`:
+
+    - outbound: `(link.type, link.target_id, link.note)` — what this
+      memory points at, mirroring `memory.links` on disk.
+    - inbound: `(link.type, source.id, link.note)` — every memory
+      that links AT this id. The reverse direction the
+      `_links_payload` reverse-scan used to compute via a full
+      `load_all`.
+
+    Returns empty lists when the index file doesn't exist or has
+    no rows for either direction. The handler falls back to
+    `load_all` in that case (the same fallback shape the rest of
+    `_load_search_candidates` uses)."""
+    path = index_path(root)
+    if not path.exists():
+        return [], []
+    conn = _connect(path)
+    try:
+        _ensure_schema(conn)
+        outbound = conn.execute(
+            "SELECT type, target_id, note FROM memory_links "
+            "WHERE source_id = ? ORDER BY type, target_id",
+            (memory_id,),
+        ).fetchall()
+        inbound = conn.execute(
+            "SELECT type, source_id, note FROM memory_links "
+            "WHERE target_id = ? ORDER BY type, source_id",
+            (memory_id,),
+        ).fetchall()
+        return (
+            [(row["type"], row["target_id"], row["note"]) for row in outbound],
+            [(row["type"], row["source_id"], row["note"]) for row in inbound],
+        )
+    finally:
+        conn.close()
+
+
 def status(root: Path) -> dict[str, Any]:
     """Diagnostic snapshot of the index file. Used by
     `bettermemory doctor` to surface index health and by the reindex
@@ -407,14 +565,28 @@ def _isoformat_optional(dt: datetime | None) -> str | None:
     return dt.isoformat() if dt is not None else None
 
 
+def _filename_for(memory: Memory) -> str:
+    """Re-derive the on-disk filename for a memory. Same shape the
+    Store uses (`<created>-<slug>.md`); this is a pure function of
+    the memory's identity fields, so the index can reproduce it
+    without consulting the file system. Collision-suffixed filenames
+    aren't re-derivable here, but they're rare; `_load_search_candidates`
+    handles a missing file by skipping that candidate and falling
+    back to the load_all path."""
+    from .models import build_filename, make_slug
+
+    slug = make_slug(memory.body)
+    return build_filename(memory.created, slug)
+
+
 def _insert_memory(conn: sqlite3.Connection, memory: Memory) -> None:
     """Insert a new row. Caller has already cleared the table or
     confirmed no row with this id exists."""
     conn.execute(
         "INSERT INTO memories("
         "id, created, updated, last_verified_at, confidence, category, "
-        "body, scopes_text, scopes_json) "
-        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        "body, scopes_text, scopes_json, filename) "
+        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
         (
             memory.id,
             memory.created.isoformat(),
@@ -425,8 +597,10 @@ def _insert_memory(conn: sqlite3.Connection, memory: Memory) -> None:
             memory.body,
             _scopes_text(memory.scopes),
             json.dumps(memory.scopes),
+            _filename_for(memory),
         ),
     )
+    _sync_links(conn, memory)
 
 
 def _upsert_memory(conn: sqlite3.Connection, memory: Memory) -> None:
@@ -436,8 +610,8 @@ def _upsert_memory(conn: sqlite3.Connection, memory: Memory) -> None:
     conn.execute(
         "INSERT INTO memories("
         "id, created, updated, last_verified_at, confidence, category, "
-        "body, scopes_text, scopes_json) "
-        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?) "
+        "body, scopes_text, scopes_json, filename) "
+        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?) "
         "ON CONFLICT(id) DO UPDATE SET "
         "created = excluded.created, "
         "updated = excluded.updated, "
@@ -446,7 +620,8 @@ def _upsert_memory(conn: sqlite3.Connection, memory: Memory) -> None:
         "category = excluded.category, "
         "body = excluded.body, "
         "scopes_text = excluded.scopes_text, "
-        "scopes_json = excluded.scopes_json",
+        "scopes_json = excluded.scopes_json, "
+        "filename = excluded.filename",
         (
             memory.id,
             memory.created.isoformat(),
@@ -457,7 +632,30 @@ def _upsert_memory(conn: sqlite3.Connection, memory: Memory) -> None:
             memory.body,
             _scopes_text(memory.scopes),
             json.dumps(memory.scopes),
+            _filename_for(memory),
         ),
+    )
+    _sync_links(conn, memory)
+
+
+def _sync_links(conn: sqlite3.Connection, memory: Memory) -> None:
+    """Replace the outbound link rows for `memory.id`. Inter-memory
+    links use REPLACE semantics at the model layer (`memory_update`
+    overwrites the full list), so the index mirror is the same: drop
+    every row where this memory is the source, then insert the new
+    list."""
+    conn.execute(
+        "DELETE FROM memory_links WHERE source_id = ?", (memory.id,)
+    )
+    if not memory.links:
+        return
+    conn.executemany(
+        "INSERT OR IGNORE INTO memory_links("
+        "source_id, type, target_id, note) VALUES (?, ?, ?, ?)",
+        [
+            (memory.id, link.type.value, link.target_id, link.note)
+            for link in memory.links
+        ],
     )
 
 
@@ -476,7 +674,9 @@ __all__ = [
     "INDEX_FILENAME",
     "SCHEMA_VERSION",
     "IndexVersionError",
+    "filenames_for_ids",
     "index_path",
+    "links_for",
     "query",
     "rebuild",
     "remove",

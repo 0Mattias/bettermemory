@@ -815,16 +815,29 @@ class ToolHandlers:
             return self.store.load_all()
         candidate_ids = {cid for cid, _ in candidate_pairs}
 
-        # Load just the candidates. One pass over the active set
-        # filtering by id is still O(N) on file count, but skips the
-        # YAML parse + Pydantic construction for non-candidates —
-        # the actual cost-saving. A future revision can build an
-        # id → path lookup in the index meta table for true O(k)
-        # access.
+        # Load just the candidates via the index's id → filename
+        # lookup — true O(k) on file IO. Candidates that aren't in
+        # the lookup (a row written by a pre-v2 schema, an entry
+        # that's been removed since the FTS pre-filter ran, etc.)
+        # are silently dropped; the fallback to `load_all` above
+        # handles the "index couldn't help at all" case.
         loaded: list[Any] = []
-        for memory in self.store.load_all():
-            if memory.id in candidate_ids:
-                loaded.append(memory)
+        ids = list(candidate_ids)
+        filenames = _index.filenames_for_ids(self.store.root, ids)
+        for cid in ids:
+            filename = filenames.get(cid)
+            if not filename:
+                continue
+            file_path = self.store.root / filename
+            try:
+                loaded.append(self.store._load_path(file_path))
+            except (ValueError, KeyError, OSError):
+                # Stale filename (memory was moved / tombstoned
+                # between the index lookup and the read) or a
+                # malformed frontmatter row. Skip — the fallback
+                # shape in the rest of memory_search means a missed
+                # candidate degrades to "no hit", not to a crash.
+                continue
         return loaded
 
     # ---- memory_search ---------------------------------------------------
@@ -1147,16 +1160,27 @@ class ToolHandlers:
         """Build the `links` + `reverse_links` payload for memory_show.
 
         Forward `links` come from the memory's own frontmatter. Reverse
-        `reverse_links` are computed by scanning the active set for any
-        memory whose links point at this memory's id — surfaced so a
-        retrieval consumer sees the relationship both ways (e.g. "this
-        memory is superseded by X" alongside "X supersedes this").
+        `reverse_links` are computed by querying the FTS5 index's
+        `memory_links` table — every memory that links AT this id is
+        a row keyed on `target_id`, so the lookup is O(k) on the
+        number of reverse links rather than O(N) on the store size.
+        Surfaced so a retrieval consumer sees the relationship both
+        ways (e.g. "this memory is superseded by X" alongside "X
+        supersedes this").
 
         Both lists are omitted when empty (absence-as-signal contract,
         matches `path_drift` / `commit_drift`). Reverse links carry the
         source `memory_id` so the consumer can navigate to the linking
         memory; forward links carry the `target_id`.
+
+        Fallback: if the index file doesn't exist (fresh install, just
+        deleted), `links_for` returns empty lists and we walk the
+        active set once. That matches the same fallback shape
+        `_load_search_candidates` uses — search keeps working through
+        a torn-down index, just slower.
         """
+        from . import index as _index
+
         out: dict[str, Any] = {}
         if memory.links:
             out["links"] = [
@@ -1167,22 +1191,35 @@ class ToolHandlers:
                 }
                 for link in memory.links
             ]
-        # Reverse-link scan. One pass over the active set per show;
-        # cheap given the typical store size. For the FTS-indexed
-        # path (T3.1) this becomes an index lookup.
+        outbound, inbound = _index.links_for(self.store.root, memory.id)
         reverse: list[dict[str, Any]] = []
-        for other in self.store.load_all():
-            if other.id == memory.id:
-                continue
-            for link in other.links:
-                if link.target_id == memory.id:
-                    reverse.append(
-                        {
+        if inbound:
+            for ltype, source_id, note in inbound:
+                if source_id == memory.id:
+                    # Defensive: self-links shouldn't appear as reverse
+                    # since they're already in `links`. Skip to keep
+                    # the surface stable across index drift.
+                    continue
+                entry: dict[str, Any] = {"type": ltype, "source_id": source_id}
+                if note is not None:
+                    entry["note"] = note
+                reverse.append(entry)
+        elif not _index.index_path(self.store.root).exists():
+            # No index — fall back to the old shape so a freshly-
+            # initialised store still gets reverse links. After the
+            # next write the index will repopulate.
+            for other in self.store.load_all():
+                if other.id == memory.id:
+                    continue
+                for link in other.links:
+                    if link.target_id == memory.id:
+                        entry = {
                             "type": link.type.value,
                             "source_id": other.id,
-                            **({"note": link.note} if link.note is not None else {}),
                         }
-                    )
+                        if link.note is not None:
+                            entry["note"] = link.note
+                        reverse.append(entry)
         if reverse:
             out["reverse_links"] = reverse
         return out
