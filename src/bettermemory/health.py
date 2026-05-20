@@ -73,7 +73,24 @@ class MemoryStats:
     updated: datetime
     retrieval_count: int = 0
     show_count: int = 0
+    # `applied_count` is the total of auto + explicit. Kept as a single
+    # field so existing consumers and tests don't need to fold two
+    # counts together; the split below tells you *how* the count was
+    # reached.
     applied_count: int = 0
+    # The model never called memory_record_use(applied) explicitly for
+    # this id — the count came entirely from the server's auto-commit
+    # pass that fires ~2 turns after a retrieval. A high
+    # `auto_applied_count` with zero `explicit_applied_count` is the
+    # "weakly endorsed" signal: the ranker keeps surfacing it, the auto
+    # pass keeps logging it, but the model never deliberately reaches
+    # for it. Pairs with the endorsement_debt rollup.
+    auto_applied_count: int = 0
+    # The model called memory_record_use(applied) directly. The
+    # deliberate-endorsement signal; a non-zero value means at least
+    # once the model wrote a use event for this id rather than letting
+    # the auto pass close the loop.
+    explicit_applied_count: int = 0
     ignored_count: int = 0
     contradicted_count: int = 0
     # `corrected` is the audit-only sibling of `contradicted`: the caller
@@ -126,6 +143,24 @@ class MemoryStats:
             last_resolved_at = self.last_verified_at
         return self.last_contradicted_at > last_resolved_at
 
+    @property
+    def endorsement_ratio(self) -> float | None:
+        """Fraction of applies that were explicit, or None when there are
+        no applies to ratio over.
+
+        Closer to 1.0 means the model is deliberately endorsing this
+        memory (calling memory_record_use directly). Closer to 0.0 means
+        every applied event came from the server's auto-commit pass —
+        the model retrieves the memory but never bothers to confirm it
+        shaped the response. The latter is the "weakly endorsed"
+        signal. Returns None on `applied_count == 0` so the consumer
+        can distinguish "zero apply traffic" from "applied but all
+        auto."
+        """
+        if self.applied_count == 0:
+            return None
+        return self.explicit_applied_count / self.applied_count
+
     def to_dict(self) -> dict[str, Any]:
         return {
             "id": self.id,
@@ -136,6 +171,9 @@ class MemoryStats:
             "retrieval_count": self.retrieval_count,
             "show_count": self.show_count,
             "applied_count": self.applied_count,
+            "auto_applied_count": self.auto_applied_count,
+            "explicit_applied_count": self.explicit_applied_count,
+            "endorsement_ratio": self.endorsement_ratio,
             "ignored_count": self.ignored_count,
             "contradicted_count": self.contradicted_count,
             "corrected_count": self.corrected_count,
@@ -255,6 +293,21 @@ class VerificationDebt:
 # the bucket is small (handle now) or huge (schedule a session).
 _VERIFICATION_DEBT_CAP = 20
 
+# Minimum `retrieval_count` for a memory to be eligible for the
+# `endorsement_debt` bucket. Below this floor we treat the absence of
+# explicit endorsement as "not enough traffic to judge" rather than a
+# real signal. Five mirrors the same intuition behind
+# `heavily_used_min_applied=3`: a handful of retrievals is enough to
+# call a pattern, fewer is single-incident noise. Tunable inline on
+# the compute_health call so tests can lower the floor without forcing
+# a config bump for the common case.
+_ENDORSEMENT_DEBT_MIN_RETRIEVALS = 5
+
+# Cap the inline row list. Same shape as the verification_debt and
+# commit_drift_debt rollups — uncapped `total` for the bucket size,
+# capped rows for inline display.
+_ENDORSEMENT_DEBT_CAP = 20
+
 
 @dataclass
 class CommitDriftRow:
@@ -322,6 +375,80 @@ _COMMIT_DRIFT_DEBT_CAP = 20
 
 
 @dataclass
+class EndorsementDebt:
+    """Curation pivot for retrieved-but-never-endorsed memories.
+
+    A memory the ranker keeps surfacing (`retrieval_count >=
+    min_retrievals`) but the model never deliberately reaches for
+    (`explicit_applied_count == 0`) is the *weakly endorsed* pattern.
+    The server's auto-commit pass has been closing the loop on every
+    retrieval, but no `memory_record_use(applied)` has ever fired
+    explicitly. Either the memory IS useful and deserves a deliberate
+    spot-check (verify + an explicit applied on the next hit), or the
+    ranker is over-surfacing it and the right move is a narrower scope
+    or a removal.
+
+    Distinct from `dead_weight` (retrieved but never *applied* at all,
+    auto included): dead_weight says the model doesn't even let the
+    auto pass run on this — it must have called something that purged
+    the use-token without recording. Endorsement-debt says the
+    opposite: applies happened, but every single one was the auto
+    fallback. The two together cover the spectrum of "applied signal
+    is weak."
+
+    Ambient memories are excluded — their value is implicit (they
+    shape responses without being cited) and an explicit use event for
+    them is structurally rare. Mirrors the exclusion in `dead_weight`
+    / `cold_memories` for the same reason.
+
+    Same shape as `VerificationDebt`: capped `rows` for inline display
+    plus an uncapped `total` so a downstream reader can distinguish
+    "3 weakly endorsed" from "300 weakly endorsed" without re-counting.
+    """
+
+    min_retrievals: int
+    rows: list[MemoryStats] = field(default_factory=list)
+    total: int = 0
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "min_retrievals": self.min_retrievals,
+            "total": self.total,
+            "rows": [s.to_dict() for s in self.rows],
+        }
+
+
+@dataclass
+class SilentMissStats:
+    """Rollup of `search_miss` / `turn_audited` events over the window.
+
+    Surfaces the false-negative half of the retrieval contract: turns
+    where the model should have searched but didn't. `audited_total` is
+    the denominator (audits that ran at all); `miss_total` is the
+    numerator (audits that flagged a miss). A consumer can compute the
+    miss *rate* with `miss_total / audited_total` when audited_total > 0;
+    we don't ship the float here because rate-vs-count is a presentation
+    choice and the raw counts are stable across consumers.
+
+    Empty bucket (both zero) means the audit hook either wasn't invoked
+    in the window or invoked but never fired anything past the
+    no-signal branch — distinct from "audited heavily, no misses,"
+    which would have a non-zero `audited_total`. The two-count shape is
+    deliberate so a stalled hook ("nothing audited at all") doesn't
+    look the same as a healthy run ("audited a lot, model behaved").
+    """
+
+    audited_total: int = 0
+    miss_total: int = 0
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "audited_total": self.audited_total,
+            "miss_total": self.miss_total,
+        }
+
+
+@dataclass
 class HealthReport:
     """The full aggregate view returned by `memory_health`."""
 
@@ -380,6 +507,26 @@ class HealthReport:
     # while still landing in `verification_debt.fresh_count` because the
     # calendar window hasn't elapsed.
     commit_drift_debt: CommitDriftDebt | None = None
+    # Silent-miss telemetry — the false-negative half of opt-in
+    # retrieval. `audited_total` and `miss_total` come from the
+    # `turn_audited` and `search_miss` event kinds emitted by
+    # memory_audit_turn. The pair is the denominator + numerator for the
+    # miss rate; we keep them as raw counts so the consumer chooses how
+    # to render. Both zero means the audit hook hasn't fired in the
+    # window (or fired but only produced no_signal verdicts) — distinct
+    # from "audited heavily, no misses found."
+    silent_misses: SilentMissStats = field(default_factory=SilentMissStats)
+    # Endorsement-debt rollup — memories the ranker keeps surfacing
+    # (retrieval_count >= min) but the model never explicitly endorses
+    # (explicit_applied_count == 0). The "weakly endorsed" pattern;
+    # complement to dead_weight (which is "never applied at all"). Empty
+    # bucket = either no memory has crossed the retrieval floor or every
+    # heavily-retrieved memory has at least one explicit applied event.
+    endorsement_debt: EndorsementDebt = field(
+        default_factory=lambda: EndorsementDebt(
+            min_retrievals=_ENDORSEMENT_DEBT_MIN_RETRIEVALS,
+        )
+    )
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -403,6 +550,8 @@ class HealthReport:
                 if self.commit_drift_debt is not None
                 else None
             ),
+            "silent_misses": self.silent_misses.to_dict(),
+            "endorsement_debt": self.endorsement_debt.to_dict(),
         }
 
 
@@ -419,6 +568,7 @@ def compute_health(
     heavily_used_top_k: int = 10,
     heavily_used_min_applied: int = 3,
     verification_stale_days: int = 30,
+    endorsement_debt_min_retrievals: int = _ENDORSEMENT_DEBT_MIN_RETRIEVALS,
     caller_origin: Origin | None = None,
     now: datetime | None = None,
 ) -> HealthReport:
@@ -492,6 +642,8 @@ def compute_health(
     sessions: set[str] = set()
     total_events = 0
     orphan_use_events = 0
+    silent_miss_audited_total = 0
+    silent_miss_total = 0
 
     # Per-id chronological log of resolution-relevant events
     # (update / verify / use[contradicted|corrected]). Accumulated for
@@ -554,6 +706,18 @@ def compute_health(
                     continue
                 if outcome == "applied":
                     stats.applied_count += 1
+                    # Split on the `auto` discriminator the recorder
+                    # stamps in `_advance_turn`. A missing or non-True
+                    # value reads as explicit so legacy events written
+                    # before the auto-commit pass existed don't get
+                    # silently relabelled. The two-axis split is the
+                    # endorsement signal: high `auto_applied_count` with
+                    # zero explicit means the ranker keeps surfacing the
+                    # memory but the model never deliberately reaches.
+                    if ev.get("auto") is True:
+                        stats.auto_applied_count += 1
+                    else:
+                        stats.explicit_applied_count += 1
                 elif outcome == "ignored":
                     stats.ignored_count += 1
                 elif outcome == "contradicted":
@@ -592,6 +756,20 @@ def compute_health(
                 marker_fires[marker] += 1
             for marker in ev.get("markers_acknowledged", []) or []:
                 marker_overrides[marker] += 1
+        elif kind == "turn_audited":
+            # Denominator for the silent-miss rate. Counted unconditionally
+            # even when the verdict was "ok" or "no_signal" — the point is
+            # "the audit hook ran", which lets a consumer tell "no misses
+            # because we audited and found none" from "no misses because
+            # nobody audited."
+            silent_miss_audited_total += 1
+        elif kind == "search_miss":
+            # Numerator. A separate kind from `turn_audited` (rather than
+            # a field on it) so consumers that only care about misses can
+            # filter the log on a single `kind=` value, and so a
+            # tombstone-style migration ("we changed how misses are
+            # detected, drop the old ones") can target one kind cleanly.
+            silent_miss_total += 1
 
     all_markers = sorted(set(marker_fires) | set(marker_overrides))
     marker_stats = [
@@ -744,6 +922,36 @@ def compute_health(
         caller_origin=caller_origin,
     )
 
+    # Endorsement debt — memories the ranker keeps surfacing (retrieval
+    # crossed the floor) that the model has never explicitly endorsed
+    # (zero `explicit_applied_count`). Ambient excluded by construction
+    # — their value is implicit and they're structurally unlikely to
+    # carry explicit use events. Sort by retrieval_count desc (most
+    # over-surfaced first), then by last_used_at desc so the rows
+    # surface "actively over-surfaced" before "historically
+    # over-surfaced." The bucket is uncapped in `total`; rows are
+    # capped at `_ENDORSEMENT_DEBT_CAP` for inline display.
+    endorsement_floor = max(1, int(endorsement_debt_min_retrievals))
+    endorsement_candidates = [
+        s
+        for s in by_id.values()
+        if s.category != Category.AMBIENT
+        and s.retrieval_count >= endorsement_floor
+        and s.explicit_applied_count == 0
+    ]
+    endorsement_candidates.sort(
+        key=lambda s: (
+            s.retrieval_count,
+            s.last_used_at or s.updated,
+        ),
+        reverse=True,
+    )
+    endorsement_debt = EndorsementDebt(
+        min_retrievals=endorsement_floor,
+        rows=endorsement_candidates[:_ENDORSEMENT_DEBT_CAP],
+        total=len(endorsement_candidates),
+    )
+
     return HealthReport(
         generated_at=now,
         window_days=window_days,
@@ -761,6 +969,11 @@ def compute_health(
         orphan_use_events=orphan_use_events,
         verification_debt=verification_debt,
         commit_drift_debt=commit_drift_debt,
+        silent_misses=SilentMissStats(
+            audited_total=silent_miss_audited_total,
+            miss_total=silent_miss_total,
+        ),
+        endorsement_debt=endorsement_debt,
     )
 
 
@@ -908,8 +1121,15 @@ def render_text(report: HealthReport) -> str:
     if not report.heavily_used:
         lines.append("  (none)")
     for s in report.heavily_used:
+        # Surface the auto/explicit split so a curator can spot
+        # weakly-endorsed memories at a glance: applied=N (auto=X exp=Y)
+        # where exp=0 with non-zero auto is the "ranker keeps surfacing
+        # this but the model never deliberately endorses it" pattern.
         lines.append(
-            f"  {s.id} [applied={s.applied_count}] {','.join(s.scopes)}: {s.summary}"
+            f"  {s.id} [applied={s.applied_count} "
+            f"(auto={s.auto_applied_count} "
+            f"exp={s.explicit_applied_count})] "
+            f"{','.join(s.scopes)}: {s.summary}"
         )
 
     lines.append("")
@@ -988,6 +1208,46 @@ def render_text(report: HealthReport) -> str:
             )
         if debt.stale_total > len(debt.stale):
             lines.append(f"    ... and {debt.stale_total - len(debt.stale)} more")
+
+    ed = report.endorsement_debt
+    if ed.total > 0:
+        lines.append("")
+        lines.append(
+            f"Endorsement debt ({ed.total}) — retrieved >= "
+            f"{ed.min_retrievals} times, never explicitly applied "
+            "(model never deliberately endorsed the memory; every "
+            "applied event came from the auto-commit pass):"
+        )
+        for s in ed.rows:
+            lines.append(
+                f"  {s.id} [retrievals={s.retrieval_count} "
+                f"auto_applied={s.auto_applied_count}] "
+                f"{','.join(s.scopes)}: {s.summary}"
+            )
+        if ed.total > len(ed.rows):
+            lines.append(f"  ... and {ed.total - len(ed.rows)} more")
+
+    sm = report.silent_misses
+    if sm.audited_total > 0 or sm.miss_total > 0:
+        lines.append("")
+        lines.append(
+            f"Silent misses — audited={sm.audited_total}  "
+            f"miss={sm.miss_total}  "
+            f"(emit via memory_audit_turn from a client-side end-of-turn hook):"
+        )
+        if sm.miss_total == 0:
+            lines.append("  (none — audit ran and found no misses)")
+        else:
+            miss_rate_pct: float | None = (
+                round(sm.miss_total / sm.audited_total * 100, 1)
+                if sm.audited_total > 0
+                else None
+            )
+            rate_str = f"{miss_rate_pct}%" if miss_rate_pct is not None else "?"
+            lines.append(
+                f"  {sm.miss_total} of {sm.audited_total} audited turns "
+                f"flagged a miss (rate={rate_str})"
+            )
 
     cd = report.commit_drift_debt
     if cd is not None:
@@ -1083,18 +1343,30 @@ def curation_counts(
     *,
     window_days: int = 30,
     verification_stale_days: int = 30,
+    endorsement_debt_min_retrievals: int = _ENDORSEMENT_DEBT_MIN_RETRIEVALS,
     caller_origin: Origin | None = None,
     now: datetime | None = None,
 ) -> dict[str, int]:
     """Cheap summary of curation pressure.
 
     Returns
-    ``{"stale", "never_verified", "drifted", "cold", "dead"}`` —
+    ``{"stale", "never_verified", "drifted", "cold", "dead",
+    "silent_misses", "endorsement_debt"}`` —
     integer counts only, no row materialisation. Used by
     `memory_scope_overview` so the model can see at a glance whether
     the store has anything worth a curation pass without paying the
     full `compute_health` cost (which materialises and sorts every
     bucket and walks the event log to build resolution timelines).
+    `silent_misses` here is the *numerator* (miss_total) only — the
+    rate denominator (audited_total) is available from
+    `compute_health().silent_misses` when the consumer needs it.
+    Session-start surfaces just the numerator because a non-zero
+    count is the actionable signal; the audit-cadence denominator
+    matters for tuning, not for "should I look at this now."
+    `endorsement_debt` is the count of memories the ranker keeps
+    surfacing (retrieval_count >= min) that the model never explicitly
+    endorsed — same shape decision as silent_misses: surface the
+    actionable count, defer the full bucket to compute_health.
 
     Numerical contract: each count must agree with the corresponding
     bucket size from `compute_health` over the same memories/events
@@ -1118,6 +1390,12 @@ def curation_counts(
 
     retrieval_counts: dict[str, int] = {m.id: 0 for m in mem_list}
     applied_counts: dict[str, int] = {m.id: 0 for m in mem_list}
+    # Tracks explicit-only applies for the endorsement_debt count.
+    # An auto-flagged applied event is the server closing the loop,
+    # not the model endorsing — same discriminator
+    # `_advance_turn`/`memory_record_use` use.
+    explicit_applied_counts: dict[str, int] = {m.id: 0 for m in mem_list}
+    silent_misses = 0
     for ev in events:
         kind = ev.get("kind")
         if kind == "search":
@@ -1125,14 +1403,21 @@ def curation_counts(
                 if mid in retrieval_counts:
                     retrieval_counts[mid] += 1
         elif kind == "use" and ev.get("outcome") == "applied":
+            is_auto = ev.get("auto") is True
             for mid in ev.get("ids", []) or []:
                 if mid in applied_counts:
                     applied_counts[mid] += 1
+                    if not is_auto and mid in explicit_applied_counts:
+                        explicit_applied_counts[mid] += 1
+        elif kind == "search_miss":
+            silent_misses += 1
 
     never_verified = 0
     stale = 0
     cold = 0
     dead = 0
+    endorsement_debt = 0
+    endorsement_floor = max(1, int(endorsement_debt_min_retrievals))
     for m in mem_list:
         is_ambient = m.category == Category.AMBIENT
         if m.last_verified_at is None:
@@ -1146,6 +1431,18 @@ def curation_counts(
                 cold += 1
             elif a == 0:
                 dead += 1
+        # Endorsement-debt count: heavily retrieved (over the floor)
+        # AND no explicit applied event ever, regardless of window. We
+        # don't apply the `created < cutoff` window here because the
+        # retrieval floor itself is the "has had time to accumulate
+        # signal" guard — a brand-new memory with 5+ retrievals is
+        # already a candidate. Mirrors the compute_health rollup.
+        if (
+            not is_ambient
+            and retrieval_counts.get(m.id, 0) >= endorsement_floor
+            and explicit_applied_counts.get(m.id, 0) == 0
+        ):
+            endorsement_debt += 1
 
     drifted = 0
     if caller_origin is not None and caller_origin.repo and caller_origin.cwd:
@@ -1173,6 +1470,8 @@ def curation_counts(
         "drifted": drifted,
         "cold": cold,
         "dead": dead,
+        "silent_misses": silent_misses,
+        "endorsement_debt": endorsement_debt,
     }
 
 
@@ -1183,6 +1482,7 @@ def report_for_directory(
     heavily_used_top_k: int = 10,
     heavily_used_min_applied: int = 3,
     verification_stale_days: int = 30,
+    endorsement_debt_min_retrievals: int = _ENDORSEMENT_DEBT_MIN_RETRIEVALS,
     caller_origin: Origin | None = None,
     now: datetime | None = None,
 ) -> HealthReport:
@@ -1203,6 +1503,7 @@ def report_for_directory(
         heavily_used_top_k=heavily_used_top_k,
         heavily_used_min_applied=heavily_used_min_applied,
         verification_stale_days=verification_stale_days,
+        endorsement_debt_min_retrievals=endorsement_debt_min_retrievals,
         caller_origin=caller_origin,
         now=now,
     )
@@ -1211,9 +1512,11 @@ def report_for_directory(
 __all__ = [
     "CommitDriftDebt",
     "CommitDriftRow",
+    "EndorsementDebt",
     "MemoryStats",
     "MarkerStats",
     "ScopeHealth",
+    "SilentMissStats",
     "VerificationDebt",
     "HealthReport",
     "compute_health",

@@ -86,6 +86,8 @@ This question is generic. Claude does not call `memory_search`. The reply is pri
 - **Auto-scoped by project and worktree.** Memories written from inside a git checkout carry the repo URL *and* the worktree root. `memory_search` defaults to filtering by both — sibling `git worktree add` checkouts of the same repo are isolated. Cross-project queries are explicit (`auto_scope=false`).
 - **A confirmation tier for claims about you.** `memory_write(category="user-inference")` always goes pending regardless of global config. The user always gets the veto on misattribution.
 - **A feedback loop.** `memory_record_use(ids, outcome)` after each response logs `applied` / `ignored` / `contradicted` / `corrected`. Auto-commits as `applied` ~2 turns after retrieval if no explicit call. Feeds `memory_health` so dead weight surfaces automatically.
+- **Silent-miss telemetry (new in 2.1).** `memory_audit_turn` fires from a client-side end-of-turn hook with the user's message; runs a search probe over the active store using the model's configured ranker and asks whether a `search` or `show` event landed in the same session within the lookback window. A high-relevance hit with no recent retrieval emits a `search_miss` event so `memory_health.silent_misses` (and the `curation_pending.silent_misses` rollup on `memory_scope_overview`) surface the false-negative rate. Closes the opt-in retrieval contract's structurally invisible cost.
+- **Endorsement-debt curation (new in 2.1).** `MemoryStats` now splits `applied_count` into `auto_applied_count` (the server's auto-commit pass) and `explicit_applied_count` (model called `memory_record_use` directly), with an `endorsement_ratio` derived from the two. A new `endorsement_debt` rollup on `HealthReport` and `curation_counts` collects memories the ranker keeps surfacing (`retrieval_count >= 5`) that the model has never explicitly endorsed — the "weakly endorsed" pile, complement to `dead_weight`.
 
 ## Other MCP clients
 
@@ -129,7 +131,7 @@ Claude Code 2.x ships its own filesystem-backed memory that auto-injects stored 
 
 ## Tools
 
-The full surface contract (signatures, defaults, return shapes, audit notes) lives in [`docs/api.md`](docs/api.md). The table below is the at-a-glance summary; new-in-2.0 parameters are flagged inline.
+The full surface contract (signatures, defaults, return shapes, audit notes) lives in [`docs/api.md`](docs/api.md). The table below is the at-a-glance summary; new-in-2.0 and new-in-2.1 parameters are flagged inline.
 
 | Tool | What it does |
 |---|---|
@@ -144,8 +146,9 @@ The full surface contract (signatures, defaults, return shapes, audit notes) liv
 | `memory_list_tombstones(scopes?)` | List removed memories with their removal metadata. |
 | `memory_rename_scope(old_scope, new_scope, include_tombstones?)` | Replace `old_scope` with `new_scope` across active memories (and tombstones, by default). The cheap fix for typo'd scopes surfaced by `memory_health.rare_scopes`. |
 | `memory_record_use(memory_ids, outcome, note?, claim_excerpts?)` | Record how a retrieved memory landed. New (2.0) `claim_excerpts` parallel to `memory_ids` carries the load-bearing claim — the audit log captures *which* claim shaped the response. |
-| `memory_health(window_days?, heavily_used_top_k?, min_applied?)` | Aggregate health view: dead weight, heavily-used, contradictions with `resolution_timeline`, transient marker stats, scope distribution, `rare_scopes`, `verification_debt`, `commit_drift_debt`. Same data as `bettermemory health`. |
-| `memory_scope_overview(auto_scope?)` | Cheap session-start hint: per-scope counts plus a `curation_pending` rollup (`{stale, never_verified, drifted, cold, dead}`). |
+| `memory_health(window_days?, heavily_used_top_k?, min_applied?)` | Aggregate health view: dead weight, heavily-used (now with `applied=N (auto=X exp=Y)` per-row split, new in 2.1), contradictions with `resolution_timeline`, transient marker stats, scope distribution, `rare_scopes`, `verification_debt`, `commit_drift_debt`, plus (new in 2.1) `silent_misses` and `endorsement_debt`. Same data as `bettermemory health`. |
+| `memory_audit_turn(user_message, assistant_response?, lookback_seconds?)` (new in 2.1) | Silent-miss telemetry. Fires from a client-side end-of-turn hook; emits `turn_audited` always and `search_miss` when a high-relevance probe hit exists with no `search`/`show` event in the session lookback window. |
+| `memory_scope_overview(auto_scope?)` | Cheap session-start hint: per-scope counts plus a `curation_pending` rollup (`{stale, never_verified, drifted, cold, dead, silent_misses, endorsement_debt}` — the last two new in 2.1). |
 | `memory_scope_disable(scope)` / `memory_scope_enable(scope)` | Mute / unmute a scope for the rest of this session. |
 | `memory_write_confirm(pending_id)` / `memory_write_cancel(pending_id)` | Commit or drop a pending write (returned for `category="user-inference"`). |
 

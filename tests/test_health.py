@@ -243,6 +243,8 @@ def test_curation_counts_zero_on_empty_store() -> None:
         "drifted": 0,
         "cold": 0,
         "dead": 0,
+        "silent_misses": 0,
+        "endorsement_debt": 0,
     }
 
 
@@ -1256,3 +1258,257 @@ def test_report_for_directory_loads_store_and_events(
     assert len(report.heavily_used) == 1
     assert report.heavily_used[0].id == m.id
     assert report.heavily_used[0].applied_count == 1
+
+
+# ---------------------------------------------------------------------------
+# Change C — auto vs explicit applied count split
+# ---------------------------------------------------------------------------
+
+
+def test_auto_applied_event_lands_in_auto_count() -> None:
+    """A use event with `auto=True` increments `auto_applied_count` and
+    leaves `explicit_applied_count` at zero — the server's auto-commit
+    pass shouldn't look like the model deliberately endorsed."""
+    m = _memory()
+    events = [_event("use", ids=[m.id], outcome="applied", auto=True)]
+    report = compute_health(
+        [m], events, heavily_used_min_applied=1, now=_utc(2026, 5, 1)
+    )
+    row = report.heavily_used[0]
+    assert row.applied_count == 1
+    assert row.auto_applied_count == 1
+    assert row.explicit_applied_count == 0
+
+
+def test_explicit_applied_event_lands_in_explicit_count() -> None:
+    """A use event without `auto=True` (or with auto=False) counts as
+    explicit — the model called memory_record_use directly."""
+    m = _memory()
+    events = [
+        _event("use", ids=[m.id], outcome="applied"),  # no auto field
+        _event("use", ids=[m.id], outcome="applied", auto=False),
+    ]
+    report = compute_health(
+        [m], events, heavily_used_min_applied=1, now=_utc(2026, 5, 1)
+    )
+    row = report.heavily_used[0]
+    assert row.applied_count == 2
+    assert row.auto_applied_count == 0
+    assert row.explicit_applied_count == 2
+
+
+def test_mixed_auto_and_explicit_splits_correctly() -> None:
+    """Total applied_count equals auto + explicit at every point."""
+    m = _memory()
+    events = [
+        _event("use", ids=[m.id], outcome="applied", auto=True),
+        _event("use", ids=[m.id], outcome="applied"),
+        _event("use", ids=[m.id], outcome="applied", auto=True),
+        _event("use", ids=[m.id], outcome="applied", auto=False),
+    ]
+    report = compute_health(
+        [m], events, heavily_used_min_applied=1, now=_utc(2026, 5, 1)
+    )
+    row = report.heavily_used[0]
+    assert row.applied_count == 4
+    assert row.auto_applied_count == 2
+    assert row.explicit_applied_count == 2
+    assert row.applied_count == row.auto_applied_count + row.explicit_applied_count
+
+
+def test_endorsement_ratio_none_when_zero_applies() -> None:
+    """With no applied events at all, the ratio is None — distinct from
+    'zero explicit out of N auto.' The memory isn't in heavily_used
+    (zero applies), so the property is asserted directly on a hand-built
+    MemoryStats instead of reaching through the report buckets."""
+    from bettermemory.health import MemoryStats
+
+    m = _memory()
+    stats = MemoryStats(
+        id=m.id,
+        scopes=list(m.scopes),
+        summary="x",
+        created=m.created,
+        updated=m.updated,
+    )
+    assert stats.endorsement_ratio is None
+
+
+def test_endorsement_ratio_all_auto() -> None:
+    """100% auto-applied → ratio 0.0. The weakly-endorsed signal."""
+    m = _memory()
+    events = [
+        _event("use", ids=[m.id], outcome="applied", auto=True),
+        _event("use", ids=[m.id], outcome="applied", auto=True),
+        _event("use", ids=[m.id], outcome="applied", auto=True),
+    ]
+    report = compute_health(
+        [m], events, heavily_used_min_applied=1, now=_utc(2026, 5, 1)
+    )
+    assert report.heavily_used[0].endorsement_ratio == 0.0
+
+
+def test_to_dict_carries_split_counts_and_ratio() -> None:
+    m = _memory()
+    events = [
+        _event("use", ids=[m.id], outcome="applied", auto=True),
+        _event("use", ids=[m.id], outcome="applied"),
+    ]
+    report = compute_health(
+        [m], events, heavily_used_min_applied=1, now=_utc(2026, 5, 1)
+    )
+    out = report.heavily_used[0].to_dict()
+    assert out["auto_applied_count"] == 1
+    assert out["explicit_applied_count"] == 1
+    assert out["endorsement_ratio"] == 0.5
+
+
+# ---------------------------------------------------------------------------
+# Change D — endorsement_debt rollup
+# ---------------------------------------------------------------------------
+
+
+def test_endorsement_debt_picks_up_heavy_retrieval_with_zero_explicit() -> None:
+    """The flagship case: a memory retrieved 5+ times, every applied
+    event was auto, never explicitly endorsed → endorsement_debt."""
+    m = _memory()
+    events = []
+    for _ in range(5):
+        events.append(_event("search", returned=[m.id]))
+        events.append(_event("use", ids=[m.id], outcome="applied", auto=True))
+    report = compute_health(
+        [m], events, heavily_used_min_applied=1, now=_utc(2026, 5, 1)
+    )
+    assert report.endorsement_debt.total == 1
+    assert report.endorsement_debt.rows[0].id == m.id
+
+
+def test_endorsement_debt_respects_min_retrievals_floor() -> None:
+    """Below the floor (4 retrievals), the memory doesn't qualify —
+    not enough traffic to call a pattern."""
+    m = _memory()
+    events = []
+    for _ in range(4):
+        events.append(_event("search", returned=[m.id]))
+        events.append(_event("use", ids=[m.id], outcome="applied", auto=True))
+    report = compute_health(
+        [m], events, heavily_used_min_applied=1, now=_utc(2026, 5, 1)
+    )
+    assert report.endorsement_debt.total == 0
+
+
+def test_endorsement_debt_excludes_explicitly_endorsed() -> None:
+    """One explicit applied event lifts the memory out of debt — the
+    model has reached for it deliberately at least once."""
+    m = _memory()
+    events = []
+    for _ in range(10):
+        events.append(_event("search", returned=[m.id]))
+        events.append(_event("use", ids=[m.id], outcome="applied", auto=True))
+    # One explicit event lifts the memory out of the bucket.
+    events.append(_event("use", ids=[m.id], outcome="applied"))
+    report = compute_health(
+        [m], events, heavily_used_min_applied=1, now=_utc(2026, 5, 1)
+    )
+    assert report.endorsement_debt.total == 0
+
+
+def test_endorsement_debt_excludes_ambient() -> None:
+    """Ambient memories shape responses without being cited; explicit
+    use events are structurally rare. They must not land here for the
+    same reason they don't land in dead_weight or cold_memories."""
+    m = _memory(category=Category.AMBIENT)
+    events = []
+    for _ in range(10):
+        events.append(_event("search", returned=[m.id]))
+        events.append(_event("use", ids=[m.id], outcome="applied", auto=True))
+    report = compute_health(
+        [m], events, heavily_used_min_applied=1, now=_utc(2026, 5, 1)
+    )
+    assert report.endorsement_debt.total == 0
+
+
+def test_endorsement_debt_sorted_by_retrieval_count_desc() -> None:
+    """Heaviest-trafficked first."""
+    light = _memory()
+    medium = _memory()
+    heavy = _memory()
+    events: list[dict[str, Any]] = []
+    for _ in range(5):
+        events.append(_event("search", returned=[light.id]))
+        events.append(_event("use", ids=[light.id], outcome="applied", auto=True))
+    for _ in range(10):
+        events.append(_event("search", returned=[medium.id]))
+        events.append(_event("use", ids=[medium.id], outcome="applied", auto=True))
+    for _ in range(20):
+        events.append(_event("search", returned=[heavy.id]))
+        events.append(_event("use", ids=[heavy.id], outcome="applied", auto=True))
+    report = compute_health(
+        [light, medium, heavy],
+        events,
+        heavily_used_min_applied=1,
+        now=_utc(2026, 5, 1),
+    )
+    assert [r.id for r in report.endorsement_debt.rows] == [
+        heavy.id,
+        medium.id,
+        light.id,
+    ]
+
+
+def test_endorsement_debt_threshold_overridable() -> None:
+    """Lower the floor so tests can exercise the bucket without 5+
+    retrievals — and so a noisy store can tighten the criterion."""
+    m = _memory()
+    events = [
+        _event("search", returned=[m.id]),
+        _event("use", ids=[m.id], outcome="applied", auto=True),
+    ]
+    report = compute_health(
+        [m],
+        events,
+        heavily_used_min_applied=1,
+        endorsement_debt_min_retrievals=1,
+        now=_utc(2026, 5, 1),
+    )
+    assert report.endorsement_debt.total == 1
+    assert report.endorsement_debt.min_retrievals == 1
+
+
+def test_endorsement_debt_min_retrievals_floor_clamped_above_zero() -> None:
+    """A zero / negative threshold doesn't get interpreted literally
+    (it would let zero-retrieval memories qualify) — clamped to 1."""
+    m = _memory()
+    report = compute_health(
+        [m],
+        [],
+        heavily_used_min_applied=1,
+        endorsement_debt_min_retrievals=0,
+        now=_utc(2026, 5, 1),
+    )
+    assert report.endorsement_debt.min_retrievals == 1
+    assert report.endorsement_debt.total == 0
+
+
+def test_curation_counts_endorsement_debt_matches_health_bucket() -> None:
+    """Numerical contract: curation_counts['endorsement_debt'] equals
+    HealthReport.endorsement_debt.total over the same inputs."""
+    m = _memory()
+    events = []
+    for _ in range(5):
+        events.append(_event("search", returned=[m.id]))
+        events.append(_event("use", ids=[m.id], outcome="applied", auto=True))
+    report = compute_health(
+        [m], events, heavily_used_min_applied=1, now=_utc(2026, 5, 1)
+    )
+    counts = curation_counts([m], events, window_days=30, now=_utc(2026, 5, 1))
+    assert counts["endorsement_debt"] == report.endorsement_debt.total
+
+
+def test_endorsement_debt_to_dict_shape() -> None:
+    report = compute_health([], [], now=_utc(2026, 5, 1))
+    payload = report.to_dict()
+    assert "endorsement_debt" in payload
+    assert payload["endorsement_debt"]["total"] == 0
+    assert payload["endorsement_debt"]["rows"] == []
+    assert payload["endorsement_debt"]["min_retrievals"] >= 1

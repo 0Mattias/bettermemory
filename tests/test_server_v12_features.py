@@ -401,6 +401,8 @@ async def test_scope_overview_returns_curation_pending(server: Any) -> None:
         "drifted",
         "cold",
         "dead",
+        "silent_misses",
+        "endorsement_debt",
     }
     # All counts must be integers.
     for v in res["curation_pending"].values():
@@ -415,6 +417,8 @@ async def test_scope_overview_curation_pending_zero_on_empty(server: Any) -> Non
         "drifted": 0,
         "cold": 0,
         "dead": 0,
+        "silent_misses": 0,
+        "endorsement_debt": 0,
     }
 
 

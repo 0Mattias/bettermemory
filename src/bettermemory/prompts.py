@@ -40,14 +40,25 @@ memories are NOT in your context unless you actively retrieve them.
 Session-start hint: if the conversation has a clear project context (cwd
 matches a repo, the user mentions a project by name), one call to
 memory_scope_overview returns counts per scope without bodies plus a
-`curation_pending` rollup ({stale, never_verified, drifted, cold, dead}:
-integer counts only, no row materialisation). If the `total` is 0,
-skip memory_search for the rest of the session unless the user
-explicitly asks. If counts are non-zero, memory_search remains the way
-to retrieve content. The `curation_pending` rollup tells you whether
-the store has anything worth a curation pass without paying the
-memory_health cost; non-zero `dead` or `drifted` is the cue to
-suggest one when the conversation has time. Use scope_overview once
+`curation_pending` rollup ({stale, never_verified, drifted, cold, dead,
+silent_misses, endorsement_debt}: integer counts only, no row
+materialisation). If the `total` is 0, skip memory_search for the rest
+of the session unless the user explicitly asks. If counts are non-zero,
+memory_search remains the way to retrieve content. The
+`curation_pending` rollup tells you whether the store has anything
+worth a curation pass without paying the memory_health cost; non-zero
+`dead` or `drifted` is the cue to suggest one when the conversation
+has time. `silent_misses` is the false-negative signal — turns where
+memory_audit_turn flagged that search should have happened but didn't;
+a growing count is the cue to investigate retrieval discipline (or, if
+you're not running the audit hook yet, to wire one up).
+`endorsement_debt` is the weakly-endorsed bucket — memories the ranker
+keeps surfacing that the model never explicitly applies (auto-commit
+keeps closing the loop; no deliberate memory_record_use ever fires).
+A non-zero count means a curation pass should spot-check those rows
+and either confirm them via memory_verify + an explicit
+record_use(applied) on the next hit, or narrow the scope/remove them
+if the ranker is over-surfacing. Use scope_overview once
 per conversation; it's a yes/no signal, not something to poll.
 
 When to call memory_search:

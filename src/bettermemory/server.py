@@ -29,6 +29,7 @@ from typing import Any
 from mcp.server.fastmcp import FastMCP
 
 from ._handlers import (
+    DESC_MEMORY_AUDIT_TURN,
     DESC_MEMORY_HEALTH,
     DESC_MEMORY_LIST,
     DESC_MEMORY_LIST_TOMBSTONES,
@@ -288,6 +289,9 @@ def _register_tools(
     )
     mcp.tool(name="memory_health", description=DESC_MEMORY_HEALTH)(
         handlers.memory_health
+    )
+    mcp.tool(name="memory_audit_turn", description=DESC_MEMORY_AUDIT_TURN)(
+        handlers.memory_audit_turn
     )
     mcp.tool(name="memory_rename_scope", description=DESC_MEMORY_RENAME_SCOPE)(
         handlers.memory_rename_scope

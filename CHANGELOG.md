@@ -11,6 +11,66 @@ spells out exactly what's stable.
 
 (Empty. Accumulate entries here between tags.)
 
+## 2.1.0 - 2026-05-20
+
+**Silent-miss telemetry and endorsement-debt curation.** Two additive
+features close the false-negative half of the opt-in retrieval
+contract and add a "weakly endorsed" curation pivot. No on-disk
+breaking changes — every new wire field is opt-in or absence-as-signal,
+SCHEMA_VERSION stays at 1, and legacy events load unchanged
+(`auto`-absent reads as explicit so pre-auto-commit history isn't
+silently relabelled). Test count: 970 → 1021 (+51).
+
+### Added
+
+- `memory_audit_turn` MCP tool. Fires from a client-side end-of-turn
+  hook with the user's message; runs a search probe over the active
+  store using the model's configured search mode and asks whether a
+  `search` or `show` event fired in the same session within
+  `lookback_seconds` (default 60s, clamped to [1, 600]). When a
+  high-relevance hit exists AND no retrieval happened in the window,
+  emits a `search_miss` event so curation views surface the rate.
+  Always emits `turn_audited` so audit cadence is visible in the log
+  even when nothing's flagged. The threshold rule is versioned
+  (`THRESHOLD_RULE_V1 = "v1_top1_high"`) and recorded on every event
+  so a later calibration pass can replay historical logs under a new
+  threshold without losing the audit trail. Surface:
+  `bettermemory.audit` module exports `probe_for_miss`,
+  `MissReport`, `MissHit`, `DEFAULT_LOOKBACK_SECONDS`,
+  `THRESHOLD_RULE_V1`.
+- Auto-vs-explicit applied count split on `MemoryStats`.
+  `applied_count` (the total) is now backed by `auto_applied_count`
+  (the server's auto-commit pass) plus `explicit_applied_count`
+  (model called `memory_record_use` directly), with
+  `endorsement_ratio = explicit / total` (or `None` on zero applies).
+  Legacy events without the `auto` field count as explicit so
+  pre-auto-commit history reads cleanly. The `heavily_used` render
+  in `memory_health` now shows `applied=N (auto=X exp=Y)`.
+- `endorsement_debt` rollup on `HealthReport` and `curation_counts`.
+  The "weakly endorsed" bucket: memories the ranker keeps surfacing
+  (`retrieval_count >= 5`) that the model never deliberately reaches
+  for (`explicit_applied_count == 0`). Complement to `dead_weight`
+  (never applied at all, auto included): dead_weight says the model
+  doesn't even let the auto pass run on this; endorsement_debt says
+  applies happened, but every single one was the auto fallback.
+  Ambient memories are excluded — their value is implicit and
+  explicit use events are structurally rare. Capped rows for inline
+  display plus an uncapped `total` for bucket size. Threshold
+  tunable via `endorsement_debt_min_retrievals` (clamped to >=1).
+- `silent_misses` rollup on `HealthReport` and `curation_counts`.
+  Counts `turn_audited` (denominator) and `search_miss` (numerator)
+  events; the two-count shape distinguishes "stalled hook"
+  (audited_total=0) from "healthy run" (audited_total>>0,
+  miss_total=0). `memory_scope_overview.curation_pending` surfaces
+  the miss numerator alongside `endorsement_debt` so session-start
+  signals whether either pile is non-empty.
+
+### Internal
+
+- Health renderer fix: rename the inner `rate_pct` binding in the
+  silent-misses block so it doesn't shadow the marker-stats one
+  inside the same function scope.
+
 ## 2.0.0 - 2026-05-16
 
 **Verification-grade memory.** The 1.6 plan in `docs/v1.6-plan.md`
