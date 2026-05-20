@@ -85,12 +85,15 @@ async def test_addendum_tool_names_exist_on_server(tmp_path: Path) -> None:
     registered = {tool.name for tool in await mcp.list_tools()}
 
     referenced = set(_TOOL_REF_RE.findall(SYSTEM_PROMPT_ADDENDUM))
-    # Drop tool-prefix-shaped strings that are obviously placeholder
-    # references in prose (none exist today, but if the addendum starts
-    # talking about a hypothetical `memory_FOO` we don't want the test
-    # to fail for a doc artifact). The current addendum uses real
-    # names exclusively, so this is just future-proofing.
-    referenced = {name for name in referenced if not name.endswith("_")}
+    # Strip kwarg-shaped names the regex over-includes (`memory_ids`
+    # is a parameter on `memory_record_use`, not a tool). Same
+    # allowlist as the SKILL.md test below — keep them in sync.
+    KNOWN_KWARGS = {"memory_ids"}
+    referenced = {
+        name
+        for name in referenced
+        if not name.endswith("_") and name not in KNOWN_KWARGS
+    }
 
     missing = referenced - registered
     assert not missing, (
