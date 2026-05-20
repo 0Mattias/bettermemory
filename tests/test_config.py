@@ -369,3 +369,56 @@ def test_resolved_directory_ignores_project_dir_that_is_a_file(
 
     cfg = Config()
     assert cfg.resolved_directory(cwd=cwd) == (fake_home / ".claude-memory").resolve()
+
+
+# ---------------------------------------------------------------------------
+# System-directory footgun warning (F-C1)
+# ---------------------------------------------------------------------------
+
+
+def test_resolved_directory_warns_on_system_dir_via_env(
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """Setting `BETTERMEMORY_DIR=/etc/bettermemory` is almost always a
+    misconfiguration (someone meant a relative path or a typo expanded
+    against the wrong base). We still honour the value — there are
+    legitimate ops-managed prefixes we can't predict — but we log a
+    warning so the misconfiguration shows up in logs rather than
+    silently scattering markdown files under /etc."""
+    import sys
+
+    if sys.platform == "win32":
+        pytest.skip("system dir prefixes are POSIX-specific")
+
+    monkeypatch.setenv(ENV_DIR_OVERRIDE, "/etc/bettermemory")
+    caplog.set_level("WARNING", logger="bettermemory.config")
+
+    cfg = Config()
+    # Resolve macOS symlinks for the prefix-match (Path("/etc") becomes
+    # `/private/etc` on macOS); the warning logic resolves prefixes too,
+    # so the load-bearing assertion is that the warning fired and named
+    # the source — not the literal string form of the path.
+    cfg.resolved_directory()
+    assert any(
+        "system directory" in record.message and ENV_DIR_OVERRIDE in record.message
+        for record in caplog.records
+    ), f"no system-dir warning; got: {[r.message for r in caplog.records]}"
+
+
+def test_resolved_directory_no_warn_for_user_path(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """User-writable paths must not trigger the warning. Lock the
+    headroom so a future tightening of the prefix list doesn't start
+    catching `/Users/...` / `/home/...` paths."""
+    monkeypatch.setenv(ENV_DIR_OVERRIDE, str(tmp_path / "mem"))
+    caplog.set_level("WARNING", logger="bettermemory.config")
+
+    cfg = Config()
+    cfg.resolved_directory()
+    assert not any(
+        "system directory" in record.message for record in caplog.records
+    ), f"unexpected warning on user path: {[r.message for r in caplog.records]}"

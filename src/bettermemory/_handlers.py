@@ -108,6 +108,16 @@ _WRITE_CATEGORIES: frozenset[str] = frozenset({c.value for c in Category})
 _AMBIENT_LONG_BODY_WORDS = 500
 
 
+# Cap on free-text `note` strings recorded on `memory_verify` and
+# `memory_record_use` events. The web UI already enforces 500 chars on
+# the /verify POST — this is the matching cap for the MCP entry points,
+# so a hostile client (or a runaway model) can't inflate the JSONL
+# event log with multi-megabyte notes. 500 chars covers any reasonable
+# rationale ("verified against commit abc123" sort of thing); pasting
+# whole transcripts belongs in a memory body, not in an event note.
+_NOTE_MAX_LEN = 500
+
+
 # ---------------------------------------------------------------------------
 # Tool descriptions — model-facing strings. Kept as module-level constants
 # (rather than docstrings or inline at the registration site) so the
@@ -1888,6 +1898,12 @@ class ToolHandlers:
                 raise ValueError(f"invalid memory id: {mid!r}")
         if note is not None and not isinstance(note, str):
             raise ValueError("note must be a string if provided")
+        if note is not None and len(note) > _NOTE_MAX_LEN:
+            raise ValueError(
+                f"note is {len(note)} chars — cap is {_NOTE_MAX_LEN}. "
+                "The note is a short rationale for the outcome, not a "
+                "place to paste prose; trim it before recording."
+            )
 
         # `claim_excerpts` is the provenance signal (T1.1 of the 1.6 plan).
         # When provided, it's a list parallel to `memory_ids` with one
@@ -1982,6 +1998,12 @@ class ToolHandlers:
         _advance_turn(state, self.recorder)
         if note is not None and not isinstance(note, str):
             raise ValueError("note must be a string if provided")
+        if note is not None and len(note) > _NOTE_MAX_LEN:
+            raise ValueError(
+                f"note is {len(note)} chars — cap is {_NOTE_MAX_LEN}. "
+                "The note is a short rationale for the verification, "
+                "not a place to paste prose; trim it before recording."
+            )
         for label, value in (
             ("verified_paths", verified_paths),
             ("verified_commits", verified_commits),

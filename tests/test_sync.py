@@ -458,3 +458,66 @@ def test_auto_pulls_then_pushes(memory_dir: Path, bare_remote: Path) -> None:
     assert isinstance(push, dict)
     assert pull["pulled"] is True
     assert push["pushed"] is True
+
+
+# ---------------------------------------------------------------------------
+# Name validation (F-S2 / F-S3) and pull --no-tags (L6)
+# ---------------------------------------------------------------------------
+
+
+def test_init_rejects_unsafe_default_branch(memory_dir: Path) -> None:
+    """`default_branch` is positional to `git init --initial-branch`.
+    A value starting with `-` (or containing shell-meaningful chars)
+    could in some git versions get parsed as a flag rather than a
+    branch name. The validator rejects anything outside the conservative
+    safe set."""
+    with pytest.raises(sync.SyncError, match="default_branch"):
+        sync.init(memory_dir, default_branch="--exec=evil")
+
+
+def test_push_rejects_unsafe_remote_name(memory_dir: Path, bare_remote: Path) -> None:
+    """Same rule on the `remote` arg passed to push: validate against
+    the safe charset before letting it through to `git push <remote>`."""
+    sync.init(memory_dir, remote=str(bare_remote))
+    Store(memory_dir).write(content="x", scopes=["tools"])
+    with pytest.raises(sync.SyncError, match="remote"):
+        sync.push(memory_dir, remote="--exec=evil")
+
+
+def test_pull_rejects_unsafe_remote_name(memory_dir: Path) -> None:
+    """Same rule on the `remote` arg passed to pull."""
+    sync.init(memory_dir)
+    with pytest.raises(sync.SyncError, match="remote"):
+        sync.pull(memory_dir, remote="--upload-pack=evil")
+
+
+def test_pull_uses_no_tags(
+    memory_dir: Path,
+    bare_remote: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Regression: `git pull --rebase` must include `--no-tags`. A
+    hostile or sloppy remote pushing refs under `refs/tags/` would
+    otherwise be silently mirrored into the local `.git/refs/tags/`,
+    where a tag named `main` could shadow the branch."""
+    sync.init(memory_dir, remote=str(bare_remote))
+    Store(memory_dir).write(content="x", scopes=["tools"])
+    sync.push(memory_dir)
+
+    captured_args: list[list[str]] = []
+    original_run_git = sync._run_git
+
+    def capturing_run_git(
+        root: Path, args: list[str], *, check: bool = True
+    ) -> subprocess.CompletedProcess[str]:
+        captured_args.append(list(args))
+        return original_run_git(root, args, check=check)
+
+    monkeypatch.setattr(sync, "_run_git", capturing_run_git)
+    sync.pull(memory_dir, reindex=False)
+
+    pull_calls = [a for a in captured_args if a and a[0] == "pull"]
+    assert pull_calls, f"no pull subcommand in captured args: {captured_args}"
+    assert "--no-tags" in pull_calls[0], (
+        f"`git pull` missing --no-tags: {pull_calls[0]}"
+    )

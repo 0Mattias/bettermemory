@@ -1222,6 +1222,30 @@ async def test_memory_update_content_resets_last_verified_at(server: Any) -> Non
     assert post["last_verified_at"] is None
 
 
+async def test_memory_verify_rejects_oversized_note(server: Any) -> None:
+    """The MCP entry-point cap on `note` matches the web /verify
+    endpoint (500 chars). Without this, a hostile client could
+    inflate the JSONL event log with multi-megabyte notes."""
+    written = await _call(
+        server, "memory_write", content="durable claim", scopes=["tools"]
+    )
+    with pytest.raises(Exception, match="cap is 500"):
+        await _call(
+            server, "memory_verify", id=written["id"], note="x" * 501
+        )
+
+
+async def test_memory_verify_accepts_max_length_note(server: Any) -> None:
+    """Sanity check: 500 chars exactly is accepted (cap is inclusive)."""
+    written = await _call(
+        server, "memory_write", content="durable claim", scopes=["tools"]
+    )
+    res = await _call(
+        server, "memory_verify", id=written["id"], note="x" * 500
+    )
+    assert res["last_verified_at"] is not None
+
+
 async def test_memory_update_scope_only_preserves_last_verified_at(
     server: Any,
 ) -> None:

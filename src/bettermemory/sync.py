@@ -45,6 +45,7 @@ Why not git directly? The wrapper buys:
 from __future__ import annotations
 
 import logging
+import re
 import shutil
 import subprocess
 from dataclasses import dataclass
@@ -129,6 +130,27 @@ def _require_git() -> str:
             "vendored git client."
         )
     return binary
+
+
+# Conservative charset for remote and branch names passed positionally
+# into git. Git's own rules are wider, but we only let a `remote` /
+# `default_branch` parameter through if it's clearly a name, not a flag.
+# Leading `-` is the specific footgun: a positional arg that starts with
+# a dash can get parsed as an option in some argv contexts (e.g.
+# `git remote add --exec=…`). The check is belt-and-suspenders alongside
+# the existing argv-list invocation pattern, which already closes the
+# shell-injection surface.
+_GIT_NAME_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._/-]*$")
+
+
+def _require_git_name(label: str, value: str) -> str:
+    if not _GIT_NAME_RE.fullmatch(value):
+        raise SyncError(
+            f"{label} {value!r} contains characters outside the safe "
+            f"set [A-Za-z0-9._/-] (or starts with a dash). Pick a name "
+            f"like 'origin' / 'main', not a flag."
+        )
+    return value
 
 
 def _redact_url(url: str | None) -> str | None:
@@ -253,6 +275,8 @@ def init(
         raise SyncError(f"memory directory {root} does not exist")
     if not root.is_dir():
         raise SyncError(f"memory directory {root} is not a directory")
+
+    _require_git_name("default_branch", default_branch)
 
     actions: list[str] = []
     already_repo = _is_repo(root)
@@ -384,6 +408,7 @@ def push(
     empty commit, but for a sync wrapper the right default is
     "say nothing and skip".
     """
+    _require_git_name("remote", remote)
     root = Path(root).expanduser().resolve()
     if not _is_repo(root):
         raise SyncError(
@@ -452,6 +477,7 @@ def pull(
     scripts that batch multiple sync operations and want to defer
     the index rebuild to the end.
     """
+    _require_git_name("remote", remote)
     root = Path(root).expanduser().resolve()
     if not _is_repo(root):
         raise SyncError(
@@ -465,7 +491,14 @@ def pull(
             f"`bettermemory sync init --remote <url>` or add it manually."
         )
 
-    pull_result = _run_git(root, ["pull", "--rebase", remote], check=False)
+    # `--no-tags` keeps a hostile (or sloppy) remote from injecting refs
+    # under `refs/tags/` that shadow branch names, and keeps the local
+    # `.git/refs/tags/` clean — the memory store has no concept of tags,
+    # so anything that lands there is at best clutter and at worst a
+    # foot-gun ("git checkout main" picking up the wrong ref).
+    pull_result = _run_git(
+        root, ["pull", "--rebase", "--no-tags", remote], check=False
+    )
     if pull_result.returncode != 0:
         # See the redaction note on the push branch — credentialed
         # URLs can land in pull stderr too (e.g. when the remote is

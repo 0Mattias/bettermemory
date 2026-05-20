@@ -256,3 +256,47 @@ async def test_record_use_with_telemetry_disabled_is_noop(
     assert res["outcome"] == "applied"
     # And no event log file is created.
     assert not (memory_dir / ".events.jsonl").exists()
+
+
+# ---------------------------------------------------------------------------
+# Note length cap — parity with the web /verify endpoint
+# ---------------------------------------------------------------------------
+
+
+async def test_record_use_rejects_oversized_note(
+    server_with_events: tuple[Any, Path],
+) -> None:
+    """The web UI caps `note` at 500 chars on /verify. The MCP entry
+    point now matches: a hostile client (or a runaway model) can't
+    inflate the JSONL event log with multi-megabyte notes."""
+    server, _ = server_with_events
+    written = await _call(
+        server, "memory_write", content="durable fact", scopes=["tools"]
+    )
+    with pytest.raises(Exception, match="cap is 500"):
+        await _call(
+            server,
+            "memory_record_use",
+            memory_ids=[written["id"]],
+            outcome="ignored",
+            note="x" * 501,
+        )
+
+
+async def test_record_use_accepts_max_length_note(
+    server_with_events: tuple[Any, Path],
+) -> None:
+    """Sanity check: exactly 500 chars is accepted (the cap is
+    inclusive)."""
+    server, _ = server_with_events
+    written = await _call(
+        server, "memory_write", content="durable fact", scopes=["tools"]
+    )
+    res = await _call(
+        server,
+        "memory_record_use",
+        memory_ids=[written["id"]],
+        outcome="ignored",
+        note="x" * 500,
+    )
+    assert res["outcome"] == "ignored"

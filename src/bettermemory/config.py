@@ -197,10 +197,14 @@ class Config:
         """Apply the resolution rule and return an absolute directory path."""
         env_override = os.environ.get(ENV_DIR_OVERRIDE)
         if env_override:
-            return Path(env_override).expanduser().resolve()
+            resolved = Path(env_override).expanduser().resolve()
+            _warn_on_system_dir(ENV_DIR_OVERRIDE, resolved)
+            return resolved
 
         if self.storage.directory:
-            return Path(self.storage.directory).expanduser().resolve()
+            resolved = Path(self.storage.directory).expanduser().resolve()
+            _warn_on_system_dir("[storage] directory", resolved)
+            return resolved
 
         cwd = (cwd or Path.cwd()).resolve()
         project_dir = cwd / PROJECT_DIR_NAME
@@ -208,6 +212,63 @@ class Config:
             return project_dir.resolve()
 
         return (Path.home() / GLOBAL_DIR_NAME).resolve()
+
+
+# Path prefixes that almost certainly indicate a misconfigured env var
+# (someone typed `BETTERMEMORY_DIR=/etc` thinking it was relative, or
+# the var got expanded against the wrong base). The store would then
+# try to `mkdir(parents=True, exist_ok=True)` under a system directory
+# and either EPERM at startup or — worse, if run as root — succeed and
+# scatter markdown files into `/etc`. The warning is informational
+# only; we still honour the value because there are legitimate cases
+# (a custom mount, a chroot, an ops-managed prefix) we can't predict.
+# `/var` is intentionally NOT in this list: macOS routes its per-user
+# tmp dir through `/var/folders/...` (which resolves to `/private/var/...`),
+# so warning on `/var` would fire on every legitimate `tmp_path` test
+# and every ad-hoc tmpdir use. The protected set focuses on directories
+# a user definitely doesn't mean to use as a writable memory store.
+_SYSTEM_DIR_PREFIXES: tuple[Path, ...] = (
+    Path("/etc"),
+    Path("/usr"),
+    Path("/bin"),
+    Path("/sbin"),
+    Path("/boot"),
+    Path("/dev"),
+    Path("/proc"),
+    Path("/sys"),
+)
+
+
+def _warn_on_system_dir(source: str, resolved: Path) -> None:
+    import logging
+
+    for raw_prefix in _SYSTEM_DIR_PREFIXES:
+        # `.resolve()` normalises macOS symlinks (`/etc` -> `/private/etc`,
+        # `/var` -> `/private/var`). Without this, a `BETTERMEMORY_DIR=/etc/...`
+        # that resolves to `/private/etc/...` on macOS would slip past
+        # the is_relative_to check. Linux is already canonical so the
+        # call is a no-op there. Tolerate non-existent prefixes silently
+        # — different platforms have different system dirs.
+        try:
+            prefix = raw_prefix.resolve()
+        except (OSError, ValueError):
+            prefix = raw_prefix
+        try:
+            if resolved == prefix or resolved.is_relative_to(prefix):
+                logging.getLogger("bettermemory.config").warning(
+                    "%s resolves to %s, which is under a system directory "
+                    "(%s). bettermemory will still try to use it, but this "
+                    "is almost always a misconfiguration — check your env "
+                    "var or config and point at a user-writable path.",
+                    source,
+                    resolved,
+                    raw_prefix,
+                )
+                return
+        except ValueError:
+            # Path.is_relative_to raises on Windows when comparing
+            # across drives; tolerate that silently.
+            continue
 
 
 # ---------------------------------------------------------------------------
