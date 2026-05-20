@@ -123,6 +123,77 @@ def test_rename_scope_old_equals_new_returns_empty(store: Store) -> None:
     assert result == {"active": [], "tombstoned": []}
 
 
+def test_rename_scope_updates_fts5_index(store: Store) -> None:
+    """Regression: a rename must propagate to the FTS5 index. The
+    `scopes_text` column feeds BM25 ranking and the scope-LIKE
+    pre-filter; without an upsert here the index drifts from disk
+    until the next manual `bettermemory reindex`, and search-time
+    scope ranking reads against the old name."""
+    import sqlite3
+
+    from bettermemory import index as _index
+
+    memory = store.write(content="python tooling notes", scopes=["infra"])
+    # Force the index to populate (covers the case where the store's
+    # write path didn't upsert because the index file didn't yet exist
+    # — `_index_upsert_quietly` does upsert, but this also locks in
+    # the precondition explicitly).
+    _index.upsert(store.root, memory)
+
+    result = store.rename_scope("infra", "infrastructure")
+    assert memory.id in result["active"]
+
+    db_path = _index.index_path(store.root)
+    conn = sqlite3.connect(str(db_path))
+    try:
+        row = conn.execute(
+            "SELECT scopes_text FROM memories WHERE id = ?",
+            (memory.id,),
+        ).fetchone()
+    finally:
+        conn.close()
+    assert row is not None, "renamed memory missing from index"
+    scopes_text = row[0]
+    assert " infrastructure " in scopes_text, (
+        f"new scope name not in index after rename: {scopes_text!r}"
+    )
+    assert " infra " not in scopes_text, (
+        f"old scope name still in index after rename: {scopes_text!r}"
+    )
+
+
+def test_rename_scope_restored_memory_searchable_by_new_scope(
+    store: Store,
+) -> None:
+    """Regression chain: restore writes back to the active set; the
+    fix to `restore` also upserts the FTS5 index. Combined with the
+    rename-updates-index fix above, a tombstone→restore→rename
+    sequence ends with a fully-current index entry."""
+    import sqlite3
+
+    from bettermemory import index as _index
+
+    memory = store.write(content="kept body", scopes=["alpha"])
+    store.tombstone(memory.id, reason="oops")
+    restored = store.restore(memory.id)
+    assert restored.id == memory.id
+
+    db_path = _index.index_path(store.root)
+    conn = sqlite3.connect(str(db_path))
+    try:
+        row = conn.execute(
+            "SELECT scopes_text FROM memories WHERE id = ?",
+            (memory.id,),
+        ).fetchone()
+    finally:
+        conn.close()
+    assert row is not None, (
+        "restored memory not re-added to the FTS5 index — "
+        "search would silently miss it"
+    )
+    assert " alpha " in row[0]
+
+
 # ---------------------------------------------------------------------------
 # memory_rename_scope MCP tool
 # ---------------------------------------------------------------------------

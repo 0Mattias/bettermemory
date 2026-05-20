@@ -410,16 +410,22 @@ class Store:
                     )
             raise MemoryNotFoundError(f"no memory with id {memory_id}")
 
-        existing = self._load_path(existing_path)
-        update: dict[str, object] = {"last_verified_at": utcnow()}
-        if verified_paths is not None:
-            update["verified_paths"] = list(verified_paths)
-        if verified_commits is not None:
-            update["verified_commits"] = list(verified_commits)
-        if verified_versions is not None:
-            update["verified_versions"] = list(verified_versions)
-        new_memory = existing.model_copy(update=update)
+        # Read-modify-write must happen under the same lock. Reading
+        # outside the lock and writing inside it leaves a window where
+        # a concurrent `update` / `tombstone` can land in between; our
+        # write would then overwrite that change with the stale body
+        # plus the new `last_verified_at`. Cheap to hold the lock during
+        # the read — the file is the same one we're about to write.
         with _locked(existing_path):
+            existing = self._load_path(existing_path)
+            update: dict[str, object] = {"last_verified_at": utcnow()}
+            if verified_paths is not None:
+                update["verified_paths"] = list(verified_paths)
+            if verified_commits is not None:
+                update["verified_commits"] = list(verified_commits)
+            if verified_versions is not None:
+                update["verified_versions"] = list(verified_versions)
+            new_memory = existing.model_copy(update=update)
             self._write_path(existing_path, new_memory)
         _index_upsert_quietly(self.root, new_memory)
         return new_memory
@@ -454,22 +460,28 @@ class Store:
                     raise TombstonedError(f"memory {memory_id} is already tombstoned")
             raise MemoryNotFoundError(f"no memory with id {memory_id}")
 
-        post = frontmatter.load(path)
-        post.metadata["removed"] = utcnow()
-        post.metadata["removed_reason"] = reason
-        # Only emit the field when a session_id was passed — keeps legacy
-        # tests and ad-hoc callers from getting an opaque `None` lying in
-        # frontmatter. The reader treats missing-or-None identically.
-        if session_id is not None:
-            post.metadata["removed_session"] = session_id
-
         target = self.tombstone_dir / f"{path.stem}.tombstone.md"
         # If a same-named tombstone already exists, append the ULID for
         # uniqueness rather than overwriting history.
         if target.exists():
             target = self.tombstone_dir / (f"{path.stem}.{memory_id}.tombstone.md")
 
+        # Read + write under the same lock. Reading the body outside the
+        # lock and writing the tombstone inside it leaves a window where
+        # a concurrent `update` can land in between; we'd then write a
+        # tombstone containing the pre-update body, losing the in-flight
+        # edit silently.
         with _locked(path):
+            post = frontmatter.load(path)
+            post.metadata["removed"] = utcnow()
+            post.metadata["removed_reason"] = reason
+            # Only emit the field when a session_id was passed — keeps
+            # legacy tests and ad-hoc callers from getting an opaque
+            # `None` lying in frontmatter. The reader treats missing
+            # or None identically.
+            if session_id is not None:
+                post.metadata["removed_session"] = session_id
+
             _atomic_write_post(target, post)
             try:
                 path.unlink()
@@ -666,32 +678,47 @@ class Store:
         if tombstone_path is None:
             raise MemoryNotFoundError(f"no tombstone with id {memory_id}")
 
-        post = frontmatter.load(tombstone_path)
-        post.metadata.pop("removed", None)
-        post.metadata.pop("removed_reason", None)
-        post.metadata.pop("removed_session", None)
+        # Lock on the tombstone path for the whole read-write-unlink
+        # sequence. Two concurrent restores of the same id would both
+        # see the tombstone outside the lock, both read it, and both
+        # try to write — the second's `active_path.exists()` check
+        # would land on the first's just-written active file and pick
+        # a collision-suffixed name, resurrecting the memory twice. The
+        # tombstone lock serializes the sequence; the second restore
+        # then sees the tombstone is gone and raises clearly.
+        with _locked(tombstone_path):
+            try:
+                post = frontmatter.load(tombstone_path)
+            except FileNotFoundError:
+                raise MemoryNotFoundError(
+                    f"no tombstone with id {memory_id}"
+                ) from None
+            post.metadata.pop("removed", None)
+            post.metadata.pop("removed_reason", None)
+            post.metadata.pop("removed_session", None)
 
-        # Reuse the active-side path-builder so a restore lands at the
-        # same shape as a fresh write — date-prefixed slug filename in
-        # the root, no `.tombstone.md` suffix. The slug is regenerated
-        # from the body to handle the (unusual) case where the original
-        # filename collided and got a short-id suffix; the restored
-        # name may differ slightly but that's fine — filenames are
-        # advisory, not part of the identity.
-        try:
-            created = _as_dt(post.metadata["created"])
-        except (KeyError, ValueError) as exc:
-            raise ValueError(
-                f"{tombstone_path}: cannot restore — missing/invalid created"
-            ) from exc
-        slug = make_slug(post.content)
-        active_filename = build_filename(created, slug)
-        active_path = self.root / active_filename
-        if active_path.exists():
-            short = memory_id[-6:].lower()
-            active_path = self.root / build_filename(created, f"{slug}-{short}")
+            # Reuse the active-side path-builder so a restore lands at
+            # the same shape as a fresh write — date-prefixed slug
+            # filename in the root, no `.tombstone.md` suffix. The slug
+            # is regenerated from the body to handle the (unusual) case
+            # where the original filename collided and got a short-id
+            # suffix; the restored name may differ slightly but that's
+            # fine — filenames are advisory, not part of the identity.
+            try:
+                created = _as_dt(post.metadata["created"])
+            except (KeyError, ValueError) as exc:
+                raise ValueError(
+                    f"{tombstone_path}: cannot restore — missing/invalid created"
+                ) from exc
+            slug = make_slug(post.content)
+            active_filename = build_filename(created, slug)
+            active_path = self.root / active_filename
+            if active_path.exists():
+                short = memory_id[-6:].lower()
+                active_path = self.root / build_filename(
+                    created, f"{slug}-{short}"
+                )
 
-        with _locked(active_path):
             _atomic_write_post(active_path, post)
             try:
                 tombstone_path.unlink()
@@ -706,7 +733,12 @@ class Store:
             # the tombstone alongside the restored active file.
             fsync_dir(tombstone_path.parent)
 
-        return self._load_path(active_path)
+        restored = self._load_path(active_path)
+        # Restored memories rejoin the searchable set — keep the FTS5
+        # index in step with the file system. The remove-on-tombstone
+        # call dropped this id; the restore is the symmetric upsert.
+        _index_upsert_quietly(self.root, restored)
+        return restored
 
     # ---- scope rename ----------------------------------------------------
 
@@ -745,22 +777,34 @@ class Store:
 
         active_changed: list[str] = []
         for path in self._iter_active_paths():
-            try:
-                memory = self._load_path(path)
-            except (ValueError, KeyError):
-                continue
-            new_scopes = self._scopes_after_rename(memory.scopes, old, new)
-            if new_scopes is None:
-                continue
-            # Bump `updated` because the metadata moved. `last_verified_at`
-            # is preserved — the body's claims are untouched, so the
-            # verification (if any) still applies.
-            refreshed = memory.model_copy(
-                update={"scopes": new_scopes, "updated": utcnow()}
-            )
+            # Read-modify-write under the same lock per file. The prior
+            # shape loaded outside the lock, opening a window where a
+            # concurrent `update` or `tombstone` could land between our
+            # read and write — our write would then clobber that change
+            # with a stale body plus the renamed scope. The index update
+            # stays inside the lock too: the FTS5 `scopes_text` column
+            # is rebuilt from the new scope list, and without keeping
+            # it in step with disk, BM25 ranking on the renamed scope
+            # reads against stale indexed text until the next manual
+            # `bettermemory reindex`.
             with _locked(path):
+                try:
+                    memory = self._load_path(path)
+                except (ValueError, KeyError, FileNotFoundError):
+                    continue
+                new_scopes = self._scopes_after_rename(memory.scopes, old, new)
+                if new_scopes is None:
+                    continue
+                # Bump `updated` because the metadata moved.
+                # `last_verified_at` is preserved — the body's claims
+                # are untouched, so the verification (if any) still
+                # applies.
+                refreshed = memory.model_copy(
+                    update={"scopes": new_scopes, "updated": utcnow()}
+                )
                 self._write_path(path, refreshed)
-            active_changed.append(memory.id)
+                _index_upsert_quietly(self.root, refreshed)
+                active_changed.append(refreshed.id)
 
         tombstoned_changed: list[str] = []
         if include_tombstones:
