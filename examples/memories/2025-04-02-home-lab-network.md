@@ -1,4 +1,5 @@
 ---
+schema_version: 1
 id: 01HXYZHOMELABNETWORKEXAMPL
 created: 2025-04-02T18:00:00+00:00
 updated: 2025-04-02T18:00:00+00:00

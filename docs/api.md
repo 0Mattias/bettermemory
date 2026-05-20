@@ -47,19 +47,21 @@ Returns `{current_repo, scopes: {scope: count}, total, curation_pending}`. The `
 
 ## Writing
 
-### `memory_write(content, scopes, confidence?, source?, category?, force?, acknowledge_transient?, acknowledge_scope_mismatch?, groundedness_check?, source_transcript?, acknowledge_ungrounded?)`
+### `memory_write(content, scopes, confidence?, source?, force?, acknowledge_transient?, acknowledge_scope_mismatch?, acknowledge_ungrounded?, category?, groundedness_check?, source_transcript?)`
+
+Signature reflects the handler in `src/bettermemory/_handlers.py`. In MCP every argument is keyword-only at the wire, so positional order is only consequential for Python callers reading this as a spec.
 
 - `content: str`. Required.
 - `scopes: list[str]`. Required, non-empty.
 - `confidence: str = "medium"`. One of `"low"`, `"medium"`, `"high"`.
 - `source: str = "explicit-statement"`. One of `"explicit-statement"`, `"inferred"`.
-- `category: str = "fact"`. One of `"fact"`, `"user-inference"`, `"ambient"`. `"fact"` commits immediately. `"user-inference"` structurally goes pending and returns `{status: "pending", pending_id, pending_reason: "user-inference"}` regardless of config — claims about the user always get the conversational veto. `"ambient"` commits like `"fact"` but is excluded from the dead-weight curation rule (long bodies over 500 words attach a non-blocking `ambient_body_long` warning).
 - `force: bool = False`. Bypass content dedup AND tombstone dedup.
 - `acknowledge_transient: bool = False`. Bypass the durability marker check. Logged as an override.
 - `acknowledge_scope_mismatch: bool = False`. Bypass the scope-mismatch warning when a cross-project reference is intentional.
+- `acknowledge_ungrounded: bool = False`. Override the groundedness gate when grounding sources (file reads, tool results) aren't represented in the transcript.
+- `category: str = "fact"`. One of `"fact"`, `"user-inference"`, `"ambient"`. `"fact"` commits immediately. `"user-inference"` structurally goes pending and returns `{status: "pending", pending_id, pending_reason: "user-inference"}` regardless of config — claims about the user always get the conversational veto. `"ambient"` commits like `"fact"` but is excluded from the dead-weight curation rule (long bodies over 500 words attach a non-blocking `ambient_body_long` warning).
 - `groundedness_check: bool = False`. Opt-in. When True and `source_transcript` is provided, the server walks the proposed body sentence-by-sentence and flags any whose content tokens overlap the transcript by less than 30%.
 - `source_transcript: str | None = None`. The conversation turns that motivated this write. Required for the gate to fire.
-- `acknowledge_ungrounded: bool = False`. Override the groundedness gate when grounding sources (file reads, tool results) aren't represented in the transcript.
 
 Result statuses:
 

@@ -1,4 +1,5 @@
 ---
+schema_version: 1
 id: 01HXYZTUTORIALSTYLEEXAMPLE
 created: 2025-03-14T10:23:00+00:00
 updated: 2025-03-14T10:23:00+00:00

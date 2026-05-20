@@ -1,4 +1,5 @@
 ---
+schema_version: 1
 id: 01HXYZPROJECTFOOSTACKEXAMP
 created: 2025-04-15T09:14:00+00:00
 updated: 2025-04-15T09:14:00+00:00

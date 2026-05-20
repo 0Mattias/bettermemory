@@ -4,7 +4,7 @@ Notable changes between releases. Format follows
 [Keep a Changelog](https://keepachangelog.com/) loosely. From 1.0
 onward the project uses semver in the standard way: major bumps for
 breaking changes, minor for additive features, patch for fixes. The
-[1.x compatibility contract](CONTRIBUTING.md#versioning-and-the-1x-compatibility-contract)
+[compatibility contract](CONTRIBUTING.md#versioning-and-the-compatibility-contract)
 spells out exactly what's stable.
 
 ## Unreleased
