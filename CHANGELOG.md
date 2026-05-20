@@ -11,6 +11,37 @@ spells out exactly what's stable.
 
 (Empty. Accumulate entries here between tags.)
 
+## 2.1.1 - 2026-05-20
+
+**Documentation pass.** No code or on-disk format changes; the
+exported `SYSTEM_PROMPT_ADDENDUM` constant is shorter but carries
+the same load-bearing policy. Plugin users get a shorter `SKILL.md`
+on next install; programmatic consumers of `SYSTEM_PROMPT_ADDENDUM`
+get the trimmed body.
+
+### Changed
+
+- `README.md` rewritten end-to-end. ~66% shorter (489 → 164 lines).
+  Lost the per-feature "(new in 2.0)" / "(new in 2.1)" markers
+  (CHANGELOG owns history), the duplicate install paths, the full
+  17-row tool table (now a grouped list pointing at `docs/api.md`),
+  and the internals deep-dives that belong in `/docs` (event log,
+  durability check internals, groundedness gate internals,
+  performance characteristics, full config sample). Comparison
+  table trimmed from 16 to 10 rows. The PyPI landing page renders
+  this README, so the change ships to PyPI on next release.
+- `plugin/README.md`, `plugin/skills/bettermemory/SKILL.md`,
+  `docs/installation.md`, `docs/clients.md`, `docs/system_prompt.md`,
+  and `src/bettermemory/prompts.py` (`SYSTEM_PROMPT_ADDENDUM`)
+  condensed in the same pass. The drift test keeps the addendum and
+  its doc copy byte-identical.
+- `docs/api.md` reorganized. The previous version listed
+  `memory_write` twice (once in the retrieval section, then again
+  under writing), put `memory_show` after `memory_write`, and was
+  missing `memory_audit_turn` entirely. Tools now appear in the
+  documented group order (Retrieval, Writing, Lifecycle,
+  Verification, Curation, Session-local) and all 17 are covered.
+
 ## 2.1.0 - 2026-05-20
 
 **Silent-miss telemetry and endorsement-debt curation.** Two additive
