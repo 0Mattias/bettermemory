@@ -386,7 +386,7 @@ DESC_MEMORY_HEALTH = (
 
 
 DESC_MEMORY_RECORD_USE = (
-    "Override the auto-recorded `applied` outcome for a "
+    "Override the auto-committed `applied` outcome for a "
     "retrieved memory. Default behavior: every memory_search hit "
     "auto-commits as `applied` ~2 turns later (logged with "
     "`auto=true`), so the common case handles itself — only call "

@@ -9,7 +9,13 @@ spells out exactly what's stable.
 
 ## Unreleased
 
-(Empty. Accumulate entries here between tags.)
+### Fixed (housekeeping)
+
+- **`DESC_MEMORY_RECORD_USE` terminology drift.** The first sentence
+  said "auto-recorded" while the next sentence and every other
+  surface (docs, SKILL.md, this CHANGELOG) said "auto-committed".
+  Model-facing string, so consistency lands every Claude session.
+  Aligned to "auto-committed".
 
 ## 2.3.1 - 2026-05-20
 
