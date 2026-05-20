@@ -413,11 +413,46 @@ def _normalize_candidate(raw: str) -> str | None:
         # `/x` is too short to be a meaningful claim; `/` alone is the root.
         if len(s) < 3:
             return None
-        return None if _is_placeholder_path(s) else s
+        if _is_placeholder_path(s):
+            return None
+        # Single-segment absolute path with no extension (`/verify`,
+        # `/healthz`, `/login`, `/api`): almost always a URL route or
+        # identifier in prose, not a filesystem citation. Real
+        # filesystem citations in memory bodies are either multi-segment
+        # (`/Users/...`, `/etc/foo.conf`), home-relative (`~/...`), or
+        # carry an extension (`/foo.txt`). The narrowing also filters
+        # bare top-level dirs (`/etc`, `/usr`, `/var`) — those always
+        # exist on the systems this runs on, so no real drift signal is
+        # lost. Concrete bite this fixes: the canonical bettermemory
+        # body cites `/verify` (the web UI POST route) and the
+        # extractor was reading it as a missing filesystem path,
+        # producing a phantom `path_drift_missing=1` on every retrieval.
+        if _is_single_segment_routelike(s):
+            return None
+        return s
     # Windows drive: `C:\` or `C:/`
     if len(s) >= 3 and s[0].isalpha() and s[1] == ":" and s[2] in "/\\":
         return s
     return None
+
+
+def _is_single_segment_routelike(s: str) -> bool:
+    """True when `s` is a single-segment absolute path with no extension
+    (`/verify`, `/healthz`, `/api`, `/etc`).
+
+    Detect by counting `/` after the leading one: exactly one `/` total
+    AND the terminal segment has no `.`. Multi-segment paths
+    (`/etc/foo`), extensioned single segments (`/foo.txt`), and the
+    root (`/`, already filtered upstream by the length check) are not
+    matched. Windows paths never enter this branch — they're handled
+    via the drive-letter check after the `/` branch.
+    """
+    if s.count("/") != 1:
+        return False
+    segment = s[1:]
+    if not segment:
+        return False
+    return "." not in segment
 
 
 def _is_placeholder_path(s: str) -> bool:

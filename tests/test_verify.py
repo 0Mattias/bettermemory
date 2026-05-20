@@ -370,6 +370,79 @@ def test_tmp_foo_test_fixture_still_valid_path(tmp_path: Path) -> None:
 
 
 # ---------------------------------------------------------------------------
+# Single-segment routes / identifiers (URL routes mistaken for fs paths)
+#
+# The canonical bite: a memory body documenting `/verify` (the web UI
+# POST route, NOT a filesystem path) was being extracted as a path
+# candidate, stat'd, and surfaced as `path_drift_missing=1` on every
+# retrieval. The class is broader than `/verify` — any single-segment
+# absolute path without an extension is almost always a URL route or
+# identifier in prose, not a filesystem citation. Filter at extraction
+# time so the drift signal stays trustworthy.
+# ---------------------------------------------------------------------------
+
+
+def test_verify_route_in_prose_not_path() -> None:
+    """The exact body shape that bit production: backtick-wrapped
+    `/verify` followed by an HTTP verb in prose. Must not surface in
+    `missing` (or `checked`) — it's a route, not a path."""
+    body = "Web UI `/verify` POST: CSRF Origin check and length cap."
+    report = detect_path_drift(body)
+    assert "/verify" not in report.checked
+    assert "/verify" not in report.missing
+
+
+def test_single_segment_extensionless_routes_skipped() -> None:
+    """Broader class of the same bite: route-like single-segment paths
+    that pepper API documentation prose."""
+    body = (
+        "Endpoints documented inline: `/healthz`, `/ready`, `/login`, "
+        "`/api`, `/dashboard`. None of these are filesystem citations."
+    )
+    report = detect_path_drift(body)
+    for route in ("/healthz", "/ready", "/login", "/api", "/dashboard"):
+        assert route not in report.checked, f"{route} leaked into checked"
+        assert route not in report.missing, f"{route} leaked into missing"
+
+
+def test_single_segment_with_extension_still_extracted() -> None:
+    """`/foo.txt` IS a plausible filesystem citation — the extension is
+    the distinguishing feature. Should still hit the stat path and
+    surface as missing when the file doesn't exist."""
+    body = "Touched `/this-file-should-not-exist-xyz123.flag` as a marker."
+    report = detect_path_drift(body)
+    assert "/this-file-should-not-exist-xyz123.flag" in report.checked
+    assert "/this-file-should-not-exist-xyz123.flag" in report.missing
+
+
+def test_multi_segment_extensionless_still_extracted(tmp_path: Path) -> None:
+    """The narrowing applies ONLY to single-segment paths. A
+    multi-segment extensionless path like `/usr/local/bin/foo` is a
+    legitimate filesystem claim and must still be checked."""
+    nested = tmp_path / "subdir" / "binary-name"
+    nested.parent.mkdir()
+    nested.write_text("#!/bin/sh\n")
+    body = f"Installed binary at `{nested}`."
+    report = detect_path_drift(body)
+    assert str(nested) in report.checked
+    assert str(nested) not in report.missing
+
+
+def test_home_relative_single_segment_still_extracted(tmp_path: Path) -> None:
+    """`~/.zshrc`-shaped single-segment home-relative paths are real
+    filesystem citations — they go through a different branch
+    (`~/` prefix) and must not be affected by the narrowing."""
+    home_file = tmp_path / ".some-rc"
+    home_file.write_text("real")
+    # Patch home so the `~/` expansion in the extractor lands in tmp_path.
+    with patch.dict(os.environ, {"HOME": str(tmp_path)}):
+        body = "Config lives at `~/.some-rc`."
+        report = detect_path_drift(body)
+    assert "~/.some-rc" in report.checked
+    assert "~/.some-rc" not in report.missing
+
+
+# ---------------------------------------------------------------------------
 # Caps on per-body work
 # ---------------------------------------------------------------------------
 

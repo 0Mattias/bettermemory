@@ -9,6 +9,36 @@ spells out exactly what's stable.
 
 ## Unreleased
 
+## 2.4.0 - 2026-05-20
+
+**Path-drift extractor: narrow single-segment routes.** A bugfix
+release, but tagged minor because it changes the path-candidate set
+the `path_drift` signal acts on — consumers tracking
+`path_drift_missing` counts will see lower numbers on bodies that
+document URL routes inline.
+
+### Fixed (correctness)
+
+- **`/verify`-shaped URL routes no longer flagged as missing
+  filesystem paths.** The path extractor in `verify.py` was treating
+  backtick-wrapped single-segment absolute paths (`/verify`,
+  `/healthz`, `/login`, `/api`) as filesystem candidates and
+  stat'ing them. They reliably failed the stat and surfaced as
+  `path_drift_missing` on every retrieval of any memory whose body
+  documents a route-typed API. The canonical bite: the bettermemory
+  memory documenting the 2.0.0 web UI fix ("Web UI ``/verify`` POST:
+  CSRF Origin check and length cap.") produced a phantom drift
+  signal on every search. New helper
+  `verify._is_single_segment_routelike` rejects extensionless
+  single-segment absolute paths at extraction time. Multi-segment
+  paths (`/Users/...`, `/etc/foo.conf`), home-relative paths
+  (`~/...`), Windows paths, and extensioned single-segment paths
+  (`/foo.txt`) are unaffected. Bare top-level system dirs (`/etc`,
+  `/var`, `/usr`) get filtered too but always exist on the systems
+  this runs on, so no real drift signal is lost. Five regression
+  tests in `tests/test_verify.py` cover the production bite, the
+  broader route class, and the unaffected-by-narrowing edges.
+
 ## 2.3.2 - 2026-05-20
 
 **Polish release.** One model-facing terminology fix on top of
