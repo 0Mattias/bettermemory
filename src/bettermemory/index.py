@@ -141,12 +141,31 @@ def _connect(path: Path) -> sqlite3.Connection:
     """Open a SQLite connection with the defaults we want everywhere:
     foreign keys on (currently no FKs but cheap to enable for future),
     WAL mode for concurrent read+write, and a 5-second busy timeout so
-    a momentarily-locked database retries rather than failing fast."""
+    a momentarily-locked database retries rather than failing fast.
+
+    Each connect tightens permissions to 0o600 on the .db and any
+    existing -wal / -shm siblings. The index mirrors body content for
+    full-text search, so the same privacy bar applies as to the source
+    memory files. The WAL/SHM siblings are created lazily by SQLite on
+    first write, so a one-shot chmod-on-creation could miss them;
+    chmod-on-every-connect is idempotent and cheap (one stat + one
+    chmod per file). No-op on Windows."""
     path.parent.mkdir(parents=True, exist_ok=True)
     conn = sqlite3.connect(str(path), timeout=5.0)
     conn.execute("PRAGMA foreign_keys = ON")
     conn.execute("PRAGMA journal_mode = WAL")
     conn.row_factory = sqlite3.Row
+    import contextlib
+    import os as _os
+
+    for sibling in (
+        path,
+        path.with_suffix(path.suffix + "-wal"),
+        path.with_suffix(path.suffix + "-shm"),
+    ):
+        if sibling.exists():
+            with contextlib.suppress(OSError):
+                _os.chmod(sibling, 0o600)
     return conn
 
 

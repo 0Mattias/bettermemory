@@ -129,10 +129,21 @@ class Recorder:
                 # a crash. One event per tool call, so the fsync cost is
                 # negligible compared to the value of not losing audit
                 # records in a power-loss scenario.
+                first_write = not self.path.exists()
                 with self.path.open("ab") as f:
                     f.write(line.encode("utf-8"))
                     f.flush()
                     fsync_file(f.fileno())
+                # Tighten permissions on first write — without this, the
+                # log inherits the user umask (typically 0o644) and ends
+                # up world-readable. Event records carry session ids and
+                # the raw user/model queries that triggered them; that's
+                # private user data on a shared-user box. No-op on
+                # Windows. Done outside the open() block so the chmod
+                # doesn't race the buffered append.
+                if first_write:
+                    with contextlib.suppress(OSError):
+                        os.chmod(self.path, 0o600)
         except Exception as exc:  # noqa: BLE001 — never break the caller.
             log.warning("event log write failed (kind=%s): %s", kind, exc)
 

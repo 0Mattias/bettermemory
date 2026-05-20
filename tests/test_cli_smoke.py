@@ -261,6 +261,30 @@ def _run_subprocess(*args: str, env_extra: dict[str, str] | None = None) -> str:
     return (result.stdout + result.stderr).strip()
 
 
+# `python -m bettermemory` only resolves when the package is importable
+# in the subprocess Python — which requires `pip install -e .` (or a
+# wheel install). The conftest sys.path hack handles in-process imports
+# but doesn't propagate to subprocesses. Skip when the subprocess can't
+# import the package; CI always can (it runs `uv sync` first), local
+# fresh clones may not.
+_PACKAGE_IMPORTABLE_IN_SUBPROCESS = (
+    subprocess.run(
+        [sys.executable, "-c", "import bettermemory"],
+        capture_output=True,
+    ).returncode
+    == 0
+)
+
+_skip_without_install = pytest.mark.skipif(
+    not _PACKAGE_IMPORTABLE_IN_SUBPROCESS,
+    reason=(
+        "subprocess Python can't import bettermemory — "
+        "run `pip install -e .` (or `uv sync`) locally"
+    ),
+)
+
+
+@_skip_without_install
 def test_subprocess_help_pins_packaging(tmp_path: Path) -> None:
     """The `python -m bettermemory` path runs `__main__.py` rather than
     the in-process `main()` directly. Worth pinning so a regression in
@@ -274,6 +298,7 @@ def test_subprocess_help_pins_packaging(tmp_path: Path) -> None:
     assert "Persistent memory" in out
 
 
+@_skip_without_install
 def test_subprocess_version_pins_packaging(tmp_path: Path) -> None:
     """Same idea for `--version` — a wheel that ships without metadata
     would fall through to the `0+unknown` branch in __init__.py and

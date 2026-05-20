@@ -514,3 +514,57 @@ def test_iter_tombstone_paths_skips_symlinks(
     assert len(paths) == 1
     assert ".tombstone.md" in paths[0].name
     assert "rogue" not in paths[0].name
+
+
+# ---------------------------------------------------------------------------
+# File permissions — 0o600 on memory files (L4)
+# ---------------------------------------------------------------------------
+
+
+def test_memory_file_is_owner_only(memory_dir: Path) -> None:
+    """Regression: memory files written by the store must land at
+    0o600 (owner read/write only). Inherit-user-umask would put them
+    at 0o644 on a default Linux/macOS install — world-readable, which
+    contradicts the user's privacy expectation for memory content.
+    The lock files already use 0o600 (see `_locked`); this brings the
+    data path in line."""
+    import sys
+
+    if sys.platform == "win32":
+        pytest.skip("POSIX permission bits don't apply on Windows")
+
+    store = Store(memory_dir)
+    memory = store.write(content="private body", scopes=["tools"])
+    md_files = [p for p in memory_dir.iterdir() if p.suffix == ".md"]
+    assert len(md_files) == 1
+    mode = md_files[0].stat().st_mode & 0o777
+    assert mode == 0o600, (
+        f"memory file mode is {oct(mode)}, expected 0o600 — "
+        f"file is readable by group/world"
+    )
+
+    # Same check after an `update` (rewrites in-place via _atomic_write_post).
+    store.update(memory.model_copy(update={"body": "rewritten\n"}))
+    mode = md_files[0].stat().st_mode & 0o777
+    assert mode == 0o600, (
+        f"memory file mode after update is {oct(mode)}, expected 0o600"
+    )
+
+
+def test_tombstone_file_is_owner_only(memory_dir: Path) -> None:
+    """Tombstones land in `.tombstones/` via the same `_atomic_write_post`
+    helper. Verify the chmod applies there too — tombstones carry the
+    same body content as live memories, plus the removal reason and
+    session id, so the privacy bar is the same."""
+    import sys
+
+    if sys.platform == "win32":
+        pytest.skip("POSIX permission bits don't apply on Windows")
+
+    store = Store(memory_dir)
+    memory = store.write(content="body", scopes=["tools"])
+    store.tombstone(memory.id, reason="not needed")
+    tombstones = list(store._iter_tombstone_paths())
+    assert len(tombstones) == 1
+    mode = tombstones[0].stat().st_mode & 0o777
+    assert mode == 0o600, f"tombstone mode is {oct(mode)}, expected 0o600"

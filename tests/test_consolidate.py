@@ -515,7 +515,23 @@ def test_consolidate_returns_method_label_when_no_semantic_model(
 # CLI smoke
 # ---------------------------------------------------------------------------
 
+# These tests invoke the `bettermemory` CLI script directly, which only
+# exists on $PATH after `pip install -e .` (or a published install). CI
+# runs `uv sync --extra dev` before pytest so the binary is present;
+# a fresh local clone without the editable install would otherwise see
+# these fail with FileNotFoundError. Mirrors the `shutil.which("git")`
+# gate that protects test_sync.py from the same issue.
+import shutil as _shutil  # noqa: E402
 
+_BETTERMEMORY_ON_PATH = _shutil.which("bettermemory") is not None
+
+_skip_without_cli = pytest.mark.skipif(
+    not _BETTERMEMORY_ON_PATH,
+    reason="`bettermemory` CLI not on $PATH; run `pip install -e .` locally",
+)
+
+
+@_skip_without_cli
 async def test_cli_consolidate_via_subprocess(
     memory_dir: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -536,6 +552,7 @@ async def test_cli_consolidate_via_subprocess(
     assert "dry-run" in result.stdout
 
 
+@_skip_without_cli
 async def test_cli_consolidate_json_via_subprocess(
     memory_dir: Path,
 ) -> None:

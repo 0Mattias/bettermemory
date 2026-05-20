@@ -1062,6 +1062,12 @@ def _atomic_write_post(path: Path, post: frontmatter.Post) -> None:
     durable past a crash. Both fsyncs are best-effort — see `_fsutil`
     for the platform/filesystem caveats.
 
+    Mode 0o600 (owner read/write only) is set after the rename. Without
+    this, files inherit the user umask — typically 0o644 on Linux/macOS,
+    so memory content ends up world-readable on shared-user boxes.
+    The lock-file path already uses 0o600 (see `_locked`); this brings
+    the data path in line. Windows ignores the bits silently.
+
     One helper, one definition of "durable write" for every persistent
     write in the store: new memories, tombstones, restores, and
     rename_scope in-place edits all share this pattern.
@@ -1073,6 +1079,11 @@ def _atomic_write_post(path: Path, post: frontmatter.Post) -> None:
         f.flush()
         fsync_file(f.fileno())
     tmp.replace(path)
+    # chmod after rename so a partially-written tmp file never sits at
+    # the target path with relaxed permissions. `os.chmod` is a no-op
+    # for the bits beyond the platform's permission model.
+    with contextlib.suppress(OSError):
+        os.chmod(path, 0o600)
     fsync_dir(path.parent)
 
 

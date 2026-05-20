@@ -16,6 +16,8 @@ import subprocess
 import sys
 from importlib.metadata import version as pkg_version
 
+import pytest
+
 import bettermemory
 
 
@@ -45,6 +47,27 @@ def test_dunder_version_looks_like_a_pep440_version() -> None:
     assert re.match(r"^\d", v), f"__version__ should start with a digit: {v!r}"
 
 
+# `python -m bettermemory` only resolves when the package is installed
+# in the subprocess Python — `pip install -e .` or a wheel install. CI
+# does this via `uv sync --extra dev`; a fresh local clone without the
+# editable install would otherwise see this fail with "No module named
+# bettermemory". Skip when the subprocess can't import.
+_PACKAGE_IMPORTABLE_IN_SUBPROCESS = (
+    subprocess.run(
+        [sys.executable, "-c", "import bettermemory"],
+        capture_output=True,
+    ).returncode
+    == 0
+)
+
+
+@pytest.mark.skipif(
+    not _PACKAGE_IMPORTABLE_IN_SUBPROCESS,
+    reason=(
+        "subprocess Python can't import bettermemory — "
+        "run `pip install -e .` (or `uv sync`) locally"
+    ),
+)
 def test_version_flag_prints_dunder_version() -> None:
     """The CLI's `--version` flag is the user-facing version surface;
     pin it to the same source. Spawning a subprocess catches argparse
