@@ -32,6 +32,7 @@ PLUGIN_MANIFEST_PATH = PLUGIN_PATH / ".claude-plugin" / "plugin.json"
 PLUGIN_MCP_PATH = PLUGIN_PATH / ".mcp.json"
 PLUGIN_SKILL_PATH = PLUGIN_PATH / "skills" / "bettermemory" / "SKILL.md"
 PLUGIN_README_PATH = PLUGIN_PATH / "README.md"
+PLUGIN_HOOKS_PATH = PLUGIN_PATH / "hooks" / "hooks.json"
 PYPROJECT_PATH = REPO_ROOT / "pyproject.toml"
 
 
@@ -269,3 +270,74 @@ def test_skill_carries_load_bearing_phrases(phrase: str) -> None:
     assert phrase.lower() in body, (
         f"skill is missing the load-bearing phrase {phrase!r}"
     )
+
+
+# ---------------------------------------------------------------------------
+# Stop hook — wired so memory_audit_turn fires at end-of-turn for plugin
+# users without manual settings.json edits.
+# ---------------------------------------------------------------------------
+
+
+def test_plugin_ships_stop_hook() -> None:
+    """The 2.1 release shipped `memory_audit_turn` for silent-miss
+    telemetry but didn't ship the Stop hook that fires it. Without
+    the hook, the audit was opt-in-on-top-of-opt-in — the model had
+    to choose to call it AND the user had to manually wire
+    settings.json. The plugin now ships hooks/hooks.json declaring
+    the Stop binding so plugin install is enough."""
+    assert PLUGIN_HOOKS_PATH.exists(), (
+        f"plugin hooks manifest missing at "
+        f"{PLUGIN_HOOKS_PATH.relative_to(REPO_ROOT)}"
+    )
+
+
+def test_stop_hook_calls_audit_turn() -> None:
+    """The Stop binding must invoke `bettermemory audit-turn`. Pin
+    the exact command so a rename of the CLI subcommand or the hook
+    config shape shows up here, not as a silent telemetry regression
+    when users next install the plugin."""
+    body = json.loads(PLUGIN_HOOKS_PATH.read_text(encoding="utf-8"))
+    assert "hooks" in body, "missing top-level 'hooks' key"
+    assert "Stop" in body["hooks"], "Stop event binding missing"
+    stop_entries = body["hooks"]["Stop"]
+    assert stop_entries, "Stop entry list is empty"
+    # Find the command-form hook.
+    command_hooks = [
+        h
+        for entry in stop_entries
+        for h in entry.get("hooks", [])
+        if h.get("type") == "command"
+    ]
+    assert command_hooks, "no command-form hook under Stop"
+    matched = [
+        h
+        for h in command_hooks
+        if "bettermemory audit-turn" in h.get("command", "")
+    ]
+    assert matched, (
+        f"none of the Stop command hooks call `bettermemory audit-turn`; "
+        f"got: {[h.get('command') for h in command_hooks]}"
+    )
+
+
+def test_stop_hook_has_reasonable_timeout() -> None:
+    """The hook fires on every Stop event. A missing or huge timeout
+    would block turn completion if the CLI ever wedged. Pin a
+    sub-minute upper bound to lock in the principle — hooks must not
+    visibly block."""
+    body = json.loads(PLUGIN_HOOKS_PATH.read_text(encoding="utf-8"))
+    command_hooks = [
+        h
+        for entry in body["hooks"]["Stop"]
+        for h in entry.get("hooks", [])
+        if h.get("type") == "command"
+    ]
+    for hook in command_hooks:
+        timeout = hook.get("timeout")
+        assert timeout is not None, (
+            f"Stop hook is missing a timeout field: {hook!r}"
+        )
+        assert 0 < timeout <= 60, (
+            f"Stop hook timeout {timeout!r} is outside the 1..60s window "
+            f"— hooks must not visibly block turn completion"
+        )

@@ -1,0 +1,16 @@
+{
+  "$schema-comment": "Claude Code plugin hook manifest. The Stop event fires once per assistant response — every turn end. The hook calls `bettermemory audit-turn`, which reads the hook's stdin JSON (session_id + transcript_path), runs `probe_for_miss` against the active store, and writes `turn_audited` / `search_miss` events to the on-disk event log. The CLI is designed to always exit 0; the trailing `|| true` is belt-and-suspenders so a uvx network failure, an older PyPI version that doesn't yet have the subcommand, or any other unexpected shape never surfaces as a hook error banner in Claude Code. Losing one turn of telemetry is preferable to interrupting the user.",
+  "hooks": {
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "uvx bettermemory audit-turn --quiet || true",
+            "timeout": 30
+          }
+        ]
+      }
+    ]
+  }
+}

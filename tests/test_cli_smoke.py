@@ -236,6 +236,7 @@ def test_unknown_subcommand_exits_nonzero(
         "reindex",
         "consolidate",
         "ui",
+        "audit-turn",
     ],
 )
 def test_subcommand_help_works(
