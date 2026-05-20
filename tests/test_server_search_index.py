@@ -178,3 +178,69 @@ async def test_index_threshold_env_var_resets_per_call(
 
     # Same memory surfaces both ways — quality byte-stable.
     assert hits_default[0]["id"] == hits_indexed[0]["id"]
+
+
+async def test_search_skips_candidate_when_index_filename_drifts(
+    server: Any, memory_dir: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Regression for the H4 review finding. `sync pull` (and any
+    out-of-band rewrite of the memory directory) can leave the
+    index's `filename` column pointing at a file whose body now
+    belongs to a different memory id. Without an id-equality
+    check the handler would score the candidate's FTS hit against
+    the wrong body. The fix verifies `memory.id == candidate_id`
+    after loading; mismatched files are silently dropped."""
+    import sqlite3
+
+    from bettermemory import index as _index
+
+    monkeypatch.setenv("BETTERMEMORY_INDEX_THRESHOLD", "1")
+    a = _unwrap(
+        await _call(
+            server,
+            "memory_write",
+            content="python list comprehension",
+            scopes=["tools"],
+        )
+    )
+    b = _unwrap(
+        await _call(
+            server,
+            "memory_write",
+            content="kubernetes networking notes",
+            scopes=["infra"],
+        )
+    )
+
+    # Drift: rewrite the index so a.id's row points at b's filename.
+    # This simulates the post-sync-pull state where files moved
+    # behind the index's back. A search for "python" still finds a
+    # via FTS (the body column is correct), but the filename lookup
+    # delivers b's file. Without the defense, the handler returns
+    # b's body scored against a's query and surfaces it as a hit
+    # for "python".
+    db_path = _index.index_path(memory_dir)
+    with sqlite3.connect(str(db_path)) as conn:
+        b_filename = conn.execute(
+            "SELECT filename FROM memories WHERE id = ?", (b["id"],)
+        ).fetchone()[0]
+        conn.execute(
+            "UPDATE memories SET filename = ? WHERE id = ?",
+            (b_filename, a["id"]),
+        )
+
+    hits = _unwrap(await _call(server, "memory_search", query="python"))
+    # The mis-pointed candidate is silently dropped; the search
+    # falls back through the rest of the pipeline. b is not in
+    # `hits` masquerading as a "python" match.
+    for h in hits:
+        if h["id"] == a["id"]:
+            # If the drift defense fired correctly, a may be missing
+            # entirely from the hit list (because its filename lookup
+            # returned b's body and the id check rejected it) — that's
+            # acceptable, the post-pull reindex restores it.
+            continue
+        assert h["id"] != b["id"] or "python" in (h.get("body") or ""), (
+            f"index drift produced a wrong hit: id={h['id']} surfaced "
+            f"for query 'python' but body is not python-related"
+        )

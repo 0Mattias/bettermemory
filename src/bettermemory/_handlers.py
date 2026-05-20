@@ -744,7 +744,7 @@ class ToolHandlers:
                 continue
             file_path = self.store.root / filename
             try:
-                loaded.append(self.store._load_path(file_path))
+                memory = self.store._load_path(file_path)
             except (ValueError, KeyError, OSError):
                 # Stale filename (memory was moved / tombstoned
                 # between the index lookup and the read) or a
@@ -752,6 +752,17 @@ class ToolHandlers:
                 # shape in the rest of memory_search means a missed
                 # candidate degrades to "no hit", not to a crash.
                 continue
+            # Index-drift defense: `sync pull` rewrites files in
+            # place, so the filename column can briefly point at a
+            # path whose body now belongs to a different memory id.
+            # Without this guard, the handler would score the
+            # candidate's FTS hit against a body it isn't paired
+            # with anymore. The post-pull `bettermemory reindex`
+            # is the right long-term fix, but we don't trust the
+            # index unconditionally between pull and reindex.
+            if memory.id != cid:
+                continue
+            loaded.append(memory)
         return loaded
 
     # ---- memory_search ---------------------------------------------------

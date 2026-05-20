@@ -11,6 +11,220 @@ spells out exactly what's stable.
 
 (Empty. Accumulate entries here between tags.)
 
+## 2.3.0 - 2026-05-20
+
+**Production-readiness audit pass.** 12 commits closing ~28 audit
+findings across correctness, security, performance, and the
+model-facing surface. The release is cut as a minor bump because
+the FTS5 index schema goes from v1 to v2 (drop-and-rebuild on first
+launch, transparent), a new `bettermemory audit-turn` CLI subcommand
+ships, and the plugin manifest now declares a Stop hook that fires
+silent-miss telemetry on every assistant turn. Schema_version on
+memory files stays at 1 — no on-disk format change.
+
+### Fixed (correctness)
+
+- **TOCTOU race in mutation paths.** `mark_verified` / `tombstone` /
+  `restore` / `rename_scope` previously read the target file before
+  acquiring the file lock, opening a window where a concurrent
+  `update` from `web.py` or `sync.py` could be silently clobbered.
+  Reads now happen inside the same `_locked()` block as the write.
+- **FTS5 index drift on `rename_scope` and `restore`.** Renaming a
+  scope wrote the new list to disk without updating the index's
+  `scopes_text` column; BM25 ranking on the renamed scope read
+  against stale text until the next manual reindex. `restore` was
+  missing the index upsert entirely — restored memories were absent
+  from indexed search until reindex. Both paths now call
+  `_index_upsert_quietly` after the file write.
+- **Consolidate failures aggregated, not silently swallowed.** The
+  dedup / demotion apply loops logged per-failure warnings but
+  never rolled them up; a run hitting 10 disk-full errors scrolled
+  past the user's terminal with no summary signal. Added
+  `ConsolidateFailure` plus a `failures` list on `ConsolidateReport`;
+  both the text and JSON renderings now show the rollup.
+- **SQLite connection leak on PRAGMA failure.** `index._connect`
+  could leak the open `sqlite3.Connection` when a PRAGMA raised
+  mid-setup (corrupt or zero-byte DB). Surfaced as
+  `ResourceWarning: unclosed database` in two tests. Now wraps the
+  post-connect setup in a try/except that closes on failure.
+
+### Added (security)
+
+- **Sync stderr redaction in push/pull error paths.** The default
+  `_run_git` path already scrubbed credentialed URLs through
+  `_redact_text`; the `push` and `pull` paths built their own
+  `SyncError` from raw stderr to attach actionable hints, and that
+  branch leaked the URL. Both now wrap the surfaced text.
+- **Symlink rejection in store iteration.** `_iter_active_paths`
+  and `_iter_tombstone_paths` previously called `entry.is_file()`,
+  which follows symlinks. A hostile remote pushing `something.md`
+  as a symlink to an arbitrary readable file would have its target
+  loaded and parsed on the next `load_all`. Now skips
+  `is_symlink()` entries.
+- **CSRF header-less POST rejection.** `web._same_origin` accepted
+  state-changing POSTs that arrived without `Origin` or `Referer`
+  headers on the rationale that some browsers strip Referer. In
+  practice modern browsers send Origin reliably; a header-less
+  POST is a non-browser tool (`curl -X POST`) hitting the endpoint
+  directly. Header-less POSTs are now rejected; CLI scripts that
+  drive the UI should set `-H "Origin: http://127.0.0.1:<port>"`.
+- **YAML body-size cap in frontmatter parser.** `_frontmatter.loads`
+  uses YAML `SafeLoader`, which protects against `!!python/object`
+  but not against alias-expansion DoS (the "billion laughs" pattern).
+  The store widens its trust boundary once `sync pull` is in use
+  (a remote can write into the memory directory); a 64 KB pre-flight
+  check now rejects oversized frontmatter before `yaml.load` sees it.
+- **`note` field length cap on memory_verify / memory_record_use.**
+  The web `/verify` endpoint already capped `note` at 500 chars; the
+  MCP entry points didn't, leaving a hostile-client surface to
+  inflate the JSONL event log. Same 500-char ceiling now enforced
+  on the MCP side.
+- **Git argv validation.** `sync.init` / `push` / `pull` validate
+  `remote` and `default_branch` against `^[A-Za-z0-9][A-Za-z0-9._/-]*$`
+  before passing positionally to git. Belt-and-suspenders against a
+  value like `--exec=evil` being parsed as a flag in older gits.
+- **`--no-tags` on `git pull --rebase`.** Hostile / sloppy remotes
+  pushing refs under `refs/tags/` would otherwise be mirrored into
+  the local `.git/refs/tags/`; a tag named `main` could shadow the
+  branch on a later checkout.
+- **0o600 permissions on data files.** Memory `.md` files, the
+  event log `.events.jsonl`, the SQLite index and its WAL/SHM
+  siblings all inherit the user umask (typically 0o644 — world-
+  readable on default Linux/macOS). Lock files already used 0o600;
+  the data path now matches. Best-effort; no-op on Windows.
+- **System-directory warning on misconfigured `BETTERMEMORY_DIR`.**
+  `config.resolved_directory` now logs a WARNING when the resolved
+  path lives under `/etc`, `/usr`, `/bin`, `/sbin`, `/boot`, `/dev`,
+  `/proc`, or `/sys`. Catches the typical footgun where someone
+  typed a system path by mistake; `/var` is intentionally excluded
+  because macOS routes the per-user tmp through `/var/folders/...`.
+
+### Added (features)
+
+- **`bettermemory audit-turn` CLI subcommand** wraps the silent-
+  miss audit (previously only the `memory_audit_turn` MCP tool) for
+  client-side hook invocation. Reads the Claude Code Stop-hook
+  stdin JSON (session_id + transcript_path), parses the transcript
+  to find the latest user message, and runs `probe_for_miss`
+  against the active store. Always exits 0 by design so a hook
+  misfire never breaks the turn-end pipeline.
+- **Plugin Stop hook** in `plugin/hooks/hooks.json` declares the
+  binding: `uvx bettermemory audit-turn --quiet || true`. Closes
+  the silent-miss feedback loop without requiring the model to
+  remember to call the MCP tool. The `|| true` is belt-and-
+  suspenders so an old PyPI snapshot or an `uvx` cold-start issue
+  never surfaces as a Claude Code error banner.
+- **Cross-process session-disabled-scopes divergence (known
+  limitation)**: the Stop hook can't read the MCP server's
+  in-memory `SessionState`, so scopes the user disabled in the
+  current session via `memory_scope_disable` are still in scope
+  for the hook's audit. Stop-hook events carry
+  `triggered_from="stop_hook"` so downstream rollups can
+  distinguish; the model-side `memory_audit_turn` events remain
+  the strict source of truth.
+
+### Performance
+
+- **FTS5 schema v2: id→filename + memory_links tables.** Two hot
+  paths in `_handlers.py` were still `load_all`-ing per call
+  despite the index being available:
+  - `_load_search_candidates` intersected the FTS candidate set
+    against `store.load_all()` for every search.
+  - `_links_payload` walked every active memory's frontmatter on
+    every `memory_show` to compute reverse-links.
+  Schema v2 adds a `filename` column to the `memories` table and a
+  separate `memory_links` table (with a DELETE-cascade trigger so
+  reverse-link queries don't dangle on tombstone). Both handlers
+  use the new index helpers; the index now does what it always
+  said it did.
+- **v1 → v2 migration**: `_ensure_schema` detects the version
+  mismatch, drops the data tables, and recreates empty. The Store
+  hooks repopulate gradually as writes land; `bettermemory reindex`
+  does the explicit full rebuild. The fallback in
+  `_load_search_candidates` routes to `load_all` while the index is
+  empty, so search keeps working through the transition with no
+  user-visible break.
+- **Index drift defense on candidate loads** (review fix): after
+  resolving a candidate id to a filename and reading the file,
+  verify the loaded memory's id matches the candidate id before
+  appending to the result. Catches the `sync pull` window where
+  the index's filename column briefly points at a path whose body
+  has changed.
+
+### Changed (model-facing surface)
+
+- **Tool descriptions trimmed.** `DESC_MEMORY_SEARCH`, `_WRITE`,
+  `_SHOW`, `_HEALTH`, `_UPDATE`, `_VERIFY`, `_RECORD_USE`, and
+  `_SCOPE_OVERVIEW` were rewritten around "API surface + branching
+  cues" rather than repeating policy that lives in the system
+  `instructions` block and SKILL.md. Combined: 23,202 → 16,774
+  chars (~5,800 → ~4,193 tokens). Every branching field a model
+  needs to call the tool correctly survives.
+- **`SYSTEM_PROMPT_ADDENDUM` restructured around the same quick-card
+  opener SKILL.md uses.** The previous addendum was prose-heavy
+  and lacked the decide-at-a-glance table; the rewrite is closer
+  in shape to the skill, which makes "addendum and skill carry the
+  same policy" closer to true. 8,255 → 6,512 chars (~2,063 → ~1,628
+  tokens). The byte-equality drift test against
+  `docs/system_prompt.md` is updated to match.
+- **`memory_scope_overview` description** now spells out all seven
+  keys it returns (was claiming three) including the load-bearing
+  `curation_pending` rollup the addendum tells the model to read
+  at session start.
+- **18-tool count corrected.** The 2.1.0 release added
+  `memory_audit_turn` (the 18th tool); the 2.1.1 docs-condense pass
+  propagated the prior "17 tools" count throughout the live
+  surface. README, api.md, plugin/README, CONTRIBUTING, and the
+  server.py registration comment now read "18".
+
+### Changed (tests + dev workflow)
+
+- **`tests/test_sync.py` sandboxed.** The fixture was running
+  `git config --global user.{email,name}` to make commits work,
+  which silently overwrote the developer's `~/.gitconfig` on every
+  local run. Fix: redirect git's global config to a per-test tmp
+  file via `GIT_CONFIG_GLOBAL`.
+- **Subprocess tests gated.** Five tests that invoke
+  `bettermemory` as a subprocess fail on local checkouts without
+  `pip install -e .`; now skip with a clear "run `pip install -e .`
+  locally" reason rather than failing loud.
+- **Three new structural drift tests** in `tests/test_prompts.py`:
+  every `memory_*` name referenced in `SYSTEM_PROMPT_ADDENDUM` and
+  in the plugin's `SKILL.md` must resolve to a tool the server
+  registers. A rename or removal that forgets the policy surfaces
+  shows up here.
+- **In-process CLI coverage.** New tests for `consolidate` (text +
+  --json), `tombstones list` (text + --json), `export -o`,
+  `reindex`, and `migrate origin` exercise the dispatch arms that
+  the subprocess tests previously protected. `server.py` coverage:
+  41% → 55%.
+
+### Documentation
+
+- `examples/memories/*.md` files now carry `schema_version: 1` as
+  the first frontmatter key (matching what `store.py` actually
+  writes; the previous examples were missing the field).
+- `CHANGELOG.md:7` anchor link to CONTRIBUTING.md was broken
+  (`#versioning-and-the-1x-compatibility-contract` — the `1x-`
+  was dropped during the 2.0 rewrite). Fixed.
+- `docs/api.md` `memory_write` parameter signature reordered to
+  match `_handlers.py`.
+- The 2.2.0 entry's lede ("No code... behaviour is byte-identical")
+  was self-contradicting against the `_handlers.py` / `audit.py` /
+  `groundedness.py` edits listed two paragraphs below. Lede
+  reworded to "No behavioural changes — only docstrings and code
+  comments were touched."
+
+### Deferred
+
+- L9 (`time.sleep(0.01)` → freezegun-style explicit timestamps in
+  test fixtures). The refactor needs a fixture that monkeypatches
+  `utcnow` across every consumer module — multiple
+  `from .models import utcnow` sites capture the reference at
+  import time, so patching the canonical source doesn't propagate.
+  The sleeps work today; the refactor warrants its own focused
+  commit rather than bundling here.
+
 ## 2.2.0 - 2026-05-20
 
 **Documentation tone pass.** No behavioural, on-disk-format, or

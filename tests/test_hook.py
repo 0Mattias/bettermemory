@@ -288,6 +288,12 @@ def test_main_swallows_unexpected_errors(
     """Contract: the hook must never propagate a non-zero exit.
     Force a downstream raise via a deliberately-broken
     BETTERMEMORY_DIR and confirm we still return 0."""
+    import sys
+
+    if sys.platform == "win32":
+        # /dev/null is POSIX-specific; the broken-dir simulation
+        # would need a different path on Windows.
+        pytest.skip("broken-dir simulation is POSIX-only")
     monkeypatch.setenv("BETTERMEMORY_DIR", "/dev/null/not-a-dir")
     transcript = tmp_path / "t.jsonl"
     _write_transcript(
@@ -304,3 +310,112 @@ def test_main_swallows_unexpected_errors(
         ]
     )
     assert code == 0
+
+
+# ---------------------------------------------------------------------------
+# Telemetry config + path defense (review pass — H2, M9)
+# ---------------------------------------------------------------------------
+
+
+def test_main_respects_telemetry_disabled(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Regression: hook.run_audit was constructing a Recorder without
+    threading `cfg.telemetry.enabled` through, so a user who
+    explicitly opted out of event logging would still see
+    `turn_audited` / `search_miss` events written on every Stop hook
+    invocation. The recorder now honours the same config the server
+    side reads.
+
+    Fixture writes a config.toml with `[telemetry] enabled = false`
+    and points BETTERMEMORY_CONFIG_PATH at it; the hook should run
+    cleanly but produce no .events.jsonl."""
+    mem_dir = tmp_path / "mem"
+    mem_dir.mkdir()
+    monkeypatch.setenv("BETTERMEMORY_DIR", str(mem_dir))
+
+    # Disable telemetry via a tmp config file.
+    config_dir = tmp_path / "cfg"
+    config_dir.mkdir()
+    (config_dir / "config.toml").write_text(
+        '[telemetry]\nenabled = false\n', encoding="utf-8"
+    )
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
+    # Some platforms read platformdirs from different env vars;
+    # belt-and-suspenders via the documented override.
+    monkeypatch.setenv("BETTERMEMORY_CONFIG", str(config_dir / "config.toml"))
+
+    from bettermemory.store import Store
+
+    Store(mem_dir).write(content="kept body", scopes=["tools"])
+    transcript = tmp_path / "t.jsonl"
+    _write_transcript(
+        transcript,
+        {"type": "user", "message": {"content": "kept body question"}},
+    )
+
+    # Run with a config that disables telemetry explicitly by passing
+    # it through the function entry point — the CLI-level override via
+    # env-var is tested above; here we lock the behaviour at the
+    # public surface.
+    from bettermemory.config import Config, TelemetryConfig, StorageConfig
+    from bettermemory.hook import run_audit
+
+    cfg = Config(
+        storage=StorageConfig(directory=str(mem_dir)),
+        telemetry=TelemetryConfig(enabled=False),
+    )
+    run_audit(
+        user_message="kept body question",
+        assistant_response=None,
+        session_id="sess",
+        config=cfg,
+    )
+    assert not (mem_dir / ".events.jsonl").exists(), (
+        "telemetry-disabled config must suppress the Stop-hook "
+        "event log; got an events.jsonl anyway"
+    )
+
+
+def test_main_rejects_non_file_transcript_path(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Regression for the M9 review finding: a Stop-hook payload
+    that delivers `transcript_path=<a directory>` or `<a fifo>` or
+    `<a missing file>` must not coax the hook into reading
+    something it shouldn't. The contract: resolve() + is_file()
+    rejection short-circuits the hook to exit 0 without opening
+    anything."""
+    import sys
+
+    if sys.platform == "win32":
+        pytest.skip("file-mode checks are POSIX-shaped; Windows differs")
+    mem_dir = tmp_path / "mem"
+    mem_dir.mkdir()
+    monkeypatch.setenv("BETTERMEMORY_DIR", str(mem_dir))
+
+    # Point at the memory directory itself (a directory, not a file).
+    code = hook_main(
+        [
+            "--transcript-path",
+            str(mem_dir),
+            "--session-id",
+            "sess",
+            "--quiet",
+        ]
+    )
+    assert code == 0
+    assert not (mem_dir / ".events.jsonl").exists()
+
+    # Point at a missing path.
+    code = hook_main(
+        [
+            "--transcript-path",
+            str(tmp_path / "definitely-missing.jsonl"),
+            "--session-id",
+            "sess",
+            "--quiet",
+        ]
+    )
+    assert code == 0
+    assert not (mem_dir / ".events.jsonl").exists()

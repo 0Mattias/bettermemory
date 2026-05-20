@@ -23,11 +23,31 @@ decide whether the model retrieved memory this turn. The session
 id is carried in the Stop hook payload; recent events are read
 from `.events.jsonl`.
 
+Known divergence from the in-process audit: this hook does NOT
+see session-disabled scopes. The model-side `memory_audit_turn`
+filters out scopes the user disabled via `memory_scope_disable`
+(those live in `SessionState` and aren't persisted), so a turn the
+user explicitly framed as "unrelated to project X" can be flagged
+as a silent miss here even though the in-process audit would
+shield it. Stop-hook events carry `triggered_from="stop_hook"` so
+downstream rollups can distinguish the two sources; consumers
+that want the strict count should prefer the model-side events.
+
 Failure mode: the hook must never block the turn end. Every error
 path is caught and exit code is forced to 0 so a parser hiccup or
 a missing transcript doesn't surface as a Claude Code error banner.
 The user can `bettermemory audit-turn --transcript-path ...` for a
 loud version if they want to debug.
+
+Trust boundary: `transcript_path` comes from Claude Code's Stop
+hook payload, not from the model. We still defensively resolve
+and `is_file()`-check the path before reading — the hook runs in
+the user's process context, so a misconfigured upstream hook that
+mutates the payload shouldn't be able to coax us into reading an
+arbitrary file. The contents go nowhere observable even on
+mis-feed (the JSONL parser drops anything that isn't a
+user/assistant message), but the read itself is a surface worth
+narrowing.
 """
 
 from __future__ import annotations
@@ -160,8 +180,17 @@ def run_audit(
         mode=cfg.behavior.search_mode or "keyword",
     )
     # Emit the audit event so cadence is visible even when there's
-    # nothing to flag — matches the MCP handler's discipline.
-    recorder = Recorder(root=root, session_id=session_id)
+    # nothing to flag — matches the MCP handler's discipline. Honour
+    # the same `telemetry.enabled` / `telemetry.max_bytes` config
+    # the server-side recorder reads, so a user who opted out of
+    # event logging doesn't see the hook silently override that
+    # choice on every Stop event.
+    recorder = Recorder(
+        root=root,
+        session_id=session_id,
+        enabled=cfg.telemetry.enabled,
+        max_bytes=cfg.telemetry.max_bytes,
+    )
     recorder.record(
         "turn_audited",
         verdict=report.verdict,
@@ -232,7 +261,16 @@ def main(argv: list[str] | None = None) -> int:
             # interrupted.
             return 0
 
-        transcript_path = Path(str(transcript_raw)).expanduser()
+        # Resolve + is_file() defense: collapses `..` segments, follows
+        # symlinks to their target, and rejects fifos / devices / dirs /
+        # missing files. A misconfigured Stop-hook payload (or a future
+        # upstream hook that rewrites the field) can't coax the
+        # transcript reader into opening `/etc/shadow` or a named pipe
+        # this way. The contents go nowhere observable even without
+        # this guard, but the read itself is the surface worth closing.
+        transcript_path = Path(str(transcript_raw)).expanduser().resolve()
+        if not transcript_path.is_file():
+            return 0
         user, assistant = _extract_last_exchange(transcript_path)
         if not user:
             return 0
