@@ -406,26 +406,27 @@ def _render_tombstones(tombstones: list[Any]) -> str:
 def _same_origin(origin: str | None, referer: str | None) -> bool:
     """Decide whether a state-changing POST originated from the UI itself.
 
-    Returns True when either header points at a loopback host
-    (`localhost`, `127.0.0.1`, `[::1]`) on any port. Same-machine
+    Returns True when an Origin or Referer header points at a loopback
+    host (`localhost`, `127.0.0.1`, `[::1]`) on any port. Same-machine
     coverage is the entire trust model — the UI binds loopback by
     default, and a user who deliberately exposes it to a LAN is
     accepting the implied trust of every browser on that LAN.
 
-    Returns True when both headers are absent — same-origin classic
-    form POSTs from server-rendered HTML strip Referer under stricter
-    referrer-policy settings, and Origin is only sent on cross-origin
-    or POST in some configurations. Refusing every header-less POST
-    would break the normal in-UI flow. The risk we're guarding against
-    is a third-party origin actively *attaching* its own Origin /
-    Referer — which browsers do automatically for cross-site form
-    submissions.
+    Header-less POSTs are REJECTED. Browsers reliably send Origin on
+    POSTs (the HTML spec requires it for non-safe method requests
+    initiated from a document); a request with neither Origin nor
+    Referer is a non-browser tool (`curl -X POST ...`) hitting the
+    endpoint directly. In the LAN-exposed configuration that would
+    otherwise be an unauthenticated state-mutation primitive for any
+    other host that can reach the socket. CLI users who genuinely
+    need to script against the UI should set `-H "Origin:
+    http://127.0.0.1:<port>"` — the standard CSRF-safe pattern.
     """
     from urllib.parse import urlparse
 
     candidates = [h for h in (origin, referer) if h]
     if not candidates:
-        return True
+        return False
     for header in candidates:
         try:
             host = (urlparse(header).hostname or "").lower()

@@ -155,6 +155,42 @@ def test_hit_includes_updated_timestamp() -> None:
     assert hits[0].updated == a.updated
 
 
+def test_hit_includes_category() -> None:
+    """Regression for commit 88120ab: `MemoryHit.category` is
+    propagated from the source memory. Negative-results suppression
+    and the response builder both branch on category, so a hit
+    without it falls through to the default and misclassifies the
+    memory."""
+    from bettermemory.models import Category
+
+    a = _memory("durable infrastructure note about postgres")
+    # Construct with an explicit non-default category so the test
+    # catches both the "category dropped" and "category defaulted"
+    # failure modes.
+    a = a.model_copy(update={"category": Category.AMBIENT})
+    hits = search([a], "postgres")
+    assert hits, "expected at least one hit for the matching token"
+    assert hits[0].category == Category.AMBIENT, (
+        f"MemoryHit.category dropped or defaulted; got {hits[0].category!r}"
+    )
+
+
+def test_hit_includes_default_fact_category() -> None:
+    """When the source memory has `category=None` (legacy memories
+    written before the field existed), the hit's category should
+    surface as None — NOT silently default to FACT. The
+    response/scoring code can apply a default; the search layer
+    should preserve the input shape."""
+    a = _memory("legacy note")
+    assert a.category is None
+    hits = search([a], "legacy")
+    assert hits, "expected at least one hit"
+    assert hits[0].category is None, (
+        f"hit.category should preserve None for legacy memories; "
+        f"got {hits[0].category!r}"
+    )
+
+
 def test_empty_query_returns_empty_list() -> None:
     a = _memory("anything")
     assert search([a], "") == []

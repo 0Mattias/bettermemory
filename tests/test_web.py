@@ -112,6 +112,9 @@ def test_memory_detail_404_when_missing(client: Any) -> None:
     assert r.status_code == 404
 
 
+_LOOPBACK_ORIGIN = {"Origin": "http://127.0.0.1:8765"}
+
+
 def test_verify_marks_memory_and_redirects(client: Any, store: Store) -> None:
     """POST /memories/{id}/verify bumps last_verified_at and 303s
     back to the detail page (PRG pattern — refreshes don't repeat
@@ -122,6 +125,7 @@ def test_verify_marks_memory_and_redirects(client: Any, store: Store) -> None:
     r = client.post(
         f"/memories/{m.id}/verify",
         data={"note": "spot-checked"},
+        headers=_LOOPBACK_ORIGIN,
         follow_redirects=False,
     )
     assert r.status_code == 303
@@ -137,6 +141,7 @@ def test_verify_404_when_missing(client: Any) -> None:
     r = client.post(
         "/memories/01J0000000000000000000000A/verify",
         data={"note": ""},
+        headers=_LOOPBACK_ORIGIN,
     )
     assert r.status_code == 404
 
@@ -178,9 +183,30 @@ def test_verify_rejects_oversized_note(client: Any, store: Store) -> None:
     r = client.post(
         f"/memories/{m.id}/verify",
         data={"note": "x" * 501},
+        headers=_LOOPBACK_ORIGIN,
         follow_redirects=False,
     )
     assert r.status_code == 400
+    reloaded = store.load_one(m.id)
+    assert reloaded.last_verified_at is None
+
+
+def test_verify_rejects_headerless_post(client: Any, store: Store) -> None:
+    """Regression for the M3 audit finding: a POST with neither
+    Origin nor Referer must be rejected. The prior behaviour accepted
+    header-less POSTs on the rationale that some browser configs
+    strip Referer — but modern browsers reliably send Origin on
+    POSTs, so a header-less request is a non-browser tool. In the
+    LAN-exposed configuration, accepting it would be an
+    unauthenticated state-mutation primitive for any host that can
+    reach the socket."""
+    m = store.write(content="some claim", scopes=["tools"])
+    r = client.post(
+        f"/memories/{m.id}/verify",
+        data={"note": ""},
+        follow_redirects=False,
+    )
+    assert r.status_code == 403
     reloaded = store.load_one(m.id)
     assert reloaded.last_verified_at is None
 

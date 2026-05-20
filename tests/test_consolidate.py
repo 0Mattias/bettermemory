@@ -412,6 +412,74 @@ def test_consolidate_dedup_duplicate_seen_once_in_multi_pair(
     assert c.id not in tombstoned
 
 
+def test_consolidate_preserves_earlier_crowned_keeper_in_3way_cluster(
+    store: Store,
+) -> None:
+    """Regression for commit 2a9c087.
+
+    Scenario: three memories X / Y / Z where the pair (X, Y) has
+    similarity 1.0 (identical bodies) and the pair (Z, X) has lower
+    similarity (Z's body shares most tokens with X but adds one).
+    Iteration order — created descending from `load_all` — and the
+    sort-by-similarity-desc give the candidate list this shape:
+
+        1. (keeper=X, duplicate=Y, sim=1.0)
+        2. (keeper=Z, duplicate=X, sim≈0.78)
+
+    Before the fix, applying the second pair would tombstone X — but
+    X was already crowned keeper of pair 1, so Y's tombstone-reason
+    citation would dangle to a removed memory. The `keepers_so_far`
+    guard preserves X.
+
+    The pre-existing 3-identical-bodies test exercises the
+    duplicate-already-tombstoned guard (line 598), not this one
+    (line 600); identical bodies and monotonic timestamps mean
+    `load_all`'s newest-first ordering puts the newest as keeper of
+    every pair, and the earlier-keeper-as-later-duplicate condition
+    never fires. The bodies below are tuned so the two guards
+    exercise different branches."""
+    import time
+
+    # Order matters: Y oldest, X middle, Z newest.
+    # X and Y identical bodies → sim 1.0
+    # Z differs from X by one token → sim ≈ 0.78 (above the 0.75 default)
+    y = store.write(
+        content="alpha beta gamma delta epsilon foxtrot golf hotel",
+        scopes=["tools"],
+    )
+    time.sleep(0.01)
+    x = store.write(
+        content="alpha beta gamma delta epsilon foxtrot golf hotel",
+        scopes=["tools"],
+    )
+    time.sleep(0.01)
+    z = store.write(
+        content="alpha beta gamma delta epsilon foxtrot golf india",
+        scopes=["tools"],
+    )
+
+    report = consolidate(store, apply=True)
+    tombstoned = {
+        act.memory_id for act in report.actions_taken if act.kind == "tombstoned"
+    }
+    assert y.id in tombstoned, "Y (oldest, identical to X) should be tombstoned"
+    assert x.id not in tombstoned, (
+        "regression: X was crowned keeper of (X, Y); the keepers_so_far "
+        "guard must prevent (Z, X) from tombstoning X. Without the fix, "
+        "X is tombstoned and Y's tombstone reason cites a dead memory."
+    )
+    assert z.id not in tombstoned
+
+    # Y's tombstone reason should cite X — the canonical winner of the
+    # (X, Y) pair — and the cited memory must still be alive.
+    tombstones = store.load_tombstones()
+    y_tomb = next(t for t in tombstones if t.id == y.id)
+    assert x.id in (y_tomb.removed_reason or ""), (
+        f"Y's tombstone-reason should cite X (the canonical winner of "
+        f"(X, Y)); got: {y_tomb.removed_reason!r}"
+    )
+
+
 # ---------------------------------------------------------------------------
 # Rendering
 # ---------------------------------------------------------------------------
