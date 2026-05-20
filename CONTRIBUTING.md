@@ -51,7 +51,7 @@ The project uses semver with the conventions below. The headline: **within a maj
 
 The 2.0 bump itself was a scope-only bump — nine 1.6-plan features shipped in one release. SCHEMA_VERSION stayed at 1, every new wire field is opt-in or absence-as-signal, and no 1.x surface was renamed or removed. Treat the rules below as continuous across the 1→2 boundary; they describe the project's stance on stability, not a one-off cleanup.
 
-### Surface (the 17 MCP tools)
+### Surface (the 18 MCP tools)
 
 Stable within the current major (2.x):
 

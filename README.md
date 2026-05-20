@@ -96,7 +96,7 @@ Storage resolution: `$BETTERMEMORY_DIR` if set, else `./.claude-memory/` if it e
 
 ## Tools
 
-17 MCP tools, grouped:
+18 MCP tools, grouped:
 
 - **Retrieval** — `memory_search`, `memory_show`, `memory_list`, `memory_scope_overview`
 - **Writing** — `memory_write` (plus `memory_write_confirm` / `memory_write_cancel` for the staged-write flow), `memory_update`

@@ -13,12 +13,13 @@ spells out exactly what's stable.
 
 ## 2.2.0 - 2026-05-20
 
-**Documentation tone pass.** No code, on-disk format, or tool-surface
-changes; behaviour is byte-identical to 2.1.1. The release is cut as
-a minor bump rather than a patch because the public-facing language
-in `README.md` and `docs/v1.6-plan.md` changed materially — anyone
-linking to the prior README will land on a different framing of the
-project.
+**Documentation tone pass.** No behavioural, on-disk-format, or
+tool-surface changes; the source-file edits below are scoped to
+docstrings and code comments, so runtime behaviour is byte-identical
+to 2.1.1. The release is cut as a minor bump rather than a patch
+because the public-facing language in `README.md` and
+`docs/v1.6-plan.md` changed materially — anyone linking to the
+prior README will land on a different framing of the project.
 
 ### Changed
 
@@ -84,7 +85,7 @@ get the trimmed body.
   under writing), put `memory_show` after `memory_write`, and was
   missing `memory_audit_turn` entirely. Tools now appear in the
   documented group order (Retrieval, Writing, Lifecycle,
-  Verification, Curation, Session-local) and all 17 are covered.
+  Verification, Curation, Session-local) and all 18 are covered.
 
 ## 2.1.0 - 2026-05-20
 

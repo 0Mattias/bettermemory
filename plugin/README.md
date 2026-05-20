@@ -4,7 +4,7 @@ The Claude Code plugin wrapper for [bettermemory](https://github.com/0Mattias/be
 
 The plugin bundles two things:
 
-1. **MCP server registration** ([`.mcp.json`](.mcp.json)) — spawns `uvx bettermemory` as a stdio MCP server. All 17 memory tools become available on plugin enable.
+1. **MCP server registration** ([`.mcp.json`](.mcp.json)) — spawns `uvx bettermemory` as a stdio MCP server. All 18 memory tools become available on plugin enable.
 2. **Memory-discipline skill** ([`skills/bettermemory/SKILL.md`](skills/bettermemory/SKILL.md)) — lands the opt-in retrieval policy, transparency requirement, and writing discipline at the system-prompt level. The MCP server's own `instructions` block carries a short summary; the skill is the long-form companion (Claude Code truncates the `instructions` block at ~1.8 KB).
 
 ## Install
@@ -24,7 +24,7 @@ If you prefer a pre-installed `bettermemory` binary, edit `.mcp.json` after inst
 What memory tools do you have?
 ```
 
-You should see the 17 tools listed with the `mcp__bettermemory__` prefix. Then:
+You should see the 18 tools listed with the `mcp__bettermemory__` prefix. Then:
 
 ```text
 Remember that I prefer hands-on tutorials with runnable code, not screenshots.

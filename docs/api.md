@@ -1,6 +1,6 @@
 # API surface (2.x)
 
-The contractual list of MCP tools bettermemory exposes. Signatures, defaults, and return shapes are stable within the 2.x line per the rules in [`CONTRIBUTING.md`](../CONTRIBUTING.md). The 17 tools group naturally:
+The contractual list of MCP tools bettermemory exposes. Signatures, defaults, and return shapes are stable within the 2.x line per the rules in [`CONTRIBUTING.md`](../CONTRIBUTING.md). The 18 tools group naturally:
 
 - **Retrieval** — `memory_search`, `memory_show`, `memory_list`, `memory_scope_overview`
 - **Writing** — `memory_write` (plus `memory_write_confirm` / `memory_write_cancel` for the staged-write flow), `memory_update`

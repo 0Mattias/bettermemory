@@ -249,7 +249,7 @@ def _register_tools(
     )
 
     # Order matches the module docstring's tool list above so a reader
-    # can scan top-to-bottom and see all seventeen tools at once.
+    # can scan top-to-bottom and see all eighteen tools at once.
     mcp.tool(name="memory_search", description=DESC_MEMORY_SEARCH)(
         handlers.memory_search
     )
