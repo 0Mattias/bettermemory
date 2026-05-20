@@ -192,6 +192,6 @@ bettermemory's response is to surface the *provenance and freshness of every mem
 
 - [`docs/blog/memory-is-rotting.md`](docs/blog/memory-is-rotting.md) — the motivation, written as a standalone post: why every other memory layer leaks rotted facts into the model's reply, and how the staleness verdict + claim-level audit trail close the loop.
 - [`docs/eval.md`](docs/eval.md) — the three metrics bettermemory wants the field to adopt: `memory_helped_rate`, `endorsement_rate`, `silent_miss_rate`. Defined for any system that exposes the right telemetry, not just this one.
-- [`docs/ROADMAP.md`](docs/ROADMAP.md) — what's planned (optional fastembed embeddings, `bettermemory eval` CLI, local consolidation pass, Claude Code auto-memory bridge) and what's deliberately out of scope (managed cloud, multi-user RBAC, graph backend).
+- [`docs/ROADMAP.md`](docs/ROADMAP.md) — what's planned (comparative-publication run of `bettermemory eval` against Mem0 / claude-mem / agentmemory; Claude Code auto-memory ingest bridge; operational polish) and what's deliberately out of scope (managed cloud, multi-user RBAC, graph backend). The fastembed extra, `bettermemory eval` CLI, and `consolidate --llm` Dreaming-defense pass all shipped in 2.5.0.
 
 Built by Mattias Rask. MIT licensed — see [LICENSE](LICENSE).

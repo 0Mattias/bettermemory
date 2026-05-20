@@ -80,6 +80,34 @@ Companion signal: `silent_misses`. The opposite failure mode. The user asks a qu
 
 These two — endorsement debt and silent misses — bracket the retrieval contract. One catches noise the ranker is feeding the model that's getting ignored; the other catches signal the ranker has and the model is missing. Together they give you the first product-shaped instance of *"did memory actually help me?"* — a question every memory layer should be able to answer, and none of the funded ones currently do.
 
+## What the numbers look like
+
+The 2.5.0 release ships `bettermemory eval`, a CLI that computes those rates over the existing event log. I ran it against my own store the day the release tagged. Thirty-day window, default settings:
+
+```
+$ bettermemory eval --json | jq '{counts, endorsement_rate, silent_miss_rate, endorsement_debt: .endorsement_debt.total}'
+{
+  "counts": {
+    "retrieval_occurrences": 325,
+    "applied_total": 143,
+    "applied_explicit": 15,
+    "turns_audited": 33,
+    "silent_misses": 5
+  },
+  "endorsement_rate":  { "rate": 0.105, "ci95": [0.065, 0.166] },
+  "silent_miss_rate":  { "rate": 0.152, "ci95": [0.067, 0.309] },
+  "endorsement_debt": 7
+}
+```
+
+A few of those numbers are worth sitting with:
+
+- **Seven memories in endorsement debt.** Each was retrieved 10–34 times in the window. Each was *auto-applied* every time the implicit timer fired. None of them got an explicit endorsement. They look load-bearing in the retrieval count; they're dead weight in the ranker.
+- **Silent miss rate 15.2%.** One out of every seven audited turns surfaced a high-relevance memory the model should have retrieved and didn't. The probe runs after the turn finishes, so it doesn't slow anything down — it just makes the retrieval contract's slippage visible.
+- **`memory_helped_rate` shows 0%** in this run because the explicit-claim-excerpt flow only landed days before the eval window started — most events in the log were captured before models started attaching `claim_excerpts` on `record_use`. That zero is an *adoption signal*, not a verdict on the memory layer. If anything it's evidence the metric is honest enough to surface its own propagation gap rather than hiding it behind a flattering composite.
+
+I am the author of bettermemory, dogfooding it daily, and these are my numbers. The fact that endorsement debt and silent miss rate both fire on me is the point. The competing systems aren't measuring this. Mine is measuring it on me, and the numbers are imperfect, and that imperfection is exactly the bug class that's been invisible everywhere else.
+
 ## Why nobody else does this
 
 The honest answer: it's not where the money is.
