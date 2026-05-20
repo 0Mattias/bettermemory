@@ -11,6 +11,72 @@ spells out exactly what's stable.
 
 (Empty. Accumulate entries here between tags.)
 
+## 2.3.1 - 2026-05-20
+
+**Audit-pass follow-up.** 2.3.0 cut as a single rebased push of 12
+audit commits — the chain never ran CI individually, so the first
+push to main failed format check (16 unrun files) and the format
+fix-up exposed a mypy regression in the new lock-discipline tests.
+This patch closes the deeper bugs the rebase-squash papered over.
+All fixes are correctness-only; no surface or schema changes.
+
+### Fixed (correctness)
+
+- **`rename_scope` tombstone branch TOCTOU.** The 2.3.0 lock-reads
+  fix covered the active-side branch but left the tombstone branch
+  reading `frontmatter.load(tpath)` outside the lock. A concurrent
+  `restore` could land between the read and the write and have its
+  rewrite clobbered. The read now lives inside the same
+  `_locked(tpath)` block as the write. Regression test in
+  `tests/test_store_locking.py` traces `fm_load` against the
+  tombstone path's `_locked` window.
+
+- **Index `filename` column wrong for collision-suffixed files.**
+  The schema-v2 id → filename lookup derived its filename via
+  `_filename_for(memory)`, which only knew `(created, slug)` — no
+  collision suffix. Two memories sharing a date+slug had their
+  index rows both pointing at the unsuffixed file; a search hit on
+  the second memory resolved to the first memory's body, tripped
+  the `memory.id != cid` defense, and got dropped. Fix threads the
+  actual filename through `index.upsert(..., *, filename=)`,
+  `index.rebuild(..., items: Iterable[tuple[Path, Memory]])`, and
+  `_index_upsert_quietly(..., *, filename=)`. New helper
+  `Store.iter_active()` yields `(path, memory)` pairs for the
+  rebuild path. Regression test in `tests/test_index.py`.
+
+- **`_load_search_candidates` empty-loaded fallback.** When the
+  FTS pre-filter returned candidate ids but every filename lookup
+  missed (pre-v2 schema rows, every match tombstoned mid-search,
+  etc.), the handler returned an empty list — the comment in
+  `_filename_for` had claimed the `load_all` fallback covered that
+  case; it didn't. The fallback is now actually wired up. Regression
+  test blanks every filename column in the index and confirms
+  search still surfaces the matching memory.
+
+- **Stop-hook event missing `assistant_present`.** `hook.run_audit`
+  accepted `assistant_response: str | None` but never wrote it to
+  the `turn_audited` event, while the in-process
+  `memory_audit_turn` handler did emit the flag. Downstream rollups
+  joining the two event sources saw an inconsistent field shape.
+  Hook now mirrors the handler. Regression tests cover both
+  branches (text block present → True; thinking/tool_use only →
+  False).
+
+### Fixed (housekeeping)
+
+- **`index._connect` style cleanup.** `import contextlib` and
+  `import os as _os` moved from inside the function to module top;
+  `except BaseException` narrowed to `except Exception` so a
+  `KeyboardInterrupt` / `SystemExit` during connect setup doesn't
+  get swallowed silently.
+
+- **`test_store_locking.py` mypy regression** (already in main via
+  `1f72222`). The fixture patched `store_module.frontmatter.load`,
+  which tripped mypy's strict re-export rule since
+  `store.py` aliases the module via `from . import _frontmatter as
+  frontmatter`. Switched the patch target to the already-imported
+  `_fm` alias.
+
 ## 2.3.0 - 2026-05-20
 
 **Production-readiness audit pass.** 12 commits closing ~28 audit
