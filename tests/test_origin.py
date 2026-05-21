@@ -36,6 +36,26 @@ def test_capture_in_non_repo_directory(tmp_path: Path) -> None:
     assert origin.branch is None
 
 
+def test_capture_when_cwd_deleted(monkeypatch: pytest.MonkeyPatch) -> None:
+    """If `Path.cwd()` raises FileNotFoundError because the working directory
+    was deleted (Stop-hook scenario: user `rm -rf`s their dir before turn
+    end), return an all-null Origin instead of propagating. Without this,
+    the audit hook leaks the OSError to stderr and Claude Code shows it as
+    a turn-end error banner.
+    """
+
+    def _boom() -> Path:
+        raise FileNotFoundError(2, "No such file or directory")
+
+    monkeypatch.setattr(Path, "cwd", staticmethod(_boom))
+
+    origin = capture()
+    assert origin.cwd is None
+    assert origin.repo is None
+    assert origin.branch is None
+    assert origin.worktree_root is None
+
+
 # ---------------------------------------------------------------------------
 # capture() — real git repo (skipped if git not on PATH)
 # ---------------------------------------------------------------------------

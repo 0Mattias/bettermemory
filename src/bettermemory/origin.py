@@ -97,8 +97,20 @@ def capture(cwd: Path | None = None) -> Origin:
     which is what the auto-scope filter uses to keep a memory written
     from one worktree from leaking into a search run from a sibling
     worktree.
+
+    Returns an all-null Origin when the process's working directory has
+    been deleted (`Path.cwd()` raises FileNotFoundError). Hits in the
+    Stop hook, where the user can `rm -rf` the dir they were working in
+    before the turn ends — we'd rather log a `null`-origin event than
+    let the audit explode.
     """
-    resolved = (cwd or Path.cwd()).resolve()
+    if cwd is None:
+        try:
+            resolved = Path.cwd().resolve()
+        except (FileNotFoundError, OSError):
+            return Origin()
+    else:
+        resolved = cwd.resolve()
     cwd_str = str(resolved)
 
     repo_url = _git_remote_url(resolved)

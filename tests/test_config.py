@@ -371,6 +371,30 @@ def test_resolved_directory_ignores_project_dir_that_is_a_file(
     assert cfg.resolved_directory(cwd=cwd) == (fake_home / ".claude-memory").resolve()
 
 
+def test_resolved_directory_when_cwd_deleted(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """If `Path.cwd()` raises FileNotFoundError because the process's working
+    directory was deleted (a Stop-hook reality: user `rm -rf`s the dir they
+    were working in before the turn ends), fall through to the global default
+    instead of letting the exception escape. The hook would otherwise leak
+    `[Errno 2] No such file or directory` to stderr and Claude Code surfaces
+    that as a turn-end error banner.
+    """
+    monkeypatch.delenv(ENV_DIR_OVERRIDE, raising=False)
+    fake_home = tmp_path / "home"
+    fake_home.mkdir()
+    _set_fake_home(monkeypatch, fake_home)
+
+    def _boom() -> Path:
+        raise FileNotFoundError(2, "No such file or directory")
+
+    monkeypatch.setattr(Path, "cwd", staticmethod(_boom))
+
+    cfg = Config()
+    assert cfg.resolved_directory() == (fake_home / ".claude-memory").resolve()
+
+
 # ---------------------------------------------------------------------------
 # System-directory footgun warning (F-C1)
 # ---------------------------------------------------------------------------

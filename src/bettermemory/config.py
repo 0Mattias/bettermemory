@@ -240,10 +240,25 @@ class Config:
             _warn_on_system_dir("[storage] directory", resolved)
             return resolved
 
-        cwd = (cwd or Path.cwd()).resolve()
-        project_dir = cwd / PROJECT_DIR_NAME
-        if project_dir.is_dir():
-            return project_dir.resolve()
+        # `Path.cwd()` raises FileNotFoundError when the process's working
+        # directory has been deleted out from under it — a real failure mode
+        # in the Stop hook, where the user can `rm -rf` the dir they were
+        # working in before the turn ends. Skip the project-scoped branch
+        # and fall through to the global default in that case rather than
+        # letting the exception escape and surface as a hook error banner.
+        resolved_cwd: Path | None
+        if cwd is not None:
+            resolved_cwd = cwd.resolve()
+        else:
+            try:
+                resolved_cwd = Path.cwd().resolve()
+            except (FileNotFoundError, OSError):
+                resolved_cwd = None
+
+        if resolved_cwd is not None:
+            project_dir = resolved_cwd / PROJECT_DIR_NAME
+            if project_dir.is_dir():
+                return project_dir.resolve()
 
         return (Path.home() / GLOBAL_DIR_NAME).resolve()
 
