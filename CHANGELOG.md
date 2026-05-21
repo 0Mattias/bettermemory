@@ -7,6 +7,115 @@ breaking changes, minor for additive features, patch for fixes. The
 [compatibility contract](CONTRIBUTING.md#versioning-and-the-compatibility-contract)
 spells out exactly what's stable.
 
+## 2.6.3 - 2026-05-21
+
+**Audit-pass-of-the-audit-pass-of-the-audit-pass.** A third multi-agent
+review of the 2.6.2 surface — this time scoped to "find the bugs the
+last two audits' fix patterns should have generalized" — caught one
+CRITICAL concurrency bug, two HIGH transcript-read DoS surfaces, and a
+latent field-name drift in `llm.py` that is the same class as the
+`find_demotion_candidates` bug 2.6.2 fixed in `consolidate.py`. Plus the
+matching docs follow-ups. No on-disk format changes, no wire-shape
+changes; one new constant and one new test surface.
+
+### Fixed
+
+- **`store.py:_locked` and `events.py:_locked` unlinked the lockfile
+  inside `finally`, silently breaking mutual exclusion under
+  contention.** The context manager opened `lock_path` with
+  `O_CREAT`, `flock()`-ed the fd, then on exit unlocked → closed →
+  **unlinked** the file. If process A unlinks the lockfile after B has
+  already opened it but before C calls `os.open(lock_path, O_CREAT)`,
+  B keeps its fd on the now-defunct inode and C creates a fresh one;
+  flock identity is per-inode, so B and C then both believe they hold
+  the lock. The bug was invisible under low contention (each lock
+  acquire-and-release was serial within one process) but loosens to
+  full lost-update territory under cross-process load — exactly the
+  scenario `bettermemory sync` and any future multi-client HTTP/SSE
+  posture introduces. Fix: drop the unlink; persist the 0-byte
+  lockfile so every `os.open` sees the same inode. Comment in both
+  files records the trade-off so a future "the lockfiles are clutter,
+  let's clean them up" PR fails the review instead of the production.
+- **`hook.py:_extract_last_exchange` read the entire transcript with
+  no cap.** Same OOM class the 2.6.2 release fixed in
+  `consolidate.py:_load_transcript` for the consolidate path, left
+  unaddressed in the Stop-hook path. Claude Code transcripts grow
+  monotonically over a session; in extended pairing sessions the JSONL
+  reaches hundreds of MB, and the hook fires after every assistant
+  turn. The old read+splitlines pattern allocated the whole file twice
+  before the reverse walk even started. Fix: seek to the end and read
+  the trailing `_TRANSCRIPT_TAIL_READ_BYTES = 1_048_576` bytes, then
+  discard the first partial line (the next newline starts a complete
+  record). The hook only needs the latest user+assistant pair, which
+  always sits at the tail of an append-only log — the head bytes are
+  dead weight. Unseekable streams (FIFOs from `mkfifo`-based fixtures)
+  fall back to a bounded forward read; binary-mode read with
+  `errors="replace"` decode handles UTF-8 codepoints split at the
+  truncation boundary.
+- **`consolidate.py:_load_transcript` counted characters, not bytes,
+  despite the cap constant being named `_TRANSCRIPT_READ_CAP_BYTES`.**
+  The 2.6.2 release added `fh.read(_TRANSCRIPT_READ_CAP_BYTES)` on a
+  *text*-mode stream, which reads at most that many *characters*.
+  Worst-case multibyte UTF-8 (4 bytes/char) read up to ~4 MiB into
+  memory before the cap kicked in — defeating the "1 MiB hard cap"
+  the comment claimed. Fix: open in binary mode, read raw bytes,
+  decode with `errors="replace"` so a partial codepoint at the
+  truncation boundary doesn't raise. Same byte-vs-char trap as the
+  classic `max-length` validators in HTTP frameworks; the fix is one
+  call-shape swap.
+- **`llm.py:_collect_contradiction_targets` and
+  `_build_cluster_member` read the wrong event field names.** Code
+  checked `kind == "memory_search"` / `"memory_record_use"` and
+  `event.get("memory_ids")`, but the canonical `Recorder` writes
+  `kind="search"` / `"use"` with `returned=[…]` / `ids=[…]` (see
+  `_handlers.py:1049` and `_handlers.py:2039`). **Same class as the
+  `find_demotion_candidates` bug 2.6.2 fixed** in `consolidate.py`:
+  the tests passed because the fixtures used the legacy field names,
+  so the production-shape mismatch never surfaced under CI. Result:
+  contradiction clusters silently always empty against real event
+  logs; the LLM never saw the `contradicted` signal it relies on to
+  judge whether a near-duplicate pair is actually in opposition. Fix:
+  read the canonical names with a tolerant fallback to the legacy
+  shape (mirroring 2.6.2's `event.get("returned") or
+  event.get("hit_ids")` discipline), plus `event.get("session") or
+  event.get("session_id", "")` to tolerate both auto-emitted and
+  hand-rolled session keys. New regression test
+  `test_build_clusters_seeds_contradiction_from_real_recorder` in
+  `tests/test_llm.py` round-trips events through a real `Recorder` so
+  a future drop of the canonical-name path fails at suite time — the
+  same discipline the 2.6.2 demotion fix established.
+
+### Changed
+
+- **`SECURITY.md` — corrected the Web UI CSRF claim.** The hardening
+  notes still described the pre-2.3.0 permissive header-less POST
+  behavior ("Header-less POSTs fall through… refusing every
+  header-less POST would break the normal in-UI flow"). 2.3.0 closed
+  that path: `web.py:_same_origin` now returns False when both
+  `Origin` and `Referer` are absent, and the existing `test_web.py`
+  regression coverage pins it. The doc now reads "Header-less POSTs
+  are rejected." with the CLI-scripting escape hatch (`-H "Origin:
+  http://127.0.0.1:<port>"`) called out explicitly. Security
+  documentation overstating an attack surface that has already been
+  closed is worse than understating it, but only by a hair — the fix
+  brings the prose in line with the code.
+- **`CHANGELOG.md` — restored the missing `## 1.2.1 - 2026-05-10`
+  heading.** Same defect 2.6.2 fixed for `## 2.6.0` (and the 1.3.2
+  entry already noted for 1.3.0 itself). The 1.2.1 narrative flowed
+  out of the 1.2.2 entry without a separator; renderers walking the
+  heading hierarchy saw 1.2.2's `### Fixed` body continuing into the
+  1.2.1 prose. **Pattern-recognition note** (load-bearing for future
+  audits): three releases now have shipped without their `##` heading.
+  Worth adding a CI lint that asserts every `## <version> -` heading
+  has a matching `[project] version = "<version>"` entry in
+  `pyproject.toml`'s history (or a release tag) so the next instance
+  trips the suite instead of an audit pass.
+- **`docs/ROADMAP.md` — version pin and test count.** "Where we are"
+  header read `(May 2026, v2.6.0)`; bumped to `v2.6.3`. The
+  `1234 tests` line was off by ~20 after the 2.6.1 / 2.6.2 / 2.6.3
+  additions; replaced with `1200+ tests` so the next minor doesn't
+  drift again from the same precise-number-rots-fast root cause.
+
 ## 2.6.2 - 2026-05-21
 
 **Audit-pass-of-the-audit-pass.** A multi-agent re-audit of the 2.6.1
@@ -1590,6 +1699,8 @@ being verified.
   `test_dot_prefixed_real_path_not_misclassified_as_placeholder`
   test pinning that `~/.claude-memory` and similar leading-dot
   paths don't trip the extension-stripping branch.
+
+## 1.2.1 - 2026-05-10
 
 Same-day docs-surface follow-up to 1.2.0. The v1.2.0 release added
 `staleness_verdict`, auto-`record_use` via `use_token`,
