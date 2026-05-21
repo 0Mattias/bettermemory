@@ -53,6 +53,7 @@ narrowing.
 from __future__ import annotations
 
 import json
+import os
 import sys
 from datetime import datetime
 from pathlib import Path
@@ -75,6 +76,15 @@ from .store import MemoryNotFoundError, Store, TombstonedError
 # double-counting. Wide enough to cover normal conversational
 # pauses, narrow enough to focus on the current turn.
 _ATTRIBUTION_LOOKBACK_SECONDS = 600
+
+# Cap the transcript read to the trailing 1 MiB. The hook only needs the
+# latest user + assistant message, which sit at the tail of an append-only
+# JSONL log; older content is irrelevant for this turn. Reading the whole
+# file was a real OOM vector on long Claude Code sessions (transcripts grow
+# to hundreds of MB in extended pairing sessions). The cap mirrors the
+# `_TRANSCRIPT_READ_CAP_BYTES` constant in consolidate.py and is enforced
+# at byte granularity (not character) so multibyte UTF-8 can't bypass it.
+_TRANSCRIPT_TAIL_READ_BYTES = 1_048_576
 
 
 def _read_payload(stdin_text: str) -> dict[str, Any]:
@@ -111,10 +121,39 @@ def _extract_last_exchange(
     """
     user: str | None = None
     assistant: str | None = None
+    # Tail-read: seek to the end and read at most the trailing
+    # `_TRANSCRIPT_TAIL_READ_BYTES`. The latest user+assistant pair
+    # sits at the end of the append-only JSONL, so the head is
+    # uninteresting and risks loading hundreds of MB of session
+    # history into memory. Drop the first line if we landed
+    # mid-record — `errors="replace"` already handles a partial UTF-8
+    # codepoint at the chunk boundary, but a half JSON object would
+    # fail the `json.loads` in the loop below and get skipped, so we
+    # only need to discard it explicitly when there's no full newline
+    # before the first parseable line. The reverse walk below tolerates
+    # the missing prefix transparently.
     try:
-        text = transcript_path.read_text(encoding="utf-8", errors="replace")
+        with transcript_path.open("rb") as fh:
+            try:
+                fh.seek(0, os.SEEK_END)
+                size = fh.tell()
+                offset = max(0, size - _TRANSCRIPT_TAIL_READ_BYTES)
+                fh.seek(offset)
+            except OSError:
+                # Pipes / FIFOs / unseekable streams — fall back to a
+                # bounded read from the current position.
+                offset = 0
+            chunk = fh.read(_TRANSCRIPT_TAIL_READ_BYTES)
     except OSError:
         return None, None
+
+    text = chunk.decode("utf-8", errors="replace")
+    if offset > 0:
+        # If we cut into the middle of a line, discard it — the next
+        # newline starts the first complete record.
+        newline = text.find("\n")
+        if newline != -1:
+            text = text[newline + 1 :]
 
     # Walk lines in reverse — the most recent user/assistant come
     # last. Stop once we have both.
