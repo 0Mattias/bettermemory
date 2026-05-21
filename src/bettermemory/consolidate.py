@@ -64,6 +64,15 @@ _DEFAULT_WINDOW_DAYS = 30
 _DEFAULT_COLD_SCOPE_DAYS = 180
 _DEFAULT_TYPO_DISTANCE = 2
 
+# Hard cap on bytes read from a transcript file. The downstream prompt
+# builder already caps the text it ships to the LLM at
+# `llm.MAX_TRANSCRIPT_CHARS` (12k chars + truncation marker); this
+# cap exists one layer earlier so a multi-GB transcript path can't OOM
+# the process before the truncation kicks in. 1 MiB is comfortably
+# larger than the longest sensible Claude Code session JSONL while
+# still bounded.
+_TRANSCRIPT_READ_CAP_BYTES = 1_048_576
+
 
 # ---------------------------------------------------------------------------
 # Result dataclasses
@@ -380,7 +389,13 @@ def find_demotion_candidates(
     applied: dict[str, int] = defaultdict(int)
     for event in events:
         if event.get("kind") == "search":
-            for mid in event.get("hit_ids") or []:
+            # The recorder writes the result-id list as `returned`
+            # (canonical name in `_handlers.memory_search`). Tolerate
+            # the older `hit_ids` field so synthetic test fixtures and
+            # any pre-rename event logs still feed the count; without
+            # the fallback this whole pass silently produced zero
+            # demotion candidates against real event logs.
+            for mid in event.get("returned") or event.get("hit_ids") or []:
                 retrieved[mid] += 1
         elif event.get("kind") == "use":
             ids = event.get("ids") or []
@@ -938,7 +953,14 @@ def _load_transcript(path: Path) -> str:
     cluster.
     """
     try:
-        raw = path.read_text(encoding="utf-8", errors="replace")
+        with path.open("r", encoding="utf-8", errors="replace") as fh:
+            # `read(n)` on a text stream reads at most n characters —
+            # bounded by `_TRANSCRIPT_READ_CAP_BYTES` so a hostile or
+            # accidentally-huge transcript can't blow up memory. The
+            # downstream prompt builder truncates again at
+            # `MAX_TRANSCRIPT_CHARS`, so any truncation here just
+            # narrows the candidate window earlier.
+            raw = fh.read(_TRANSCRIPT_READ_CAP_BYTES)
     except OSError:
         return ""
     if path.suffix.lower() != ".jsonl":
@@ -992,6 +1014,7 @@ def consolidate_llm(
     interactive_input: Any = None,
     session_id: str | None = None,
     from_transcript: str | None = None,
+    max_content_bytes: int | None = None,
 ) -> LLMConsolidateReport:
     """Run an LLM-driven consolidation pass.
 
@@ -1034,6 +1057,13 @@ def consolidate_llm(
     When provided, the consolidate pass adds a transcript-facts
     cluster to the run; without it, only the existing dedup /
     contradiction passes fire.
+
+    `max_content_bytes` mirrors the `[behavior] max_content_bytes`
+    config knob and gates propose_new writes the same way
+    `memory_write` does — the LLM only sees ~8 cluster members as
+    context, so guardrails that don't depend on a single-call view of
+    the store have to fire here. None disables the size cap (used
+    only by tests that exercise the apply path without a Config).
     """
     from . import llm as _llm
 
@@ -1118,7 +1148,14 @@ def consolidate_llm(
                 continue
         report.accepted.append(proposal)
         try:
-            actions = _apply_llm_proposal(store, proposal, by_id, session_id=session_id)
+            actions = _apply_llm_proposal(
+                store,
+                proposal,
+                by_id,
+                session_id=session_id,
+                max_content_bytes=max_content_bytes,
+                semantic_model=semantic_model,
+            )
             report.actions_taken.extend(actions)
         except Exception as exc:  # noqa: BLE001
             log.warning("consolidate --llm: apply failed: %s", exc)
@@ -1141,6 +1178,8 @@ def _apply_llm_proposal(
     by_id: dict[str, Memory],
     *,
     session_id: str | None,
+    max_content_bytes: int | None = None,
+    semantic_model: Any | None = None,
 ) -> list[LLMProposalAction]:
     """Translate a validated `Proposal` into store-level mutations.
 
@@ -1149,6 +1188,13 @@ def _apply_llm_proposal(
     legible — every code path that mutates the store on behalf of an
     LLM is right here, and the surface area for "what can --llm
     actually do" is short enough to scan.
+
+    `max_content_bytes` and `semantic_model` gate the `propose_new`
+    branch's write — the LLM only saw a small cluster slice, so the
+    dedup / size / transient checks `memory_write` runs at the MCP
+    surface have to fire here too. Gate failures raise `RuntimeError`;
+    `consolidate_llm` catches it as one `LLMClusterFailure` and the
+    operator sees the rejection reason in the report.
     """
     from . import llm as _llm
 
@@ -1242,6 +1288,66 @@ def _apply_llm_proposal(
             f"\n\n_(consolidate --llm --from-transcript: {proposal.source_excerpt})_"
         )
         body_with_provenance = proposal.body.rstrip() + provenance
+
+        # Mirror the write-time guardrails `_handlers.memory_write` runs.
+        # The LLM only sees ~8 cluster members as "don't duplicate
+        # these" context, so dedup against the full active set + the
+        # tombstone set is load-bearing here — without it, --llm
+        # --from-transcript would happily re-create memories the user
+        # already wrote (or already removed).
+        if max_content_bytes is not None:
+            body_bytes = len(body_with_provenance.encode("utf-8"))
+            if body_bytes > max_content_bytes:
+                raise RuntimeError(
+                    f"propose_new body exceeds max_content_bytes "
+                    f"({body_bytes} > {max_content_bytes})"
+                )
+
+        from .durability import find_transient_markers
+
+        transient = find_transient_markers(body_with_provenance)
+        if transient:
+            markers = ", ".join(h.marker for h in transient)
+            raise RuntimeError(
+                f"propose_new body contains transient markers "
+                f"({markers}); refuse — the consolidate path can't "
+                "ask the LLM to acknowledge_transient"
+            )
+
+        from .search import find_similar, find_similar_tombstones
+
+        active = store.load_all()
+        high_active = [
+            h
+            for h in find_similar(
+                body_with_provenance, active, semantic_model=semantic_model
+            )
+            if h.relevance == "high"
+        ]
+        if high_active:
+            raise RuntimeError(
+                f"propose_new body high-overlaps existing memory "
+                f"{high_active[0].id}; the LLM only saw the cluster "
+                "slice, not the full active set — skip rather than "
+                "create a parallel entry"
+            )
+
+        high_removed = [
+            h
+            for h in find_similar_tombstones(
+                body_with_provenance,
+                store.load_tombstones(),
+                semantic_model=semantic_model,
+            )
+            if h.relevance == "high-removed"
+        ]
+        if high_removed:
+            raise RuntimeError(
+                f"propose_new body high-overlaps previously-removed "
+                f"memory {high_removed[0].id}; the prior tombstone "
+                "stands until the user explicitly memory_restore's it"
+            )
+
         written = store.write(
             content=body_with_provenance,
             scopes=[proposal.scope],

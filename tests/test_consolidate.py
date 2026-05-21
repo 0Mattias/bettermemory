@@ -243,6 +243,32 @@ def test_demotion_skips_never_retrieved() -> None:
     assert candidates == []
 
 
+def test_demotion_reads_returned_field_on_real_recorder_events(tmp_path: Path) -> None:
+    """Regression: production `memory_search` events carry the result
+    id list under the `returned` field (the canonical recorder shape),
+    not `hit_ids` (the legacy synthetic-fixture name used elsewhere in
+    this file). When the demotion scanner only consulted `hit_ids` it
+    silently produced zero candidates against any real event log — the
+    `bettermemory consolidate` demotion pass was dead in production
+    while every test passed. This round-trips one event through the
+    actual `Recorder` so a future refactor that drops the
+    `returned`-aware code path is caught at suite time."""
+    now = datetime.now(timezone.utc)
+    old = now - timedelta(days=60)
+    m = _memory("body", created=old, updated=old)
+
+    recorder = Recorder(root=tmp_path, session_id="test-demotion")
+    recorder.record("search", query="anything", returned=[m.id])
+
+    from bettermemory.events import iter_events
+
+    events = list(iter_events(tmp_path))
+    candidates = find_demotion_candidates([m], events, window_days=30, now=now)
+    assert len(candidates) == 1
+    assert candidates[0].memory_id == m.id
+    assert candidates[0].retrieved_count == 1
+
+
 # ---------------------------------------------------------------------------
 # Cold-scope pass
 # ---------------------------------------------------------------------------

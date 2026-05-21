@@ -1,6 +1,6 @@
 ---
 schema_version: 1
-id: 01HXYZHOMELABNETWORKEXAMPL
+id: 01KS64A29FN2SVW8T2AA4AE0A9
 created: 2025-04-02T18:00:00+00:00
 updated: 2025-04-02T18:00:00+00:00
 scopes: [infrastructure, home-lab]

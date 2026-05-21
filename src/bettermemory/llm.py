@@ -51,7 +51,7 @@ from dataclasses import dataclass
 from datetime import datetime
 from typing import Any, Literal, Protocol, Union
 
-from .models import Memory
+from .models import Memory, validate_scope as _validate_scope_syntax
 
 
 log = logging.getLogger("bettermemory.llm")
@@ -740,6 +740,15 @@ def _validate_propose_new(
     scope = scope.strip()
     if scope == "general":
         log.warning("propose_new: scope 'general' rejected (catch-all is forbidden)")
+        return None
+    # Match the syntax rules `memory_write` enforces. Without this the
+    # bad scope only crashes at apply time — after the user has already
+    # seen a "+ NEW MEMORY" diff and accepted it. Reject up front so
+    # malformed scopes never make it into the renderer.
+    try:
+        scope = _validate_scope_syntax(scope)
+    except ValueError as exc:
+        log.warning("propose_new: scope %r failed validation: %s", scope, exc)
         return None
     if category not in {"fact", "ambient"}:
         log.warning("propose_new: category %r must be 'fact' or 'ambient'", category)

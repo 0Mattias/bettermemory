@@ -597,7 +597,7 @@ class Store:
         for path in self._iter_tombstone_paths():
             try:
                 post = frontmatter.load(path)
-            except Exception:
+            except (ValueError, KeyError, OSError):
                 continue
             if post.metadata.get("id") == memory_id:
                 return path
@@ -842,7 +842,7 @@ class Store:
                 with _locked(tpath):
                     try:
                         post = frontmatter.load(tpath)
-                    except Exception:
+                    except (ValueError, KeyError, OSError):
                         continue
                     raw_scopes = post.metadata.get("scopes")
                     if not isinstance(raw_scopes, list):
@@ -949,7 +949,7 @@ class Store:
         for path in self._iter_active_paths():
             try:
                 post = frontmatter.load(path)
-            except Exception:
+            except (ValueError, KeyError, OSError):
                 continue
             if post.metadata.get("id") == memory_id:
                 return path

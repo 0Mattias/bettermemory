@@ -1739,6 +1739,7 @@ def _cli_consolidate(
             model=llm_model,
             url=llm_url,
             from_transcript=from_transcript,
+            max_content_bytes=config.behavior.max_content_bytes,
         )
 
 
@@ -1755,6 +1756,7 @@ def _cli_consolidate_llm(
     model: str | None,
     url: str | None,
     from_transcript: str | None = None,
+    max_content_bytes: int | None = None,
 ) -> None:
     """Run the --llm pass after the structural passes have rendered.
 
@@ -1788,6 +1790,7 @@ def _cli_consolidate_llm(
         interactive_input=interactive_input,
         session_id=session_id,
         from_transcript=from_transcript,
+        max_content_bytes=max_content_bytes,
     )
     sys.stdout.write(render_llm_json(report) if json_out else render_llm_text(report))
 
