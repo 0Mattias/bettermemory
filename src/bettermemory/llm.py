@@ -878,23 +878,32 @@ def _collect_contradiction_targets(
     most-recently-co-retrieved memory id from the same session. This
     is a heuristic — the LLM gets to judge whether the pair is
     actually in contradiction or just adjacent.
+
+    Reads the canonical `Recorder` shape (`kind="search"`/`"use"`,
+    `returned=[…]` / `ids=[…]`, session under `"session"`) and falls
+    back to the legacy `"memory_search"`/`"memory_record_use"` +
+    `"memory_ids"` + `"session_id"` shape for any pre-2.6.3 event
+    logs still on disk. Production never wrote the legacy shape from
+    this module's handlers — the fallback exists for parity with the
+    `find_demotion_candidates` audit-fix in 2.6.2 and to keep
+    hand-rolled test fixtures (which used the legacy names) working.
     """
     contradicted_by_session: dict[str, list[tuple[str, str]]] = {}
     last_retrieval_by_session: dict[str, list[str]] = {}
 
     for event in events:
         kind = event.get("kind", "")
-        session_id = event.get("session_id", "")
-        if kind == "memory_search":
-            ids = event.get("memory_ids") or []
+        session_id = event.get("session") or event.get("session_id", "")
+        if kind in ("search", "memory_search"):
+            ids = event.get("returned") or event.get("memory_ids") or []
             if isinstance(ids, list):
                 last_retrieval_by_session[session_id] = [
                     mid for mid in ids if isinstance(mid, str) and mid in by_id
                 ]
-        elif kind == "memory_record_use":
+        elif kind in ("use", "memory_record_use"):
             if event.get("outcome") != "contradicted":
                 continue
-            memory_ids = event.get("memory_ids") or []
+            memory_ids = event.get("ids") or event.get("memory_ids") or []
             if not isinstance(memory_ids, list):
                 continue
             for mid in memory_ids:
@@ -926,7 +935,12 @@ def _build_cluster_member(
     events: list[dict[str, Any]],
 ) -> ClusterMember:
     """Aggregate use-events for one memory into per-outcome counts +
-    a recent excerpt sample."""
+    a recent excerpt sample.
+
+    Reads the canonical `Recorder` shape (`kind="use"` with `ids=[…]`)
+    and falls back to the legacy `"memory_record_use"` + `"memory_ids"`
+    shape for parity with `_collect_contradiction_targets` above.
+    """
     counts = {
         "applied": 0,
         "ignored": 0,
@@ -935,9 +949,10 @@ def _build_cluster_member(
     }
     excerpts: list[MemoryExcerpt] = []
     for event in events:
-        if event.get("kind") != "memory_record_use":
+        if event.get("kind") not in ("use", "memory_record_use"):
             continue
-        if memory.id not in (event.get("memory_ids") or []):
+        ids = event.get("ids") or event.get("memory_ids") or []
+        if memory.id not in ids:
             continue
         outcome = event.get("outcome", "")
         if outcome not in counts:
@@ -945,7 +960,6 @@ def _build_cluster_member(
         counts[outcome] += 1
         excerpts_raw = event.get("claim_excerpts") or []
         if isinstance(excerpts_raw, list):
-            ids = event.get("memory_ids") or []
             try:
                 idx = ids.index(memory.id)
                 excerpt = excerpts_raw[idx] if idx < len(excerpts_raw) else None

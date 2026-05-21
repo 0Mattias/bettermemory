@@ -387,8 +387,16 @@ def test_build_clusters_handles_no_pairs() -> None:
 
 
 def test_build_clusters_seeds_contradiction_from_event() -> None:
-    """A `memory_record_use(outcome="contradicted")` event paired with
-    a co-retrieval should produce a contradiction-candidate cluster."""
+    """Legacy-shape event fixture (kind=`memory_search`/`memory_record_use`,
+    `session_id`/`memory_ids` field names) still seeds contradictions.
+
+    Production never wrote this shape from these handlers, but old test
+    fixtures and any hand-rolled event logs from before 2.6.3 carry it.
+    The fallback in `_collect_contradiction_targets` keeps them working.
+    For the canonical-shape regression test that round-trips a real
+    `Recorder`, see `test_build_clusters_seeds_contradiction_from_real_recorder`
+    below.
+    """
     a = _make_memory("body a")
     b = _make_memory("body b")
     events = [
@@ -413,6 +421,70 @@ def test_build_clusters_seeds_contradiction_from_event() -> None:
     assert len(contradiction_clusters) == 1
     member_ids = {m.memory.id for m in contradiction_clusters[0].members}
     assert member_ids == {a.id, b.id}
+
+
+def test_build_clusters_seeds_contradiction_from_real_recorder(
+    tmp_path: object,
+) -> None:
+    """Regression test for the 2.6.3 field-name fix.
+
+    The canonical `Recorder` writes `kind="search"` with `returned=[…]`
+    and `kind="use"` with `ids=[…]` — NOT the `memory_search` /
+    `memory_record_use` / `memory_ids` shape the previous test uses.
+    This test round-trips events through a real `Recorder` and reads
+    them back via `iter_events` so any drift between what production
+    emits and what `_collect_contradiction_targets` / `_build_cluster_member`
+    consume fails the suite. Mirrors the discipline of the 2.6.2 fix
+    for `find_demotion_candidates` in `consolidate.py`.
+    """
+    from pathlib import Path
+
+    from bettermemory.events import Recorder, iter_events
+
+    root = Path(tmp_path)  # type: ignore[arg-type]
+    a = _make_memory("body a")
+    b = _make_memory("body b")
+
+    recorder = Recorder(root=root, session_id="s1")
+    # Production-shape search event: returned=[…], not memory_ids.
+    recorder.record(
+        "search",
+        query="anything",
+        returned=[a.id, b.id],
+        relevance=["high", "high"],
+    )
+    # Production-shape use event: ids=[…], outcome="contradicted",
+    # claim_excerpts aligned by index with ids so excerpt aggregation
+    # rounds through the same shape.
+    recorder.record(
+        "use",
+        ids=[a.id],
+        outcome="contradicted",
+        claim_excerpts=["the body of a contradicts the body of b"],
+        attribution="model",
+    )
+
+    events = list(iter_events(root))
+    clusters = build_clusters([a, b], events=events, near_duplicate_pairs=[])
+
+    contradiction_clusters = [
+        c for c in clusters if c.cluster_kind == "contradiction_candidates"
+    ]
+    assert len(contradiction_clusters) == 1, (
+        "Real-Recorder events should produce a contradiction cluster — "
+        "if this fails, the production event shape has drifted past what "
+        "_collect_contradiction_targets reads."
+    )
+    member_ids = {m.memory.id for m in contradiction_clusters[0].members}
+    assert member_ids == {a.id, b.id}
+
+    # And the excerpt aggregation reaches the cluster member too —
+    # `_build_cluster_member` reads `ids` (not `memory_ids`) post-fix.
+    member_a = next(m for m in contradiction_clusters[0].members if m.memory.id == a.id)
+    assert member_a.contradicted_count == 1
+    assert any("contradicts" in e.excerpt for e in member_a.excerpts), (
+        "claim_excerpt should round-trip through _build_cluster_member"
+    )
 
 
 # ---------------------------------------------------------------------------
