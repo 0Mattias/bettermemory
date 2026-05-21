@@ -130,7 +130,11 @@ class Store:
     def __post_init__(self) -> None:
         self.root = Path(self.root).expanduser().resolve()
         self.root.mkdir(parents=True, exist_ok=True)
-        (self.root / TOMBSTONE_DIR).mkdir(exist_ok=True)
+        # Explicit 0o700 — don't rely on the caller's umask. Tombstones
+        # carry the same trust boundary as active memories (paths cited
+        # in `removed_reason`, body hashes for dedup), so directory-listing
+        # them should require the owner just like the active store.
+        (self.root / TOMBSTONE_DIR).mkdir(mode=0o700, exist_ok=True)
 
     @property
     def tombstone_dir(self) -> Path:

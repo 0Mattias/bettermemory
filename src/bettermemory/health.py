@@ -571,6 +571,7 @@ def compute_health(
     endorsement_debt_min_retrievals: int = _ENDORSEMENT_DEBT_MIN_RETRIEVALS,
     caller_origin: Origin | None = None,
     now: datetime | None = None,
+    tombstoned_ids: set[str] | None = None,
 ) -> HealthReport:
     """Build a `HealthReport` from active memories + the event stream.
 
@@ -614,6 +615,7 @@ def compute_health(
     now = now or datetime.now(timezone.utc)
     cutoff = now - timedelta(days=window_days)
     verification_cutoff = now - timedelta(days=verification_stale_days)
+    tombstoned_ids = tombstoned_ids or set()
 
     by_id: dict[str, MemoryStats] = {}
     # Parallel mapping of memory id -> origin.repo, kept separately so we
@@ -696,13 +698,17 @@ def compute_health(
                 stats = by_id.get(mid)
                 if stats is None:
                     # Memory may have been tombstoned after the use was
-                    # recorded, or — more concerningly — the writer may
-                    # have fabricated the ULID. We can't tell from the
-                    # event alone (a tombstoned memory's id is a valid
-                    # ULID just like any other), so we count both cases
-                    # in `orphan_use_events`. A growing count is the
-                    # "model is hallucinating ids" smoke test.
-                    orphan_use_events += 1
+                    # recorded (a benign lifecycle event — the memory
+                    # existed when used) or the writer may have fabricated
+                    # the ULID (the concerning case). We discriminate by
+                    # checking the tombstone set: tombstoned-id references
+                    # are filtered out so `orphan_use_events` is a clean
+                    # smoke test for "model is hallucinating ids". Older
+                    # callers that don't pass `tombstoned_ids` see the
+                    # legacy conflated count (every unknown id is an
+                    # orphan), which preserves backward compatibility.
+                    if mid not in tombstoned_ids:
+                        orphan_use_events += 1
                     continue
                 if outcome == "applied":
                     stats.applied_count += 1
@@ -1496,6 +1502,7 @@ def report_for_directory(
     from .store import Store
 
     store = Store(root)
+    tombstoned_ids = {t.id for t in store.load_tombstones()}
     return compute_health(
         store.load_all(),
         iter_all_events(root),
@@ -1506,6 +1513,7 @@ def report_for_directory(
         endorsement_debt_min_retrievals=endorsement_debt_min_retrievals,
         caller_origin=caller_origin,
         now=now,
+        tombstoned_ids=tombstoned_ids,
     )
 
 

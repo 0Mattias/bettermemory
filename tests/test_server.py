@@ -188,6 +188,59 @@ async def test_write_rejects_invalid_scope(server: Any) -> None:
         await _call(server, "memory_write", content="x", scopes=["With Space"])
 
 
+async def test_write_rejects_oversized_content(memory_dir: Path) -> None:
+    """A memory_write body exceeding [behavior] max_content_bytes is
+    rejected at the handler. The cap protects against a runaway model
+    or hostile client filling the store with a multi-gigabyte body —
+    the event log is already capped at 10 MB rotation, but the memory
+    file itself was previously unbounded."""
+    from bettermemory.config import BehaviorConfig
+
+    cfg = Config(
+        storage=StorageConfig(directory=str(memory_dir)),
+        behavior=BehaviorConfig(max_content_bytes=200),
+    )
+    server = build_server(config=cfg, store=Store(memory_dir), state=SessionState())
+    big_body = "x" * 500
+    with pytest.raises(Exception, match="max_content_bytes"):
+        await _call(server, "memory_write", content=big_body, scopes=["tools"])
+
+
+async def test_write_cap_disabled_when_zero(memory_dir: Path) -> None:
+    """max_content_bytes=0 disables the cap — the legacy behaviour
+    before this knob existed. Tested so a downstream config picking 0
+    explicitly (e.g. a corpus of curated long-form bodies) doesn't
+    accidentally trip the validator."""
+    from bettermemory.config import BehaviorConfig
+
+    cfg = Config(
+        storage=StorageConfig(directory=str(memory_dir)),
+        behavior=BehaviorConfig(max_content_bytes=0),
+    )
+    server = build_server(config=cfg, store=Store(memory_dir), state=SessionState())
+    big_body = "x" * 50_000
+    result = await _call(server, "memory_write", content=big_body, scopes=["tools"])
+    assert result is not None
+
+
+async def test_update_rejects_oversized_content(memory_dir: Path) -> None:
+    """memory_update applies the same cap — otherwise a caller could
+    bypass the bound by writing under-cap and then updating to a
+    multi-megabyte body."""
+    from bettermemory.config import BehaviorConfig
+
+    cfg = Config(
+        storage=StorageConfig(directory=str(memory_dir)),
+        behavior=BehaviorConfig(max_content_bytes=200),
+    )
+    server = build_server(config=cfg, store=Store(memory_dir), state=SessionState())
+    small = await _call(server, "memory_write", content="ok body", scopes=["tools"])
+    memory_id = small["id"]
+    big_body = "x" * 500
+    with pytest.raises(Exception, match="max_content_bytes"):
+        await _call(server, "memory_update", id=memory_id, content=big_body)
+
+
 async def test_show_unknown_id_errors(server: Any) -> None:
     with pytest.raises(Exception):
         await _call(server, "memory_show", id="01HXYZNOTAREALIDOK000000ZZ")

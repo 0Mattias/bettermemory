@@ -1085,6 +1085,41 @@ def test_orphan_use_events_zero_when_all_ids_known() -> None:
     assert report.orphan_use_events == 0
 
 
+def test_orphan_use_events_excludes_tombstoned_ids() -> None:
+    """Use events referencing tombstoned ids are NOT orphans — the memory
+    existed when used; it was just removed later. Without this filter the
+    "model is hallucinating ids" smoke test fires on every benign
+    tombstone-after-use lifecycle, drowning out the real fabrication
+    signal."""
+    a = _memory()
+    tombstoned_id = generate_ulid()
+    fabricated_id = generate_ulid()
+    events = [
+        _event("use", ids=[a.id], outcome="applied"),  # known active
+        _event("use", ids=[tombstoned_id], outcome="applied"),  # benign
+        _event("use", ids=[fabricated_id], outcome="applied"),  # concerning
+    ]
+    report = compute_health(
+        [a],
+        events,
+        now=_utc(2026, 5, 1),
+        tombstoned_ids={tombstoned_id},
+    )
+    # Only the truly-unknown id counts.
+    assert report.orphan_use_events == 1
+
+
+def test_orphan_use_events_legacy_behavior_when_tombstones_unset() -> None:
+    """Callers that don't pass `tombstoned_ids` get the old conflated
+    behavior (every unknown id is an orphan) — backward compatibility
+    for offline tooling that doesn't load the tombstone set."""
+    a = _memory()
+    tombstoned_id = generate_ulid()
+    events = [_event("use", ids=[tombstoned_id], outcome="applied")]
+    report = compute_health([a], events, now=_utc(2026, 5, 1))
+    assert report.orphan_use_events == 1
+
+
 def test_render_text_includes_orphan_section_when_nonzero() -> None:
     a = _memory()
     events = [_event("use", ids=[generate_ulid()], outcome="applied")]

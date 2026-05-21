@@ -129,6 +129,15 @@ verification_stale_days = 30
 # retention. Active memories are unaffected.
 tombstone_retention_days = 0
 
+# Hard cap on a single memory body's UTF-8 byte length at `memory_write`
+# / `memory_update` time. Existing memories on disk are never re-validated
+# — this is a write-time bound that protects against a runaway model or a
+# hostile client filling disk with a multi-gigabyte body. The default of
+# 1 MB is ~1000x a typical memory (which sits at 1–2 KB); raise it if you
+# legitimately curate very long context dumps as single memories, lower
+# it for stricter resource boundaries. Set to 0 to disable the cap.
+max_content_bytes = 1000000
+
 [scopes]
 # If non-empty, writes with scopes outside this list fail. Empty = anything.
 allowed = []
@@ -202,6 +211,12 @@ class BehaviorConfig:
     # default mirrors `recency_boost_half_life_days` so freshness for
     # ranking and freshness for verification stay aligned.
     verification_stale_days: int = 30
+    # Hard cap on a memory body's UTF-8 byte length at write/update time.
+    # Default 1 MB — ~1000x the typical 1–2 KB memory body. 0 disables
+    # the cap entirely (legacy behaviour). The check runs at the handler
+    # boundary; existing on-disk memories are never re-validated, so
+    # raising the cap downward doesn't reject already-stored data.
+    max_content_bytes: int = 1_000_000
 
 
 @dataclass
@@ -383,6 +398,7 @@ def load_config(path: Path | None = None) -> Config:
             verification_stale_days=int(
                 behavior_raw.get("verification_stale_days", 30)
             ),
+            max_content_bytes=int(behavior_raw.get("max_content_bytes", 1_000_000)),
         ),
         scopes=ScopesConfig(
             allowed=list(scopes_raw.get("allowed", [])),

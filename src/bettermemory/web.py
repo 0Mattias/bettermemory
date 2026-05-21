@@ -34,6 +34,7 @@ from typing import TYPE_CHECKING, Any
 
 from .config import Config
 from .health import report_for_directory
+from .models import validate_scope
 from .origin import capture as capture_origin
 from .store import MemoryNotFoundError, Store, TombstonedError
 
@@ -480,6 +481,17 @@ def build_app(config: Config, store: Store | None = None) -> "FastAPI":
 
     @app.get("/memories", response_class=HTMLResponse)
     def memories(q: str = "", scope: str = "") -> HTMLResponse:
+        # Defence-in-depth: the scope filter feeds straight into the
+        # store's set-intersection logic with no SQL or shell exposure,
+        # so this isn't an injection vector — but we run the same
+        # `validate_scope` MCP handlers use so a malformed scope query
+        # param (e.g. `?scope=../`) surfaces a clear 400 instead of
+        # silently returning an empty list. Empty string = no filter.
+        if scope:
+            try:
+                scope = validate_scope(scope)
+            except ValueError as exc:
+                raise HTTPException(status_code=400, detail=str(exc)) from exc
         summaries = store.list_summaries(scopes=[scope] if scope else None)
         if q:
             needle = q.lower()

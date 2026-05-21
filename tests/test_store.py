@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 import time
 from datetime import datetime, timezone
 from pathlib import Path
@@ -79,6 +80,15 @@ def test_tombstone_preserves_body_and_adds_removal_metadata(store: Store) -> Non
     assert "user said so" in text
     # Tombstone lives under .tombstones/.
     assert path.parent == store.tombstone_dir
+
+
+@pytest.mark.skipif(os.name == "nt", reason="POSIX mode bits not meaningful on Windows")
+def test_tombstone_dir_has_owner_only_permissions(store: Store) -> None:
+    """The tombstone directory is created with mode 0o700 explicitly,
+    not via umask. Stored tombstones carry the same trust boundary as
+    active memories — directory-listing them should require the owner."""
+    mode = store.tombstone_dir.stat().st_mode & 0o777
+    assert mode == 0o700, f"expected 0o700, got {oct(mode)}"
 
 
 def test_tombstoned_memory_load_one_raises_clearly(store: Store) -> None:

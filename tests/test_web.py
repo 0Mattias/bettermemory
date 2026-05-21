@@ -93,6 +93,15 @@ def test_memories_list_scope_filter(client: Any, store: Store) -> None:
     assert "kubernetes notes" not in r.text
 
 
+def test_memories_list_rejects_malformed_scope(client: Any) -> None:
+    """A scope that doesn't match the MCP scope regex must 400 — same
+    contract MCP handlers enforce. Without this the UI would silently
+    return an empty list (set-intersection of "real scope" with
+    "garbage" is empty), which masks user typos as "no results"."""
+    r = client.get("/memories", params={"scope": "../etc/passwd"})
+    assert r.status_code == 400
+
+
 def test_memory_detail_renders(client: Any, store: Store) -> None:
     """Detail view shows the body, scopes, timestamps, and a verify
     form."""

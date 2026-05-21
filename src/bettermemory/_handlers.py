@@ -524,6 +524,28 @@ DESC_MEMORY_AUDIT_TURN = (
 # ---------------------------------------------------------------------------
 
 
+def _validate_content_size(content: str, max_bytes: int) -> None:
+    """Reject memory bodies whose UTF-8 byte length exceeds `max_bytes`.
+
+    A no-op when `max_bytes <= 0` (cap disabled). Centralised so that
+    `memory_write`, `memory_update`, and any future write entry point
+    share the same bound. The check is on encoded byte length rather
+    than character count because that's the unit that lands on disk
+    and in the JSONL event log — a body of CJK or emoji characters
+    expands meaningfully under UTF-8 encoding.
+    """
+    if max_bytes <= 0:
+        return
+    encoded_size = len(content.encode("utf-8"))
+    if encoded_size > max_bytes:
+        raise ValueError(
+            f"content exceeds max_content_bytes "
+            f"({encoded_size} bytes > {max_bytes} bytes). "
+            f"Split into multiple memories or raise the "
+            f"[behavior] max_content_bytes config setting."
+        )
+
+
 def _validate_write_payload(
     *,
     content: str,
@@ -532,6 +554,7 @@ def _validate_write_payload(
     source: str,
     allowed_scopes: list[str],
     category: str = "fact",
+    max_content_bytes: int = 0,
 ) -> dict[str, Any]:
     """Validate and normalise the kwargs for `Store.write`.
 
@@ -542,6 +565,7 @@ def _validate_write_payload(
         raise ValueError("content must be a non-empty string")
     if not scopes:
         raise ValueError("scopes must contain at least one entry")
+    _validate_content_size(content, max_content_bytes)
 
     clean_scopes = [validate_scope(s) for s in scopes]
 
@@ -1240,6 +1264,7 @@ class ToolHandlers:
             source=source,
             allowed_scopes=self.config.scopes.allowed,
             category=category,
+            max_content_bytes=self.config.behavior.max_content_bytes,
         )
 
         # Origin is captured before the durability check so it's always
@@ -1624,6 +1649,8 @@ class ToolHandlers:
             )
         if content is not None and not content.strip():
             raise ValueError("content must be non-empty if provided")
+        if content is not None:
+            _validate_content_size(content, self.config.behavior.max_content_bytes)
 
         try:
             existing = self.store.load_one(id)

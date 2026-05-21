@@ -7,7 +7,84 @@ breaking changes, minor for additive features, patch for fixes. The
 [compatibility contract](CONTRIBUTING.md#versioning-and-the-compatibility-contract)
 spells out exactly what's stable.
 
-## 2.6.0 - 2026-05-21
+## 2.6.1 - 2026-05-21
+
+**Audit-pass follow-up.** A read-through of the 2.6.0 surface
+surfaced one defensible bug, two defence-in-depth gaps, an unbounded
+input on `memory_write`, and a smoke test that was conflating benign
+lifecycle events with the failure mode it was meant to catch. None of
+the changes touch the on-disk format, the wire shape, or any contract
+the model branches on; older callers see byte-stable behaviour.
+
+### Added
+
+- **`[behavior] max_content_bytes` write-time cap (default 1 MB,
+  `0` disables).** Closes the only unbounded-input surface left after
+  the YAML / note / origin trust-boundary work in 1.x. The event log
+  already rotates at 10 MB, but the memory file itself was previously
+  unbounded — a runaway model or hostile client could fill disk with a
+  multi-gigabyte body. `memory_write` and `memory_update` now share a
+  `_validate_content_size` helper that measures encoded UTF-8 byte
+  length (the unit that actually lands on disk and in the JSONL log,
+  not character count) and raises a clear `ValueError` past the cap.
+  Existing on-disk memories are never re-validated, so raising the cap
+  downward never rejects already-stored data.
+
+### Changed
+
+- **`orphan_use_events` is now a clean fabrication smoke test.** The
+  rollup previously incremented on every `record_use` referencing an
+  id not in the active store — which conflated benign
+  tombstone-after-use lifecycle events with model hallucination. The
+  CLAUDE.md / health output advised treating a growing count as "model
+  is hallucinating ids", but in practice the count was dominated by
+  legitimate post-tombstone references. `compute_health` now accepts
+  an optional `tombstoned_ids` set; ids in that set are filtered out
+  of the orphan count. `report_for_directory` passes the live
+  tombstone set from `store.load_tombstones()`, so production callers
+  via the MCP tool and CLI subcommand get the sharpened signal.
+  Callers that don't pass `tombstoned_ids` see the legacy conflated
+  count — backward compatibility for offline tooling that builds
+  events without a live store.
+
+### Fixed
+
+- **`store.py:Store.__post_init__` — explicit `mode=0o700` on the
+  tombstone directory.** Previously `mkdir(exist_ok=True)` relied on
+  the caller's umask for owner-only permissions. On a system with a
+  loose umask (0o027 or higher), the tombstone directory could be
+  group- or world-listable. The active memory dir has always been
+  owner-only via the per-file 0o600 fanout; the tombstone dir now
+  matches at the directory level too. Tombstones carry the same trust
+  boundary as active memories (paths in `removed_reason`, body hashes
+  for dedup), so directory listing should require the owner.
+- **`web.py` `/memories?scope=…` query param now validates.** The
+  scope query param fed straight into `store.list_summaries` with no
+  validation — not an injection vector (set-intersection on scope
+  strings, no SQL exposure), but inconsistent with the MCP handlers
+  that all call `validate_scope`. A malformed scope (e.g.
+  `?scope=../etc/passwd`) silently returned an empty list, masking the
+  user's typo as "no results". The route now returns a clear 400 with
+  the same error message MCP handlers produce.
+- **`_response.py:_attach_commit_drift_to_hits` — defensive `.get()`
+  on `path_drift_missing` during late verdict recomputation.** The
+  late recompute reads `hit_dict["path_drift_missing"]` set earlier by
+  `hit_to_dict`. The dependency was safe today but invisible across
+  function boundaries; a future refactor that changed when the field
+  attached would `KeyError` retrieval. Now uses `.get("…", 0)` — costs
+  nothing, removes the implicit invariant.
+- **`attribution.py:_SENTENCE_SPLIT_RE` docstring.** The comment
+  claimed the trailing-space requirement avoided breaking
+  abbreviations into pseudo-sentences. It only achieves that for
+  decimal numbers (`1.5`) and version strings (`v2.6.0`) where the
+  dot is followed by a digit; prose abbreviations like `Dr. Smith` or
+  `e.g. foo` do split. The over-split is accepted by design (the same
+  boundary is tested from the other side, so attribution survives the
+  loss of one fragment), but the comment was misleading and would
+  have steered a future maintainer toward the wrong fix. Comment
+  rewritten to match what the regex actually does.
+
+
 
 **Three writing-reflex / audit-attribution levers that close the gap
 between the verification contract and what the model actually does.**

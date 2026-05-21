@@ -410,7 +410,7 @@ class ResponseBuilder:
             verdict_required = verification_status in {"never", "stale"}
             if verdict_required:
                 hit_dict["staleness_verdict"] = "spot_check_required"
-            elif count > 0 or hit_dict["path_drift_missing"] > 0:
+            elif count > 0 or hit_dict.get("path_drift_missing", 0) > 0:
                 hit_dict["staleness_verdict"] = "spot_check_recommended"
             else:
                 hit_dict["staleness_verdict"] = "fresh"

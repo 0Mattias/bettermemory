@@ -159,11 +159,14 @@ _MAX_EXCERPT_CHARS = 500
 _STOPWORD_RATIO_MAX = 0.80
 
 # Sentence splitter. Splits on terminal punctuation followed by space,
-# OR on one-or-more newlines. The trailing space requirement avoids
-# breaking decimal numbers (1.5) and abbreviations into pseudo-
-# sentences. Over-split is better than under-split for attribution —
-# a longer sentence that fails the candidate filter at one boundary
-# still has the same boundary tested from the other side.
+# OR on one-or-more newlines. The trailing-space requirement preserves
+# decimal numbers (1.5) and version strings (v2.6.0) — the dot there
+# is followed by a digit, not whitespace. Abbreviations like "Dr.
+# Smith" or "e.g. foo" DO split: that's accepted. Over-split is better
+# than under-split for attribution because a longer sentence that
+# fails the candidate filter at one boundary still has the same
+# boundary tested from the other side, and memory bodies in this
+# corpus rarely contain prose abbreviations of that shape.
 _SENTENCE_SPLIT_RE = re.compile(r"(?:[.!?]\s+|\n+)")
 
 # Strip trailing punctuation tokens for the stopword ratio check, so
