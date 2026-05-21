@@ -968,6 +968,25 @@ def main() -> None:
             "--llm refuses to commit anything."
         ),
     )
+    consolidate_parser.add_argument(
+        "--from-transcript",
+        type=str,
+        default=None,
+        metavar="PATH",
+        help=(
+            "Path to a transcript file (plain text, Markdown, or a "
+            "Claude Code session JSONL — autodetected by extension). "
+            "When set, the --llm pass adds a transcript_facts cluster "
+            "that asks the LLM to propose new memories worth saving "
+            "from the conversation — closing the writing-reflex gap "
+            "where the model skips memory_write mid-task. Existing "
+            "memories are passed in as the 'don't propose duplicates' "
+            "context. Apply gate is shared with the other --llm "
+            "proposal types: dry-run by default, --apply --yes for "
+            "batch, --apply for interactive y/N. Requires --llm; "
+            "without it the flag is a no-op."
+        ),
+    )
 
     eval_parser = sub.add_parser(
         "eval",
@@ -1143,6 +1162,7 @@ def main() -> None:
             llm_model=args.llm_model,
             llm_url=args.llm_url,
             yes=args.yes,
+            from_transcript=args.from_transcript,
         )
         return
     if args.cmd == "audit-turn":
@@ -1660,6 +1680,7 @@ def _cli_consolidate(
     llm_model: str | None = None,
     llm_url: str | None = None,
     yes: bool = False,
+    from_transcript: str | None = None,
 ) -> None:
     """`bettermemory consolidate` — offline curation pass.
 
@@ -1717,6 +1738,7 @@ def _cli_consolidate(
             provider_name=llm_provider,
             model=llm_model,
             url=llm_url,
+            from_transcript=from_transcript,
         )
 
 
@@ -1732,6 +1754,7 @@ def _cli_consolidate_llm(
     provider_name: str,
     model: str | None,
     url: str | None,
+    from_transcript: str | None = None,
 ) -> None:
     """Run the --llm pass after the structural passes have rendered.
 
@@ -1764,6 +1787,7 @@ def _cli_consolidate_llm(
         accept=yes,
         interactive_input=interactive_input,
         session_id=session_id,
+        from_transcript=from_transcript,
     )
     sys.stdout.write(render_llm_json(report) if json_out else render_llm_text(report))
 

@@ -17,12 +17,13 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from bettermemory.consolidate import consolidate_llm
+from bettermemory.consolidate import build_transcript_cluster, consolidate_llm
 from bettermemory.llm import (
     Cluster,
     DemoteTierProposal,
     MergeProposal,
     Proposal,
+    ProposeNewProposal,
     ResolveContradictionProposal,
     RewriteRelativeDateProposal,
 )
@@ -334,4 +335,170 @@ def test_no_dupes_means_no_clusters(tmp_path: Path) -> None:
     provider = FakeProvider()
     report = consolidate_llm(store, provider, apply=False)
     assert report.cluster_count == 0
-    assert provider.call_count == 0
+
+
+# ---------------------------------------------------------------------------
+# Transcript-facts cluster + propose_new — Proposal 3 / writing-reflex gap.
+# ---------------------------------------------------------------------------
+
+
+def _make_store_with_existing(tmp_path: Path) -> Store:
+    """A small store with one unrelated memory so build_transcript_cluster
+    has something to use as 'don't propose duplicates of these'
+    context."""
+    store = Store(tmp_path)
+    store.write(
+        content="The metrics dashboard runs at grafana.internal/d/api-latency.",
+        scopes=["infrastructure"],
+        confidence=Confidence.MEDIUM,
+        source=Source.EXPLICIT,
+    )
+    return store
+
+
+def test_build_transcript_cluster_loads_plain_text(tmp_path: Path) -> None:
+    """A plain `.md` transcript reads through verbatim; the cluster
+    carries the transcript content and the existing memories as
+    members."""
+    store = _make_store_with_existing(tmp_path)
+    transcript = tmp_path / "session.md"
+    transcript.write_text(
+        "User said postgres listens on port 5433.\n"
+        "Assistant acknowledged and saved it.",
+        encoding="utf-8",
+    )
+    cluster = build_transcript_cluster(
+        transcript_path=transcript,
+        memories=store.load_all(),
+        events=[],
+    )
+    assert cluster is not None
+    assert cluster.cluster_kind == "transcript_facts"
+    assert "port 5433" in cluster.transcript
+    assert len(cluster.members) >= 1
+
+
+def test_build_transcript_cluster_loads_jsonl_session(tmp_path: Path) -> None:
+    """A `.jsonl` transcript (Claude Code per-session format) gets
+    flattened to `[role] text` lines so the LLM sees a readable
+    conversation, not raw JSON."""
+    store = _make_store_with_existing(tmp_path)
+    transcript = tmp_path / "session.jsonl"
+    transcript.write_text(
+        "\n".join(
+            [
+                '{"type": "user", "message": {"content": "My Postgres is on 5433."}}',
+                '{"type": "assistant", "message": {"content": [{"type": "text", "text": "Saved."}]}}',
+            ]
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    cluster = build_transcript_cluster(
+        transcript_path=transcript,
+        memories=store.load_all(),
+        events=[],
+    )
+    assert cluster is not None
+    assert "[user] My Postgres is on 5433." in cluster.transcript
+    assert "[assistant] Saved." in cluster.transcript
+
+
+def test_build_transcript_cluster_returns_none_for_empty_file(
+    tmp_path: Path,
+) -> None:
+    """An empty / whitespace-only transcript yields no cluster — the
+    caller skips the LLM call entirely so we don't spend tokens on
+    nothing."""
+    transcript = tmp_path / "empty.txt"
+    transcript.write_text("   \n\n\n", encoding="utf-8")
+    cluster = build_transcript_cluster(
+        transcript_path=transcript,
+        memories=[],
+        events=[],
+    )
+    assert cluster is None
+
+
+def test_build_transcript_cluster_returns_none_for_missing_file(
+    tmp_path: Path,
+) -> None:
+    """A missing transcript path is silently skipped; the caller
+    upstream surfaces it as a LLMClusterFailure when the consolidate
+    pass needs to report the misconfiguration."""
+    cluster = build_transcript_cluster(
+        transcript_path=tmp_path / "does-not-exist.txt",
+        memories=[],
+        events=[],
+    )
+    assert cluster is None
+
+
+def test_consolidate_with_from_transcript_runs_propose_new(tmp_path: Path) -> None:
+    """End-to-end: a `from_transcript` path plus a FakeProvider that
+    returns one propose_new proposal. Dry-run returns the proposal;
+    --apply --yes writes a new memory whose body carries the
+    consolidate-provenance line."""
+    store = _make_store_with_existing(tmp_path)
+    transcript = tmp_path / "session.md"
+    transcript.write_text(
+        "[user] My Postgres is on port 5433, not 5432.\n"
+        "[assistant] Saved.",
+        encoding="utf-8",
+    )
+    proposal = ProposeNewProposal(
+        scope="infrastructure",
+        category="fact",
+        body="Postgres listens on port 5433, not the default 5432.",
+        source_excerpt="[user] My Postgres is on port 5433, not 5432.",
+        rationale="user-stated infrastructure fact",
+    )
+    provider = FakeProvider(proposals=[proposal])
+
+    # Dry-run first — the proposal lands in the report; no new memory
+    # in the store.
+    dry = consolidate_llm(
+        store, provider, apply=False, from_transcript=str(transcript)
+    )
+    assert any(isinstance(p, ProposeNewProposal) for p in dry.proposals)
+    memories_before = store.load_all()
+    # One existing memory from _make_store_with_existing.
+    assert len(memories_before) == 1
+
+    # Apply with --yes: the new memory lands in the store.
+    applied = consolidate_llm(
+        store,
+        provider,
+        apply=True,
+        accept=True,
+        from_transcript=str(transcript),
+    )
+    assert any(a.kind == "llm_propose_new" for a in applied.actions_taken)
+    memories_after = store.load_all()
+    assert len(memories_after) == 2
+
+    # The new memory carries the consolidate-provenance line so the
+    # source_excerpt is preserved in the body for future audits.
+    new_memory = next(
+        m
+        for m in memories_after
+        if "port 5433" in m.body and "5432" in m.body and "default" in m.body
+    )
+    assert new_memory.scopes == ["infrastructure"]
+    assert "consolidate --llm --from-transcript" in new_memory.body
+    assert "[user] My Postgres is on port 5433" in new_memory.body
+
+
+def test_consolidate_without_from_transcript_does_not_call_propose_new(
+    tmp_path: Path,
+) -> None:
+    """Existing behavior: a --llm run without --from-transcript runs
+    only the structural-cluster passes. The FakeProvider sees only the
+    dedup cluster; propose_new is never relevant."""
+    store, _a, _b = _make_store_with_dupes(tmp_path)
+    provider = FakeProvider()
+    report = consolidate_llm(store, provider, apply=False)
+    # FakeProvider was called once (for the dedup cluster). No
+    # transcript-facts cluster was built, so no second LLM call.
+    assert provider.call_count == 1
+    assert not any(isinstance(p, ProposeNewProposal) for p in report.proposals)

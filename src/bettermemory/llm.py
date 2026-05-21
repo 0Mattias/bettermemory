@@ -63,6 +63,18 @@ log = logging.getLogger("bettermemory.llm")
 MAX_BODY_CHARS = 4000
 MAX_EXCERPTS_PER_MEMORY = 3
 MAX_EXCERPT_CHARS = 200
+# Transcript chars sent to the LLM for `transcript_facts` clusters.
+# Wide enough to carry a multi-turn conversation; capped to keep
+# prompt cost bounded. Long transcripts get truncated at the boundary
+# with a `[...transcript truncated...]` marker so the LLM sees the
+# truncation explicitly.
+MAX_TRANSCRIPT_CHARS = 12000
+# Cap on the source_excerpt the LLM cites for a propose_new
+# proposal. Mirrors the `claim_excerpts` 500-char limit on
+# `memory_record_use` — short enough that excerpts aren't a
+# back-door way to dump the whole transcript into the body's
+# provenance line.
+MAX_SOURCE_EXCERPT_CHARS = 500
 
 # Default Ollama settings. Local-first by design; nothing leaves the
 # machine unless the user explicitly switches to the Anthropic or
@@ -114,6 +126,12 @@ class Cluster:
     the prompt can steer toward the relevant proposal types. The LLM
     isn't constrained to one type — a near-duplicate cluster can still
     yield a tier demotion if the members are stale.
+
+    `transcript` (optional) is a conversation snippet attached to the
+    cluster when `cluster_kind="transcript_facts"`: the LLM is asked
+    to propose new memories worth saving from the conversation, with
+    the cluster's existing members serving as the "don't propose
+    duplicates of these" context. Other cluster_kinds leave it None.
     """
 
     cluster_id: str
@@ -122,9 +140,11 @@ class Cluster:
         "contradiction_candidates",
         "relative_dates",
         "demotion_candidates",
+        "transcript_facts",
         "general",
     ]
     members: tuple[ClusterMember, ...]
+    transcript: str | None = None
 
 
 # ---------------------------------------------------------------------------
@@ -195,11 +215,45 @@ class DemoteTierProposal:
     type: Literal["demote_tier"] = "demote_tier"
 
 
+@dataclass(frozen=True)
+class ProposeNewProposal:
+    """Create a new memory the conversation produced — closes the
+    writing-reflex gap.
+
+    The MCP contract asks the model to call `memory_write` whenever
+    something durable enters the conversation; in practice the model
+    skips most writes because the bar for "durable" is fuzzy and
+    head-down task focus wins. The `consolidate --llm
+    --from-transcript` pass closes this by reading the conversation
+    after the fact and asking an LLM to surface what should have been
+    written. Every proposal renders as a "+ NEW MEMORY" preview;
+    --apply requires the same accept gate as merge / resolve /
+    rewrite-date / demote.
+
+    `scope`, `category`, and `body` are the same parameters
+    `memory_write` takes. `category` is restricted to `fact` or
+    `ambient` — `user-inference` is excluded because that tier
+    requires explicit user confirmation, which the consolidate path
+    can't supply. `source_excerpt` is the conversation snippet the
+    LLM extracted the fact from; the applier writes it into the
+    memory body as a provenance line so future audits can trace the
+    claim back to a turn.
+    """
+
+    scope: str
+    category: Literal["fact", "ambient"]
+    body: str
+    source_excerpt: str
+    rationale: str
+    type: Literal["propose_new"] = "propose_new"
+
+
 Proposal = Union[
     MergeProposal,
     ResolveContradictionProposal,
     RewriteRelativeDateProposal,
     DemoteTierProposal,
+    ProposeNewProposal,
 ]
 
 
@@ -383,23 +437,25 @@ def make_provider(name: str, **kwargs: Any) -> LLMProvider:
 # ---------------------------------------------------------------------------
 
 
-_SYSTEM_PROMPT = """You are a memory-consolidation assistant for the bettermemory project. Given a CLUSTER of related stored memories, propose between zero and N concrete consolidation actions on them. Today's date is provided so you can rewrite relative phrases ("today", "last week") into absolute dates.
+_SYSTEM_PROMPT = """You are a memory-consolidation assistant for the bettermemory project. Given a CLUSTER of related stored memories (and optionally a conversation TRANSCRIPT), propose between zero and N concrete actions. Today's date is provided so you can rewrite relative phrases ("today", "last week") into absolute dates.
 
-You may propose any combination of these four action types:
+You may propose any combination of these five action types:
 
 1. "merge" — Two or more memories say substantially the same thing. Pick a "keeper_id" from the cluster; list the others as "duplicate_ids"; provide the merged "new_body" (single body that captures every load-bearing claim from all members).
 2. "resolve_contradiction" — Two memories disagree and one is clearly current. Pick a "winner_id" and a "loser_id" (both from the cluster); the loser will be tombstoned. Provide a one-line "rationale" naming the disagreement.
 3. "rewrite_relative_date" — A memory body contains relative phrases referencing dates that have drifted. Provide "memory_id" and the full "new_body" with absolute dates substituted. Do NOT propose this for bodies already using absolute dates.
 4. "demote_tier" — A memory's verifiable claims have been superseded but the surrounding context is still useful for response shaping. Provide "memory_id" and "new_category" (must be "fact" or "ambient"; almost always "ambient" for demotions). Do NOT propose demoting a memory that has any path/version/commit claim still valid against current reality.
+5. "propose_new" — A TRANSCRIPT is attached and it surfaced a durable fact NOT already covered by any cluster member. Provide "scope" (e.g. "projects:foo", "tools", "infrastructure" — never the catch-all "general"), "category" (must be "fact" or "ambient"; never "user-inference" — that tier requires explicit user confirmation the consolidate pass can't supply), "body" (the durable claim, two to four sentences), "source_excerpt" (the literal turn from the transcript the body distils — max 500 chars). DO NOT propose: facts the cluster members already cover, transient state ("today I", "we just"), commit-SHA-like tokens, time-bound markers, or anything that boils down to "what we discussed". Only durable claims — preferences, decisions, infrastructure / configuration facts, finished units of work whose what-and-why git won't capture.
 
 Strict rules:
 
 - Output ONE valid JSON object with a top-level "proposals" array. Nothing else — no preamble, no commentary, no markdown fences.
 - Every memory_id, keeper_id, duplicate_ids entry, winner_id, and loser_id MUST appear exactly as written in the cluster. Inventing an ID is a hallucination and will be rejected.
 - Each proposal MUST include a "type" field, the type-specific fields above, and a "rationale" string (at most 200 chars).
+- "propose_new" proposals MUST come from the TRANSCRIPT section; you may not invent durable facts from the cluster members or thin air.
 - If the cluster doesn't need any action, output {"proposals": []}.
 - Do not propose changes that touch memories outside the cluster.
-- For "new_body" fields: preserve the markdown structure and any path/identifier tokens from the originals. Do not invent new facts; only re-arrange and condense what's there."""
+- For "new_body" / "body" fields: preserve the markdown structure and any path/identifier tokens from the originals. Do not invent new facts; only re-arrange and condense what's there or in the transcript."""
 
 
 def build_prompt(cluster: Cluster, *, today: str) -> str:
@@ -443,6 +499,18 @@ def build_prompt(cluster: Cluster, *, today: str) -> str:
             body = body[:MAX_BODY_CHARS] + "\n[...body truncated...]"
         lines.append(body)
         lines.append("--- END MEMORY ---")
+        lines.append("")
+    if cluster.transcript is not None:
+        # The cluster's `members` above act as the "already covered;
+        # don't propose duplicates of these" context for propose_new
+        # proposals. The TRANSCRIPT is the source the LLM extracts
+        # candidate new memories from.
+        transcript = cluster.transcript.strip()
+        if len(transcript) > MAX_TRANSCRIPT_CHARS:
+            transcript = transcript[:MAX_TRANSCRIPT_CHARS] + "\n[...transcript truncated...]"
+        lines.append("--- BEGIN TRANSCRIPT ---")
+        lines.append(transcript)
+        lines.append("--- END TRANSCRIPT ---")
         lines.append("")
     lines.append('Respond with {"proposals": [...]} only.')
     return "\n".join(lines)
@@ -521,6 +589,8 @@ def parse_and_validate(
             proposal = _validate_rewrite_date(entry, rationale, valid_ids)
         elif kind == "demote_tier":
             proposal = _validate_demote(entry, rationale, valid_ids)
+        elif kind == "propose_new":
+            proposal = _validate_propose_new(entry, rationale, cluster)
         else:
             log.warning("unknown proposal type %r; skipping", kind)
             continue
@@ -630,6 +700,65 @@ def _validate_demote(
     return DemoteTierProposal(
         memory_id=memory_id,
         new_category=new_category,
+        rationale=rationale,
+    )
+
+
+def _validate_propose_new(
+    entry: dict[str, Any],
+    rationale: str,
+    cluster: Cluster,
+) -> ProposeNewProposal | None:
+    """Validate a propose_new proposal.
+
+    Hard gates the LLM should not be able to talk its way past:
+    - cluster MUST carry a transcript (the LLM can only propose new
+      memories sourced FROM a transcript; without one, the prompt
+      shouldn't have suggested type=propose_new in the first place).
+    - scope MUST be a non-empty string that isn't the catch-all
+      "general" (the prompt explicitly forbids it; reject if the LLM
+      ignored that).
+    - category MUST be "fact" or "ambient" — never "user-inference"
+      (that tier requires explicit user confirmation the consolidate
+      pass can't supply).
+    - body MUST be non-empty.
+    - source_excerpt MUST be a non-empty string capped at
+      `MAX_SOURCE_EXCERPT_CHARS`.
+    """
+    if cluster.transcript is None:
+        log.warning("propose_new: cluster has no transcript; rejecting proposal")
+        return None
+    scope = entry.get("scope")
+    category = entry.get("category")
+    body = entry.get("body", "")
+    source_excerpt = entry.get("source_excerpt", "")
+    if not isinstance(scope, str) or not scope.strip():
+        log.warning("propose_new: scope must be a non-empty string; got %r", scope)
+        return None
+    scope = scope.strip()
+    if scope == "general":
+        log.warning("propose_new: scope 'general' rejected (catch-all is forbidden)")
+        return None
+    if category not in {"fact", "ambient"}:
+        log.warning(
+            "propose_new: category %r must be 'fact' or 'ambient'", category
+        )
+        return None
+    if not isinstance(body, str) or not body.strip():
+        log.warning("propose_new: body empty for scope %r", scope)
+        return None
+    if not isinstance(source_excerpt, str) or not source_excerpt.strip():
+        log.warning(
+            "propose_new: source_excerpt empty for scope %r — the audit "
+            "trail requires a transcript quotation",
+            scope,
+        )
+        return None
+    return ProposeNewProposal(
+        scope=scope,
+        category=category,
+        body=body.strip(),
+        source_excerpt=source_excerpt.strip()[:MAX_SOURCE_EXCERPT_CHARS],
         rationale=rationale,
     )
 
@@ -895,6 +1024,18 @@ def render_proposal_diff(proposal: Proposal, by_id: dict[str, Memory]) -> str:
             f"[DEMOTE_TIER] {proposal.memory_id}: {current} -> {proposal.new_category}"
         )
         lines.append(f"  rationale: {proposal.rationale}")
+    elif isinstance(proposal, ProposeNewProposal):
+        # No existing memory to diff against — render as a "new file"
+        # preview so the audit story stays parallel with the other
+        # proposal types.
+        lines.append(
+            f"[PROPOSE_NEW] scope={proposal.scope} category={proposal.category}"
+        )
+        lines.append(f"  rationale: {proposal.rationale}")
+        lines.append(f"  source_excerpt: {proposal.source_excerpt}")
+        lines.append("  body:")
+        for body_line in proposal.body.splitlines():
+            lines.append(f"    + {body_line}")
     return "\n".join(lines)
 
 
@@ -922,6 +1063,7 @@ __all__ = [
     "ResolveContradictionProposal",
     "RewriteRelativeDateProposal",
     "DemoteTierProposal",
+    "ProposeNewProposal",
     "Proposal",
     "LLMProvider",
     "OllamaProvider",
@@ -936,4 +1078,6 @@ __all__ = [
     "DEFAULT_OLLAMA_URL",
     "DEFAULT_OLLAMA_MODEL",
     "DEFAULT_OLLAMA_TIMEOUT_SECONDS",
+    "MAX_TRANSCRIPT_CHARS",
+    "MAX_SOURCE_EXCERPT_CHARS",
 ]

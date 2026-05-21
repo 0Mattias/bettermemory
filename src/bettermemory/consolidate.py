@@ -39,11 +39,13 @@ caller can render text, JSON, or whatever else.
 
 from __future__ import annotations
 
+import json
 import logging
 from collections import Counter, defaultdict
 from collections.abc import Iterable
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
+from pathlib import Path
 from typing import Any
 
 from .events import iter_events
@@ -865,6 +867,118 @@ class LLMConsolidateReport:
         }
 
 
+# Cap on the number of existing memories the transcript cluster
+# carries as "don't propose duplicates of these" context. Keeps the
+# prompt cost bounded; the LLM gets the most-recently-updated slice,
+# which is the most likely overlap with whatever the conversation just
+# produced. Tuning knob — bump if false-positive duplicate proposals
+# show up in practice.
+_TRANSCRIPT_CLUSTER_MEMORY_CAP = 8
+
+
+def build_transcript_cluster(
+    *,
+    transcript_path: Path,
+    memories: list[Memory],
+    events: list[dict[str, Any]],
+) -> Any | None:
+    """Build a `transcript_facts` cluster from a transcript file.
+
+    The transcript text is flattened to a readable form: a
+    Claude Code session JSONL gets its `user` / `assistant` text
+    blocks extracted in order; any other content is read verbatim and
+    handed to the LLM as-is. Returns `None` for an unreadable or
+    empty transcript so the caller can surface the failure as one bad
+    input rather than tanking the whole pass.
+
+    The cluster's "members" are the most-recently-updated memories,
+    capped at `_TRANSCRIPT_CLUSTER_MEMORY_CAP`. The LLM sees them as
+    the "already covered" context — propose_new proposals that
+    duplicate any of these get caught at validation time
+    (`parse_and_validate` reuses the same hallucination-defence
+    rejection path the other proposal types use, and the prompt
+    itself instructs the LLM to skip duplicates).
+    """
+    from . import llm as _llm
+
+    transcript = _load_transcript(transcript_path)
+    if not transcript or not transcript.strip():
+        return None
+
+    # Most-recently-updated first; cap the slice.
+    recent = sorted(memories, key=lambda m: m.updated, reverse=True)[
+        :_TRANSCRIPT_CLUSTER_MEMORY_CAP
+    ]
+    members = tuple(
+        _llm._build_cluster_member(m, events) for m in recent  # noqa: SLF001
+    )
+    return _llm.Cluster(
+        cluster_id="transcript-facts",
+        cluster_kind="transcript_facts",
+        members=members,
+        transcript=transcript,
+    )
+
+
+def _load_transcript(path: Path) -> str:
+    """Read a transcript file and flatten it to a plain-text form.
+
+    Detection is by file extension only:
+
+    - ``.jsonl`` → Claude Code per-session log. Parse line-by-line;
+      keep `{"type": "user", ...}` and `{"type": "assistant", ...}`
+      entries and concatenate their text content blocks.
+    - anything else → read verbatim. Plain-text and Markdown
+      transcripts pass through unchanged.
+
+    Returns an empty string when the path doesn't exist, can't be
+    read, or contains no recoverable content — the caller treats
+    that as "no transcript to consolidate from" and skips the
+    cluster.
+    """
+    try:
+        raw = path.read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return ""
+    if path.suffix.lower() != ".jsonl":
+        return raw
+
+    out: list[str] = []
+    for line in raw.splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            row = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if not isinstance(row, dict):
+            continue
+        role = row.get("type")
+        message = row.get("message")
+        if role not in ("user", "assistant") or not isinstance(message, dict):
+            continue
+        content = message.get("content")
+        text: str | None = None
+        if isinstance(content, str):
+            text = content
+        elif isinstance(content, list):
+            parts: list[str] = []
+            for block in content:
+                if not isinstance(block, dict):
+                    continue
+                if block.get("type") == "text":
+                    chunk = block.get("text")
+                    if isinstance(chunk, str) and chunk:
+                        parts.append(chunk)
+            if parts:
+                text = "\n".join(parts)
+        if not text:
+            continue
+        out.append(f"[{role}] {text}")
+    return "\n\n".join(out)
+
+
 def consolidate_llm(
     store: Store,
     provider: Any,  # llm.LLMProvider — kept Any to avoid import cycle
@@ -876,6 +990,7 @@ def consolidate_llm(
     accept: bool = False,
     interactive_input: Any = None,
     session_id: str | None = None,
+    from_transcript: str | None = None,
 ) -> LLMConsolidateReport:
     """Run an LLM-driven consolidation pass.
 
@@ -886,16 +1001,22 @@ def consolidate_llm(
        Jaccard fallback.
     2. Walk the event log to seed `contradiction_candidates` clusters
        from any `record_use(outcome="contradicted")` events.
-    3. Ask `provider` for proposals on each cluster. Hallucinated
+    3. When ``from_transcript`` is provided, append a
+       ``transcript_facts`` cluster that carries the conversation text
+       plus a sample of existing memories as the "don't propose
+       duplicates" context. The LLM proposes `propose_new` actions
+       (new memories worth saving from the conversation) on this
+       cluster, closing the writing-reflex gap.
+    4. Ask `provider` for proposals on each cluster. Hallucinated
        memory IDs are rejected at validation time by `llm.parse_and_validate`.
-    4. With `apply=False` (dry-run, the default): return the report
+    5. With `apply=False` (dry-run, the default): return the report
        with every proposal but no mutations.
-    5. With `apply=True` AND `accept=True`: commit every validated
+    6. With `apply=True` AND `accept=True`: commit every validated
        proposal silently (CI / scripted use).
-    6. With `apply=True` AND `interactive_input` provided (the
+    7. With `apply=True` AND `interactive_input` provided (the
        interactive path the CLI uses): prompt per proposal and only
        commit the accepted ones.
-    7. With `apply=True` AND no accept AND no interactive_input:
+    8. With `apply=True` AND no accept AND no interactive_input:
        refuse to commit — the audit-transparency contract requires an
        explicit human accept.
 
@@ -906,6 +1027,12 @@ def consolidate_llm(
     (the prompt text) returning the user's response — i.e. `input`
     in interactive mode, a stub in tests. Pass `None` to mean
     "non-interactive."
+
+    `from_transcript` is a path to a transcript file (plain text or
+    JSONL — Claude Code's per-session log shape is auto-detected).
+    When provided, the consolidate pass adds a transcript-facts
+    cluster to the run; without it, only the existing dedup /
+    contradiction passes fire.
     """
     from . import llm as _llm
 
@@ -922,6 +1049,28 @@ def consolidate_llm(
     )
     pairs = [(c.keeper_id, c.duplicate_id) for c in dedup_candidates]
     clusters = _llm.build_clusters(memories, events=events, near_duplicate_pairs=pairs)
+
+    # Append a transcript_facts cluster when the caller asked for it.
+    # `build_transcript_cluster` is a no-op (returns None) when the
+    # transcript is empty or all-whitespace; failures during read are
+    # surfaced as a LLMClusterFailure rather than bubbling up so one
+    # bad input doesn't tank the whole pass.
+    if from_transcript is not None:
+        try:
+            transcript_cluster = build_transcript_cluster(
+                transcript_path=Path(from_transcript),
+                memories=memories,
+                events=events,
+            )
+        except Exception as exc:  # noqa: BLE001 — surface as failure
+            transcript_cluster = None
+            log.warning(
+                "consolidate --llm --from-transcript: failed to load %s: %s",
+                from_transcript,
+                exc,
+            )
+        if transcript_cluster is not None:
+            clusters.append(transcript_cluster)
 
     report = LLMConsolidateReport(
         provider_name=getattr(provider, "name", "?"),
@@ -1078,6 +1227,33 @@ def _apply_llm_proposal(
                 detail=(
                     f"{(memory.category or Category.FACT).value} -> "
                     f"{proposal.new_category}: {proposal.rationale}"
+                ),
+            )
+        )
+    elif isinstance(proposal, _llm.ProposeNewProposal):
+        new_category = (
+            Category.AMBIENT if proposal.category == "ambient" else Category.FACT
+        )
+        # Stamp the source_excerpt into the body as a provenance line.
+        # Future audits can trace the claim back to the transcript turn
+        # without having to keep the transcript itself around.
+        provenance = (
+            "\n\n_(consolidate --llm --from-transcript: "
+            f"{proposal.source_excerpt})_"
+        )
+        body_with_provenance = proposal.body.rstrip() + provenance
+        written = store.write(
+            content=body_with_provenance,
+            scopes=[proposal.scope],
+            category=new_category,
+        )
+        actions.append(
+            LLMProposalAction(
+                kind="llm_propose_new",
+                memory_id=written.id,
+                detail=(
+                    f"scope={proposal.scope} category={proposal.category}: "
+                    f"{proposal.rationale}"
                 ),
             )
         )

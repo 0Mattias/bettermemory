@@ -26,6 +26,7 @@ from bettermemory.llm import (
     MemoryExcerpt,
     MergeProposal,
     OllamaProvider,
+    ProposeNewProposal,
     ResolveContradictionProposal,
     RewriteRelativeDateProposal,
     build_clusters,
@@ -496,3 +497,182 @@ def test_today_iso_returns_string_date() -> None:
     to substitute deterministically."""
     today = today_iso(datetime(2026, 5, 20, tzinfo=timezone.utc))
     assert today == "2026-05-20"
+
+
+# ---------------------------------------------------------------------------
+# ProposeNew — the fifth proposal type (closes the writing-reflex gap)
+# ---------------------------------------------------------------------------
+
+
+def _make_transcript_cluster(memories: list[Memory], transcript: str) -> Cluster:
+    return Cluster(
+        cluster_id="transcript-facts",
+        cluster_kind="transcript_facts",
+        members=tuple(ClusterMember(memory=m) for m in memories),
+        transcript=transcript,
+    )
+
+
+def test_parse_valid_propose_new() -> None:
+    """Happy path: the LLM extracts a durable fact from the transcript
+    with a non-general scope, a valid category, a body, a non-empty
+    source_excerpt, and a rationale. Validator accepts the proposal."""
+    existing = _make_memory("Some unrelated existing memory.")
+    cluster = _make_transcript_cluster(
+        [existing],
+        "[user] My Postgres listens on port 5433.\n"
+        "[assistant] Got it — saving that.",
+    )
+    raw = json.dumps(
+        {
+            "proposals": [
+                {
+                    "type": "propose_new",
+                    "scope": "infrastructure",
+                    "category": "fact",
+                    "body": "Postgres listens on port 5433, not the default 5432.",
+                    "source_excerpt": "[user] My Postgres listens on port 5433.",
+                    "rationale": "user-stated infrastructure fact, durable",
+                }
+            ]
+        }
+    )
+    proposals = parse_and_validate(raw, cluster)
+    assert len(proposals) == 1
+    assert isinstance(proposals[0], ProposeNewProposal)
+    assert proposals[0].scope == "infrastructure"
+    assert proposals[0].category == "fact"
+    assert "port 5433" in proposals[0].body
+
+
+def test_parse_rejects_propose_new_without_transcript() -> None:
+    """Without a transcript on the cluster, propose_new is non-sensical
+    — the LLM has no source to extract from. Reject before the proposal
+    can reach the apply path."""
+    cluster = _make_cluster([_make_memory("anything")])
+    raw = json.dumps(
+        {
+            "proposals": [
+                {
+                    "type": "propose_new",
+                    "scope": "tools",
+                    "category": "fact",
+                    "body": "Made-up fact.",
+                    "source_excerpt": "nothing real",
+                    "rationale": "should be rejected",
+                }
+            ]
+        }
+    )
+    proposals = parse_and_validate(raw, cluster)
+    assert proposals == []
+
+
+def test_parse_rejects_propose_new_general_scope() -> None:
+    """The catch-all `general` scope is forbidden by the prompt; the
+    validator enforces it structurally too."""
+    cluster = _make_transcript_cluster([_make_memory("x")], "[user] something")
+    raw = json.dumps(
+        {
+            "proposals": [
+                {
+                    "type": "propose_new",
+                    "scope": "general",
+                    "category": "fact",
+                    "body": "Vaguely scoped fact.",
+                    "source_excerpt": "[user] something",
+                    "rationale": "wrong scope",
+                }
+            ]
+        }
+    )
+    proposals = parse_and_validate(raw, cluster)
+    assert proposals == []
+
+
+def test_parse_rejects_propose_new_user_inference_category() -> None:
+    """`user-inference` requires explicit user confirmation; the
+    consolidate path can't supply that, so the LLM may not propose
+    new memories at that tier."""
+    cluster = _make_transcript_cluster([_make_memory("x")], "[user] I prefer tabs.")
+    raw = json.dumps(
+        {
+            "proposals": [
+                {
+                    "type": "propose_new",
+                    "scope": "learning-style",
+                    "category": "user-inference",
+                    "body": "User prefers tabs over spaces.",
+                    "source_excerpt": "[user] I prefer tabs.",
+                    "rationale": "user preference",
+                }
+            ]
+        }
+    )
+    proposals = parse_and_validate(raw, cluster)
+    assert proposals == []
+
+
+def test_parse_rejects_propose_new_empty_source_excerpt() -> None:
+    """The audit trail requires a transcript quotation. Empty
+    source_excerpt is rejected so the provenance line on the new
+    memory always points back at concrete text."""
+    cluster = _make_transcript_cluster([_make_memory("x")], "[user] anything")
+    raw = json.dumps(
+        {
+            "proposals": [
+                {
+                    "type": "propose_new",
+                    "scope": "tools",
+                    "category": "fact",
+                    "body": "Made-up fact.",
+                    "source_excerpt": "",
+                    "rationale": "no provenance",
+                }
+            ]
+        }
+    )
+    proposals = parse_and_validate(raw, cluster)
+    assert proposals == []
+
+
+def test_build_prompt_includes_transcript_when_present() -> None:
+    """A transcript on the cluster surfaces in the prompt under the
+    --- BEGIN TRANSCRIPT --- delimiter so the LLM knows to extract
+    propose_new proposals from it (not from thin air)."""
+    cluster = _make_transcript_cluster(
+        [_make_memory("existing-fact")],
+        "[user] Distinctive turn content.\n[assistant] Acknowledged.",
+    )
+    prompt = build_prompt(cluster, today="2026-05-21")
+    assert "BEGIN TRANSCRIPT" in prompt
+    assert "END TRANSCRIPT" in prompt
+    assert "Distinctive turn content" in prompt
+
+
+def test_build_prompt_omits_transcript_when_absent() -> None:
+    """Clusters without a transcript (the existing dedup /
+    contradiction kinds) don't get a TRANSCRIPT section — the LLM
+    sees the same prompt shape it did before propose_new shipped."""
+    cluster = _make_cluster([_make_memory("x")])
+    prompt = build_prompt(cluster, today="2026-05-21")
+    assert "BEGIN TRANSCRIPT" not in prompt
+
+
+def test_render_propose_new_diff_shows_new_body() -> None:
+    """The propose_new diff renderer treats the proposal as a new
+    file: + lines for the body, plus scope / category / rationale /
+    source_excerpt labels so the audit trail is one block."""
+    proposal = ProposeNewProposal(
+        scope="infrastructure",
+        category="fact",
+        body="Postgres listens on port 5433.",
+        source_excerpt="[user] My Postgres listens on port 5433.",
+        rationale="durable infrastructure fact",
+    )
+    rendered = render_proposal_diff(proposal, by_id={})
+    assert "PROPOSE_NEW" in rendered
+    assert "scope=infrastructure" in rendered
+    assert "category=fact" in rendered
+    assert "+ Postgres listens on port 5433." in rendered
+    assert "source_excerpt:" in rendered
