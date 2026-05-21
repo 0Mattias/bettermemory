@@ -81,6 +81,13 @@ class NotTombstonedError(KeyError):
 # is the form mypy understands as platform narrowing; a try/except ImportError
 # also works at runtime but mypy still type-checks the unreachable Windows
 # path against the linux fcntl stubs.
+#
+# The lockfile is left on disk after release. A previous version unlinked
+# it inside `finally`, which broke mutual exclusion under contention:
+# process A could unlink between B's `os.open` and a third process C's
+# `os.open`, after which B and C held flocks on different inodes and
+# both believed they owned the lock. Persisting the 0-byte file keeps
+# every open() on the same inode so flock actually serialises.
 
 
 @contextlib.contextmanager
@@ -102,8 +109,6 @@ def _locked(path: Path) -> Iterator[None]:
             fcntl.flock(fd, fcntl.LOCK_UN)
         finally:
             os.close(fd)
-            with contextlib.suppress(OSError):
-                lock_path.unlink()
 
 
 # ---------------------------------------------------------------------------

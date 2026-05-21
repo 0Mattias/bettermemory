@@ -57,6 +57,11 @@ def _utcnow_iso() -> str:
 # assumption (see store.py) means concurrent appends shouldn't happen anyway;
 # the lock is belt-and-suspenders against a future async/multi-process world.
 # The sys.platform guard is the form mypy understands as platform narrowing.
+#
+# Lockfile is NOT unlinked on release — see the matching note in store.py.
+# Unlinking races inode reuse and lets two flock holders coexist on
+# different inodes; persisting the 0-byte file keeps every open() on the
+# same inode so flock actually serialises.
 @contextlib.contextmanager
 def _locked(path: Path) -> Iterator[None]:
     if sys.platform == "win32":  # pragma: no cover - non-unix
@@ -76,8 +81,6 @@ def _locked(path: Path) -> Iterator[None]:
             fcntl.flock(fd, fcntl.LOCK_UN)
         finally:
             os.close(fd)
-            with contextlib.suppress(OSError):
-                lock_path.unlink()
 
 
 @dataclass
