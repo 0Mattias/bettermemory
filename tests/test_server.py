@@ -1436,11 +1436,18 @@ async def test_memory_search_expand_top_surfaces_path_drift(
     assert str(missing) in hits[0]["path_drift"]["missing"]
 
 
-async def test_memory_search_no_path_drift_when_top_not_expanded(
+async def test_memory_search_surfaces_path_drift_without_expand_top(
     server: Any, tmp_path: Path
 ) -> None:
-    """Without expand_top, path_drift shouldn't appear — we haven't loaded
-    the body, so we have nothing to scan against."""
+    """Per-hit path drift detail surfaces even without expand_top.
+
+    The search pipeline runs `detect_path_drift` on every hit's body
+    inside `_build_hit`; the missing-paths list rides through on
+    `MemoryHit` so the response builder can expose `path_drift` directly.
+    A `spot_check_recommended` hit is actionable without a memory_show
+    round-trip — the model reads the missing paths and decides what to
+    do.
+    """
     missing = tmp_path / "not-expanded.txt"
     await _call(
         server,
@@ -1450,7 +1457,10 @@ async def test_memory_search_no_path_drift_when_top_not_expanded(
     )
     hits = _unwrap(await _call(server, "memory_search", query="something reference"))
     assert len(hits) >= 1
-    assert "path_drift" not in hits[0]
+    assert hits[0].get("path_drift") is not None
+    assert str(missing) in hits[0]["path_drift"]["missing"]
+    # Healthy/absent path_drift cases still omit the field — only the
+    # `has_drift or verified` cases surface it.
 
 
 # ---------------------------------------------------------------------------

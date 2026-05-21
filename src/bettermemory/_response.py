@@ -86,6 +86,16 @@ class ResponseBuilder:
         drift isn't applicable (caller not in a repo, hit from a
         different repo, hit never verified) — those verdicts never get
         revisited.
+
+        `path_drift_checked` / `path_drift_missing` stay around as cheap
+        triage counts on every hit. `path_drift` is the rich shape that
+        carries the actual paths (`{checked, missing, verified}`),
+        emitted only when the body has drift or verified attestations
+        — matching `memory_show`'s `path_drift` contract. A
+        `spot_check_recommended` hit with `path_drift.missing =
+        ["src/auth/middleware.py"]` is directly actionable: the model
+        memory_updates the rotted bit or memory_verifies the rest, no
+        memory_show round-trip required.
         """
         verification = compute_verification_status(
             hit.last_verified_at, now=now, stale_after_days=self._stale_after_days
@@ -95,7 +105,7 @@ class ResponseBuilder:
             path_drift_missing=hit.path_drift_missing,
             commit_drift_count=None,
         )
-        return {
+        out: dict[str, Any] = {
             "id": hit.id,
             "scopes": hit.scopes,
             "confidence": hit.confidence.value,
@@ -112,6 +122,13 @@ class ResponseBuilder:
             "path_drift_missing": hit.path_drift_missing,
             "staleness_verdict": verdict,
         }
+        if hit.path_drift_missing_paths or hit.path_drift_verified_paths:
+            out["path_drift"] = {
+                "checked": list(hit.path_drift_checked_paths),
+                "missing": list(hit.path_drift_missing_paths),
+                "verified": list(hit.path_drift_verified_paths),
+            }
+        return out
 
     def summary_to_dict(
         self,

@@ -26,7 +26,7 @@ only see what these tools surface.
 | Write? | something durable just entered the conversation → yes. Don't wait for "remember that". State or timestamps → no (the tool will reject). |
 | Category? | claim about the user → `user-inference` (always pending). Atmospheric / no verifiable claims → `ambient`. Else → `fact`. |
 | Outcome? | retrieval shaped reply → silence (auto-commits as `applied` ~2 turns later). Off-topic / wrong → explicit `ignored` / `contradicted` / `corrected`. |
-| Verify? | `staleness_verdict != "fresh"` → spot-check one claim; pass `verified_paths` to `memory_verify`. |
+| Verify? | `staleness_verdict != "fresh"` → `path_drift.missing` on the hit lists what rotted; memory_update those, memory_verify the rest with `verified_paths`. |
 | Scope? | project name if obvious; never `general`. |
 
 Tools: memory_search, memory_show, memory_list, memory_scope_overview,
@@ -85,12 +85,15 @@ Every retrieval carries `staleness_verdict`:
   world has moved (path missing, or commits since last verify).
 - `spot_check_required`: verification.status is `never` or `stale`.
 
-When the verdict isn't fresh, spot-check at least one verifiable
-claim. If it holds, memory_verify(id, verified_paths=[…],
-verified_commits=[…], verified_versions=[…]) — the server uses
-these to short-circuit later drift signals. If a claim drifted,
-memory_update the body first (resets last_verified_at), then
-memory_verify again to close the loop.
+When the verdict isn't fresh, the hit already carries the
+actionable detail. `path_drift.missing` (when present) lists the
+body-cited paths that no longer exist — memory_update those
+directly. The remaining un-drifted claims (`path_drift.verified`
++ the rest of the body) you can attest with memory_verify(id,
+verified_paths=[…], verified_commits=[…], verified_versions=[…])
+— the server uses these to short-circuit later drift signals.
+memory_update resets `last_verified_at`, so verify again after
+fixing drifted prose to close the loop.
 
 Negative-results suppression: a hit's `recent_negative_outcomes`
 (when present) means the user already rejected this in the last

@@ -330,6 +330,16 @@ class MemoryHit(BaseModel):
     other contexts, e.g. memory_show, where the full PathDriftReport
     is the right surface).
 
+    `path_drift_checked_paths` / `path_drift_missing_paths` /
+    `path_drift_verified_paths` are the actual path lists behind the
+    counts. They let the consumer act on a non-fresh hit without a
+    memory_show round-trip — when a hit comes back
+    `spot_check_recommended` with `path_drift_missing_paths=["src/auth/middleware.py"]`,
+    the caller can directly memory_update the rotted bit or
+    memory_verify the rest. The counts above stay around for cheap
+    triage; the lists are the actionable detail surfaced when the
+    response builder folds them in.
+
     `category` mirrors the persisted memory field; surfaced on every hit
     so triage can spot ambient context without expanding.
     """
@@ -346,6 +356,9 @@ class MemoryHit(BaseModel):
     last_verified_at: datetime | None = None
     path_drift_checked: int = 0
     path_drift_missing: int = 0
+    path_drift_checked_paths: list[str] = []
+    path_drift_missing_paths: list[str] = []
+    path_drift_verified_paths: list[str] = []
     category: Category | None = None
 
 

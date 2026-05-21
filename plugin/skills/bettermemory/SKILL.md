@@ -15,7 +15,7 @@ Persistent memory between sessions lives in this plugin's MCP tools. **Do not fr
 | Write? | proactive — something durable just entered the conversation → yes. Don't wait for *"remember that"*. State or timestamps → no (the tool will reject). |
 | Category? | claim about the user → `user-inference`. Atmospheric / no verifiable claims → `ambient`. Else → `fact`. |
 | Outcome? | retrieval shaped reply → silence (auto-commits as `applied`). Off-topic or wrong → explicit `ignored` / `contradicted` / `corrected`. |
-| Verify? | `staleness_verdict != "fresh"` → spot-check one claim before relying; pass `verified_paths` to `memory_verify`. |
+| Verify? | `staleness_verdict != "fresh"` → `path_drift.missing` on the hit lists what rotted; `memory_update` those, `memory_verify` the rest with `verified_paths`. |
 | Scope? | project name if obvious; never `general`. |
 
 Detail on each tool lives in the tool's own description — this skill is the policy.
@@ -71,7 +71,7 @@ Memory is a snapshot; it does not auto-refresh. Every retrieval carries a derive
 - `"spot_check_recommended"`: verification calendar-fresh but the world has moved (path missing, or repo has commits since the last verify). Quick check before relying.
 - `"spot_check_required"`: `verification.status` is `"never"` or `"stale"`. Pre-empts the drift inputs because the verification anchor itself is missing or expired.
 
-When the verdict isn't `"fresh"`, spot-check at least one verifiable claim (file path, version, configuration). If it holds, call `memory_verify(id, verified_paths=[…], verified_commits=[…], verified_versions=[…])`. The server uses these to short-circuit later drift signals. If a claim has drifted, `memory_update` the body first, then `memory_verify` the corrected version.
+When the verdict isn't `"fresh"`, the hit already carries the actionable detail. `path_drift.missing` (when present) lists the body-cited paths that no longer exist — `memory_update` those directly, no memory_show round-trip needed. The remaining un-drifted claims (`path_drift.verified` plus the rest of the body) can be attested with `memory_verify(id, verified_paths=[…], verified_commits=[…], verified_versions=[…])`; the server uses these to short-circuit later drift signals. `memory_update` resets `last_verified_at`, so verify again after fixing drifted prose to close the loop.
 
 ## When to write
 

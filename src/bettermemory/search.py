@@ -507,7 +507,7 @@ def _build_hit(
     the marginal cost is bounded by the cap inside `detect_path_drift`
     rather than corpus size.
     """
-    drift = detect_path_drift(memory.body)
+    drift = detect_path_drift(memory.body, verified_paths=memory.verified_paths)
     return MemoryHit(
         id=memory.id,
         scopes=memory.scopes,
@@ -522,6 +522,9 @@ def _build_hit(
         last_verified_at=memory.last_verified_at,
         path_drift_checked=len(drift.checked),
         path_drift_missing=len(drift.missing),
+        path_drift_checked_paths=list(drift.checked),
+        path_drift_missing_paths=list(drift.missing),
+        path_drift_verified_paths=list(drift.verified),
     )
 
 
