@@ -7,6 +7,111 @@ breaking changes, minor for additive features, patch for fixes. The
 [compatibility contract](CONTRIBUTING.md#versioning-and-the-compatibility-contract)
 spells out exactly what's stable.
 
+## 2.6.2 - 2026-05-21
+
+**Audit-pass-of-the-audit-pass.** A multi-agent re-audit of the 2.6.1
+surface caught four real correctness gaps in the consolidate path that
+the previous read-through missed, plus several doc-vs-behavior drifts
+worth fixing while the surface was warm. No on-disk format changes, no
+wire-shape changes — only existing-but-skipped checks getting wired up
+correctly.
+
+### Fixed
+
+- **`consolidate.py:find_demotion_candidates` was reading the wrong
+  event field.** The demotion pass keyed retrieval counts off
+  `event.get("hit_ids")`, but `_handlers.memory_search` records the
+  result-id list as `returned` — has done since the recorder shape
+  stabilised. Every real event log silently scored zero retrievals,
+  which means the demote-never-applied rule never proposed a single
+  candidate against a production store. The unit tests passed because
+  the synthetic fixtures used the legacy `hit_ids` field. Now reads
+  `returned` with a `hit_ids` fallback for any pre-rename event logs;
+  added a regression test (`test_consolidate.py`) that rounds through
+  a real `Recorder` so a future drop of the `returned`-aware path
+  fails at suite time.
+- **`consolidate.py:_apply_llm_proposal` `propose_new` branch
+  bypassed every write-time guardrail.** `memory_write` runs
+  `find_similar` (active + tombstones), `find_transient_markers`, and
+  the new 2.6.1 `max_content_bytes` cap before committing — but the
+  LLM-proposed branch went straight to `store.write` with none of
+  them. Since the LLM only sees ~8 cluster members as "don't
+  duplicate these" context, dedup against the full active set is
+  load-bearing: without it, `consolidate --llm --from-transcript`
+  would happily re-create memories the user already wrote (or
+  already removed). All four gates now fire before the write; gate
+  failures raise `RuntimeError` which `consolidate_llm` already
+  records as `LLMClusterFailure`, so the operator sees the rejection
+  reason in the report.
+- **`consolidate.py:_load_transcript` had no read-size cap.** The
+  whole transcript file was `path.read_text()`-ed before any
+  truncation — same unbounded-input class 2.6.1's `max_content_bytes`
+  work closed for memory bodies. A multi-GB transcript would OOM the
+  process. Now caps the read at 1 MiB via a single `f.read(N)` on the
+  text stream; the downstream prompt builder still truncates again
+  at `MAX_TRANSCRIPT_CHARS` (12 KB).
+- **`llm.py:_validate_propose_new` didn't call `validate_scope`.** A
+  syntactically-bad scope (e.g. `"foo bar"`, anything outside the
+  lowercase-alphanumeric-plus-hyphens-and-colons grammar) passed
+  validation and crashed at apply time — *after* the user had
+  already seen and accepted the `+ NEW MEMORY` diff. Now uses the
+  same `validate_scope` helper `memory_write`'s payload validator
+  does, so bad scopes are rejected before the diff renderer sees
+  them.
+- **`store.py` — three bare `except Exception:` narrowed.**
+  `_find_tombstone_path_for_id` (line 600), `rename_scope`'s
+  tombstone branch (line 845), and `_find_path_for_id` (line 952)
+  were catching every exception from `frontmatter.load`, including
+  ones that should propagate (e.g. `MemoryError` on a pathological
+  file). Tightened to `(ValueError, KeyError, OSError)` to match the
+  rest of the file's convention. Tests unchanged; no behavioral
+  difference on the well-formed-frontmatter happy path.
+- **`examples/memories/*.md` were silently broken.** All three
+  placeholder IDs (`01HXYZTUTORIALSTYLEEXAMPLE`,
+  `01HXYZHOMELABNETWORKEXAMPL`,
+  `01HXYZPROJECTFOOSTACKEXAMP`) contained `I` / `L` / `O` / `U`
+  characters, which the Crockford-base32 `_ULID_RE` rejects. `Memory()`
+  validation failed and `Store.load_all` swallowed the `ValidationError`
+  — so following the README's "drop these into `~/.claude-memory/`"
+  instruction produced an empty store with no error visible to the
+  user. Regenerated three valid IDs via `generate_ulid()`.
+
+### Changed
+
+- **`CHANGELOG.md` — restored the missing `## 2.6.0 - 2026-05-21`
+  heading.** The 2.6.1 insertion landed without recreating the
+  separator between releases, so the 2.6.1 "Fixed" bullets flowed
+  directly into the 2.6.0 body text. Cosmetic but unambiguously
+  wrong for changelog consumers (rendered HTML, parsers that walk
+  the heading hierarchy). Also added the missing 2.6.1 "Fixed"
+  bullet for commit `00521d5` — the deleted-CWD Stop-hook fix
+  shipped in 2.6.1 but never made it into the changelog entry — and
+  scoped the 2.4.0 system-dirs claim to clarify Windows behaviour.
+- **`SECURITY.md` — reworded the YAML claim.** "No `yaml.load`
+  anywhere" was an overclaim — `_frontmatter.py:100` does call
+  `yaml.load(..., Loader=yaml.SafeLoader)`. Same safety property,
+  but the literal sentence was wrong. Now reads "every `yaml.load`
+  call pins `Loader=yaml.SafeLoader`" plus the 64 KB pre-flight cap
+  noted in the parser as belt-and-suspenders.
+- **`CONTRIBUTING.md` — inlined the macOS `UF_HIDDEN` explanation.**
+  The previous text cross-referenced a README "macOS gotcha"
+  section that doesn't exist. Now self-contained, with the
+  `chflags nohidden .venv` recovery command for an already-flagged
+  directory.
+- **`docs/installation.md` — added the `[embeddings-fast]` extra.**
+  Shipped in 2.5.0 but the install page only listed `[embeddings]`
+  and `[ui]`. New entry calls out the PyTorch-vs-ONNX trade-off (~500
+  MB vs ~50 MB on disk) and the `[behavior] semantic_provider` knob
+  for selecting fastembed explicitly when both extras are installed.
+- **`_handlers.py:DESC_MEMORY_WRITE`** — the documented success
+  status was `"ok"` but the actual emitted value is `"committed"`
+  (`_response.committed` has been stable on `"committed"` since 2.x).
+  Models branching on the documented value got a no-match. Now
+  matches the emission.
+- **`server.py` module docstring** — Curation list extended to
+  include `memory_audit_turn`. Was 17 of 18; registration was always
+  correct, the docstring was stale.
+
 ## 2.6.1 - 2026-05-21
 
 **Audit-pass follow-up.** A read-through of the 2.6.0 surface
