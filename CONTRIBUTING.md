@@ -17,7 +17,7 @@ uv sync --extra dev
 source venv/bin/activate
 ```
 
-The env directory is `venv/`, not `.venv/`, because macOS Sequoia auto-applies `UF_HIDDEN` to anything literally named `.venv` inside iCloud-synced folders. See the README's "macOS gotcha" section for the full story.
+The env directory is `venv/`, not `.venv/`, because macOS Sequoia auto-applies the `UF_HIDDEN` BSD flag to any directory whose name starts with a leading dot inside iCloud-synced folders. Once flagged, the directory is invisible to `ls` (without `-la`), to most TUIs, and to the Finder — including the editor file pickers that surface "your active venv". The `.envrc` and `pyproject.toml` therefore point at `venv/` (no leading dot). If you don't sync the project directory through iCloud you can use `.venv/` as usual, but the checked-in defaults assume the conservative path. Run `chflags nohidden .venv` to unhide a directory that's already been flagged.
 
 ## Running the suite
 

@@ -8,7 +8,8 @@ the consuming model sees an identical list):
              memory_update
 - Lifecycle: memory_remove, memory_restore, memory_list_tombstones
 - Verification: memory_verify
-- Curation:  memory_record_use, memory_health, memory_rename_scope
+- Curation:  memory_record_use, memory_health, memory_audit_turn,
+             memory_rename_scope
 - Session:   memory_scope_disable / memory_scope_enable
 
 The handler implementations live on `ToolHandlers` in `_handlers.py`;

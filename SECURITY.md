@@ -34,7 +34,7 @@ bettermemory is a single-user, local-first tool. The threat model is correspondi
 
 - The attacker is **the user themselves** trying not to lock themselves out (data integrity, no-corruption, no-data-loss invariants under normal operation and concurrent access).
 - The attacker is **a process running as the same user** that gains write access to the memory directory. Outside the threat model: bettermemory does not encrypt data on disk and does not authenticate callers; the OS-level filesystem permissions ARE the access control. If you need stronger isolation, use OS-level disk encryption (FileVault, LUKS, BitLocker) and the standard per-user file permissions.
-- The attacker is a **malicious memory body** crafted to exploit a parser bug (YAML deserialization, frontmatter handling). bettermemory uses `yaml.SafeLoader` exclusively; no `yaml.load` anywhere, no pickle, no `eval`. The vendored frontmatter parser (`src/bettermemory/_frontmatter.py`) was added in part to remove the upstream `python-frontmatter` dependency and pin parser behavior.
+- The attacker is a **malicious memory body** crafted to exploit a parser bug (YAML deserialization, frontmatter handling). bettermemory uses `yaml.SafeLoader` exclusively — every `yaml.load` call in the codebase pins `Loader=yaml.SafeLoader` and the dumper subclasses `yaml.SafeDumper`; no unsafe loaders, no pickle, no `eval`. The frontmatter parser caps incoming YAML at 64 KB before parsing to bound resource use on malformed input. The vendored frontmatter parser (`src/bettermemory/_frontmatter.py`) was added in part to remove the upstream `python-frontmatter` dependency and pin parser behavior.
 
 **Out of scope** (would not be treated as security issues):
 

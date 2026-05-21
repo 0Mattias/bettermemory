@@ -11,10 +11,13 @@ pip install bettermemory           # or plain pip into a venv
 Optional extras:
 
 ```sh
-uv tool install 'bettermemory[embeddings]'   # sentence-transformers for semantic / hybrid search
-uv tool install 'bettermemory[ui]'           # FastAPI + uvicorn for `bettermemory ui`
+uv tool install 'bettermemory[embeddings]'        # sentence-transformers for semantic / hybrid search
+uv tool install 'bettermemory[embeddings-fast]'   # fastembed (ONNX, ~50 MB) — lighter alternative to embeddings
+uv tool install 'bettermemory[ui]'                # FastAPI + uvicorn for `bettermemory ui`
 uv tool install 'bettermemory[embeddings,ui]'
 ```
+
+`[embeddings]` pulls PyTorch (~500 MB on disk) via sentence-transformers and is the default when both extras are installed (the cache byte-stability story wins). `[embeddings-fast]` swaps in ONNX Runtime — same retrieval surface, ~10× smaller install — and is the right pick on CI runners, small VMs, and air-gapped boxes. Select fastembed explicitly via `[behavior] semantic_provider = "fastembed"` in your config.
 
 Python 3.11–3.14. From a development clone: `uv tool install .` (or `uv pip install -e .` for editable).
 

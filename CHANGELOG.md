@@ -83,8 +83,17 @@ the model branches on; older callers see byte-stable behaviour.
   loss of one fragment), but the comment was misleading and would
   have steered a future maintainer toward the wrong fix. Comment
   rewritten to match what the regex actually does.
+- **`hook.py` Stop-hook tolerates a deleted CWD.** The audit path
+  read `Path.cwd()` so the per-turn event-log walk could attach an
+  `origin` field; if the user `rm -rf`-ed the project directory mid-
+  session (or any other producer of `FileNotFoundError` /  `OSError`
+  on `getcwd`), the hook would tear down the whole session instead of
+  just dropping the attribution. Now: catch `(FileNotFoundError,
+  OSError)` and continue with `origin=None`. The Stop hook is best-
+  effort; one cwd-resolution failure shouldn't kill the rest of the
+  attribution pass.
 
-
+## 2.6.0 - 2026-05-21
 
 **Three writing-reflex / audit-attribution levers that close the gap
 between the verification contract and what the model actually does.**
@@ -331,8 +340,10 @@ document URL routes inline.
   paths (`/Users/...`, `/etc/foo.conf`), home-relative paths
   (`~/...`), Windows paths, and extensioned single-segment paths
   (`/foo.txt`) are unaffected. Bare top-level system dirs (`/etc`,
-  `/var`, `/usr`) get filtered too but always exist on the systems
-  this runs on, so no real drift signal is lost. Five regression
+  `/var`, `/usr`) get filtered too — on POSIX they exist by
+  definition so the filter is a no-op for real drift, and on Windows
+  they don't exist as bare roots so filtering them strips a false-
+  positive at zero cost. Five regression
   tests in `tests/test_verify.py` cover the production bite, the
   broader route class, and the unaffected-by-narrowing edges.
 
