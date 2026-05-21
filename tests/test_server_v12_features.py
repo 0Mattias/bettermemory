@@ -387,6 +387,55 @@ async def test_use_token_within_ttl_does_not_auto_commit(
     assert not auto_uses, "auto-commit fired before TTL"
 
 
+async def test_hook_attributed_event_suppresses_auto_commit(
+    server_with_state: tuple[Any, SessionState, Path],
+) -> None:
+    """When the Stop hook has already emitted an `applied` event with
+    `attribution="hook"` for a memory, the in-process auto-commit must
+    NOT fire a second `applied` event two turns later. The hook
+    happens cross-process; the dedup goes via the event log."""
+    srv, state, memory_dir = server_with_state
+    res = await _call(
+        srv, "memory_write", content="A retrievable fact.", scopes=["tools"]
+    )
+    await _call(srv, "memory_search", query="retrievable fact")
+    assert res["id"] in state.pending_use_tokens
+
+    # Simulate the Stop hook attributing this retrieval. The hook
+    # writes through Recorder with the same session id the in-process
+    # one uses; advance_turn's dedup pass reads the event log.
+    from bettermemory.events import Recorder
+
+    Recorder(root=memory_dir, session_id=state.session_id).record(
+        "use",
+        ids=[res["id"]],
+        outcome="applied",
+        auto=False,
+        attribution="hook",
+        claim_excerpts=["A retrievable fact"],
+        triggered_from="stop_hook",
+    )
+
+    # Advance enough turns for any rogue auto-commit to fire.
+    await _call(srv, "memory_list")
+    await _call(srv, "memory_list")
+    await _call(srv, "memory_list")
+
+    events = list(iter_events(memory_dir))
+    use_events_for_id = [
+        e
+        for e in events
+        if e.get("kind") == "use" and res["id"] in (e.get("ids") or [])
+    ]
+    # Exactly one `applied` event — the hook's. The auto-commit was
+    # suppressed by the pending-token purge in _advance_turn.
+    applied = [e for e in use_events_for_id if e.get("outcome") == "applied"]
+    assert len(applied) == 1, f"expected one applied event; got: {applied}"
+    assert applied[0]["attribution"] == "hook"
+    # Token cleared from the pending map by the dedup purge.
+    assert res["id"] not in state.pending_use_tokens
+
+
 # ---------------------------------------------------------------------------
 # Change 5 — curation_pending in memory_scope_overview
 # ---------------------------------------------------------------------------

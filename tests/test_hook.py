@@ -462,3 +462,202 @@ def test_main_rejects_non_file_transcript_path(
     )
     assert code == 0
     assert not (mem_dir / ".events.jsonl").exists()
+
+
+# ---------------------------------------------------------------------------
+# Hook attribution — substring-matching retrieved memory bodies against the
+# assistant reply and emitting `use` events with attribution="hook".
+# ---------------------------------------------------------------------------
+
+
+def _seed_search_event(mem_dir: Path, *, session_id: str, returned: list[str]) -> None:
+    """Write a synthetic `search` event so the hook treats the listed
+    memory_ids as recently retrieved in this session. Avoids spinning
+    up the MCP server just to populate the precondition for an
+    attribution test."""
+    from bettermemory.events import Recorder
+
+    Recorder(root=mem_dir, session_id=session_id).record(
+        "search",
+        query="seed",
+        scopes_filter=None,
+        max_results=5,
+        returned=returned,
+        relevance=["high"] * len(returned),
+        expand_top=False,
+        expanded_id=None,
+        expanded_drift_missing=0,
+        expanded_commit_drift_status=None,
+        expanded_commits_since_verify=None,
+        auto_scope=True,
+        repo_filter=None,
+    )
+
+
+def test_hook_attributes_use_when_body_appears_in_reply(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """End-to-end attribution: write a memory whose body has a
+    distinctive sentence, seed a `search` event so the hook treats
+    the memory as retrieved, transcribe an assistant reply quoting
+    the sentence, run the hook, assert the `use` event landed with
+    `attribution="hook"` and the matched excerpt.
+    """
+    mem_dir = tmp_path / "mem"
+    mem_dir.mkdir()
+    monkeypatch.setenv("BETTERMEMORY_DIR", str(mem_dir))
+
+    store = Store(mem_dir)
+    written = store.write(
+        content=(
+            "The metrics dashboard runs at grafana.internal/d/api-latency "
+            "for the oncall watch — pages on p99 over 800ms."
+        ),
+        scopes=["infrastructure"],
+    )
+    _seed_search_event(mem_dir, session_id="sess-attr", returned=[written.id])
+
+    transcript = tmp_path / "t.jsonl"
+    _write_transcript(
+        transcript,
+        {"type": "user", "message": {"content": "where is the latency dashboard?"}},
+        {
+            "type": "assistant",
+            "message": {
+                "content": [
+                    {
+                        "type": "text",
+                        "text": (
+                            "The metrics dashboard runs at "
+                            "grafana.internal/d/api-latency for the oncall "
+                            "watch — pages on p99 over 800ms. I'll add a "
+                            "panel."
+                        ),
+                    }
+                ]
+            },
+        },
+    )
+
+    code = hook_main(
+        ["--transcript-path", str(transcript), "--session-id", "sess-attr", "--quiet"]
+    )
+    assert code == 0
+
+    events = list(iter_events(mem_dir))
+    use_events = [e for e in events if e["kind"] == "use"]
+    assert len(use_events) == 1, f"expected one use event; got: {use_events}"
+    ev = use_events[0]
+    assert ev["attribution"] == "hook"
+    assert ev["outcome"] == "applied"
+    assert ev["auto"] is False
+    assert ev["ids"] == [written.id]
+    assert isinstance(ev["claim_excerpts"], list)
+    assert "grafana.internal/d/api-latency" in ev["claim_excerpts"][0]
+
+
+def test_hook_skips_attribution_when_already_used(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """If a use event for the memory already exists this session
+    (e.g. the model explicitly recorded use, or an earlier hook turn
+    attributed it), the hook must NOT emit a second use event.
+    Approximates the in-process SessionState's pending-token check
+    from the event log alone — the only signal the cross-process
+    hook has access to.
+    """
+    mem_dir = tmp_path / "mem"
+    mem_dir.mkdir()
+    monkeypatch.setenv("BETTERMEMORY_DIR", str(mem_dir))
+
+    store = Store(mem_dir)
+    written = store.write(
+        content=(
+            "Sessions are stored in Redis with a 24-hour TTL and "
+            "evicted on graceful logout via the destroy_session helper."
+        ),
+        scopes=["infrastructure"],
+    )
+    _seed_search_event(mem_dir, session_id="sess-dup", returned=[written.id])
+
+    # Pre-record a model-explicit use for the same memory.
+    from bettermemory.events import Recorder
+
+    Recorder(root=mem_dir, session_id="sess-dup").record(
+        "use",
+        ids=[written.id],
+        outcome="applied",
+        note=None,
+        attribution="model",
+    )
+
+    transcript = tmp_path / "t.jsonl"
+    _write_transcript(
+        transcript,
+        {"type": "user", "message": {"content": "session storage details?"}},
+        {
+            "type": "assistant",
+            "message": {
+                "content": [
+                    {
+                        "type": "text",
+                        "text": (
+                            "Sessions are stored in Redis with a 24-hour TTL "
+                            "and evicted on graceful logout via the "
+                            "destroy_session helper. Anything else?"
+                        ),
+                    }
+                ]
+            },
+        },
+    )
+
+    code = hook_main(
+        ["--transcript-path", str(transcript), "--session-id", "sess-dup", "--quiet"]
+    )
+    assert code == 0
+
+    events = list(iter_events(mem_dir))
+    use_events = [e for e in events if e["kind"] == "use"]
+    # Only the pre-seeded model use stays — no hook duplicate.
+    assert len(use_events) == 1
+    assert use_events[0]["attribution"] == "model"
+
+
+def test_hook_emits_no_attribution_event_when_reply_doesnt_quote(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """If no candidate sentence from any retrieved memory's body
+    appears in the reply, the hook must NOT emit a `use` event —
+    silence is the correct signal for a no-match turn."""
+    mem_dir = tmp_path / "mem"
+    mem_dir.mkdir()
+    monkeypatch.setenv("BETTERMEMORY_DIR", str(mem_dir))
+
+    store = Store(mem_dir)
+    written = store.write(
+        content="The kubernetes ingress is on the staging cluster only for now.",
+        scopes=["infrastructure"],
+    )
+    _seed_search_event(mem_dir, session_id="sess-miss", returned=[written.id])
+
+    transcript = tmp_path / "t.jsonl"
+    _write_transcript(
+        transcript,
+        {"type": "user", "message": {"content": "what's for dinner?"}},
+        {
+            "type": "assistant",
+            "message": {
+                "content": [{"type": "text", "text": "Probably pasta. I'm flexible."}]
+            },
+        },
+    )
+
+    code = hook_main(
+        ["--transcript-path", str(transcript), "--session-id", "sess-miss", "--quiet"]
+    )
+    assert code == 0
+
+    events = list(iter_events(mem_dir))
+    use_events = [e for e in events if e["kind"] == "use"]
+    assert use_events == []

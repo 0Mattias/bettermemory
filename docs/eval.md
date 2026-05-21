@@ -13,25 +13,32 @@ bettermemory's closed-loop telemetry (`memory_record_use`, `memory_audit_turn`, 
 
 ### `memory_helped_rate`
 
-> Of all retrievals, what fraction were **explicitly endorsed as load-bearing** by the model that retrieved them?
+> Of all retrievals, what fraction were **attested as load-bearing** — either by the model that retrieved them or by the Stop hook's post-hoc substring-match attribution?
 
 Numerator: `record_use` events where `outcome="applied"` AND `auto=false` AND `claim_excerpts` is non-empty.
 
 Denominator: all distinct `(turn_id, memory_id)` retrieval pairs in the window.
 
-A high rate means most retrievals shaped a sentence the model wrote and the model deliberately said so. A low rate means the ranker is firing on noise the model is silently ignoring.
+A high rate means most retrievals shaped a sentence the model wrote, and there's evidence on the record for which sentence. A low rate means the ranker is firing on noise the model is silently ignoring.
 
-This is the headline metric. It is the closest existing instrument to *"did memory help me?"* and it costs zero additional compute — every byte needed to compute it falls out of the existing `memory_record_use` event stream.
+Two attestation tiers feed in:
+
+- **Model-explicit** (`attribution="model"`): the model called `memory_record_use` with `claim_excerpts`, deliberately attaching the load-bearing phrase to the retrieval.
+- **Hook-attributed** (`attribution="hook"`): the Stop hook ran a substring match over the assistant's reply text against each retrieved memory's body sentences and emitted an `applied` event with the matched phrase. Heuristic — substring match misses paraphrases — but precision-tuned (≥6-token, ≥30-char, stopword-filtered candidate sentences), so false positives stay rare.
+
+Both tiers count toward the numerator because both represent evidence the retrieval shaped a reply. The third tier — `attribution="auto"`, the bare auto-fallback with no excerpts — is excluded. The eval CLI splits the tiers in the `applied_total` / `applied_explicit` counts so consumers can recompute against a stricter "model only" definition if they want it.
+
+This is the headline metric. It is the closest existing instrument to *"did memory help me?"* and it costs zero additional compute — every byte needed to compute it falls out of the existing `memory_record_use` event stream plus the Stop hook's attribution pass.
 
 ### `endorsement_rate`
 
-> Of retrievals tagged `applied`, what fraction were **explicit** (`auto=false`) versus the auto-fallback (`auto=true`)?
+> Of retrievals tagged `applied`, what fraction had attestation (model-explicit OR hook-attributed) vs. the bare auto-fallback?
 
 Numerator: `record_use` events with `outcome="applied"` AND `auto=false`.
 
 Denominator: all `record_use` events with `outcome="applied"`.
 
-This is the dead-letter detector. A low rate (mostly auto-applied) means the model is reflexively letting retrievals fall off the end of the lookback window without deliberately reaching for them. The companion view in `memory_health` is `endorsement_debt`: memories with `retrieval_count >= 5` AND `explicit_applied_count == 0`.
+This is the dead-letter detector. A low rate (mostly auto-applied) means nothing produced evidence the retrieval shaped a reply — the model didn't explicitly endorse, and the hook didn't find a substring match either. The companion view in `memory_health` is `endorsement_debt`: memories with `retrieval_count >= 5` AND `explicit_applied_count == 0`. With hook attribution counting toward `explicit_applied_count`, this bucket narrows to memories that retrieve frequently but never visibly shape a reply — a tighter signal for what's worth pruning.
 
 ### `silent_miss_rate`
 

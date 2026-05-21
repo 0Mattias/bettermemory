@@ -599,15 +599,28 @@ def _advance_turn(
     `consume_old_tokens` accepts the same set so the exclusion is
     structural rather than racey.
 
+    Hook-attributed ids (the Stop hook substring-matched a retrieved
+    memory's body against the assistant turn and emitted a
+    `record_use` event with `attribution="hook"`) are purged from
+    the pending map before consume_old_tokens runs. The hook lives
+    in a different process and can't touch this in-memory state, so
+    its attribution is communicated through the event log. Without
+    the purge, the auto-commit would fire a *second* `applied`
+    event for the same retrieval — duplicating the audit signal and
+    inflating the eval CLI's denominators.
+
     Auto-committed ids land in the event log under
-    `kind="use", outcome="applied", auto=True` so health analysis
-    can distinguish auto-applied from explicit-applied if a future
-    rollup wants to. The current `compute_health` already counts them
-    in the same `applied_count` slot — auto IS the signal that the
-    model probably used the memory, the same as if it had called
-    record_use itself.
+    `kind="use", outcome="applied", auto=True, attribution="auto"`
+    so the eval CLI can distinguish the three applied tiers (model
+    explicit, hook attributed, auto fallback). Older events without
+    `attribution` fall back to `model` when auto=false and `auto`
+    when auto=true at read time.
     """
     state.advance_turn()
+    if state.pending_use_tokens and recorder.enabled:
+        hook_ids = _hook_attributed_pending_ids(state, recorder)
+        for mid in hook_ids:
+            state.purge_use_token(mid)
     auto_ids = state.consume_old_tokens(override_ids=override_ids)
     if auto_ids:
         recorder.record(
@@ -615,7 +628,43 @@ def _advance_turn(
             ids=list(auto_ids),
             outcome="applied",
             auto=True,
+            attribution="auto",
         )
+
+
+def _hook_attributed_pending_ids(
+    state: SessionState,
+    recorder: Recorder,
+) -> set[str]:
+    """Return the subset of pending-token memory_ids the Stop hook has
+    already attributed for this session.
+
+    Reads the active event log forward; bounded by the rotation cap
+    (default 10 MB) and only invoked when there ARE pending tokens
+    (the common between-batch case skips this entirely). Matches a
+    hook event when its `attribution` is `"hook"`, its session
+    matches the caller's, and at least one of its `ids` is currently
+    pending. Older log entries are tolerated — they fall away once
+    their wall-clock TTL evicts their token from `pending_use_tokens`.
+    """
+    if not state.pending_use_tokens:
+        return set()
+    pending = set(state.pending_use_tokens.keys())
+    out: set[str] = set()
+    for event in iter_events(recorder.root):
+        if event.get("kind") != "use":
+            continue
+        if event.get("session") != recorder.session_id:
+            continue
+        if event.get("attribution") != "hook":
+            continue
+        ids = event.get("ids") or []
+        if not isinstance(ids, list):
+            continue
+        for mid in ids:
+            if isinstance(mid, str) and mid in pending:
+                out.add(mid)
+    return out
 
 
 def _attach_use_tokens(
@@ -1946,11 +1995,17 @@ class ToolHandlers:
         # byte-stable for calls that don't use the new field — existing
         # log parsers / tests that key off the kind="use" event keep
         # working without seeing a new claim_excerpts key with a null
-        # value on every old event.
+        # value on every old event. `attribution="model"` distinguishes
+        # the explicit-by-model path from the hook-attributed
+        # (`attribution="hook"`) and auto-fallback (`attribution="auto"`)
+        # paths in the eval CLI's rollups; older events without the
+        # field fall back to `model` when auto=false, `auto` when
+        # auto=true.
         event_fields: dict[str, Any] = {
             "ids": list(memory_ids),
             "outcome": outcome,
             "note": note,
+            "attribution": "model",
         }
         if recorded_excerpts is not None:
             event_fields["claim_excerpts"] = recorded_excerpts

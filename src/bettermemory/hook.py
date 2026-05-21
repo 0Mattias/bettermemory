@@ -54,16 +54,27 @@ from __future__ import annotations
 
 import json
 import sys
+from datetime import datetime
 from pathlib import Path
 from typing import Any
 
+from .attribution import attribute_uses
 from .audit import probe_for_miss
 from .config import Config, load_config
 from .events import Recorder
 from .events import iter_events
 from .models import utcnow
 from .origin import capture as capture_origin
-from .store import Store
+from .store import MemoryNotFoundError, Store, TombstonedError
+
+
+# Wall-clock window the hook attributes against. A retrieval older
+# than this is considered settled — auto-commit will already have
+# fired (the in-process TTL is two turns, typically seconds to
+# minutes), so attributing to a stale retrieval would risk
+# double-counting. Wide enough to cover normal conversational
+# pauses, narrow enough to focus on the current turn.
+_ATTRIBUTION_LOOKBACK_SECONDS = 600
 
 
 def _read_payload(stdin_text: str) -> dict[str, Any]:
@@ -210,7 +221,139 @@ def run_audit(
             top_hit_ids=[h.id for h in report.top_hits],
             triggered_from="stop_hook",
         )
+
+    # Post-hoc claim_excerpt attribution. The MCP contract asks the
+    # model to attach `claim_excerpts` on explicit memory_record_use
+    # when a retrieved memory shaped a sentence in its reply; in
+    # practice the model defaults to the free auto-commit path and
+    # `memory_helped_rate` reads 0%. The hook closes the loop by
+    # substring-matching recently-retrieved memories' bodies against
+    # the assistant's reply text — when a body sentence appears
+    # verbatim (case- and whitespace-normalised), record an
+    # `applied` event with the matched phrase as the excerpt and
+    # `attribution="hook"`. The in-process `_advance_turn` reads
+    # these events and skips the redundant auto-commit so the
+    # retrieval generates one applied event total, not two.
+    if assistant_response:
+        _emit_hook_attributions(
+            store=store,
+            recorder=recorder,
+            recent_events=recent,
+            session_id=session_id,
+            assistant_response=assistant_response,
+        )
     return report.to_dict()
+
+
+def _emit_hook_attributions(
+    *,
+    store: Store,
+    recorder: Recorder,
+    recent_events: list[dict[str, Any]],
+    session_id: str,
+    assistant_response: str,
+) -> None:
+    """Substring-match recently-retrieved memories against the reply
+    text and emit `applied` events for matches.
+
+    `pending` is the set of memory_ids retrieved (via `search` or
+    `show`) in this session within the lookback window, MINUS ids
+    that already have any `use` event in the same window — those
+    have either been explicitly recorded by the model or
+    auto-committed already, and re-attributing would double-count.
+    The matcher's heuristics (≥6-token, ≥30-char, stopword-
+    filtered candidate sentences) cap false positives; the
+    "no-already-used" filter caps double-counting.
+    """
+    pending = _pending_retrievals(
+        recent_events,
+        session_id=session_id,
+        lookback_seconds=_ATTRIBUTION_LOOKBACK_SECONDS,
+    )
+    if not pending:
+        return
+    bodies: dict[str, str] = {}
+    for memory_id in pending:
+        try:
+            memory = store.load_one(memory_id)
+        except (MemoryNotFoundError, TombstonedError):
+            # Memory disappeared between retrieval and end-of-turn —
+            # nothing to attribute against. Skip silently.
+            continue
+        bodies[memory_id] = memory.body
+    if not bodies:
+        return
+    matches = attribute_uses(bodies, assistant_response)
+    if not matches:
+        return
+    recorder.record(
+        "use",
+        ids=[m.memory_id for m in matches],
+        outcome="applied",
+        auto=False,
+        attribution="hook",
+        claim_excerpts=[m.claim_excerpt for m in matches],
+        triggered_from="stop_hook",
+    )
+
+
+def _pending_retrievals(
+    events: list[dict[str, Any]],
+    *,
+    session_id: str,
+    lookback_seconds: int,
+) -> set[str]:
+    """Memory_ids retrieved in this session within the lookback window
+    that have NOT yet been recorded via `record_use`.
+
+    A retrieval is the `search` event's `returned` list or the `show`
+    event's `id`. A `use` event for the same id within the window
+    counts as already-recorded and removes the id from the pending
+    set. This approximates the in-process SessionState's
+    `pending_use_tokens` from the event log alone, which is what the
+    hook has access to.
+    """
+    cutoff_ts = utcnow().timestamp() - lookback_seconds
+    retrieved: set[str] = set()
+    used: set[str] = set()
+    for event in events:
+        if event.get("session") != session_id:
+            continue
+        ts_str = event.get("ts")
+        if not isinstance(ts_str, str):
+            continue
+        ts = _parse_iso_ts(ts_str)
+        if ts is None or ts.timestamp() < cutoff_ts:
+            continue
+        kind = event.get("kind")
+        if kind == "search":
+            returned = event.get("returned") or []
+            if isinstance(returned, list):
+                for mid in returned:
+                    if isinstance(mid, str):
+                        retrieved.add(mid)
+        elif kind == "show":
+            mid = event.get("id")
+            if isinstance(mid, str):
+                retrieved.add(mid)
+        elif kind == "use":
+            ids = event.get("ids") or []
+            if isinstance(ids, list):
+                for mid in ids:
+                    if isinstance(mid, str):
+                        used.add(mid)
+    return retrieved - used
+
+
+def _parse_iso_ts(value: str) -> datetime | None:
+    """Tolerant ISO-8601 parse — accepts the `Z` suffix used in event
+    logs. Returns None on malformed input rather than raising so a
+    single bad event doesn't break the whole attribution pass.
+    """
+    try:
+        return datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except (ValueError, AttributeError):
+        return None
 
 
 def main(argv: list[str] | None = None) -> int:

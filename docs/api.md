@@ -133,7 +133,9 @@ Bumps `last_verified_at` without touching `updated`. Idempotent. The structured 
 - `note: str | None = None`.
 - `claim_excerpts: list[str | None] | None = None`. Parallel to `memory_ids` — one entry per id (max 500 chars), or `None` for "no specific claim". Recorded in the event log so an audit can trace any response back to the specific claim, not just the memory id. Empty strings are rejected (pass `None` instead).
 
-Auto-commit: every `memory_search` hit and `memory_show` response carries an opaque `use_token`. If `memory_record_use` isn't called within ~2 turns, the server auto-commits as `outcome="applied"` on the next `memory_*` call (logged with `auto=true`). Explicit calls win — the server purges the pending token before recording.
+Auto-commit: every `memory_search` hit and `memory_show` response carries an opaque `use_token`. If `memory_record_use` isn't called within ~2 turns, the server auto-commits as `outcome="applied"` on the next `memory_*` call (logged with `auto=true, attribution="auto"`). Explicit calls win — the server purges the pending token before recording and writes `attribution="model"`.
+
+Hook attribution: the Stop hook (`bettermemory audit-turn`) also looks at the assistant's reply text against recently-retrieved memory bodies. When a candidate sentence from a body appears verbatim (case- and whitespace-normalised) in the reply, the hook emits its own `applied` event with `attribution="hook"`, `auto=false`, and the matched phrase as the `claim_excerpt`. The in-process auto-commit then reads the event log and purges any token whose memory_id was already hook-attributed, so each retrieval generates exactly one `applied` event (hook, model, or auto — not multiple). Older events without an `attribution` field fall back to `"model"` when `auto=false` and `"auto"` when `auto=true`, so back-compat with pre-attribution logs is implicit.
 
 ### `memory_health(window_days?, heavily_used_top_k?, min_applied?)`
 

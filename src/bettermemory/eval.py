@@ -3,14 +3,20 @@
 Three rates the existing event log makes computable today:
 
 - ``memory_helped_rate`` — fraction of retrieval occurrences (search-hit
-  positions + memory_show calls) that produced an explicit
+  positions + memory_show calls) that produced an attested
   ``memory_record_use(applied)`` event carrying a non-empty
-  ``claim_excerpt``. The model's deliberate endorsement of "this memory
-  shaped a load-bearing sentence."
+  ``claim_excerpt``. Two attestation tiers feed in: model-explicit
+  (the model called ``memory_record_use`` with excerpts) and
+  hook-attributed (the Stop hook substring-matched a body sentence
+  against the assistant reply and emitted an excerpt automatically).
+  Both are evidence the retrieval was load-bearing; both count toward
+  the numerator. The ``auto`` fallback (no excerpt, ``attribution="auto"``)
+  is the bare-minimum signal and is excluded.
 - ``endorsement_rate`` — among ``use`` events with ``outcome="applied"``,
-  the fraction that were explicit (``auto`` falsy). A low rate means
-  every applied is the server's auto-commit fallback; the model never
-  *deliberately* reaches for what the ranker keeps surfacing.
+  the fraction that were non-auto. A low rate means every applied is
+  the server's auto-commit fallback; nothing — neither the model
+  reaching for ``memory_record_use`` nor the Stop hook's heuristic
+  attribution — produced evidence the retrieval shaped a reply.
 - ``silent_miss_rate`` — ``search_miss`` events divided by
   ``turn_audited`` events. The opt-in-retrieval contract's blind spot:
   turns where the model should have searched but didn't.
@@ -22,6 +28,14 @@ All numerator/denominator counts are stored on the report so consumers
 can recompute (or weight) the rates differently. Confidence intervals
 use the Wilson score interval at 95% (z=1.96), which behaves well at
 small n and at the rate endpoints.
+
+Attribution tier: events carry an ``attribution`` field with values
+``"model"`` (explicit by AI), ``"hook"`` (Stop-hook substring match),
+or ``"auto"`` (the auto-fallback). Older events without the field
+fall back to ``"model"`` when ``auto`` is false and ``"auto"`` when
+``auto`` is true. The eval rollups branch on ``auto`` directly so the
+back-compat fall-through stays implicit; consumers wanting to split
+model-explicit from hook-attributed reach into the raw events.
 """
 
 from __future__ import annotations
