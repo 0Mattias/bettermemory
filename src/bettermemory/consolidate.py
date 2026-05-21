@@ -953,14 +953,17 @@ def _load_transcript(path: Path) -> str:
     cluster.
     """
     try:
-        with path.open("r", encoding="utf-8", errors="replace") as fh:
-            # `read(n)` on a text stream reads at most n characters —
-            # bounded by `_TRANSCRIPT_READ_CAP_BYTES` so a hostile or
-            # accidentally-huge transcript can't blow up memory. The
-            # downstream prompt builder truncates again at
-            # `MAX_TRANSCRIPT_CHARS`, so any truncation here just
-            # narrows the candidate window earlier.
-            raw = fh.read(_TRANSCRIPT_READ_CAP_BYTES)
+        # Read at byte (not character) granularity so a multibyte UTF-8
+        # transcript can't bypass the `_TRANSCRIPT_READ_CAP_BYTES` cap.
+        # A text-mode `fh.read(n)` reads up to n *characters*; with
+        # 4-byte codepoints that's up to 4× the intended ceiling, which
+        # defeats the point of the cap. Read raw bytes, then decode
+        # with `errors="replace"` so a partial codepoint at the
+        # truncation boundary doesn't raise. The downstream prompt
+        # builder truncates again at `MAX_TRANSCRIPT_CHARS`, so any
+        # truncation here just narrows the candidate window earlier.
+        with path.open("rb") as fh:
+            raw = fh.read(_TRANSCRIPT_READ_CAP_BYTES).decode("utf-8", errors="replace")
     except OSError:
         return ""
     if path.suffix.lower() != ".jsonl":
