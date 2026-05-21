@@ -2,16 +2,18 @@
 
 Published roadmap is part of the distribution strategy: people deciding between memory layers want to know where a project is going, not just where it's been. This document lists the planned work in roughly the order it will land. Plans change; the CHANGELOG is the source of truth for what shipped.
 
-## Where we are (May 2026, v2.4.0)
+## Where we are (May 2026, v2.6.0)
 
 - 18 MCP tools across retrieval, writing, lifecycle, verification, curation, and session-local controls.
 - FTS5 inverted index pre-filtering candidates above ~500 memories.
-- Staleness verdict trifecta (calendar + path drift + commit drift) on every retrieval.
-- `memory_record_use` with claim-level `claim_excerpts`.
+- Staleness verdict trifecta (calendar + path drift + commit drift) on every retrieval; `path_drift = {checked, missing, verified}` lists inline on every hit.
+- `memory_record_use` with claim-level `claim_excerpts`; Stop-hook post-hoc substring-match attribution closes the "model didn't bother attaching the excerpt" gap (`attribution ∈ {model, hook, auto}`, exactly one event per retrieval).
 - `memory_audit_turn` silent-miss probe, threshold rule versioned at `v1_top1_high`.
+- `bettermemory consolidate --llm` Dreaming-defense pass with five proposal types (merge / resolve_contradiction / rewrite_relative_date / demote_tier / propose_new); `--from-transcript PATH` closes the writing-reflex gap by proposing new memories from a conversation, all under the same audit-gate accept loop.
+- `bettermemory eval` CLI: `memory_helped_rate` / `endorsement_rate` / `silent_miss_rate` with Wilson 95% CIs.
 - Git-based cross-host sync via `bettermemory sync`.
 - FastAPI curation UI (`bettermemory ui`).
-- 1063 tests, 80% coverage floor, Python 3.11–3.14, MIT.
+- 1234 tests, 80% coverage floor, Python 3.11–3.14, MIT.
 
 ## ~~Next~~ Shipped (Unreleased) — closing the recall gap
 

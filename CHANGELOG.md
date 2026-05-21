@@ -7,6 +7,110 @@ breaking changes, minor for additive features, patch for fixes. The
 [compatibility contract](CONTRIBUTING.md#versioning-and-the-compatibility-contract)
 spells out exactly what's stable.
 
+## 2.6.0 - 2026-05-21
+
+**Three writing-reflex / audit-attribution levers that close the gap
+between the verification contract and what the model actually does.**
+The MCP contract asks the model to attach `claim_excerpts` on explicit
+`memory_record_use`, to spot-check claims when the staleness verdict
+isn't fresh, and to call `memory_write` whenever something durable
+enters the conversation. In dogfood the model defaults to the cheap
+auto-commit path on all three — `memory_helped_rate` reads 0%, the
+spot-check ceremony asks the model to recompute what the server
+already knows, and most durable facts never get written. This release
+closes each gap by moving the load-bearing work off the model:
+the server already knows which paths drifted, the Stop hook already
+sees the assistant reply, and `consolidate --llm --from-transcript`
+already has the conversation. None of the three change the surface
+contract; they just stop asking the model to do something the system
+is in a better position to do itself.
+
+### Added
+
+- **`path_drift` lists inline on every search hit.** The search
+  pipeline already runs `detect_path_drift` inside `_build_hit` but
+  was discarding the actual path lists, keeping only the integer
+  counts. The model got a non-fresh `staleness_verdict` with no
+  actionable handle — its only options were `memory_show` round-trips
+  or manually re-scanning the snippet. New `MemoryHit` fields
+  (`path_drift_checked_paths` / `path_drift_missing_paths` /
+  `path_drift_verified_paths`) carry the `PathDriftReport`'s lists
+  through and the search response surfaces them under
+  `path_drift = {checked, missing, verified}` — the same key shape
+  `memory_show` already uses. A `spot_check_recommended` hit with
+  `path_drift.missing = ["src/auth/middleware.py"]` is now directly
+  actionable: `memory_update` the rotted bit or `memory_verify` the
+  rest, no round-trip needed. Side effect: `_build_hit` now passes
+  `verified_paths` to `detect_path_drift` (it wasn't before — the
+  `verified` field of the report was always empty on search hits, bug
+  fix). The spot-check ceremony language across
+  `DESC_MEMORY_SEARCH`, `SYSTEM_PROMPT_ADDENDUM`,
+  `plugin/skills/bettermemory/SKILL.md`, and `docs/api.md` updated:
+  the previous contract asked the model to recompute what the server
+  already knew; the new contract reads the missing-paths list
+  directly.
+- **Stop-hook post-hoc `claim_excerpt` attribution.** New
+  `attribution.py` module runs a precision-tuned substring match
+  (sentences ≥6 tokens AND ≥30 chars, stopword-filtered,
+  case- and whitespace-normalised) between recently-retrieved memory
+  bodies and the assistant reply text. When a body sentence appears
+  in the reply, the Stop hook emits one `record_use` event per
+  (memory, matched-sentence) pair with `outcome="applied"`,
+  `auto=false`, `attribution="hook"`, and the matched phrase as the
+  `claim_excerpt`. New `attribution` field on `use` events with three
+  tiers — `model` (explicit by AI), `hook` (substring-match), `auto`
+  (the fallback). Older events without the field fall back at read
+  time (`auto=false → model`, `auto=true → auto`). `_advance_turn`
+  reads recent events at the start of each `memory_*` call, purges
+  hook-attributed ids from the pending map, and skips the
+  auto-commit pass for them — so each retrieval generates exactly one
+  `applied` event (hook, model, or auto). The hook also filters
+  memory_ids that already have any `use` event in the lookback window
+  (600s default), so a model that DID record use explicitly doesn't
+  get a redundant hook attribution. `bettermemory eval` and
+  `docs/eval.md` updated to describe the tier; the three-way split
+  surfaces in the `applied_total` / `applied_explicit` counts so
+  consumers can recompute against a stricter "model only" definition.
+  Tests: 11 new in `tests/test_attribution.py`, 3 new in
+  `tests/test_hook.py`, 1 new in `tests/test_server_v12_features.py`.
+- **`bettermemory consolidate --llm --from-transcript PATH`.** The
+  MCP contract asks the model to call `memory_write` whenever
+  something durable enters the conversation; in practice the bar for
+  "durable" is fuzzy and head-down task focus wins. The new flag
+  reads the conversation after the fact (plain text, Markdown, or
+  Claude Code session JSONL — autodetected by extension) and asks
+  the LLM to propose new memories worth saving. Fifth proposal type
+  `propose_new(scope, category, body, source_excerpt, rationale)`
+  joins the existing four (merge / resolve_contradiction /
+  rewrite_relative_date / demote_tier) under the same audit gate —
+  every proposal renders as a "+ NEW MEMORY" diff preview, `--apply`
+  requires either `--yes` (batch accept) or an interactive y/N
+  prompt. Hallucination defences fire: `scope` must be non-empty and
+  not "general" (the catch-all); `category` must be `fact` or
+  `ambient` — never `user-inference` (that tier requires explicit
+  user confirmation the consolidate path can't supply);
+  `source_excerpt` is required and capped at 500 chars; `body` must
+  be non-empty. The excerpt is stamped into the new body as a
+  provenance line so future audits trace each claim back to a
+  transcript turn. Existing memories (most-recently-updated, capped
+  at 8) ride along as the "don't propose duplicates of these"
+  context. Cluster shape extended with optional `transcript: str |
+  None` and `cluster_kind="transcript_facts"`; existing cluster types
+  unaffected. Tests: 9 new in `tests/test_llm.py`, 6 new in
+  `tests/test_consolidate_llm.py`. Full suite: 1234 passed, 9
+  skipped.
+- **`docs/incidents/` postmortem scaffold.** A public-postmortem
+  directory for reported memory-rot bugs — cases where the
+  verification trifecta (calendar age + path drift + commit drift)
+  missed a stale claim or fired on a fresh one. Competing memory
+  systems don't surface their drift bugs because their architecture
+  doesn't expose drift to begin with; bettermemory's contract puts
+  the verdict in every retrieval response, so we owe a public
+  accounting when the verdict was wrong. `README.md` explains
+  why-and-how-to-file; `TEMPLATE.md` is the fillable shape (Symptom
+  / Root cause / Fix / Verification / What the surface should do
+  differently). Index is empty until the first report lands.
+
 ## 2.5.0 - 2026-05-20
 
 **Verification-grade memory lane: positioning + eval CLI + recall fix +

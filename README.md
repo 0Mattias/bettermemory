@@ -40,8 +40,8 @@ bettermemory init --client claude-desktop
 
 ### Verification surface (the differentiated lane)
 
-- **Per-hit staleness verdict.** Every retrieval carries `staleness_verdict ∈ {fresh, spot_check_recommended, spot_check_required}`, derived from three orthogonal drift signals: calendar verification age, filesystem path drift (paths cited in the body that no longer exist), and commit drift against the memory's origin repo. The model can decide *whether to trust the memory before relying on it*.
-- **Claim-level audit trail.** `memory_record_use(claim_excerpts=[…])` logs the load-bearing sentence each retrieved memory shaped. Months later, you can trace any reply back to the specific stored claim that produced it. Auto-commits as `applied` ~2 turns after retrieval; explicit `ignored` / `contradicted` / `corrected` overrides record nuance.
+- **Per-hit staleness verdict.** Every retrieval carries `staleness_verdict ∈ {fresh, spot_check_recommended, spot_check_required}`, derived from three orthogonal drift signals: calendar verification age, filesystem path drift (paths cited in the body that no longer exist), and commit drift against the memory's origin repo. The model can decide *whether to trust the memory before relying on it*. Hits also carry an inline `path_drift = {checked, missing, verified}` list when drift is detected, so the model can `memory_update` the rotted path or `memory_verify` the rest without a `memory_show` round-trip.
+- **Claim-level audit trail.** `memory_record_use(claim_excerpts=[…])` logs the load-bearing sentence each retrieved memory shaped. Months later, you can trace any reply back to the specific stored claim that produced it. The Stop hook (`bettermemory audit-turn`) also runs a precision-tuned substring match against the assistant reply and attributes hits the model forgot to log explicitly — three tiers (`model` / `hook` / `auto`), one event per retrieval, no double-counting. Explicit `ignored` / `contradicted` / `corrected` overrides record nuance.
 - **Endorsement-debt visibility.** `memory_health` surfaces memories the ranker keeps surfacing but the model never *deliberately* reaches for — the search-result equivalent of a dead-letter queue. No other memory system exposes this.
 - **Silent-miss probe.** `memory_audit_turn` re-runs the model's ranker over the just-completed turn and flags high-relevance hits the model *didn't* retrieve. Closes the loop on retrieval-contract slippage that is otherwise structurally invisible.
 - **Confirmation tier for claims about you.** `category="user-inference"` *always* stages pending regardless of config — misattribution of preferences sticks for months, so the user always has the veto on claims about themselves.
@@ -131,6 +131,7 @@ bettermemory health                         # curation rollup (text or --json)
 bettermemory consolidate                    # dedup + demote + cold-scope + typo passes
 bettermemory consolidate --apply            # commit dedup + demotions
 bettermemory consolidate --llm              # +LLM pass: merges, contradictions, date rewrites, demotions
+bettermemory consolidate --llm --from-transcript PATH  # +propose new memories from a Claude Code session JSONL / plain transcript
 bettermemory consolidate --llm --apply      # interactive accept; or --apply --yes for batch
 bettermemory eval                           # memory_helped_rate / endorsement_rate / silent_miss_rate
 bettermemory eval --since 7d --scope tools  # narrow to a window or a scope
@@ -180,7 +181,7 @@ Defaults are sensible — most users never edit it. Knobs that matter: `behavior
 
 - **Cloud sync as a service.** Sync is git-based; bring your own remote (GitHub, Forgejo, bare repo over SSH).
 - **Cross-user sharing.** Single-user tool. Team scopes are deferred.
-- **Automatic memory extraction from transcripts.** The opt-in retrieval contract loses its meaning if writes happen behind the user's back; bettermemory's writes are always model-initiated and visible in the conversation.
+- **Silent / autonomous memory extraction from transcripts.** Writes that happen behind the user's back defeat the opt-in retrieval contract. `bettermemory consolidate --llm --from-transcript PATH` is the audited alternative: explicit command, dry-run by default, every proposed memory rendered as a diff with a `source_excerpt` provenance line, `--apply` refuses without `--yes` (batch) or interactive per-proposal y/N.
 
 ## Design notes
 
@@ -191,6 +192,7 @@ bettermemory's response is to surface the *provenance and freshness of every mem
 ## Further reading
 
 - [`docs/eval.md`](docs/eval.md) — the three metrics bettermemory wants the field to adopt: `memory_helped_rate`, `endorsement_rate`, `silent_miss_rate`. Defined for any system that exposes the right telemetry, not just this one.
-- [`docs/ROADMAP.md`](docs/ROADMAP.md) — what's planned (comparative-publication run of `bettermemory eval` against Mem0 / claude-mem / agentmemory; Claude Code auto-memory ingest bridge; operational polish) and what's deliberately out of scope (managed cloud, multi-user RBAC, graph backend). The fastembed extra, `bettermemory eval` CLI, and `consolidate --llm` Dreaming-defense pass all shipped in 2.5.0.
+- [`docs/incidents/`](docs/incidents/) — public postmortems for memory-rot bugs the verification trifecta should have caught. The contract puts the verdict in every retrieval response; we owe a public accounting when the verdict was wrong.
+- [`docs/ROADMAP.md`](docs/ROADMAP.md) — what's planned (comparative-publication run of `bettermemory eval` against Mem0 / claude-mem / agentmemory; Claude Code auto-memory ingest bridge; operational polish) and what's deliberately out of scope (managed cloud, multi-user RBAC, graph backend). The fastembed extra, `bettermemory eval` CLI, `consolidate --llm` Dreaming-defense pass, and `consolidate --llm --from-transcript` writing-reflex closure all shipped between 2.5.0 and 2.6.0.
 
 Built by Mattias Rask. MIT licensed — see [LICENSE](LICENSE).
