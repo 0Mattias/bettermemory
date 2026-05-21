@@ -910,7 +910,8 @@ def build_transcript_cluster(
         :_TRANSCRIPT_CLUSTER_MEMORY_CAP
     ]
     members = tuple(
-        _llm._build_cluster_member(m, events) for m in recent  # noqa: SLF001
+        _llm._build_cluster_member(m, events)
+        for m in recent  # noqa: SLF001
     )
     return _llm.Cluster(
         cluster_id="transcript-facts",
@@ -1238,8 +1239,7 @@ def _apply_llm_proposal(
         # Future audits can trace the claim back to the transcript turn
         # without having to keep the transcript itself around.
         provenance = (
-            "\n\n_(consolidate --llm --from-transcript: "
-            f"{proposal.source_excerpt})_"
+            f"\n\n_(consolidate --llm --from-transcript: {proposal.source_excerpt})_"
         )
         body_with_provenance = proposal.body.rstrip() + provenance
         written = store.write(

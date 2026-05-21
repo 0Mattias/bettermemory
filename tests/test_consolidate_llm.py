@@ -442,8 +442,7 @@ def test_consolidate_with_from_transcript_runs_propose_new(tmp_path: Path) -> No
     store = _make_store_with_existing(tmp_path)
     transcript = tmp_path / "session.md"
     transcript.write_text(
-        "[user] My Postgres is on port 5433, not 5432.\n"
-        "[assistant] Saved.",
+        "[user] My Postgres is on port 5433, not 5432.\n[assistant] Saved.",
         encoding="utf-8",
     )
     proposal = ProposeNewProposal(
@@ -457,9 +456,7 @@ def test_consolidate_with_from_transcript_runs_propose_new(tmp_path: Path) -> No
 
     # Dry-run first — the proposal lands in the report; no new memory
     # in the store.
-    dry = consolidate_llm(
-        store, provider, apply=False, from_transcript=str(transcript)
-    )
+    dry = consolidate_llm(store, provider, apply=False, from_transcript=str(transcript))
     assert any(isinstance(p, ProposeNewProposal) for p in dry.proposals)
     memories_before = store.load_all()
     # One existing memory from _make_store_with_existing.

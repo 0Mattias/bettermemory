@@ -520,8 +520,7 @@ def test_parse_valid_propose_new() -> None:
     existing = _make_memory("Some unrelated existing memory.")
     cluster = _make_transcript_cluster(
         [existing],
-        "[user] My Postgres listens on port 5433.\n"
-        "[assistant] Got it — saving that.",
+        "[user] My Postgres listens on port 5433.\n[assistant] Got it — saving that.",
     )
     raw = json.dumps(
         {

@@ -60,15 +60,21 @@ def test_stopword_heavy_sentence_filtered() -> None:
 
 
 def test_case_insensitive_and_whitespace_collapsed() -> None:
-    body = "The auth middleware lives in src/auth/middleware.py for the JWT verification."
+    body = (
+        "The auth middleware lives in src/auth/middleware.py for the JWT verification."
+    )
     reply = "the auth middleware lives in   src/auth/middleware.py for the jwt verification."
     matches = attribute_uses({"mem1": body}, reply)
     assert len(matches) == 1
 
 
 def test_multi_memory_independent_attribution() -> None:
-    body_a = "The auth middleware lives in src/auth/middleware.py for the JWT verify path."
-    body_b = "The metrics dashboard runs at grafana.internal/d/api-latency for oncall watch."
+    body_a = (
+        "The auth middleware lives in src/auth/middleware.py for the JWT verify path."
+    )
+    body_b = (
+        "The metrics dashboard runs at grafana.internal/d/api-latency for oncall watch."
+    )
     reply = (
         "The metrics dashboard runs at grafana.internal/d/api-latency for oncall watch — "
         "I'll add a panel."

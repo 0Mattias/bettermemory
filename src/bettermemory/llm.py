@@ -507,7 +507,9 @@ def build_prompt(cluster: Cluster, *, today: str) -> str:
         # candidate new memories from.
         transcript = cluster.transcript.strip()
         if len(transcript) > MAX_TRANSCRIPT_CHARS:
-            transcript = transcript[:MAX_TRANSCRIPT_CHARS] + "\n[...transcript truncated...]"
+            transcript = (
+                transcript[:MAX_TRANSCRIPT_CHARS] + "\n[...transcript truncated...]"
+            )
         lines.append("--- BEGIN TRANSCRIPT ---")
         lines.append(transcript)
         lines.append("--- END TRANSCRIPT ---")
@@ -740,9 +742,7 @@ def _validate_propose_new(
         log.warning("propose_new: scope 'general' rejected (catch-all is forbidden)")
         return None
     if category not in {"fact", "ambient"}:
-        log.warning(
-            "propose_new: category %r must be 'fact' or 'ambient'", category
-        )
+        log.warning("propose_new: category %r must be 'fact' or 'ambient'", category)
         return None
     if not isinstance(body, str) or not body.strip():
         log.warning("propose_new: body empty for scope %r", scope)
