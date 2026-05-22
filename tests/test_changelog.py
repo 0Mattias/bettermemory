@@ -51,7 +51,7 @@ def _changelog_headings() -> list[tuple[str, str, int]]:
     flagged separately by ``test_all_version_headings_well_formed``.
     """
     out: list[tuple[str, str, int]] = []
-    for i, line in enumerate(_CHANGELOG.read_text().splitlines(), 1):
+    for i, line in enumerate(_CHANGELOG.read_text(encoding="utf-8").splitlines(), 1):
         m = _HEADING_RE.match(line)
         if m:
             out.append((m["version"], m["date"], i))
@@ -94,7 +94,7 @@ def test_all_version_headings_well_formed() -> None:
     """
     bad: list[tuple[int, str]] = []
     version_like = re.compile(r"^## \d+\.\d+")
-    for i, line in enumerate(_CHANGELOG.read_text().splitlines(), 1):
+    for i, line in enumerate(_CHANGELOG.read_text(encoding="utf-8").splitlines(), 1):
         if not version_like.match(line):
             continue
         if not _HEADING_RE.match(line):

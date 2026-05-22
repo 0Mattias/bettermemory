@@ -291,6 +291,10 @@ def test_multi_process_stress_no_corruption(tmp_path: Path) -> None:
 #      itself.
 
 
+@pytest.mark.skipif(
+    sys.platform == "win32",
+    reason="fcntl-based locking is POSIX-only; flock_excl no-ops on Windows so no lockfile is created",
+)
 def test_store_locked_persists_lockfile_after_exit(tmp_path: Path) -> None:
     """`_locked` must not unlink the lockfile on exit. The 2.6.3 fix
     removed the prior in-finally unlink; this test fails if anyone
@@ -314,6 +318,10 @@ def test_store_locked_persists_lockfile_after_exit(tmp_path: Path) -> None:
     )
 
 
+@pytest.mark.skipif(
+    sys.platform == "win32",
+    reason="fcntl-based locking is POSIX-only; flock_excl no-ops on Windows so no lockfile is created",
+)
 def test_events_locked_persists_lockfile_after_exit(tmp_path: Path) -> None:
     """Same invariant for `events._locked`. The 2.6.3 fix touched
     both files because the bug was in both."""
