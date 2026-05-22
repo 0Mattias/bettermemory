@@ -16,7 +16,7 @@ from pathlib import Path
 from typing import Iterator
 
 from . import _frontmatter as frontmatter
-from ._fsutil import flock_excl as _locked, fsync_dir, fsync_file
+from ._fsutil import flock_excl, fsync_dir, fsync_file
 
 # We use a vendored frontmatter parser (`_frontmatter.py`) which pins the
 # pure-Python yaml.SafeLoader / yaml.SafeDumper. Two reasons:
@@ -81,6 +81,11 @@ class NotTombstonedError(KeyError):
 # Single source of truth: a future fix to the locking discipline lands
 # in `_fsutil.flock_excl` and applies to events.py and sync.py too —
 # see the 2.6.3 pattern-generalization audit note.
+#
+# Top-level assignment (not `import flock_excl as _locked`) so mypy strict's
+# no_implicit_reexport rule accepts external imports of `_locked` here —
+# `migrate.py` and the locking tests reach into this module by name.
+_locked = flock_excl
 
 
 # ---------------------------------------------------------------------------

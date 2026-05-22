@@ -191,7 +191,7 @@ def test_loads_rejects_oversized_yaml_frontmatter() -> None:
         loads(huge_yaml)
 
 
-def test_load_rejects_oversized_file_before_read(tmp_path) -> None:  # type: ignore[no-untyped-def]
+def test_load_rejects_oversized_file_before_read(tmp_path) -> None:
     """Regression for 2.6.4. ``_frontmatter.load`` previously called
     ``Path.read_text()`` with no size guard; a hostile ``sync pull``
     from a remote pushing a multi-GB ``.md`` would exhaust memory

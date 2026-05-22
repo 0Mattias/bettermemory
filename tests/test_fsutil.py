@@ -102,13 +102,13 @@ class TestBoundedTailRead:
         path.write_bytes(b"line1\nline2\n")
         real_open = Path.open
 
-        def patched_open(self: Path, *args, **kwargs):  # type: ignore[no-untyped-def]
+        def patched_open(self: Path, *args, **kwargs):
             fh = real_open(self, *args, **kwargs)
 
-            def fail_seek(*_a, **_kw):  # type: ignore[no-untyped-def]
+            def fail_seek(*_a, **_kw):
                 raise OSError("unseekable")
 
-            fh.seek = fail_seek  # type: ignore[method-assign]
+            fh.seek = fail_seek
             return fh
 
         monkeypatch.setattr(Path, "open", patched_open)
@@ -162,7 +162,11 @@ class TestBoundedStreamRead:
             pytest.skip("os.mkfifo not available")
         fifo = tmp_path / "pipe"
         os.mkfifo(fifo)
-        pid = os.fork()
+        # POSIX-only — hasattr(os, "mkfifo") above gates the call. The
+        # `unused-ignore` code is stacked so mypy on POSIX (where os.fork
+        # exists) doesn't flag the attr-defined ignore as unused; mypy on
+        # Windows needs it because the symbol genuinely doesn't exist there.
+        pid = os.fork()  # type: ignore[attr-defined, unused-ignore]
         if pid == 0:  # child
             try:
                 with fifo.open("wb") as f:

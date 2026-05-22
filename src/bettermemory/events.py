@@ -32,7 +32,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Iterator
 
-from ._fsutil import flock_excl as _locked, fsync_dir, fsync_file
+from ._fsutil import flock_excl, fsync_dir, fsync_file
 
 log = logging.getLogger("bettermemory.events")
 
@@ -52,6 +52,9 @@ def _utcnow_iso() -> str:
 # (single source — 2.6.3 audit-pass-of-audit-pass found the matching
 # `_locked` in store.py and events.py had drifted in comments alone, and
 # the unlink-on-finally regression risk doubles with each duplicate).
+# Top-level assignment (not `import flock_excl as _locked`) so mypy strict's
+# no_implicit_reexport rule accepts external imports of `_locked` here.
+_locked = flock_excl
 
 
 @dataclass
