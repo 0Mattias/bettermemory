@@ -10,14 +10,13 @@ from __future__ import annotations
 import contextlib
 import errno
 import os
-import sys
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Iterator
 
 from . import _frontmatter as frontmatter
-from ._fsutil import fsync_dir, fsync_file
+from ._fsutil import flock_excl as _locked, fsync_dir, fsync_file
 
 # We use a vendored frontmatter parser (`_frontmatter.py`) which pins the
 # pure-Python yaml.SafeLoader / yaml.SafeDumper. Two reasons:
@@ -76,39 +75,12 @@ class NotTombstonedError(KeyError):
 # File locking
 # ---------------------------------------------------------------------------
 #
-# fcntl.flock on Unix; on Windows there's no fcntl so we fall back to a no-op.
-# The MVP assumes single-process access — see README. The sys.platform guard
-# is the form mypy understands as platform narrowing; a try/except ImportError
-# also works at runtime but mypy still type-checks the unreachable Windows
-# path against the linux fcntl stubs.
-#
-# The lockfile is left on disk after release. A previous version unlinked
-# it inside `finally`, which broke mutual exclusion under contention:
-# process A could unlink between B's `os.open` and a third process C's
-# `os.open`, after which B and C held flocks on different inodes and
-# both believed they owned the lock. Persisting the 0-byte file keeps
-# every open() on the same inode so flock actually serialises.
-
-
-@contextlib.contextmanager
-def _locked(path: Path) -> Iterator[None]:
-    if sys.platform == "win32":  # pragma: no cover - non-unix
-        yield
-        return
-
-    import fcntl
-
-    path.parent.mkdir(parents=True, exist_ok=True)
-    lock_path = path.with_suffix(path.suffix + ".lock")
-    fd = os.open(lock_path, os.O_CREAT | os.O_RDWR, 0o600)
-    try:
-        fcntl.flock(fd, fcntl.LOCK_EX)
-        yield
-    finally:
-        try:
-            fcntl.flock(fd, fcntl.LOCK_UN)
-        finally:
-            os.close(fd)
+# `_locked` is the local alias for the canonical fcntl-based exclusive
+# flock in `_fsutil.flock_excl`. Re-exported as `_locked` here so the
+# rest of `store.py` keeps reading naturally (`with _locked(path):`).
+# Single source of truth: a future fix to the locking discipline lands
+# in `_fsutil.flock_excl` and applies to events.py and sync.py too —
+# see the 2.6.3 pattern-generalization audit note.
 
 
 # ---------------------------------------------------------------------------
@@ -494,11 +466,18 @@ class Store:
                     raise TombstonedError(f"memory {memory_id} is already tombstoned")
             raise MemoryNotFoundError(f"no memory with id {memory_id}")
 
-        target = self.tombstone_dir / f"{path.stem}.tombstone.md"
-        # If a same-named tombstone already exists, append the ULID for
-        # uniqueness rather than overwriting history.
-        if target.exists():
-            target = self.tombstone_dir / (f"{path.stem}.{memory_id}.tombstone.md")
+        # Unconditionally include the ULID in the tombstone filename so
+        # the name is unique by construction. Pre-2.6.4 the code picked
+        # the unsuffixed `{path.stem}.tombstone.md` when the file
+        # didn't yet exist and added the ULID only on collision — a
+        # TOCTOU: two concurrent `tombstone()` calls on different
+        # memories with the same `path.stem` (rare but possible when
+        # slugs collide) both saw `target.exists() == False` and both
+        # picked the unsuffixed name, with the second clobbering the
+        # first's tombstone via `tmp.replace`. Always-suffixed kills
+        # the race. Existing unsuffixed tombstones on disk continue to
+        # load — the reader keys off the `id` field, not the filename.
+        target = self.tombstone_dir / f"{path.stem}.{memory_id}.tombstone.md"
 
         # Read + write under the same lock. Reading the body outside the
         # lock and writing the tombstone inside it leaves a window where
@@ -914,22 +893,30 @@ class Store:
         cutoff = (now or utcnow()) - older_than
         pruned: list[tuple[datetime, str]] = []
         for path in self._iter_tombstone_paths():
-            try:
-                tombstone = self._load_tombstone_path(path)
-            except (ValueError, KeyError):
-                # Malformed tombstones are left alone — pruning them
-                # would silently drop possibly-recoverable history.
-                continue
-            if tombstone.removed >= cutoff:
-                continue
-            try:
-                path.unlink()
-            except OSError:
-                # Best-effort: a tombstone we can't delete (perms,
-                # mid-rotation race) will be retried on the next prune
-                # call. Don't kill the loop.
-                continue
-            pruned.append((tombstone.removed, tombstone.id))
+            # Acquire the per-tombstone lock for read + delete. Without
+            # it, a concurrent `restore(id)` (which holds the same
+            # `_locked(path)`) can rewrite the active file out of the
+            # tombstone, and our subsequent `unlink` here removes a
+            # tombstone the restore intended to keep audited. Matching
+            # the 2.6.4 migrate.py fix — every mutator now goes through
+            # the per-file lock.
+            with _locked(path):
+                try:
+                    tombstone = self._load_tombstone_path(path)
+                except (ValueError, KeyError):
+                    # Malformed tombstones are left alone — pruning them
+                    # would silently drop possibly-recoverable history.
+                    continue
+                if tombstone.removed >= cutoff:
+                    continue
+                try:
+                    path.unlink()
+                except OSError:
+                    # Best-effort: a tombstone we can't delete (perms,
+                    # mid-rotation race) will be retried on the next prune
+                    # call. Don't kill the loop.
+                    continue
+                pruned.append((tombstone.removed, tombstone.id))
 
         pruned.sort(key=lambda item: item[0])
         return [memory_id for _, memory_id in pruned]

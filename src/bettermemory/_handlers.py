@@ -678,11 +678,18 @@ def _hook_attributed_pending_ids(
     for event in iter_events(recorder.root):
         if event.get("kind") != "use":
             continue
-        if event.get("session") != recorder.session_id:
+        # `session` / `session_id` both appear depending on producer
+        # vintage: canonical handler writes both; pre-2.6.4 hook wrote
+        # only `session`. Read either with the canonical-first
+        # discipline 70e41a4 established for llm.py.
+        if (event.get("session") or event.get("session_id")) != recorder.session_id:
             continue
         if event.get("attribution") != "hook":
             continue
-        ids = event.get("ids") or []
+        # Legacy fallback for `memory_ids` — same class as the 70e41a4
+        # fix. Pre-2.6.3 `use` events landed with `memory_ids=[…]`
+        # before the Recorder canonicalized to `ids=[…]`.
+        ids = event.get("ids") or event.get("memory_ids") or []
         if not isinstance(ids, list):
             continue
         for mid in ids:

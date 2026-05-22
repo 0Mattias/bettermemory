@@ -26,9 +26,8 @@ from pathlib import Path
 from typing import Iterator
 
 from . import _frontmatter as frontmatter
-from ._fsutil import fsync_dir, fsync_file
 from .origin import Origin, capture
-from .store import TOMBSTONE_DIR
+from .store import TOMBSTONE_DIR, _atomic_write_post, _locked
 
 log = logging.getLogger("bettermemory.migrate")
 
@@ -156,70 +155,71 @@ def migrate_origin_in_directory(
 
     for path in _iter_active_memory_files(memory_dir):
         report.scanned += 1
-        try:
-            post = frontmatter.load(path)
-        except Exception as exc:  # noqa: BLE001 — defensive read.
-            log.warning("skipping malformed file %s: %s", path, exc)
-            report.malformed.append(path)
-            continue
+        # Acquire the per-file lock for the whole read-modify-write.
+        # Without this, a concurrent `Store.update` / `tombstone` /
+        # `mark_verified` from a running MCP server can write its
+        # version under the lock; the migrator's unlocked RMW then
+        # `replace`s with the stale-body-plus-origin, silently losing
+        # the in-flight edit. The lock matches the discipline every
+        # other mutator in `store.py` uses — see 2.6.4 fix.
+        with _locked(path):
+            try:
+                post = frontmatter.load(path)
+            except Exception as exc:  # noqa: BLE001 — defensive read.
+                log.warning("skipping malformed file %s: %s", path, exc)
+                report.malformed.append(path)
+                continue
 
-        # The vendored frontmatter parser is permissive — a file with no
-        # YAML block at all loads with `metadata == {}`. That's *not* a
-        # valid bettermemory memory; the store would refuse to load it
-        # too. Treat the absence of `id` as the signal that this file
-        # isn't ours and shouldn't be edited.
-        if "id" not in post.metadata:
-            log.warning(
-                "skipping %s: no frontmatter `id` — not a bettermemory file",
-                path,
-            )
-            report.malformed.append(path)
-            continue
+            # The vendored frontmatter parser is permissive — a file with no
+            # YAML block at all loads with `metadata == {}`. That's *not* a
+            # valid bettermemory memory; the store would refuse to load it
+            # too. Treat the absence of `id` as the signal that this file
+            # isn't ours and shouldn't be edited.
+            if "id" not in post.metadata:
+                log.warning(
+                    "skipping %s: no frontmatter `id` — not a bettermemory file",
+                    path,
+                )
+                report.malformed.append(path)
+                continue
 
-        if "origin" in post.metadata and post.metadata["origin"]:
-            report.already_had_origin += 1
-            continue
+            if "origin" in post.metadata and post.metadata["origin"]:
+                report.already_had_origin += 1
+                continue
 
-        # Route this memory: scope-map first, then fallback. The first
-        # matching scope wins — order is determined by Python dict
-        # insertion order, which is the order the caller passed flags.
-        chosen: dict[str, object] | None = None
-        if mapped_payloads:
-            memory_scopes = post.metadata.get("scopes") or []
-            for scope, payload in mapped_payloads.items():
-                if scope in memory_scopes:
-                    chosen = payload
-                    break
-        if chosen is None:
-            chosen = fallback_payload
-        if chosen is None:
-            # No rule fired for this memory — leave alone. This is the
-            # common case for a global directory where the user only
-            # passed `--scope-repo` for some scopes; un-routed memories
-            # stay un-tagged rather than getting force-tagged with a
-            # wrong URL.
-            continue
+            # Route this memory: scope-map first, then fallback. The first
+            # matching scope wins — order is determined by Python dict
+            # insertion order, which is the order the caller passed flags.
+            chosen: dict[str, object] | None = None
+            if mapped_payloads:
+                memory_scopes = post.metadata.get("scopes") or []
+                for scope, payload in mapped_payloads.items():
+                    if scope in memory_scopes:
+                        chosen = payload
+                        break
+            if chosen is None:
+                chosen = fallback_payload
+            if chosen is None:
+                # No rule fired for this memory — leave alone. This is the
+                # common case for a global directory where the user only
+                # passed `--scope-repo` for some scopes; un-routed memories
+                # stay un-tagged rather than getting force-tagged with a
+                # wrong URL.
+                continue
 
-        post.metadata["origin"] = dict(chosen)
-        report.updated += 1
+            post.metadata["origin"] = dict(chosen)
+            report.updated += 1
 
-        if dry_run:
-            continue
+            if dry_run:
+                continue
 
-        # Mirror the durability discipline of `store._atomic_write_post`:
-        # tmp.write/flush/fsync, atomic rename, fsync the parent directory.
-        # Without these fsyncs a power loss between `replace` and the next
-        # background flush leaves a zero-byte file at `path` — the audit
-        # caught this gap because the bare `write_bytes`+`replace` pattern
-        # used here predated the helper that hardened the rest of the store.
-        tmp = path.with_suffix(path.suffix + ".tmp")
-        data = frontmatter.dumps(post).encode("utf-8")
-        with tmp.open("wb") as f:
-            f.write(data)
-            f.flush()
-            fsync_file(f.fileno())
-        tmp.replace(path)
-        fsync_dir(path.parent)
+            # Use the shared `_atomic_write_post` helper: tmp+fsync+rename
+            # +chmod 0o600+fsync_dir. The bare `write_bytes`+`replace`
+            # pattern this code used pre-2.6.4 dropped the `0o600` chmod,
+            # so post-migration files inherited the umask (typically
+            # 0o644) and ended up world-readable — undoing the privacy
+            # guarantee the store set on the original write.
+            _atomic_write_post(path, post)
 
     return report
 

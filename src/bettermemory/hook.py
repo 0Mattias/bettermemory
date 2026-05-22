@@ -53,12 +53,12 @@ narrowing.
 from __future__ import annotations
 
 import json
-import os
 import sys
 from datetime import datetime
 from pathlib import Path
 from typing import Any
 
+from ._fsutil import bounded_stream_read, bounded_tail_read
 from .attribution import attribute_uses
 from .audit import probe_for_miss
 from .config import Config, load_config
@@ -85,6 +85,16 @@ _ATTRIBUTION_LOOKBACK_SECONDS = 600
 # `_TRANSCRIPT_READ_CAP_BYTES` constant in consolidate.py and is enforced
 # at byte granularity (not character) so multibyte UTF-8 can't bypass it.
 _TRANSCRIPT_TAIL_READ_BYTES = 1_048_576
+
+# Cap the Stop-hook stdin payload. Claude Code emits a small JSON object
+# (`session_id`, `transcript_path`, `cwd`, `hook_event_name`) — well under
+# 1 KB in practice. 64 KB leaves five orders of magnitude of headroom for
+# any sensible payload while bounding a misbehaving pipe writer's blast
+# radius. Without this cap the hook process would buffer the entire pipe
+# into memory before `json.loads` got a chance to reject. An oversized
+# payload is treated as a malformed input — the hook silently no-ops,
+# same contract as a bad JSON payload.
+_STDIN_PAYLOAD_CAP_BYTES = 64 * 1024
 
 
 def _read_payload(stdin_text: str) -> dict[str, Any]:
@@ -121,39 +131,15 @@ def _extract_last_exchange(
     """
     user: str | None = None
     assistant: str | None = None
-    # Tail-read: seek to the end and read at most the trailing
-    # `_TRANSCRIPT_TAIL_READ_BYTES`. The latest user+assistant pair
-    # sits at the end of the append-only JSONL, so the head is
-    # uninteresting and risks loading hundreds of MB of session
-    # history into memory. Drop the first line if we landed
-    # mid-record — `errors="replace"` already handles a partial UTF-8
-    # codepoint at the chunk boundary, but a half JSON object would
-    # fail the `json.loads` in the loop below and get skipped, so we
-    # only need to discard it explicitly when there's no full newline
-    # before the first parseable line. The reverse walk below tolerates
-    # the missing prefix transparently.
+    # `bounded_tail_read` handles the seek-to-end + partial-line-discard +
+    # unseekable-stream fallback. The latest user+assistant pair sits at
+    # the tail of an append-only JSONL, so the head is uninteresting and
+    # would risk loading hundreds of MB of session history into memory.
     try:
-        with transcript_path.open("rb") as fh:
-            try:
-                fh.seek(0, os.SEEK_END)
-                size = fh.tell()
-                offset = max(0, size - _TRANSCRIPT_TAIL_READ_BYTES)
-                fh.seek(offset)
-            except OSError:
-                # Pipes / FIFOs / unseekable streams — fall back to a
-                # bounded read from the current position.
-                offset = 0
-            chunk = fh.read(_TRANSCRIPT_TAIL_READ_BYTES)
+        chunk = bounded_tail_read(transcript_path, _TRANSCRIPT_TAIL_READ_BYTES)
     except OSError:
         return None, None
-
     text = chunk.decode("utf-8", errors="replace")
-    if offset > 0:
-        # If we cut into the middle of a line, discard it — the next
-        # newline starts the first complete record.
-        newline = text.find("\n")
-        if newline != -1:
-            text = text[newline + 1 :]
 
     # Walk lines in reverse — the most recent user/assistant come
     # last. Stop once we have both.
@@ -241,23 +227,35 @@ def run_audit(
         enabled=cfg.telemetry.enabled,
         max_bytes=cfg.telemetry.max_bytes,
     )
+    # Field-name discipline: match the in-process handler's canonical
+    # shape (see `_handlers.py:2353` and `:2364`) so the downstream
+    # eval / health rollups see one event shape regardless of source.
+    # The 2.6.3 audit cycle missed that this path emitted
+    # `top_hit_ids=[strings]` and omitted `threshold_rule` /
+    # `lookback_seconds`, which silently broke the silent-miss eval
+    # renderer for hook-originated traffic (the primary production
+    # source). `triggered_from` distinguishes the source for rollups
+    # that need it; everything else mirrors the handler.
+    probe_mode = cfg.behavior.search_mode or "keyword"
     recorder.record(
         "turn_audited",
+        session_id=session_id,
         verdict=report.verdict,
-        threshold_rule=report.threshold_rule,
+        lookback_seconds=report.lookback_seconds,
         recent_retrieval_count=report.recent_retrieval_count,
-        # Mirror the in-process handler's signal so a downstream rollup
-        # joining stop-hook events with model-side events sees the same
-        # field shape. `triggered_from` already distinguishes the source.
+        probe_mode=probe_mode,
+        threshold_rule=report.threshold_rule,
         assistant_present=assistant_response is not None,
         triggered_from="stop_hook",
     )
     if report.is_miss:
         recorder.record(
             "search_miss",
-            session=session_id,
+            session_id=session_id,
+            threshold_rule=report.threshold_rule,
+            lookback_seconds=report.lookback_seconds,
+            top_hits=[h.to_dict() for h in report.top_hits],
             probe_query=report.probe_query,
-            top_hit_ids=[h.id for h in report.top_hits],
             triggered_from="stop_hook",
         )
 
@@ -356,7 +354,9 @@ def _pending_retrievals(
     retrieved: set[str] = set()
     used: set[str] = set()
     for event in events:
-        if event.get("session") != session_id:
+        # Canonical-first session lookup with legacy fallback — same
+        # discipline 70e41a4 established for llm.py.
+        if (event.get("session") or event.get("session_id")) != session_id:
             continue
         ts_str = event.get("ts")
         if not isinstance(ts_str, str):
@@ -366,7 +366,15 @@ def _pending_retrievals(
             continue
         kind = event.get("kind")
         if kind == "search":
-            returned = event.get("returned") or []
+            # Legacy fallback: pre-2.6.3 search archives wrote
+            # `memory_ids`, test fixtures used `hit_ids`. Read canonical,
+            # fall back to either.
+            returned = (
+                event.get("returned")
+                or event.get("memory_ids")
+                or event.get("hit_ids")
+                or []
+            )
             if isinstance(returned, list):
                 for mid in returned:
                     if isinstance(mid, str):
@@ -376,7 +384,8 @@ def _pending_retrievals(
             if isinstance(mid, str):
                 retrieved.add(mid)
         elif kind == "use":
-            ids = event.get("ids") or []
+            # Legacy fallback for `memory_ids` — same class as above.
+            ids = event.get("ids") or event.get("memory_ids") or []
             if isinstance(ids, list):
                 for mid in ids:
                     if isinstance(mid, str):
@@ -436,7 +445,18 @@ def main(argv: list[str] | None = None) -> int:
     try:
         payload: dict[str, Any] = {}
         if args.transcript_path is None or args.session_id is None:
-            payload = _read_payload(sys.stdin.read())
+            # Bound the stdin read at byte granularity. A misbehaving
+            # pipe writer streaming GB of garbage would otherwise OOM
+            # the hook process before `json.loads` got a chance to
+            # reject. Oversized payloads land in the same bucket as
+            # malformed JSON: silent no-op, contract preserved.
+            try:
+                raw_payload = bounded_stream_read(
+                    sys.stdin.buffer, _STDIN_PAYLOAD_CAP_BYTES
+                )
+            except ValueError:
+                return 0
+            payload = _read_payload(raw_payload.decode("utf-8", errors="replace"))
 
         transcript_raw = args.transcript_path or payload.get("transcript_path")
         session_id = args.session_id or payload.get("session_id")

@@ -22,6 +22,8 @@ from bettermemory.config import BehaviorConfig, Config, ScopesConfig, StorageCon
 from bettermemory.session import SessionState
 from bettermemory.store import Store
 
+from ._event_helpers import EventLog
+
 
 @pytest.fixture
 def memory_dir(tmp_path: Path) -> Path:
@@ -47,3 +49,15 @@ def config(memory_dir: Path) -> Config:
 @pytest.fixture
 def session() -> SessionState:
     return SessionState()
+
+
+@pytest.fixture
+def event_log(tmp_path: Path) -> EventLog:
+    """Real ``Recorder``-backed event log for event-consumer tests.
+
+    Replaces hand-built event dict literals. The 2.6.2 and 2.6.3
+    field-name bugs both shipped because tests used a dict shape that
+    didn't match what production emits — see
+    ``tests/_event_helpers.py`` for the full rationale.
+    """
+    return EventLog(root=tmp_path)

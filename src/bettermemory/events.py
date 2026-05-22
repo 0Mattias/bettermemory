@@ -23,18 +23,16 @@ in `config.toml` if this is unwanted.
 
 from __future__ import annotations
 
-import contextlib
 import gzip
 import json
 import logging
 import os
-import sys
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Iterator
 
-from ._fsutil import fsync_dir, fsync_file
+from ._fsutil import flock_excl as _locked, fsync_dir, fsync_file
 
 log = logging.getLogger("bettermemory.events")
 
@@ -49,38 +47,11 @@ def _utcnow_iso() -> str:
     return datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
 
 
-# Same lock pattern as store.py — duplicated rather than shared because
-# the two modules have different invariants (the store locks per-memory-file;
-# events locks the single append log) and a shared helper would obscure that.
-#
-# Windows doesn't have fcntl; we no-op the lock there. The MVP single-process
-# assumption (see store.py) means concurrent appends shouldn't happen anyway;
-# the lock is belt-and-suspenders against a future async/multi-process world.
-# The sys.platform guard is the form mypy understands as platform narrowing.
-#
-# Lockfile is NOT unlinked on release — see the matching note in store.py.
-# Unlinking races inode reuse and lets two flock holders coexist on
-# different inodes; persisting the 0-byte file keeps every open() on the
-# same inode so flock actually serialises.
-@contextlib.contextmanager
-def _locked(path: Path) -> Iterator[None]:
-    if sys.platform == "win32":  # pragma: no cover - non-unix
-        yield
-        return
-
-    import fcntl
-
-    path.parent.mkdir(parents=True, exist_ok=True)
-    lock_path = path.with_suffix(path.suffix + ".lock")
-    fd = os.open(lock_path, os.O_CREAT | os.O_RDWR, 0o600)
-    try:
-        fcntl.flock(fd, fcntl.LOCK_EX)
-        yield
-    finally:
-        try:
-            fcntl.flock(fd, fcntl.LOCK_UN)
-        finally:
-            os.close(fd)
+# `_locked` is re-exported here as the local symbol for the event log's
+# append path; the canonical definition lives in `_fsutil.flock_excl`
+# (single source — 2.6.3 audit-pass-of-audit-pass found the matching
+# `_locked` in store.py and events.py had drifted in comments alone, and
+# the unlink-on-finally regression risk doubles with each duplicate).
 
 
 @dataclass
@@ -144,9 +115,23 @@ class Recorder:
                 # private user data on a shared-user box. No-op on
                 # Windows. Done outside the open() block so the chmod
                 # doesn't race the buffered append.
+                #
+                # Pre-2.6.4 a chmod failure was silently suppressed —
+                # the log would land world-readable and nothing flagged
+                # the gap. Log WARNING so the operator at least sees it
+                # in the logs and can investigate (typical causes:
+                # noexec/nosuid mounts in containers, root-owned dirs
+                # on shared boxes, restricted filesystems).
                 if first_write:
-                    with contextlib.suppress(OSError):
+                    try:
                         os.chmod(self.path, 0o600)
+                    except OSError as chmod_exc:
+                        log.warning(
+                            "event log %s: chmod 0o600 failed (%s); "
+                            "log may be world-readable",
+                            self.path,
+                            chmod_exc,
+                        )
         except Exception as exc:  # noqa: BLE001 — never break the caller.
             log.warning("event log write failed (kind=%s): %s", kind, exc)
 

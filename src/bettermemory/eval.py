@@ -613,6 +613,18 @@ def _silent_miss_from_event(ev: dict[str, Any]) -> SilentMissCandidate | None:
                 top_id = cand_id
             if isinstance(cand_rel, str):
                 top_relevance = cand_rel
+    else:
+        # Legacy fallback for pre-2.6.4 hook-originated events: those
+        # wrote `top_hit_ids=[strings]` instead of `top_hits=[dicts]`.
+        # Match the discipline 70e41a4 established for the llm.py
+        # field-name fix — read canonical, fall back to legacy.
+        # Relevance isn't recoverable from the legacy shape (only ids
+        # were stored); top_relevance stays None for old archives.
+        legacy_ids = ev.get("top_hit_ids")
+        if isinstance(legacy_ids, list) and legacy_ids:
+            first_id = legacy_ids[0]
+            if isinstance(first_id, str):
+                top_id = first_id
     rule = ev.get("threshold_rule")
     rule_s = rule if isinstance(rule, str) else None
     recent = ev.get("recent_retrieval_count")

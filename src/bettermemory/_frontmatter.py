@@ -32,6 +32,8 @@ from typing import Any
 
 import yaml
 
+from ._fsutil import bounded_read
+
 
 _DELIM = "---"
 
@@ -44,6 +46,16 @@ _DELIM = "---"
 # is in use (a remote can push files into the memory directory), so
 # the cap is no longer purely a defence against local mistakes.
 _MAX_YAML_BYTES = 64 * 1024
+
+# File-level cap on `_frontmatter.load`. The previous `read_text()`
+# loaded the entire file before the 64 KB YAML cap could fire, so a
+# hostile `sync pull` from a remote pushing a multi-GB `.md` exhausted
+# memory before the parse path even ran. 1 MiB is ~250× the largest
+# legitimate body the project has produced (verified_paths + body
+# dense memories cap out under a couple of KB) and 16× the YAML cap,
+# so any in-the-wild memory fits comfortably while pathological
+# inputs hit a clean ValueError instead of an OOM.
+_MAX_FILE_BYTES = 1024 * 1024
 
 
 @dataclass
@@ -106,8 +118,15 @@ def loads(text: str) -> Post:
 
 
 def load(path: Path | str) -> Post:
-    """Read and parse a file. Replaces `frontmatter.load(path, ...)`."""
-    return loads(Path(path).read_text(encoding="utf-8"))
+    """Read and parse a file. Replaces `frontmatter.load(path, ...)`.
+
+    Stat-rejects files larger than :data:`_MAX_FILE_BYTES` before any
+    allocation — the previous unbounded ``read_text()`` was a sync-pull
+    DoS vector (a hostile remote pushing a multi-GB ``.md`` would OOM
+    the loader before the 64 KB YAML cap ever fired).
+    """
+    raw = bounded_read(Path(path), _MAX_FILE_BYTES)
+    return loads(raw.decode("utf-8", errors="replace"))
 
 
 class _NoAliasDumper(yaml.SafeDumper):

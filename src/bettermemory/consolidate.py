@@ -48,6 +48,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+from ._fsutil import bounded_tail_read
 from .events import iter_events
 from .health import _edit_distance_within
 from .models import Category, Memory, snippet_for
@@ -398,7 +399,9 @@ def find_demotion_candidates(
             for mid in event.get("returned") or event.get("hit_ids") or []:
                 retrieved[mid] += 1
         elif event.get("kind") == "use":
-            ids = event.get("ids") or []
+            # Same legacy fallback as the `returned`/`hit_ids` branch
+            # above — pre-2.6.3 `use` events wrote `memory_ids`.
+            ids = event.get("ids") or event.get("memory_ids") or []
             if event.get("outcome") == "applied":
                 for mid in ids:
                     applied[mid] += 1
@@ -458,7 +461,8 @@ def find_cold_scopes(
     applied_ids: set[str] = set()
     for event in events:
         if event.get("kind") == "use" and event.get("outcome") == "applied":
-            for mid in event.get("ids") or []:
+            # Legacy fallback for `memory_ids` — see 70e41a4.
+            for mid in event.get("ids") or event.get("memory_ids") or []:
                 applied_ids.add(mid)
 
     out: list[ColdScopeSuggestion] = []
@@ -953,17 +957,15 @@ def _load_transcript(path: Path) -> str:
     cluster.
     """
     try:
-        # Read at byte (not character) granularity so a multibyte UTF-8
-        # transcript can't bypass the `_TRANSCRIPT_READ_CAP_BYTES` cap.
-        # A text-mode `fh.read(n)` reads up to n *characters*; with
-        # 4-byte codepoints that's up to 4× the intended ceiling, which
-        # defeats the point of the cap. Read raw bytes, then decode
-        # with `errors="replace"` so a partial codepoint at the
-        # truncation boundary doesn't raise. The downstream prompt
-        # builder truncates again at `MAX_TRANSCRIPT_CHARS`, so any
-        # truncation here just narrows the candidate window earlier.
-        with path.open("rb") as fh:
-            raw = fh.read(_TRANSCRIPT_READ_CAP_BYTES).decode("utf-8", errors="replace")
+        # `bounded_tail_read` enforces the byte cap (not chars) so a
+        # multibyte UTF-8 transcript can't bypass it — see 2.6.3 fix.
+        # The downstream prompt builder truncates again at
+        # `MAX_TRANSCRIPT_CHARS`; any truncation here just narrows the
+        # candidate window earlier. Tail-read so a long session keeps
+        # the most-recent content rather than ancient lead-in.
+        raw = bounded_tail_read(path, _TRANSCRIPT_READ_CAP_BYTES).decode(
+            "utf-8", errors="replace"
+        )
     except OSError:
         return ""
     if path.suffix.lower() != ".jsonl":
@@ -1217,12 +1219,35 @@ def _apply_llm_proposal(
                 detail=f"merged from {list(proposal.duplicate_ids)}",
             )
         )
+        # Tombstone duplicates one-by-one; on the first failure, roll
+        # back the keeper's body so the partial-merge state (keeper has
+        # merged body, some duplicates still active) doesn't ship to
+        # retrieval. The rollback is best-effort — if it also fails,
+        # the operator needs to investigate, but the raise gives them
+        # the signal to do so instead of silently leaving a duplicate
+        # the merge was meant to remove. Pre-2.6.4 a partial failure
+        # left keeper-merged + some-duplicates-active, which the next
+        # consolidate run would re-merge but could compound on disk.
         for dup_id in proposal.duplicate_ids:
             reason = (
                 f"consolidate --llm: merged into {proposal.keeper_id} "
                 f"({proposal.rationale})"
             )
-            store.tombstone(dup_id, reason=reason, session_id=session_id)
+            try:
+                store.tombstone(dup_id, reason=reason, session_id=session_id)
+            except Exception:
+                # Roll back the keeper to its pre-merge body so the
+                # partial state isn't left for retrieval to see.
+                try:
+                    store.update(keeper)
+                except Exception:  # noqa: BLE001 — log path
+                    log.warning(
+                        "merge rollback failed for keeper %s after duplicate "
+                        "%s could not be tombstoned; manual cleanup required",
+                        proposal.keeper_id,
+                        dup_id,
+                    )
+                raise
             actions.append(
                 LLMProposalAction(
                     kind="llm_merge_tombstone",

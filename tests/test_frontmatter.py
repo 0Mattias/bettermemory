@@ -191,6 +191,25 @@ def test_loads_rejects_oversized_yaml_frontmatter() -> None:
         loads(huge_yaml)
 
 
+def test_load_rejects_oversized_file_before_read(tmp_path) -> None:  # type: ignore[no-untyped-def]
+    """Regression for 2.6.4. ``_frontmatter.load`` previously called
+    ``Path.read_text()`` with no size guard; a hostile ``sync pull``
+    from a remote pushing a multi-GB ``.md`` would exhaust memory
+    before the 64 KB YAML cap could ever fire. The fix stat-rejects
+    above 1 MiB before any allocation.
+
+    Verified by writing a file 2 MiB long — well past the file cap,
+    well under the YAML cap (which only applies to the frontmatter
+    region anyway). The reject must fire on the size pre-flight, not
+    on the YAML parser.
+    """
+    path = tmp_path / "huge.md"
+    # 2 MiB of pure body text; no frontmatter region.
+    path.write_bytes(b"x" * (2 * 1024 * 1024))
+    with pytest.raises(ValueError, match="exceeds cap"):
+        load(path)
+
+
 def test_loads_accepts_normal_sized_frontmatter() -> None:
     """Sanity check: normal-sized frontmatter (verified_paths, links,
     etc. all populated) is well under the 64 KB cap. Lock the

@@ -51,6 +51,19 @@ import subprocess
 from dataclasses import dataclass
 from pathlib import Path
 
+from ._fsutil import flock_excl
+
+# Coarse store-wide lock for push/pull. The git operations the sync
+# wrapper invokes (`git add -A`, `git commit`, `git pull --rebase`)
+# are not atomic with respect to the in-process Store: `add -A`
+# snapshots whatever is on disk at that instant, so a concurrent
+# `Store.write` mid-`add` ships a half-written file-set; `pull
+# --rebase` can `checkout` over a file another process holds open
+# for write. The lock turns each sync op into an atomic boundary.
+# The lockfile lives at `<root>/.sync.lock` (created by
+# `flock_excl` from the input path `<root>/.sync`).
+_SYNC_LOCK_NAME = ".sync"
+
 
 log = logging.getLogger("bettermemory.sync")
 
@@ -415,45 +428,53 @@ def push(
             f"{root} is not a git repo. Run `bettermemory sync init` first."
         )
 
-    _run_git(root, ["add", "-A"])
-    diff = _run_git(root, ["diff", "--cached", "--quiet"], check=False)
-    has_staged = diff.returncode != 0
-    committed = False
-    if has_staged:
-        _run_git(root, ["commit", "-m", message])
-        committed = True
+    # Coordinate against the in-process Store. Without this, a
+    # concurrent `Store.write` mid-`git add -A` snapshots a
+    # half-written file-set: git commits memory A v1 + memory B v2 +
+    # the freshly-renamed tombstone of memory C, producing a
+    # cross-machine state that's inconsistent with what the local
+    # store ever held. The lock is per-process exclusive; on Windows
+    # `flock_excl` is a no-op (MVP single-process there).
+    with flock_excl(root / _SYNC_LOCK_NAME):
+        _run_git(root, ["add", "-A"])
+        diff = _run_git(root, ["diff", "--cached", "--quiet"], check=False)
+        has_staged = diff.returncode != 0
+        committed = False
+        if has_staged:
+            _run_git(root, ["commit", "-m", message])
+            committed = True
 
-    # Even when nothing was committed this turn, prior commits may
-    # not yet be on the remote. So push unconditionally — but only
-    # when a remote of the requested name exists. Otherwise raise a
-    # clear error.
-    remotes = _run_git(root, ["remote"], check=False).stdout.split()
-    if remote not in remotes:
-        raise SyncError(
-            f"no remote named {remote!r}. Run "
-            f"`bettermemory sync init --remote <url>` or add it manually."
-        )
+        # Even when nothing was committed this turn, prior commits may
+        # not yet be on the remote. So push unconditionally — but only
+        # when a remote of the requested name exists. Otherwise raise a
+        # clear error.
+        remotes = _run_git(root, ["remote"], check=False).stdout.split()
+        if remote not in remotes:
+            raise SyncError(
+                f"no remote named {remote!r}. Run "
+                f"`bettermemory sync init --remote <url>` or add it manually."
+            )
 
-    # `--set-upstream` is harmless on subsequent pushes once tracking
-    # exists and avoids the "your branch has no upstream" foot-gun on
-    # the first push. The downstream `pull --rebase` needs the
-    # tracking branch to know what to rebase onto.
-    push_result = _run_git(
-        root, ["push", "--set-upstream", remote, "HEAD"], check=False
-    )
-    if push_result.returncode != 0:
-        # Same redaction discipline as `_run_git`'s default error path:
-        # `git push` failures often echo the full remote URL, which
-        # for HTTPS auth includes the token. The push/pull paths build
-        # their own SyncError (because they want to attach the
-        # "rebase --continue" hint for the conflict case), so the
-        # redaction wrapper has to be applied here too — otherwise
-        # this branch is the one outlet that leaks credentials.
-        stderr = _redact_text(push_result.stderr.strip())
-        stdout = _redact_text(push_result.stdout.strip())
-        raise SyncError(
-            f"`git push --set-upstream {remote} HEAD` failed: {stderr or stdout}"
+        # `--set-upstream` is harmless on subsequent pushes once tracking
+        # exists and avoids the "your branch has no upstream" foot-gun on
+        # the first push. The downstream `pull --rebase` needs the
+        # tracking branch to know what to rebase onto.
+        push_result = _run_git(
+            root, ["push", "--set-upstream", remote, "HEAD"], check=False
         )
+        if push_result.returncode != 0:
+            # Same redaction discipline as `_run_git`'s default error path:
+            # `git push` failures often echo the full remote URL, which
+            # for HTTPS auth includes the token. The push/pull paths build
+            # their own SyncError (because they want to attach the
+            # "rebase --continue" hint for the conflict case), so the
+            # redaction wrapper has to be applied here too — otherwise
+            # this branch is the one outlet that leaks credentials.
+            stderr = _redact_text(push_result.stderr.strip())
+            stdout = _redact_text(push_result.stdout.strip())
+            raise SyncError(
+                f"`git push --set-upstream {remote} HEAD` failed: {stderr or stdout}"
+            )
 
     return {
         "root": str(root),
@@ -483,42 +504,55 @@ def pull(
             f"{root} is not a git repo. Run `bettermemory sync init` first."
         )
 
-    remotes = _run_git(root, ["remote"], check=False).stdout.split()
-    if remote not in remotes:
-        raise SyncError(
-            f"no remote named {remote!r}. Run "
-            f"`bettermemory sync init --remote <url>` or add it manually."
+    # Coordinate against the in-process Store. `git pull --rebase`
+    # can `checkout` over a file another process holds open for
+    # write; without the lock that's a real race once two MCP
+    # clients share a repo. On crash mid-rebase the repo is left in
+    # `.git/rebase-merge/` — operator runs `git rebase --abort`
+    # from the memory directory to recover. The lock is held across
+    # both the pull AND the reindex so the FTS5 rebuild sees the
+    # same on-disk set the rebase landed.
+    with flock_excl(root / _SYNC_LOCK_NAME):
+        remotes = _run_git(root, ["remote"], check=False).stdout.split()
+        if remote not in remotes:
+            raise SyncError(
+                f"no remote named {remote!r}. Run "
+                f"`bettermemory sync init --remote <url>` or add it manually."
+            )
+
+        # `--no-tags` keeps a hostile (or sloppy) remote from injecting refs
+        # under `refs/tags/` that shadow branch names, and keeps the local
+        # `.git/refs/tags/` clean — the memory store has no concept of tags,
+        # so anything that lands there is at best clutter and at worst a
+        # foot-gun ("git checkout main" picking up the wrong ref).
+        pull_result = _run_git(
+            root, ["pull", "--rebase", "--no-tags", remote], check=False
         )
+        if pull_result.returncode != 0:
+            # See the redaction note on the push branch — credentialed
+            # URLs can land in pull stderr too (e.g. when the remote is
+            # unreachable git echoes the URL with the auth segment).
+            stderr = _redact_text(pull_result.stderr.strip())
+            stdout = _redact_text(pull_result.stdout.strip())
+            raise SyncError(
+                f"`git pull --rebase {remote}` failed: "
+                f"{stderr or stdout}\n"
+                "If the failure is a merge conflict, resolve it by hand and "
+                "run `git rebase --continue` from the memory directory. "
+                "On crash mid-rebase, `git rebase --abort` recovers the "
+                "pre-pull state."
+            )
 
-    # `--no-tags` keeps a hostile (or sloppy) remote from injecting refs
-    # under `refs/tags/` that shadow branch names, and keeps the local
-    # `.git/refs/tags/` clean — the memory store has no concept of tags,
-    # so anything that lands there is at best clutter and at worst a
-    # foot-gun ("git checkout main" picking up the wrong ref).
-    pull_result = _run_git(root, ["pull", "--rebase", "--no-tags", remote], check=False)
-    if pull_result.returncode != 0:
-        # See the redaction note on the push branch — credentialed
-        # URLs can land in pull stderr too (e.g. when the remote is
-        # unreachable git echoes the URL with the auth segment).
-        stderr = _redact_text(pull_result.stderr.strip())
-        stdout = _redact_text(pull_result.stdout.strip())
-        raise SyncError(
-            f"`git pull --rebase {remote}` failed: "
-            f"{stderr or stdout}\n"
-            "If the failure is a merge conflict, resolve it by hand and "
-            "run `git rebase --continue` from the memory directory."
-        )
+        indexed: int | None = None
+        if reindex:
+            # Lazy import — same pattern the Store hooks use. Avoids
+            # paying the SQLite import cost on sync runs that pass
+            # --no-reindex.
+            from . import index as _index
+            from .store import Store
 
-    indexed: int | None = None
-    if reindex:
-        # Lazy import — same pattern the Store hooks use. Avoids
-        # paying the SQLite import cost on sync runs that pass
-        # --no-reindex.
-        from . import index as _index
-        from .store import Store
-
-        store = Store(root)
-        indexed = _index.rebuild(root, store.iter_active())
+            store = Store(root)
+            indexed = _index.rebuild(root, store.iter_active())
 
     return {
         "root": str(root),

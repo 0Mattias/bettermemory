@@ -83,6 +83,27 @@ DEFAULT_OLLAMA_URL = "http://localhost:11434"
 DEFAULT_OLLAMA_MODEL = "llama3.2:3b"
 DEFAULT_OLLAMA_TIMEOUT_SECONDS = 60.0
 
+# Output-token cap shared across providers. 2048 is well above any
+# legitimate JSON proposal payload for the cluster sizes we feed in,
+# and prevents an unbounded local Ollama (or a misconfigured remote
+# provider) from running away and OOMing the consolidate process by
+# buffering megabytes of response. The Anthropic provider already
+# carried this cap from day one; the Ollama and OpenAI providers
+# previously had no output bound, so a runaway model could allocate
+# all available RAM before parsing rejected the (invalid) tail.
+DEFAULT_MAX_OUTPUT_TOKENS = 2048
+
+
+class LLMResponseTruncated(RuntimeError):
+    """Raised when the LLM hit ``max_tokens`` and the response is
+    truncated mid-JSON. Distinct from ``ProposalValidationError`` so
+    the consolidate report can surface "raise max_tokens or split
+    cluster" instead of a generic "JSON parse failed" — the previous
+    silent-drop behaviour (truncated JSON falls through
+    ``parse_and_validate`` as malformed) hid the actual root cause
+    from the operator.
+    """
+
 
 # ---------------------------------------------------------------------------
 # Cluster — input shape to the LLM
@@ -320,12 +341,34 @@ class OllamaProvider:
                 # most well-formed cases; the validator handles the
                 # rest.
                 "format": "json",
-                "options": {"temperature": 0.0},
+                "options": {
+                    "temperature": 0.0,
+                    # Bound output tokens so a misconfigured or
+                    # runaway local Ollama can't allocate all RAM
+                    # buffering a multi-MB JSON response. `httpx`
+                    # buffers the whole body before `.json()`; the
+                    # cap is on the producer side.
+                    "num_predict": DEFAULT_MAX_OUTPUT_TOKENS,
+                },
             },
             timeout=self.timeout_seconds,
         )
         response.raise_for_status()
-        raw = response.json().get("response", "")
+        payload = response.json()
+        raw = payload.get("response", "")
+        # Ollama reports truncation via `done_reason == "length"`
+        # (newer) or by an empty `done` flag (older); both indicate
+        # the model stopped because it hit the token cap, not because
+        # it finished cleanly. A truncated JSON body silently falls
+        # through `parse_and_validate` as malformed, hiding the
+        # actual root cause; raise distinctly so the consolidate
+        # report can advise "raise num_predict or split cluster".
+        if payload.get("done_reason") == "length":
+            raise LLMResponseTruncated(
+                f"Ollama response truncated at num_predict="
+                f"{DEFAULT_MAX_OUTPUT_TOKENS}; raise the cap or split "
+                f"the cluster."
+            )
         return parse_and_validate(raw, cluster)
 
 
@@ -367,10 +410,20 @@ class AnthropicProvider:
         prompt = build_prompt(cluster, today=today)
         msg = client.messages.create(
             model=self.model,
-            max_tokens=2048,
+            max_tokens=DEFAULT_MAX_OUTPUT_TOKENS,
             temperature=0.0,
             messages=[{"role": "user", "content": prompt}],
         )
+        # `stop_reason == "max_tokens"` means the model hit the cap
+        # mid-response; the JSON body is truncated and `parse_and_
+        # validate` would silently drop every proposal. Raise
+        # distinctly so the consolidate report surfaces the cause.
+        if getattr(msg, "stop_reason", None) == "max_tokens":
+            raise LLMResponseTruncated(
+                f"Anthropic response truncated at max_tokens="
+                f"{DEFAULT_MAX_OUTPUT_TOKENS}; raise the cap or split "
+                f"the cluster."
+            )
         # Anthropic returns a list of content blocks; we asked for a
         # single text response.
         raw = "".join(
@@ -411,11 +464,23 @@ class OpenAIProvider:
         prompt = build_prompt(cluster, today=today)
         response = client.chat.completions.create(
             model=self.model,
+            max_tokens=DEFAULT_MAX_OUTPUT_TOKENS,
             temperature=0.0,
             messages=[{"role": "user", "content": prompt}],
             response_format={"type": "json_object"},
         )
-        raw = response.choices[0].message.content or ""
+        # `finish_reason == "length"` is the OpenAI signal that the
+        # model hit `max_tokens` mid-response. Raise distinctly so
+        # the operator sees the cause instead of an opaque JSON parse
+        # failure — same pattern as the Anthropic and Ollama branches.
+        choice = response.choices[0]
+        if getattr(choice, "finish_reason", None) == "length":
+            raise LLMResponseTruncated(
+                f"OpenAI response truncated at max_tokens="
+                f"{DEFAULT_MAX_OUTPUT_TOKENS}; raise the cap or split "
+                f"the cluster."
+            )
+        raw = choice.message.content or ""
         return parse_and_validate(raw, cluster)
 
 

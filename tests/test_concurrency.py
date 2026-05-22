@@ -21,6 +21,14 @@ collisions on the same memory are exactly the contention we want
 to exercise. After the workers finish, validate invariants on the
 on-disk state.
 
+The 2.6.3 release added a fault-injection block at the end of this
+module that targets the lockfile-inode-identity invariant
+specifically: a regression to the pre-fix `unlink in finally`
+discipline would let two flock holders coexist on different inodes.
+The stress test alone wouldn't catch that — collisions are rare
+enough at 200 ops that the inode-split race wouldn't fire reliably.
+The targeted assertions below close the gap deterministically.
+
 Skipped on Windows: the locking primitive is a no-op there
 (`fcntl` is POSIX-only) and the MVP single-process assumption
 applies. The test would still pass — just trivially.
@@ -32,6 +40,7 @@ import json
 import multiprocessing as mp
 import random
 import sys
+import time
 from pathlib import Path
 
 import pytest
@@ -258,4 +267,196 @@ def test_multi_process_stress_no_corruption(tmp_path: Path) -> None:
         f"Too many concurrency_errors: {total_errs} of "
         f"{total_ops + total_errs} attempts failed. Lock contention "
         f"may be wrong-headed."
+    )
+
+
+# ---------------------------------------------------------------------------
+# Targeted lockfile-invariant tests (2.6.3 regression coverage)
+# ---------------------------------------------------------------------------
+#
+# The stress test exercises locks in aggregate but doesn't deterministically
+# fire the inode-identity race that the 2.6.3 unlink-in-finally fix closed.
+# These tests pin two invariants explicitly:
+#
+#   1. `_locked` MUST NOT unlink its lockfile on context-manager exit.
+#      Doing so re-introduces the 2.6.3 bug: a concurrent acquirer's
+#      `os.open` after the unlink lands on a fresh inode, and flock
+#      identity is per-inode, so two holders coexist.
+#
+#   2. While process A holds `_locked(path)`, process B's attempt to
+#      acquire `_locked(path)` from a spawned (not forked) interpreter
+#      MUST block until A releases. Same invariant exercised by the
+#      stress test, but deterministic and isolated from the surrounding
+#      Store activity so a regression points at the lock primitive
+#      itself.
+
+
+def test_store_locked_persists_lockfile_after_exit(tmp_path: Path) -> None:
+    """`_locked` must not unlink the lockfile on exit. The 2.6.3 fix
+    removed the prior in-finally unlink; this test fails if anyone
+    re-introduces it. The 0-byte file on disk is the price we pay
+    for inode-stable mutual exclusion across processes.
+    """
+    from bettermemory.store import _locked
+
+    target = tmp_path / "thing.md"
+    target.touch()
+    lock_path = target.with_suffix(target.suffix + ".lock")
+
+    with _locked(target):
+        assert lock_path.exists(), (
+            "lockfile must exist while the lock is held; if it doesn't, "
+            "the acquire path is wrong"
+        )
+    assert lock_path.exists(), (
+        "lockfile must persist after release — see 2.6.3. Unlinking "
+        "breaks inode identity for the next acquirer."
+    )
+
+
+def test_events_locked_persists_lockfile_after_exit(tmp_path: Path) -> None:
+    """Same invariant for `events._locked`. The 2.6.3 fix touched
+    both files because the bug was in both."""
+    from bettermemory.events import _locked
+
+    target = tmp_path / ".events.jsonl"
+    target.touch()
+    lock_path = target.with_suffix(target.suffix + ".lock")
+
+    with _locked(target):
+        assert lock_path.exists()
+    assert lock_path.exists()
+
+
+def _worker_hold_lock(root: str, acquired_marker: str, release_marker: str) -> None:
+    """Worker A: acquire `_locked` on a known path, signal acquisition
+    via a marker file, hold until the release marker appears.
+
+    Must be a module-level function so `mp.get_context("spawn")` can
+    pickle it. The worker uses an external file-system rendezvous
+    (touch / poll) rather than an `mp.Event` so the test exercises a
+    realistic cross-process coordination posture — Events are great
+    for tightly-coupled workers but don't reflect how real bettermemory
+    processes (MCP server + Stop hook + `bettermemory sync`) coordinate.
+    """
+    from bettermemory.store import _locked
+
+    target = Path(root) / "thing.md"
+    target.touch()
+
+    with _locked(target):
+        Path(acquired_marker).touch()
+        # Wait up to 10 seconds for the parent to signal release. The
+        # parent should signal within ~0.5s; the long timeout is just
+        # belt-and-suspenders so a flaky scheduler doesn't leave a
+        # zombie worker holding the lock indefinitely.
+        deadline = time.monotonic() + 10
+        while time.monotonic() < deadline:
+            if Path(release_marker).exists():
+                return
+            time.sleep(0.01)
+
+
+def _worker_time_acquire(root: str, attempt_marker: str, result_path: str) -> None:
+    """Worker B: attempt `_locked` on the same path A holds; record
+    how long the acquisition took. Signals the parent via
+    ``attempt_marker`` immediately before calling `_locked` so the
+    parent can synchronize its hold timer against B's actual attempt
+    rather than against B's spawn start (which on macOS takes
+    ~200 ms and would otherwise eat the hold window).
+
+    The parent will assert elapsed ≥ the time A held after B's
+    signal — anything less means mutual exclusion failed.
+    """
+    from bettermemory.store import _locked
+
+    target = Path(root) / "thing.md"
+    Path(attempt_marker).touch()
+    t0 = time.monotonic()
+    with _locked(target):
+        elapsed = time.monotonic() - t0
+    Path(result_path).write_text(json.dumps({"elapsed": elapsed}))
+
+
+@pytest.mark.skipif(
+    sys.platform == "win32",
+    reason="fcntl-based locking is POSIX-only",
+)
+def test_locked_serializes_two_spawned_processes(tmp_path: Path) -> None:
+    """Cross-process mutual exclusion: while A holds the lock, B's
+    acquisition MUST block until A releases.
+
+    This is the contract `_locked` is supposed to provide. The
+    stress test exercises it by accident under random ops; this
+    test fires it deterministically. A regression here points at
+    the lock primitive directly, not at any higher-level Store path.
+
+    Uses `spawn` (not `fork`) so the workers don't inherit the
+    parent's already-open fds, which would short-circuit the
+    cross-process flock test.
+    """
+    ctx = mp.get_context("spawn")
+    barrier_dir = tmp_path / "barriers"
+    barrier_dir.mkdir()
+    a_acquired = barrier_dir / "a_acquired"
+    a_release = barrier_dir / "a_release"
+    b_attempting = barrier_dir / "b_attempting"
+    b_result = barrier_dir / "b_result.json"
+
+    proc_a = ctx.Process(
+        target=_worker_hold_lock,
+        args=(str(tmp_path), str(a_acquired), str(a_release)),
+    )
+    proc_a.start()
+
+    # Wait until A has the lock — the marker file appears after A's
+    # `with _locked(...)` block opens.
+    deadline = time.monotonic() + 10
+    while not a_acquired.exists():
+        if time.monotonic() > deadline:
+            proc_a.kill()
+            proc_a.join(timeout=2)
+            pytest.fail("worker A never signalled lock acquisition")
+        time.sleep(0.01)
+
+    # Spawn B; it should block in `_locked(...)` waiting for A. B
+    # signals via `b_attempting` immediately before its lock attempt
+    # so the parent can time the hold from B's attempt onward rather
+    # than from B's spawn (spawn overhead is ~200ms on macOS and
+    # would otherwise hide a real fix).
+    proc_b = ctx.Process(
+        target=_worker_time_acquire,
+        args=(str(tmp_path), str(b_attempting), str(b_result)),
+    )
+    proc_b.start()
+
+    deadline = time.monotonic() + 10
+    while not b_attempting.exists():
+        if time.monotonic() > deadline:
+            proc_a.kill()
+            proc_b.kill()
+            proc_a.join(timeout=2)
+            proc_b.join(timeout=2)
+            pytest.fail("worker B never signalled lock-acquisition attempt")
+        time.sleep(0.01)
+
+    # B is now blocked inside `_locked`. Hold for a measurable window.
+    hold_seconds = 0.5
+    time.sleep(hold_seconds)
+    a_release.touch()
+
+    proc_a.join(timeout=10)
+    proc_b.join(timeout=10)
+    assert proc_a.exitcode == 0, f"worker A failed (exit={proc_a.exitcode})"
+    assert proc_b.exitcode == 0, f"worker B failed (exit={proc_b.exitcode})"
+
+    result = json.loads(b_result.read_text())
+    elapsed = result["elapsed"]
+    # B's elapsed must include the hold window. Slack tolerates
+    # scheduler jitter without masking a real mutual-exclusion
+    # regression: a broken lock yields elapsed ≈ 0.
+    assert elapsed >= 0.8 * hold_seconds, (
+        f"worker B acquired in {elapsed:.3f}s while A was supposed to "
+        f"hold for {hold_seconds:.3f}s. Mutual exclusion broken — "
+        f"likely a regression of the 2.6.3 lockfile-identity fix."
     )

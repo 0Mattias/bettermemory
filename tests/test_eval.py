@@ -66,9 +66,27 @@ def _mem(
 def _ev(
     kind: str, ts: datetime | str = "2026-05-15T12:00:00.000+00:00", **fields: Any
 ) -> dict[str, Any]:
+    """Hand-built event dict for tests that don't need disk round-trip.
+
+    Prefer the ``event_log`` pytest fixture (see ``tests/_event_helpers.py``)
+    for new tests — it routes through the real ``Recorder`` and so the
+    fixture's shape can never drift from production's. This helper
+    remains for legacy tests; the ``session`` default is omitted when
+    callers pass either ``session=`` or ``session_id=`` so the two
+    fields never disagree in a way that's impossible in production.
+    """
     if isinstance(ts, datetime):
         ts = ts.isoformat()
-    return {"ts": ts, "kind": kind, "session": "sess-test", **fields}
+    base: dict[str, Any] = {"ts": ts, "kind": kind}
+    # Only default `session` when the caller didn't provide a session
+    # field. Pre-2.6.4 the helper hardcoded `session: "sess-test"`
+    # regardless of any `session_id=` the caller passed — the resulting
+    # event had both fields disagreeing, which can't happen in
+    # production (both are derived from the same SessionState).
+    if "session" not in fields and "session_id" not in fields:
+        base["session"] = "sess-test"
+    base.update(fields)
+    return base
 
 
 # ---------------------------------------------------------------------------
@@ -383,6 +401,36 @@ class TestSilentMissRate:
         report = compute_eval(memories=[], events=events)
         assert report.silent_misses == 1
         assert report.silent_miss_recent == []
+
+    def test_legacy_hook_top_hit_ids_shape_still_renders(self) -> None:
+        """Regression for the 2.6.4 silent-miss fix.
+
+        Pre-2.6.4 the Stop hook emitted `top_hit_ids=[strings]`
+        instead of `top_hits=[dicts]`. Eval read canonical-only, so
+        the renderer's `top_missed_id` came back None for every
+        hook-originated miss — and the hook is the *primary*
+        production source. Archived events on disk still carry the
+        legacy shape, so the eval reader must tolerate both with the
+        same discipline 70e41a4 established for llm.py.
+
+        The synthesized fallback can't recover relevance (the legacy
+        shape didn't store it), so the renderer shows None there —
+        but the id surfaces, which is what triage actually uses.
+        """
+        events: list[dict[str, Any]] = [
+            _ev(
+                "search_miss",
+                session_id="sess-legacy",
+                top_hit_ids=["mem-legacy"],
+                triggered_from="stop_hook",
+            ),
+        ]
+        report = compute_eval(memories=[], events=events)
+        assert report.silent_misses == 1
+        cand = report.silent_miss_recent[0]
+        assert cand.top_missed_id == "mem-legacy"
+        # Relevance not recoverable from the legacy shape.
+        assert cand.top_missed_relevance is None
 
 
 # ---------------------------------------------------------------------------

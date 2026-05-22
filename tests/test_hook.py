@@ -173,6 +173,18 @@ def test_flatten_assistant_content_returns_none_on_no_text() -> None:
 # ---------------------------------------------------------------------------
 
 
+class _StdinMock:
+    """Minimal stdin double exposing a `.buffer` for binary reads.
+
+    The hook now reads via `sys.stdin.buffer` (binary) so the
+    2.6.4 byte-cap can apply; tests need to swap that out without
+    importing the full real-stdin machinery.
+    """
+
+    def __init__(self, data: bytes) -> None:
+        self.buffer = io.BytesIO(data)
+
+
 def test_main_no_op_when_payload_empty(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
@@ -181,9 +193,33 @@ def test_main_no_op_when_payload_empty(
     """Empty stdin payload: nothing to do. Must exit 0 and write
     nothing to the event log."""
     monkeypatch.setenv("BETTERMEMORY_DIR", str(tmp_path))
-    monkeypatch.setattr("sys.stdin", io.StringIO(""))
+    monkeypatch.setattr("sys.stdin", _StdinMock(b""))
     code = hook_main(["--quiet"])
     assert code == 0
+    assert not (tmp_path / ".events.jsonl").exists()
+
+
+def test_main_no_op_when_stdin_oversized(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """Regression for the 2.6.4 stdin byte-cap fix.
+
+    Pre-2.6.4 the hook called `sys.stdin.read()` with no cap; a
+    misbehaving upstream piping GB of bytes would buffer the whole
+    thing into memory before `json.loads` could reject. The fix
+    caps via `bounded_stream_read` and treats oversized payloads as
+    "malformed input — silent no-op" so the contract that the hook
+    never breaks the turn end stays intact.
+    """
+    monkeypatch.setenv("BETTERMEMORY_DIR", str(tmp_path))
+    # 128 KiB of garbage — 2× the 64 KiB cap.
+    monkeypatch.setattr("sys.stdin", _StdinMock(b"x" * (128 * 1024)))
+    code = hook_main(["--quiet"])
+    # Must NOT raise; must exit 0 quietly.
+    assert code == 0
+    # Oversized payload is treated as "nothing to audit" — no events
+    # land in the log because we didn't reach the audit branch.
     assert not (tmp_path / ".events.jsonl").exists()
 
 
@@ -278,6 +314,35 @@ def test_main_runs_audit_and_logs_turn_audited(
     # leaving downstream rollups joining stop-hook and model-side
     # events with an inconsistent field shape.
     assert audited["assistant_present"] is True
+    # Canonical-shape regression for the 2.6.4 silent-miss fix.
+    # Pre-2.6.4 the hook emitted `turn_audited` without `session_id` /
+    # `lookback_seconds` / `probe_mode`, and `search_miss` with
+    # `top_hit_ids=[strings]` instead of `top_hits=[dicts]`. That
+    # silently broke `eval.py:_silent_miss_from_event` for the
+    # primary production source. The fields below MUST exist with
+    # the canonical shape the in-process handler also writes — if
+    # any disappears, the silent-miss eval renderer regresses.
+    assert isinstance(audited.get("session_id"), str)
+    assert isinstance(audited.get("lookback_seconds"), int)
+    assert isinstance(audited.get("probe_mode"), str)
+    assert isinstance(audited.get("threshold_rule"), str)
+    if "search_miss" in kinds:
+        miss = next(e for e in events if e["kind"] == "search_miss")
+        # top_hits must be a list of dicts with id+relevance, not a
+        # bare list of id strings.
+        top_hits = miss.get("top_hits")
+        assert isinstance(top_hits, list)
+        if top_hits:
+            first = top_hits[0]
+            assert isinstance(first, dict)
+            assert "id" in first
+            assert "relevance" in first
+        # threshold_rule and lookback_seconds are required for eval
+        # to render the row meaningfully.
+        assert isinstance(miss.get("threshold_rule"), str)
+        assert isinstance(miss.get("lookback_seconds"), int)
+        # The hook keeps its source marker.
+        assert miss.get("triggered_from") == "stop_hook"
     # The output (when --quiet wasn't passed) is a JSON summary.
     captured = capsys.readouterr()
     payload = json.loads(captured.out)

@@ -59,6 +59,7 @@ from __future__ import annotations
 
 import contextlib
 import logging
+import os
 import re
 from dataclasses import dataclass
 from pathlib import Path
@@ -482,27 +483,46 @@ def flush_persistent_cache() -> None:
     # handles the rest. Object arrays for ids/keys are fine —
     # they're short ULID-shaped strings.
     _PERSISTENT_PATH.parent.mkdir(parents=True, exist_ok=True)
-    tmp = _PERSISTENT_PATH.with_suffix(_PERSISTENT_PATH.suffix + ".tmp")
-    try:
-        # Pass an open file handle rather than the path. np.savez_compressed
-        # auto-appends `.npz` to a path string that doesn't already end in
-        # it — which would turn our `.npz.tmp` into `.npz.tmp.npz` and
-        # break the atomic rename below. Writing to a file object bypasses
-        # that suffix-mangling. fsync the file before closing so the bytes
-        # backing the rename are durable, mirroring `_atomic_write_post`'s
-        # discipline in the main store.
-        with open(tmp, "wb") as f:
-            np.savez_compressed(
-                f,
-                ids=np.array(ids),
-                keys=np.array(keys),
-                vectors=np.stack(vectors),
-            )
-            f.flush()
-            from ._fsutil import fsync_file
+    # Process-unique tmp name so two concurrent flushes (e.g. two MCP
+    # servers in the same memory dir) don't collide on the same
+    # `.tmp` path. Worst case is still last-writer-wins on the
+    # rename — that's OK because the cache is fully recomputable —
+    # but with a shared `.tmp` they'd corrupt each other's writes.
+    tmp = _PERSISTENT_PATH.with_suffix(f"{_PERSISTENT_PATH.suffix}.tmp.{os.getpid()}")
+    from ._fsutil import flock_excl, fsync_dir, fsync_file
 
-            fsync_file(f.fileno())
-        tmp.replace(_PERSISTENT_PATH)
+    try:
+        # Serialize the rename against concurrent flushes. flock_excl
+        # is per-inode exclusive; concurrent writers all serialise
+        # through the same lockfile. The lock surface is small
+        # (rename + chmod + fsync_dir); contention is negligible.
+        with flock_excl(_PERSISTENT_PATH):
+            # Pass an open file handle rather than the path. np.savez_compressed
+            # auto-appends `.npz` to a path string that doesn't already end in
+            # it — which would turn our `.npz.tmp` into `.npz.tmp.npz` and
+            # break the atomic rename below. Writing to a file object bypasses
+            # that suffix-mangling. fsync the file before closing so the bytes
+            # backing the rename are durable, mirroring `_atomic_write_post`'s
+            # discipline in the main store.
+            with open(tmp, "wb") as f:
+                np.savez_compressed(
+                    f,
+                    ids=np.array(ids),
+                    keys=np.array(keys),
+                    vectors=np.stack(vectors),
+                )
+                f.flush()
+                fsync_file(f.fileno())
+            tmp.replace(_PERSISTENT_PATH)
+            # `.npz` contains vector representations of memory bodies —
+            # same privacy bar as the source memories, which use 0o600.
+            # Pre-2.6.4 this file inherited umask and could land
+            # world-readable on shared-user boxes.
+            with contextlib.suppress(OSError):
+                os.chmod(_PERSISTENT_PATH, 0o600)
+            # fsync the parent directory so the rename survives crash —
+            # mirror `_atomic_write_post`.
+            fsync_dir(_PERSISTENT_PATH.parent)
         _DIRTY = False
     except Exception as exc:  # noqa: BLE001 — never break the dedup path
         # Clean up the orphaned tmp so a half-written cache doesn't sit
@@ -559,8 +579,15 @@ def cosine_similarity_normalized(a: Any, b: Any) -> float:
     plain lists, or any iterable of floats — we don't import numpy
     explicitly, so the module remains usable when only sentence-transformers
     (which brings numpy) is installed but not used.
+
+    Raises ``ValueError`` on dimension mismatch. ``zip(strict=True)``
+    catches the case where the persistent cache was written with one
+    embedding model's output dimension and is being read against
+    another — pre-2.6.4 ``zip(a, b)`` truncated to the shorter input
+    and produced a meaningless similarity over the overlap, which
+    still passed the threshold and silently misranked dedup.
     """
-    return float(sum(x * y for x, y in zip(a, b)))
+    return float(sum(x * y for x, y in zip(a, b, strict=True)))
 
 
 # ---------------------------------------------------------------------------

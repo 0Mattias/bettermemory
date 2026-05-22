@@ -478,7 +478,9 @@ class ResponseBuilder:
             ts = _parse_iso_ts(ts_str)
             if ts is None or ts.timestamp() < cutoff:
                 continue
-            ids = event.get("ids") or []
+            # Legacy fallback for `memory_ids` — same class as the
+            # 70e41a4 llm.py fix. Old `use` archives have `memory_ids`.
+            ids = event.get("ids") or event.get("memory_ids") or []
             for i, mid in enumerate(ids):
                 if mid not in hit_ids:
                     continue
@@ -486,7 +488,7 @@ class ResponseBuilder:
                     {
                         "ts": ts,
                         "outcome": event.get("outcome"),
-                        "session": event.get("session"),
+                        "session": event.get("session") or event.get("session_id"),
                         "note": event.get("note"),
                         "claim_excerpt": _claim_at_index(event, i),
                     }

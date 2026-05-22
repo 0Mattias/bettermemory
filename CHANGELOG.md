@@ -7,6 +7,247 @@ breaking changes, minor for additive features, patch for fixes. The
 [compatibility contract](CONTRIBUTING.md#versioning-and-the-compatibility-contract)
 spells out exactly what's stable.
 
+## 2.6.4 - 2026-05-21
+
+**Fourth audit pass over the 2.6.x surface, this one structural.** The
+prior three audits found instances of named bug classes; each fix
+landed in one location while the same pattern lived elsewhere
+unchecked. This release inverts the discipline: instead of finding
+more instances, it makes whole classes structurally impossible. Six
+parallel agent audits hunted (1) bounds enforcement, (2) field-name
+drift, (3) cross-process concurrency primitives, (4) pattern non-
+generalization from prior fixes, (5) test-fixture honesty, and (6)
+novel bug classes the first three passes missed. The big find: the
+2.1.0 silent-miss telemetry flagship is partially broken for hook-
+originated events — three audits walked past it.
+
+### Added — structural foundations
+
+- **`_fsutil.bounded_read` / `bounded_tail_read` / `bounded_stream_read`.**
+  Single point of enforcement for resource caps on input. The 2.6.2
+  and 2.6.3 releases fixed three separate unbounded-read defects (the
+  consolidate transcript, the hook transcript, the byte-vs-char trap
+  on the cap constant); the underlying class is one this codebase
+  kept producing because each call site re-derived its own
+  `.read(N)` discipline. Centralising here means the next time
+  someone adds a "read this user-controlled file" helper, the cap
+  honours bytes (not characters), the error path is named
+  (`ValueError`, not OOM), and the byte-vs-char trap is structurally
+  impossible because the helpers open in binary mode. Unit-tested
+  against the 4-byte-codepoint case directly.
+- **`_fsutil.flock_excl` — single definition for the locking
+  primitive.** `store.py:_locked` and `events.py:_locked` had been
+  duplicate implementations of the same fcntl-based exclusive
+  lock since the start. The 2.6.3 audit-pass-of-audit-pass fix
+  touched both files because the unlink-in-finally bug lived in both
+  copies. This release lifts the canonical definition to
+  `_fsutil.flock_excl`; store / events / sync all alias to it.
+  Future locking-discipline fixes land in one place — the
+  3× duplication that the 2.6.3 audit cycle had to chase is gone.
+- **`tests/_event_helpers.EventLog` + `event_log` fixture.** Real
+  `Recorder`-backed event log for tests. The 2.6.2 and 2.6.3 bugs
+  both shipped because test fixtures hand-built event dicts with
+  field names the canonical `Recorder` doesn't emit (`memory_search`
+  / `memory_ids` / `hit_ids` instead of `search` / `ids` /
+  `returned`). Tests passed, production silently failed. `EventLog`
+  routes through the real `Recorder` so any future field rename
+  fails the suite at write time instead of shipping. Includes
+  `test_shape_matches_real_handlers_emission` which pins the
+  canonical key set explicitly — drift trips the suite.
+- **Multi-process lockfile fault-injection tests
+  (`test_concurrency.py`).** Two new deterministic tests:
+  `test_store_locked_persists_lockfile_after_exit` and
+  `test_events_locked_persists_lockfile_after_exit` assert that the
+  lockfile must NOT be unlinked on context-manager exit (the exact
+  2.6.3 regression). `test_locked_serializes_two_spawned_processes`
+  spawns two interpreters and asserts B blocks on A's lock for the
+  hold window. The stress test alone wouldn't catch a regression of
+  the inode-identity invariant — these close that gap.
+- **`test_changelog.py` — CHANGELOG hygiene lint.** Asserts every
+  `## <version> -` heading is well-formed AND the version in
+  `pyproject.toml` has a matching entry. The 2.6.2 release noted
+  three missing-heading defects (1.2.1, 1.3.0, 2.6.0); the prose
+  body in each case was intact but the heading had silently
+  disappeared. Also pins `plugin.json` and `marketplace.json`
+  version against `pyproject.toml` since the recurring foot-gun
+  of one-of-three drifting bit the project on three separate
+  releases. The next missing-heading or version-drift instance
+  trips CI instead of an audit pass.
+
+### Fixed — live shipping bugs
+
+- **CRITICAL: silent-miss telemetry partially broken for hook-
+  originated events (the 2.1.0 flagship).** `hook.py:_run_audit`
+  emitted `search_miss` with `top_hit_ids=[strings]` and omitted
+  `threshold_rule` / `lookback_seconds`, while `_handlers.py:_advance_turn`
+  (the in-process MCP handler) emits `top_hits=[dicts]` with both
+  fields. `eval.py:_silent_miss_from_event` reads the canonical
+  names — so every hook-originated silent miss surfaced in `bettermemory
+  eval` showed blank `top_missed_id` / `top_missed_relevance` /
+  `threshold_rule` columns. The Stop hook is the *primary* production
+  source of search_miss events (model-side `memory_audit_turn` rarely
+  fires unprompted), so the flagship eval feature was running blind
+  on real traffic. **Three audit passes missed this.** Fix: hook
+  now emits the canonical shape (`session_id=` kwarg, `top_hits=
+  [h.to_dict() for h in report.top_hits]`, `threshold_rule`,
+  `lookback_seconds`, `probe_mode`); eval reader tolerates the
+  legacy `top_hit_ids` shape with `None` relevance so pre-2.6.4
+  archived events still render the id column. Regression coverage
+  in `test_hook.py` (pins canonical shape on every hook emission)
+  and `test_eval.py:test_legacy_hook_top_hit_ids_shape_still_renders`.
+- **HIGH: `_frontmatter.load` read whole file before YAML cap fired.**
+  `_frontmatter.py:108-110` called `Path.read_text()` with no
+  pre-flight size check. The existing `_MAX_YAML_BYTES = 64 KiB`
+  cap only protects the frontmatter region — a hostile `sync pull`
+  pushing a multi-GB `.md` would OOM the loader before the YAML
+  parser ran. Three audit agents flagged this independently. Fix:
+  stat-rejects above `_MAX_FILE_BYTES = 1 MiB` (250× the largest
+  legitimate memory body, 16× the YAML cap) using `bounded_read`.
+- **HIGH: `hook.py:main` read entire stdin payload with no cap.**
+  `sys.stdin.read()` before `json.loads` would buffer GB of
+  garbage from a misbehaving pipe writer into memory before the
+  parser got a chance to reject. Stop hooks fire on every assistant
+  turn — the blast radius is wide. Fix: `bounded_stream_read(
+  sys.stdin.buffer, 64 KiB)` with oversized-payload treated as
+  malformed (silent no-op, preserving the hook's "never break the
+  turn end" contract).
+- **HIGH: `migrate.py` rewrote memory files without `_locked`.**
+  `migrate_origin_in_directory` walked the active set and
+  read-modify-wrote each file via tmp+rename WITHOUT acquiring the
+  per-file lock the rest of the store uses. A concurrent
+  `Store.update` / `tombstone` / `mark_verified` from a running MCP
+  server could land between the migrate read and the migrate
+  rename, silently losing the in-flight edit. Fix: wrap each
+  per-file RMW in `_locked(path)` AND route through
+  `_atomic_write_post` (which the rest of the store already uses) —
+  the migrate path was also dropping the 0o600 chmod, so
+  post-migration files inherited umask (0o644) and ended up
+  world-readable. Two fixes for the price of one structural
+  consolidation.
+- **HIGH: `sync.py push` / `pull` ran git operations with zero
+  Store coordination.** `git add -A` snapshots the file-set at one
+  instant; a concurrent `Store.write` mid-`add` ships a half-
+  written file-set to the remote. `git pull --rebase` can
+  `checkout` over a file that another process holds open for
+  write. Fix: both functions now hold `flock_excl(root / ".sync")`
+  for the duration of the git operation sequence. The lock covers
+  pull's reindex too so the FTS5 rebuild sees the same on-disk
+  state the rebase landed. Pull's error message gained the
+  `git rebase --abort` recovery hint for the crash-mid-rebase case.
+- **HIGH: LLM providers (Ollama, OpenAI) had no output-token cap.**
+  Ollama call had no `num_predict` in `options`; the OpenAI
+  provider passed no `max_tokens` (while Anthropic had carried
+  `max_tokens=2048` from the start). A runaway local model can
+  return arbitrarily many tokens; httpx buffers the whole body
+  before `.json()` so the consolidate process OOMs on the response
+  side. Fix: shared `DEFAULT_MAX_OUTPUT_TOKENS = 2048` enforced
+  on all three providers. Plus a new `LLMResponseTruncated`
+  exception raised when the provider signals it hit the cap
+  (`done_reason="length"` / `stop_reason="max_tokens"` /
+  `finish_reason="length"`) — pre-2.6.4 the truncated JSON
+  silently fell through `parse_and_validate` as malformed, hiding
+  the real root cause from the operator. Now the consolidate
+  report surfaces "raise the cap or split the cluster" explicitly.
+- **MEDIUM: `store.prune_tombstones` and `store.tombstone`
+  concurrency.** `prune_tombstones` read+stat+unlink each
+  tombstone WITHOUT the per-file lock — a concurrent `restore(id)`
+  race could either un-tombstone or double-unlink. Fix: wrap the
+  per-tombstone read/unlink in `_locked(path)`. Separately, the
+  tombstone-naming TOCTOU (`if target.exists(): target = ...
+  ULID-suffixed`) is killed by always using the ULID-suffixed
+  filename — unique by construction, no race possible. Existing
+  unsuffixed tombstones on disk continue to load (the reader keys
+  off the `id` field, not the filename).
+- **MEDIUM: `index.py:_ensure_schema` downgrade ran outside a
+  transaction.** On schema-version-down, `DROP TABLE` then
+  `CREATE TABLE` ran in autocommit. A parallel connection
+  opening between the drop and the create saw a schema with no
+  `memories` table and SELECTs failed (no BUSY raised because
+  the table simply wasn't there yet). Fix: wrap drop+recreate
+  in `BEGIN IMMEDIATE` ... `COMMIT` with rollback on exception.
+- **MEDIUM: `semantic.flush_persistent_cache` cache flush race.**
+  Two MCP servers in the same memory dir would both write
+  `<root>/.embeddings.npz.tmp` and race the rename, last-writer
+  -wins corrupting whichever lost. Plus no `fsync_dir`, no
+  `chmod 0o600` (vector representations of memory bodies have
+  the same privacy bar as the source memories). Fix:
+  process-unique tmp name (`.tmp.<pid>`), `flock_excl` around
+  the rename, `os.chmod(_PERSISTENT_PATH, 0o600)` post-rename,
+  `fsync_dir` post-chmod.
+- **MEDIUM: `events.py` chmod 0o600 failure silently suppressed.**
+  `contextlib.suppress(OSError)` on the chmod meant a failure
+  left the log world-readable with no signal. Fix: log WARNING
+  on failure so the operator can investigate (typical causes:
+  noexec/nosuid container mounts, restricted filesystems).
+- **MEDIUM: `semantic.cosine_similarity_normalized` truncated to
+  shorter input on dimension mismatch.** `zip(a, b)` over
+  different-length vectors produced a similarity over the
+  overlap only — meaningless number that still passed the
+  threshold. The case fires when a persistent cache from one
+  embedding model is read against another (config swap without
+  `flush_persistent_cache`). Fix: `zip(a, b, strict=True)`
+  raises `ValueError` on dimension mismatch.
+- **MEDIUM: LLM merge apply had no partial-failure recovery.**
+  `consolidate.apply_llm_proposal` updated the keeper's body
+  then iterated `store.tombstone(dup_id)` for each duplicate.
+  If the third of five tombstones failed, the keeper had the
+  merged body while two duplicates were still active —
+  retrieval would surface both the merged record and the
+  unmerged duplicates. Fix: catch exception in the tombstone
+  loop, roll back the keeper to its pre-merge body, then
+  re-raise. The rollback is best-effort but the raise gives
+  the operator a clean signal instead of silent half-done state.
+
+### Fixed — pattern-generalization (event consumer fallbacks)
+
+- The 2.6.3 fix added tolerant `event.get("returned") or
+  event.get("memory_ids")` reads to `llm.py` only. Six other
+  consumers (`_handlers.py`, `_response.py`, `hook.py`,
+  `consolidate.find_demotion_candidates`,
+  `consolidate.find_cold_scopes`) read canonical-only — pre-2.6.3
+  archived events on disk were silently dropped from those passes.
+  All six now use the same canonical-first-then-legacy discipline.
+  Same fix applied to `session` / `session_id` divergence:
+  pre-2.6.4 hook wrote `session=`, handler writes `session_id=`,
+  the Recorder auto-stamps `session`. All consumers now read
+  `event.get("session") or event.get("session_id")`.
+
+### Changed
+
+- **`tests/test_eval.py:_ev()` helper no longer fabricates
+  impossible session shapes.** Pre-2.6.4 the helper hardcoded
+  `session: "sess-test"` regardless of any `session_id=` the
+  caller passed; the resulting event had both fields
+  disagreeing — a state production never produces (both fields
+  derive from `state.session_id`). Helper now omits the
+  `session` default when the caller provides either field.
+  Migration to `_canonical_event` for legacy hand-built
+  fixtures is follow-up work; the helper docstring directs
+  new tests to the `event_log` fixture.
+
+### Audit framing — why a fourth pass
+
+After three audits in one day the question shifted from "are
+there more instances of these bug classes?" to "why do these
+bug classes keep producing new instances?" The structural fixes
+above (single helpers for byte caps + flock + test fixtures)
+make the *class* impossible — not "the next instance harder to
+find." That's the differential from the 2.6.1 / 2.6.2 / 2.6.3
+audit-pass approach, which was finding instances of named bug
+classes one at a time. Two of four 2.6.3 bug classes (byte-vs-
+char, field-name drift) are now structurally impossible at the
+write site. Concurrency primitive duplication is gone (3× → 1×).
+The fourth pass found one critical-severity live bug
+(silent-miss flagship broken for hook traffic) that three prior
+passes missed — confirming the audit-of-audit-of-audit
+diminishing-returns thesis: more audits surface different bugs
+not because they're more thorough, but because each pass's
+attention budget runs out before exhausting the surface.
+
+Suite: 1277 passed, 9 skipped (+32 tests vs 2.6.3, including
+the structural-tripwire trio: byte-cap unit tests, EventLog
+shape-pinning, lockfile fault-injection).
+
 ## 2.6.3 - 2026-05-21
 
 **Audit-pass-of-the-audit-pass-of-the-audit-pass.** A third multi-agent

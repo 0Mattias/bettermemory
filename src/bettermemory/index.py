@@ -265,17 +265,32 @@ def _ensure_schema(conn: sqlite3.Connection) -> None:
             on_disk,
             SCHEMA_VERSION,
         )
-        conn.executescript(
-            "DROP TABLE IF EXISTS memory_links;"
-            "DROP TABLE IF EXISTS memories_fts;"
-            "DROP TABLE IF EXISTS memories;"
-        )
-        conn.executescript(_SCHEMA)
-        conn.execute(
-            "UPDATE meta SET value = ? WHERE key = 'schema_version'",
-            (str(SCHEMA_VERSION),),
-        )
-        conn.execute("UPDATE meta SET value = '0' WHERE key = 'indexed_count'")
+        # Drop + re-create inside a single transaction. Without
+        # BEGIN IMMEDIATE, a parallel reader opening the index
+        # between the DROP and the CREATE sees an inconsistent
+        # schema (no `memories` table) and SELECTs fail. The
+        # SQLite busy timeout doesn't help — no BUSY is raised when
+        # the table simply isn't there yet. Wrapping in a single
+        # BEGIN IMMEDIATE … COMMIT makes the swap atomic for
+        # readers waiting on the same database file.
+        conn.execute("BEGIN IMMEDIATE")
+        try:
+            conn.executescript(
+                "DROP TABLE IF EXISTS memory_links;"
+                "DROP TABLE IF EXISTS memories_fts;"
+                "DROP TABLE IF EXISTS memories;"
+            )
+            conn.executescript(_SCHEMA)
+            conn.execute(
+                "UPDATE meta SET value = ? WHERE key = 'schema_version'",
+                (str(SCHEMA_VERSION),),
+            )
+            conn.execute("UPDATE meta SET value = '0' WHERE key = 'indexed_count'")
+            conn.commit()
+        except Exception:
+            conn.rollback()
+            raise
+        return
     conn.commit()
 
 
