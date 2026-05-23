@@ -676,7 +676,13 @@ def compute_health(
 
     for ev in events:
         total_events += 1
-        sess = ev.get("session")
+        # Canonical-first read with the legacy-name fallback the other
+        # event consumers use. The Recorder stamps `session` on every
+        # canonical-emitted event, but `turn_audited` / `search_miss`
+        # use `session_id` as their canonical field — without the
+        # fallback, those event kinds were silently dropped from the
+        # distinct-session rollup.
+        sess = ev.get("session") or ev.get("session_id")
         if sess:
             sessions.add(sess)
 

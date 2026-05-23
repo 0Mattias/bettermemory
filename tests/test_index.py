@@ -424,38 +424,63 @@ def test_v1_index_downgraded_to_v2_via_drop_and_recreate(
     assert a.id in filenames
 
 
-def test_schema_rebuild_executescript_is_transactional(tmp_path: Path) -> None:
+def test_schema_rebuild_executescript_is_transactional(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     """Regression for the 2.6.4 audit. `_ensure_schema`'s v1→v2
-    rebuild keeps the DROP + CREATE atomic by embedding
-    `BEGIN IMMEDIATE … COMMIT` *inside* the `executescript` string.
-    The 2.6.4 code instead did `conn.execute("BEGIN IMMEDIATE")`
-    then a separate `executescript(...)` — but `executescript`
-    implicitly commits the pending transaction first, so the BEGIN
-    wrapped nothing and a concurrent reader could see the
-    no-`memories`-table gap.
+    rebuild must keep the DROP + CREATE atomic — a failure on the
+    CREATE side must roll the DROP back so the on-disk memories
+    table survives.
 
-    Pins the property the fix depends on: an `executescript` whose
-    script carries its own BEGIN/COMMIT genuinely wraps — a failure
-    mid-script rolls the earlier statements back.
+    The 2.6.4 bug was `conn.execute("BEGIN IMMEDIATE")` followed by
+    a separate `conn.executescript(...)`: `executescript` implicitly
+    commits any pending transaction before it runs, so the BEGIN
+    wrapped nothing and the DROP would be auto-committed by the time
+    the CREATE failed. The 2.6.5 fix moves BEGIN/COMMIT inside the
+    executescript string.
+
+    Exercises the production code path (not a stdlib-property pin):
+    sets up a v1 index with a row, injects a broken `_SCHEMA` so the
+    v1→v2 rebuild's CREATE phase fails, calls `_ensure_schema`, and
+    asserts the row survives. A regression to the 2.6.4 bug shape
+    would commit the DROP and lose the row; the fix preserves it.
     """
     db = tmp_path / "t.sqlite"
     conn = sqlite3.connect(db)
-    conn.executescript(
-        "CREATE TABLE memories (id TEXT);INSERT INTO memories VALUES ('keep');"
-    )
-    conn.commit()
-    # Script drops the table, then fails on a broken CREATE.
-    with pytest.raises(sqlite3.Error):
-        conn.executescript(
-            "BEGIN IMMEDIATE;\n"
-            "DROP TABLE memories;\n"
-            "CREATE TABLE memories (broken syntax;\n"
-            "COMMIT;"
+    try:
+        # Initial setup: build a current-schema index with one row,
+        # then force the meta version backwards so the next
+        # `_ensure_schema` call enters the v1→v2 migration branch.
+        index._ensure_schema(conn)
+        conn.execute(
+            "INSERT INTO memories(id, created, updated, confidence, body, "
+            "scopes_text, scopes_json) VALUES "
+            "('keep', '2026-01-01', '2026-01-01', 'fact', 'b', 's', '[]')"
         )
-    conn.rollback()
-    row = conn.execute("SELECT id FROM memories").fetchone()
-    conn.close()
+        conn.execute("UPDATE meta SET value = '1' WHERE key = 'schema_version'")
+        conn.commit()
+    finally:
+        conn.close()
+
+    # Inject a broken `_SCHEMA` so the v1→v2 rebuild's CREATE phase
+    # fails after the DROPs run. A non-atomic rebuild commits the
+    # DROP and loses the row; the atomic fix rolls it back.
+    monkeypatch.setattr(index, "_SCHEMA", "CREATE TABLE broken (broken syntax;")
+
+    conn = sqlite3.connect(db)
+    try:
+        with pytest.raises(sqlite3.Error):
+            index._ensure_schema(conn)
+    finally:
+        conn.close()
+
+    conn = sqlite3.connect(db)
+    try:
+        row = conn.execute("SELECT id FROM memories").fetchone()
+    finally:
+        conn.close()
     assert row == ("keep",), (
-        "embedded BEGIN/COMMIT did not wrap the DROP — a mid-rebuild "
-        "failure would destroy the index"
+        "v1→v2 rebuild left the on-disk memories table without its "
+        "original row — the DROP was committed before the failure, "
+        "exactly the 2.6.4 bug shape"
     )
