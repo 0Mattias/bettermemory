@@ -744,6 +744,19 @@ def search(
     Use the `relevance` label, not the raw score, when comparing hits
     across modes.
     """
+    # Runtime guard against unknown modes. The `SearchMode` Literal pins
+    # this at the type-checker layer, but the handler accepts an opaque
+    # string from MCP and Python doesn't enforce Literals at call time;
+    # without this check, a typo like `mode="emantic"` would fall through
+    # the if/elif chain into the `else` branch and silently run hybrid.
+    # Raising here makes the failure mode loud at the dispatch boundary
+    # regardless of where the bad string came from (handler, CLI, future
+    # programmatic client).
+    if mode not in ("keyword", "bm25", "semantic", "hybrid"):
+        raise ValueError(
+            f"unknown search mode {mode!r}; "
+            "must be one of: keyword, bm25, semantic, hybrid"
+        )
     if mode == "semantic" and semantic_model is None:
         raise ValueError("mode='semantic' requires semantic_model to be provided")
 

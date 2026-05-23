@@ -323,10 +323,19 @@ class SessionRegistry:
 
     def for_request(self, ctx: "_Ctx | None") -> SessionState:
         key = self._key_for_ctx(ctx)
+        # `setdefault` is atomic on CPython dict, so two concurrent
+        # callers observing a missing key both receive the same
+        # SessionState instance — the alternative (`get` then
+        # `__setitem__`) is a TOCTOU window where the second writer
+        # wipes the first writer's `pending_writes` / `disabled_scopes`
+        # / `turn_counter`. Today stdio collapses every request into
+        # `_DEFAULT_CLIENT_KEY`, so this race is dormant; the moment
+        # an HTTP/SSE transport starts fanning distinct `client_id`s
+        # in parallel (anticipated in the class docstring above) the
+        # `setdefault` is what keeps each client's state intact.
         state = self._states.get(key)
         if state is None:
-            state = SessionState()
-            self._states[key] = state
+            state = self._states.setdefault(key, SessionState())
         return state
 
     @staticmethod

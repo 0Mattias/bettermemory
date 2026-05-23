@@ -54,7 +54,7 @@ Signature reflects the handler in `src/bettermemory/_handlers.py`. In MCP every 
 - `content: str`. Required.
 - `scopes: list[str]`. Required, non-empty.
 - `confidence: str = "medium"`. One of `"low"`, `"medium"`, `"high"`.
-- `source: str = "explicit-statement"`. One of `"explicit-statement"`, `"inferred"`.
+- `source: str = "explicit-statement"`. One of `"explicit-statement"`, `"inferred"`, `"user-correction"`. `"user-correction"` is the post-hoc tag for memories created when the user contradicts an earlier inference — the body carries the corrected fact, the source records that the correction came from the user rather than from a fresh statement or model inference.
 - `force: bool = False`. Bypass content dedup AND tombstone dedup.
 - `acknowledge_transient: bool = False`. Bypass the durability marker check. Logged as an override.
 - `acknowledge_scope_mismatch: bool = False`. Bypass the scope-mismatch warning when a cross-project reference is intentional.
@@ -65,7 +65,7 @@ Signature reflects the handler in `src/bettermemory/_handlers.py`. In MCP every 
 
 Result statuses:
 
-- `"ok"` — committed; payload includes the new id and `related` medium-overlap matches.
+- `"committed"` — write succeeded; payload includes the new id and `related` medium-overlap matches.
 - `"transient_warning"` — durability gate fired; `markers` listed.
 - `"duplicate"` — content dedup fired; `matches` listed. The right response is `memory_update` on the matched id.
 - `"previously_removed"` — tombstone dedup fired; `removed_matches` listed with their original `removed_reason`. Either drop the write or `memory_restore` the tombstone.

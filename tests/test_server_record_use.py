@@ -170,7 +170,7 @@ async def test_record_use_empty_ids_rejected(
     server_with_events: tuple[Any, Path],
 ) -> None:
     server, _ = server_with_events
-    with pytest.raises(Exception):
+    with pytest.raises(Exception, match="memory_ids must contain at least one"):
         await _call(
             server,
             "memory_record_use",
@@ -186,7 +186,7 @@ async def test_record_use_invalid_outcome_rejected(
     written = await _call(
         server, "memory_write", content="durable fact", scopes=["tools"]
     )
-    with pytest.raises(Exception):
+    with pytest.raises(Exception, match="outcome must be one of"):
         await _call(
             server,
             "memory_record_use",
@@ -199,7 +199,7 @@ async def test_record_use_invalid_ulid_rejected(
     server_with_events: tuple[Any, Path],
 ) -> None:
     server, _ = server_with_events
-    with pytest.raises(Exception):
+    with pytest.raises(Exception, match="invalid memory id"):
         await _call(
             server,
             "memory_record_use",

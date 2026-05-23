@@ -188,7 +188,7 @@ async def test_links_with_invalid_type_rejected(server: Any) -> None:
     handler boundary."""
     a_id = await _seed(server, "a")
     b_id = await _seed(server, "b")
-    with pytest.raises(Exception):
+    with pytest.raises(Exception, match=r"links\[0\] invalid"):
         await _call(
             server,
             "memory_update",
@@ -201,7 +201,7 @@ async def test_links_with_invalid_target_id_rejected(server: Any) -> None:
     """target_id must be a valid ULID. A non-ULID string is a caller
     bug and means the link can never resolve to a memory."""
     mid = await _seed(server, "anything")
-    with pytest.raises(Exception):
+    with pytest.raises(Exception, match="target_id must be a valid ULID"):
         await _call(
             server,
             "memory_update",

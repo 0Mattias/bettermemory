@@ -384,7 +384,13 @@ def compute_eval(
             ids = ev.get("ids") or ev.get("memory_ids") or []
             if not isinstance(ids, list):
                 continue
-            is_auto = bool(ev.get("auto"))
+            # Strict identity comparison matches health.py:736 — only
+            # the literal `True` the Recorder stamps on auto-committed
+            # use events qualifies as "auto". A stray truthy value
+            # (legacy `auto=1`, `auto="true"`) reads as explicit, same
+            # as missing/None, so we never silently relabel borderline
+            # data as auto.
+            is_auto = ev.get("auto") is True
             raw_excerpts = ev.get("claim_excerpts")
             # claim_excerpts is parallel to ids; entries may be None.
             # An entry counts toward the helped-rate numerator only

@@ -400,15 +400,24 @@ def find_demotion_candidates(
         if event.get("kind") == "search":
             # The recorder writes the result-id list as `returned`
             # (canonical name in `_handlers.memory_search`). Tolerate
-            # the older `hit_ids` field so synthetic test fixtures and
-            # any pre-rename event logs still feed the count; without
-            # the fallback this whole pass silently produced zero
-            # demotion candidates against real event logs.
-            for mid in event.get("returned") or event.get("hit_ids") or []:
+            # the older `memory_ids` and `hit_ids` fields so synthetic
+            # test fixtures and any pre-rename event logs still feed
+            # the count; without the fallback this whole pass silently
+            # produced zero demotion candidates against real event
+            # logs. Order mirrors the canonical-first / legacy-second
+            # discipline applied at health.py:699, health.py:1423,
+            # eval.py:361, hook.py:365-367 — all sibling read sites.
+            for mid in (
+                event.get("returned")
+                or event.get("memory_ids")
+                or event.get("hit_ids")
+                or []
+            ):
                 retrieved[mid] += 1
         elif event.get("kind") == "use":
-            # Same legacy fallback as the `returned`/`hit_ids` branch
-            # above — pre-2.6.3 `use` events wrote `memory_ids`.
+            # Same legacy fallback as the `returned` branch above —
+            # pre-2.6.3 `use` events wrote `memory_ids` as the
+            # canonical id list field, before the `ids` rename.
             ids = event.get("ids") or event.get("memory_ids") or []
             if event.get("outcome") == "applied":
                 for mid in ids:

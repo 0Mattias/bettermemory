@@ -215,7 +215,7 @@ async def test_tool_renames_active(server: Any) -> None:
 async def test_tool_validates_scopes(server: Any) -> None:
     """Invalid scope strings (uppercase, whitespace) should raise."""
     await _call(server, "memory_write", content="x", scopes=["tools"])
-    with pytest.raises(Exception):
+    with pytest.raises(Exception, match="invalid scope"):
         await _call(
             server,
             "memory_rename_scope",
@@ -225,14 +225,13 @@ async def test_tool_validates_scopes(server: Any) -> None:
 
 
 async def test_tool_rejects_old_equals_new(server: Any) -> None:
-    with pytest.raises(Exception) as excinfo:
+    with pytest.raises(Exception, match="must differ"):
         await _call(
             server,
             "memory_rename_scope",
             old_scope="tools",
             new_scope="tools",
         )
-    assert "differ" in str(excinfo.value)
 
 
 async def test_tool_rejects_new_outside_allowed_list(memory_dir: Path) -> None:
@@ -248,14 +247,13 @@ async def test_tool_rejects_new_outside_allowed_list(memory_dir: Path) -> None:
     )
     server = build_server(config=cfg, store=Store(memory_dir), state=SessionState())
     await _call(server, "memory_write", content="x", scopes=["tools"])
-    with pytest.raises(Exception) as excinfo:
+    with pytest.raises(Exception, match="not in the allowed list"):
         await _call(
             server,
             "memory_rename_scope",
             old_scope="tools",
             new_scope="career",
         )
-    assert "allowed" in str(excinfo.value)
 
 
 async def test_tool_records_event(server: Any, memory_dir: Path) -> None:

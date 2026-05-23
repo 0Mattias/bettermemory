@@ -27,6 +27,7 @@ import gzip
 import json
 import logging
 import os
+import re
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
@@ -231,6 +232,9 @@ def iter_events(root: Path) -> Iterator[dict[str, Any]]:
                 continue
 
 
+_TRAILING_COUNTER_RE = re.compile(r"-(\d+)$")
+
+
 def _archive_sort_key(path: Path) -> tuple[int, int]:
     """Sort key for `iter_all_events` archive ordering.
 
@@ -245,25 +249,32 @@ def _archive_sort_key(path: Path) -> tuple[int, int]:
     The index is derived from the filename suffix structure; see the
     `_rotate_if_needed` collision-handling for the producer side.
     Bare `{ts}` -> 0, `{ts}-{session}` -> 1, `{ts}-{session}-N` -> 1+N.
+
+    Session ids carry arbitrary internal dashes — Claude Code stamps
+    full UUIDs (e.g. `0c69b1b2-cb4e-4cea-…`) — so a naive
+    `inner.split("-")[-1]` trips on a UUID's trailing hex segment.
+    We strip the timestamp prefix (no dashes by construction) and
+    detect the optional `-N` counter via a regex anchored to end-of-
+    string; the remaining body is treated as the session id wholesale.
     """
     try:
         mtime = path.stat().st_mtime_ns
     except OSError:
         mtime = 0
     inner = path.name[len(ARCHIVE_PREFIX) : -len(ARCHIVE_SUFFIX)]
-    parts = inner.split("-")
-    # parts[0] is the timestamp; subsequent parts are session/counter.
-    if len(parts) <= 1:
+    ts_split = inner.split("-", 1)
+    if len(ts_split) == 1:
+        # Bare `.events-{ts}.jsonl.gz` — first-write-of-second.
         return (mtime, 0)
-    if len(parts) == 2:
-        # `.events-{ts}-{session}.jsonl.gz` — second-write-of-second.
-        return (mtime, 1)
-    # `.events-{ts}-{session}-N.jsonl.gz` — third or later.
-    try:
-        return (mtime, 1 + int(parts[-1]))
-    except ValueError:
-        # Malformed counter — fall back to "after the bare/single forms".
-        return (mtime, 2)
+    remainder = ts_split[1]
+    match = _TRAILING_COUNTER_RE.search(remainder)
+    if match is not None:
+        # `.events-{ts}-{session}-N.jsonl.gz` — third or later. The
+        # regex is end-anchored, so it only matches a `-\d+` suffix
+        # rather than any digit substring inside the session id.
+        return (mtime, 1 + int(match.group(1)))
+    # `.events-{ts}-{session}.jsonl.gz` — second-write-of-second.
+    return (mtime, 1)
 
 
 def iter_all_events(root: Path) -> Iterator[dict[str, Any]]:

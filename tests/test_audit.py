@@ -555,7 +555,14 @@ async def test_audit_turn_rejects_non_string_message(
     server_with_events: tuple[Any, Path, SessionState],
 ) -> None:
     server, _, _ = server_with_events
-    with pytest.raises(Exception):
+    # Two layers can reject this — pydantic at the MCP arg-validation
+    # boundary ("Input should be a valid string") OR the handler's own
+    # `isinstance` guard ("user_message must be a string"). Either is
+    # an acceptable surface — the regex covers both so a future
+    # rearrangement of the validation order doesn't fail this test
+    # for the wrong reason. The point is that non-string `user_message`
+    # is loudly rejected, not which layer rejects first.
+    with pytest.raises(Exception, match="user_message must be a string|valid string"):
         await _call(server, "memory_audit_turn", user_message=12345)
 
 

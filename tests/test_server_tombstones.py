@@ -145,9 +145,8 @@ async def test_restore_active_id_raises_value_error(
     actually wanted to edit."""
     server, _, _ = server_with_state
     written = await _call(server, "memory_write", content="x", scopes=["tools"])
-    with pytest.raises(Exception) as excinfo:
+    with pytest.raises(Exception, match="active"):
         await _call(server, "memory_restore", id=written["id"])
-    assert "active" in str(excinfo.value)
 
 
 async def test_restore_unknown_id_raises_value_error(
@@ -158,12 +157,8 @@ async def test_restore_unknown_id_raises_value_error(
     from bettermemory.models import generate_ulid
 
     server, _, _ = server_with_state
-    with pytest.raises(Exception) as excinfo:
+    with pytest.raises(Exception, match="no tombstone|not found"):
         await _call(server, "memory_restore", id=generate_ulid())
-    assert (
-        "no tombstone" in str(excinfo.value)
-        or "not found" in str(excinfo.value).lower()
-    )
 
 
 async def test_restore_emits_event(server_with_state: Any, memory_dir: Path) -> None:

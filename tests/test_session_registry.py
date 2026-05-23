@@ -250,14 +250,13 @@ async def test_pending_write_is_isolated_between_clients(
     )
 
     # Bob trying to confirm raises — same reason.
-    with pytest.raises(Exception) as confirm_exc:
+    with pytest.raises(Exception, match="no pending write"):
         await _call(
             server,
             "memory_write_confirm",
             pending_id=pending_id,
             ctx=bob_ctx,
         )
-    assert "no pending write" in str(confirm_exc.value)
 
     # Alice's pending is still hers to commit.
     committed = await _call(

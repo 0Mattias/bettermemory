@@ -2,7 +2,7 @@
 
 Published roadmap is part of the distribution strategy: people deciding between memory layers want to know where a project is going, not just where it's been. This document lists the planned work in roughly the order it will land. Plans change; the CHANGELOG is the source of truth for what shipped.
 
-## Where we are (May 2026, v2.6.3)
+## Where we are (May 2026, v2.6.6)
 
 - 18 MCP tools across retrieval, writing, lifecycle, verification, curation, and session-local controls.
 - FTS5 inverted index pre-filtering candidates above ~500 memories.

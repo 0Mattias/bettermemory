@@ -179,12 +179,12 @@ async def test_disabled_scope_hidden_from_search_and_list(server: Any) -> None:
 
 
 async def test_write_rejects_empty_scopes(server: Any) -> None:
-    with pytest.raises(Exception):
+    with pytest.raises(Exception, match="scopes must contain at least one entry"):
         await _call(server, "memory_write", content="x", scopes=[])
 
 
 async def test_write_rejects_invalid_scope(server: Any) -> None:
-    with pytest.raises(Exception):
+    with pytest.raises(Exception, match="invalid scope"):
         await _call(server, "memory_write", content="x", scopes=["With Space"])
 
 
@@ -242,7 +242,12 @@ async def test_update_rejects_oversized_content(memory_dir: Path) -> None:
 
 
 async def test_show_unknown_id_errors(server: Any) -> None:
-    with pytest.raises(Exception):
+    # The fixture id contains `O` (not a valid Crockford-base32 character),
+    # so the store's ULID-validity gate fires before the lookup — the
+    # actual error message is `invalid id`. Match either shape so a
+    # future test that passes a structurally-valid-but-absent id (the
+    # `no memory with id` message) still satisfies the assertion.
+    with pytest.raises(Exception, match="invalid id|no memory with id"):
         await _call(server, "memory_show", id="01HXYZNOTAREALIDOK000000ZZ")
 
 
@@ -319,7 +324,7 @@ async def test_pending_write_can_be_cancelled(
     assert pid not in state.pending_writes
 
     # Cannot confirm after cancel.
-    with pytest.raises(Exception):
+    with pytest.raises(Exception, match="no pending write"):
         await _call(server, "memory_write_confirm", pending_id=pid)
 
 
@@ -327,7 +332,7 @@ async def test_confirm_unknown_id_errors(
     confirming_server: tuple[Any, SessionState],
 ) -> None:
     server, _ = confirming_server
-    with pytest.raises(Exception):
+    with pytest.raises(Exception, match="no pending write"):
         await _call(server, "memory_write_confirm", pending_id="pending_deadbeef0000")
 
 
@@ -412,7 +417,7 @@ async def test_default_category_fact_commits_immediately(server: Any) -> None:
 
 
 async def test_invalid_category_raises(server: Any) -> None:
-    with pytest.raises(Exception):
+    with pytest.raises(Exception, match="category must be one of"):
         await _call(
             server,
             "memory_write",
@@ -746,25 +751,25 @@ async def test_update_combines_multiple_fields(server: Any) -> None:
 
 async def test_update_rejects_no_fields(server: Any) -> None:
     written = await _call(server, "memory_write", content="x", scopes=["tools"])
-    with pytest.raises(Exception):
+    with pytest.raises(Exception, match="memory_update needs at least one"):
         await _call(server, "memory_update", id=written["id"])
 
 
 async def test_update_rejects_empty_content(server: Any) -> None:
     written = await _call(server, "memory_write", content="x", scopes=["tools"])
-    with pytest.raises(Exception):
+    with pytest.raises(Exception, match="content must be non-empty"):
         await _call(server, "memory_update", id=written["id"], content="   ")
 
 
 async def test_update_rejects_empty_scopes(server: Any) -> None:
     written = await _call(server, "memory_write", content="x", scopes=["tools"])
-    with pytest.raises(Exception):
+    with pytest.raises(Exception, match="scopes must contain at least one entry"):
         await _call(server, "memory_update", id=written["id"], scopes=[])
 
 
 async def test_update_rejects_invalid_scope(server: Any) -> None:
     written = await _call(server, "memory_write", content="x", scopes=["tools"])
-    with pytest.raises(Exception):
+    with pytest.raises(Exception, match="invalid scope"):
         await _call(
             server,
             "memory_update",
@@ -775,7 +780,7 @@ async def test_update_rejects_invalid_scope(server: Any) -> None:
 
 async def test_update_rejects_invalid_confidence(server: Any) -> None:
     written = await _call(server, "memory_write", content="x", scopes=["tools"])
-    with pytest.raises(Exception):
+    with pytest.raises(Exception, match="confidence must be one of"):
         await _call(
             server,
             "memory_update",
@@ -785,7 +790,10 @@ async def test_update_rejects_invalid_confidence(server: Any) -> None:
 
 
 async def test_update_unknown_id_errors(server: Any) -> None:
-    with pytest.raises(Exception):
+    # Same as `test_show_unknown_id_errors`: the test id carries an `O`
+    # (illegal in Crockford-base32 ULIDs), so the validity gate raises
+    # `invalid id` rather than `no memory with id`. Match either shape.
+    with pytest.raises(Exception, match="invalid id|no memory with id"):
         await _call(
             server,
             "memory_update",
@@ -797,7 +805,7 @@ async def test_update_unknown_id_errors(server: Any) -> None:
 async def test_update_tombstoned_id_errors(server: Any) -> None:
     written = await _call(server, "memory_write", content="x", scopes=["tools"])
     await _call(server, "memory_remove", id=written["id"], reason="superseded")
-    with pytest.raises(Exception):
+    with pytest.raises(Exception, match="was removed"):
         await _call(
             server,
             "memory_update",
@@ -912,7 +920,7 @@ async def test_update_omitting_category_preserves_existing(server: Any) -> None:
 
 async def test_update_rejects_user_inference_category(server: Any) -> None:
     written = await _call(server, "memory_write", content="x", scopes=["tools"])
-    with pytest.raises(Exception):
+    with pytest.raises(Exception, match="category must be one of"):
         await _call(
             server,
             "memory_update",
@@ -923,7 +931,7 @@ async def test_update_rejects_user_inference_category(server: Any) -> None:
 
 async def test_update_rejects_unknown_category(server: Any) -> None:
     written = await _call(server, "memory_write", content="x", scopes=["tools"])
-    with pytest.raises(Exception):
+    with pytest.raises(Exception, match="category must be one of"):
         await _call(
             server,
             "memory_update",
@@ -1235,7 +1243,9 @@ async def test_memory_verify_does_not_bump_updated(server: Any) -> None:
 
 
 async def test_memory_verify_unknown_id_errors(server: Any) -> None:
-    with pytest.raises(Exception):
+    # As with the show/update unknown-id tests, this fixture id contains
+    # `O` so the ULID validity gate fires first — match either shape.
+    with pytest.raises(Exception, match="invalid id|no memory with id"):
         await _call(server, "memory_verify", id="01HXYZNOTAREALIDOK000000ZZ")
 
 
@@ -1244,7 +1254,7 @@ async def test_memory_verify_tombstoned_errors(server: Any) -> None:
         server, "memory_write", content="durable claim", scopes=["tools"]
     )
     await _call(server, "memory_remove", id=written["id"], reason="superseded")
-    with pytest.raises(Exception):
+    with pytest.raises(Exception, match="was removed"):
         await _call(server, "memory_verify", id=written["id"])
 
 

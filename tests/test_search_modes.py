@@ -193,15 +193,19 @@ def test_mode_hybrid_consensus_top_beats_single_ranker_top() -> None:
 
 
 def test_mode_invalid_returns_typed_error() -> None:
-    """The `mode` parameter is a Literal — but if a caller passes a string
-    from the MCP boundary, we should fail fast on dispatch rather than
-    silently returning empty results from an unmatched if/elif chain."""
+    """An unknown mode raises ValueError at the dispatch boundary —
+    the runtime guard above the if/elif chain catches typos like
+    `mode="emantic"` that the Literal annotation can't enforce at
+    call time. Without the guard, the chain falls through to the
+    `else` branch and silently runs hybrid, masking a caller bug.
+    Pin both the exception type AND a substring of the message so a
+    refactor that drops the validation (or returns a generic error)
+    fails here rather than slipping through."""
     a = _memory("anything")
-    # We can't easily check this at runtime because the Literal type
-    # check happens at static analysis time, but we can assert that
-    # the dispatch chain has an `else` covering hybrid — if a future
-    # refactor drops `hybrid` from the chain, the if/elif/else falls
-    # through and produces an empty result. The other tests above
-    # cover that the four named modes all produce results.
-    hits = search([a], "anything", mode="keyword")
-    assert hits
+    with pytest.raises(ValueError, match="unknown search mode"):
+        search([a], "anything", mode="emantic")  # type: ignore[arg-type]
+    # Also verify a syntactically-distinct invalid value — e.g.
+    # an empty string — hits the same guard, so the validator is
+    # genuinely a closed-set check, not a typo-specific reject.
+    with pytest.raises(ValueError, match="unknown search mode"):
+        search([a], "anything", mode="")  # type: ignore[arg-type]

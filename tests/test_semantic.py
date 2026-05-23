@@ -178,14 +178,30 @@ def _memory(body: str, *, scopes: list[str] | None = None) -> Memory:
 
 
 def test_find_similar_dispatches_to_jaccard_without_model() -> None:
-    """A no-model call still works — Jaccard fallback. Two bodies that
-    share no tokens shouldn't surface, even if a semantic model would
-    have flagged them."""
-    a = _memory("the queue uses postgres")
-    b = _memory("the database is postgres")
-    hits = find_similar(a.body, [b])
-    # Same tokens (postgres, queue/database) — Jaccard fires.
-    assert len(hits) >= 0  # Coexists with prior tests.
+    """A no-model call dispatches to the Jaccard branch. Pin both the
+    positive and the negative case so a regression that wired
+    find_similar to always return `[]` (or to silently swallow
+    `semantic_model=None`) would fail at least one assertion. The
+    prior version asserted only `len(hits) >= 0`, a tautology that
+    pinned nothing — the production write-time dedup path could have
+    broken silently with the test green."""
+    # Positive case — high token overlap. Bodies share five distinctive
+    # tokens after stopword stripping; Jaccard >= MEDIUM_SIMILARITY (0.40)
+    # so the hit surfaces.
+    a = _memory("database stores user preferences and configuration values together")
+    b = _memory("database stores user preferences and configuration values")
+    pos_hits = find_similar(a.body, [b])
+    assert len(pos_hits) == 1
+    assert pos_hits[0].id == b.id
+    assert pos_hits[0].similarity > 0.40
+
+    # Negative case — disjoint token sets. No hit, no exception, no
+    # hidden semantic-fallback path. Together with the positive case
+    # this pins the dispatch boundary.
+    c = _memory("kubernetes deployment scheduling rollouts")
+    d = _memory("rust ownership borrow checker semantics")
+    neg_hits = find_similar(c.body, [d])
+    assert neg_hits == []
 
 
 def test_find_similar_uses_semantic_when_model_provided() -> None:

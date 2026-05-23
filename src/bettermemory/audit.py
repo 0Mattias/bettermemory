@@ -30,11 +30,13 @@ Design notes:
   different lens, but the default is "what would the model have
   done."
 
-- **`memory_show` counts as retrieval activity too.** The miss probe
-  doesn't fire when a `search` OR `show` event landed in the
-  session's lookback window — both are retrievals from the model's
-  perspective. Counting only `search` would mis-flag the legitimate
-  search-then-show flow.
+- **`memory_show` and `memory_list` count as retrieval activity too.**
+  The miss probe doesn't fire when a `search`, `show`, or `list`
+  event landed in the session's lookback window — all three are
+  retrievals from the model's perspective (`list` surfaces ids and,
+  with `with_bodies=True`, full bodies — the model has the content
+  it needed without a `search`). Counting only `search` would mis-flag
+  the legitimate search-then-show and triage-via-list flows.
 
 - **No event emitted from this module.** Like `search.search` itself,
   the probe returns a structured verdict; the *handler* records the
@@ -74,12 +76,16 @@ from .search import SearchMode, search as run_search
 
 # Events that count as "the model retrieved memory in this turn."
 # `search` is the obvious one; `show` is the equally-legitimate
-# direct-by-id retrieval. Other event kinds (`use`, `verify`, etc.) are
-# downstream of an earlier retrieval — counting them as retrieval would
-# double-shield the audit. Kept as a module-level frozenset so a future
-# event kind (e.g. a hypothetical `replay` mode) can be added in one
-# place rather than scattered across the function body.
-_RETRIEVAL_EVENT_KINDS: frozenset[str] = frozenset({"search", "show"})
+# direct-by-id retrieval; `list` is the same surface with a different
+# entry point (scope filter, optionally with bodies). All three put
+# memory content in front of the model, so a turn where any of them
+# fired shouldn't trip the miss probe. Other event kinds (`use`,
+# `verify`, etc.) are downstream of an earlier retrieval — counting
+# them as retrieval would double-shield the audit. Kept as a
+# module-level frozenset so a future event kind (e.g. a hypothetical
+# `replay` mode) can be added in one place rather than scattered
+# across the function body.
+_RETRIEVAL_EVENT_KINDS: frozenset[str] = frozenset({"search", "show", "list"})
 
 
 # Threshold rule identifiers. Bumped when the criterion changes so a

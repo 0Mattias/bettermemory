@@ -158,7 +158,7 @@ async def test_fact_category_long_body_does_not_warn(server: Any) -> None:
 
 
 async def test_unknown_category_rejected(server: Any) -> None:
-    with pytest.raises(Exception):
+    with pytest.raises(Exception, match="category must be one of"):
         await _call(
             server,
             "memory_write",
@@ -193,9 +193,35 @@ async def test_ambient_excluded_from_dead_weight_via_health(server: Any) -> None
 
 
 async def test_cold_memories_field_returned_by_health(server: Any) -> None:
-    res = await _call(server, "memory_health")
+    """A fact memory never retrieved (no `memory_search`) and older than
+    `window_days` lands in the `cold_memories` bucket — not
+    `dead_weight`. The prior version of this test only asserted that
+    the key existed and was a list, which a regression that always
+    returned `[]` would pass. Drive the routing predicate end-to-end
+    so the bucket has to actually carry the written id."""
+    written = await _call(
+        server,
+        "memory_write",
+        content="Database connection pool size is 32.",
+        scopes=["infrastructure"],
+    )
+    # `window_days=0` makes any freshly-created memory older than the
+    # cutoff (cutoff == now), so the cold predicate (`created < cutoff
+    # AND retrieval_count == 0 AND not ambient`) holds without us
+    # needing to backdate the file on disk.
+    res = await _call(server, "memory_health", window_days=0)
     assert "cold_memories" in res
-    assert isinstance(res["cold_memories"], list)
+    cold = res["cold_memories"]
+    assert isinstance(cold, list)
+    cold_ids = {row["id"] for row in cold}
+    assert written["id"] in cold_ids, (
+        "never-retrieved fact memory must land in cold_memories"
+    )
+    # And NOT in dead_weight — that's the retrieved-but-not-applied
+    # axis. Pinning both buckets ensures a regression that misroutes
+    # cold memories into dead_weight (or vice versa) fails here.
+    dead_ids = {row["id"] for row in res["dead_weight"]}
+    assert written["id"] not in dead_ids
 
 
 # ---------------------------------------------------------------------------
