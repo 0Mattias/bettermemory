@@ -7,6 +7,141 @@ breaking changes, minor for additive features, patch for fixes. The
 [compatibility contract](CONTRIBUTING.md#versioning-and-the-compatibility-contract)
 spells out exactly what's stable.
 
+## 2.6.5 - 2026-05-23
+
+**Post-2.6.4 audit follow-up.** A six-agent meta-audit of the 2.6.4
+"structural audit" release found several claims that didn't hold and
+one regression the release itself introduced. This release addresses
+every HIGH and MEDIUM finding plus the LOW/NIT items with clean
+fixes.
+
+### Fixed — live bugs in 2.6.4
+
+- **`bounded_read` flattened `FileNotFoundError` to bare `OSError`.**
+  The 2.6.4 catch-and-re-raise turned `Store.restore` and
+  `Store.rename_scope`'s `except FileNotFoundError` handlers into
+  dead code AND made `test_concurrency`'s stress test flaky (~20%
+  under contention) — a regression introduced by the audit release
+  itself. Fix: drop the re-wrap; `path.stat()` raises its native
+  subclass unchanged.
+
+- **`index._ensure_schema` `BEGIN IMMEDIATE` wrapped nothing.**
+  Python's `sqlite3.executescript()` implicitly commits any pending
+  transaction before it runs, so 2.6.4's
+  `conn.execute("BEGIN IMMEDIATE")` followed by two `executescript()`
+  calls left the DROP/CREATE unprotected — a concurrent reader could
+  still see "no such table: memories" mid-rebuild, exactly the gap
+  the 2.6.4 fix claimed to close. Fix: move `BEGIN`/`COMMIT` inside
+  the executescript string. Verified atomic on CPython 3.11–3.13.
+
+- **`consolidate` merge-rollback orphaned tombstoned duplicates.**
+  In a 3+-member cluster, if dup A tombstoned but dup B failed,
+  2.6.4's rollback restored the keeper but left A's content in
+  *neither* the keeper (rolled back, never received the merge) nor
+  the active set (tombstoned) — silent data loss until a manual
+  `memory_restore`. Fix: track successfully-tombstoned ids and
+  `store.restore()` them on failure.
+
+- **`_frontmatter.load` silently masked UTF-8 corruption.** 2.6.4
+  swapped `read_text(encoding="utf-8")` (raises on invalid UTF-8)
+  for `decode("utf-8", errors="replace")` (silent U+FFFD
+  substitution). A corrupt memory file then loaded into the
+  retrieval surface, `doctor` reported it clean, and the next
+  mutator rewrote the file — laundering the corruption permanently.
+  Fix: strict decode, raise `ValueError` so the store's
+  malformed-file skip path fires (the pre-2.6.4 contract).
+
+- **`health.py` (×4) and `eval.py` (×2) missed the legacy-name
+  fallback.** 2.6.4 applied the canonical-first / legacy-second
+  discipline to five consumers but skipped the core curation engine
+  (`compute_health`, `curation_counts`) and the silent-miss eval
+  renderer. Same discipline applied.
+
+- **`sync.py` push/pull lock did NOT coordinate with `Store.write`**
+  as the 2.6.4 CHANGELOG claimed. `.sync.lock` is a different inode
+  from per-memory `<id>.md.lock`, so `flock` never serialized them.
+  The lock genuinely serializes sync-vs-sync (push-vs-push,
+  push-vs-pull). 2.6.4 CHANGELOG and in-code comments corrected.
+  True sync↔Store coordination would require global write
+  serialization and is left as a deliberate future decision.
+
+### Fixed — incomplete generalisations
+
+- **Shared `turn_audited` / `search_miss` field builders**
+  (`audit.turn_audited_fields`, `audit.search_miss_fields`). The
+  2.6.4 audit found the Stop hook and the in-process MCP handler
+  emitting these events with hand-copied kwarg lists that had
+  *already* drifted (`triggered_from` on one, absent on the other).
+  Both producers now route through the shared builders, so they
+  cannot drift again. Handler tags `triggered_from="mcp_tool"`;
+  `search_miss` carries `recent_retrieval_count` so
+  `eval._silent_miss_from_event`'s column stops being permanently
+  blank.
+
+- **`semantic` stale-dimension cache crashed `memory_write`.**
+  `cosine_similarity_normalized` with `zip(strict=True)` (added in
+  2.6.4) raises `ValueError` on mismatched-dimension vectors —
+  uncaught on the `memory_write` → `find_similar` path. When a
+  persistent embedding cache was written under one model checkpoint
+  and hydrated under another (same `model_name`, different output
+  dimension), every comparison raised and the whole handler failed.
+  New `semantic._note_model_dimension` learns the live dimension
+  from encodes the callers already do (no probe encode) and purges
+  stale entries; `find_similar` / `_search` /
+  `find_similar_tombstones` prime it from their query encode;
+  `_find_dedup_semantic` gets a defensive `except ValueError`.
+
+- **`bounded_tail_read` hung on writer-less FIFO** via
+  `consolidate._load_transcript`. Pointing
+  `consolidate --llm --from-transcript` at a FIFO would block
+  `open("rb")` forever. Added `is_file()` guard mirroring the hook's;
+  corrected `bounded_tail_read`'s docstring FIFO language.
+
+### Fixed — LOW / NIT
+
+- `audit._count_recent_retrievals` — added the canonical-first
+  session fallback the 2.6.4 release applied everywhere else but
+  missed on the silent-miss probe's own hot path.
+- `_handlers.py` comment falsely claimed "canonical handler writes
+  both `session` and `session_id`" — corrected (the Recorder always
+  stamps `session`, never `session_id`; only events whose producer
+  passes `session_id=` explicitly carry both).
+- `tests/test_event_helpers.py` "contract" test emitted
+  `claim_excerpts` / `lookback_seconds` / `probe_query` / `query`
+  without asserting them — a producer-side rename would have slipped
+  through the very test it was supposed to pin. Assertions added.
+- `tests/test_changelog.py` — added `encoding="utf-8"` to the
+  `plugin.json` / `marketplace.json` reads (the same anti-pattern
+  the 2.6.4 CI fix corrected for `CHANGELOG.md` in the same file).
+- CHANGELOG 2.6.4 entry corrections: `hook.py:_run_audit` →
+  `run_audit` (function name); "Six other consumers" → "Five"
+  (matches the parenthetical); the false sync-vs-Store coordination
+  claim corrected as noted above.
+- `llm.py` Ollama-truncation comment described an unimplemented
+  "empty `done` flag (older)" branch — tightened to what the code
+  actually checks.
+
+### Added — regression tests
+
+- `test_fsutil.test_missing_file_raises_filenotfounderror` pins the
+  `OSError` subclass contract (the test that should have caught the
+  2.6.4 flattening regression but only asserted `OSError`).
+- `test_frontmatter.test_load_rejects_invalid_utf8` pins the
+  strict-decode contract.
+- `test_index.test_schema_rebuild_executescript_is_transactional`
+  pins the `executescript`-with-embedded-`BEGIN` atomicity property
+  the fix relies on.
+- `test_consolidate_llm.test_merge_rollback_restores_earlier_tombstoned_duplicates`
+  covers the multi-duplicate rollback.
+- `test_consolidate_llm.test_load_transcript_does_not_hang_on_fifo`
+  — daemon-thread regression that pins the FIFO guard without
+  hanging the suite on regression.
+- `test_audit.test_event_field_builders_pin_canonical_shape` pins
+  the shared builders' output, including the two 2.6.4-audit gaps
+  (`triggered_from` and `recent_retrieval_count` on `search_miss`).
+- `test_semantic.test_stale_dimension_cache_entries_are_purged`
+  pins the dimension reconcile.
+
 ## 2.6.4 - 2026-05-21
 
 **Fourth audit pass over the 2.6.x surface, this one structural.** The
