@@ -7,6 +7,185 @@ breaking changes, minor for additive features, patch for fixes. The
 [compatibility contract](CONTRIBUTING.md#versioning-and-the-compatibility-contract)
 spells out exactly what's stable.
 
+## 2.6.7 - 2026-05-23
+
+**Post-2.6.6 audit follow-up.** A six-agent meta-audit of the 2.6.6
+release found two HIGH-severity contract drifts (one doc, one
+test), eight MEDIUM items spanning correctness / concurrency /
+contract / release-hygiene, and three LOW hardening items. Two
+agents flagged the same `consolidate.py:407` legacy-fallback gap
+independently. Every finding worth fixing in code is in this
+release; the LOWs explicitly out of scope (web UI defense-in-depth
+headers, `init.py` atomic write, sub-microsecond chmod window on
+freshly-created index/embedding files) are squarely inside the
+documented same-machine trust model.
+
+### Fixed — HIGH: contract drift between handler and docs
+
+- **`docs/api.md` memory_write success status said `"ok"`,
+  emitted value is `"committed"`.** The exact drift CHANGELOG
+  2.6.2 announced as fixed in `DESC_MEMORY_WRITE` — but
+  `docs/api.md` (the file `CONTRIBUTING.md:44` calls "pinned"
+  as the stability contract) was never updated in lockstep.
+  A library author or programmatic client branching on the
+  documented value got a no-match against every successful
+  write. Fixed to `"committed"` matching the handler description
+  and `_response.py:277`.
+
+### Fixed — HIGH: regression test that didn't exercise the production path
+
+- **`test_find_similar_dispatches_to_jaccard_without_model`
+  asserted `len(hits) >= 0` — tautology.** The docstring
+  promised "two bodies that share no tokens shouldn't surface
+  via Jaccard," but the test bodies shared the token `postgres`,
+  the inline comment contradicted the docstring, and the
+  assertion was a tautology. Same shape as the 2.6.6
+  `test_schema_rebuild_executescript_is_transactional` rewrite —
+  a test named for a production branch it never exercised.
+  Rewritten with a positive case (shared distinctive tokens →
+  Jaccard hit at similarity > 0.40) plus a negative case
+  (disjoint token sets → no hit, no exception, no hidden
+  semantic-fallback path) so the dispatch boundary is pinned.
+
+### Fixed — MEDIUM: incomplete generalisation (two agents flagged independently)
+
+- **`consolidate.py:407` `find_demotion_candidates` missed the
+  `memory_ids` legacy fallback.** Read `event.get("returned") or
+  event.get("hit_ids") or []`, missing the canonical-first /
+  legacy-second / oldest-third chain every other call site
+  uses (`eval.py:361`, `hook.py:365-367`, `health.py:699`,
+  `health.py:1423`). Two of the six audit agents flagged this
+  independently. Same pattern as the 2.6.6 `health.py:679` fix
+  — the 2.6.5 sweep missed two sites, not one. Fix: insert
+  `memory_ids` between `returned` and `hit_ids`.
+
+### Fixed — MEDIUM: telemetry false positives
+
+- **`audit.py` `_RETRIEVAL_EVENT_KINDS` whitelist excluded
+  `list` events.** `memory_list(scopes=[…])` returns ids (and
+  bodies when `with_bodies=True`) and logs `kind="list",
+  returned=[…]` — same retrieval semantics as `search` and
+  `show`, but the silent-miss probe only counted the first two.
+  A model using `memory_list` to triage would be flagged for a
+  silent miss even though it had the content in front of it.
+  Fix: add `list` to the frozenset.
+
+### Fixed — MEDIUM: dormant concurrency TOCTOU
+
+- **`SessionRegistry.for_request` had a read-then-write race
+  on shared mutable state with no lock.** Two concurrent
+  callers observing the same missing `client_id` both create
+  fresh `SessionState` instances and the second `__setitem__`
+  wipes the first writer's `pending_writes` / `disabled_scopes`
+  / `turn_counter`. Stdio collapses every request into a single
+  default-client key so the race is dormant today, but the
+  class docstring anticipates an HTTP/SSE transport that fans
+  distinct `client_id`s in parallel — at which point the race
+  becomes live and silent. Fix: `dict.setdefault` is atomic on
+  CPython, so concurrent callers observing a missing key all
+  receive the same `SessionState` instance.
+
+### Fixed — MEDIUM: tool description omitted a returned bucket
+
+- **`DESC_MEMORY_HEALTH` listed `dead_weight` but never
+  mentioned `cold_memories`.** Description claimed
+  `dead_weight = created > window_days AND never applied`.
+  Code additionally requires `retrieval_count > 0`;
+  never-retrieved memories route to the separate `cold_memories`
+  bucket the description never named. A model curating against
+  `dead_weight` would miss the cold subset entirely. Fix:
+  mirror the `docs/api.md` framing — dead is *"retrieved but
+  didn't help"*, cold is *"the ranker isn't surfacing this at
+  all"*.
+
+### Fixed — MEDIUM: source enum under-documented
+
+- **`docs/api.md` listed only `"explicit-statement"` and
+  `"inferred"` for `memory_write.source`.** `models.py` defines
+  a third value `"user-correction"` that the handler accepts
+  and that `examples/memories/2025-04-15-projects-foo-stack.md`
+  actively uses. The doc is the contract; the validator was
+  wider than the contract. Fix: include `"user-correction"`
+  with prose covering the post-hoc-correction semantics.
+
+### Fixed — MEDIUM: ROADMAP version stale
+
+- **`docs/ROADMAP.md` "Where we are" pinned at v2.6.3.**
+  CHANGELOG 2.6.3 flagged "this count rots fast" but no test
+  pins the version, so the same drift recurred immediately
+  through 2.6.4 / 2.6.5 / 2.6.6. Fix: bump to v2.6.6. (A
+  sync-guard test would close this structurally; out of scope
+  for this round.)
+
+### Fixed — MEDIUM: dispatch path defense-in-depth + test
+
+- **`search.search()` had no runtime mode validator.** The
+  `SearchMode` Literal pinned modes at the type-checker layer
+  but Python doesn't enforce Literals at call time, so any
+  unknown string from a future programmatic caller would fall
+  through the if/elif chain into the `else` branch and silently
+  run hybrid. Fix: runtime validator at the dispatch boundary;
+  unknown modes raise `ValueError` with the closed-set message.
+  `test_mode_invalid_returns_typed_error` was the test that
+  named the missing validator ("we can't easily check this at
+  runtime") — now actually exercises the production rejection.
+
+### Fixed — MEDIUM: weak structural pin on cold_memories
+
+- **`test_cold_memories_field_returned_by_health` only asserted
+  `isinstance(res["cold_memories"], list)`.** A regression that
+  always returned `[]` would pass. Rewritten to drive the
+  routing predicate end-to-end (write a fact memory, call
+  `memory_health(window_days=0)`, assert the id lands in
+  `cold_memories` AND NOT in `dead_weight`). Misroutes between
+  the two buckets now fail this test.
+
+### Fixed — MEDIUM: broad pytest.raises pattern
+
+- **30 sites used `pytest.raises(Exception)` without `match=`**
+  across test_server.py, test_server_record_use.py,
+  test_rename_scope.py, test_server_v12_features.py,
+  test_session_registry.py, test_audit.py,
+  test_server_tombstones.py, test_server_links.py. Bare
+  `Exception` catches any error type with any message — a
+  refactor that swapped a clean `ValueError` for
+  `AttributeError: 'NoneType'` would keep tests green while
+  users see uninformative tracebacks at the MCP boundary. Fix:
+  every site now pins the actual error-message substring via
+  `match="…"`, following the pattern test_server.py:205
+  established. Where two validation layers can fire (pydantic
+  vs. handler `isinstance` checks), the regex covers both so a
+  rearrangement of validation order doesn't fail tests for the
+  wrong reason.
+
+### Fixed — LOW: discipline alignment
+
+- **`auto` discriminator strictness drift** — `health.py:736`
+  used `is True`, `eval.py:387` used `bool(...)`. Production
+  traffic only writes literal True so no current bug, but
+  identical structural class to the session-id sweep
+  2.6.5/2.6.6 already addressed. Fix: aligned `eval.py:387` to
+  `ev.get("auto") is True`.
+
+- **`events.py:_archive_sort_key` mis-parsed session_ids with
+  internal dashes** (Claude Code session_id is a full UUID).
+  Naive `inner.split("-")[-1]` fell into the numeric-tail
+  branch for UUIDs whose last hex chunk happened to be all
+  digits, producing a wrong sort key. Most consumers use the
+  embedded `ts` so impact is small, but the parser was broken.
+  Fix: regex anchored to end-of-string for the `-N` counter
+  suffix.
+
+### Fixed — LOW: per-tool description wording
+
+- **`DESC_MEMORY_SEARCH`** now explicitly notes that memories
+  with no recorded origin pass `auto_scope=True` as global —
+  mirrors the sibling `DESC_MEMORY_SCOPE_OVERVIEW` wording.
+
+- **`DESC_MEMORY_RECORD_USE`** now documents the empty-string
+  rejection on `claim_excerpts` (handler raises ValueError
+  pointing the caller at `None` for "no specific claim").
+
 ## 2.6.6 - 2026-05-23
 
 **Post-2.6.5 audit follow-up.** A four-agent meta-audit of the 2.6.5
