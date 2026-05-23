@@ -1,6 +1,6 @@
 [project]
 name = "bettermemory"
-version = "2.6.5"
+version = "2.6.6"
 description = "Memory you can verify — MCP-native memory for AI coding agents, with per-hit staleness verdicts and claim-level audit trails. Local-first, MIT, no cloud."
 readme = "README.md"
 requires-python = ">=3.11"

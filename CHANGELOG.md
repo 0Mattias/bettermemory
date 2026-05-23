@@ -7,6 +7,44 @@ breaking changes, minor for additive features, patch for fixes. The
 [compatibility contract](CONTRIBUTING.md#versioning-and-the-compatibility-contract)
 spells out exactly what's stable.
 
+## 2.6.6 - 2026-05-23
+
+**Post-2.6.5 audit follow-up.** A four-agent meta-audit of the 2.6.5
+"post-2.6.4 audit follow-up" release found two items: one
+pattern-discipline gap that 2.6.5 swept everywhere else but missed,
+and one regression test that pinned a stdlib property instead of
+the production call site it was named after.
+
+### Fixed — incomplete generalisation
+
+- **`health.py` distinct-session aggregation read canonical-only.**
+  The 2.6.5 sweep applied the canonical-first / legacy-second
+  fallback to five other `health.py` event reads but missed line
+  679's `sess = ev.get("session")`. The Recorder stamps `session`
+  on most canonical events, but `turn_audited` / `search_miss` use
+  `session_id` as their canonical field — under-counting the
+  distinct-session metric in `compute_health`'s rollup whenever
+  those event kinds were the only events in a session. Fix:
+  `ev.get("session") or ev.get("session_id")`, matching the
+  pattern applied at the four other `health.py` sites.
+
+### Fixed — regression test that didn't exercise the production path
+
+- **`test_schema_rebuild_executescript_is_transactional` pinned a
+  stdlib property, not the production call site.** The 2.6.5 test
+  opened a raw `sqlite3.Connection`, hand-rolled the `BEGIN
+  IMMEDIATE … COMMIT`-embedded executescript pattern, and asserted
+  SQLite genuinely wraps. That verifies the property the fix
+  depends on, but a regression in `_ensure_schema` itself (e.g.,
+  reverting to the 2.6.4 shape: `conn.execute("BEGIN IMMEDIATE")`
+  then a separate `executescript`) would still pass the test —
+  the production code path isn't called. Rewrite: sets up a v1
+  index with a row, injects a broken `_SCHEMA` via monkeypatch,
+  calls `index._ensure_schema` directly, asserts the row survives.
+  The 2.6.4 buggy shape would commit the DROP in autocommit mode
+  before the failing CREATE, losing the row; the 2.6.5 fix
+  preserves it.
+
 ## 2.6.5 - 2026-05-23
 
 **Post-2.6.4 audit follow-up.** A six-agent meta-audit of the 2.6.4
