@@ -112,18 +112,23 @@ def bounded_read(path: Path, max_bytes: int) -> bytes:
     Raises ``ValueError`` if the file's size exceeds the cap. The stat
     check happens before the allocation so an oversized file is
     rejected without ever loading it. Returns bytes; callers decode
-    explicitly (typically ``.decode("utf-8", errors="replace")`` for
-    user-controlled text, ``json.loads`` for structured input).
+    explicitly (``.decode("utf-8")`` for user-controlled text,
+    ``json.loads`` for structured input).
+
+    A stat/open failure propagates as its native ``OSError`` subclass
+    (``FileNotFoundError``, ``PermissionError``, …) unchanged — NOT
+    re-wrapped into a bare ``OSError``. Callers special-case the
+    subclass: ``Store.restore`` / ``Store.rename_scope`` catch
+    ``FileNotFoundError`` to turn a vanished-file race into a clean
+    ``MemoryNotFoundError``; flattening the subclass would silently
+    make those handlers dead code.
 
     Use for inputs where over-cap is a malformed-input signal —
     frontmatter, config files, JSON payloads. For append-only logs
     where truncation is the right behaviour, use
     :func:`bounded_tail_read` instead.
     """
-    try:
-        size = path.stat().st_size
-    except OSError as exc:
-        raise OSError(f"{path}: cannot stat: {exc}") from exc
+    size = path.stat().st_size
     if size > max_bytes:
         raise ValueError(f"{path}: file size {size} exceeds cap {max_bytes} bytes")
     with path.open("rb") as fh:
@@ -142,9 +147,13 @@ def bounded_tail_read(path: Path, max_bytes: int) -> bytes:
     will not have a partial-line discard applied — that's the caller's
     responsibility to handle).
 
-    Falls back to a bounded forward read for unseekable streams
-    (FIFOs, named pipes); the partial-line discard does not apply in
-    that case because the read starts at the head.
+    Falls back to a bounded forward read when the open file can't be
+    seeked; the partial-line discard does not apply in that case
+    because the read starts at the head. NOTE: the fallback only
+    helps once the file is open — opening a FIFO with no writer
+    blocks indefinitely, so a caller passing a possibly-non-regular
+    path must guard with ``Path.is_file()`` first (see
+    ``hook._extract_last_exchange`` and ``consolidate._load_transcript``).
     """
     with path.open("rb") as fh:
         try:

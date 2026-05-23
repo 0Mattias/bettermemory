@@ -117,10 +117,12 @@ def test_plugin_marketplace_version_matches_pyproject() -> None:
 
     expected = _pyproject_version()
     plugin_json = json.loads(
-        (_REPO_ROOT / "plugin" / ".claude-plugin" / "plugin.json").read_text()
+        (_REPO_ROOT / "plugin" / ".claude-plugin" / "plugin.json").read_text(
+            encoding="utf-8"
+        )
     )
     marketplace = json.loads(
-        (_REPO_ROOT / ".claude-plugin" / "marketplace.json").read_text()
+        (_REPO_ROOT / ".claude-plugin" / "marketplace.json").read_text(encoding="utf-8")
     )
     assert plugin_json.get("version") == expected, (
         f"plugin/.claude-plugin/plugin.json version "

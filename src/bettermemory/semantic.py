@@ -334,6 +334,12 @@ _HYDRATED: bool = False
 # happened to hit cache.
 _DIRTY: bool = False
 
+# `_MODEL_DIM` records the live embedding model's output dimension,
+# learned from the first fresh encode this process does — None until
+# then. Reset whenever the cache is cleared or the persistent path
+# changes. See `_note_model_dimension`.
+_MODEL_DIM: int | None = None
+
 
 def configure_persistent_cache(
     root: Path | None,
@@ -374,7 +380,7 @@ def configure_persistent_cache(
     vector for the same `(memory_id, updated_key)` and leave
     `_DIRTY=False`, so the new file would never be written.
     """
-    global _PERSISTENT_PATH, _HYDRATED, _DIRTY
+    global _PERSISTENT_PATH, _HYDRATED, _DIRTY, _MODEL_DIM
     new_path: Path | None = None
     if root is not None:
         safe = re.sub(r"[^a-zA-Z0-9._-]", "_", model_name)
@@ -396,6 +402,9 @@ def configure_persistent_cache(
     _PERSISTENT_PATH = new_path
     _HYDRATED = False
     _DIRTY = False
+    # New path -> next access re-hydrates; the dimension check must
+    # re-run against whatever the new file holds.
+    _MODEL_DIM = None
 
 
 def _hydrate_persistent_cache() -> None:
@@ -538,6 +547,43 @@ def flush_persistent_cache() -> None:
         )
 
 
+def _note_model_dimension(dim: int) -> None:
+    """Record the live model's embedding dimension and, the first time
+    it's seen, drop any cache entries that don't match it.
+
+    A persistent cache written under one model checkpoint and hydrated
+    under another (same `model_name`, different output dimension)
+    would otherwise pair a stale-dimension cached vector against a
+    freshly-computed one in `cosine_similarity_normalized`, whose
+    `zip(strict=True)` raises `ValueError` — uncaught on the
+    `memory_write` -> `find_similar` path, so the whole handler fails.
+
+    Every caller that computes a *fresh* embedding feeds the dimension
+    here: `cached_embed`'s own cache-miss branch, and the query encode
+    in `find_similar` / `_search` / `find_similar_tombstones` (which
+    runs before any `cached_embed`, so stale entries are purged before
+    a cache hit can hand one back). The one-time purge forces every
+    stale entry to recompute at the current dimension. No probe encode
+    — the dimension is taken from work the caller already did.
+    """
+    global _MODEL_DIM, _DIRTY
+    if _MODEL_DIM == dim:
+        return
+    _MODEL_DIM = dim
+    stale = [mid for mid, c in _EMBEDDING_CACHE.items() if len(c.vector) != dim]
+    if stale:
+        for mid in stale:
+            del _EMBEDDING_CACHE[mid]
+        _DIRTY = True
+        log.warning(
+            "embedding cache: dropped %d stale-dimension entries — the "
+            "persistent cache was written under a different model "
+            "checkpoint; they will be recomputed at the current "
+            "dimension.",
+            len(stale),
+        )
+
+
 def cached_embed(
     model: Any,
     memory_id: str,
@@ -557,9 +603,17 @@ def cached_embed(
     global _DIRTY
     _hydrate_persistent_cache()
     cached = _EMBEDDING_CACHE.get(memory_id)
-    if cached is not None and cached.updated_key == updated_key:
+    if (
+        cached is not None
+        and cached.updated_key == updated_key
+        and (_MODEL_DIM is None or len(cached.vector) == _MODEL_DIM)
+    ):
         return cached.vector
     vector = model.encode(body, normalize_embeddings=True)
+    # A fresh encode — its length is the live model dimension. Feed it
+    # to the reconcile pass so any stale-dimension hydrated entries are
+    # purged before they can reach `cosine_similarity_normalized`.
+    _note_model_dimension(len(vector))
     _EMBEDDING_CACHE[memory_id] = _CachedEmbedding(
         memory_id=memory_id, updated_key=updated_key, vector=vector
     )
@@ -603,7 +657,7 @@ def reset_caches() -> None:
     needs to reconfigure persistence explicitly. Doesn't touch the
     on-disk file; that's a deliberate filesystem effect that survives.
     """
-    global _PERSISTENT_PATH, _HYDRATED, _DIRTY
+    global _PERSISTENT_PATH, _HYDRATED, _DIRTY, _MODEL_DIM
     _MODEL_CACHE.clear()
     _LOAD_FAILED.clear()
     _LOAD_FAILED_LOGGED.clear()
@@ -611,6 +665,7 @@ def reset_caches() -> None:
     _PERSISTENT_PATH = None
     _HYDRATED = False
     _DIRTY = False
+    _MODEL_DIM = None
 
 
 __all__ = [

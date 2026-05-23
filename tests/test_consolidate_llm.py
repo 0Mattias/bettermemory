@@ -17,6 +17,8 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from pathlib import Path
 
+import pytest
+
 from bettermemory.consolidate import build_transcript_cluster, consolidate_llm
 from bettermemory.llm import (
     Cluster,
@@ -164,6 +166,71 @@ def test_apply_yes_batch_commits_merge(tmp_path: Path) -> None:
     assert a_id in active_ids
     keeper = next(m for m in store.load_all() if m.id == a_id)
     assert "queue + worker" in keeper.body
+
+
+def test_merge_rollback_restores_earlier_tombstoned_duplicates(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """Regression for the 2.6.4 audit. A multi-way merge tombstones
+    `duplicate_ids` one by one. If a later tombstone fails, the
+    rollback must restore the keeper's body AND un-tombstone every
+    duplicate already removed — otherwise the earlier duplicate's
+    content survives in neither the keeper (rolled back) nor the
+    active set (tombstoned): silent data loss.
+    """
+    store = Store(tmp_path)
+    keeper = store.write(
+        content="postgres listens on port 5432 for the task queue",
+        scopes=["tools"],
+    )
+    dup1 = store.write(
+        content="postgres listens on port 5432 for the task queue worker",
+        scopes=["tools"],
+    )
+    dup2 = store.write(
+        content="postgres listens on port 5432 for the task queue daemon",
+        scopes=["tools"],
+    )
+    provider = FakeProvider(
+        proposals=[
+            MergeProposal(
+                keeper_id=keeper.id,
+                duplicate_ids=(dup1.id, dup2.id),
+                new_body="postgres on port 5432 (queue + worker + jobs)\n",
+                rationale="combined",
+            )
+        ]
+    )
+
+    # Fail the SECOND duplicate's tombstone; the first is already
+    # tombstoned by then, so the rollback has to undo it.
+    real_tombstone = store.tombstone
+
+    def flaky_tombstone(memory_id, **kw):
+        if memory_id == dup2.id:
+            raise RuntimeError("simulated tombstone failure")
+        return real_tombstone(memory_id, **kw)
+
+    monkeypatch.setattr(store, "tombstone", flaky_tombstone)
+
+    report = consolidate_llm(
+        store, provider, apply=True, accept=True, session_id="test-session"
+    )
+
+    # consolidate_llm catches the per-cluster raise as a failure.
+    assert len(report.failures) >= 1
+    active = {m.id for m in store.load_all()}
+    # Keeper rolled back to its pre-merge body.
+    assert keeper.id in active
+    keeper_now = next(m for m in store.load_all() if m.id == keeper.id)
+    assert "queue + worker + jobs" not in keeper_now.body
+    # dup1 was tombstoned, then restored by the rollback — must be active.
+    assert dup1.id in active, (
+        "dup1 was tombstoned before dup2 failed; the rollback must "
+        "restore it or its content is silently lost"
+    )
+    # dup2's tombstone never succeeded.
+    assert dup2.id in active
 
 
 def test_interactive_accept_per_proposal(tmp_path: Path) -> None:
@@ -376,6 +443,40 @@ def test_build_transcript_cluster_loads_plain_text(tmp_path: Path) -> None:
     assert cluster.cluster_kind == "transcript_facts"
     assert "port 5433" in cluster.transcript
     assert len(cluster.members) >= 1
+
+
+def test_load_transcript_does_not_hang_on_fifo(tmp_path: Path) -> None:
+    """Regression for the 2.6.4 audit. `_load_transcript` opened the
+    path through `bounded_tail_read` with no regular-file guard —
+    pointed at a FIFO with no writer, `open("rb")` blocks forever,
+    hanging `consolidate --llm --from-transcript`. The `is_file()`
+    guard rejects non-regular paths up front.
+
+    Runs `_load_transcript` in a daemon thread: with the guard it
+    returns instantly; without it the thread stays blocked in
+    `open()` and is still alive after the join timeout.
+    """
+    import os
+    import threading
+
+    from bettermemory.consolidate import _load_transcript
+
+    if not hasattr(os, "mkfifo"):  # pragma: no cover - non-unix
+        pytest.skip("os.mkfifo not available")
+
+    fifo = tmp_path / "pipe"
+    os.mkfifo(fifo)
+    result: list[str] = []
+    worker = threading.Thread(
+        target=lambda: result.append(_load_transcript(fifo)), daemon=True
+    )
+    worker.start()
+    worker.join(timeout=5)
+    assert not worker.is_alive(), (
+        "_load_transcript hung on a writer-less FIFO — the is_file() "
+        "guard before bounded_tail_read is missing"
+    )
+    assert result == [""]
 
 
 def test_build_transcript_cluster_loads_jsonl_session(tmp_path: Path) -> None:

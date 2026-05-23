@@ -124,9 +124,21 @@ def load(path: Path | str) -> Post:
     allocation — the previous unbounded ``read_text()`` was a sync-pull
     DoS vector (a hostile remote pushing a multi-GB ``.md`` would OOM
     the loader before the 64 KB YAML cap ever fired).
+
+    Decodes UTF-8 strictly: invalid bytes raise ``ValueError``. Not
+    ``errors="replace"`` — substituting U+FFFD would let a corrupt
+    memory file load into the retrieval surface with `doctor`
+    reporting it clean, and the next mutator would rewrite the file,
+    laundering the corruption permanently. Raising keeps the
+    pre-2.6.4 contract (``read_text(encoding="utf-8")`` raised here
+    too) so the store's malformed-file skip path fires.
     """
     raw = bounded_read(Path(path), _MAX_FILE_BYTES)
-    return loads(raw.decode("utf-8", errors="replace"))
+    try:
+        text = raw.decode("utf-8")
+    except UnicodeDecodeError as exc:
+        raise ValueError(f"{path}: not valid UTF-8: {exc}") from exc
+    return loads(text)
 
 
 class _NoAliasDumper(yaml.SafeDumper):

@@ -355,7 +355,11 @@ def compute_eval(
 
         kind = ev.get("kind")
         if kind == "search":
-            returned = ev.get("returned") or []
+            # Legacy-name fallback — same discipline as the other
+            # event consumers (hook / consolidate / _handlers).
+            returned = (
+                ev.get("returned") or ev.get("memory_ids") or ev.get("hit_ids") or []
+            )
             if not isinstance(returned, list):
                 continue
             for mid in returned:
@@ -377,7 +381,7 @@ def compute_eval(
             outcome = ev.get("outcome")
             if outcome != "applied":
                 continue
-            ids = ev.get("ids") or []
+            ids = ev.get("ids") or ev.get("memory_ids") or []
             if not isinstance(ids, list):
                 continue
             is_auto = bool(ev.get("auto"))

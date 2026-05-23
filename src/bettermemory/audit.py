@@ -192,6 +192,63 @@ class MissReport:
         }
 
 
+def turn_audited_fields(
+    report: MissReport,
+    *,
+    session_id: str,
+    probe_mode: str,
+    assistant_present: bool,
+    triggered_from: str,
+) -> dict[str, Any]:
+    """Canonical field set for a ``turn_audited`` event.
+
+    Single source of truth for the two producers — the Stop hook
+    (``hook.run_audit``) and the in-process MCP handler
+    (``_handlers._advance_turn``). The 2.6.4 audit found them already
+    drifted (``triggered_from`` on the hook, absent on the handler);
+    routing both through this builder makes that drift structurally
+    impossible. ``triggered_from`` is the source discriminator —
+    ``"stop_hook"`` or ``"mcp_tool"``, a closed set both producers
+    populate so a consumer can split traffic without guessing.
+    """
+    return {
+        "session_id": session_id,
+        "verdict": report.verdict,
+        "lookback_seconds": report.lookback_seconds,
+        "recent_retrieval_count": report.recent_retrieval_count,
+        "probe_mode": probe_mode,
+        "threshold_rule": report.threshold_rule,
+        "assistant_present": assistant_present,
+        "triggered_from": triggered_from,
+    }
+
+
+def search_miss_fields(
+    report: MissReport,
+    *,
+    session_id: str,
+    triggered_from: str,
+) -> dict[str, Any]:
+    """Canonical field set for a ``search_miss`` event. Pairs with
+    :func:`turn_audited_fields` — see that docstring for the
+    drift-prevention rationale.
+
+    Carries ``recent_retrieval_count`` so ``eval._silent_miss_from_event``
+    can render it: the 2.6.4 audit found that consumer reading the
+    field off the ``search_miss`` event while every producer emitted
+    it on ``turn_audited`` only — the eval column was always blank.
+    """
+    return {
+        "session_id": session_id,
+        "threshold_rule": report.threshold_rule,
+        "lookback_seconds": report.lookback_seconds,
+        "recent_retrieval_count": report.recent_retrieval_count,
+        "top_hits": [h.to_dict() for h in report.top_hits],
+        "probe_query": report.probe_query,
+        "triggered_from": triggered_from,
+    }
+
+
 def probe_for_miss(
     memories: list[Memory],
     user_message: str,
@@ -359,7 +416,9 @@ def _count_recent_retrievals(
     for ev in events:
         if ev.get("kind") not in _RETRIEVAL_EVENT_KINDS:
             continue
-        if ev.get("session") != session_id:
+        # Canonical-first session read with the legacy fallback the
+        # other event consumers use — see 70e41a4.
+        if (ev.get("session") or ev.get("session_id")) != session_id:
             continue
         ts = _parse_ts(ev.get("ts"))
         if ts is None or ts < cutoff:
@@ -385,4 +444,6 @@ __all__ = [
     "MissReport",
     "Verdict",
     "probe_for_miss",
+    "search_miss_fields",
+    "turn_audited_fields",
 ]

@@ -53,8 +53,14 @@ class TestBoundedRead:
         # Cap of 400 bytes accepts it.
         assert bounded_read(path, max_bytes=400) == b"\xf0\x9f\x98\x80" * 100
 
-    def test_missing_file_raises_oserror(self, tmp_path: Path) -> None:
-        with pytest.raises(OSError, match="cannot stat"):
+    def test_missing_file_raises_filenotfounderror(self, tmp_path: Path) -> None:
+        """A missing file must raise `FileNotFoundError` — the native
+        subclass, NOT a flattened bare `OSError`. `Store.restore` and
+        `Store.rename_scope` catch `FileNotFoundError` specifically to
+        turn a vanished-file race into a clean `MemoryNotFoundError`;
+        flattening the subclass (the 2.6.4 regression) silently turned
+        those handlers into dead code."""
+        with pytest.raises(FileNotFoundError):
             bounded_read(tmp_path / "nope", max_bytes=1024)
 
     def test_empty_file(self, tmp_path: Path) -> None:

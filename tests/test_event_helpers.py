@@ -93,8 +93,13 @@ def test_shape_matches_real_handlers_emission(tmp_path: Path) -> None:
     write = log.emit("write", id="m1", status="committed")
     # Pin the canonical field names. If any of these assertions breaks,
     # both the producer-side change AND every consumer reading the
-    # field need updating.
-    assert "returned" in search and "relevance" in search
+    # field need updating. Every field emitted above is asserted — the
+    # 2.6.4 audit found this test emitted `claim_excerpts` /
+    # `lookback_seconds` without ever asserting them, so a rename
+    # would have slipped through the "contract" test silently.
+    assert "returned" in search and "relevance" in search and "query" in search
     assert "ids" in use and "outcome" in use and "attribution" in use
+    assert "claim_excerpts" in use
     assert "top_hits" in miss and "threshold_rule" in miss
+    assert "lookback_seconds" in miss and "probe_query" in miss
     assert "status" in write

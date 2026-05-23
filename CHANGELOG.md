@@ -77,7 +77,7 @@ originated events — three audits walked past it.
 ### Fixed — live shipping bugs
 
 - **CRITICAL: silent-miss telemetry partially broken for hook-
-  originated events (the 2.1.0 flagship).** `hook.py:_run_audit`
+  originated events (the 2.1.0 flagship).** `hook.py:run_audit`
   emitted `search_miss` with `top_hit_ids=[strings]` and omitted
   `threshold_rule` / `lookback_seconds`, while `_handlers.py:_advance_turn`
   (the in-process MCP handler) emits `top_hits=[dicts]` with both
@@ -124,16 +124,24 @@ originated events — three audits walked past it.
   post-migration files inherited umask (0o644) and ended up
   world-readable. Two fixes for the price of one structural
   consolidation.
-- **HIGH: `sync.py push` / `pull` ran git operations with zero
-  Store coordination.** `git add -A` snapshots the file-set at one
-  instant; a concurrent `Store.write` mid-`add` ships a half-
-  written file-set to the remote. `git pull --rebase` can
-  `checkout` over a file that another process holds open for
-  write. Fix: both functions now hold `flock_excl(root / ".sync")`
-  for the duration of the git operation sequence. The lock covers
-  pull's reindex too so the FTS5 rebuild sees the same on-disk
-  state the rebase landed. Pull's error message gained the
-  `git rebase --abort` recovery hint for the crash-mid-rebase case.
+- **MEDIUM: `sync.py push` / `pull` ran git operations with no
+  mutual exclusion.** Two concurrent `bettermemory sync` runs (push
+  racing push, or push racing pull) interleave their `git add` /
+  `commit` / `pull --rebase` with nothing serializing them. Fix:
+  both functions now hold `flock_excl(root / ".sync")` for the
+  duration of the git operation sequence, making each sync op an
+  atomic boundary against the other. The lock covers pull's reindex
+  too so the FTS5 rebuild sees the same on-disk state the rebase
+  landed. Pull's error message gained the `git rebase --abort`
+  recovery hint for the crash-mid-rebase case. *Known limitation
+  (corrected post-release): this lock does NOT coordinate against
+  the in-process `Store`.* `Store.write` holds a per-memory-file
+  lock on a different inode, so a `Store.write` landing mid-`git
+  add -A` can still stage a half-written file-set (at worst one
+  commit stale; the next sync corrects it). True sync↔Store
+  coordination would require `Store`'s mutators to take the
+  `.sync` lock too — a global write-serialization tradeoff
+  deferred as a separate decision.
 - **HIGH: LLM providers (Ollama, OpenAI) had no output-token cap.**
   Ollama call had no `num_predict` in `options`; the OpenAI
   provider passed no `max_tokens` (while Anthropic had carried
@@ -201,12 +209,12 @@ originated events — three audits walked past it.
 ### Fixed — pattern-generalization (event consumer fallbacks)
 
 - The 2.6.3 fix added tolerant `event.get("returned") or
-  event.get("memory_ids")` reads to `llm.py` only. Six other
+  event.get("memory_ids")` reads to `llm.py` only. Five other
   consumers (`_handlers.py`, `_response.py`, `hook.py`,
   `consolidate.find_demotion_candidates`,
   `consolidate.find_cold_scopes`) read canonical-only — pre-2.6.3
   archived events on disk were silently dropped from those passes.
-  All six now use the same canonical-first-then-legacy discipline.
+  All five now use the same canonical-first-then-legacy discipline.
   Same fix applied to `session` / `session_id` divergence:
   pre-2.6.4 hook wrote `session=`, handler writes `session_id=`,
   the Recorder auto-stamps `session`. All consumers now read

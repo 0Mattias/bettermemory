@@ -422,3 +422,40 @@ def test_v1_index_downgraded_to_v2_via_drop_and_recreate(
     # And the H1 surfaces work again on the reindexed store.
     filenames = index.filenames_for_ids(memory_dir, [a.id])
     assert a.id in filenames
+
+
+def test_schema_rebuild_executescript_is_transactional(tmp_path: Path) -> None:
+    """Regression for the 2.6.4 audit. `_ensure_schema`'s v1→v2
+    rebuild keeps the DROP + CREATE atomic by embedding
+    `BEGIN IMMEDIATE … COMMIT` *inside* the `executescript` string.
+    The 2.6.4 code instead did `conn.execute("BEGIN IMMEDIATE")`
+    then a separate `executescript(...)` — but `executescript`
+    implicitly commits the pending transaction first, so the BEGIN
+    wrapped nothing and a concurrent reader could see the
+    no-`memories`-table gap.
+
+    Pins the property the fix depends on: an `executescript` whose
+    script carries its own BEGIN/COMMIT genuinely wraps — a failure
+    mid-script rolls the earlier statements back.
+    """
+    db = tmp_path / "t.sqlite"
+    conn = sqlite3.connect(db)
+    conn.executescript(
+        "CREATE TABLE memories (id TEXT);INSERT INTO memories VALUES ('keep');"
+    )
+    conn.commit()
+    # Script drops the table, then fails on a broken CREATE.
+    with pytest.raises(sqlite3.Error):
+        conn.executescript(
+            "BEGIN IMMEDIATE;\n"
+            "DROP TABLE memories;\n"
+            "CREATE TABLE memories (broken syntax;\n"
+            "COMMIT;"
+        )
+    conn.rollback()
+    row = conn.execute("SELECT id FROM memories").fetchone()
+    conn.close()
+    assert row == ("keep",), (
+        "embedded BEGIN/COMMIT did not wrap the DROP — a mid-rebuild "
+        "failure would destroy the index"
+    )

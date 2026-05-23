@@ -210,6 +210,23 @@ def test_load_rejects_oversized_file_before_read(tmp_path) -> None:
         load(path)
 
 
+def test_load_rejects_invalid_utf8(tmp_path) -> None:
+    """Regression for the 2.6.4 audit. The 2.6.4 rewrite of `load`
+    switched from `read_text(encoding="utf-8")` (raises on invalid
+    UTF-8) to `decode("utf-8", errors="replace")` (silently
+    substitutes U+FFFD). That let a corrupt memory file load into the
+    retrieval surface with `doctor` reporting it clean; the next
+    mutator then rewrote the file, laundering the corruption. `load`
+    must raise on invalid UTF-8 so the store's malformed-file skip
+    path fires and `doctor` surfaces the gap.
+    """
+    path = tmp_path / "corrupt.md"
+    # A lone 0xFF byte is never valid UTF-8.
+    path.write_bytes(b"---\nid: x\n---\n\nbody \xff text\n")
+    with pytest.raises(ValueError):
+        load(path)
+
+
 def test_loads_accepts_normal_sized_frontmatter() -> None:
     """Sanity check: normal-sized frontmatter (verified_paths, links,
     etc. all populated) is well under the 64 KB cap. Lock the

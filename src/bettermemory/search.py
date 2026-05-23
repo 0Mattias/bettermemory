@@ -600,6 +600,7 @@ def _score_semantic(
     with off-topic ones.
     """
     from .semantic import (
+        _note_model_dimension,
         cached_embed,
         cosine_similarity_normalized,
         flush_persistent_cache,
@@ -609,6 +610,10 @@ def _score_semantic(
     if not query_clean:
         return []
     query_vec = semantic_model.encode(query_clean, normalize_embeddings=True)
+    # The query encode is the first fresh embedding this run does —
+    # feed its dimension to the cache reconcile so any stale-dimension
+    # hydrated entries are purged before the `cached_embed` hits below.
+    _note_model_dimension(len(query_vec))
 
     threshold = 0.3
     out: list[tuple[Memory, float, list[str]]] = []
@@ -966,6 +971,7 @@ def _find_similar_semantic(
     `semantic_model` won't trigger the import path.
     """
     from .semantic import (
+        _note_model_dimension,
         cached_embed,
         cosine_similarity_normalized,
         flush_persistent_cache,
@@ -976,6 +982,10 @@ def _find_similar_semantic(
         return []
 
     new_vec = model.encode(new_body_clean, normalize_embeddings=True)
+    # First fresh embedding of the run — prime the cache reconcile so a
+    # stale-dimension hydrated entry can't reach `cosine` below. See
+    # `semantic._note_model_dimension`.
+    _note_model_dimension(len(new_vec))
 
     hits: list[SimilarHit] = []
     for memory in existing:
@@ -1148,6 +1158,7 @@ def _find_similar_tombstones_semantic(
     restore-then-tombstone cycle).
     """
     from .semantic import (
+        _note_model_dimension,
         cached_embed,
         cosine_similarity_normalized,
         flush_persistent_cache,
@@ -1158,6 +1169,8 @@ def _find_similar_tombstones_semantic(
         return []
 
     new_vec = model.encode(new_body_clean, normalize_embeddings=True)
+    # Prime the cache reconcile — see `_find_similar_semantic`.
+    _note_model_dimension(len(new_vec))
 
     hits: list[SimilarHit] = []
     for memory in tombstoned:

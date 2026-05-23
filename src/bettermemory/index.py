@@ -265,22 +265,37 @@ def _ensure_schema(conn: sqlite3.Connection) -> None:
             on_disk,
             SCHEMA_VERSION,
         )
-        # Drop + re-create inside a single transaction. Without
-        # BEGIN IMMEDIATE, a parallel reader opening the index
-        # between the DROP and the CREATE sees an inconsistent
-        # schema (no `memories` table) and SELECTs fail. The
-        # SQLite busy timeout doesn't help — no BUSY is raised when
-        # the table simply isn't there yet. Wrapping in a single
-        # BEGIN IMMEDIATE … COMMIT makes the swap atomic for
-        # readers waiting on the same database file.
-        conn.execute("BEGIN IMMEDIATE")
+        # Drop + re-create as a single atomic transaction. A parallel
+        # reader opening the index between the DROP and the CREATE
+        # would otherwise see an inconsistent schema (no `memories`
+        # table) and its SELECT would fail — the SQLite busy timeout
+        # doesn't help, no BUSY is raised when the table simply isn't
+        # there yet.
+        #
+        # The transaction control (`BEGIN IMMEDIATE` … `COMMIT`) lives
+        # *inside* the executescript string, deliberately. A
+        # `conn.execute("BEGIN IMMEDIATE")` followed by a separate
+        # `conn.executescript(...)` does NOT wrap: `executescript`
+        # implicitly COMMITs any pending transaction before it runs
+        # (documented behaviour), so the BEGIN is committed away and
+        # the DROP/CREATE run unprotected. Keeping BEGIN/COMMIT in the
+        # script body holds the whole drop+recreate in one
+        # transaction; a concurrent reader sees the old schema or the
+        # new one, never the gap. Verified on CPython 3.11–3.13.
         try:
             conn.executescript(
-                "DROP TABLE IF EXISTS memory_links;"
-                "DROP TABLE IF EXISTS memories_fts;"
-                "DROP TABLE IF EXISTS memories;"
+                "BEGIN IMMEDIATE;\n"
+                "DROP TABLE IF EXISTS memory_links;\n"
+                "DROP TABLE IF EXISTS memories_fts;\n"
+                "DROP TABLE IF EXISTS memories;\n"
+                f"{_SCHEMA}\n"
+                "COMMIT;"
             )
-            conn.executescript(_SCHEMA)
+            # The `meta` table is never dropped, so a reader can't race
+            # these the way it can the schema swap above — run them
+            # after the atomic CREATE rather than inside it (which
+            # would mean string-building the version into the script,
+            # since executescript takes no bound parameters).
             conn.execute(
                 "UPDATE meta SET value = ? WHERE key = 'schema_version'",
                 (str(SCHEMA_VERSION),),

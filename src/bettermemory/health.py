@@ -684,7 +684,14 @@ def compute_health(
         ts = _parse_ts(ev.get("ts"))
 
         if kind == "search":
-            for mid in ev.get("returned", []) or []:
+            # Canonical-first read with the legacy-name fallback the
+            # other event consumers use (consolidate / hook /
+            # _handlers / _response) — keeps the health rollups
+            # consistent if an event carries the older `memory_ids` /
+            # `hit_ids` spelling.
+            for mid in (
+                ev.get("returned") or ev.get("memory_ids") or ev.get("hit_ids") or []
+            ):
                 stats = by_id.get(mid)
                 if stats:
                     stats.retrieval_count += 1
@@ -694,7 +701,7 @@ def compute_health(
                 stats.show_count += 1
         elif kind == "use":
             outcome = ev.get("outcome")
-            for mid in ev.get("ids", []) or []:
+            for mid in ev.get("ids") or ev.get("memory_ids") or []:
                 stats = by_id.get(mid)
                 if stats is None:
                     # Memory may have been tombstoned after the use was
@@ -1405,12 +1412,15 @@ def curation_counts(
     for ev in events:
         kind = ev.get("kind")
         if kind == "search":
-            for mid in ev.get("returned", []) or []:
+            # Legacy-name fallback — see the note in `compute_health`.
+            for mid in (
+                ev.get("returned") or ev.get("memory_ids") or ev.get("hit_ids") or []
+            ):
                 if mid in retrieval_counts:
                     retrieval_counts[mid] += 1
         elif kind == "use" and ev.get("outcome") == "applied":
             is_auto = ev.get("auto") is True
-            for mid in ev.get("ids", []) or []:
+            for mid in ev.get("ids") or ev.get("memory_ids") or []:
                 if mid in applied_counts:
                     applied_counts[mid] += 1
                     if not is_auto and mid in explicit_applied_counts:

@@ -21,7 +21,12 @@ from typing import Any, TypeAlias
 from mcp.server.fastmcp import Context as _FastMCPContext
 
 from ._response import ResponseBuilder, isoformat, isoformat_optional
-from .audit import DEFAULT_LOOKBACK_SECONDS, probe_for_miss
+from .audit import (
+    DEFAULT_LOOKBACK_SECONDS,
+    probe_for_miss,
+    search_miss_fields,
+    turn_audited_fields,
+)
 from .config import Config
 from .durability import find_transient_markers
 from .events import Recorder, iter_all_events, iter_events
@@ -678,10 +683,11 @@ def _hook_attributed_pending_ids(
     for event in iter_events(recorder.root):
         if event.get("kind") != "use":
             continue
-        # `session` / `session_id` both appear depending on producer
-        # vintage: canonical handler writes both; pre-2.6.4 hook wrote
-        # only `session`. Read either with the canonical-first
-        # discipline 70e41a4 established for llm.py.
+        # `use` events always carry `session` (the Recorder stamps it
+        # on every event); `session_id` only appears on events whose
+        # producer passed it explicitly (`turn_audited` / `search_miss`).
+        # The `or` keeps the read robust regardless — canonical-first,
+        # the discipline 70e41a4 established for llm.py.
         if (event.get("session") or event.get("session_id")) != recorder.session_id:
             continue
         if event.get("attribution") != "hook":
@@ -2359,22 +2365,22 @@ class ToolHandlers:
         # run this turn" with "audit ran and found nothing."
         self.recorder.record(
             "turn_audited",
-            session_id=state.session_id,
-            verdict=report.verdict,
-            lookback_seconds=window,
-            recent_retrieval_count=report.recent_retrieval_count,
-            probe_mode=probe_mode,
-            threshold_rule=report.threshold_rule,
-            assistant_present=assistant_response is not None,
+            **turn_audited_fields(
+                report,
+                session_id=state.session_id,
+                probe_mode=probe_mode,
+                assistant_present=assistant_response is not None,
+                triggered_from="mcp_tool",
+            ),
         )
         if report.is_miss:
             self.recorder.record(
                 "search_miss",
-                session_id=state.session_id,
-                threshold_rule=report.threshold_rule,
-                lookback_seconds=window,
-                top_hits=[h.to_dict() for h in report.top_hits],
-                probe_query=report.probe_query,
+                **search_miss_fields(
+                    report,
+                    session_id=state.session_id,
+                    triggered_from="mcp_tool",
+                ),
             )
         return report.to_dict()
 

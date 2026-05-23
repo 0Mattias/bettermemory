@@ -350,7 +350,15 @@ def _find_dedup_semantic(
         m_i, v_i = embedded[i]
         for j in range(i + 1, len(embedded)):
             m_j, v_j = embedded[j]
-            sim = cosine_similarity_normalized(v_i, v_j)
+            try:
+                sim = cosine_similarity_normalized(v_i, v_j)
+            except ValueError:
+                # Vector dimension mismatch — a stale persistent-cache
+                # entry (written under a different model checkpoint)
+                # was collected into this batch before a fresh encode
+                # triggered `semantic._note_model_dimension`'s purge.
+                # Skip the pair rather than crash the consolidate pass.
+                continue
             if sim < threshold:
                 continue
             keeper, duplicate = _pick_keeper(m_i, m_j)
@@ -956,6 +964,15 @@ def _load_transcript(path: Path) -> str:
     that as "no transcript to consolidate from" and skips the
     cluster.
     """
+    # Reject anything that isn't a regular file before opening it.
+    # `bounded_tail_read` opens the path in binary mode; a FIFO with
+    # no writer would block `open()` indefinitely, hanging
+    # `consolidate --llm --from-transcript`. `is_file()` stats without
+    # opening (no block) and is False for FIFOs, devices, directories,
+    # and missing paths — all "no transcript", same as the OSError
+    # branch. `hook.py` guards its transcript path the same way.
+    if not path.is_file():
+        return ""
     try:
         # `bounded_tail_read` enforces the byte cap (not chars) so a
         # multibyte UTF-8 transcript can't bypass it — see 2.6.3 fix.
@@ -1219,15 +1236,22 @@ def _apply_llm_proposal(
                 detail=f"merged from {list(proposal.duplicate_ids)}",
             )
         )
-        # Tombstone duplicates one-by-one; on the first failure, roll
-        # back the keeper's body so the partial-merge state (keeper has
-        # merged body, some duplicates still active) doesn't ship to
-        # retrieval. The rollback is best-effort — if it also fails,
-        # the operator needs to investigate, but the raise gives them
-        # the signal to do so instead of silently leaving a duplicate
-        # the merge was meant to remove. Pre-2.6.4 a partial failure
-        # left keeper-merged + some-duplicates-active, which the next
-        # consolidate run would re-merge but could compound on disk.
+        # Tombstone duplicates one-by-one. On any failure, fully roll
+        # back: restore the keeper's pre-merge body AND un-tombstone
+        # every duplicate already removed in this proposal. `keeper`
+        # is the pre-merge object — `merged` above is a separate
+        # `model_copy` — so `store.update(keeper)` is a true rollback.
+        #
+        # Restoring the earlier duplicates is load-bearing for multi-
+        # way clusters: a 3+-member cluster gives `duplicate_ids` two
+        # or more entries, so "dup A tombstoned, dup B fails" is a
+        # reachable state. Without the restore loop, dup A's content
+        # survives in neither the keeper (rolled back, never got the
+        # merge) nor the active set (tombstoned) — silent data loss
+        # until a manual `memory_restore`. Both rollback arms are
+        # best-effort: if one also fails, log loudly with the id the
+        # operator needs so the partial state is at least visible.
+        tombstoned: list[str] = []
         for dup_id in proposal.duplicate_ids:
             reason = (
                 f"consolidate --llm: merged into {proposal.keeper_id} "
@@ -1236,18 +1260,29 @@ def _apply_llm_proposal(
             try:
                 store.tombstone(dup_id, reason=reason, session_id=session_id)
             except Exception:
-                # Roll back the keeper to its pre-merge body so the
-                # partial state isn't left for retrieval to see.
                 try:
                     store.update(keeper)
                 except Exception:  # noqa: BLE001 — log path
                     log.warning(
-                        "merge rollback failed for keeper %s after duplicate "
-                        "%s could not be tombstoned; manual cleanup required",
+                        "merge rollback: keeper %s body could not be "
+                        "restored after duplicate %s failed to tombstone; "
+                        "manual cleanup required",
                         proposal.keeper_id,
                         dup_id,
                     )
+                for done_id in tombstoned:
+                    try:
+                        store.restore(done_id)
+                    except Exception:  # noqa: BLE001 — log path
+                        log.warning(
+                            "merge rollback: duplicate %s was tombstoned "
+                            "then could not be restored after the merge "
+                            "aborted; run `memory_restore %s` to recover",
+                            done_id,
+                            done_id,
+                        )
                 raise
+            tombstoned.append(dup_id)
             actions.append(
                 LLMProposalAction(
                     kind="llm_merge_tombstone",

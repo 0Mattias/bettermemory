@@ -356,13 +356,12 @@ class OllamaProvider:
         response.raise_for_status()
         payload = response.json()
         raw = payload.get("response", "")
-        # Ollama reports truncation via `done_reason == "length"`
-        # (newer) or by an empty `done` flag (older); both indicate
-        # the model stopped because it hit the token cap, not because
-        # it finished cleanly. A truncated JSON body silently falls
-        # through `parse_and_validate` as malformed, hiding the
-        # actual root cause; raise distinctly so the consolidate
-        # report can advise "raise num_predict or split cluster".
+        # Ollama reports a token-cap truncation via
+        # `done_reason == "length"`. A truncated JSON body would
+        # otherwise fall through `parse_and_validate` as malformed,
+        # hiding the actual root cause; raise distinctly so the
+        # consolidate report can advise "raise num_predict or split
+        # cluster".
         if payload.get("done_reason") == "length":
             raise LLMResponseTruncated(
                 f"Ollama response truncated at num_predict="

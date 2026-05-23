@@ -428,13 +428,21 @@ def push(
             f"{root} is not a git repo. Run `bettermemory sync init` first."
         )
 
-    # Coordinate against the in-process Store. Without this, a
-    # concurrent `Store.write` mid-`git add -A` snapshots a
-    # half-written file-set: git commits memory A v1 + memory B v2 +
-    # the freshly-renamed tombstone of memory C, producing a
-    # cross-machine state that's inconsistent with what the local
-    # store ever held. The lock is per-process exclusive; on Windows
-    # `flock_excl` is a no-op (MVP single-process there).
+    # Serialize concurrent `bettermemory sync` operations. Two `sync
+    # push` runs, or a `push` racing a `pull`, would otherwise
+    # interleave their `git add` / `commit` / `push` — the lock makes
+    # each sync op an atomic boundary against the other.
+    #
+    # This does NOT coordinate against the in-process `Store`.
+    # `Store.write` holds a per-memory-file lock (`<id>.md.lock`) — a
+    # different inode from this `.sync.lock`, so `flock` does not
+    # serialize the two. A `Store.write` landing mid-`git add -A` can
+    # still stage a half-written file-set; that snapshot is at worst
+    # one commit stale and the next sync corrects it. True sync↔Store
+    # coordination would require `Store`'s mutators to take this same
+    # lock — a global write-serialization tradeoff left as a
+    # deliberate, separate decision. On Windows `flock_excl` is a
+    # no-op (MVP single-process there).
     with flock_excl(root / _SYNC_LOCK_NAME):
         _run_git(root, ["add", "-A"])
         diff = _run_git(root, ["diff", "--cached", "--quiet"], check=False)
@@ -504,14 +512,16 @@ def pull(
             f"{root} is not a git repo. Run `bettermemory sync init` first."
         )
 
-    # Coordinate against the in-process Store. `git pull --rebase`
-    # can `checkout` over a file another process holds open for
-    # write; without the lock that's a real race once two MCP
-    # clients share a repo. On crash mid-rebase the repo is left in
-    # `.git/rebase-merge/` — operator runs `git rebase --abort`
-    # from the memory directory to recover. The lock is held across
-    # both the pull AND the reindex so the FTS5 rebuild sees the
-    # same on-disk set the rebase landed.
+    # Serialize concurrent `bettermemory sync` operations — see the
+    # note in `push()`. This lock makes `pull` atomic against another
+    # `pull` / `push`; it does NOT coordinate against the in-process
+    # `Store` (a different lockfile inode), so `git pull --rebase`
+    # can still `checkout` over a file a racing `Store.write` holds
+    # open — a known gap pending Store-side coordination. On crash
+    # mid-rebase the repo is left in `.git/rebase-merge/` — operator
+    # runs `git rebase --abort` from the memory directory to recover.
+    # The lock is held across both the pull AND the reindex so the
+    # FTS5 rebuild sees the same on-disk set the rebase landed.
     with flock_excl(root / _SYNC_LOCK_NAME):
         remotes = _run_git(root, ["remote"], check=False).stdout.split()
         if remote not in remotes:

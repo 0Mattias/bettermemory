@@ -60,7 +60,7 @@ from typing import Any
 
 from ._fsutil import bounded_stream_read, bounded_tail_read
 from .attribution import attribute_uses
-from .audit import probe_for_miss
+from .audit import probe_for_miss, search_miss_fields, turn_audited_fields
 from .config import Config, load_config
 from .events import Recorder
 from .events import iter_events
@@ -227,36 +227,28 @@ def run_audit(
         enabled=cfg.telemetry.enabled,
         max_bytes=cfg.telemetry.max_bytes,
     )
-    # Field-name discipline: match the in-process handler's canonical
-    # shape (see `_handlers.py:2353` and `:2364`) so the downstream
-    # eval / health rollups see one event shape regardless of source.
-    # The 2.6.3 audit cycle missed that this path emitted
-    # `top_hit_ids=[strings]` and omitted `threshold_rule` /
-    # `lookback_seconds`, which silently broke the silent-miss eval
-    # renderer for hook-originated traffic (the primary production
-    # source). `triggered_from` distinguishes the source for rollups
-    # that need it; everything else mirrors the handler.
+    # `turn_audited` / `search_miss` field sets come from the shared
+    # builders in `audit.py`, so the Stop hook and the in-process MCP
+    # handler (`_handlers._advance_turn`) cannot drift — the 2.6.4
+    # audit found them already diverged. `triggered_from="stop_hook"`
+    # tags the source.
     probe_mode = cfg.behavior.search_mode or "keyword"
     recorder.record(
         "turn_audited",
-        session_id=session_id,
-        verdict=report.verdict,
-        lookback_seconds=report.lookback_seconds,
-        recent_retrieval_count=report.recent_retrieval_count,
-        probe_mode=probe_mode,
-        threshold_rule=report.threshold_rule,
-        assistant_present=assistant_response is not None,
-        triggered_from="stop_hook",
+        **turn_audited_fields(
+            report,
+            session_id=session_id,
+            probe_mode=probe_mode,
+            assistant_present=assistant_response is not None,
+            triggered_from="stop_hook",
+        ),
     )
     if report.is_miss:
         recorder.record(
             "search_miss",
-            session_id=session_id,
-            threshold_rule=report.threshold_rule,
-            lookback_seconds=report.lookback_seconds,
-            top_hits=[h.to_dict() for h in report.top_hits],
-            probe_query=report.probe_query,
-            triggered_from="stop_hook",
+            **search_miss_fields(
+                report, session_id=session_id, triggered_from="stop_hook"
+            ),
         )
 
     # Post-hoc claim_excerpt attribution. The MCP contract asks the

@@ -263,3 +263,42 @@ def test_find_similar_semantic_skips_empty_bodies() -> None:
     fake = _FakeModel()
     hits = find_similar("", [_memory("anything")], semantic_model=fake)
     assert hits == []
+
+
+def test_stale_dimension_cache_entries_are_purged() -> None:
+    """Regression for the 2.6.4 audit. A persistent embedding cache
+    written under one model checkpoint and hydrated under another with
+    a different output dimension (same `model_name`) would pair a
+    stale-dimension cached vector against a fresh one in
+    `cosine_similarity_normalized`; `zip(strict=True)` raises
+    `ValueError`, uncaught on the `memory_write` -> `find_similar`
+    path. `_note_model_dimension` — fed by the query encode in
+    `find_similar` / `_search`, and by `cached_embed`'s own miss
+    branch — drops cache entries whose dimension doesn't match the
+    live model, so no comparison ever pairs mismatched vectors.
+    """
+    from bettermemory import semantic
+
+    class _FixedDimModel:
+        """Emits 4-dimensional vectors for any input."""
+
+        def encode(self, text: str, normalize_embeddings: bool = True) -> list[float]:
+            return [0.5, 0.5, 0.5, 0.5]
+
+    # A hydrated persistent cache holding a 3-dimensional vector (an
+    # older checkpoint's output) for a memory that hasn't changed.
+    semantic._EMBEDDING_CACHE["stale-mem"] = semantic._CachedEmbedding(
+        memory_id="stale-mem", updated_key="k", vector=[1.0, 0.0, 0.0]
+    )
+    # `find_similar` learns the live dimension from its query encode
+    # and primes the reconcile — which purges the stale entry.
+    semantic._note_model_dimension(4)
+    assert "stale-mem" not in semantic._EMBEDDING_CACHE
+
+    # `cached_embed` recomputes the purged memory at dim 4, and a
+    # second memory compares cleanly — no dimension-mismatch ValueError.
+    model = _FixedDimModel()
+    vec = semantic.cached_embed(model, "stale-mem", "k", "body")
+    assert len(vec) == 4
+    other = semantic.cached_embed(model, "fresh", "k2", "other")
+    assert semantic.cosine_similarity_normalized(vec, other) == 1.0

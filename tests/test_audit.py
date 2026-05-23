@@ -687,3 +687,57 @@ def test_health_to_dict_carries_silent_misses() -> None:
     payload = report.to_dict()
     assert "silent_misses" in payload
     assert payload["silent_misses"] == {"audited_total": 0, "miss_total": 0}
+
+
+def test_event_field_builders_pin_canonical_shape() -> None:
+    """The `turn_audited` / `search_miss` field builders are the single
+    source of truth for the two producers (the Stop hook and the
+    in-process MCP handler), so the shapes can't drift. Pin the
+    contract — and specifically the two gaps the 2.6.4 audit found:
+    `search_miss` must carry `triggered_from` (the handler omitted it)
+    and `recent_retrieval_count` (every producer omitted it, leaving
+    `eval`'s silent-miss column permanently blank).
+    """
+    from bettermemory.audit import (
+        MissHit,
+        MissReport,
+        search_miss_fields,
+        turn_audited_fields,
+    )
+
+    report = MissReport(
+        verdict="miss",
+        checked_at=_utc(2026, 5, 22),
+        session_id="s1",
+        lookback_seconds=600,
+        recent_retrieval_count=3,
+        threshold_rule=THRESHOLD_RULE_V1,
+        top_hits=(
+            MissHit(
+                id="m1",
+                score=0.9,
+                relevance="high",
+                scopes=("tools",),
+                snippet="snip",
+            ),
+        ),
+        probe_query="q",
+    )
+    ta = turn_audited_fields(
+        report,
+        session_id="s1",
+        probe_mode="keyword",
+        assistant_present=True,
+        triggered_from="stop_hook",
+    )
+    sm = search_miss_fields(report, session_id="s1", triggered_from="mcp_tool")
+
+    assert ta["triggered_from"] == "stop_hook"
+    assert ta["recent_retrieval_count"] == 3
+    assert ta["verdict"] == "miss"
+    # The two 2.6.4-audit gaps: search_miss must carry both.
+    assert sm["triggered_from"] == "mcp_tool"
+    assert sm["recent_retrieval_count"] == 3
+    # top_hits is the canonical list-of-dicts shape, not list-of-str.
+    assert isinstance(sm["top_hits"][0], dict)
+    assert sm["top_hits"][0]["id"] == "m1"
