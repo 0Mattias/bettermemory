@@ -60,14 +60,15 @@ class _StubSemanticModel:
         return vec
 
 
-def test_mode_keyword_is_default_and_unchanged() -> None:
-    """Calling search() with no `mode` should use the keyword scorer — same
-    behaviour as before the mode parameter existed. Pin the default so a
-    future flip to hybrid is an obvious diff."""
+def test_mode_default_is_hybrid() -> None:
+    """Calling search() with no `mode` should use the hybrid scorer
+    (default since 2.6.8). Pin the default so a future flip is an
+    obvious diff. Hybrid degrades to keyword+BM25 fusion when no
+    semantic_model is provided, so this works without the extras."""
     a = _memory("python list comprehension")
     b = _memory("kubernetes networking notes")
     default = search([a, b], "python list")
-    explicit = search([a, b], "python list", mode="keyword")
+    explicit = search([a, b], "python list", mode="hybrid")
     assert [h.id for h in default] == [h.id for h in explicit]
 
 

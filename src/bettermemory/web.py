@@ -548,6 +548,7 @@ def build_app(config: Config, store: Store | None = None) -> "FastAPI":
             root=store.root,
             session_id="web-ui",
             enabled=config.telemetry.enabled,
+            log_queries_verbatim=config.telemetry.log_queries_verbatim,
         )
         rec.record("verify", id=memory_id, note=note or None, source="web-ui")
         return RedirectResponse(url=f"/memories/{memory_id}", status_code=303)

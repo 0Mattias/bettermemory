@@ -22,10 +22,10 @@ Design notes:
 
 - **Probe matches the model's configured search mode.** The default is
   whatever `config.behavior.search_mode` resolves to (typically
-  `"keyword"` in 1.6.0). Probing with a different scorer than the
-  model would have used measures the wrong thing — a BM25 hit the
-  model on keyword mode would never have seen is not a miss the model
-  could have caught. Callers can override the `mode` parameter on the
+  `"hybrid"` since 2.6.8; was `"keyword"` in 1.6.0). Probing with a
+  different scorer than the model would have used measures the wrong
+  thing — a BM25 hit the model on keyword mode would never have seen
+  is not a miss the model could have caught. Callers can override the `mode` parameter on the
   probe for offline curation passes that intentionally want a
   different lens, but the default is "what would the model have
   done."
@@ -265,7 +265,7 @@ def probe_for_miss(
     lookback_seconds: int = DEFAULT_LOOKBACK_SECONDS,
     caller_origin: Origin | None = None,
     excluded_scopes: set[str] | None = None,
-    mode: str = "keyword",
+    mode: str = "hybrid",
 ) -> MissReport:
     """Decide whether the just-completed turn was a silent retrieval miss.
 
@@ -292,9 +292,9 @@ def probe_for_miss(
     the model would have used — probing with a different scorer
     measures "would a different ranker have hit" rather than "did the
     model miss what its ranker would have shown." Default falls to
-    `"keyword"` (the package default) when the caller doesn't have a
-    config to thread in. `"hybrid"` is available for offline curation
-    passes that want paraphrase recall and have extras installed. The
+    `"hybrid"` (the package default since 2.6.8) when the caller
+    doesn't have a config to thread in. Hybrid gracefully degrades to
+    keyword+BM25 fusion when no embedding extra is installed. The
     probe deliberately does NOT request `expand_top` or `path_drift` —
     those signals matter for *consuming* a hit, not for deciding
     whether a search should have happened.

@@ -57,18 +57,17 @@ async def _seed(server: Any, body: str, scopes: list[str] | None = None) -> str:
     return res["id"]
 
 
-async def test_default_mode_is_keyword(server: Any) -> None:
-    """No mode parameter and no config setting => keyword mode. Pin the
-    1.6.0 default so a future flip to hybrid is an obvious diff."""
+async def test_default_mode_is_hybrid(server: Any) -> None:
+    """No mode parameter and no config setting => hybrid mode (default
+    since 2.6.8). Pin the default so a future flip is an obvious diff."""
     await _seed(server, "python list comprehension and generators")
     await _seed(server, "rust borrow checker and lifetimes")
 
     hits = _unwrap(await _call(server, "memory_search", query="python"))
     assert hits
-    # Keyword scorer produces scores in the count+multiplier range (>= 1).
-    # BM25/hybrid would be in a different scale. Sanity check: the score
-    # is large enough that we're clearly on the keyword path.
-    assert hits[0]["score"] >= 0.5
+    # Hybrid fuses via RRF: scores land in the small ~0.01-0.05 range.
+    # Keyword would produce scores >= 0.5. This bound separates the two.
+    assert 0 < hits[0]["score"] < 0.1
 
 
 async def test_mode_bm25_returns_hits(server: Any) -> None:

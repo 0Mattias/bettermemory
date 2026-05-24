@@ -462,6 +462,62 @@ async def test_hook_attributed_event_suppresses_auto_commit(
     assert res["id"] not in state.pending_use_tokens
 
 
+async def test_stale_use_event_does_not_falsely_purge_fresh_token(
+    server_with_state: tuple[Any, SessionState, Path],
+) -> None:
+    """Regression: pre-2.6.8 the in-process dedup scan matched on
+    `(session_id, memory_id)` only, with no timestamp guard. A memory
+    retrieved twice in one session (search → record_use → search again)
+    would falsely purge the *fresh* second token against the *stale*
+    first record_use event, dropping the auto-commit cadence on a
+    legitimate new retrieval. The fix is the `event.ts >= token.issued_at`
+    filter in `_already_recorded_pending_ids`.
+    """
+    srv, state, memory_dir = server_with_state
+    res = await _call(
+        srv, "memory_write", content="A retrievable fact.", scopes=["tools"]
+    )
+    mid = res["id"]
+
+    # Cycle 1: search → explicit record_use → token cleared, log carries
+    # a `use, attribution="model"` event timestamped at this moment.
+    await _call(srv, "memory_search", query="retrievable fact")
+    await _call(
+        srv,
+        "memory_record_use",
+        memory_ids=[mid],
+        outcome="applied",
+        claim_excerpts=["A retrievable fact"],
+    )
+    assert mid not in state.pending_use_tokens
+
+    # Cycle 2: fresh search — a brand-new token should be issued and the
+    # stale cycle-1 event must NOT purge it. The token's issued_at is
+    # strictly after the cycle-1 record_use event's ts.
+    await _call(srv, "memory_search", query="retrievable fact")
+    assert mid in state.pending_use_tokens, (
+        "fresh token from cycle-2 search was falsely purged by the stale "
+        "cycle-1 record_use event (missing event-timestamp guard)"
+    )
+
+    # And after the TTL passes, the auto-commit DOES fire for the fresh
+    # cycle — proving the token is live, not just resident-but-shadowed.
+    await _call(srv, "memory_list")
+    await _call(srv, "memory_list")
+    events = list(iter_events(memory_dir))
+    auto_for_cycle_2 = [
+        e
+        for e in events
+        if e.get("kind") == "use"
+        and e.get("auto") is True
+        and mid in (e.get("ids") or [])
+    ]
+    assert auto_for_cycle_2, (
+        "cycle-2 token never auto-committed — the dedup scan must have "
+        "purged it despite the timestamp guard"
+    )
+
+
 # ---------------------------------------------------------------------------
 # Change 5 — curation_pending in memory_scope_overview
 # ---------------------------------------------------------------------------

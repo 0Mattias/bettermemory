@@ -336,6 +336,51 @@ async def test_confirm_unknown_id_errors(
         await _call(server, "memory_write_confirm", pending_id="pending_deadbeef0000")
 
 
+async def test_pending_write_expiry_emits_event_and_surfaces_in_confirm_error(
+    confirming_server: tuple[Any, SessionState], memory_dir: Path
+) -> None:
+    """Pre-2.6.8 the 1h TTL silently dropped a pending write — a "yes
+    save it" 61 minutes later would fail with "no pending write" and
+    no signal that it had been evicted vs. typo'd. Now: a
+    `pending_expired` event lands and `memory_write_confirm` returns a
+    targeted error that says "expired, re-stage".
+    """
+    import time as _time
+
+    from bettermemory import session as session_mod
+    from bettermemory.events import iter_events
+
+    server, state = confirming_server
+    pending = await _call(
+        server,
+        "memory_write",
+        content="durable preference",
+        scopes=["tools"],
+    )
+    pid = pending["pending_id"]
+
+    # Backdate the pending write past the TTL so the next _evict_expired
+    # call drops it. Faster than waiting an hour and structurally exercises
+    # the same code path.
+    state.pending_writes[pid].created_at = (
+        _time.time() - session_mod._PENDING_TTL_SECONDS - 1
+    )
+
+    # Any memory_* call advances the turn, which drains pending_expired.
+    await _call(server, "memory_list")
+
+    expired_events = [
+        e for e in iter_events(memory_dir) if e["kind"] == "pending_expired"
+    ]
+    assert len(expired_events) == 1
+    assert expired_events[0]["pending_id"] == pid
+    assert expired_events[0]["ttl_seconds"] >= session_mod._PENDING_TTL_SECONDS
+
+    # The confirm now distinguishes expired from missing.
+    with pytest.raises(Exception, match="expired before confirmation"):
+        await _call(server, "memory_write_confirm", pending_id=pid)
+
+
 async def test_confirmation_disabled_writes_immediately(server: Any) -> None:
     """The default config commits immediately — no pending state."""
     res = await _call(server, "memory_write", content="immediate", scopes=["tools"])

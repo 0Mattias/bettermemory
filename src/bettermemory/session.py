@@ -126,6 +126,14 @@ class SessionState:
     # are based on the delta between the current turn and each
     # token's `issued_at_turn`.
     turn_counter: int = 0
+    # Pending writes that hit `_PENDING_TTL_SECONDS` before confirmation.
+    # Drained by `pop_recently_expired()` so handlers can emit one
+    # `pending_expired` event per drop and `memory_write_confirm` can
+    # tell "expired" apart from "never existed". Garbage-collected on
+    # the same eviction pass once each id has been expired for one full
+    # TTL — at that point the model has no live reference to it.
+    _expired_pending: dict[str, "PendingWrite"] = field(default_factory=dict)
+    _expired_pending_at: dict[str, float] = field(default_factory=dict)
 
     # ---- scopes ----------------------------------------------------------
 
@@ -161,10 +169,45 @@ class SessionState:
         return self.pending_writes.pop(pending_id, None) is not None
 
     def _evict_expired(self) -> None:
-        cutoff = time.time() - _PENDING_TTL_SECONDS
+        """Move stale pending writes into the `_expired_pending` queue.
+
+        The handler drains the queue via `pop_recently_expired()` and
+        emits a `pending_expired` event for each entry — without that,
+        the model has no way to tell that its 61-minute-later "yes,
+        save it" confirmation lost the race with the TTL. Entries that
+        have themselves been expired for one full TTL are GC'd here:
+        once the original 1h window has passed twice, the model isn't
+        plausibly still referencing the id.
+        """
+        now = time.time()
+        cutoff = now - _PENDING_TTL_SECONDS
         stale = [pid for pid, p in self.pending_writes.items() if p.created_at < cutoff]
         for pid in stale:
-            del self.pending_writes[pid]
+            self._expired_pending[pid] = self.pending_writes.pop(pid)
+            self._expired_pending_at[pid] = now
+        for pid in list(self._expired_pending_at):
+            if self._expired_pending_at[pid] < cutoff:
+                self._expired_pending_at.pop(pid, None)
+                self._expired_pending.pop(pid, None)
+
+    def pop_recently_expired(self) -> list["PendingWrite"]:
+        """Drain and return pending writes evicted since the last drain.
+
+        Returned in insertion order. The handler emits one
+        `pending_expired` event per entry; the entries themselves stay
+        out of the live `pending_writes` map regardless. Idempotent —
+        a second call returns an empty list until the next eviction.
+        """
+        drained = list(self._expired_pending.values())
+        self._expired_pending.clear()
+        # `_expired_pending_at` stays populated so `take_pending` can
+        # still distinguish "recently expired" from "never existed"
+        # for the duration of one TTL window.
+        return drained
+
+    def was_recently_expired(self, pending_id: str) -> bool:
+        """True if `pending_id` was evicted within the past TTL window."""
+        return pending_id in self._expired_pending_at
 
     # ---- turns and use-tokens -------------------------------------------
 
@@ -173,11 +216,15 @@ class SessionState:
 
         Called at the entry of every memory_* tool handler so the
         auto-commit pass has a stable monotonic clock to compare token
-        ages against. Also evicts wall-clock-expired tokens so the
-        map can't grow without bound.
+        ages against. Also evicts wall-clock-expired tokens AND any
+        pending writes that crossed their TTL — the latter populates
+        `_expired_pending` so `_drain_pending_expired` (handler-side)
+        can emit one event per drop and the confirm handler can
+        distinguish "expired" from "never existed."
         """
         self.turn_counter += 1
         self._evict_expired_use_tokens()
+        self._evict_expired()
         return self.turn_counter
 
     def issue_use_tokens(self, memory_ids: list[str]) -> dict[str, str]:
@@ -262,6 +309,8 @@ class SessionState:
         self.disabled_scopes.clear()
         self.pending_writes.clear()
         self.pending_use_tokens.clear()
+        self._expired_pending.clear()
+        self._expired_pending_at.clear()
 
     # ---- SessionSource protocol -----------------------------------------
 

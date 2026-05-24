@@ -24,6 +24,7 @@ in `config.toml` if this is unwanted.
 from __future__ import annotations
 
 import gzip
+import hashlib
 import json
 import logging
 import os
@@ -41,11 +42,64 @@ log = logging.getLogger("bettermemory.events")
 EVENT_LOG_FILENAME = ".events.jsonl"
 ARCHIVE_PREFIX = ".events-"
 ARCHIVE_SUFFIX = ".jsonl.gz"
+# Fields whose values are model/user-typed free text and may carry
+# secrets. Redacted in `Recorder.record` when
+# `telemetry.log_queries_verbatim = false` (the default since 2.6.8).
+# Each value is replaced with `{"hash": "<sha256-prefix>", "preview":
+# "<32 chars>", "len": N}` — cross-event correlation by hash works,
+# the first 32 characters survive for triage, no raw body lands.
+_REDACTED_TEXT_FIELDS = frozenset({"query", "probe_query"})
+_QUERY_PREVIEW_CHARS = 32
+_QUERY_HASH_PREFIX = 16
+# Plain-JSONL holding name used during rotation. The active log is
+# `rename`d to a sibling with this suffix before compression starts —
+# the rename is atomic, so a crash never leaves the active log
+# half-truncated. Recovery on the next rotation either completes the
+# compression (no matching archive) or unlinks the holding file
+# (archive already exists). Reader paths include orphan holding files
+# only when no matching archive exists, so post-recovery a crashed
+# rotation never double-counts events.
+ROTATING_SUFFIX = ".jsonl.rotating"
+ROTATING_GZ_TMP_SUFFIX = ".jsonl.gz.tmp"
 DEFAULT_MAX_BYTES = 10_000_000  # 10 MB before rotation.
 
 
 def _utcnow_iso() -> str:
     return datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+
+
+def redact_query(text: str) -> dict[str, Any]:
+    """Replace a free-text field with a structured redaction.
+
+    Shape: ``{"hash": "<16-hex-prefix>", "preview": "<first 32 chars>",
+    "len": <total length>}``. The hash lets a consumer correlate
+    repeated queries without seeing them; the preview is enough to
+    triage what kind of query it was (e.g. "kubernetes networking"
+    survives, "my-api-key=sk-…" survives only its first 32 chars
+    rather than the full secret). The full text is not recoverable
+    from the event log.
+    """
+    digest = hashlib.sha256(text.encode("utf-8", errors="replace")).hexdigest()
+    return {
+        "hash": digest[:_QUERY_HASH_PREFIX],
+        "preview": text[:_QUERY_PREVIEW_CHARS],
+        "len": len(text),
+    }
+
+
+def _redact_event_fields(fields: dict[str, Any]) -> dict[str, Any]:
+    """Return a copy of `fields` with redacted-text fields replaced.
+
+    Non-string values pass through untouched — the field set isn't
+    guaranteed across producers and we don't want to silently drop a
+    legitimate non-string payload.
+    """
+    out = dict(fields)
+    for key in _REDACTED_TEXT_FIELDS:
+        value = out.get(key)
+        if isinstance(value, str):
+            out[key] = redact_query(value)
+    return out
 
 
 # `_locked` is re-exported here as the local symbol for the event log's
@@ -75,6 +129,12 @@ class Recorder:
     session_id: str
     enabled: bool = True
     max_bytes: int = DEFAULT_MAX_BYTES
+    # When False (default since 2.6.8), fields in `_REDACTED_TEXT_FIELDS`
+    # are replaced with `{"hash", "preview", "len"}` before the event is
+    # serialised. Set True to keep the legacy verbatim shape — useful for
+    # debugging your own ranker, less so for shared boxes. Wired from
+    # `TelemetryConfig.log_queries_verbatim` at server construction.
+    log_queries_verbatim: bool = False
 
     def __post_init__(self) -> None:
         self.root = Path(self.root)
@@ -92,6 +152,8 @@ class Recorder:
         if not self.enabled:
             return
         try:
+            if not self.log_queries_verbatim:
+                fields = _redact_event_fields(fields)
             event = {
                 "ts": _utcnow_iso(),
                 "session": self.session_id,
@@ -142,7 +204,32 @@ class Recorder:
     # ---- internals --------------------------------------------------------
 
     def _rotate_if_needed(self) -> None:
-        """Gzip-rotate the active log if it has crossed `max_bytes`."""
+        """Gzip-rotate the active log if it has crossed `max_bytes`.
+
+        Crash-safe sequence:
+
+        1. Atomically rename `.events.jsonl` -> `.events-{ts}.jsonl.rotating`.
+           After this point the active log is empty (the next append
+           creates a fresh file). The data lives entirely in the
+           `.rotating` holding file; readers know to include it when no
+           matching `.gz` exists yet.
+        2. fsync the directory so the rename is durable.
+        3. Gzip the `.rotating` file into a `.jsonl.gz.tmp` sibling and
+           fsync. A crash here leaves both files; recovery on the next
+           rotation either completes step 4 (if the `.tmp` is intact) or
+           re-runs from step 3.
+        4. Atomically rename `.jsonl.gz.tmp` -> `.jsonl.gz` and fsync
+           the directory. The archive is now canonical.
+        5. Unlink the `.rotating` holding file and fsync the directory.
+
+        Before any of this, sweep for orphan `.rotating` files from prior
+        crashed rotations and either complete them (no matching `.gz`)
+        or unlink them (matching `.gz` exists — the gz is canonical).
+        """
+        # Recovery first — bring any prior crashed rotation to a clean
+        # state before we start a new one. Cheap when nothing's orphaned.
+        self._recover_orphan_rotations()
+
         try:
             size = self.path.stat().st_size
         except FileNotFoundError:
@@ -163,6 +250,8 @@ class Recorder:
         # immediately). First fall back to a session-tagged name; then a
         # numeric counter until we find an unused path. Bounded by the
         # number of bytes we've actually written, so the loop terminates.
+        # The .rotating holding file uses the same stem as the eventual
+        # archive so recovery can pair them by name.
         if archive.exists():
             archive = self.root / (
                 f"{ARCHIVE_PREFIX}{ts}-{self.session_id}{ARCHIVE_SUFFIX}"
@@ -173,37 +262,122 @@ class Recorder:
                 f"{ARCHIVE_PREFIX}{ts}-{self.session_id}-{counter}{ARCHIVE_SUFFIX}"
             )
             counter += 1
+
+        rotating = archive.with_name(archive.name[: -len(ARCHIVE_SUFFIX)] + ROTATING_SUFFIX)
         try:
-            with self.path.open("rb") as src, gzip.open(archive, "wb") as dst:
-                while True:
-                    chunk = src.read(64 * 1024)
-                    if not chunk:
-                        break
-                    dst.write(chunk)
-            # fsync the archive AFTER `gzip.open(...) as dst` exits, so the
-            # gzip trailer (CRC32 + ISIZE) — written by `GzipFile.close()`
-            # at `with` exit — is part of what gets pushed to disk. An
-            # earlier version fsynced `dst.fileno()` from inside the `with`
-            # block, which flushed the body but raced the trailer; a crash
-            # at that point could leave a body-only archive that gzip.open
-            # would reject on read with a CRC error. Re-open the file to
-            # get a clean fd for the fsync. Best-effort; pseudo-filesystems
-            # may not support fsync, and a failure here doesn't change the
-            # durability of the source `.jsonl` — that one isn't unlinked
-            # until below.
-            try:
-                with archive.open("rb") as fsynced:
-                    fsync_file(fsynced.fileno())
-            except OSError:
-                pass
-            self.path.unlink()
-            # fsync the directory so the unlink + archive creation are
-            # both durable. Without this, a crash here could leave us
-            # with the original log still present AND the archive, or
-            # with neither (depending on what was flushed first).
+            # Step 1: atomic rename. After this the active log is gone.
+            os.replace(self.path, rotating)
             fsync_dir(self.root)
         except OSError as exc:
-            log.warning("event log rotation failed: %s", exc)
+            log.warning("event log rotation rename failed: %s", exc)
+            return
+
+        try:
+            self._compress_rotating(rotating, archive)
+        except OSError as exc:
+            # Compression failed mid-flight. The `.rotating` file still
+            # holds all the data; the next rotation will pick it up via
+            # the recovery sweep. Don't unlink it — that would lose data.
+            log.warning("event log rotation compress failed: %s", exc)
+
+    def _compress_rotating(self, rotating: Path, archive: Path) -> None:
+        """Steps 3-5: compress a `.rotating` holding file into its archive.
+
+        Idempotent against partial completion — if `archive` already
+        exists we skip recompression. Used both for the inline path
+        (called from `_rotate_if_needed` immediately after the rename)
+        and for recovery (called from `_recover_orphan_rotations` after
+        a crash).
+        """
+        if archive.exists():
+            # Compression already completed before a prior crash. The
+            # archive is canonical; the .rotating file is a duplicate
+            # that we can safely unlink.
+            try:
+                rotating.unlink()
+                fsync_dir(self.root)
+            except OSError as exc:  # pragma: no cover
+                log.warning("orphan .rotating unlink failed: %s", exc)
+            return
+
+        tmp = archive.with_name(archive.name[: -len(ARCHIVE_SUFFIX)] + ROTATING_GZ_TMP_SUFFIX)
+        # A leftover .tmp from a prior crashed compression is junk —
+        # we have no way to know it's complete, so retry from scratch.
+        if tmp.exists():
+            try:
+                tmp.unlink()
+            except OSError:  # pragma: no cover
+                pass
+
+        with rotating.open("rb") as src, gzip.open(tmp, "wb") as dst:
+            while True:
+                chunk = src.read(64 * 1024)
+                if not chunk:
+                    break
+                dst.write(chunk)
+        # fsync the temp AFTER `gzip.open(...) as dst` exits so the gzip
+        # trailer (CRC32 + ISIZE, written by `GzipFile.close()` at `with`
+        # exit) is part of what gets pushed to disk. Best-effort — pseudo
+        # filesystems may not support fsync, and the canonical-archive
+        # rename below is the durability boundary.
+        try:
+            with tmp.open("rb") as fsynced:
+                fsync_file(fsynced.fileno())
+        except OSError:
+            pass
+        # Match the 0o600 the active log gets on first write — the
+        # archive carries the same session ids and (when verbatim is
+        # enabled) the same raw query text, so it deserves the same
+        # permissions. No-op on Windows. Done before the canonical
+        # rename so the file is never visible at the canonical name
+        # with broader-than-target permissions.
+        try:
+            os.chmod(tmp, 0o600)
+        except OSError as chmod_exc:  # pragma: no cover
+            log.warning(
+                "rotation archive %s: chmod 0o600 failed (%s); "
+                "archive may be world-readable",
+                tmp,
+                chmod_exc,
+            )
+        # Step 4: atomic rename to canonical archive name.
+        os.replace(tmp, archive)
+        fsync_dir(self.root)
+        # Step 5: now that the archive is canonical, unlink the holding
+        # file. A crash between this and the next fsync_dir leaves a
+        # duplicate-data .rotating file; the next rotation's recovery
+        # sweep notices the matching archive and unlinks it.
+        try:
+            rotating.unlink()
+            fsync_dir(self.root)
+        except OSError as exc:  # pragma: no cover
+            log.warning(".rotating unlink failed: %s", exc)
+
+    def _recover_orphan_rotations(self) -> None:
+        """Bring any prior crashed rotation to a clean state.
+
+        Called at the top of `_rotate_if_needed`. Each `.rotating`
+        file represents a rotation that started but didn't finish. If
+        a matching `.gz` exists, the compression completed before the
+        crash — unlink the `.rotating`. Otherwise the data only lives
+        in the `.rotating` file — re-run compression to produce the
+        archive. Cheap when nothing's orphaned (no iterdir cost beyond
+        the existing one in `_rotate_if_needed`'s caller path).
+        """
+        try:
+            entries = list(self.root.iterdir())
+        except OSError:  # pragma: no cover
+            return
+        for path in entries:
+            if not (path.is_file() and path.name.startswith(ARCHIVE_PREFIX)
+                    and path.name.endswith(ROTATING_SUFFIX)):
+                continue
+            archive_name = path.name[: -len(ROTATING_SUFFIX)] + ARCHIVE_SUFFIX
+            archive = path.with_name(archive_name)
+            try:
+                self._compress_rotating(path, archive)
+            except OSError as exc:  # pragma: no cover
+                log.warning("orphan .rotating recovery failed for %s: %s", path, exc)
 
 
 # ---------------------------------------------------------------------------
@@ -283,6 +457,13 @@ def iter_all_events(root: Path) -> Iterator[dict[str, Any]]:
     Archive filenames embed a UTC timestamp, so lexicographic sort is
     chronological. The active log is yielded last. Used by `memory_health`
     in Phase 5 and by anything that wants the full history.
+
+    Orphan `.rotating` holding files (produced when a rotation crashed
+    after the active-log rename but before compression finished) are
+    yielded *only* when no matching archive exists for the same stem.
+    When a matching archive exists, the archive is canonical and the
+    `.rotating` file is a stale duplicate that the next rotation will
+    unlink — including it would double-count those events.
     """
     if not root.exists():
         return
@@ -298,6 +479,14 @@ def iter_all_events(root: Path) -> Iterator[dict[str, Any]]:
         and p.name.startswith(ARCHIVE_PREFIX)
         and p.name.endswith(ARCHIVE_SUFFIX)
     ]
+    rotating_files = [
+        p
+        for p in entries
+        if p.is_file()
+        and p.name.startswith(ARCHIVE_PREFIX)
+        and p.name.endswith(ROTATING_SUFFIX)
+    ]
+    archive_stems = {p.name[: -len(ARCHIVE_SUFFIX)] for p in archives}
     # Sort by (mtime, in-second-counter). Naive filename sort is wrong
     # because collision-handling produces names like
     # `.events-{ts}-N.jsonl.gz` that lex-sort *before* the bare
@@ -315,6 +504,27 @@ def iter_all_events(root: Path) -> Iterator[dict[str, Any]]:
     for archive in archives:
         try:
             with gzip.open(archive, "rt", encoding="utf-8") as f:
+                for line in f:
+                    line = line.strip()
+                    if not line:
+                        continue
+                    try:
+                        yield json.loads(line)
+                    except json.JSONDecodeError:
+                        continue
+        except OSError:  # pragma: no cover
+            continue
+
+    # Crash-recovery yield: orphan .rotating files whose archive never
+    # landed. These represent a real rotation in-flight when the process
+    # died; their events would be otherwise lost to the reader until
+    # the next rotation's recovery sweep produces the archive.
+    for rotating in rotating_files:
+        stem = rotating.name[: -len(ROTATING_SUFFIX)]
+        if stem in archive_stems:
+            continue
+        try:
+            with rotating.open("r", encoding="utf-8") as f:
                 for line in f:
                     line = line.strip()
                     if not line:

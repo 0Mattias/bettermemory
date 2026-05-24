@@ -334,14 +334,14 @@ def test_probe_mode_rejects_unknown_value() -> None:
         )
 
 
-def test_probe_mode_default_is_keyword() -> None:
-    """Default falls to keyword (the package default) — matches what
-    the model would do absent a config override. Pin the default so a
-    future drift to `hybrid` is deliberate, not silent."""
+def test_probe_mode_default_is_hybrid() -> None:
+    """Default falls to hybrid (the package default since 2.6.8) —
+    matches what the model would do absent a config override. Pin the
+    default so a future drift is deliberate, not silent."""
     import inspect
 
     sig = inspect.signature(probe_for_miss)
-    assert sig.parameters["mode"].default == "keyword"
+    assert sig.parameters["mode"].default == "hybrid"
 
 
 def test_partial_coverage_query_does_not_clear_threshold() -> None:
@@ -522,7 +522,13 @@ async def test_audit_turn_emits_search_miss_on_miss(
     assert len(miss_events) == 1
     miss = miss_events[0]
     assert miss["threshold_rule"] == THRESHOLD_RULE_V1
-    assert miss["probe_query"] == user_query
+    # `telemetry.log_queries_verbatim` defaults to False since 2.6.8:
+    # `probe_query` lands as `{"hash", "preview", "len"}`. The preview
+    # carries the first 32 chars so triage is still possible without
+    # storing the full text.
+    assert isinstance(miss["probe_query"], dict)
+    assert miss["probe_query"]["preview"] == user_query[:32]
+    assert miss["probe_query"]["len"] == len(user_query)
     assert len(miss["top_hits"]) >= 1
 
 
@@ -580,8 +586,8 @@ async def test_audit_turn_emits_probe_mode_and_retrieval_count(
     ev = audited[-1]
     assert "recent_retrieval_count" in ev
     assert isinstance(ev["recent_retrieval_count"], int)
-    # Default search_mode is "keyword" — the probe should match.
-    assert ev["probe_mode"] == "keyword"
+    # Default search_mode is "hybrid" (since 2.6.8) — probe matches.
+    assert ev["probe_mode"] == "hybrid"
 
 
 async def test_audit_turn_show_shields_miss_via_handler(

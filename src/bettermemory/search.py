@@ -2,21 +2,23 @@
 
 Four selectable rankers, dispatched by `search(mode=...)`:
 
-- ``keyword`` (default in 1.6.0): the original TF + scope-weighted +
-  coverage + recency scorer. Cheap, deterministic, good on
-  identifier-heavy queries.
+- ``hybrid`` (default since 2.6.8): reciprocal rank fusion (Cormack
+  et al., SIGIR 2009) over keyword + BM25, plus semantic when a model
+  is provided. Gracefully degrades to keyword+BM25 fusion when no
+  model is available, so the flipped default doesn't add a dep
+  requirement. The fused score lives in a different (much smaller)
+  scale than the single-ranker scores — branch on `relevance`, not
+  raw `score`, when comparing across modes.
+- ``keyword`` (legacy default in 1.6.0): the original TF +
+  scope-weighted + coverage + recency scorer. Cheap, deterministic,
+  good on identifier-heavy queries but lacks IDF — underperforms on
+  rare-term queries vs. BM25/hybrid.
 - ``bm25``: Okapi BM25 with IDF weighting, TF saturation, length
   normalisation, plus the same scope-bonus and recency multiplier as
-  the keyword scorer. Better recall on rare-term queries.
+  the keyword scorer.
 - ``semantic``: sentence-transformers cosine over per-memory cached
   embeddings (extras-gated; raises a clear error when the embeddings
   extra isn't installed).
-- ``hybrid``: reciprocal rank fusion (Cormack et al., SIGIR 2009)
-  over keyword + BM25, plus semantic when a model is provided.
-  Gracefully degrades to keyword+BM25 fusion when no model is
-  available. The fused score lives in a different (much smaller)
-  scale than the single-ranker scores — branch on `relevance`, not
-  raw `score`, when comparing across modes.
 
 `compute_idf` and `reciprocal_rank_fusion` are exported alongside
 their per-mode scorers so callers can wire the rankers directly
@@ -36,9 +38,11 @@ from .models import Memory, MemoryHit, SimilarHit, TombstonedMemory, snippet_for
 from .origin import should_include_for_caller
 from .verify import detect_path_drift
 
-# Search modes exposed via `search(mode=...)`. Default stays `keyword` in
-# 1.6.0 to keep the existing behaviour byte-stable; the plan is to flip
-# to `hybrid` once dogfooding has shaken out any ranking regressions.
+# Search modes exposed via `search(mode=...)`. Default is `hybrid` since
+# 2.6.8 — the keyword scorer lacks IDF weighting and underperforms on
+# rare-term queries, and hybrid degrades gracefully to keyword+BM25
+# fusion when no embedding extra is installed (so flipping the default
+# doesn't add a dep requirement).
 SearchMode = Literal["keyword", "bm25", "semantic", "hybrid"]
 
 
@@ -703,7 +707,7 @@ def search(
     max_results: int = 5,
     now: datetime | None = None,
     half_life_days: float = 30.0,
-    mode: SearchMode = "keyword",
+    mode: SearchMode = "hybrid",
     semantic_model: Any | None = None,
     rrf_k: int = _RRF_K_DEFAULT,
 ) -> list[MemoryHit]:
@@ -724,13 +728,15 @@ def search(
       pass through. No-op without `repo_filter` — a worktree path
       without a repo identifier doesn't carry enough context to
       filter on.
-    - `mode`: ranker selection. `"keyword"` (default, the original
-      TF + coverage + recency scorer); `"bm25"` (Okapi BM25 with the
-      same scope-bonus + recency boost); `"semantic"` (sentence-
-      transformers cosine — requires `semantic_model`); `"hybrid"`
-      (RRF fusion of keyword + BM25, plus semantic when a model is
-      provided). The hybrid mode gracefully degrades when no
-      semantic_model is given: it fuses keyword + BM25 only.
+    - `mode`: ranker selection. `"hybrid"` (default since 2.6.8: RRF
+      fusion of keyword + BM25, plus semantic when a model is
+      provided); `"keyword"` (legacy TF + coverage + recency scorer
+      with no IDF weighting); `"bm25"` (Okapi BM25 with the same
+      scope-bonus + recency boost); `"semantic"` (sentence-
+      transformers cosine — requires `semantic_model`). The hybrid
+      mode gracefully degrades when no `semantic_model` is given: it
+      fuses keyword + BM25 only, so flipping the default doesn't
+      require any embedding extra.
     - `semantic_model`: optional sentence-transformers model. Required
       for `mode="semantic"`; optional for `mode="hybrid"` (semantic is
       added to the fusion when present).

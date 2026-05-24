@@ -52,18 +52,18 @@ default_max_results = 5
 recency_boost_half_life_days = 30
 
 # Retrieval ranker for memory_search. One of:
-#   "keyword" — the original TF + coverage + recency scorer (default; 1.6.0
-#       stays byte-stable with prior behaviour)
+#   "keyword" — the original TF + coverage + recency scorer (legacy default
+#       in 1.6.0). No IDF weighting, so rare-term queries underperform.
 #   "bm25"    — Okapi BM25 with the same scope-bonus + recency boost
 #   "semantic" — sentence-transformers cosine; requires the embeddings
 #       extra. Falls back to "keyword" with a WARNING log if the extra
 #       isn't installed.
 #   "hybrid"  — reciprocal-rank-fusion of keyword + BM25 (plus semantic
-#       when the embeddings extra is installed). Recommended once
-#       you've dogfooded; planned to become the default in a later
-#       release.
+#       when the embeddings extra is installed). Strict improvement over
+#       any single mode; gracefully degrades to keyword + BM25 fusion when
+#       no embedding extra is present. Default since 2.6.8.
 # The MCP `mode` parameter on memory_search overrides this per-call.
-search_mode = "keyword"
+search_mode = "hybrid"
 
 # When true, memory_write dedup uses cosine similarity on sentence
 # embeddings instead of Jaccard on token sets — catches paraphrases
@@ -147,13 +147,22 @@ allowed = []
 # call: search queries, returned IDs, write/update/remove events. Used by the
 # memory_health view, by use-recording feedback, and to tune the durability
 # marker list against real traffic. Lives next to the memories — same trust
-# boundary, no new permissions story. Search queries are recorded verbatim;
-# set `enabled = false` to opt out.
+# boundary, no new permissions story. Set `enabled = false` to opt out.
 enabled = true
 
 # Rotate (gzip) the active log when it crosses this many bytes. Archives are
 # kept indefinitely — prune by hand if disk pressure matters.
 max_bytes = 10000000
+
+# Search query privacy. When false (the default since 2.6.8), `memory_search`
+# `query` and `memory_audit_turn` `probe_query` fields are redacted to
+# `{"hash": "<sha256-prefix>", "preview": "<first 32 chars>", "len": N}`
+# before landing in the event log. Correlation across events still works (a
+# repeated query has the same hash) and the first ~32 characters survive for
+# triage, but a secret pasted into a query no longer lives on disk verbatim.
+# Set true to restore the legacy verbatim shape — useful for debugging your
+# own ranker, less so for shared boxes.
+log_queries_verbatim = false
 """
 
 
@@ -168,15 +177,16 @@ class BehaviorConfig:
     default_max_results: int = 5
     recency_boost_half_life_days: float = 30.0
     # Retrieval ranker for `memory_search`. One of `keyword` (the
-    # original TF + coverage + recency scorer; default), `bm25` (Okapi
+    # original TF + coverage + recency scorer; legacy), `bm25` (Okapi
     # BM25), `semantic` (sentence-transformers cosine; requires the
     # embeddings extra), or `hybrid` (RRF fusion of keyword + BM25,
     # plus semantic when the extra is installed). The MCP `mode`
     # parameter on memory_search overrides this per-call. Default
-    # stays `keyword` in 1.6.0 so existing ranking behaviour is
-    # byte-stable; planned flip to `hybrid` in a later release once
-    # dogfooding has shaken out ranking regressions.
-    search_mode: str = "keyword"
+    # is `hybrid` since 2.6.8 — the keyword scorer lacks IDF weighting
+    # so rare-term queries underperform; hybrid is a strict improvement
+    # and degrades gracefully to keyword+BM25 when no embedding extra
+    # is installed.
+    search_mode: str = "hybrid"
     # Semantic dedup is opt-in — see DEFAULT_CONFIG for prose.
     semantic_dedup: bool = False
     # Provider selection — "auto" (default), "torch", or "fastembed".
@@ -230,6 +240,16 @@ class TelemetryConfig:
 
     enabled: bool = True
     max_bytes: int = 10_000_000
+    # When false (the default since 2.6.8), `memory_search` query text and
+    # `memory_audit_turn` `probe_query` are redacted in the event log —
+    # replaced with `{"hash": "<sha256-prefix>", "preview": "<32 chars>",
+    # "len": <int>}`. Correlation across events still works (same query
+    # has the same hash), and the first ~32 characters survive for triage,
+    # but a secret pasted into a search no longer lands on disk verbatim.
+    # Set true to restore the legacy verbatim shape. The event-log file is
+    # also chmod'd 0o600 on first write, so this is defense-in-depth rather
+    # than a permissions story.
+    log_queries_verbatim: bool = False
 
 
 @dataclass
@@ -371,7 +391,7 @@ def load_config(path: Path | None = None) -> Config:
                 behavior_raw.get("require_write_confirmation", False)
             ),
             default_max_results=int(behavior_raw.get("default_max_results", 5)),
-            search_mode=str(behavior_raw.get("search_mode", "keyword")),
+            search_mode=str(behavior_raw.get("search_mode", "hybrid")),
             recency_boost_half_life_days=float(
                 behavior_raw.get("recency_boost_half_life_days", 30.0)
             ),
@@ -406,6 +426,9 @@ def load_config(path: Path | None = None) -> Config:
         telemetry=TelemetryConfig(
             enabled=bool(telemetry_raw.get("enabled", True)),
             max_bytes=int(telemetry_raw.get("max_bytes", 10_000_000)),
+            log_queries_verbatim=bool(
+                telemetry_raw.get("log_queries_verbatim", False)
+            ),
         ),
         config_path=config_path,
     )

@@ -122,6 +122,7 @@ def build_server(
             session_id=recorder_session_id,
             enabled=config.telemetry.enabled,
             max_bytes=config.telemetry.max_bytes,
+            log_queries_verbatim=config.telemetry.log_queries_verbatim,
         )
 
     # Wire the persistent embedding cache to this store's directory. The

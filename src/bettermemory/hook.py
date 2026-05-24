@@ -213,7 +213,7 @@ def run_audit(
         now=utcnow(),
         lookback_seconds=60,
         caller_origin=capture_origin(),
-        mode=cfg.behavior.search_mode or "keyword",
+        mode=cfg.behavior.search_mode or "hybrid",
     )
     # Emit the audit event so cadence is visible even when there's
     # nothing to flag — matches the MCP handler's discipline. Honour
@@ -226,13 +226,14 @@ def run_audit(
         session_id=session_id,
         enabled=cfg.telemetry.enabled,
         max_bytes=cfg.telemetry.max_bytes,
+        log_queries_verbatim=cfg.telemetry.log_queries_verbatim,
     )
     # `turn_audited` / `search_miss` field sets come from the shared
     # builders in `audit.py`, so the Stop hook and the in-process MCP
     # handler (`_handlers._advance_turn`) cannot drift — the 2.6.4
     # audit found them already diverged. `triggered_from="stop_hook"`
     # tags the source.
-    probe_mode = cfg.behavior.search_mode or "keyword"
+    probe_mode = cfg.behavior.search_mode or "hybrid"
     recorder.record(
         "turn_audited",
         **turn_audited_fields(

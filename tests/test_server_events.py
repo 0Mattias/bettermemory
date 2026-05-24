@@ -117,7 +117,14 @@ async def test_search_records_query_and_returned_ids(
     search_events = [e for e in _events(memory_dir) if e["kind"] == "search"]
     assert len(search_events) == 1
     e = search_events[0]
-    assert e["query"] == "kubernetes networking"
+    # `telemetry.log_queries_verbatim` defaults to False since 2.6.8:
+    # the query lands as `{"hash", "preview", "len"}`. The preview keeps
+    # the first 32 chars (the full query here is shorter) so the field
+    # is still triage-readable without storing the full text.
+    assert isinstance(e["query"], dict)
+    assert e["query"]["preview"] == "kubernetes networking"
+    assert e["query"]["len"] == len("kubernetes networking")
+    assert len(e["query"]["hash"]) == 16
     assert written["id"] in e["returned"]
     assert "high" in e["relevance"] or "medium" in e["relevance"]
 

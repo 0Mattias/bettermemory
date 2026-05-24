@@ -311,6 +311,145 @@ def test_iter_all_events_handles_missing_root(tmp_path: Path) -> None:
 # ---------------------------------------------------------------------------
 
 
+# ---------------------------------------------------------------------------
+# Privacy: query / probe_query redaction. Default since 2.6.8 is to
+# replace the verbatim text with `{"hash", "preview", "len"}` so a secret
+# pasted into a search doesn't land on disk. Verbatim mode opts back in
+# via `Recorder(log_queries_verbatim=True)`.
+# ---------------------------------------------------------------------------
+
+
+def test_record_redacts_query_by_default(tmp_path: Path) -> None:
+    rec = Recorder(root=tmp_path, session_id="sess_test")  # default: redact
+    # Query longer than the 32-char preview so the secret tail lands
+    # entirely outside the preserved prefix.
+    query = "look up how I configure key=sk-very-secret-tail-bytes-here"
+    rec.record("search", query=query)
+
+    events = list(iter_events(tmp_path))
+    assert len(events) == 1
+    q = events[0]["query"]
+    assert isinstance(q, dict)
+    # First 32 chars survive for triage; the rest does not.
+    assert q["preview"] == query[:32]
+    assert q["len"] == len(query)
+    assert len(q["hash"]) == 16
+    # The full query is not recoverable from the on-disk event log —
+    # the bytes that lived past the preview are gone.
+    line = (tmp_path / EVENT_LOG_FILENAME).read_text(encoding="utf-8")
+    assert "sk-very-secret-tail-bytes-here" not in line
+
+
+def test_record_keeps_query_verbatim_when_opted_in(tmp_path: Path) -> None:
+    rec = Recorder(
+        root=tmp_path, session_id="sess_test", log_queries_verbatim=True
+    )
+    rec.record("search", query="kubernetes networking")
+    events = list(iter_events(tmp_path))
+    assert events[0]["query"] == "kubernetes networking"
+
+
+def test_record_redacts_probe_query_field(tmp_path: Path) -> None:
+    """`probe_query` lives on `search_miss` events. Same redaction
+    treatment as `query` — the field name is in `_REDACTED_TEXT_FIELDS`."""
+    rec = Recorder(root=tmp_path, session_id="sess_test")
+    rec.record("search_miss", probe_query="how do I X")
+    events = list(iter_events(tmp_path))
+    assert isinstance(events[0]["probe_query"], dict)
+    assert events[0]["probe_query"]["preview"] == "how do I X"
+
+
+def test_record_redaction_correlates_repeated_queries(tmp_path: Path) -> None:
+    """A repeated query lands with the same hash even though the text
+    is gone — gives downstream analytics a correlation handle."""
+    rec = Recorder(root=tmp_path, session_id="sess_test")
+    rec.record("search", query="X")
+    rec.record("search", query="Y")
+    rec.record("search", query="X")
+    events = list(iter_events(tmp_path))
+    assert events[0]["query"]["hash"] == events[2]["query"]["hash"]
+    assert events[0]["query"]["hash"] != events[1]["query"]["hash"]
+
+
+# ---------------------------------------------------------------------------
+# Rotation crash recovery: the .rotating/.gz.tmp two-phase rename should
+# leave the reader with each event counted exactly once regardless of
+# where a crash lands. The fix replaces the pre-2.6.8 "compress in place
+# then unlink source" sequence, which could leave both files present
+# after a crash between the gzip-close and the unlink — readers would
+# see the events twice in `iter_all_events`.
+# ---------------------------------------------------------------------------
+
+
+def _seed_with_pending_rotation(tmp_path: Path) -> Path:
+    """Build a `.rotating` orphan with no matching archive.
+
+    Simulates a crash mid-rotation: the active log was renamed to its
+    `.rotating` holding name (step 1 of the new rotation sequence) but
+    the gzip step (step 3) never finished, so no `.gz` exists.
+    """
+    rotating = tmp_path / ".events-20300101T000000Z.jsonl.rotating"
+    rotating.write_text(
+        '{"ts":"2030-01-01T00:00:00Z","session":"sess_x","kind":"write","id":"RECOVER1"}\n'
+        '{"ts":"2030-01-01T00:00:01Z","session":"sess_x","kind":"write","id":"RECOVER2"}\n',
+        encoding="utf-8",
+    )
+    return rotating
+
+
+def test_iter_all_events_yields_orphan_rotating_when_no_archive(
+    tmp_path: Path,
+) -> None:
+    """A `.rotating` file with no matching archive carries the only
+    copy of those events — the reader must include it."""
+    _seed_with_pending_rotation(tmp_path)
+    events = list(iter_all_events(tmp_path))
+    ids = [e["id"] for e in events]
+    assert ids == ["RECOVER1", "RECOVER2"]
+
+
+def test_iter_all_events_skips_orphan_rotating_when_archive_exists(
+    tmp_path: Path,
+) -> None:
+    """If a `.rotating` file and its matching archive both exist, the
+    archive is canonical — yielding both would double-count events.
+    Pre-2.6.8 the rotate path could leave both present after a crash;
+    the reader must defend against double-counting at read time."""
+    rotating = _seed_with_pending_rotation(tmp_path)
+    archive = rotating.with_name(rotating.name.replace(".rotating", ".gz"))
+    # Build a gzipped archive with the same contents.
+    with gzip.open(archive, "wb") as gz:
+        gz.write(rotating.read_bytes())
+
+    events = list(iter_all_events(tmp_path))
+    ids = [e["id"] for e in events]
+    assert ids == ["RECOVER1", "RECOVER2"]  # once, not twice
+
+
+def test_rotation_recovers_orphan_rotating_into_archive(tmp_path: Path) -> None:
+    """The next rotation cycle picks up an orphan `.rotating` and finishes
+    compressing it. After recovery the orphan is gone and the archive
+    contains its events."""
+    _seed_with_pending_rotation(tmp_path)
+    rec = Recorder(root=tmp_path, session_id="sess_recover", max_bytes=80)
+    # A single small write would normally not trigger rotation; pad past
+    # the threshold so `_rotate_if_needed` runs. The recovery sweep
+    # happens unconditionally at the top of that call.
+    for i in range(8):
+        rec.record("write", id=f"NEW{i}", note="filler to push past threshold")
+
+    orphans = list(tmp_path.glob(".events-*.jsonl.rotating"))
+    assert orphans == [], "orphan .rotating should be recovered"
+
+    # The originally-orphaned events plus the new events all appear once
+    # via iter_all_events.
+    events = list(iter_all_events(tmp_path))
+    ids = [e["id"] for e in events]
+    assert ids.count("RECOVER1") == 1
+    assert ids.count("RECOVER2") == 1
+    assert "NEW0" in ids
+
+
 def test_two_recorders_one_dir_no_corruption(tmp_path: Path) -> None:
     """A second Recorder pointed at the same dir appends cleanly."""
     a = Recorder(root=tmp_path, session_id="sess_a")

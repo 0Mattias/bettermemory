@@ -16,6 +16,8 @@ call surface are identical to the prior in-closure shape.
 
 from __future__ import annotations
 
+import time
+from datetime import datetime
 from typing import Any, TypeAlias
 
 from mcp.server.fastmcp import Context as _FastMCPContext
@@ -167,7 +169,7 @@ DESC_MEMORY_SEARCH = (
     "- `auto_scope=True` (default): filter to current repo+worktree; "
     "memories with no recorded origin always pass as global. Set "
     "False for explicit cross-project queries.\n"
-    "- `mode` (optional, default from config): `keyword`, `bm25`, "
+    "- `mode` (optional, default from config; package default `hybrid`): `keyword`, `bm25`, "
     "`semantic` (needs embeddings extra), or `hybrid` (RRF of the "
     "first three). `hybrid` for paraphrase recall; `keyword` for "
     "literal-token queries.\n\n"
@@ -616,6 +618,41 @@ def _validate_write_payload(
     }
 
 
+def _drain_pending_expired(state: SessionState, recorder: Recorder) -> None:
+    """Emit one `pending_expired` event per pending write that hit its
+    TTL since the last drain.
+
+    Pre-2.6.8 expiry was a silent map deletion — a user saying "yes,
+    save it" 61 minutes after the prompt would see `memory_write_confirm`
+    fail with "no pending write" and have no way to know it had been
+    evicted. The recorder log now carries the eviction so the eval
+    surface can render a curation cue, and the confirm handler can
+    distinguish "expired" from "never existed" via
+    `state.was_recently_expired`.
+    """
+    drained = state.pop_recently_expired()
+    if not drained:
+        return
+    for pending in drained:
+        # `category` is the headline payload field used to distinguish
+        # user-inference writes (the always-pending tier) from regular
+        # writes. Surface it so the curation cue downstream can tell
+        # which tier was lost — losing a user-inference confirmation
+        # is worse than losing a plain fact.
+        category = None
+        payload = pending.payload
+        if isinstance(payload, dict):
+            cat = payload.get("category")
+            if isinstance(cat, str):
+                category = cat
+        recorder.record(
+            "pending_expired",
+            pending_id=pending.pending_id,
+            ttl_seconds=int(time.time() - pending.created_at),
+            category=category,
+        )
+
+
 def _advance_turn(
     state: SessionState,
     recorder: Recorder,
@@ -655,9 +692,10 @@ def _advance_turn(
     when auto=true at read time.
     """
     state.advance_turn()
+    _drain_pending_expired(state, recorder)
     if state.pending_use_tokens and recorder.enabled:
-        hook_ids = _hook_attributed_pending_ids(state, recorder)
-        for mid in hook_ids:
+        already_recorded = _already_recorded_pending_ids(state, recorder)
+        for mid in already_recorded:
             state.purge_use_token(mid)
     auto_ids = state.consume_old_tokens(override_ids=override_ids)
     if auto_ids:
@@ -670,24 +708,53 @@ def _advance_turn(
         )
 
 
-def _hook_attributed_pending_ids(
+def _event_ts_epoch(raw: Any) -> float | None:
+    """Parse the recorder's ISO-8601 `ts` (always UTC, trailing `Z`) into
+    a POSIX epoch. Returns None on a malformed value so the caller can
+    skip the event without crashing.
+    """
+    if not isinstance(raw, str):
+        return None
+    try:
+        return datetime.fromisoformat(raw.replace("Z", "+00:00")).timestamp()
+    except (ValueError, AttributeError):
+        return None
+
+
+def _already_recorded_pending_ids(
     state: SessionState,
     recorder: Recorder,
 ) -> set[str]:
-    """Return the subset of pending-token memory_ids the Stop hook has
-    already attributed for this session.
+    """Return the subset of pending-token memory_ids that already have
+    a `use` event in the log emitted AFTER the token was issued.
 
-    Reads the active event log forward; bounded by the rotation cap
-    (default 10 MB) and only invoked when there ARE pending tokens
-    (the common between-batch case skips this entirely). Matches a
-    hook event when its `attribution` is `"hook"`, its session
-    matches the caller's, and at least one of its `ids` is currently
-    pending. Older log entries are tolerated — they fall away once
-    their wall-clock TTL evicts their token from `pending_use_tokens`.
+    Generalises the pre-2.6.8 hook-only scan (`_hook_attributed_pending_ids`)
+    to cover three race classes the auto-fallback would otherwise
+    double-emit against:
+
+    1. Stop-hook attribution (out-of-process — the hook writes a
+       `use, attribution="hook"` event that the in-memory state can
+       only see by reading the log).
+    2. Explicit model `record_use` that landed in the log *after* a
+       prior search re-issued a token for the same id (in-process
+       state's `purge_use_token` covers the same-turn case; the log
+       scan catches the same-id-different-turn re-issue case).
+    3. Any future attribution tier added to the log without a matching
+       in-memory hook.
+
+    The `event.ts >= token.issued_at` filter is load-bearing: without
+    it, a stale `use` event for the same id (from an earlier retrieval
+    in the same session, or replay-after-rotation) would falsely purge
+    a freshly-issued token. The pre-2.6.8 hook-only scan had the same
+    bug — it just happened only on the hook path. Reads the active
+    event log forward; bounded by the rotation cap (default 10 MB) and
+    only invoked when there ARE pending tokens.
     """
     if not state.pending_use_tokens:
         return set()
-    pending = set(state.pending_use_tokens.keys())
+    pending_issued_at = {
+        mid: tok.issued_at for mid, tok in state.pending_use_tokens.items()
+    }
     out: set[str] = set()
     for event in iter_events(recorder.root):
         if event.get("kind") != "use":
@@ -699,7 +766,8 @@ def _hook_attributed_pending_ids(
         # the discipline 70e41a4 established for llm.py.
         if (event.get("session") or event.get("session_id")) != recorder.session_id:
             continue
-        if event.get("attribution") != "hook":
+        ev_ts = _event_ts_epoch(event.get("ts"))
+        if ev_ts is None:
             continue
         # Legacy fallback for `memory_ids` — same class as the 70e41a4
         # fix. Pre-2.6.3 `use` events landed with `memory_ids=[…]`
@@ -708,9 +776,26 @@ def _hook_attributed_pending_ids(
         if not isinstance(ids, list):
             continue
         for mid in ids:
-            if isinstance(mid, str) and mid in pending:
+            if not isinstance(mid, str):
+                continue
+            issued = pending_issued_at.get(mid)
+            if issued is None:
+                continue
+            # Tolerance: clock skew between Recorder.record() (UTC-now
+            # at log time) and PendingUseToken.issued_at (wall-clock at
+            # mint time) is well under a second. Strict `>=` keeps the
+            # invariant: the event must reflect a use attribution that
+            # happened *after* this token was minted, not an older one
+            # left over from a previous search-of-same-id cycle.
+            if ev_ts >= issued:
                 out.add(mid)
     return out
+
+
+# Legacy alias kept for any out-of-tree caller; the new name is more
+# accurate now that the scan also covers explicit model/hook events
+# beyond the original hook-only role.
+_hook_attributed_pending_ids = _already_recorded_pending_ids
 
 
 def _attach_use_tokens(
@@ -889,11 +974,11 @@ class ToolHandlers:
             max_results = self.config.behavior.default_max_results
         max_results = max(1, min(int(max_results), 50))
 
-        # Resolve search mode: per-call override > config default > "keyword".
+        # Resolve search mode: per-call override > config default > "hybrid".
         # Validation happens via the Literal narrowing in search() — any
         # other value will raise ValueError at the dispatch boundary,
         # which the handler propagates to the caller as a tool error.
-        resolved_mode = mode or self.config.behavior.search_mode or "keyword"
+        resolved_mode = mode or self.config.behavior.search_mode or "hybrid"
         if resolved_mode not in ("keyword", "bm25", "semantic", "hybrid"):
             raise ValueError(
                 f"unknown search mode {resolved_mode!r}; "
@@ -1620,9 +1705,22 @@ class ToolHandlers:
         _advance_turn(state, self.recorder)
         pending = state.take_pending(pending_id)
         if pending is None:
+            # Distinguish "expired" from "never existed" so the model
+            # can offer to re-stage the write rather than just retrying
+            # with the same id. The 1h TTL is short enough that a long
+            # human absence (lunch break, overnight think) is the most
+            # common cause; before 2.6.8 the error was indistinguishable
+            # from a typo, and the eviction was silent.
+            if state.was_recently_expired(pending_id):
+                raise ValueError(
+                    f"pending write {pending_id!r} expired before "
+                    "confirmation (the 1-hour TTL elapsed). The proposed "
+                    "memory was not saved. Re-stage with memory_write to "
+                    "create a fresh pending id."
+                )
             raise ValueError(
                 f"no pending write with id {pending_id!r} (it may have "
-                "expired or been already committed)"
+                "been already committed or never existed)"
             )
         memory = self.store.write(**pending.payload)
         self.recorder.record(
@@ -2352,9 +2450,9 @@ class ToolHandlers:
         # Probe uses the same search mode the model would have used —
         # otherwise we'd be measuring "would a different scorer have
         # hit" rather than "did the model miss what its ranker would
-        # have shown." Falls through to `"keyword"` (the package
-        # default) when the config doesn't carry an override.
-        probe_mode = self.config.behavior.search_mode or "keyword"
+        # have shown." Falls through to `"hybrid"` (the package
+        # default since 2.6.8) when the config doesn't carry an override.
+        probe_mode = self.config.behavior.search_mode or "hybrid"
         report = probe_for_miss(
             memories,
             user_message,

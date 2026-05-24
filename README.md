@@ -8,7 +8,7 @@
 
 **Memory you can verify.**
 
-MCP-native memory for AI coding agents. Every retrieved fact carries a **staleness verdict** — calendar age + filesystem path drift + git commit drift — so the model knows when a stored memory has rotted before it relies on it. Every use is logged with a claim-level excerpt, so retrievals are auditable months later. Retrieval is opt-in; writes about *you* always stage for confirmation. Stored as plain markdown on disk; MIT-licensed; works with Claude Code, Cursor, Continue, Cline, and any MCP client.
+MCP-native memory for AI coding agents. Every retrieved fact carries a **staleness verdict** — calendar age + filesystem path drift + git commit drift — so the model knows when a stored memory has rotted before it relies on it. Retrievals are logged with three attribution tiers — model-explicit (with claim-level excerpts), Stop-hook substring match, or an auto-fallback if neither fires — so a reply months later can be traced back to the load-bearing stored claim wherever the model or hook recorded one. Retrieval is opt-in; writes about *you* always stage for confirmation. Stored as plain markdown on disk; MIT-licensed; works with Claude Code, Cursor, Continue, Cline, and any MCP client.
 
 > **Why this exists.** Every other memory layer — Mem0, Zep, Letta, claude-mem, Anthropic's reference server, the dozen SQLite-FTS5 MCP clones — stores facts. None of them tell the model *when a stored fact has rotted*, *which sentence in the reply a memory shaped*, or *which retrievals the model never deliberately reaches for*. bettermemory does all three. See [Where it fits](#where-it-fits) for the comparison.
 
@@ -41,7 +41,7 @@ bettermemory init --client claude-desktop
 ### Verification surface (the differentiated lane)
 
 - **Per-hit staleness verdict.** Every retrieval carries `staleness_verdict ∈ {fresh, spot_check_recommended, spot_check_required}`, derived from three orthogonal drift signals: calendar verification age, filesystem path drift (paths cited in the body that no longer exist), and commit drift against the memory's origin repo. The model can decide *whether to trust the memory before relying on it*. Hits also carry an inline `path_drift = {checked, missing, verified}` list when drift is detected, so the model can `memory_update` the rotted path or `memory_verify` the rest without a `memory_show` round-trip.
-- **Claim-level audit trail.** `memory_record_use(claim_excerpts=[…])` logs the load-bearing sentence each retrieved memory shaped. Months later, you can trace any reply back to the specific stored claim that produced it. The Stop hook (`bettermemory audit-turn`) also runs a precision-tuned substring match against the assistant reply and attributes hits the model forgot to log explicitly — three tiers (`model` / `hook` / `auto`), one event per retrieval, no double-counting. Explicit `ignored` / `contradicted` / `corrected` overrides record nuance.
+- **Claim-level audit trail.** `memory_record_use(claim_excerpts=[…])` logs the load-bearing sentence each retrieved memory shaped — when the model deliberately calls it. The Stop hook (`bettermemory audit-turn`) catches retrievals the model forgot to log by running a precision-tuned substring match against the assistant reply and emitting a `record_use(attribution="hook")` event with the matched phrase. Retrievals that neither path covers within ~2 turns fall back to `attribution="auto"` with no excerpt — present in the count of the dead-letter detector (`endorsement_rate`) but not the load-bearing numerator. Three tiers, one event per retrieval, no double-counting. Explicit `ignored` / `contradicted` / `corrected` overrides record nuance.
 - **Endorsement-debt visibility.** `memory_health` surfaces memories the ranker keeps surfacing but the model never *deliberately* reaches for — the search-result equivalent of a dead-letter queue. No other memory system exposes this.
 - **Silent-miss probe.** `memory_audit_turn` re-runs the model's ranker over the just-completed turn and flags high-relevance hits the model *didn't* retrieve. Closes the loop on retrieval-contract slippage that is otherwise structurally invisible.
 - **Confirmation tier for claims about you.** `category="user-inference"` *always* stages pending regardless of config — misattribution of preferences sticks for months, so the user always has the veto on claims about themselves.
@@ -52,7 +52,7 @@ bettermemory init --client claude-desktop
 
 - **Opt-in retrieval.** `memory_search` is a tool the model calls deliberately. The default per turn is not to call it.
 - **Proactive writing with structural gates.** Aggressive writing is safe because a durability check, content/tombstone dedup, scope-mismatch check, and the pending tier guard the writes.
-- **Hybrid retrieval.** Four selectable rankers: `keyword` (default), `bm25`, `semantic` (sentence-transformers, optional extra), or `hybrid` (Reciprocal Rank Fusion).
+- **Hybrid retrieval.** Four selectable rankers: `hybrid` (default since 2.6.8 — RRF over keyword + BM25, plus semantic when the embeddings extra is installed; degrades gracefully without it), `bm25` (Okapi BM25), `keyword` (legacy TF + coverage; no IDF), or `semantic` (sentence-transformers, requires extra).
 - **Typed inter-memory links.** `supersedes` / `contradicts` / `extends` / `depends_on`. Surfaced bidirectionally on `memory_show`.
 - **Tombstones, not deletes.** Removed memories keep their `removed_reason`. Tombstone-aware dedup catches paraphrases six months later. Reversible via `memory_restore`.
 - **Auto-scoped by repo and worktree.** Memories written from a git checkout carry the repo URL and worktree root; `memory_search` filters by both. Sibling worktrees of the same repo are isolated.
@@ -150,7 +150,7 @@ Below ~500 memories, search uses `load_all` (byte-stable to 1.x). Above the thre
 
 ### Embeddings for semantic / hybrid retrieval
 
-Keyword + BM25 retrieval is the default and ships with zero extra deps. To add the semantic ranker (paraphrase matching) and hybrid mode (RRF over keyword + BM25 + cosine), install one of two optional extras:
+Hybrid retrieval (RRF over keyword + BM25) is the default and ships with zero extra deps — the hybrid mode gracefully degrades to keyword+BM25 fusion when no embedding extra is installed. To add the semantic third leg (paraphrase matching via sentence-transformers cosine), install one of two optional extras:
 
 ```sh
 uv pip install -e ".[embeddings]"       # sentence-transformers + PyTorch (~500MB; the well-trodden path)
@@ -167,7 +167,7 @@ uv pip install -e ".[embeddings-fast]"  # fastembed + ONNX Runtime (~50MB total;
 - Linux: `~/.config/bettermemory/config.toml`
 - Windows: `%LOCALAPPDATA%\bettermemory\config.toml`
 
-Defaults are sensible — most users never edit it. Knobs that matter: `behavior.search_mode` (`keyword` / `bm25` / `semantic` / `hybrid`), `behavior.semantic_provider` (`auto` / `torch` / `fastembed`), `behavior.require_write_confirmation` (per-write veto; off by default for solo setups, but `category="user-inference"` always goes pending regardless), `behavior.verification_stale_days` (default 30), `telemetry.enabled` (flip to `false` to disable the event log).
+Defaults are sensible — most users never edit it. Knobs that matter: `behavior.search_mode` (`hybrid` default since 2.6.8, plus `keyword` / `bm25` / `semantic`), `behavior.semantic_provider` (`auto` / `torch` / `fastembed`), `behavior.require_write_confirmation` (per-write veto; off by default for solo setups, but `category="user-inference"` always goes pending regardless), `behavior.verification_stale_days` (default 30), `telemetry.enabled` (flip to `false` to disable the event log), `telemetry.log_queries_verbatim` (default `false`; off-by-default opt-in for storing raw `memory_search` query text — see Privacy below).
 
 ## Limitations
 
