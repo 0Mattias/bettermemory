@@ -698,15 +698,573 @@ def _short_ts(ts: str) -> str:
     return f"{date_part} {time_part}"
 
 
+# ---------------------------------------------------------------------------
+# Threshold-rule sweep — replay logged misses under alternative rules
+# ---------------------------------------------------------------------------
+
+# A threshold rule is a pure function that, given the top hits the
+# probe returned and the recent retrieval count, decides whether the
+# event should be flagged as a silent miss. The rule registry below
+# carries every rule by name; the sweep walks logged `search_miss`
+# events and asks each rule the counterfactual question: would *this*
+# rule have flagged the same event? Because `search_miss` events only
+# exist for turns the *current* rule (v1) flagged, the sweep can only
+# meaningfully compare rules that are equally strict or stricter than
+# v1 — a strictly looser rule would also fire on turns where v1
+# didn't, and those turns aren't in the event log to replay (the
+# `turn_audited` companion event doesn't carry `top_hits`). Stricter
+# alternatives let the maintainer answer "is v1 over-firing? would
+# raising the bar drop the miss count from N to N'?" — which is the
+# calibration question audit.py's docstring flags as open.
+#
+# The rule signature stays narrow on purpose: `(top_hits,
+# recent_retrieval_count) -> bool`. Anything more would require
+# replaying historical user messages against the live ranker, which
+# the log doesn't preserve (the message is the user's private query;
+# logging it verbatim is precisely the surface 2.6.8 closed).
+
+
+@dataclass(frozen=True)
+class ThresholdRule:
+    """Named decision rule for the silent-miss audit.
+
+    `check(top_hits, recent_retrieval_count) -> bool` returns True when
+    the event should be flagged as a miss. The top_hits list is the
+    same shape that lands in the `search_miss` event under the
+    `top_hits` key: a list of dicts with `id`, `score`, `relevance`,
+    `scopes`, `snippet`.
+    """
+
+    name: str
+    description: str
+    check: Any  # Callable[[list[dict[str, Any]], int], bool]
+
+
+def _rule_v1_top1_high(
+    top_hits: list[dict[str, Any]], recent_retrieval_count: int
+) -> bool:
+    """Current default: top-1 relevance == "high" AND no recent retrieval.
+    The relevance check is what `probe_for_miss` already runs; we
+    re-derive it here so the rule is replayable from the logged event
+    alone, without depending on the live ranker."""
+    if recent_retrieval_count > 0:
+        return False
+    if not top_hits:
+        return False
+    return top_hits[0].get("relevance") == "high"
+
+
+def _rule_v2_top1_high_score_50(
+    top_hits: list[dict[str, Any]], recent_retrieval_count: int
+) -> bool:
+    """Tightening v1: also require the top-1 score >= 50. The keyword
+    ranker emits scores roughly in [0, 200] for typical queries; 50
+    is a conservative floor that filters single-token "high" hits that
+    score in the 1-token-coverage low end. Replayable from the event
+    alone because score lands on the same dict."""
+    if not _rule_v1_top1_high(top_hits, recent_retrieval_count):
+        return False
+    top = top_hits[0]
+    score = top.get("score")
+    if not isinstance(score, (int, float)):
+        return False
+    return score >= 50.0
+
+
+def _rule_v3_top1_high_dominant(
+    top_hits: list[dict[str, Any]], recent_retrieval_count: int
+) -> bool:
+    """Tightening v1: require the top-1 hit to be at least 2x the score
+    of the second hit (or be the only hit). The dominance signal
+    distinguishes "one obvious match the model should have caught"
+    from "a borderline ranker fluke where several hits tied."""
+    if not _rule_v1_top1_high(top_hits, recent_retrieval_count):
+        return False
+    top = top_hits[0]
+    top_score = top.get("score")
+    if not isinstance(top_score, (int, float)):
+        return False
+    if len(top_hits) < 2:
+        # Only one hit; dominance is trivially satisfied.
+        return True
+    second = top_hits[1]
+    second_score = second.get("score")
+    if not isinstance(second_score, (int, float)) or second_score <= 0:
+        return True
+    return top_score >= 2 * second_score
+
+
+def _rule_v4_top1_high_strict_combined(
+    top_hits: list[dict[str, Any]], recent_retrieval_count: int
+) -> bool:
+    """The intersection of v2 (score floor) and v3 (dominance). The
+    most conservative of the bundled rules — if this fires, the event
+    cleared both alternate strictness tests as well."""
+    return _rule_v2_top1_high_score_50(
+        top_hits, recent_retrieval_count
+    ) and _rule_v3_top1_high_dominant(top_hits, recent_retrieval_count)
+
+
+# Registry. Stable across the public API — adding new rules is
+# additive; removing/renaming requires a deprecation cycle so callers
+# of `compute_threshold_sweep` can pin a known-good set.
+THRESHOLD_RULES: dict[str, ThresholdRule] = {
+    "v1_top1_high": ThresholdRule(
+        name="v1_top1_high",
+        description="Current default: top-1 hit relevance == 'high' AND "
+        "no retrieval (search/show/list) in the lookback window.",
+        check=_rule_v1_top1_high,
+    ),
+    "v2_top1_high_score_50": ThresholdRule(
+        name="v2_top1_high_score_50",
+        description="v1 + top-1 score >= 50.0. Filters single-token "
+        "high-relevance hits that score only on coverage.",
+        check=_rule_v2_top1_high_score_50,
+    ),
+    "v3_top1_high_dominant": ThresholdRule(
+        name="v3_top1_high_dominant",
+        description="v1 + top-1 score >= 2x top-2 score. Distinguishes "
+        "one-clear-match from borderline-ranker-noise.",
+        check=_rule_v3_top1_high_dominant,
+    ),
+    "v4_top1_high_strict_combined": ThresholdRule(
+        name="v4_top1_high_strict_combined",
+        description="Intersection of v2 and v3: must clear both the "
+        "score floor and the dominance test.",
+        check=_rule_v4_top1_high_strict_combined,
+    ),
+}
+
+
+@dataclass
+class ThresholdSweepRow:
+    rule: str
+    description: str
+    would_flag: int
+    delta_from_v1: int  # negative means stricter than v1 (flags fewer)
+    delta_pct: float | None  # share of v1 misses this rule would still flag
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "rule": self.rule,
+            "description": self.description,
+            "would_flag": self.would_flag,
+            "delta_from_v1": self.delta_from_v1,
+            "delta_pct": self.delta_pct,
+        }
+
+
+@dataclass
+class ThresholdSweepReport:
+    """Counterfactual rollup of how many logged search_miss events each
+    rule would have flagged.
+
+    `replayable_misses` is the denominator — `search_miss` events that
+    carry the `top_hits` array. Pre-2.6.4 hook-originated events
+    wrote `top_hit_ids` instead and can't be replayed; those land in
+    `skipped_legacy_event_count` so the report stays honest about how
+    much of the history was actually replayed.
+
+    The `v1_top1_high` row is always present (computing its replay
+    over the same events is the validation check — it must equal
+    `replayable_misses` exactly, otherwise the helper has drifted
+    from the production rule).
+    """
+
+    generated_at: datetime
+    window_seconds: int | None
+    total_events_scanned: int
+    replayable_misses: int
+    skipped_legacy_event_count: int
+    rows: list[ThresholdSweepRow] = field(default_factory=list)
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "generated_at": self.generated_at.isoformat(),
+            "window_seconds": self.window_seconds,
+            "total_events_scanned": self.total_events_scanned,
+            "replayable_misses": self.replayable_misses,
+            "skipped_legacy_event_count": self.skipped_legacy_event_count,
+            "rows": [r.to_dict() for r in self.rows],
+        }
+
+
+def compute_threshold_sweep(
+    events: Iterable[dict[str, Any]],
+    *,
+    rules: dict[str, ThresholdRule] | None = None,
+    since: timedelta | None = None,
+    now: datetime | None = None,
+) -> ThresholdSweepReport:
+    """Replay logged search_miss events against each named rule.
+
+    Only `search_miss` events with a `top_hits` list participate;
+    legacy `top_hit_ids` (pre-2.6.4 hook shape) lack the relevance
+    label every rule needs and are counted in
+    `skipped_legacy_event_count` so the denominator stays explicit.
+    The sweep is a *relative* comparison among rules at least as
+    strict as v1; a strictly looser rule would also flag turns
+    where v1 didn't, which we can't replay from the log alone
+    because the companion `turn_audited` event doesn't carry
+    `top_hits`. That limitation is the calibration question
+    `audit.py`'s docstring flags as open.
+    """
+    now = now or datetime.now(timezone.utc)
+    cutoff: datetime | None = (now - since) if since is not None else None
+    rules_in_use = rules or THRESHOLD_RULES
+
+    replayable: list[tuple[list[dict[str, Any]], int]] = []
+    total_events_scanned = 0
+    legacy_skipped = 0
+    for ev in events:
+        if not isinstance(ev, dict):
+            continue
+        total_events_scanned += 1
+        if cutoff is not None:
+            ts = _parse_ts(ev.get("ts"))
+            if ts is None or ts < cutoff:
+                continue
+        if ev.get("kind") != "search_miss":
+            continue
+        top_hits = ev.get("top_hits")
+        if not isinstance(top_hits, list):
+            # Legacy hook shape carried `top_hit_ids` only — no relevance
+            # label, so no rule can re-evaluate. Skip but count for the
+            # denominator-honesty footnote.
+            if isinstance(ev.get("top_hit_ids"), list):
+                legacy_skipped += 1
+            continue
+        recent = ev.get("recent_retrieval_count")
+        if not isinstance(recent, int):
+            recent = 0
+        replayable.append((top_hits, recent))
+
+    # Compute v1's flag count first — it acts as the reference for
+    # `delta_from_v1` on every other row.
+    v1_rule = rules_in_use.get("v1_top1_high")
+    if v1_rule is not None:
+        v1_count = sum(
+            1 for top_hits, recent in replayable if v1_rule.check(top_hits, recent)
+        )
+    else:
+        v1_count = 0
+
+    rows: list[ThresholdSweepRow] = []
+    for rule_name, rule in rules_in_use.items():
+        would_flag = sum(
+            1 for top_hits, recent in replayable if rule.check(top_hits, recent)
+        )
+        delta = would_flag - v1_count
+        if v1_count > 0:
+            delta_pct: float | None = would_flag / v1_count
+        else:
+            delta_pct = None
+        rows.append(
+            ThresholdSweepRow(
+                rule=rule_name,
+                description=rule.description,
+                would_flag=would_flag,
+                delta_from_v1=delta,
+                delta_pct=delta_pct,
+            )
+        )
+
+    # Stable ordering: v1 first (the reference), then by would_flag
+    # descending, then by name.
+    def sort_key(row: ThresholdSweepRow) -> tuple[int, int, str]:
+        v1_first = 0 if row.rule == "v1_top1_high" else 1
+        return (v1_first, -row.would_flag, row.rule)
+
+    rows.sort(key=sort_key)
+
+    return ThresholdSweepReport(
+        generated_at=now,
+        window_seconds=int(since.total_seconds()) if since is not None else None,
+        total_events_scanned=total_events_scanned,
+        replayable_misses=len(replayable),
+        skipped_legacy_event_count=legacy_skipped,
+        rows=rows,
+    )
+
+
+def render_threshold_sweep_text(report: ThresholdSweepReport) -> str:
+    """Plain-text rendering: one row per rule, showing how many of the
+    `replayable_misses` it would flag and the absolute / percentage
+    delta vs. v1."""
+    lines: list[str] = []
+    window = (
+        "all time"
+        if report.window_seconds is None
+        else _humanize_seconds(report.window_seconds)
+    )
+    lines.append(f"bettermemory eval --threshold-sweep — last {window}")
+    lines.append("─" * 60)
+    lines.append(f"Events scanned         {report.total_events_scanned:>5d}")
+    lines.append(f"Replayable misses      {report.replayable_misses:>5d}")
+    if report.skipped_legacy_event_count > 0:
+        lines.append(
+            f"  (skipped {report.skipped_legacy_event_count} legacy events "
+            "carrying top_hit_ids only — no relevance label to replay against)"
+        )
+    if report.replayable_misses == 0:
+        lines.append("")
+        lines.append(
+            "No replayable misses in window. The sweep needs `search_miss` "
+            "events with `top_hits` (2.6.4+) to produce a comparison; "
+            "run with `--since all` if your recent window is empty, or "
+            "wait until `memory_audit_turn` has fired a few times."
+        )
+        return "\n".join(lines) + "\n"
+    lines.append("")
+    lines.append(f"{'rule':<32s} {'flagged':>7s}  {'Δ v1':>7s}  {'% v1':>6s}")
+    for row in report.rows:
+        if row.delta_pct is None:
+            pct = "—"
+        else:
+            pct = f"{row.delta_pct * 100:5.1f}%"
+        delta = f"{row.delta_from_v1:+d}" if row.rule != "v1_top1_high" else "—"
+        lines.append(
+            f"  {row.rule:<30s} {row.would_flag:>7d}  {delta:>7s}  {pct:>6s}"
+        )
+    lines.append("")
+    lines.append("Caveat: this is a *relative* sweep over events the v1 rule")
+    lines.append("already flagged. Strictly looser rules cannot be evaluated")
+    lines.append("from the log alone — turn_audited does not carry top_hits.")
+    return "\n".join(lines) + "\n"
+
+
+# ---------------------------------------------------------------------------
+# Tool-usage rollup — per-MCP-tool call counts from the event log
+# ---------------------------------------------------------------------------
+
+# Map from event `kind` to the MCP tool that emits it. Used by
+# `compute_tool_usage` so the rollup uses tool names rather than the
+# wire-format event kinds the recorder writes. The exact set is the
+# 18-tool surface listed in `server.py`'s module docstring; tools
+# without a dedicated event of their own appear in
+# `TOOLS_WITHOUT_TELEMETRY` instead.
+#
+# Why an explicit map rather than counting raw `kind` values: some
+# event kinds (`search_miss`, `pending_expired`) are side-effects of
+# other tools, not tool calls in their own right. Counting raw kinds
+# would double-count `memory_audit_turn` invocations that happen to
+# detect a miss and under-count `memory_write` invocations that
+# stage a pending confirmation (the `write` event has
+# `status="pending"` but it's still one tool call). The map collapses
+# both axes correctly.
+_TOOL_EVENT_KIND_TO_TOOL: dict[str, str] = {
+    "search": "memory_search",
+    "show": "memory_show",
+    "list": "memory_list",
+    "scope_overview": "memory_scope_overview",
+    "write": "memory_write",
+    "write_confirm": "memory_write_confirm",
+    "write_cancel": "memory_write_cancel",
+    "update": "memory_update",
+    "remove": "memory_remove",
+    "restore": "memory_restore",
+    "list_tombstones": "memory_list_tombstones",
+    "verify": "memory_verify",
+    "use": "memory_record_use",
+    "rename_scope": "memory_rename_scope",
+    "scope_disable": "memory_scope_disable",
+    "scope_enable": "memory_scope_enable",
+    "turn_audited": "memory_audit_turn",
+}
+
+# Tools that don't emit a dedicated event of their own; the rollup
+# surfaces them with a 0 count and a note rather than silently dropping
+# them, so a reader inspecting the report can tell "this tool is not
+# counted" apart from "this tool was never called."
+TOOLS_WITHOUT_TELEMETRY: tuple[str, ...] = ("memory_health",)
+
+
+@dataclass
+class ToolUsageRow:
+    """One row of the tool-usage rollup. ``count`` is the number of
+    invocations attributed to this tool in the window; ``share`` is
+    its fraction of the total non-zero rollup (``None`` when the
+    rollup is entirely empty)."""
+
+    tool: str
+    count: int
+    share: float | None
+    has_telemetry: bool = True
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "tool": self.tool,
+            "count": self.count,
+            "share": self.share,
+            "has_telemetry": self.has_telemetry,
+        }
+
+
+@dataclass
+class ToolUsageReport:
+    """Output of ``compute_tool_usage``. Carries one row per known MCP
+    tool — even the zero-count ones — so a downstream consumer can
+    branch on "tool was never called" without a missing-key guard.
+
+    ``unmapped_event_kinds`` carries the count of event-kind values
+    that didn't map to any tool. A non-zero value here indicates the
+    map drifted out of sync with the recorder — useful as a guardrail
+    so an unmapped new event kind doesn't silently vanish from the
+    rollup.
+    """
+
+    generated_at: datetime
+    window_seconds: int | None
+    total_events_scanned: int
+    total_tool_calls: int
+    rows: list[ToolUsageRow] = field(default_factory=list)
+    unmapped_event_kinds: dict[str, int] = field(default_factory=dict)
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "generated_at": self.generated_at.isoformat(),
+            "window_seconds": self.window_seconds,
+            "total_events_scanned": self.total_events_scanned,
+            "total_tool_calls": self.total_tool_calls,
+            "rows": [r.to_dict() for r in self.rows],
+            "unmapped_event_kinds": dict(self.unmapped_event_kinds),
+        }
+
+
+def compute_tool_usage(
+    events: Iterable[dict[str, Any]],
+    *,
+    since: timedelta | None = None,
+    now: datetime | None = None,
+) -> ToolUsageReport:
+    """Roll up event log into per-MCP-tool call counts.
+
+    ``since`` applies the same window semantics as ``compute_eval`` —
+    events with ``ts < now - since`` are skipped. Pass ``None`` for
+    all-time. Returns one row per known MCP tool (with zero-count
+    rows preserved) plus a ``rows`` field sorted by descending count
+    and a tally of unmapped event kinds so the map can be audited
+    against the live recorder.
+    """
+    now = now or datetime.now(timezone.utc)
+    cutoff: datetime | None = (now - since) if since is not None else None
+
+    per_tool: dict[str, int] = {tool: 0 for tool in _TOOL_EVENT_KIND_TO_TOOL.values()}
+    for tool in TOOLS_WITHOUT_TELEMETRY:
+        per_tool[tool] = 0
+    unmapped: dict[str, int] = {}
+    total_events_scanned = 0
+    total_tool_calls = 0
+
+    # The kinds we know are side-effects of other tools rather than
+    # tool calls themselves; tracked separately so they don't pollute
+    # `unmapped_event_kinds`.
+    side_effect_kinds = {"search_miss", "pending_expired"}
+
+    for ev in events:
+        if not isinstance(ev, dict):
+            continue
+        total_events_scanned += 1
+        if cutoff is not None:
+            ts = _parse_ts(ev.get("ts"))
+            if ts is None or ts < cutoff:
+                continue
+        kind = ev.get("kind")
+        if not isinstance(kind, str):
+            continue
+        tool = _TOOL_EVENT_KIND_TO_TOOL.get(kind)
+        if tool is not None:
+            per_tool[tool] += 1
+            total_tool_calls += 1
+        elif kind in side_effect_kinds:
+            continue
+        else:
+            unmapped[kind] = unmapped.get(kind, 0) + 1
+
+    rows: list[ToolUsageRow] = []
+    for tool, count in per_tool.items():
+        share = (count / total_tool_calls) if total_tool_calls > 0 else None
+        has_telemetry = tool not in TOOLS_WITHOUT_TELEMETRY
+        rows.append(
+            ToolUsageRow(tool=tool, count=count, share=share, has_telemetry=has_telemetry)
+        )
+    # Descending by count, then by tool name for determinism. Untelemetered
+    # rows always sort to the bottom (count is 0 and share is the same as
+    # any other zero-count row, so the tie-break by name puts them where
+    # they belong without a special case).
+    rows.sort(key=lambda r: (-r.count, r.tool))
+
+    return ToolUsageReport(
+        generated_at=now,
+        window_seconds=int(since.total_seconds()) if since is not None else None,
+        total_events_scanned=total_events_scanned,
+        total_tool_calls=total_tool_calls,
+        rows=rows,
+        unmapped_event_kinds=unmapped,
+    )
+
+
+def render_tool_usage_text(report: ToolUsageReport) -> str:
+    """Plain-text rendering for the CLI. One row per tool, sorted by
+    descending call count; untelemetered tools surface with a footer
+    so the reader sees "memory_health is not counted" rather than
+    "memory_health was never called.""" ""
+    lines: list[str] = []
+    window = (
+        "all time"
+        if report.window_seconds is None
+        else _humanize_seconds(report.window_seconds)
+    )
+    lines.append(f"bettermemory eval --tool-usage — last {window}")
+    lines.append("─" * 60)
+    lines.append(f"Events scanned     {report.total_events_scanned:>5d}")
+    lines.append(f"Tool calls         {report.total_tool_calls:>5d}")
+    lines.append("")
+    lines.append(f"{'tool':<32s} {'count':>7s}  share")
+    for row in report.rows:
+        if not row.has_telemetry:
+            lines.append(f"  {row.tool:<30s} {row.count:>7d}  —  (no telemetry)")
+            continue
+        if row.share is None:
+            share_str = "—"
+        else:
+            share_str = f"{row.share * 100:5.1f}%"
+        bar = _bar(row.share or 0.0)
+        lines.append(f"  {row.tool:<30s} {row.count:>7d}  {share_str}  {bar}")
+    if report.unmapped_event_kinds:
+        lines.append("")
+        lines.append(
+            "Unmapped event kinds (recorder emitted something the tool-usage "
+            "map didn't know about — likely a new tool that needs to be "
+            "added to _TOOL_EVENT_KIND_TO_TOOL):"
+        )
+        for kind, count in sorted(
+            report.unmapped_event_kinds.items(), key=lambda kv: (-kv[1], kv[0])
+        ):
+            lines.append(f"  {kind:<30s} {count:>7d}")
+    return "\n".join(lines) + "\n"
+
+
 __all__ = [
     "EvalReport",
     "RateCI",
     "EndorsementDebtRow",
     "SilentMissCandidate",
+    "ToolUsageReport",
+    "ToolUsageRow",
+    "ThresholdRule",
+    "ThresholdSweepReport",
+    "ThresholdSweepRow",
+    "THRESHOLD_RULES",
+    "TOOLS_WITHOUT_TELEMETRY",
     "DEFAULT_SINCE_SPEC",
     "DEFAULT_ENDORSEMENT_MIN_RETRIEVALS",
     "DEFAULT_SILENT_MISS_LIMIT",
     "compute_eval",
+    "compute_tool_usage",
+    "compute_threshold_sweep",
     "parse_since",
     "render_text",
+    "render_tool_usage_text",
+    "render_threshold_sweep_text",
 ]

@@ -32,7 +32,7 @@ from .audit import (
 from .config import Config
 from .durability import find_transient_markers
 from .events import Recorder, iter_all_events, iter_events
-from .health import curation_counts, report_for_directory
+from .health import curation_counts, find_prior_session_boundary, report_for_directory
 from .models import (
     Category,
     Confidence,
@@ -467,7 +467,8 @@ DESC_MEMORY_SCOPE_OVERVIEW = (
     "if `total` is 0, skip memory_search for the rest of the "
     "session unless explicitly asked.\n\n"
     "Returns `{current_repo, current_cwd, auto_scope, scopes: "
-    "{scope: count}, total, disabled_scopes, curation_pending}`. "
+    "{scope: count}, total, disabled_scopes, curation_pending, "
+    "curation_pending_new_since_last_session}`. "
     "`curation_pending` is an integer-count rollup the model "
     "should branch on:\n"
     "  {stale, never_verified, drifted, cold, dead, "
@@ -476,6 +477,18 @@ DESC_MEMORY_SCOPE_OVERVIEW = (
     "curation pass when the conversation has time. Non-zero "
     "`silent_misses` / `endorsement_debt` means the audit-turn "
     "telemetry has actionable backlog.\n\n"
+    "`curation_pending_new_since_last_session` is the same shape, "
+    "filtered to events emitted and memories *created* since the "
+    "previous session ended (not memories that aged into a bucket; "
+    "an older record drifting into `stale` between sessions stays "
+    "visible only in the absolute `curation_pending` view). Branch "
+    "on this dict when deciding whether to *prompt* the user about "
+    "curation — non-zero values here mean new rot has accumulated "
+    "since you were last around, vs. the absolute `curation_pending` "
+    "view which stays non-zero across sessions until each item is "
+    "actually resolved. The field is `null` on the very first "
+    "session (no prior boundary to delta against); fall back to "
+    "`curation_pending` in that case.\n\n"
     "Default-scoped to the caller's current repository; memories "
     "with no origin always pass as global. Set `auto_scope=False` "
     "for the cross-project view. Counts respect session-disabled "
@@ -2282,7 +2295,7 @@ class ToolHandlers:
             sorted(scope_counts.items(), key=lambda kv: (-kv[1], kv[0]))
         )
 
-        # Curation pending — five integer counts that surface "is there
+        # Curation pending — seven integer counts that surface "is there
         # anything worth a curation pass right now?" without the full
         # `memory_health` cost. Walks the event log once (same shape
         # health.compute_health does) but skips row materialisation.
@@ -2290,13 +2303,44 @@ class ToolHandlers:
         # totals above; curation is always cross-repo because rot in
         # another scope is still rot. The caller-origin we feed in
         # drives the `drifted` count when available.
+        #
+        # We materialise the event stream once and run `curation_counts`
+        # twice: once unbounded for the absolute view (`curation_pending`)
+        # and once bounded to events newer than the prior session
+        # boundary for the delta view
+        # (`curation_pending_new_since_last_session`). Materialisation
+        # is necessary because `find_prior_session_boundary` walks the
+        # same stream the rollups consume — running the iterator twice
+        # would do twice the file I/O. The list is bounded by the
+        # active log + rotated archives, which is the same scale
+        # `compute_health` already pays at session-start once.
+        events_snapshot = list(iter_all_events(self.store.root))
         curation = curation_counts(
             all_memories,
-            iter_all_events(self.store.root),
+            events_snapshot,
             window_days=30,
             verification_stale_days=self.config.behavior.verification_stale_days,
             caller_origin=current_origin,
         )
+        prior_boundary = find_prior_session_boundary(
+            events_snapshot,
+            state.session_id,
+        )
+        if prior_boundary is None:
+            # First session ever, or the event log was wiped. The delta
+            # view is undefined, not zero — surface it as null so the
+            # model branches on "no baseline" vs. "nothing new" rather
+            # than collapsing the two cases.
+            curation_delta: dict[str, int] | None = None
+        else:
+            curation_delta = curation_counts(
+                all_memories,
+                events_snapshot,
+                window_days=30,
+                verification_stale_days=self.config.behavior.verification_stale_days,
+                caller_origin=current_origin,
+                since=prior_boundary,
+            )
 
         self.recorder.record(
             "scope_overview",
@@ -2305,6 +2349,8 @@ class ToolHandlers:
             total=total,
             scope_count=len(sorted_scopes),
             curation_pending=curation,
+            curation_pending_new_since_last_session=curation_delta,
+            prior_session_boundary=isoformat_optional(prior_boundary),
         )
         return {
             "current_repo": repo_filter,
@@ -2314,6 +2360,7 @@ class ToolHandlers:
             "total": total,
             "disabled_scopes": sorted(state.disabled_scopes),
             "curation_pending": curation,
+            "curation_pending_new_since_last_session": curation_delta,
         }
 
     # ---- memory_scope_disable -------------------------------------------

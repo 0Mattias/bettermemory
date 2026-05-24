@@ -14,6 +14,7 @@ from bettermemory.health import (
     _edit_distance_within,
     compute_health,
     curation_counts,
+    find_prior_session_boundary,
     render_json,
     render_text,
     report_for_directory,
@@ -293,6 +294,133 @@ def test_curation_counts_excludes_ambient_from_dead_and_cold() -> None:
     counts = curation_counts([cold, dead], events, window_days=30, now=_utc(2026, 5, 1))
     assert counts["dead"] == 0
     assert counts["cold"] == 0
+
+
+# ---------------------------------------------------------------------------
+# curation_counts — `since` (delta) filter
+# ---------------------------------------------------------------------------
+
+
+def test_curation_counts_since_drops_events_older_than_boundary() -> None:
+    """Delta mode: a search_miss event before `since` does not contribute
+    to `silent_misses`. The same event with `since=None` does."""
+    old_event = _event("search_miss", ts=_utc(2026, 4, 1))
+    new_event = _event("search_miss", ts=_utc(2026, 4, 20))
+    events = [old_event, new_event]
+    absolute = curation_counts([], events, now=_utc(2026, 5, 1))
+    delta = curation_counts(
+        [],
+        events,
+        now=_utc(2026, 5, 1),
+        since=_utc(2026, 4, 10),
+    )
+    assert absolute["silent_misses"] == 2
+    assert delta["silent_misses"] == 1
+
+
+def test_curation_counts_since_excludes_memories_created_before_boundary() -> None:
+    """Memories whose `created` predates `since` are filtered out of the
+    delta view — `cold` / `dead` / `stale` / `never_verified` rollups
+    only see post-`since` memories."""
+    old = _memory(created=_utc(2026, 1, 1))  # would normally count cold
+    fresh = _memory(created=_utc(2026, 4, 20))  # post-boundary, recent
+    absolute = curation_counts([old, fresh], [], window_days=30, now=_utc(2026, 5, 1))
+    delta = curation_counts(
+        [old, fresh],
+        [],
+        window_days=30,
+        now=_utc(2026, 5, 1),
+        since=_utc(2026, 4, 10),
+    )
+    # Both rows are never_verified absolute; only the post-boundary row
+    # is in the delta view.
+    assert absolute["never_verified"] == 2
+    assert delta["never_verified"] == 1
+    # Cold only triggers on >30d-old memories; the absolute counts the
+    # old row, the delta excludes it because old < since.
+    assert absolute["cold"] == 1
+    assert delta["cold"] == 0
+
+
+def test_curation_counts_since_zero_when_nothing_new() -> None:
+    """An event log fully behind `since` produces an all-zero delta —
+    distinct from None (no baseline), which is the handler's
+    responsibility, not the helper's."""
+    events = [_event("search_miss", ts=_utc(2026, 4, 1))]
+    delta = curation_counts(
+        [_memory(created=_utc(2026, 1, 1))],
+        events,
+        now=_utc(2026, 5, 1),
+        since=_utc(2026, 4, 30),
+    )
+    assert delta == {
+        "stale": 0,
+        "never_verified": 0,
+        "drifted": 0,
+        "cold": 0,
+        "dead": 0,
+        "silent_misses": 0,
+        "endorsement_debt": 0,
+    }
+
+
+# ---------------------------------------------------------------------------
+# find_prior_session_boundary — locates the previous session's tail
+# ---------------------------------------------------------------------------
+
+
+def test_find_prior_session_boundary_returns_none_when_only_current_session() -> None:
+    events = [
+        _event("search", ts=_utc(2026, 4, 1), session="sess_current"),
+        _event("show", ts=_utc(2026, 4, 2), session="sess_current"),
+    ]
+    assert find_prior_session_boundary(events, "sess_current") is None
+
+
+def test_find_prior_session_boundary_returns_none_when_current_session_id_missing() -> None:
+    """An empty / None current session id has no baseline to delta against."""
+    events = [_event("search", ts=_utc(2026, 4, 1), session="sess_a")]
+    assert find_prior_session_boundary(events, None) is None
+    assert find_prior_session_boundary(events, "") is None
+
+
+def test_find_prior_session_boundary_returns_latest_other_session_ts() -> None:
+    """The boundary is the max ts of any event NOT in current_session."""
+    events = [
+        _event("search", ts=_utc(2026, 4, 1), session="sess_old"),
+        _event("show", ts=_utc(2026, 4, 5), session="sess_older_still"),
+        _event("show", ts=_utc(2026, 4, 3), session="sess_old"),
+        _event("search", ts=_utc(2026, 4, 10), session="sess_current"),
+    ]
+    boundary = find_prior_session_boundary(events, "sess_current")
+    assert boundary == _utc(2026, 4, 5)
+
+
+def test_find_prior_session_boundary_accepts_legacy_session_id_field() -> None:
+    """Pre-unification archives wrote `session_id` instead of `session`.
+    The boundary helper has to accept both, otherwise old archives
+    would invisibly hide the prior session boundary."""
+    legacy = {
+        "ts": _utc(2026, 4, 1).isoformat().replace("+00:00", "Z"),
+        "session_id": "sess_old",  # legacy field name
+        "kind": "search",
+    }
+    current = _event("search", ts=_utc(2026, 4, 10), session="sess_current")
+    assert find_prior_session_boundary([legacy, current], "sess_current") == _utc(
+        2026, 4, 1
+    )
+
+
+def test_find_prior_session_boundary_skips_malformed_events() -> None:
+    """Garbage entries don't poison the walk — the helper treats them
+    as "no info" and keeps going."""
+    events = [
+        {"ts": "not-a-timestamp", "session": "sess_old", "kind": "x"},
+        {"session": "sess_old", "kind": "x"},  # no ts
+        _event("search", ts=_utc(2026, 4, 5), session="sess_old"),
+        _event("search", ts=_utc(2026, 4, 10), session="sess_current"),
+    ]
+    assert find_prior_session_boundary(events, "sess_current") == _utc(2026, 4, 5)
 
 
 # ---------------------------------------------------------------------------

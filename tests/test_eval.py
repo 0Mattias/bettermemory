@@ -20,11 +20,17 @@ import pytest
 
 from bettermemory.eval import (
     DEFAULT_ENDORSEMENT_MIN_RETRIEVALS,
+    THRESHOLD_RULES,
+    TOOLS_WITHOUT_TELEMETRY,
     RateCI,
     _wilson_interval,
     compute_eval,
+    compute_threshold_sweep,
+    compute_tool_usage,
     parse_since,
     render_text,
+    render_threshold_sweep_text,
+    render_tool_usage_text,
 )
 from bettermemory.events import Recorder
 from bettermemory.models import (
@@ -683,6 +689,108 @@ class TestCLI:
         )
         assert parsed["window_seconds"] is None  # 'all'
 
+    def test_eval_tool_usage_subcommand_text(self, tmp_path: Path, capsys: Any) -> None:
+        """The --tool-usage CLI mode runs end-to-end and renders the
+        per-tool rollup header so a downstream tail-the-output script
+        can grep for it. Empty store gives every tool a zero count."""
+        from bettermemory.server import main as server_main
+
+        env_save = os.environ.get("BETTERMEMORY_DIR")
+        os.environ["BETTERMEMORY_DIR"] = str(tmp_path / "memdir")
+        argv_save = sys.argv[:]
+        sys.argv = ["bettermemory", "eval", "--tool-usage", "--since", "all"]
+        try:
+            server_main()
+        finally:
+            sys.argv = argv_save
+            if env_save is None:
+                os.environ.pop("BETTERMEMORY_DIR", None)
+            else:
+                os.environ["BETTERMEMORY_DIR"] = env_save
+
+        captured = capsys.readouterr()
+        assert "bettermemory eval --tool-usage" in captured.out
+        assert "memory_search" in captured.out
+        # Empty store → zero tool calls total.
+        assert "Tool calls             0" in captured.out
+
+    def test_eval_tool_usage_subcommand_json(self, tmp_path: Path, capsys: Any) -> None:
+        from bettermemory.server import main as server_main
+
+        env_save = os.environ.get("BETTERMEMORY_DIR")
+        os.environ["BETTERMEMORY_DIR"] = str(tmp_path / "memdir")
+        argv_save = sys.argv[:]
+        sys.argv = ["bettermemory", "eval", "--tool-usage", "--json", "--since", "all"]
+        try:
+            server_main()
+        finally:
+            sys.argv = argv_save
+            if env_save is None:
+                os.environ.pop("BETTERMEMORY_DIR", None)
+            else:
+                os.environ["BETTERMEMORY_DIR"] = env_save
+
+        captured = capsys.readouterr()
+        parsed = json.loads(captured.out)
+        assert parsed["total_tool_calls"] == 0
+        # Schema sanity: rows is a list, every entry has a tool name.
+        assert isinstance(parsed["rows"], list)
+        assert all("tool" in r and "count" in r for r in parsed["rows"])
+        # The 18-tool surface lands in JSON too.
+        tool_names = {r["tool"] for r in parsed["rows"]}
+        assert "memory_search" in tool_names
+        assert "memory_health" in tool_names
+
+    def test_eval_threshold_sweep_subcommand_text(
+        self, tmp_path: Path, capsys: Any
+    ) -> None:
+        """End-to-end CLI smoke. Empty store → "no replayable misses"
+        message lands in stdout."""
+        from bettermemory.server import main as server_main
+
+        env_save = os.environ.get("BETTERMEMORY_DIR")
+        os.environ["BETTERMEMORY_DIR"] = str(tmp_path / "memdir")
+        argv_save = sys.argv[:]
+        sys.argv = ["bettermemory", "eval", "--threshold-sweep", "--since", "all"]
+        try:
+            server_main()
+        finally:
+            sys.argv = argv_save
+            if env_save is None:
+                os.environ.pop("BETTERMEMORY_DIR", None)
+            else:
+                os.environ["BETTERMEMORY_DIR"] = env_save
+
+        captured = capsys.readouterr()
+        assert "bettermemory eval --threshold-sweep" in captured.out
+        assert "No replayable misses" in captured.out
+
+    def test_eval_threshold_sweep_and_tool_usage_mutually_exclusive(
+        self, tmp_path: Path
+    ) -> None:
+        from bettermemory.server import main as server_main
+
+        env_save = os.environ.get("BETTERMEMORY_DIR")
+        os.environ["BETTERMEMORY_DIR"] = str(tmp_path / "memdir")
+        argv_save = sys.argv[:]
+        sys.argv = [
+            "bettermemory",
+            "eval",
+            "--tool-usage",
+            "--threshold-sweep",
+            "--since",
+            "all",
+        ]
+        try:
+            with pytest.raises(SystemExit):
+                server_main()
+        finally:
+            sys.argv = argv_save
+            if env_save is None:
+                os.environ.pop("BETTERMEMORY_DIR", None)
+            else:
+                os.environ["BETTERMEMORY_DIR"] = env_save
+
     def test_eval_rejects_garbage_since(self, tmp_path: Path) -> None:
         from bettermemory.server import main as server_main
 
@@ -734,3 +842,339 @@ class TestCLI:
         assert report.applied_explicit == 1
         assert report.explicit_endorsements_with_excerpt == 1
         assert report.memory_helped_rate.rate == pytest.approx(1.0)
+
+
+# ---------------------------------------------------------------------------
+# compute_tool_usage — per-MCP-tool call counts
+# ---------------------------------------------------------------------------
+
+
+class TestComputeToolUsage:
+    def test_empty_events_returns_zero_rows_for_every_tool(self) -> None:
+        """An empty event log still surfaces one row per known tool
+        (all zero counts) so a consumer can branch on "tool never called"
+        without a missing-key guard. Untelemetered tools surface too."""
+        report = compute_tool_usage([])
+        tool_names = {row.tool for row in report.rows}
+        # The full 18 — explicit-mapped 17 plus the one in
+        # TOOLS_WITHOUT_TELEMETRY (memory_health).
+        assert len(report.rows) == 18
+        assert "memory_search" in tool_names
+        assert "memory_health" in tool_names
+        for row in report.rows:
+            assert row.count == 0
+            assert row.share is None  # zero denominator
+        assert report.total_tool_calls == 0
+        assert report.unmapped_event_kinds == {}
+
+    def test_counts_one_event_per_tool_call(self) -> None:
+        events = [
+            _ev("search", returned=["mid"]),
+            _ev("search", returned=["mid"]),
+            _ev("show", id="mid"),
+            _ev("verify", id="mid"),
+            _ev("verify", id="mid"),
+            _ev("verify", id="mid"),
+        ]
+        report = compute_tool_usage(events)
+        counts = {row.tool: row.count for row in report.rows}
+        assert counts["memory_search"] == 2
+        assert counts["memory_show"] == 1
+        assert counts["memory_verify"] == 3
+        assert report.total_tool_calls == 6
+
+    def test_rows_sorted_by_count_descending(self) -> None:
+        events = [
+            _ev("search") for _ in range(5)
+        ] + [_ev("verify"), _ev("verify")]
+        report = compute_tool_usage(events)
+        # The first nonzero row should be memory_search (5); next memory_verify (2).
+        nonzero = [r for r in report.rows if r.count > 0]
+        assert [r.tool for r in nonzero] == ["memory_search", "memory_verify"]
+
+    def test_side_effect_event_kinds_are_not_counted_as_tool_calls(self) -> None:
+        """`search_miss` and `pending_expired` are side-effects of other
+        tools, not standalone tool calls. They must not inflate any
+        tool's count and must not surface as unmapped either."""
+        events = [
+            _ev("search_miss"),
+            _ev("search_miss"),
+            _ev("pending_expired", pending_id="pending_x"),
+        ]
+        report = compute_tool_usage(events)
+        assert report.total_tool_calls == 0
+        assert report.unmapped_event_kinds == {}
+
+    def test_unmapped_event_kind_surfaces_in_report(self) -> None:
+        """A new event kind that nobody updated the map for shows up
+        in `unmapped_event_kinds` so the next contributor sees it
+        rather than the count silently vanishing into thin air."""
+        events = [_ev("brand_new_kind_no_one_mapped"), _ev("brand_new_kind_no_one_mapped")]
+        report = compute_tool_usage(events)
+        assert report.unmapped_event_kinds == {"brand_new_kind_no_one_mapped": 2}
+
+    def test_since_filter_drops_old_events(self) -> None:
+        old = _ev("search", ts="2026-01-01T00:00:00+00:00")
+        recent = _ev("search", ts="2026-05-20T00:00:00+00:00")
+        report = compute_tool_usage(
+            [old, recent],
+            since=timedelta(days=7),
+            now=datetime(2026, 5, 22, tzinfo=timezone.utc),
+        )
+        # Only the recent event survives the window.
+        counts = {r.tool: r.count for r in report.rows}
+        assert counts["memory_search"] == 1
+
+    def test_share_is_fraction_of_tool_calls(self) -> None:
+        events = [_ev("search"), _ev("search"), _ev("show")]
+        report = compute_tool_usage(events)
+        for row in report.rows:
+            if row.tool == "memory_search":
+                assert row.share == pytest.approx(2 / 3)
+            elif row.tool == "memory_show":
+                assert row.share == pytest.approx(1 / 3)
+            else:
+                assert row.share == pytest.approx(0.0)
+
+    def test_untelemetered_tool_marked(self) -> None:
+        """memory_health doesn't emit a dedicated event, so the row exists
+        with count=0 but flagged so the renderer can show "no telemetry"
+        rather than "never called" — the two cases are different."""
+        report = compute_tool_usage([])
+        health_row = next(r for r in report.rows if r.tool == "memory_health")
+        assert health_row.has_telemetry is False
+        assert "memory_health" in TOOLS_WITHOUT_TELEMETRY
+
+    def test_to_dict_is_self_describing(self) -> None:
+        events = [_ev("search")]
+        payload = compute_tool_usage(events).to_dict()
+        assert payload["total_tool_calls"] == 1
+        assert "rows" in payload
+        assert any(r["tool"] == "memory_search" for r in payload["rows"])
+
+
+# ---------------------------------------------------------------------------
+# render_tool_usage_text — CLI rendering
+# ---------------------------------------------------------------------------
+
+
+class TestRenderToolUsageText:
+    def test_text_renders_header_and_tool_rows(self) -> None:
+        events = [_ev("search"), _ev("search"), _ev("show")]
+        text = render_tool_usage_text(compute_tool_usage(events))
+        assert "bettermemory eval --tool-usage" in text
+        assert "memory_search" in text
+        assert "memory_show" in text
+
+    def test_text_marks_untelemetered_tools_distinctly(self) -> None:
+        text = render_tool_usage_text(compute_tool_usage([]))
+        # memory_health row carries the "no telemetry" caveat so the
+        # zero count isn't misread as "never called".
+        assert "memory_health" in text
+        assert "no telemetry" in text
+
+    def test_text_lists_unmapped_kinds_with_caveat(self) -> None:
+        events = [_ev("freshly_added_kind")]
+        text = render_tool_usage_text(compute_tool_usage(events))
+        assert "Unmapped event kinds" in text
+        assert "freshly_added_kind" in text
+
+
+# ---------------------------------------------------------------------------
+# compute_threshold_sweep — counterfactual replay over logged misses
+# ---------------------------------------------------------------------------
+
+
+def _miss_event(
+    *,
+    top_hits: list[dict[str, Any]],
+    recent_retrieval_count: int = 0,
+    ts: str = "2026-05-15T12:00:00+00:00",
+) -> dict[str, Any]:
+    """Build a `search_miss` event in the canonical post-2.6.4 shape
+    (with `top_hits` as list of dicts carrying `relevance` and
+    `score`). Pre-2.6.4 hook events used `top_hit_ids` instead."""
+    return _ev(
+        "search_miss",
+        ts=ts,
+        top_hits=top_hits,
+        recent_retrieval_count=recent_retrieval_count,
+    )
+
+
+def _hit(**fields: Any) -> dict[str, Any]:
+    base: dict[str, Any] = {
+        "id": "01XXXXXX",
+        "score": 100.0,
+        "relevance": "high",
+        "scopes": ["tools"],
+        "snippet": "snippet",
+    }
+    base.update(fields)
+    return base
+
+
+class TestComputeThresholdSweep:
+    def test_v1_replay_matches_replayable_count(self) -> None:
+        """v1 is the reference: replaying it over events the production
+        rule already flagged must reproduce every flag (otherwise the
+        helper's rule has drifted from production)."""
+        events = [
+            _miss_event(top_hits=[_hit(relevance="high", score=100.0)]),
+            _miss_event(top_hits=[_hit(relevance="high", score=80.0)]),
+            _miss_event(top_hits=[_hit(relevance="high", score=20.0)]),
+        ]
+        report = compute_threshold_sweep(events)
+        v1_row = next(r for r in report.rows if r.rule == "v1_top1_high")
+        assert v1_row.would_flag == report.replayable_misses == 3
+
+    def test_v2_score_floor_drops_low_score_misses(self) -> None:
+        events = [
+            _miss_event(top_hits=[_hit(relevance="high", score=100.0)]),
+            _miss_event(top_hits=[_hit(relevance="high", score=20.0)]),  # <50
+            _miss_event(top_hits=[_hit(relevance="high", score=49.9)]),  # <50
+        ]
+        report = compute_threshold_sweep(events)
+        v2 = next(r for r in report.rows if r.rule == "v2_top1_high_score_50")
+        assert v2.would_flag == 1
+        assert v2.delta_from_v1 == -2  # two misses fall below the floor
+
+    def test_v3_dominance_drops_close_seconds(self) -> None:
+        """v3 requires top-1 score >= 2 * top-2 score. An event whose
+        top-1 narrowly beats top-2 doesn't clear the dominance bar."""
+        dominated = _miss_event(
+            top_hits=[
+                _hit(relevance="high", score=100.0),
+                _hit(relevance="medium", score=40.0),  # 100 >= 2*40, ok
+            ]
+        )
+        not_dominant = _miss_event(
+            top_hits=[
+                _hit(relevance="high", score=100.0),
+                _hit(relevance="medium", score=80.0),  # 100 < 2*80, drops
+            ]
+        )
+        report = compute_threshold_sweep([dominated, not_dominant])
+        v3 = next(r for r in report.rows if r.rule == "v3_top1_high_dominant")
+        assert v3.would_flag == 1
+        assert v3.delta_from_v1 == -1
+
+    def test_v3_solo_hit_is_trivially_dominant(self) -> None:
+        """A solo top-1 hit (no top-2 to compare against) cannot fail
+        the dominance test — there's nothing for it to dominate against."""
+        events = [_miss_event(top_hits=[_hit(relevance="high", score=10.0)])]
+        report = compute_threshold_sweep(events)
+        v3 = next(r for r in report.rows if r.rule == "v3_top1_high_dominant")
+        assert v3.would_flag == 1
+
+    def test_recent_retrieval_means_no_miss_under_any_rule(self) -> None:
+        """The recent-retrieval shield is part of every rule's v1
+        precondition; an event with non-zero recent_retrieval_count
+        cannot flag under any of the bundled rules."""
+        events = [
+            _miss_event(
+                top_hits=[_hit(relevance="high", score=200.0)],
+                recent_retrieval_count=1,
+            )
+        ]
+        report = compute_threshold_sweep(events)
+        for row in report.rows:
+            assert row.would_flag == 0
+
+    def test_legacy_top_hit_ids_event_is_skipped_and_counted(self) -> None:
+        """Pre-2.6.4 hook events wrote `top_hit_ids` (strings only,
+        no relevance). The sweep can't replay them but counts them
+        in `skipped_legacy_event_count` so the denominator is honest."""
+        legacy = _ev("search_miss", top_hit_ids=["01XXXXXX"])
+        modern = _miss_event(top_hits=[_hit(relevance="high")])
+        report = compute_threshold_sweep([legacy, modern])
+        assert report.skipped_legacy_event_count == 1
+        assert report.replayable_misses == 1
+
+    def test_non_miss_events_are_skipped(self) -> None:
+        """The sweep only walks `search_miss` events; other kinds in
+        the log must not pollute the count."""
+        events = [_ev("search"), _ev("use"), _miss_event(top_hits=[_hit()])]
+        report = compute_threshold_sweep(events)
+        assert report.replayable_misses == 1
+        assert report.total_events_scanned == 3
+
+    def test_since_filter_drops_old_events(self) -> None:
+        old = _miss_event(
+            top_hits=[_hit()],
+            ts="2026-01-01T00:00:00+00:00",
+        )
+        recent = _miss_event(
+            top_hits=[_hit()],
+            ts="2026-05-20T00:00:00+00:00",
+        )
+        report = compute_threshold_sweep(
+            [old, recent],
+            since=timedelta(days=7),
+            now=datetime(2026, 5, 22, tzinfo=timezone.utc),
+        )
+        assert report.replayable_misses == 1
+
+    def test_empty_events_emits_zero_replayable(self) -> None:
+        report = compute_threshold_sweep([])
+        assert report.replayable_misses == 0
+        # Each known rule still appears as a row with would_flag=0 so a
+        # downstream consumer doesn't need a missing-key guard.
+        rule_names = {row.rule for row in report.rows}
+        assert rule_names == set(THRESHOLD_RULES)
+
+    def test_v1_first_in_row_order(self) -> None:
+        """v1 is the reference rule and should land in position 0 of
+        the rendered table regardless of its absolute flag count."""
+        events = [_miss_event(top_hits=[_hit()])]
+        report = compute_threshold_sweep(events)
+        assert report.rows[0].rule == "v1_top1_high"
+
+    def test_v2_halves_v1_on_synthetic_corpus(self) -> None:
+        """The CHANGELOG calibration claim depends on this *mechanism*:
+        replaying a corpus where half the v1-flagged misses fall below
+        v2's score floor must show v2.would_flag == v1.would_flag / 2
+        and delta_pct == 0.5. The maintainer's dogfood numbers are not
+        in scope here (they live on a private log) — what's tested is
+        the arithmetic that produces them. A bug in `delta_pct` or in
+        the rule predicate would pass the per-row tests above but fail
+        the aggregate shape this test pins down."""
+        # 10 events: 5 above the score floor (would survive v2), 5 below.
+        events = [
+            _miss_event(top_hits=[_hit(relevance="high", score=60.0)])
+            for _ in range(5)
+        ] + [
+            _miss_event(top_hits=[_hit(relevance="high", score=10.0)])
+            for _ in range(5)
+        ]
+        report = compute_threshold_sweep(events)
+        v1 = next(r for r in report.rows if r.rule == "v1_top1_high")
+        v2 = next(r for r in report.rows if r.rule == "v2_top1_high_score_50")
+        assert v1.would_flag == 10
+        assert v2.would_flag == 5
+        assert v2.delta_pct == 0.5
+        assert v2.delta_from_v1 == -5
+
+
+class TestRenderThresholdSweepText:
+    def test_renders_header_and_caveat(self) -> None:
+        events = [_miss_event(top_hits=[_hit()])]
+        text = render_threshold_sweep_text(compute_threshold_sweep(events))
+        assert "bettermemory eval --threshold-sweep" in text
+        # The caveat about strictly-looser rules being un-replayable
+        # must surface so a reader doesn't misread the relative deltas
+        # as absolute miss rates.
+        assert "Caveat" in text
+        assert "looser rules" in text
+
+    def test_renders_legacy_skip_count(self) -> None:
+        legacy = _ev("search_miss", top_hit_ids=["01XXXXXX"])
+        modern = _miss_event(top_hits=[_hit()])
+        text = render_threshold_sweep_text(compute_threshold_sweep([legacy, modern]))
+        assert "skipped 1 legacy" in text
+
+    def test_renders_empty_window_message(self) -> None:
+        """An empty replayable bucket renders an explanatory message
+        rather than a blank table — tells the user what to do next."""
+        text = render_threshold_sweep_text(compute_threshold_sweep([]))
+        assert "No replayable misses" in text

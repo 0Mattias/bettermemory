@@ -1365,6 +1365,7 @@ def curation_counts(
     endorsement_debt_min_retrievals: int = _ENDORSEMENT_DEBT_MIN_RETRIEVALS,
     caller_origin: Origin | None = None,
     now: datetime | None = None,
+    since: datetime | None = None,
 ) -> dict[str, int]:
     """Cheap summary of curation pressure.
 
@@ -1398,14 +1399,37 @@ def curation_counts(
     `caller_origin` drives the `drifted` count, mirroring
     `_compute_commit_drift_debt`. Pass None to skip the
     repo-aware portion (the count stays at zero).
+
+    `since`, when set, switches the helper into *delta* mode:
+    events older than `since` are skipped, and memories created
+    before `since` are excluded from every state-derived bucket.
+    The semantic shifts from "what's in the store today?" to "what
+    has *newly* appeared since `since`?" — which is what
+    `memory_scope_overview` uses to compute
+    `curation_pending_new_since_last_session`. Retrieval counts in
+    delta mode reflect only the post-`since` slice of the event log,
+    so a memory written before `since` that has had no new
+    retrievals will not light up `endorsement_debt`. Drift detection
+    is left unchanged: a memory drifts against the working tree
+    regardless of when its row was created, so the drift count
+    applies only to memories created after `since` (matching the
+    "newly appeared" framing).
     """
     now = now or datetime.now(timezone.utc)
     cutoff = now - timedelta(days=window_days)
     verification_cutoff = now - timedelta(days=verification_stale_days)
+    since_aware = _ensure_utc(since)
 
     # Re-iterate only once over `memories` — pull the slim bookkeeping
-    # we need.
-    mem_list: list[Memory] = list(memories)
+    # we need. In delta mode, `since` filters here so every downstream
+    # rollup sees only the post-`since` slice of the store.
+    mem_list: list[Memory] = []
+    for m in memories:
+        if since_aware is not None:
+            created_aware = _ensure_utc(m.created)
+            if created_aware is None or created_aware < since_aware:
+                continue
+        mem_list.append(m)
 
     retrieval_counts: dict[str, int] = {m.id: 0 for m in mem_list}
     applied_counts: dict[str, int] = {m.id: 0 for m in mem_list}
@@ -1416,6 +1440,10 @@ def curation_counts(
     explicit_applied_counts: dict[str, int] = {m.id: 0 for m in mem_list}
     silent_misses = 0
     for ev in events:
+        if since_aware is not None:
+            ev_ts = _ensure_utc(_parse_event_ts(ev.get("ts")))
+            if ev_ts is None or ev_ts < since_aware:
+                continue
         kind = ev.get("kind")
         if kind == "search":
             # Legacy-name fallback — see the note in `compute_health`.
@@ -1479,10 +1507,10 @@ def curation_counts(
                     continue
                 if not repos_match(origin_repo, caller_origin.repo):
                     continue
-                since = m.last_verified_at
-                if since.tzinfo is None:
-                    since = since.replace(tzinfo=timezone.utc)
-                idx = bisect.bisect_right(timestamps_sorted, since)
+                verified_at = _ensure_utc(m.last_verified_at)
+                if verified_at is None:
+                    continue
+                idx = bisect.bisect_right(timestamps_sorted, verified_at)
                 if len(timestamps_sorted) - idx > 0:
                     drifted += 1
 
@@ -1495,6 +1523,79 @@ def curation_counts(
         "silent_misses": silent_misses,
         "endorsement_debt": endorsement_debt,
     }
+
+
+def find_prior_session_boundary(
+    events: Iterable[dict[str, Any]],
+    current_session_id: str | None,
+) -> datetime | None:
+    """Latest event timestamp belonging to a session other than the current one.
+
+    Used by `memory_scope_overview` to compute the
+    `curation_pending_new_since_last_session` delta. Returns
+    ``None`` when the event log carries no events outside the current
+    session — typical on a fresh install or the very first session
+    after a memory directory was wiped. Callers treat ``None`` as
+    "no prior session to delta against" and surface the delta dict
+    as ``None`` rather than as the absolute counts, so the model can
+    distinguish "nothing new" (delta is zero) from "no baseline
+    available" (delta is None).
+
+    Walks events forward and tracks the max ts among entries whose
+    `session` (or legacy `session_id`) field differs from
+    `current_session_id`. Both legacy and canonical event-shape
+    field names are accepted to stay compatible with archives
+    written before the field-name unification.
+    """
+    if not current_session_id:
+        return None
+    latest: datetime | None = None
+    for ev in events:
+        if not isinstance(ev, dict):
+            continue
+        session_id = ev.get("session") or ev.get("session_id")
+        if not isinstance(session_id, str) or session_id == current_session_id:
+            continue
+        ts = _parse_event_ts(ev.get("ts"))
+        if ts is None:
+            continue
+        ts = _ensure_utc(ts)
+        if ts is None:
+            continue
+        if latest is None or ts > latest:
+            latest = ts
+    return latest
+
+
+def _parse_event_ts(raw: Any) -> datetime | None:
+    """Parse the ISO-8601 timestamp the recorder writes onto every event.
+
+    Mirrors `eval._parse_ts` rather than importing it — the eval
+    module already depends on `health` transitively via the store,
+    and pulling the helper across would invert that direction. The
+    parser is intentionally permissive: malformed entries return
+    ``None`` so the caller skips them without raising mid-walk.
+    """
+    if not isinstance(raw, str):
+        return None
+    try:
+        if raw.endswith("Z"):
+            raw = raw[:-1] + "+00:00"
+        return datetime.fromisoformat(raw)
+    except ValueError:
+        return None
+
+
+def _ensure_utc(dt: datetime | None) -> datetime | None:
+    """Stamp naive datetimes as UTC. The event-log timestamps the
+    recorder writes are always UTC; naive memory `created` fields
+    from older test fixtures (pre-tz models) are treated as UTC too.
+    Returns the input on tz-aware datetimes and ``None`` on ``None``."""
+    if dt is None:
+        return None
+    if dt.tzinfo is None:
+        return dt.replace(tzinfo=timezone.utc)
+    return dt
 
 
 def report_for_directory(

@@ -7,6 +7,143 @@ breaking changes, minor for additive features, patch for fixes. The
 [compatibility contract](CONTRIBUTING.md#versioning-and-the-compatibility-contract)
 spells out exactly what's stable.
 
+## 2.7.0 - 2026-05-24
+
+**Calibration evidence + Claude Code auto-memory bridge.** Four additions land
+together because they answer questions the project has flagged as open for
+several releases: *which MCP tools is the model actually reaching for?* (data
+for the "trim the surface" roadmap item), *is `v1_top1_high` over-firing?*
+(the calibration question `audit.py`'s docstring calls out), *how do we
+prompt for curation without nagging across sessions?* (the rollup-vs-delta
+gap on `memory_scope_overview`), and *how do users who already accumulated
+Claude Code auto-memory upgrade?* (the bridge from
+`~/.claude/projects/*/memory/` into bettermemory's audit layer).
+
+Net effect: 35+ new tests, ~1100 lines of code + docs, zero changes to the
+on-disk schema, zero changes to the 18-tool MCP surface. Existing memories
+load and search unchanged.
+
+### Added — `bettermemory eval --tool-usage`
+
+- **Per-MCP-tool call-count rollup from the event log.** One row per known
+  tool with absolute counts, share of total, and a bar visualisation. Tools
+  without a dedicated event (today: `memory_health`) surface with a
+  zero count and a "no telemetry" annotation rather than being silently
+  dropped — distinguishes "this tool is not counted" from "this tool was
+  never called." A new map (`eval._TOOL_EVENT_KIND_TO_TOOL`) collapses the
+  per-tool event-kind variants (`write` can land with `status="ok"`,
+  `"pending"`, `"duplicate"`, etc., but it's still one tool call;
+  `memory_audit_turn` always emits `turn_audited` and *optionally* a
+  `search_miss` side-effect — counting raw kinds would double-count it).
+  Honours `--since` and `--json`; ignores the rate-mode knobs.
+- **Unmapped-event-kind footer.** A future contributor who adds a new MCP
+  tool without updating the map will see the unmapped kind surface in the
+  output's footer rather than have its calls vanish silently. Guardrail
+  against map drift over time.
+
+### Added — `bettermemory eval --threshold-sweep`
+
+- **Counterfactual replay of logged `search_miss` events under alternative
+  threshold rules.** Closes the calibration question
+  `audit.py`'s docstring flags as open. Bundled rules (all stricter than v1
+  so the comparison is well-defined):
+
+  - `v1_top1_high` — current default (reference).
+  - `v2_top1_high_score_50` — v1 + top-1 score >= 50. Filters single-token
+    high-coverage hits.
+  - `v3_top1_high_dominant` — v1 + top-1 score >= 2× top-2 score. Distinguishes
+    obvious match from borderline tie.
+  - `v4_top1_high_strict_combined` — intersection of v2 and v3.
+
+  On the maintainer's dogfood log (~14 memories, 12 replayable misses since
+  2.6.4), v2 would halve the v1 miss count — direct evidence the score
+  floor is a defensible tightening. Adding a new rule is two lines (a checker
+  function + a `ThresholdRule` entry in `eval.THRESHOLD_RULES`).
+- **Honest about its limitation.** The sweep is *relative*: strictly-looser
+  rules can't be evaluated from the log alone because the companion
+  `turn_audited` event doesn't carry `top_hits`. The caveat is in the
+  text rendering, in the docs, and in the module docstring. Going further
+  would mean adding `top_hits` to every `turn_audited` event, which bloats
+  the log meaningfully — kept as a deliberate trade-off, not a roadmap commitment.
+- **Pre-2.6.4 event compatibility.** Legacy hook-originated `search_miss`
+  events that carry only `top_hit_ids` (no relevance label) can't be
+  replayed; they surface in `skipped_legacy_event_count` so the
+  `replayable_misses` denominator stays honest.
+
+### Added — `bettermemory ingest`
+
+- **Bridge from Claude Code auto-memory.** New CLI subcommand walks
+  `~/.claude/projects/<sanitized-cwd>/memory/` (or any path passed via
+  `--from`), parses the auto-memory format (frontmatter `name`,
+  `description`, both nested `metadata.type` and flat top-level `type:`
+  shapes the auto-memory feature has emitted across versions, plus body),
+  maps the type to a bettermemory category, dedups against the active
+  store and tombstone log via the existing `find_similar` /
+  `find_similar_tombstones` Jaccard pass, and writes survivors as
+  ordinary records carrying an `imported-from-claude-code` provenance
+  scope plus a type-derived second scope (`feedback`, `project-context`,
+  `user-inferences`, `reference`). Auto-discovery's path sanitiser
+  replaces both `/` and `.` with `-` to match Claude Code's on-disk
+  layout — so a worktree at `~/projects/foo/.claude/worktrees/bar`
+  resolves correctly rather than silently missing.
+- **Category mapping.** `user` → `Category.USER_INFERENCE`, `feedback` →
+  `Category.FACT`, `project` → `Category.FACT`, `reference` →
+  `Category.AMBIENT`, anything else / missing → `Category.FACT`. The MCP
+  write handler's always-pending gate for `user-inference` does NOT
+  apply to ingest — an ingest run is the user telling bettermemory "these
+  pre-existing user-curated files are mine, ingest them" and routing each
+  one through pending-confirm would be ergonomic theatre. The category
+  still lands on the record so downstream curation treats them as
+  user-claim memories.
+- **No source-file mutation.** Considered and rejected — modifying the
+  source `.md` files would race Claude Code's own auto-memory writes, and
+  the dedup gate already makes re-ingestion safe (matching content
+  Jaccards at 1.0 and trips the high-similarity threshold). Re-running
+  ingest on an already-ingested source produces the expected
+  `skip_duplicate` rows.
+- **Plugin SKILL.md banner loosened.** The pre-2.7.0 banner read
+  *"Do not fragment memory across ad-hoc files alongside …
+  `~/.claude/projects/*/memory/` …"* — implicitly framing the auto-memory
+  feature as adversarial. The new banner names the auto-memory path
+  specifically and points to the ingest CLI, flipping the framing from
+  "fight" to "consume rather than fight."
+
+### Added — `memory_scope_overview` delta field
+
+- **`curation_pending_new_since_last_session`.** Sibling to the existing
+  absolute `curation_pending` dict. Same key shape (`stale`,
+  `never_verified`, `drifted`, `cold`, `dead`, `silent_misses`,
+  `endorsement_debt`) but counted only against events emitted and
+  memories created after the latest event from a session other than
+  the current one. The field is `null` when no prior session exists in
+  the event log (first session ever, or after a wipe) — the model branches
+  on null vs. dict to tell "no baseline" apart from "nothing new since
+  baseline." The tool description tells the model: prompt about curation
+  based on the *delta*, surface the *absolute* on demand.
+- **`find_prior_session_boundary` helper.** Pure function in `health.py`
+  that walks the event stream forward and returns the max ts among events
+  whose `session` field differs from the caller's current `session_id`.
+  Accepts both the canonical `session` and the legacy `session_id` field
+  names so pre-unification archives still resolve to a usable boundary.
+  Materialisation in the handler is intentional: the events list is
+  bounded by the active log + rotated archives (same scale
+  `compute_health` already pays at session-start), and walking the
+  iterator twice would do twice the I/O for the same result.
+- **`curation_counts` gains a `since` parameter.** When set, filters
+  events to `ts >= since` and memories to `created >= since` for every
+  state-derived bucket. The same helper produces both the absolute and
+  delta views from the handler — no parallel implementation to drift.
+
+### Changed — plugin SKILL.md banner
+
+- The pre-2.7.0 anti-fragmentation banner named
+  `~/.claude/projects/*/memory/` as forbidden alongside ad-hoc files
+  like `MEMORY.md`. The new banner singles that path out specifically as
+  *"ingest it once if it exists"* and links to `bettermemory ingest`.
+  Lets users who came to bettermemory after months of auto-memory
+  accumulation upgrade cleanly. The `MEMORY.md` / scratch-markdown
+  proscription is preserved verbatim.
+
 ## 2.6.8 - 2026-05-24
 
 **External audit follow-up.** A four-agent fresh-eyes audit of 2.6.7

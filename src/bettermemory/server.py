@@ -990,6 +990,59 @@ def main() -> None:
         ),
     )
 
+    ingest_parser = sub.add_parser(
+        "ingest",
+        help=(
+            "Import Claude Code's auto-memory directory "
+            "(~/.claude/projects/<sanitized-cwd>/memory/) into the "
+            "bettermemory store. Maps the auto-memory `type` to a "
+            "bettermemory category, dedups against the active store "
+            "and tombstone log, and writes survivors as ordinary "
+            "records carrying an `imported-from-claude-code` scope. "
+            "The framing is 'consume rather than fight' the auto-"
+            "memory feature: the user keeps the ergonomic capture and "
+            "gains the verification surface."
+        ),
+    )
+    ingest_parser.add_argument(
+        "--from",
+        dest="source",
+        type=str,
+        default=None,
+        help=(
+            "Path to the source directory. When omitted, "
+            "auto-detects the per-cwd auto-memory path; if no "
+            "auto-memory exists for this cwd, exits with a hint."
+        ),
+    )
+    ingest_parser.add_argument(
+        "--dry-run",
+        action="store_true",
+        help=(
+            "Plan only — show what would be ingested without writing. "
+            "Default is to commit (mirrors `bettermemory health` rather "
+            "than `bettermemory consolidate`, which defaults to dry-run; "
+            "ingest is symmetric with the cron-style `sync auto` and "
+            "the bias is 'one shot, low cost, run it.')"
+        ),
+    )
+    ingest_parser.add_argument(
+        "--scope",
+        action="append",
+        default=[],
+        dest="extra_scopes",
+        help=(
+            "Extra scope tag(s) to append to every ingested memory, on top "
+            "of the default `imported-from-claude-code` and the type-derived "
+            "tag. Repeat for multiple."
+        ),
+    )
+    ingest_parser.add_argument(
+        "--json",
+        action="store_true",
+        help="Emit JSON instead of human-readable text.",
+    )
+
     eval_parser = sub.add_parser(
         "eval",
         help=(
@@ -1037,6 +1090,34 @@ def main() -> None:
         help=(
             "How many recent silent-miss events to surface inline. "
             "The full series stays in the event log. Default: 20."
+        ),
+    )
+    eval_parser.add_argument(
+        "--tool-usage",
+        action="store_true",
+        help=(
+            "Switch to the per-MCP-tool call-count rollup instead of the "
+            "rate trio. One row per tool with absolute counts and share "
+            "of total, plus a tally of any unmapped event kinds. Use to "
+            "answer 'which tools is the model actually reaching for?' "
+            "without running compute_health. Honours `--since` and "
+            "`--json`; ignores `--scope`, `--min-retrievals`, and "
+            "`--silent-miss-limit` (those are rate-mode knobs)."
+        ),
+    )
+    eval_parser.add_argument(
+        "--threshold-sweep",
+        action="store_true",
+        help=(
+            "Switch to a counterfactual replay of logged search_miss "
+            "events against alternative threshold rules. Reports how "
+            "many misses each rule (v1_top1_high, v2_top1_high_score_50, "
+            "v3_top1_high_dominant, v4_top1_high_strict_combined) would "
+            "have flagged. Honours `--since` and `--json`; ignores "
+            "the rate-mode knobs. Useful for calibrating whether v1 is "
+            "over-firing on borderline hits — see docs/eval.md for the "
+            "caveat about absolute-vs-relative miss rates under "
+            "differently-strict rules."
         ),
     )
     eval_parser.add_argument(
@@ -1190,7 +1271,18 @@ def main() -> None:
             endorsement_min_retrievals=args.min_retrievals,
             silent_miss_limit=args.silent_miss_limit,
             json_out=args.json,
+            tool_usage=args.tool_usage,
+            threshold_sweep=args.threshold_sweep,
             parser=eval_parser,
+        )
+        return
+    if args.cmd == "ingest":
+        _cli_ingest(
+            source=args.source,
+            dry_run=args.dry_run,
+            extra_scopes=args.extra_scopes,
+            json_out=args.json,
+            parser=ingest_parser,
         )
         return
 
@@ -1804,24 +1896,44 @@ def _cli_eval(
     endorsement_min_retrievals: int | None,
     silent_miss_limit: int,
     json_out: bool,
+    tool_usage: bool,
+    threshold_sweep: bool,
     parser: Any,
 ) -> None:
-    """`bettermemory eval` — compute and render the three effectiveness rates.
+    """`bettermemory eval` — compute and render the effectiveness report.
 
-    Reads ``iter_all_events`` plus the active store, calls
-    ``compute_eval``, then renders text or JSON. The pure compute
-    layer lives in ``bettermemory.eval`` so tests can drive it
-    directly with synthetic events.
+    Default mode reports the three effectiveness rates
+    (memory_helped_rate, endorsement_rate, silent_miss_rate). Two
+    alternative modes:
+
+    - ``--tool-usage``: per-MCP-tool call-count rollup. Answers
+      "which tools is the model actually reaching for?".
+    - ``--threshold-sweep``: counterfactual replay of logged
+      `search_miss` events against alternative threshold rules.
+      Answers "is the current v1_top1_high rule over-firing?".
+
+    The pure compute layer lives in ``bettermemory.eval`` so tests
+    can drive every mode directly with synthetic events. The two
+    alternative modes are mutually exclusive; if both flags are set
+    the parser exits with an error before this function runs.
     """
     import json as _json
 
     from .eval import (
         DEFAULT_ENDORSEMENT_MIN_RETRIEVALS,
         compute_eval,
+        compute_threshold_sweep,
+        compute_tool_usage,
         parse_since,
         render_text,
+        render_threshold_sweep_text,
+        render_tool_usage_text,
     )
     from .events import iter_all_events
+
+    if tool_usage and threshold_sweep:
+        parser.error("--tool-usage and --threshold-sweep are mutually exclusive")
+        return  # pragma: no cover — parser.error raises SystemExit
 
     try:
         since = parse_since(since_spec)
@@ -1831,6 +1943,34 @@ def _cli_eval(
 
     config = load_config()
     directory = config.resolved_directory()
+
+    if tool_usage:
+        # Tool-usage mode ignores `--scope`, `--min-retrievals`, and
+        # `--silent-miss-limit` — they're rate-mode knobs. We don't
+        # call parser.error on them so a user piping the same args
+        # into both modes (a reasonable shell loop) doesn't have to
+        # strip the rate-mode flags before each invocation.
+        usage_report = compute_tool_usage(
+            events=iter_all_events(directory),
+            since=since,
+        )
+        if json_out:
+            sys.stdout.write(_json.dumps(usage_report.to_dict(), indent=2) + "\n")
+        else:
+            sys.stdout.write(render_tool_usage_text(usage_report))
+        return
+
+    if threshold_sweep:
+        sweep_report = compute_threshold_sweep(
+            events=iter_all_events(directory),
+            since=since,
+        )
+        if json_out:
+            sys.stdout.write(_json.dumps(sweep_report.to_dict(), indent=2) + "\n")
+        else:
+            sys.stdout.write(render_threshold_sweep_text(sweep_report))
+        return
+
     store = Store(directory)
 
     floor = (
@@ -1851,6 +1991,85 @@ def _cli_eval(
         sys.stdout.write(_json.dumps(report.to_dict(), indent=2) + "\n")
     else:
         sys.stdout.write(render_text(report))
+
+
+def _cli_ingest(
+    *,
+    source: str | None,
+    dry_run: bool,
+    extra_scopes: list[str],
+    json_out: bool,
+    parser: Any,
+) -> None:
+    """`bettermemory ingest` — import Claude Code's auto-memory directory.
+
+    Resolves the source root (explicit `--from` wins; otherwise tries
+    the per-cwd auto-memory path), classifies every `.md` file via
+    ``compute_ingest_plan``, and (unless `--dry-run`) commits the
+    write actions via ``apply_ingest_plan``.
+
+    Exit codes:
+    - 0: ran successfully (even when 0 rows landed)
+    - 1: source root not found / not a directory (the user-facing
+      hint surfaces in the error message via parser.error)
+    """
+    import json as _json
+    from pathlib import Path as _Path
+
+    from .ingest import (
+        apply_ingest_plan,
+        compute_ingest_plan,
+        discover_default_source_root,
+        render_ingest_text,
+    )
+
+    if source:
+        source_root: _Path | None = _Path(source).expanduser()
+    else:
+        source_root = discover_default_source_root()
+        if source_root is None:
+            parser.error(
+                "no --from given and no auto-memory directory found for "
+                f"the current cwd ({_Path.cwd()}). Pass --from PATH to "
+                "point at an existing auto-memory directory; on this "
+                "machine the expected layout is "
+                "~/.claude/projects/<sanitized-cwd>/memory/."
+            )
+            return  # pragma: no cover — parser.error raises SystemExit
+
+    config = load_config()
+    directory = config.resolved_directory()
+    store = Store(directory)
+    existing = store.load_all()
+    tombstoned = store.load_tombstones()
+
+    try:
+        plan = compute_ingest_plan(
+            source_root,
+            existing_memories=existing,
+            existing_tombstones=tombstoned,
+            extra_scopes=extra_scopes,
+        )
+    except (FileNotFoundError, NotADirectoryError) as exc:
+        parser.error(str(exc))
+        return  # pragma: no cover
+
+    if not dry_run:
+        # Reuse the recorder construction the MCP server uses so the
+        # ingest event lands in the same audit log.
+        from .events import Recorder
+        from .session import SessionState
+
+        recorder = Recorder(
+            root=directory,
+            session_id=SessionState().session_id,
+        )
+        apply_ingest_plan(plan, store, recorder=recorder)
+
+    if json_out:
+        sys.stdout.write(_json.dumps(plan.to_dict(), indent=2) + "\n")
+    else:
+        sys.stdout.write(render_ingest_text(plan, dry_run=dry_run))
 
 
 def _cli_export(

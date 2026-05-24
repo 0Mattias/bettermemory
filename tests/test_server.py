@@ -1670,6 +1670,87 @@ async def test_scope_overview_returns_current_repo_field(server: Any) -> None:
     assert "current_cwd" in overview
 
 
+async def test_scope_overview_delta_field_present_in_return_shape(server: Any) -> None:
+    """`curation_pending_new_since_last_session` is always part of the
+    return dict — null when no prior session exists, a sibling dict to
+    `curation_pending` once a baseline is established. Always-present
+    fields let the model branch without a KeyError guard."""
+    overview = await _call(server, "memory_scope_overview", auto_scope=False)
+    assert "curation_pending_new_since_last_session" in overview
+
+
+async def test_scope_overview_delta_null_on_first_session(server: Any) -> None:
+    """First session on a fresh store has no prior boundary to delta
+    against — surface `null` so the model treats it as "no baseline"
+    and falls back to the absolute `curation_pending` view rather than
+    interpreting an all-zero delta as "nothing has changed."""
+    overview = await _call(server, "memory_scope_overview", auto_scope=False)
+    assert overview["curation_pending_new_since_last_session"] is None
+
+
+async def test_scope_overview_delta_dict_when_prior_session_exists(
+    memory_dir: Path,
+) -> None:
+    """Once events from a different session_id exist in the log, the
+    delta dict materialises. Same key set as `curation_pending`."""
+    cfg = Config(storage=StorageConfig(directory=str(memory_dir)))
+    # First "session": write a memory and call scope_overview so the
+    # event log carries something tagged with this session_id.
+    server_a = build_server(
+        config=cfg, store=Store(memory_dir), state=SessionState()
+    )
+    await _call(server_a, "memory_write", content="x", scopes=["tools"])
+    await _call(server_a, "memory_scope_overview", auto_scope=False)
+
+    # Second "session": fresh SessionState gives a new session_id, so
+    # the events from session A are now "prior" relative to session B.
+    server_b = build_server(
+        config=cfg, store=Store(memory_dir), state=SessionState()
+    )
+    overview = await _call(server_b, "memory_scope_overview", auto_scope=False)
+    delta = overview["curation_pending_new_since_last_session"]
+    assert isinstance(delta, dict)
+    # Same key set as the absolute view — the model should not need a
+    # different branch for each.
+    assert set(delta.keys()) == set(overview["curation_pending"].keys())
+
+
+async def test_scope_overview_delta_event_recorded_carries_boundary(
+    memory_dir: Path,
+) -> None:
+    """The `scope_overview` event in the log carries the prior boundary
+    timestamp (or null), so a downstream `eval` pass can correlate the
+    delta dict back to the cutoff that produced it without re-running
+    `find_prior_session_boundary` against the live log state."""
+    cfg = Config(storage=StorageConfig(directory=str(memory_dir)))
+    # Seed a prior-session event so the boundary resolves to a non-null
+    # value on the second session_overview call.
+    server_a = build_server(
+        config=cfg, store=Store(memory_dir), state=SessionState()
+    )
+    await _call(server_a, "memory_write", content="y", scopes=["tools"])
+
+    server_b = build_server(
+        config=cfg, store=Store(memory_dir), state=SessionState()
+    )
+    await _call(server_b, "memory_scope_overview", auto_scope=False)
+
+    # Read the events log directly and pull the most recent scope_overview
+    # record. The field name on the recorded event mirrors the return-dict
+    # key with a `prior_session_boundary` companion so an eval pass can
+    # re-trace the math.
+    events_path = memory_dir / ".events.jsonl"
+    lines = events_path.read_text().splitlines()
+    scope_events = [
+        json.loads(line) for line in lines if json.loads(line)["kind"] == "scope_overview"
+    ]
+    assert scope_events, "expected at least one scope_overview event"
+    latest = scope_events[-1]
+    assert "prior_session_boundary" in latest
+    assert latest["prior_session_boundary"] is not None
+    assert "curation_pending_new_since_last_session" in latest
+
+
 # ---------------------------------------------------------------------------
 # Tools list — new tools registered
 # ---------------------------------------------------------------------------

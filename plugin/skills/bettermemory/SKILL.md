@@ -5,7 +5,7 @@ description: Verification-grade memory between sessions. Use bettermemory's MCP 
 
 # bettermemory: opt-in memory retrieval
 
-Persistent memory between sessions lives in this plugin's MCP tools. **Do not fragment memory across ad-hoc files alongside** (`MEMORY.md`, `~/.claude/projects/*/memory/`, scratch markdown elsewhere). Future sessions only see what these tools surface.
+Persistent memory between sessions lives in this plugin's MCP tools. **Do not fragment memory across ad-hoc files alongside** (`MEMORY.md`, scratch markdown elsewhere) — future sessions only see what these tools surface. If Claude Code's auto-memory at `~/.claude/projects/*/memory/` already exists from before bettermemory was installed, ingest it (one-shot `bettermemory ingest --from <path>`) rather than letting it accumulate alongside; the ingest CLI maps each auto-memory file to a bettermemory record, dedups against the active store and tombstone log, and stamps an `imported-from-claude-code` scope for traceability.
 
 ## Quick card
 

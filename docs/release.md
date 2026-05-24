@@ -49,7 +49,9 @@ $EDITOR .claude-plugin/marketplace.json      # `.metadata.version`
 $EDITOR CHANGELOG.md
 
 # 4. Run the suite locally. The version-sync tests are the cheapest
-#    check that all four files agree.
+#    check that all three version files agree (pyproject.toml is the
+#    source of truth for `bettermemory.__version__`, which the plugin
+#    manifests must match).
 pytest tests/test_plugin.py tests/test_version.py -q
 
 # 5. Commit, tag, push.

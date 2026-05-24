@@ -2,7 +2,7 @@
 
 Published roadmap is part of the distribution strategy: people deciding between memory layers want to know where a project is going, not just where it's been. This document lists the planned work in roughly the order it will land. Plans change; the CHANGELOG is the source of truth for what shipped.
 
-## Where we are (May 2026, v2.6.6)
+## Where we are (May 2026, v2.7.0)
 
 - 18 MCP tools across retrieval, writing, lifecycle, verification, curation, and session-local controls.
 - FTS5 inverted index pre-filtering candidates above ~500 memories.
@@ -39,15 +39,26 @@ Published roadmap is part of the distribution strategy: people deciding between 
 
 ✅ **`--from-transcript` (writing-reflex gap).** The MCP contract asks the model to call `memory_write` whenever something durable enters the conversation; in practice the bar for "durable" is fuzzy and head-down task focus wins, so most writes get skipped. `bettermemory consolidate --llm --from-transcript PATH` reads the conversation (plain text, Markdown, or Claude Code session JSONL — autodetected) and asks the LLM to propose new memories worth saving. The fifth proposal type, `propose_new`, joins the existing four under the same `--apply`/`--yes`/interactive accept gate. Existing memories ride along as the "don't propose duplicates of these" context; `user-inference` category is forbidden (requires explicit user confirmation the consolidate path can't supply); `source_excerpt` provenance is stamped into the new body so the audit trail traces every claim back to a transcript turn.
 
-## After that — Claude Code auto-memory bridge
+## ~~After that~~ Shipped (Unreleased) — Claude Code auto-memory bridge
 
-**`bettermemory ingest --from ~/.claude/projects/*/memory`.** Claude Code 2.x writes auto-memory to a per-project filesystem directory. Today bettermemory's plugin lands an instruction in the system prompt to consolidate memory in bettermemory's tools instead. The bridge inverts: import any auto-memory that exists, promote it into the scoped/verified/dedup'd bettermemory store, and emit a one-line note in the source directory pointing at the bettermemory ID.
+✅ **`bettermemory ingest --from <path>`.** Claude Code 2.x writes auto-memory to a per-project filesystem directory. The new CLI walks the source directory, parses each `.md` file's frontmatter (`name`, `description`, `metadata.type`), maps the type to a bettermemory category (`user` → `user-inference`, `feedback`/`project` → `fact`, `reference` → `ambient`), dedups against the active store and tombstone log, and writes survivors as ordinary records carrying an `imported-from-claude-code` provenance scope. The plugin SKILL.md banner was loosened from "don't write to that path" to "ingest it once if it exists" — the framing flipped from "fight" to "consume."
 
-**Why this matters.** Claude Code's auto-memory is on by default and has cultural inertia we can't and shouldn't try to break. Consuming it (rather than fighting it) makes bettermemory a *strict upgrade path* — users keep the ergonomic capture, gain the verification surface. Positioning is "upgrade Claude Code's filesystem memory into the audit layer."
+**Path auto-discovery + path-arg.** When `--from` is omitted, the CLI tries `~/.claude/projects/<sanitized-cwd-path>/memory/`; if no such directory exists, it exits with a hint. `--dry-run` reports the plan without committing; `--scope` appends extra scopes to every row.
+
+**Out of scope (for this release).** Source-file mutation (writing back an "ingested" marker) was considered and rejected — dedup against the active store + tombstone log already makes re-ingestion safe, and modifying source files would race Claude Code's own auto-memory writes. If a user wants to delete the source dir after ingest, they do so manually.
+
+## ~~After that~~ Shipped (Unreleased) — Trim-surface evidence
+
+✅ **`bettermemory eval --tool-usage`.** Per-MCP-tool call-count rollup from the event log. Answers "which tools is the model actually reaching for?" without running `compute_health`. The intended use is the *evidence* underlying the next surface-trim decision: tools that haven't been called across multiple dogfood installs are candidates to move behind a power-user flag and out of the default `instructions` block. The map from event `kind` to tool name lives in `eval._TOOL_EVENT_KIND_TO_TOOL`; tools without a dedicated event (today: `memory_health`) surface with a zero count and a "no telemetry" caveat rather than being silently dropped.
+
+✅ **`bettermemory eval --threshold-sweep`.** Counterfactual replay of logged `search_miss` events under alternative threshold rules (`v1_top1_high` current default + three strictly-stricter variants: `v2_top1_high_score_50`, `v3_top1_high_dominant`, `v4_top1_high_strict_combined`). Closes the calibration question `audit.py`'s docstring flags as open — *is v1 over-firing?* — by letting the maintainer see how many of the v1-flagged misses would still be flagged under a tighter rule. Sweep is *relative* (strictly-looser rules can't be replayed, because the companion `turn_audited` event doesn't carry `top_hits`); the limitation is documented and the alternative — bloating `turn_audited` with top_hits — is a deliberate trade-off, not a roadmap commitment.
+
+## ~~After that~~ Shipped (Unreleased) — Session-aware curation hint
+
+✅ **`memory_scope_overview` returns `curation_pending_new_since_last_session`.** The absolute `curation_pending` rollup stayed non-zero between sessions even after the user saw it, which made the session-start hint a candidate for nag-fatigue. The new sibling field uses the latest event from a different `session_id` as the boundary and recomputes the rollup over events emitted and memories created after that point — so the model branches on "*new* curation pressure" rather than the accumulated total. The field is `null` on the very first session (no prior boundary to delta against); the absolute view stays the fall-through.
 
 ## After that — operational polish
 
-- **Trim the MCP surface where models don't use it.** 18 tools is at the high end of what models reliably engage with. After landing the eval CLI, look at retrieval counts per tool name: anything that's never been called in dogfood usage moves behind a power-user flag and out of the default `instructions` block.
 - **Encryption-at-rest option.** Today: plaintext on disk; threat model is OS-level encryption. Some users (and a future linter for credential-shaped strings at write time) want defense in depth. Investigate a `[encrypted]` extra with `age`-backed envelope encryption per file. Likely won't ship in 2026.
 - **Status-only `bettermemory ui --tunnel`.** The FastAPI UI is local-only. A `--tunnel` flag wires up a one-shot Cloudflare or Tailscale Funnel tunnel for read-only browsing from another device. No mutations over the tunnel.
 

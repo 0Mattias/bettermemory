@@ -113,7 +113,67 @@ Window: 2026-04-20 → 2026-05-20
 
 `--json` emits the same numbers as machine-readable JSON for CI pipelines. `--scope` filters to a single scope (useful for catching e.g. `projects:foo` going feral while `tools` stays healthy). `--min-retrievals` controls the endorsement-debt floor (default 5); `--silent-miss-limit` controls how many recent miss events are surfaced inline (default 20).
 
-The implementation lives in `src/bettermemory/eval.py`. The compute pass is deliberately independent of `health.compute_health` — both layers join events against the active store, but the eval module is single-responsibility (the three rates and their two row lists) and the rendering is screenshot-friendly. The CLI is wired into `server.py`'s argparse table the same way `health` and `consolidate` are.
+### `--tool-usage` — per-MCP-tool call-count rollup
+
+```
+$ bettermemory eval --tool-usage --since 30d
+bettermemory eval --tool-usage — last 30d
+────────────────────────────────────────────────────────────
+Events scanned       768
+Tool calls           737
+
+tool                              count  share
+  memory_audit_turn                 143  19.4%  ▇▇▁▁▁▁▁▁▁▁
+  memory_record_use                 117  15.9%  ▇▇▁▁▁▁▁▁▁▁
+  memory_show                       114  15.5%  ▇▇▁▁▁▁▁▁▁▁
+  …
+  memory_write_confirm                1   0.1%  ▁▁▁▁▁▁▁▁▁▁
+  memory_health                       0  —  (no telemetry)
+```
+
+A second mode of `bettermemory eval` that answers a different question: *which MCP tools is the model actually reaching for?* One row per tool with absolute counts and the share of total tool calls. Intended as the empirical input for the roadmap's "trim the MCP surface" decision — tools that haven't been called in months across multiple installs are candidates to move behind a power-user flag.
+
+The event-kind → tool-name map lives in `eval._TOOL_EVENT_KIND_TO_TOOL`. Tools without a dedicated event (today: `memory_health`) surface with a zero count and a "no telemetry" annotation rather than being silently dropped, so the reader can distinguish "this tool is not counted" from "this tool was never called." If a new tool ships and the map isn't updated, the unmapped event kinds surface in their own footer section as a guardrail. Side-effect events (`search_miss`, `pending_expired`) are filtered out — they're consequences of other tool calls rather than tool calls in their own right.
+
+Honours `--since` and `--json`; ignores the rate-mode knobs (`--scope`, `--min-retrievals`, `--silent-miss-limit`) so a shell loop piping the same args into both modes doesn't have to strip them.
+
+### `--threshold-sweep` — counterfactual replay over alternative rules
+
+```
+$ bettermemory eval --threshold-sweep --since all
+bettermemory eval --threshold-sweep — last all time
+────────────────────────────────────────────────────────────
+Events scanned           768
+Replayable misses         12
+  (skipped 19 legacy events carrying top_hit_ids only — no relevance label to replay against)
+
+rule                             flagged     Δ v1    % v1
+  v1_top1_high                        12        —  100.0%
+  v3_top1_high_dominant               11       -1   91.7%
+  v2_top1_high_score_50                6       -6   50.0%
+  v4_top1_high_strict_combined         6       -6   50.0%
+
+Caveat: this is a *relative* sweep over events the v1 rule
+already flagged. Strictly looser rules cannot be evaluated
+from the log alone — turn_audited does not carry top_hits.
+```
+
+The third mode of `bettermemory eval`: walks logged `search_miss` events and asks each named rule the counterfactual question *would this event have been flagged under rule X?* Answers the calibration question `audit.py`'s docstring flags as open — *is `v1_top1_high` over-firing? would tightening reduce the noise?*
+
+Bundled rules (all at least as strict as v1, so the sweep is well-defined):
+
+| Rule | Tightening over v1 |
+|---|---|
+| `v1_top1_high` | reference (top-1 relevance == "high", no recent retrieval) |
+| `v2_top1_high_score_50` | + top-1 score >= 50 — filters single-token high-coverage hits |
+| `v3_top1_high_dominant` | + top-1 score >= 2× top-2 score — distinguishes obvious match from borderline tie |
+| `v4_top1_high_strict_combined` | intersection of v2 and v3 |
+
+**Why only strictly-stricter rules.** A looser rule would also fire on turns where v1 *didn't* — but those turns aren't in the event log to replay, because the companion `turn_audited` event doesn't carry `top_hits`. The pre-2.6.4 hook-originated `search_miss` events lack `top_hits` too (they wrote `top_hit_ids` only) and surface in the `skipped_legacy_event_count` so the denominator stays honest. To gain the ability to replay *looser* rules, a future change would need to add `top_hits` to `turn_audited` — which inflates the log meaningfully and is therefore a deliberate trade-off, not a roadmap commitment.
+
+Honours `--since` and `--json`; mutually exclusive with `--tool-usage`. The implementation is `compute_threshold_sweep` in `eval.py`; the rule registry is `THRESHOLD_RULES`. Adding a new rule is two lines (a checker function + a `ThresholdRule` entry in the registry).
+
+The implementation lives in `src/bettermemory/eval.py`. The compute pass is deliberately independent of `health.compute_health` — both layers join events against the active store, but the eval module is single-responsibility (the three rates, the tool-usage rollup, and the threshold sweep) and the rendering is screenshot-friendly. The CLI is wired into `server.py`'s argparse table the same way `health` and `consolidate` are.
 
 ## Comparing systems honestly
 
