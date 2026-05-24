@@ -263,7 +263,9 @@ class Recorder:
             )
             counter += 1
 
-        rotating = archive.with_name(archive.name[: -len(ARCHIVE_SUFFIX)] + ROTATING_SUFFIX)
+        rotating = archive.with_name(
+            archive.name[: -len(ARCHIVE_SUFFIX)] + ROTATING_SUFFIX
+        )
         try:
             # Step 1: atomic rename. After this the active log is gone.
             os.replace(self.path, rotating)
@@ -300,7 +302,9 @@ class Recorder:
                 log.warning("orphan .rotating unlink failed: %s", exc)
             return
 
-        tmp = archive.with_name(archive.name[: -len(ARCHIVE_SUFFIX)] + ROTATING_GZ_TMP_SUFFIX)
+        tmp = archive.with_name(
+            archive.name[: -len(ARCHIVE_SUFFIX)] + ROTATING_GZ_TMP_SUFFIX
+        )
         # A leftover .tmp from a prior crashed compression is junk —
         # we have no way to know it's complete, so retry from scratch.
         if tmp.exists():
@@ -369,8 +373,11 @@ class Recorder:
         except OSError:  # pragma: no cover
             return
         for path in entries:
-            if not (path.is_file() and path.name.startswith(ARCHIVE_PREFIX)
-                    and path.name.endswith(ROTATING_SUFFIX)):
+            if not (
+                path.is_file()
+                and path.name.startswith(ARCHIVE_PREFIX)
+                and path.name.endswith(ROTATING_SUFFIX)
+            ):
                 continue
             archive_name = path.name[: -len(ROTATING_SUFFIX)] + ARCHIVE_SUFFIX
             archive = path.with_name(archive_name)

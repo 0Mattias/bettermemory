@@ -426,9 +426,7 @@ def load_config(path: Path | None = None) -> Config:
         telemetry=TelemetryConfig(
             enabled=bool(telemetry_raw.get("enabled", True)),
             max_bytes=int(telemetry_raw.get("max_bytes", 10_000_000)),
-            log_queries_verbatim=bool(
-                telemetry_raw.get("log_queries_verbatim", False)
-            ),
+            log_queries_verbatim=bool(telemetry_raw.get("log_queries_verbatim", False)),
         ),
         config_path=config_path,
     )

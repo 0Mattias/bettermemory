@@ -341,9 +341,7 @@ def test_record_redacts_query_by_default(tmp_path: Path) -> None:
 
 
 def test_record_keeps_query_verbatim_when_opted_in(tmp_path: Path) -> None:
-    rec = Recorder(
-        root=tmp_path, session_id="sess_test", log_queries_verbatim=True
-    )
+    rec = Recorder(root=tmp_path, session_id="sess_test", log_queries_verbatim=True)
     rec.record("search", query="kubernetes networking")
     events = list(iter_events(tmp_path))
     assert events[0]["query"] == "kubernetes networking"
