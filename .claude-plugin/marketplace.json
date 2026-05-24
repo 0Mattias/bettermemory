@@ -6,13 +6,13 @@
   },
   "metadata": {
     "description": "Memory you can verify — MCP-native memory with per-hit staleness verdicts and claim-level audit trails. Local-first, no cloud.",
-    "version": "2.6.7"
+    "version": "2.6.8"
   },
   "plugins": [
     {
       "name": "bettermemory",
       "source": "./plugin",
-      "description": "Verification-grade memory for Claude Code. Every retrieved fact carries a staleness verdict (calendar age + filesystem path drift + git commit drift) so the model knows when a stored memory has rotted before relying on it; every use is logged with a claim-level excerpt so retrievals stay auditable months later. Memories are plain markdown + YAML in ~/.claude-memory/; retrieval is opt-in per turn; writes about you always stage for confirmation. Bundles 18 MCP tools and a memory-discipline skill that lands the policy in the system prompt.",
+      "description": "Verification-grade memory for Claude Code. Every retrieved fact carries a staleness verdict (calendar age + filesystem path drift + git commit drift) so the model knows when a stored memory has rotted before relying on it; retrievals are logged with three attribution tiers (model-explicit with claim-level excerpts, Stop-hook substring match, or auto-fallback) so a reply months later can be traced back to the load-bearing stored claim wherever it was recorded. Memories are plain markdown + YAML in ~/.claude-memory/; retrieval is opt-in per turn; writes about you always stage for confirmation. Bundles 18 MCP tools and a memory-discipline skill that lands the policy in the system prompt.",
       "category": "memory",
       "tags": [
         "memory",

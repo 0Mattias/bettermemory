@@ -7,6 +7,116 @@ breaking changes, minor for additive features, patch for fixes. The
 [compatibility contract](CONTRIBUTING.md#versioning-and-the-compatibility-contract)
 spells out exactly what's stable.
 
+## 2.6.8 - 2026-05-24
+
+**External audit follow-up.** A four-agent fresh-eyes audit of 2.6.7
+found one ranker default that underperformed by design, three event-log
+and session-state correctness issues the dogfood ~14-memory scale would
+never hit, one privacy-by-default gap, and one README over-promise.
+Every finding is fixed in this release. The two findings the audit
+flagged but the maintainer kept out of scope — empirical recalibration
+of the 30-day staleness window and the 0.3 semantic threshold against
+a real dataset — are tracked for the next minor; both are observability
+questions the eval CLI was designed to answer once enough turns of
+dogfood traffic exist.
+
+### Changed — default `search_mode` is now `hybrid`
+
+- **`behavior.search_mode` defaults to `"hybrid"` (was `"keyword"`).**
+  Hybrid runs RRF over keyword + BM25 (and semantic when the
+  `[embeddings]` extra is installed), gracefully degrading to
+  keyword + BM25 fusion when no embedding extra is present — so the
+  flip doesn't add a dep requirement. The legacy keyword scorer
+  lacks IDF weighting and underperforms on rare-term queries. The
+  1.6.0 default is still selectable explicitly via `mode="keyword"`
+  for byte-stable behaviour on identifier-heavy queries. `docs/api.md`,
+  the `DEFAULT_CONFIG` template, and `BehaviorConfig.search_mode`
+  all carry matching comments now.
+
+### Fixed — HIGH: event log rotation could double-count on crash
+
+- **`events._rotate_if_needed` had a crash window between gzip-close
+  and source unlink that left both files present.** Recovery via
+  `iter_all_events` then yielded every rotated event twice — and the
+  eval framework's `silent_miss_rate` / `endorsement_rate` numerators
+  are computed off that stream, so a single crashed rotation would
+  inflate the denominators for the lifetime of the active log. Fixed
+  with a `.rotating` two-phase rename: the active log is atomically
+  renamed to `.events-{ts}.jsonl.rotating` *first*, then compressed
+  into a `.jsonl.gz.tmp` sibling, then renamed atomically to the
+  canonical `.gz`, then the `.rotating` holding file is unlinked. A
+  crash at any step is recoverable on the next rotation via a sweep
+  at the top of `_rotate_if_needed`. Archives inherit the active-log's
+  `0o600` permissions via an explicit `chmod` before the canonical
+  rename. `iter_all_events` reads orphan `.rotating` files only when
+  no matching `.gz` exists.
+
+### Fixed — HIGH: silent pending-write expiry
+
+- **`SessionState._evict_expired` dropped pending writes silently.**
+  A user saying "yes, save it" 61+ minutes after the prompt got back
+  `no pending write with id ...` — the eviction was indistinguishable
+  from a typo and left no event-log trail. Two related changes:
+  - `_advance_turn` now calls `state._evict_expired()` and any drop
+    populates `_expired_pending`, which `_drain_pending_expired`
+    consumes to emit one `pending_expired` event per drop (carrying
+    the `pending_id`, the `ttl_seconds` that elapsed, and the
+    proposed-memory `category` so downstream curation can flag lost
+    `user-inference` confirmations specifically).
+  - `memory_write_confirm` now consults
+    `SessionState.was_recently_expired(pending_id)` and raises a
+    targeted error — `"pending write {pid!r} expired before
+    confirmation (the 1-hour TTL elapsed). The proposed memory was
+    not saved. Re-stage with memory_write to create a fresh pending
+    id."` — so the model knows whether to apologise-and-re-ask or
+    debug a phantom id.
+
+### Fixed — HIGH: auto-`record_use` race when log events landed after the scan
+
+- **`_advance_turn`'s pre-consume dedup scanned only
+  `attribution="hook"` events and matched on `(session, memory_id)`
+  alone.** Two failure modes followed:
+  - A model that did `memory_search` → `memory_record_use(applied)`
+    → `memory_search` (same id) had its *fresh* second token
+    falsely purged by the *stale* first record_use event, dropping
+    the auto-commit cadence on a legitimate new retrieval.
+  - Any non-hook attribution that landed in the log after the search
+    but before the auto-fire could produce two `use` events for the
+    same `(turn, memory_id)` pair.
+  Replaced with `_already_recorded_pending_ids`, which: (a) covers
+  any `use` event regardless of `attribution` tier, and (b) gates
+  on `event.ts >= token.issued_at` so a stale event from a prior
+  retrieval cycle no longer purges a fresh token. The hook-only
+  function name is kept as a backwards-compat alias.
+
+### Fixed — MED: search query text logged verbatim to disk by default
+
+- **`Recorder.record` wrote `query` / `probe_query` field values
+  verbatim.** A user pasting `key=sk-very-secret-...` into a
+  `memory_search` landed the full secret on disk. Two changes:
+  - New `telemetry.log_queries_verbatim` flag (default `false` since
+    2.6.8) replaces the field with `{"hash": "<16-hex sha256
+    prefix>", "preview": "<first 32 chars>", "len": N}` before the
+    event is serialised. Cross-event correlation still works (a
+    repeated query has the same hash); the first 32 characters
+    survive for triage; the full body is not recoverable.
+  - Rotated archives now match the active log's `0o600` permissions
+    (was umask-default — defense-in-depth so the chmod miss on the
+    archive doesn't undo the active-log permission story).
+  Set `telemetry.log_queries_verbatim = true` to restore the legacy
+  shape for ranker debugging.
+
+### Fixed — LOW: README over-promised "every use is logged with claim-level excerpt"
+
+- The phrasing implied every retrieval landed in the log with an
+  excerpt. In practice only the *model-explicit*
+  (`memory_record_use(claim_excerpts=…)`) and *hook-attributed*
+  (Stop hook substring match) tiers carry excerpts; the
+  `attribution="auto"` fallback for retrievals neither path covers
+  has no excerpt and is excluded from `memory_helped_rate`'s
+  numerator. README and the "Claim-level audit trail" bullet now
+  spell out the three tiers and which one carries excerpts.
+
 ## 2.6.7 - 2026-05-23
 
 **Post-2.6.6 audit follow-up.** A six-agent meta-audit of the 2.6.6
