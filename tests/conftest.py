@@ -5,6 +5,7 @@ Each test gets a fresh temp memory directory so the tests stay hermetic.
 
 from __future__ import annotations
 
+import importlib.util
 import sys
 from pathlib import Path
 
@@ -23,6 +24,43 @@ from bettermemory.session import SessionState
 from bettermemory.store import Store
 
 from ._event_helpers import EventLog
+
+
+# ---------------------------------------------------------------------------
+# Marker-driven autoskip for optional-extras tests.
+#
+# The `no_extras` family of markers (registered in pyproject.toml) tags tests
+# that assert *the absence* of an optional dependency — e.g. "get_model
+# returns None on ImportError". CI runs these in a job where the extra is
+# explicitly NOT installed. Locally, a developer who has `sentence-transformers`
+# or `fastembed` in their venv (typical, since they ship in the embeddings
+# extras) would otherwise see these tests fail loudly. Auto-skipping when the
+# extra IS importable keeps the local dev loop quiet without weakening CI.
+# ---------------------------------------------------------------------------
+
+_TORCH_PRESENT = importlib.util.find_spec("sentence_transformers") is not None
+_FASTEMBED_PRESENT = importlib.util.find_spec("fastembed") is not None
+
+
+def pytest_collection_modifyitems(
+    config: pytest.Config, items: list[pytest.Item]
+) -> None:
+    skip_no_extras = pytest.mark.skip(
+        reason="embeddings extra is installed — test asserts its absence"
+    )
+    skip_no_torch = pytest.mark.skip(
+        reason="sentence-transformers is installed — test asserts its absence"
+    )
+    skip_no_fastembed = pytest.mark.skip(
+        reason="fastembed is installed — test asserts its absence"
+    )
+    for item in items:
+        if "no_extras" in item.keywords and (_TORCH_PRESENT or _FASTEMBED_PRESENT):
+            item.add_marker(skip_no_extras)
+        if "no_torch_embeddings" in item.keywords and _TORCH_PRESENT:
+            item.add_marker(skip_no_torch)
+        if "no_fastembed" in item.keywords and _FASTEMBED_PRESENT:
+            item.add_marker(skip_no_fastembed)
 
 
 @pytest.fixture

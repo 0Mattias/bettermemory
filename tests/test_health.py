@@ -364,6 +364,88 @@ def test_curation_counts_since_zero_when_nothing_new() -> None:
     }
 
 
+def test_curation_counts_since_excludes_old_memory_aging_into_stale() -> None:
+    """The headline `curation_pending_new_since_last_session` claim:
+    a memory created BEFORE `since` that has since aged into the
+    `stale` bucket (last_verified_at older than the staleness cutoff)
+    surfaces in the absolute view but NOT the delta. The point of
+    the delta is "new rot since last session"; an old row crossing
+    a threshold isn't new — the row itself predates `since`."""
+    # Verified the day after it was created, both far in the past.
+    # `stale` triggers when last_verified_at < (now - 30d), i.e.
+    # last_verified_at < 2026-04-01. The 2026-01-02 verification
+    # is well past that cutoff, so the row is `stale`.
+    old = _memory(
+        created=_utc(2026, 1, 1),
+        last_verified_at=_utc(2026, 1, 2),
+    )
+    absolute = curation_counts(
+        [old],
+        [],
+        window_days=30,
+        verification_stale_days=30,
+        now=_utc(2026, 5, 1),
+    )
+    delta = curation_counts(
+        [old],
+        [],
+        window_days=30,
+        verification_stale_days=30,
+        now=_utc(2026, 5, 1),
+        since=_utc(2026, 4, 10),
+    )
+    assert absolute["stale"] == 1
+    assert delta["stale"] == 0
+
+
+def test_curation_counts_since_filter_is_exclusive_at_boundary() -> None:
+    """`since` is *exclusive*: an event whose ts equals the boundary
+    value belongs to the prior session (the boundary IS that session's
+    last event ts, per `find_prior_session_boundary`) and must not
+    leak into the delta. Same applies to memory `created`. A naive
+    strict-`<` filter would double-count the boundary event."""
+    boundary = _utc(2026, 4, 10)
+    boundary_event = _event("search_miss", ts=boundary)
+    boundary_memory = _memory(created=boundary)
+    delta = curation_counts(
+        [boundary_memory],
+        [boundary_event],
+        window_days=30,
+        now=_utc(2026, 5, 1),
+        since=boundary,
+    )
+    assert delta["silent_misses"] == 0
+    assert delta["never_verified"] == 0
+
+
+def test_curation_counts_since_filters_endorsement_debt_to_post_boundary() -> None:
+    """`endorsement_debt` rides the same `mem_list` filter as stale /
+    cold / dead, so a heavily-retrieved memory created before `since`
+    must not surface in the delta even if its post-`since` retrievals
+    push it over the floor."""
+    old = _memory(created=_utc(2026, 1, 1))
+    # 10 retrievals all after `since` would normally flag the row;
+    # the row itself predates `since` so the delta must exclude it.
+    search_events = [
+        _event("search", ts=_utc(2026, 4, 20), returned=[old.id]) for _ in range(10)
+    ]
+    absolute = curation_counts(
+        [old],
+        search_events,
+        now=_utc(2026, 5, 1),
+        endorsement_debt_min_retrievals=5,
+    )
+    delta = curation_counts(
+        [old],
+        search_events,
+        now=_utc(2026, 5, 1),
+        since=_utc(2026, 4, 10),
+        endorsement_debt_min_retrievals=5,
+    )
+    assert absolute["endorsement_debt"] == 1
+    assert delta["endorsement_debt"] == 0
+
+
 # ---------------------------------------------------------------------------
 # find_prior_session_boundary — locates the previous session's tail
 # ---------------------------------------------------------------------------
@@ -377,7 +459,9 @@ def test_find_prior_session_boundary_returns_none_when_only_current_session() ->
     assert find_prior_session_boundary(events, "sess_current") is None
 
 
-def test_find_prior_session_boundary_returns_none_when_current_session_id_missing() -> None:
+def test_find_prior_session_boundary_returns_none_when_current_session_id_missing() -> (
+    None
+):
     """An empty / None current session id has no baseline to delta against."""
     events = [_event("search", ts=_utc(2026, 4, 1), session="sess_a")]
     assert find_prior_session_boundary(events, None) is None

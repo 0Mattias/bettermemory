@@ -108,6 +108,13 @@ class RateCI:
     rate: float | None
     lower: float | None
     upper: float | None
+    # True when `numerator > denominator` — a torn read scenario where
+    # the event log was read mid-rotation and ordering anomalies leaked
+    # through. The Wilson helper clamps `k = n` in this case so the
+    # interval stays well-defined, but the audit consumer needs the flag
+    # so it knows "your numbers may be wrong" rather than silently
+    # trusting a 1.0 rate.
+    torn_read: bool = False
 
     @classmethod
     def from_counts(cls, numerator: int, denominator: int) -> RateCI:
@@ -119,10 +126,19 @@ class RateCI:
                 lower=None,
                 upper=None,
             )
-        rate = numerator / denominator
+        torn_read = numerator > denominator
+        # Clamp the rate at 1.0 so the surfaced value matches the
+        # clamped Wilson bounds. Without this the rate would read
+        # >1.0 while the CI clamps at 1.0 — inconsistent and confusing.
+        rate = 1.0 if torn_read else numerator / denominator
         lo, hi = _wilson_interval(numerator, denominator)
         return cls(
-            numerator=numerator, denominator=denominator, rate=rate, lower=lo, upper=hi
+            numerator=numerator,
+            denominator=denominator,
+            rate=rate,
+            lower=lo,
+            upper=hi,
+            torn_read=torn_read,
         )
 
     def to_dict(self) -> dict[str, Any]:
@@ -132,6 +148,7 @@ class RateCI:
             "rate": self.rate,
             "ci95_lower": self.lower,
             "ci95_upper": self.upper,
+            "torn_read": self.torn_read,
         }
 
 
@@ -354,9 +371,17 @@ def compute_eval(
                 continue
 
         kind = ev.get("kind")
-        if kind == "search":
-            # Legacy-name fallback — same discipline as the other
-            # event consumers (hook / consolidate / _handlers).
+        if kind in ("search", "list"):
+            # `list` is bundled with `search` because `audit.py` and the
+            # tool-usage map both treat memory_list as a retrieval
+            # surface (the model uses it to browse, the same way it
+            # uses memory_search to query). Keeping these aligned
+            # keeps the eval denominator consistent with audit cadence.
+            # Legacy-name fallback (`memory_ids` / `hit_ids`) — same
+            # discipline as the other event consumers (hook /
+            # consolidate / _handlers). `list` events only ever wrote
+            # `returned`, but reading through the same fallback chain
+            # is harmless.
             returned = (
                 ev.get("returned") or ev.get("memory_ids") or ev.get("hit_ids") or []
             )
@@ -400,9 +425,30 @@ def compute_eval(
                 excerpts = list(raw_excerpts)
             else:
                 excerpts = [None] * len(ids)
+            # Dedupe `ids` within a single use event before counting.
+            # A model that sends `record_use(memory_ids=["A", "A"], ...)`
+            # would otherwise inflate `applied_total` and the helped-rate
+            # numerator. Since eval.py is the citable reference for the
+            # published metric, the dedup must happen here — we can't
+            # fix upstream without changing recorder semantics. Preserve
+            # the first non-empty excerpt per id so the helped-rate
+            # numerator stays accurate when "A" appears twice with
+            # excerpts `["foo", "bar"]`.
+            seen_ids: dict[str, Any] = {}
             for i, mid in enumerate(ids):
                 if not isinstance(mid, str):
                     continue
+                excerpt = excerpts[i] if i < len(excerpts) else None
+                if mid in seen_ids:
+                    existing = seen_ids[mid]
+                    # Upgrade to a non-empty excerpt if we don't have one yet.
+                    if not (isinstance(existing, str) and existing.strip()) and (
+                        isinstance(excerpt, str) and excerpt.strip()
+                    ):
+                        seen_ids[mid] = excerpt
+                else:
+                    seen_ids[mid] = excerpt
+            for mid, excerpt in seen_ids.items():
                 if not passes_scope(mid):
                     continue
                 applied_total += 1
@@ -411,7 +457,6 @@ def compute_eval(
                 else:
                     applied_explicit += 1
                     explicit_applied_count[mid] = explicit_applied_count.get(mid, 0) + 1
-                    excerpt = excerpts[i] if i < len(excerpts) else None
                     if isinstance(excerpt, str) and excerpt.strip():
                         explicit_endorsements_with_excerpt += 1
         elif kind == "turn_audited":
@@ -427,7 +472,9 @@ def compute_eval(
             candidate = _silent_miss_from_event(ev)
             if candidate is not None:
                 silent_miss_buffer.append(candidate)
-                if len(silent_miss_buffer) > silent_miss_limit:
+                if silent_miss_limit <= 0:
+                    silent_miss_buffer = []
+                elif len(silent_miss_buffer) > silent_miss_limit:
                     silent_miss_buffer = silent_miss_buffer[-silent_miss_limit:]
 
     # Endorsement-debt rows: retrieval_count >= floor AND
@@ -547,6 +594,16 @@ def render_text(report: EvalReport) -> str:
     if report.threshold_rule:
         lines.append("")
         lines.append(f"Threshold rule: {report.threshold_rule}")
+    if (
+        report.memory_helped_rate.torn_read
+        or report.endorsement_rate.torn_read
+        or report.silent_miss_rate.torn_read
+    ):
+        lines.append("")
+        lines.append(
+            "WARNING: torn-read detected (numerator > denominator) — "
+            "log rotation may have raced; numbers may be wrong."
+        )
     return "\n".join(lines) + "\n"
 
 
@@ -582,7 +639,15 @@ def _wilson_interval(k: int, n: int, z: float = _WILSON_Z) -> tuple[float, float
 
 def _parse_ts(raw: Any) -> datetime | None:
     """Parse the ISO-8601 timestamp the recorder writes. Returns
-    ``None`` on any failure — the caller already knows to skip."""
+    ``None`` on any failure — the caller already knows to skip.
+
+    Always returns a tz-aware datetime: naive ISO strings (which an
+    external producer or an older binary might emit) are stamped as
+    UTC so the result can be safely compared against the tz-aware
+    cutoff every caller derives from ``datetime.now(timezone.utc)``.
+    Without that, the comparison would raise
+    ``TypeError: can't compare offset-naive and offset-aware
+    datetimes`` mid-iteration."""
     if not isinstance(raw, str):
         return None
     try:
@@ -594,9 +659,12 @@ def _parse_ts(raw: Any) -> datetime | None:
         # accept the bare ``Z`` literal.
         if raw.endswith("Z"):
             raw = raw[:-1] + "+00:00"
-        return datetime.fromisoformat(raw)
+        parsed = datetime.fromisoformat(raw)
     except ValueError:
         return None
+    if parsed.tzinfo is None:
+        return parsed.replace(tzinfo=timezone.utc)
+    return parsed
 
 
 def _silent_miss_from_event(ev: dict[str, Any]) -> SilentMissCandidate | None:
@@ -638,7 +706,11 @@ def _silent_miss_from_event(ev: dict[str, Any]) -> SilentMissCandidate | None:
     rule = ev.get("threshold_rule")
     rule_s = rule if isinstance(rule, str) else None
     recent = ev.get("recent_retrieval_count")
-    recent_i = recent if isinstance(recent, int) else 0
+    # `bool` is a subclass of `int` in Python, so a stray `True` / `False`
+    # in the field would slip past a naked `isinstance(_, int)` check and
+    # count as 1 / 0. Exclude bools explicitly so a torn event reads as 0
+    # rather than silently distorting the audit numerator.
+    recent_i = recent if isinstance(recent, int) and not isinstance(recent, bool) else 0
     return SilentMissCandidate(
         ts=ts,
         session_id=session_id,
@@ -678,14 +750,11 @@ def _truncate(s: str, n: int) -> str:
 
 def _humanize_seconds(seconds: int) -> str:
     if seconds % 86400 == 0:
-        days = seconds // 86400
-        return f"{days}d" if days != 1 else "1 day"
+        return f"{seconds // 86400}d"
     if seconds % 3600 == 0:
-        hours = seconds // 3600
-        return f"{hours}h"
+        return f"{seconds // 3600}h"
     if seconds % 60 == 0:
-        minutes = seconds // 60
-        return f"{minutes}m"
+        return f"{seconds // 60}m"
     return f"{seconds}s"
 
 
@@ -868,7 +937,13 @@ class ThresholdSweepReport:
     The `v1_top1_high` row is always present (computing its replay
     over the same events is the validation check — it must equal
     `replayable_misses` exactly, otherwise the helper has drifted
-    from the production rule).
+    from the production rule). `v1_drift` carries the difference
+    (`replayable_misses - v1_would_flag`); a non-zero value means
+    real log data contains events that *should* have tripped v1 but
+    don't under the in-process rule — typically a sign the rule
+    diverged from production or a future log shape introduced an
+    event that the production rule no longer matches. The renderer
+    surfaces a warning line when this drifts.
     """
 
     generated_at: datetime
@@ -876,6 +951,7 @@ class ThresholdSweepReport:
     total_events_scanned: int
     replayable_misses: int
     skipped_legacy_event_count: int
+    v1_drift: int = 0
     rows: list[ThresholdSweepRow] = field(default_factory=list)
 
     def to_dict(self) -> dict[str, Any]:
@@ -885,6 +961,7 @@ class ThresholdSweepReport:
             "total_events_scanned": self.total_events_scanned,
             "replayable_misses": self.replayable_misses,
             "skipped_legacy_event_count": self.skipped_legacy_event_count,
+            "v1_drift": self.v1_drift,
             "rows": [r.to_dict() for r in self.rows],
         }
 
@@ -935,7 +1012,8 @@ def compute_threshold_sweep(
                 legacy_skipped += 1
             continue
         recent = ev.get("recent_retrieval_count")
-        if not isinstance(recent, int):
+        # `bool` ⊂ `int` — same caveat as `_silent_miss_from_event`.
+        if not isinstance(recent, int) or isinstance(recent, bool):
             recent = 0
         replayable.append((top_hits, recent))
 
@@ -983,6 +1061,7 @@ def compute_threshold_sweep(
         total_events_scanned=total_events_scanned,
         replayable_misses=len(replayable),
         skipped_legacy_event_count=legacy_skipped,
+        v1_drift=len(replayable) - v1_count,
         rows=rows,
     )
 
@@ -1006,6 +1085,12 @@ def render_threshold_sweep_text(report: ThresholdSweepReport) -> str:
             f"  (skipped {report.skipped_legacy_event_count} legacy events "
             "carrying top_hit_ids only — no relevance label to replay against)"
         )
+    if report.v1_drift != 0:
+        lines.append(
+            f"  ⚠ v1 replay drift: {report.v1_drift:+d} (the in-process "
+            "v1 rule disagrees with the production decision on that many "
+            "events — check audit.py / eval.THRESHOLD_RULES for divergence)"
+        )
     if report.replayable_misses == 0:
         lines.append("")
         lines.append(
@@ -1023,9 +1108,7 @@ def render_threshold_sweep_text(report: ThresholdSweepReport) -> str:
         else:
             pct = f"{row.delta_pct * 100:5.1f}%"
         delta = f"{row.delta_from_v1:+d}" if row.rule != "v1_top1_high" else "—"
-        lines.append(
-            f"  {row.rule:<30s} {row.would_flag:>7d}  {delta:>7s}  {pct:>6s}"
-        )
+        lines.append(f"  {row.rule:<30s} {row.would_flag:>7d}  {delta:>7s}  {pct:>6s}")
     lines.append("")
     lines.append("Caveat: this is a *relative* sweep over events the v1 rule")
     lines.append("already flagged. Strictly looser rules cannot be evaluated")
@@ -1077,6 +1160,20 @@ _TOOL_EVENT_KIND_TO_TOOL: dict[str, str] = {
 # them, so a reader inspecting the report can tell "this tool is not
 # counted" apart from "this tool was never called."
 TOOLS_WITHOUT_TELEMETRY: tuple[str, ...] = ("memory_health",)
+
+# Event kinds the recorder emits as side-effects of other tools, NOT as
+# tool calls in their own right. ``search_miss`` is a sub-event of
+# ``turn_audited`` (the audit detected a high-relevance hit the model
+# would have missed); ``pending_expired`` fires when the TTL on a
+# ``memory_write`` pending token elapses. Neither belongs in the
+# tool-usage rollup — they would inflate the parent tool's count.
+#
+# The parity test in ``tests/test_eval.py`` asserts that every kind
+# recorded anywhere in ``src/`` appears in either
+# ``_TOOL_EVENT_KIND_TO_TOOL`` or this set, and that the two are
+# mutually exclusive. Adding a new event kind without updating one of
+# them is the bug class this guards against.
+_KNOWN_SIDE_EFFECT_KINDS: frozenset[str] = frozenset({"search_miss", "pending_expired"})
 
 
 @dataclass
@@ -1156,11 +1253,6 @@ def compute_tool_usage(
     total_events_scanned = 0
     total_tool_calls = 0
 
-    # The kinds we know are side-effects of other tools rather than
-    # tool calls themselves; tracked separately so they don't pollute
-    # `unmapped_event_kinds`.
-    side_effect_kinds = {"search_miss", "pending_expired"}
-
     for ev in events:
         if not isinstance(ev, dict):
             continue
@@ -1172,11 +1264,11 @@ def compute_tool_usage(
         kind = ev.get("kind")
         if not isinstance(kind, str):
             continue
-        tool = _TOOL_EVENT_KIND_TO_TOOL.get(kind)
-        if tool is not None:
-            per_tool[tool] += 1
+        mapped_tool = _TOOL_EVENT_KIND_TO_TOOL.get(kind)
+        if mapped_tool is not None:
+            per_tool[mapped_tool] += 1
             total_tool_calls += 1
-        elif kind in side_effect_kinds:
+        elif kind in _KNOWN_SIDE_EFFECT_KINDS:
             continue
         else:
             unmapped[kind] = unmapped.get(kind, 0) + 1
@@ -1186,7 +1278,9 @@ def compute_tool_usage(
         share = (count / total_tool_calls) if total_tool_calls > 0 else None
         has_telemetry = tool not in TOOLS_WITHOUT_TELEMETRY
         rows.append(
-            ToolUsageRow(tool=tool, count=count, share=share, has_telemetry=has_telemetry)
+            ToolUsageRow(
+                tool=tool, count=count, share=share, has_telemetry=has_telemetry
+            )
         )
     # Descending by count, then by tool name for determinism. Untelemetered
     # rows always sort to the bottom (count is 0 and share is the same as
@@ -1208,7 +1302,7 @@ def render_tool_usage_text(report: ToolUsageReport) -> str:
     """Plain-text rendering for the CLI. One row per tool, sorted by
     descending call count; untelemetered tools surface with a footer
     so the reader sees "memory_health is not counted" rather than
-    "memory_health was never called.""" ""
+    "memory_health was never called."""
     lines: list[str] = []
     window = (
         "all time"
@@ -1236,7 +1330,8 @@ def render_tool_usage_text(report: ToolUsageReport) -> str:
         lines.append(
             "Unmapped event kinds (recorder emitted something the tool-usage "
             "map didn't know about — likely a new tool that needs to be "
-            "added to _TOOL_EVENT_KIND_TO_TOOL):"
+            "added to _TOOL_EVENT_KIND_TO_TOOL, or a new side-effect kind "
+            "that should be added to the side_effect_kinds set):"
         )
         for kind, count in sorted(
             report.unmapped_event_kinds.items(), key=lambda kv: (-kv[1], kv[0])

@@ -23,6 +23,8 @@ from bettermemory.eval import (
     THRESHOLD_RULES,
     TOOLS_WITHOUT_TELEMETRY,
     RateCI,
+    _KNOWN_SIDE_EFFECT_KINDS,
+    _TOOL_EVENT_KIND_TO_TOOL,
     _wilson_interval,
     compute_eval,
     compute_threshold_sweep,
@@ -179,6 +181,24 @@ class TestWilsonInterval:
         _, hi_large = _wilson_interval(20, 100)
         assert hi_small > hi_large
 
+    def test_wilson_interval_matches_known_reference(self) -> None:
+        # Numerical-gold reference values at z=1.96. The other structural
+        # tests in this class only check lo<=rate<=hi / clamps at the
+        # endpoints — they'd pass even if the formula were swapped for
+        # naive Wald, which clamps the same way. This pinning catches
+        # an actual formula regression.
+        #
+        # Reference values computed via the Wilson formula
+        # `(p̂ + z²/(2n) ± z·√((p̂(1-p̂) + z²/(4n))/n)) / (1 + z²/n)`
+        # at z=1.96, matching scipy.stats.binomtest(k, n).proportion_ci(
+        # method='wilson') to four decimal places.
+        lo, hi = _wilson_interval(50, 100)
+        assert lo == pytest.approx(0.4038, abs=5e-4)
+        assert hi == pytest.approx(0.5962, abs=5e-4)
+        lo, hi = _wilson_interval(1, 10)
+        assert lo == pytest.approx(0.0179, abs=5e-4)
+        assert hi == pytest.approx(0.4042, abs=5e-4)
+
 
 # ---------------------------------------------------------------------------
 # RateCI
@@ -209,7 +229,20 @@ class TestRateCI:
             "rate",
             "ci95_lower",
             "ci95_upper",
+            "torn_read",
         }
+
+    def test_rate_ci_marks_torn_read_when_numerator_exceeds_denominator(self) -> None:
+        # `k > n` is a torn-read scenario: the event log was read mid
+        # rotation and ordering anomalies leaked through. The Wilson
+        # helper clamps so the interval stays well-defined, but the
+        # audit consumer needs the flag so CI consumers can branch on
+        # "your numbers may be wrong" rather than silently trusting 1.0.
+        torn = RateCI.from_counts(5, 3)
+        assert torn.torn_read is True
+        assert torn.rate == 1.0
+        normal = RateCI.from_counts(3, 5)
+        assert normal.torn_read is False
 
 
 # ---------------------------------------------------------------------------
@@ -347,6 +380,27 @@ class TestUseEvents:
         report = compute_eval(memories=[mem], events=events)
         assert report.applied_total == 0
         assert report.applied_explicit == 0
+
+    def test_compute_eval_dedupes_repeated_memory_ids_within_use_event(self) -> None:
+        # A model that sends `record_use(memory_ids=["A", "A", "B"], ...)`
+        # must not inflate `applied_total` to 3. eval.py is the citable
+        # reference for the published metric, so the dedup happens here.
+        mem_a = _mem(body="memory A")
+        mem_b = _mem(body="memory B")
+        events = [
+            _ev(
+                "use",
+                ids=[mem_a.id, mem_a.id, mem_b.id],
+                outcome="applied",
+                claim_excerpts=["foo", "bar", "baz"],
+            ),
+        ]
+        report = compute_eval(memories=[mem_a, mem_b], events=events)
+        # A counted once + B counted once = 2, NOT 3.
+        assert report.applied_total == 2
+        assert report.applied_explicit == 2
+        # Each unique id surfaced a non-empty excerpt, so both count.
+        assert report.explicit_endorsements_with_excerpt == 2
 
 
 # ---------------------------------------------------------------------------
@@ -884,9 +938,7 @@ class TestComputeToolUsage:
         assert report.total_tool_calls == 6
 
     def test_rows_sorted_by_count_descending(self) -> None:
-        events = [
-            _ev("search") for _ in range(5)
-        ] + [_ev("verify"), _ev("verify")]
+        events = [_ev("search") for _ in range(5)] + [_ev("verify"), _ev("verify")]
         report = compute_tool_usage(events)
         # The first nonzero row should be memory_search (5); next memory_verify (2).
         nonzero = [r for r in report.rows if r.count > 0]
@@ -909,7 +961,10 @@ class TestComputeToolUsage:
         """A new event kind that nobody updated the map for shows up
         in `unmapped_event_kinds` so the next contributor sees it
         rather than the count silently vanishing into thin air."""
-        events = [_ev("brand_new_kind_no_one_mapped"), _ev("brand_new_kind_no_one_mapped")]
+        events = [
+            _ev("brand_new_kind_no_one_mapped"),
+            _ev("brand_new_kind_no_one_mapped"),
+        ]
         report = compute_tool_usage(events)
         assert report.unmapped_event_kinds == {"brand_new_kind_no_one_mapped": 2}
 
@@ -979,6 +1034,70 @@ class TestRenderToolUsageText:
         assert "Unmapped event kinds" in text
         assert "freshly_added_kind" in text
 
+    def test_kind_map_parity_with_recorder_call_sites(self) -> None:
+        """Every ``kind`` value passed to ``recorder.record()`` anywhere
+        in ``src/bettermemory`` must appear in either
+        ``_TOOL_EVENT_KIND_TO_TOOL`` (counted toward a tool's rollup) or
+        ``_KNOWN_SIDE_EFFECT_KINDS`` (deliberately excluded — sub-events
+        of other tools). A new event kind that's neither will silently
+        show up in the ``unmapped_event_kinds`` footer rather than
+        failing CI, which is exactly the slow-drift bug class this
+        guards against.
+
+        Implementation: AST-walk the source tree, extract every literal
+        first-arg (positional) or ``kind=`` keyword passed to a method
+        named ``record``, and assert set equality.
+        """
+        import ast
+
+        src_root = Path(__file__).resolve().parents[1] / "src" / "bettermemory"
+        discovered: set[str] = set()
+        for py_file in src_root.rglob("*.py"):
+            tree = ast.parse(py_file.read_text())
+            for node in ast.walk(tree):
+                if not isinstance(node, ast.Call):
+                    continue
+                func = node.func
+                if not (isinstance(func, ast.Attribute) and func.attr == "record"):
+                    continue
+                if (
+                    node.args
+                    and isinstance(node.args[0], ast.Constant)
+                    and isinstance(node.args[0].value, str)
+                ):
+                    discovered.add(node.args[0].value)
+                for kw in node.keywords:
+                    if (
+                        kw.arg == "kind"
+                        and isinstance(kw.value, ast.Constant)
+                        and isinstance(kw.value.value, str)
+                    ):
+                        discovered.add(kw.value.value)
+
+        mapped = set(_TOOL_EVENT_KIND_TO_TOOL.keys())
+        side_effects = set(_KNOWN_SIDE_EFFECT_KINDS)
+
+        overlap = mapped & side_effects
+        assert not overlap, (
+            f"kinds {sorted(overlap)} appear in BOTH _TOOL_EVENT_KIND_TO_TOOL "
+            f"and _KNOWN_SIDE_EFFECT_KINDS. Move them to one place only."
+        )
+
+        expected = mapped | side_effects
+        unmapped_in_src = discovered - expected
+        assert not unmapped_in_src, (
+            f"recorder.record() emits kind(s) {sorted(unmapped_in_src)} that "
+            f"are neither in _TOOL_EVENT_KIND_TO_TOOL nor _KNOWN_SIDE_EFFECT_KINDS. "
+            f"Add them to one or the other so the tool-usage rollup stays honest."
+        )
+
+        stale_in_map = expected - discovered
+        assert not stale_in_map, (
+            f"_TOOL_EVENT_KIND_TO_TOOL/_KNOWN_SIDE_EFFECT_KINDS contains "
+            f"{sorted(stale_in_map)} but no recorder.record() call in src/ "
+            f"emits those kinds. Stale entries — remove or fix the call site."
+        )
+
 
 # ---------------------------------------------------------------------------
 # compute_threshold_sweep — counterfactual replay over logged misses
@@ -1027,6 +1146,41 @@ class TestComputeThresholdSweep:
         report = compute_threshold_sweep(events)
         v1_row = next(r for r in report.rows if r.rule == "v1_top1_high")
         assert v1_row.would_flag == report.replayable_misses == 3
+        assert report.v1_drift == 0
+
+    def test_v1_drift_surfaces_when_event_unreplayable_by_v1(self) -> None:
+        """A logged miss whose top hit is `medium` (or otherwise can't
+        be re-flagged by the in-process v1) increments `v1_drift`.
+        This is the production-side guard the docstring promises:
+        the helper diverging from the rule that originally fired the
+        miss is observable rather than silent. The renderer surfaces
+        a warning line when drift is non-zero."""
+        events = [
+            _miss_event(top_hits=[_hit(relevance="high", score=100.0)]),
+            # This event was logged as a miss by production, but its
+            # top hit is `medium` — the in-process v1 won't re-flag it.
+            _miss_event(top_hits=[_hit(relevance="medium", score=100.0)]),
+        ]
+        report = compute_threshold_sweep(events)
+        assert report.replayable_misses == 2
+        assert report.v1_drift == 1
+        text = render_threshold_sweep_text(report)
+        assert "v1 replay drift" in text
+
+    def test_recent_retrieval_count_true_does_not_count_as_one(self) -> None:
+        """`isinstance(True, int)` is True in Python; a stray `True` in
+        a torn `recent_retrieval_count` would slip past a naked int
+        check and read as 1. Verify the bool guard zeroes it out."""
+        events = [
+            _miss_event(top_hits=[_hit()], recent_retrieval_count=True),  # type: ignore[arg-type]
+        ]
+        report = compute_threshold_sweep(events)
+        assert report.replayable_misses == 1
+        # `recent` was coerced to 0 so v1 (which has no recent-retrieval
+        # gate at top1=high) flags the miss; the meaningful assertion is
+        # that this did not raise and did not silently read as 1.
+        v1_row = next(r for r in report.rows if r.rule == "v1_top1_high")
+        assert v1_row.would_flag == 1
 
     def test_v2_score_floor_drops_low_score_misses(self) -> None:
         events = [
@@ -1141,11 +1295,9 @@ class TestComputeThresholdSweep:
         the aggregate shape this test pins down."""
         # 10 events: 5 above the score floor (would survive v2), 5 below.
         events = [
-            _miss_event(top_hits=[_hit(relevance="high", score=60.0)])
-            for _ in range(5)
+            _miss_event(top_hits=[_hit(relevance="high", score=60.0)]) for _ in range(5)
         ] + [
-            _miss_event(top_hits=[_hit(relevance="high", score=10.0)])
-            for _ in range(5)
+            _miss_event(top_hits=[_hit(relevance="high", score=10.0)]) for _ in range(5)
         ]
         report = compute_threshold_sweep(events)
         v1 = next(r for r in report.rows if r.rule == "v1_top1_high")
@@ -1154,6 +1306,53 @@ class TestComputeThresholdSweep:
         assert v2.would_flag == 5
         assert v2.delta_pct == 0.5
         assert v2.delta_from_v1 == -5
+
+
+class TestComputeEvalListKind:
+    def test_list_event_counts_as_retrieval(self) -> None:
+        """`memory_list` is bundled with `memory_search` in audit.py's
+        retrieval set; compute_eval must count it too so the eval
+        denominator (`retrieval_occurrences`) stays aligned with the
+        audit cadence. Without this, a workflow that leans on
+        memory_list (browse-then-show) would distort the
+        memory_helped_rate downward by underreporting the denominator."""
+        events = [
+            _ev("list", returned=["mem-A", "mem-B"]),
+            _ev("use", ids=["mem-A"], outcome="applied", claim_excerpts=["x"]),
+        ]
+        report = compute_eval(memories=[], events=events)
+        # Two ids returned by the list call = two retrieval occurrences.
+        assert report.retrieval_occurrences == 2
+
+
+class TestParseTsTzAware:
+    def test_naive_iso_returns_utc(self) -> None:
+        """A naive ISO timestamp (no `Z`, no `+00:00`) must be stamped
+        as UTC, otherwise downstream comparison against the tz-aware
+        cutoff would raise `TypeError` mid-iteration. The recorder
+        always emits `Z`-suffixed timestamps, so this guards against
+        external producers and older binaries."""
+        from bettermemory.eval import _parse_ts
+
+        parsed = _parse_ts("2026-05-15T12:00:00")
+        assert parsed is not None
+        assert parsed.tzinfo is timezone.utc
+
+    def test_window_filter_does_not_crash_on_naive_ts(self) -> None:
+        """End-to-end: a window filter over an event log containing a
+        naive timestamp must not raise. Drops the event or includes it
+        per the UTC interpretation, but does not propagate a tz
+        comparison error to the caller."""
+        events = [{"ts": "2026-05-15T12:00:00", "kind": "search_miss", "session": "s"}]
+        # `now` and `since` cooperate to put the cutoff well in the past,
+        # so the event survives the filter and contributes to silent_misses.
+        report = compute_eval(
+            memories=[],
+            events=events,
+            now=datetime(2026, 5, 20, tzinfo=timezone.utc),
+            since=timedelta(days=30),
+        )
+        assert report.silent_misses == 1
 
 
 class TestRenderThresholdSweepText:

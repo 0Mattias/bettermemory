@@ -19,9 +19,9 @@ gap on `memory_scope_overview`), and *how do users who already accumulated
 Claude Code auto-memory upgrade?* (the bridge from
 `~/.claude/projects/*/memory/` into bettermemory's audit layer).
 
-Net effect: 35+ new tests, ~1100 lines of code + docs, zero changes to the
-on-disk schema, zero changes to the 18-tool MCP surface. Existing memories
-load and search unchanged.
+Net effect: ~80 new tests, ~3500 lines of code + docs (≈1700 of which are
+tests), zero changes to the on-disk schema, zero changes to the 18-tool MCP
+surface. Existing memories load and search unchanged.
 
 ### Added — `bettermemory eval --tool-usage`
 
@@ -121,18 +121,22 @@ load and search unchanged.
   baseline." The tool description tells the model: prompt about curation
   based on the *delta*, surface the *absolute* on demand.
 - **`find_prior_session_boundary` helper.** Pure function in `health.py`
-  that walks the event stream forward and returns the max ts among events
+  that walks the event stream once and returns the max ts among events
   whose `session` field differs from the caller's current `session_id`.
   Accepts both the canonical `session` and the legacy `session_id` field
   names so pre-unification archives still resolve to a usable boundary.
-  Materialisation in the handler is intentional: the events list is
-  bounded by the active log + rotated archives (same scale
-  `compute_health` already pays at session-start), and walking the
-  iterator twice would do twice the I/O for the same result.
+  Materialisation in the handler is intentional — the handler runs three
+  passes over the same in-memory event list (absolute rollup, boundary
+  helper, delta rollup); the events list is bounded by the active log
+  + rotated archives (same scale `compute_health` already pays at
+  session-start), and re-walking the iterator three times would do
+  three times the I/O for the same result.
 - **`curation_counts` gains a `since` parameter.** When set, filters
-  events to `ts >= since` and memories to `created >= since` for every
-  state-derived bucket. The same helper produces both the absolute and
-  delta views from the handler — no parallel implementation to drift.
+  events to `ts > since` and memories to `created > since` (the
+  boundary value IS the prior session's last event timestamp, so it
+  belongs to the prior session, not the delta). The same helper
+  produces both the absolute and delta views from the handler — no
+  parallel implementation to drift.
 
 ### Changed — plugin SKILL.md banner
 
@@ -143,6 +147,87 @@ load and search unchanged.
   Lets users who came to bettermemory after months of auto-memory
   accumulation upgrade cleanly. The `MEMORY.md` / scratch-markdown
   proscription is preserved verbatim.
+
+### Pre-tag audit fixes (folded in)
+
+A second-pass audit of the 2.7.0 surface (four parallel fresh-eyes
+agents) caught several correctness gaps in the new features.
+Addressed before the tag rather than as a 2.7.1:
+
+- **`memory_scope_overview` delta is correct under SessionRegistry.**
+  The handler was passing `state.session_id` to
+  `find_prior_session_boundary`, but every event the recorder writes
+  carries the recorder's process-lifetime `session_id` (a different
+  value when SessionRegistry is in use). In multi-client mode that
+  collapsed the delta to ~empty because the handler treated every
+  recorded event as "from another session." The handler now passes
+  `self.recorder.session_id`. Regression test:
+  `test_scope_overview_delta_uses_recorder_session_not_state`.
+- **`curation_counts(since=…)` boundary is exclusive.** The filter was
+  strict `<` (`ev_ts < since` skipped), which meant the prior session's
+  last event itself slipped into the delta. Now `<=` for both event
+  timestamp and memory `created`. The CHANGELOG promise of "events
+  emitted and memories created since the previous session ended"
+  required the boundary value to be exclusive (it IS the prior
+  session's last event ts). Lock-in tests:
+  `test_curation_counts_since_filter_is_exclusive_at_boundary`,
+  `test_curation_counts_since_excludes_old_memory_aging_into_stale`.
+- **`memory_list` events count as retrievals in `compute_eval`.**
+  `audit.py:88` treats `{"search","show","list"}` as the retrieval set;
+  `compute_eval` was only counting `search` + `show`, narrowing the
+  `retrieval_occurrences` denominator vs. the audit cadence and
+  distorting `memory_helped_rate` downward for workflows that lean on
+  `memory_list`. Lock-in test:
+  `TestComputeEvalListKind.test_list_event_counts_as_retrieval`.
+- **`v1_drift` surfaces in `compute_threshold_sweep`.** The previous
+  docstring promised v1's replay must equal `replayable_misses` but
+  the production helper never raised on mismatch — only a 3-event
+  synthetic test enforced it. New `v1_drift` field on
+  `ThresholdSweepReport` carries `replayable_misses - v1_would_flag`;
+  the text renderer surfaces a warning line when non-zero.
+- **`_parse_ts` returns tz-aware on naive ISO input.** The recorder
+  always writes `Z`-suffixed timestamps, but external producers or
+  older binaries could emit naive ISO strings. `_parse_ts` was
+  returning naive datetimes for those, and the downstream `<` against
+  the tz-aware cutoff would raise `TypeError` mid-iteration. Naive
+  inputs are now stamped as UTC.
+- **`recent_retrieval_count` excludes `bool`.** `isinstance(True, int)`
+  is True in Python; a stray `True` / `False` in the field would
+  silently count as 1 / 0. Bools are now guarded out at both
+  `_silent_miss_from_event` and the threshold-sweep replay.
+- **`bettermemory ingest --force` for parity with `memory_write`.** The
+  active-store dedup gate can be bypassed for the rare case of a
+  legitimately-near auto-memory record. Tombstone dedup remains in
+  force — re-importing a deliberately-removed memory stays disallowed.
+- **`apply_ingest_plan` no longer swallows `MemoryError` per row.**
+  The bare `except Exception` would retry-and-eat disk-full / OOM
+  errors on every subsequent row. Narrowed to `(ValueError, OSError)`
+  so hard system failures propagate instead of being relabeled as
+  per-row `skip_invalid`.
+- **`_TYPE_TO_CATEGORY` / `_TYPE_TO_EXTRA_SCOPE` key invariant.** A
+  module-import-time assert pins the two maps to the same key set,
+  catching typos that would otherwise silently downgrade ingest
+  behaviour (missing extra-scope loses the type-derived scope;
+  missing category falls back to `FACT`).
+- **`IngestPlan.summary` zero-init is driven by `_ACTIONS`.** The
+  hardcoded zero-init list silently dropped any future `Action`
+  literal a contributor added. Now derived from the single `_ACTIONS`
+  tuple.
+- **Nested-vs-flat `type:` precedence is documented and tested.** Both
+  shapes ship in real auto-memory directories. Precedence: nested
+  wins on conflict. Lock-in test: `test_nested_type_wins_when_both_present`.
+- **`discover_default_source_root` positive tests.** The 2.7.0 audit
+  added dot-replacement to the path sanitiser; until now no positive
+  test exercised the sanitiser at all, so a refactor that reverted to
+  slash-only behaviour would pass the negative test silently. Tests
+  added for both the simple and `.claude/worktrees/*`-style dotted
+  cases.
+- **Tone polish.** `DESC_MEMORY_SCOPE_OVERVIEW` "drifting into stale"
+  changed to "aging into stale" to disambiguate from the separate
+  `drifted` bucket. Tool-usage footer wording acknowledges side-effect
+  event kinds. `_humanize_seconds` no longer prints "1 day" for 1d
+  while emitting "30d" elsewhere. `docs/eval.md` example block now
+  matches actual `render_text` output.
 
 ## 2.6.8 - 2026-05-24
 

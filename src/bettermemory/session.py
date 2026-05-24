@@ -31,7 +31,9 @@ to the handler bodies.
 from __future__ import annotations
 
 import secrets
+import threading
 import time
+from collections import OrderedDict
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, Protocol, TypeAlias
 
@@ -348,18 +350,29 @@ class SessionSource(Protocol):
 _DEFAULT_CLIENT_KEY = "__default__"
 
 
-@dataclass
 class SessionRegistry:
     """Per-client `SessionState` map for multi-client server processes.
 
     Keys are FastMCP `client_id` strings (or `_DEFAULT_CLIENT_KEY` when
     the transport doesn't supply one). States are created lazily on
     first `for_request` for a given key, so an idle client doesn't
-    pre-allocate anything. Eviction is not currently performed — the
-    state objects are small (a handful of dicts) and the realistic
-    fan-out is one-digit clients per server process. If a long-running
-    server starts seeing hundreds of distinct client_ids, swap the
-    plain dict for an LRU.
+    pre-allocate anything.
+
+    Backed by an `OrderedDict` with an LRU eviction cap (`max_clients`,
+    default 256): on each `for_request` an existing key is touched to
+    the end via `move_to_end`, and inserting past the cap evicts the
+    oldest entry. The cap matters under HTTP/SSE transports that fan
+    arbitrary client_ids through one server process — without it, the
+    map grows unbounded for the lifetime of the process. The stdio
+    transport collapses every request into `_DEFAULT_CLIENT_KEY`, so a
+    long-running stdio process sees a fixed map of size 1; the LRU is
+    inert there.
+
+    A `threading.Lock` guards mutations because the touch+evict pass
+    is non-atomic (read, move, possibly pop) and HTTP/SSE transports
+    can dispatch concurrent requests. The pre-LRU shape relied on
+    `dict.setdefault` being atomic on CPython; the OrderedDict path
+    can't replicate that without an explicit lock.
 
     The registry is intentionally a stateful object rather than a
     module-level singleton: tests construct fresh ones via
@@ -368,24 +381,41 @@ class SessionRegistry:
     the same process.
     """
 
-    _states: dict[str, SessionState] = field(default_factory=dict)
+    # Default cap. 256 is generous — the typical case is one client
+    # per server (stdio). HTTP/SSE deployments with more concurrent
+    # clients should pass an explicit value sized to expected fan-out.
+    DEFAULT_MAX_CLIENTS = 256
+
+    def __init__(self, max_clients: int = DEFAULT_MAX_CLIENTS) -> None:
+        self._states: "OrderedDict[str, SessionState]" = OrderedDict()
+        self._lock = threading.Lock()
+        self.max_clients = max_clients
+        self._evicted_count = 0
 
     def for_request(self, ctx: "_Ctx | None") -> SessionState:
         key = self._key_for_ctx(ctx)
-        # `setdefault` is atomic on CPython dict, so two concurrent
-        # callers observing a missing key both receive the same
-        # SessionState instance — the alternative (`get` then
-        # `__setitem__`) is a TOCTOU window where the second writer
-        # wipes the first writer's `pending_writes` / `disabled_scopes`
-        # / `turn_counter`. Today stdio collapses every request into
-        # `_DEFAULT_CLIENT_KEY`, so this race is dormant; the moment
-        # an HTTP/SSE transport starts fanning distinct `client_id`s
-        # in parallel (anticipated in the class docstring above) the
-        # `setdefault` is what keeps each client's state intact.
-        state = self._states.get(key)
-        if state is None:
-            state = self._states.setdefault(key, SessionState())
-        return state
+        # The touch-on-access + insert-with-eviction pass mutates two
+        # pieces of state and must be atomic against concurrent callers
+        # — otherwise two requests for the same new client_id could
+        # each insert a fresh SessionState and one would overwrite the
+        # other (losing pending_writes / disabled_scopes / turn_counter).
+        # The pre-LRU shape used `dict.setdefault`'s atomicity for the
+        # same guarantee; the OrderedDict path needs an explicit lock.
+        with self._lock:
+            state = self._states.get(key)
+            if state is not None:
+                # Touch-on-access: move the existing entry to the
+                # end so it's the most-recently-used.
+                self._states.move_to_end(key)
+                return state
+            state = SessionState()
+            self._states[key] = state
+            # Evict the oldest entry if we crossed the cap. `popitem(last=False)`
+            # removes the front of the OrderedDict — the least-recently-used.
+            if len(self._states) > self.max_clients:
+                self._states.popitem(last=False)
+                self._evicted_count += 1
+            return state
 
     @staticmethod
     def _key_for_ctx(ctx: "_Ctx | None") -> str:
@@ -408,7 +438,23 @@ class SessionRegistry:
         """Snapshot of the registered session keys. Test-only; lets
         suites assert that two distinct clients produced two distinct
         states, or that one client reused the same state across calls."""
-        return set(self._states)
+        with self._lock:
+            return set(self._states)
+
+    def stats(self) -> dict[str, int]:
+        """Debug-visible counters: current size, lifetime evictions, cap.
+
+        Exposed so HTTP-transport deployments can spot a runaway
+        client_id fan-out (where `evicted` climbs monotonically). The
+        snapshot is a point-in-time read under the lock; the values
+        may drift the moment the lock is released.
+        """
+        with self._lock:
+            return {
+                "size": len(self._states),
+                "evicted": self._evicted_count,
+                "max_clients": self.max_clients,
+            }
 
 
 # Process-wide default registry. `main()` uses this; tests that want

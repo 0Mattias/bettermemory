@@ -1410,10 +1410,10 @@ def curation_counts(
     delta mode reflect only the post-`since` slice of the event log,
     so a memory written before `since` that has had no new
     retrievals will not light up `endorsement_debt`. Drift detection
-    is left unchanged: a memory drifts against the working tree
-    regardless of when its row was created, so the drift count
-    applies only to memories created after `since` (matching the
-    "newly appeared" framing).
+    follows the same "newly appeared" framing as the other
+    state-derived buckets: the drift count is filtered to memories
+    created after `since`, so an older row that drifted in the prior
+    session won't double-surface in the next session's delta.
     """
     now = now or datetime.now(timezone.utc)
     cutoff = now - timedelta(days=window_days)
@@ -1427,7 +1427,12 @@ def curation_counts(
     for m in memories:
         if since_aware is not None:
             created_aware = _ensure_utc(m.created)
-            if created_aware is None or created_aware < since_aware:
+            # Same `<=` boundary discipline as the event filter below:
+            # a memory created at exactly `since` was created by the
+            # prior session's last event (write events stamp creation
+            # at the same ts they record), so it belongs to that
+            # session, not the delta.
+            if created_aware is None or created_aware <= since_aware:
                 continue
         mem_list.append(m)
 
@@ -1442,7 +1447,13 @@ def curation_counts(
     for ev in events:
         if since_aware is not None:
             ev_ts = _ensure_utc(_parse_event_ts(ev.get("ts")))
-            if ev_ts is None or ev_ts < since_aware:
+            # Strict `<=` rather than `<`: when `since` is a session
+            # boundary from `find_prior_session_boundary`, the boundary
+            # value IS the prior session's last event timestamp, so
+            # that event belongs to the *prior* session and must not
+            # leak into the delta. The handler treats `since` as
+            # exclusive ("events strictly after the prior session").
+            if ev_ts is None or ev_ts <= since_aware:
                 continue
         kind = ev.get("kind")
         if kind == "search":

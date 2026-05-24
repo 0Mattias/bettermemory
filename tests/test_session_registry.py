@@ -302,3 +302,74 @@ async def test_disabled_scopes_are_isolated_between_clients(
         "bob's disabled_scopes leaked from alice's session — the registry "
         "isn't isolating per-client session state."
     )
+
+
+# ---------------------------------------------------------------------------
+# Unit: LRU eviction
+# ---------------------------------------------------------------------------
+
+
+def test_session_registry_evicts_oldest_when_full() -> None:
+    """Inserting one client_id past `max_clients` evicts the oldest entry.
+
+    Without the LRU cap, a long-running HTTP/SSE server would accumulate
+    state for every distinct client_id ever connected — an unbounded
+    memory leak. The eviction kicks in on the insert-past-cap path,
+    drops the front of the OrderedDict (least-recently-used), and bumps
+    the `evicted` counter exposed via `stats()`.
+    """
+    registry = SessionRegistry(max_clients=3)
+    s0 = registry.for_request(_fake_ctx(client_id="c0"))
+    registry.for_request(_fake_ctx(client_id="c1"))
+    registry.for_request(_fake_ctx(client_id="c2"))
+    assert registry.stats() == {"size": 3, "evicted": 0, "max_clients": 3}
+
+    # One past the cap — c0 (oldest) gets evicted.
+    registry.for_request(_fake_ctx(client_id="c3"))
+    stats = registry.stats()
+    assert stats["size"] == 3
+    assert stats["evicted"] == 1
+    assert stats["max_clients"] == 3
+
+    keys = registry.known_keys()
+    assert "c0" not in keys, "oldest entry should have been evicted"
+    assert {"c1", "c2", "c3"} <= keys
+
+    # And a fresh `for_request` for c0 mints a NEW state (different
+    # identity from the original) — proving the original was actually
+    # dropped, not just moved.
+    s0_again = registry.for_request(_fake_ctx(client_id="c0"))
+    assert s0_again is not s0
+    # Inserting c0 fresh evicted the next-oldest (c1) since the cap was full.
+    assert registry.stats()["evicted"] == 2
+
+
+def test_session_registry_touches_on_access() -> None:
+    """A `for_request` against an EXISTING key moves it to the end of
+    the LRU. So if A, B, C are inserted in order, touching A again,
+    then inserting D, the entry evicted must be B — A is now the
+    most-recently-used, not the oldest.
+
+    Without touch-on-access, a long-lived client would still get
+    evicted just because newer clients keep landing — the cap would
+    behave as a FIFO instead of an LRU.
+    """
+    registry = SessionRegistry(max_clients=3)
+    s_a = registry.for_request(_fake_ctx(client_id="A"))
+    registry.for_request(_fake_ctx(client_id="B"))
+    registry.for_request(_fake_ctx(client_id="C"))
+
+    # Touch A — it should now be the most-recently-used.
+    s_a_again = registry.for_request(_fake_ctx(client_id="A"))
+    assert s_a_again is s_a  # same instance — touch, not re-create
+
+    # Insert D — pushes past the cap, evicts the current oldest (B).
+    registry.for_request(_fake_ctx(client_id="D"))
+
+    keys = registry.known_keys()
+    assert "B" not in keys, (
+        "B should have been evicted as the oldest after A was touched; "
+        "if A was evicted instead, touch-on-access isn't working"
+    )
+    assert {"A", "C", "D"} <= keys
+    assert registry.stats()["evicted"] == 1

@@ -754,3 +754,67 @@ def test_event_field_builders_pin_canonical_shape() -> None:
     # top_hits is the canonical list-of-dicts shape, not list-of-str.
     assert isinstance(sm["top_hits"][0], dict)
     assert sm["top_hits"][0]["id"] == "m1"
+
+
+def test_turn_audited_fields_rejects_unknown_triggered_from() -> None:
+    """`triggered_from` is a closed-set discriminator
+    (`"stop_hook" | "mcp_tool"`) but Python doesn't enforce the
+    Literal at call time. A typo elsewhere (`"stop-hook"`,
+    `"mcptool"`) would silently produce unsplittable eval rows since
+    downstream consumers `groupby`-split on this field. The builder
+    raises at the dispatch boundary, mirroring the search-mode guard
+    in `search.py:761`.
+    """
+    from bettermemory.audit import (
+        MissHit,
+        MissReport,
+        search_miss_fields,
+        turn_audited_fields,
+    )
+
+    report = MissReport(
+        verdict="miss",
+        checked_at=_utc(2026, 5, 22),
+        session_id="s1",
+        lookback_seconds=600,
+        recent_retrieval_count=3,
+        threshold_rule=THRESHOLD_RULE_V1,
+        top_hits=(
+            MissHit(
+                id="m1",
+                score=0.9,
+                relevance="high",
+                scopes=("tools",),
+                snippet="snip",
+            ),
+        ),
+        probe_query="q",
+    )
+
+    # Negative case: bogus value rejected by both builders.
+    with pytest.raises(ValueError, match="triggered_from"):
+        turn_audited_fields(
+            report,
+            session_id="s1",
+            probe_mode="keyword",
+            assistant_present=True,
+            triggered_from="stop-hook",  # typo: hyphen instead of underscore
+        )
+    with pytest.raises(ValueError, match="triggered_from"):
+        search_miss_fields(report, session_id="s1", triggered_from="mcptool")
+
+    # Positive case: the two canonical values still flow through
+    # unchanged. Keeps the closed set honest — a future broadening
+    # would require adding the new value to `_VALID_TRIGGERED_FROM`
+    # and updating this assertion in one diff.
+    for value in ("stop_hook", "mcp_tool"):
+        ta = turn_audited_fields(
+            report,
+            session_id="s1",
+            probe_mode="keyword",
+            assistant_present=True,
+            triggered_from=value,
+        )
+        assert ta["triggered_from"] == value
+        sm = search_miss_fields(report, session_id="s1", triggered_from=value)
+        assert sm["triggered_from"] == value

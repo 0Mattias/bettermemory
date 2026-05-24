@@ -1038,6 +1038,18 @@ def main() -> None:
         ),
     )
     ingest_parser.add_argument(
+        "--force",
+        action="store_true",
+        help=(
+            "Skip the active-store dedup gate. Tombstone dedup is still "
+            "respected (re-importing something the user already chose to "
+            "remove stays out of the active store). Parity with the "
+            "`force=True` option on `memory_write` for the rare case of "
+            "a legitimately-near auto-memory that should land alongside "
+            "an existing record rather than being suppressed as duplicate."
+        ),
+    )
+    ingest_parser.add_argument(
         "--json",
         action="store_true",
         help="Emit JSON instead of human-readable text.",
@@ -1281,6 +1293,7 @@ def main() -> None:
             source=args.source,
             dry_run=args.dry_run,
             extra_scopes=args.extra_scopes,
+            force=args.force,
             json_out=args.json,
             parser=ingest_parser,
         )
@@ -1998,6 +2011,7 @@ def _cli_ingest(
     source: str | None,
     dry_run: bool,
     extra_scopes: list[str],
+    force: bool = False,
     json_out: bool,
     parser: Any,
 ) -> None:
@@ -2036,6 +2050,7 @@ def _cli_ingest(
                 "~/.claude/projects/<sanitized-cwd>/memory/."
             )
             return  # pragma: no cover — parser.error raises SystemExit
+    assert source_root is not None  # narrowed by both branches above
 
     config = load_config()
     directory = config.resolved_directory()
@@ -2049,6 +2064,7 @@ def _cli_ingest(
             existing_memories=existing,
             existing_tombstones=tombstoned,
             extra_scopes=extra_scopes,
+            force=force,
         )
     except (FileNotFoundError, NotADirectoryError) as exc:
         parser.error(str(exc))

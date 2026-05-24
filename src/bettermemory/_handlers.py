@@ -480,8 +480,10 @@ DESC_MEMORY_SCOPE_OVERVIEW = (
     "`curation_pending_new_since_last_session` is the same shape, "
     "filtered to events emitted and memories *created* since the "
     "previous session ended (not memories that aged into a bucket; "
-    "an older record drifting into `stale` between sessions stays "
-    "visible only in the absolute `curation_pending` view). Branch "
+    "an older record aging into `stale` between sessions stays "
+    "visible only in the absolute `curation_pending` view — note "
+    "this is distinct from the separate `drifted` bucket, which "
+    "tracks working-tree drift). Branch "
     "on this dict when deciding whether to *prompt* the user about "
     "curation — non-zero values here mean new rot has accumulated "
     "since you were last around, vs. the absolute `curation_pending` "
@@ -759,17 +761,40 @@ def _already_recorded_pending_ids(
     it, a stale `use` event for the same id (from an earlier retrieval
     in the same session, or replay-after-rotation) would falsely purge
     a freshly-issued token. The pre-2.6.8 hook-only scan had the same
-    bug — it just happened only on the hook path. Reads the active
-    event log forward; bounded by the rotation cap (default 10 MB) and
-    only invoked when there ARE pending tokens.
+    bug — it just happened only on the hook path.
+
+    Reads the active event log BACKWARD (most-recent first) and early-
+    exits once events fall behind the oldest pending token's
+    `issued_at`: any event older than that cannot have recorded any of
+    our pending tokens (since the tokens were minted after that point).
+    Bounded by the rotation cap (default 10 MB) and only invoked when
+    there ARE pending tokens. The simplest correct approach: list
+    the active log once and iterate `reversed(...)` — the cap keeps
+    the materialised list bounded.
     """
     if not state.pending_use_tokens:
         return set()
     pending_issued_at = {
         mid: tok.issued_at for mid, tok in state.pending_use_tokens.items()
     }
+    # Oldest pending token's mint time. Any event timestamped before
+    # this cannot have recorded any of these tokens, so we can stop
+    # the backward scan as soon as we cross that boundary.
+    oldest_pending_issued_at = min(pending_issued_at.values())
     out: set[str] = set()
-    for event in iter_events(recorder.root):
+    # Materialise once and iterate reversed. The active log is bounded
+    # by the rotation cap (default 10 MB ≈ tens of thousands of events),
+    # so the list is bounded too — and the early-exit below typically
+    # bails after a handful of recent events.
+    events = list(iter_events(recorder.root))
+    for event in reversed(events):
+        ev_ts = _event_ts_epoch(event.get("ts"))
+        if ev_ts is not None and ev_ts < oldest_pending_issued_at:
+            # Every earlier event has an `ev_ts` that's older still
+            # (the active log is append-only by wall-clock), so no
+            # remaining event can satisfy `ev_ts >= issued` for any
+            # pending token. Early-exit.
+            break
         if event.get("kind") != "use":
             continue
         # `use` events always carry `session` (the Recorder stamps it
@@ -779,7 +804,6 @@ def _already_recorded_pending_ids(
         # the discipline 70e41a4 established for llm.py.
         if (event.get("session") or event.get("session_id")) != recorder.session_id:
             continue
-        ev_ts = _event_ts_epoch(event.get("ts"))
         if ev_ts is None:
             continue
         # Legacy fallback for `memory_ids` — same class as the 70e41a4
@@ -2322,9 +2346,24 @@ class ToolHandlers:
             verification_stale_days=self.config.behavior.verification_stale_days,
             caller_origin=current_origin,
         )
+        # Use the recorder's session_id, not `state.session_id`.
+        # Every event the recorder writes is tagged `session =
+        # self.session_id` (events.py:159) — that's the single
+        # process-lifetime id, and it's the only `session` value
+        # the event log carries. In single-client stdio mode the
+        # two ids are equal (`state` is the registry's default
+        # state, built with the same id the recorder reads at
+        # construction); in multi-client SessionRegistry mode each
+        # request has its own `state.session_id` but the recorder
+        # still stamps its own id onto every event, so passing
+        # `state.session_id` would treat every recorded event as
+        # "from another session" and collapse the delta. The
+        # "session" the delta talks about is the recorder
+        # lifetime / process run, which is what's actually visible
+        # in the log.
         prior_boundary = find_prior_session_boundary(
             events_snapshot,
-            state.session_id,
+            self.recorder.session_id,
         )
         if prior_boundary is None:
             # First session ever, or the event log was wiped. The delta

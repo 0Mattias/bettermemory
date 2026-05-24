@@ -369,6 +369,80 @@ def test_record_redaction_correlates_repeated_queries(tmp_path: Path) -> None:
     assert events[0]["query"]["hash"] != events[1]["query"]["hash"]
 
 
+def test_redact_query_strips_known_token_shapes(tmp_path: Path) -> None:
+    """The 32-char preview can capture entire short secrets (a GitHub
+    PAT, AWS access key, OpenAI / Anthropic key prefix). `redact_query`
+    pattern-strips known secret shapes BEFORE truncating so the
+    preview never carries a partial high-entropy token.
+
+    Defense-in-depth: the event log is local `0o600`, but logs
+    occasionally leave that perimeter (an attached `bettermemory eval`
+    export, a shared transcript, a bug report).
+    """
+    from bettermemory.events import redact_query
+
+    # Realistic-shape secret samples (NOT real credentials). Each
+    # entry: (raw query, regex marker that must appear, original
+    # secret substring that must NOT appear in the preview).
+    cases = [
+        # Anthropic — `sk-ant-` prefix, must be caught BEFORE the
+        # generic `sk-` pattern so the marker is the specific one.
+        (
+            "key sk-ant-abc1234567890defghijklmnopqrstuv tail",
+            "[REDACTED:anthropic-key]",
+            "sk-ant-abc1234567890defghijklmnopqrstuv",
+        ),
+        # OpenAI — generic `sk-…` (no `ant-` segment). 48-char body.
+        (
+            "key sk-abc123def456ghi789jkl012mno345pqr678stu901vwx234 tail",
+            "[REDACTED:openai-key]",
+            "sk-abc123def456ghi789jkl012mno345pqr678stu901vwx234",
+        ),
+        # GitHub classic PAT.
+        (
+            "header ghp_abcdefghijklmnopqrstuvwxyz0123456789 done",
+            "[REDACTED:github-token]",
+            "ghp_abcdefghijklmnopqrstuvwxyz0123456789",
+        ),
+        # GitHub fine-grained PAT.
+        (
+            "header github_pat_abcdefghijklmnopqrstuv done",
+            "[REDACTED:github-pat]",
+            "github_pat_abcdefghijklmnopqrstuv",
+        ),
+        # AWS access key — exactly 20 chars total (`AKIA` + 16).
+        (
+            "creds AKIAIOSFODNN7EXAMPLE tail",
+            "[REDACTED:aws-access-key]",
+            "AKIAIOSFODNN7EXAMPLE",
+        ),
+    ]
+
+    for raw, marker, secret in cases:
+        out = redact_query(raw)
+        # The marker must appear in the preview AND the secret must
+        # be gone — pattern-strip runs before the 32-char truncation
+        # so both invariants hold on the same value.
+        assert marker in out["preview"], (
+            f"missing marker {marker!r} in preview {out['preview']!r}"
+        )
+        assert secret not in out["preview"], (
+            f"secret {secret!r} leaked into preview {out['preview']!r}"
+        )
+        # The pre-strip length is retained — downstream triage can
+        # still see "this query was 87 chars" without seeing what
+        # those chars were.
+        assert out["len"] == len(raw)
+
+    # The change is additive, not breaking: a non-secret query still
+    # produces the original 32-char preview behavior.
+    benign = "look up how I configure kubernetes networking on raspberry pi"
+    out = redact_query(benign)
+    assert out["preview"] == benign[:32]
+    assert out["len"] == len(benign)
+    assert len(out["hash"]) == 16
+
+
 # ---------------------------------------------------------------------------
 # Rotation crash recovery: the .rotating/.gz.tmp two-phase rename should
 # leave the reader with each event counted exactly once regardless of

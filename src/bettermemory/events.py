@@ -51,6 +51,44 @@ ARCHIVE_SUFFIX = ".jsonl.gz"
 _REDACTED_TEXT_FIELDS = frozenset({"query", "probe_query"})
 _QUERY_PREVIEW_CHARS = 32
 _QUERY_HASH_PREFIX = 16
+
+# Defense-in-depth pattern strip for known secret shapes. The 32-char
+# preview alone can capture entire short tokens — a GitHub PAT
+# (`ghp_<36chars>`) or an AWS access key (`AKIA<16chars>`) easily fits
+# inside the preview window, and an OpenAI / Anthropic secret can have
+# enough of its high-entropy tail land in the preview to be usable.
+# The query log is local 0o600, so the primary defense is filesystem
+# permissions; pattern-strip closes the gap when logs leave that
+# perimeter (a `bettermemory eval` export, an attached transcript,
+# a shared bug report). Patterns are applied BEFORE the 32-char
+# truncation so the truncation never captures a partial secret.
+#
+# Order matters: the more-specific Anthropic key pattern runs before
+# the generic `sk-` pattern so `sk-ant-…` is labelled correctly rather
+# than caught as a generic OpenAI key.
+_SECRET_PATTERNS: tuple[tuple[re.Pattern[str], str], ...] = (
+    (re.compile(r"\bsk-ant-[A-Za-z0-9_-]{20,}\b"), "[REDACTED:anthropic-key]"),
+    (re.compile(r"\bsk-[A-Za-z0-9]{20,}\b"), "[REDACTED:openai-key]"),
+    (re.compile(r"\bghp_[A-Za-z0-9]{30,}\b"), "[REDACTED:github-token]"),
+    (re.compile(r"\bgithub_pat_[A-Za-z0-9_]{20,}\b"), "[REDACTED:github-pat]"),
+    (re.compile(r"\bAKIA[A-Z0-9]{16}\b"), "[REDACTED:aws-access-key]"),
+)
+
+
+def _strip_known_secrets(text: str) -> str:
+    """Replace known secret token shapes with redaction markers.
+
+    Applied before the 32-char preview is taken so the preview never
+    captures a partial token. The hash is also computed on the
+    secret-stripped text so a repeated query with the same secret
+    still correlates, but the secret bytes don't feed into the hash
+    input either.
+    """
+    for pattern, replacement in _SECRET_PATTERNS:
+        text = pattern.sub(replacement, text)
+    return text
+
+
 # Plain-JSONL holding name used during rotation. The active log is
 # `rename`d to a sibling with this suffix before compression starts —
 # the rename is atomic, so a crash never leaves the active log
@@ -78,12 +116,21 @@ def redact_query(text: str) -> dict[str, Any]:
     survives, "my-api-key=sk-…" survives only its first 32 chars
     rather than the full secret). The full text is not recoverable
     from the event log.
+
+    Known token shapes (Anthropic / OpenAI / GitHub / AWS) are
+    stripped to opaque markers BEFORE the 32-char preview is taken,
+    so the preview never carries a partial high-entropy secret. The
+    pre-strip text length is retained as ``len`` so downstream
+    triage can still see "this query was 87 chars" without seeing
+    what those chars were.
     """
-    digest = hashlib.sha256(text.encode("utf-8", errors="replace")).hexdigest()
+    original_len = len(text)
+    stripped = _strip_known_secrets(text)
+    digest = hashlib.sha256(stripped.encode("utf-8", errors="replace")).hexdigest()
     return {
         "hash": digest[:_QUERY_HASH_PREFIX],
-        "preview": text[:_QUERY_PREVIEW_CHARS],
-        "len": len(text),
+        "preview": stripped[:_QUERY_PREVIEW_CHARS],
+        "len": original_len,
     }
 
 

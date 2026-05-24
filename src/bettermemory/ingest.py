@@ -84,6 +84,17 @@ _TYPE_TO_EXTRA_SCOPE: dict[str, str] = {
     "reference": "reference",
 }
 
+# Catch typos / divergence early: a key added to one map without the
+# other would silently downgrade ingest behaviour (a missing
+# extra-scope means the type-derived scope is lost; a missing
+# category means the row falls back to FACT). Module-import-time
+# assert fails loudly before any user-facing call.
+assert set(_TYPE_TO_CATEGORY) == set(_TYPE_TO_EXTRA_SCOPE), (
+    "_TYPE_TO_CATEGORY and _TYPE_TO_EXTRA_SCOPE must share the same keys; "
+    f"category-only: {set(_TYPE_TO_CATEGORY) - set(_TYPE_TO_EXTRA_SCOPE)}, "
+    f"scope-only: {set(_TYPE_TO_EXTRA_SCOPE) - set(_TYPE_TO_CATEGORY)}"
+)
+
 # Default scope every ingested memory carries. The provenance tag
 # lets a `memory_search` for ``imported-from-claude-code`` surface
 # just the imported set — useful when triaging "what came across in
@@ -110,7 +121,23 @@ Action = Literal[
     "skip_tombstone",
     "skip_invalid",
     "skip_empty",
+    "skip_symlink",
 ]
+
+# Single source of truth for the `Action` literals. `IngestPlan.summary`
+# pre-seeds zeros for every action so the renderer never has to guard
+# missing keys, and adding a new `Action` literal without updating this
+# tuple is a one-line diff that fails the matching assertion in
+# `tests/test_ingest.py` rather than silently producing a missing
+# bucket in the rollup.
+_ACTIONS: tuple[Action, ...] = (
+    "write",
+    "skip_duplicate",
+    "skip_tombstone",
+    "skip_invalid",
+    "skip_empty",
+    "skip_symlink",
+)
 
 
 @dataclass
@@ -151,14 +178,8 @@ class IngestPlan:
 
     @property
     def summary(self) -> dict[str, int]:
-        out: dict[str, int] = {
-            "write": 0,
-            "skip_duplicate": 0,
-            "skip_tombstone": 0,
-            "skip_invalid": 0,
-            "skip_empty": 0,
-            "total": len(self.rows),
-        }
+        out: dict[str, int] = {a: 0 for a in _ACTIONS}
+        out["total"] = len(self.rows)
         for row in self.rows:
             out[row.action] = out.get(row.action, 0) + 1
         return out
@@ -197,6 +218,7 @@ def _classify_one(
     tombstoned: list[TombstonedMemory],
     extra_scopes: list[str],
     high_threshold: float,
+    force: bool = False,
 ) -> IngestRow:
     """Parse one source file and return the classified IngestRow.
 
@@ -231,10 +253,14 @@ def _classify_one(
     # The auto-memory format used the nested
     # `metadata: {type: <kind>}` shape in early Claude Code releases,
     # then flattened to top-level `type: <kind>` later. Both forms
-    # show up in real auto-memory directories, so we consult the
-    # nested form first and fall back to the flat key. Tests:
+    # show up in real auto-memory directories. **Precedence: nested
+    # wins.** If both keys are present (a transitional file mid-
+    # migration), the nested value is honoured because the older
+    # writer was authoritative when the file was first emitted, and
+    # callers can later overwrite via the flat path if needed. Tests:
     # `test_user_type_maps_to_user_inference` covers nested;
-    # `test_flat_type_key_is_honored` covers flat.
+    # `test_flat_type_key_is_honored` covers flat;
+    # `test_nested_type_wins_when_both_present` pins the precedence.
     raw_type: Any = None
     nested = meta.get("metadata")
     if isinstance(nested, dict):
@@ -248,18 +274,10 @@ def _classify_one(
         auto_type = None
 
     name = meta.get("name")
-    title = (
-        name.strip()
-        if isinstance(name, str) and name.strip()
-        else source_path.stem
-    )
+    title = name.strip() if isinstance(name, str) and name.strip() else source_path.stem
 
     description_raw = meta.get("description")
-    description = (
-        description_raw.strip()
-        if isinstance(description_raw, str)
-        else ""
-    )
+    description = description_raw.strip() if isinstance(description_raw, str) else ""
 
     # Body composition: the auto-memory format puts the canonical
     # one-line summary in `description` and the full prose in the body.
@@ -299,21 +317,25 @@ def _classify_one(
 
     # Dedup gate: active store wins, then tombstones. Both checks use
     # the same Jaccard threshold as `memory_write` so a re-ingest
-    # behaves the same way an interactive write would have.
-    active_hits = find_similar(composed, existing, high_threshold=high_threshold)
-    high_active = [h for h in active_hits if h.relevance == "high"]
-    if high_active:
-        return IngestRow(
-            source_path=source_path,
-            title=title,
-            description=description,
-            auto_memory_type=auto_type,
-            body=composed,
-            scopes=scope_list,
-            category=category,
-            action="skip_duplicate",
-            reason=f"matches active memory {high_active[0].id}",
-        )
+    # behaves the same way an interactive write would have. `force`
+    # bypasses the active-store check (parity with `memory_write`'s
+    # `force=True`) but never bypasses the tombstone check —
+    # re-ingesting a deliberately-removed memory stays disallowed.
+    if not force:
+        active_hits = find_similar(composed, existing, high_threshold=high_threshold)
+        high_active = [h for h in active_hits if h.relevance == "high"]
+        if high_active:
+            return IngestRow(
+                source_path=source_path,
+                title=title,
+                description=description,
+                auto_memory_type=auto_type,
+                body=composed,
+                scopes=scope_list,
+                category=category,
+                action="skip_duplicate",
+                reason=f"matches active memory {high_active[0].id}",
+            )
 
     tombstone_hits = find_similar_tombstones(
         composed, tombstoned, high_threshold=high_threshold
@@ -356,12 +378,15 @@ def compute_ingest_plan(
     extra_scopes: list[str] | None = None,
     now: datetime | None = None,
     high_threshold: float = HIGH_SIMILARITY,
+    force: bool = False,
 ) -> IngestPlan:
     """Walk the source root for `.md` files and classify each one.
 
     Doesn't write — caller follows up with `apply_ingest_plan` if
     they want to commit. `extra_scopes` is appended to every record's
     scope list (after the provenance + type-derived defaults).
+    `force=True` bypasses the active-store dedup gate (parity with
+    `memory_write`'s `force`); tombstone dedup is always honoured.
 
     Raises `FileNotFoundError` if the source root doesn't exist —
     distinguished from "exists but empty" so the CLI can tell the
@@ -380,13 +405,32 @@ def compute_ingest_plan(
         )
 
     if not source_root.is_dir():
-        raise NotADirectoryError(
-            f"source root {source_root} is not a directory."
-        )
+        raise NotADirectoryError(f"source root {source_root} is not a directory.")
 
     rows: list[IngestRow] = []
     # Deterministic order for stable rendering + reproducible tests.
     for path in sorted(source_root.glob("*.md")):
+        # `Path.is_file()` follows symlinks — so a `.md` symlink pointing
+        # at `/etc/passwd` (or any file outside the source dir) would
+        # otherwise be ingested verbatim as a memory. Detect and skip
+        # symlinks up front rather than trying to parse them. We emit a
+        # `skip_symlink` row so the summary surfaces the count alongside
+        # the other skip reasons, but never read the target.
+        if path.is_symlink():
+            rows.append(
+                IngestRow(
+                    source_path=path,
+                    title=path.stem,
+                    description="",
+                    auto_memory_type=None,
+                    body="",
+                    scopes=[],
+                    category=Category.FACT,
+                    action="skip_symlink",
+                    reason="symlinks are not ingested",
+                )
+            )
+            continue
         if not path.is_file():
             continue
         if path.name in _INDEX_FILENAMES:
@@ -398,6 +442,7 @@ def compute_ingest_plan(
                 tombstoned=existing_tombstones,
                 extra_scopes=extras,
                 high_threshold=high_threshold,
+                force=force,
             )
         )
 
@@ -444,7 +489,16 @@ def apply_ingest_plan(
                     triggered_from="cli_ingest",
                     source_path=str(row.source_path),
                 )
-        except Exception as exc:  # noqa: BLE001 — narrow to skip_invalid
+        except (ValueError, OSError) as exc:
+            # ValueError covers `Store.write` raising on bad input
+            # (empty body, oversize, malformed scope) — per-row recoverable
+            # and surfacing as `skip_invalid` lets the rest of the batch
+            # continue. OSError covers filesystem hiccups on individual
+            # writes (permissions, missing dir under a race). Bare
+            # `Exception` would also swallow `MemoryError` and disk-full
+            # situations, which should propagate so the operator sees
+            # that the run can't continue rather than racking up
+            # identical per-row failures.
             row.action = "skip_invalid"
             row.reason = f"write failed: {exc}"
     return plan
@@ -465,21 +519,17 @@ def render_ingest_text(plan: IngestPlan, *, dry_run: bool) -> str:
     lines.append(f"Source: {plan.source_root}")
     s = plan.summary
     lines.append(f"Total files       {s['total']:>4d}")
-    lines.append(
-        f"  {verb:<11s}      {s['write']:>4d}"
-    )
+    lines.append(f"  {verb:<11s}      {s['write']:>4d}")
     if s["skip_duplicate"]:
-        lines.append(
-            f"  skip duplicate    {s['skip_duplicate']:>4d}"
-        )
+        lines.append(f"  skip duplicate    {s['skip_duplicate']:>4d}")
     if s["skip_tombstone"]:
-        lines.append(
-            f"  skip tombstoned   {s['skip_tombstone']:>4d}"
-        )
+        lines.append(f"  skip tombstoned   {s['skip_tombstone']:>4d}")
     if s["skip_empty"]:
         lines.append(f"  skip empty        {s['skip_empty']:>4d}")
     if s["skip_invalid"]:
         lines.append(f"  skip invalid      {s['skip_invalid']:>4d}")
+    if s["skip_symlink"]:
+        lines.append(f"  skip symlink      {s['skip_symlink']:>4d}")
     lines.append("")
 
     # Per-row detail, grouped by action so the eye lands on the
@@ -488,7 +538,14 @@ def render_ingest_text(plan: IngestPlan, *, dry_run: bool) -> str:
     by_action: dict[str, list[IngestRow]] = {}
     for row in plan.rows:
         by_action.setdefault(row.action, []).append(row)
-    for action in ("write", "skip_duplicate", "skip_tombstone", "skip_empty", "skip_invalid"):
+    for action in (
+        "write",
+        "skip_duplicate",
+        "skip_tombstone",
+        "skip_empty",
+        "skip_invalid",
+        "skip_symlink",
+    ):
         rows = by_action.get(action) or []
         if not rows:
             continue

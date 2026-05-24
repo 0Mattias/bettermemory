@@ -34,9 +34,9 @@ This is the headline metric. It is the closest existing instrument to *"did memo
 
 > Of retrievals tagged `applied`, what fraction had attestation (model-explicit OR hook-attributed) vs. the bare auto-fallback?
 
-Numerator: `record_use` events with `outcome="applied"` AND `auto=false`.
+Numerator: per-memory-id references inside `record_use` events with `outcome="applied"` AND `auto=false` (a single event applying three ids contributes three to the numerator).
 
-Denominator: all `record_use` events with `outcome="applied"`.
+Denominator: per-memory-id references inside all `record_use` events with `outcome="applied"` (same per-id granularity as the numerator).
 
 This is the dead-letter detector. A low rate (mostly auto-applied) means nothing produced evidence the retrieval shaped a reply — the model didn't explicitly endorse, and the hook didn't find a substring match either. The companion view in `memory_health` is `endorsement_debt`: memories with `retrieval_count >= 5` AND `explicit_applied_count == 0`. With hook attribution counting toward `explicit_applied_count`, this bucket narrows to memories that retrieve frequently but never visibly shape a reply — a tighter signal for what's worth pruning.
 
@@ -88,27 +88,27 @@ the CLI (notebooks, custom dashboards, CI checks) can drive it
 directly with their own event iterators.
 
 ```text
-Memory eval — last 30 days
-─────────────────────────────────────────────────
-Turns audited                          412
-Retrievals (distinct turn × memory)    198
-Memories surfaced                       47
+bettermemory eval — last 30d
+────────────────────────────────────────────────────────────
+Events scanned                        768
+Retrieval occurrences                 198
+Applied use events (auto+explicit)    142
+Turns audited                         412
 
-memory_helped_rate     0.61 ± 0.07   ▇▇▇▇▇▇▇▁▁▁
-endorsement_rate       0.74 ± 0.06   ▇▇▇▇▇▇▇▇▁▁
-silent_miss_rate       0.09 ± 0.03   ▇▁▁▁▁▁▁▁▁▁
+memory_helped_rate   0.61 ± 0.07   ▇▇▇▇▇▇▁▁▁▁   (k=121, n=198)
+endorsement_rate     0.74 ± 0.06   ▇▇▇▇▇▇▇▁▁▁   (k=105, n=142)
+silent_miss_rate     0.09 ± 0.03   ▇▁▁▁▁▁▁▁▁▁   (k=37, n=412)
 
-Endorsement-debt memories (≥5 retrievals, 0 explicit applied):
-  01HXYZ123ABC   tools           "Use ripgrep instead of grep…"   (12 retrievals)
-  01HXYZ456DEF   learning-style  "User prefers terse explan…"     (7 retrievals)
+Endorsement-debt memories (retrievals ≥ 5, 0 explicit applied): 2
+  01HXYZ123ABC  tools             "Use ripgrep instead of grep…"  (12 retrievals)
+  01HXYZ456DEF  learning-style    "User prefers terse explan…"    (7 retrievals)
 
 Silent-miss candidates (last 20):
-  2026-05-19  scope=projects:foo   missed: 01HXYZ789GHI  (relevance=high, rule=v1_top1_high)
-  2026-05-17  scope=tools          missed: 01HXYZ555JKL  (relevance=high, rule=v1_top1_high)
+  2026-05-19 14:02  session=sess_abcd1234…  missed=01HXYZ789GHI relevance=high
+  2026-05-17 09:18  session=sess_efgh5678…  missed=01HXYZ555JKL relevance=high
   …
 
 Threshold rule: v1_top1_high
-Window: 2026-04-20 → 2026-05-20
 ```
 
 `--json` emits the same numbers as machine-readable JSON for CI pipelines. `--scope` filters to a single scope (useful for catching e.g. `projects:foo` going feral while `tools` stays healthy). `--min-retrievals` controls the endorsement-debt floor (default 5); `--silent-miss-limit` controls how many recent miss events are surfaced inline (default 20).

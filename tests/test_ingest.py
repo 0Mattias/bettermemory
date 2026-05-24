@@ -186,6 +186,43 @@ class TestComputeIngestPlan:
         names = {r.source_path.name for r in plan.rows}
         assert names == {"real-mem.md"}
 
+    def test_compute_ingest_plan_skips_symlinks(
+        self, source_root: Path, store: Store
+    ) -> None:
+        """A `.md` file that's actually a symlink (e.g. pointing at
+        `/etc/hosts`) must NOT be ingested as a memory — `Path.is_file`
+        alone follows symlinks, so the walker has to detect and skip
+        them up front. Surfaces as `skip_symlink` in the summary."""
+        # Real, well-formed source file alongside a symlink to a
+        # never-readable-as-memory host file. `/etc/hosts` is always
+        # present on macOS and Linux; the test would skip on a system
+        # where it's absent.
+        target = Path("/etc/hosts")
+        if not target.exists():
+            pytest.skip("requires /etc/hosts (always present on macOS/Linux)")
+        _write_auto_memory(source_root, "good", auto_type="feedback")
+        bad = source_root / "bad.md"
+        os.symlink(target, bad)
+
+        plan = compute_ingest_plan(
+            source_root,
+            existing_memories=store.load_all(),
+            existing_tombstones=store.load_tombstones(),
+        )
+
+        rows_by_name = {r.source_path.name: r for r in plan.rows}
+        assert "bad.md" in rows_by_name
+        assert rows_by_name["bad.md"].action == "skip_symlink"
+        # The symlink's row carries no body — we must never read the
+        # target. Defense-in-depth: even if a future refactor swapped
+        # `path.is_symlink()` for a target read, this assertion would
+        # catch it before /etc/hosts content lands in an IngestRow.
+        assert rows_by_name["bad.md"].body == ""
+        assert "good.md" in rows_by_name
+        assert rows_by_name["good.md"].action == "write"
+        # Summary surfaces the count alongside the other skip reasons.
+        assert plan.summary["skip_symlink"] == 1
+
     def test_empty_body_and_description_is_skipped(
         self, source_root: Path, store: Store
     ) -> None:
@@ -229,9 +266,7 @@ class TestComputeIngestPlan:
         assert "parse error" in broken_row.reason or "mapping" in broken_row.reason
         assert actions["ok-file.md"] == "write"
 
-    def test_flat_type_key_is_honored(
-        self, source_root: Path, store: Store
-    ) -> None:
+    def test_flat_type_key_is_honored(self, source_root: Path, store: Store) -> None:
         """Later Claude Code auto-memory revisions flattened the type
         key from `metadata.type` to a top-level `type:`. Both forms
         appear in real auto-memory directories, so the parser must
@@ -250,6 +285,57 @@ class TestComputeIngestPlan:
         [row] = plan.rows
         assert row.auto_memory_type == "user"
         assert row.category == Category.USER_INFERENCE
+
+    def test_nested_type_wins_when_both_present(
+        self, source_root: Path, store: Store
+    ) -> None:
+        """A transitional file mid-migration could in principle carry
+        both shapes. The parser's documented precedence is "nested
+        wins"; this test pins it so a future refactor that flipped
+        the lookup order would surface. The conflict is rare in
+        production today but locking in the rule keeps it
+        observable rather than discovered after a silent regression."""
+        source_root.mkdir()
+        path = source_root / "both.md"
+        path.write_text(
+            "---\n"
+            "name: both\n"
+            "description: summary\n"
+            "type: reference\n"  # flat
+            "metadata:\n"
+            "  type: user\n"  # nested — should win
+            "---\nbody\n"
+        )
+        plan = compute_ingest_plan(
+            source_root,
+            existing_memories=store.load_all(),
+            existing_tombstones=store.load_tombstones(),
+        )
+        [row] = plan.rows
+        assert row.auto_memory_type == "user"
+        assert row.category == Category.USER_INFERENCE
+
+    def test_non_string_type_falls_back_to_fact(
+        self, source_root: Path, store: Store
+    ) -> None:
+        """A non-string `type:` value (YAML int, list, mapping) is a
+        torn file. `_classify_one` clamps to None → `Category.FACT`
+        rather than raising, so one weird source file never blocks
+        the rest of the batch."""
+        source_root.mkdir()
+        path = source_root / "bad-type.md"
+        path.write_text(
+            "---\nname: bad-type\ndescription: summary\ntype: 42\n---\nbody\n"
+        )
+        plan = compute_ingest_plan(
+            source_root,
+            existing_memories=store.load_all(),
+            existing_tombstones=store.load_tombstones(),
+        )
+        [row] = plan.rows
+        assert row.auto_memory_type is None
+        assert row.category == Category.FACT
+        assert row.action == "write"
 
     def test_type_derived_scope_is_appended(
         self, source_root: Path, store: Store
@@ -328,6 +414,77 @@ class TestComputeIngestPlan:
 
 
 class TestDedup:
+    def test_force_bypasses_active_dedup_but_not_tombstones(
+        self, source_root: Path, store: Store
+    ) -> None:
+        """`--force` parity with `memory_write`'s `force=True`: skips
+        the active-store dedup but keeps the tombstone dedup so a
+        user-removed memory can't be resurrected by re-ingest. Locks
+        in the asymmetry the audit specifically called out — the two
+        gates have to be controllable independently."""
+        # Seed an active memory that would otherwise dedup.
+        _write_auto_memory(
+            source_root,
+            "dup",
+            description="ripgrep over grep",
+            body="The team uses ripgrep instead of grep.",
+        )
+        plan_first = compute_ingest_plan(
+            source_root,
+            existing_memories=store.load_all(),
+            existing_tombstones=store.load_tombstones(),
+        )
+        apply_ingest_plan(plan_first, store)
+
+        # Without --force the same source file is suppressed as duplicate.
+        plan_skip = compute_ingest_plan(
+            source_root,
+            existing_memories=store.load_all(),
+            existing_tombstones=store.load_tombstones(),
+        )
+        assert plan_skip.rows[0].action == "skip_duplicate"
+
+        # With --force the dedup gate is bypassed; a new write lands.
+        plan_force = compute_ingest_plan(
+            source_root,
+            existing_memories=store.load_all(),
+            existing_tombstones=store.load_tombstones(),
+            force=True,
+        )
+        assert plan_force.rows[0].action == "write"
+
+    def test_force_does_not_resurrect_tombstoned_memory(
+        self, source_root: Path, store: Store
+    ) -> None:
+        """Tombstone dedup stays in force even under --force. Removing
+        a memory is a deliberate act; re-ingesting it should still be
+        blocked at the tombstone gate."""
+        _write_auto_memory(
+            source_root,
+            "tomb-1",
+            description="remove me",
+            body="this body is going to be tombstoned",
+        )
+        plan = compute_ingest_plan(
+            source_root,
+            existing_memories=store.load_all(),
+            existing_tombstones=store.load_tombstones(),
+        )
+        apply_ingest_plan(plan, store)
+        [row] = plan.rows
+        assert row.written_id is not None
+        store.tombstone(row.written_id, "test-removed", session_id="sess-test")
+
+        # Re-ingest with --force — the active-store dedup is bypassed
+        # but the tombstone dedup is still checked, so this stays out.
+        plan_replay = compute_ingest_plan(
+            source_root,
+            existing_memories=store.load_all(),
+            existing_tombstones=store.load_tombstones(),
+            force=True,
+        )
+        assert plan_replay.rows[0].action == "skip_tombstone"
+
     def test_duplicate_against_active_store_is_skipped(
         self, source_root: Path, store: Store
     ) -> None:
@@ -371,8 +528,7 @@ class TestDedup:
         # Write a near-duplicate into the store, then tombstone it.
         existing = store.write(
             content=(
-                "ripgrep is the preferred grep tool\n\n"
-                "Use ripgrep instead of grep.\n"
+                "ripgrep is the preferred grep tool\n\nUse ripgrep instead of grep.\n"
             ),
             scopes=["tools"],
         )
@@ -394,9 +550,7 @@ class TestDedup:
 
 
 class TestApplyIngestPlan:
-    def test_write_action_lands_in_store(
-        self, source_root: Path, store: Store
-    ) -> None:
+    def test_write_action_lands_in_store(self, source_root: Path, store: Store) -> None:
         _write_auto_memory(source_root, "fresh", description="hello", body="world")
         plan = compute_ingest_plan(
             source_root,
@@ -411,9 +565,7 @@ class TestApplyIngestPlan:
         assert new
         assert "hello" in new[0].body and "world" in new[0].body
 
-    def test_skip_actions_do_not_write(
-        self, source_root: Path, store: Store
-    ) -> None:
+    def test_skip_actions_do_not_write(self, source_root: Path, store: Store) -> None:
         source_root.mkdir()
         (source_root / "empty.md").write_text("---\nname: empty\n---\n\n")
         before_count = len(store.load_all())
@@ -439,7 +591,9 @@ class TestApplyIngestPlan:
         ingested row materialises as an active memory, not a pending
         write awaiting confirmation."""
         _write_auto_memory(
-            source_root, "user-claim", auto_type="user",
+            source_root,
+            "user-claim",
+            auto_type="user",
             description="user prefers terse responses",
             body="explicitly stated 2026-05-24",
         )
@@ -465,9 +619,7 @@ class TestApplyIngestPlan:
 
 
 class TestRender:
-    def test_dry_run_says_would_write(
-        self, source_root: Path, store: Store
-    ) -> None:
+    def test_dry_run_says_would_write(self, source_root: Path, store: Store) -> None:
         _write_auto_memory(source_root, "x")
         plan = compute_ingest_plan(
             source_root,
@@ -478,9 +630,7 @@ class TestRender:
         assert "--dry-run" in text
         assert "would write" in text
 
-    def test_commit_says_wrote_with_ids(
-        self, source_root: Path, store: Store
-    ) -> None:
+    def test_commit_says_wrote_with_ids(self, source_root: Path, store: Store) -> None:
         _write_auto_memory(source_root, "x")
         plan = compute_ingest_plan(
             source_root,
@@ -510,6 +660,57 @@ class TestDiscoverDefaultSourceRoot:
         result = discover_default_source_root(tmp_path / "fake-project-path")
         assert result is None
 
+    def test_finds_auto_memory_for_simple_cwd(
+        self, tmp_path: Path, monkeypatch: Any
+    ) -> None:
+        """The positive case: a cwd whose sanitised name maps to an
+        existing `~/.claude/projects/<sanitised>/memory/` directory
+        resolves to that path. Without this test, the sanitisation
+        algorithm has no lock-in — a refactor that reordered the
+        replaces or restored a slash-only behaviour would still pass
+        the negative test."""
+        fake_home = tmp_path / "home"
+        fake_home.mkdir()
+        monkeypatch.setattr(Path, "home", lambda: fake_home)
+
+        # `/Users/me/projects/foo` → `-Users-me-projects-foo`
+        cwd = tmp_path / "cwd_simple" / "projects" / "foo"
+        cwd.mkdir(parents=True)
+        resolved = str(cwd.resolve()).lstrip("/")
+        sanitised = "-" + resolved.replace("/", "-").replace(".", "-")
+        target = fake_home / ".claude" / "projects" / sanitised / "memory"
+        target.mkdir(parents=True)
+
+        assert discover_default_source_root(cwd) == target
+
+    def test_finds_auto_memory_for_dotted_cwd(
+        self, tmp_path: Path, monkeypatch: Any
+    ) -> None:
+        """Locks in the 2.7.0 audit-fix: cwds containing a dot (a
+        common shape for `.claude/worktrees/*`, hidden dirs, or
+        version-suffixed paths) sanitise BOTH `/` and `.` to `-`.
+        An earlier slash-only sanitiser silently missed every dotted
+        path. Without this test, the dot-replacement is a one-line
+        change a future maintainer could revert."""
+        fake_home = tmp_path / "home"
+        fake_home.mkdir()
+        monkeypatch.setattr(Path, "home", lambda: fake_home)
+
+        # Mirrors the `.claude/worktrees/<branch>` layout the audit
+        # comment calls out.
+        cwd = tmp_path / "repo" / ".claude" / "worktrees" / "feat-branch"
+        cwd.mkdir(parents=True)
+        resolved = str(cwd.resolve()).lstrip("/")
+        sanitised = "-" + resolved.replace("/", "-").replace(".", "-")
+        # The sanitised name must contain `--claude-` (the dot before
+        # `claude` mapped to a second `-`); if a refactor produces
+        # `-.claude-` instead, this assertion fails fast.
+        assert "--claude-" in sanitised
+        target = fake_home / ".claude" / "projects" / sanitised / "memory"
+        target.mkdir(parents=True)
+
+        assert discover_default_source_root(cwd) == target
+
 
 # ---------------------------------------------------------------------------
 # CLI integration
@@ -518,7 +719,7 @@ class TestDiscoverDefaultSourceRoot:
 
 class TestCLI:
     def test_ingest_dry_run_smoke(
-        self, tmp_path: Path, capsys: Any
+        self, tmp_path: Path, capsys: Any, monkeypatch: Any
     ) -> None:
         from bettermemory.server import main as server_main
 
@@ -526,25 +727,18 @@ class TestCLI:
         _write_auto_memory(source, "cli-test-1")
         store_dir = tmp_path / "store"
 
-        env_save = os.environ.get("BETTERMEMORY_DIR")
-        os.environ["BETTERMEMORY_DIR"] = str(store_dir)
-        argv_save = sys.argv[:]
-        sys.argv = ["bettermemory", "ingest", "--from", str(source), "--dry-run"]
-        try:
-            server_main()
-        finally:
-            sys.argv = argv_save
-            if env_save is None:
-                os.environ.pop("BETTERMEMORY_DIR", None)
-            else:
-                os.environ["BETTERMEMORY_DIR"] = env_save
+        monkeypatch.setenv("BETTERMEMORY_DIR", str(store_dir))
+        monkeypatch.setattr(
+            sys, "argv", ["bettermemory", "ingest", "--from", str(source), "--dry-run"]
+        )
+        server_main()
 
         captured = capsys.readouterr()
         assert "bettermemory ingest --dry-run" in captured.out
         assert "cli-test-1" in captured.out
 
     def test_ingest_commit_persists_to_store(
-        self, tmp_path: Path, capsys: Any
+        self, tmp_path: Path, capsys: Any, monkeypatch: Any
     ) -> None:
         from bettermemory.server import main as server_main
 
@@ -552,18 +746,11 @@ class TestCLI:
         _write_auto_memory(source, "cli-test-2")
         store_dir = tmp_path / "store"
 
-        env_save = os.environ.get("BETTERMEMORY_DIR")
-        os.environ["BETTERMEMORY_DIR"] = str(store_dir)
-        argv_save = sys.argv[:]
-        sys.argv = ["bettermemory", "ingest", "--from", str(source)]
-        try:
-            server_main()
-        finally:
-            sys.argv = argv_save
-            if env_save is None:
-                os.environ.pop("BETTERMEMORY_DIR", None)
-            else:
-                os.environ["BETTERMEMORY_DIR"] = env_save
+        monkeypatch.setenv("BETTERMEMORY_DIR", str(store_dir))
+        monkeypatch.setattr(
+            sys, "argv", ["bettermemory", "ingest", "--from", str(source)]
+        )
+        server_main()
 
         captured = capsys.readouterr()
         assert "wrote" in captured.out
@@ -574,44 +761,38 @@ class TestCLI:
         assert len(all_mems) == 1
         assert DEFAULT_PROVENANCE_SCOPE in all_mems[0].scopes
 
-    def test_ingest_json_output(self, tmp_path: Path, capsys: Any) -> None:
+    def test_ingest_json_output(
+        self, tmp_path: Path, capsys: Any, monkeypatch: Any
+    ) -> None:
         from bettermemory.server import main as server_main
 
         source = tmp_path / "source"
         _write_auto_memory(source, "cli-test-3")
         store_dir = tmp_path / "store"
 
-        env_save = os.environ.get("BETTERMEMORY_DIR")
-        os.environ["BETTERMEMORY_DIR"] = str(store_dir)
-        argv_save = sys.argv[:]
-        sys.argv = ["bettermemory", "ingest", "--from", str(source), "--json", "--dry-run"]
-        try:
-            server_main()
-        finally:
-            sys.argv = argv_save
-            if env_save is None:
-                os.environ.pop("BETTERMEMORY_DIR", None)
-            else:
-                os.environ["BETTERMEMORY_DIR"] = env_save
+        monkeypatch.setenv("BETTERMEMORY_DIR", str(store_dir))
+        monkeypatch.setattr(
+            sys,
+            "argv",
+            ["bettermemory", "ingest", "--from", str(source), "--json", "--dry-run"],
+        )
+        server_main()
 
         parsed = json.loads(capsys.readouterr().out)
         assert parsed["summary"]["total"] == 1
         assert parsed["summary"]["write"] == 1
         assert parsed["rows"][0]["title"] == "cli-test-3"
 
-    def test_ingest_missing_source_errors_cleanly(self, tmp_path: Path) -> None:
+    def test_ingest_missing_source_errors_cleanly(
+        self, tmp_path: Path, monkeypatch: Any
+    ) -> None:
         from bettermemory.server import main as server_main
 
-        env_save = os.environ.get("BETTERMEMORY_DIR")
-        os.environ["BETTERMEMORY_DIR"] = str(tmp_path / "store")
-        argv_save = sys.argv[:]
-        sys.argv = ["bettermemory", "ingest", "--from", str(tmp_path / "nope"), "--dry-run"]
-        try:
-            with pytest.raises(SystemExit):
-                server_main()
-        finally:
-            sys.argv = argv_save
-            if env_save is None:
-                os.environ.pop("BETTERMEMORY_DIR", None)
-            else:
-                os.environ["BETTERMEMORY_DIR"] = env_save
+        monkeypatch.setenv("BETTERMEMORY_DIR", str(tmp_path / "store"))
+        monkeypatch.setattr(
+            sys,
+            "argv",
+            ["bettermemory", "ingest", "--from", str(tmp_path / "nope"), "--dry-run"],
+        )
+        with pytest.raises(SystemExit):
+            server_main()

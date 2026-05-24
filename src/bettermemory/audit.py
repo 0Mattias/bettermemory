@@ -46,15 +46,18 @@ Design notes:
 - **Threshold rule is a string in the report.** v1 is `top-1 hit
   relevance == "high"`. The relevance label comes from
   `_relevance_label(matched_unique, query_unique)` which classifies on
-  coverage >= 0.75. **Calibration is unknown.** Single-token user
-  messages structurally always score "high" if the token appears
-  anywhere (1/1 = 1.0); multi-token natural language with stopwords
-  often lands at 2/3 = "medium" and does not fire. Whether the v1
-  rule under-fires, over-fires, or is roughly right depends on the
-  real distribution of user messages, which we don't have data on
-  yet. The rule version is recorded on every emitted event so a
-  later calibration pass can replay historical logs under a new
-  threshold without losing the audit trail.
+  coverage >= 0.75. **Calibration is empirical**, and as of 2.7.0
+  there's a tool for it: `bettermemory eval --threshold-sweep` runs
+  a counterfactual replay of logged `search_miss` events under the
+  bundled stricter rules (v2 score floor, v3 dominance, v4
+  intersection) and reports `v1_drift` so a divergence between this
+  in-process rule and what production actually flagged is visible.
+  Single-token user messages structurally always score "high" if the
+  token appears anywhere (1/1 = 1.0); multi-token natural language
+  with stopwords often lands at 2/3 = "medium" and does not fire.
+  The rule version is recorded on every emitted event so a later
+  calibration pass can replay historical logs under a new threshold
+  without losing the audit trail.
 
 - **Lookback is wall-clock, not turn-counter.** The audit fires from a
   client-side hook (Claude Code Stop hook, etc.), which doesn't carry
@@ -103,6 +106,16 @@ _TOP_HITS_RETAINED = 3
 # enough to cover a normal multi-tool model turn; short enough that a
 # search from earlier in the session doesn't paper over a fresh miss.
 DEFAULT_LOOKBACK_SECONDS = 60
+
+# Closed set of `triggered_from` discriminator values for `turn_audited`
+# and `search_miss` events. The Stop hook emits `"stop_hook"`; the
+# in-process MCP handler emits `"mcp_tool"`. Pinning the set at the
+# builder boundary mirrors the search-mode runtime guard in
+# `search.py:761` — without this check, a typo elsewhere silently
+# produces unsplittable eval rows (downstream consumers `groupby`-split
+# on this field). Mirrors the same Literal-at-types-only situation:
+# Python doesn't enforce it at call time.
+_VALID_TRIGGERED_FROM: frozenset[str] = frozenset({"stop_hook", "mcp_tool"})
 
 
 # Verdict literals — surfaced both in the structured return and (verbatim)
@@ -217,6 +230,11 @@ def turn_audited_fields(
     ``"stop_hook"`` or ``"mcp_tool"``, a closed set both producers
     populate so a consumer can split traffic without guessing.
     """
+    if triggered_from not in _VALID_TRIGGERED_FROM:
+        raise ValueError(
+            f"triggered_from must be one of "
+            f"{sorted(_VALID_TRIGGERED_FROM)!r}, got {triggered_from!r}"
+        )
     return {
         "session_id": session_id,
         "verdict": report.verdict,
@@ -244,6 +262,11 @@ def search_miss_fields(
     field off the ``search_miss`` event while every producer emitted
     it on ``turn_audited`` only — the eval column was always blank.
     """
+    if triggered_from not in _VALID_TRIGGERED_FROM:
+        raise ValueError(
+            f"triggered_from must be one of "
+            f"{sorted(_VALID_TRIGGERED_FROM)!r}, got {triggered_from!r}"
+        )
     return {
         "session_id": session_id,
         "threshold_rule": report.threshold_rule,

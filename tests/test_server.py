@@ -1696,23 +1696,67 @@ async def test_scope_overview_delta_dict_when_prior_session_exists(
     cfg = Config(storage=StorageConfig(directory=str(memory_dir)))
     # First "session": write a memory and call scope_overview so the
     # event log carries something tagged with this session_id.
-    server_a = build_server(
-        config=cfg, store=Store(memory_dir), state=SessionState()
-    )
+    server_a = build_server(config=cfg, store=Store(memory_dir), state=SessionState())
     await _call(server_a, "memory_write", content="x", scopes=["tools"])
     await _call(server_a, "memory_scope_overview", auto_scope=False)
 
     # Second "session": fresh SessionState gives a new session_id, so
     # the events from session A are now "prior" relative to session B.
-    server_b = build_server(
-        config=cfg, store=Store(memory_dir), state=SessionState()
-    )
+    server_b = build_server(config=cfg, store=Store(memory_dir), state=SessionState())
     overview = await _call(server_b, "memory_scope_overview", auto_scope=False)
     delta = overview["curation_pending_new_since_last_session"]
     assert isinstance(delta, dict)
     # Same key set as the absolute view — the model should not need a
     # different branch for each.
     assert set(delta.keys()) == set(overview["curation_pending"].keys())
+
+
+async def test_scope_overview_delta_uses_recorder_session_not_state(
+    memory_dir: Path,
+) -> None:
+    """Multi-client regression: in SessionRegistry mode each request's
+    `state.session_id` differs from the recorder's process-wide
+    `session_id`. Every event the recorder writes carries the
+    recorder's id, so the handler must use the recorder's id (not
+    `state.session_id`) when locating the prior session boundary.
+    Otherwise the registry-path delta misidentifies the current
+    session's events as "prior" and collapses to a wrong value.
+
+    This test pins the contract by passing an explicit mismatched
+    state + recorder pair to `build_server`."""
+    from bettermemory.events import Recorder
+
+    cfg = Config(storage=StorageConfig(directory=str(memory_dir)))
+    # Session A: seed the event log with a prior-session event.
+    server_a = build_server(config=cfg, store=Store(memory_dir), state=SessionState())
+    await _call(server_a, "memory_write", content="seed", scopes=["tools"])
+
+    # Session B: deliberately mismatched ids to simulate the
+    # SessionRegistry multi-client case.
+    rec_b = Recorder(
+        root=memory_dir,
+        session_id="recorder-id-B",
+    )
+    state_b = SessionState(session_id="client-state-id-B")
+    server_b = build_server(
+        config=cfg,
+        store=Store(memory_dir),
+        state=state_b,
+        recorder=rec_b,
+    )
+    overview = await _call(server_b, "memory_scope_overview", auto_scope=False)
+    # The boundary should resolve against the prior session (server_a's
+    # events) using the recorder's id — surface a delta dict, not None.
+    assert overview["curation_pending_new_since_last_session"] is not None
+    # And the recorded scope_overview event uses recorder-id-B as its
+    # session tag (proves the audit-trail stays internally consistent).
+    events_path = memory_dir / ".events.jsonl"
+    last = [
+        json.loads(line)
+        for line in events_path.read_text().splitlines()
+        if json.loads(line).get("kind") == "scope_overview"
+    ][-1]
+    assert last["session"] == "recorder-id-B"
 
 
 async def test_scope_overview_delta_event_recorded_carries_boundary(
@@ -1725,14 +1769,10 @@ async def test_scope_overview_delta_event_recorded_carries_boundary(
     cfg = Config(storage=StorageConfig(directory=str(memory_dir)))
     # Seed a prior-session event so the boundary resolves to a non-null
     # value on the second session_overview call.
-    server_a = build_server(
-        config=cfg, store=Store(memory_dir), state=SessionState()
-    )
+    server_a = build_server(config=cfg, store=Store(memory_dir), state=SessionState())
     await _call(server_a, "memory_write", content="y", scopes=["tools"])
 
-    server_b = build_server(
-        config=cfg, store=Store(memory_dir), state=SessionState()
-    )
+    server_b = build_server(config=cfg, store=Store(memory_dir), state=SessionState())
     await _call(server_b, "memory_scope_overview", auto_scope=False)
 
     # Read the events log directly and pull the most recent scope_overview
@@ -1742,7 +1782,9 @@ async def test_scope_overview_delta_event_recorded_carries_boundary(
     events_path = memory_dir / ".events.jsonl"
     lines = events_path.read_text().splitlines()
     scope_events = [
-        json.loads(line) for line in lines if json.loads(line)["kind"] == "scope_overview"
+        json.loads(line)
+        for line in lines
+        if json.loads(line)["kind"] == "scope_overview"
     ]
     assert scope_events, "expected at least one scope_overview event"
     latest = scope_events[-1]
@@ -1972,3 +2014,127 @@ def test_instructions_block_carries_load_bearing_phrases(server: Any) -> None:
     ]
     missing = [p for p in must_have if p not in body]
     assert not missing, f"instructions lost load-bearing phrases: {missing}"
+
+
+# ---------------------------------------------------------------------------
+# Backward-scan early-exit in _already_recorded_pending_ids
+# ---------------------------------------------------------------------------
+
+
+def test_already_recorded_pending_ids_early_exits_on_old_events(
+    memory_dir: Path,
+) -> None:
+    """The dedup scan walks the active log backward and bails as soon
+    as event timestamps fall behind the oldest pending token's
+    `issued_at`. Without the early-exit, every call to this function
+    walks every event in the active log — O(N) per turn against a
+    rotation cap of 10 MB / tens of thousands of events.
+
+    Two assertions live here:
+
+    1. Correctness — the function returns exactly the memory_ids whose
+       use-events are timestamped at or after the corresponding token's
+       `issued_at`. The 2.6.7 timestamp-guard semantics must survive
+       the optimisation.
+    2. Performance — a log of 10k old (pre-token) events plus a few
+       recent use-events resolves in well under 100ms. Generous
+       threshold so the test isn't flaky on slow CI; the early-exit
+       brings the realistic wall-clock down by orders of magnitude
+       relative to the full forward scan.
+    """
+    import time as _time
+
+    from bettermemory._handlers import _already_recorded_pending_ids
+    from bettermemory.events import Recorder
+    from bettermemory.session import PendingUseToken, SessionState
+
+    memory_dir.mkdir(parents=True, exist_ok=True)
+
+    state = SessionState()
+    recorder = Recorder(root=memory_dir, session_id=state.session_id)
+
+    # Phase 1: write 10_000 ancient events to the active log. Predates
+    # any pending token; the early-exit must bail before scanning them.
+    for i in range(10_000):
+        recorder.record("turn_audited", session_id=state.session_id, hits=[], note=i)
+
+    # Phase 2: mint pending tokens NOW. Every recorded `use` event below
+    # will be timestamped strictly after the tokens' `issued_at`.
+    now_ts = _time.time()
+    pending_mids = [f"01J0000000000000000000{i:04d}" for i in range(5)]
+    for mid in pending_mids:
+        state.pending_use_tokens[mid] = PendingUseToken(
+            token=f"use_{mid[-8:]}",
+            memory_id=mid,
+            issued_at=now_ts,
+            issued_at_turn=1,
+        )
+
+    # Phase 3: record a `use` event for each pending mid AFTER minting.
+    for mid in pending_mids:
+        recorder.record(
+            "use", ids=[mid], outcome="applied", auto=False, attribution="model"
+        )
+
+    # Correctness: every minted token should be reported as
+    # "already recorded" — the 5 use events all match.
+    start = _time.perf_counter()
+    result = _already_recorded_pending_ids(state, recorder)
+    elapsed = _time.perf_counter() - start
+
+    assert result == set(pending_mids), f"expected all pending ids back, got {result}"
+
+    # Performance: with the backward early-exit, the scan touches a
+    # handful of recent events (the 5 use events + the trailing
+    # turn_audited barrier) before bailing — well under 100ms even on
+    # slow CI. Without the optimisation, the full forward scan over
+    # 10k+ events comfortably exceeds this on a non-trivial loop body.
+    assert elapsed < 0.1, (
+        f"_already_recorded_pending_ids took {elapsed:.3f}s for 10k-event "
+        f"log; backward early-exit appears not to be triggering"
+    )
+
+
+def test_already_recorded_pending_ids_respects_issued_at_guard(
+    memory_dir: Path,
+) -> None:
+    """The 2.6.7 fix: a `use` event timestamped BEFORE the pending
+    token's `issued_at` must not falsely purge the fresh token. This
+    is the load-bearing invariant that the backward-scan optimisation
+    must preserve.
+    """
+    import time as _time
+
+    from bettermemory._handlers import _already_recorded_pending_ids
+    from bettermemory.events import Recorder
+    from bettermemory.session import PendingUseToken, SessionState
+
+    memory_dir.mkdir(parents=True, exist_ok=True)
+    state = SessionState()
+    recorder = Recorder(root=memory_dir, session_id=state.session_id)
+
+    mid = "01J0000000000000000000ABCD"
+    # Stale use event lands FIRST.
+    recorder.record(
+        "use", ids=[mid], outcome="applied", auto=False, attribution="model"
+    )
+
+    # Brief sleep to ensure the next token's wall-clock issued_at
+    # comfortably exceeds the stale event's ts (sub-second resolution
+    # on the ISO timestamp shouldn't matter in practice, but pin it).
+    _time.sleep(0.01)
+
+    state.pending_use_tokens[mid] = PendingUseToken(
+        token="use_freshtok",
+        memory_id=mid,
+        issued_at=_time.time(),
+        issued_at_turn=1,
+    )
+
+    result = _already_recorded_pending_ids(state, recorder)
+    # The stale event is older than the fresh token — must NOT mark
+    # the token as already-recorded.
+    assert result == set(), (
+        f"stale event falsely matched fresh token; got {result}. "
+        "The event.ts >= token.issued_at guard regressed."
+    )

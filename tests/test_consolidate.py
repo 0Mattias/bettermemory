@@ -659,18 +659,39 @@ def test_consolidate_returns_method_label_when_no_semantic_model(
 # ---------------------------------------------------------------------------
 
 # These tests invoke the `bettermemory` CLI script directly, which only
-# exists on $PATH after `pip install -e .` (or a published install). CI
-# runs `uv sync --extra dev` before pytest so the binary is present;
-# a fresh local clone without the editable install would otherwise see
-# these fail with FileNotFoundError. Mirrors the `shutil.which("git")`
-# gate that protects test_sync.py from the same issue.
+# works after `pip install -e .` (or a published install). CI runs
+# `uv sync --extra dev` before pytest so the binary is present and the
+# package is importable; a fresh local clone where the shim exists on
+# $PATH but the editable install is broken (stale `.pth`, iCloud-sync
+# UF_HIDDEN flag, etc.) would otherwise see these fail with
+# `ModuleNotFoundError: bettermemory`. Probe with `--help` so the gate
+# catches both "shim missing" and "shim broken" — the failure modes
+# look identical from a developer's perspective. Mirrors the
+# `shutil.which("git")` gate that protects test_sync.py.
 import shutil as _shutil  # noqa: E402
+import subprocess as _subprocess  # noqa: E402
 
-_BETTERMEMORY_ON_PATH = _shutil.which("bettermemory") is not None
+
+def _cli_is_functional() -> bool:
+    if _shutil.which("bettermemory") is None:
+        return False
+    try:
+        result = _subprocess.run(
+            ["bettermemory", "--help"],
+            capture_output=True,
+            text=True,
+            timeout=10,
+        )
+    except (OSError, _subprocess.TimeoutExpired):
+        return False
+    return result.returncode == 0
+
+
+_BETTERMEMORY_CLI_WORKS = _cli_is_functional()
 
 _skip_without_cli = pytest.mark.skipif(
-    not _BETTERMEMORY_ON_PATH,
-    reason="`bettermemory` CLI not on $PATH; run `pip install -e .` locally",
+    not _BETTERMEMORY_CLI_WORKS,
+    reason="`bettermemory` CLI not functional; run `pip install -e .` locally",
 )
 
 
