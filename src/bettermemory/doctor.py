@@ -27,8 +27,10 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import shutil
 import sys
+import sysconfig
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -669,6 +671,146 @@ def _check_mcp_client_configs() -> Diagnosis:
     )
 
 
+# Pattern for the iCloud-style duplicate that the canonical METADATA
+# file commonly gets renamed to: "METADATA 2", "METADATA 3", …, or
+# "METADATA copy", "METADATA copy 2". The detector treats either as a
+# hint that the original was clobbered by a sync conflict.
+_METADATA_DUP_RE = re.compile(r"^METADATA(?: \d+| copy(?: \d+)?)$")
+
+
+def _discover_site_packages() -> list[Path]:
+    """Return the active interpreter's site-packages directories.
+
+    Wrapped as a module-level helper so tests can monkeypatch a tmp
+    path in without having to fake `sysconfig`/`site` themselves.
+    Returns absolute, deduplicated paths that exist on disk; an empty
+    list if none can be located (which the caller treats as "nothing
+    to check").
+    """
+    candidates: list[str] = []
+    purelib = sysconfig.get_paths().get("purelib")
+    if purelib:
+        candidates.append(purelib)
+    platlib = sysconfig.get_paths().get("platlib")
+    if platlib:
+        candidates.append(platlib)
+    # `site.getsitepackages()` isn't available in every embedded
+    # interpreter (e.g. some virtualenv-in-virtualenv chains); guard it.
+    try:
+        import site
+
+        candidates.extend(site.getsitepackages())
+    except Exception:  # noqa: BLE001
+        pass
+
+    seen: set[str] = set()
+    out: list[Path] = []
+    for c in candidates:
+        p = Path(c)
+        try:
+            resolved = str(p.resolve())
+        except OSError:
+            continue
+        if resolved in seen:
+            continue
+        seen.add(resolved)
+        if p.is_dir():
+            out.append(p)
+    return out
+
+
+def _check_distinfo_metadata(site_packages: list[Path] | None = None) -> Diagnosis:
+    """Detect `*.dist-info/` dirs missing the canonical `METADATA` file.
+
+    iCloud Drive on macOS occasionally duplicates files inside a
+    dependency's dist-info directory — the canonical `METADATA` file
+    ends up only as `METADATA 2` (or `METADATA copy`, etc.) and the
+    canonical name disappears. When that happens,
+    `importlib.metadata.version("<pkg>")` returns None for that
+    distribution. Inside the `mcp` library this trips a pydantic
+    validation that crashes the MCP server with an opaque `-32000`
+    reconnect failure — the user sees the server disconnect mid-
+    session and nothing in the logs points at the root cause.
+    The detector is a no-op fixer: it surfaces affected dist-info dirs
+    so the user can rename the duplicate or re-install the package.
+    """
+    if site_packages is None:
+        site_packages = _discover_site_packages()
+
+    if not site_packages:
+        return Diagnosis(
+            name="distinfo_metadata",
+            status="ok",
+            message="No site-packages directories located — skipping dist-info check.",
+        )
+
+    broken: list[dict[str, Any]] = []
+    scanned = 0
+    for sp in site_packages:
+        try:
+            entries = list(sp.glob("*.dist-info"))
+        except OSError:
+            continue
+        for dist_info in entries:
+            if not dist_info.is_dir():
+                continue
+            scanned += 1
+            if (dist_info / "METADATA").is_file():
+                continue
+            # Missing canonical METADATA. Scan for the iCloud-style
+            # duplicate so we can hint at the likely cause.
+            duplicates: list[str] = []
+            try:
+                for child in dist_info.iterdir():
+                    if child.is_file() and _METADATA_DUP_RE.match(child.name):
+                        duplicates.append(child.name)
+            except OSError:
+                pass
+            broken.append(
+                {
+                    "dist_info": str(dist_info),
+                    "duplicates": sorted(duplicates),
+                }
+            )
+
+    if not broken:
+        return Diagnosis(
+            name="distinfo_metadata",
+            status="ok",
+            message=f"All {scanned} dist-info dir(s) have a canonical METADATA file.",
+            details={"scanned": scanned, "site_packages": [str(p) for p in site_packages]},
+        )
+
+    names = ", ".join(Path(b["dist_info"]).name for b in broken[:3])
+    if len(broken) > 3:
+        names += f", … (+{len(broken) - 3} more)"
+    any_dup = any(b["duplicates"] for b in broken)
+    cause_hint = (
+        " A duplicate like `METADATA 2` is present, which is the iCloud "
+        "Drive sync-conflict signature on macOS."
+        if any_dup
+        else ""
+    )
+    return Diagnosis(
+        name="distinfo_metadata",
+        status="warn",
+        message=(
+            f"{len(broken)} dist-info dir(s) missing canonical METADATA "
+            f"({names}). `importlib.metadata.version()` returns None for "
+            f"these packages, which can crash the MCP server with an "
+            f"opaque `-32000` disconnect.{cause_hint}"
+        ),
+        fix_hint=(
+            "Re-install the affected package(s) with `uv pip install "
+            "--force-reinstall <pkg>` (or `pip install --force-reinstall "
+            "<pkg>`). Renaming `METADATA 2` → `METADATA` works if it's "
+            "the only canonical-shaped file in the dir, but re-installing "
+            "is the safer fix."
+        ),
+        details={"scanned": scanned, "broken": broken},
+    )
+
+
 # ---------------------------------------------------------------------------
 # Top-level
 # ---------------------------------------------------------------------------
@@ -734,6 +876,7 @@ def run_diagnostics() -> DoctorReport:
 
     checks.append(_safe("embeddings_extra", lambda: _check_embeddings_extra(cfg)))
     checks.append(_safe("mcp_client_configs", _check_mcp_client_configs))
+    checks.append(_safe("distinfo_metadata", _check_distinfo_metadata))
 
     # Filter out any None entries that snuck through (defensive).
     return DoctorReport(checks=[c for c in checks if c is not None])

@@ -22,6 +22,7 @@ from bettermemory.doctor import (
     _check_audit_turn_cadence,
     _check_binary_on_path,
     _check_config_loadable,
+    _check_distinfo_metadata,
     _check_embeddings_extra,
     _check_event_log_writable,
     _check_mcp_client_configs,
@@ -498,6 +499,94 @@ def test_mcp_client_configs_skips_files_without_betterentries(
     # No bettermemory entries found -> "no client config references
     # bettermemory" warn (same as no-files case).
     assert diag.status == "warn"
+
+
+# ---------------------------------------------------------------------------
+# distinfo_metadata
+# ---------------------------------------------------------------------------
+
+
+def _make_distinfo(parent: Path, name: str, *, files: dict[str, str]) -> Path:
+    """Build a fake `*.dist-info/` directory under `parent` with the
+    given top-level files. Returns the dist-info path."""
+    d = parent / name
+    d.mkdir()
+    for fname, body in files.items():
+        (d / fname).write_text(body, encoding="utf-8")
+    return d
+
+
+def test_distinfo_metadata_ok_when_no_site_packages() -> None:
+    """An empty discovery list (e.g. embedded interpreter) is treated as
+    "nothing to check" — the check must not warn just because we
+    couldn't find a site-packages dir."""
+    diag = _check_distinfo_metadata(site_packages=[])
+    assert diag.status == "ok"
+    assert "skipping" in diag.message.lower()
+
+
+def test_distinfo_metadata_ok_when_all_have_canonical(tmp_path: Path) -> None:
+    """Healthy dist-info dirs (each with a `METADATA` file) pass
+    silently — no warning even if other files are present."""
+    _make_distinfo(tmp_path, "pkg-1.0.dist-info", files={"METADATA": "Name: pkg\n"})
+    _make_distinfo(
+        tmp_path,
+        "other-2.0.dist-info",
+        files={"METADATA": "Name: other\n", "WHEEL": "ok\n"},
+    )
+    diag = _check_distinfo_metadata(site_packages=[tmp_path])
+    assert diag.status == "ok"
+    assert diag.details["scanned"] == 2
+
+
+def test_distinfo_metadata_warns_on_missing_canonical(tmp_path: Path) -> None:
+    """A dist-info dir with only `METADATA 2` (the iCloud-conflict
+    rename) and no canonical `METADATA` is the failure mode this
+    check exists to catch — warn, name the dir, hint at the iCloud
+    cause, and suggest re-install."""
+    _make_distinfo(
+        tmp_path, "healthy-1.0.dist-info", files={"METADATA": "Name: healthy\n"}
+    )
+    broken = _make_distinfo(
+        tmp_path,
+        "broken-2.0.dist-info",
+        files={"METADATA 2": "Name: broken\n", "WHEEL": "ok\n"},
+    )
+    diag = _check_distinfo_metadata(site_packages=[tmp_path])
+    assert diag.status == "warn"
+    # The healthy dir must NOT be named in the warning.
+    assert "healthy-1.0.dist-info" not in diag.message
+    # The broken one MUST be named.
+    assert "broken-2.0.dist-info" in diag.message
+    # The iCloud-cause hint fires because `METADATA 2` matched the
+    # duplicate regex.
+    assert "iCloud" in diag.message
+    # Fix hint should point at re-install (the safer recovery).
+    assert diag.fix_hint is not None
+    assert "reinstall" in (diag.fix_hint or "").lower() or "install" in (
+        diag.fix_hint or ""
+    ).lower()
+    # `details.broken` should list the broken dir and its duplicates.
+    assert len(diag.details["broken"]) == 1
+    entry = diag.details["broken"][0]
+    assert entry["dist_info"] == str(broken)
+    assert "METADATA 2" in entry["duplicates"]
+
+
+def test_distinfo_metadata_warns_without_icloud_hint_when_no_duplicate(
+    tmp_path: Path,
+) -> None:
+    """A dist-info missing METADATA but with no iCloud-style duplicate
+    (e.g. partial uninstall) still warns, but skips the iCloud-cause
+    sentence — we only claim the cause when the evidence is there."""
+    _make_distinfo(
+        tmp_path, "partial-3.0.dist-info", files={"WHEEL": "ok\n"}
+    )
+    diag = _check_distinfo_metadata(site_packages=[tmp_path])
+    assert diag.status == "warn"
+    assert "partial-3.0.dist-info" in diag.message
+    assert "iCloud" not in diag.message  # no duplicate -> no cause hint
+    assert diag.details["broken"][0]["duplicates"] == []
 
 
 # ---------------------------------------------------------------------------
