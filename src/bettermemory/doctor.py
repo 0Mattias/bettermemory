@@ -788,19 +788,45 @@ def _check_distinfo_metadata(site_packages: list[Path] | None = None) -> Diagnos
                 # partial sync or manual edit) passes both `is_file()`
                 # and `stat().st_size > 0`, but `importlib.metadata.
                 # version()` still returns None because the canonical
-                # `Name:` header is absent. Read the first 256 bytes and
-                # require the RFC-822-ish `Name: <value>` header to be
-                # present — that's literally what the loader parses to
-                # answer `version()`. Wrap the read in try/except so a
+                # `Name:` header is absent. Require the RFC-822-ish
+                # `Name: <value>` header to be present in the header
+                # section — that's literally what the loader parses to
+                # answer `version()`.
+                #
+                # The header section is RFC-822-shaped and terminates
+                # at the first blank line. PEP 643 / Core Metadata
+                # doesn't fix the order of fields, so `Name:` can sit
+                # arbitrarily deep behind `Metadata-Version:`,
+                # `License-Expression:`, multiple `Project-URL:` rows,
+                # or in-header `Description:` text emitted by some
+                # packaging tools. Read in chunks until we hit a blank
+                # line OR a defensive 16 KiB cap — well past any real
+                # wheel's header but bounded against a pathological
+                # multi-MiB file. Wrap the read in try/except so a
                 # race-condition mid-walk doesn't crash doctor.
                 try:
+                    chunks: list[bytes] = []
+                    total = 0
+                    cap = 16 * 1024
                     with metadata_path.open("rb") as fh:
-                        head = fh.read(256)
+                        while total < cap:
+                            chunk = fh.read(1024)
+                            if not chunk:
+                                break
+                            chunks.append(chunk)
+                            total += len(chunk)
+                            # `\n\n` (LF) or `\r\n\r\n` (CRLF) marks
+                            # the end of the RFC-822 header section.
+                            # Check the rolling buffer so a terminator
+                            # split across two chunks still triggers.
+                            joined = b"".join(chunks)
+                            if b"\n\n" in joined or b"\r\n\r\n" in joined:
+                                break
+                    header_section = b"".join(chunks).decode(
+                        "utf-8", errors="replace"
+                    )
                     header_ok = bool(
-                        re.search(
-                            r"(?m)^Name:\s*\S",
-                            head.decode("utf-8", errors="replace"),
-                        )
+                        re.search(r"(?m)^Name:\s*\S", header_section)
                     )
                 except OSError:
                     header_ok = False

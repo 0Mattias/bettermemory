@@ -659,6 +659,50 @@ def test_distinfo_metadata_ok_when_metadata_has_leading_metadata_version_header(
     assert diag.details["scanned"] == 1
 
 
+def test_distinfo_metadata_ok_when_name_header_past_first_chunk(
+    tmp_path: Path,
+) -> None:
+    """PEP 643 / Core Metadata doesn't fix header order. Wheels emitted
+    by some packaging tools push `Name:` past the first few hundred
+    bytes by leading with `Metadata-Version:`, long `License-Expression:`
+    SPDX strings, multiple `Project-URL:` rows, or in-header
+    `Description:` text. The header check used to read a fixed 256-byte
+    window; this test pins a METADATA where `Name:` sits well past byte
+    256 (still inside the RFC-822 header section) and asserts the check
+    finds it. Under the old 256-byte cap this would false-positive
+    (warn that a valid wheel is broken)."""
+    # Build a realistic header section where `Name:` is pushed past
+    # byte 256 by long, real-world-shaped fields. Each `Project-URL:`
+    # line is ~80 bytes; six of them plus the `License-Expression:`
+    # SPDX expression lands `Name:` somewhere around byte 600.
+    header = (
+        b"Metadata-Version: 2.4\n"
+        b"License-Expression: (Apache-2.0 OR MIT) AND BSD-3-Clause\n"
+        b"Project-URL: Homepage, https://example.com/some/long/url/path/to/project\n"
+        b"Project-URL: Documentation, https://example.com/docs/very/long/path/here\n"
+        b"Project-URL: Repository, https://github.com/example/some-long-repo-name\n"
+        b"Project-URL: Issues, https://github.com/example/some-long-repo-name/issues\n"
+        b"Project-URL: Changelog, https://example.com/some/long/url/to/changelog\n"
+        b"Project-URL: Funding, https://example.com/some/long/funding/url/here\n"
+        b"Name: pkg\n"
+        b"Version: 1.0\n"
+        b"\n"
+        b"Body text after blank line - should not be scanned for headers.\n"
+    )
+    # Sanity: confirm the fixture actually exercises the bug class.
+    name_offset = header.index(b"\nName: ") + 1
+    assert name_offset > 256, (
+        f"fixture must place Name: past byte 256 to pin the bug class; "
+        f"got offset {name_offset}"
+    )
+    d = tmp_path / "pkg-1.0.dist-info"
+    d.mkdir()
+    (d / "METADATA").write_bytes(header)
+    diag = _check_distinfo_metadata(site_packages=[tmp_path])
+    assert diag.status == "ok"
+    assert diag.details["scanned"] == 1
+
+
 def test_distinfo_metadata_scans_user_site(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
