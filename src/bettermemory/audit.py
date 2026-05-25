@@ -79,6 +79,7 @@ from typing import Any, Iterable, Literal, cast
 from .models import Memory, MemoryHit
 from .origin import Origin, repos_match
 from .search import SearchMode, _strip_stopwords, search as run_search, tokenize
+from .time_utils import isoformat_utc, parse_event_ts
 
 
 # Events that count as "the model retrieved memory in this turn."
@@ -216,7 +217,7 @@ class MissReport:
     def to_dict(self) -> dict[str, Any]:
         return {
             "verdict": self.verdict,
-            "checked_at": self.checked_at.isoformat().replace("+00:00", "Z"),
+            "checked_at": isoformat_utc(self.checked_at),
             "session_id": self.session_id,
             "lookback_seconds": self.lookback_seconds,
             "recent_retrieval_count": self.recent_retrieval_count,
@@ -534,21 +535,11 @@ def _count_recent_retrievals(
         # other event consumers use — see 70e41a4.
         if (ev.get("session") or ev.get("session_id")) != session_id:
             continue
-        ts = _parse_ts(ev.get("ts"))
+        ts = parse_event_ts(ev.get("ts"))
         if ts is None or ts < cutoff:
             continue
         count += 1
     return count
-
-
-def _parse_ts(value: object) -> datetime | None:
-    if not isinstance(value, str):
-        return None
-    s = value.replace("Z", "+00:00")
-    try:
-        return datetime.fromisoformat(s)
-    except ValueError:
-        return None
 
 
 __all__ = [

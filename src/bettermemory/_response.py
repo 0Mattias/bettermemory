@@ -27,6 +27,8 @@ from .models import (
     TombstonedSummary,
 )
 from .origin import Origin, commit_author_timestamps, repos_match
+from .time_utils import isoformat_utc as _isoformat_utc
+from .time_utils import isoformat_utc_optional as _isoformat_utc_optional
 from .verify import (
     compute_staleness_verdict,
     compute_verification_status,
@@ -37,19 +39,13 @@ from .verify import (
 __all__ = ["ResponseBuilder", "isoformat", "isoformat_optional"]
 
 
-def isoformat(dt: datetime) -> str:
-    return dt.isoformat().replace("+00:00", "Z")
-
-
-def isoformat_optional(dt: datetime | None) -> str | None:
-    """ISO-format `dt`, returning None when the input is None.
-
-    Distinct from `isoformat` because `None` is a meaningful response
-    value for `last_verified_at` — "never verified" is a valid state, not
-    an error. Returning the literal None lets JSON-serialisation produce
-    `"last_verified_at": null` which the caller can branch on directly.
-    """
-    return None if dt is None else isoformat(dt)
+# `isoformat` / `isoformat_optional` are the public names this module
+# has exported since 1.x; keep them as aliases over the canonical
+# `time_utils` helpers so the wire-format definition lives in one
+# place but downstream callers (handlers, tests) don't have to chase
+# the rename.
+isoformat = _isoformat_utc
+isoformat_optional = _isoformat_utc_optional
 
 
 class ResponseBuilder:

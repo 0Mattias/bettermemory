@@ -47,6 +47,7 @@ from datetime import datetime, timedelta, timezone
 from typing import Any, Iterable
 
 from .models import Memory, first_summary_line
+from .time_utils import parse_event_ts
 
 
 # ---------------------------------------------------------------------------
@@ -637,34 +638,14 @@ def _wilson_interval(k: int, n: int, z: float = _WILSON_Z) -> tuple[float, float
     return (max(0.0, center - margin), min(1.0, center + margin))
 
 
-def _parse_ts(raw: Any) -> datetime | None:
-    """Parse the ISO-8601 timestamp the recorder writes. Returns
-    ``None`` on any failure — the caller already knows to skip.
-
-    Always returns a tz-aware datetime: naive ISO strings (which an
-    external producer or an older binary might emit) are stamped as
-    UTC so the result can be safely compared against the tz-aware
-    cutoff every caller derives from ``datetime.now(timezone.utc)``.
-    Without that, the comparison would raise
-    ``TypeError: can't compare offset-naive and offset-aware
-    datetimes`` mid-iteration."""
-    if not isinstance(raw, str):
-        return None
-    try:
-        # The recorder writes ``YYYY-MM-DDTHH:MM:SS.fffZ``. ``fromisoformat``
-        # in 3.11+ accepts that shape; older shapes (without microseconds,
-        # or with explicit ``+00:00``) round-trip too.
-        # The trailing ``Z`` is replaced with ``+00:00`` for
-        # ``fromisoformat`` compatibility on 3.11 / 3.12, which don't
-        # accept the bare ``Z`` literal.
-        if raw.endswith("Z"):
-            raw = raw[:-1] + "+00:00"
-        parsed = datetime.fromisoformat(raw)
-    except ValueError:
-        return None
-    if parsed.tzinfo is None:
-        return parsed.replace(tzinfo=timezone.utc)
-    return parsed
+# `_parse_ts` is a thin module-local alias for the canonical
+# `time_utils.parse_event_ts`. The eval module reads it as if it were
+# local; the indirection centralises the parse semantics without
+# routing every call site through the time_utils import path. Same
+# tz-aware UTC contract — a naive ISO string comes back stamped as UTC
+# so callers can compare against the tz-aware cutoff every rollup
+# derives from `datetime.now(timezone.utc)` without raising.
+_parse_ts = parse_event_ts
 
 
 def _silent_miss_from_event(ev: dict[str, Any]) -> SilentMissCandidate | None:
