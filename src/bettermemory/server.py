@@ -45,10 +45,7 @@ so the consuming model sees an identical list):
 
 from __future__ import annotations
 
-import logging
-
-from .builder import _register_tools, build_server
-from .config import load_config
+from .builder import build_server
 from .origin import capture as capture_origin  # noqa: F401
 from .prompts import SYSTEM_PROMPT_ADDENDUM
 
@@ -60,21 +57,6 @@ from .prompts import SYSTEM_PROMPT_ADDENDUM
 # defensively monkeypatch `bettermemory.server.capture_origin`; removing
 # the binding would AttributeError on the patch even though the test's
 # active code path never calls the symbol.
-
-
-log = logging.getLogger("bettermemory")
-
-
-# Round-3 audit fix: the three semantic-setup helpers moved to
-# ``bettermemory.semantic_setup`` so ``cli/`` can import them without
-# back-edging through this module. Re-exported here so any out-of-tree
-# caller keeps its existing import path. ``builder.py`` reaches the
-# canonical home directly.
-from .semantic_setup import (  # noqa: E402
-    _configure_persistent_embeddings,
-    _resolve_semantic_provider_and_model,
-    _semantic_model_or_none,
-)
 
 
 # ---------------------------------------------------------------------------
@@ -135,10 +117,8 @@ from .cli.export import _cli_export  # noqa: E402
 # from `bettermemory.builder`, the canonical home post-Round-3.
 __all__ = [
     "build_server",
-    "_register_tools",
     "main",
     "SYSTEM_PROMPT_ADDENDUM",
-    "load_config",
     "capture_origin",
     "_cli_export",
     "_cli_consolidate_acknowledge_debt",
