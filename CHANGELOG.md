@@ -9,6 +9,8 @@ spells out exactly what's stable.
 
 ## Unreleased
 
+## 3.0.0 - 2026-05-25
+
 **Companion escape hatch for the 2.7.3 cwd-suppression fix.** v2.7.3
 stopped emitting same-repo silent-miss false positives going forward,
 but the events log still carried the batch of pre-fix `search_miss` /
