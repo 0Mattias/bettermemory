@@ -7,6 +7,29 @@ breaking changes, minor for additive features, patch for fixes. The
 [compatibility contract](CONTRIBUTING.md#versioning-and-the-compatibility-contract)
 spells out exactly what's stable.
 
+## 2.7.2 - 2026-05-25
+
+**Windows CI repair.** The 2.7.0 auto-memory-bridge work shipped Windows-only
+regressions that only surfaced in the 2.7.1 CI run (masked by the version-sync
+failures that fired first). All three fixes are test-side or pure path
+normalisation; no runtime behaviour change on POSIX.
+
+### Fixed — Windows test compatibility
+
+- **`discover_default_source_root` normalises Windows paths.** `cwd.resolve()`
+  on Windows produces backslash-separated paths with a drive-letter prefix;
+  swapping to `as_posix()` + stripping the `:` from `C:/Users/...` keeps the
+  sanitisation a one-liner that produces a valid filename on both platforms.
+  POSIX output is unchanged (`as_posix()` is a no-op on POSIX absolute paths).
+- **`test_finds_auto_memory_for_simple_cwd` and `_for_dotted_cwd` mirror the
+  production normalisation.** Previously the tests computed an expected
+  sanitised name using the old `str(...).lstrip("/")` form, which on Windows
+  leaves a `C:\` prefix that `mkdir` rejects with `WinError 123` before the
+  assertion runs.
+- **`test_kind_map_parity_with_recorder_call_sites` reads source files as
+  UTF-8.** The default `read_text()` uses the locale encoding (`cp1252` on
+  Windows), which couldn't decode a non-ASCII byte in a bettermemory docstring.
+
 ## 2.7.1 - 2026-05-24
 
 **Post-2.7.0 audit follow-up + concurrency test coverage.** A four-agent
