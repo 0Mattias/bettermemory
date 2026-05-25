@@ -36,6 +36,7 @@ def best_effort(
     *,
     logger: logging.Logger | None = None,
     repair_hint: str | None = None,
+    id_getter: Callable[..., Any] | None = None,
 ) -> Callable[[Callable[..., T]], Callable[..., T | None]]:
     """Wrap a function so it never raises — log a warning instead.
 
@@ -50,6 +51,19 @@ def best_effort(
     optional trailing fragment that tells the reader how to recover
     (typically "Run ``bettermemory reindex``"); when present it lands at
     the end of the warning, separated by a period.
+
+    ``id_getter`` is an optional callable with the same signature as the
+    wrapped function; when set, its return value is included in the
+    warning ("index upsert failed for 01HXYZ…"). Pre-Round-3 the
+    decorator dropped the wrapped-function's args entirely, so the
+    inline ``_index_upsert_quietly`` warnings (which embedded
+    ``memory.id`` directly into the message) regressed to id-less
+    warnings after extraction — a production FTS5-corruption flood lost
+    the per-memory attribution that made the old log line actionable.
+    The getter is called inside the except branch, so its own failure
+    is contained: an exception from the getter is caught, logged at
+    debug, and the message degrades to the id-less shape rather than
+    masking the original exception or raising back to the caller.
 
     Catches the broad ``Exception`` rather than a specific type because
     every adopter site has the same "we don't know what the underlying
@@ -66,9 +80,22 @@ def best_effort(
                 return fn(*args, **kwargs)
             except Exception as exc:  # noqa: BLE001 — that is the point.
                 tail = f" {repair_hint}" if repair_hint else ""
+                ctx = ""
+                if id_getter is not None:
+                    try:
+                        ident = id_getter(*args, **kwargs)
+                    except Exception:  # noqa: BLE001 — getter failure must not mask exc.
+                        log.debug(
+                            "best_effort id_getter raised; degrading log",
+                            exc_info=True,
+                        )
+                    else:
+                        if ident is not None:
+                            ctx = f" for {ident}"
                 log.warning(
-                    "%s failed: %s: %s.%s",
+                    "%s%s failed: %s: %s.%s",
                     operation,
+                    ctx,
                     type(exc).__name__,
                     exc,
                     tail,

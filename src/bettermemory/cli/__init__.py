@@ -20,12 +20,12 @@ from __future__ import annotations
 import argparse
 
 from . import (
-    audit_turn,
+    audit_turn_cmd,
     consolidate,
     doctor,
     eval as eval_cmd,
     export,
-    health,
+    health_cmd,
     ingest,
     init as init_cmd,
     migrate,
@@ -35,6 +35,17 @@ from . import (
     tombstones,
     ui,
 )
+
+# Round-3 audit fix: the CLI modules for the ``health`` and
+# ``audit-turn`` subcommands were originally named ``cli/health.py`` and
+# ``cli/audit_turn.py``, colliding with the MCP-tool-handler modules at
+# ``handlers/health.py`` and ``handlers/audit_turn.py``. Grepping
+# ``audit_turn`` from a fresh checkout returned both files with no hint
+# at which was which. Renaming the CLI side (the handler side keeps the
+# established "strip the memory_ prefix" convention) eliminates the
+# basename collision while preserving every CLI surface — the
+# subcommand strings ``bettermemory health`` and ``bettermemory
+# audit-turn`` are unchanged.
 
 
 def _build_parser() -> tuple[argparse.ArgumentParser, dict[str, argparse.ArgumentParser]]:
@@ -71,7 +82,7 @@ def _build_parser() -> tuple[argparse.ArgumentParser, dict[str, argparse.Argumen
     # (`test_help_lists_all_subcommands`) and by users who memorise
     # the layout. Don't reorder casually.
     subparsers: dict[str, argparse.ArgumentParser] = {
-        "health": health.add_subparser(sub),
+        "health": health_cmd.add_subparser(sub),
         "doctor": doctor.add_subparser(sub),
         "init": init_cmd.add_subparser(sub),
         "migrate": migrate.add_subparser(sub),
@@ -80,7 +91,7 @@ def _build_parser() -> tuple[argparse.ArgumentParser, dict[str, argparse.Argumen
         "ui": ui.add_subparser(sub),
         "sync": sync.add_subparser(sub),
         "reindex": reindex.add_subparser(sub),
-        "audit-turn": audit_turn.add_subparser(sub),
+        "audit-turn": audit_turn_cmd.add_subparser(sub),
         "consolidate": consolidate.add_subparser(sub),
         "ingest": ingest.add_subparser(sub),
         "eval": eval_cmd.add_subparser(sub),
@@ -107,7 +118,7 @@ def main() -> None:
     # failure, while ``.print_help()`` on the subparser shows the right
     # help block when a sub-sub-command was missing.
     if cmd == "health":
-        health.run(args)
+        health_cmd.run(args)
         return
     if cmd == "doctor":
         doctor.run(args)
@@ -134,7 +145,7 @@ def main() -> None:
         reindex.run(args)
         return
     if cmd == "audit-turn":
-        audit_turn.run(args)
+        audit_turn_cmd.run(args)
         return
     if cmd == "consolidate":
         consolidate.run(args)

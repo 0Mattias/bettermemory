@@ -113,38 +113,33 @@ def _check_binary_on_path() -> Diagnosis:
             details={"path": binary},
         )
     fallback = find_binary()
-    # `find_binary()` returns the bare string ``"bettermemory"`` as its
-    # last-resort fallback when neither `shutil.which` nor `sys.argv[0]`
-    # resolves to an absolute path. In that case the hint shouldn't
-    # pretend we know the path — say "use the absolute path" generically
-    # and leave the lookup to the user. When `find_binary()` DID resolve
-    # to a real on-disk path (e.g. via `sys.argv[0]`, the `python -m
-    # bettermemory doctor` invocation path), substitute the resolved
-    # path into the hint so the user can copy-paste it into their MCP
-    # config without re-running `which`.
+    # Keep the fix_hint generic. Pre-Round-3 doctor substituted the
+    # resolved invocation path ("Use the absolute path in MCP client
+    # configs: /some/path") into the hint to save the user a `which`
+    # lookup. The footgun: on a machine with parallel installs (pipx +
+    # `uv tool install` + a venv shim), the path we'd substitute is
+    # the binary that satisfied the current `bettermemory doctor`
+    # invocation, which is not necessarily the one the user wants
+    # pinned into their MCP client config. Pasting a stale shim path
+    # there silently breaks future upgrades. The generic hint sends the
+    # user through `bettermemory init` (which handles the rewrite
+    # transactionally) or `which bettermemory` (which they run from
+    # the shell they intend the binary to come from). The resolved
+    # path is still in `details` for tooling that wants it.
     resolved_path: str | None = None
     if Path(fallback).is_absolute() and Path(fallback).exists():
         resolved_path = fallback
     elif sys.argv and sys.argv[0]:
-        # Belt-and-suspenders: if `find_binary()` returned bare and we
-        # were invoked via an absolute argv[0] (e.g. `/path/to/venv/bin/
-        # bettermemory doctor`), surface that path.
         argv0 = Path(sys.argv[0])
         if argv0.is_absolute() and argv0.exists() and "bettermemory" in argv0.name:
             resolved_path = str(argv0.resolve())
 
-    if resolved_path:
-        hint = (
-            f"Use the absolute path in MCP client configs: {resolved_path}. "
-            "`bettermemory init --client X` does this automatically."
-        )
-    else:
-        hint = (
-            "Use the absolute path to the `bettermemory` binary in MCP "
-            "client configs (find it with `which bettermemory` from a "
-            "shell that has it on PATH, or run "
-            "`bettermemory init --client X` which does this automatically)."
-        )
+    hint = (
+        "Use the absolute path to the `bettermemory` binary in MCP "
+        "client configs (find it with `which bettermemory` from a "
+        "shell that has it on PATH, or run "
+        "`bettermemory init --client X` which does this automatically)."
+    )
     return Diagnosis(
         name="binary_on_path",
         status="warn",
@@ -397,12 +392,21 @@ def _check_audit_turn_cadence(directory: Path) -> Diagnosis:
     still records other events from in-session tool calls but
     `turn_audited` is silent.
 
-    Heuristic: over the last 7 days, if the event log has any session
-    activity at all but zero `turn_audited` events, warn. Soft warning,
-    not a fatal error — a user who deliberately doesn't run the hook
-    (CI run, a one-off bulk-ingest session, a probe via the
+    Heuristic: over the last 7 days, if the event log shows at least
+    two distinct sessions with zero `turn_audited` events, warn. Soft
+    warning, not a fatal error — a user who deliberately doesn't run
+    the hook (CI run, a one-off bulk-ingest session, a probe via the
     programmatic client) has the same shape and we don't want to
-    spam them.
+    spam them. The ≥2-session floor (Round-3 fix-up) kills the
+    false-positive that fired for low-cadence users: a once-a-week
+    Claude Code user had exactly one session in the 7-day window
+    every check, so the old `n_sessions > 0` predicate fired the
+    warning even with a perfectly-working hook (the next session
+    hadn't happened yet, so there was no "Stop event that should
+    have produced turn_audited but didn't"). Requiring two sessions
+    means we've seen at least one session END (the Stop hook's
+    trigger) without the corresponding turn_audited row, which is
+    the real signal.
     """
     if not directory.exists():
         return Diagnosis(
@@ -457,7 +461,7 @@ def _check_audit_turn_cadence(directory: Path) -> Diagnosis:
             message="No events in the last 7 days — nothing to check.",
             details=info,
         )
-    if turn_audited == 0 and n_sessions > 0:
+    if turn_audited == 0 and n_sessions >= 2:
         # Don't pretend we know the exact expected count — the cadence
         # depends on how often the user invokes Claude Code. "At least
         # N" is a useful order-of-magnitude where N is the session
@@ -477,6 +481,24 @@ def _check_audit_turn_cadence(directory: Path) -> Diagnosis:
                 "plugin's `hooks/hooks.json` does this automatically "
                 "when the plugin is installed; manual setups need to "
                 "wire it themselves."
+            ),
+            details=info,
+        )
+    if turn_audited == 0 and n_sessions == 1:
+        # Exactly one session in the window: either the user is a
+        # low-cadence Claude Code user (weekly-or-less) and the next
+        # session simply hasn't happened yet, or this IS the broken
+        # hook but we haven't seen enough sessions to be sure. Either
+        # way, an "ok" verdict with the count surfaced is the right
+        # response — the user can run `doctor` after their next
+        # session to get a definitive signal.
+        return Diagnosis(
+            name="audit_turn_cadence",
+            status="ok",
+            message=(
+                "Only 1 session in the last 7 days — not enough cadence "
+                "data to verify the audit-turn hook fires. Re-run "
+                "`bettermemory doctor` after at least one more session."
             ),
             details=info,
         )

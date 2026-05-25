@@ -484,6 +484,162 @@ def test_locked_serializes_two_spawned_processes(tmp_path: Path) -> None:
 # active side.
 
 
+def _slug_collision_write_worker(args: tuple[str, str, int]) -> str | None:
+    """Worker for the multi-process slug-collision variant.
+
+    Runs in its own Python interpreter (``spawn`` context), so the
+    inter-process `_locked` flock is genuinely tested — the threaded
+    variant below holds the GIL during the load-store sequence in
+    ``_path_for``, which is the exact place a regression to the
+    pre-Round-3 `bare.exists()` gate would race. The multi-process
+    form removes the GIL guarantee, so two interpreters can both
+    observe `bare.exists() == False` between the open and the lock
+    if and only if the always-suffix discipline isn't in place.
+    """
+    root, body, _seed = args
+    s = Store(Path(root))
+    try:
+        memory = s.write(content=body, scopes=["tools"])
+        return memory.id
+    except Exception:  # noqa: BLE001 — surface as missing id, assertions catch it
+        return None
+
+
+def _slug_collision_restore_worker(args: tuple[str, str]) -> str | None:
+    """Worker for the multi-process restore-side C1 variant.
+
+    The store has N pre-tombstoned memories whose bodies slugify
+    identically. Each worker process restores one of them. Pre-Round-3
+    `Store.restore` used the same `active_path.exists()` gate that
+    `_path_for` used pre-2.7 — so two concurrent restores would each
+    lock a DIFFERENT tombstone path (so the lock doesn't help) and
+    both write to the same `active_path`. The second `_atomic_write_post`
+    would clobber the first. After the Round-3 fix, both restores end
+    up at distinct `{date}-{slug}-{shortid}.md` filenames.
+    """
+    root, memory_id = args
+    s = Store(Path(root))
+    try:
+        m = s.restore(memory_id)
+        return m.id
+    except Exception:  # noqa: BLE001 — surface as None; assert catches it
+        return None
+
+
+@pytest.mark.skipif(
+    sys.platform == "win32",
+    reason="fcntl-based locking is POSIX-only; MVP single-process on Windows",
+)
+def test_multi_process_concurrent_slug_collision_writes_do_not_clobber(
+    tmp_path: Path,
+) -> None:
+    """C1 regression across REAL processes (no GIL).
+
+    The threaded variant below races writers under the GIL, which
+    can't actually pre-empt a Python bytecode boundary inside the
+    `_path_for` -> `_locked` -> `_write_path` window. That's enough
+    to exercise the always-suffix invariant (the invariant is
+    construction-time, not race-time), but a future refactor that
+    swaps the invariant for a guard-with-recheck would fail the
+    spawn-process variant a way it doesn't fail the threaded one —
+    so this test catches a strictly larger regression surface.
+    """
+    n_writers = 6
+    body = "identical body for cross-process slug collision"
+    ctx = mp.get_context("spawn")
+    with ctx.Pool(n_writers) as pool:
+        ids = pool.map(
+            _slug_collision_write_worker,
+            [(str(tmp_path), body, w) for w in range(n_writers)],
+        )
+
+    assert None not in ids, f"some workers failed to write: {ids}"
+    assert len(ids) == n_writers
+    # No duplicate ids — ULID generation is per-process but each process
+    # gets its own clock + entropy, so collisions are astronomical.
+    assert len(set(ids)) == n_writers
+
+    md_files = sorted(p.name for p in tmp_path.glob("*.md") if not p.name.startswith("."))
+    assert len(md_files) == n_writers, (
+        f"expected {n_writers} files, got {len(md_files)}: {md_files}. "
+        f"Cross-process slug-collision silent overwrite (C1 regression)."
+    )
+
+    # Every written id loads back via a fresh Store — no silent drops.
+    store = Store(tmp_path)
+    loaded = {store.load_one(mid).id for mid in ids if mid is not None}
+    assert loaded == {mid for mid in ids if mid is not None}
+
+
+@pytest.mark.skipif(
+    sys.platform == "win32",
+    reason="fcntl-based locking is POSIX-only; MVP single-process on Windows",
+)
+def test_multi_process_concurrent_slug_collision_restores_do_not_clobber(
+    tmp_path: Path,
+) -> None:
+    """C1 regression on the RESTORE side, across real processes.
+
+    Pre-Round-3, the four-agent audit found that `Store.restore` still
+    used the legacy `active_path.exists()`-gated path selection that
+    `_path_for` killed in `bc47593`. Two concurrent restores of
+    differently-tombstoned memories whose bodies slugify identically
+    would each lock their own tombstone path, both see
+    `active_path.exists() == False`, and both write — second silently
+    clobbering the first. The lock is on the tombstone, not on the
+    destination, so it can't help. The fix mirrors `_path_for`:
+    unconditionally suffix with the short-id, so two distinct
+    memory_ids can never produce the same active_path.
+
+    Setup: write N memories with identical bodies (different ids, so
+    different filenames courtesy of the write-side always-suffix),
+    tombstone all of them, then restore all of them concurrently in
+    separate processes. Invariant: N distinct active files exist
+    after the restore, all loadable as memories.
+    """
+    n_workers = 6
+    body = "identical body for cross-process restore-side slug collision"
+
+    # Phase 1: write N memories single-process, all with the same body.
+    setup_store = Store(tmp_path)
+    pre_written_ids: list[str] = []
+    for _ in range(n_workers):
+        m = setup_store.write(content=body, scopes=["tools"])
+        pre_written_ids.append(m.id)
+    # Tombstone all of them so they live in .tombstones/.
+    for mid in pre_written_ids:
+        setup_store.tombstone(mid, reason="setup for C1 restore race")
+    assert sorted(p.name for p in tmp_path.glob("*.md")) == [], (
+        "setup: every active file should be tombstoned before the race"
+    )
+
+    # Phase 2: race the restores across separate processes.
+    ctx = mp.get_context("spawn")
+    with ctx.Pool(n_workers) as pool:
+        restored_ids = pool.map(
+            _slug_collision_restore_worker,
+            [(str(tmp_path), mid) for mid in pre_written_ids],
+        )
+
+    assert None not in restored_ids, (
+        f"some workers failed to restore: {restored_ids}"
+    )
+    assert set(restored_ids) == set(pre_written_ids), (
+        "restored ids must equal the input set"
+    )
+
+    md_files = sorted(p.name for p in tmp_path.glob("*.md") if not p.name.startswith("."))
+    assert len(md_files) == n_workers, (
+        f"expected {n_workers} restored files, got {len(md_files)}: "
+        f"{md_files}. Restore-side slug-collision silent overwrite "
+        f"(C1 regression on the restore path)."
+    )
+    # Every restored id loads back — no silent drops on restore.
+    fresh_store = Store(tmp_path)
+    loaded = {fresh_store.load_one(mid).id for mid in pre_written_ids}
+    assert loaded == set(pre_written_ids)
+
+
 def test_concurrent_slug_collision_writes_do_not_clobber(tmp_path: Path) -> None:
     """C1 regression. Two threaded writers whose bodies slugify to the
     same string must both end up with distinct files on disk; neither
@@ -491,10 +647,11 @@ def test_concurrent_slug_collision_writes_do_not_clobber(tmp_path: Path) -> None
 
     Threaded (not multiprocess) because we want maximum interleaving on
     the `_path_for` -> `_locked` -> `_write_path` sequence. The
-    cross-process variant is already exercised by
-    `test_multi_process_stress_no_corruption`; this test pins the
-    deterministic slug-collision case so a regression to the
-    `exists()`-only guard fails it loudly.
+    cross-process variant is exercised by the two
+    ``test_multi_process_concurrent_slug_collision_*`` tests above; this
+    test pins the deterministic threaded slug-collision case so a
+    regression to the `exists()`-only guard fails it loudly even on
+    GIL-bound Python.
     """
     import threading
 

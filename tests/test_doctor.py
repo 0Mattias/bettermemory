@@ -80,13 +80,16 @@ def test_binary_on_path_warns_when_missing(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """When the binary IS resolvable (real on-disk path), the hint
-    substitutes it into the message so the user can copy-paste it into
-    their MCP config. When the resolver only returns the bare
-    `"bettermemory"` last-resort, the hint stays generic — pointing
-    the user at `which bettermemory` instead of pretending we know
-    the path (M5 audit fix)."""
-    # Resolved case — real file exists, so the hint surfaces the path.
+    """When the binary isn't on $PATH, doctor warns and emits a generic
+    hint that points at `bettermemory init` / `which bettermemory`.
+    Pre-Round-3 doctor substituted the resolved invocation path into
+    the hint to save the user a lookup; the substitution turned into a
+    footgun on machines with parallel installs (pipx + `uv tool
+    install` + a venv shim — pasting the doctor-resolved path into the
+    MCP config silently pinned a shim the user didn't intend). The
+    resolved path now lives in `details.resolved_path` only — tooling
+    that wants it can read it, but the user-facing hint never
+    pretends to know which shim is canonical."""
     real_binary = tmp_path / "bettermemory"
     real_binary.write_text("#!/bin/sh\n", encoding="utf-8")
     monkeypatch.setattr("bettermemory.doctor.shutil.which", lambda _name: None)
@@ -97,7 +100,13 @@ def test_binary_on_path_warns_when_missing(
     diag = _check_binary_on_path()
     assert diag.status == "warn"
     assert diag.fix_hint is not None
-    assert str(real_binary) in (diag.fix_hint or "")
+    # The resolved path must NOT appear in the hint — that was the
+    # footgun. It should still be present in details for tooling.
+    assert str(real_binary) not in (diag.fix_hint or "")
+    assert "which bettermemory" in (diag.fix_hint or "") or "init" in (
+        diag.fix_hint or ""
+    )
+    assert (diag.details or {}).get("resolved_path") == str(real_binary)
 
 
 def test_binary_on_path_warn_hint_stays_generic_when_unresolved(
@@ -313,6 +322,30 @@ def test_audit_turn_cadence_silent_hook_warns(tmp_path: Path) -> None:
     # Surface the session count to motivate the warning.
     assert diag.details["sessions"] == 2
     assert diag.details["turn_audited_events"] == 0
+
+
+def test_audit_turn_cadence_single_session_does_not_warn(tmp_path: Path) -> None:
+    """Round-3 fix: exactly one session in the 7-day window must NOT
+    fire the warning. The prior heuristic (`n_sessions > 0`) false-
+    positived for weekly-or-less Claude Code users — they had one
+    session in any 7-day window and the next session hadn't happened
+    yet, so the hook hadn't had a Stop trigger to fire on. Reporting
+    "broken hook" in that case is wrong; the right answer is "not
+    enough cadence to tell". Two distinct sessions (one of which
+    completed without producing a turn_audited row) is the real
+    signal."""
+    from datetime import datetime, timezone
+
+    now_iso = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+    _write_event(tmp_path, "search", ts=now_iso, session="lonely")
+    _write_event(tmp_path, "write", ts=now_iso, session="lonely")
+    diag = _check_audit_turn_cadence(tmp_path)
+    assert diag.status == "ok"
+    assert diag.details["sessions"] == 1
+    assert diag.details["turn_audited_events"] == 0
+    # The message should explain why we're not warning yet, not just
+    # silently report ok.
+    assert "1 session" in diag.message or "one session" in diag.message.lower()
 
 
 def test_audit_turn_cadence_only_old_events_skips_warn(tmp_path: Path) -> None:

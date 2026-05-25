@@ -615,7 +615,34 @@ def build_prompt(cluster: Cluster, *, today: str) -> str:
             lines.append("recent claim_excerpts:")
             for ex in member.excerpts[:MAX_EXCERPTS_PER_MEMORY]:
                 excerpt = ex.excerpt[:MAX_EXCERPT_CHARS]
-                lines.append(f"  - [{ex.outcome}] {excerpt}")
+                # audit H5 — excerpts are model-supplied (or recorder-
+                # captured) substrings of a prior turn that "applied" /
+                # "ignored" / "contradicted" the memory. They reach this
+                # fence the same way the body does — except the body got
+                # both the delimiter pre-scan and the `memory:` per-line
+                # quoting, and the excerpt previously got neither. The
+                # random-nonce defence (line 571) still makes a
+                # successful break-out astronomically unlikely, but the
+                # belt-and-suspenders posture demands symmetric
+                # treatment: scan for fence substrings up front (reject
+                # rather than strip, mirroring the body branch above),
+                # then quote each line with the `excerpt:` marker so a
+                # chat-trained model reads it as quoted data, not as
+                # sibling instructions.
+                if (
+                    mem_end in excerpt
+                    or trn_end in excerpt
+                    or mem_begin in excerpt
+                    or trn_begin in excerpt
+                ):
+                    raise MemoryFenceInjectionError(member.memory.id)
+                excerpt_lines = excerpt.splitlines() or [""]
+                if len(excerpt_lines) == 1:
+                    lines.append(f"  - [{ex.outcome}] excerpt: {excerpt_lines[0]}")
+                else:
+                    lines.append(f"  - [{ex.outcome}]")
+                    for excerpt_line in excerpt_lines:
+                        lines.append(f"      excerpt: {excerpt_line}")
         lines.append("body:")
         body = body.strip()
         if len(body) > MAX_BODY_CHARS:

@@ -254,7 +254,7 @@ def _cli_consolidate(
     untrusted reasoning.
     """
     from ..consolidate import consolidate, render_json, render_text
-    from ..server import _semantic_model_or_none
+    from ..semantic_setup import _semantic_model_or_none
 
     ctx = cli_context()
     config = ctx.config
@@ -483,7 +483,7 @@ def _cli_consolidate_acknowledge_misses(
     was written.
     """
     import json as _json
-    from datetime import datetime, timezone
+    from datetime import datetime, timedelta, timezone
 
     from ..events import Recorder, iter_all_events
 
@@ -508,9 +508,24 @@ def _cli_consolidate_acknowledge_misses(
     try:
         parsed = datetime.fromisoformat(cutoff_ts.replace("Z", "+00:00"))
     except ValueError:
+        # Bare-date convenience hint: a tired oncall who types
+        # `2026-05-25` (legitimate intent: midnight UTC of that day)
+        # would otherwise just see "invalid ISO timestamp" and have to
+        # guess the format. fromisoformat() *does* accept bare dates
+        # since 3.11, so this branch only fires for genuinely malformed
+        # input — but pointing out the midnight-UTC spelling is the
+        # cheap-help.
+        import re as _re
+
+        bare_date_hint = ""
+        if _re.fullmatch(r"\d{4}-\d{2}-\d{2}", cutoff_ts):
+            bare_date_hint = (
+                f" (or '{cutoff_ts}T00:00:00Z' if you meant midnight UTC)"
+            )
         sys.stderr.write(
             f"acknowledge-misses-before: invalid ISO timestamp "
-            f"{cutoff_ts!r}. Expected e.g. '2026-05-25T05:25:35Z'.\n"
+            f"{cutoff_ts!r}. Expected e.g. '2026-05-25T05:25:35Z'"
+            f"{bare_date_hint}.\n"
         )
         raise SystemExit(1) from None
 
@@ -521,12 +536,39 @@ def _cli_consolidate_acknowledge_misses(
     # miss-rate skew. Forcing the user to spell out the offset (or
     # write `Z`) makes the assumption part of the input.
     if parsed.tzinfo is None:
+        # If the user typed a bare date, the parse SUCCEEDED (3.11+
+        # fromisoformat accepts it) but produced a naive midnight — so
+        # the hint here is the same as the parse-error branch above:
+        # spell out the offset.
         sys.stderr.write(
             f"acknowledge-misses-before: ISO timestamp {cutoff_ts!r} "
             f"is missing a UTC offset. Pass an explicit offset or "
-            f"trailing `Z` (e.g. '2026-05-25T05:25:35Z' or "
-            f"'2026-05-25T01:25:35-04:00') so the cutoff isn't "
-            f"silently interpreted as your local zone.\n"
+            f"trailing `Z` (e.g. '{cutoff_ts}T00:00:00Z' for midnight "
+            f"UTC, or '2026-05-25T01:25:35-04:00' for an explicit "
+            f"offset) so the cutoff isn't silently interpreted as "
+            f"your local zone.\n"
+        )
+        raise SystemExit(1)
+
+    # Refuse far-future cutoffs. A typo like `2126-05-25T00:00:00Z`
+    # parses and validates fine but writes a cutoff a century out;
+    # subsequent `memory_health` runs report `audited_total=0,
+    # miss_total=0` forever and the rollup looks "clean". A small
+    # forward-grace is fine (the existing test exercises `now + 1min`
+    # to clear a freshly-fired miss); a day is generous for legitimate
+    # admin "drop everything up through tomorrow" intent. Beyond that
+    # the input is almost certainly a typo or pasted-wrong-year.
+    now_utc = datetime.now(timezone.utc)
+    far_future_grace = timedelta(hours=24)
+    if parsed > now_utc + far_future_grace:
+        sys.stderr.write(
+            f"acknowledge-misses-before: cutoff {cutoff_ts!r} is more "
+            f"than 24 hours in the future (now is "
+            f"{now_utc.isoformat().replace('+00:00', 'Z')}). This is "
+            f"almost always a typo — a year-2126 cutoff would silently "
+            f"hide every audited event in the log indefinitely. Pass a "
+            f"timestamp at or before "
+            f"{(now_utc + far_future_grace).isoformat().replace('+00:00', 'Z')}.\n"
         )
         raise SystemExit(1)
 
@@ -563,7 +605,7 @@ def _cli_consolidate_acknowledge_misses(
     landed = any(
         ev.get("kind") == "silent_miss_cutoff"
         and ev.get("cutoff_ts") == canonical_cutoff
-        and (ev.get("session") or ev.get("session_id")) == session_id
+        and ev.get("session") == session_id
         for ev in iter_all_events(store.root)
     )
     if not landed:

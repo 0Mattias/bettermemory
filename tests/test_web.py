@@ -369,11 +369,13 @@ def test_csrf_token_differs_across_apps(memory_dir: Path, store: Store) -> None:
 
 def test_non_loopback_bind_logs_warning(caplog: Any) -> None:
     """audit H4 — binding to a non-loopback host emits a clear
-    WARNING about the unencrypted-transport caveat. We don't actually
-    start uvicorn (would block); call the helper directly and verify
-    it returns False for non-loopback, which is the trigger condition
-    for the warning."""
-    from bettermemory.web import _is_loopback_bind
+    WARNING about the unencrypted-transport caveat. Exercise both
+    branches via the extracted ``_warn_if_non_loopback_bind`` helper:
+    loopback hosts return False and emit nothing, non-loopback hosts
+    return True and emit a single WARNING record."""
+    import logging
+
+    from bettermemory.web import _is_loopback_bind, _warn_if_non_loopback_bind
 
     assert _is_loopback_bind("127.0.0.1") is True
     assert _is_loopback_bind("localhost") is True
@@ -381,6 +383,24 @@ def test_non_loopback_bind_logs_warning(caplog: Any) -> None:
     # 0.0.0.0 is the "bind to all interfaces" wildcard; treat it as
     # non-loopback because it exposes the socket to every NIC.
     assert _is_loopback_bind("0.0.0.0") is False
+
+    # Loopback path: no warning, return False (didn't fire).
+    with caplog.at_level(logging.WARNING, logger="bettermemory"):
+        assert _warn_if_non_loopback_bind("127.0.0.1") is False
+    assert not [r for r in caplog.records if r.levelno >= logging.WARNING], (
+        "loopback bind must not log a warning"
+    )
+
+    caplog.clear()
+    # Non-loopback path: exactly one warning, return True (fired).
+    with caplog.at_level(logging.WARNING, logger="bettermemory"):
+        assert _warn_if_non_loopback_bind("0.0.0.0") is True
+    warn_records = [r for r in caplog.records if r.levelno == logging.WARNING]
+    assert len(warn_records) == 1, (
+        f"expected exactly one WARNING for non-loopback bind, got {warn_records!r}"
+    )
+    assert "non-loopback" in warn_records[0].getMessage().lower()
+    assert "csrf" in warn_records[0].getMessage().lower()
 
 
 def test_health_renders(client: Any, store: Store) -> None:

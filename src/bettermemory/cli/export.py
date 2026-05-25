@@ -104,15 +104,19 @@ def _cli_export(
     import json as _json
     from pathlib import Path as _Path
 
-    # Route through `bettermemory.server.load_config` so the test
-    # monkeypatch surface (`monkeypatch.setattr("bettermemory.server.
-    # load_config", ...)`) keeps working post CLI-extraction. The
-    # canonical home of `load_config` is `bettermemory.config`; the
-    # `server` module re-exports it so the historical patch path is
-    # preserved.
-    from .. import server as _server
+    # Import ``load_config`` from its canonical home rather than via
+    # ``bettermemory.server``'s re-export. Pre-Round-3 the
+    # ``cli.export`` code went through ``server.load_config`` only to
+    # keep ``tests/test_export.py``'s monkeypatch surface
+    # (``"bettermemory.server.load_config"``) working post
+    # CLI-extraction — but the back-edge through ``server`` was the
+    # exact reverse-import the broader audit flagged. The test now
+    # patches ``"bettermemory.config.load_config"`` directly; the
+    # re-export on ``server`` is preserved for any out-of-tree caller
+    # but new code reaches the canonical location here.
+    from ..config import load_config as _load_config
 
-    config = _server.load_config()
+    config = _load_config()
     directory = config.resolved_directory()
     store = Store(directory)
 

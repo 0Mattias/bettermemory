@@ -1,18 +1,24 @@
 """ToolHandlers facade — wires per-tool handler functions to a class.
 
 Pre-Round-2 every MCP tool was a method on a 1700-line ``ToolHandlers``
-god class in this file. Round 2 moved each handler into its own module
-under ``handlers/`` (one module per tool, or one per symmetric pair).
-This file shrinks to a thin facade: ``ToolHandlers`` captures the
-dependency references (config, store, sessions, recorder, responses,
-semantic_model_factory) once per server and exposes a bound method
-per tool that delegates to the corresponding ``handlers.*`` function.
+god class. Round 2 moved each handler into its own module under
+``handlers/`` (one module per tool, or one per symmetric pair). The
+god class shrank but did NOT disappear — what's left here is a
+~500-line dependency-bundle + per-tool delegation surface. It is
+intentionally not "thin": every public tool method re-lists the same
+kwargs FastMCP will introspect, because FastMCP's ``mcp.tool(...)``
+decorator builds the JSON schema from ``inspect.signature(method)``
+and a ``**kwargs``-only delegate would land in the client manifest
+as a typeless catch-all. The signature has to be spelled out per
+tool; the body underneath is one line forwarding to the per-tool
+module function.
 
-Why a class at all: ``FastMCP.tool(...)`` registers callables and
-introspects their signatures for the JSON schema; binding the handler
-function as a method strips ``self`` from the schema and gives the
-tests a stable handle (``mcp._tool_manager.get_tool(name).fn`` is a
-bound method, signature looks the same as the pre-refactor shape).
+A ``__getattr__`` + registry would be ~20 lines instead of 220 but
+would erase the schema (any client introspecting the tool list would
+see ``**kwargs`` and no parameter docs). The per-tool methods are
+the price of keeping the wire surface byte-identical to the
+pre-refactor shape — see the docstring on each method for the call
+it delegates to.
 
 Why this file still has names like ``_already_recorded_pending_ids``
 and ``capture_origin``: the test suite monkey-patches both. Keeping

@@ -686,19 +686,35 @@ def serve(
         ) from exc
 
     app = build_app(config)
-    # audit H4 — resolve the bind address against the canonical
-    # loopback set rather than name-matching "localhost" / "127.0.0.1"
-    # only. `--host 0.0.0.0`, `--host ::`, or a non-loopback hostname
-    # all surface as non-loopback here, so the warning fires on every
-    # exposed deployment instead of the prior name-only check.
-    if not _is_loopback_bind(host):
-        log.warning(
-            "Binding to a non-loopback address; CSRF token protects "
-            "mutations but transport is unencrypted. Use loopback or "
-            "front with TLS for sensitive deployments."
-        )
+    _warn_if_non_loopback_bind(host)
     log.info("bettermemory ui starting on http://%s:%d", host, port)
     uvicorn.run(app, host=host, port=port, log_level="warning")
+
+
+def _warn_if_non_loopback_bind(host: str) -> bool:
+    """Emit the H4 non-loopback warning when ``host`` isn't loopback.
+
+    Returns ``True`` if the warning was emitted, ``False`` otherwise.
+    Extracted from ``serve()`` so tests can exercise the warning path
+    without launching uvicorn — the prior shape had the warning inline
+    in ``serve()``, so the only way to assert it fired was to mock
+    uvicorn and run the full launch path, which `test_web.py` punted
+    on (and ended up testing only the predicate, not the warning).
+
+    audit H4 — resolve the bind address against the canonical loopback
+    set rather than name-matching "localhost" / "127.0.0.1" only.
+    `--host 0.0.0.0`, `--host ::`, or a non-loopback hostname all
+    surface as non-loopback here, so the warning fires on every
+    exposed deployment instead of the prior name-only check.
+    """
+    if _is_loopback_bind(host):
+        return False
+    log.warning(
+        "Binding to a non-loopback address; CSRF token protects "
+        "mutations but transport is unencrypted. Use loopback or "
+        "front with TLS for sensitive deployments."
+    )
+    return True
 
 
 def _is_loopback_bind(host: str) -> bool:

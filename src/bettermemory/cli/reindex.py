@@ -148,7 +148,7 @@ def _reindex_embeddings(config: Config, store: Store) -> dict[str, Any]:
     leak into the FTS5-index code path.
     """
     from ..semantic import cached_embed, flush_persistent_cache
-    from ..server import (
+    from ..semantic_setup import (
         _configure_persistent_embeddings,
         _resolve_semantic_provider_and_model,
         _semantic_model_or_none,

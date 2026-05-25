@@ -764,13 +764,18 @@ class Store:
             post.metadata.pop("removed_reason", None)
             post.metadata.pop("removed_session", None)
 
-            # Reuse the active-side path-builder so a restore lands at
-            # the same shape as a fresh write — date-prefixed slug
-            # filename in the root, no `.tombstone.md` suffix. The slug
-            # is regenerated from the body to handle the (unusual) case
-            # where the original filename collided and got a short-id
-            # suffix; the restored name may differ slightly but that's
-            # fine — filenames are advisory, not part of the identity.
+            # Mirror `_path_for`'s always-suffix discipline so the restore
+            # lands at the same shape a fresh `write()` would produce —
+            # date-prefixed slug + short-id suffix, no `.tombstone.md`.
+            # Pre-fix this used the legacy `bare.exists()` gate that
+            # `bc47593` killed in `_path_for`: two concurrent restores of
+            # differently-tombstoned memories whose bodies slugify
+            # identically each locked their own (distinct) tombstone
+            # path, both saw `active_path.exists() == False`, both wrote
+            # — second silently clobbered the first. The lock is on the
+            # tombstone, not on the destination, so it can't help here.
+            # Always-suffixing the active filename closes the window the
+            # same way it did for `write()`.
             try:
                 created = _as_dt(post.metadata["created"])
             except (KeyError, ValueError) as exc:
@@ -778,11 +783,8 @@ class Store:
                     f"{tombstone_path}: cannot restore — missing/invalid created"
                 ) from exc
             slug = make_slug(post.content)
-            active_filename = build_filename(created, slug)
-            active_path = self.root / active_filename
-            if active_path.exists():
-                short = memory_id[-6:].lower()
-                active_path = self.root / build_filename(created, f"{slug}-{short}")
+            short = memory_id[-6:].lower()
+            active_path = self.root / build_filename(created, f"{slug}-{short}")
 
             _atomic_write_post(active_path, post)
             try:
@@ -1114,7 +1116,12 @@ _INDEX_LOG = _logging.getLogger("bettermemory.store")
 _INDEX_REPAIR_HINT = "Run `bettermemory reindex` to repair."
 
 
-@best_effort("index upsert", logger=_INDEX_LOG, repair_hint=_INDEX_REPAIR_HINT)
+@best_effort(
+    "index upsert",
+    logger=_INDEX_LOG,
+    repair_hint=_INDEX_REPAIR_HINT,
+    id_getter=lambda root, memory, *, filename: memory.id,
+)
 def _index_upsert_quietly(root: Path, memory: Memory, *, filename: str) -> None:
     """Update the FTS5 index for one memory. Best-effort: a failure
     here (corrupt index, locked database, missing SQLite extension)
@@ -1138,7 +1145,12 @@ def _index_upsert_quietly(root: Path, memory: Memory, *, filename: str) -> None:
     _index.upsert(root, memory, filename=filename)
 
 
-@best_effort("index remove", logger=_INDEX_LOG, repair_hint=_INDEX_REPAIR_HINT)
+@best_effort(
+    "index remove",
+    logger=_INDEX_LOG,
+    repair_hint=_INDEX_REPAIR_HINT,
+    id_getter=lambda root, memory_id: memory_id,
+)
 def _index_remove_quietly(root: Path, memory_id: str) -> None:
     """Drop one memory from the FTS5 index. Same best-effort contract
     as the upsert: never block the on-disk tombstone on an index
