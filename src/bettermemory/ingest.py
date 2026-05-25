@@ -584,10 +584,16 @@ def discover_default_source_root(cwd: Path | None = None) -> Path | None:
     hidden dirs, version-suffixed paths). Returns the path if it
     exists; None otherwise. The CLI treats None as "no auto-memory
     found — pass --from explicitly."
+
+    On Windows, ``cwd.resolve()`` produces backslash-separated paths
+    with a drive-letter prefix (``C:\\Users\\...``). ``as_posix()``
+    normalises to forward slashes, and the colon is stripped because
+    it's illegal in Windows filenames — so ``C:/Users/x`` becomes
+    ``-C-Users-x`` rather than the unbuildable ``-C:\\Users\\x``.
     """
     cwd = cwd or Path.cwd()
-    resolved = str(cwd.resolve()).lstrip("/")
-    sanitized = "-" + resolved.replace("/", "-").replace(".", "-")
+    resolved = cwd.resolve().as_posix().lstrip("/")
+    sanitized = "-" + resolved.replace("/", "-").replace(".", "-").replace(":", "")
     candidate = Path.home() / ".claude" / "projects" / sanitized / "memory"
     if candidate.exists() and candidate.is_dir():
         return candidate

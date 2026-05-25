@@ -674,10 +674,13 @@ class TestDiscoverDefaultSourceRoot:
         monkeypatch.setattr(Path, "home", lambda: fake_home)
 
         # `/Users/me/projects/foo` → `-Users-me-projects-foo`
+        # On Windows `as_posix()` + `:` strip mirrors the production
+        # sanitiser so `C:\\Users\\...` becomes a valid filename
+        # component instead of one Windows rejects with WinError 123.
         cwd = tmp_path / "cwd_simple" / "projects" / "foo"
         cwd.mkdir(parents=True)
-        resolved = str(cwd.resolve()).lstrip("/")
-        sanitised = "-" + resolved.replace("/", "-").replace(".", "-")
+        resolved = cwd.resolve().as_posix().lstrip("/")
+        sanitised = "-" + resolved.replace("/", "-").replace(".", "-").replace(":", "")
         target = fake_home / ".claude" / "projects" / sanitised / "memory"
         target.mkdir(parents=True)
 
@@ -697,11 +700,12 @@ class TestDiscoverDefaultSourceRoot:
         monkeypatch.setattr(Path, "home", lambda: fake_home)
 
         # Mirrors the `.claude/worktrees/<branch>` layout the audit
-        # comment calls out.
+        # comment calls out. Same Windows-aware normalisation as the
+        # simple-cwd test above.
         cwd = tmp_path / "repo" / ".claude" / "worktrees" / "feat-branch"
         cwd.mkdir(parents=True)
-        resolved = str(cwd.resolve()).lstrip("/")
-        sanitised = "-" + resolved.replace("/", "-").replace(".", "-")
+        resolved = cwd.resolve().as_posix().lstrip("/")
+        sanitised = "-" + resolved.replace("/", "-").replace(".", "-").replace(":", "")
         # The sanitised name must contain `--claude-` (the dot before
         # `claude` mapped to a second `-`); if a refactor produces
         # `-.claude-` instead, this assertion fails fast.

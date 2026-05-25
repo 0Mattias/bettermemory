@@ -1070,7 +1070,7 @@ class TestRenderToolUsageText:
         src_root = Path(__file__).resolve().parents[1] / "src" / "bettermemory"
         discovered: set[str] = set()
         for py_file in src_root.rglob("*.py"):
-            tree = ast.parse(py_file.read_text())
+            tree = ast.parse(py_file.read_text(encoding="utf-8"))
             for node in ast.walk(tree):
                 if not isinstance(node, ast.Call):
                     continue
