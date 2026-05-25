@@ -7,6 +7,81 @@ breaking changes, minor for additive features, patch for fixes. The
 [compatibility contract](CONTRIBUTING.md#versioning-and-the-compatibility-contract)
 spells out exactly what's stable.
 
+## 2.7.1 - 2026-05-24
+
+**Post-2.7.0 audit follow-up + concurrency test coverage.** A four-agent
+production-readiness audit of the 2.7.0 branch flagged security, eval-correctness,
+long-running-mode, and test-hygiene gaps; this release bundles every fix.
+A review pass on top added two `SessionRegistry` concurrency tests that prove
+the `threading.Lock` actually serializes contention (the prior sequential
+tests only proved the `OrderedDict` mechanics) and dropped a dead
+`# type: ignore` that mypy was already flagging.
+
+### Fixed — Security & robustness
+
+- **`ingest`: symlinks skipped before any read.** A hostile auto-memory
+  directory containing `secret.md -> /etc/shadow` could otherwise smuggle the
+  target's contents into a memory record. A new `skip_symlink` action surfaces
+  in the rendered plan summary so the skip is auditable.
+- **`audit.turn_audited_fields` / `search_miss_fields` reject unknown
+  `triggered_from` values at runtime.** Mirrors the 2.6.7 search-mode pattern;
+  typos now fail fast at the dispatch boundary instead of silently producing
+  unsplittable eval rows.
+- **`events.redact_query` strips known secret shapes before the 32-char
+  preview.** Five patterns (`sk-ant-…`, `sk-…`, `ghp_…`, `github_pat_…`,
+  `AKIA…`); a GitHub PAT or AWS key can no longer leak via partial-token
+  capture in the truncation. `SECURITY.md` carries a threat-model note for
+  the query-redaction defense-in-depth.
+
+### Fixed — Eval correctness
+
+- **`compute_eval` dedupes `memory_ids` within a single `record_use` event.**
+  `docs/eval.md` spells out the per-id denominator semantics so consumers
+  know exactly what each count represents.
+- **`RateCI.torn_read` flag set when numerator > denominator.** The renderer
+  emits an explicit warning line, and `to_dict` exposes the flag so CI
+  consumers can branch on it (a torn read indicates log rotation raced).
+- **Wilson interval pinned against numerical gold** — `(50, 100)` and
+  `(1, 10)` now assert exact bounds with tight tolerance, distinguishing
+  Wilson from naive Wald. The prior six structural assertions would have
+  passed with either formula.
+
+### Added — Long-running-mode preparation
+
+- **`SessionRegistry` is now LRU-bounded under a lock.** `OrderedDict`
+  backing with a `max_clients=256` cap, `threading.Lock` for atomic
+  touch+insert+evict, and a `stats()` introspection surface. The stdio
+  transport collapses every request into one bucket, so behaviour there is
+  unchanged; the LRU and lock matter for HTTP/SSE transports that fan
+  arbitrary `client_id` values through one process.
+- **`_already_recorded_pending_ids` scans the event log in reverse** and
+  early-exits on `ev_ts < oldest_pending_issued_at`, bounding the hot-path
+  scan to the pending-token window rather than the full 10 MB active log.
+
+### Added — Test-suite & test-env hygiene
+
+- **`conftest.pytest_collection_modifyitems` auto-skips `no_extras` /
+  `no_torch_embeddings` / `no_fastembed`** when the relevant extra IS
+  installed locally, eliminating false failures on dev machines that have
+  the optional dependencies present.
+- **`test_consolidate` subprocess gate probes `bettermemory --help`**
+  instead of relying solely on `shutil.which`, catching stale editable
+  installs where the binary is on `PATH` but the import is broken.
+- **New `test_kind_map_parity_with_recorder_call_sites`** AST-walks `src/`
+  and asserts every `recorder.record()` kind appears in either the tool-event
+  map or the side-effect set. Guards against the unmapped-footer slow-drift
+  bug class — extractor limitations documented inline.
+- **Two new concurrent `SessionRegistry` tests.** 32-thread same-key
+  contention must return one `is`-identity state; 8×25 distinct-key insertion
+  past `cap=16` must preserve `size + evicted == total_inserts`. Without
+  these, removing the lock would still pass the rest of the suite — the
+  regression would only surface in production under HTTP/SSE fan-out.
+
+### Build
+
+- mypy ✓, ruff ✓, 1387 passed / 9 skipped / 0 failed (CI baseline; dev
+  machines with extras installed see 11 skipped via the new auto-skip).
+
 ## 2.7.0 - 2026-05-24
 
 **Calibration evidence + Claude Code auto-memory bridge.** Four additions land
