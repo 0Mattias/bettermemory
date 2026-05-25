@@ -29,6 +29,7 @@ from bettermemory.doctor import (
     _check_memory_parse_health,
     _check_python_version,
     _check_storage_directory,
+    _discover_site_packages,
     cli_doctor,
     render_json,
     render_text,
@@ -587,6 +588,100 @@ def test_distinfo_metadata_warns_without_icloud_hint_when_no_duplicate(
     assert "partial-3.0.dist-info" in diag.message
     assert "iCloud" not in diag.message  # no duplicate -> no cause hint
     assert diag.details["broken"][0]["duplicates"] == []
+
+
+def test_distinfo_metadata_warns_on_empty_canonical_file(tmp_path: Path) -> None:
+    """A zero-byte `METADATA` is the same failure mode as a missing
+    one: `importlib.metadata.version()` returns None, which trips the
+    downstream `-32000` MCP crash. The check must treat empty as broken
+    even though the file technically exists."""
+    _make_distinfo(
+        tmp_path, "healthy-1.0.dist-info", files={"METADATA": "Name: healthy\n"}
+    )
+    # Build the broken dir by hand so we can write an empty METADATA
+    # without `_make_distinfo` having to special-case empty strings.
+    broken = tmp_path / "empty-2.0.dist-info"
+    broken.mkdir()
+    (broken / "METADATA").write_bytes(b"")  # zero-byte file
+    diag = _check_distinfo_metadata(site_packages=[tmp_path])
+    assert diag.status == "warn"
+    assert "healthy-1.0.dist-info" not in diag.message
+    assert "empty-2.0.dist-info" in diag.message
+    # Empty file has no iCloud-style duplicate sibling.
+    assert "iCloud" not in diag.message
+    assert len(diag.details["broken"]) == 1
+    assert diag.details["broken"][0]["dist_info"] == str(broken)
+
+
+def test_distinfo_metadata_scans_user_site(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """`pip install --user` lands packages in `site.getusersitepackages()`.
+    When `ENABLE_USER_SITE` is true, the discoverer must include that
+    directory so user-site dist-info dirs aren't silently skipped."""
+    import site as _site
+
+    user_site = tmp_path / "user-site"
+    user_site.mkdir()
+    _make_distinfo(
+        user_site,
+        "broken-1.0.dist-info",
+        files={"METADATA 2": "Name: broken\n"},
+    )
+    monkeypatch.setattr(_site, "ENABLE_USER_SITE", True)
+    monkeypatch.setattr(_site, "getusersitepackages", lambda: str(user_site))
+    # Neutralize the other discoverers so the test exercises user-site
+    # in isolation — otherwise the host's real site-packages would also
+    # be scanned and could shift the assertion targets.
+    monkeypatch.setattr(
+        "bettermemory.doctor.sysconfig.get_paths",
+        lambda: {"purelib": "", "platlib": ""},
+    )
+    monkeypatch.setattr(_site, "getsitepackages", lambda: [])
+
+    discovered = _discover_site_packages()
+    resolved_user_site = user_site.resolve()
+    assert any(p.resolve() == resolved_user_site for p in discovered)
+
+    diag = _check_distinfo_metadata()
+    assert diag.status == "warn"
+    assert "broken-1.0.dist-info" in diag.message
+
+
+def test_distinfo_metadata_skips_user_site_when_disabled(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """When `ENABLE_USER_SITE` is False (the modern venv default), the
+    discoverer must not call `getusersitepackages()` and must not scan
+    that directory — a broken dist-info there should go unreported."""
+    import site as _site
+
+    user_site = tmp_path / "user-site"
+    user_site.mkdir()
+    _make_distinfo(
+        user_site,
+        "broken-1.0.dist-info",
+        files={"METADATA 2": "Name: broken\n"},
+    )
+    monkeypatch.setattr(_site, "ENABLE_USER_SITE", False)
+
+    called = {"n": 0}
+
+    def _should_not_be_called() -> str:
+        called["n"] += 1
+        return str(user_site)
+
+    monkeypatch.setattr(_site, "getusersitepackages", _should_not_be_called)
+    monkeypatch.setattr(
+        "bettermemory.doctor.sysconfig.get_paths",
+        lambda: {"purelib": "", "platlib": ""},
+    )
+    monkeypatch.setattr(_site, "getsitepackages", lambda: [])
+
+    discovered = _discover_site_packages()
+    assert called["n"] == 0
+    resolved_user_site = user_site.resolve()
+    assert all(p.resolve() != resolved_user_site for p in discovered)
 
 
 # ---------------------------------------------------------------------------

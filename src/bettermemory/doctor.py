@@ -703,6 +703,21 @@ def _discover_site_packages() -> list[Path]:
     except Exception:  # noqa: BLE001
         pass
 
+    # User-site (`pip install --user`) is a legitimate install path
+    # whose dist-info dirs can also trip the `-32000` failure mode.
+    # Modern venvs default `ENABLE_USER_SITE` to False, in which case
+    # this is a no-op. Guard the call the same way as `getsitepackages`
+    # for platforms where it would fail.
+    try:
+        import site
+
+        if getattr(site, "ENABLE_USER_SITE", False):
+            user_site = site.getusersitepackages()
+            if user_site:
+                candidates.append(user_site)
+    except Exception:  # noqa: BLE001
+        pass
+
     seen: set[str] = set()
     out: list[Path] = []
     for c in candidates:
@@ -755,10 +770,23 @@ def _check_distinfo_metadata(site_packages: list[Path] | None = None) -> Diagnos
             if not dist_info.is_dir():
                 continue
             scanned += 1
-            if (dist_info / "METADATA").is_file():
+            metadata_path = dist_info / "METADATA"
+            # `importlib.metadata.version()` returns None for an empty
+            # METADATA file the same way it does for a missing one — a
+            # zero-byte file (FS-interrupted write, manual edit, sync
+            # glitch) trips the same `-32000` crash downstream, so we
+            # treat empty as broken too. Use `stat()` rather than reading
+            # the file to keep the scan O(dirs), not O(bytes).
+            try:
+                is_nonempty = (
+                    metadata_path.is_file() and metadata_path.stat().st_size > 0
+                )
+            except OSError:
+                is_nonempty = False
+            if is_nonempty:
                 continue
-            # Missing canonical METADATA. Scan for the iCloud-style
-            # duplicate so we can hint at the likely cause.
+            # Missing or empty canonical METADATA. Scan for the iCloud-
+            # style duplicate so we can hint at the likely cause.
             duplicates: list[str] = []
             try:
                 for child in dist_info.iterdir():
