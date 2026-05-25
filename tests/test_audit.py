@@ -124,6 +124,46 @@ def test_empty_query_returns_no_signal() -> None:
     assert report.probe_query is None
 
 
+def test_single_content_token_query_returns_no_signal() -> None:
+    """Bare continuations ("yes", "continue") and one-content-token
+    fragments ("go for it" — "for"/"it" are stopwords) structurally
+    always score "high" against any memory that mentions the token
+    (1/1 = 1.0). Probe short-circuits to no_signal before the ranker
+    runs so the entire single-content-token cohort drops out of the
+    search_miss bucket. probe_query is preserved so a `no_signal`
+    report on this path is distinguishable from the empty-query
+    branch (which sets probe_query=None)."""
+    m = _memory("yes the backup strategy uses triangular restic replication")
+    for query in ("yes", "continue", "go for it", "push it"):
+        report = probe_for_miss(
+            [m],
+            query,
+            recent_events=[],
+            session_id="sess_x",
+            now=_utc(2026, 5, 1),
+        )
+        assert report.verdict == "no_signal", query
+        assert report.top_hits == ()
+        assert report.probe_query == query
+
+
+def test_two_content_token_query_passes_the_gate() -> None:
+    """The MIN_PROBE_CONTENT_TOKENS floor lets two-content-token queries
+    through. Pins the floor against an off-by-one that would also
+    suppress legitimate short queries like "backup strategy"."""
+    m = _memory("backup strategy uses triangular restic replication")
+    report = probe_for_miss(
+        [m],
+        "backup strategy",
+        recent_events=[],
+        session_id="sess_x",
+        now=_utc(2026, 5, 1),
+    )
+    # Two content tokens → gate passes → ranker runs → miss verdict
+    # because no search fired in the lookback window.
+    assert report.verdict == "miss"
+
+
 def test_query_with_no_hits_returns_no_signal() -> None:
     """When the probe returns zero hits (rather than low-relevance hits),
     that's `no_signal` — there's nothing to score against, so the audit
