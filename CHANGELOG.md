@@ -86,6 +86,103 @@ rewriting the log.
   non-existent `{"hits": [...]}` envelope; run command updated from
   `venv/bin/python` to `uv run python`.
 
+### Changed — Module layout
+
+- **`build_server` extracted to `bettermemory.builder`.** `build_server`
+  and `_register_tools` now live in a new `bettermemory.builder`
+  module; `cli/serve.py` can import them at module top level instead
+  of through the previous function-local lazy import that worked
+  around the `cli ↔ server` cycle. `bettermemory.server` becomes a
+  back-compat re-export shim — `from bettermemory.server import
+  build_server` keeps working unchanged.
+- **`bettermemory.__init__` imports from canonical homes.** Package
+  init now pulls `build_server` from `.builder` and `main` from
+  `.cli` directly, bypassing the `server.py` shim. Public surface
+  re-exported from the package root is unchanged.
+
+### Removed — Defensive `bettermemory.server` re-exports
+
+- **`bettermemory.server.__all__` trimmed to its actually-used
+  surface.** After verifying zero in-tree consumers, the following
+  symbols were dropped from `bettermemory.server`: `_register_tools`,
+  `load_config`, and three `_*_semantic*` helpers. Downstream code
+  doing `from bettermemory.server import load_config` or `from
+  bettermemory.server import _register_tools` will now raise
+  `ImportError`; the canonical paths are `bettermemory.config.load_config`
+  and `bettermemory.builder._register_tools` respectively. The shim's
+  retained surface is `build_server`, `main`, `SYSTEM_PROMPT_ADDENDUM`,
+  `capture_origin`, and three `_cli_*` helpers (the `_cli_*` trio kept
+  because the test suite monkeypatches them at the `server.` import
+  path). This is a soft API break — narrow in scope, but consumers
+  pinning to the old import paths must update.
+
+### Added — Diagnostics
+
+- **`bettermemory doctor` detects `.dist-info` dirs missing canonical
+  `METADATA`.** A new check walks `site-packages` and warns on any
+  `*.dist-info` directory whose `METADATA` is absent or non-readable —
+  the exact failure mode that surfaces when iCloud Drive renames
+  `METADATA` to `METADATA 2` mid-sync and crashes the MCP server with
+  a `-32000` pydantic validation failure. Sites scanned cover both
+  `site.getsitepackages()` and (when `ENABLE_USER_SITE` is true)
+  `site.getusersitepackages()`, so `pip install --user` installs are
+  also covered. +4 tests for the detector.
+
+### Added — Test-suite hygiene
+
+- **Platform-mocked coverage for the Windows `flock` branch.**
+  `_flock_windows` is now exercised from a POSIX dev box via a
+  `_FakeMsvcrt` injected through `sys.modules`. Tests cover the
+  retry/backoff loop under simulated contention, the `LK_UNLCK` /
+  `LK_NBLCK` symmetry, and `BETTERMEMORY_FLOCK_TIMEOUT` env-var
+  parsing including the invalid-string fallback. +6 tests; first
+  coverage of the Windows branch outside CI.
+- **Direct-import smoke tests at the package boundaries.**
+  `tests/test_direct_imports.py` imports every public module under
+  `handlers/` (15) and `cli/` (14) and exercises one representative
+  surface from each, so signature drift at the import boundary fails
+  at collection time rather than masquerading as a runtime `AttributeError`
+  in a downstream consumer. +30 tests.
+
+### Fixed — Doctor dist-info detector
+
+- **Empty `METADATA` files no longer pass the `.is_file()` check.**
+  The original predicate accepted zero-byte `METADATA` even though
+  the pydantic loader still rejects it; the check now requires
+  `is_file() AND stat().st_size > 0` so the doctor flags the empty
+  case alongside the missing-file case. +1 test pinning the
+  zero-byte path.
+- **`_discover_site_packages` honours `site.ENABLE_USER_SITE`.**
+  Previously only `site.getsitepackages()` was scanned, so a
+  `pip install --user` install with a broken dist-info would silently
+  evade the detector. The user-site path is now included when (and
+  only when) `ENABLE_USER_SITE` is truthy. +2 tests covering the
+  enabled and disabled branches.
+
+### Fixed — Test rigour
+
+- **Windows `flock` env-var fallback test proves the fallback is
+  non-zero.** `test_env_var_invalid_string_falls_back_to_default`
+  previously asserted only that the call returned without raising; it
+  now uses `always_fail=True` + `pytest.raises(TimeoutError)` + a
+  retry-count assertion to prove the default timeout actually elapsed,
+  catching a "fallback silently resolves to 0" regression class the
+  weaker assertion would have missed.
+- **Backoff test asserts monotonic growth and the 100 ms cap.**
+  `test_retries_with_backoff_until_acquired` now records every
+  `time.sleep` duration and asserts the sequence is monotonically
+  non-decreasing and that no single sleep exceeds the 100 ms ceiling
+  the production loop enforces. Prior assertion only counted retries.
+
+### Documentation
+
+- Stale docstring / comment refresh across `server.py`,
+  `cli/__init__.py`, `builder.py`, and `cli/export.py` — six spots
+  that still described the pre-2.7.3 single-module layout were
+  updated to point at the post-extract structure (canonical homes
+  in `builder.py`, the shim role of `server.py`, etc.). Code paths
+  unchanged.
+
 ## 2.7.3 - 2026-05-25
 
 **Post-2.7.2 dogfood audit follow-up.** The threshold-sweep on the
