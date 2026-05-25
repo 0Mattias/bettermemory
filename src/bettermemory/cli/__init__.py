@@ -10,11 +10,12 @@ The exact order of ``sub.add_parser`` calls is load-bearing — it
 determines the order subcommands appear in ``bettermemory --help``.
 Preserve it when adding or removing modules.
 
-MCP wiring (``build_server``, ``_register_tools``, the FastMCP
-``instructions`` block) lives in ``bettermemory.builder``;
-``server.py`` re-exports it for back-compat. The split keeps this
-package's top-level imports from back-edging through ``server.py``,
-which was previously the source of a load-time cycle in ``serve.py``.
+MCP wiring (``build_server`` plus ``_register_tools`` and the
+FastMCP ``instructions`` block, both private to the builder) lives
+in ``bettermemory.builder``; ``server.py`` re-exports ``build_server``
+for back-compat. The split keeps this package's top-level imports
+from back-edging through ``server.py``, which was previously the
+source of a load-time cycle in ``serve.py``.
 """
 
 from __future__ import annotations

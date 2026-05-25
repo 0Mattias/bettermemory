@@ -139,9 +139,10 @@ rewriting the log.
   coverage of the Windows branch outside CI.
 - **Direct-import smoke tests at the package boundaries.**
   `tests/test_direct_imports.py` imports every public module under
-  `handlers/` (15) and `cli/` (14) and exercises one representative
-  surface from each, so signature drift at the import boundary fails
-  at collection time rather than masquerading as a runtime `AttributeError`
+  `handlers/` (15) and `cli/` (14) and snapshots the full parameter
+  signature (name, default, and `POSITIONAL_OR_KEYWORD` kind) of each
+  handler, so signature drift at the import boundary fails at
+  collection time rather than masquerading as a runtime `AttributeError`
   in a downstream consumer. +30 tests.
 
 ### Fixed — Doctor dist-info detector
