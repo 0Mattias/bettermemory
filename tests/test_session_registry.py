@@ -20,6 +20,7 @@ Two test layers:
 
 from __future__ import annotations
 
+import threading
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -373,3 +374,110 @@ def test_session_registry_touches_on_access() -> None:
     )
     assert {"A", "C", "D"} <= keys
     assert registry.stats()["evicted"] == 1
+
+
+# ---------------------------------------------------------------------------
+# Concurrency: the threading.Lock actually serializes contention
+# ---------------------------------------------------------------------------
+#
+# The sequential LRU tests above prove the OrderedDict mechanics are right;
+# these prove the lock isn't load-bearing in theory only. HTTP/SSE transports
+# can dispatch concurrent requests against the same registry, and the
+# touch+insert+evict pass is a read-modify-write that races without the lock.
+# Without these tests, removing the lock would still pass the rest of the
+# suite — the regression would only show up in production under fan-out.
+
+
+def test_session_registry_same_key_concurrent_for_request_returns_one_state() -> None:
+    """N threads racing on the same fresh client_id must all receive the
+    same `SessionState` instance.
+
+    Without the lock, two threads observing `self._states.get(key) is None`
+    simultaneously would each construct a fresh `SessionState` and the
+    second `self._states[key] = state` would silently overwrite the first.
+    Any pending writes / use-tokens on the lost state would vanish. We
+    can't observe the overwrite directly (both states would have the
+    same external shape), but we CAN observe the identity divergence:
+    if any two threads got different `is`-identity states, the lock
+    failed to serialize.
+    """
+    registry = SessionRegistry(max_clients=64)
+    n_threads = 32
+    start = threading.Event()
+    results: list[SessionState] = []
+    results_lock = threading.Lock()
+
+    def worker() -> None:
+        start.wait()  # release all threads simultaneously for maximum contention
+        state = registry.for_request(_fake_ctx(client_id="hot-key"))
+        with results_lock:
+            results.append(state)
+
+    threads = [threading.Thread(target=worker) for _ in range(n_threads)]
+    for t in threads:
+        t.start()
+    start.set()
+    for t in threads:
+        t.join(timeout=5.0)
+        assert not t.is_alive(), "worker hung — possible deadlock in for_request"
+
+    assert len(results) == n_threads
+    first = results[0]
+    assert all(s is first for s in results), (
+        "concurrent for_request on the same key returned different SessionState "
+        "instances — the lock failed to serialize the read-modify-write pass and "
+        "later writers overwrote earlier ones. Pending writes on the lost states "
+        "would silently vanish in production under HTTP/SSE fan-out."
+    )
+    assert registry.stats()["size"] == 1
+
+
+def test_session_registry_concurrent_distinct_inserts_preserve_size_invariant() -> None:
+    """Under concurrent insertion of distinct keys past the cap, the
+    invariant `size + evicted == total_unique_inserts` must hold.
+
+    This catches a different failure mode than the same-key test: races
+    in the eviction path. If `len(self._states) > self.max_clients` and
+    the subsequent `popitem(last=False)` weren't atomic with the insert,
+    two threads could each see size==cap+1, each pop, and the registry
+    would end up under-sized (with `evicted` over-counted) or, worse,
+    leave the cap exceeded. The accounting equation makes the failure
+    visible without needing to assert specific surviving keys (which
+    would depend on scheduling).
+    """
+    registry = SessionRegistry(max_clients=16)
+    n_threads = 8
+    inserts_per_thread = 25  # 200 distinct keys total, well past cap
+    start = threading.Event()
+    errors: list[BaseException] = []
+
+    def worker(thread_idx: int) -> None:
+        try:
+            start.wait()
+            for i in range(inserts_per_thread):
+                registry.for_request(_fake_ctx(client_id=f"t{thread_idx}-k{i}"))
+        except BaseException as exc:  # noqa: BLE001
+            errors.append(exc)
+
+    threads = [threading.Thread(target=worker, args=(i,)) for i in range(n_threads)]
+    for t in threads:
+        t.start()
+    start.set()
+    for t in threads:
+        t.join(timeout=10.0)
+        assert not t.is_alive(), "worker hung — possible deadlock in for_request"
+
+    assert not errors, f"workers raised: {errors!r}"
+
+    total_inserts = n_threads * inserts_per_thread
+    stats = registry.stats()
+    assert stats["size"] == registry.max_clients, (
+        f"size={stats['size']} != cap={registry.max_clients}; "
+        f"the eviction/insert pair raced and left the registry mis-sized"
+    )
+    assert stats["size"] + stats["evicted"] == total_inserts, (
+        f"size ({stats['size']}) + evicted ({stats['evicted']}) "
+        f"!= total inserts ({total_inserts}); the eviction counter and "
+        f"the dict size disagree, which means an insert or pop was lost "
+        f"to a race"
+    )

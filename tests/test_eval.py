@@ -1047,6 +1047,23 @@ class TestRenderToolUsageText:
         Implementation: AST-walk the source tree, extract every literal
         first-arg (positional) or ``kind=`` keyword passed to a method
         named ``record``, and assert set equality.
+
+        Extraction is intentionally narrow — only literal-string ``kind``
+        values are discovered. Patterns that would slip past:
+
+        * ``recorder.record(KIND_CONST, ...)`` where ``KIND_CONST`` is a
+          module-level ``Final[str]``.
+        * ``recorder.record(kind=resolve_kind(x))`` or any non-literal
+          expression for ``kind=``.
+        * ``recorder.record(**payload)`` where ``kind`` is spread in.
+        * ``kind`` passed as the second-or-later positional argument
+          (only the first positional is read).
+
+        Every call site in ``src/bettermemory`` today uses literal-string
+        positional or ``kind=`` keyword form, so the assumption holds.
+        If a future refactor switches to one of the patterns above,
+        broaden the extractor here rather than letting drift sneak back
+        in via the ``unmapped_event_kinds`` footer.
         """
         import ast
 
@@ -1172,7 +1189,7 @@ class TestComputeThresholdSweep:
         a torn `recent_retrieval_count` would slip past a naked int
         check and read as 1. Verify the bool guard zeroes it out."""
         events = [
-            _miss_event(top_hits=[_hit()], recent_retrieval_count=True),  # type: ignore[arg-type]
+            _miss_event(top_hits=[_hit()], recent_retrieval_count=True),
         ]
         report = compute_threshold_sweep(events)
         assert report.replayable_misses == 1
