@@ -17,7 +17,9 @@ import pytest
 
 from bettermemory.config import BehaviorConfig, Config, StorageConfig
 from bettermemory.doctor import (
+    Diagnosis,
     DoctorReport,
+    _check_audit_turn_cadence,
     _check_binary_on_path,
     _check_config_loadable,
     _check_embeddings_extra,
@@ -74,13 +76,52 @@ def test_binary_on_path_when_present(monkeypatch: pytest.MonkeyPatch) -> None:
     assert "/usr/local/bin/bettermemory" in diag.message
 
 
-def test_binary_on_path_warns_when_missing(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_binary_on_path_warns_when_missing(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """When the binary IS resolvable (real on-disk path), the hint
+    substitutes it into the message so the user can copy-paste it into
+    their MCP config. When the resolver only returns the bare
+    `"bettermemory"` last-resort, the hint stays generic — pointing
+    the user at `which bettermemory` instead of pretending we know
+    the path (M5 audit fix)."""
+    # Resolved case — real file exists, so the hint surfaces the path.
+    real_binary = tmp_path / "bettermemory"
+    real_binary.write_text("#!/bin/sh\n", encoding="utf-8")
     monkeypatch.setattr("bettermemory.doctor.shutil.which", lambda _name: None)
-    monkeypatch.setattr("bettermemory.doctor.find_binary", lambda: "/fallback/bm")
+    monkeypatch.setattr("bettermemory.doctor.find_binary", lambda: str(real_binary))
+    # `sys.argv[0]` could be anything in pytest's process — pin it so
+    # the secondary "argv0 is absolute" branch doesn't accidentally fire.
+    monkeypatch.setattr("bettermemory.doctor.sys.argv", ["pytest"])
     diag = _check_binary_on_path()
     assert diag.status == "warn"
     assert diag.fix_hint is not None
-    assert "/fallback/bm" in (diag.fix_hint or "")
+    assert str(real_binary) in (diag.fix_hint or "")
+
+
+def test_binary_on_path_warn_hint_stays_generic_when_unresolved(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """When `find_binary()` returns the bare `"bettermemory"`
+    last-resort (no `shutil.which`, no absolute `sys.argv[0]` to fall
+    back on), the hint must NOT embed the bare string — that would
+    suggest `bettermemory` is the absolute path. Stay generic and
+    point at `which`."""
+    monkeypatch.setattr("bettermemory.doctor.shutil.which", lambda _name: None)
+    monkeypatch.setattr("bettermemory.doctor.find_binary", lambda: "bettermemory")
+    # Pin argv to a non-bettermemory absolute path so the secondary
+    # branch doesn't fire either.
+    monkeypatch.setattr("bettermemory.doctor.sys.argv", ["/usr/bin/python3"])
+    diag = _check_binary_on_path()
+    assert diag.status == "warn"
+    assert diag.fix_hint is not None
+    hint = diag.fix_hint or ""
+    # Bare "bettermemory" must not appear as a path-shaped substring in
+    # the hint. The hint should suggest looking it up rather than
+    # presenting the unresolved name as the answer.
+    assert "configs: bettermemory" not in hint
+    assert "which bettermemory" in hint or "init" in hint
 
 
 # ---------------------------------------------------------------------------
@@ -212,6 +253,82 @@ def test_event_log_unwritable_fails(tmp_path: Path) -> None:
     if diag.status == "ok":
         pytest.skip("filesystem ignored chmod; cannot exercise unwritable file")
     assert diag.status == "fail"
+
+
+# ---------------------------------------------------------------------------
+# audit_turn_cadence (M-doctor-hook)
+# ---------------------------------------------------------------------------
+
+
+def _write_event(directory: Path, kind: str, *, ts: str, session: str = "s1") -> None:
+    """Append one event line directly to the event log.
+
+    We write raw JSONL rather than going through `events.Recorder` so
+    the test can pin the timestamp without monkey-patching the clock.
+    The `audit_turn_cadence` check reads via `iter_all_events`, which
+    parses the same JSONL.
+    """
+    import json
+
+    log = directory / ".events.jsonl"
+    payload = {"ts": ts, "session": session, "kind": kind}
+    with log.open("a", encoding="utf-8") as f:
+        f.write(json.dumps(payload) + "\n")
+
+
+def test_audit_turn_cadence_empty_dir_is_ok(tmp_path: Path) -> None:
+    """No events at all means we have nothing to compare against;
+    don't false-warn the user on a brand-new install."""
+    diag = _check_audit_turn_cadence(tmp_path)
+    assert diag.status == "ok"
+
+
+def test_audit_turn_cadence_recent_audits_pass(tmp_path: Path) -> None:
+    """Several recent `turn_audited` events across multiple sessions:
+    the hook is firing, nothing to warn about."""
+    from datetime import datetime, timezone
+
+    now_iso = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+    _write_event(tmp_path, "search", ts=now_iso, session="s1")
+    _write_event(tmp_path, "turn_audited", ts=now_iso, session="s1")
+    _write_event(tmp_path, "turn_audited", ts=now_iso, session="s2")
+    diag = _check_audit_turn_cadence(tmp_path)
+    assert diag.status == "ok"
+    assert diag.details["turn_audited_events"] == 2
+
+
+def test_audit_turn_cadence_silent_hook_warns(tmp_path: Path) -> None:
+    """Recent session activity but zero `turn_audited` events: the
+    Stop hook is mis-wired (or absent). Soft warning."""
+    from datetime import datetime, timezone
+
+    now_iso = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+    _write_event(tmp_path, "search", ts=now_iso, session="s1")
+    _write_event(tmp_path, "write", ts=now_iso, session="s1")
+    _write_event(tmp_path, "search", ts=now_iso, session="s2")
+    diag = _check_audit_turn_cadence(tmp_path)
+    assert diag.status == "warn"
+    assert diag.fix_hint is not None
+    assert "Stop hook" in diag.message or "audit-turn" in diag.message
+    # Surface the session count to motivate the warning.
+    assert diag.details["sessions"] == 2
+    assert diag.details["turn_audited_events"] == 0
+
+
+def test_audit_turn_cadence_only_old_events_skips_warn(tmp_path: Path) -> None:
+    """Events outside the 7-day window don't count — old activity from
+    last month shouldn't trigger a warning today."""
+    from datetime import datetime, timedelta, timezone
+
+    old = (datetime.now(timezone.utc) - timedelta(days=30)).isoformat().replace(
+        "+00:00", "Z"
+    )
+    _write_event(tmp_path, "search", ts=old, session="s1")
+    _write_event(tmp_path, "write", ts=old, session="s1")
+    diag = _check_audit_turn_cadence(tmp_path)
+    # No events in window -> ok (nothing to check).
+    assert diag.status == "ok"
+    assert diag.details["total_events"] == 0
 
 
 # ---------------------------------------------------------------------------
@@ -368,21 +485,8 @@ def test_run_diagnostics_returns_report(tmp_path: Path) -> None:
 def test_render_text_includes_all_check_names() -> None:
     report = DoctorReport(
         checks=[
-            type(
-                "D",
-                (),
-                {"name": "alpha", "status": "ok", "message": "fine", "fix_hint": None},
-            )(),
-            type(
-                "D",
-                (),
-                {
-                    "name": "beta",
-                    "status": "warn",
-                    "message": "iffy",
-                    "fix_hint": "do X",
-                },
-            )(),
+            Diagnosis(name="alpha", status="ok", message="fine"),
+            Diagnosis(name="beta", status="warn", message="iffy", fix_hint="do X"),
         ]
     )
     out = render_text(report)
@@ -407,60 +511,18 @@ def test_cli_doctor_returns_exit_code(
 ) -> None:
     """cli_doctor returns 0/1/2 depending on the worst diagnosis seen.
     Force a known state by stubbing run_diagnostics."""
-    fake_report = DoctorReport(
-        checks=[
-            type(
-                "D",
-                (),
-                {
-                    "name": "x",
-                    "status": "ok",
-                    "message": "",
-                    "fix_hint": None,
-                    "details": {},
-                },
-            )(),
-        ]
-    )
+    fake_report = DoctorReport(checks=[Diagnosis(name="x", status="ok", message="")])
     monkeypatch.setattr("bettermemory.doctor.run_diagnostics", lambda: fake_report)
     code = cli_doctor(json_out=False)
     assert code == 0
 
-    fake_report = DoctorReport(
-        checks=[
-            type(
-                "D",
-                (),
-                {
-                    "name": "x",
-                    "status": "warn",
-                    "message": "",
-                    "fix_hint": None,
-                    "details": {},
-                },
-            )(),
-        ]
-    )
+    fake_report = DoctorReport(checks=[Diagnosis(name="x", status="warn", message="")])
     monkeypatch.setattr("bettermemory.doctor.run_diagnostics", lambda: fake_report)
     capsys.readouterr()
     code = cli_doctor(json_out=False)
     assert code == 1
 
-    fake_report = DoctorReport(
-        checks=[
-            type(
-                "D",
-                (),
-                {
-                    "name": "x",
-                    "status": "fail",
-                    "message": "",
-                    "fix_hint": None,
-                    "details": {},
-                },
-            )(),
-        ]
-    )
+    fake_report = DoctorReport(checks=[Diagnosis(name="x", status="fail", message="")])
     monkeypatch.setattr("bettermemory.doctor.run_diagnostics", lambda: fake_report)
     capsys.readouterr()
     code = cli_doctor(json_out=False)

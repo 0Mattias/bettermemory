@@ -30,10 +30,12 @@ import os
 import shutil
 import sys
 from dataclasses import dataclass, field
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Literal
 
 from .config import Config, load_config
+from .events import iter_all_events
 from .init import KNOWN_CLIENTS, find_binary
 from .store import Store
 
@@ -111,6 +113,38 @@ def _check_binary_on_path() -> Diagnosis:
             details={"path": binary},
         )
     fallback = find_binary()
+    # `find_binary()` returns the bare string ``"bettermemory"`` as its
+    # last-resort fallback when neither `shutil.which` nor `sys.argv[0]`
+    # resolves to an absolute path. In that case the hint shouldn't
+    # pretend we know the path — say "use the absolute path" generically
+    # and leave the lookup to the user. When `find_binary()` DID resolve
+    # to a real on-disk path (e.g. via `sys.argv[0]`, the `python -m
+    # bettermemory doctor` invocation path), substitute the resolved
+    # path into the hint so the user can copy-paste it into their MCP
+    # config without re-running `which`.
+    resolved_path: str | None = None
+    if Path(fallback).is_absolute() and Path(fallback).exists():
+        resolved_path = fallback
+    elif sys.argv and sys.argv[0]:
+        # Belt-and-suspenders: if `find_binary()` returned bare and we
+        # were invoked via an absolute argv[0] (e.g. `/path/to/venv/bin/
+        # bettermemory doctor`), surface that path.
+        argv0 = Path(sys.argv[0])
+        if argv0.is_absolute() and argv0.exists() and "bettermemory" in argv0.name:
+            resolved_path = str(argv0.resolve())
+
+    if resolved_path:
+        hint = (
+            f"Use the absolute path in MCP client configs: {resolved_path}. "
+            "`bettermemory init --client X` does this automatically."
+        )
+    else:
+        hint = (
+            "Use the absolute path to the `bettermemory` binary in MCP "
+            "client configs (find it with `which bettermemory` from a "
+            "shell that has it on PATH, or run "
+            "`bettermemory init --client X` which does this automatically)."
+        )
     return Diagnosis(
         name="binary_on_path",
         status="warn",
@@ -120,11 +154,8 @@ def _check_binary_on_path() -> Diagnosis:
             "either unless their PATH is set up at GUI-launch time "
             "(macOS Finder/Launchpad inherits a minimal PATH)."
         ),
-        fix_hint=(
-            f"Use the absolute path in MCP client configs: {fallback}. "
-            "`bettermemory init --client X` does this automatically."
-        ),
-        details={"resolved_binary": fallback},
+        fix_hint=hint,
+        details={"resolved_binary": fallback, "resolved_path": resolved_path},
     )
 
 
@@ -355,6 +386,111 @@ def _check_event_log_writable(directory: Path) -> Diagnosis:
     )
 
 
+def _check_audit_turn_cadence(directory: Path) -> Diagnosis:
+    """Detect a silently no-opping Stop hook.
+
+    The plugin ships `hooks/hooks.json` declaring a Stop binding that
+    invokes `bettermemory audit-turn`. When that hook fires, the
+    server records a `turn_audited` event per turn. Without the hook
+    (or with a hook wired to a stale binary path, a sandbox that
+    blocks `~/.local/bin`, a settings.json typo, etc.) the server
+    still records other events from in-session tool calls but
+    `turn_audited` is silent.
+
+    Heuristic: over the last 7 days, if the event log has any session
+    activity at all but zero `turn_audited` events, warn. Soft warning,
+    not a fatal error — a user who deliberately doesn't run the hook
+    (CI run, a one-off bulk-ingest session, a probe via the
+    programmatic client) has the same shape and we don't want to
+    spam them.
+    """
+    if not directory.exists():
+        return Diagnosis(
+            name="audit_turn_cadence",
+            status="ok",
+            message="Event log not yet created — skipping audit-turn check.",
+        )
+    cutoff = datetime.now(timezone.utc) - timedelta(days=7)
+    sessions: set[str] = set()
+    turn_audited = 0
+    total_events = 0
+    try:
+        for event in iter_all_events(directory):
+            ts_raw = event.get("ts")
+            if not isinstance(ts_raw, str):
+                continue
+            try:
+                # `_utcnow_iso` writes `…Z`; fromisoformat handles `+00:00`
+                # but the trailing-Z form needs a tiny normalization.
+                ts = datetime.fromisoformat(ts_raw.replace("Z", "+00:00"))
+            except ValueError:
+                continue
+            if ts.tzinfo is None:
+                ts = ts.replace(tzinfo=timezone.utc)
+            if ts < cutoff:
+                continue
+            total_events += 1
+            session = event.get("session")
+            if isinstance(session, str) and session:
+                sessions.add(session)
+            if event.get("kind") == "turn_audited":
+                turn_audited += 1
+    except OSError as exc:
+        return Diagnosis(
+            name="audit_turn_cadence",
+            status="warn",
+            message=f"Could not read event log to check audit cadence: {exc}.",
+        )
+
+    n_sessions = len(sessions)
+    info: dict[str, Any] = {
+        "window_days": 7,
+        "sessions": n_sessions,
+        "turn_audited_events": turn_audited,
+        "total_events": total_events,
+    }
+
+    if total_events == 0:
+        return Diagnosis(
+            name="audit_turn_cadence",
+            status="ok",
+            message="No events in the last 7 days — nothing to check.",
+            details=info,
+        )
+    if turn_audited == 0 and n_sessions > 0:
+        # Don't pretend we know the exact expected count — the cadence
+        # depends on how often the user invokes Claude Code. "At least
+        # N" is a useful order-of-magnitude where N is the session
+        # count (a turn produces one Stop event, but a session
+        # produces many turns — N is a lower bound).
+        return Diagnosis(
+            name="audit_turn_cadence",
+            status="warn",
+            message=(
+                f"Your Stop hook may be silently no-opping — expected at "
+                f"least {n_sessions} audit-turn events given "
+                f"{n_sessions} session(s) in the last 7 days, found 0."
+            ),
+            fix_hint=(
+                "Check `~/.claude/settings.json` (or your hooks config) "
+                "for a Stop binding to `bettermemory audit-turn`. The "
+                "plugin's `hooks/hooks.json` does this automatically "
+                "when the plugin is installed; manual setups need to "
+                "wire it themselves."
+            ),
+            details=info,
+        )
+    return Diagnosis(
+        name="audit_turn_cadence",
+        status="ok",
+        message=(
+            f"{turn_audited} `turn_audited` event(s) across {n_sessions} "
+            f"session(s) in the last 7 days."
+        ),
+        details=info,
+    )
+
+
 def _check_embeddings_extra(cfg: Config) -> Diagnosis:
     """If `behavior.semantic_dedup = true`, the embeddings extra has to
     be installed or write-time dedup silently falls back to Jaccard.
@@ -567,6 +703,12 @@ def run_diagnostics() -> DoctorReport:
             )
         )
         checks.append(_safe("event_log", lambda: _check_event_log_writable(directory)))
+        checks.append(
+            _safe(
+                "audit_turn_cadence",
+                lambda: _check_audit_turn_cadence(directory),
+            )
+        )
 
     checks.append(_safe("embeddings_extra", lambda: _check_embeddings_extra(cfg)))
     checks.append(_safe("mcp_client_configs", _check_mcp_client_configs))
