@@ -34,5 +34,13 @@ htmlcov/
 # macOS Finder droppings
 .DS_Store
 
+# iCloud Drive sometimes lands "Filename 2.ext" duplicates next to a
+# canonical file when a sync races a local edit. Pattern catches every
+# extension and depth so a stale pre-edit copy can't accidentally get
+# committed (the 2.7.x cycle picked up `ingest 2.py`, `CHANGELOG 2.md`,
+# `plugin 2.json`, and `test_ingest 2.py` before this rule landed).
+* [0-9].*
+* [0-9]
+
 # Local Claude Code settings (keep settings.json shared, ignore the per-machine one)
 .claude/settings.local.json
