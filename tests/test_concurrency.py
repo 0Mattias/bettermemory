@@ -468,3 +468,259 @@ def test_locked_serializes_two_spawned_processes(tmp_path: Path) -> None:
         f"hold for {hold_seconds:.3f}s. Mutual exclusion broken — "
         f"likely a regression of the 2.6.3 lockfile-identity fix."
     )
+
+
+# ---------------------------------------------------------------------------
+# C1 regression — slug-collision silent data loss
+# ---------------------------------------------------------------------------
+#
+# Pre-2.7 the active-side `_path_for` used `candidate.exists()` as the
+# only collision guard. Two concurrent writes whose bodies slugified to
+# the same value both saw `exists() == False`, both picked the bare
+# candidate, serialized on `_locked(<same path>)` — and the second
+# `_atomic_write_post` clobbered the first memory entirely.
+# `tombstone()` already closed this race in 2.6.4 by unconditionally
+# embedding the ULID in the filename; the fix mirrors that on the
+# active side.
+
+
+def test_concurrent_slug_collision_writes_do_not_clobber(tmp_path: Path) -> None:
+    """C1 regression. Two threaded writers whose bodies slugify to the
+    same string must both end up with distinct files on disk; neither
+    memory may be silently overwritten.
+
+    Threaded (not multiprocess) because we want maximum interleaving on
+    the `_path_for` -> `_locked` -> `_write_path` sequence. The
+    cross-process variant is already exercised by
+    `test_multi_process_stress_no_corruption`; this test pins the
+    deterministic slug-collision case so a regression to the
+    `exists()`-only guard fails it loudly.
+    """
+    import threading
+
+    store = Store(tmp_path)
+    # Identical bodies -> identical slugs. Each writer hammers the
+    # store concurrently; nothing about the content distinguishes them.
+    n_writers = 16
+    barrier = threading.Barrier(n_writers)
+    written_ids: list[str] = []
+    written_lock = threading.Lock()
+    errors: list[BaseException] = []
+
+    def worker() -> None:
+        try:
+            barrier.wait()  # release all writers together
+            memory = store.write(
+                content="hello world identical body for slug collision",
+                scopes=["tools"],
+            )
+            with written_lock:
+                written_ids.append(memory.id)
+        except BaseException as exc:  # noqa: BLE001 — capture for assert
+            with written_lock:
+                errors.append(exc)
+
+    threads = [threading.Thread(target=worker) for _ in range(n_writers)]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join(timeout=30)
+
+    assert not errors, f"writers raised: {errors}"
+    assert len(written_ids) == n_writers
+    assert len(set(written_ids)) == n_writers, "duplicate ids returned from write"
+
+    # Disk invariant: one .md file per write, and every id loads back.
+    files = sorted(p.name for p in tmp_path.iterdir() if p.suffix == ".md")
+    assert len(files) == n_writers, (
+        f"expected {n_writers} files, got {len(files)}: {files}. "
+        f"Slug-collision silent overwrite (C1 regression)."
+    )
+    loaded_ids = {store.load_one(mid).id for mid in written_ids}
+    assert loaded_ids == set(written_ids), (
+        "Some written memories vanished from disk — silent overwrite (C1)."
+    )
+
+
+# Property-based variant: same invariant under randomized bodies that
+# all share a slug, plus a smattering of unrelated bodies. Hypothesis
+# generates a body shape and a worker count; the invariant — every
+# written id loads back — must hold across the input space.
+# hypothesis is in [project.optional-dependencies].dev — if you can run
+# pytest, you have it; importing unconditionally keeps the analyzer happy.
+from hypothesis import HealthCheck, given, settings
+from hypothesis import strategies as st
+
+
+@settings(
+    max_examples=6,
+    deadline=None,
+    suppress_health_check=[HealthCheck.function_scoped_fixture],
+)
+@given(
+    # Body that slugifies cleanly — alpha chars + spaces so
+    # make_slug emits a non-empty, stable slug. Length kept small
+    # to keep the test snappy; we're testing collision behaviour,
+    # not slug-generation breadth.
+    body=st.text(
+        alphabet="abcdefghijklmnopqrstuvwxyz ",
+        min_size=8,
+        max_size=40,
+    ).filter(lambda s: s.strip()),
+    n_writers=st.integers(min_value=2, max_value=8),
+)
+def test_property_concurrent_slug_collision_preserves_all_writes(
+    tmp_path: Path, body: str, n_writers: int
+) -> None:
+    """Property-based C1 regression. Hypothesis generates a body
+    and a writer count; all writers race on identical content
+    (same slug). Invariant: every successful write is recoverable
+    via `load_one`. A regression that drops one of N concurrent
+    same-slug writes fails this test."""
+    import threading
+    import uuid
+
+    # Per-example subdir so hypothesis's re-use of `tmp_path`
+    # doesn't leak files between cases.
+    root = tmp_path / f"ex_{uuid.uuid4().hex[:12]}"
+    root.mkdir()
+    store = Store(root)
+    barrier = threading.Barrier(n_writers)
+    written_ids: list[str] = []
+    written_lock = threading.Lock()
+    errors: list[BaseException] = []
+
+    def worker() -> None:
+        try:
+            barrier.wait()
+            memory = store.write(content=body, scopes=["tools"])
+            with written_lock:
+                written_ids.append(memory.id)
+        except BaseException as exc:  # noqa: BLE001
+            with written_lock:
+                errors.append(exc)
+
+    threads = [threading.Thread(target=worker) for _ in range(n_writers)]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join(timeout=30)
+
+    assert not errors, f"writers raised: {errors}"
+    assert len(written_ids) == n_writers
+    # Every id must load back — no silent overwrites.
+    loaded = {store.load_one(mid).id for mid in written_ids}
+    assert loaded == set(written_ids), (
+        f"Lost writes (C1 regression). Written: {sorted(written_ids)}; "
+        f"loaded: {sorted(loaded)}; body={body!r}."
+    )
+
+
+# ---------------------------------------------------------------------------
+# C2 regression — update / mark_verified / rename_scope must not
+# resurrect a tombstoned memory
+# ---------------------------------------------------------------------------
+#
+# Pre-2.7 the locked-write sequence was:
+#   1. `_find_path_for_id(id)` walks the directory unlocked.
+#   2. We acquire `_locked(path)`.
+#   3. Inside the lock, `_write_path(path, memory)`.
+# Between step 1 and step 2, another process could `tombstone(id)`,
+# moving the file out to `.tombstones/`. Step 3 then wrote a fresh
+# active file at the original path, resurrecting the tombstoned memory
+# behind the user's back. The fix adds an under-lock id recheck (step
+# 2.5); the tests below verify that recheck raises rather than
+# silently writing.
+
+
+def test_update_after_concurrent_tombstone_raises(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """C2 regression for `update`. Simulate the race deterministically
+    by tombstoning the target memory between `_find_path_for_id` and
+    the lock acquisition. The update must raise MemoryNotFoundError —
+    NOT silently re-create an active file at the original path."""
+    store = Store(tmp_path)
+    memory = store.write(content="will be tombstoned mid-update", scopes=["tools"])
+
+    # Patch `_find_path_for_id` to capture the path it would return,
+    # then tombstone the memory before the caller takes the lock.
+    # `_fired` guards against recursion: `tombstone()` itself calls
+    # `_find_path_for_id`, so we only inject the race on the first
+    # call (the one made by `update`).
+    original_find = Store._find_path_for_id
+    fired = {"done": False}
+
+    def racing_find(self: Store, mid: str) -> Path | None:
+        path = original_find(self, mid)
+        if (
+            path is not None
+            and mid == memory.id
+            and not fired["done"]
+        ):
+            fired["done"] = True
+            # Inject the race: tombstone the memory before the caller
+            # acquires the lock. This emulates a second process moving
+            # the file under our feet.
+            self.tombstone(mid, reason="raced by other process")
+        return path
+
+    monkeypatch.setattr(Store, "_find_path_for_id", racing_find)
+
+    bumped = memory.model_copy(update={"body": "edited\n"})
+    with pytest.raises(MemoryNotFoundError, match="raced with"):
+        store.update(bumped)
+
+    # Disk invariant: the tombstone won, no resurrected active file at
+    # the original path. (`load_one` raises TombstonedError for the id.)
+    with pytest.raises(TombstonedError):
+        store.load_one(memory.id)
+    # And: no orphan active .md file should exist for that id.
+    active_files = [
+        p
+        for p in tmp_path.iterdir()
+        if p.is_file() and p.suffix == ".md"
+    ]
+    # The directory may legitimately contain other files; just verify
+    # no file holds the tombstoned id in its frontmatter.
+    from bettermemory._frontmatter import load as fm_load
+
+    for p in active_files:
+        post = fm_load(p)
+        assert post.metadata.get("id") != memory.id, (
+            f"Active file {p.name} carries tombstoned id {memory.id} — "
+            f"C2 regression: update resurrected the memory."
+        )
+
+
+def test_mark_verified_after_concurrent_tombstone_raises(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """C2 regression for `mark_verified`. Same race window as `update`
+    — find walks unlocked, tombstone slips in, our write inside the
+    lock used to resurrect the memory. The recheck must raise."""
+    store = Store(tmp_path)
+    memory = store.write(content="will be tombstoned mid-verify", scopes=["tools"])
+
+    original_find = Store._find_path_for_id
+    fired = {"done": False}
+
+    def racing_find(self: Store, mid: str) -> Path | None:
+        path = original_find(self, mid)
+        if (
+            path is not None
+            and mid == memory.id
+            and not fired["done"]
+        ):
+            fired["done"] = True
+            self.tombstone(mid, reason="raced by other process")
+        return path
+
+    monkeypatch.setattr(Store, "_find_path_for_id", racing_find)
+
+    with pytest.raises(MemoryNotFoundError, match="raced with"):
+        store.mark_verified(memory.id)
+
+    # Tombstone state is preserved.
+    with pytest.raises(TombstonedError):
+        store.load_one(memory.id)

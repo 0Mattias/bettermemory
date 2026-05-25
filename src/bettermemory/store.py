@@ -16,6 +16,7 @@ from pathlib import Path
 from typing import Iterator
 
 from . import _frontmatter as frontmatter
+from ._decorators import best_effort
 from ._fsutil import flock_excl, fsync_dir, fsync_file
 
 # We use a vendored frontmatter parser (`_frontmatter.py`) which pins the
@@ -235,6 +236,10 @@ class Store:
 
         raise MemoryNotFoundError(f"no memory with id {memory_id}")
 
+    def show(self, memory_id: str) -> Memory:
+        """Public alias matching the MCP `memory_show` tool name."""
+        return self.load_one(memory_id)
+
     def _load_path(self, path: Path) -> Memory:
         post = frontmatter.load(path)
         meta = post.metadata
@@ -368,7 +373,15 @@ class Store:
         path = self._path_for(memory)
         with _locked(path):
             self._write_path(path, memory)
-        _index_upsert_quietly(self.root, memory, filename=path.name)
+            # perf: index upsert under lock is intentional — see audit
+            # H1. Two concurrent updates on the same id used to release
+            # the file lock in order A→B, but their SQLite upserts
+            # could still interleave so the index ended up with A's
+            # body while disk had B's. The SQLite serialization
+            # overhead is worth it: stale FTS5 ranking quietly
+            # misleads `memory_search`, and the file-lock cost is
+            # bounded (we're already holding it through `_write_path`).
+            _index_upsert_quietly(self.root, memory, filename=path.name)
         return memory
 
     def update(self, memory: Memory) -> Memory:
@@ -380,8 +393,30 @@ class Store:
         now = utcnow()
         new_memory = memory.model_copy(update={"updated": now})
         with _locked(existing_path):
+            # Re-verify the path under the lock. `_find_path_for_id`
+            # above walked the directory unlocked, so a concurrent
+            # `tombstone()` could have moved the file into
+            # `.tombstones/` between the find and this lock; without
+            # the recheck, our write would resurrect the tombstoned
+            # memory by re-creating an active file at the original
+            # path — silently overriding the removal and leaving the
+            # tombstone orphaned in `.tombstones/`.
+            #
+            # Cheapest correct check: the file still exists AND its id
+            # frontmatter still matches. If either fails, the path no
+            # longer represents the same logical memory and the caller
+            # must retry through `_find_path_for_id` (or accept the
+            # tombstone). We surface MemoryNotFoundError rather than a
+            # custom race-flag — the calling tool layer (`memory_update`)
+            # treats it the same way as the find-time miss above.
+            if not _id_still_at_path(existing_path, memory.id):
+                raise MemoryNotFoundError(
+                    f"no memory with id {memory.id} (raced with "
+                    f"concurrent tombstone or rename)"
+                )
             self._write_path(existing_path, new_memory)
-        _index_upsert_quietly(self.root, new_memory, filename=existing_path.name)
+            # perf: index upsert under lock is intentional — see audit H1.
+            _index_upsert_quietly(self.root, new_memory, filename=existing_path.name)
         return new_memory
 
     def mark_verified(
@@ -428,6 +463,20 @@ class Store:
         # plus the new `last_verified_at`. Cheap to hold the lock during
         # the read — the file is the same one we're about to write.
         with _locked(existing_path):
+            # Same C2 recheck as `update`: `_find_path_for_id` walked
+            # unlocked, so a concurrent `tombstone()` may have moved
+            # the file away between the find and this lock. Without
+            # the recheck, our `_load_path` would raise
+            # FileNotFoundError (passing through as OSError) or, worse,
+            # the path could have been reused for a different memory
+            # via a same-slug write — in which case we'd corrupt that
+            # memory with a `last_verified_at` claim from a different
+            # id. Recheck before the load.
+            if not _id_still_at_path(existing_path, memory_id):
+                raise MemoryNotFoundError(
+                    f"no memory with id {memory_id} (raced with "
+                    f"concurrent tombstone or rename)"
+                )
             existing = self._load_path(existing_path)
             update: dict[str, object] = {"last_verified_at": utcnow()}
             if verified_paths is not None:
@@ -438,7 +487,8 @@ class Store:
                 update["verified_versions"] = list(verified_versions)
             new_memory = existing.model_copy(update=update)
             self._write_path(existing_path, new_memory)
-        _index_upsert_quietly(self.root, new_memory, filename=existing_path.name)
+            # perf: index upsert under lock is intentional — see audit H1.
+            _index_upsert_quietly(self.root, new_memory, filename=existing_path.name)
         return new_memory
 
     def tombstone(
@@ -511,7 +561,8 @@ class Store:
             # come back to BOTH the tombstone and the original active
             # file existing (a soft form of double-bookkeeping).
             fsync_dir(path.parent)
-        _index_remove_quietly(self.root, memory_id)
+            # perf: index remove under lock is intentional — see audit H1.
+            _index_remove_quietly(self.root, memory_id)
         return target
 
     # ---- tombstone read paths --------------------------------------------
@@ -747,11 +798,12 @@ class Store:
             # the tombstone alongside the restored active file.
             fsync_dir(tombstone_path.parent)
 
-        restored = self._load_path(active_path)
-        # Restored memories rejoin the searchable set — keep the FTS5
-        # index in step with the file system. The remove-on-tombstone
-        # call dropped this id; the restore is the symmetric upsert.
-        _index_upsert_quietly(self.root, restored, filename=active_path.name)
+            restored = self._load_path(active_path)
+            # Restored memories rejoin the searchable set — keep the FTS5
+            # index in step with the file system. The remove-on-tombstone
+            # call dropped this id; the restore is the symmetric upsert.
+            # perf: index upsert under lock is intentional — see audit H1.
+            _index_upsert_quietly(self.root, restored, filename=active_path.name)
         return restored
 
     # ---- scope rename ----------------------------------------------------
@@ -802,6 +854,17 @@ class Store:
             # reads against stale indexed text until the next manual
             # `bettermemory reindex`.
             with _locked(path):
+                # C2 recheck symmetric to `update`/`mark_verified`:
+                # `_iter_active_paths` listed the directory unlocked,
+                # so a concurrent `tombstone()` may have moved the
+                # file between the iteration and this lock. Without
+                # the recheck we'd either crash on a missing file or
+                # (worst case on a legacy bare-name layout, where a
+                # different memory could land at the same path after
+                # the tombstone) silently rewrite the scopes of an
+                # unrelated memory. Skip on miss; the next
+                # `rename_scope` invocation will pick up any
+                # newly-written files.
                 try:
                     memory = self._load_path(path)
                 except (ValueError, KeyError, FileNotFoundError):
@@ -817,6 +880,7 @@ class Store:
                     update={"scopes": new_scopes, "updated": utcnow()}
                 )
                 self._write_path(path, refreshed)
+                # perf: index upsert under lock is intentional — see audit H1.
                 _index_upsert_quietly(self.root, refreshed, filename=path.name)
                 active_changed.append(refreshed.id)
 
@@ -829,6 +893,16 @@ class Store:
                 # land between an unlocked read and a locked write and
                 # have its in-flight rewrite clobbered.
                 with _locked(tpath):
+                    # C2 recheck: tombstones can vanish under our feet
+                    # via `restore()` or `prune_tombstones()`. The load
+                    # below already handles the missing-file case, but
+                    # we also need to make sure the file we lock still
+                    # has the same id we'd have computed pre-lock
+                    # (otherwise a `restore` + new tombstone of a
+                    # different memory could swap which id sits at this
+                    # path on legacy layouts). The frontmatter.load
+                    # under the lock IS that check — we trust whatever
+                    # id is in the file at lock time and act on it.
                     try:
                         post = frontmatter.load(tpath)
                     except (ValueError, KeyError, OSError):
@@ -930,15 +1004,31 @@ class Store:
 
     def _path_for(self, memory: Memory) -> Path:
         slug = make_slug(memory.body)
-        filename = build_filename(memory.created, slug)
-        candidate = self.root / filename
 
-        # Avoid clobbering: if filename collides (same date + slug), append a
-        # short ID suffix.
-        if candidate.exists():
-            short = memory.id[-6:].lower()
-            candidate = self.root / build_filename(memory.created, f"{slug}-{short}")
-        return candidate
+        # Unconditionally embed the short ULID in the filename so the
+        # name is unique by construction. Pre-2.7 the code picked the
+        # bare `<date>-<slug>.md` when the file didn't yet exist and
+        # added the ULID only on collision — a TOCTOU silent-data-loss
+        # bug: two concurrent `write()`s whose bodies slugify to the
+        # same value both observed `bare.exists() == False`, both
+        # picked the bare candidate, serialized on `_locked(<same
+        # path>)` — and the second writer's `_atomic_write_post`
+        # clobbered the first memory entirely. The on-disk file still
+        # parsed, but it carried writer B's id; writer A's memory was
+        # gone with no trace.
+        #
+        # Always-suffixed kills the race: with distinct ULIDs (which
+        # `generate_ulid` makes vanishingly unlikely to collide), two
+        # writers can never pick the same path even if their bodies
+        # slugify identically. Matches the discipline `tombstone()`
+        # adopted in 2.6.4 (see store.py:474-485) for the same reason.
+        #
+        # Existing unsuffixed memories on disk continue to load — the
+        # reader keys off the `id` field, not the filename. The cost
+        # is a slightly longer filename (6 hex chars + a hyphen) on
+        # every new write; the benefit is no silent overwrites.
+        short = memory.id[-6:].lower()
+        return self.root / build_filename(memory.created, f"{slug}-{short}")
 
     def _find_path_for_id(self, memory_id: str) -> Path | None:
         if not is_valid_ulid(memory_id):
@@ -1018,6 +1108,13 @@ class Store:
 # ---------------------------------------------------------------------------
 
 
+import logging as _logging
+
+_INDEX_LOG = _logging.getLogger("bettermemory.store")
+_INDEX_REPAIR_HINT = "Run `bettermemory reindex` to repair."
+
+
+@best_effort("index upsert", logger=_INDEX_LOG, repair_hint=_INDEX_REPAIR_HINT)
 def _index_upsert_quietly(root: Path, memory: Memory, *, filename: str) -> None:
     """Update the FTS5 index for one memory. Best-effort: a failure
     here (corrupt index, locked database, missing SQLite extension)
@@ -1033,73 +1130,115 @@ def _index_upsert_quietly(root: Path, memory: Memory, *, filename: str) -> None:
 
     Lazy import so this module loads cleanly even when callers don't
     actually use the index (e.g. pure-Python tests against the file
-    store directly)."""
-    try:
-        from . import index as _index
+    store directly). The ``@best_effort`` wrapper supplies the
+    swallow-and-warn shape — the body below stays the bare
+    happy-path call."""
+    from . import index as _index
 
-        _index.upsert(root, memory, filename=filename)
-    except Exception as exc:  # noqa: BLE001 — never break the write
-        import logging
-
-        logging.getLogger("bettermemory.store").warning(
-            "index upsert failed for %s: %s. Run `bettermemory reindex` to repair.",
-            memory.id,
-            exc,
-        )
+    _index.upsert(root, memory, filename=filename)
 
 
+@best_effort("index remove", logger=_INDEX_LOG, repair_hint=_INDEX_REPAIR_HINT)
 def _index_remove_quietly(root: Path, memory_id: str) -> None:
     """Drop one memory from the FTS5 index. Same best-effort contract
     as the upsert: never block the on-disk tombstone on an index
-    failure."""
-    try:
-        from . import index as _index
+    failure. The ``@best_effort`` wrapper supplies the swallow-and-warn
+    shape — the body below stays the bare happy-path call."""
+    from . import index as _index
 
-        _index.remove(root, memory_id)
-    except Exception as exc:  # noqa: BLE001
-        import logging
-
-        logging.getLogger("bettermemory.store").warning(
-            "index remove failed for %s: %s. Run `bettermemory reindex` to repair.",
-            memory_id,
-            exc,
-        )
+    _index.remove(root, memory_id)
 
 
 def _atomic_write_post(path: Path, post: frontmatter.Post) -> None:
     """Atomic, durable write of a frontmatter Post to `path`.
 
-    Write-to-tmp, fsync the file, rename into place, fsync the parent
-    directory. The rename alone is POSIX-atomic for the directory entry,
-    but without fsync on the file we can end up with a renamed-but-empty
-    file after power loss (the entry exists, the bytes never reached
-    disk); without fsync on the directory the rename itself isn't
-    durable past a crash. Both fsyncs are best-effort — see `_fsutil`
-    for the platform/filesystem caveats.
+    Write-to-tmp, fchmod 0o600 on the tmp fd, fsync the file, rename
+    into place, fsync the parent directory. The rename alone is
+    POSIX-atomic for the directory entry, but without fsync on the
+    file we can end up with a renamed-but-empty file after power loss
+    (the entry exists, the bytes never reached disk); without fsync
+    on the directory the rename itself isn't durable past a crash.
+    Both fsyncs are best-effort — see `_fsutil` for the
+    platform/filesystem caveats.
 
-    Mode 0o600 (owner read/write only) is set after the rename. Without
-    this, files inherit the user umask — typically 0o644 on Linux/macOS,
-    so memory content ends up world-readable on shared-user boxes.
-    The lock-file path already uses 0o600 (see `_locked`); this brings
-    the data path in line. Windows ignores the bits silently.
+    Mode 0o600 (owner read/write only) is set on the tmp file BEFORE
+    the rename — `os.fchmod` on the open file descriptor — so the
+    rename brings the restricted mode atomically. The pre-2.7 shape
+    set the mode via `os.chmod(path, 0o600)` AFTER the rename, which
+    opened a window where the file was world-readable at the target
+    path (the umask is typically 0o644 on Linux/macOS, sometimes
+    0o664 on shared-user boxes). Concurrent readers in that window
+    could legally open and tail the file before we restricted it.
+    fchmod-before-rename closes the window — the file's permission
+    bits are 0o600 from the moment it appears under `path`.
+
+    The tmp file uses a per-process random suffix
+    (`tempfile.NamedTemporaryFile(dir=path.parent, prefix=path.name +
+    ".", suffix=".tmp", delete=False)`) rather than the deterministic
+    `<path>.tmp` it used pre-2.7. Two writers landing on the same
+    target path used to race on the deterministic tmp name itself —
+    one writer's flush-to-tmp could overlap the other's, and the
+    final rename's "winner" was just the last one to `replace`. With
+    a per-process tmp name the two writers fill separate files and
+    serialize only on the rename; one of them lands, the other's tmp
+    is left as `<path>.<random>.tmp` on disk (deterministic cleanup
+    happens via the `try/finally` below). The file-lock in
+    `_locked()` is still the primary correctness guarantee — this
+    just removes the secondary tmp-name collision risk that would
+    otherwise show up on platforms where the lock primitive is a
+    no-op (Windows pre-2.7) or when two writers don't share a lock
+    (e.g. a tooling bug that bypasses Store).
 
     One helper, one definition of "durable write" for every persistent
     write in the store: new memories, tombstones, restores, and
     rename_scope in-place edits all share this pattern.
     """
-    tmp = path.with_suffix(path.suffix + ".tmp")
+    import tempfile
+
     data = frontmatter.dumps(post).encode("utf-8")
-    with tmp.open("wb") as f:
-        f.write(data)
-        f.flush()
-        fsync_file(f.fileno())
-    tmp.replace(path)
-    # chmod after rename so a partially-written tmp file never sits at
-    # the target path with relaxed permissions. `os.chmod` is a no-op
-    # for the bits beyond the platform's permission model.
-    with contextlib.suppress(OSError):
-        os.chmod(path, 0o600)
-    fsync_dir(path.parent)
+    # `delete=False` is required because we move the tmp to `path`
+    # before letting the context manager close it; `delete=True` would
+    # try to unlink the (now-renamed) original tmp path on context exit
+    # and crash. `prefix=path.name + "."` keeps the tmp visibly
+    # associated with the target file in `ls` output, which helps
+    # post-crash inspection.
+    parent = path.parent
+    parent.mkdir(parents=True, exist_ok=True)
+    tmp_file = tempfile.NamedTemporaryFile(
+        dir=str(parent),
+        prefix=path.name + ".",
+        suffix=".tmp",
+        delete=False,
+    )
+    tmp_path = Path(tmp_file.name)
+    renamed = False
+    try:
+        with tmp_file as f:
+            f.write(data)
+            f.flush()
+            # fchmod BEFORE the rename so the file is 0o600 the moment
+            # it appears at `path`. Suppressed — Windows has no mode
+            # bits and some sandbox filesystems reject fchmod; that's
+            # not a corruption risk, just a permission-bit loss.
+            with contextlib.suppress(OSError):
+                os.fchmod(f.fileno(), 0o600)
+            fsync_file(f.fileno())
+        tmp_path.replace(path)
+        renamed = True
+        # Defensive post-rename chmod (belt-and-suspenders): if the
+        # filesystem squashed the mode on rename (rare — most POSIX
+        # filesystems preserve it) we can still recover. This is a
+        # no-op when fchmod above succeeded.
+        with contextlib.suppress(OSError):
+            os.chmod(path, 0o600)
+        fsync_dir(parent)
+    finally:
+        # If we never renamed (write or rename raised), the tmp is an
+        # orphan; clean it up so the directory doesn't accumulate
+        # `<path>.<random>.tmp` files on every failure.
+        if not renamed:
+            with contextlib.suppress(OSError):
+                tmp_path.unlink()
 
 
 def _as_dt(value: object) -> datetime:
@@ -1136,6 +1275,31 @@ def _as_dt(value: object) -> datetime:
 def _scope_intersect(memory_scopes: list[str], filter_scopes: list[str]) -> bool:
     """True if memory has at least one of the requested scopes."""
     return bool(set(memory_scopes) & set(filter_scopes))
+
+
+def _id_still_at_path(path: Path, memory_id: str) -> bool:
+    """Re-verify under-lock that `path` still carries a memory with
+    `memory_id` in its frontmatter.
+
+    Cheap recheck callers use after acquiring `_locked(path)` to
+    detect a concurrent `tombstone()` (or `rename_scope`, or any
+    other mutator that moves the file) that landed between
+    `_find_path_for_id` and the lock acquisition. Returns False when
+    the file vanished, when the frontmatter can't be parsed, or when
+    the id no longer matches — any of which means the path no longer
+    represents the same logical memory and the in-flight write must
+    not proceed (it would resurrect a tombstoned memory by recreating
+    an active file at the original path, orphaning the tombstone).
+
+    Defensive against IO failures — a transient unreadable file is
+    treated the same as a vanished one. Callers raise
+    `MemoryNotFoundError` on False.
+    """
+    try:
+        post = frontmatter.load(path)
+    except (FileNotFoundError, ValueError, KeyError, OSError):
+        return False
+    return post.metadata.get("id") == memory_id
 
 
 def _load_str_list(value: object) -> list[str]:

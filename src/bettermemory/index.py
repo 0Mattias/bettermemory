@@ -30,17 +30,24 @@ Lifecycle:
 Concurrency: SQLite's WAL mode plus a 5-second busy timeout (set in
 ``_connect``) lets multiple processes share the index — readers don't
 block writers and vice versa, and contending writers retry rather
-than fail. The index upsert is deliberately *outside* the per-memory
-``fcntl.flock`` critical section in the Store — pulling SQLite I/O
-inside a file lock would serialize one writer's index write against
-every other writer's file write, with no consistency win because the
-index is a derived cache. The trade-off: if two writers race on the
-same memory id and one SQLite upsert fails past the busy timeout,
-the index drifts from the canonical file. Hooks log a warning and
-let the canonical write proceed (`_index_upsert_quietly` in
-``store.py``); the recovery path is ``bettermemory reindex``, which
-rebuilds the index from the on-disk truth. Files are canonical, the
-index is regenerable.
+than fail. As of the audit H1 fix, the index upsert lives *inside*
+the per-memory ``fcntl.flock`` critical section in the Store
+(``_index_upsert_quietly`` / ``_index_remove_quietly`` are called
+under the file lock in every mutator). Earlier the upsert ran after
+the lock release on perf grounds; that lost ordering across
+concurrent updates to the same id (file lock could release in order
+A→B, but the two SQLite upserts could land B→A, leaving the index
+with A's body while disk had B's). Stale FTS5 ranking quietly
+misled ``memory_search`` and made the index harder to trust than
+just rebuilding from disk; pulling the upsert under the lock
+trades a tiny extra hold time for an actually-consistent index.
+
+The hook is still best-effort: if a SQLite upsert fails inside the
+lock (corrupt index, missing FTS5 extension, ENOSPC), the Store
+logs a warning and lets the canonical file write succeed. The
+recovery path remains ``bettermemory reindex``, which rebuilds the
+index from the on-disk truth. Files are canonical, the index is
+regenerable.
 
 This module is intentionally narrow: schema, lifecycle, and a thin
 ``query`` surface returning ranked memory IDs. The search ranker

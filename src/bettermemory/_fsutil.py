@@ -171,11 +171,21 @@ def bounded_tail_read(path: Path, max_bytes: int) -> bytes:
     return chunk
 
 
+# Module-level guard so the "Windows lock fell back to in-process only"
+# warning is emitted at most once per process. Pre-2.7 the Windows
+# branch was a silent no-op; that's a real cross-process correctness
+# gap (two MCP processes pointed at the same memory directory could
+# race writes), so any fallback path is at least visible in the
+# logs now.
+_FLOCK_WARNED = False
+
+
 @contextlib.contextmanager
 def flock_excl(path: Path) -> Iterator[None]:
-    """POSIX ``flock``-based mutual exclusion on ``path.lock``.
+    """Cross-process exclusive lock on a sidecar lockfile next to ``path``.
 
-    The lockfile is created (or opened) at ``path.with_suffix(suffix +
+    POSIX path: ``fcntl.flock(fd, LOCK_EX)`` on ``<path>.lock``. The
+    lockfile is created (or opened) at ``path.with_suffix(suffix +
     ".lock")`` and held under ``LOCK_EX`` for the duration of the
     ``with`` block. The lockfile is NOT unlinked on release — see the
     2.6.3 audit note: ``flock`` identity is per-inode; unlinking on
@@ -185,28 +195,46 @@ def flock_excl(path: Path) -> Iterator[None]:
     the 0-byte lockfile keeps every ``os.open(lock_path, O_CREAT)``
     on the same inode so the flock actually serialises.
 
-    The lockfile is created with ``0o600`` mode so the cross-host
-    ``sync push`` posture doesn't leak it as world-readable
-    (it's a zero-byte file, but a stray world-readable file in
-    ``~/.claude-memory/`` is still bad form).
+    Windows path (audit H3): ``msvcrt.locking(fd, LK_NBLCK, 1)`` on
+    the same sidecar lockfile, with a retry-with-exponential-backoff
+    loop because ``LK_NBLCK`` is non-blocking and raises ``OSError``
+    on contention. Pre-2.7 this branch was a silent ``yield`` no-op
+    — two MCP processes on Windows pointed at the same memory
+    directory could race writes and corrupt files with no warning.
+    ``msvcrt.locking`` is the closest Windows analog: it's a
+    cross-process byte-range advisory lock on the file, and locking
+    a single byte (offset 0, length 1) gives whole-file mutual
+    exclusion in practice for our usage. The non-blocking variant
+    plus a retry loop avoids the dead-process-holds-the-lock failure
+    mode that the blocking variant exhibits. Default timeout is
+    30 seconds (overridable via ``BETTERMEMORY_FLOCK_TIMEOUT``);
+    backoff caps at 100ms per sleep.
 
-    No-op on Windows — ``fcntl`` is POSIX-only. The MVP single-process
-    assumption applies there; callers using this for cross-process
-    coordination get a degenerate one-process locker on Windows.
+    If the Windows branch can't load ``msvcrt`` (extremely unusual —
+    it ships with CPython) or the lockfile can't be created at all,
+    the helper falls back to an in-process-only yield and emits a
+    one-shot ``logger.warning`` so the regression is visible in
+    operator logs. Pre-2.7 the no-op was permanent and silent.
+
+    The lockfile is created with ``0o600`` mode (POSIX) or default
+    Windows mode bits (Windows ignores POSIX bits anyway) so the
+    cross-host ``sync push`` posture doesn't leak it as world-readable
+    on POSIX hosts.
 
     This is the SINGLE definition. ``store.py``, ``events.py``, and
     ``sync.py`` all alias to this so a future fix to the locking
     discipline lands in one place and not three — see the 2.6.3
     pattern-generalization audit note.
     """
-    if sys.platform == "win32":  # pragma: no cover - non-unix
-        yield
+    path.parent.mkdir(parents=True, exist_ok=True)
+    lock_path = path.with_suffix(path.suffix + ".lock")
+
+    if sys.platform == "win32":  # pragma: no cover - non-unix in CI
+        yield from _flock_windows(lock_path)
         return
 
     import fcntl
 
-    path.parent.mkdir(parents=True, exist_ok=True)
-    lock_path = path.with_suffix(path.suffix + ".lock")
     fd = os.open(lock_path, os.O_CREAT | os.O_RDWR, 0o600)
     try:
         fcntl.flock(fd, fcntl.LOCK_EX)
@@ -216,6 +244,102 @@ def flock_excl(path: Path) -> Iterator[None]:
             fcntl.flock(fd, fcntl.LOCK_UN)
         finally:
             os.close(fd)
+
+
+def _flock_windows(lock_path: Path) -> Iterator[None]:  # pragma: no cover - non-unix in CI
+    """Windows-only exclusive lock helper for ``flock_excl``.
+
+    Yields once the lock is held; releases on context exit. Splits out
+    so the POSIX branch in ``flock_excl`` reads naturally and so the
+    Windows-specific imports (``msvcrt``) don't pollute module-load
+    on POSIX hosts.
+
+    The retry loop spaces attempts with capped exponential backoff so
+    short-lived contention doesn't burn CPU and long-held locks don't
+    hammer the lockfile. The timeout is intentionally generous (30s
+    default) — bettermemory writes are interactive in nature; if
+    nothing has progressed in 30 seconds the right behaviour is to
+    surface an error to the caller rather than spin indefinitely.
+    """
+    import logging
+    import time
+
+    global _FLOCK_WARNED
+
+    try:
+        import msvcrt  # type: ignore[import-not-found]
+    except ImportError:
+        if not _FLOCK_WARNED:
+            _FLOCK_WARNED = True
+            logging.getLogger("bettermemory._fsutil").warning(
+                "flock_excl: msvcrt unavailable on this Windows interpreter; "
+                "cross-process locking is disabled. Concurrent writers may "
+                "corrupt files. Falling back to in-process-only yield."
+            )
+        yield
+        return
+
+    timeout_str = os.environ.get("BETTERMEMORY_FLOCK_TIMEOUT", "30")
+    try:
+        timeout = float(timeout_str)
+    except ValueError:
+        timeout = 30.0
+
+    try:
+        fd = os.open(str(lock_path), os.O_CREAT | os.O_RDWR)
+    except OSError:
+        if not _FLOCK_WARNED:
+            _FLOCK_WARNED = True
+            logging.getLogger("bettermemory._fsutil").warning(
+                "flock_excl: cannot open lockfile %s on Windows; "
+                "cross-process locking is disabled. Concurrent writers may "
+                "corrupt files.",
+                lock_path,
+            )
+        yield
+        return
+
+    try:
+        deadline = time.monotonic() + timeout
+        backoff = 0.005  # 5ms initial
+        acquired = False
+        while True:
+            try:
+                # LK_NBLCK: non-blocking exclusive lock on 1 byte at
+                # the current file position. Raises OSError on
+                # contention. The byte-range is the conventional
+                # whole-file proxy for advisory locks on Windows.
+                msvcrt.locking(fd, msvcrt.LK_NBLCK, 1)  # type: ignore[attr-defined]
+                acquired = True
+                break
+            except OSError:
+                if time.monotonic() >= deadline:
+                    raise TimeoutError(
+                        f"flock_excl: could not acquire {lock_path} within "
+                        f"{timeout:.1f}s (set BETTERMEMORY_FLOCK_TIMEOUT to "
+                        f"raise the ceiling)"
+                    )
+                time.sleep(backoff)
+                # Cap at 100ms — keeps the retry interval bounded so a
+                # long-held lock doesn't spin out to multi-second sleeps
+                # that hide a lock that JUST released.
+                backoff = min(backoff * 2, 0.1)
+        try:
+            yield
+        finally:
+            if acquired:
+                try:
+                    # Release the same byte we locked. Errors here
+                    # would orphan the lock; suppress and log via the
+                    # close path so the process can continue.
+                    msvcrt.locking(fd, msvcrt.LK_UNLCK, 1)  # type: ignore[attr-defined]
+                except OSError:
+                    pass
+    finally:
+        try:
+            os.close(fd)
+        except OSError:
+            pass
 
 
 def bounded_stream_read(stream: BinaryIO, max_bytes: int) -> bytes:
