@@ -34,7 +34,9 @@ bettermemory init --client claude-desktop
 
 **Week two**, fresh session: *"Walk me through pandas from zero to hero."* The phrase is ambiguous in a way stored preferences could resolve, so Claude calls `memory_search`, surfaces the preference, and tells you up front: *"Using your stored preference for code-driven tutorials…"* before answering.
 
-**Month three:** *"What's the difference between `find` and `fd`?"* Generic question. Claude doesn't search. The reply isn't tinted by months of accumulated personal context. That's the design point.
+**Month three:** *"Where does the auth middleware live again?"* Claude retrieves a memory that cites `src/auth/middleware.py`. The hit comes back with `staleness_verdict="spot_check_recommended"` and `path_drift={missing: ["src/auth/middleware.py"]}` — the file was renamed weeks ago. Claude says so, calls `memory_update` to point at the new path, and answers from the corrected memory. The rot was caught at retrieval, not buried in a wrong answer.
+
+**Month six:** *"What's the difference between `find` and `fd`?"* Generic question. Claude doesn't search. The reply isn't tinted by months of accumulated personal context. That's the design point.
 
 ## Features
 
@@ -103,7 +105,36 @@ When I ask for a "zero to hero" tutorial, I want a hands-on
 walkthrough with code I can run, not a tour of the IDE.
 ```
 
-Tombstones move to `.tombstones/`. Optional fields are written only when populated: `origin` (cwd + repo + branch + worktree captured at write time), `last_verified_at`, `category`, `verified_paths` / `verified_commits` / `verified_versions`, and `links`.
+A memory carrying the optional fields — captured under a project repo, verified against a couple of paths, and superseding an earlier record — looks like:
+
+```markdown
+---
+schema_version: 1
+id: 01HXYZ456DEF
+created: 2025-04-02T09:11:00+00:00
+updated: 2025-05-10T14:02:00+00:00
+scopes: [projects:bettermemory, infrastructure]
+confidence: high
+source: explicit-statement
+category: fact
+origin:
+  cwd: /Users/m/code/bettermemory
+  repo: https://github.com/0Mattias/bettermemory
+  branch: main
+  worktree: /Users/m/code/bettermemory
+last_verified_at: 2025-05-10T14:02:00+00:00
+verified_paths:
+  - src/bettermemory/health.py
+  - docs/eval.md
+links:
+  - {type: supersedes, target_id: 01HXYZ111AAA}
+---
+The `compute_health` rollup honors the latest `silent_miss_cutoff`
+event in the log and drops earlier `turn_audited` / `search_miss`
+rows from both numerator and denominator.
+```
+
+Tombstones move to `.tombstones/`. Optional fields are written only when populated: `origin`, `last_verified_at`, `category`, `verified_paths` / `verified_commits` / `verified_versions`, and `links`.
 
 Storage resolution: `$BETTERMEMORY_DIR` if set, else `./.claude-memory/` if it exists, else `~/.claude-memory/`. Project-scoped overrides global; cross-project queries are explicit (`auto_scope=false`).
 
@@ -133,8 +164,13 @@ bettermemory consolidate --apply            # commit dedup + demotions
 bettermemory consolidate --llm              # +LLM pass: merges, contradictions, date rewrites, demotions
 bettermemory consolidate --llm --from-transcript PATH  # +propose new memories from a Claude Code session JSONL / plain transcript
 bettermemory consolidate --llm --apply      # interactive accept; or --apply --yes for batch
+bettermemory consolidate --acknowledge-debt                        # one-shot clear of the endorsement_debt curation bucket
+bettermemory consolidate --acknowledge-misses-before <ISO_TS>      # invalidate stale silent-miss events after a fix lands
 bettermemory eval                           # memory_helped_rate / endorsement_rate / silent_miss_rate
 bettermemory eval --since 7d --scope tools  # narrow to a window or a scope
+bettermemory eval --tool-usage              # per-MCP-tool call-count rollup ("which tools is the model reaching for?")
+bettermemory eval --threshold-sweep         # counterfactual replay of logged search_miss events under alternative rules
+bettermemory ingest                         # import Claude Code's auto-memory directory into the store
 bettermemory reindex                        # rebuild FTS5 index from on-disk files
 bettermemory reindex --embeddings           # also re-embed bodies into the active provider's cache
 bettermemory sync init --remote URL         # git-based cross-host sync
@@ -193,6 +229,6 @@ bettermemory's response is to surface the *provenance and freshness of every mem
 
 - [`docs/eval.md`](docs/eval.md) — the three metrics bettermemory wants the field to adopt: `memory_helped_rate`, `endorsement_rate`, `silent_miss_rate`. Defined for any system that exposes the right telemetry, not just this one.
 - [`docs/incidents/`](docs/incidents/) — public postmortems for memory-rot bugs the verification trifecta should have caught. The contract puts the verdict in every retrieval response; we owe a public accounting when the verdict was wrong.
-- [`docs/ROADMAP.md`](docs/ROADMAP.md) — what's planned (comparative-publication run of `bettermemory eval` against Mem0 / claude-mem / agentmemory; operational polish) and what's deliberately out of scope (managed cloud, multi-user RBAC, graph backend). The fastembed extra, `bettermemory eval` CLI, `consolidate --llm` Dreaming-defense pass, and `consolidate --llm --from-transcript` writing-reflex closure all shipped between 2.5.0 and 2.6.0. 2.7.0 added the calibration trio (`eval --tool-usage` for "which tools is the model actually reaching for?", `eval --threshold-sweep` for counterfactual silent-miss replay), the `memory_scope_overview` delta field (`curation_pending_new_since_last_session`), and the `bettermemory ingest` bridge from Claude Code's auto-memory directory.
+- [`docs/ROADMAP.md`](docs/ROADMAP.md) — what's planned (comparative-publication run of `bettermemory eval` against Mem0 / claude-mem / agentmemory; operational polish) and what's deliberately out of scope (managed cloud, multi-user RBAC, graph backend). The fastembed extra, `bettermemory eval` CLI, `consolidate --llm` Dreaming-defense pass, and `consolidate --llm --from-transcript` writing-reflex closure all shipped between 2.5.0 and 2.6.0. 2.7.0 added the calibration trio (`eval --tool-usage` for "which tools is the model actually reaching for?", `eval --threshold-sweep` for counterfactual silent-miss replay), the `memory_scope_overview` delta field (`curation_pending_new_since_last_session`), and the `bettermemory ingest` bridge from Claude Code's auto-memory directory. 2.7.3 closed a silent-miss false-positive class (same-repo cwd suppression) and added `consolidate --acknowledge-debt` for retroactively clearing the endorsement-debt curation bucket; the unreleased follow-up adds `consolidate --acknowledge-misses-before <ISO_TS>` so the historical miss batch invalidated by the cwd-suppression fix can be dropped from the rollup without rewriting the events log.
 
 Built by Mattias Rask. MIT licensed — see [LICENSE](LICENSE).

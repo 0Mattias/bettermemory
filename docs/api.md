@@ -145,6 +145,8 @@ Hook attribution: the Stop hook (`bettermemory audit-turn`) also looks at the as
 
 Returns the aggregate rollup: `total_active_memories`, `total_events`, `distinct_sessions`, `dead_weight`, `cold_memories`, `heavily_used` (with per-row `applied=N (auto=X exp=Y)` split), `contradicted` (each row carries a `resolution_timeline`), `marker_stats`, `scope_distribution`, `scope_health`, `rare_scopes`, `orphan_use_events`, `verification_debt`, `commit_drift_debt` (null when the server isn't in a repo whose memories live in this store), `silent_misses`, and `endorsement_debt`.
 
+The `silent_misses` rollup honors a `silent_miss_cutoff` event when present — written by `bettermemory consolidate --acknowledge-misses-before <ISO_TS>` to invalidate pre-fix `turn_audited` / `search_miss` events after a change that obsoletes them. CLI-only; no MCP surface.
+
 `dead_weight` and `cold_memories` measure different failure modes: dead weight is *"retrieved but didn't help"*, cold is *"the ranker isn't surfacing this at all"*. Use them to act on the right axis.
 
 ### `memory_audit_turn(user_message, assistant_response?, lookback_seconds?)`

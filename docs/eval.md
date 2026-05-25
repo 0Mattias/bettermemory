@@ -50,6 +50,8 @@ Denominator: total audited turns (`turn_audited` events).
 
 This is the opposite failure mode of `endorsement_rate`. A high rate means the model is failing to reach for memory when it should. The threshold rule is versioned (`THRESHOLD_RULE_V1 = "v1_top1_high"`); the event records which rule fired so cross-version comparison stays meaningful.
 
+**Escape hatch for pre-fix events.** When a fix lands that invalidates a batch of historical misses (e.g. the v2.7.3 cwd-suppression change), `bettermemory consolidate --acknowledge-misses-before <ISO_TS>` writes one additive `silent_miss_cutoff` event with `cutoff_ts=<ISO_TS>`. Subsequent `memory_health` / `memory_scope_overview` rollups drop any `turn_audited` *or* `search_miss` events earlier than the cutoff — invalidating both numerator and denominator so the rate isn't skewed. The rollup honors the latest cutoff seen; an earlier cutoff is ignored. Reversible by a later cutoff or by pruning the event manually.
+
 ## The three rates together
 
 | | Low | High |
@@ -133,7 +135,7 @@ tool                              count  share
 
 A second mode of `bettermemory eval` that answers a different question: *which MCP tools is the model actually reaching for?* One row per tool with absolute counts and the share of total tool calls. Intended as the empirical input for the roadmap's "trim the MCP surface" decision — tools that haven't been called in months across multiple installs are candidates to move behind a power-user flag.
 
-The event-kind → tool-name map lives in `eval._TOOL_EVENT_KIND_TO_TOOL`. Tools without a dedicated event (today: `memory_health`) surface with a zero count and a "no telemetry" annotation rather than being silently dropped, so the reader can distinguish "this tool is not counted" from "this tool was never called." If a new tool ships and the map isn't updated, the unmapped event kinds surface in their own footer section as a guardrail. Side-effect events (`search_miss`, `pending_expired`) are filtered out — they're consequences of other tool calls rather than tool calls in their own right.
+The event-kind → tool-name map lives in `eval._TOOL_EVENT_KIND_TO_TOOL`. Tools without a dedicated event (today: `memory_health`) surface with a zero count and a "no telemetry" annotation rather than being silently dropped, so the reader can distinguish "this tool is not counted" from "this tool was never called." If a new tool ships and the map isn't updated, the unmapped event kinds surface in their own footer section as a guardrail. Side-effect events (`search_miss`, `pending_expired`, `silent_miss_cutoff`) are filtered out — they're consequences of other tool calls rather than tool calls in their own right. `silent_miss_cutoff` is a CLI admin operation that invalidates stale events; same rationale.
 
 Honours `--since` and `--json`; ignores the rate-mode knobs (`--scope`, `--min-retrievals`, `--silent-miss-limit`) so a shell loop piping the same args into both modes doesn't have to strip them.
 

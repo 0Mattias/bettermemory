@@ -2,7 +2,7 @@
 
 Published roadmap is part of the distribution strategy: people deciding between memory layers want to know where a project is going, not just where it's been. This document lists the planned work in roughly the order it will land. Plans change; the CHANGELOG is the source of truth for what shipped.
 
-## Where we are (May 2026, v2.7.0)
+## Where we are (May 2026, v2.7.3)
 
 - 18 MCP tools across retrieval, writing, lifecycle, verification, curation, and session-local controls.
 - FTS5 inverted index pre-filtering candidates above ~500 memories.
@@ -11,6 +11,7 @@ Published roadmap is part of the distribution strategy: people deciding between 
 - `memory_audit_turn` silent-miss probe, threshold rule versioned at `v1_top1_high`.
 - `bettermemory consolidate --llm` Dreaming-defense pass with five proposal types (merge / resolve_contradiction / rewrite_relative_date / demote_tier / propose_new); `--from-transcript PATH` closes the writing-reflex gap by proposing new memories from a conversation, all under the same audit-gate accept loop.
 - `bettermemory eval` CLI: `memory_helped_rate` / `endorsement_rate` / `silent_miss_rate` with Wilson 95% CIs.
+- Curation-debt-clearing surface: `bettermemory consolidate --acknowledge-debt` (2.7.3) writes one explicit-applied event per endorsement-debt memory to clear the signal without touching bodies; `bettermemory consolidate --acknowledge-misses-before <ISO_TS>` (post-2.7.3) writes a `silent_miss_cutoff` event that retroactively drops pre-cutoff `turn_audited` / `search_miss` events from the rollup. Both are purely additive — no `--apply` gate, reversible by a follow-up event.
 - Git-based cross-host sync via `bettermemory sync`.
 - FastAPI curation UI (`bettermemory ui`).
 - 1200+ tests, 80% coverage floor, Python 3.11–3.14, MIT.

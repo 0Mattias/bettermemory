@@ -21,8 +21,10 @@ Run:
 
     venv/bin/python examples/programmatic_client.py
 
-Output is a small narrated walk through write → search → show →
-remove, showing one of each round trip.
+Output is a small narrated walk through write (fact) → write
+(user-inference, staged pending) → confirm → search → show → remove,
+showing one of each round trip and calling out the `staleness_verdict`
+field on the search hit.
 
 Connecting to a different storage directory than the host's default:
 set `BETTERMEMORY_DIR` in `env=` below. We default to a fresh tmp dir
@@ -102,56 +104,119 @@ async def _walk_through_one_session(storage_dir: Path) -> None:
                 print(f"     - {name}")
             print()
 
-            # ---- Step 2: write a memory -----------------------------
-            print("# 2. memory_write: durable architectural decision")
-            write_result = await session.call_tool(
+            # ---- Step 2: write a fact memory ------------------------
+            # A `category="fact"` write commits immediately. We use a
+            # generic build-tool convention here — the kind of fact a
+            # real project's first memory often looks like.
+            print("# 2. memory_write (fact): commits immediately")
+            fact_result = await session.call_tool(
                 "memory_write",
                 {
                     "content": (
-                        "bettermemory uses fcntl-based per-file locking "
-                        "for multi-process safety on Unix. The store "
-                        "writes to a `.tmp` file then renames atomically, "
-                        "so concurrent readers never observe torn writes."
+                        "Project atlas uses pnpm with a workspace, not "
+                        "npm or yarn. Install with `pnpm install` at the "
+                        "root; per-package lockfiles are disallowed by "
+                        "`.npmrc`. Add deps with "
+                        "`pnpm --filter <pkg> add <dep>`."
                     ),
-                    "scopes": ["projects:bettermemory", "infrastructure"],
+                    "scopes": ["projects:atlas", "tools"],
                     "confidence": "high",
+                    "category": "fact",
                 },
             )
-            print(_pretty(write_result))
+            print(_pretty(fact_result))
             print()
 
-            # Capture the new memory's id from the response so we can
-            # retrieve it. The bettermemory write response is JSON;
-            # we already pretty-printed it above.
-            written = json.loads(write_result.content[0].text)
-            new_id = written.get("id")
-            assert new_id, f"memory_write didn't return an id: {written!r}"
+            fact_written = json.loads(fact_result.content[0].text)
+            fact_id = fact_written.get("id")
+            assert fact_id, f"memory_write didn't return an id: {fact_written!r}"
 
-            # ---- Step 3: search for it ------------------------------
-            print("# 3. memory_search: looking for the fact we just wrote")
+            # ---- Step 3: write a user-inference (staged pending) ----
+            # `category="user-inference"` ALWAYS routes through the
+            # staged-write tier — the server returns `status="pending"`
+            # plus a `pending_id` instead of committing. The user (or
+            # caller) confirms or cancels explicitly. This is the
+            # user's veto on claims about themselves.
+            print("# 3. memory_write (user-inference): stages pending")
+            staged_result = await session.call_tool(
+                "memory_write",
+                {
+                    "content": (
+                        "User prefers code-driven walkthroughs over GUI "
+                        "tours — when asked for a tutorial, lead with "
+                        "runnable snippets, not screenshots."
+                    ),
+                    "scopes": ["learning-style"],
+                    "confidence": "medium",
+                    "category": "user-inference",
+                },
+            )
+            print(_pretty(staged_result))
+            print()
+
+            staged = json.loads(staged_result.content[0].text)
+            assert staged.get("status") == "pending", (
+                f"expected status='pending' for user-inference write, "
+                f"got {staged!r}"
+            )
+            pending_id = staged["pending_id"]
+
+            # ---- Step 4: confirm the pending write ------------------
+            # In a real session the host surfaces the proposal to the
+            # user and only calls _confirm after they assent. Here we
+            # confirm immediately so the demo finishes in one pass.
+            print(f"# 4. memory_write_confirm: commit pending {pending_id}")
+            confirm_result = await session.call_tool(
+                "memory_write_confirm",
+                {"pending_id": pending_id},
+            )
+            print(_pretty(confirm_result))
+            print()
+
+            confirmed = json.loads(confirm_result.content[0].text)
+            inference_id = confirmed.get("id")
+            assert inference_id, f"confirm didn't return an id: {confirmed!r}"
+
+            # ---- Step 5: search ------------------------------------
+            # Each hit carries a `staleness_verdict` field — fresh /
+            # spot_check_recommended / spot_check_required — derived
+            # from calendar age, drift against `verified_paths`, and
+            # git commits since `last_verified_at`. Brand-new writes
+            # surface as `spot_check_required` because the body has
+            # never been spot-checked yet (`last_verified_at` is
+            # null); a subsequent `memory_verify(id, verified_paths=
+            # [...])` call drops the verdict to `fresh`. This is the
+            # signal the model uses to decide whether to spot-check
+            # before relying on the hit.
+            print("# 5. memory_search: hits carry staleness_verdict")
             search_result = await session.call_tool(
                 "memory_search",
-                {"query": "fcntl locking concurrency", "max_results": 3},
+                {"query": "pnpm workspace install", "max_results": 3},
             )
+            search_payload = json.loads(search_result.content[0].text)
+            for hit in search_payload.get("hits", []):
+                verdict = hit.get("staleness_verdict", "?")
+                print(f"   hit {hit.get('id')} -> staleness_verdict={verdict}")
             print(_pretty(search_result))
             print()
 
-            # ---- Step 4: fetch full body ----------------------------
-            print(f"# 4. memory_show: fetch the full body for {new_id}")
+            # ---- Step 6: fetch the fact's full body -----------------
+            print(f"# 6. memory_show: fetch the full body for {fact_id}")
             show_result = await session.call_tool(
                 "memory_show",
-                {"id": new_id},
+                {"id": fact_id},
             )
             print(_pretty(show_result))
             print()
 
-            # ---- Step 5: tombstone it -------------------------------
-            print("# 5. memory_remove: tidy up after the demo")
-            remove_result = await session.call_tool(
-                "memory_remove",
-                {"id": new_id, "reason": "programmatic-client demo cleanup"},
-            )
-            print(_pretty(remove_result))
+            # ---- Step 7: tombstone both -----------------------------
+            print("# 7. memory_remove: tidy up after the demo")
+            for victim_id in (fact_id, inference_id):
+                remove_result = await session.call_tool(
+                    "memory_remove",
+                    {"id": victim_id, "reason": "programmatic-client demo cleanup"},
+                )
+                print(_pretty(remove_result))
             print()
 
 

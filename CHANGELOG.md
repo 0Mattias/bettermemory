@@ -7,6 +7,33 @@ breaking changes, minor for additive features, patch for fixes. The
 [compatibility contract](CONTRIBUTING.md#versioning-and-the-compatibility-contract)
 spells out exactly what's stable.
 
+## Unreleased
+
+**Companion escape hatch for the 2.7.3 cwd-suppression fix.** v2.7.3
+stopped emitting same-repo silent-miss false positives going forward,
+but the events log still carried the batch of pre-fix `search_miss` /
+`turn_audited` rows that skew the miss-rate rollup. This release adds
+an additive CLI cutoff so that batch can be invalidated without
+rewriting the log.
+
+### Added — Curation
+
+- **`bettermemory consolidate --acknowledge-misses-before <ISO_TS>`**
+  writes one `silent_miss_cutoff` event with `cutoff_ts=<ISO_TS>`
+  through the shared `Recorder`. `compute_health` and
+  `curation_counts` honor the latest `cutoff_ts` they observe and
+  drop any `turn_audited` / `search_miss` events earlier than it —
+  filtering both numerator and denominator so the miss-rate metric
+  doesn't skew low or high. Mirrors `--acknowledge-debt`'s surface:
+  always commits, no `--apply` gate (events are additive and a
+  misapplied cutoff can be superseded by a later one), text and JSON
+  output, validates the ISO timestamp up front so a typo surfaces as
+  exit 1 instead of writing an event the rollup will silently
+  ignore. `silent_miss_cutoff` is classified as a side-effect kind in
+  `eval.py` so the tool-usage rollup doesn't count CLI admin
+  operations as tool invocations — same rationale as `search_miss`
+  and `pending_expired`.
+
 ## 2.7.3 - 2026-05-25
 
 **Post-2.7.2 dogfood audit follow-up.** The threshold-sweep on the
