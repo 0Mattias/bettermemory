@@ -644,8 +644,13 @@ def compute_health(
     sessions: set[str] = set()
     total_events = 0
     orphan_use_events = 0
-    silent_miss_audited_total = 0
-    silent_miss_total = 0
+    # Audit telemetry is buffered as timestamps and resolved after the
+    # events pass so a `silent_miss_cutoff` event later in the log can
+    # retroactively drop events before its `cutoff_ts` — the post-fix
+    # rollup hatch documented at the `search_miss` branch below.
+    silent_miss_audited_ts: list[datetime | None] = []
+    silent_miss_ts: list[datetime | None] = []
+    latest_miss_cutoff: datetime | None = None
 
     # Per-id chronological log of resolution-relevant events
     # (update / verify / use[contradicted|corrected]). Accumulated for
@@ -776,19 +781,32 @@ def compute_health(
             for marker in ev.get("markers_acknowledged", []) or []:
                 marker_overrides[marker] += 1
         elif kind == "turn_audited":
-            # Denominator for the silent-miss rate. Counted unconditionally
-            # even when the verdict was "ok" or "no_signal" — the point is
-            # "the audit hook ran", which lets a consumer tell "no misses
-            # because we audited and found none" from "no misses because
-            # nobody audited."
-            silent_miss_audited_total += 1
+            # Denominator for the silent-miss rate. Buffered with the
+            # event ts so a later `silent_miss_cutoff` can retroactively
+            # drop pre-cutoff audits — keeping just the numerator filtered
+            # would skew the rate (low miss / high audited).
+            silent_miss_audited_ts.append(ts)
         elif kind == "search_miss":
             # Numerator. A separate kind from `turn_audited` (rather than
             # a field on it) so consumers that only care about misses can
-            # filter the log on a single `kind=` value, and so a
-            # tombstone-style migration ("we changed how misses are
-            # detected, drop the old ones") can target one kind cleanly.
-            silent_miss_total += 1
+            # filter the log on a single `kind=` value, and so the
+            # `silent_miss_cutoff` hatch can target one kind cleanly
+            # without rewriting the events log.
+            silent_miss_ts.append(ts)
+        elif kind == "silent_miss_cutoff":
+            # Additive escape hatch: when a fix lands that invalidates a
+            # batch of historical misses (e.g. v2.7.3 cwd-suppression),
+            # `bettermemory consolidate --acknowledge-misses-before <ts>`
+            # writes one of these and the rollup honors the latest
+            # `cutoff_ts` seen, dropping any earlier turn_audited /
+            # search_miss events. Older `cutoff_ts` values are ignored so
+            # a later cutoff can extend the window but not shrink it.
+            cutoff_raw = ev.get("cutoff_ts")
+            parsed_cutoff = _parse_ts(cutoff_raw)
+            if parsed_cutoff is not None and (
+                latest_miss_cutoff is None or parsed_cutoff > latest_miss_cutoff
+            ):
+                latest_miss_cutoff = parsed_cutoff
 
     all_markers = sorted(set(marker_fires) | set(marker_overrides))
     marker_stats = [
@@ -989,8 +1007,10 @@ def compute_health(
         verification_debt=verification_debt,
         commit_drift_debt=commit_drift_debt,
         silent_misses=SilentMissStats(
-            audited_total=silent_miss_audited_total,
-            miss_total=silent_miss_total,
+            audited_total=_count_post_cutoff(
+                silent_miss_audited_ts, latest_miss_cutoff
+            ),
+            miss_total=_count_post_cutoff(silent_miss_ts, latest_miss_cutoff),
         ),
         endorsement_debt=endorsement_debt,
     )
@@ -1316,6 +1336,24 @@ def _parse_ts(value: object) -> datetime | None:
         return None
 
 
+def _count_post_cutoff(
+    timestamps: list[datetime | None], cutoff: datetime | None
+) -> int:
+    """Count timestamps that fall at or after a cutoff.
+
+    When `cutoff` is None, returns the full count — preserving the
+    pre-cutoff-event rollup behavior for stores that have never run
+    `consolidate --acknowledge-misses-before`. When `cutoff` is set,
+    events with a missing or unparseable timestamp are dropped on the
+    conservative interpretation that we cannot prove they post-date
+    the cutoff (a stamped Recorder always emits `ts`, so this only
+    affects malformed legacy events).
+    """
+    if cutoff is None:
+        return len(timestamps)
+    return sum(1 for ts in timestamps if ts is not None and ts >= cutoff)
+
+
 def _edit_distance_within(a: str, b: str, max_dist: int) -> bool:
     """True iff Levenshtein(a, b) <= max_dist.
 
@@ -1443,7 +1481,12 @@ def curation_counts(
     # not the model endorsing — same discriminator
     # `_advance_turn`/`memory_record_use` use.
     explicit_applied_counts: dict[str, int] = {m.id: 0 for m in mem_list}
-    silent_misses = 0
+    # Buffered with timestamps so a later `silent_miss_cutoff` event
+    # can retroactively drop pre-cutoff misses — same shape as the
+    # `compute_health` rollup, kept in sync because both paths feed
+    # the model's "should I look at this now?" decision.
+    silent_miss_ts_list: list[datetime | None] = []
+    latest_miss_cutoff: datetime | None = None
     for ev in events:
         if since_aware is not None:
             ev_ts = _ensure_utc(_parse_event_ts(ev.get("ts")))
@@ -1471,7 +1514,15 @@ def curation_counts(
                     if not is_auto and mid in explicit_applied_counts:
                         explicit_applied_counts[mid] += 1
         elif kind == "search_miss":
-            silent_misses += 1
+            silent_miss_ts_list.append(_ensure_utc(_parse_event_ts(ev.get("ts"))))
+        elif kind == "silent_miss_cutoff":
+            parsed = _ensure_utc(_parse_event_ts(ev.get("cutoff_ts")))
+            if parsed is not None and (
+                latest_miss_cutoff is None or parsed > latest_miss_cutoff
+            ):
+                latest_miss_cutoff = parsed
+
+    silent_misses = _count_post_cutoff(silent_miss_ts_list, latest_miss_cutoff)
 
     never_verified = 0
     stale = 0

@@ -985,6 +985,26 @@ def main() -> None:
         ),
     )
     consolidate_parser.add_argument(
+        "--acknowledge-misses-before",
+        type=str,
+        default=None,
+        metavar="ISO_TS",
+        help=(
+            "Write one additive `silent_miss_cutoff` event with "
+            "`cutoff_ts=<ISO_TS>`. Subsequent `memory_health` / "
+            "`memory_scope_overview` rollups drop any `turn_audited` / "
+            "`search_miss` events earlier than the cutoff — the rollup "
+            "always honors the latest cutoff seen. Use after a fix "
+            "that invalidates a batch of historical misses (e.g. the "
+            "v2.7.3 cwd-suppression change) so the rate metric reflects "
+            "post-fix behavior. ISO_TS accepts the same formats as "
+            "event timestamps (e.g. `2026-05-25T05:25:35Z`). Always "
+            "commits — no --apply gate, because the event is purely "
+            "additive and a misapplied cutoff can be superseded by a "
+            "later one or ignored by manually pruning the cutoff event."
+        ),
+    )
+    consolidate_parser.add_argument(
         "--from-transcript",
         type=str,
         default=None,
@@ -1273,6 +1293,7 @@ def main() -> None:
             yes=args.yes,
             from_transcript=args.from_transcript,
             acknowledge_debt=args.acknowledge_debt,
+            acknowledge_misses_before=args.acknowledge_misses_before,
         )
         return
     if args.cmd == "audit-turn":
@@ -1804,6 +1825,7 @@ def _cli_consolidate(
     yes: bool = False,
     from_transcript: str | None = None,
     acknowledge_debt: bool = False,
+    acknowledge_misses_before: str | None = None,
 ) -> None:
     """`bettermemory consolidate` — offline curation pass.
 
@@ -1870,6 +1892,15 @@ def _cli_consolidate(
             store=store,
             config=config,
             session_id=session_id,
+            json_out=json_out,
+        )
+
+    if acknowledge_misses_before is not None:
+        _cli_consolidate_acknowledge_misses(
+            store=store,
+            config=config,
+            session_id=session_id,
+            cutoff_ts=acknowledge_misses_before,
             json_out=json_out,
         )
 
@@ -2005,6 +2036,88 @@ def _cli_consolidate_acknowledge_debt(
         sys.stdout.write(f"  {mid}\n")
     if len(acknowledged_ids) > display_cap:
         sys.stdout.write(f"  ... and {len(acknowledged_ids) - display_cap} more\n")
+
+
+def _cli_consolidate_acknowledge_misses(
+    *,
+    store: Store,
+    config: Config,
+    session_id: str,
+    cutoff_ts: str,
+    json_out: bool,
+) -> None:
+    """Write one additive `silent_miss_cutoff` event.
+
+    The `memory_health` rollup honors the latest cutoff and drops any
+    `turn_audited` / `search_miss` events with `ts < cutoff_ts` —
+    invalidating a batch of historical misses after a fix lands
+    (e.g. v2.7.3 cwd-suppression) so the miss-rate metric reflects
+    post-fix behavior. Pure event-log write; no body or telemetry is
+    mutated and no `.events.jsonl` line is removed. Mirrors the
+    surface-area discipline of `--acknowledge-debt`: always commits,
+    goes through the shared :class:`Recorder` for locking and rotation,
+    and supports both text and JSON output. Validates the timestamp up
+    front so a typo surfaces as an exit-1 error instead of silently
+    writing a malformed event that the rollup will then ignore.
+    """
+    import json as _json
+    from datetime import datetime, timezone
+
+    from .events import Recorder
+
+    # Validate the cutoff up front. Accept both `Z` and explicit-offset
+    # ISO forms (matching the Recorder's emission) — `_parse_ts` in
+    # health.py does the same swap, but we re-implement here to keep
+    # the CLI path from importing a private health helper.
+    try:
+        parsed = datetime.fromisoformat(cutoff_ts.replace("Z", "+00:00"))
+    except ValueError:
+        sys.stderr.write(
+            f"acknowledge-misses-before: invalid ISO timestamp "
+            f"{cutoff_ts!r}. Expected e.g. '2026-05-25T05:25:35Z'.\n"
+        )
+        raise SystemExit(1) from None
+
+    # Normalize to UTC-Z so every cutoff event in the log uses the same
+    # representation, regardless of which offset the caller passed. The
+    # rollup compares aware datetimes, so this is a presentation detail
+    # rather than a correctness one — but consistent formatting makes
+    # the events easier to eyeball.
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=timezone.utc)
+    canonical_cutoff = (
+        parsed.astimezone(timezone.utc).isoformat().replace("+00:00", "Z")
+    )
+
+    recorder = Recorder(
+        root=store.root,
+        session_id=session_id,
+        enabled=config.telemetry.enabled,
+        max_bytes=config.telemetry.max_bytes,
+        log_queries_verbatim=config.telemetry.log_queries_verbatim,
+    )
+    recorder.record(
+        "silent_miss_cutoff",
+        cutoff_ts=canonical_cutoff,
+        attribution="cli_acknowledge_misses",
+        note="bettermemory consolidate --acknowledge-misses-before",
+    )
+
+    if json_out:
+        sys.stdout.write(
+            _json.dumps(
+                {"silent_miss_cutoff": canonical_cutoff},
+                separators=(",", ":"),
+            )
+            + "\n"
+        )
+        return
+
+    sys.stdout.write(
+        f"acknowledge-misses-before: wrote `silent_miss_cutoff` event "
+        f"with cutoff_ts={canonical_cutoff}. Health rollups will now "
+        f"drop any earlier `turn_audited` / `search_miss` events.\n"
+    )
 
 
 def _cli_consolidate_llm(

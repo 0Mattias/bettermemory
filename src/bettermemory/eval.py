@@ -1165,15 +1165,21 @@ TOOLS_WITHOUT_TELEMETRY: tuple[str, ...] = ("memory_health",)
 # tool calls in their own right. ``search_miss`` is a sub-event of
 # ``turn_audited`` (the audit detected a high-relevance hit the model
 # would have missed); ``pending_expired`` fires when the TTL on a
-# ``memory_write`` pending token elapses. Neither belongs in the
-# tool-usage rollup — they would inflate the parent tool's count.
+# ``memory_write`` pending token elapses; ``silent_miss_cutoff`` is an
+# additive admin event written by ``bettermemory consolidate
+# --acknowledge-misses-before`` to invalidate a batch of pre-fix miss
+# telemetry. None of these belong in the tool-usage rollup — they
+# would inflate the parent tool's count (or, for the CLI event, count
+# an admin operation as a tool invocation).
 #
 # The parity test in ``tests/test_eval.py`` asserts that every kind
 # recorded anywhere in ``src/`` appears in either
 # ``_TOOL_EVENT_KIND_TO_TOOL`` or this set, and that the two are
 # mutually exclusive. Adding a new event kind without updating one of
 # them is the bug class this guards against.
-_KNOWN_SIDE_EFFECT_KINDS: frozenset[str] = frozenset({"search_miss", "pending_expired"})
+_KNOWN_SIDE_EFFECT_KINDS: frozenset[str] = frozenset(
+    {"search_miss", "pending_expired", "silent_miss_cutoff"}
+)
 
 
 @dataclass

@@ -447,6 +447,141 @@ def test_curation_counts_since_filters_endorsement_debt_to_post_boundary() -> No
 
 
 # ---------------------------------------------------------------------------
+# silent_miss_cutoff — additive escape hatch for pre-fix telemetry
+# ---------------------------------------------------------------------------
+
+
+def test_silent_miss_cutoff_drops_pre_cutoff_misses_in_compute_health() -> None:
+    """A `silent_miss_cutoff` event with cutoff_ts T drops `search_miss`
+    events at ts<T from both numerator and denominator. Post-T events
+    survive."""
+    pre = _event("search_miss", ts=_utc(2026, 4, 1))
+    post = _event("search_miss", ts=_utc(2026, 4, 20))
+    cutoff = _event(
+        "silent_miss_cutoff",
+        ts=_utc(2026, 4, 10),
+        cutoff_ts=_utc(2026, 4, 10).isoformat().replace("+00:00", "Z"),
+    )
+    report = compute_health([], [pre, post, cutoff], now=_utc(2026, 5, 1))
+    assert report.silent_misses.miss_total == 1
+
+
+def test_silent_miss_cutoff_drops_pre_cutoff_audited_in_compute_health() -> None:
+    """The denominator (`turn_audited`) is filtered too — filtering only
+    the numerator would skew the rate (low miss / high audited)."""
+    pre_audit = _event("turn_audited", ts=_utc(2026, 4, 1))
+    post_audit = _event("turn_audited", ts=_utc(2026, 4, 20))
+    cutoff = _event(
+        "silent_miss_cutoff",
+        ts=_utc(2026, 4, 10),
+        cutoff_ts=_utc(2026, 4, 10).isoformat().replace("+00:00", "Z"),
+    )
+    report = compute_health([], [pre_audit, post_audit, cutoff], now=_utc(2026, 5, 1))
+    assert report.silent_misses.audited_total == 1
+
+
+def test_silent_miss_cutoff_latest_wins() -> None:
+    """When multiple cutoff events exist the rollup honors the newest
+    `cutoff_ts`, not the first or the last in log order. Older cutoffs
+    cannot un-shrink the window an earlier extension established."""
+    miss_a = _event("search_miss", ts=_utc(2026, 4, 5))
+    miss_b = _event("search_miss", ts=_utc(2026, 4, 15))
+    miss_c = _event("search_miss", ts=_utc(2026, 4, 25))
+    early_cutoff = _event(
+        "silent_miss_cutoff",
+        ts=_utc(2026, 4, 10),
+        cutoff_ts=_utc(2026, 4, 10).isoformat().replace("+00:00", "Z"),
+    )
+    later_cutoff = _event(
+        "silent_miss_cutoff",
+        ts=_utc(2026, 4, 20),
+        cutoff_ts=_utc(2026, 4, 20).isoformat().replace("+00:00", "Z"),
+    )
+    report = compute_health(
+        [],
+        [miss_a, early_cutoff, miss_b, later_cutoff, miss_c],
+        now=_utc(2026, 5, 1),
+    )
+    assert report.silent_misses.miss_total == 1
+
+
+def test_silent_miss_cutoff_ignores_older_value_after_newer_seen() -> None:
+    """A cutoff event written after a newer cutoff event cannot shrink
+    the window — the rollup keeps the max `cutoff_ts` it has ever
+    observed in the log, regardless of arrival order."""
+    miss_a = _event("search_miss", ts=_utc(2026, 4, 5))
+    miss_b = _event("search_miss", ts=_utc(2026, 4, 15))
+    newer_first = _event(
+        "silent_miss_cutoff",
+        ts=_utc(2026, 4, 18),
+        cutoff_ts=_utc(2026, 4, 20).isoformat().replace("+00:00", "Z"),
+    )
+    older_later = _event(
+        "silent_miss_cutoff",
+        ts=_utc(2026, 4, 21),
+        cutoff_ts=_utc(2026, 4, 10).isoformat().replace("+00:00", "Z"),
+    )
+    report = compute_health(
+        [],
+        [miss_a, newer_first, miss_b, older_later],
+        now=_utc(2026, 5, 1),
+    )
+    # max cutoff is 2026-04-20, so both miss_a (04-05) and miss_b
+    # (04-15) are filtered out.
+    assert report.silent_misses.miss_total == 0
+
+
+def test_silent_miss_cutoff_ignored_when_malformed() -> None:
+    """A cutoff event with a non-parseable `cutoff_ts` is silently
+    dropped — the rollup falls through to the pre-cutoff counting
+    behavior rather than failing the whole health report."""
+    miss = _event("search_miss", ts=_utc(2026, 4, 1))
+    junk_cutoff = _event(
+        "silent_miss_cutoff",
+        ts=_utc(2026, 4, 10),
+        cutoff_ts="not-a-timestamp",
+    )
+    no_cutoff_field = _event("silent_miss_cutoff", ts=_utc(2026, 4, 10))
+    report = compute_health(
+        [], [miss, junk_cutoff, no_cutoff_field], now=_utc(2026, 5, 1)
+    )
+    assert report.silent_misses.miss_total == 1
+
+
+def test_silent_miss_cutoff_no_op_without_cutoff_event() -> None:
+    """Backwards-compat: stores with no `silent_miss_cutoff` events in
+    their log behave exactly as before — every `search_miss` and
+    `turn_audited` event counts."""
+    misses = [
+        _event("search_miss", ts=_utc(2026, 4, 1)),
+        _event("search_miss", ts=_utc(2026, 4, 20)),
+    ]
+    audits = [
+        _event("turn_audited", ts=_utc(2026, 4, 1)),
+        _event("turn_audited", ts=_utc(2026, 4, 20)),
+    ]
+    report = compute_health([], misses + audits, now=_utc(2026, 5, 1))
+    assert report.silent_misses.miss_total == 2
+    assert report.silent_misses.audited_total == 2
+
+
+def test_silent_miss_cutoff_filters_curation_counts_too() -> None:
+    """The scope-overview fast helper honors the same cutoff as
+    `compute_health`. Without this, the session-start
+    `curation_pending.silent_misses` count and the deep health report
+    would disagree on the same store."""
+    pre = _event("search_miss", ts=_utc(2026, 4, 1))
+    post = _event("search_miss", ts=_utc(2026, 4, 20))
+    cutoff = _event(
+        "silent_miss_cutoff",
+        ts=_utc(2026, 4, 10),
+        cutoff_ts=_utc(2026, 4, 10).isoformat().replace("+00:00", "Z"),
+    )
+    counts = curation_counts([], [pre, post, cutoff], now=_utc(2026, 5, 1))
+    assert counts["silent_misses"] == 1
+
+
+# ---------------------------------------------------------------------------
 # find_prior_session_boundary — locates the previous session's tail
 # ---------------------------------------------------------------------------
 

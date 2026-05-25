@@ -32,7 +32,10 @@ from bettermemory.consolidate import (
 )
 from bettermemory.events import Recorder, iter_all_events
 from bettermemory.models import Category, Confidence, Memory, Source, generate_ulid
-from bettermemory.server import _cli_consolidate_acknowledge_debt
+from bettermemory.server import (
+    _cli_consolidate_acknowledge_debt,
+    _cli_consolidate_acknowledge_misses,
+)
 from bettermemory.store import Store
 
 
@@ -897,6 +900,151 @@ def test_acknowledge_debt_json_output_carries_acknowledged_ids(
     assert payload["acknowledged"] == 2
     assert payload["floor"] == 5
     assert set(payload["ids"]) == {m1.id, m2.id}
+
+
+# ---------------------------------------------------------------------------
+# acknowledge-misses-before CLI helper — direct in-process tests
+# ---------------------------------------------------------------------------
+#
+# `_cli_consolidate_acknowledge_misses` writes one additive
+# `silent_miss_cutoff` event. The next `memory_health` /
+# `memory_scope_overview` pass drops pre-cutoff `turn_audited` and
+# `search_miss` events from the rollup. Tests pin the event shape, the
+# input validation, the output channels, and the round-trip through
+# `compute_health`.
+
+
+def test_acknowledge_misses_writes_silent_miss_cutoff_event(
+    store: Store,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """The handler writes exactly one `silent_miss_cutoff` event whose
+    `cutoff_ts` round-trips through `_parse_ts`, with the same
+    attribution scheme as `--acknowledge-debt`."""
+    _cli_consolidate_acknowledge_misses(
+        store=store,
+        config=Config(),
+        session_id="ack-cli",
+        cutoff_ts="2026-05-25T05:25:35Z",
+        json_out=False,
+    )
+
+    cutoff_events = [
+        e for e in iter_all_events(store.root) if e.get("kind") == "silent_miss_cutoff"
+    ]
+    assert len(cutoff_events) == 1
+    ev = cutoff_events[0]
+    assert ev["cutoff_ts"] == "2026-05-25T05:25:35Z"
+    assert ev["attribution"] == "cli_acknowledge_misses"
+    assert "2026-05-25T05:25:35Z" in capsys.readouterr().out
+
+
+def test_acknowledge_misses_normalizes_offset_to_utc_z(
+    store: Store,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """An ISO timestamp with an explicit offset is stored canonicalised
+    to UTC with a `Z` suffix — so every cutoff event in the log uses
+    one representation regardless of which offset the caller passed."""
+    _cli_consolidate_acknowledge_misses(
+        store=store,
+        config=Config(),
+        session_id="ack-cli",
+        cutoff_ts="2026-05-25T01:25:35-04:00",
+        json_out=False,
+    )
+
+    capsys.readouterr()  # drain
+    cutoff_events = [
+        e for e in iter_all_events(store.root) if e.get("kind") == "silent_miss_cutoff"
+    ]
+    assert cutoff_events[0]["cutoff_ts"] == "2026-05-25T05:25:35Z"
+
+
+def test_acknowledge_misses_rejects_malformed_timestamp(
+    store: Store,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """A typo'd timestamp surfaces as exit 1 + a clear stderr message
+    rather than silently writing an event the rollup will then ignore."""
+    with pytest.raises(SystemExit) as exc:
+        _cli_consolidate_acknowledge_misses(
+            store=store,
+            config=Config(),
+            session_id="ack-cli",
+            cutoff_ts="not-a-timestamp",
+            json_out=False,
+        )
+    assert exc.value.code == 1
+    err = capsys.readouterr().err
+    assert "invalid ISO timestamp" in err
+    # No event must have been written when validation failed.
+    cutoff_events = [
+        e for e in iter_all_events(store.root) if e.get("kind") == "silent_miss_cutoff"
+    ]
+    assert cutoff_events == []
+
+
+def test_acknowledge_misses_json_output_carries_canonical_cutoff(
+    store: Store,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """The `--json` path emits a parseable object with the canonical
+    cutoff_ts. Pins the JSON contract for downstream consumers."""
+    _cli_consolidate_acknowledge_misses(
+        store=store,
+        config=Config(),
+        session_id="ack-cli",
+        cutoff_ts="2026-05-25T05:25:35Z",
+        json_out=True,
+    )
+
+    payload = json.loads(capsys.readouterr().out)
+    assert payload == {"silent_miss_cutoff": "2026-05-25T05:25:35Z"}
+
+
+def test_acknowledge_misses_event_clears_prior_miss_telemetry(
+    store: Store,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """End-to-end: pre-existing `search_miss` / `turn_audited` events
+    are dropped from a subsequent `compute_health` rollup once the
+    cutoff event is written."""
+    from bettermemory.health import compute_health
+
+    recorder = Recorder(root=store.root, session_id="seed")
+    # Two pre-fix misses + two pre-fix audits.
+    for _ in range(2):
+        recorder.record("turn_audited")
+        recorder.record("search_miss", probe_query="q", top_hit_ids=[])
+
+    before = compute_health(
+        store.load_all(),
+        list(iter_all_events(store.root)),
+        now=datetime.now(timezone.utc),
+    )
+    assert before.silent_misses.miss_total == 2
+    assert before.silent_misses.audited_total == 2
+
+    # Cutoff in the future — drops everything older.
+    _cli_consolidate_acknowledge_misses(
+        store=store,
+        config=Config(),
+        session_id="ack-cli",
+        cutoff_ts=(datetime.now(timezone.utc) + timedelta(minutes=1))
+        .isoformat()
+        .replace("+00:00", "Z"),
+        json_out=False,
+    )
+    capsys.readouterr()  # drain
+
+    after = compute_health(
+        store.load_all(),
+        list(iter_all_events(store.root)),
+        now=datetime.now(timezone.utc),
+    )
+    assert after.silent_misses.miss_total == 0
+    assert after.silent_misses.audited_total == 0
 
 
 @_skip_without_cli
