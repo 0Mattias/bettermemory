@@ -667,8 +667,15 @@ def build_prompt(cluster: Cluster, *, today: str) -> str:
         # audit H5 — same delimiter-collision check for transcripts.
         # A transcript-fenced injection would be a different vector
         # (user-supplied transcript, not memory body), but the same
-        # defence applies: reject up front.
-        if trn_end in transcript or mem_end in transcript:
+        # defence applies: reject up front. Symmetric with the body
+        # and excerpt scans above — all four nonce-anchored delimiters
+        # rejected, not just the END pair.
+        if (
+            trn_end in transcript
+            or mem_end in transcript
+            or trn_begin in transcript
+            or mem_begin in transcript
+        ):
             raise MemoryFenceInjectionError("<transcript>")
         if len(transcript) > MAX_TRANSCRIPT_CHARS:
             transcript = (

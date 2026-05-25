@@ -516,11 +516,13 @@ def _count_recent_retrievals(
 ) -> int:
     """Count retrieval events for `session_id` within the window.
 
-    Retrieval = `kind in {"search", "show"}`. Both shield the audit
-    from flagging a miss: a memory_show by id is an equally legitimate
-    way for the model to pull content. Counting only `search` would
-    mis-flag the common search-then-show round-trip, where the search
-    happens early in the turn and the show happens later.
+    Retrieval = `kind in _RETRIEVAL_EVENT_KINDS` (`{"search", "show",
+    "list"}`). All three shield the audit from flagging a miss: a
+    memory_show by id is an equally legitimate way for the model to
+    pull content, and a memory_list call surfaces a known scope without
+    re-searching. Counting only `search` would mis-flag the common
+    search-then-show round-trip, where the search happens early in the
+    turn and the show happens later.
 
     Defensive against the same malformed-event cases the rest of the
     health pipeline handles: missing ts, non-string ts, non-session
