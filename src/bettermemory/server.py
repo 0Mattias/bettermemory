@@ -971,6 +971,20 @@ def main() -> None:
         ),
     )
     consolidate_parser.add_argument(
+        "--acknowledge-debt",
+        action="store_true",
+        help=(
+            "Walk the endorsement_debt bucket (memories the ranker keeps "
+            "surfacing without an explicit `memory_record_use(applied)` "
+            "ever firing) and write one explicit `use(applied)` event "
+            "per id. Retroactively clears the curation signal without "
+            "touching bodies or scopes. Always commits — no --apply "
+            "gate, because the events are purely additive and a "
+            "misapplied acknowledgement can be reversed with a "
+            "follow-up `corrected` event."
+        ),
+    )
+    consolidate_parser.add_argument(
         "--from-transcript",
         type=str,
         default=None,
@@ -1258,6 +1272,7 @@ def main() -> None:
             llm_url=args.llm_url,
             yes=args.yes,
             from_transcript=args.from_transcript,
+            acknowledge_debt=args.acknowledge_debt,
         )
         return
     if args.cmd == "audit-turn":
@@ -1788,6 +1803,7 @@ def _cli_consolidate(
     llm_url: str | None = None,
     yes: bool = False,
     from_transcript: str | None = None,
+    acknowledge_debt: bool = False,
 ) -> None:
     """`bettermemory consolidate` — offline curation pass.
 
@@ -1848,6 +1864,147 @@ def _cli_consolidate(
             from_transcript=from_transcript,
             max_content_bytes=config.behavior.max_content_bytes,
         )
+
+    if acknowledge_debt:
+        _cli_consolidate_acknowledge_debt(
+            store=store,
+            config=config,
+            session_id=session_id,
+            json_out=json_out,
+        )
+
+
+def _cli_consolidate_acknowledge_debt(
+    *,
+    store: Store,
+    config: Config,
+    session_id: str,
+    json_out: bool,
+) -> None:
+    """Retroactively endorse memories in the ``endorsement_debt`` bucket.
+
+    Endorsement debt = memories the ranker keeps surfacing
+    (``retrieval_count >= endorsement_floor``) where every applied event
+    came from the server's auto-fallback path (``auto=True``) rather
+    than from a deliberate ``memory_record_use(applied)``. The
+    ``health.endorsement_debt`` rollup surfaces them; this pass clears
+    them by writing one explicit ``use(applied)`` event per id —
+    structurally identical to what an attentive model would have
+    emitted on the next deliberate retrieval. No body or scope change;
+    no tombstone; the original auto-applies stay in the log alongside
+    the new explicit endorsements.
+
+    Always commits regardless of ``--apply`` because the writes are
+    additive: a mistaken acknowledgement can be reversed with a
+    ``memory_record_use(outcome="corrected")`` follow-up, and no
+    pre-existing event is overwritten. Mirrors the surface-area
+    discipline of every other CLI write path (``reindex``, ``ingest``,
+    ``--apply`` itself) by going through the shared
+    :class:`Recorder` so file locking and rotation behave the same.
+
+    Filter is re-derived inline because
+    :class:`~bettermemory.health.EndorsementDebt` caps its ``rows``
+    list at ``_ENDORSEMENT_DEBT_CAP`` for inline display and we need
+    every debt id, not just the top N. The three predicates match
+    :func:`bettermemory.health.compute_health` exactly — if that
+    canonical filter changes, this one must too.
+    """
+    import json as _json
+
+    from .events import Recorder, iter_all_events
+    from .health import _ENDORSEMENT_DEBT_MIN_RETRIEVALS
+    from .models import Category
+
+    memories = store.load_all()
+    events = list(iter_all_events(store.root))
+
+    retrieval_counts: dict[str, int] = {m.id: 0 for m in memories}
+    explicit_applied: dict[str, int] = {m.id: 0 for m in memories}
+    for ev in events:
+        kind = ev.get("kind")
+        if kind == "search":
+            for mid in (
+                ev.get("returned") or ev.get("memory_ids") or ev.get("hit_ids") or []
+            ):
+                if mid in retrieval_counts:
+                    retrieval_counts[mid] += 1
+        elif kind == "use" and ev.get("outcome") == "applied":
+            if ev.get("auto") is True:
+                continue
+            for mid in ev.get("ids") or ev.get("memory_ids") or []:
+                if mid in explicit_applied:
+                    explicit_applied[mid] += 1
+
+    floor = _ENDORSEMENT_DEBT_MIN_RETRIEVALS
+    candidates = [
+        m
+        for m in memories
+        if m.category != Category.AMBIENT
+        and retrieval_counts.get(m.id, 0) >= floor
+        and explicit_applied.get(m.id, 0) == 0
+    ]
+
+    if not candidates:
+        if json_out:
+            sys.stdout.write(
+                _json.dumps(
+                    {"acknowledged": 0, "floor": floor, "ids": []},
+                    separators=(",", ":"),
+                )
+                + "\n"
+            )
+        else:
+            sys.stdout.write(
+                f"acknowledge-debt: no endorsement-debt memories "
+                f"(floor: retrieval_count >= {floor} AND "
+                f"explicit_applied_count == 0).\n"
+            )
+        return
+
+    recorder = Recorder(
+        root=store.root,
+        session_id=session_id,
+        enabled=config.telemetry.enabled,
+        max_bytes=config.telemetry.max_bytes,
+        log_queries_verbatim=config.telemetry.log_queries_verbatim,
+    )
+
+    acknowledged_ids: list[str] = []
+    for m in candidates:
+        recorder.record(
+            "use",
+            ids=[m.id],
+            outcome="applied",
+            auto=False,
+            attribution="cli_acknowledge_debt",
+            note="bettermemory consolidate --acknowledge-debt",
+        )
+        acknowledged_ids.append(m.id)
+
+    if json_out:
+        sys.stdout.write(
+            _json.dumps(
+                {
+                    "acknowledged": len(acknowledged_ids),
+                    "floor": floor,
+                    "ids": acknowledged_ids,
+                },
+                separators=(",", ":"),
+            )
+            + "\n"
+        )
+        return
+
+    sys.stdout.write(
+        f"acknowledge-debt: wrote {len(acknowledged_ids)} explicit "
+        f"`use(applied)` events for endorsement-debt memories "
+        f"(floor: retrieval_count >= {floor}).\n"
+    )
+    display_cap = 20
+    for mid in acknowledged_ids[:display_cap]:
+        sys.stdout.write(f"  {mid}\n")
+    if len(acknowledged_ids) > display_cap:
+        sys.stdout.write(f"  ... and {len(acknowledged_ids) - display_cap} more\n")
 
 
 def _cli_consolidate_llm(

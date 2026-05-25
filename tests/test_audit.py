@@ -26,12 +26,14 @@ import pytest
 from bettermemory.audit import (
     DEFAULT_LOOKBACK_SECONDS,
     THRESHOLD_RULE_V1,
+    _caller_in_top_hit_project,
     probe_for_miss,
 )
 from bettermemory.config import Config, StorageConfig
 from bettermemory.events import Recorder, iter_events
 from bettermemory.health import compute_health, curation_counts
 from bettermemory.models import Confidence, Memory, Source, generate_ulid
+from bettermemory.origin import Origin
 from bettermemory.server import build_server
 from bettermemory.session import SessionState
 from bettermemory.store import Store
@@ -330,6 +332,208 @@ def test_show_in_different_session_does_not_shield() -> None:
         lookback_seconds=60,
     )
     assert report.verdict == "miss"
+
+
+def test_caller_in_project_suppresses_high_relevance_miss() -> None:
+    """When the caller is in the same git project as the top-hit memory
+    was written from, the probe returns ``"ok"`` instead of ``"miss"`` —
+    the model has that project's source tree open, so the absence of a
+    memory_search isn't a contract slip.
+
+    Surfaced by 2.7.x dogfood: ~95% of ``search_miss`` events were of
+    the form "update bettermemory" / "push it" asked from inside the
+    bettermemory repo, where the model already had bettermemory's
+    source open and didn't need a memory lookup."""
+    repo = "git@github.com:owner/foo.git"
+    mem = Memory(
+        id=generate_ulid(),
+        created=_utc(2026, 1, 1),
+        updated=_utc(2026, 1, 1),
+        scopes=["projects:foo"],
+        confidence=Confidence.MEDIUM,
+        source=Source.EXPLICIT,
+        body="foo indexer notes about the ingestion pipeline",
+        origin=Origin(cwd="/tmp/foo", repo=repo, worktree_root="/tmp/foo"),
+    )
+    caller = Origin(cwd="/tmp/foo", repo=repo, worktree_root="/tmp/foo")
+    report = probe_for_miss(
+        [mem],
+        "foo indexer notes",
+        recent_events=[],
+        session_id="sess_x",
+        now=_utc(2026, 5, 1),
+        caller_origin=caller,
+    )
+    # Sanity: without suppression this would be a miss — high
+    # relevance hit, no recent retrieval.
+    assert len(report.top_hits) >= 1
+    assert report.top_hits[0].relevance == "high"
+    assert report.recent_retrieval_count == 0
+    # Suppression fires: caller is in foo's repo, top hit is project:foo.
+    assert report.verdict == "ok"
+
+
+def test_global_memory_top_hit_does_not_suppress() -> None:
+    """A global (non-project-scoped) top hit doesn't trigger the
+    project-cwd suppression even when the caller is inside a repo —
+    cross-cutting notes (auth keys, home-dir scripts, etc.) should
+    still surface as misses when the model didn't search."""
+    repo = "git@github.com:owner/foo.git"
+    mem = Memory(
+        id=generate_ulid(),
+        created=_utc(2026, 1, 1),
+        updated=_utc(2026, 1, 1),
+        scopes=["tools"],
+        confidence=Confidence.MEDIUM,
+        source=Source.EXPLICIT,
+        body="restic backup strategy for the home dir",
+        origin=Origin(cwd="/tmp/foo", repo=repo, worktree_root="/tmp/foo"),
+    )
+    caller = Origin(cwd="/tmp/foo", repo=repo, worktree_root="/tmp/foo")
+    report = probe_for_miss(
+        [mem],
+        "restic backup strategy",
+        recent_events=[],
+        session_id="sess_x",
+        now=_utc(2026, 5, 1),
+        caller_origin=caller,
+    )
+    # No project: scope on the hit → suppression doesn't apply → miss
+    # fires normally.
+    assert report.verdict == "miss"
+
+
+def test_caller_outside_any_repo_does_not_suppress() -> None:
+    """When the caller isn't inside a git checkout (caller_origin.repo
+    is None), there's no project boundary to suppress against — every
+    high-relevance hit fires as a normal miss."""
+    repo = "git@github.com:owner/foo.git"
+    mem = Memory(
+        id=generate_ulid(),
+        created=_utc(2026, 1, 1),
+        updated=_utc(2026, 1, 1),
+        scopes=["projects:foo"],
+        confidence=Confidence.MEDIUM,
+        source=Source.EXPLICIT,
+        body="foo indexer notes",
+        origin=Origin(cwd="/tmp/foo", repo=repo, worktree_root="/tmp/foo"),
+    )
+    # Caller has a cwd but no repo (e.g. running from a home dir).
+    caller = Origin(cwd="/home/user")
+    report = probe_for_miss(
+        [mem],
+        "foo indexer notes",
+        recent_events=[],
+        session_id="sess_x",
+        now=_utc(2026, 5, 1),
+        caller_origin=caller,
+    )
+    assert report.verdict == "miss"
+
+
+def test_legacy_memory_without_origin_does_not_suppress() -> None:
+    """A memory written before the origin field shipped (origin=None)
+    can't trigger suppression — we have no evidence to compare against
+    the caller's repo. The miss surfaces as it would have pre-fix."""
+    mem = Memory(
+        id=generate_ulid(),
+        created=_utc(2026, 1, 1),
+        updated=_utc(2026, 1, 1),
+        scopes=["projects:foo"],
+        confidence=Confidence.MEDIUM,
+        source=Source.EXPLICIT,
+        body="foo indexer notes",
+        origin=None,
+    )
+    caller = Origin(
+        cwd="/tmp/foo",
+        repo="git@github.com:owner/foo.git",
+        worktree_root="/tmp/foo",
+    )
+    report = probe_for_miss(
+        [mem],
+        "foo indexer notes",
+        recent_events=[],
+        session_id="sess_x",
+        now=_utc(2026, 5, 1),
+        caller_origin=caller,
+    )
+    assert report.verdict == "miss"
+
+
+def test_caller_in_top_hit_project_helper_cross_repo() -> None:
+    """Direct unit test for the helper: a project-tagged memory written
+    from one repo doesn't suppress a caller in a different repo. The
+    auto-scope filter usually keeps these out of the top hits, but the
+    helper checks repos_match explicitly so offline callers that
+    bypass auto-scope (eval replays, curation passes) don't lose the
+    cross-project signal."""
+    from bettermemory.audit import MissHit
+
+    mem = Memory(
+        id=generate_ulid(),
+        created=_utc(2026, 1, 1),
+        updated=_utc(2026, 1, 1),
+        scopes=["projects:foo"],
+        confidence=Confidence.MEDIUM,
+        source=Source.EXPLICIT,
+        body="foo indexer notes",
+        origin=Origin(
+            cwd="/tmp/foo",
+            repo="git@github.com:owner/foo.git",
+            worktree_root="/tmp/foo",
+        ),
+    )
+    caller = Origin(
+        cwd="/tmp/bar",
+        repo="git@github.com:owner/bar.git",
+        worktree_root="/tmp/bar",
+    )
+    hit = MissHit(
+        id=mem.id,
+        score=99.0,
+        relevance="high",
+        scopes=("projects:foo",),
+        snippet="foo indexer notes",
+    )
+    assert _caller_in_top_hit_project((hit,), [mem], caller) is False
+
+
+def test_caller_in_top_hit_project_helper_normalizes_remote_urls() -> None:
+    """SSH and HTTPS forms of the same remote URL should match — relies
+    on repos_match's URL normalisation. Without this, a memory written
+    via ``git@github.com:owner/foo.git`` wouldn't suppress for a caller
+    in the HTTPS-cloned ``https://github.com/owner/foo`` worktree of
+    the same repo (and vice versa)."""
+    from bettermemory.audit import MissHit
+
+    mem = Memory(
+        id=generate_ulid(),
+        created=_utc(2026, 1, 1),
+        updated=_utc(2026, 1, 1),
+        scopes=["projects:foo"],
+        confidence=Confidence.MEDIUM,
+        source=Source.EXPLICIT,
+        body="foo notes",
+        origin=Origin(
+            cwd="/tmp/foo",
+            repo="git@github.com:owner/foo.git",
+            worktree_root="/tmp/foo",
+        ),
+    )
+    caller = Origin(
+        cwd="/tmp/foo",
+        repo="https://github.com/owner/foo",
+        worktree_root="/tmp/foo",
+    )
+    hit = MissHit(
+        id=mem.id,
+        score=99.0,
+        relevance="high",
+        scopes=("projects:foo",),
+        snippet="foo notes",
+    )
+    assert _caller_in_top_hit_project((hit,), [mem], caller) is True
 
 
 def test_search_and_show_both_count_toward_recent_retrieval() -> None:

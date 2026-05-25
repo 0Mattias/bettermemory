@@ -77,7 +77,7 @@ from datetime import datetime, timedelta, timezone
 from typing import Any, Iterable, Literal, cast
 
 from .models import Memory, MemoryHit
-from .origin import Origin
+from .origin import Origin, repos_match
 from .search import SearchMode, _strip_stopwords, search as run_search, tokenize
 
 
@@ -439,6 +439,15 @@ def probe_for_miss(
         verdict: Verdict = "ok"
     elif recent_retrieval_count > 0:
         verdict = "ok"
+    elif _caller_in_top_hit_project(top_hits, memories, caller_origin):
+        # Caller is working inside the same git project a top-hit memory
+        # was written from. The model already has that project's source
+        # tree open, so the absence of a memory_search isn't a contract
+        # slip — the relevant context is reachable without one.
+        # Dogfood evidence (2.7.x): ~95% of replayable misses came from
+        # this cohort ("update bettermemory", "push it", "is X up to
+        # date") asked from inside the matching repo.
+        verdict = "ok"
     else:
         verdict = "miss"
 
@@ -452,6 +461,49 @@ def probe_for_miss(
         top_hits=top_hits,
         probe_query=user_message,
     )
+
+
+def _caller_in_top_hit_project(
+    top_hits: tuple[MissHit, ...],
+    memories: list[Memory],
+    caller_origin: Origin | None,
+) -> bool:
+    """True when the caller is in the same git project as a top-hit memory.
+
+    Used to suppress the miss verdict when "the model has source open"
+    explains the missing search. Both halves are load-bearing:
+
+    * ``projects:`` scope on the hit — a global memory has no project
+      boundary to suppress against. Surfacing one through this gate
+      would swallow real misses on cross-cutting notes (auth tokens,
+      home-dir scripts, etc.) that legitimately should have prompted
+      a search even from inside a project repo.
+    * ``repos_match`` between the caller's current repo and the
+      memory's ``origin.repo`` — the memory was written from this
+      same project, so the model is plausibly editing files it
+      describes. A project-tagged memory written from a different
+      repo (rare misconfiguration) doesn't qualify.
+
+    The auto-scope filter on ``run_search`` already filters cross-repo
+    memories out of the top hits when ``caller_origin.repo`` is set, so
+    in practice the ``repos_match`` arm usually matches. Checking it
+    explicitly keeps the suppression self-contained — the rule reads
+    correctly without relying on transitive search behavior, and a
+    future caller that bypasses auto-scope (offline curation, eval
+    replays) doesn't accidentally suppress real cross-project misses.
+    """
+    if caller_origin is None or caller_origin.repo is None:
+        return False
+    memories_by_id = {m.id: m for m in memories}
+    for hit in top_hits:
+        if not any(s.startswith("projects:") for s in hit.scopes):
+            continue
+        mem = memories_by_id.get(hit.id)
+        if mem is None or mem.origin is None or mem.origin.repo is None:
+            continue
+        if repos_match(mem.origin.repo, caller_origin.repo):
+            return True
+    return False
 
 
 def _count_recent_retrievals(

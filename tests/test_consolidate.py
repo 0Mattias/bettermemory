@@ -14,6 +14,7 @@ from typing import Any
 
 import pytest
 
+from bettermemory.config import Config
 from bettermemory.consolidate import (
     ColdScopeSuggestion,
     ConsolidateReport,
@@ -29,8 +30,9 @@ from bettermemory.consolidate import (
     render_json,
     render_text,
 )
-from bettermemory.events import Recorder
+from bettermemory.events import Recorder, iter_all_events
 from bettermemory.models import Category, Confidence, Memory, Source, generate_ulid
+from bettermemory.server import _cli_consolidate_acknowledge_debt
 from bettermemory.store import Store
 
 
@@ -693,6 +695,208 @@ _skip_without_cli = pytest.mark.skipif(
     not _BETTERMEMORY_CLI_WORKS,
     reason="`bettermemory` CLI not functional; run `pip install -e .` locally",
 )
+
+
+# ---------------------------------------------------------------------------
+# acknowledge-debt CLI helper — direct in-process tests
+# ---------------------------------------------------------------------------
+#
+# `_cli_consolidate_acknowledge_debt` clears the curation signal for
+# memories the ranker keeps surfacing but the model never explicitly
+# endorsed. The filter matches `compute_health`'s endorsement_debt
+# predicate exactly; these tests pin each predicate (high retrieval,
+# zero explicit-applied, non-ambient) and confirm the event written
+# is what `health._silent_miss_from_event` and the `applied_counts`
+# walk on _handlers expect (kind=use, outcome=applied, auto=False).
+
+
+def _seed_search_events(recorder: Recorder, memory_id: str, count: int) -> None:
+    for _ in range(count):
+        recorder.record("search", query="q", returned=[memory_id])
+
+
+def test_acknowledge_debt_writes_explicit_use_event_for_unendorsed_memory(
+    store: Store,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """A memory with retrieval_count >= floor and zero explicit applied
+    events is written one `use(applied, auto=False)` event. The event
+    shape is what `compute_health` reads on the next pass to clear the
+    debt — same field set the model's deliberate `memory_record_use`
+    would emit, with `attribution="cli_acknowledge_debt"` so the source
+    of the endorsement is recoverable in the log."""
+    m = store.write(content="durable note about indexer behavior", scopes=["tools"])
+    recorder = Recorder(root=store.root, session_id="seed")
+    _seed_search_events(recorder, m.id, count=6)
+
+    _cli_consolidate_acknowledge_debt(
+        store=store,
+        config=Config(),
+        session_id="ack-cli",
+        json_out=False,
+    )
+
+    use_events = [e for e in iter_all_events(store.root) if e.get("kind") == "use"]
+    assert len(use_events) == 1
+    ev = use_events[0]
+    assert ev["outcome"] == "applied"
+    assert ev["auto"] is False
+    assert ev["ids"] == [m.id]
+    assert ev["attribution"] == "cli_acknowledge_debt"
+
+    out = capsys.readouterr().out
+    assert "1 explicit" in out
+    assert m.id in out
+
+
+def test_acknowledge_debt_skips_already_endorsed_memory(
+    store: Store,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """A memory with even one explicit applied event in the log is
+    already endorsed — no debt to clear, no event written. The
+    discriminator is `auto=True`; an explicit applied with no `auto`
+    flag (or `auto=False`) counts."""
+    m = store.write(content="endorsed body", scopes=["tools"])
+    recorder = Recorder(root=store.root, session_id="seed")
+    _seed_search_events(recorder, m.id, count=6)
+    # One explicit applied — the model already endorsed this memory.
+    recorder.record("use", ids=[m.id], outcome="applied", auto=False)
+
+    _cli_consolidate_acknowledge_debt(
+        store=store,
+        config=Config(),
+        session_id="ack-cli",
+        json_out=False,
+    )
+
+    use_events_after = [
+        e
+        for e in iter_all_events(store.root)
+        if e.get("kind") == "use" and e.get("attribution") == "cli_acknowledge_debt"
+    ]
+    assert use_events_after == []
+    assert "no endorsement-debt memories" in capsys.readouterr().out
+
+
+def test_acknowledge_debt_does_not_count_auto_applied_as_endorsement(
+    store: Store,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """The auto-fallback `_advance_turn` writes `use(applied, auto=True)`
+    on every retrieval whose token aged out. The endorsement_debt
+    rollup excludes these — the whole point is to surface memories
+    where every applied came from auto. Pin that an auto event does
+    NOT block the acknowledgement."""
+    m = store.write(content="auto-applied body", scopes=["tools"])
+    recorder = Recorder(root=store.root, session_id="seed")
+    _seed_search_events(recorder, m.id, count=6)
+    # Plenty of auto-applies — still debt, because none are explicit.
+    for _ in range(3):
+        recorder.record(
+            "use", ids=[m.id], outcome="applied", auto=True, attribution="auto"
+        )
+
+    _cli_consolidate_acknowledge_debt(
+        store=store,
+        config=Config(),
+        session_id="ack-cli",
+        json_out=False,
+    )
+
+    explicit = [
+        e
+        for e in iter_all_events(store.root)
+        if e.get("kind") == "use" and e.get("auto") is False
+    ]
+    assert len(explicit) == 1
+    assert explicit[0]["ids"] == [m.id]
+    assert "1 explicit" in capsys.readouterr().out
+
+
+def test_acknowledge_debt_skips_ambient_memory(
+    store: Store,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """Ambient memories are excluded by construction — their value is
+    implicit (they shape responses without being cited) so an explicit
+    use event for them is structurally rare and not a signal of
+    weak endorsement. Mirrors the filter in `compute_health`."""
+    m = store.write(
+        content="ambient drift", scopes=["tools"], category=Category.AMBIENT
+    )
+    recorder = Recorder(root=store.root, session_id="seed")
+    _seed_search_events(recorder, m.id, count=10)
+
+    _cli_consolidate_acknowledge_debt(
+        store=store,
+        config=Config(),
+        session_id="ack-cli",
+        json_out=False,
+    )
+
+    cli_acks = [
+        e
+        for e in iter_all_events(store.root)
+        if e.get("kind") == "use" and e.get("attribution") == "cli_acknowledge_debt"
+    ]
+    assert cli_acks == []
+    assert "no endorsement-debt memories" in capsys.readouterr().out
+
+
+def test_acknowledge_debt_skips_memory_below_retrieval_floor(
+    store: Store,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """A memory retrieved fewer than `_ENDORSEMENT_DEBT_MIN_RETRIEVALS`
+    (5) times isn't surfaced as debt — the rollup's floor exists so a
+    one-off retrieval doesn't enter the bucket. Acknowledging it would
+    create a false explicit signal where the audit had no opinion."""
+    m = store.write(content="rare hit", scopes=["tools"])
+    recorder = Recorder(root=store.root, session_id="seed")
+    _seed_search_events(recorder, m.id, count=4)
+
+    _cli_consolidate_acknowledge_debt(
+        store=store,
+        config=Config(),
+        session_id="ack-cli",
+        json_out=False,
+    )
+
+    cli_acks = [
+        e
+        for e in iter_all_events(store.root)
+        if e.get("kind") == "use" and e.get("attribution") == "cli_acknowledge_debt"
+    ]
+    assert cli_acks == []
+    assert "no endorsement-debt memories" in capsys.readouterr().out
+
+
+def test_acknowledge_debt_json_output_carries_acknowledged_ids(
+    store: Store,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """The `--json` path emits a parseable object with `acknowledged`,
+    `floor`, and the full id list. Pins the JSON contract so a downstream
+    consumer (CI script, dashboard) doesn't break on a stdout-format
+    change."""
+    m1 = store.write(content="alpha", scopes=["tools"])
+    m2 = store.write(content="beta", scopes=["tools"])
+    recorder = Recorder(root=store.root, session_id="seed")
+    _seed_search_events(recorder, m1.id, count=6)
+    _seed_search_events(recorder, m2.id, count=6)
+
+    _cli_consolidate_acknowledge_debt(
+        store=store,
+        config=Config(),
+        session_id="ack-cli",
+        json_out=True,
+    )
+
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["acknowledged"] == 2
+    assert payload["floor"] == 5
+    assert set(payload["ids"]) == {m1.id, m2.id}
 
 
 @_skip_without_cli
