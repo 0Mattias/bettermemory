@@ -466,24 +466,51 @@ class TestFlockWindows:
     def test_env_var_invalid_string_falls_back_to_default(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        """A non-numeric ``BETTERMEMORY_FLOCK_TIMEOUT`` must NOT raise
-        ``ValueError`` out of the lock acquire path — the helper
-        catches the parse error and falls back to the 30s default.
+        """A non-numeric ``BETTERMEMORY_FLOCK_TIMEOUT`` must fall back
+        to the documented 30s default — not propagate ``ValueError``,
+        not silently degrade to ``timeout = 0`` (which would instantly
+        time out under any real contention).
 
-        The earlier version of this test combined garbage env-var with
-        a no-failure fake, which proved only that ``float()`` didn't
-        explode — the retry loop was never entered, so even a
-        regression that fell back to ``timeout = 0`` (a real bug:
-        lock acquire would instantly time out under any contention)
-        would have passed. This stronger version uses an always-failing
-        fake so the retry loop MUST run, and asserts (1) the loop
-        does eventually raise ``TimeoutError`` (proving 30s is finite,
-        not infinite), and (2) the loop made more than one attempt
-        before raising (proving ``timeout > 0`` — a regression to
-        ``timeout = 0`` would bail after attempt 1 with
-        ``call_count == 1``)."""
+        Round-1 fortification proved only ``timeout > 0`` via
+        ``fake.lock_attempts > 1``: with ``time.sleep`` no-op'd and
+        real ``time.monotonic`` ticking on wall-clock, even a
+        regression to ``timeout = 0.001`` (or any small nonzero) would
+        burn through thousands of attempts before the deadline tripped
+        and still pass. The docstring's claim of "distinguishing the
+        real 30s default from an accidental zero" overpromised against
+        what the count assertion actually enforced.
+
+        This round patches ``time.monotonic`` to a deterministic
+        per-call counter (``0, 1, 2, 3, ...``). With that counter,
+        the deadline arithmetic in ``_flock_windows`` becomes exact:
+
+        * First ``time.monotonic()`` call sets ``deadline = 0 + timeout``.
+        * Each subsequent ``time.monotonic()`` (the post-attempt
+          deadline check) returns the next integer.
+        * The loop trips ``TimeoutError`` on the first attempt whose
+          deadline check returns ``>= timeout``.
+
+        So with ``timeout = 30`` we expect EXACTLY 30 attempts — the
+        check at attempt 30 returns 30, satisfies ``30 >= 30``, and
+        raises. A regression to ``timeout = 0.001`` would exit after
+        attempt 1 (check returns 1, ``1 >= 0.001``, raise). A
+        regression to ``timeout = 0`` would also give 1. The exact
+        ``== 30`` assertion below pins the documented default rather
+        than the weaker "is positive" property.
+
+        ``time.sleep`` is still no-op'd because the deterministic
+        counter makes real sleep arithmetic irrelevant (and slow)."""
+        import time
+
         monkeypatch.setattr("time.sleep", lambda _s: None)
         monkeypatch.setattr(_fsutil, "_FLOCK_WARNED", False)
+        # Deterministic monotonic counter: 0, 1, 2, 3, ... Each call
+        # ticks the counter exactly one unit. The production deadline
+        # arithmetic (``deadline = time.monotonic() + timeout`` then
+        # ``time.monotonic() >= deadline`` per failed attempt) then
+        # becomes a function of attempt count, not wall-clock.
+        monotonic_counter = iter(range(0, 10_000))
+        monkeypatch.setattr(time, "monotonic", lambda: next(monotonic_counter))
         # Always-failing fake forces the deadline arithmetic to be the
         # only thing that can end the loop. With a no-failure fake we
         # exit on attempt 1 regardless of what ``timeout`` got parsed
@@ -501,17 +528,28 @@ class TestFlockWindows:
             with _drive(_fsutil._flock_windows(lock_path)):
                 pytest.fail("body must not run when acquisition times out")
 
-        # call_count > 1 is the load-bearing assertion: it proves the
-        # retry loop ran at least one full lap (attempt → sleep →
-        # attempt). A regression that fell back to ``timeout = 0``
-        # would exit on the first deadline check after attempt 1, giving
-        # ``call_count == 1`` and tripping this — distinguishing the
-        # real 30s default from an accidental zero.
-        assert fake.lock_attempts > 1, (
-            f"retry loop must have iterated more than once under the "
-            f"30s default ceiling; got {fake.lock_attempts} attempt(s). "
-            f"If this is 1, the env-var fallback set ``timeout = 0`` — "
-            f"a real bug that this test now catches."
+        # Exact attempt count pins the documented 30s default. The
+        # deterministic monotonic counter makes this precise: with
+        # ``timeout = 30`` the loop's deadline is set from
+        # ``time.monotonic() = 0`` (first call), each failed-attempt
+        # check ticks the counter (``1, 2, ..., 30``), and the loop
+        # raises when the check first returns ``>= 30`` — which happens
+        # on attempt 30 (the 31st ``time.monotonic()`` call total).
+        #
+        # Regression matrix this catches:
+        #   timeout = 30     → attempts == 30  (current, passes)
+        #   timeout = 0      → attempts == 1   (instant trip)
+        #   timeout = 0.001  → attempts == 1   (counter int=1 >= 0.001)
+        #   timeout = 5      → attempts == 5   (wrong default value)
+        #   timeout = 60     → attempts == 60  (wrong default value)
+        assert fake.lock_attempts == 30, (
+            f"expected EXACTLY 30 lock attempts under the documented "
+            f"30s default ceiling with a deterministic monotonic "
+            f"counter (one tick per call); got {fake.lock_attempts}. "
+            f"A mismatch means the env-var fallback did not parse to "
+            f"30.0 — could be 0 (instant trip → 1 attempt), a small "
+            f"nonzero (still 1 attempt under integer-tick counter), "
+            f"or a different default value entirely (5, 60, etc)."
         )
 
     def test_env_var_change_takes_effect_on_next_acquisition(
