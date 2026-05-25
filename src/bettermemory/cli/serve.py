@@ -12,6 +12,7 @@ from __future__ import annotations
 import logging
 import sys
 
+from ..builder import build_server
 from ..config import load_config
 from ..store import Store
 
@@ -54,11 +55,5 @@ def run_serve() -> None:
     # long-running server process can safely serve multiple MCP clients.
     # For stdio (one client per process) this collapses to a single state
     # under the default key — same observable behavior as before.
-    # `build_server` is imported lazily because `server.py` imports
-    # back through `cli.consolidate` / `cli.export` to preserve the
-    # historical `bettermemory.server._cli_…` test surface; a top-level
-    # `from ..server import build_server` reopens that cycle.
-    from ..server import build_server
-
     mcp = build_server(config=config, store=store)
     mcp.run("stdio")
