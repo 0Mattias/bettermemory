@@ -11,9 +11,9 @@ determines the order subcommands appear in ``bettermemory --help``.
 Preserve it when adding or removing modules.
 
 MCP wiring (``build_server`` plus ``_register_tools`` and the
-FastMCP ``instructions`` block, both private to the builder) lives
-in ``bettermemory.builder``; ``server.py`` re-exports ``build_server``
-for back-compat. The split keeps this package's top-level imports
+FastMCP ``instructions`` block, neither re-exported through
+``server.py``) lives in ``bettermemory.builder``; ``server.py``
+re-exports ``build_server`` for back-compat. The split keeps this package's top-level imports
 from back-edging through ``server.py``, which was previously the
 source of a load-time cycle in ``serve.py``.
 """
