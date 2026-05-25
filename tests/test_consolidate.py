@@ -1003,6 +1003,82 @@ def test_acknowledge_misses_json_output_carries_canonical_cutoff(
     assert payload == {"silent_miss_cutoff": "2026-05-25T05:25:35Z"}
 
 
+def test_acknowledge_misses_rejects_naive_timestamp(
+    store: Store,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """A naive ISO timestamp (no offset, no `Z`) is rejected up front.
+    Silently stamping naive input as UTC was the previous behavior and
+    produced off-by-zone cutoffs for non-UTC users with no warning."""
+    with pytest.raises(SystemExit) as exc:
+        _cli_consolidate_acknowledge_misses(
+            store=store,
+            config=Config(),
+            session_id="ack-cli",
+            cutoff_ts="2026-05-25T05:25:35",  # No offset, no Z.
+            json_out=False,
+        )
+    assert exc.value.code == 1
+    err = capsys.readouterr().err
+    assert "missing a UTC offset" in err
+    # No event landed.
+    cutoff_events = [
+        e for e in iter_all_events(store.root) if e.get("kind") == "silent_miss_cutoff"
+    ]
+    assert cutoff_events == []
+
+
+def test_acknowledge_misses_refuses_when_telemetry_disabled(
+    store: Store,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """The CLI is itself a telemetry write; a disabled Recorder would
+    silently no-op. Exit 1 with a clear message instead of writing
+    nothing and returning success."""
+    from bettermemory.config import TelemetryConfig
+
+    config_no_telem = Config(telemetry=TelemetryConfig(enabled=False))
+    with pytest.raises(SystemExit) as exc:
+        _cli_consolidate_acknowledge_misses(
+            store=store,
+            config=config_no_telem,
+            session_id="ack-cli",
+            cutoff_ts="2026-05-25T05:25:35Z",
+            json_out=False,
+        )
+    assert exc.value.code == 1
+    err = capsys.readouterr().err
+    assert "telemetry is disabled" in err
+    # No event landed (the Recorder wouldn't have written anyway, but
+    # confirm the fail-fast prevented even that attempt).
+    cutoff_events = [
+        e for e in iter_all_events(store.root) if e.get("kind") == "silent_miss_cutoff"
+    ]
+    assert cutoff_events == []
+
+
+def test_acknowledge_misses_json_error_path_writes_nothing_to_stdout(
+    store: Store,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """`--json` on the invalid-timestamp path must not emit a partial
+    JSON line or an empty `{}` to stdout — downstream consumers parse
+    stdout as JSON and a stray byte breaks them. The error rides on
+    stderr; stdout stays empty."""
+    with pytest.raises(SystemExit) as exc:
+        _cli_consolidate_acknowledge_misses(
+            store=store,
+            config=Config(),
+            session_id="ack-cli",
+            cutoff_ts="not-a-timestamp",
+            json_out=True,
+        )
+    assert exc.value.code == 1
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    assert "invalid ISO timestamp" in captured.err
+
+
 def test_acknowledge_misses_event_clears_prior_miss_telemetry(
     store: Store,
     capsys: pytest.CaptureFixture[str],
@@ -1095,3 +1171,41 @@ async def test_cli_consolidate_json_via_subprocess(
         "actions_taken",
     ):
         assert key in parsed
+
+
+@_skip_without_cli
+async def test_cli_consolidate_acknowledge_misses_via_subprocess(
+    memory_dir: Path,
+) -> None:
+    """End-to-end argparse-wiring check: the
+    `bettermemory consolidate --acknowledge-misses-before <ISO_TS>`
+    invocation parses the flag, runs the in-process handler, and
+    writes one `silent_miss_cutoff` event visible in the events log.
+    The direct in-process tests above cover the handler logic; this
+    test catches breakage in the argparse plumbing (typo'd flag
+    name, missing `action=`, wrong dest, etc.) that the in-process
+    tests would miss."""
+    import subprocess
+
+    cutoff = "2026-05-25T05:25:35Z"
+    result = subprocess.run(
+        [
+            "bettermemory",
+            "consolidate",
+            "--acknowledge-misses-before",
+            cutoff,
+        ],
+        capture_output=True,
+        text=True,
+        env={**__import__("os").environ, "BETTERMEMORY_DIR": str(memory_dir)},
+        timeout=15,
+    )
+    assert result.returncode == 0, result.stderr
+    assert cutoff in result.stdout
+    # Confirm the event actually landed via the same code path the
+    # rollup will use to read it back.
+    cutoff_events = [
+        e for e in iter_all_events(memory_dir) if e.get("kind") == "silent_miss_cutoff"
+    ]
+    assert len(cutoff_events) == 1
+    assert cutoff_events[0]["cutoff_ts"] == cutoff

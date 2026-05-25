@@ -19,7 +19,10 @@ the wire format.
 
 Run:
 
-    venv/bin/python examples/programmatic_client.py
+    uv run python examples/programmatic_client.py
+
+(or, if you have `bettermemory` installed globally via `uv tool
+install`, any Python interpreter that can import `mcp`.)
 
 Output is a small narrated walk through write (fact) → write
 (user-inference, staged pending) → confirm → search → show → remove,
@@ -156,8 +159,7 @@ async def _walk_through_one_session(storage_dir: Path) -> None:
 
             staged = json.loads(staged_result.content[0].text)
             assert staged.get("status") == "pending", (
-                f"expected status='pending' for user-inference write, "
-                f"got {staged!r}"
+                f"expected status='pending' for user-inference write, got {staged!r}"
             )
             pending_id = staged["pending_id"]
 
@@ -193,10 +195,20 @@ async def _walk_through_one_session(storage_dir: Path) -> None:
                 "memory_search",
                 {"query": "pnpm workspace install", "max_results": 3},
             )
-            search_payload = json.loads(search_result.content[0].text)
-            for hit in search_payload.get("hits", []):
+            # The MCP layer serialises a list-returning tool as one
+            # `TextContent` per hit, each carrying a JSON-encoded hit
+            # dict — `staleness_verdict` is a top-level field on each
+            # one (not nested under `verification`, which carries the
+            # raw status). We walk `content` directly rather than
+            # treating the response as a single payload.
+            print(f"   {len(search_result.content)} hit(s):")
+            for item in search_result.content:
+                text = getattr(item, "text", None)
+                if not text:
+                    continue
+                hit = json.loads(text)
                 verdict = hit.get("staleness_verdict", "?")
-                print(f"   hit {hit.get('id')} -> staleness_verdict={verdict}")
+                print(f"     - {hit.get('id')} -> staleness_verdict={verdict}")
             print(_pretty(search_result))
             print()
 

@@ -4,7 +4,7 @@ HealthReport."""
 from __future__ import annotations
 
 import json
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
@@ -578,6 +578,115 @@ def test_silent_miss_cutoff_filters_curation_counts_too() -> None:
         cutoff_ts=_utc(2026, 4, 10).isoformat().replace("+00:00", "Z"),
     )
     counts = curation_counts([], [pre, post, cutoff], now=_utc(2026, 5, 1))
+    assert counts["silent_misses"] == 1
+
+
+def test_silent_miss_cutoff_drops_numerator_and_denominator_together() -> None:
+    """Both `search_miss` and `turn_audited` are filtered from the SAME
+    event log so the miss-rate metric doesn't skew. The two single-axis
+    tests above pin each kind in isolation; this one pins the joint
+    behavior — a regression that filtered only one side would still
+    pass the per-kind tests but fail this one."""
+    pre_audit = _event("turn_audited", ts=_utc(2026, 4, 1))
+    pre_miss = _event("search_miss", ts=_utc(2026, 4, 2))
+    post_audit = _event("turn_audited", ts=_utc(2026, 4, 20))
+    post_miss = _event("search_miss", ts=_utc(2026, 4, 21))
+    cutoff = _event(
+        "silent_miss_cutoff",
+        ts=_utc(2026, 4, 10),
+        cutoff_ts=_utc(2026, 4, 10).isoformat().replace("+00:00", "Z"),
+    )
+    report = compute_health(
+        [],
+        [pre_audit, pre_miss, post_audit, post_miss, cutoff],
+        now=_utc(2026, 5, 1),
+    )
+    # Both buckets must drop the pre-cutoff event; the rate stays at
+    # 1/1 instead of skewing to 1/2 (miss kept, audit dropped) or
+    # 2/1 (audit kept, miss dropped).
+    assert report.silent_misses.miss_total == 1
+    assert report.silent_misses.audited_total == 1
+
+
+def test_silent_miss_cutoff_keeps_events_at_exact_boundary() -> None:
+    """`_count_post_cutoff` uses `ts >= cutoff` — an event whose ts is
+    exactly the cutoff is kept. Flipping the inequality to `>` would
+    silently change semantics without surfacing in the other tests
+    (they all use strictly-pre or strictly-post timestamps)."""
+    cutoff_at = _utc(2026, 4, 10)
+    one_second_before = cutoff_at - timedelta(seconds=1)
+    miss_at_boundary = _event("search_miss", ts=cutoff_at)
+    audit_at_boundary = _event("turn_audited", ts=cutoff_at)
+    miss_before = _event("search_miss", ts=one_second_before)
+    audit_before = _event("turn_audited", ts=one_second_before)
+    cutoff = _event(
+        "silent_miss_cutoff",
+        ts=cutoff_at,
+        cutoff_ts=cutoff_at.isoformat().replace("+00:00", "Z"),
+    )
+    report = compute_health(
+        [],
+        [miss_at_boundary, audit_at_boundary, miss_before, audit_before, cutoff],
+        now=_utc(2026, 5, 1),
+    )
+    # The boundary events are kept; the strictly-pre ones are dropped.
+    assert report.silent_misses.miss_total == 1
+    assert report.silent_misses.audited_total == 1
+
+
+def test_silent_miss_cutoff_latest_wins_filters_audited_side_too() -> None:
+    """The latest-cutoff-wins tests above only assert on the miss side.
+    A bug where `compute_health` picked the max cutoff for `search_miss`
+    but the first-seen cutoff for `turn_audited` would slip through —
+    this test pins that both sides resolve to the SAME cutoff value."""
+    audit_a = _event("turn_audited", ts=_utc(2026, 4, 5))
+    audit_b = _event("turn_audited", ts=_utc(2026, 4, 15))
+    audit_c = _event("turn_audited", ts=_utc(2026, 4, 25))
+    early_cutoff = _event(
+        "silent_miss_cutoff",
+        ts=_utc(2026, 4, 10),
+        cutoff_ts=_utc(2026, 4, 10).isoformat().replace("+00:00", "Z"),
+    )
+    later_cutoff = _event(
+        "silent_miss_cutoff",
+        ts=_utc(2026, 4, 20),
+        cutoff_ts=_utc(2026, 4, 20).isoformat().replace("+00:00", "Z"),
+    )
+    report = compute_health(
+        [],
+        [audit_a, early_cutoff, audit_b, later_cutoff, audit_c],
+        now=_utc(2026, 5, 1),
+    )
+    # Only audit_c (04-25) survives the 04-20 cutoff. Pinning audited
+    # specifically — the miss-side equivalent test already exists.
+    assert report.silent_misses.audited_total == 1
+
+
+def test_silent_miss_cutoff_resolved_globally_under_since_delta() -> None:
+    """`curation_counts(since=...)` filters event walk by `--since`, but
+    `silent_miss_cutoff` events are global markers — their effect must
+    apply even if the cutoff event itself falls below the delta window.
+    Without this exemption, a delta run would drop the cutoff and the
+    rollup would over-count pre-cutoff misses."""
+    # Cutoff written long ago, well before the `since` boundary.
+    cutoff = _event(
+        "silent_miss_cutoff",
+        ts=_utc(2026, 1, 1),
+        cutoff_ts=_utc(2026, 4, 10).isoformat().replace("+00:00", "Z"),
+    )
+    # Two misses in the delta window — one pre-cutoff, one post-cutoff.
+    pre = _event("search_miss", ts=_utc(2026, 4, 5))
+    post = _event("search_miss", ts=_utc(2026, 4, 20))
+
+    counts = curation_counts(
+        [],
+        [cutoff, pre, post],
+        now=_utc(2026, 5, 1),
+        since=_utc(2026, 4, 1),
+    )
+    # The cutoff must apply — only the post-cutoff miss counts.
+    # Without the exemption, the cutoff would be silently dropped and
+    # both misses (pre and post) would count as 2.
     assert counts["silent_misses"] == 1
 
 

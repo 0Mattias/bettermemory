@@ -945,13 +945,17 @@ class TestComputeToolUsage:
         assert [r.tool for r in nonzero] == ["memory_search", "memory_verify"]
 
     def test_side_effect_event_kinds_are_not_counted_as_tool_calls(self) -> None:
-        """`search_miss` and `pending_expired` are side-effects of other
-        tools, not standalone tool calls. They must not inflate any
-        tool's count and must not surface as unmapped either."""
+        """`search_miss`, `pending_expired`, and `silent_miss_cutoff`
+        are side-effects of other tools (or CLI admin ops), not
+        standalone tool calls. They must not inflate any tool's count
+        and must not surface as unmapped either — a regression that
+        moved any of these into `_TOOL_EVENT_KIND_TO_TOOL` would
+        attribute admin operations to the wrong parent."""
         events = [
             _ev("search_miss"),
             _ev("search_miss"),
             _ev("pending_expired", pending_id="pending_x"),
+            _ev("silent_miss_cutoff", cutoff_ts="2026-04-10T00:00:00Z"),
         ]
         report = compute_tool_usage(events)
         assert report.total_tool_calls == 0

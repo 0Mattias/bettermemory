@@ -997,8 +997,12 @@ def main() -> None:
             "always honors the latest cutoff seen. Use after a fix "
             "that invalidates a batch of historical misses (e.g. the "
             "v2.7.3 cwd-suppression change) so the rate metric reflects "
-            "post-fix behavior. ISO_TS accepts the same formats as "
-            "event timestamps (e.g. `2026-05-25T05:25:35Z`). Always "
+            "post-fix behavior. ISO_TS must carry an explicit UTC offset "
+            "or trailing `Z` (e.g. `2026-05-25T05:25:35Z` or "
+            "`2026-05-25T01:25:35-04:00`); naive local times are "
+            "rejected to avoid silent off-by-zone cutoffs. Requires "
+            "telemetry enabled — the cutoff is itself a telemetry event "
+            "and a disabled recorder would silently no-op. Always "
             "commits — no --apply gate, because the event is purely "
             "additive and a misapplied cutoff can be superseded by a "
             "later one or ignored by manually pruning the cutoff event."
@@ -2059,11 +2063,32 @@ def _cli_consolidate_acknowledge_misses(
     and supports both text and JSON output. Validates the timestamp up
     front so a typo surfaces as an exit-1 error instead of silently
     writing a malformed event that the rollup will then ignore.
+
+    The CLI rejects naive ISO timestamps and refuses to run with
+    telemetry disabled, because both are silent-no-op footguns: a
+    naive timestamp from a non-UTC user would be stamped UTC and
+    produce an off-by-zone cutoff, and a disabled Recorder swallows
+    every write so the user thinks the cutoff landed when nothing
+    was written.
     """
     import json as _json
     from datetime import datetime, timezone
 
-    from .events import Recorder
+    from .events import Recorder, iter_all_events
+
+    # Refuse to run with telemetry disabled — the Recorder's `enabled`
+    # flag turns `record()` into a no-op, so the write would silently
+    # disappear and exit 0. The cutoff is itself a telemetry event;
+    # if telemetry is off there is nothing to acknowledge and no place
+    # to write the marker.
+    if not config.telemetry.enabled:
+        sys.stderr.write(
+            "acknowledge-misses-before: telemetry is disabled in the "
+            "active config, so the cutoff event would be silently "
+            "dropped. Enable telemetry (config.telemetry.enabled = "
+            "true) before running this command.\n"
+        )
+        raise SystemExit(1)
 
     # Validate the cutoff up front. Accept both `Z` and explicit-offset
     # ISO forms (matching the Recorder's emission) — `_parse_ts` in
@@ -2078,13 +2103,27 @@ def _cli_consolidate_acknowledge_misses(
         )
         raise SystemExit(1) from None
 
+    # Reject naive timestamps. A bare `2026-05-25T10:00:00` from a
+    # non-UTC user produces a cutoff several hours off-by-zone with no
+    # warning — the rollup compares aware datetimes, so the
+    # discrepancy would only show up days later as a confusing
+    # miss-rate skew. Forcing the user to spell out the offset (or
+    # write `Z`) makes the assumption part of the input.
+    if parsed.tzinfo is None:
+        sys.stderr.write(
+            f"acknowledge-misses-before: ISO timestamp {cutoff_ts!r} "
+            f"is missing a UTC offset. Pass an explicit offset or "
+            f"trailing `Z` (e.g. '2026-05-25T05:25:35Z' or "
+            f"'2026-05-25T01:25:35-04:00') so the cutoff isn't "
+            f"silently interpreted as your local zone.\n"
+        )
+        raise SystemExit(1)
+
     # Normalize to UTC-Z so every cutoff event in the log uses the same
     # representation, regardless of which offset the caller passed. The
     # rollup compares aware datetimes, so this is a presentation detail
     # rather than a correctness one — but consistent formatting makes
     # the events easier to eyeball.
-    if parsed.tzinfo is None:
-        parsed = parsed.replace(tzinfo=timezone.utc)
     canonical_cutoff = (
         parsed.astimezone(timezone.utc).isoformat().replace("+00:00", "Z")
     )
@@ -2102,6 +2141,28 @@ def _cli_consolidate_acknowledge_misses(
         attribution="cli_acknowledge_misses",
         note="bettermemory consolidate --acknowledge-misses-before",
     )
+
+    # Defensive verification: `Recorder.record` swallows every
+    # exception by design (a logging hiccup must never break a tool
+    # call), but for an admin CLI op that means a chmod failure / I/O
+    # error would still exit 0 with nothing on disk. Read back through
+    # `iter_all_events` and confirm our event landed — scoped to this
+    # session_id + canonical_cutoff so we don't false-positive on a
+    # prior cutoff with the same timestamp.
+    landed = any(
+        ev.get("kind") == "silent_miss_cutoff"
+        and ev.get("cutoff_ts") == canonical_cutoff
+        and (ev.get("session") or ev.get("session_id")) == session_id
+        for ev in iter_all_events(store.root)
+    )
+    if not landed:
+        sys.stderr.write(
+            "acknowledge-misses-before: recorder.record() returned "
+            "but the silent_miss_cutoff event is not visible in the "
+            "events log. Check filesystem permissions and disk space; "
+            "no cutoff was applied.\n"
+        )
+        raise SystemExit(1)
 
     if json_out:
         sys.stdout.write(

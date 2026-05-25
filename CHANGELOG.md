@@ -34,6 +34,58 @@ rewriting the log.
   operations as tool invocations — same rationale as `search_miss`
   and `pending_expired`.
 
+### Fixed — Audit follow-up
+
+- **`--acknowledge-misses-before` no longer silently stamps naive
+  timestamps as UTC.** A bare ISO timestamp without an offset (e.g.
+  `2026-05-25T10:00:00`) from a non-UTC user used to produce an
+  off-by-zone cutoff with no warning; the CLI now rejects naive
+  input and prints a clear stderr message pointing at the explicit
+  offset / `Z` syntax it accepts.
+- **`--acknowledge-misses-before` refuses to run with telemetry
+  disabled** instead of returning exit 0 having written nothing.
+  The cutoff is itself a telemetry event; a disabled `Recorder`
+  swallows the write so the user thought the cutoff had landed when
+  it had not. Post-write verification reads the events log back to
+  catch any remaining silent-failure modes (chmod failure, I/O
+  error). The CLI errors with exit 1 and a clear message in either
+  case.
+- **`compute_health` and `curation_counts` now use the same
+  `cutoff_ts` parser** (`_ensure_utc(_parse_event_ts(...))`).
+  Previously the two paths used different parsers, so a naive
+  `cutoff_ts` value could produce divergent rollups against the
+  same store. Event timestamps in `compute_health` are also normalized
+  to UTC so any legacy naive `ts` compares cleanly against the
+  aware cutoff.
+- **`curation_counts(since=...)` resolves `silent_miss_cutoff`
+  events before applying the delta filter.** Previously a cutoff
+  event whose own `ts` fell under `since` was silently dropped,
+  causing a delta run to over-count pre-cutoff misses. Cutoffs are
+  global markers — they now always apply regardless of `--since`.
+
+### Fixed — Docs & examples
+
+- README on-disk-format example: `origin.worktree` corrected to
+  `origin.worktree_root` (the actual field name the writer emits);
+  example ULIDs expanded from 12 chars to the 26-char form the
+  validator requires.
+- `examples/memories/2025-05-10-ci-runner-migration.md` now has a
+  resolvable `supersedes` target — added
+  `examples/memories/2025-02-10-atlas-jenkins-ci.md` as the
+  predecessor so the link demonstrates the feature it markets
+  instead of dangling.
+- `examples/memories/README.md`: the path-drift relationship is
+  corrected (drift is computed against body-cited paths with
+  `verified_paths` *excluding* matched paths from the signal, not
+  "against verified_paths"); the legacy-memory claim now correctly
+  states such memories surface as `spot_check_required` rather than
+  `fresh`.
+- `examples/programmatic_client.py`: the per-hit
+  `staleness_verdict` print loop now iterates over the actual MCP
+  response shape (one `TextContent` per hit) instead of the
+  non-existent `{"hits": [...]}` envelope; run command updated from
+  `venv/bin/python` to `uv run python`.
+
 ## 2.7.3 - 2026-05-25
 
 **Post-2.7.2 dogfood audit follow-up.** The threshold-sweep on the

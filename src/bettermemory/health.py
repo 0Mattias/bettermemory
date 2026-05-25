@@ -692,7 +692,11 @@ def compute_health(
             sessions.add(sess)
 
         kind = ev.get("kind")
-        ts = _parse_ts(ev.get("ts"))
+        # `_ensure_utc` after `_parse_ts` so any naive ts (legacy
+        # fixtures, hand-written events) compares cleanly against the
+        # tz-aware cutoff resolved below. Mirrors `curation_counts`,
+        # so a naive cutoff_ts produces the same rollup either way.
+        ts = _ensure_utc(_parse_ts(ev.get("ts")))
 
         if kind == "search":
             # Canonical-first read with the legacy-name fallback the
@@ -801,8 +805,11 @@ def compute_health(
             # `cutoff_ts` seen, dropping any earlier turn_audited /
             # search_miss events. Older `cutoff_ts` values are ignored so
             # a later cutoff can extend the window but not shrink it.
-            cutoff_raw = ev.get("cutoff_ts")
-            parsed_cutoff = _parse_ts(cutoff_raw)
+            # `_ensure_utc` after parsing so a naive cutoff_ts compares
+            # cleanly against the aware event ts above (curation_counts
+            # uses the same combination; keep them in sync so a naive
+            # cutoff_ts can't produce divergent rollups across paths).
+            parsed_cutoff = _ensure_utc(_parse_event_ts(ev.get("cutoff_ts")))
             if parsed_cutoff is not None and (
                 latest_miss_cutoff is None or parsed_cutoff > latest_miss_cutoff
             ):
@@ -1488,6 +1495,21 @@ def curation_counts(
     silent_miss_ts_list: list[datetime | None] = []
     latest_miss_cutoff: datetime | None = None
     for ev in events:
+        kind = ev.get("kind")
+        # `silent_miss_cutoff` is a global marker — once written it
+        # applies to the entire silent_miss rollup regardless of
+        # window. Resolve it BEFORE the `--since` filter so a cutoff
+        # event whose own `ts` falls under the delta boundary still
+        # masks pre-cutoff misses correctly. Without this exemption a
+        # `--since` delta would silently drop the cutoff and the
+        # numerator would over-count.
+        if kind == "silent_miss_cutoff":
+            parsed = _ensure_utc(_parse_event_ts(ev.get("cutoff_ts")))
+            if parsed is not None and (
+                latest_miss_cutoff is None or parsed > latest_miss_cutoff
+            ):
+                latest_miss_cutoff = parsed
+            continue
         if since_aware is not None:
             ev_ts = _ensure_utc(_parse_event_ts(ev.get("ts")))
             # Strict `<=` rather than `<`: when `since` is a session
@@ -1498,7 +1520,6 @@ def curation_counts(
             # exclusive ("events strictly after the prior session").
             if ev_ts is None or ev_ts <= since_aware:
                 continue
-        kind = ev.get("kind")
         if kind == "search":
             # Legacy-name fallback — see the note in `compute_health`.
             for mid in (
@@ -1515,12 +1536,6 @@ def curation_counts(
                         explicit_applied_counts[mid] += 1
         elif kind == "search_miss":
             silent_miss_ts_list.append(_ensure_utc(_parse_event_ts(ev.get("ts"))))
-        elif kind == "silent_miss_cutoff":
-            parsed = _ensure_utc(_parse_event_ts(ev.get("cutoff_ts")))
-            if parsed is not None and (
-                latest_miss_cutoff is None or parsed > latest_miss_cutoff
-            ):
-                latest_miss_cutoff = parsed
 
     silent_misses = _count_post_cutoff(silent_miss_ts_list, latest_miss_cutoff)
 

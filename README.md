@@ -94,7 +94,7 @@ One file per memory:
 ```markdown
 ---
 schema_version: 1
-id: 01HXYZ123ABC
+id: 01HXYZ123ABCDEFGHJKMNPQRST
 created: 2025-03-14T10:23:00+00:00
 updated: 2025-03-14T10:23:00+00:00
 scopes: [tools, learning-style]
@@ -110,7 +110,7 @@ A memory carrying the optional fields — captured under a project repo, verifie
 ```markdown
 ---
 schema_version: 1
-id: 01HXYZ456DEF
+id: 01HXYZ456DEFGHJKMNPQRSTVWX
 created: 2025-04-02T09:11:00+00:00
 updated: 2025-05-10T14:02:00+00:00
 scopes: [projects:bettermemory, infrastructure]
@@ -121,13 +121,13 @@ origin:
   cwd: /Users/m/code/bettermemory
   repo: https://github.com/0Mattias/bettermemory
   branch: main
-  worktree: /Users/m/code/bettermemory
+  worktree_root: /Users/m/code/bettermemory
 last_verified_at: 2025-05-10T14:02:00+00:00
 verified_paths:
   - src/bettermemory/health.py
   - docs/eval.md
 links:
-  - {type: supersedes, target_id: 01HXYZ111AAA}
+  - {type: supersedes, target_id: 01HXYZ111AAABCDEFGHJKMNPQR}
 ---
 The `compute_health` rollup honors the latest `silent_miss_cutoff`
 event in the log and drops earlier `turn_audited` / `search_miss`
