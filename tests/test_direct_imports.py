@@ -36,12 +36,56 @@ import pytest
 # handlers.* — per-tool MCP handler modules
 #
 # Each handler module exports ``DESC_<TOOL>`` (string) + ``<tool>`` (async
-# function). The smoke is "the symbols resolve via direct import, the
-# DESC is non-empty, the function is a coroutine function". A signature-
-# drift regression (renamed parameter, missing default, async->sync
-# change) would fail one of these import-or-assert steps before the
-# facade tests would notice.
+# function). The smoke pins three things per handler:
+#
+#   1. The DESC constant is a non-empty string (so the FastMCP schema
+#      renders something the model can actually read).
+#   2. The handler is a coroutine function (async->sync flips are loud
+#      breakage at the dispatch boundary).
+#   3. The FULL parameter snapshot: parameter names, ordering, and
+#      defaults. Pinning the whole list (not a subset) is what makes
+#      this signature-drift detection — adding / removing / renaming
+#      ANY parameter, or flipping a default that gates behaviour
+#      (``force=False`` -> ``force=True``, etc.), fails the snapshot.
+#      Type annotations are deliberately NOT pinned (Pyright catches
+#      those at lint time; capturing them here would create noisy
+#      Optional[X] / X | None equivalence churn).
+#
+# All current handlers take POSITIONAL_OR_KEYWORD parameters only; the
+# helper enforces that as a structural invariant so a future refactor
+# that introduces keyword-only params (e.g. ``*, force: bool``) trips
+# the assertion and lands a deliberate update here.
 # ---------------------------------------------------------------------------
+
+
+_MISSING = inspect.Parameter.empty
+
+
+def _snapshot_params(
+    handler: object,
+) -> list[tuple[str, object]]:
+    """Return ``[(name, default), ...]`` for every parameter on ``handler``.
+
+    Defaults are ``inspect.Parameter.empty`` for required parameters and
+    the literal default value otherwise — so a snapshot like
+    ``[("deps", _MISSING), ("force", False)]`` will fail loudly if
+    either ``deps`` becomes optional or ``force`` flips to ``True``.
+
+    Asserts every parameter is POSITIONAL_OR_KEYWORD because that's the
+    structural invariant the whole handler package follows today; a
+    future move to KEYWORD_ONLY-or-anything-else is a real design
+    change that should land an explicit update here rather than slip
+    through silently.
+    """
+    sig = inspect.signature(handler)  # type: ignore[arg-type]
+    snapshot: list[tuple[str, object]] = []
+    for name, param in sig.parameters.items():
+        assert param.kind is inspect.Parameter.POSITIONAL_OR_KEYWORD, (
+            f"{handler!r} parameter {name!r} kind drifted to {param.kind!r} "
+            "— update the snapshot helper if this is intentional"
+        )
+        snapshot.append((name, param.default))
+    return snapshot
 
 
 def test_handlers_audit_turn_direct_import() -> None:
@@ -52,9 +96,13 @@ def test_handlers_audit_turn_direct_import() -> None:
 
     assert isinstance(DESC_MEMORY_AUDIT_TURN, str) and DESC_MEMORY_AUDIT_TURN
     assert inspect.iscoroutinefunction(memory_audit_turn)
-    params = inspect.signature(memory_audit_turn).parameters
-    assert "deps" in params
-    assert "user_message" in params
+    assert _snapshot_params(memory_audit_turn) == [
+        ("deps", _MISSING),
+        ("user_message", _MISSING),
+        ("assistant_response", None),
+        ("lookback_seconds", None),
+        ("ctx", None),
+    ]
 
 
 def test_handlers_health_direct_import() -> None:
@@ -62,9 +110,13 @@ def test_handlers_health_direct_import() -> None:
 
     assert isinstance(DESC_MEMORY_HEALTH, str) and DESC_MEMORY_HEALTH
     assert inspect.iscoroutinefunction(memory_health)
-    params = inspect.signature(memory_health).parameters
-    assert "deps" in params
-    assert "window_days" in params
+    assert _snapshot_params(memory_health) == [
+        ("deps", _MISSING),
+        ("window_days", 30),
+        ("heavily_used_top_k", 10),
+        ("min_applied", None),
+        ("ctx", None),
+    ]
 
 
 def test_handlers_list_active_direct_import() -> None:
@@ -72,9 +124,12 @@ def test_handlers_list_active_direct_import() -> None:
 
     assert isinstance(DESC_MEMORY_LIST, str) and DESC_MEMORY_LIST
     assert inspect.iscoroutinefunction(memory_list)
-    params = inspect.signature(memory_list).parameters
-    assert "deps" in params
-    assert "with_bodies" in params
+    assert _snapshot_params(memory_list) == [
+        ("deps", _MISSING),
+        ("scopes", None),
+        ("with_bodies", False),
+        ("ctx", None),
+    ]
 
 
 def test_handlers_record_use_direct_import() -> None:
@@ -85,10 +140,14 @@ def test_handlers_record_use_direct_import() -> None:
 
     assert isinstance(DESC_MEMORY_RECORD_USE, str) and DESC_MEMORY_RECORD_USE
     assert inspect.iscoroutinefunction(memory_record_use)
-    params = inspect.signature(memory_record_use).parameters
-    assert "deps" in params
-    assert "memory_ids" in params
-    assert "outcome" in params
+    assert _snapshot_params(memory_record_use) == [
+        ("deps", _MISSING),
+        ("memory_ids", _MISSING),
+        ("outcome", _MISSING),
+        ("note", None),
+        ("claim_excerpts", None),
+        ("ctx", None),
+    ]
 
 
 def test_handlers_remove_direct_import() -> None:
@@ -96,10 +155,12 @@ def test_handlers_remove_direct_import() -> None:
 
     assert isinstance(DESC_MEMORY_REMOVE, str) and DESC_MEMORY_REMOVE
     assert inspect.iscoroutinefunction(memory_remove)
-    params = inspect.signature(memory_remove).parameters
-    assert "deps" in params
-    assert "id" in params
-    assert "reason" in params
+    assert _snapshot_params(memory_remove) == [
+        ("deps", _MISSING),
+        ("id", _MISSING),
+        ("reason", _MISSING),
+        ("ctx", None),
+    ]
 
 
 def test_handlers_rename_scope_direct_import() -> None:
@@ -110,10 +171,13 @@ def test_handlers_rename_scope_direct_import() -> None:
 
     assert isinstance(DESC_MEMORY_RENAME_SCOPE, str) and DESC_MEMORY_RENAME_SCOPE
     assert inspect.iscoroutinefunction(memory_rename_scope)
-    params = inspect.signature(memory_rename_scope).parameters
-    assert "deps" in params
-    assert "old_scope" in params
-    assert "new_scope" in params
+    assert _snapshot_params(memory_rename_scope) == [
+        ("deps", _MISSING),
+        ("old_scope", _MISSING),
+        ("new_scope", _MISSING),
+        ("include_tombstones", True),
+        ("ctx", None),
+    ]
 
 
 def test_handlers_restore_direct_import() -> None:
@@ -121,9 +185,11 @@ def test_handlers_restore_direct_import() -> None:
 
     assert isinstance(DESC_MEMORY_RESTORE, str) and DESC_MEMORY_RESTORE
     assert inspect.iscoroutinefunction(memory_restore)
-    params = inspect.signature(memory_restore).parameters
-    assert "deps" in params
-    assert "id" in params
+    assert _snapshot_params(memory_restore) == [
+        ("deps", _MISSING),
+        ("id", _MISSING),
+        ("ctx", None),
+    ]
 
 
 def test_handlers_scope_overview_direct_import() -> None:
@@ -134,14 +200,18 @@ def test_handlers_scope_overview_direct_import() -> None:
 
     assert isinstance(DESC_MEMORY_SCOPE_OVERVIEW, str) and DESC_MEMORY_SCOPE_OVERVIEW
     assert inspect.iscoroutinefunction(memory_scope_overview)
-    params = inspect.signature(memory_scope_overview).parameters
-    assert "deps" in params
-    assert "auto_scope" in params
+    assert _snapshot_params(memory_scope_overview) == [
+        ("deps", _MISSING),
+        ("auto_scope", True),
+        ("ctx", None),
+    ]
 
 
 def test_handlers_scope_toggle_direct_import() -> None:
     """Two distinct entry points: ``disable`` and ``enable``. Both pinned
-    so a typo on one (renamed param, swapped async/sync) doesn't slip in."""
+    so a typo on one (renamed param, swapped async/sync) doesn't slip in.
+    The pair is structurally symmetric — same parameter snapshot — so a
+    drift that breaks the symmetry would also trip these assertions."""
     from bettermemory.handlers.scope_toggle import (
         DESC_MEMORY_SCOPE_DISABLE,
         DESC_MEMORY_SCOPE_ENABLE,
@@ -153,8 +223,13 @@ def test_handlers_scope_toggle_direct_import() -> None:
     assert isinstance(DESC_MEMORY_SCOPE_ENABLE, str) and DESC_MEMORY_SCOPE_ENABLE
     assert inspect.iscoroutinefunction(memory_scope_disable)
     assert inspect.iscoroutinefunction(memory_scope_enable)
-    assert "scope" in inspect.signature(memory_scope_disable).parameters
-    assert "scope" in inspect.signature(memory_scope_enable).parameters
+    expected = [
+        ("deps", _MISSING),
+        ("scope", _MISSING),
+        ("ctx", None),
+    ]
+    assert _snapshot_params(memory_scope_disable) == expected
+    assert _snapshot_params(memory_scope_enable) == expected
 
 
 def test_handlers_search_direct_import() -> None:
@@ -162,10 +237,16 @@ def test_handlers_search_direct_import() -> None:
 
     assert isinstance(DESC_MEMORY_SEARCH, str) and DESC_MEMORY_SEARCH
     assert inspect.iscoroutinefunction(memory_search)
-    params = inspect.signature(memory_search).parameters
-    assert "deps" in params
-    assert "query" in params
-    assert "mode" in params
+    assert _snapshot_params(memory_search) == [
+        ("deps", _MISSING),
+        ("query", _MISSING),
+        ("scopes", None),
+        ("max_results", None),
+        ("expand_top", False),
+        ("auto_scope", True),
+        ("mode", None),
+        ("ctx", None),
+    ]
 
 
 def test_handlers_show_direct_import() -> None:
@@ -173,9 +254,11 @@ def test_handlers_show_direct_import() -> None:
 
     assert isinstance(DESC_MEMORY_SHOW, str) and DESC_MEMORY_SHOW
     assert inspect.iscoroutinefunction(memory_show)
-    params = inspect.signature(memory_show).parameters
-    assert "deps" in params
-    assert "id" in params
+    assert _snapshot_params(memory_show) == [
+        ("deps", _MISSING),
+        ("id", _MISSING),
+        ("ctx", None),
+    ]
 
 
 def test_handlers_tombstones_direct_import() -> None:
@@ -186,9 +269,11 @@ def test_handlers_tombstones_direct_import() -> None:
 
     assert isinstance(DESC_MEMORY_LIST_TOMBSTONES, str) and DESC_MEMORY_LIST_TOMBSTONES
     assert inspect.iscoroutinefunction(memory_list_tombstones)
-    params = inspect.signature(memory_list_tombstones).parameters
-    assert "deps" in params
-    assert "scopes" in params
+    assert _snapshot_params(memory_list_tombstones) == [
+        ("deps", _MISSING),
+        ("scopes", None),
+        ("ctx", None),
+    ]
 
 
 def test_handlers_update_direct_import() -> None:
@@ -203,10 +288,16 @@ def test_handlers_update_direct_import() -> None:
     # separately so a refactor that drops the shared tail is caught.
     assert isinstance(DESC_MEMORY_LINKS_TAIL, str) and DESC_MEMORY_LINKS_TAIL
     assert inspect.iscoroutinefunction(memory_update)
-    params = inspect.signature(memory_update).parameters
-    assert "deps" in params
-    assert "id" in params
-    assert "links" in params
+    assert _snapshot_params(memory_update) == [
+        ("deps", _MISSING),
+        ("id", _MISSING),
+        ("content", None),
+        ("scopes", None),
+        ("confidence", None),
+        ("category", None),
+        ("links", None),
+        ("ctx", None),
+    ]
 
 
 def test_handlers_verify_direct_import() -> None:
@@ -214,17 +305,26 @@ def test_handlers_verify_direct_import() -> None:
 
     assert isinstance(DESC_MEMORY_VERIFY, str) and DESC_MEMORY_VERIFY
     assert inspect.iscoroutinefunction(memory_verify)
-    params = inspect.signature(memory_verify).parameters
-    assert "deps" in params
-    assert "id" in params
-    assert "verified_paths" in params
+    assert _snapshot_params(memory_verify) == [
+        ("deps", _MISSING),
+        ("id", _MISSING),
+        ("note", None),
+        ("verified_paths", None),
+        ("verified_commits", None),
+        ("verified_versions", None),
+        ("ctx", None),
+    ]
 
 
 def test_handlers_write_direct_import() -> None:
     """Three distinct entry points: ``write``, ``write_confirm``,
     ``write_cancel``. The trio is the pending-write lifecycle and a
     signature drift on any one breaks the others' contract — pin all
-    three."""
+    three. ``memory_write``'s parameter list is the longest of any
+    handler (the acknowledge_* / groundedness_* / force flags) and the
+    most failure-prone surface for silent drops — a removed
+    ``acknowledge_ungrounded`` would have slipped past the pre-snapshot
+    subset check, which is exactly the gap this rewrite closes."""
     from bettermemory.handlers.write import (
         DESC_MEMORY_WRITE,
         DESC_MEMORY_WRITE_CANCEL,
@@ -240,10 +340,28 @@ def test_handlers_write_direct_import() -> None:
     assert inspect.iscoroutinefunction(memory_write)
     assert inspect.iscoroutinefunction(memory_write_confirm)
     assert inspect.iscoroutinefunction(memory_write_cancel)
-    write_params = inspect.signature(memory_write).parameters
-    assert {"deps", "content", "scopes", "category"}.issubset(write_params)
-    assert "pending_id" in inspect.signature(memory_write_confirm).parameters
-    assert "pending_id" in inspect.signature(memory_write_cancel).parameters
+    assert _snapshot_params(memory_write) == [
+        ("deps", _MISSING),
+        ("content", _MISSING),
+        ("scopes", _MISSING),
+        ("confidence", "medium"),
+        ("source", "explicit-statement"),
+        ("force", False),
+        ("acknowledge_transient", False),
+        ("acknowledge_scope_mismatch", False),
+        ("acknowledge_ungrounded", False),
+        ("category", "fact"),
+        ("groundedness_check", False),
+        ("source_transcript", None),
+        ("ctx", None),
+    ]
+    confirm_cancel_expected = [
+        ("deps", _MISSING),
+        ("pending_id", _MISSING),
+        ("ctx", None),
+    ]
+    assert _snapshot_params(memory_write_confirm) == confirm_cancel_expected
+    assert _snapshot_params(memory_write_cancel) == confirm_cancel_expected
 
 
 # ---------------------------------------------------------------------------
