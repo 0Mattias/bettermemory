@@ -797,7 +797,7 @@ def _check_distinfo_metadata(site_packages: list[Path] | None = None) -> Diagnos
                     with metadata_path.open("rb") as fh:
                         head = fh.read(256)
                     header_ok = bool(
-                        re.match(
+                        re.search(
                             r"(?m)^Name:\s*\S",
                             head.decode("utf-8", errors="replace"),
                         )

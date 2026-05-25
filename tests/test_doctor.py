@@ -640,6 +640,25 @@ def test_distinfo_metadata_warns_on_whitespace_only_canonical(
     assert diag.details["broken"][0]["dist_info"] == str(broken)
 
 
+def test_distinfo_metadata_ok_when_metadata_has_leading_metadata_version_header(
+    tmp_path: Path,
+) -> None:
+    """Real-world wheels emit `Metadata-Version: <ver>` as the FIRST line
+    of `METADATA` per Core Metadata convention, with `Name:` on a later
+    line. The header check must find `Name:` anywhere in the read window,
+    not only at byte 0 — otherwise `re.match` (anchored at position 0
+    regardless of `(?m)`) returns None against every real wheel and the
+    check flags all packages as broken. Pin a realistic multi-line header
+    so the `re.match` vs `re.search` regression can't re-ship."""
+    realistic = b"Metadata-Version: 2.4\nName: pkg\nVersion: 1.0\n"
+    d = tmp_path / "pkg-1.0.dist-info"
+    d.mkdir()
+    (d / "METADATA").write_bytes(realistic)
+    diag = _check_distinfo_metadata(site_packages=[tmp_path])
+    assert diag.status == "ok"
+    assert diag.details["scanned"] == 1
+
+
 def test_distinfo_metadata_scans_user_site(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
