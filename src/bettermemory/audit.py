@@ -11,12 +11,12 @@ because nothing in the event log records a search that didn't happen.
 This module closes that loop. `probe_for_miss` runs a cheap search
 sweep over the active store using a completed turn's user message and
 looks for a high-relevance hit. When a hit exists AND no retrieval
-event (`search` or `show`) fired in the same session within a
-configurable lookback window, the probe returns a `MissReport` — the
-explicit signal that the retrieval contract slipped on this turn. The
-probe uses the model's configured search mode by default so it measures
-what the model would have done, not what a hypothetical scorer might
-have found.
+event (see `_RETRIEVAL_EVENT_KINDS`: `search`, `show`, or `list`)
+fired in the same session within a configurable lookback window, the
+probe returns a `MissReport` — the explicit signal that the retrieval
+contract slipped on this turn. The probe uses the model's configured
+search mode by default so it measures what the model would have done,
+not what a hypothetical scorer might have found.
 
 Design notes:
 
@@ -174,20 +174,22 @@ class MissReport:
     `verdict` is the load-bearing field:
 
     - ``"miss"``: a high-relevance hit exists for this turn's query AND no
-      `search` event fired in the lookback window. The retrieval contract
+      retrieval event (see `_RETRIEVAL_EVENT_KINDS`: `search`, `show`, or
+      `list`) fired in the lookback window. The retrieval contract
       slipped — the model should have searched.
     - ``"ok"``: either no hit cleared the threshold (genuine "nothing to
-      retrieve here") OR a search already fired in the lookback window
-      (the model did search; nothing for the audit to flag).
+      retrieve here") OR a retrieval event already fired in the lookback
+      window (the model did search/show/list; nothing for the audit to
+      flag).
     - ``"no_signal"``: the probe couldn't run meaningfully — empty store,
       empty query, all-stopword query. Distinct from "ok" so the consumer
       can tell "audit ran and saw nothing relevant" apart from "audit
       had nothing to work with."
 
-    `recent_retrieval_count` is the number of retrieval events (`search`
-    or `show`) found in the session within `lookback_seconds`. Zero
-    means no retrieval happened within the window; non-zero is the
-    "model did retrieve" branch.
+    `recent_retrieval_count` is the number of retrieval events (see
+    `_RETRIEVAL_EVENT_KINDS`: `search`, `show`, or `list`) found in the
+    session within `lookback_seconds`. Zero means no retrieval happened
+    within the window; non-zero is the "model did retrieve" branch.
 
     `threshold_rule` records which decision rule was applied. Versioned
     so a future calibration pass can replay old reports under a new rule.
@@ -239,8 +241,9 @@ def turn_audited_fields(
 
     Single source of truth for the two producers — the Stop hook
     (``hook.run_audit``) and the in-process MCP handler
-    (``_handlers._advance_turn``). The 2.6.4 audit found them already
-    drifted (``triggered_from`` on the hook, absent on the handler);
+    (``handlers.audit_turn.memory_audit_turn``). The 2.6.4 audit found
+    them already drifted (``triggered_from`` on the hook, absent on the
+    handler);
     routing both through this builder makes that drift structurally
     impossible. ``triggered_from`` is the source discriminator —
     ``"stop_hook"`` or ``"mcp_tool"``, a closed set both producers
@@ -310,8 +313,9 @@ def probe_for_miss(
 
     Runs a cheap search probe over `memories` using `user_message`, then
     asks: did the model retrieve memory this session within the last
-    `lookback_seconds` (via `search` or `show`)? The cross of those two
-    facts gives the verdict.
+    `lookback_seconds` (via any event in `_RETRIEVAL_EVENT_KINDS`:
+    `search`, `show`, or `list`)? The cross of those two facts gives
+    the verdict.
 
     `recent_events` is an iterable over the session's recent event log
     entries (any iterable — the function only walks it once). Callers
