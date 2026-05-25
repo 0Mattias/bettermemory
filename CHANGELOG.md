@@ -7,6 +7,56 @@ breaking changes, minor for additive features, patch for fixes. The
 [compatibility contract](CONTRIBUTING.md#versioning-and-the-compatibility-contract)
 spells out exactly what's stable.
 
+## 2.7.3 - 2026-05-25
+
+**Post-2.7.2 dogfood audit follow-up.** The threshold-sweep on the
+2.7.x `search_miss` log surfaced that 20 of 21 replayable misses were
+probes asked from inside the matching project repo ("update
+bettermemory" / "push it" / "is X up to date"); the model had source
+open and didn't need a `memory_search`. This release suppresses that
+class. A second fix adds a CLI path to clear the related
+`endorsement_debt` curation bucket without touching memory bodies.
+
+### Fixed — Audit false-positive class
+
+- **`audit.probe_for_miss` suppresses misses when the caller's repo
+  matches a top-hit memory's `origin.repo` AND the hit carries a
+  `projects:` scope.** Returns `verdict="ok"` for the suppressed case
+  so no `search_miss` event is emitted; `turn_audited` still records
+  the verdict. The auto-scope filter on `run_search` already covers
+  most of this at the search level, but the explicit check keeps the
+  suppression self-contained for offline callers (eval replays,
+  curation passes) that bypass auto-scope. Both predicates are
+  load-bearing — a `projects:` hit from another repo still flags
+  (real cross-project miss), and a same-repo global memory still
+  flags (no project boundary to suppress against). Uses `repos_match`
+  for URL normalisation so SSH and HTTPS forms of the same remote
+  compare equal.
+
+### Added — Curation
+
+- **`bettermemory consolidate --acknowledge-debt`** walks the
+  `endorsement_debt` bucket (memories the ranker keeps surfacing
+  where every applied event came from the auto-fallback path) and
+  writes one explicit `use(applied, auto=False,
+  attribution="cli_acknowledge_debt")` event per id. Retroactively
+  clears the curation signal without altering bodies or scopes.
+  Always commits (additive; reversible with a `corrected` follow-up
+  on `memory_record_use`), goes through the shared `Recorder` so
+  file locking and rotation match the other CLI write paths. Filter
+  re-derived inline because `EndorsementDebt.rows` caps at 20 for
+  inline display and the CLI needs every debt id.
+
+### Deferred — Threshold-rule v5
+
+The sweep on the live log shows v3 (dominance, 2× ratio) drops only
+1 of 21 misses, and v2/v4 (score floor) drops 10 but depends on the
+keyword score scale — silently breaks once the running server picks
+up the hybrid default. After the cwd-suppression ships, ~1 miss
+remains in the corpus — too thin to calibrate a new rule against.
+Deferred to a fresh dogfood window so v5 can be designed against
+post-suppression false positives.
+
 ## 2.7.2 - 2026-05-25
 
 **Windows CI repair.** The 2.7.0 auto-memory-bridge work shipped Windows-only
