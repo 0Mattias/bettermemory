@@ -41,9 +41,7 @@ async def memory_rename_scope(
     clean_new = validate_scope(new_scope)
     if clean_old == clean_new:
         raise ValueError("old_scope and new_scope must differ")
-    if deps.config.scopes.allowed and clean_new not in set(
-        deps.config.scopes.allowed
-    ):
+    if deps.config.scopes.allowed and clean_new not in set(deps.config.scopes.allowed):
         raise ValueError(
             f"new_scope {clean_new!r} is not in the allowed list: "
             f"{sorted(deps.config.scopes.allowed)}"

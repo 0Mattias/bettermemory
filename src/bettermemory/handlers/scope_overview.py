@@ -108,9 +108,7 @@ async def memory_scope_overview(
     # Sort scopes by count desc, then name for determinism. Important
     # for tests and for the model — a stable ordering means a "if the
     # top scope is X" branch behaves consistently across calls.
-    sorted_scopes = dict(
-        sorted(scope_counts.items(), key=lambda kv: (-kv[1], kv[0]))
-    )
+    sorted_scopes = dict(sorted(scope_counts.items(), key=lambda kv: (-kv[1], kv[0])))
 
     # Curation pending — seven integer counts that surface "is there
     # anything worth a curation pass right now?" without the full

@@ -44,6 +44,8 @@ import time
 from pathlib import Path
 
 import pytest
+from hypothesis import HealthCheck, given, settings
+from hypothesis import strategies as st
 
 from bettermemory.events import Recorder
 from bettermemory.store import (
@@ -559,7 +561,9 @@ def test_multi_process_concurrent_slug_collision_writes_do_not_clobber(
     # gets its own clock + entropy, so collisions are astronomical.
     assert len(set(ids)) == n_writers
 
-    md_files = sorted(p.name for p in tmp_path.glob("*.md") if not p.name.startswith("."))
+    md_files = sorted(
+        p.name for p in tmp_path.glob("*.md") if not p.name.startswith(".")
+    )
     assert len(md_files) == n_writers, (
         f"expected {n_writers} files, got {len(md_files)}: {md_files}. "
         f"Cross-process slug-collision silent overwrite (C1 regression)."
@@ -621,14 +625,14 @@ def test_multi_process_concurrent_slug_collision_restores_do_not_clobber(
             [(str(tmp_path), mid) for mid in pre_written_ids],
         )
 
-    assert None not in restored_ids, (
-        f"some workers failed to restore: {restored_ids}"
-    )
+    assert None not in restored_ids, f"some workers failed to restore: {restored_ids}"
     assert set(restored_ids) == set(pre_written_ids), (
         "restored ids must equal the input set"
     )
 
-    md_files = sorted(p.name for p in tmp_path.glob("*.md") if not p.name.startswith("."))
+    md_files = sorted(
+        p.name for p in tmp_path.glob("*.md") if not p.name.startswith(".")
+    )
     assert len(md_files) == n_workers, (
         f"expected {n_workers} restored files, got {len(md_files)}: "
         f"{md_files}. Restore-side slug-collision silent overwrite "
@@ -704,9 +708,7 @@ def test_concurrent_slug_collision_writes_do_not_clobber(tmp_path: Path) -> None
 # generates a body shape and a worker count; the invariant — every
 # written id loads back — must hold across the input space.
 # hypothesis is in [project.optional-dependencies].dev — if you can run
-# pytest, you have it; importing unconditionally keeps the analyzer happy.
-from hypothesis import HealthCheck, given, settings
-from hypothesis import strategies as st
+# pytest, you have it; the imports live at the top of the file.
 
 
 @settings(
@@ -810,11 +812,7 @@ def test_update_after_concurrent_tombstone_raises(
 
     def racing_find(self: Store, mid: str) -> Path | None:
         path = original_find(self, mid)
-        if (
-            path is not None
-            and mid == memory.id
-            and not fired["done"]
-        ):
+        if path is not None and mid == memory.id and not fired["done"]:
             fired["done"] = True
             # Inject the race: tombstone the memory before the caller
             # acquires the lock. This emulates a second process moving
@@ -833,11 +831,7 @@ def test_update_after_concurrent_tombstone_raises(
     with pytest.raises(TombstonedError):
         store.load_one(memory.id)
     # And: no orphan active .md file should exist for that id.
-    active_files = [
-        p
-        for p in tmp_path.iterdir()
-        if p.is_file() and p.suffix == ".md"
-    ]
+    active_files = [p for p in tmp_path.iterdir() if p.is_file() and p.suffix == ".md"]
     # The directory may legitimately contain other files; just verify
     # no file holds the tombstoned id in its frontmatter.
     from bettermemory._frontmatter import load as fm_load
@@ -864,11 +858,7 @@ def test_mark_verified_after_concurrent_tombstone_raises(
 
     def racing_find(self: Store, mid: str) -> Path | None:
         path = original_find(self, mid)
-        if (
-            path is not None
-            and mid == memory.id
-            and not fired["done"]
-        ):
+        if path is not None and mid == memory.id and not fired["done"]:
             fired["done"] = True
             self.tombstone(mid, reason="raced by other process")
         return path

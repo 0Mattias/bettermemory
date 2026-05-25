@@ -822,12 +822,8 @@ def _check_distinfo_metadata(site_packages: list[Path] | None = None) -> Diagnos
                             joined = b"".join(chunks)
                             if b"\n\n" in joined or b"\r\n\r\n" in joined:
                                 break
-                    header_section = b"".join(chunks).decode(
-                        "utf-8", errors="replace"
-                    )
-                    header_ok = bool(
-                        re.search(r"(?m)^Name:\s*\S", header_section)
-                    )
+                    header_section = b"".join(chunks).decode("utf-8", errors="replace")
+                    header_ok = bool(re.search(r"(?m)^Name:\s*\S", header_section))
                 except OSError:
                     header_ok = False
                 if header_ok:
@@ -853,7 +849,10 @@ def _check_distinfo_metadata(site_packages: list[Path] | None = None) -> Diagnos
             name="distinfo_metadata",
             status="ok",
             message=f"All {scanned} dist-info dir(s) have a canonical METADATA file.",
-            details={"scanned": scanned, "site_packages": [str(p) for p in site_packages]},
+            details={
+                "scanned": scanned,
+                "site_packages": [str(p) for p in site_packages],
+            },
         )
 
     names = ", ".join(Path(b["dist_info"]).name for b in broken[:3])

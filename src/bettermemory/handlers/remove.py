@@ -31,9 +31,7 @@ async def memory_remove(
     if not reason or not reason.strip():
         raise ValueError("reason must be a non-empty string")
     try:
-        tombstone_path = deps.store.tombstone(
-            id, reason, session_id=state.session_id
-        )
+        tombstone_path = deps.store.tombstone(id, reason, session_id=state.session_id)
     except TombstonedError as exc:
         raise ValueError(str(exc)) from exc
     except MemoryNotFoundError as exc:

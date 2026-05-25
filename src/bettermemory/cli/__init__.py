@@ -51,7 +51,9 @@ from . import (
 # audit-turn`` are unchanged.
 
 
-def _build_parser() -> tuple[argparse.ArgumentParser, dict[str, argparse.ArgumentParser]]:
+def _build_parser() -> tuple[
+    argparse.ArgumentParser, dict[str, argparse.ArgumentParser]
+]:
     """Construct the root parser and every subparser.
 
     Returns ``(parser, subparsers)`` where ``subparsers`` is the dict of

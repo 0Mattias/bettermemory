@@ -254,9 +254,7 @@ class ToolHandlers:
             ctx=ctx,
         )
 
-    async def memory_show(
-        self, id: str, ctx: Context | None = None
-    ) -> dict[str, Any]:
+    async def memory_show(self, id: str, ctx: Context | None = None) -> dict[str, Any]:
         return await _handlers_pkg.memory_show(self, id, ctx=ctx)
 
     async def memory_write(
@@ -341,9 +339,7 @@ class ToolHandlers:
         scopes: list[str] | None = None,
         ctx: Context | None = None,
     ) -> list[dict[str, Any]]:
-        return await _handlers_pkg.memory_list_tombstones(
-            self, scopes=scopes, ctx=ctx
-        )
+        return await _handlers_pkg.memory_list_tombstones(self, scopes=scopes, ctx=ctx)
 
     async def memory_restore(
         self, id: str, ctx: Context | None = None

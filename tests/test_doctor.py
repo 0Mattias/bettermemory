@@ -355,8 +355,10 @@ def test_audit_turn_cadence_only_old_events_skips_warn(tmp_path: Path) -> None:
     last month shouldn't trigger a warning today."""
     from datetime import datetime, timedelta, timezone
 
-    old = (datetime.now(timezone.utc) - timedelta(days=30)).isoformat().replace(
-        "+00:00", "Z"
+    old = (
+        (datetime.now(timezone.utc) - timedelta(days=30))
+        .isoformat()
+        .replace("+00:00", "Z")
     )
     _write_event(tmp_path, "search", ts=old, session="s1")
     _write_event(tmp_path, "write", ts=old, session="s1")
@@ -564,9 +566,10 @@ def test_distinfo_metadata_warns_on_missing_canonical(tmp_path: Path) -> None:
     assert "iCloud" in diag.message
     # Fix hint should point at re-install (the safer recovery).
     assert diag.fix_hint is not None
-    assert "reinstall" in (diag.fix_hint or "").lower() or "install" in (
-        diag.fix_hint or ""
-    ).lower()
+    assert (
+        "reinstall" in (diag.fix_hint or "").lower()
+        or "install" in (diag.fix_hint or "").lower()
+    )
     # `details.broken` should list the broken dir and its duplicates.
     assert len(diag.details["broken"]) == 1
     entry = diag.details["broken"][0]
@@ -580,9 +583,7 @@ def test_distinfo_metadata_warns_without_icloud_hint_when_no_duplicate(
     """A dist-info missing METADATA but with no iCloud-style duplicate
     (e.g. partial uninstall) still warns, but skips the iCloud-cause
     sentence — we only claim the cause when the evidence is there."""
-    _make_distinfo(
-        tmp_path, "partial-3.0.dist-info", files={"WHEEL": "ok\n"}
-    )
+    _make_distinfo(tmp_path, "partial-3.0.dist-info", files={"WHEEL": "ok\n"})
     diag = _check_distinfo_metadata(site_packages=[tmp_path])
     assert diag.status == "warn"
     assert "partial-3.0.dist-info" in diag.message

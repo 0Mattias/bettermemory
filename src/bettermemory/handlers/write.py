@@ -424,9 +424,7 @@ class DedupTombstoneGate(WriteGate):
             high_threshold=high_threshold,
             medium_threshold=medium_threshold,
         )
-        high_removed = [
-            h for h in tombstone_similar if h.relevance == "high-removed"
-        ]
+        high_removed = [h for h in tombstone_similar if h.relevance == "high-removed"]
         if high_removed:
             return Reject(
                 response={

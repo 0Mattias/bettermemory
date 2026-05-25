@@ -64,9 +64,7 @@ async def memory_verify(
     ):
         if value is None:
             continue
-        if not isinstance(value, list) or not all(
-            isinstance(s, str) for s in value
-        ):
+        if not isinstance(value, list) or not all(isinstance(s, str) for s in value):
             raise ValueError(f"{label} must be a list of strings if provided")
     try:
         memory = deps.store.mark_verified(

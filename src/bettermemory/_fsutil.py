@@ -246,7 +246,9 @@ def flock_excl(path: Path) -> Iterator[None]:
             os.close(fd)
 
 
-def _flock_windows(lock_path: Path) -> Iterator[None]:  # pragma: no cover - non-unix in CI
+def _flock_windows(
+    lock_path: Path,
+) -> Iterator[None]:  # pragma: no cover - non-unix in CI
     """Windows-only exclusive lock helper for ``flock_excl``.
 
     Yields once the lock is held; releases on context exit. Splits out
@@ -267,7 +269,7 @@ def _flock_windows(lock_path: Path) -> Iterator[None]:  # pragma: no cover - non
     global _FLOCK_WARNED
 
     try:
-        import msvcrt  # type: ignore[import-not-found]
+        import msvcrt
     except ImportError:
         if not _FLOCK_WARNED:
             _FLOCK_WARNED = True

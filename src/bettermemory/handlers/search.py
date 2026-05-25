@@ -150,9 +150,7 @@ async def memory_search(
     # repo filter — both are pieces of the same "drop cross-context
     # memories" defaults pass. Disabling auto_scope drops both, so a
     # cross-project search keeps working without needing a second flag.
-    worktree_filter: str | None = (
-        current_origin.worktree_root if auto_scope else None
-    )
+    worktree_filter: str | None = current_origin.worktree_root if auto_scope else None
 
     # FTS5 candidate pre-filter (T3.1 phase B). When the index
     # exists and the store is large enough that load_all would
@@ -240,9 +238,7 @@ async def memory_search(
             pass
         else:
             out[0]["body"] = memory.body
-            drift = detect_path_drift(
-                memory.body, verified_paths=memory.verified_paths
-            )
+            drift = detect_path_drift(memory.body, verified_paths=memory.verified_paths)
             if drift.has_drift or drift.verified:
                 out[0]["path_drift"] = drift.to_dict()
             expanded_drift_missing = len(drift.missing)

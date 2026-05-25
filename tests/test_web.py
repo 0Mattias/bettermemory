@@ -251,9 +251,7 @@ def test_verify_rejects_headerless_post(client: Any, store: Store) -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_verify_rejects_post_without_csrf_token(
-    client: Any, store: Store
-) -> None:
+def test_verify_rejects_post_without_csrf_token(client: Any, store: Store) -> None:
     """audit H4 — a POST that passes the same-origin check but
     carries no X-CSRF-Token (and no `csrf_token` form field) must be
     rejected. The prior same-origin-only gate accepted a forged
@@ -272,9 +270,7 @@ def test_verify_rejects_post_without_csrf_token(
     assert reloaded.last_verified_at is None
 
 
-def test_verify_rejects_post_with_wrong_csrf_token(
-    client: Any, store: Store
-) -> None:
+def test_verify_rejects_post_with_wrong_csrf_token(client: Any, store: Store) -> None:
     """audit H4 — a POST with a token that doesn't match the
     per-process value must be rejected. Guards against an attacker
     who guessed the token shape (`secrets.token_urlsafe(32)` output)
@@ -304,9 +300,7 @@ def test_verify_accepts_token_scraped_from_rendered_page(
     m = store.write(content="some claim", scopes=["tools"])
     page = client.get(f"/memories/{m.id}")
     assert page.status_code == 200
-    match = re.search(
-        r'<meta name="csrf-token" content="([^"]+)"', page.text
-    )
+    match = re.search(r'<meta name="csrf-token" content="([^"]+)"', page.text)
     assert match is not None, "expected a csrf-token meta tag on every page"
     token = match.group(1)
     assert token, "csrf-token must be a non-empty string"

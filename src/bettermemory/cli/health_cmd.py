@@ -14,9 +14,7 @@ def add_subparser(
     sub: "argparse._SubParsersAction[argparse.ArgumentParser]",
 ) -> argparse.ArgumentParser:
     """Register the ``health`` subparser on the parent parser."""
-    parser = sub.add_parser(
-        "health", help="Print the aggregate memory health report."
-    )
+    parser = sub.add_parser("health", help="Print the aggregate memory health report.")
     parser.add_argument(
         "--json",
         action="store_true",

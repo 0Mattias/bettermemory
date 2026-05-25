@@ -124,9 +124,7 @@ def test_example_memory_parses_and_validates(example_path: Path) -> None:
     # Required fields per Memory model.
     required = ("id", "created", "updated", "scopes", "confidence", "source")
     missing = [k for k in required if k not in meta]
-    assert not missing, (
-        f"{example_path.name}: missing required field(s): {missing}"
-    )
+    assert not missing, f"{example_path.name}: missing required field(s): {missing}"
 
     # Build the kwargs dict the way Store._load_path does, with the
     # additive-field defaults that legacy memories rely on. Anything
@@ -160,8 +158,7 @@ def test_example_memory_parses_and_validates(example_path: Path) -> None:
             return []
         if not isinstance(value, list):
             raise TypeError(
-                f"{example_path.name}: expected list, got "
-                f"{type(value).__name__}"
+                f"{example_path.name}: expected list, got {type(value).__name__}"
             )
         return [str(item) for item in value]
 
@@ -185,6 +182,4 @@ def test_example_memory_parses_and_validates(example_path: Path) -> None:
     )
     # Round-trip sanity — id and body survive validation.
     assert memory.id == str(meta["id"])
-    assert memory.body.strip(), (
-        f"{example_path.name}: body is empty after validation"
-    )
+    assert memory.body.strip(), f"{example_path.name}: body is empty after validation"

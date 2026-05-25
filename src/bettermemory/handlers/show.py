@@ -116,9 +116,7 @@ async def memory_show(
         path_drift_missing=len(drift.missing),
         verification_status=verification.status,
         staleness_verdict=verdict,
-        commit_drift_status=(
-            commit_drift.status if commit_drift is not None else None
-        ),
+        commit_drift_status=(commit_drift.status if commit_drift is not None else None),
         commits_since_verify=(
             commit_drift.commits_since_verify if commit_drift is not None else None
         ),
@@ -128,9 +126,7 @@ async def memory_show(
         "scopes": memory.scopes,
         "confidence": memory.confidence.value,
         "source": memory.source.value,
-        "category": (
-            memory.category.value if memory.category is not None else None
-        ),
+        "category": (memory.category.value if memory.category is not None else None),
         "created": isoformat(memory.created),
         "updated": isoformat(memory.updated),
         "last_verified_at": isoformat_optional(memory.last_verified_at),
@@ -141,9 +137,7 @@ async def memory_show(
         "path_drift": (
             drift.to_dict() if (drift.has_drift or drift.verified) else None
         ),
-        "commit_drift": (
-            commit_drift.to_dict() if commit_drift is not None else None
-        ),
+        "commit_drift": (commit_drift.to_dict() if commit_drift is not None else None),
         "use_token": token_map[memory.id],
         "verified_paths": list(memory.verified_paths),
         "verified_commits": list(memory.verified_commits),

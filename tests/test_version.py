@@ -175,9 +175,7 @@ def test_pyproject_matches_plugin_and_marketplace_manifests() -> None:
         )
     )
     market = json.loads(
-        (_REPO_ROOT / ".claude-plugin" / "marketplace.json").read_text(
-            encoding="utf-8"
-        )
+        (_REPO_ROOT / ".claude-plugin" / "marketplace.json").read_text(encoding="utf-8")
     )
     assert plugin.get("version") == pyproject_v, (
         f"plugin.json version {plugin.get('version')!r} != "

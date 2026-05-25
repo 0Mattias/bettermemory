@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import contextlib
 import errno
+import logging as _logging
 import os
 from dataclasses import dataclass
 from datetime import datetime, timedelta
@@ -1109,8 +1110,6 @@ class Store:
 # Helpers
 # ---------------------------------------------------------------------------
 
-
-import logging as _logging
 
 _INDEX_LOG = _logging.getLogger("bettermemory.store")
 _INDEX_REPAIR_HINT = "Run `bettermemory reindex` to repair."

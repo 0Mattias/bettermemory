@@ -519,9 +519,7 @@ def _cli_consolidate_acknowledge_misses(
 
         bare_date_hint = ""
         if _re.fullmatch(r"\d{4}-\d{2}-\d{2}", cutoff_ts):
-            bare_date_hint = (
-                f" (or '{cutoff_ts}T00:00:00Z' if you meant midnight UTC)"
-            )
+            bare_date_hint = f" (or '{cutoff_ts}T00:00:00Z' if you meant midnight UTC)"
         sys.stderr.write(
             f"acknowledge-misses-before: invalid ISO timestamp "
             f"{cutoff_ts!r}. Expected e.g. '2026-05-25T05:25:35Z'"

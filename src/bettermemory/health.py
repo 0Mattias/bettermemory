@@ -740,9 +740,7 @@ class _StatsAccumulator:
                 # last_contradicted_at — that field is reserved for
                 # the unresolved-contradiction signal.
                 stats.corrected_count += 1
-                self._append_resolution(
-                    mid, "corrected", ev.get("ts"), ev.get("note")
-                )
+                self._append_resolution(mid, "corrected", ev.get("ts"), ev.get("note"))
             if ts is not None and (
                 stats.last_used_at is None or ts > stats.last_used_at
             ):
@@ -769,9 +767,7 @@ class _StatsAccumulator:
         # event ts so a later `silent_miss_cutoff` can retroactively
         # drop pre-cutoff audits — keeping just the numerator filtered
         # would skew the rate (low miss / high audited).
-        self._silent_miss_audited_ts.append(
-            _ensure_utc(parse_event_ts(ev.get("ts")))
-        )
+        self._silent_miss_audited_ts.append(_ensure_utc(parse_event_ts(ev.get("ts"))))
 
     def _handle_search_miss(self, ev: dict[str, Any]) -> None:
         # Numerator. A separate kind from `turn_audited` (rather than
@@ -795,16 +791,13 @@ class _StatsAccumulator:
         # cutoff_ts can't produce divergent rollups across paths).
         parsed_cutoff = _ensure_utc(parse_event_ts(ev.get("cutoff_ts")))
         if parsed_cutoff is not None and (
-            self._latest_miss_cutoff is None
-            or parsed_cutoff > self._latest_miss_cutoff
+            self._latest_miss_cutoff is None or parsed_cutoff > self._latest_miss_cutoff
         ):
             self._latest_miss_cutoff = parsed_cutoff
 
     # ---- helpers --------------------------------------------------------
 
-    def _append_resolution(
-        self, mid: str, kind: str, ts_str: Any, note: Any
-    ) -> None:
+    def _append_resolution(self, mid: str, kind: str, ts_str: Any, note: Any) -> None:
         # Defensive against malformed events: a missing or non-string
         # timestamp would still be useful in the timeline (the kind
         # alone tells you something happened), but we render it as

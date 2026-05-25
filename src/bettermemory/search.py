@@ -1071,9 +1071,7 @@ def _score_similar_semantic(
     return hits
 
 
-def _build_active_hit(
-    memory: Memory, similarity: float, relevance: str
-) -> SimilarHit:
+def _build_active_hit(memory: Memory, similarity: float, relevance: str) -> SimilarHit:
     """Construct a SimilarHit for the active-memory dedup path."""
     return SimilarHit(
         id=memory.id,
