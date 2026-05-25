@@ -151,8 +151,13 @@ rewriting the log.
   The original predicate accepted zero-byte `METADATA` even though
   the pydantic loader still rejects it; the check now requires
   `is_file() AND stat().st_size > 0` so the doctor flags the empty
-  case alongside the missing-file case. +1 test pinning the
-  zero-byte path.
+  case alongside the missing-file case. A whitespace-only `METADATA`
+  (e.g. `"   \n  \n"` from a partial sync or manual edit) also slips
+  past size > 0 while still tripping the same downstream crash, so
+  the predicate now additionally reads the first 256 bytes and
+  requires the canonical `Name:` header that `importlib.metadata.
+  version()` parses. +2 tests pinning the zero-byte and
+  whitespace-only paths.
 - **`_discover_site_packages` honours `site.ENABLE_USER_SITE`.**
   Previously only `site.getsitepackages()` was scanned, so a
   `pip install --user` install with a broken dist-info would silently

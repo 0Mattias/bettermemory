@@ -784,7 +784,28 @@ def _check_distinfo_metadata(site_packages: list[Path] | None = None) -> Diagnos
             except OSError:
                 is_nonempty = False
             if is_nonempty:
-                continue
+                # Whitespace-only METADATA (e.g. `"   \n  \n"` from a
+                # partial sync or manual edit) passes both `is_file()`
+                # and `stat().st_size > 0`, but `importlib.metadata.
+                # version()` still returns None because the canonical
+                # `Name:` header is absent. Read the first 256 bytes and
+                # require the RFC-822-ish `Name: <value>` header to be
+                # present — that's literally what the loader parses to
+                # answer `version()`. Wrap the read in try/except so a
+                # race-condition mid-walk doesn't crash doctor.
+                try:
+                    with metadata_path.open("rb") as fh:
+                        head = fh.read(256)
+                    header_ok = bool(
+                        re.match(
+                            r"(?m)^Name:\s*\S",
+                            head.decode("utf-8", errors="replace"),
+                        )
+                    )
+                except OSError:
+                    header_ok = False
+                if header_ok:
+                    continue
             # Missing or empty canonical METADATA. Scan for the iCloud-
             # style duplicate so we can hint at the likely cause.
             duplicates: list[str] = []

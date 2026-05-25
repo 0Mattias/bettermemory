@@ -613,6 +613,33 @@ def test_distinfo_metadata_warns_on_empty_canonical_file(tmp_path: Path) -> None
     assert diag.details["broken"][0]["dist_info"] == str(broken)
 
 
+def test_distinfo_metadata_warns_on_whitespace_only_canonical(
+    tmp_path: Path,
+) -> None:
+    """A `METADATA` containing only whitespace (e.g. `"   \\n   \\n"`
+    from a manual edit or partial sync) passes both `is_file()` and
+    `stat().st_size > 0`, but `importlib.metadata.version()` still
+    returns None because the canonical `Name:` header is absent —
+    the same `-32000` crash downstream. The check must require the
+    `Name:` header, not just a non-zero file size."""
+    _make_distinfo(
+        tmp_path, "healthy-1.0.dist-info", files={"METADATA": "Name: healthy\n"}
+    )
+    # Build the broken dir by hand so we can write whitespace-only
+    # bytes without `_make_distinfo` re-encoding through write_text.
+    broken = tmp_path / "whitespace-2.0.dist-info"
+    broken.mkdir()
+    (broken / "METADATA").write_bytes(b"   \n   \n")  # non-zero, no Name:
+    diag = _check_distinfo_metadata(site_packages=[tmp_path])
+    assert diag.status == "warn"
+    assert "healthy-1.0.dist-info" not in diag.message
+    assert "whitespace-2.0.dist-info" in diag.message
+    # Whitespace-only file has no iCloud-style duplicate sibling.
+    assert "iCloud" not in diag.message
+    assert len(diag.details["broken"]) == 1
+    assert diag.details["broken"][0]["dist_info"] == str(broken)
+
+
 def test_distinfo_metadata_scans_user_site(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
