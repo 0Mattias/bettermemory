@@ -37,11 +37,16 @@ from collections import Counter
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from typing import Any, Iterable
+from typing import Any, Callable, Iterable
 
 from .events import iter_all_events
 from .models import Category, Memory, first_summary_line
 from .origin import Origin, commit_author_timestamps, repos_match
+from .time_utils import (
+    ensure_utc,
+    isoformat_utc_optional,
+    parse_event_ts,
+)
 
 
 # ---------------------------------------------------------------------------
@@ -560,6 +565,291 @@ class HealthReport:
 # ---------------------------------------------------------------------------
 
 
+@dataclass
+class _AccumulatorRollups:
+    """The frozen output of ``_StatsAccumulator.rollups()``.
+
+    A flat record so the caller (``compute_health``) can pluck out
+    individual fields with a tuple-unpack feel rather than reading
+    attributes off the live accumulator. Each field maps to one of
+    the per-event-kind counters the pre-Round-2 inline loop maintained
+    as local variables.
+    """
+
+    marker_fires: Counter[str]
+    marker_overrides: Counter[str]
+    sessions: set[str]
+    total_events: int
+    orphan_use_events: int
+    silent_miss_audited_ts: list[datetime | None]
+    silent_miss_ts: list[datetime | None]
+    latest_miss_cutoff: datetime | None
+    resolution_events_by_id: dict[str, list[dict[str, Any]]]
+
+
+class _StatsAccumulator:
+    """Walk an event stream once and accumulate every per-event-kind
+    counter ``compute_health`` needs.
+
+    Pre-Round-2 ``compute_health`` carried a 130-line ``for ev in
+    events:`` loop with a long ``elif kind == "..."`` chain. The new
+    shape: one method per event kind (``_handle_search`` /
+    ``_handle_use`` / etc.) and a single dispatch method
+    (``handle_event``) that routes by kind. The MemoryStats / Counter
+    state is held on the accumulator; the post-stream rollup
+    (``rollups()``) freezes it into an ``_AccumulatorRollups``
+    dataclass so the orchestrator can read clean.
+
+    Why a class rather than free functions: the per-handler state is
+    shared (a `use` event mutates `MemoryStats`; a `silent_miss_cutoff`
+    might invalidate buffered audit ts), so passing the dicts around
+    as kwargs would just push the state into closures. The class is
+    the cleaner pattern.
+
+    Not exported. Tests still verify the rollups via the public
+    ``compute_health`` surface.
+    """
+
+    def __init__(
+        self,
+        *,
+        by_id: dict[str, MemoryStats],
+        tombstoned_ids: set[str],
+    ) -> None:
+        self._by_id = by_id
+        self._tombstoned_ids = tombstoned_ids
+        # Marker stats are accumulated by canonical marker name. Both
+        # `markers` (transient_warning fires) and `markers_acknowledged`
+        # (committed-with-override) feed in.
+        self._marker_fires: Counter[str] = Counter()
+        self._marker_overrides: Counter[str] = Counter()
+        self._sessions: set[str] = set()
+        self._total_events = 0
+        self._orphan_use_events = 0
+        # Audit telemetry is buffered as timestamps and resolved after
+        # the events pass so a `silent_miss_cutoff` event later in the
+        # log can retroactively drop events before its `cutoff_ts` —
+        # the post-fix rollup hatch documented at the `_handle_search_miss`
+        # branch.
+        self._silent_miss_audited_ts: list[datetime | None] = []
+        self._silent_miss_ts: list[datetime | None] = []
+        self._latest_miss_cutoff: datetime | None = None
+        # Per-id chronological log of resolution-relevant events
+        # (update / verify / use[contradicted|corrected]). Accumulated
+        # for every memory while we walk the event stream once;
+        # attached only to rows that end up in the contradicted bucket
+        # (so we don't bloat the output for rows that have nothing
+        # interesting to say). Cheaper than re-iterating the events
+        # twice and bounded by the per-memory event count, which is
+        # small in practice.
+        self._resolution_events_by_id: dict[str, list[dict[str, Any]]] = {
+            mid: [] for mid in by_id
+        }
+
+    # ---- dispatch -------------------------------------------------------
+
+    def handle_event(self, ev: dict[str, Any]) -> None:
+        """Route one event to its per-kind handler. Always bumps the
+        total-events counter and the per-session set, regardless of
+        kind — those rollups are kind-agnostic."""
+        self._total_events += 1
+        # Canonical-first session read with the legacy fallback the
+        # other event consumers use. The Recorder stamps `session` on
+        # every canonical-emitted event, but `turn_audited` /
+        # `search_miss` use `session_id` as their canonical field —
+        # without the fallback, those event kinds were silently
+        # dropped from the distinct-session rollup.
+        sess = ev.get("session") or ev.get("session_id")
+        if sess:
+            self._sessions.add(sess)
+
+        kind = ev.get("kind")
+        handler = self._HANDLERS.get(kind) if isinstance(kind, str) else None
+        if handler is not None:
+            handler(self, ev)
+
+    # ---- per-event handlers --------------------------------------------
+
+    def _handle_search(self, ev: dict[str, Any]) -> None:
+        # Canonical-first read with the legacy-name fallback the other
+        # event consumers use (consolidate / hook / _handlers /
+        # _response) — keeps the health rollups consistent if an
+        # event carries the older `memory_ids` / `hit_ids` spelling.
+        for mid in (
+            ev.get("returned") or ev.get("memory_ids") or ev.get("hit_ids") or []
+        ):
+            stats = self._by_id.get(mid)
+            if stats:
+                stats.retrieval_count += 1
+
+    def _handle_show(self, ev: dict[str, Any]) -> None:
+        stats = self._by_id.get(ev.get("id", ""))
+        if stats:
+            stats.show_count += 1
+
+    def _handle_use(self, ev: dict[str, Any]) -> None:
+        outcome = ev.get("outcome")
+        ts = _ensure_utc(parse_event_ts(ev.get("ts")))
+        for mid in ev.get("ids") or ev.get("memory_ids") or []:
+            stats = self._by_id.get(mid)
+            if stats is None:
+                # Memory may have been tombstoned after the use was
+                # recorded (a benign lifecycle event — the memory
+                # existed when used) or the writer may have fabricated
+                # the ULID (the concerning case). We discriminate by
+                # checking the tombstone set: tombstoned-id references
+                # are filtered out so `orphan_use_events` is a clean
+                # smoke test for "model is hallucinating ids". Older
+                # callers that don't pass `tombstoned_ids` see the
+                # legacy conflated count (every unknown id is an
+                # orphan), which preserves backward compatibility.
+                if mid not in self._tombstoned_ids:
+                    self._orphan_use_events += 1
+                continue
+            if outcome == "applied":
+                stats.applied_count += 1
+                # Split on the `auto` discriminator the recorder
+                # stamps in `_advance_turn`. A missing or non-True
+                # value reads as explicit so legacy events written
+                # before the auto-commit pass existed don't get
+                # silently relabelled. The two-axis split is the
+                # endorsement signal: high `auto_applied_count` with
+                # zero explicit means the ranker keeps surfacing the
+                # memory but the model never deliberately reaches.
+                if ev.get("auto") is True:
+                    stats.auto_applied_count += 1
+                else:
+                    stats.explicit_applied_count += 1
+            elif outcome == "ignored":
+                stats.ignored_count += 1
+            elif outcome == "contradicted":
+                stats.contradicted_count += 1
+                if ts is not None and (
+                    stats.last_contradicted_at is None
+                    or ts > stats.last_contradicted_at
+                ):
+                    stats.last_contradicted_at = ts
+                self._append_resolution(
+                    mid, "contradicted", ev.get("ts"), ev.get("note")
+                )
+            elif outcome == "corrected":
+                # Audit-only: the caller has already resolved via
+                # memory_update / memory_verify earlier in the turn.
+                # Increment the counter and bump last_used_at like
+                # any other use, but deliberately do NOT touch
+                # last_contradicted_at — that field is reserved for
+                # the unresolved-contradiction signal.
+                stats.corrected_count += 1
+                self._append_resolution(
+                    mid, "corrected", ev.get("ts"), ev.get("note")
+                )
+            if ts is not None and (
+                stats.last_used_at is None or ts > stats.last_used_at
+            ):
+                stats.last_used_at = ts
+
+    def _handle_update(self, ev: dict[str, Any]) -> None:
+        mid = ev.get("id", "")
+        if isinstance(mid, str) and mid:
+            self._append_resolution(mid, "update", ev.get("ts"), ev.get("note"))
+
+    def _handle_verify(self, ev: dict[str, Any]) -> None:
+        mid = ev.get("id", "")
+        if isinstance(mid, str) and mid:
+            self._append_resolution(mid, "verify", ev.get("ts"), ev.get("note"))
+
+    def _handle_write(self, ev: dict[str, Any]) -> None:
+        for marker in ev.get("markers", []) or []:
+            self._marker_fires[marker] += 1
+        for marker in ev.get("markers_acknowledged", []) or []:
+            self._marker_overrides[marker] += 1
+
+    def _handle_turn_audited(self, ev: dict[str, Any]) -> None:
+        # Denominator for the silent-miss rate. Buffered with the
+        # event ts so a later `silent_miss_cutoff` can retroactively
+        # drop pre-cutoff audits — keeping just the numerator filtered
+        # would skew the rate (low miss / high audited).
+        self._silent_miss_audited_ts.append(
+            _ensure_utc(parse_event_ts(ev.get("ts")))
+        )
+
+    def _handle_search_miss(self, ev: dict[str, Any]) -> None:
+        # Numerator. A separate kind from `turn_audited` (rather than
+        # a field on it) so consumers that only care about misses can
+        # filter the log on a single `kind=` value, and so the
+        # `silent_miss_cutoff` hatch can target one kind cleanly
+        # without rewriting the events log.
+        self._silent_miss_ts.append(_ensure_utc(parse_event_ts(ev.get("ts"))))
+
+    def _handle_silent_miss_cutoff(self, ev: dict[str, Any]) -> None:
+        # Additive escape hatch: when a fix lands that invalidates a
+        # batch of historical misses (e.g. v2.7.3 cwd-suppression),
+        # `bettermemory consolidate --acknowledge-misses-before <ts>`
+        # writes one of these and the rollup honors the latest
+        # `cutoff_ts` seen, dropping any earlier turn_audited /
+        # search_miss events. Older `cutoff_ts` values are ignored so
+        # a later cutoff can extend the window but not shrink it.
+        # `_ensure_utc` after parsing so a naive cutoff_ts compares
+        # cleanly against the aware event ts above (curation_counts
+        # uses the same combination; keep them in sync so a naive
+        # cutoff_ts can't produce divergent rollups across paths).
+        parsed_cutoff = _ensure_utc(parse_event_ts(ev.get("cutoff_ts")))
+        if parsed_cutoff is not None and (
+            self._latest_miss_cutoff is None
+            or parsed_cutoff > self._latest_miss_cutoff
+        ):
+            self._latest_miss_cutoff = parsed_cutoff
+
+    # ---- helpers --------------------------------------------------------
+
+    def _append_resolution(
+        self, mid: str, kind: str, ts_str: Any, note: Any
+    ) -> None:
+        # Defensive against malformed events: a missing or non-string
+        # timestamp would still be useful in the timeline (the kind
+        # alone tells you something happened), but we render it as
+        # None so the consumer can skip unsorted entries cleanly.
+        bucket = self._resolution_events_by_id.get(mid)
+        if bucket is None:
+            return
+        bucket.append(
+            {
+                "kind": kind,
+                "ts": ts_str if isinstance(ts_str, str) else None,
+                "note": note if isinstance(note, str) else None,
+            }
+        )
+
+    def rollups(self) -> _AccumulatorRollups:
+        """Freeze the accumulated counters into a flat record."""
+        return _AccumulatorRollups(
+            marker_fires=self._marker_fires,
+            marker_overrides=self._marker_overrides,
+            sessions=self._sessions,
+            total_events=self._total_events,
+            orphan_use_events=self._orphan_use_events,
+            silent_miss_audited_ts=self._silent_miss_audited_ts,
+            silent_miss_ts=self._silent_miss_ts,
+            latest_miss_cutoff=self._latest_miss_cutoff,
+            resolution_events_by_id=self._resolution_events_by_id,
+        )
+
+    # Class-level dispatch table. Defined after the methods so the
+    # references resolve; declared on the class so the lookup is
+    # built once per process rather than per `handle_event` call.
+    _HANDLERS: dict[str, Callable[["_StatsAccumulator", dict[str, Any]], None]] = {
+        "search": _handle_search,
+        "show": _handle_show,
+        "use": _handle_use,
+        "update": _handle_update,
+        "verify": _handle_verify,
+        "write": _handle_write,
+        "turn_audited": _handle_turn_audited,
+        "search_miss": _handle_search_miss,
+        "silent_miss_cutoff": _handle_silent_miss_cutoff,
+    }
+
+
 def compute_health(
     memories: Iterable[Memory],
     events: Iterable[dict[str, Any]],
@@ -635,196 +925,33 @@ def compute_health(
         )
         origin_repo_by_id[m.id] = m.origin.repo if m.origin else None
 
-    # Marker stats are accumulated by canonical marker name. Both
-    # `markers` (transient_warning fires) and `markers_acknowledged`
-    # (committed-with-override) feed in.
-    marker_fires: Counter[str] = Counter()
-    marker_overrides: Counter[str] = Counter()
-
-    sessions: set[str] = set()
-    total_events = 0
-    orphan_use_events = 0
-    # Audit telemetry is buffered as timestamps and resolved after the
-    # events pass so a `silent_miss_cutoff` event later in the log can
-    # retroactively drop events before its `cutoff_ts` — the post-fix
-    # rollup hatch documented at the `search_miss` branch below.
-    silent_miss_audited_ts: list[datetime | None] = []
-    silent_miss_ts: list[datetime | None] = []
-    latest_miss_cutoff: datetime | None = None
-
-    # Per-id chronological log of resolution-relevant events
-    # (update / verify / use[contradicted|corrected]). Accumulated for
-    # every memory while we walk the event stream once; attached only to
-    # rows that end up in the contradicted bucket (so we don't bloat the
-    # output for rows that have nothing interesting to say). Cheaper than
-    # re-iterating the events twice and bounded by the per-memory event
-    # count, which is small in practice.
-    resolution_events_by_id: dict[str, list[dict[str, Any]]] = {
-        mid: [] for mid in by_id
-    }
-
-    def _append_resolution(mid: str, kind: str, ts_str: str | None, note: Any) -> None:
-        # Defensive against malformed events: a missing or non-string
-        # timestamp would still be useful in the timeline (the kind alone
-        # tells you something happened), but we render it as None so the
-        # consumer can skip unsorted entries cleanly.
-        bucket = resolution_events_by_id.get(mid)
-        if bucket is None:
-            return
-        bucket.append(
-            {
-                "kind": kind,
-                "ts": ts_str if isinstance(ts_str, str) else None,
-                "note": note if isinstance(note, str) else None,
-            }
-        )
-
+    accumulator = _StatsAccumulator(by_id=by_id, tombstoned_ids=tombstoned_ids)
     for ev in events:
-        total_events += 1
-        # Canonical-first read with the legacy-name fallback the other
-        # event consumers use. The Recorder stamps `session` on every
-        # canonical-emitted event, but `turn_audited` / `search_miss`
-        # use `session_id` as their canonical field — without the
-        # fallback, those event kinds were silently dropped from the
-        # distinct-session rollup.
-        sess = ev.get("session") or ev.get("session_id")
-        if sess:
-            sessions.add(sess)
+        accumulator.handle_event(ev)
+    rollups = accumulator.rollups()
 
-        kind = ev.get("kind")
-        # `_ensure_utc` after `_parse_ts` so any naive ts (legacy
-        # fixtures, hand-written events) compares cleanly against the
-        # tz-aware cutoff resolved below. Mirrors `curation_counts`,
-        # so a naive cutoff_ts produces the same rollup either way.
-        ts = _ensure_utc(_parse_ts(ev.get("ts")))
-
-        if kind == "search":
-            # Canonical-first read with the legacy-name fallback the
-            # other event consumers use (consolidate / hook /
-            # _handlers / _response) — keeps the health rollups
-            # consistent if an event carries the older `memory_ids` /
-            # `hit_ids` spelling.
-            for mid in (
-                ev.get("returned") or ev.get("memory_ids") or ev.get("hit_ids") or []
-            ):
-                stats = by_id.get(mid)
-                if stats:
-                    stats.retrieval_count += 1
-        elif kind == "show":
-            stats = by_id.get(ev.get("id", ""))
-            if stats:
-                stats.show_count += 1
-        elif kind == "use":
-            outcome = ev.get("outcome")
-            for mid in ev.get("ids") or ev.get("memory_ids") or []:
-                stats = by_id.get(mid)
-                if stats is None:
-                    # Memory may have been tombstoned after the use was
-                    # recorded (a benign lifecycle event — the memory
-                    # existed when used) or the writer may have fabricated
-                    # the ULID (the concerning case). We discriminate by
-                    # checking the tombstone set: tombstoned-id references
-                    # are filtered out so `orphan_use_events` is a clean
-                    # smoke test for "model is hallucinating ids". Older
-                    # callers that don't pass `tombstoned_ids` see the
-                    # legacy conflated count (every unknown id is an
-                    # orphan), which preserves backward compatibility.
-                    if mid not in tombstoned_ids:
-                        orphan_use_events += 1
-                    continue
-                if outcome == "applied":
-                    stats.applied_count += 1
-                    # Split on the `auto` discriminator the recorder
-                    # stamps in `_advance_turn`. A missing or non-True
-                    # value reads as explicit so legacy events written
-                    # before the auto-commit pass existed don't get
-                    # silently relabelled. The two-axis split is the
-                    # endorsement signal: high `auto_applied_count` with
-                    # zero explicit means the ranker keeps surfacing the
-                    # memory but the model never deliberately reaches.
-                    if ev.get("auto") is True:
-                        stats.auto_applied_count += 1
-                    else:
-                        stats.explicit_applied_count += 1
-                elif outcome == "ignored":
-                    stats.ignored_count += 1
-                elif outcome == "contradicted":
-                    stats.contradicted_count += 1
-                    if ts is not None and (
-                        stats.last_contradicted_at is None
-                        or ts > stats.last_contradicted_at
-                    ):
-                        stats.last_contradicted_at = ts
-                    _append_resolution(
-                        mid, "contradicted", ev.get("ts"), ev.get("note")
-                    )
-                elif outcome == "corrected":
-                    # Audit-only: the caller has already resolved via
-                    # memory_update / memory_verify earlier in the turn.
-                    # Increment the counter and bump last_used_at like
-                    # any other use, but deliberately do NOT touch
-                    # last_contradicted_at — that field is reserved for
-                    # the unresolved-contradiction signal.
-                    stats.corrected_count += 1
-                    _append_resolution(mid, "corrected", ev.get("ts"), ev.get("note"))
-                if ts is not None and (
-                    stats.last_used_at is None or ts > stats.last_used_at
-                ):
-                    stats.last_used_at = ts
-        elif kind == "update":
-            mid = ev.get("id", "")
-            if isinstance(mid, str) and mid:
-                _append_resolution(mid, "update", ev.get("ts"), ev.get("note"))
-        elif kind == "verify":
-            mid = ev.get("id", "")
-            if isinstance(mid, str) and mid:
-                _append_resolution(mid, "verify", ev.get("ts"), ev.get("note"))
-        elif kind == "write":
-            for marker in ev.get("markers", []) or []:
-                marker_fires[marker] += 1
-            for marker in ev.get("markers_acknowledged", []) or []:
-                marker_overrides[marker] += 1
-        elif kind == "turn_audited":
-            # Denominator for the silent-miss rate. Buffered with the
-            # event ts so a later `silent_miss_cutoff` can retroactively
-            # drop pre-cutoff audits — keeping just the numerator filtered
-            # would skew the rate (low miss / high audited).
-            silent_miss_audited_ts.append(ts)
-        elif kind == "search_miss":
-            # Numerator. A separate kind from `turn_audited` (rather than
-            # a field on it) so consumers that only care about misses can
-            # filter the log on a single `kind=` value, and so the
-            # `silent_miss_cutoff` hatch can target one kind cleanly
-            # without rewriting the events log.
-            silent_miss_ts.append(ts)
-        elif kind == "silent_miss_cutoff":
-            # Additive escape hatch: when a fix lands that invalidates a
-            # batch of historical misses (e.g. v2.7.3 cwd-suppression),
-            # `bettermemory consolidate --acknowledge-misses-before <ts>`
-            # writes one of these and the rollup honors the latest
-            # `cutoff_ts` seen, dropping any earlier turn_audited /
-            # search_miss events. Older `cutoff_ts` values are ignored so
-            # a later cutoff can extend the window but not shrink it.
-            # `_ensure_utc` after parsing so a naive cutoff_ts compares
-            # cleanly against the aware event ts above (curation_counts
-            # uses the same combination; keep them in sync so a naive
-            # cutoff_ts can't produce divergent rollups across paths).
-            parsed_cutoff = _ensure_utc(_parse_event_ts(ev.get("cutoff_ts")))
-            if parsed_cutoff is not None and (
-                latest_miss_cutoff is None or parsed_cutoff > latest_miss_cutoff
-            ):
-                latest_miss_cutoff = parsed_cutoff
-
-    all_markers = sorted(set(marker_fires) | set(marker_overrides))
     marker_stats = [
         MarkerStats(
             marker=m,
-            fire_count=marker_fires[m],
-            override_count=marker_overrides[m],
+            fire_count=rollups.marker_fires[m],
+            override_count=rollups.marker_overrides[m],
         )
-        for m in all_markers
+        for m in sorted(set(rollups.marker_fires) | set(rollups.marker_overrides))
     ]
     marker_stats.sort(key=lambda s: s.total, reverse=True)
+
+    # Re-bind the per-event accumulator-derived names back into the
+    # local scope so the remaining rollup logic (dead_weight, cold,
+    # contradicted, etc.) reads with the pre-refactor variable names.
+    # No behavior change — every name maps 1:1 to the accumulator's
+    # corresponding field.
+    total_events = rollups.total_events
+    orphan_use_events = rollups.orphan_use_events
+    silent_miss_audited_ts = rollups.silent_miss_audited_ts
+    silent_miss_ts = rollups.silent_miss_ts
+    latest_miss_cutoff = rollups.latest_miss_cutoff
+    resolution_events_by_id = rollups.resolution_events_by_id
+    sessions = rollups.sessions
 
     scope_distribution = Counter(
         scope for stats in by_id.values() for scope in stats.scopes
@@ -1328,19 +1455,7 @@ def render_json(report: HealthReport) -> str:
 
 
 def _iso(dt: datetime | None) -> str | None:
-    if dt is None:
-        return None
-    return dt.isoformat().replace("+00:00", "Z")
-
-
-def _parse_ts(value: object) -> datetime | None:
-    if not isinstance(value, str):
-        return None
-    s = value.replace("Z", "+00:00")
-    try:
-        return datetime.fromisoformat(s)
-    except ValueError:
-        return None
+    return isoformat_utc_optional(dt)
 
 
 def _count_post_cutoff(
@@ -1644,35 +1759,13 @@ def find_prior_session_boundary(
     return latest
 
 
-def _parse_event_ts(raw: Any) -> datetime | None:
-    """Parse the ISO-8601 timestamp the recorder writes onto every event.
-
-    Mirrors `eval._parse_ts` rather than importing it — the eval
-    module already depends on `health` transitively via the store,
-    and pulling the helper across would invert that direction. The
-    parser is intentionally permissive: malformed entries return
-    ``None`` so the caller skips them without raising mid-walk.
-    """
-    if not isinstance(raw, str):
-        return None
-    try:
-        if raw.endswith("Z"):
-            raw = raw[:-1] + "+00:00"
-        return datetime.fromisoformat(raw)
-    except ValueError:
-        return None
-
-
-def _ensure_utc(dt: datetime | None) -> datetime | None:
-    """Stamp naive datetimes as UTC. The event-log timestamps the
-    recorder writes are always UTC; naive memory `created` fields
-    from older test fixtures (pre-tz models) are treated as UTC too.
-    Returns the input on tz-aware datetimes and ``None`` on ``None``."""
-    if dt is None:
-        return None
-    if dt.tzinfo is None:
-        return dt.replace(tzinfo=timezone.utc)
-    return dt
+# `_parse_event_ts` and `_ensure_utc` are thin module-local aliases for
+# the canonical helpers in `time_utils`. Kept as names because the rest
+# of this module reads them as if they were local; the indirection
+# centralises the parse / tz-stamp semantics without re-routing every
+# call site through `time_utils.*`.
+_parse_event_ts = parse_event_ts
+_ensure_utc = ensure_utc
 
 
 def report_for_directory(
