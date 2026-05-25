@@ -14,14 +14,11 @@ What's left in this module:
   entry point. Every wheel on PyPI was built with this entry point
   pinned in ``pyproject.toml``; the shim delegates into
   ``bettermemory.cli.main``.
-* Re-exports of ``build_server`` and ``_register_tools`` from
-  ``bettermemory.builder`` so the forty+ test files that import
-  ``from bettermemory.server import build_server`` keep resolving.
-* Re-exports of ``SYSTEM_PROMPT_ADDENDUM``, ``load_config``, and
-  ``capture_origin`` for the same back-compat reason. ``test_export``
-  used to patch ``bettermemory.server.load_config`` (Round-3 moved the
-  patch to ``bettermemory.config.load_config``, but the re-export
-  remains for any out-of-tree caller). ``test_server_origin`` and
+* Re-export of ``build_server`` from ``bettermemory.builder`` so the
+  forty+ test files that import ``from bettermemory.server import
+  build_server`` keep resolving.
+* Re-exports of ``SYSTEM_PROMPT_ADDENDUM`` and ``capture_origin`` for
+  the same back-compat reason. ``test_server_origin`` and
   ``test_server_commit_drift`` patch
   ``bettermemory.server.capture_origin``; the binding must stay
   importable here.
@@ -72,12 +69,12 @@ from .prompts import SYSTEM_PROMPT_ADDENDUM
 #    every existing install ships that entry point. Re-exporting `main`
 #    here keeps the script working without bumping pyproject — older
 #    wheels already on PyPI still resolve.
-# 2. `tests/test_export.py` monkeypatches `bettermemory.server.load_config`
-#    and the test_server_origin / test_server_commit_drift suites
-#    monkeypatch `bettermemory.server.capture_origin`. Both names stay
-#    importable at this module path; the CLI helpers route their
-#    `load_config()` call through `bettermemory.server` so the patch
-#    still wins.
+# 2. The test_server_origin / test_server_commit_drift suites
+#    monkeypatch `bettermemory.server.capture_origin`; the binding
+#    stays importable at this module path. (The canonical patch target
+#    for `load_config` is now `bettermemory.config.load_config` —
+#    every CLI module imports it from `..config` directly, so no
+#    back-edge through this module is needed.)
 # 3. `tests/test_consolidate.py` and `tests/test_export.py` import
 #    `_cli_export`, `_cli_consolidate_acknowledge_debt`, and
 #    `_cli_consolidate_acknowledge_misses` directly from
@@ -110,11 +107,11 @@ from .cli.consolidate import (  # noqa: E402
 from .cli.export import _cli_export  # noqa: E402
 
 
-# Re-export the prompt for consumers who import the package. `load_config`
-# and `capture_origin` are exposed so the test-monkeypatch contracts
-# documented above pass mypy's `Module ... does not explicitly export
-# attribute` check. `build_server` and `_register_tools` are re-exported
-# from `bettermemory.builder`, the canonical home post-Round-3.
+# Re-export the prompt for consumers who import the package.
+# `capture_origin` is exposed so the test-monkeypatch contract
+# documented above passes mypy's `Module ... does not explicitly export
+# attribute` check. `build_server` is re-exported from
+# `bettermemory.builder`, the canonical home post-Round-3.
 __all__ = [
     "build_server",
     "main",

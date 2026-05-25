@@ -58,12 +58,11 @@ def _build_parser() -> tuple[argparse.ArgumentParser, dict[str, argparse.Argumen
     needed by dispatchers that need to call ``.print_help()`` on a
     specific subparser when no sub-sub-command was given.
     """
-    # Lazy version lookup: the `bettermemory` package's `__init__`
-    # imports from `.server`, which re-exports `_cli_export` from this
-    # package — a top-level `from .. import __version__` here is part
-    # of the circular path on initial load. Reading the version inside
-    # the parser builder defers the resolution until after every module
-    # has finished loading.
+    # Lazy version lookup: `cli/__init__.py` is imported by
+    # `bettermemory/__init__.py` (via `from .cli import main`) before
+    # `__version__` is bound there; a top-level `from .. import
+    # __version__` would hit a partial-module AttributeError. Deferring
+    # the lookup until call time avoids the race.
     from .. import __version__
 
     parser = argparse.ArgumentParser(

@@ -25,9 +25,9 @@ What's here:
 * ``_register_tools(mcp, ...)``: binds each ``ToolHandlers`` method
   against the FastMCP instance, one ``mcp.tool(...)`` call per tool.
 
-``server.py`` re-exports both names so any out-of-tree caller and the
-full test suite (forty+ files import ``from bettermemory.server import
-build_server``) keeps working without churn.
+``server.py`` re-exports ``build_server`` so any out-of-tree caller
+and the full test suite (forty+ files import ``from bettermemory.server
+import build_server``) keeps working without churn.
 """
 
 from __future__ import annotations
