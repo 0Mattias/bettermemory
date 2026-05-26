@@ -94,6 +94,24 @@ DEFAULT_OLLAMA_TIMEOUT_SECONDS = 60.0
 # all available RAM before parsing rejected the (invalid) tail.
 DEFAULT_MAX_OUTPUT_TOKENS = 2048
 
+# Closed-protocol whitelist: the `category` values an LLM is allowed
+# to propose, both for retag (``demote_tier``) and for new memories
+# (``propose_new``). ``user-inference`` is deliberately excluded —
+# that tier requires explicit user confirmation, which the
+# consolidate path can't supply. The ``Literal[…]`` typedefs on
+# ``DemoteTierProposal.new_category`` and
+# ``ProposeNewProposal.category`` mirror this set but are mypy-only;
+# this frozenset is the runtime enforcement, exercised by
+# ``_validate_demote`` and ``_validate_propose_new`` below. Lives as
+# a module-level constant so the two validators share a single
+# source of truth — silent divergence between the two sites would
+# let a valid proposal for one tier be warning-log-and-rejected at
+# the other for no good reason, and a future addition (a new
+# proposable tier) would otherwise need to land in two `in`-checks.
+# Pinned by ``_EXPECTED_PROPOSABLE_CATEGORIES`` in
+# ``tests/test_llm.py``.
+_LLM_PROPOSABLE_CATEGORIES: frozenset[str] = frozenset({"fact", "ambient"})
+
 
 class LLMResponseTruncated(RuntimeError):
     """Raised when the LLM hit ``max_tokens`` and the response is
@@ -865,7 +883,7 @@ def _validate_demote(
     if not isinstance(memory_id, str) or memory_id not in valid_ids:
         log.warning("demote_tier: memory_id %r not in cluster", memory_id)
         return None
-    if new_category not in {"fact", "ambient"}:
+    if new_category not in _LLM_PROPOSABLE_CATEGORIES:
         log.warning(
             "demote_tier: new_category %r must be 'fact' or 'ambient'", new_category
         )
@@ -921,7 +939,7 @@ def _validate_propose_new(
     except ValueError as exc:
         log.warning("propose_new: scope %r failed validation: %s", scope, exc)
         return None
-    if category not in {"fact", "ambient"}:
+    if category not in _LLM_PROPOSABLE_CATEGORIES:
         log.warning("propose_new: category %r must be 'fact' or 'ambient'", category)
         return None
     if not isinstance(body, str) or not body.strip():

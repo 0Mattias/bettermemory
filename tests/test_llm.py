@@ -29,6 +29,7 @@ from bettermemory.llm import (
     ProposeNewProposal,
     ResolveContradictionProposal,
     RewriteRelativeDateProposal,
+    _LLM_PROPOSABLE_CATEGORIES,
     build_clusters,
     build_prompt,
     make_provider,
@@ -1128,3 +1129,126 @@ def test_render_propose_new_diff_shows_new_body() -> None:
     assert "category=fact" in rendered
     assert "+ Postgres listens on port 5433." in rendered
     assert "source_excerpt:" in rendered
+
+
+# ---------------------------------------------------------------------------
+# Pin {"fact", "ambient"} membership of the LLM-proposal validators
+# ---------------------------------------------------------------------------
+#
+# `_validate_demote` and `_validate_propose_new` in `llm.py` both gate
+# the proposal's category on the same closed-protocol whitelist of
+# tiers an LLM is allowed to propose. Since this pin landed the two
+# sites share `_LLM_PROPOSABLE_CATEGORIES`; the tests below pin both
+# ends of the contract:
+#
+# - the membership guard
+#   (`test_llm_proposable_categories_match_frozenset`) catches
+#   *additions* to the source set — a new tier silently joining the
+#   proposable list without a regression case on either validator;
+# - the parametrised validator tests catch *deletions* from the source
+#   set — a member silently dropped, warning-log-and-rejecting any
+#   valid LLM proposal for that tier on the affected validator. The
+#   list is hardcoded (not derived from the frozenset itself);
+#   parametrising off the source would silently skip the case when a
+#   member is removed instead of failing loudly. The `Literal[…]`
+#   typedefs on `DemoteTierProposal.new_category` and
+#   `ProposeNewProposal.category` mirror this set but are mypy-only;
+#   the frozenset is the runtime enforcement these tests pin.
+#
+# Negative-control: temporarily replacing `_LLM_PROPOSABLE_CATEGORIES`
+# with `frozenset({"ambient"})` fails the membership guard plus the
+# two `[fact]` parametrise cases (the demote and propose_new fact
+# proposals get rejected with the "must be 'fact' or 'ambient'"
+# warning); replacing with `frozenset({"fact"})` fails the membership
+# guard plus the two `[ambient]` parametrise cases. Reverted to
+# `frozenset({"fact", "ambient"})`.
+
+# Hardcoded so a deletion from `_LLM_PROPOSABLE_CATEGORIES` causes the
+# corresponding parametrise case to fail (parametrising off the
+# frozenset itself would just drop the case, silently). The membership
+# guard below ensures additions still require touching this list.
+_EXPECTED_PROPOSABLE_CATEGORIES: tuple[str, ...] = ("fact", "ambient")
+
+
+def test_llm_proposable_categories_match_frozenset() -> None:
+    """Guard so additions to ``_LLM_PROPOSABLE_CATEGORIES`` are mirrored
+    in the parametrise list — otherwise a new tier joining the
+    proposable set could ship without regression coverage on either
+    validator (``_validate_demote`` or ``_validate_propose_new``).
+    Also catches accidental drift between the runtime frozenset and
+    the ``Literal[…]`` typedefs on ``DemoteTierProposal.new_category``
+    / ``ProposeNewProposal.category`` if a future change adds a
+    member to one but not the other."""
+    assert set(_EXPECTED_PROPOSABLE_CATEGORIES) == set(_LLM_PROPOSABLE_CATEGORIES)
+
+
+@pytest.mark.parametrize("category", _EXPECTED_PROPOSABLE_CATEGORIES)
+def test_validate_demote_accepts_every_proposable_category(category: str) -> None:
+    """Every member of ``_LLM_PROPOSABLE_CATEGORIES`` must flow through
+    ``_validate_demote`` end-to-end (via ``parse_and_validate``) and
+    materialise as a ``DemoteTierProposal`` with the requested
+    ``new_category``. Routes through the ``in``-membership lookup at
+    ``llm.py:_validate_demote``. A silent drop of either member here
+    lets the validator warning-log-and-reject a legitimately formed
+    LLM demote proposal for that tier — the demote pass silently
+    loses half its surface."""
+    a = _make_memory("a memory", category=Category.FACT)
+    cluster = _make_cluster([a])
+    raw = json.dumps(
+        {
+            "proposals": [
+                {
+                    "type": "demote_tier",
+                    "memory_id": a.id,
+                    "new_category": category,
+                    "rationale": f"demote to {category}",
+                }
+            ]
+        }
+    )
+    proposals = parse_and_validate(raw, cluster)
+    assert len(proposals) == 1, (
+        f"demote_tier proposal with new_category={category!r} was "
+        f"warning-log-rejected — the validator's category gate has "
+        f"drifted from _LLM_PROPOSABLE_CATEGORIES"
+    )
+    assert isinstance(proposals[0], DemoteTierProposal)
+    assert proposals[0].new_category == category
+
+
+@pytest.mark.parametrize("category", _EXPECTED_PROPOSABLE_CATEGORIES)
+def test_validate_propose_new_accepts_every_proposable_category(category: str) -> None:
+    """Mirror of ``test_validate_demote_accepts_every_proposable_category``
+    on the ``propose_new`` validator. Routes through the
+    ``in``-membership lookup at ``llm.py:_validate_propose_new``. A
+    silent drop here would warning-log-and-reject any valid
+    transcript-sourced proposal at that tier — the writing-reflex
+    gap that ``consolidate --llm --from-transcript`` is meant to
+    close goes back to silently dropping facts."""
+    existing = _make_memory("Some unrelated existing memory.")
+    cluster = _make_transcript_cluster(
+        [existing],
+        "[user] My Postgres listens on port 5433.\n[assistant] Got it — saving that.",
+    )
+    raw = json.dumps(
+        {
+            "proposals": [
+                {
+                    "type": "propose_new",
+                    "scope": "infrastructure",
+                    "category": category,
+                    "body": "Postgres listens on port 5433, not the default 5432.",
+                    "source_excerpt": "[user] My Postgres listens on port 5433.",
+                    "rationale": f"surfaced as {category}",
+                }
+            ]
+        }
+    )
+    proposals = parse_and_validate(raw, cluster)
+    assert len(proposals) == 1, (
+        f"propose_new proposal with category={category!r} was "
+        f"warning-log-rejected — the validator's category gate has "
+        f"drifted from _LLM_PROPOSABLE_CATEGORIES"
+    )
+    assert isinstance(proposals[0], ProposeNewProposal)
+    assert proposals[0].category == category
