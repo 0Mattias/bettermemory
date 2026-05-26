@@ -1,6 +1,6 @@
-# API surface (2.x)
+# API surface (3.x)
 
-The contractual list of MCP tools bettermemory exposes. Signatures, defaults, and return shapes are stable within the 2.x line per the rules in [`CONTRIBUTING.md`](../CONTRIBUTING.md). The 18 tools group naturally:
+The contractual list of MCP tools bettermemory exposes. Signatures, defaults, and return shapes are stable within the 3.x line per the rules in [`CONTRIBUTING.md`](../CONTRIBUTING.md). The 18 tools group naturally:
 
 - **Retrieval** — `memory_search`, `memory_show`, `memory_list`, `memory_scope_overview`
 - **Writing** — `memory_write` (plus `memory_write_confirm` / `memory_write_cancel` for the staged-write flow), `memory_update`
@@ -180,4 +180,4 @@ These hold across the surface:
 - Required arguments are always named in the description; defaults are conservative (`force=False`, `acknowledge_transient=False`, `with_bodies=False`, `category="fact"`).
 - `memory_update` requires at least one of `content`, `scopes`, `confidence`, `category`, `links` at runtime — not expressible in JSON Schema, but the handler returns a clear error.
 
-The 2.x surface is the contract. Additions follow the rules in [`CONTRIBUTING.md`](../CONTRIBUTING.md). Removals or renames wait for 3.0.
+The 3.x surface is the contract. Additions follow the rules in [`CONTRIBUTING.md`](../CONTRIBUTING.md). Removals or renames wait for 4.0.

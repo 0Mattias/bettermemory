@@ -47,19 +47,19 @@ CI runs `uv sync --extra dev --extra ui` followed by `ruff check . && ruff forma
 
 ## Versioning and the compatibility contract
 
-The project uses semver with the conventions below. The headline: **within a major line, the surface defined in [`docs/api.md`](docs/api.md) and the on-disk format defined by `models.SCHEMA_VERSION` are stable.** Strangers who pin `bettermemory==2.x` get a contract they can rely on. The current major is 2; the same shape held for 1.x and will hold for any future major line.
+The project uses semver with the conventions below. The headline: **within a major line, the surface defined in [`docs/api.md`](docs/api.md) and the on-disk format defined by `models.SCHEMA_VERSION` are stable.** Strangers who pin `bettermemory==3.x` get a contract they can rely on. The current major is 3; the same shape held for 1.x and 2.x and will hold for any future major line.
 
-The 2.0 bump itself was a scope-only bump — nine 1.6-plan features shipped in one release. SCHEMA_VERSION stayed at 1, every new wire field is opt-in or absence-as-signal, and no 1.x surface was renamed or removed. Treat the rules below as continuous across the 1→2 boundary; they describe the project's stance on stability, not a one-off cleanup.
+The 2.0 bump itself was a scope-only bump — nine 1.6-plan features shipped in one release. SCHEMA_VERSION stayed at 1, every new wire field was opt-in or absence-as-signal, and no 1.x surface was renamed or removed. The 3.0 bump was the same shape: a soft API break trimming defensive `bettermemory.server` re-exports after verifying zero in-tree consumers, packaged with the post-2.7.3 audit-loop. SCHEMA_VERSION stayed at 1 across both transitions; treat the rules below as continuous across the 1→2 and 2→3 boundaries — they describe the project's stance on stability, not a one-off cleanup.
 
 ### Surface (the 18 MCP tools)
 
-Stable within the current major (2.x):
+Stable within the current major (3.x):
 
 - Tool names. `memory_search` will not be renamed to `mem_search`.
 - Required parameter names and positions. `memory_remove(id, reason)` will not flip to `(reason, id)`.
-- Default values for optional parameters. `memory_search.expand_top` defaults to `False`; `memory_search.mode` defaults to `"keyword"` (new in 2.0); `memory_write.groundedness_check` defaults to `False` (new in 2.0).
+- Default values for optional parameters. `memory_search.expand_top` defaults to `False`; `memory_search.mode` defaults to `"hybrid"` (since 2.6.8); `memory_write.groundedness_check` defaults to `False` (since 2.0).
 - Closed-set string values for enum-typed parameters. `confidence` is `"low"` / `"medium"` / `"high"`; `outcome` is `"applied"` / `"ignored"` / `"contradicted"` / `"corrected"`; `category` is `"fact"` / `"user-inference"` / `"ambient"`; `mode` is `"keyword"` / `"bm25"` / `"semantic"` / `"hybrid"`; `link.type` is `"supersedes"` / `"contradicts"` / `"extends"` / `"depends_on"`.
-- Return-shape keys for the same status. A `memory_write` response with `status="duplicate"` will continue to carry a `matches` list; the new `status="ungrounded"` (from the optional groundedness gate) will continue to carry `claims`.
+- Return-shape keys for the same status. A `memory_write` response with `status="duplicate"` will continue to carry a `matches` list; the `status="ungrounded"` value (from the optional groundedness gate) will continue to carry `claims`.
 
 Permitted within a major:
 
@@ -67,7 +67,7 @@ Permitted within a major:
 - Adding new optional parameters to existing tools, with defaults that preserve current behavior.
 - Adding new fields to return shapes.
 - Adding new return-status values to existing tools (clients should treat unknown status strings as a soft error and fall back to `memory_show`-style verification).
-- Adding new enum values to the closed-set parameters above. Forward-compat: e.g. a future `link.type` like `"refines"` would load as an unknown link type on older readers without failing the whole record (the policy enforced by 2.0's `MemoryLink` loader).
+- Adding new enum values to the closed-set parameters above. Forward-compat: e.g. a future `link.type` like `"refines"` would load as an unknown link type on older readers without failing the whole record (the policy `MemoryLink`'s loader has enforced since 2.0).
 - Tightening validation in ways that turn previously-undefined inputs into clear errors. Loosening validation in ways that accept previously-rejected inputs is also permitted.
 
 Forbidden within a major:
@@ -80,7 +80,7 @@ Forbidden within a major:
 
 ### On-disk format (`models.SCHEMA_VERSION`)
 
-`SCHEMA_VERSION = 1` is the constant in `src/bettermemory/models.py`. Every memory and tombstone written by 1.x and 2.x carries `schema_version: 1` in its frontmatter. Readers default to `1` when the field is missing (the implicit version of memories written before the constant existed). 2.0 added several optional frontmatter fields (the typed `links` list, the parallel `verified_paths` / `verified_commits` / `verified_versions` attestation lists, `origin.worktree_root`) but every one is purely additive: legacy memories load unchanged, and the constant stays at 1.
+`SCHEMA_VERSION = 1` is the constant in `src/bettermemory/models.py`. Every memory and tombstone written by 1.x, 2.x, and 3.x carries `schema_version: 1` in its frontmatter. Readers default to `1` when the field is missing (the implicit version of memories written before the constant existed). 2.0 added several optional frontmatter fields (the typed `links` list, the parallel `verified_paths` / `verified_commits` / `verified_versions` attestation lists, `origin.worktree_root`) but every one is purely additive: legacy memories load unchanged, and the constant stays at 1. 3.0 made no on-disk-format changes.
 
 Within a major, all changes to the on-disk format are **additive only**: new optional frontmatter fields, never renamed, never removed, never re-defined. A reader from a later minor will load files written by an earlier minor without any migration step. A reader from an earlier minor will load files written by a later minor as long as the later minor only added fields the earlier reader does not recognize (and tolerates), which is the rule above.
 
@@ -90,12 +90,12 @@ When a tool, parameter, or field is destined for removal at the next major bump:
 
 1. The deprecation lands in a minor of the current major with a `Deprecated` entry in the changelog. The entry names the deprecated surface, the replacement (if any), and the planned-removal target version.
 2. The implementation logs a one-time WARNING per process when the deprecated surface is used, with the same replacement pointer.
-3. The deprecated surface continues to function, since semver says so, until the next major bump (3.0).
-4. At 3.0, the surface is removed. The 3.0 release notes reiterate every removed item.
+3. The deprecated surface continues to function, since semver says so, until the next major bump (4.0).
+4. At 4.0, the surface is removed. The 4.0 release notes reiterate every removed item.
 
 Patches and bug fixes do not count as "uses" of the deprecated surface for the WARNING; the warning fires when *callers* use the surface. The implementation may continue to call into the deprecated path internally for compatibility.
 
-### Major bumps (3.0 and beyond)
+### Major bumps (4.0 and beyond)
 
 A major bump is reserved for genuinely breaking changes:
 
@@ -103,7 +103,7 @@ A major bump is reserved for genuinely breaking changes:
 - A non-additive on-disk format change (renamed or removed frontmatter fields, changed serialization for an existing field, change in the `.tombstones/` layout, a `SCHEMA_VERSION` bump).
 - A change in the relationship between tools (for example, requiring `memory_write` to be paired with a `memory_record_use` call that is currently optional).
 
-The 2.0 release is the example of what does *not* require a major bump: nine additive features, no renames, SCHEMA_VERSION stayed at 1. The bump there was a scope signal to consumers ("the surface meaningfully grew") rather than a compatibility break. A future major would carry an actual break.
+The 2.0 and 3.0 releases are the examples of what does *not* require a hard-break major bump under this policy: 2.0 shipped nine additive features with no renames, and 3.0 trimmed defensive `bettermemory.server` re-exports after verifying zero in-tree consumers — a soft API break narrow enough to be the *only* break in the release. SCHEMA_VERSION stayed at 1 across both. Each bump was a scope signal to consumers ("the surface meaningfully grew" / "an import path you may have relied on is gone") rather than a wholesale compatibility break. A future major would carry a wider break.
 
 Every major bump ships with:
 

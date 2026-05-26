@@ -6,9 +6,10 @@ bettermemory follows semver from 1.0 onward. The latest minor of the current maj
 
 | Version | Status |
 |---------|--------|
-| 2.x latest | Supported |
-| 2.x earlier minor | Upgrade to latest 2.x |
-| 1.x | Unsupported; upgrade to 2.x (no on-disk migration required — SCHEMA_VERSION stayed at 1) |
+| 3.x latest | Supported |
+| 3.x earlier minor | Upgrade to latest 3.x |
+| 2.x | Unsupported; upgrade to 3.x (no on-disk migration required — SCHEMA_VERSION stayed at 1) |
+| 1.x | Unsupported; upgrade to 3.x (no on-disk migration required — SCHEMA_VERSION stayed at 1) |
 | 0.x | Unsupported (pre-1.0) |
 
 ## Reporting a vulnerability

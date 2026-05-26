@@ -2,7 +2,7 @@
 
 Published roadmap is part of the distribution strategy: people deciding between memory layers want to know where a project is going, not just where it's been. This document lists the planned work in roughly the order it will land. Plans change; the CHANGELOG is the source of truth for what shipped.
 
-## Where we are (May 2026, v2.7.3)
+## Where we are (May 2026, v3.0.0)
 
 - 18 MCP tools across retrieval, writing, lifecycle, verification, curation, and session-local controls.
 - FTS5 inverted index pre-filtering candidates above ~500 memories.
@@ -11,26 +11,26 @@ Published roadmap is part of the distribution strategy: people deciding between 
 - `memory_audit_turn` silent-miss probe, threshold rule versioned at `v1_top1_high`.
 - `bettermemory consolidate --llm` Dreaming-defense pass with five proposal types (merge / resolve_contradiction / rewrite_relative_date / demote_tier / propose_new); `--from-transcript PATH` closes the writing-reflex gap by proposing new memories from a conversation, all under the same audit-gate accept loop.
 - `bettermemory eval` CLI: `memory_helped_rate` / `endorsement_rate` / `silent_miss_rate` with Wilson 95% CIs.
-- Curation-debt-clearing surface: `bettermemory consolidate --acknowledge-debt` (2.7.3) writes one explicit-applied event per endorsement-debt memory to clear the signal without touching bodies; `bettermemory consolidate --acknowledge-misses-before <ISO_TS>` (post-2.7.3) writes a `silent_miss_cutoff` event that retroactively drops pre-cutoff `turn_audited` / `search_miss` events from the rollup. Both are purely additive — no `--apply` gate, reversible by a follow-up event.
+- Curation-debt-clearing surface: `bettermemory consolidate --acknowledge-debt` (2.7.3) writes one explicit-applied event per endorsement-debt memory to clear the signal without touching bodies; `bettermemory consolidate --acknowledge-misses-before <ISO_TS>` (3.0.0) writes a `silent_miss_cutoff` event that retroactively drops pre-cutoff `turn_audited` / `search_miss` events from the rollup. Both are purely additive — no `--apply` gate, reversible by a follow-up event.
 - Git-based cross-host sync via `bettermemory sync`.
 - FastAPI curation UI (`bettermemory ui`).
-- 1200+ tests, 80% coverage floor, Python 3.11–3.14, MIT.
+- 1500+ tests, 80% coverage floor, Python 3.11–3.14, MIT.
 
-## ~~Next~~ Shipped (Unreleased) — closing the recall gap
+## ~~Next~~ Shipped (2.5.0) — closing the recall gap
 
 ✅ **Optional `fastembed` embedding mode without a torch dep.** The new `[embeddings-fast]` extra wraps `fastembed` + ONNX Runtime (~50 MB total) as a drop-in replacement for the `[embeddings]` extra's `sentence-transformers` + PyTorch (~500 MB). `[behavior] semantic_provider = "auto"` picks torch when both are installed (existing `.embeddings.<model>.npz` caches stay byte-stable), otherwise fastembed; explicit `"torch"` / `"fastembed"` honoured even when the extra isn't installed (the per-provider WARNING surfaces the missing-extra hint). Provider-namespaced cache files (`.embeddings.fastembed.<model>.npz` vs the legacy `.embeddings.<model>.npz`) prevent vector mixing across providers. Default model `BAAI/bge-small-en-v1.5` (384-dim, ~33 MB ONNX) mirrors `all-MiniLM-L6-v2`'s dimensionality so cosine thresholds stay comparable. `bettermemory reindex --embeddings` warms the new cache after a provider swap. CI gains `test-embeddings-fast` pinned to Python 3.13 (fastembed wheels lag 3.14); see `pyproject.toml` for the `no_fastembed` / `no_torch_embeddings` pytest markers. *Why this matters: the bear case on bettermemory was "FTS5-only loses every public recall benchmark." That objection is now closed without compromising the no-database default.*
 
 ## Next release — comparative publication
 
-**Run `bettermemory eval` against the field and publish the numbers.** The eval CLI shipped in Unreleased, and `[embeddings-fast]` now closes the install-friction gap that would have made apples-to-apples retrieval comparisons awkward. The harness builds a fixed conversational workload, runs each system end-to-end, computes the trio (`memory_helped_rate`, `endorsement_rate`, `silent_miss_rate`), and reports with Wilson CIs. Systems to include: bettermemory, Mem0 (OpenMemory self-host), Anthropic's reference `server-memory`, claude-mem, and agentmemory. *Why this matters: every other comparison article in this market is about retrieval recall — a different question. Owning "did memory shape the reply?" is the lane-claim, and a published comparative is the grounding artifact for it.* Harness shape: `tests/eval/comparative.py`.
+**Run `bettermemory eval` against the field and publish the numbers.** The eval CLI shipped in 2.5.0, and `[embeddings-fast]` now closes the install-friction gap that would have made apples-to-apples retrieval comparisons awkward. The harness builds a fixed conversational workload, runs each system end-to-end, computes the trio (`memory_helped_rate`, `endorsement_rate`, `silent_miss_rate`), and reports with Wilson CIs. Systems to include: bettermemory, Mem0 (OpenMemory self-host), Anthropic's reference `server-memory`, claude-mem, and agentmemory. *Why this matters: every other comparison article in this market is about retrieval recall — a different question. Owning "did memory shape the reply?" is the lane-claim, and a published comparative is the grounding artifact for it.* Harness shape: `tests/eval/comparative.py`.
 
-## ~~Next~~ Shipped (Unreleased) — `bettermemory eval`
+## ~~Next~~ Shipped (2.5.0) — `bettermemory eval`
 
 ✅ **`bettermemory eval` CLI**. Reads `.events.jsonl` plus the active store, reports `memory_helped_rate`, `endorsement_rate`, `silent_miss_rate` with Wilson 95% confidence intervals. Lists endorsement-debt memories and silent-miss candidates. JSON output for CI. Methodology in [`docs/eval.md`](eval.md); pure compute in `src/bettermemory/eval.py`; 52 tests in `tests/test_eval.py`.
 
 **Still pending: comparative publication.** Run the same workload against bettermemory, Mem0 (OpenMemory self-host), Anthropic's reference `server-memory`, claude-mem, and agentmemory. Publish the numbers. The metric and the harness are owned territory — *every other comparison article in this market is about retrieval recall.* Owning *"did memory shape the reply?"* is the lane-claim. Harness shape: `tests/eval/comparative.py` to land alongside the embedding extra.
 
-## ~~After that~~ Shipped (Unreleased) — Dreaming defense via local consolidation
+## ~~After that~~ Shipped (2.5.0, `--from-transcript` 2.6.0) — Dreaming defense via local consolidation
 
 ✅ **`bettermemory consolidate --llm`.** The four offline passes (dedup, demote-never-applied, cold-scope suggestions, scope-typo) now have a fifth sibling: cluster related memories, send each cluster + its `claim_excerpts` history to a local Ollama model (default) or to Anthropic / OpenAI (env keys), and let the model propose **merges**, **contradiction resolutions**, **relative-date-to-absolute rewrites** (today's date passed in the prompt so the model doesn't infer it from training data), and **tier demotions** for facts whose verifiable claims have been superseded.
 
@@ -40,7 +40,7 @@ Published roadmap is part of the distribution strategy: people deciding between 
 
 ✅ **`--from-transcript` (writing-reflex gap).** The MCP contract asks the model to call `memory_write` whenever something durable enters the conversation; in practice the bar for "durable" is fuzzy and head-down task focus wins, so most writes get skipped. `bettermemory consolidate --llm --from-transcript PATH` reads the conversation (plain text, Markdown, or Claude Code session JSONL — autodetected) and asks the LLM to propose new memories worth saving. The fifth proposal type, `propose_new`, joins the existing four under the same `--apply`/`--yes`/interactive accept gate. Existing memories ride along as the "don't propose duplicates of these" context; `user-inference` category is forbidden (requires explicit user confirmation the consolidate path can't supply); `source_excerpt` provenance is stamped into the new body so the audit trail traces every claim back to a transcript turn.
 
-## ~~After that~~ Shipped (Unreleased) — Claude Code auto-memory bridge
+## ~~After that~~ Shipped (2.7.0) — Claude Code auto-memory bridge
 
 ✅ **`bettermemory ingest --from <path>`.** Claude Code 2.x writes auto-memory to a per-project filesystem directory. The new CLI walks the source directory, parses each `.md` file's frontmatter (`name`, `description`, `metadata.type`), maps the type to a bettermemory category (`user` → `user-inference`, `feedback`/`project` → `fact`, `reference` → `ambient`), dedups against the active store and tombstone log, and writes survivors as ordinary records carrying an `imported-from-claude-code` provenance scope. The plugin SKILL.md banner was loosened from "don't write to that path" to "ingest it once if it exists" — the framing flipped from "fight" to "consume."
 
@@ -48,13 +48,13 @@ Published roadmap is part of the distribution strategy: people deciding between 
 
 **Out of scope (for this release).** Source-file mutation (writing back an "ingested" marker) was considered and rejected — dedup against the active store + tombstone log already makes re-ingestion safe, and modifying source files would race Claude Code's own auto-memory writes. If a user wants to delete the source dir after ingest, they do so manually.
 
-## ~~After that~~ Shipped (Unreleased) — Trim-surface evidence
+## ~~After that~~ Shipped (2.7.0) — Trim-surface evidence
 
 ✅ **`bettermemory eval --tool-usage`.** Per-MCP-tool call-count rollup from the event log. Answers "which tools is the model actually reaching for?" without running `compute_health`. The intended use is the *evidence* underlying the next surface-trim decision: tools that haven't been called across multiple dogfood installs are candidates to move behind a power-user flag and out of the default `instructions` block. The map from event `kind` to tool name lives in `eval._TOOL_EVENT_KIND_TO_TOOL`; tools without a dedicated event (today: `memory_health`) surface with a zero count and a "no telemetry" caveat rather than being silently dropped.
 
 ✅ **`bettermemory eval --threshold-sweep`.** Counterfactual replay of logged `search_miss` events under alternative threshold rules (`v1_top1_high` current default + three strictly-stricter variants: `v2_top1_high_score_50`, `v3_top1_high_dominant`, `v4_top1_high_strict_combined`). Closes the calibration question `audit.py`'s docstring flags as open — *is v1 over-firing?* — by letting the maintainer see how many of the v1-flagged misses would still be flagged under a tighter rule. Sweep is *relative* (strictly-looser rules can't be replayed, because the companion `turn_audited` event doesn't carry `top_hits`); the limitation is documented and the alternative — bloating `turn_audited` with top_hits — is a deliberate trade-off, not a roadmap commitment.
 
-## ~~After that~~ Shipped (Unreleased) — Session-aware curation hint
+## ~~After that~~ Shipped (2.7.0) — Session-aware curation hint
 
 ✅ **`memory_scope_overview` returns `curation_pending_new_since_last_session`.** The absolute `curation_pending` rollup stayed non-zero between sessions even after the user saw it, which made the session-start hint a candidate for nag-fatigue. The new sibling field uses the latest event from a different `session_id` as the boundary and recomputes the rollup over events emitted and memories created after that point — so the model branches on "*new* curation pressure" rather than the accumulated total. The field is `null` on the very first session (no prior boundary to delta against); the absolute view stays the fall-through.
 
