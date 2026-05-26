@@ -9,6 +9,8 @@ spells out exactly what's stable.
 
 ## Unreleased
 
+## 3.0.1 - 2026-05-26
+
 Post-3.0.0 audit-loop follow-up. Mostly low-impact: one
 defense-in-depth security tightening, one CI-gate repair, and a
 sweep of test-rigour pins closing the same class hazard
