@@ -138,19 +138,41 @@ def _verify_headers(csrf_token: str) -> dict[str, str]:
     return {**_LOOPBACK_ORIGIN, "X-CSRF-Token": csrf_token}
 
 
+# audit follow-up — pin all three loopback host forms accepted by
+# `_same_origin` (web.py: `{"localhost", "127.0.0.1", "::1"}`). Prior
+# to this parametrise only `127.0.0.1` was exercised end-to-end through
+# the verify endpoint; narrowing the accept-set to a single form (or
+# breaking the IPv6 bracketed-host parse) would 403 users typing
+# `http://localhost:<port>` or `http://[::1]:<port>` without CI noticing.
+# The bracketed-IPv6 form is RFC 3986; `urllib.parse.urlparse` strips
+# the brackets and returns the bare `::1` host, matching the accept-set.
+_LOOPBACK_ORIGIN_FORMS = [
+    pytest.param("http://localhost:8765", id="localhost"),
+    pytest.param("http://127.0.0.1:8765", id="127.0.0.1"),
+    pytest.param("http://[::1]:8765", id="ipv6-bracketed"),
+]
+
+
+@pytest.mark.parametrize("origin", _LOOPBACK_ORIGIN_FORMS)
 def test_verify_marks_memory_and_redirects(
-    client: Any, store: Store, csrf_token: str
+    client: Any, store: Store, csrf_token: str, origin: str
 ) -> None:
     """POST /memories/{id}/verify bumps last_verified_at and 303s
     back to the detail page (PRG pattern — refreshes don't repeat
-    the verify)."""
+    the verify).
+
+    Parametrised across all three loopback Origin forms accepted by
+    `_same_origin` so a regression narrowing the accept-set or breaking
+    IPv6 bracket parsing surfaces immediately. Each case must drive the
+    full state mutation (303 + `last_verified_at` actually bumped) so a
+    half-fix that 303s without doing the work also fails."""
     m = store.write(content="some claim", scopes=["tools"])
     assert m.last_verified_at is None
 
     r = client.post(
         f"/memories/{m.id}/verify",
         data={"note": "spot-checked"},
-        headers=_verify_headers(csrf_token),
+        headers={"Origin": origin, "X-CSRF-Token": csrf_token},
         follow_redirects=False,
     )
     assert r.status_code == 303
