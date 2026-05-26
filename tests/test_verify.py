@@ -28,6 +28,7 @@ from bettermemory.verify import (
     CommitDriftStatus,
     PathDriftReport,
     VerificationStatus,
+    _PLACEHOLDER_PATHS,
     compute_commit_drift,
     compute_verification_status,
     detect_path_drift,
@@ -295,17 +296,47 @@ def test_root_alone_excluded() -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_etc_foo_placeholder_skipped() -> None:
-    """The canonical Stevens-K&R-ish doc placeholder. Standalone backtick-
-    wrapped — exactly the shape that bit a memory verifying a path-typed
-    API in v1.2.1."""
+# Hardcoded so a deletion from `_PLACEHOLDER_PATHS` causes the
+# corresponding test case to fail (parametrising off the frozenset
+# itself would just drop the case, silently). The membership guard
+# below ensures additions still require touching this list.
+_EXPECTED_PLACEHOLDER_PATHS: tuple[str, ...] = (
+    "/etc/bar",
+    "/etc/baz",
+    "/etc/foo",
+    "/foo",
+    "/foo/bar",
+    "/foo/bar/baz",
+    "/foo/baz",
+    "/path/to",
+)
+
+
+def test_placeholder_paths_list_matches_frozenset() -> None:
+    """Guard so additions to `_PLACEHOLDER_PATHS` are mirrored in the
+    parametrise list — otherwise a new member could ship without
+    regression coverage."""
+    assert set(_EXPECTED_PLACEHOLDER_PATHS) == set(_PLACEHOLDER_PATHS)
+
+
+@pytest.mark.parametrize("placeholder", _EXPECTED_PLACEHOLDER_PATHS)
+def test_placeholder_path_skipped(placeholder: str) -> None:
+    """Every member of `_PLACEHOLDER_PATHS` must be filtered out of the
+    drift report when it appears backtick-wrapped in a memory body. The
+    canonical bug — a memory verifying a path-typed API ("a memory
+    verified for `/etc/foo` reads as clean…") generating a phantom
+    `path_drift_missing` entry on every retrieval — recurs the moment
+    any of these members silently drops out of the frozenset. Pin the
+    whole set so a deletion fails CI loudly rather than producing
+    low-grade telemetry noise."""
     body = (
-        "A memory verified for `/etc/foo` reads as `clean` even when the "
-        "surrounding project moved, as long as `/etc/foo` itself didn't."
+        f"A memory verified for `{placeholder}` reads as `clean` even when "
+        f"the surrounding project moved, as long as `{placeholder}` itself "
+        f"didn't."
     )
     report = detect_path_drift(body)
-    assert "/etc/foo" not in report.checked
-    assert "/etc/foo" not in report.missing
+    assert placeholder not in report.checked
+    assert placeholder not in report.missing
 
 
 def test_path_to_prefix_placeholder_skipped() -> None:
@@ -322,14 +353,6 @@ def test_home_path_to_prefix_placeholder_skipped() -> None:
     body = "Drop the file at `~/path/to/somewhere` for the loader to pick it up."
     report = detect_path_drift(body)
     assert all("path/to" not in c for c in report.checked)
-
-
-def test_foo_bar_placeholder_skipped() -> None:
-    """`/foo/bar` style minimalist placeholder."""
-    body = "Map mounts like `/foo/bar` and `/foo/baz` into the container."
-    report = detect_path_drift(body)
-    assert "/foo/bar" not in report.checked
-    assert "/foo/baz" not in report.checked
 
 
 def test_placeholder_with_extension_skipped() -> None:
