@@ -971,6 +971,16 @@ def run_diagnostics() -> DoctorReport:
 _STATUS_GLYPH: dict[CheckStatus, str] = {"ok": "✓", "warn": "⚠", "fail": "✗"}
 
 
+# Exit-code mapping for `cli_doctor`. Lifted to a module-level constant
+# (mirroring `_STATUS_GLYPH`'s placement) so the closed-Literal-keyed dict
+# can be pinned in tests against `CheckStatus`. The inline dict it replaces
+# carried the same KeyError hazard: adding a fourth `CheckStatus` literal
+# without updating the mapping would crash `bettermemory doctor` on the
+# first diagnosis that surfaced the new status — exit codes are user-visible
+# in shell pipelines, so the failure mode is worth pinning.
+_EXIT_CODE_BY_STATUS: dict[CheckStatus, int] = {"ok": 0, "warn": 1, "fail": 2}
+
+
 def render_text(report: DoctorReport) -> str:
     overall = report.overall
     glyph = _STATUS_GLYPH[overall]
@@ -1024,4 +1034,4 @@ def cli_doctor(*, json_out: bool) -> int:
         sys.stdout.write(render_json(report))
     else:
         sys.stdout.write(render_text(report))
-    return {"ok": 0, "warn": 1, "fail": 2}[report.overall]
+    return _EXIT_CODE_BY_STATUS[report.overall]

@@ -91,8 +91,8 @@ DEFAULT_FASTEMBED_MODEL_NAME = "BAAI/bge-small-en-v1.5"
 # `sync.py`'s gitignore writer can build the matching glob by importing both
 # halves rather than hardcoding a sibling `.embeddings.*.npz` literal that
 # would drift silently if the on-disk shape ever moved.
-_EMBEDDING_FILENAME_PREFIX = ".embeddings."
-_EMBEDDING_FILENAME_SUFFIX = ".npz"
+EMBEDDING_FILENAME_PREFIX = ".embeddings."
+EMBEDDING_FILENAME_SUFFIX = ".npz"
 
 
 # ---------------------------------------------------------------------------
@@ -400,12 +400,12 @@ def configure_persistent_cache(
             # migration step.
             new_path = (
                 Path(root)
-                / f"{_EMBEDDING_FILENAME_PREFIX}{safe}{_EMBEDDING_FILENAME_SUFFIX}"
+                / f"{EMBEDDING_FILENAME_PREFIX}{safe}{EMBEDDING_FILENAME_SUFFIX}"
             )
         else:
             new_path = (
                 Path(root)
-                / f"{_EMBEDDING_FILENAME_PREFIX}{provider}.{safe}{_EMBEDDING_FILENAME_SUFFIX}"
+                / f"{EMBEDDING_FILENAME_PREFIX}{provider}.{safe}{EMBEDDING_FILENAME_SUFFIX}"
             )
 
     if new_path != _PERSISTENT_PATH:

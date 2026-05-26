@@ -19,8 +19,8 @@ from bettermemory.doctor import DOCTOR_PROBE_FILENAME
 from bettermemory.events import EVENT_LOG_FILENAME
 from bettermemory.index import INDEX_FILENAME
 from bettermemory.semantic import (
-    _EMBEDDING_FILENAME_PREFIX,
-    _EMBEDDING_FILENAME_SUFFIX,
+    EMBEDDING_FILENAME_PREFIX,
+    EMBEDDING_FILENAME_SUFFIX,
 )
 from bettermemory.store import Store
 
@@ -539,8 +539,8 @@ def test_pull_uses_no_tags(
 #
 #   - `events.py:EVENT_LOG_FILENAME`            → `.events.jsonl`
 #   - `index.py:INDEX_FILENAME`                 → `.index.sqlite`
-#   - `semantic.py:_EMBEDDING_FILENAME_PREFIX`  → `.embeddings.`
-#     `semantic.py:_EMBEDDING_FILENAME_SUFFIX`  → `.npz`
+#   - `semantic.py:EMBEDDING_FILENAME_PREFIX`   → `.embeddings.`
+#     `semantic.py:EMBEDDING_FILENAME_SUFFIX`   → `.npz`
 #   - `doctor.py:DOCTOR_PROBE_FILENAME`         → `.doctor-probe`
 #
 # Hazard: a future rename of any canonical filename constant updates
@@ -584,9 +584,9 @@ def test_gitignore_lines_include_canonical_filename_constants() -> None:
     # Embedding cache is a glob; assert it was built from the lifted
     # prefix/suffix constants. A rename of either half without
     # updating the sync glob would strand the rebuilt cache in git.
-    embedding_glob = f"{_EMBEDDING_FILENAME_PREFIX}*{_EMBEDDING_FILENAME_SUFFIX}"
+    embedding_glob = f"{EMBEDDING_FILENAME_PREFIX}*{EMBEDDING_FILENAME_SUFFIX}"
     assert embedding_glob in sync._GITIGNORE_LINES, (
         f"sync._GITIGNORE_LINES missing embedding-cache glob "
         f"({embedding_glob!r}) built from "
-        f"semantic._EMBEDDING_FILENAME_PREFIX / _SUFFIX"
+        f"semantic.EMBEDDING_FILENAME_PREFIX / SUFFIX"
     )

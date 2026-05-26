@@ -32,6 +32,7 @@ from bettermemory.doctor import (
     _check_python_version,
     _check_storage_directory,
     _discover_site_packages,
+    _EXIT_CODE_BY_STATUS,
     _STATUS_GLYPH,
     cli_doctor,
     render_json,
@@ -917,6 +918,22 @@ def test_render_text_overall_label_covers_every_check_status() -> None:
         assert "bettermemory doctor" in out
 
 
+def test_exit_code_by_status_keys_match_check_status_literal() -> None:
+    """`_EXIT_CODE_BY_STATUS` is direct-indexed in `cli_doctor`
+    (`_EXIT_CODE_BY_STATUS[report.overall]`); a missing key crashes
+    the `bettermemory doctor` CLI with `KeyError` rather than
+    returning a clean exit code. Pin the keys against the hardcoded
+    `_EXPECTED_CHECK_STATUSES` so a new `CheckStatus` literal trips
+    this guard before it ships — exit codes are user-visible in
+    shell pipelines, so the failure mode is worth pinning alongside
+    the `_STATUS_GLYPH` / `overall_label` renderer guards."""
+    assert set(_EXIT_CODE_BY_STATUS.keys()) == set(_EXPECTED_CHECK_STATUSES), (
+        "`_EXIT_CODE_BY_STATUS` keys drifted from `CheckStatus`; see "
+        "doctor.py:_EXIT_CODE_BY_STATUS and cli_doctor — the mapping "
+        "must mirror every CheckStatus literal or the CLI crashes."
+    )
+
+
 # ---------------------------------------------------------------------------
 # Cross-module parity: the event-log path probed by
 # `_check_event_log_writable` (`doctor.py`) MUST resolve to the same
@@ -931,15 +948,11 @@ def test_render_text_overall_label_covers_every_check_status() -> None:
 def test_check_event_log_uses_canonical_event_log_filename(
     tmp_path: Path,
 ) -> None:
-    """When the event log already exists, `_check_event_log_writable`
-    must probe THE file the `Recorder` writes — i.e. the path built
-    from `events.EVENT_LOG_FILENAME`. The "log too large" branch is
-    the cleanest way to confirm the constructed path: drop a file at
-    `<dir>/EVENT_LOG_FILENAME`, set the size threshold low, expect
-    the warn branch to fire (which means doctor found the file).
-    Drift would surface as the probe returning the
-    "not yet created" branch even though we placed the file with
-    the canonical name."""
+    """Pin `doctor.py:_check_event_log_writable` to the canonical
+    `events.EVENT_LOG_FILENAME`. Drop a file at `<dir>/EVENT_LOG_FILENAME`
+    and confirm the probe finds it (i.e. takes the existing-file branch,
+    not the "not yet created" branch a hardcoded literal would fall
+    through to after a rename of the constant)."""
     from bettermemory.events import EVENT_LOG_FILENAME
 
     log_path = tmp_path / EVENT_LOG_FILENAME

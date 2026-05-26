@@ -55,7 +55,7 @@ from ._fsutil import flock_excl
 from .doctor import DOCTOR_PROBE_FILENAME
 from .events import EVENT_LOG_FILENAME
 from .index import INDEX_FILENAME
-from .semantic import _EMBEDDING_FILENAME_PREFIX, _EMBEDDING_FILENAME_SUFFIX
+from .semantic import EMBEDDING_FILENAME_PREFIX, EMBEDDING_FILENAME_SUFFIX
 
 # Coarse store-wide lock for push/pull. The git operations the sync
 # wrapper invokes (`git add -A`, `git commit`, `git pull --rebase`)
@@ -86,7 +86,7 @@ _GITIGNORE_LINES = [
     f"{INDEX_FILENAME}-wal",
     EVENT_LOG_FILENAME,
     f"{EVENT_LOG_FILENAME}.*.gz",
-    f"{_EMBEDDING_FILENAME_PREFIX}*{_EMBEDDING_FILENAME_SUFFIX}",
+    f"{EMBEDDING_FILENAME_PREFIX}*{EMBEDDING_FILENAME_SUFFIX}",
     "*.lock",
     DOCTOR_PROBE_FILENAME,
 ]
