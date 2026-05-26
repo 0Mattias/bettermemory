@@ -189,7 +189,7 @@ Most systems do (1). Few do (2). Almost none do (3). When you're comparing memor
 
 ## Publication plan
 
-The numbers from running this eval against bettermemory's own dogfood usage, plus the same workload re-run against Mem0 (OpenMemory self-host), Anthropic's reference `server-memory`, claude-mem, and agentmemory, will go into a follow-up post: *"What memory actually helped, by the numbers."* If you'd like to contribute a system to the comparison, open an issue with the eval harness output for your system; runnable harness code lives at `tests/eval/`.
+The numbers from running this eval against bettermemory's own dogfood usage, plus the same workload re-run against Mem0 (OpenMemory self-host), Anthropic's reference `server-memory`, claude-mem, and agentmemory, will go into a follow-up post: *"What memory actually helped, by the numbers."* If you'd like to contribute a system to the comparison, open an issue with the eval harness output for your system; runnable harness code will live at `tests/eval/` when the harness lands.
 
 ## Caveats and open calibration
 

@@ -71,7 +71,7 @@ These come up; here's why they aren't on the list:
 - **Team-shared multi-user store with permissions.** memctl owns that lane. The `bettermemory sync` git-based pattern handles "the same user across multiple machines" cleanly; "the same store across multiple users with RBAC" is a different product.
 - **Knowledge-graph backend.** Zep/Graphiti/Cognee own that lane. Adding a graph backend dilutes the "plain markdown audit-friendly" story without meaningfully closing the gap.
 - **Non-MCP SDK / REST endpoint.** MCP is the right protocol; the Linux Foundation + Anthropic + Block + OpenAI governance has stabilized it. Programmatic users can `import bettermemory` directly from Python.
-- **Pursuing LongMemEval leaderboard top spot.** OMEGA at 95.4% and agentmemory at 95.2% reflect targeted retrieval-engineering investment that isn't bettermemory's wedge. We'll publish a respectable number once embeddings ship; the goal is "competitive, not first."
+- **Pursuing LongMemEval leaderboard top spot.** OMEGA at 95.4% and agentmemory at 95.2% reflect targeted retrieval-engineering investment that isn't bettermemory's wedge. We'll publish a respectable number from the comparative-publication pass; the goal is "competitive, not first."
 
 ## Get involved
 

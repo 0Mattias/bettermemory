@@ -5,11 +5,12 @@ body:
   - type: markdown
     attributes:
       value: |
-        bettermemory has a 1.x compatibility contract — see
-        [CONTRIBUTING.md](https://github.com/0Mattias/bettermemory/blob/main/CONTRIBUTING.md#versioning-and-the-1x-compatibility-contract)
-        for what's pinned. Additive features (new tools, new optional
-        arguments) land easily; renames, removals, and semantic
-        redefinitions are 2.0 material.
+        bettermemory has a per-major-line compatibility contract (the
+        current major is 3) — see
+        [CONTRIBUTING.md](https://github.com/0Mattias/bettermemory/blob/main/CONTRIBUTING.md#versioning-and-the-compatibility-contract)
+        for what's pinned within 3.x. Additive features (new tools,
+        new optional arguments) land easily; renames, removals, and
+        semantic redefinitions are 4.0 material.
 
         Before opening: scan
         [docs/api.md](https://github.com/0Mattias/bettermemory/blob/main/docs/api.md)
@@ -43,7 +44,7 @@ body:
     attributes:
       label: Alternatives considered
       description: |
-        Have you tried any workarounds with the current 1.x surface?
+        Have you tried any workarounds with the current 3.x surface?
         Why are they insufficient? This is the section that most
         clearly distinguishes "needs a feature" from "needs a docs
         clarification".
@@ -53,7 +54,7 @@ body:
     attributes:
       label: Compatibility
       description: |
-        Is this additive (compatible with 1.x) or does it require
+        Is this additive (compatible within 3.x) or does it require
         breaking an existing behavior?
       options:
         - Additive (new tool, new optional argument, new config)
