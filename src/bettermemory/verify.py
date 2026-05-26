@@ -814,9 +814,23 @@ def compute_commit_drift(
 # load-bearing one consumers should branch on first.
 
 
-_VERDICT_FRESH = "fresh"
-_VERDICT_RECOMMENDED = "spot_check_recommended"
-_VERDICT_REQUIRED = "spot_check_required"
+# Tier strings emitted on the wire by ``compute_staleness_verdict``
+# below AND by ``ResponseBuilder.attach_commit_drift_counts`` in
+# ``_response.py`` (the per-search recompute that folds commit-drift
+# into the verdict once the per-search commit-timestamp list has been
+# read). The two sites are independent emission points; without a
+# shared source of truth a rename here — say ``"spot_check_required"``
+# → ``"verify_now"`` — would only propagate to whichever site the
+# refactor reached first. ``memory_show`` (canonical site) would emit
+# the new string while ``memory_search``'s top hit (recompute site)
+# would still emit the old one for any memory matched by the
+# commit-drift recompute path. Same divergence-hazard pattern as
+# ``_VERDICT_RAISE_STATUSES`` below, but on the OUTPUT side of the
+# rollup. Pinned by ``test_staleness_verdict_tier_strings_match_*`` in
+# ``tests/test_server_v12_features.py``.
+_VERDICT_FRESH: str = "fresh"
+_VERDICT_RECOMMENDED: str = "spot_check_recommended"
+_VERDICT_REQUIRED: str = "spot_check_required"
 
 # Closed-protocol whitelist: the `verification.status` values that
 # pre-empt every drift input and force the verdict to

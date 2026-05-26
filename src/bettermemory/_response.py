@@ -30,7 +30,10 @@ from .origin import Origin, commit_author_timestamps, repos_match
 from .time_utils import isoformat_utc as _isoformat_utc
 from .time_utils import isoformat_utc_optional as _isoformat_utc_optional
 from .verify import (
+    _VERDICT_FRESH,
     _VERDICT_RAISE_STATUSES,
+    _VERDICT_RECOMMENDED,
+    _VERDICT_REQUIRED,
     compute_staleness_verdict,
     compute_verification_status,
     detect_path_drift,
@@ -410,12 +413,18 @@ class ResponseBuilder:
             # surface a different verdict than `memory_show` does for
             # the same stale memory.
             verdict_required = verification_status in _VERDICT_RAISE_STATUSES
+            # Mirror the tier strings ``compute_staleness_verdict``
+            # emits at ``verify.py`` — same closed-protocol output, one
+            # source of truth. A rename of any tier in ``verify.py``
+            # that didn't reach this recompute would silently desync
+            # the ``memory_search`` top-hit verdict from the
+            # ``memory_show`` verdict for the same memory.
             if verdict_required:
-                hit_dict["staleness_verdict"] = "spot_check_required"
+                hit_dict["staleness_verdict"] = _VERDICT_REQUIRED
             elif count > 0 or hit_dict.get("path_drift_missing", 0) > 0:
-                hit_dict["staleness_verdict"] = "spot_check_recommended"
+                hit_dict["staleness_verdict"] = _VERDICT_RECOMMENDED
             else:
-                hit_dict["staleness_verdict"] = "fresh"
+                hit_dict["staleness_verdict"] = _VERDICT_FRESH
 
     def attach_recent_negative_outcomes(
         self,

@@ -34,7 +34,12 @@ from bettermemory.origin import Origin
 from bettermemory.server import build_server
 from bettermemory.session import SessionState
 from bettermemory.store import Store
-from bettermemory.verify import _VERDICT_RAISE_STATUSES
+from bettermemory.verify import (
+    _VERDICT_FRESH,
+    _VERDICT_RAISE_STATUSES,
+    _VERDICT_RECOMMENDED,
+    _VERDICT_REQUIRED,
+)
 
 
 @pytest.fixture
@@ -587,6 +592,134 @@ async def test_staleness_verdict_matches_across_show_and_search(
         f"drift between verify.py and _response.py"
     )
     assert shown["staleness_verdict"] == "spot_check_required"
+
+
+# ---------------------------------------------------------------------------
+# Change 3 (cont.) — pin verdict TIER STRINGS across the two emission sites
+# ---------------------------------------------------------------------------
+#
+# Symmetric follow-on to the ``_VERDICT_RAISE_STATUSES`` pin above.
+# Where that gated the INPUT to the verdict computation, this pins the
+# OUTPUT — the three tier strings (``"fresh"``,
+# ``"spot_check_recommended"``, ``"spot_check_required"``) the rollup
+# emits. ``compute_staleness_verdict`` in ``verify.py`` returns one of
+# ``_VERDICT_FRESH`` / ``_VERDICT_RECOMMENDED`` / ``_VERDICT_REQUIRED``;
+# the per-search recompute at
+# ``ResponseBuilder.attach_commit_drift_counts`` in ``_response.py``
+# imports the same constants and re-emits them after folding commit
+# drift into the verdict. A rename of any tier in ``verify.py`` that
+# didn't reach the recompute would silently desync the
+# ``memory_search`` top-hit verdict from the ``memory_show`` verdict
+# for the same memory — the same divergence-hazard the input-side pin
+# closes, but on the output side.
+#
+# Two complementary tests:
+#
+# - ``test_staleness_verdict_tier_string_values_unchanged`` — pins the
+#   WIRE values of the three tier strings. The constants are
+#   underscore-prefixed (module-private DRY) but the *string values*
+#   are observable to MCP clients; a refactor that DRYs the trio must
+#   not change the values themselves. Hardcoded literals here (not
+#   derived from the constants) so a value flip in ``verify.py``
+#   fails the assertion loudly instead of silently agreeing with the
+#   renamed constant.
+# - ``test_staleness_verdict_string_matches_constant_across_show_and_search``
+#   — cross-surface: for a stale memory routed through the
+#   recompute path, both ``memory_show`` and ``memory_search``'s top
+#   hit must emit exactly ``_VERDICT_REQUIRED``. A site that fell
+#   back to a stale literal (e.g. ``"verify_now"`` left over after a
+#   rename) would fail one of the two equality checks. The
+#   recompute path is reached via the same fake-``capture_origin`` +
+#   tmp-git-repo pattern as
+#   ``test_staleness_verdict_stale_survives_commit_drift_recompute``,
+#   so the assertion exercises the exact site (``_response.py:415``)
+#   the OUTPUT-side hazard lives at.
+#
+# Negative-control: temporarily replacing ``_VERDICT_REQUIRED`` in
+# ``verify.py`` with ``"verify_now"`` fails
+# ``test_staleness_verdict_tier_string_values_unchanged`` (wire value
+# flipped) and the cross-surface test (both surfaces now emit
+# ``"verify_now"``, but the constant assertion still matches — caught
+# by the wire-value pin). Temporarily flipping only the literal at
+# ``_response.py:415`` to ``"verify_now"`` without touching the
+# constant fails the cross-surface test only (``memory_show`` still
+# emits ``_VERDICT_REQUIRED`` value, the recompute site emits the
+# stale literal) — the exact desync the queue item targets.
+
+
+def test_staleness_verdict_tier_string_values_unchanged() -> None:
+    """Pin the wire VALUES of the three tier strings. The constants are
+    module-private (DRY across emission sites) but the string values
+    are observable to MCP clients; the DRY refactor must not change
+    the values themselves. Hardcoded literals here so a value flip in
+    ``verify.py`` fails this assertion loudly instead of silently
+    agreeing with the renamed constant."""
+    assert _VERDICT_FRESH == "fresh"
+    assert _VERDICT_RECOMMENDED == "spot_check_recommended"
+    assert _VERDICT_REQUIRED == "spot_check_required"
+
+
+@pytest.mark.skipif(not _GIT_AVAILABLE, reason="git not on PATH")
+async def test_staleness_verdict_string_matches_constant_across_show_and_search(
+    memory_dir: Path, tmp_path: Path
+) -> None:
+    """Cross-surface OUTPUT pin: for one stale memory routed through
+    the commit-drift recompute path, both ``memory_show`` and
+    ``memory_search``'s top hit must emit a verdict string that
+    equals the shared ``_VERDICT_REQUIRED`` constant. Catches the
+    specific failure mode the queue item flags — a single-site
+    refactor that drops one of the three emission points (or
+    re-hardcodes one with a stale literal) would manifest as a
+    diverging string between the two surfaces, even when both
+    surfaces still produce a syntactically-valid verdict tier.
+    Routes through the recompute path (fake-``capture_origin`` +
+    tmp-git-repo) so the assertion exercises ``_response.py:415``,
+    the OUTPUT-side hazard site."""
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    _init_repo(repo)
+    origin = Origin(cwd=str(repo), repo=_FAKE_REPO_REMOTE, branch="main")
+    server = _build_stale_server_with_origin(memory_dir, origin)
+
+    memory_id = await _write_memory_in_state(server, status="stale")
+    shown = await _call(server, "memory_show", id=memory_id)
+    hits = _unwrap(
+        await _call(
+            server,
+            "memory_search",
+            query="widget configuration staleness",
+            auto_scope=False,
+        )
+    )
+    hit = next((h for h in hits if h["id"] == memory_id), None)
+    assert hit is not None, f"seeded memory {memory_id!r} missing from search results"
+    # Recompute gate: presence of `commit_drift_count` proves
+    # `attach_commit_drift_counts` actually ran on this hit — i.e. the
+    # OUTPUT-side emission site at `_response.py:415` was reached.
+    # Absence means the test setup silently bypassed the recompute and
+    # the regression case isn't being checked.
+    assert "commit_drift_count" in hit, (
+        "test setup failed: attach_commit_drift_counts did not recompute "
+        "the verdict for this hit, so the OUTPUT-side tier-string "
+        "emission at _response.py:415 wasn't exercised"
+    )
+    # Both surfaces must emit the *shared constant value*, not just a
+    # syntactically-valid verdict tier. A single-site stale literal
+    # would pass the surface-equality test in
+    # `test_staleness_verdict_matches_across_show_and_search` if the
+    # other site also drifted to the same wrong literal, but would
+    # fail at least one of these two checks.
+    assert shown["staleness_verdict"] == _VERDICT_REQUIRED, (
+        f"memory_show emitted {shown['staleness_verdict']!r}, expected "
+        f"{_VERDICT_REQUIRED!r} (the shared constant) — possible "
+        f"single-site drift away from verify.py's _VERDICT_REQUIRED"
+    )
+    assert hit["staleness_verdict"] == _VERDICT_REQUIRED, (
+        f"memory_search top hit emitted {hit['staleness_verdict']!r}, "
+        f"expected {_VERDICT_REQUIRED!r} (the shared constant) — "
+        f"possible single-site drift between verify.py's "
+        f"_VERDICT_REQUIRED and _response.py's recompute emission"
+    )
 
 
 # ---------------------------------------------------------------------------
