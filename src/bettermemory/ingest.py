@@ -127,9 +127,9 @@ Action = Literal[
 # Single source of truth for the `Action` literals. `IngestPlan.summary`
 # pre-seeds zeros for every action so the renderer never has to guard
 # missing keys, and adding a new `Action` literal without updating this
-# tuple is a one-line diff that fails the matching assertion in
-# `tests/test_ingest.py` rather than silently producing a missing
-# bucket in the rollup.
+# tuple is a one-line diff that fails
+# `test_actions_tuple_matches_action_literal` in `tests/test_ingest.py`
+# rather than silently producing a missing bucket in the rollup.
 _ACTIONS: tuple[Action, ...] = (
     "write",
     "skip_duplicate",

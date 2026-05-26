@@ -16,9 +16,13 @@ from typing import Any
 
 import pytest
 
+import typing
+
 from bettermemory.ingest import (
     DEFAULT_PROVENANCE_SCOPE,
+    _ACTIONS,
     _INDEX_FILENAMES,
+    Action,
     apply_ingest_plan,
     compute_ingest_plan,
     discover_default_source_root,
@@ -116,6 +120,49 @@ def test_index_filenames_match_frozenset() -> None:
     on the ingest surface — mirrors ``test_use_outcomes_match_frozenset``
     in ``tests/test_server_record_use_provenance.py``."""
     assert set(_EXPECTED_INDEX_FILENAMES) == set(_INDEX_FILENAMES)
+
+
+# Parity pin between the `Action` Literal (`ingest.py:118`) and the
+# `_ACTIONS` tuple (`ingest.py:133`) consumed by `IngestPlan.summary`
+# at `ingest.py:181` (`out: dict[str, int] = {a: 0 for a in _ACTIONS}`).
+# The two MUST stay in lockstep: a new Literal value without a matching
+# `_ACTIONS` entry means `IngestPlan.summary` pre-seeds zero rows for
+# every known action except the new one, and any downstream renderer
+# that does `summary["new_action"]` would KeyError on the missing
+# bucket. The comment at `ingest.py:127-132` documents that this
+# matching assertion exists in `tests/test_ingest.py` — this guard
+# makes the comment true (prior to this commit, no such assertion
+# existed in this file).
+#
+# Set-equality (not tuple-equality) is correct here: `_ACTIONS` is
+# consumed as the keys of a dict comprehension, so order doesn't
+# affect the summary's contents (Python 3.7+ dict iteration order is
+# insertion-order but the summary is consumed as a value-keyed lookup
+# downstream, not by ordered iteration). Contrast with
+# `_SECRET_PATTERNS` in `tests/test_events.py` where the iteration
+# order IS load-bearing (regex precedence).
+#
+# Negative-control: temporarily adding a bogus `"skip_bogus"` member
+# to the `Action` Literal in `ingest.py` fails
+# `test_actions_tuple_matches_action_literal` (set inequality:
+# Literal has extra `"skip_bogus"` that `_ACTIONS` doesn't). Revert
+# restores green.
+def test_actions_tuple_matches_action_literal() -> None:
+    """Guard so additions to (or deletions from) the ``Action`` Literal
+    at ``ingest.py:118`` are mirrored in the ``_ACTIONS`` tuple at
+    ``ingest.py:133`` — otherwise ``IngestPlan.summary`` would
+    pre-seed zero rows for every known action except the new one,
+    and any downstream renderer that does ``summary["new_action"]``
+    would KeyError on the missing bucket. Set equality is correct
+    here because ``_ACTIONS`` is consumed as the keys of a dict
+    comprehension (order isn't load-bearing for pre-seeding); the
+    matching ordered-tuple guards live in ``tests/test_events.py``
+    (``_SECRET_PATTERNS``) and ``tests/test_server.py``
+    (``_WRITE_GATES``) where iteration precedence IS load-bearing.
+
+    This assertion is the one the comment at ``ingest.py:127-132``
+    refers to — prior to this commit the comment was aspirational."""
+    assert set(_ACTIONS) == set(typing.get_args(Action))
 
 
 # ---------------------------------------------------------------------------

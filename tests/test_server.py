@@ -1318,6 +1318,107 @@ async def test_dedup_passes_through_to_pending_with_related(
     assert second["related"][0]["relevance"] == "medium"
 
 
+# ---------------------------------------------------------------------------
+# Ordered-tuple pin for `_WRITE_GATES` — the WriteGate strategy chain
+# orchestrated by `handlers/write.py:545`. ORDER IS LOAD-BEARING and the
+# comment at `handlers/write.py:474-481` explicitly documents the
+# rationale: transient before dedup so a transient parent doesn't route
+# the writer to `memory_update`; scope-mismatch before dedup so a write
+# tagged for a different scope doesn't get a duplicate hit; groundedness
+# before dedup because (the comment's load-bearing example) a
+# hallucinated write being reported as a "duplicate" of a real one is
+# misleading; dedup before pending so the user-inference confirmation
+# flow doesn't ask about a write we'd already reject; PendingGate last
+# because everything else either rejects or accepts.
+#
+# This is the HIGH-HAZARD pin in the closed-protocol audit-loop sweep.
+# Hazard surface: a silent reorder violates the security / correctness
+# invariant the source comment documents — specifically:
+#   * dedup-before-groundedness lets a hallucinated write masquerade as
+#     a duplicate of a real one (the comment's literal example);
+#   * dropping `GroundednessGate` from the tuple silently lets
+#     ungrounded writes through (the gate fires only because it's in
+#     the chain);
+#   * any reorder changes which gate fires first when multiple would
+#     reject, changing the user-visible response.
+#
+# Contrast with the basic-shape membership guards landed in bde7602
+# (`_REDACTED_TEXT_FIELDS`, `_PLACEHOLDER_PREFIXES`, `_INDEX_FILENAMES`)
+# and the prior tick's pins (`_USE_OUTCOMES`, `_VALID_TRIGGERED_FROM`,
+# `_RETRIEVAL_EVENT_KINDS`): those use `set(...) == set(...)` because
+# order isn't load-bearing for `in`-membership lookups. This guard
+# uses *tuple* equality on the per-instance type sequence because
+# precedence between gates IS load-bearing — a silent reorder would
+# pass a set-equality assertion while corrupting the precedence the
+# write.py:474-481 comment documents. Tuple equality catches
+# additions, deletions, AND reorders in one assertion.
+#
+# A future contributor reordering for performance (or adding a new
+# gate, or deleting one) must update both the source tuple AND this
+# expected tuple in the same commit. Treat any drift as a deliberate
+# security/correctness decision that requires re-reading the
+# write.py:474-481 rationale: would the new ordering still bounce a
+# hallucinated write before reporting it as a duplicate? Still bounce
+# a transient-parent write before routing the writer to update? Still
+# stage user-inference last so dedup doesn't ask the user about a
+# write we'd reject? If yes, update both. If unsure, don't reorder.
+#
+# Negative-control: swapping `DedupActiveGate` and `GroundednessGate`
+# in `_WRITE_GATES` (a plausible "performance" reorder that puts
+# cheaper checks first) fails
+# `test_write_gates_match_expected_types_in_order` (tuple inequality
+# — sequences differ at index 2 / 3). Revert restores green.
+def test_write_gates_match_expected_types_in_order() -> None:
+    """Guard so additions, deletions, AND reorders of ``_WRITE_GATES``
+    (the ordered WriteGate strategy chain orchestrated by
+    ``handlers/write.py:545``) are caught — uses *tuple* equality
+    rather than set equality because gate precedence is load-bearing.
+
+    The comment at ``handlers/write.py:474-481`` documents the
+    invariant: transient/scope-mismatch/groundedness gates fire
+    BEFORE dedup so (a) a hallucinated write can't masquerade as a
+    duplicate of a real one, (b) a transient-parent write isn't
+    routed to ``memory_update``, (c) a scope-mismatched write doesn't
+    get a misleading duplicate hit; dedup BEFORE pending so the
+    user-inference confirmation flow doesn't ask about a write we'd
+    already reject; ``PendingGate`` last because everything else
+    either rejects or accepts. A silent reorder breaks the
+    security/correctness invariant the source comment documents.
+
+    A future contributor reordering this tuple for performance must
+    update both the source AND this expected tuple in the same
+    commit, AND re-read the write.py:474-481 rationale to confirm
+    the new ordering still preserves: hallucinated-before-dedup,
+    transient-before-dedup, scope-before-dedup, dedup-before-pending,
+    and pending-last."""
+    from bettermemory.handlers.write import (
+        DedupActiveGate,
+        DedupTombstoneGate,
+        GroundednessGate,
+        PendingGate,
+        ScopeMismatchGate,
+        TransientGate,
+        _WRITE_GATES,
+    )
+
+    expected: tuple[type, ...] = (
+        TransientGate,
+        ScopeMismatchGate,
+        GroundednessGate,
+        DedupActiveGate,
+        DedupTombstoneGate,
+        PendingGate,
+    )
+    actual = tuple(type(g) for g in _WRITE_GATES)
+    assert actual == expected, (
+        f"_WRITE_GATES drifted from documented order at "
+        f"handlers/write.py:474-481. Got {[t.__name__ for t in actual]}, "
+        f"expected {[t.__name__ for t in expected]}. Re-read the source "
+        f"comment before reordering — this guards a security/correctness "
+        f"invariant, not a stylistic choice."
+    )
+
+
 async def test_memory_update_unaffected_by_dedup(server: Any) -> None:
     """memory_update doesn't go through the dedup check — it edits an
     existing entry, so by definition there's no parallel entry to create.
