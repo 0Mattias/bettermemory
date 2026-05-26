@@ -176,6 +176,7 @@ class TestComputeIngestPlan:
         memories — they must not be ingested."""
         source_root.mkdir()
         (source_root / "MEMORY.md").write_text("# Index of memories\n- foo\n")
+        (source_root / "INDEX.md").write_text("# Index of memories\n- foo\n")
         (source_root / "README.md").write_text("# Auto-memory readme\n")
         _write_auto_memory(source_root, "real-mem", auto_type="feedback")
         plan = compute_ingest_plan(
