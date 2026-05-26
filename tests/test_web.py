@@ -41,6 +41,14 @@ def client(memory_dir: Path, store: Store) -> Any:
     return TestClient(app)
 
 
+@pytest.fixture
+def csrf_token(client: Any) -> str:
+    """audit H4 — extract the per-process CSRF token from the test
+    app. Read it from app.state (the regression tests below also
+    cover scraping it from the rendered HTML meta tag)."""
+    return client.app.state.csrf_token
+
+
 # ---------------------------------------------------------------------------
 # Smoke
 # ---------------------------------------------------------------------------
@@ -124,17 +132,47 @@ def test_memory_detail_404_when_missing(client: Any) -> None:
 _LOOPBACK_ORIGIN = {"Origin": "http://127.0.0.1:8765"}
 
 
-def test_verify_marks_memory_and_redirects(client: Any, store: Store) -> None:
+def _verify_headers(csrf_token: str) -> dict[str, str]:
+    """Headers for a same-origin /verify POST that passes both the
+    same-origin check and the per-process CSRF token check."""
+    return {**_LOOPBACK_ORIGIN, "X-CSRF-Token": csrf_token}
+
+
+# audit follow-up — pin all three loopback host forms accepted by
+# `_same_origin` (web.py: `{"localhost", "127.0.0.1", "::1"}`). Prior
+# to this parametrise only `127.0.0.1` was exercised end-to-end through
+# the verify endpoint; narrowing the accept-set to a single form (or
+# breaking the IPv6 bracketed-host parse) would 403 users typing
+# `http://localhost:<port>` or `http://[::1]:<port>` without CI noticing.
+# The bracketed-IPv6 form is RFC 3986; `urllib.parse.urlparse` strips
+# the brackets and returns the bare `::1` host, matching the accept-set.
+_LOOPBACK_ORIGIN_FORMS = [
+    pytest.param("http://localhost:8765", id="localhost"),
+    pytest.param("http://127.0.0.1:8765", id="127.0.0.1"),
+    pytest.param("http://[::1]:8765", id="ipv6-bracketed"),
+]
+
+
+@pytest.mark.parametrize("origin", _LOOPBACK_ORIGIN_FORMS)
+def test_verify_marks_memory_and_redirects(
+    client: Any, store: Store, csrf_token: str, origin: str
+) -> None:
     """POST /memories/{id}/verify bumps last_verified_at and 303s
     back to the detail page (PRG pattern — refreshes don't repeat
-    the verify)."""
+    the verify).
+
+    Parametrised across all three loopback Origin forms accepted by
+    `_same_origin` so a regression narrowing the accept-set or breaking
+    IPv6 bracket parsing surfaces immediately. Each case must drive the
+    full state mutation (303 + `last_verified_at` actually bumped) so a
+    half-fix that 303s without doing the work also fails."""
     m = store.write(content="some claim", scopes=["tools"])
     assert m.last_verified_at is None
 
     r = client.post(
         f"/memories/{m.id}/verify",
         data={"note": "spot-checked"},
-        headers=_LOOPBACK_ORIGIN,
+        headers={"Origin": origin, "X-CSRF-Token": csrf_token},
         follow_redirects=False,
     )
     assert r.status_code == 303
@@ -144,27 +182,32 @@ def test_verify_marks_memory_and_redirects(client: Any, store: Store) -> None:
     assert reloaded.last_verified_at is not None
 
 
-def test_verify_404_when_missing(client: Any) -> None:
+def test_verify_404_when_missing(client: Any, csrf_token: str) -> None:
     """Posting a verify for a non-existent id returns 404 with a
     clean error — not a 500."""
     r = client.post(
         "/memories/01J0000000000000000000000A/verify",
         data={"note": ""},
-        headers=_LOOPBACK_ORIGIN,
+        headers=_verify_headers(csrf_token),
     )
     assert r.status_code == 404
 
 
-def test_verify_rejects_cross_origin(client: Any, store: Store) -> None:
+def test_verify_rejects_cross_origin(
+    client: Any, store: Store, csrf_token: str
+) -> None:
     """A POST carrying an Origin / Referer that doesn't point at
     loopback is rejected as a cross-site forgery. Defends against a
     malicious page submitting a form to the localhost UI from another
-    open tab."""
+    open tab. (Token alone would also reject this case after the
+    token check, but this exercises the same-origin gate
+    independently — useful for the LAN-exposure scenario where a
+    forged Origin alone shouldn't be enough to bypass.)"""
     m = store.write(content="some claim", scopes=["tools"])
     r = client.post(
         f"/memories/{m.id}/verify",
         data={"note": ""},
-        headers={"Origin": "https://evil.example.com"},
+        headers={"Origin": "https://evil.example.com", "X-CSRF-Token": csrf_token},
         follow_redirects=False,
     )
     assert r.status_code == 403
@@ -172,27 +215,32 @@ def test_verify_rejects_cross_origin(client: Any, store: Store) -> None:
     assert reloaded.last_verified_at is None
 
 
-def test_verify_accepts_loopback_origin(client: Any, store: Store) -> None:
+def test_verify_accepts_loopback_origin(
+    client: Any, store: Store, csrf_token: str
+) -> None:
     """A POST with an Origin pointing at this UI's own loopback host
-    passes the CSRF check. Mirrors the normal in-UI form submission."""
+    AND a valid CSRF token passes both gates. Mirrors the normal in-UI
+    form submission."""
     m = store.write(content="some claim", scopes=["tools"])
     r = client.post(
         f"/memories/{m.id}/verify",
         data={"note": ""},
-        headers={"Origin": "http://127.0.0.1:8765"},
+        headers=_verify_headers(csrf_token),
         follow_redirects=False,
     )
     assert r.status_code == 303
 
 
-def test_verify_rejects_oversized_note(client: Any, store: Store) -> None:
+def test_verify_rejects_oversized_note(
+    client: Any, store: Store, csrf_token: str
+) -> None:
     """A note longer than 500 chars returns 400 without bumping
     last_verified_at — same cap discipline as `claim_excerpts`."""
     m = store.write(content="some claim", scopes=["tools"])
     r = client.post(
         f"/memories/{m.id}/verify",
         data={"note": "x" * 501},
-        headers=_LOOPBACK_ORIGIN,
+        headers=_verify_headers(csrf_token),
         follow_redirects=False,
     )
     assert r.status_code == 400
@@ -218,6 +266,157 @@ def test_verify_rejects_headerless_post(client: Any, store: Store) -> None:
     assert r.status_code == 403
     reloaded = store.load_one(m.id)
     assert reloaded.last_verified_at is None
+
+
+# ---------------------------------------------------------------------------
+# H4 regression — per-process CSRF token
+# ---------------------------------------------------------------------------
+
+
+def test_verify_rejects_post_without_csrf_token(client: Any, store: Store) -> None:
+    """audit H4 — a POST that passes the same-origin check but
+    carries no X-CSRF-Token (and no `csrf_token` form field) must be
+    rejected. The prior same-origin-only gate accepted a forged
+    `Origin: http://localhost:8765` from any non-browser client on
+    the LAN under --host 0.0.0.0; the token check closes that
+    window."""
+    m = store.write(content="some claim", scopes=["tools"])
+    r = client.post(
+        f"/memories/{m.id}/verify",
+        data={"note": ""},
+        headers=_LOOPBACK_ORIGIN,  # no X-CSRF-Token
+        follow_redirects=False,
+    )
+    assert r.status_code == 403
+    reloaded = store.load_one(m.id)
+    assert reloaded.last_verified_at is None
+
+
+def test_verify_rejects_post_with_wrong_csrf_token(client: Any, store: Store) -> None:
+    """audit H4 — a POST with a token that doesn't match the
+    per-process value must be rejected. Guards against an attacker
+    who guessed the token shape (`secrets.token_urlsafe(32)` output)
+    but didn't read it from the page."""
+    m = store.write(content="some claim", scopes=["tools"])
+    r = client.post(
+        f"/memories/{m.id}/verify",
+        data={"note": ""},
+        headers={**_LOOPBACK_ORIGIN, "X-CSRF-Token": "this-is-not-the-token"},
+        follow_redirects=False,
+    )
+    assert r.status_code == 403
+    reloaded = store.load_one(m.id)
+    assert reloaded.last_verified_at is None
+
+
+def test_verify_accepts_token_scraped_from_rendered_page(
+    client: Any, store: Store
+) -> None:
+    """audit H4 — the token rendered into the <meta name="csrf-token">
+    tag on any page is the one the server accepts. Exercises the
+    end-to-end contract: a real browser would parse the meta tag,
+    set X-CSRF-Token, and the server would compare_digest it against
+    the per-process value."""
+    import re
+
+    m = store.write(content="some claim", scopes=["tools"])
+    page = client.get(f"/memories/{m.id}")
+    assert page.status_code == 200
+    match = re.search(r'<meta name="csrf-token" content="([^"]+)"', page.text)
+    assert match is not None, "expected a csrf-token meta tag on every page"
+    token = match.group(1)
+    assert token, "csrf-token must be a non-empty string"
+
+    r = client.post(
+        f"/memories/{m.id}/verify",
+        data={"note": ""},
+        headers={**_LOOPBACK_ORIGIN, "X-CSRF-Token": token},
+        follow_redirects=False,
+    )
+    assert r.status_code == 303
+
+
+def test_verify_accepts_csrf_via_form_field(
+    client: Any, store: Store, csrf_token: str
+) -> None:
+    """audit H4 — the token can also be supplied via a `csrf_token`
+    form field for plain <form method=post> submissions that aren't
+    able to set custom request headers without JavaScript. The inline
+    JS in _layout adds a hidden input; this test exercises the
+    server-side acceptance of that hidden-input path directly."""
+    m = store.write(content="some claim", scopes=["tools"])
+    r = client.post(
+        f"/memories/{m.id}/verify",
+        data={"note": "", "csrf_token": csrf_token},
+        headers=_LOOPBACK_ORIGIN,
+        follow_redirects=False,
+    )
+    assert r.status_code == 303
+
+
+def test_csrf_token_is_stable_within_process(client: Any) -> None:
+    """audit H4 — the token is generated once at app-build time and
+    stays constant for the process lifetime. Rotating per-request
+    would break submits across tabs and buy no defence against the
+    threat model (a local attacker who can read one page can read
+    any page)."""
+    import re
+
+    page1 = client.get("/")
+    page2 = client.get("/memories")
+    t1 = re.search(r'<meta name="csrf-token" content="([^"]+)"', page1.text)
+    t2 = re.search(r'<meta name="csrf-token" content="([^"]+)"', page2.text)
+    assert t1 is not None and t2 is not None
+    assert t1.group(1) == t2.group(1)
+
+
+def test_csrf_token_differs_across_apps(memory_dir: Path, store: Store) -> None:
+    """audit H4 — two independently built apps get distinct random
+    tokens. Guards against accidentally hoisting the token to module
+    scope (which would persist across server restarts and undermine
+    the "regenerate on restart" property)."""
+    from bettermemory.web import build_app
+
+    cfg = Config(storage=StorageConfig(directory=str(memory_dir)))
+    app1 = build_app(cfg, store)
+    app2 = build_app(cfg, store)
+    assert app1.state.csrf_token != app2.state.csrf_token
+
+
+def test_non_loopback_bind_logs_warning(caplog: Any) -> None:
+    """audit H4 — binding to a non-loopback host emits a clear
+    WARNING about the unencrypted-transport caveat. Exercise both
+    branches via the extracted ``_warn_if_non_loopback_bind`` helper:
+    loopback hosts return False and emit nothing, non-loopback hosts
+    return True and emit a single WARNING record."""
+    import logging
+
+    from bettermemory.web import _is_loopback_bind, _warn_if_non_loopback_bind
+
+    assert _is_loopback_bind("127.0.0.1") is True
+    assert _is_loopback_bind("localhost") is True
+    assert _is_loopback_bind("::1") is True
+    # 0.0.0.0 is the "bind to all interfaces" wildcard; treat it as
+    # non-loopback because it exposes the socket to every NIC.
+    assert _is_loopback_bind("0.0.0.0") is False
+
+    # Loopback path: no warning, return False (didn't fire).
+    with caplog.at_level(logging.WARNING, logger="bettermemory"):
+        assert _warn_if_non_loopback_bind("127.0.0.1") is False
+    assert not [r for r in caplog.records if r.levelno >= logging.WARNING], (
+        "loopback bind must not log a warning"
+    )
+
+    caplog.clear()
+    # Non-loopback path: exactly one warning, return True (fired).
+    with caplog.at_level(logging.WARNING, logger="bettermemory"):
+        assert _warn_if_non_loopback_bind("0.0.0.0") is True
+    warn_records = [r for r in caplog.records if r.levelno == logging.WARNING]
+    assert len(warn_records) == 1, (
+        f"expected exactly one WARNING for non-loopback bind, got {warn_records!r}"
+    )
+    assert "non-loopback" in warn_records[0].getMessage().lower()
+    assert "csrf" in warn_records[0].getMessage().lower()
 
 
 def test_health_renders(client: Any, store: Store) -> None:

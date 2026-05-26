@@ -20,16 +20,26 @@ hermetic per-test memory dir, isolated SessionState.
 from __future__ import annotations
 
 import json
+import os
+import shutil
+import subprocess
 from pathlib import Path
 from typing import Any
 
 import pytest
 
-from bettermemory.config import Config, StorageConfig
-from bettermemory.events import iter_events
+from bettermemory.config import BehaviorConfig, Config, StorageConfig
+from bettermemory.events import Recorder, iter_events
+from bettermemory.origin import Origin
 from bettermemory.server import build_server
 from bettermemory.session import SessionState
 from bettermemory.store import Store
+from bettermemory.verify import (
+    _VERDICT_FRESH,
+    _VERDICT_RAISE_STATUSES,
+    _VERDICT_RECOMMENDED,
+    _VERDICT_REQUIRED,
+)
 
 
 @pytest.fixture
@@ -60,6 +70,24 @@ def server_with_state(memory_dir: Path) -> tuple[Any, SessionState, Path]:
         state=state,
     )
     return srv, state, memory_dir
+
+
+@pytest.fixture
+def stale_server(memory_dir: Path) -> Any:
+    """Server with ``verification_stale_days=0`` so any verified memory
+    is immediately classified ``stale`` by ``compute_verification_status``
+    (any positive elapsed time after the verify call satisfies the
+    ``age_seconds > 0`` threshold check). Drives the ``"stale"`` branch
+    of the staleness-verdict gate without backdating timestamps."""
+    cfg = Config(
+        storage=StorageConfig(directory=str(memory_dir)),
+        behavior=BehaviorConfig(verification_stale_days=0),
+    )
+    return build_server(
+        config=cfg,
+        store=Store(memory_dir),
+        state=SessionState(),
+    )
 
 
 async def _call(server: Any, name: str, **kwargs: Any) -> Any:
@@ -286,6 +314,492 @@ async def test_memory_search_expand_top_recomputes_verdict_on_drift(
     if top.get("relevance") == "high":
         # Expanded path triggered.
         assert top["staleness_verdict"] == "spot_check_recommended"
+
+
+# ---------------------------------------------------------------------------
+# Change 3 (cont.) — pin {never, stale} membership of the verdict gate
+# ---------------------------------------------------------------------------
+#
+# `compute_staleness_verdict` (`verify.py`) and
+# `ResponseBuilder.attach_commit_drift_counts` (`_response.py`) both
+# branch on the same closed-protocol whitelist of verification.status
+# values that force the rollup to `spot_check_required`. Since 3.0.0
+# the two sites share `_VERDICT_RAISE_STATUSES`; the tests below pin
+# both ends of the contract:
+#
+# - the membership guard (`test_staleness_verdict_raise_statuses_match_
+#   frozenset`) catches *additions* to the source set — a new status
+#   silently joining the raise list without a regression case;
+# - the parametrised end-to-end tests catch *deletions* from the source
+#   set — a member silently dropped, downgrading the loudest re-verify
+#   signal the server emits. The list is hardcoded (not derived from
+#   the frozenset itself); parametrising off the source would silently
+#   skip the case when a member is removed instead of failing loudly.
+#
+# Negative-control: temporarily removing "stale" from
+# `_VERDICT_RAISE_STATUSES` flips
+# `test_staleness_verdict_via_show[stale]`,
+# `test_staleness_verdict_via_search[stale]`,
+# `test_staleness_verdict_stale_survives_commit_drift_recompute`, and
+# `test_staleness_verdict_matches_across_show_and_search` from passing
+# to failing (the stale memory's verdict regresses to
+# `spot_check_recommended` or `fresh`); removing "never" flips the
+# corresponding `[never]` parametrise cases. The membership guard also
+# fails in either case.
+
+# Hardcoded so a deletion from `_VERDICT_RAISE_STATUSES` causes the
+# corresponding parametrise case to fail (parametrising off the
+# frozenset itself would just drop the case, silently). The membership
+# guard below ensures additions still require touching this list.
+_EXPECTED_RAISE_STATUSES: tuple[str, ...] = ("never", "stale")
+
+
+_GIT_AVAILABLE = shutil.which("git") is not None
+_FAKE_REPO_REMOTE = "git@github.com:example/staleness-verdict-test.git"
+
+
+def _init_repo(path: Path, *, remote: str = _FAKE_REPO_REMOTE) -> None:
+    """Tmp-repo helper mirroring `tests/test_server_commit_drift.py` so
+    `attach_commit_drift_counts` has a real cwd to shell `git log`
+    against. One commit is enough for `commit_author_timestamps` to
+    return a non-None list, which is the gate for the recompute at
+    `_response.py:406` to fire."""
+    subprocess.run(
+        ["git", "init", "--initial-branch=main"],
+        cwd=path,
+        check=True,
+        capture_output=True,
+    )
+    subprocess.run(
+        ["git", "remote", "add", "origin", remote],
+        cwd=path,
+        check=True,
+        capture_output=True,
+    )
+    env = os.environ.copy()
+    env["GIT_AUTHOR_DATE"] = "2020-01-01T00:00:00+00:00"
+    env["GIT_COMMITTER_DATE"] = "2020-01-01T00:00:00+00:00"
+    env["GIT_AUTHOR_NAME"] = "Test"
+    env["GIT_AUTHOR_EMAIL"] = "test@example.com"
+    env["GIT_COMMITTER_NAME"] = "Test"
+    env["GIT_COMMITTER_EMAIL"] = "test@example.com"
+    subprocess.run(
+        ["git", "commit", "--allow-empty", "-m", "ancient"],
+        cwd=path,
+        check=True,
+        capture_output=True,
+        env=env,
+    )
+
+
+def _build_stale_server_with_origin(memory_dir: Path, origin: Origin) -> Any:
+    """Build a server with ``verification_stale_days=0`` whose
+    ``capture_origin`` returns the supplied ``origin``. Mirrors the
+    monkeypatch pattern from ``tests/test_server_commit_drift.py`` so the
+    test can pin the caller's repo without altering the process cwd."""
+    import bettermemory._handlers as handlers_module
+    import bettermemory.server as server_module
+
+    state = SessionState()
+    cfg = Config(
+        storage=StorageConfig(directory=str(memory_dir)),
+        behavior=BehaviorConfig(verification_stale_days=0),
+    )
+    recorder = Recorder(root=memory_dir, session_id=state.session_id)
+    srv = build_server(
+        config=cfg,
+        store=Store(memory_dir),
+        state=state,
+        recorder=recorder,
+    )
+
+    def fake_capture(cwd: Path | None = None) -> Origin:
+        return origin
+
+    setattr(handlers_module, "capture_origin", fake_capture)
+    setattr(server_module, "capture_origin", fake_capture)
+    return srv
+
+
+async def _write_memory_in_state(server: Any, *, status: str) -> str:
+    """Produce a memory whose ``verification.status`` resolves to
+    ``status`` against the server's ``verification_stale_days``
+    configuration. ``"never"`` skips the verify call; ``"stale"`` calls
+    ``memory_verify`` once — paired with ``verification_stale_days=0``
+    on ``server``, the immediately-elapsed wall time tips the verdict
+    to stale on the next ``compute_verification_status`` call."""
+    content = "The widget configuration lives in /etc/widget-staleness-pin.toml."
+    written = await _call(server, "memory_write", content=content, scopes=["tools"])
+    if status == "stale":
+        await _call(server, "memory_verify", id=written["id"], note="seed")
+    elif status != "never":
+        raise AssertionError(f"unexpected raise-status fixture: {status!r}")
+    return str(written["id"])
+
+
+def test_staleness_verdict_raise_statuses_match_frozenset() -> None:
+    """Guard so additions to ``_VERDICT_RAISE_STATUSES`` are mirrored in
+    the parametrise list — otherwise a new status joining the raise
+    set could ship without regression coverage on either site
+    (``verify.py``'s ``compute_staleness_verdict`` or ``_response.py``'s
+    ``attach_commit_drift_counts`` recompute)."""
+    assert set(_EXPECTED_RAISE_STATUSES) == set(_VERDICT_RAISE_STATUSES)
+
+
+@pytest.mark.parametrize("status", _EXPECTED_RAISE_STATUSES)
+async def test_staleness_verdict_via_show(stale_server: Any, status: str) -> None:
+    """Every member of ``_VERDICT_RAISE_STATUSES`` must drive
+    ``memory_show``'s ``staleness_verdict`` to ``spot_check_required``
+    with a non-null ``verification.recommendation``. Routes through
+    ``compute_staleness_verdict`` at ``verify.py:848`` (the canonical
+    gate). A silent drop of either member here lets the loudest
+    re-verify signal — the verdict consumers branch on first — fall
+    through to the drift-only ``spot_check_recommended`` or even
+    ``fresh``, treating an unverified or expired memory as ground
+    truth."""
+    memory_id = await _write_memory_in_state(stale_server, status=status)
+    shown = await _call(stale_server, "memory_show", id=memory_id)
+
+    assert shown["verification"]["status"] == status
+    assert shown["staleness_verdict"] == "spot_check_required"
+    recommendation = shown["verification"]["recommendation"]
+    assert recommendation is not None and recommendation.strip(), (
+        "raise-status verdicts must carry an actionable recommendation; "
+        "got an empty payload"
+    )
+
+
+@pytest.mark.parametrize("status", _EXPECTED_RAISE_STATUSES)
+async def test_staleness_verdict_via_search(stale_server: Any, status: str) -> None:
+    """Mirror of ``test_staleness_verdict_via_show`` on the
+    ``memory_search`` surface. ``hit_to_dict`` in ``_response.py`` also
+    routes through ``compute_staleness_verdict`` (``verify.py:848``);
+    a silent drop there is independent of the ``memory_show`` path and
+    would lower the top-hit verdict on every retrieval. Locks the
+    search side of the contract too."""
+    memory_id = await _write_memory_in_state(stale_server, status=status)
+    # `auto_scope=False` keeps the test independent of the runner's
+    # cwd — the memory's `origin.repo` would otherwise depend on
+    # whether the test was invoked from inside a checkout.
+    hits = _unwrap(
+        await _call(
+            stale_server,
+            "memory_search",
+            query="widget configuration staleness",
+            auto_scope=False,
+        )
+    )
+    assert hits, "expected at least one hit for the seeded memory"
+    hit = next((h for h in hits if h["id"] == memory_id), None)
+    assert hit is not None, f"seeded memory {memory_id!r} missing from search results"
+    assert hit["verification"]["status"] == status
+    assert hit["staleness_verdict"] == "spot_check_required"
+
+
+@pytest.mark.skipif(not _GIT_AVAILABLE, reason="git not on PATH")
+async def test_staleness_verdict_stale_survives_commit_drift_recompute(
+    memory_dir: Path, tmp_path: Path
+) -> None:
+    """Pins the duplicate of the raise-status gate at ``_response.py:406``.
+
+    ``hit_to_dict`` initialises ``staleness_verdict`` from verification
+    + path-drift only; ``attach_commit_drift_counts`` re-derives the
+    verdict per hit once the per-search commit-timestamp list has been
+    read. The recompute uses its own copy of the
+    ``{"never", "stale"}`` membership check — the silent-drop hazard
+    the loop targets. If the recompute's gate drifts from
+    ``compute_staleness_verdict``'s gate, a stale memory whose
+    ``origin.repo`` matches the caller's would re-land on
+    ``spot_check_recommended`` (or ``fresh``) the moment commit-drift
+    becomes computable, while the same memory's ``memory_show``
+    verdict stays ``spot_check_required`` — silent divergence between
+    two retrieval surfaces.
+
+    Setup uses the fake-``capture_origin`` pattern from
+    ``test_server_commit_drift.py`` so the recompute path is
+    deterministically reached: caller in repo R, memory written
+    while caller is in repo R (so ``origin.repo == R``), memory
+    verified (so ``hit.last_verified_at is not None``),
+    ``verification_stale_days=0`` so the verify is immediately
+    classified ``stale``.
+    """
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    _init_repo(repo)
+    origin = Origin(cwd=str(repo), repo=_FAKE_REPO_REMOTE, branch="main")
+    server = _build_stale_server_with_origin(memory_dir, origin)
+
+    memory_id = await _write_memory_in_state(server, status="stale")
+    hits = _unwrap(
+        await _call(
+            server,
+            "memory_search",
+            query="widget configuration staleness",
+            auto_scope=False,
+        )
+    )
+    hit = next((h for h in hits if h["id"] == memory_id), None)
+    assert hit is not None, (
+        f"seeded stale memory {memory_id!r} missing from search results"
+    )
+    # `commit_drift_count` is present iff `attach_commit_drift_counts`
+    # actually ran the recompute against this hit — that's the gate
+    # we're trying to exercise. Absence here means the test setup
+    # didn't reach `_response.py:406` and the regression case isn't
+    # being checked.
+    assert "commit_drift_count" in hit, (
+        "test setup failed: attach_commit_drift_counts did not recompute "
+        "the verdict for this hit, so the duplicate raise-status gate "
+        "at _response.py:406 wasn't exercised"
+    )
+    assert hit["verification"]["status"] == "stale"
+    assert hit["staleness_verdict"] == "spot_check_required"
+
+
+@pytest.mark.skipif(not _GIT_AVAILABLE, reason="git not on PATH")
+async def test_staleness_verdict_matches_across_show_and_search(
+    memory_dir: Path, tmp_path: Path
+) -> None:
+    """Cross-surface invariant: for a single stale memory, the verdict
+    returned by ``memory_show`` and by ``memory_search``'s top hit
+    must match. A single-site refactor that drops a member from only
+    one of the two raise-status whitelists would manifest here as a
+    diverging verdict between surfaces — the failure mode the queue
+    item explicitly calls out (``memory_show`` vs ``memory_search``
+    top-hit divergence)."""
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    _init_repo(repo)
+    origin = Origin(cwd=str(repo), repo=_FAKE_REPO_REMOTE, branch="main")
+    server = _build_stale_server_with_origin(memory_dir, origin)
+
+    memory_id = await _write_memory_in_state(server, status="stale")
+    shown = await _call(server, "memory_show", id=memory_id)
+    hits = _unwrap(
+        await _call(
+            server,
+            "memory_search",
+            query="widget configuration staleness",
+            auto_scope=False,
+        )
+    )
+    hit = next((h for h in hits if h["id"] == memory_id), None)
+    assert hit is not None
+    assert shown["staleness_verdict"] == hit["staleness_verdict"], (
+        f"memory_show and memory_search disagree on the verdict for "
+        f"{memory_id!r}: show={shown['staleness_verdict']!r}, "
+        f"search={hit['staleness_verdict']!r} — possible single-site "
+        f"drift between verify.py and _response.py"
+    )
+    assert shown["staleness_verdict"] == "spot_check_required"
+
+
+# ---------------------------------------------------------------------------
+# Change 3 (cont.) — pin verdict TIER STRINGS across the two emission sites
+# ---------------------------------------------------------------------------
+#
+# Symmetric follow-on to the ``_VERDICT_RAISE_STATUSES`` pin above.
+# Where that gated the INPUT to the verdict computation, this pins the
+# OUTPUT — the three tier strings (``"fresh"``,
+# ``"spot_check_recommended"``, ``"spot_check_required"``) the rollup
+# emits. ``compute_staleness_verdict`` in ``verify.py`` returns one of
+# ``_VERDICT_FRESH`` / ``_VERDICT_RECOMMENDED`` / ``_VERDICT_REQUIRED``;
+# the per-search recompute at
+# ``ResponseBuilder.attach_commit_drift_counts`` in ``_response.py``
+# imports the same constants and re-emits them after folding commit
+# drift into the verdict. A rename of any tier in ``verify.py`` that
+# didn't reach the recompute would silently desync the
+# ``memory_search`` top-hit verdict from the ``memory_show`` verdict
+# for the same memory — the same divergence-hazard the input-side pin
+# closes, but on the output side.
+#
+# Two complementary tests:
+#
+# - ``test_staleness_verdict_tier_string_values_unchanged`` — pins the
+#   WIRE values of the three tier strings. The constants are
+#   underscore-prefixed (module-private DRY) but the *string values*
+#   are observable to MCP clients; a refactor that DRYs the trio must
+#   not change the values themselves. Hardcoded literals here (not
+#   derived from the constants) so a value flip in ``verify.py``
+#   fails the assertion loudly instead of silently agreeing with the
+#   renamed constant.
+# - ``test_staleness_verdict_string_matches_constant_across_show_and_search``
+#   — cross-surface: for a stale memory routed through the
+#   recompute path, both ``memory_show`` and ``memory_search``'s top
+#   hit must emit exactly ``_VERDICT_REQUIRED``. A site that fell
+#   back to a stale literal (e.g. ``"verify_now"`` left over after a
+#   rename) would fail one of the two equality checks. The
+#   recompute path is reached via the same fake-``capture_origin`` +
+#   tmp-git-repo pattern as
+#   ``test_staleness_verdict_stale_survives_commit_drift_recompute``,
+#   so the assertion exercises the exact site (``_response.py:415``)
+#   the OUTPUT-side hazard lives at.
+#
+# Negative-control: temporarily replacing ``_VERDICT_REQUIRED`` in
+# ``verify.py`` with ``"verify_now"`` fails
+# ``test_staleness_verdict_tier_string_values_unchanged`` (wire value
+# flipped) and the cross-surface test (both surfaces now emit
+# ``"verify_now"``, but the constant assertion still matches — caught
+# by the wire-value pin). Temporarily flipping only the literal at
+# ``_response.py:415`` to ``"verify_now"`` without touching the
+# constant fails the cross-surface test only (``memory_show`` still
+# emits ``_VERDICT_REQUIRED`` value, the recompute site emits the
+# stale literal) — the exact desync the queue item targets.
+
+
+def test_staleness_verdict_tier_string_values_unchanged() -> None:
+    """Pin the wire VALUES of the three tier strings. The constants are
+    module-private (DRY across emission sites) but the string values
+    are observable to MCP clients; the DRY refactor must not change
+    the values themselves. Hardcoded literals here so a value flip in
+    ``verify.py`` fails this assertion loudly instead of silently
+    agreeing with the renamed constant."""
+    assert _VERDICT_FRESH == "fresh"
+    assert _VERDICT_RECOMMENDED == "spot_check_recommended"
+    assert _VERDICT_REQUIRED == "spot_check_required"
+
+
+@pytest.mark.skipif(not _GIT_AVAILABLE, reason="git not on PATH")
+async def test_staleness_verdict_string_matches_constant_across_show_and_search(
+    memory_dir: Path, tmp_path: Path
+) -> None:
+    """Cross-surface OUTPUT pin: for one stale memory routed through
+    the commit-drift recompute path, both ``memory_show`` and
+    ``memory_search``'s top hit must emit a verdict string that
+    equals the shared ``_VERDICT_REQUIRED`` constant. Catches the
+    specific failure mode the queue item flags — a single-site
+    refactor that drops one of the three emission points (or
+    re-hardcodes one with a stale literal) would manifest as a
+    diverging string between the two surfaces, even when both
+    surfaces still produce a syntactically-valid verdict tier.
+    Routes through the recompute path (fake-``capture_origin`` +
+    tmp-git-repo) so the assertion exercises ``_response.py:415``,
+    the OUTPUT-side hazard site."""
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    _init_repo(repo)
+    origin = Origin(cwd=str(repo), repo=_FAKE_REPO_REMOTE, branch="main")
+    server = _build_stale_server_with_origin(memory_dir, origin)
+
+    memory_id = await _write_memory_in_state(server, status="stale")
+    shown = await _call(server, "memory_show", id=memory_id)
+    hits = _unwrap(
+        await _call(
+            server,
+            "memory_search",
+            query="widget configuration staleness",
+            auto_scope=False,
+        )
+    )
+    hit = next((h for h in hits if h["id"] == memory_id), None)
+    assert hit is not None, f"seeded memory {memory_id!r} missing from search results"
+    # Recompute gate: presence of `commit_drift_count` proves
+    # `attach_commit_drift_counts` actually ran on this hit — i.e. the
+    # OUTPUT-side emission site at `_response.py:415` was reached.
+    # Absence means the test setup silently bypassed the recompute and
+    # the regression case isn't being checked.
+    assert "commit_drift_count" in hit, (
+        "test setup failed: attach_commit_drift_counts did not recompute "
+        "the verdict for this hit, so the OUTPUT-side tier-string "
+        "emission at _response.py:415 wasn't exercised"
+    )
+    # Both surfaces must emit the *shared constant value*, not just a
+    # syntactically-valid verdict tier. A single-site stale literal
+    # would pass the surface-equality test in
+    # `test_staleness_verdict_matches_across_show_and_search` if the
+    # other site also drifted to the same wrong literal, but would
+    # fail at least one of these two checks.
+    assert shown["staleness_verdict"] == _VERDICT_REQUIRED, (
+        f"memory_show emitted {shown['staleness_verdict']!r}, expected "
+        f"{_VERDICT_REQUIRED!r} (the shared constant) — possible "
+        f"single-site drift away from verify.py's _VERDICT_REQUIRED"
+    )
+    assert hit["staleness_verdict"] == _VERDICT_REQUIRED, (
+        f"memory_search top hit emitted {hit['staleness_verdict']!r}, "
+        f"expected {_VERDICT_REQUIRED!r} (the shared constant) — "
+        f"possible single-site drift between verify.py's "
+        f"_VERDICT_REQUIRED and _response.py's recompute emission"
+    )
+
+
+# ---------------------------------------------------------------------------
+# Change 3 (cont.) — pin verdict emission on the memory_list surfaces too
+# ---------------------------------------------------------------------------
+#
+# ``compute_staleness_verdict`` has 5 call sites in
+# ``_response.py`` + ``handlers/show.py``:
+#
+# - ``_response.py:103``  — ``hit_to_dict`` (memory_search)
+# - ``_response.py:161``  — ``summary_to_dict`` (memory_list summary)
+# - ``_response.py:224``  — ``memory_to_dict`` (memory_list with_bodies)
+# - ``_response.py:415``  — ``attach_commit_drift_counts`` recompute
+# - ``handlers/show.py``  — memory_show
+#
+# The cross-surface tests above triangulate three of them
+# (memory_show, memory_search hit, and the per-search recompute) but
+# leave the two memory_list paths unpinned. A single-site hardcoded
+# literal at ``_response.py:161`` or ``:224`` — e.g. a refactor that
+# inlined ``"spot_check_required"`` for "clarity" — would silently
+# desync the memory_list verdict from every other surface while every
+# existing test still passed. This test extends the cross-surface
+# coverage to both list shapes (summary + with_bodies) so a literal
+# at either site fails loudly.
+#
+# Negative-control: temporarily hardcoding the literal ``"wrong"`` at
+# ``_response.py:161`` flips the summary-path assertion below;
+# temporarily hardcoding it at ``_response.py:224`` flips the
+# with_bodies-path assertion. Both reverts confirmed.
+
+
+async def test_staleness_verdict_string_matches_constant_across_list_surfaces(
+    stale_server: Any,
+) -> None:
+    """Cross-surface OUTPUT pin on the memory_list paths: for a stale
+    memory routed through both ``memory_list`` (summary) and
+    ``memory_list(with_bodies=True)``, the emitted ``staleness_verdict``
+    on each returned row must equal the shared ``_VERDICT_REQUIRED``
+    constant. Catches a single-site hardcoded literal at
+    ``_response.py:161`` (``summary_to_dict``) or ``:224``
+    (``memory_to_dict``) — both are independent emission sites the
+    other cross-surface tests don't reach.
+
+    Uses the ``stale_server`` fixture (``verification_stale_days=0``)
+    plus the existing ``_write_memory_in_state(..., status="stale")``
+    helper so the produced memory is classified ``stale`` on the next
+    ``compute_verification_status`` call — driving the
+    ``_VERDICT_RAISE_STATUSES`` branch that pre-empts every drift
+    input."""
+    memory_id = await _write_memory_in_state(stale_server, status="stale")
+
+    # Summary path (`_response.py:161` → `summary_to_dict`).
+    summary_rows = _unwrap(await _call(stale_server, "memory_list"))
+    summary_row = next((r for r in summary_rows if r["id"] == memory_id), None)
+    assert summary_row is not None, (
+        f"seeded memory {memory_id!r} missing from memory_list summary"
+    )
+    assert summary_row["verification"]["status"] == "stale"
+    assert summary_row["staleness_verdict"] == _VERDICT_REQUIRED, (
+        f"memory_list (summary) emitted "
+        f"{summary_row['staleness_verdict']!r}, expected "
+        f"{_VERDICT_REQUIRED!r} (the shared constant) — possible "
+        f"single-site drift away from verify.py's _VERDICT_REQUIRED "
+        f"at _response.py:161 (summary_to_dict)"
+    )
+
+    # With-bodies path (`_response.py:224` → `memory_to_dict`).
+    body_rows = _unwrap(await _call(stale_server, "memory_list", with_bodies=True))
+    body_row = next((r for r in body_rows if r["id"] == memory_id), None)
+    assert body_row is not None, (
+        f"seeded memory {memory_id!r} missing from memory_list with_bodies"
+    )
+    assert body_row["verification"]["status"] == "stale"
+    assert body_row["staleness_verdict"] == _VERDICT_REQUIRED, (
+        f"memory_list (with_bodies) emitted "
+        f"{body_row['staleness_verdict']!r}, expected "
+        f"{_VERDICT_REQUIRED!r} (the shared constant) — possible "
+        f"single-site drift away from verify.py's _VERDICT_REQUIRED "
+        f"at _response.py:224 (memory_to_dict)"
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -561,6 +1075,123 @@ async def test_scope_overview_curation_never_verified_increments(
     await _call(server, "memory_write", content="A new fact.", scopes=["tools"])
     res = await _call(server, "memory_scope_overview")
     assert res["curation_pending"]["never_verified"] == 1
+
+
+# Wire-shape parity for the DESC_* tool descriptions — the prose the LLM
+# client sees has to enumerate the same bucket keys the runtime emits, or
+# the model will branch on names that don't exist (or miss names that do).
+# The existing pins above lock the runtime side
+# (`test_scope_overview_returns_curation_pending`,
+# `test_scope_overview_curation_pending_zero_on_empty`); these two pin
+# the prose side via regex extraction so a future docstring edit that
+# drops or renames a bucket fails CI instead of silently misleading
+# clients.
+
+
+def test_desc_memory_scope_overview_enumerates_curation_pending_keys() -> None:
+    """`DESC_MEMORY_SCOPE_OVERVIEW` prose lists the seven
+    `curation_pending` keys in a brace-delimited block. Extract them via
+    regex and assert set equality against the runtime wire shape (which
+    is pinned at `test_scope_overview_curation_pending_zero_on_empty`)."""
+    import re
+
+    from bettermemory.handlers.scope_overview import DESC_MEMORY_SCOPE_OVERVIEW
+
+    # The prose lays out the rollup as:
+    #     "{stale, never_verified, drifted, cold, dead, "
+    #     "silent_misses, endorsement_debt}"
+    # The literal C-style string concatenation in the source becomes one
+    # contiguous "{...}" at runtime — the regex matches that block.
+    match = re.search(r"\{([a-z_,\s]+)\}", DESC_MEMORY_SCOPE_OVERVIEW)
+    assert match is not None, (
+        "DESC_MEMORY_SCOPE_OVERVIEW no longer contains a brace-delimited "
+        "list of curation_pending bucket names. The prose lost its "
+        "self-documenting structure; restore the `{name, name, ...}` "
+        "block or update this extraction."
+    )
+    extracted = {name.strip() for name in match.group(1).split(",")}
+
+    expected = {
+        "stale",
+        "never_verified",
+        "drifted",
+        "cold",
+        "dead",
+        "silent_misses",
+        "endorsement_debt",
+    }
+    assert extracted == expected, (
+        "DESC_MEMORY_SCOPE_OVERVIEW's curation_pending key list drifted "
+        f"from the runtime wire shape. Only in prose: "
+        f"{sorted(extracted - expected)}; only in runtime: "
+        f"{sorted(expected - extracted)}. Sync the docstring with the "
+        "dict returned by `curation_counts` (and the test_server_v12 pin "
+        "above)."
+    )
+
+
+def test_desc_memory_health_enumerates_report_bucket_keys() -> None:
+    """`DESC_MEMORY_HEALTH` prose enumerates every bucket key returned by
+    `HealthReport.to_dict()`. Regex-extract the bucket region between
+    "Returns buckets" and "CLI equivalent", then assert set equality
+    against the expected bucket names — drift here misleads clients
+    about what `memory_health` actually returns."""
+    import re
+
+    from bettermemory.handlers.health import DESC_MEMORY_HEALTH
+
+    # Slice the bucket-enumeration region. Anchoring on the surrounding
+    # prose ("Returns buckets" / "CLI equivalent:") keeps the extraction
+    # robust against future edits that add unrelated backticked tokens
+    # outside the bucket list (e.g. a tool-reference in a leading sentence).
+    start = DESC_MEMORY_HEALTH.index("Returns buckets")
+    end = DESC_MEMORY_HEALTH.index("CLI equivalent:")
+    region = DESC_MEMORY_HEALTH[start:end]
+
+    # Bucket names appear backticked inside the region. Parameter
+    # references — `window_days`, `min_applied`, `resolution_timeline`,
+    # `verification_stale_days`, and the cross-tool reference
+    # `memory_audit_turn` — also live here; filter them out explicitly so
+    # the assertion focuses on actual bucket names.
+    all_ticked = set(re.findall(r"`([a-z_][a-z_0-9]*)`", region))
+    NON_BUCKET = {
+        "window_days",
+        "min_applied",
+        "resolution_timeline",
+        "verification_stale_days",
+        "memory_audit_turn",
+    }
+    extracted = all_ticked - NON_BUCKET
+
+    # Match `HealthReport.to_dict()` keys (see `health.py`). The five
+    # report-metadata keys (`generated_at`, `window_days`,
+    # `total_active_memories`, `total_events`, `distinct_sessions`) are
+    # intentionally NOT in the prose's "Returns buckets" section — they
+    # surface above it in the same DESC string but aren't buckets. This
+    # set is the bucket subset, kept in lockstep with the wire shape.
+    expected = {
+        "dead_weight",
+        "cold_memories",
+        "heavily_used",
+        "contradicted",
+        "verification_debt",
+        "commit_drift_debt",
+        "silent_misses",
+        "endorsement_debt",
+        "scope_distribution",
+        "scope_health",
+        "rare_scopes",
+        "orphan_use_events",
+        "marker_stats",
+    }
+    assert extracted == expected, (
+        "DESC_MEMORY_HEALTH's enumerated bucket names drifted from "
+        f"HealthReport.to_dict(). Only in prose: "
+        f"{sorted(extracted - expected)}; only in runtime: "
+        f"{sorted(expected - extracted)}. Sync the docstring with the "
+        "report's wire shape — clients build mental models from this "
+        "description."
+    )
 
 
 # ---------------------------------------------------------------------------

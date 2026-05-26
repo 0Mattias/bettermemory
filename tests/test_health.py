@@ -4,7 +4,7 @@ HealthReport."""
 from __future__ import annotations
 
 import json
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
@@ -444,6 +444,250 @@ def test_curation_counts_since_filters_endorsement_debt_to_post_boundary() -> No
     )
     assert absolute["endorsement_debt"] == 1
     assert delta["endorsement_debt"] == 0
+
+
+# ---------------------------------------------------------------------------
+# silent_miss_cutoff — additive escape hatch for pre-fix telemetry
+# ---------------------------------------------------------------------------
+
+
+def test_silent_miss_cutoff_drops_pre_cutoff_misses_in_compute_health() -> None:
+    """A `silent_miss_cutoff` event with cutoff_ts T drops `search_miss`
+    events at ts<T from both numerator and denominator. Post-T events
+    survive."""
+    pre = _event("search_miss", ts=_utc(2026, 4, 1))
+    post = _event("search_miss", ts=_utc(2026, 4, 20))
+    cutoff = _event(
+        "silent_miss_cutoff",
+        ts=_utc(2026, 4, 10),
+        cutoff_ts=_utc(2026, 4, 10).isoformat().replace("+00:00", "Z"),
+    )
+    report = compute_health([], [pre, post, cutoff], now=_utc(2026, 5, 1))
+    assert report.silent_misses.miss_total == 1
+
+
+def test_silent_miss_cutoff_drops_pre_cutoff_audited_in_compute_health() -> None:
+    """The denominator (`turn_audited`) is filtered too — filtering only
+    the numerator would skew the rate (low miss / high audited)."""
+    pre_audit = _event("turn_audited", ts=_utc(2026, 4, 1))
+    post_audit = _event("turn_audited", ts=_utc(2026, 4, 20))
+    cutoff = _event(
+        "silent_miss_cutoff",
+        ts=_utc(2026, 4, 10),
+        cutoff_ts=_utc(2026, 4, 10).isoformat().replace("+00:00", "Z"),
+    )
+    report = compute_health([], [pre_audit, post_audit, cutoff], now=_utc(2026, 5, 1))
+    assert report.silent_misses.audited_total == 1
+
+
+def test_silent_miss_cutoff_latest_wins() -> None:
+    """When multiple cutoff events exist the rollup honors the newest
+    `cutoff_ts`, not the first or the last in log order. Older cutoffs
+    cannot un-shrink the window an earlier extension established."""
+    miss_a = _event("search_miss", ts=_utc(2026, 4, 5))
+    miss_b = _event("search_miss", ts=_utc(2026, 4, 15))
+    miss_c = _event("search_miss", ts=_utc(2026, 4, 25))
+    early_cutoff = _event(
+        "silent_miss_cutoff",
+        ts=_utc(2026, 4, 10),
+        cutoff_ts=_utc(2026, 4, 10).isoformat().replace("+00:00", "Z"),
+    )
+    later_cutoff = _event(
+        "silent_miss_cutoff",
+        ts=_utc(2026, 4, 20),
+        cutoff_ts=_utc(2026, 4, 20).isoformat().replace("+00:00", "Z"),
+    )
+    report = compute_health(
+        [],
+        [miss_a, early_cutoff, miss_b, later_cutoff, miss_c],
+        now=_utc(2026, 5, 1),
+    )
+    assert report.silent_misses.miss_total == 1
+
+
+def test_silent_miss_cutoff_ignores_older_value_after_newer_seen() -> None:
+    """A cutoff event written after a newer cutoff event cannot shrink
+    the window — the rollup keeps the max `cutoff_ts` it has ever
+    observed in the log, regardless of arrival order."""
+    miss_a = _event("search_miss", ts=_utc(2026, 4, 5))
+    miss_b = _event("search_miss", ts=_utc(2026, 4, 15))
+    newer_first = _event(
+        "silent_miss_cutoff",
+        ts=_utc(2026, 4, 18),
+        cutoff_ts=_utc(2026, 4, 20).isoformat().replace("+00:00", "Z"),
+    )
+    older_later = _event(
+        "silent_miss_cutoff",
+        ts=_utc(2026, 4, 21),
+        cutoff_ts=_utc(2026, 4, 10).isoformat().replace("+00:00", "Z"),
+    )
+    report = compute_health(
+        [],
+        [miss_a, newer_first, miss_b, older_later],
+        now=_utc(2026, 5, 1),
+    )
+    # max cutoff is 2026-04-20, so both miss_a (04-05) and miss_b
+    # (04-15) are filtered out.
+    assert report.silent_misses.miss_total == 0
+
+
+def test_silent_miss_cutoff_ignored_when_malformed() -> None:
+    """A cutoff event with a non-parseable `cutoff_ts` is silently
+    dropped — the rollup falls through to the pre-cutoff counting
+    behavior rather than failing the whole health report."""
+    miss = _event("search_miss", ts=_utc(2026, 4, 1))
+    junk_cutoff = _event(
+        "silent_miss_cutoff",
+        ts=_utc(2026, 4, 10),
+        cutoff_ts="not-a-timestamp",
+    )
+    no_cutoff_field = _event("silent_miss_cutoff", ts=_utc(2026, 4, 10))
+    report = compute_health(
+        [], [miss, junk_cutoff, no_cutoff_field], now=_utc(2026, 5, 1)
+    )
+    assert report.silent_misses.miss_total == 1
+
+
+def test_silent_miss_cutoff_no_op_without_cutoff_event() -> None:
+    """Backwards-compat: stores with no `silent_miss_cutoff` events in
+    their log behave exactly as before — every `search_miss` and
+    `turn_audited` event counts."""
+    misses = [
+        _event("search_miss", ts=_utc(2026, 4, 1)),
+        _event("search_miss", ts=_utc(2026, 4, 20)),
+    ]
+    audits = [
+        _event("turn_audited", ts=_utc(2026, 4, 1)),
+        _event("turn_audited", ts=_utc(2026, 4, 20)),
+    ]
+    report = compute_health([], misses + audits, now=_utc(2026, 5, 1))
+    assert report.silent_misses.miss_total == 2
+    assert report.silent_misses.audited_total == 2
+
+
+def test_silent_miss_cutoff_filters_curation_counts_too() -> None:
+    """The scope-overview fast helper honors the same cutoff as
+    `compute_health`. Without this, the session-start
+    `curation_pending.silent_misses` count and the deep health report
+    would disagree on the same store."""
+    pre = _event("search_miss", ts=_utc(2026, 4, 1))
+    post = _event("search_miss", ts=_utc(2026, 4, 20))
+    cutoff = _event(
+        "silent_miss_cutoff",
+        ts=_utc(2026, 4, 10),
+        cutoff_ts=_utc(2026, 4, 10).isoformat().replace("+00:00", "Z"),
+    )
+    counts = curation_counts([], [pre, post, cutoff], now=_utc(2026, 5, 1))
+    assert counts["silent_misses"] == 1
+
+
+def test_silent_miss_cutoff_drops_numerator_and_denominator_together() -> None:
+    """Both `search_miss` and `turn_audited` are filtered from the SAME
+    event log so the miss-rate metric doesn't skew. The two single-axis
+    tests above pin each kind in isolation; this one pins the joint
+    behavior — a regression that filtered only one side would still
+    pass the per-kind tests but fail this one."""
+    pre_audit = _event("turn_audited", ts=_utc(2026, 4, 1))
+    pre_miss = _event("search_miss", ts=_utc(2026, 4, 2))
+    post_audit = _event("turn_audited", ts=_utc(2026, 4, 20))
+    post_miss = _event("search_miss", ts=_utc(2026, 4, 21))
+    cutoff = _event(
+        "silent_miss_cutoff",
+        ts=_utc(2026, 4, 10),
+        cutoff_ts=_utc(2026, 4, 10).isoformat().replace("+00:00", "Z"),
+    )
+    report = compute_health(
+        [],
+        [pre_audit, pre_miss, post_audit, post_miss, cutoff],
+        now=_utc(2026, 5, 1),
+    )
+    # Both buckets must drop the pre-cutoff event; the rate stays at
+    # 1/1 instead of skewing to 1/2 (miss kept, audit dropped) or
+    # 2/1 (audit kept, miss dropped).
+    assert report.silent_misses.miss_total == 1
+    assert report.silent_misses.audited_total == 1
+
+
+def test_silent_miss_cutoff_keeps_events_at_exact_boundary() -> None:
+    """`_count_post_cutoff` uses `ts >= cutoff` — an event whose ts is
+    exactly the cutoff is kept. Flipping the inequality to `>` would
+    silently change semantics without surfacing in the other tests
+    (they all use strictly-pre or strictly-post timestamps)."""
+    cutoff_at = _utc(2026, 4, 10)
+    one_second_before = cutoff_at - timedelta(seconds=1)
+    miss_at_boundary = _event("search_miss", ts=cutoff_at)
+    audit_at_boundary = _event("turn_audited", ts=cutoff_at)
+    miss_before = _event("search_miss", ts=one_second_before)
+    audit_before = _event("turn_audited", ts=one_second_before)
+    cutoff = _event(
+        "silent_miss_cutoff",
+        ts=cutoff_at,
+        cutoff_ts=cutoff_at.isoformat().replace("+00:00", "Z"),
+    )
+    report = compute_health(
+        [],
+        [miss_at_boundary, audit_at_boundary, miss_before, audit_before, cutoff],
+        now=_utc(2026, 5, 1),
+    )
+    # The boundary events are kept; the strictly-pre ones are dropped.
+    assert report.silent_misses.miss_total == 1
+    assert report.silent_misses.audited_total == 1
+
+
+def test_silent_miss_cutoff_latest_wins_filters_audited_side_too() -> None:
+    """The latest-cutoff-wins tests above only assert on the miss side.
+    A bug where `compute_health` picked the max cutoff for `search_miss`
+    but the first-seen cutoff for `turn_audited` would slip through —
+    this test pins that both sides resolve to the SAME cutoff value."""
+    audit_a = _event("turn_audited", ts=_utc(2026, 4, 5))
+    audit_b = _event("turn_audited", ts=_utc(2026, 4, 15))
+    audit_c = _event("turn_audited", ts=_utc(2026, 4, 25))
+    early_cutoff = _event(
+        "silent_miss_cutoff",
+        ts=_utc(2026, 4, 10),
+        cutoff_ts=_utc(2026, 4, 10).isoformat().replace("+00:00", "Z"),
+    )
+    later_cutoff = _event(
+        "silent_miss_cutoff",
+        ts=_utc(2026, 4, 20),
+        cutoff_ts=_utc(2026, 4, 20).isoformat().replace("+00:00", "Z"),
+    )
+    report = compute_health(
+        [],
+        [audit_a, early_cutoff, audit_b, later_cutoff, audit_c],
+        now=_utc(2026, 5, 1),
+    )
+    # Only audit_c (04-25) survives the 04-20 cutoff. Pinning audited
+    # specifically — the miss-side equivalent test already exists.
+    assert report.silent_misses.audited_total == 1
+
+
+def test_silent_miss_cutoff_resolved_globally_under_since_delta() -> None:
+    """`curation_counts(since=...)` filters event walk by `--since`, but
+    `silent_miss_cutoff` events are global markers — their effect must
+    apply even if the cutoff event itself falls below the delta window.
+    Without this exemption, a delta run would drop the cutoff and the
+    rollup would over-count pre-cutoff misses."""
+    # Cutoff written long ago, well before the `since` boundary.
+    cutoff = _event(
+        "silent_miss_cutoff",
+        ts=_utc(2026, 1, 1),
+        cutoff_ts=_utc(2026, 4, 10).isoformat().replace("+00:00", "Z"),
+    )
+    # Two misses in the delta window — one pre-cutoff, one post-cutoff.
+    pre = _event("search_miss", ts=_utc(2026, 4, 5))
+    post = _event("search_miss", ts=_utc(2026, 4, 20))
+
+    counts = curation_counts(
+        [],
+        [cutoff, pre, post],
+        now=_utc(2026, 5, 1),
+        since=_utc(2026, 4, 1),
+    )
+    # The cutoff must apply — only the post-cutoff miss counts.
+    # Without the exemption, the cutoff would be silently dropped and
+    # both misses (pre and post) would count as 2.
+    assert counts["silent_misses"] == 1
 
 
 # ---------------------------------------------------------------------------
@@ -1759,3 +2003,75 @@ def test_endorsement_debt_to_dict_shape() -> None:
     assert payload["endorsement_debt"]["total"] == 0
     assert payload["endorsement_debt"]["rows"] == []
     assert payload["endorsement_debt"]["min_retrievals"] >= 1
+
+
+# ---------------------------------------------------------------------------
+# Registry-vs-handler-methods parity for `_StatsAccumulator` (Class 7 —
+# closed by this commit).
+#
+# `_StatsAccumulator._HANDLERS` (`health.py:833`) is a class-level
+# `dict[str, Callable]` that routes each event `kind` to a sibling
+# `_handle_<kind>` instance method. `handle_event` (`:651`) consumes the
+# table by `_HANDLERS.get(kind)` and `handler is not None` — events
+# whose kind is missing from the table are silently dropped (the
+# fallback is `if handler is not None`, NOT `else: raise`).
+#
+# The two enumerations MUST agree:
+#
+#   - Registry-only (key without method): would crash on first event of
+#     that kind with `AttributeError` when the stored callable is
+#     dereferenced — loud, but later than necessary.
+#   - Method-only (sibling `_handle_*` method without registry entry):
+#     SILENT — `handle_event` no-ops on the kind, the health rollup
+#     drops the metric, and the contributor's "I added the handler"
+#     belief survives until someone manually validates the rollup. This
+#     is the bad direction: tracked-metric drift with no test failure.
+#
+# Hazard tier: medium (silent metric degradation on the dispatch-arm
+# side; loud-but-late on the registry-only side). The mapping is
+# 1:1 with no renaming (key `"foo"` maps to method `_handle_foo`) so
+# the `name[len('_handle_'):]` strip is faithful.
+#
+# Note: `_HANDLERS` lives INSIDE the `_StatsAccumulator` class (not as
+# a module-level constant) — the table is built once per class rather
+# than per `handle_event` call. The methods are bound to `self` via the
+# `handler(self, ev)` call site in `handle_event`. Importing via the
+# class attribute (`_StatsAccumulator._HANDLERS`) rather than module
+# scope is the correct discovery path.
+#
+# Negative-control verified at commit time (see commit message for
+# detail).
+# ---------------------------------------------------------------------------
+
+
+def test_handlers_table_matches_handle_methods() -> None:
+    """Every `_handle_<kind>` method on `_StatsAccumulator` MUST be
+    wired into `_StatsAccumulator._HANDLERS`, and vice versa.
+
+    Drift on the method-only side is the silent-bad direction: a
+    contributor adds `_handle_remove` for a new event kind and forgets
+    the `"remove": _handle_remove` table entry — `handle_event` silently
+    drops the event (`if handler is not None:`), the health rollup loses
+    the metric, and no test fails. Drift on the registry-only side
+    crashes loudly on first event of that kind (`AttributeError` on the
+    stored callable) but later than necessary.
+
+    Closes Class 7 (same-file string-key registry-dict vs sequential
+    dispatch-arm parity) from the tick-25 Branch B audit."""
+    from bettermemory.health import _StatsAccumulator
+
+    handler_methods = {
+        name[len("_handle_") :]
+        for name in dir(_StatsAccumulator)
+        if name.startswith("_handle_")
+    }
+    registry_keys = set(_StatsAccumulator._HANDLERS)
+    assert registry_keys == handler_methods, (
+        "_StatsAccumulator._HANDLERS keys / _handle_* methods drifted; "
+        "see health.py:_StatsAccumulator._HANDLERS (the dispatch table) "
+        "and the sibling _handle_* methods on the same class. "
+        f"registry-only={registry_keys - handler_methods} "
+        "(would AttributeError on first event of that kind); "
+        f"methods-only={handler_methods - registry_keys} "
+        "(SILENTLY no-ops in handle_event — health rollup loses the metric)."
+    )

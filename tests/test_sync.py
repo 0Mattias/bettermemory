@@ -15,6 +15,13 @@ from pathlib import Path
 import pytest
 
 from bettermemory import sync
+from bettermemory.doctor import DOCTOR_PROBE_FILENAME
+from bettermemory.events import EVENT_LOG_FILENAME
+from bettermemory.index import INDEX_FILENAME
+from bettermemory.semantic import (
+    EMBEDDING_FILENAME_PREFIX,
+    EMBEDDING_FILENAME_SUFFIX,
+)
 from bettermemory.store import Store
 
 
@@ -516,4 +523,70 @@ def test_pull_uses_no_tags(
     assert pull_calls, f"no pull subcommand in captured args: {captured_args}"
     assert "--no-tags" in pull_calls[0], (
         f"`git pull` missing --no-tags: {pull_calls[0]}"
+    )
+
+
+# ---------------------------------------------------------------------------
+# Filename-constant cross-module parity (Class 6 — closed by this commit).
+#
+# `_GITIGNORE_LINES` in `sync.py` enumerates the regenerable / transient
+# filenames the runtime writes alongside the canonical markdown store —
+# the FTS5 index (`.index.sqlite` + its `-shm` / `-wal` sidecars), the
+# event log (`.events.jsonl` + rotated `.events.jsonl.*.gz`), the
+# embedding cache (`.embeddings.<safe>.npz`), and the doctor probe
+# (`.doctor-probe`). Each filename is also defined as a canonical
+# constant in the module that *writes* the file:
+#
+#   - `events.py:EVENT_LOG_FILENAME`            → `.events.jsonl`
+#   - `index.py:INDEX_FILENAME`                 → `.index.sqlite`
+#   - `semantic.py:EMBEDDING_FILENAME_PREFIX`   → `.embeddings.`
+#     `semantic.py:EMBEDDING_FILENAME_SUFFIX`   → `.npz`
+#   - `doctor.py:DOCTOR_PROBE_FILENAME`         → `.doctor-probe`
+#
+# Hazard: a future rename of any canonical filename constant updates
+# the writer but, prior to this commit, would leave the sync gitignore
+# referring to a stale literal — silently checking the newly-named
+# regenerable file into the user's sync repo. Class 6 in the
+# tick-23 Branch B audit.
+#
+# Fix shape: `sync.py` now IMPORTS the constants instead of hardcoding
+# the literals; this guard asserts the constant values actually appear
+# in `_GITIGNORE_LINES`, so a future contributor who imports the
+# constant but accidentally drops it from the list still trips the
+# pin.
+#
+# Negative-controls verified at commit time (see commit message for
+# detail).
+# ---------------------------------------------------------------------------
+
+
+def test_gitignore_lines_include_canonical_filename_constants() -> None:
+    """`_GITIGNORE_LINES` (`sync.py`) MUST include the canonical
+    filename constants from the modules that write those files.
+    Renaming a constant updates the writer but, without this guard,
+    silently leaves the gitignore referring to a stale literal — and
+    the now-tracked regenerable file lands in the user's sync repo.
+
+    Closes Class 6 (filename-constant cross-module parity) from the
+    tick-23 Branch B audit."""
+    assert INDEX_FILENAME in sync._GITIGNORE_LINES, (
+        f"sync._GITIGNORE_LINES missing INDEX_FILENAME "
+        f"({INDEX_FILENAME!r}); see sync.py:_GITIGNORE_LINES"
+    )
+    assert EVENT_LOG_FILENAME in sync._GITIGNORE_LINES, (
+        f"sync._GITIGNORE_LINES missing EVENT_LOG_FILENAME "
+        f"({EVENT_LOG_FILENAME!r}); see sync.py:_GITIGNORE_LINES"
+    )
+    assert DOCTOR_PROBE_FILENAME in sync._GITIGNORE_LINES, (
+        f"sync._GITIGNORE_LINES missing DOCTOR_PROBE_FILENAME "
+        f"({DOCTOR_PROBE_FILENAME!r}); see sync.py:_GITIGNORE_LINES"
+    )
+    # Embedding cache is a glob; assert it was built from the lifted
+    # prefix/suffix constants. A rename of either half without
+    # updating the sync glob would strand the rebuilt cache in git.
+    embedding_glob = f"{EMBEDDING_FILENAME_PREFIX}*{EMBEDDING_FILENAME_SUFFIX}"
+    assert embedding_glob in sync._GITIGNORE_LINES, (
+        f"sync._GITIGNORE_LINES missing embedding-cache glob "
+        f"({embedding_glob!r}) built from "
+        f"semantic.EMBEDDING_FILENAME_PREFIX / SUFFIX"
     )

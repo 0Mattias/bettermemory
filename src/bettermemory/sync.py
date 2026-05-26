@@ -52,6 +52,10 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from ._fsutil import flock_excl
+from .doctor import DOCTOR_PROBE_FILENAME
+from .events import EVENT_LOG_FILENAME
+from .index import INDEX_FILENAME
+from .semantic import EMBEDDING_FILENAME_PREFIX, EMBEDDING_FILENAME_SUFFIX
 
 # Coarse store-wide lock for push/pull. The git operations the sync
 # wrapper invokes (`git add -A`, `git commit`, `git pull --rebase`)
@@ -74,14 +78,17 @@ log = logging.getLogger("bettermemory.sync")
 # `git log` over the store should show.
 _GITIGNORE_LINES = [
     "# bettermemory: regenerable / transient — never check in",
-    ".index.sqlite",
-    ".index.sqlite-shm",
-    ".index.sqlite-wal",
-    ".events.jsonl",
-    ".events.jsonl.*.gz",
-    ".embeddings.*.npz",
+    INDEX_FILENAME,
+    # SQLite WAL/SHM sidecar files for the same index DB. Suffixes are
+    # SQLite-side, not bettermemory-side, so they're concatenated here
+    # rather than living as their own module-level constants.
+    f"{INDEX_FILENAME}-shm",
+    f"{INDEX_FILENAME}-wal",
+    EVENT_LOG_FILENAME,
+    f"{EVENT_LOG_FILENAME}.*.gz",
+    f"{EMBEDDING_FILENAME_PREFIX}*{EMBEDDING_FILENAME_SUFFIX}",
     "*.lock",
-    ".doctor-probe",
+    DOCTOR_PROBE_FILENAME,
 ]
 
 

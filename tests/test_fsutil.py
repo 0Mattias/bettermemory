@@ -5,16 +5,27 @@ bounded-read helpers are new in 2.6.4 and are the single point of
 enforcement for the byte-vs-char and unbounded-read defects the 2.6.x
 audit cycle keeps surfacing — the tests pin the contract explicitly so
 the next caller can't re-derive a broken cap.
+
+The ``TestFlockWindows`` class exercises the ``_flock_windows`` branch
+of ``flock_excl`` on POSIX hosts by injecting a fake ``msvcrt`` module
+into ``sys.modules``. The Windows branch is ``# pragma: no cover`` on
+the POSIX CI host and Windows CI is currently aspirational, so these
+mocks are the only regression coverage we have for the retry, unlock-
+symmetry, and env-var-timeout discipline of that path.
 """
 
 from __future__ import annotations
 
+import contextlib
 import io
 import os
+import sys
+import types
 from pathlib import Path
 
 import pytest
 
+from bettermemory import _fsutil
 from bettermemory._fsutil import (
     bounded_read,
     bounded_stream_read,
@@ -185,3 +196,405 @@ class TestBoundedStreamRead:
             assert result == b"hello from fifo"
         finally:
             os.waitpid(pid, 0)
+
+
+# ---------------------------------------------------------------------------
+# Windows flock branch — platform-mocked
+# ---------------------------------------------------------------------------
+#
+# ``_flock_windows`` is the ``msvcrt.locking``-based fallback used when
+# ``sys.platform == "win32"`` (see ``flock_excl``). It is gated by the
+# `# pragma: no cover` marker because POSIX CI cannot exercise it, and
+# Windows CI is currently aspirational. The tests below inject a fake
+# ``msvcrt`` module into ``sys.modules`` so the branch runs end-to-end
+# on macOS / Linux dev boxes: every call to ``msvcrt.locking`` is
+# observable, the retry / backoff loop runs against real ``time.monotonic``
+# (with ``time.sleep`` shimmed to a no-op for speed), and the env-var
+# parsing is exercised by mutating ``BETTERMEMORY_FLOCK_TIMEOUT`` and
+# observing the next acquisition's behaviour.
+#
+# These tests do NOT need ``@pytest.mark.skipif(win32)`` — the whole
+# point of the fake-``msvcrt`` posture is that the branch is testable
+# from any host, and a future Windows CI matrix run will exercise the
+# real ``msvcrt`` end-to-end as a belt-and-suspenders complement.
+
+
+class _FakeMsvcrt(types.ModuleType):
+    """Minimal stand-in for the real Windows ``msvcrt`` module.
+
+    Records every ``locking`` call as ``(fd, mode, nbytes)``. The
+    ``fail_first`` counter controls how many initial ``LK_NBLCK``
+    attempts raise ``OSError`` (the Windows "contention" signal) before
+    the next call succeeds. ``LK_UNLCK`` calls always succeed and are
+    recorded for the symmetry assertions.
+    """
+
+    # The exact integer values don't matter — production code references
+    # them by attribute, not by value — but they must be distinct so the
+    # call-log assertions can distinguish lock from unlock.
+    LK_NBLCK = 1
+    LK_UNLCK = 2
+
+    def __init__(self, fail_first: int = 0, always_fail: bool = False) -> None:
+        super().__init__("msvcrt")
+        self.calls: list[tuple[int, int, int]] = []
+        self._fail_first = fail_first
+        self._always_fail = always_fail
+        self._lock_attempts = 0
+
+    def locking(self, fd: int, mode: int, nbytes: int) -> None:
+        self.calls.append((fd, mode, nbytes))
+        if mode == self.LK_NBLCK:
+            self._lock_attempts += 1
+            if self._always_fail or self._lock_attempts <= self._fail_first:
+                # Real msvcrt raises OSError on contention with errno
+                # EDEADLOCK/EACCES depending on the host. Production
+                # catches bare ``OSError``, so the errno detail is not
+                # load-bearing for this contract.
+                raise OSError("simulated lock contention")
+        # LK_UNLCK is always a no-op in the fake; the real msvcrt also
+        # succeeds in the common path.
+
+    @property
+    def lock_attempts(self) -> int:
+        return self._lock_attempts
+
+
+@contextlib.contextmanager
+def _drive(gen):
+    """Run a bare generator through its single yield as a context manager.
+
+    ``_flock_windows`` is intentionally a plain generator (so the
+    POSIX branch in ``flock_excl`` can ``yield from`` it without an
+    extra layer of indirection). Tests need the same shape — enter,
+    body, exit — so we wrap it here rather than monkeying with
+    ``flock_excl`` itself.
+    """
+    try:
+        next(gen)
+        yield
+    finally:
+        with contextlib.suppress(StopIteration):
+            next(gen)
+
+
+@pytest.fixture
+def fake_msvcrt(monkeypatch: pytest.MonkeyPatch) -> _FakeMsvcrt:
+    """Install a fresh ``_FakeMsvcrt`` in ``sys.modules`` and reset the
+    one-shot ``_FLOCK_WARNED`` flag so warning emission is observable
+    per test."""
+    fake = _FakeMsvcrt()
+    monkeypatch.setitem(sys.modules, "msvcrt", fake)
+    monkeypatch.setattr(_fsutil, "_FLOCK_WARNED", False)
+    # ``time.sleep`` would otherwise burn real wall-clock seconds during
+    # the retry-loop tests. Real ``time.monotonic`` is kept so the
+    # deadline arithmetic in ``_flock_windows`` still behaves
+    # realistically; the loop just doesn't actually sleep.
+    monkeypatch.setattr("time.sleep", lambda _s: None)
+    return fake
+
+
+class TestFlockWindows:
+    def test_acquires_on_first_attempt_and_releases_symmetrically(
+        self, tmp_path: Path, fake_msvcrt: _FakeMsvcrt
+    ) -> None:
+        """Happy path: the lock succeeds on the first try, the body
+        runs, and the release call mirrors the acquire — same fd, same
+        byte count, but ``LK_UNLCK`` instead of ``LK_NBLCK``. This is
+        the contract that keeps real Windows locks from leaking across
+        ``with`` blocks."""
+        lock_path = tmp_path / "thing.md.lock"
+
+        with _drive(_fsutil._flock_windows(lock_path)):
+            # Inside the body, exactly one call (the acquire) must have
+            # been made. The release happens on exit below.
+            assert fake_msvcrt.lock_attempts == 1
+            assert len(fake_msvcrt.calls) == 1
+            assert fake_msvcrt.calls[0][1] == _FakeMsvcrt.LK_NBLCK
+            assert fake_msvcrt.calls[0][2] == 1
+
+        # After the context exits there must be exactly one unlock call,
+        # targeting the same fd and byte range as the acquire.
+        assert len(fake_msvcrt.calls) == 2
+        acquire_fd, acquire_mode, acquire_n = fake_msvcrt.calls[0]
+        release_fd, release_mode, release_n = fake_msvcrt.calls[1]
+        assert acquire_mode == _FakeMsvcrt.LK_NBLCK
+        assert release_mode == _FakeMsvcrt.LK_UNLCK
+        assert acquire_fd == release_fd, (
+            "release must target the same fd as the acquire; a mismatch "
+            "would orphan the lock or unlock a fd we don't hold"
+        )
+        assert acquire_n == release_n == 1, (
+            "release byte-count must mirror the acquire — locking 1 byte "
+            "but unlocking N would either leave bytes locked or attempt "
+            "to unlock bytes we don't own"
+        )
+
+    def test_retries_with_backoff_until_acquired(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Under contention, the loop retries with capped exponential
+        backoff until it succeeds (or hits the timeout). Inject six
+        consecutive contention errors and assert: (1) the seventh
+        attempt succeeds, (2) the sleep history shape matches the
+        production discipline — one sleep per failure, monotonically
+        non-decreasing, first sleep >= the documented 5ms initial,
+        last sleep <= the documented 100ms cap.
+
+        A regression that flattened ``backoff = 0.005`` to ``0``,
+        removed the ``* 2`` doubling, or dropped the ``min(..., 0.1)``
+        cap would only show up if the test observed the real sleep
+        durations — counting attempts alone passes for the wrong
+        reason. The list-appending sleep shim is the reusable pattern:
+        ``sleeps: list[float] = []; monkeypatch.setattr(time, "sleep",
+        sleeps.append)`` lets any future test verify timing without
+        burning wall-clock seconds."""
+        import time
+
+        monkeypatch.setattr(_fsutil, "_FLOCK_WARNED", False)
+        monkeypatch.setenv("BETTERMEMORY_FLOCK_TIMEOUT", "30")
+        # Capture every backoff sleep so we can assert on the actual
+        # durations rather than just call counts. Default sleep shim
+        # from ``fake_msvcrt`` fixture is a no-op that throws the
+        # durations away; this test owns its own shim instead.
+        sleeps: list[float] = []
+        monkeypatch.setattr(time, "sleep", sleeps.append)
+        # Six contention failures gives us a meaningful sample of the
+        # exponential ramp (0.005, 0.01, 0.02, 0.04, 0.08, then capped
+        # at 0.1) without making the test fragile to small production
+        # tweaks of the initial value.
+        fake = _FakeMsvcrt(fail_first=6)
+        monkeypatch.setitem(sys.modules, "msvcrt", fake)
+        lock_path = tmp_path / "thing.md.lock"
+
+        with _drive(_fsutil._flock_windows(lock_path)):
+            assert fake.lock_attempts == 7, (
+                f"expected 6 failures then 1 success = 7 attempts, "
+                f"got {fake.lock_attempts}"
+            )
+            # Calls so far: 6 failed LK_NBLCK + 1 successful LK_NBLCK.
+            # No LK_UNLCK yet — that fires on context exit.
+            assert all(mode == _FakeMsvcrt.LK_NBLCK for _, mode, _ in fake.calls)
+            assert len(fake.calls) == 7
+
+        # Release call appended after the body exits.
+        assert fake.calls[-1][1] == _FakeMsvcrt.LK_UNLCK
+
+        # --- Backoff discipline assertions ----------------------------
+        # One sleep per contention failure (the successful attempt does
+        # not sleep — the loop breaks before the sleep call).
+        assert len(sleeps) == 6, (
+            f"expected one sleep per failed attempt = 6 sleeps, got "
+            f"{len(sleeps)} ({sleeps}). A mismatch means the retry "
+            f"loop either skipped a sleep or slept extra times."
+        )
+        # Monotonically non-decreasing: the backoff grows (then caps
+        # but never shrinks). A regression that removed the ``* 2``
+        # doubling would produce a flat list and trip this.
+        assert all(a <= b for a, b in zip(sleeps, sleeps[1:])), (
+            f"sleeps must be monotonically non-decreasing — production "
+            f"doubles backoff each iteration and caps at 0.1; got {sleeps}"
+        )
+        # First sleep is the production initial backoff (5ms). A
+        # regression flattening ``backoff = 0.005`` to ``0`` would
+        # trip this — even though the attempt count would be unchanged.
+        assert sleeps[0] >= 0.005, (
+            f"first sleep must be >= production initial backoff (0.005s); "
+            f"got {sleeps[0]}. A regression to ``backoff = 0`` would "
+            f"surface here."
+        )
+        # Max sleep stays at the documented 100ms cap. A regression
+        # removing ``min(backoff * 2, 0.1)`` would let the sixth sleep
+        # grow to 0.005 * 2^5 = 0.16 and trip this.
+        assert max(sleeps) <= 0.1, (
+            f"max sleep must respect the documented 100ms cap; got "
+            f"{max(sleeps)}. A regression removing ``min(..., 0.1)`` "
+            f"would surface here as an unbounded ramp."
+        )
+
+    def test_timeout_raises_after_deadline(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """When ``BETTERMEMORY_FLOCK_TIMEOUT`` is exhausted with the
+        lock still contended, the loop raises ``TimeoutError`` rather
+        than spinning forever. We set timeout to 0 so the very first
+        deadline check (after attempt 1) trips, regardless of clock
+        jitter on the host."""
+        monkeypatch.setattr("time.sleep", lambda _s: None)
+        monkeypatch.setattr(_fsutil, "_FLOCK_WARNED", False)
+        # Always-failing fake — every LK_NBLCK call raises.
+        fake = _FakeMsvcrt(always_fail=True)
+        monkeypatch.setitem(sys.modules, "msvcrt", fake)
+        monkeypatch.setenv("BETTERMEMORY_FLOCK_TIMEOUT", "0")
+        lock_path = tmp_path / "thing.md.lock"
+
+        with pytest.raises(TimeoutError, match="could not acquire"):
+            with _drive(_fsutil._flock_windows(lock_path)):
+                pytest.fail("body must not run when acquisition times out")
+
+        # The acquire path tried at least once. No unlock call should
+        # have fired — we never successfully acquired.
+        assert fake.lock_attempts >= 1
+        assert all(mode == _FakeMsvcrt.LK_NBLCK for _, mode, _ in fake.calls)
+
+    def test_env_var_timeout_honors_valid_integer_string(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A valid numeric env-var value is parsed and used as the
+        timeout ceiling. We verify this indirectly: a timeout of 0
+        forces a TimeoutError after one failed attempt, but a timeout
+        of (say) 5 lets the retry loop succeed when the fake yields
+        on attempt 2. The contrast pins env-var influence on the next
+        acquisition."""
+        monkeypatch.setattr("time.sleep", lambda _s: None)
+        monkeypatch.setattr(_fsutil, "_FLOCK_WARNED", False)
+        fake = _FakeMsvcrt(fail_first=1)
+        monkeypatch.setitem(sys.modules, "msvcrt", fake)
+        monkeypatch.setenv("BETTERMEMORY_FLOCK_TIMEOUT", "5")
+        lock_path = tmp_path / "thing.md.lock"
+
+        with _drive(_fsutil._flock_windows(lock_path)):
+            pass
+
+        # One failed attempt + one success = 2 calls before exit; +1
+        # unlock on exit = 3 total. Crucially the loop did NOT
+        # short-circuit to TimeoutError — the env-var was honoured.
+        assert fake.lock_attempts == 2
+        assert len(fake.calls) == 3
+        assert fake.calls[-1][1] == _FakeMsvcrt.LK_UNLCK
+
+    def test_env_var_invalid_string_falls_back_to_default(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A non-numeric ``BETTERMEMORY_FLOCK_TIMEOUT`` must fall back
+        to the documented 30s default — not propagate ``ValueError``,
+        not silently degrade to ``timeout = 0`` (which would instantly
+        time out under any real contention).
+
+        Round-1 fortification proved only ``timeout > 0`` via
+        ``fake.lock_attempts > 1``: with ``time.sleep`` no-op'd and
+        real ``time.monotonic`` ticking on wall-clock, even a
+        regression to ``timeout = 0.001`` (or any small nonzero) would
+        burn through thousands of attempts before the deadline tripped
+        and still pass. The docstring's claim of "distinguishing the
+        real 30s default from an accidental zero" overpromised against
+        what the count assertion actually enforced.
+
+        This round patches ``time.monotonic`` to a deterministic
+        per-call counter (``0, 1, 2, 3, ...``). With that counter,
+        the deadline arithmetic in ``_flock_windows`` becomes exact:
+
+        * First ``time.monotonic()`` call sets ``deadline = 0 + timeout``.
+        * Each subsequent ``time.monotonic()`` (the post-attempt
+          deadline check) returns the next integer.
+        * The loop trips ``TimeoutError`` on the first attempt whose
+          deadline check returns ``>= timeout``.
+
+        So with ``timeout = 30`` we expect EXACTLY 30 attempts — the
+        check at attempt 30 returns 30, satisfies ``30 >= 30``, and
+        raises. A regression to ``timeout = 0.001`` would exit after
+        attempt 1 (check returns 1, ``1 >= 0.001``, raise). A
+        regression to ``timeout = 0`` would also give 1. The exact
+        ``== 30`` assertion below pins the documented default rather
+        than the weaker "is positive" property.
+
+        ``time.sleep`` is still no-op'd because the deterministic
+        counter makes real sleep arithmetic irrelevant (and slow)."""
+        import time
+
+        monkeypatch.setattr("time.sleep", lambda _s: None)
+        monkeypatch.setattr(_fsutil, "_FLOCK_WARNED", False)
+        # Deterministic monotonic counter: 0, 1, 2, 3, ... Each call
+        # ticks the counter exactly one unit. The production deadline
+        # arithmetic (``deadline = time.monotonic() + timeout`` then
+        # ``time.monotonic() >= deadline`` per failed attempt) then
+        # becomes a function of attempt count, not wall-clock.
+        monotonic_counter = iter(range(0, 10_000))
+        monkeypatch.setattr(time, "monotonic", lambda: next(monotonic_counter))
+        # Always-failing fake forces the deadline arithmetic to be the
+        # only thing that can end the loop. With a no-failure fake we
+        # exit on attempt 1 regardless of what ``timeout`` got parsed
+        # to — the original weakness.
+        fake = _FakeMsvcrt(always_fail=True)
+        monkeypatch.setitem(sys.modules, "msvcrt", fake)
+        monkeypatch.setenv("BETTERMEMORY_FLOCK_TIMEOUT", "not-a-number")
+        lock_path = tmp_path / "thing.md.lock"
+
+        # If the helper propagated ValueError from float() this would
+        # explode out of the context-manager entry. The fallback path
+        # raises TimeoutError instead (eventually) — that's the
+        # contract under always-fail.
+        with pytest.raises(TimeoutError, match="could not acquire"):
+            with _drive(_fsutil._flock_windows(lock_path)):
+                pytest.fail("body must not run when acquisition times out")
+
+        # Exact attempt count pins the documented 30s default. The
+        # deterministic monotonic counter makes this precise: with
+        # ``timeout = 30`` the loop's deadline is set from
+        # ``time.monotonic() = 0`` (first call), each failed-attempt
+        # check ticks the counter (``1, 2, ..., 30``), and the loop
+        # raises when the check first returns ``>= 30`` — which happens
+        # on attempt 30 (the 31st ``time.monotonic()`` call total).
+        #
+        # Regression matrix this catches:
+        #   timeout = 30     → attempts == 30  (current, passes)
+        #   timeout = 0      → attempts == 1   (instant trip)
+        #   timeout = 0.001  → attempts == 1   (counter int=1 >= 0.001)
+        #   timeout = 5      → attempts == 5   (wrong default value)
+        #   timeout = 60     → attempts == 60  (wrong default value)
+        assert fake.lock_attempts == 30, (
+            f"expected EXACTLY 30 lock attempts under the documented "
+            f"30s default ceiling with a deterministic monotonic "
+            f"counter (one tick per call); got {fake.lock_attempts}. "
+            f"A mismatch means the env-var fallback did not parse to "
+            f"30.0 — could be 0 (instant trip → 1 attempt), a small "
+            f"nonzero (still 1 attempt under integer-tick counter), "
+            f"or a different default value entirely (5, 60, etc)."
+        )
+
+    def test_env_var_change_takes_effect_on_next_acquisition(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """The env-var is re-read on every call to ``_flock_windows``
+        (not cached at module load). Mutating it between two
+        acquisitions on the same lockfile must change the second call's
+        behaviour. This catches a subtle regression where someone
+        caches the value at import time and breaks operator-runtime
+        reconfiguration."""
+        monkeypatch.setattr("time.sleep", lambda _s: None)
+        monkeypatch.setattr(_fsutil, "_FLOCK_WARNED", False)
+        # Always-failing fake — every LK_NBLCK call raises so the
+        # timeout value is the only thing that controls success/failure.
+        fake = _FakeMsvcrt(always_fail=True)
+        monkeypatch.setitem(sys.modules, "msvcrt", fake)
+        lock_path = tmp_path / "thing.md.lock"
+
+        # First call: timeout 0 → TimeoutError after one attempt.
+        monkeypatch.setenv("BETTERMEMORY_FLOCK_TIMEOUT", "0")
+        with pytest.raises(TimeoutError):
+            with _drive(_fsutil._flock_windows(lock_path)):
+                pytest.fail("body must not run on first call")
+        first_call_attempts = fake.lock_attempts
+        assert first_call_attempts >= 1
+
+        # Second call: same fake (still always failing), but now we
+        # flip the env-var to a tiny-but-nonzero ceiling. If the
+        # helper had cached the prior value of 0, this would still
+        # raise on attempt 1; instead it must enter at least one retry
+        # before raising — proving the env-var is re-read.
+        monkeypatch.setenv("BETTERMEMORY_FLOCK_TIMEOUT", "0.05")
+        with pytest.raises(TimeoutError):
+            with _drive(_fsutil._flock_windows(lock_path)):
+                pytest.fail("body must not run on second call either")
+
+        # Second call did at least one additional attempt (more than
+        # the first call's single attempt), proving the new timeout
+        # was honoured rather than the prior cached 0.
+        second_call_attempts = fake.lock_attempts - first_call_attempts
+        assert second_call_attempts >= 2, (
+            f"second call should have retried more than once under a "
+            f"0.05s ceiling (with sleep no-op'd, retries are essentially "
+            f"free until time.monotonic crosses the deadline); got "
+            f"{second_call_attempts} attempts. If this is 1, the env-var "
+            f"was cached from the first call rather than re-read."
+        )

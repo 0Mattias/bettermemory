@@ -42,13 +42,15 @@ This is the dead-letter detector. A low rate (mostly auto-applied) means nothing
 
 ### `silent_miss_rate`
 
-> Of turns where the configured ranker would have surfaced a high-relevance hit, what fraction had **no** `memory_search` or `memory_show` call?
+> Of turns where the configured ranker would have surfaced a high-relevance hit, what fraction had **no** `memory_search`, `memory_show`, or `memory_list` call?
 
 Numerator: `search_miss` events emitted by `memory_audit_turn`.
 
 Denominator: total audited turns (`turn_audited` events).
 
 This is the opposite failure mode of `endorsement_rate`. A high rate means the model is failing to reach for memory when it should. The threshold rule is versioned (`THRESHOLD_RULE_V1 = "v1_top1_high"`); the event records which rule fired so cross-version comparison stays meaningful.
+
+**Escape hatch for pre-fix events.** When a fix lands that invalidates a batch of historical misses (e.g. the v2.7.3 cwd-suppression change), `bettermemory consolidate --acknowledge-misses-before <ISO_TS>` writes one additive `silent_miss_cutoff` event with `cutoff_ts=<ISO_TS>`. Subsequent `memory_health` / `memory_scope_overview` rollups drop any `turn_audited` *or* `search_miss` events earlier than the cutoff — invalidating both numerator and denominator so the rate isn't skewed. The rollup honors the latest cutoff seen; an earlier cutoff is ignored. Reversible by a later cutoff or by pruning the event manually.
 
 ## The three rates together
 
@@ -70,7 +72,7 @@ LongMemEval is a question-answering benchmark. It scores whether a system, given
 
 The three rates above are complementary: they require an actual deployment with real user-model interaction, and they instrument the loop rather than the QA endpoint. A system can have great LongMemEval recall and a terrible `endorsement_rate` (lots of facts pulled in, model ignores them). It can have great `endorsement_rate` on a tiny memory store but be useless for the questions LongMemEval cares about.
 
-We'll publish bettermemory's LongMemEval numbers once the optional embedding mode lands (see [ROADMAP](../ROADMAP.md)). In the meantime, the three rates above are computable today from any deployment's `.events.jsonl` and don't depend on embeddings.
+bettermemory's LongMemEval numbers will land in the comparative-publication pass on the [roadmap](ROADMAP.md) — the `[embeddings]` extra shipped in 1.0.0 and the lighter `[embeddings-fast]` extra in 2.5.0, so the install-friction blocker for apples-to-apples retrieval comparisons is closed. In the meantime, the three rates above are computable today from any deployment's `.events.jsonl` and don't depend on embeddings.
 
 ## Reference implementation: `bettermemory eval`
 
@@ -78,7 +80,7 @@ We'll publish bettermemory's LongMemEval numbers once the optional embedding mod
 bettermemory eval [--since 30d] [--scope SCOPE] [--min-retrievals N] [--silent-miss-limit N] [--json]
 ```
 
-Shipped in the Unreleased section of the CHANGELOG. Reads
+Shipped in 2.5.0. Reads
 `<store>/.events.jsonl` plus any rotated `.events-*.jsonl.gz` archives
 via `iter_all_events`, joins against the active store, and reports the
 three rates with Wilson 95% confidence intervals. The pure compute
@@ -133,7 +135,7 @@ tool                              count  share
 
 A second mode of `bettermemory eval` that answers a different question: *which MCP tools is the model actually reaching for?* One row per tool with absolute counts and the share of total tool calls. Intended as the empirical input for the roadmap's "trim the MCP surface" decision — tools that haven't been called in months across multiple installs are candidates to move behind a power-user flag.
 
-The event-kind → tool-name map lives in `eval._TOOL_EVENT_KIND_TO_TOOL`. Tools without a dedicated event (today: `memory_health`) surface with a zero count and a "no telemetry" annotation rather than being silently dropped, so the reader can distinguish "this tool is not counted" from "this tool was never called." If a new tool ships and the map isn't updated, the unmapped event kinds surface in their own footer section as a guardrail. Side-effect events (`search_miss`, `pending_expired`) are filtered out — they're consequences of other tool calls rather than tool calls in their own right.
+The event-kind → tool-name map lives in `eval._TOOL_EVENT_KIND_TO_TOOL`. Tools without a dedicated event (today: `memory_health`) surface with a zero count and a "no telemetry" annotation rather than being silently dropped, so the reader can distinguish "this tool is not counted" from "this tool was never called." If a new tool ships and the map isn't updated, the unmapped event kinds surface in their own footer section as a guardrail. Side-effect events (`search_miss`, `pending_expired`, `silent_miss_cutoff`) are filtered out — they're consequences of other tool calls rather than tool calls in their own right. `silent_miss_cutoff` is a CLI admin operation that invalidates stale events; same rationale.
 
 Honours `--since` and `--json`; ignores the rate-mode knobs (`--scope`, `--min-retrievals`, `--silent-miss-limit`) so a shell loop piping the same args into both modes doesn't have to strip them.
 
@@ -187,7 +189,7 @@ Most systems do (1). Few do (2). Almost none do (3). When you're comparing memor
 
 ## Publication plan
 
-The numbers from running this eval against bettermemory's own dogfood usage, plus the same workload re-run against Mem0 (OpenMemory self-host), Anthropic's reference `server-memory`, claude-mem, and agentmemory, will go into a follow-up post: *"What memory actually helped, by the numbers."* If you'd like to contribute a system to the comparison, open an issue with the eval harness output for your system; runnable harness code lives at `tests/eval/` once the CLI ships.
+The numbers from running this eval against bettermemory's own dogfood usage, plus the same workload re-run against Mem0 (OpenMemory self-host), Anthropic's reference `server-memory`, claude-mem, and agentmemory, will go into a follow-up post: *"What memory actually helped, by the numbers."* If you'd like to contribute a system to the comparison, open an issue with the eval harness output for your system; runnable harness code will live at `tests/eval/` when the harness lands.
 
 ## Caveats and open calibration
 

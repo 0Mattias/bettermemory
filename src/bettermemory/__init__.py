@@ -7,8 +7,9 @@ for the consumer-side instructions.
 
 from importlib.metadata import PackageNotFoundError, version as _pkg_version
 
+from .builder import build_server
+from .cli import main
 from .prompts import SYSTEM_PROMPT_ADDENDUM
-from .server import build_server, main
 
 try:
     # Single source of truth: pyproject.toml. Anything else drifts.

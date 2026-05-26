@@ -576,3 +576,33 @@ def test_tombstone_file_is_owner_only(memory_dir: Path) -> None:
     assert len(tombstones) == 1
     mode = tombstones[0].stat().st_mode & 0o777
     assert mode == 0o600, f"tombstone mode is {oct(mode)}, expected 0o600"
+
+
+# ---------------------------------------------------------------------------
+# H13 — `Store.show` alias for MCP API symmetry
+#
+# The MCP surface exposes the read-one operation as `memory_show`. The
+# Python `Store` API names it `load_one`, which is a discoverability
+# foot-gun for anyone adopting the programmatic client — they read the
+# tool-name docs and try `store.show(id)` first. The `show` alias
+# (with `load_one` retained as the canonical name) closes that gap.
+# Round 2 landed the alias; this test pins the behavior.
+# ---------------------------------------------------------------------------
+
+
+def test_store_show_is_an_alias_for_load_one(store: Store) -> None:
+    """`Store.show(id)` exists and returns the same Memory as
+    `Store.load_one(id)`. Pins the MCP-name / Python-name parity."""
+    memory = store.write(content="hello show", scopes=["tools"])
+    # Attribute presence and call equivalence — both must hold.
+    assert hasattr(Store, "show"), (
+        "Store.show is missing — MCP surface exposes `memory_show` but "
+        "the Python API has no matching attribute. Adopters trying the "
+        "programmatic client get an AttributeError instead of the same "
+        "read-one shape they saw in the tool docs."
+    )
+    via_show = store.show(memory.id)
+    via_load = store.load_one(memory.id)
+    assert via_show == via_load
+    assert via_show.id == memory.id
+    assert via_show.body == via_load.body

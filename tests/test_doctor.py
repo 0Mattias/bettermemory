@@ -10,6 +10,7 @@ the host environment under test.
 from __future__ import annotations
 
 import json
+import typing
 from pathlib import Path
 from typing import Any
 
@@ -17,15 +18,22 @@ import pytest
 
 from bettermemory.config import BehaviorConfig, Config, StorageConfig
 from bettermemory.doctor import (
+    CheckStatus,
+    Diagnosis,
     DoctorReport,
+    _check_audit_turn_cadence,
     _check_binary_on_path,
     _check_config_loadable,
+    _check_distinfo_metadata,
     _check_embeddings_extra,
     _check_event_log_writable,
     _check_mcp_client_configs,
     _check_memory_parse_health,
     _check_python_version,
     _check_storage_directory,
+    _discover_site_packages,
+    _EXIT_CODE_BY_STATUS,
+    _STATUS_GLYPH,
     cli_doctor,
     render_json,
     render_text,
@@ -74,13 +82,61 @@ def test_binary_on_path_when_present(monkeypatch: pytest.MonkeyPatch) -> None:
     assert "/usr/local/bin/bettermemory" in diag.message
 
 
-def test_binary_on_path_warns_when_missing(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_binary_on_path_warns_when_missing(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """When the binary isn't on $PATH, doctor warns and emits a generic
+    hint that points at `bettermemory init` / `which bettermemory`.
+    Pre-Round-3 doctor substituted the resolved invocation path into
+    the hint to save the user a lookup; the substitution turned into a
+    footgun on machines with parallel installs (pipx + `uv tool
+    install` + a venv shim — pasting the doctor-resolved path into the
+    MCP config silently pinned a shim the user didn't intend). The
+    resolved path now lives in `details.resolved_path` only — tooling
+    that wants it can read it, but the user-facing hint never
+    pretends to know which shim is canonical."""
+    real_binary = tmp_path / "bettermemory"
+    real_binary.write_text("#!/bin/sh\n", encoding="utf-8")
     monkeypatch.setattr("bettermemory.doctor.shutil.which", lambda _name: None)
-    monkeypatch.setattr("bettermemory.doctor.find_binary", lambda: "/fallback/bm")
+    monkeypatch.setattr("bettermemory.doctor.find_binary", lambda: str(real_binary))
+    # `sys.argv[0]` could be anything in pytest's process — pin it so
+    # the secondary "argv0 is absolute" branch doesn't accidentally fire.
+    monkeypatch.setattr("bettermemory.doctor.sys.argv", ["pytest"])
     diag = _check_binary_on_path()
     assert diag.status == "warn"
     assert diag.fix_hint is not None
-    assert "/fallback/bm" in (diag.fix_hint or "")
+    # The resolved path must NOT appear in the hint — that was the
+    # footgun. It should still be present in details for tooling.
+    assert str(real_binary) not in (diag.fix_hint or "")
+    assert "which bettermemory" in (diag.fix_hint or "") or "init" in (
+        diag.fix_hint or ""
+    )
+    assert (diag.details or {}).get("resolved_path") == str(real_binary)
+
+
+def test_binary_on_path_warn_hint_stays_generic_when_unresolved(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """When `find_binary()` returns the bare `"bettermemory"`
+    last-resort (no `shutil.which`, no absolute `sys.argv[0]` to fall
+    back on), the hint must NOT embed the bare string — that would
+    suggest `bettermemory` is the absolute path. Stay generic and
+    point at `which`."""
+    monkeypatch.setattr("bettermemory.doctor.shutil.which", lambda _name: None)
+    monkeypatch.setattr("bettermemory.doctor.find_binary", lambda: "bettermemory")
+    # Pin argv to a non-bettermemory absolute path so the secondary
+    # branch doesn't fire either.
+    monkeypatch.setattr("bettermemory.doctor.sys.argv", ["/usr/bin/python3"])
+    diag = _check_binary_on_path()
+    assert diag.status == "warn"
+    assert diag.fix_hint is not None
+    hint = diag.fix_hint or ""
+    # Bare "bettermemory" must not appear as a path-shaped substring in
+    # the hint. The hint should suggest looking it up rather than
+    # presenting the unresolved name as the answer.
+    assert "configs: bettermemory" not in hint
+    assert "which bettermemory" in hint or "init" in hint
 
 
 # ---------------------------------------------------------------------------
@@ -212,6 +268,108 @@ def test_event_log_unwritable_fails(tmp_path: Path) -> None:
     if diag.status == "ok":
         pytest.skip("filesystem ignored chmod; cannot exercise unwritable file")
     assert diag.status == "fail"
+
+
+# ---------------------------------------------------------------------------
+# audit_turn_cadence (M-doctor-hook)
+# ---------------------------------------------------------------------------
+
+
+def _write_event(directory: Path, kind: str, *, ts: str, session: str = "s1") -> None:
+    """Append one event line directly to the event log.
+
+    We write raw JSONL rather than going through `events.Recorder` so
+    the test can pin the timestamp without monkey-patching the clock.
+    The `audit_turn_cadence` check reads via `iter_all_events`, which
+    parses the same JSONL.
+    """
+    import json
+
+    log = directory / ".events.jsonl"
+    payload = {"ts": ts, "session": session, "kind": kind}
+    with log.open("a", encoding="utf-8") as f:
+        f.write(json.dumps(payload) + "\n")
+
+
+def test_audit_turn_cadence_empty_dir_is_ok(tmp_path: Path) -> None:
+    """No events at all means we have nothing to compare against;
+    don't false-warn the user on a brand-new install."""
+    diag = _check_audit_turn_cadence(tmp_path)
+    assert diag.status == "ok"
+
+
+def test_audit_turn_cadence_recent_audits_pass(tmp_path: Path) -> None:
+    """Several recent `turn_audited` events across multiple sessions:
+    the hook is firing, nothing to warn about."""
+    from datetime import datetime, timezone
+
+    now_iso = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+    _write_event(tmp_path, "search", ts=now_iso, session="s1")
+    _write_event(tmp_path, "turn_audited", ts=now_iso, session="s1")
+    _write_event(tmp_path, "turn_audited", ts=now_iso, session="s2")
+    diag = _check_audit_turn_cadence(tmp_path)
+    assert diag.status == "ok"
+    assert diag.details["turn_audited_events"] == 2
+
+
+def test_audit_turn_cadence_silent_hook_warns(tmp_path: Path) -> None:
+    """Recent session activity but zero `turn_audited` events: the
+    Stop hook is mis-wired (or absent). Soft warning."""
+    from datetime import datetime, timezone
+
+    now_iso = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+    _write_event(tmp_path, "search", ts=now_iso, session="s1")
+    _write_event(tmp_path, "write", ts=now_iso, session="s1")
+    _write_event(tmp_path, "search", ts=now_iso, session="s2")
+    diag = _check_audit_turn_cadence(tmp_path)
+    assert diag.status == "warn"
+    assert diag.fix_hint is not None
+    assert "Stop hook" in diag.message or "audit-turn" in diag.message
+    # Surface the session count to motivate the warning.
+    assert diag.details["sessions"] == 2
+    assert diag.details["turn_audited_events"] == 0
+
+
+def test_audit_turn_cadence_single_session_does_not_warn(tmp_path: Path) -> None:
+    """Round-3 fix: exactly one session in the 7-day window must NOT
+    fire the warning. The prior heuristic (`n_sessions > 0`) false-
+    positived for weekly-or-less Claude Code users — they had one
+    session in any 7-day window and the next session hadn't happened
+    yet, so the hook hadn't had a Stop trigger to fire on. Reporting
+    "broken hook" in that case is wrong; the right answer is "not
+    enough cadence to tell". Two distinct sessions (one of which
+    completed without producing a turn_audited row) is the real
+    signal."""
+    from datetime import datetime, timezone
+
+    now_iso = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+    _write_event(tmp_path, "search", ts=now_iso, session="lonely")
+    _write_event(tmp_path, "write", ts=now_iso, session="lonely")
+    diag = _check_audit_turn_cadence(tmp_path)
+    assert diag.status == "ok"
+    assert diag.details["sessions"] == 1
+    assert diag.details["turn_audited_events"] == 0
+    # The message should explain why we're not warning yet, not just
+    # silently report ok.
+    assert "1 session" in diag.message or "one session" in diag.message.lower()
+
+
+def test_audit_turn_cadence_only_old_events_skips_warn(tmp_path: Path) -> None:
+    """Events outside the 7-day window don't count — old activity from
+    last month shouldn't trigger a warning today."""
+    from datetime import datetime, timedelta, timezone
+
+    old = (
+        (datetime.now(timezone.utc) - timedelta(days=30))
+        .isoformat()
+        .replace("+00:00", "Z")
+    )
+    _write_event(tmp_path, "search", ts=old, session="s1")
+    _write_event(tmp_path, "write", ts=old, session="s1")
+    diag = _check_audit_turn_cadence(tmp_path)
+    # No events in window -> ok (nothing to check).
+    assert diag.status == "ok"
+    assert diag.details["total_events"] == 0
 
 
 # ---------------------------------------------------------------------------
@@ -351,6 +509,277 @@ def test_mcp_client_configs_skips_files_without_betterentries(
 
 
 # ---------------------------------------------------------------------------
+# distinfo_metadata
+# ---------------------------------------------------------------------------
+
+
+def _make_distinfo(parent: Path, name: str, *, files: dict[str, str]) -> Path:
+    """Build a fake `*.dist-info/` directory under `parent` with the
+    given top-level files. Returns the dist-info path."""
+    d = parent / name
+    d.mkdir()
+    for fname, body in files.items():
+        (d / fname).write_text(body, encoding="utf-8")
+    return d
+
+
+def test_distinfo_metadata_ok_when_no_site_packages() -> None:
+    """An empty discovery list (e.g. embedded interpreter) is treated as
+    "nothing to check" — the check must not warn just because we
+    couldn't find a site-packages dir."""
+    diag = _check_distinfo_metadata(site_packages=[])
+    assert diag.status == "ok"
+    assert "skipping" in diag.message.lower()
+
+
+def test_distinfo_metadata_ok_when_all_have_canonical(tmp_path: Path) -> None:
+    """Healthy dist-info dirs (each with a `METADATA` file) pass
+    silently — no warning even if other files are present."""
+    _make_distinfo(tmp_path, "pkg-1.0.dist-info", files={"METADATA": "Name: pkg\n"})
+    _make_distinfo(
+        tmp_path,
+        "other-2.0.dist-info",
+        files={"METADATA": "Name: other\n", "WHEEL": "ok\n"},
+    )
+    diag = _check_distinfo_metadata(site_packages=[tmp_path])
+    assert diag.status == "ok"
+    assert diag.details["scanned"] == 2
+
+
+def test_distinfo_metadata_warns_on_missing_canonical(tmp_path: Path) -> None:
+    """A dist-info dir with only `METADATA 2` (the iCloud-conflict
+    rename) and no canonical `METADATA` is the failure mode this
+    check exists to catch — warn, name the dir, hint at the iCloud
+    cause, and suggest re-install."""
+    _make_distinfo(
+        tmp_path, "healthy-1.0.dist-info", files={"METADATA": "Name: healthy\n"}
+    )
+    broken = _make_distinfo(
+        tmp_path,
+        "broken-2.0.dist-info",
+        files={"METADATA 2": "Name: broken\n", "WHEEL": "ok\n"},
+    )
+    diag = _check_distinfo_metadata(site_packages=[tmp_path])
+    assert diag.status == "warn"
+    # The healthy dir must NOT be named in the warning.
+    assert "healthy-1.0.dist-info" not in diag.message
+    # The broken one MUST be named.
+    assert "broken-2.0.dist-info" in diag.message
+    # The iCloud-cause hint fires because `METADATA 2` matched the
+    # duplicate regex.
+    assert "iCloud" in diag.message
+    # Fix hint should point at re-install (the safer recovery).
+    assert diag.fix_hint is not None
+    assert (
+        "reinstall" in (diag.fix_hint or "").lower()
+        or "install" in (diag.fix_hint or "").lower()
+    )
+    # `details.broken` should list the broken dir and its duplicates.
+    assert len(diag.details["broken"]) == 1
+    entry = diag.details["broken"][0]
+    assert entry["dist_info"] == str(broken)
+    assert "METADATA 2" in entry["duplicates"]
+
+
+def test_distinfo_metadata_warns_without_icloud_hint_when_no_duplicate(
+    tmp_path: Path,
+) -> None:
+    """A dist-info missing METADATA but with no iCloud-style duplicate
+    (e.g. partial uninstall) still warns, but skips the iCloud-cause
+    sentence — we only claim the cause when the evidence is there."""
+    _make_distinfo(tmp_path, "partial-3.0.dist-info", files={"WHEEL": "ok\n"})
+    diag = _check_distinfo_metadata(site_packages=[tmp_path])
+    assert diag.status == "warn"
+    assert "partial-3.0.dist-info" in diag.message
+    assert "iCloud" not in diag.message  # no duplicate -> no cause hint
+    assert diag.details["broken"][0]["duplicates"] == []
+
+
+def test_distinfo_metadata_warns_on_empty_canonical_file(tmp_path: Path) -> None:
+    """A zero-byte `METADATA` is the same failure mode as a missing
+    one: `importlib.metadata.version()` returns None, which trips the
+    downstream `-32000` MCP crash. The check must treat empty as broken
+    even though the file technically exists."""
+    _make_distinfo(
+        tmp_path, "healthy-1.0.dist-info", files={"METADATA": "Name: healthy\n"}
+    )
+    # Build the broken dir by hand so we can write an empty METADATA
+    # without `_make_distinfo` having to special-case empty strings.
+    broken = tmp_path / "empty-2.0.dist-info"
+    broken.mkdir()
+    (broken / "METADATA").write_bytes(b"")  # zero-byte file
+    diag = _check_distinfo_metadata(site_packages=[tmp_path])
+    assert diag.status == "warn"
+    assert "healthy-1.0.dist-info" not in diag.message
+    assert "empty-2.0.dist-info" in diag.message
+    # Empty file has no iCloud-style duplicate sibling.
+    assert "iCloud" not in diag.message
+    assert len(diag.details["broken"]) == 1
+    assert diag.details["broken"][0]["dist_info"] == str(broken)
+
+
+def test_distinfo_metadata_warns_on_whitespace_only_canonical(
+    tmp_path: Path,
+) -> None:
+    """A `METADATA` containing only whitespace (e.g. `"   \\n   \\n"`
+    from a manual edit or partial sync) passes both `is_file()` and
+    `stat().st_size > 0`, but `importlib.metadata.version()` still
+    returns None because the canonical `Name:` header is absent —
+    the same `-32000` crash downstream. The check must require the
+    `Name:` header, not just a non-zero file size."""
+    _make_distinfo(
+        tmp_path, "healthy-1.0.dist-info", files={"METADATA": "Name: healthy\n"}
+    )
+    # Build the broken dir by hand so we can write whitespace-only
+    # bytes without `_make_distinfo` re-encoding through write_text.
+    broken = tmp_path / "whitespace-2.0.dist-info"
+    broken.mkdir()
+    (broken / "METADATA").write_bytes(b"   \n   \n")  # non-zero, no Name:
+    diag = _check_distinfo_metadata(site_packages=[tmp_path])
+    assert diag.status == "warn"
+    assert "healthy-1.0.dist-info" not in diag.message
+    assert "whitespace-2.0.dist-info" in diag.message
+    # Whitespace-only file has no iCloud-style duplicate sibling.
+    assert "iCloud" not in diag.message
+    assert len(diag.details["broken"]) == 1
+    assert diag.details["broken"][0]["dist_info"] == str(broken)
+
+
+def test_distinfo_metadata_ok_when_metadata_has_leading_metadata_version_header(
+    tmp_path: Path,
+) -> None:
+    """Real-world wheels emit `Metadata-Version: <ver>` as the FIRST line
+    of `METADATA` per Core Metadata convention, with `Name:` on a later
+    line. The header check must find `Name:` anywhere in the read window,
+    not only at byte 0 — otherwise `re.match` (anchored at position 0
+    regardless of `(?m)`) returns None against every real wheel and the
+    check flags all packages as broken. Pin a realistic multi-line header
+    so the `re.match` vs `re.search` regression can't re-ship."""
+    realistic = b"Metadata-Version: 2.4\nName: pkg\nVersion: 1.0\n"
+    d = tmp_path / "pkg-1.0.dist-info"
+    d.mkdir()
+    (d / "METADATA").write_bytes(realistic)
+    diag = _check_distinfo_metadata(site_packages=[tmp_path])
+    assert diag.status == "ok"
+    assert diag.details["scanned"] == 1
+
+
+def test_distinfo_metadata_ok_when_name_header_past_first_chunk(
+    tmp_path: Path,
+) -> None:
+    """PEP 643 / Core Metadata doesn't fix header order. Wheels emitted
+    by some packaging tools push `Name:` past the first few hundred
+    bytes by leading with `Metadata-Version:`, long `License-Expression:`
+    SPDX strings, multiple `Project-URL:` rows, or in-header
+    `Description:` text. The header check used to read a fixed 256-byte
+    window; this test pins a METADATA where `Name:` sits well past byte
+    256 (still inside the RFC-822 header section) and asserts the check
+    finds it. Under the old 256-byte cap this would false-positive
+    (warn that a valid wheel is broken)."""
+    # Build a realistic header section where `Name:` is pushed past
+    # byte 256 by long, real-world-shaped fields. Each `Project-URL:`
+    # line is ~80 bytes; six of them plus the `License-Expression:`
+    # SPDX expression lands `Name:` somewhere around byte 600.
+    header = (
+        b"Metadata-Version: 2.4\n"
+        b"License-Expression: (Apache-2.0 OR MIT) AND BSD-3-Clause\n"
+        b"Project-URL: Homepage, https://example.com/some/long/url/path/to/project\n"
+        b"Project-URL: Documentation, https://example.com/docs/very/long/path/here\n"
+        b"Project-URL: Repository, https://github.com/example/some-long-repo-name\n"
+        b"Project-URL: Issues, https://github.com/example/some-long-repo-name/issues\n"
+        b"Project-URL: Changelog, https://example.com/some/long/url/to/changelog\n"
+        b"Project-URL: Funding, https://example.com/some/long/funding/url/here\n"
+        b"Name: pkg\n"
+        b"Version: 1.0\n"
+        b"\n"
+        b"Body text after blank line - should not be scanned for headers.\n"
+    )
+    # Sanity: confirm the fixture actually exercises the bug class.
+    name_offset = header.index(b"\nName: ") + 1
+    assert name_offset > 256, (
+        f"fixture must place Name: past byte 256 to pin the bug class; "
+        f"got offset {name_offset}"
+    )
+    d = tmp_path / "pkg-1.0.dist-info"
+    d.mkdir()
+    (d / "METADATA").write_bytes(header)
+    diag = _check_distinfo_metadata(site_packages=[tmp_path])
+    assert diag.status == "ok"
+    assert diag.details["scanned"] == 1
+
+
+def test_distinfo_metadata_scans_user_site(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """`pip install --user` lands packages in `site.getusersitepackages()`.
+    When `ENABLE_USER_SITE` is true, the discoverer must include that
+    directory so user-site dist-info dirs aren't silently skipped."""
+    import site as _site
+
+    user_site = tmp_path / "user-site"
+    user_site.mkdir()
+    _make_distinfo(
+        user_site,
+        "broken-1.0.dist-info",
+        files={"METADATA 2": "Name: broken\n"},
+    )
+    monkeypatch.setattr(_site, "ENABLE_USER_SITE", True)
+    monkeypatch.setattr(_site, "getusersitepackages", lambda: str(user_site))
+    # Neutralize the other discoverers so the test exercises user-site
+    # in isolation — otherwise the host's real site-packages would also
+    # be scanned and could shift the assertion targets.
+    monkeypatch.setattr(
+        "bettermemory.doctor.sysconfig.get_paths",
+        lambda: {"purelib": "", "platlib": ""},
+    )
+    monkeypatch.setattr(_site, "getsitepackages", lambda: [])
+
+    discovered = _discover_site_packages()
+    resolved_user_site = user_site.resolve()
+    assert any(p.resolve() == resolved_user_site for p in discovered)
+
+    diag = _check_distinfo_metadata()
+    assert diag.status == "warn"
+    assert "broken-1.0.dist-info" in diag.message
+
+
+def test_distinfo_metadata_skips_user_site_when_disabled(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """When `ENABLE_USER_SITE` is False (the modern venv default), the
+    discoverer must not call `getusersitepackages()` and must not scan
+    that directory — a broken dist-info there should go unreported."""
+    import site as _site
+
+    user_site = tmp_path / "user-site"
+    user_site.mkdir()
+    _make_distinfo(
+        user_site,
+        "broken-1.0.dist-info",
+        files={"METADATA 2": "Name: broken\n"},
+    )
+    monkeypatch.setattr(_site, "ENABLE_USER_SITE", False)
+
+    called = {"n": 0}
+
+    def _should_not_be_called() -> str:
+        called["n"] += 1
+        return str(user_site)
+
+    monkeypatch.setattr(_site, "getusersitepackages", _should_not_be_called)
+    monkeypatch.setattr(
+        "bettermemory.doctor.sysconfig.get_paths",
+        lambda: {"purelib": "", "platlib": ""},
+    )
+    monkeypatch.setattr(_site, "getsitepackages", lambda: [])
+
+    discovered = _discover_site_packages()
+    assert called["n"] == 0
+    resolved_user_site = user_site.resolve()
+    assert all(p.resolve() != resolved_user_site for p in discovered)
+
+
+# ---------------------------------------------------------------------------
 # Integration: run_diagnostics + rendering
 # ---------------------------------------------------------------------------
 
@@ -368,21 +797,8 @@ def test_run_diagnostics_returns_report(tmp_path: Path) -> None:
 def test_render_text_includes_all_check_names() -> None:
     report = DoctorReport(
         checks=[
-            type(
-                "D",
-                (),
-                {"name": "alpha", "status": "ok", "message": "fine", "fix_hint": None},
-            )(),
-            type(
-                "D",
-                (),
-                {
-                    "name": "beta",
-                    "status": "warn",
-                    "message": "iffy",
-                    "fix_hint": "do X",
-                },
-            )(),
+            Diagnosis(name="alpha", status="ok", message="fine"),
+            Diagnosis(name="beta", status="warn", message="iffy", fix_hint="do X"),
         ]
     )
     out = render_text(report)
@@ -407,61 +823,144 @@ def test_cli_doctor_returns_exit_code(
 ) -> None:
     """cli_doctor returns 0/1/2 depending on the worst diagnosis seen.
     Force a known state by stubbing run_diagnostics."""
-    fake_report = DoctorReport(
-        checks=[
-            type(
-                "D",
-                (),
-                {
-                    "name": "x",
-                    "status": "ok",
-                    "message": "",
-                    "fix_hint": None,
-                    "details": {},
-                },
-            )(),
-        ]
-    )
+    fake_report = DoctorReport(checks=[Diagnosis(name="x", status="ok", message="")])
     monkeypatch.setattr("bettermemory.doctor.run_diagnostics", lambda: fake_report)
     code = cli_doctor(json_out=False)
     assert code == 0
 
-    fake_report = DoctorReport(
-        checks=[
-            type(
-                "D",
-                (),
-                {
-                    "name": "x",
-                    "status": "warn",
-                    "message": "",
-                    "fix_hint": None,
-                    "details": {},
-                },
-            )(),
-        ]
-    )
+    fake_report = DoctorReport(checks=[Diagnosis(name="x", status="warn", message="")])
     monkeypatch.setattr("bettermemory.doctor.run_diagnostics", lambda: fake_report)
     capsys.readouterr()
     code = cli_doctor(json_out=False)
     assert code == 1
 
-    fake_report = DoctorReport(
-        checks=[
-            type(
-                "D",
-                (),
-                {
-                    "name": "x",
-                    "status": "fail",
-                    "message": "",
-                    "fix_hint": None,
-                    "details": {},
-                },
-            )(),
-        ]
-    )
+    fake_report = DoctorReport(checks=[Diagnosis(name="x", status="fail", message="")])
     monkeypatch.setattr("bettermemory.doctor.run_diagnostics", lambda: fake_report)
     capsys.readouterr()
     code = cli_doctor(json_out=False)
     assert code == 2
+
+
+# ---------------------------------------------------------------------------
+# Literal-keyed-dict parity for `_STATUS_GLYPH` (and the sibling inline
+# `overall_label`) at `doctor.py:_STATUS_GLYPH` / `render_text`.
+#
+# `_STATUS_GLYPH: dict[CheckStatus, str]` and the inline `overall_label`
+# dict at `render_text` are both keyed off the closed `CheckStatus` Literal
+# (`doctor.py:CheckStatus = Literal["ok", "warn", "fail"]`). Both are
+# consumed by direct subscript (`_STATUS_GLYPH[overall]`,
+# `_STATUS_GLYPH[check.status]`, `overall_label[overall]`) — adding a
+# fourth `CheckStatus` literal without updating both dicts would crash
+# `bettermemory doctor`'s text renderer with `KeyError` on the first
+# diagnosis that surfaces the new status.
+#
+# Hazard tier: low. Cosmetic rendering crash only — the underlying
+# `run_diagnostics` and `render_json` paths don't touch either dict, so
+# data integrity is intact. Still a closed-protocol pin worth taking now
+# that we've swept the rest of the membership-guard class. Mirrors the
+# Literal-derived guards in `test_ingest.py::test_actions_tuple_matches_
+# action_literal` (basic shape) and `test_server.py::test_write_gates_
+# match_expected_types_in_order` (ordered shape).
+#
+# `_EXPECTED_CHECK_STATUSES` is hardcoded alphabetised and NOT derived
+# from `typing.get_args(CheckStatus)` — derivation would silently shrink
+# the expected list when the source shrinks, defeating the deletion
+# guard. Same shape as `_EXPECTED_INDEX_FILENAMES` (bde7602) and
+# `_EXPECTED_USE_OUTCOMES` (db81630).
+#
+# Negative-control: temporarily adding `"info"` to the `CheckStatus`
+# Literal in `doctor.py` fails `test_status_glyph_keys_match_check_
+# status_literal` (set inequality: Literal has extra `"info"` that
+# `_STATUS_GLYPH` doesn't). Revert restores green.
+# ---------------------------------------------------------------------------
+
+
+_EXPECTED_CHECK_STATUSES: tuple[str, ...] = ("fail", "ok", "warn")
+
+
+def test_expected_check_statuses_match_literal() -> None:
+    """Pin the hardcoded `_EXPECTED_CHECK_STATUSES` tuple against the
+    canonical `CheckStatus` Literal — the indirection through this
+    tuple is what makes the two dict-parity assertions below catch
+    BOTH additions and deletions (a `get_args(CheckStatus)`-derived
+    expectation would shrink with deletions and miss the deletion
+    case)."""
+    assert set(_EXPECTED_CHECK_STATUSES) == set(typing.get_args(CheckStatus))
+
+
+def test_status_glyph_keys_match_check_status_literal() -> None:
+    """`_STATUS_GLYPH` is direct-indexed in `render_text`
+    (`_STATUS_GLYPH[overall]`, `_STATUS_GLYPH[check.status]`); a
+    missing key crashes the doctor renderer with `KeyError`. Pin the
+    keys against the hardcoded `_EXPECTED_CHECK_STATUSES` so a new
+    `CheckStatus` literal trips this guard before it ships."""
+    assert set(_STATUS_GLYPH.keys()) == set(_EXPECTED_CHECK_STATUSES), (
+        "`_STATUS_GLYPH` keys drifted from `CheckStatus`; see "
+        "doctor.py:_STATUS_GLYPH and the inline `overall_label` dict "
+        "at render_text — both must mirror every CheckStatus literal."
+    )
+
+
+def test_render_text_overall_label_covers_every_check_status() -> None:
+    """The sibling inline `overall_label` dict at `render_text` is
+    keyed off CheckStatus the same way `_STATUS_GLYPH` is — same
+    KeyError hazard. Drive `render_text` once per CheckStatus literal
+    so a missing key here crashes the test instead of crashing
+    `bettermemory doctor` in user-facing output."""
+    for status in _EXPECTED_CHECK_STATUSES:
+        # Use a single-check report so `report.overall` equals `status`.
+        report = DoctorReport(
+            checks=[Diagnosis(name="probe", status=status, message="")]  # type: ignore[arg-type]
+        )
+        out = render_text(report)
+        # The header line carries the overall_label string — a
+        # KeyError on the inline dict would have raised by now.
+        assert "bettermemory doctor" in out
+
+
+def test_exit_code_by_status_keys_match_check_status_literal() -> None:
+    """`_EXIT_CODE_BY_STATUS` is direct-indexed in `cli_doctor`
+    (`_EXIT_CODE_BY_STATUS[report.overall]`); a missing key crashes
+    the `bettermemory doctor` CLI with `KeyError` rather than
+    returning a clean exit code. Pin the keys against the hardcoded
+    `_EXPECTED_CHECK_STATUSES` so a new `CheckStatus` literal trips
+    this guard before it ships — exit codes are user-visible in
+    shell pipelines, so the failure mode is worth pinning alongside
+    the `_STATUS_GLYPH` / `overall_label` renderer guards."""
+    assert set(_EXIT_CODE_BY_STATUS.keys()) == set(_EXPECTED_CHECK_STATUSES), (
+        "`_EXIT_CODE_BY_STATUS` keys drifted from `CheckStatus`; see "
+        "doctor.py:_EXIT_CODE_BY_STATUS and cli_doctor — the mapping "
+        "must mirror every CheckStatus literal or the CLI crashes."
+    )
+
+
+# ---------------------------------------------------------------------------
+# Cross-module parity: the event-log path probed by
+# `_check_event_log_writable` (`doctor.py`) MUST resolve to the same
+# filename the `Recorder` actually writes — `events.EVENT_LOG_FILENAME`.
+# A rename of the canonical constant would, prior to this commit, have
+# updated the writer but left the doctor's probe path pointing at a
+# stale literal — silently passing the writability check against a file
+# that the runtime never creates. Closes the doctor side of Class 6.
+# ---------------------------------------------------------------------------
+
+
+def test_check_event_log_uses_canonical_event_log_filename(
+    tmp_path: Path,
+) -> None:
+    """Pin `doctor.py:_check_event_log_writable` to the canonical
+    `events.EVENT_LOG_FILENAME`. Drop a file at `<dir>/EVENT_LOG_FILENAME`
+    and confirm the probe finds it (i.e. takes the existing-file branch,
+    not the "not yet created" branch a hardcoded literal would fall
+    through to after a rename of the constant)."""
+    from bettermemory.events import EVENT_LOG_FILENAME
+
+    log_path = tmp_path / EVENT_LOG_FILENAME
+    log_path.write_text('{"kind": "test"}\n', encoding="utf-8")
+    diag = _check_event_log_writable(tmp_path)
+    # Doctor saw the file (status is `ok` or `warn`, not the
+    # "not yet created" message that fires when the path is missing).
+    assert "not yet created" not in diag.message, (
+        "doctor's log_path constructed a different filename than "
+        "events.EVENT_LOG_FILENAME — see doctor.py:_check_event_log_writable"
+    )

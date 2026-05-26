@@ -28,7 +28,7 @@ only see what these tools surface.
 | Decide | Rule |
 |---|---|
 | Search? | shared-context reference or ambiguity → yes. Otherwise no. |
-| Write? | something durable just entered the conversation → yes. Don't wait for "remember that". State or timestamps → no (the tool will reject). |
+| Write? | something durable just entered the conversation → yes. Don't wait for "remember that". State, timestamps, or commit-SHA-like tokens → no (durability check will reject; rephrase to the durable level-up form). |
 | Category? | claim about the user → `user-inference` (always pending). Atmospheric / no verifiable claims → `ambient`. Else → `fact`. |
 | Outcome? | retrieval shaped reply → silence (auto-commits as `applied` ~2 turns later). Off-topic / wrong → explicit `ignored` / `contradicted` / `corrected`. |
 | Verify? | `staleness_verdict != "fresh"` → `path_drift.missing` on the hit lists what rotted; memory_update those, memory_verify the rest with `verified_paths`. |

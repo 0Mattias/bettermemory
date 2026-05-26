@@ -16,8 +16,13 @@ from typing import Any
 
 import pytest
 
+import typing
+
 from bettermemory.ingest import (
     DEFAULT_PROVENANCE_SCOPE,
+    _ACTIONS,
+    _INDEX_FILENAMES,
+    Action,
     apply_ingest_plan,
     compute_ingest_plan,
     discover_default_source_root,
@@ -69,6 +74,95 @@ def store_dir(tmp_path: Path) -> Path:
 @pytest.fixture
 def store(store_dir: Path) -> Store:
     return Store(store_dir)
+
+
+# ---------------------------------------------------------------------------
+# Closed-protocol pin for the index-filename whitelist consumed at
+# `ingest.py:436` (`if path.name in _INDEX_FILENAMES`). The
+# `_INDEX_FILENAMES` frozenset (`ingest.py:110`, `{"MEMORY.md",
+# "INDEX.md", "README.md"}`) names every navigation-artefact filename
+# the ingest walker must skip — auto-memory's `MEMORY.md` index file,
+# the conventional `INDEX.md` / `README.md` siblings. The hazard tier
+# is low (additions are non-blocking — a new auto-memory release
+# shipping, say, `TOC.md` would just slip through and ingest as a
+# memory until somebody noticed; deletions silently allow stored-as-
+# memory copies of the named index files), but per Agent-4's bulk-pass
+# recommendation we close the failure-mode class for completeness.
+# The existing `test_index_files_are_skipped` in `TestComputeIngestPlan`
+# below covers all three current members in one shot (skipping all
+# three at once and asserting they don't surface in the plan rows) —
+# catches a deletion (the asserted-skipped file would surface) but
+# never imports `_INDEX_FILENAMES`, so an addition couldn't be caught.
+#
+# The hardcoded tuple is alphabetised and NOT derived from the source
+# set — derivation would silently shrink the expected list when the
+# source shrinks, defeating the deletion guard. Mirrors the
+# `_EXPECTED_USE_OUTCOMES` shape (db81630) on the ingest-filter
+# surface.
+#
+# Negative-control: adding `"bogus.md"` to `_INDEX_FILENAMES` fails
+# `test_index_filenames_match_frozenset` (set inequality). Revert
+# restores green.
+_EXPECTED_INDEX_FILENAMES: tuple[str, ...] = (
+    "INDEX.md",
+    "MEMORY.md",
+    "README.md",
+)
+
+
+def test_index_filenames_match_frozenset() -> None:
+    """Guard so additions to ``_INDEX_FILENAMES`` (the closed-protocol
+    nav-artefact whitelist consumed by the ingest walker) are mirrored
+    in the hardcoded ``_EXPECTED_INDEX_FILENAMES`` tuple — otherwise a
+    new index-filename convention could land in the source set and the
+    existing ``test_index_files_are_skipped`` regression case wouldn't
+    cover it. Closes the addition side of the membership-guard pattern
+    on the ingest surface — mirrors ``test_use_outcomes_match_frozenset``
+    in ``tests/test_server_record_use_provenance.py``."""
+    assert set(_EXPECTED_INDEX_FILENAMES) == set(_INDEX_FILENAMES)
+
+
+# Parity pin between the `Action` Literal (`ingest.py:118`) and the
+# `_ACTIONS` tuple (`ingest.py:133`) consumed by `IngestPlan.summary`
+# at `ingest.py:181` (`out: dict[str, int] = {a: 0 for a in _ACTIONS}`).
+# The two MUST stay in lockstep: a new Literal value without a matching
+# `_ACTIONS` entry means `IngestPlan.summary` pre-seeds zero rows for
+# every known action except the new one, and any downstream renderer
+# that does `summary["new_action"]` would KeyError on the missing
+# bucket. The comment at `ingest.py:127-132` documents that this
+# matching assertion exists in `tests/test_ingest.py` — this guard
+# makes the comment true (prior to this commit, no such assertion
+# existed in this file).
+#
+# Set-equality (not tuple-equality) is correct here: `_ACTIONS` is
+# consumed as the keys of a dict comprehension, so order doesn't
+# affect the summary's contents (Python 3.7+ dict iteration order is
+# insertion-order but the summary is consumed as a value-keyed lookup
+# downstream, not by ordered iteration). Contrast with
+# `_SECRET_PATTERNS` in `tests/test_events.py` where the iteration
+# order IS load-bearing (regex precedence).
+#
+# Negative-control: temporarily adding a bogus `"skip_bogus"` member
+# to the `Action` Literal in `ingest.py` fails
+# `test_actions_tuple_matches_action_literal` (set inequality:
+# Literal has extra `"skip_bogus"` that `_ACTIONS` doesn't). Revert
+# restores green.
+def test_actions_tuple_matches_action_literal() -> None:
+    """Guard so additions to (or deletions from) the ``Action`` Literal
+    at ``ingest.py:118`` are mirrored in the ``_ACTIONS`` tuple at
+    ``ingest.py:133`` — otherwise ``IngestPlan.summary`` would
+    pre-seed zero rows for every known action except the new one,
+    and any downstream renderer that does ``summary["new_action"]``
+    would KeyError on the missing bucket. Set equality is correct
+    here because ``_ACTIONS`` is consumed as the keys of a dict
+    comprehension (order isn't load-bearing for pre-seeding); the
+    matching ordered-tuple guards live in ``tests/test_events.py``
+    (``_SECRET_PATTERNS``) and ``tests/test_server.py``
+    (``_WRITE_GATES``) where iteration precedence IS load-bearing.
+
+    This assertion is the one the comment at ``ingest.py:127-132``
+    refers to — prior to this commit the comment was aspirational."""
+    assert set(_ACTIONS) == set(typing.get_args(Action))
 
 
 # ---------------------------------------------------------------------------
@@ -176,6 +270,7 @@ class TestComputeIngestPlan:
         memories — they must not be ingested."""
         source_root.mkdir()
         (source_root / "MEMORY.md").write_text("# Index of memories\n- foo\n")
+        (source_root / "INDEX.md").write_text("# Index of memories\n- foo\n")
         (source_root / "README.md").write_text("# Auto-memory readme\n")
         _write_auto_memory(source_root, "real-mem", auto_type="feedback")
         plan = compute_ingest_plan(

@@ -47,6 +47,7 @@ from datetime import datetime, timedelta, timezone
 from typing import Any, Iterable
 
 from .models import Memory, first_summary_line
+from .time_utils import parse_event_ts
 
 
 # ---------------------------------------------------------------------------
@@ -637,34 +638,14 @@ def _wilson_interval(k: int, n: int, z: float = _WILSON_Z) -> tuple[float, float
     return (max(0.0, center - margin), min(1.0, center + margin))
 
 
-def _parse_ts(raw: Any) -> datetime | None:
-    """Parse the ISO-8601 timestamp the recorder writes. Returns
-    ``None`` on any failure — the caller already knows to skip.
-
-    Always returns a tz-aware datetime: naive ISO strings (which an
-    external producer or an older binary might emit) are stamped as
-    UTC so the result can be safely compared against the tz-aware
-    cutoff every caller derives from ``datetime.now(timezone.utc)``.
-    Without that, the comparison would raise
-    ``TypeError: can't compare offset-naive and offset-aware
-    datetimes`` mid-iteration."""
-    if not isinstance(raw, str):
-        return None
-    try:
-        # The recorder writes ``YYYY-MM-DDTHH:MM:SS.fffZ``. ``fromisoformat``
-        # in 3.11+ accepts that shape; older shapes (without microseconds,
-        # or with explicit ``+00:00``) round-trip too.
-        # The trailing ``Z`` is replaced with ``+00:00`` for
-        # ``fromisoformat`` compatibility on 3.11 / 3.12, which don't
-        # accept the bare ``Z`` literal.
-        if raw.endswith("Z"):
-            raw = raw[:-1] + "+00:00"
-        parsed = datetime.fromisoformat(raw)
-    except ValueError:
-        return None
-    if parsed.tzinfo is None:
-        return parsed.replace(tzinfo=timezone.utc)
-    return parsed
+# `_parse_ts` is a thin module-local alias for the canonical
+# `time_utils.parse_event_ts`. The eval module reads it as if it were
+# local; the indirection centralises the parse semantics without
+# routing every call site through the time_utils import path. Same
+# tz-aware UTC contract — a naive ISO string comes back stamped as UTC
+# so callers can compare against the tz-aware cutoff every rollup
+# derives from `datetime.now(timezone.utc)` without raising.
+_parse_ts = parse_event_ts
 
 
 def _silent_miss_from_event(ev: dict[str, Any]) -> SilentMissCandidate | None:
@@ -1165,15 +1146,21 @@ TOOLS_WITHOUT_TELEMETRY: tuple[str, ...] = ("memory_health",)
 # tool calls in their own right. ``search_miss`` is a sub-event of
 # ``turn_audited`` (the audit detected a high-relevance hit the model
 # would have missed); ``pending_expired`` fires when the TTL on a
-# ``memory_write`` pending token elapses. Neither belongs in the
-# tool-usage rollup — they would inflate the parent tool's count.
+# ``memory_write`` pending token elapses; ``silent_miss_cutoff`` is an
+# additive admin event written by ``bettermemory consolidate
+# --acknowledge-misses-before`` to invalidate a batch of pre-fix miss
+# telemetry. None of these belong in the tool-usage rollup — they
+# would inflate the parent tool's count (or, for the CLI event, count
+# an admin operation as a tool invocation).
 #
 # The parity test in ``tests/test_eval.py`` asserts that every kind
 # recorded anywhere in ``src/`` appears in either
 # ``_TOOL_EVENT_KIND_TO_TOOL`` or this set, and that the two are
 # mutually exclusive. Adding a new event kind without updating one of
 # them is the bug class this guards against.
-_KNOWN_SIDE_EFFECT_KINDS: frozenset[str] = frozenset({"search_miss", "pending_expired"})
+_KNOWN_SIDE_EFFECT_KINDS: frozenset[str] = frozenset(
+    {"search_miss", "pending_expired", "silent_miss_cutoff"}
+)
 
 
 @dataclass

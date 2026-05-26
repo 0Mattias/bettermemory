@@ -85,6 +85,16 @@ DEFAULT_MODEL_NAME = "all-MiniLM-L6-v2"
 DEFAULT_FASTEMBED_MODEL_NAME = "BAAI/bge-small-en-v1.5"
 
 
+# Persistent-cache filename shape: `<root>/.embeddings.[<provider>.]<safe>.npz`
+# (the provider segment is omitted for the legacy torch layout — see
+# `configure_persistent_cache` below). Lifted to module-level constants so
+# `sync.py`'s gitignore writer can build the matching glob by importing both
+# halves rather than hardcoding a sibling `.embeddings.*.npz` literal that
+# would drift silently if the on-disk shape ever moved.
+EMBEDDING_FILENAME_PREFIX = ".embeddings."
+EMBEDDING_FILENAME_SUFFIX = ".npz"
+
+
 # ---------------------------------------------------------------------------
 # Model loader (lazy, cached, fail-soft)
 # ---------------------------------------------------------------------------
@@ -388,9 +398,15 @@ def configure_persistent_cache(
             # Legacy layout — preserved verbatim so pre-2.5.0
             # `.embeddings.<model>.npz` files keep loading without a
             # migration step.
-            new_path = Path(root) / f".embeddings.{safe}.npz"
+            new_path = (
+                Path(root)
+                / f"{EMBEDDING_FILENAME_PREFIX}{safe}{EMBEDDING_FILENAME_SUFFIX}"
+            )
         else:
-            new_path = Path(root) / f".embeddings.{provider}.{safe}.npz"
+            new_path = (
+                Path(root)
+                / f"{EMBEDDING_FILENAME_PREFIX}{provider}.{safe}{EMBEDDING_FILENAME_SUFFIX}"
+            )
 
     if new_path != _PERSISTENT_PATH:
         # Drop the in-memory cache; vectors keyed under the old model

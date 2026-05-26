@@ -36,11 +36,14 @@ def populated_store(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> tuple[Path, Store]:
     """A store with two active memories and one tombstone, with
-    `bettermemory.server.load_config` monkeypatched to return a Config
+    `bettermemory.config.load_config` monkeypatched to return a Config
     pinned to tmp_path so `_cli_export` doesn't read the real user
-    config."""
+    config. Pre-Round-3 this patched ``bettermemory.server.load_config``
+    (a re-export) — the canonical home is ``bettermemory.config``, and
+    ``cli/export.py`` now imports from there directly so the back-edge
+    through ``server`` is gone."""
     monkeypatch.setattr(
-        "bettermemory.server.load_config", lambda: _config_for(tmp_path)
+        "bettermemory.config.load_config", lambda: _config_for(tmp_path)
     )
     store = Store(tmp_path)
     store.write(

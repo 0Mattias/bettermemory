@@ -7,6 +7,8 @@ description: Verification-grade memory between sessions. Use bettermemory's MCP 
 
 Persistent memory between sessions lives in this plugin's MCP tools. **Do not fragment memory across ad-hoc files alongside** (`MEMORY.md`, scratch markdown elsewhere) — future sessions only see what these tools surface. If Claude Code's auto-memory at `~/.claude/projects/*/memory/` already exists from before bettermemory was installed, ingest it (one-shot `bettermemory ingest --from <path>`) rather than letting it accumulate alongside; the ingest CLI maps each auto-memory file to a bettermemory record, dedups against the active store and tombstone log, and stamps an `imported-from-claude-code` scope for traceability.
 
+This skill is the long-form companion to the MCP server's `instructions` block: Claude Code truncates that block at ~1.8 KB, so the full writing-discipline / scope-hygiene / confirmation-tier policy lives here. Non-plugin clients get the same content via [`docs/system_prompt.md`](../../../docs/system_prompt.md).
+
 ## Quick card
 
 | Decide | Rule |

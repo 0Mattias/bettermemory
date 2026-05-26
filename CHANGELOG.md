@@ -7,6 +7,282 @@ breaking changes, minor for additive features, patch for fixes. The
 [compatibility contract](CONTRIBUTING.md#versioning-and-the-compatibility-contract)
 spells out exactly what's stable.
 
+## Unreleased
+
+## 3.0.1 - 2026-05-26
+
+Post-3.0.0 audit-loop follow-up. Mostly low-impact: one
+defense-in-depth security tightening, one CI-gate repair, and a
+sweep of test-rigour pins closing the same class hazard
+(asymmetric whitelist coverage) the prior audit-loop already
+worked through. No on-disk format changes, no public API changes.
+
+### Security — Defense-in-depth
+
+- **`llm.py` transcript fence scan symmetrised across all four
+  nonce-anchored markers.** Pre-`520bb6d` the transcript scan
+  checked only `{trn_end, mem_end}`; the body and excerpt scans
+  already checked all four (`{trn_end, trn_begin, mem_end,
+  mem_begin}`). The random per-prompt nonce already makes
+  hard-coding a marker infeasible, so this is defense-in-depth
+  rather than a live break — but the three scan sites now line
+  up on the same predicate. Pinned by parametrised regression
+  tests covering both `<<<BM_TRANSCRIPT_*_BEGIN>>>` and
+  `<<<BM_MEMORY_*_BEGIN>>>` in the transcript body.
+
+### Fixed — CI gate
+
+- **Wider CI gate (ruff lint / ruff format / mypy strict) green
+  at HEAD.** The post-2.7.3 audit-loop converged with pytest
+  green but the wider gate was never run during the loop; five
+  distinct gaps surfaced at the 3.0.0 release boundary and were
+  closed in `25d2dea`: an obsolete `# type: ignore[import-not-
+  found]` on `import msvcrt` in `_fsutil.py` (typeshed's
+  cross-platform stub made it unused), two mid-file imports
+  flagged E402 (`store.py` and `test_concurrency.py`), four
+  `test_llm.py` fence-injection tests monkeypatching
+  `bettermemory.llm.secrets.token_hex` directly on the module
+  namespace (rewritten to `pytest.MonkeyPatch.setattr` with
+  dotted-path form — mypy-clean and removes manual cleanup
+  boilerplate), and 21 files needing `ruff format` reflow.
+  Behaviour unchanged.
+
+### Fixed — Test rigour (asymmetric whitelist coverage)
+
+- **Closed-protocol whitelists pinned at every member.** Eight
+  test commits closed the same class hazard the prior
+  audit-loop worked through: a closed-protocol frozenset
+  (`_PLACEHOLDER_PATHS`, `_INDEX_FILENAMES`,
+  `_RETRIEVAL_EVENT_KINDS`, `_same_origin` loopback hosts,
+  `_VERDICT_RAISE_STATUSES`, plus the four nonce-anchored
+  llm.py fence markers) had only partial regression coverage,
+  so a stray deletion would silently re-introduce false
+  positives or 403 users without CI noticing. Representative
+  pins: all 8 members of `_PLACEHOLDER_PATHS` (`55431ae`); the
+  `INDEX.md` clause of `_INDEX_FILENAMES` (`cc2345b`); the
+  `list` clause of `_RETRIEVAL_EVENT_KINDS` (`e360058`); all
+  three loopback hosts (`localhost`, `127.0.0.1`, `::1`) in
+  `_same_origin` (`f4dd2a4`); `{never, stale}` membership of
+  the `staleness_verdict` raise-gate across `verify.py` and
+  `_response.py` (`0d56a50`, paired with a `_VERDICT_RAISE_
+  STATUSES` DRY extraction); and BEGIN+END fence symmetry
+  across all three scan sites in `llm.py` — excerpt
+  (`40341a2`), transcript-end (`a14dd6b`), and body
+  (`93838db`). Each pin uses a hardcoded expected-membership
+  tuple plus a separate guard against additions to the source
+  set, so the assertion keeps firing on a deleted member
+  rather than being silently skipped. All verified by negative
+  control.
+
+### Documentation
+
+- **`{search, show, list}` retrieval-event drift sweep
+  completed.** `520bb6d` updated one site
+  (`_count_recent_retrievals`); a fresh-eyes pass caught
+  five parallel sites in `audit.py` with the same {search,
+  show} drift (list omitted) plus one stale handler pointer
+  invalidated by the post-`582a5d2` handler decomposition
+  (`9437d1c`). The two user-facing copies in `docs/api.md` and
+  `docs/eval.md` were then mirrored to match (`a24eade`).
+  Where prose was abstractable, the rewrite anchors to the
+  existing `_RETRIEVAL_EVENT_KINDS` constant so a future
+  addition to the frozenset doesn't re-fork the docs.
+- **2.x → 3.x live-contract framing swept across user-facing
+  docs.** 3.0.0 shipped at `1322b53` but `docs/api.md`,
+  `CONTRIBUTING.md`, `SECURITY.md`, and `docs/ROADMAP.md`
+  still advertised 2.x as the live contract (`948e04e`). The
+  `memory_search.mode` default in `CONTRIBUTING.md` was also
+  corrected from "keyword (new in 2.0)" to "hybrid (since
+  2.6.8)" since that flip already shipped. `README.md`
+  "Further reading" ROADMAP summary similarly framed
+  `consolidate --acknowledge-misses-before` as an "unreleased
+  follow-up" though it shipped in 3.0.0; reframed to
+  declarative past tense under a 3.0.0 milestone with the
+  companion `bettermemory.server` re-export trim noted as the
+  second 3.0.0 line item (`6a980a6`).
+
+## 3.0.0 - 2026-05-25
+
+**Companion escape hatch for the 2.7.3 cwd-suppression fix.** v2.7.3
+stopped emitting same-repo silent-miss false positives going forward,
+but the events log still carried the batch of pre-fix `search_miss` /
+`turn_audited` rows that skew the miss-rate rollup. This release adds
+an additive CLI cutoff so that batch can be invalidated without
+rewriting the log.
+
+### Added — Curation
+
+- **`bettermemory consolidate --acknowledge-misses-before <ISO_TS>`**
+  writes one `silent_miss_cutoff` event with `cutoff_ts=<ISO_TS>`
+  through the shared `Recorder`. `compute_health` and
+  `curation_counts` honor the latest `cutoff_ts` they observe and
+  drop any `turn_audited` / `search_miss` events earlier than it —
+  filtering both numerator and denominator so the miss-rate metric
+  doesn't skew low or high. Mirrors `--acknowledge-debt`'s surface:
+  always commits, no `--apply` gate (events are additive and a
+  misapplied cutoff can be superseded by a later one), text and JSON
+  output, validates the ISO timestamp up front so a typo surfaces as
+  exit 1 instead of writing an event the rollup will silently
+  ignore. `silent_miss_cutoff` is classified as a side-effect kind in
+  `eval.py` so the tool-usage rollup doesn't count CLI admin
+  operations as tool invocations — same rationale as `search_miss`
+  and `pending_expired`.
+
+### Fixed — Audit follow-up
+
+- **`--acknowledge-misses-before` no longer silently stamps naive
+  timestamps as UTC.** A bare ISO timestamp without an offset (e.g.
+  `2026-05-25T10:00:00`) from a non-UTC user used to produce an
+  off-by-zone cutoff with no warning; the CLI now rejects naive
+  input and prints a clear stderr message pointing at the explicit
+  offset / `Z` syntax it accepts.
+- **`--acknowledge-misses-before` refuses to run with telemetry
+  disabled** instead of returning exit 0 having written nothing.
+  The cutoff is itself a telemetry event; a disabled `Recorder`
+  swallows the write so the user thought the cutoff had landed when
+  it had not. Post-write verification reads the events log back to
+  catch any remaining silent-failure modes (chmod failure, I/O
+  error). The CLI errors with exit 1 and a clear message in either
+  case.
+- **`compute_health` and `curation_counts` now use the same
+  `cutoff_ts` parser** (`_ensure_utc(_parse_event_ts(...))`).
+  Previously the two paths used different parsers, so a naive
+  `cutoff_ts` value could produce divergent rollups against the
+  same store. Event timestamps in `compute_health` are also normalized
+  to UTC so any legacy naive `ts` compares cleanly against the
+  aware cutoff.
+- **`curation_counts(since=...)` resolves `silent_miss_cutoff`
+  events before applying the delta filter.** Previously a cutoff
+  event whose own `ts` fell under `since` was silently dropped,
+  causing a delta run to over-count pre-cutoff misses. Cutoffs are
+  global markers — they now always apply regardless of `--since`.
+
+### Fixed — Docs & examples
+
+- README on-disk-format example: `origin.worktree` corrected to
+  `origin.worktree_root` (the actual field name the writer emits);
+  example ULIDs expanded from 12 chars to the 26-char form the
+  validator requires.
+- `examples/memories/2025-05-10-ci-runner-migration.md` now has a
+  resolvable `supersedes` target — added
+  `examples/memories/2025-02-10-atlas-jenkins-ci.md` as the
+  predecessor so the link demonstrates the feature it markets
+  instead of dangling.
+- `examples/memories/README.md`: the path-drift relationship is
+  corrected (drift is computed against body-cited paths with
+  `verified_paths` *excluding* matched paths from the signal, not
+  "against verified_paths"); the legacy-memory claim now correctly
+  states such memories surface as `spot_check_required` rather than
+  `fresh`.
+- `examples/programmatic_client.py`: the per-hit
+  `staleness_verdict` print loop now iterates over the actual MCP
+  response shape (one `TextContent` per hit) instead of the
+  non-existent `{"hits": [...]}` envelope; run command updated from
+  `venv/bin/python` to `uv run python`.
+
+### Changed — Module layout
+
+- **`build_server` extracted to `bettermemory.builder`.** `build_server`
+  and `_register_tools` now live in a new `bettermemory.builder`
+  module; `cli/serve.py` can import them at module top level instead
+  of through the previous function-local lazy import that worked
+  around the `cli ↔ server` cycle. `bettermemory.server` becomes a
+  back-compat re-export shim — `from bettermemory.server import
+  build_server` keeps working unchanged.
+- **`bettermemory.__init__` imports from canonical homes.** Package
+  init now pulls `build_server` from `.builder` and `main` from
+  `.cli` directly, bypassing the `server.py` shim. Public surface
+  re-exported from the package root is unchanged.
+
+### Removed — Defensive `bettermemory.server` re-exports
+
+- **`bettermemory.server.__all__` trimmed to its actually-used
+  surface.** After verifying zero in-tree consumers, the following
+  symbols were dropped from `bettermemory.server`: `_register_tools`,
+  `load_config`, and three `_*_semantic*` helpers. Downstream code
+  doing `from bettermemory.server import load_config` or `from
+  bettermemory.server import _register_tools` will now raise
+  `ImportError`; the canonical paths are `bettermemory.config.load_config`
+  and `bettermemory.builder._register_tools` respectively. The shim's
+  retained surface is `build_server`, `main`, `SYSTEM_PROMPT_ADDENDUM`,
+  `capture_origin`, and three `_cli_*` helpers (the `_cli_*` trio kept
+  because the test suite monkeypatches them at the `server.` import
+  path). This is a soft API break — narrow in scope, but consumers
+  pinning to the old import paths must update.
+
+### Added — Diagnostics
+
+- **`bettermemory doctor` detects `.dist-info` dirs missing canonical
+  `METADATA`.** A new check walks `site-packages` and warns on any
+  `*.dist-info` directory whose `METADATA` is absent or non-readable —
+  the exact failure mode that surfaces when iCloud Drive renames
+  `METADATA` to `METADATA 2` mid-sync and crashes the MCP server with
+  a `-32000` pydantic validation failure. Sites scanned cover both
+  `site.getsitepackages()` and (when `ENABLE_USER_SITE` is true)
+  `site.getusersitepackages()`, so `pip install --user` installs are
+  also covered. +4 tests for the detector.
+
+### Added — Test-suite hygiene
+
+- **Platform-mocked coverage for the Windows `flock` branch.**
+  `_flock_windows` is now exercised from a POSIX dev box via a
+  `_FakeMsvcrt` injected through `sys.modules`. Tests cover the
+  retry/backoff loop under simulated contention, the `LK_UNLCK` /
+  `LK_NBLCK` symmetry, and `BETTERMEMORY_FLOCK_TIMEOUT` env-var
+  parsing including the invalid-string fallback. +6 tests; first
+  coverage of the Windows branch outside CI.
+- **Direct-import smoke tests at the package boundaries.**
+  `tests/test_direct_imports.py` imports every public module under
+  `handlers/` (15) and `cli/` (14) and snapshots the full parameter
+  signature (name, default, and `POSITIONAL_OR_KEYWORD` kind) of each
+  handler, so signature drift at the import boundary fails at
+  collection time rather than masquerading as a runtime `AttributeError`
+  in a downstream consumer. +30 tests.
+
+### Fixed — Doctor dist-info detector
+
+- **Empty `METADATA` files no longer pass the `.is_file()` check.**
+  The original predicate accepted zero-byte `METADATA` even though
+  the pydantic loader still rejects it; the check now requires
+  `is_file() AND stat().st_size > 0` so the doctor flags the empty
+  case alongside the missing-file case. A whitespace-only `METADATA`
+  (e.g. `"   \n  \n"` from a partial sync or manual edit) also slips
+  past size > 0 while still tripping the same downstream crash, so
+  the predicate now additionally reads the first 256 bytes and
+  requires the canonical `Name:` header that `importlib.metadata.
+  version()` parses. +2 tests pinning the zero-byte and
+  whitespace-only paths.
+- **`_discover_site_packages` honours `site.ENABLE_USER_SITE`.**
+  Previously only `site.getsitepackages()` was scanned, so a
+  `pip install --user` install with a broken dist-info would silently
+  evade the detector. The user-site path is now included when (and
+  only when) `ENABLE_USER_SITE` is truthy. +2 tests covering the
+  enabled and disabled branches.
+
+### Fixed — Test rigour
+
+- **Windows `flock` env-var fallback test proves the fallback is
+  non-zero.** `test_env_var_invalid_string_falls_back_to_default`
+  previously asserted only that the call returned without raising; it
+  now uses `always_fail=True` + `pytest.raises(TimeoutError)` + a
+  retry-count assertion to prove the default timeout actually elapsed,
+  catching a "fallback silently resolves to 0" regression class the
+  weaker assertion would have missed.
+- **Backoff test asserts monotonic growth and the 100 ms cap.**
+  `test_retries_with_backoff_until_acquired` now records every
+  `time.sleep` duration and asserts the sequence is monotonically
+  non-decreasing and that no single sleep exceeds the 100 ms ceiling
+  the production loop enforces. Prior assertion only counted retries.
+
+### Documentation
+
+- Stale docstring / comment refresh across `server.py`,
+  `cli/__init__.py`, `builder.py`, and `cli/export.py` — six spots
+  that still described the pre-2.7.3 single-module layout were
+  updated to point at the post-extract structure (canonical homes
+  in `builder.py`, the shim role of `server.py`, etc.). Code paths
+  unchanged.
+
 ## 2.7.3 - 2026-05-25
 
 **Post-2.7.2 dogfood audit follow-up.** The threshold-sweep on the

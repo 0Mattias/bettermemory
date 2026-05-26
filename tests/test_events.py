@@ -13,6 +13,8 @@ import pytest
 from bettermemory.events import (
     EVENT_LOG_FILENAME,
     Recorder,
+    _REDACTED_TEXT_FIELDS,
+    _SECRET_PATTERNS,
     iter_all_events,
     iter_events,
 )
@@ -317,6 +319,114 @@ def test_iter_all_events_handles_missing_root(tmp_path: Path) -> None:
 # pasted into a search doesn't land on disk. Verbatim mode opts back in
 # via `Recorder(log_queries_verbatim=True)`.
 # ---------------------------------------------------------------------------
+
+
+# Closed-protocol pin for the field-name whitelist consumed by
+# `_redact_event_fields` at `events.py:145`. `_REDACTED_TEXT_FIELDS`
+# (`events.py:51`, frozenset of `{"query", "probe_query"}`) names every
+# event-field whose value is treated as model/user-typed free text and
+# replaced with a `{"hash", "preview", "len"}` redaction before the
+# event hits the JSONL log. A silent addition of a new recorder field
+# name (e.g. a hypothetical `prompt` field on some new event kind)
+# without a matching entry in this frozenset would silently leak
+# verbatim values to disk — the very thing the 2.6.8 default-redact
+# switch exists to prevent. A silent deletion would un-redact the
+# affected field, also silently. The existing
+# `test_record_redacts_query_by_default` / `test_record_redacts_
+# probe_query_field` tests cover the two current members per-name
+# (they'd fail if either name dropped out) but neither imports the
+# frozenset, so an addition couldn't be caught.
+#
+# The hardcoded tuple is alphabetised and NOT derived from the source
+# set — derivation would silently shrink the expected list when the
+# source shrinks, defeating the deletion guard. Mirrors the
+# `_EXPECTED_USE_OUTCOMES` shape (db81630) on the privacy surface.
+#
+# Negative-control: adding `"bogus"` to `_REDACTED_TEXT_FIELDS` fails
+# `test_redacted_text_fields_match_frozenset` (set inequality). Revert
+# restores green.
+_EXPECTED_REDACTED_TEXT_FIELDS: tuple[str, ...] = ("probe_query", "query")
+
+
+def test_redacted_text_fields_match_frozenset() -> None:
+    """Guard so additions to ``_REDACTED_TEXT_FIELDS`` (the closed-protocol
+    field-name whitelist consumed by ``_redact_event_fields``) are
+    mirrored in the hardcoded ``_EXPECTED_REDACTED_TEXT_FIELDS`` tuple
+    — otherwise a new free-text recorder field could ship without
+    redaction coverage, silently leaking verbatim values (possibly
+    carrying secrets) into the JSONL event log. Mirrors
+    ``test_use_outcomes_match_frozenset`` in
+    ``tests/test_server_record_use_provenance.py`` — same closed-protocol
+    addition-guard pattern on the privacy surface."""
+    assert set(_EXPECTED_REDACTED_TEXT_FIELDS) == set(_REDACTED_TEXT_FIELDS)
+
+
+# Ordered-tuple pin for the secret-shape patterns consumed by
+# `_strip_known_secrets` at `events.py:87`. `_SECRET_PATTERNS`
+# (`events.py:69`, `tuple[tuple[re.Pattern[str], str], ...]`) carries
+# ordered `(regex, marker)` pairs that the stripper applies in tuple
+# order via `pattern.sub(replacement, text)`. ORDER IS LOAD-BEARING:
+# the comment at `events.py:66-68` documents that the more-specific
+# Anthropic pattern `\bsk-ant-…\b` MUST run before the generic
+# OpenAI `\bsk-…\b` pattern, otherwise the latter swallows `sk-ant-…`
+# tokens and labels them as `[REDACTED:openai-key]` (a downstream
+# log-correlation bug — the marker label is the contract with any
+# triage tooling that bucketises redactions by provider). A silent
+# insertion of an over-broad pattern between two specific siblings
+# would also let entropy leak into the 32-char preview window.
+#
+# Contrast with the basic-shape membership guards landed in bde7602
+# (`_REDACTED_TEXT_FIELDS`, `_PLACEHOLDER_PREFIXES`, `_INDEX_FILENAMES`):
+# those use `set(...) == set(...)` because order isn't load-bearing
+# for `in`-membership. This guard uses *tuple* equality because the
+# precedence between members IS load-bearing — a silent reorder would
+# pass a set-equality assertion while corrupting the precedence the
+# `events.py:66-68` comment documents. Tuple equality catches
+# additions, deletions, AND reorders in one assertion. The pattern
+# regexes themselves intentionally aren't pinned — they're easier to
+# read and review in the source than reflected in a test mirror, and
+# the existing `test_strip_known_secrets_*` cases below exercise
+# each pattern's substitution surface. The labels are what downstream
+# log-correlation tooling keys on, so they're the load-bearing
+# half of each tuple.
+#
+# A future contributor reordering for performance must update both
+# the source tuple AND this expected tuple. Treat any drift between
+# them as a deliberate decision requiring a CHANGELOG note plus a
+# scan of any log-aggregation pipeline that buckets by marker label.
+#
+# Negative-control: swapping the anthropic-key and openai-key labels
+# in `_SECRET_PATTERNS` (mimicking a "performance" reorder that puts
+# the more common provider first) fails
+# `test_secret_pattern_labels_match_expected_in_order` (tuple
+# inequality). Revert restores green.
+_EXPECTED_SECRET_PATTERN_LABELS: tuple[str, ...] = (
+    "[REDACTED:anthropic-key]",
+    "[REDACTED:openai-key]",
+    "[REDACTED:github-token]",
+    "[REDACTED:github-pat]",
+    "[REDACTED:aws-access-key]",
+)
+
+
+def test_secret_pattern_labels_match_expected_in_order() -> None:
+    """Guard so additions, deletions, AND reorders of ``_SECRET_PATTERNS``
+    (the ordered-tuple secret-shape strip-list consumed by
+    ``_strip_known_secrets``) are caught — uses *tuple* equality
+    rather than set equality because order is load-bearing.
+
+    The comment at ``events.py:66-68`` documents that the more
+    specific Anthropic ``sk-ant-…`` pattern MUST run before the
+    generic OpenAI ``sk-…`` pattern; a silent reorder would label
+    Anthropic keys as ``[REDACTED:openai-key]`` in the JSONL event
+    log, corrupting any downstream log-aggregation tooling that
+    buckets redactions by provider. The labels (the second tuple
+    member of each pair) are the load-bearing identifiers; the
+    regexes are reviewed at the source. A future contributor
+    reordering this tuple for performance must update both the
+    source AND this expected tuple in the same commit."""
+    actual = tuple(label for _, label in _SECRET_PATTERNS)
+    assert actual == _EXPECTED_SECRET_PATTERN_LABELS
 
 
 def test_record_redacts_query_by_default(tmp_path: Path) -> None:

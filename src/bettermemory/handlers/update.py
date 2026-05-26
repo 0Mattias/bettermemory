@@ -1,0 +1,226 @@
+"""memory_update MCP tool — handler implementation + DESC.
+
+Description-edit history:
+
+- M-U (Round 2): the verification-clearing rule was buried as a
+  parenthetical inside the `content` parameter doc. Hoisted to a
+  prominent leader paragraph so the verification side-effect lands
+  before any parameter detail — it's the most consequential thing a
+  caller needs to know about update vs. verify.
+"""
+
+from __future__ import annotations
+
+from typing import TYPE_CHECKING, Any
+
+from ..models import Category, Confidence, _PROPOSABLE_CATEGORIES, validate_scope
+from ..store import MemoryNotFoundError, TombstonedError
+from ._shared import Context, _advance_turn, _validate_content_size
+
+if TYPE_CHECKING:
+    from .._handlers import ToolHandlers
+
+
+DESC_MEMORY_LINKS_TAIL = (
+    " Optional `links` parameter sets the typed inter-memory edge "
+    "list. Each entry is a dict with `type` (one of `supersedes`, "
+    "`contradicts`, `extends`, `depends_on`), `target_id` (a valid "
+    "ULID — the other memory this one relates to), and an optional "
+    "`note` (free-form, why the link exists). REPLACE semantics: "
+    "pass the full new list, not a delta; pass `links=[]` to clear "
+    "all links atomically. Self-links are rejected. Links surface "
+    "bidirectionally at retrieval: memory_show on the source "
+    "carries `links`; memory_show on the target carries "
+    "`reverse_links`. Use `supersedes` when this memory replaces "
+    "the target (the retrieval consumer should prefer this one "
+    "and demote the target); `contradicts` when both can't be "
+    "true (consumer should reconcile via memory_verify); "
+    "`extends` when this memory adds nuance to the target; "
+    "`depends_on` when this memory only makes sense in the "
+    "target's context."
+)
+
+
+DESC_MEMORY_UPDATE = (
+    "Body edits clear `last_verified_at`; scope-only edits preserve "
+    "it. Bundling a scope rename with a body edit clears verification.\n\n"
+    "Refine an existing memory in place. Preferred over "
+    "memory_remove + memory_write when correcting a stored fact — "
+    "preserves `id`, `created`, and `source`; bumps `updated`.\n\n"
+    "Parameters (pass at least one):\n"
+    "- `id`: required.\n"
+    "- `content`: new body. Replacing the body clears "
+    "`last_verified_at` and the verified-* attestations (the "
+    "prior verification was for prose that no longer exists; "
+    "call memory_verify again after).\n"
+    "- `scopes` / `links`: REPLACE semantics — pass the full new "
+    "list, or `[]` to clear. Scope-only edits preserve "
+    "`last_verified_at`.\n"
+    "- `confidence`: low / medium / high.\n"
+    "- `category`: accepts `fact` and `ambient`. "
+    "`user-inference` is REJECTED here — that category exists "
+    "to gate WRITES through the pending-confirm flow; updates "
+    "have no equivalent gate." + DESC_MEMORY_LINKS_TAIL
+)
+
+
+async def memory_update(
+    deps: "ToolHandlers",
+    id: str,
+    content: str | None = None,
+    scopes: list[str] | None = None,
+    confidence: str | None = None,
+    category: str | None = None,
+    links: list[dict[str, Any]] | None = None,
+    ctx: Context | None = None,
+) -> dict[str, Any]:
+    state = deps.sessions.for_request(ctx)
+    _advance_turn(state, deps.recorder)
+    if (
+        content is None
+        and scopes is None
+        and confidence is None
+        and category is None
+        and links is None
+    ):
+        raise ValueError(
+            "memory_update needs at least one of content, scopes, "
+            "confidence, category, or links"
+        )
+    if content is not None and not content.strip():
+        raise ValueError("content must be non-empty if provided")
+    if content is not None:
+        _validate_content_size(content, deps.config.behavior.max_content_bytes)
+
+    try:
+        existing = deps.store.load_one(id)
+    except TombstonedError as exc:
+        raise ValueError(str(exc)) from exc
+    except MemoryNotFoundError as exc:
+        raise ValueError(str(exc)) from exc
+
+    new_scopes = existing.scopes
+    if scopes is not None:
+        if not scopes:
+            raise ValueError("scopes must contain at least one entry if provided")
+        new_scopes = [validate_scope(s) for s in scopes]
+        if deps.config.scopes.allowed:
+            allowed = set(deps.config.scopes.allowed)
+            unknown = [s for s in new_scopes if s not in allowed]
+            if unknown:
+                raise ValueError(
+                    f"scope(s) not in allowed list: {unknown}. "
+                    f"Allowed: {sorted(deps.config.scopes.allowed)}"
+                )
+
+    new_confidence = existing.confidence
+    if confidence is not None:
+        try:
+            new_confidence = Confidence(confidence)
+        except ValueError as exc:
+            raise ValueError(
+                f"confidence must be one of {[c.value for c in Confidence]}"
+            ) from exc
+
+    new_category = existing.category
+    if category is not None:
+        # `user-inference` is a write-time gate (pending-confirm flow);
+        # there's no analogous gate on update, so allowing a retag
+        # *into* `user-inference` would silently bypass that gate.
+        # Allow `fact` and `ambient` only. Sourced from
+        # `models._PROPOSABLE_CATEGORIES` — the same closed-protocol
+        # whitelist gates the LLM-consolidation validators
+        # (`_validate_demote`, `_validate_propose_new` in `llm.py`),
+        # which can't supply the user confirmation `user-inference`
+        # demands either. Sharing the constant means a future
+        # ``Category`` member ships the automation-eligibility
+        # decision to one place; silent divergence between this site
+        # and the LLM validators can't happen.
+        if category not in _PROPOSABLE_CATEGORIES:
+            raise ValueError(
+                "category must be one of "
+                f"{sorted(_PROPOSABLE_CATEGORIES)} on update "
+                "(`user-inference` is write-only — it gates the "
+                "pending-confirm flow which has no equivalent here)"
+            )
+        new_category = Category(category)
+
+    new_body = existing.body
+    if content is not None:
+        new_body = content.strip() + "\n"
+
+    # `links` is REPLACE semantics — the caller passes the full new
+    # list. Same shape as the `scopes` parameter: simpler than
+    # diffing add/remove, and lets the caller atomically clear all
+    # links with `links=[]`. None means "leave existing links
+    # unchanged".
+    new_links = existing.links
+    if links is not None:
+        from ..models import MemoryLink as _MemoryLink
+
+        parsed_links: list[_MemoryLink] = []
+        for i, entry in enumerate(links):
+            if not isinstance(entry, dict):
+                raise ValueError(
+                    f"links[{i}] must be a dict with 'type' and 'target_id'"
+                )
+            try:
+                parsed_links.append(_MemoryLink.model_validate(entry))
+            except (ValueError, KeyError) as exc:
+                raise ValueError(f"links[{i}] invalid: {exc}") from exc
+            if parsed_links[-1].target_id == id:
+                raise ValueError(
+                    f"links[{i}].target_id cannot equal the memory's own id "
+                    f"(self-links are incoherent)"
+                )
+        new_links = parsed_links
+
+    # When `content` changes, the prior verification was for prose
+    # that no longer exists — reset `last_verified_at` to None so the
+    # caller has to re-confirm against the new body. The structured
+    # attestation lists (`verified_paths`, `verified_commits`,
+    # `verified_versions`) were also attached to the prior prose and
+    # would lie about the new body — clear them in lockstep so the
+    # staleness rollup doesn't read e.g. `verified_paths=["/etc/foo"]`
+    # against text that no longer mentions `/etc/foo`. Scope/confidence/
+    # category/links edits don't touch the body's claims, so the
+    # verification stays intact for those. This matches the intuition
+    # that verification is a property of body content, not of metadata.
+    update_fields: dict[str, Any] = {
+        "body": new_body,
+        "scopes": new_scopes,
+        "confidence": new_confidence,
+        "category": new_category,
+        "links": new_links,
+    }
+    if content is not None:
+        update_fields["last_verified_at"] = None
+        update_fields["verified_paths"] = []
+        update_fields["verified_commits"] = []
+        update_fields["verified_versions"] = []
+
+    merged = existing.model_copy(update=update_fields)
+    updated = deps.store.update(merged)
+    fields_changed = [
+        name
+        for name, value in (
+            ("content", content),
+            ("scopes", scopes),
+            ("confidence", confidence),
+            ("category", category),
+            ("links", links),
+        )
+        if value is not None
+    ]
+    deps.recorder.record(
+        "update",
+        id=updated.id,
+        fields=fields_changed,
+        scopes=updated.scopes,
+        confidence=updated.confidence.value,
+        category=updated.category.value if updated.category is not None else None,
+    )
+    return deps.responses.committed(updated)
+
+
+__all__ = ["DESC_MEMORY_LINKS_TAIL", "DESC_MEMORY_UPDATE", "memory_update"]

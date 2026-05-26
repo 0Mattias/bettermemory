@@ -1002,6 +1002,96 @@ async def test_update_category_only_satisfies_at_least_one_field(
 
 
 # ---------------------------------------------------------------------------
+# Pin {"fact", "ambient"} membership of the update-handler category gate
+# ---------------------------------------------------------------------------
+#
+# `handlers.update.memory_update` rejects any `category` retag whose
+# value is outside `models._PROPOSABLE_CATEGORIES` — the same closed-
+# protocol whitelist that gates the LLM-consolidation validators
+# (`_validate_demote` / `_validate_propose_new` in `llm.py`, pinned
+# in `tests/test_llm.py`). `user-inference` is deliberately excluded
+# because that tier requires the pending-confirm flow and update has
+# no equivalent gate. Existing coverage hits both members
+# tangentially (`test_update_can_retag_to_ambient` exercises
+# `ambient`, `test_update_can_retag_back_to_fact` exercises `fact`)
+# but the tests below pin the contract explicitly — a deletion from
+# the source set fails the corresponding parametrise case loudly
+# instead of looking like an unrelated regression on a retag test.
+#
+# Negative-control: temporarily replacing `_PROPOSABLE_CATEGORIES`
+# in `models.py` with `frozenset({"ambient"})` fails the membership
+# guard plus this file's `[fact]` parametrise case AND both of
+# `tests/test_llm.py`'s `[fact]` validator parametrise cases (the
+# constant is shared); replacing with `frozenset({"fact"})` mirrors
+# the failure across the `[ambient]` cases. Reverted to
+# `frozenset({Category.FACT.value, Category.AMBIENT.value})`.
+
+# Hardcoded so a deletion from `_PROPOSABLE_CATEGORIES` causes the
+# corresponding parametrise case to fail (parametrising off the
+# frozenset itself would just drop the case, silently). The
+# membership guard ensures additions still require touching this
+# list. Mirrors the same constant in `tests/test_llm.py`; the two
+# guards live independently because the two pinning surfaces
+# (test_server's MCP-server fixture vs. test_llm's parse_and_validate
+# unit) shouldn't share imports beyond the production module.
+_EXPECTED_UPDATE_PROPOSABLE_CATEGORIES: tuple[str, ...] = ("fact", "ambient")
+
+
+def test_update_proposable_categories_match_frozenset() -> None:
+    """Guard so additions to ``_PROPOSABLE_CATEGORIES`` are mirrored
+    in the parametrise list below — otherwise a new tier joining the
+    proposable set could ship without regression coverage on the
+    `memory_update` retag gate. Paired with the same-named guard in
+    `tests/test_llm.py` so additions to the shared constant must
+    land regression cases on every production site that consumes
+    it."""
+    from bettermemory.models import _PROPOSABLE_CATEGORIES
+
+    assert set(_EXPECTED_UPDATE_PROPOSABLE_CATEGORIES) == set(_PROPOSABLE_CATEGORIES)
+
+
+@pytest.mark.parametrize("category", _EXPECTED_UPDATE_PROPOSABLE_CATEGORIES)
+async def test_update_accepts_every_proposable_category(
+    server: Any, category: str
+) -> None:
+    """Every member of ``_PROPOSABLE_CATEGORIES`` must be accepted by
+    `memory_update`'s category-retag gate at `handlers/update.py`.
+    Routes through the ``in``-membership lookup against
+    `_PROPOSABLE_CATEGORIES`. A silent drop of either member here
+    lets the handler raise ``ValueError("category must be one of
+    …")`` for a legitimately formed retag request — the user's
+    ``memory_update id=… category=fact`` (or ``=ambient``) call
+    bounces with a confusing "must be one of" error citing a list
+    that *contains* the value they asked for."""
+    # Seed with the *other* category so the update is a real retag,
+    # not a no-op (which the handler would still commit but doesn't
+    # exercise the gate's surface meaningfully).
+    seed_category = "ambient" if category == "fact" else "fact"
+    written = await _call(
+        server,
+        "memory_write",
+        content=f"to be retagged to {category}",
+        scopes=["tools"],
+        category=seed_category,
+    )
+    res = await _call(
+        server,
+        "memory_update",
+        id=written["id"],
+        category=category,
+    )
+    assert res["status"] == "committed", (
+        f"memory_update retag to category={category!r} was rejected — "
+        f"the handler's category gate has drifted from "
+        f"_PROPOSABLE_CATEGORIES"
+    )
+    assert res["category"] == category
+    # Persisted to disk.
+    shown = await _call(server, "memory_show", id=written["id"])
+    assert shown["category"] == category
+
+
+# ---------------------------------------------------------------------------
 # Content dedup at write time
 #
 # memory_write runs find_similar against the current store before staging or
@@ -1226,6 +1316,107 @@ async def test_dedup_passes_through_to_pending_with_related(
     assert second["status"] == "pending"
     assert "related" in second
     assert second["related"][0]["relevance"] == "medium"
+
+
+# ---------------------------------------------------------------------------
+# Ordered-tuple pin for `_WRITE_GATES` — the WriteGate strategy chain
+# orchestrated by `handlers/write.py:545`. ORDER IS LOAD-BEARING and the
+# comment at `handlers/write.py:474-481` explicitly documents the
+# rationale: transient before dedup so a transient parent doesn't route
+# the writer to `memory_update`; scope-mismatch before dedup so a write
+# tagged for a different scope doesn't get a duplicate hit; groundedness
+# before dedup because (the comment's load-bearing example) a
+# hallucinated write being reported as a "duplicate" of a real one is
+# misleading; dedup before pending so the user-inference confirmation
+# flow doesn't ask about a write we'd already reject; PendingGate last
+# because everything else either rejects or accepts.
+#
+# This is the HIGH-HAZARD pin in the closed-protocol audit-loop sweep.
+# Hazard surface: a silent reorder violates the security / correctness
+# invariant the source comment documents — specifically:
+#   * dedup-before-groundedness lets a hallucinated write masquerade as
+#     a duplicate of a real one (the comment's literal example);
+#   * dropping `GroundednessGate` from the tuple silently lets
+#     ungrounded writes through (the gate fires only because it's in
+#     the chain);
+#   * any reorder changes which gate fires first when multiple would
+#     reject, changing the user-visible response.
+#
+# Contrast with the basic-shape membership guards landed in bde7602
+# (`_REDACTED_TEXT_FIELDS`, `_PLACEHOLDER_PREFIXES`, `_INDEX_FILENAMES`)
+# and the prior tick's pins (`_USE_OUTCOMES`, `_VALID_TRIGGERED_FROM`,
+# `_RETRIEVAL_EVENT_KINDS`): those use `set(...) == set(...)` because
+# order isn't load-bearing for `in`-membership lookups. This guard
+# uses *tuple* equality on the per-instance type sequence because
+# precedence between gates IS load-bearing — a silent reorder would
+# pass a set-equality assertion while corrupting the precedence the
+# write.py:474-481 comment documents. Tuple equality catches
+# additions, deletions, AND reorders in one assertion.
+#
+# A future contributor reordering for performance (or adding a new
+# gate, or deleting one) must update both the source tuple AND this
+# expected tuple in the same commit. Treat any drift as a deliberate
+# security/correctness decision that requires re-reading the
+# write.py:474-481 rationale: would the new ordering still bounce a
+# hallucinated write before reporting it as a duplicate? Still bounce
+# a transient-parent write before routing the writer to update? Still
+# stage user-inference last so dedup doesn't ask the user about a
+# write we'd reject? If yes, update both. If unsure, don't reorder.
+#
+# Negative-control: swapping `DedupActiveGate` and `GroundednessGate`
+# in `_WRITE_GATES` (a plausible "performance" reorder that puts
+# cheaper checks first) fails
+# `test_write_gates_match_expected_types_in_order` (tuple inequality
+# — sequences differ at index 2 / 3). Revert restores green.
+def test_write_gates_match_expected_types_in_order() -> None:
+    """Guard so additions, deletions, AND reorders of ``_WRITE_GATES``
+    (the ordered WriteGate strategy chain orchestrated by
+    ``handlers/write.py:545``) are caught — uses *tuple* equality
+    rather than set equality because gate precedence is load-bearing.
+
+    The comment at ``handlers/write.py:474-481`` documents the
+    invariant: transient/scope-mismatch/groundedness gates fire
+    BEFORE dedup so (a) a hallucinated write can't masquerade as a
+    duplicate of a real one, (b) a transient-parent write isn't
+    routed to ``memory_update``, (c) a scope-mismatched write doesn't
+    get a misleading duplicate hit; dedup BEFORE pending so the
+    user-inference confirmation flow doesn't ask about a write we'd
+    already reject; ``PendingGate`` last because everything else
+    either rejects or accepts. A silent reorder breaks the
+    security/correctness invariant the source comment documents.
+
+    A future contributor reordering this tuple for performance must
+    update both the source AND this expected tuple in the same
+    commit, AND re-read the write.py:474-481 rationale to confirm
+    the new ordering still preserves: hallucinated-before-dedup,
+    transient-before-dedup, scope-before-dedup, dedup-before-pending,
+    and pending-last."""
+    from bettermemory.handlers.write import (
+        DedupActiveGate,
+        DedupTombstoneGate,
+        GroundednessGate,
+        PendingGate,
+        ScopeMismatchGate,
+        TransientGate,
+        _WRITE_GATES,
+    )
+
+    expected: tuple[type, ...] = (
+        TransientGate,
+        ScopeMismatchGate,
+        GroundednessGate,
+        DedupActiveGate,
+        DedupTombstoneGate,
+        PendingGate,
+    )
+    actual = tuple(type(g) for g in _WRITE_GATES)
+    assert actual == expected, (
+        f"_WRITE_GATES drifted from documented order at "
+        f"handlers/write.py:474-481. Got {[t.__name__ for t in actual]}, "
+        f"expected {[t.__name__ for t in expected]}. Re-read the source "
+        f"comment before reordering — this guards a security/correctness "
+        f"invariant, not a stylistic choice."
+    )
 
 
 async def test_memory_update_unaffected_by_dedup(server: Any) -> None:

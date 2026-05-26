@@ -814,9 +814,39 @@ def compute_commit_drift(
 # load-bearing one consumers should branch on first.
 
 
-_VERDICT_FRESH = "fresh"
-_VERDICT_RECOMMENDED = "spot_check_recommended"
-_VERDICT_REQUIRED = "spot_check_required"
+# Tier strings emitted on the wire by ``compute_staleness_verdict``
+# below AND by ``ResponseBuilder.attach_commit_drift_counts`` in
+# ``_response.py`` (the per-search recompute that folds commit-drift
+# into the verdict once the per-search commit-timestamp list has been
+# read). The two sites are independent emission points; without a
+# shared source of truth a rename here — say ``"spot_check_required"``
+# → ``"verify_now"`` — would only propagate to whichever site the
+# refactor reached first. ``memory_show`` (canonical site) would emit
+# the new string while ``memory_search``'s top hit (recompute site)
+# would still emit the old one for any memory matched by the
+# commit-drift recompute path. Same divergence-hazard pattern as
+# ``_VERDICT_RAISE_STATUSES`` below, but on the OUTPUT side of the
+# rollup. Pinned by
+# ``test_staleness_verdict_tier_string_values_unchanged`` (wire values)
+# and ``test_staleness_verdict_string_matches_constant_across_show_and_search``
+# (cross-surface equality) in ``tests/test_server_v12_features.py``.
+_VERDICT_FRESH: str = "fresh"
+_VERDICT_RECOMMENDED: str = "spot_check_recommended"
+_VERDICT_REQUIRED: str = "spot_check_required"
+
+# Closed-protocol whitelist: the `verification.status` values that
+# pre-empt every drift input and force the verdict to
+# ``spot_check_required``. Lives as a module-level frozenset so the
+# two consumers (``compute_staleness_verdict`` below and
+# ``ResponseBuilder.attach_commit_drift_counts`` in ``_response.py``,
+# which re-runs the same gate after folding in commit-drift) share a
+# single source of truth. Silent divergence between the two sites
+# would let a stale memory surfaced by ``memory_search`` carry a
+# different verdict than the same memory surfaced by ``memory_show``
+# — the loudest re-verify signal we emit, downgraded by a one-site
+# typo. Pinned by ``_EXPECTED_RAISE_STATUSES`` in
+# ``tests/test_server_v12_features.py``.
+_VERDICT_RAISE_STATUSES: frozenset[str] = frozenset({"never", "stale"})
 
 
 def compute_staleness_verdict(
@@ -837,15 +867,16 @@ def compute_staleness_verdict(
       this memory came from has commits since the last verify. Worth
       a quick check before relying on the body.
     - ``"spot_check_required"``: ``verification.status`` in
-      ``{"never", "stale"}``. Pre-empts the drift inputs because the
-      verification anchor itself is missing or expired.
+      ``_VERDICT_RAISE_STATUSES`` (``{"never", "stale"}``). Pre-empts
+      the drift inputs because the verification anchor itself is
+      missing or expired.
 
     `commit_drift_count` is `None` when the signal isn't applicable
     (caller not in a repo, hit from a different repo, hit never
     verified). None never elevates the verdict on a fresh memory; it
     behaves the same as 0.
     """
-    if verification.status in {"never", "stale"}:
+    if verification.status in _VERDICT_RAISE_STATUSES:
         return _VERDICT_REQUIRED
     drifty = path_drift_missing > 0 or (
         commit_drift_count is not None and commit_drift_count > 0

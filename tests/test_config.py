@@ -116,6 +116,21 @@ def test_default_config_round_trips_through_load_config(tmp_path: Path) -> None:
         loaded.behavior.verification_stale_days
         == fresh.behavior.verification_stale_days
     )
+    # Fields added after the original round-trip pin. Each one has its
+    # own coercion call in `load_config` (search_mode/semantic_provider/
+    # semantic_model_fastembed go through `str(...)`, max_content_bytes
+    # through `int(...)`, log_queries_verbatim through `bool(...)`); a
+    # silent drop or reordering that changed the coercion would survive
+    # the field-level coercion tests above but break the round-trip
+    # equality with `Config()` defaults that this test pins.
+    assert loaded.behavior.search_mode == fresh.behavior.search_mode
+    assert loaded.behavior.semantic_provider == fresh.behavior.semantic_provider
+    assert (
+        loaded.behavior.semantic_model_fastembed
+        == fresh.behavior.semantic_model_fastembed
+    )
+    assert loaded.behavior.max_content_bytes == fresh.behavior.max_content_bytes
+    assert loaded.telemetry.log_queries_verbatim == fresh.telemetry.log_queries_verbatim
     assert loaded.scopes.allowed == fresh.scopes.allowed
     assert loaded.telemetry.enabled == fresh.telemetry.enabled
     assert loaded.telemetry.max_bytes == fresh.telemetry.max_bytes

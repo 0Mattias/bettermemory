@@ -7,18 +7,39 @@ literal that drifted past 1.0 — this guard prevents the same regression.
 The argparse `--version` flag (registered in `server.main()`) reads the
 same `__version__`, so the assertions on bare equality below cover both
 surfaces in one go.
+
+The H12 audit pass (2.7.x) caught a stale local install where
+`bettermemory --version` reported 2.7.2 while pyproject said 2.7.3.
+The CI gate added at the bottom of this file pins all FOUR version
+sources together so the same drift can't slip through to a release
+wheel: `pyproject.toml`, `bettermemory.__version__`, the CLI
+subprocess output, and the plugin/marketplace manifests (the
+plugin pair is already pinned in `test_plugin.py` /
+`test_changelog.py` — re-asserting here in one consolidated test
+makes the version-skew failure mode legible from a single grep).
 """
 
 from __future__ import annotations
 
+import json
 import re
 import subprocess
 import sys
+import tomllib
 from importlib.metadata import version as pkg_version
+from pathlib import Path
 
 import pytest
 
 import bettermemory
+
+
+_REPO_ROOT = Path(__file__).resolve().parents[1]
+
+
+def _pyproject_version() -> str:
+    with (_REPO_ROOT / "pyproject.toml").open("rb") as fh:
+        return tomllib.load(fh)["project"]["version"]
 
 
 def test_dunder_version_matches_installed_metadata() -> None:
@@ -85,4 +106,83 @@ def test_version_flag_prints_dunder_version() -> None:
     )
     assert out.startswith("bettermemory "), (
         f"--version output should be prefixed with the program name: {out!r}"
+    )
+
+
+# ---------------------------------------------------------------------------
+# H12 — version skew across ALL the surfaces a release tag has to keep
+# in lockstep. Each source pinned to pyproject.toml so a release with
+# a bumped pyproject but a stale anywhere-else surfaces here.
+# ---------------------------------------------------------------------------
+
+
+def test_pyproject_version_matches_dunder_version() -> None:
+    """`importlib.metadata` reads the installed wheel's metadata, which
+    derives from pyproject at build time. A drift between this and
+    pyproject means the local install is stale — `pip install -e .` (or
+    `uv sync`) fixes it. The CI gate fires when the editable install on
+    a release-tagged commit happens to be stale, so the audit-pass
+    finding from 2.7.x can't repeat against a published wheel."""
+    pyproject_v = _pyproject_version()
+    assert bettermemory.__version__ == pyproject_v, (
+        f"bettermemory.__version__ ({bettermemory.__version__!r}) != "
+        f"pyproject.toml version ({pyproject_v!r}). The installed "
+        f"package is stale relative to the source tree — run "
+        f"`uv pip install -e .` (or `uv sync`) to refresh."
+    )
+
+
+@pytest.mark.skipif(
+    not _PACKAGE_IMPORTABLE_IN_SUBPROCESS,
+    reason=(
+        "subprocess Python can't import bettermemory — "
+        "run `pip install -e .` (or `uv sync`) locally"
+    ),
+)
+def test_cli_version_flag_matches_pyproject() -> None:
+    """The user-visible `bettermemory --version` output must match
+    pyproject. This is the surface the H12 audit caught (2.7.2 wheel
+    vs 2.7.3 pyproject) — pin it directly rather than indirectly
+    through `__version__` so the drift fails loudly here even if
+    `__version__` and pyproject agree but the CLI entry point was
+    somehow served from a different process tree."""
+    pyproject_v = _pyproject_version()
+    result = subprocess.run(
+        [sys.executable, "-m", "bettermemory", "--version"],
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+    out = (result.stdout + result.stderr).strip()
+    assert pyproject_v in out, (
+        f"`bettermemory --version` output {out!r} does not contain the "
+        f"pyproject.toml version {pyproject_v!r}. Most likely cause: a "
+        f"stale editable install; run `uv pip install -e .`. If you "
+        f"see this in CI, the release wheel is mis-tagged."
+    )
+
+
+def test_pyproject_matches_plugin_and_marketplace_manifests() -> None:
+    """Re-pin the plugin + marketplace versions to pyproject here so a
+    single `pytest tests/test_version.py` run surfaces every version-
+    skew failure mode in one place. The detailed plugin-shape
+    assertions still live in `test_plugin.py`; this is the
+    consolidated guard."""
+    pyproject_v = _pyproject_version()
+    plugin = json.loads(
+        (_REPO_ROOT / "plugin" / ".claude-plugin" / "plugin.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    market = json.loads(
+        (_REPO_ROOT / ".claude-plugin" / "marketplace.json").read_text(encoding="utf-8")
+    )
+    assert plugin.get("version") == pyproject_v, (
+        f"plugin.json version {plugin.get('version')!r} != "
+        f"pyproject.toml {pyproject_v!r} — bump both at release."
+    )
+    market_v = (market.get("metadata") or {}).get("version")
+    assert market_v == pyproject_v, (
+        f"marketplace.json metadata.version {market_v!r} != "
+        f"pyproject.toml {pyproject_v!r} — bump both at release."
     )

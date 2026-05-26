@@ -27,7 +27,13 @@ from .models import (
     TombstonedSummary,
 )
 from .origin import Origin, commit_author_timestamps, repos_match
+from .time_utils import isoformat_utc as _isoformat_utc
+from .time_utils import isoformat_utc_optional as _isoformat_utc_optional
 from .verify import (
+    _VERDICT_FRESH,
+    _VERDICT_RAISE_STATUSES,
+    _VERDICT_RECOMMENDED,
+    _VERDICT_REQUIRED,
     compute_staleness_verdict,
     compute_verification_status,
     detect_path_drift,
@@ -37,19 +43,13 @@ from .verify import (
 __all__ = ["ResponseBuilder", "isoformat", "isoformat_optional"]
 
 
-def isoformat(dt: datetime) -> str:
-    return dt.isoformat().replace("+00:00", "Z")
-
-
-def isoformat_optional(dt: datetime | None) -> str | None:
-    """ISO-format `dt`, returning None when the input is None.
-
-    Distinct from `isoformat` because `None` is a meaningful response
-    value for `last_verified_at` — "never verified" is a valid state, not
-    an error. Returning the literal None lets JSON-serialisation produce
-    `"last_verified_at": null` which the caller can branch on directly.
-    """
-    return None if dt is None else isoformat(dt)
+# `isoformat` / `isoformat_optional` are the public names this module
+# has exported since 1.x; keep them as aliases over the canonical
+# `time_utils` helpers so the wire-format definition lives in one
+# place but downstream callers (handlers, tests) don't have to chase
+# the rename.
+isoformat = _isoformat_utc
+isoformat_optional = _isoformat_utc_optional
 
 
 class ResponseBuilder:
@@ -407,13 +407,24 @@ class ResponseBuilder:
             # actually applicable.
             verification_dict = hit_dict["verification"]
             verification_status = verification_dict["status"]
-            verdict_required = verification_status in {"never", "stale"}
+            # Mirror the gate in `compute_staleness_verdict` — same
+            # closed-protocol whitelist, single source of truth. Silent
+            # divergence here would let `memory_search`'s top hit
+            # surface a different verdict than `memory_show` does for
+            # the same stale memory.
+            verdict_required = verification_status in _VERDICT_RAISE_STATUSES
+            # Mirror the tier strings ``compute_staleness_verdict``
+            # emits at ``verify.py`` — same closed-protocol output, one
+            # source of truth. A rename of any tier in ``verify.py``
+            # that didn't reach this recompute would silently desync
+            # the ``memory_search`` top-hit verdict from the
+            # ``memory_show`` verdict for the same memory.
             if verdict_required:
-                hit_dict["staleness_verdict"] = "spot_check_required"
+                hit_dict["staleness_verdict"] = _VERDICT_REQUIRED
             elif count > 0 or hit_dict.get("path_drift_missing", 0) > 0:
-                hit_dict["staleness_verdict"] = "spot_check_recommended"
+                hit_dict["staleness_verdict"] = _VERDICT_RECOMMENDED
             else:
-                hit_dict["staleness_verdict"] = "fresh"
+                hit_dict["staleness_verdict"] = _VERDICT_FRESH
 
     def attach_recent_negative_outcomes(
         self,

@@ -29,6 +29,7 @@ from __future__ import annotations
 
 import html
 import logging
+import secrets
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -146,18 +147,70 @@ ul.bare li { padding: 0.25rem 0; }
 """
 
 
-def _layout(title: str, body: str, store_root: Path) -> str:
+# Inline JS that copies the per-process CSRF token from the meta tag
+# onto every mutating <form>'s submission (and any fetch() the page
+# might add later). Plain forms can't send custom request headers, so
+# we intercept submit, append the token as a hidden field, and the
+# server checks the header form (X-CSRF-Token) OR the form-field form
+# (csrf_token) — same value, two transports. Keeping the helper tiny
+# and self-contained beats pulling in any framework.
+_CSRF_JS = """
+(function () {
+  var meta = document.querySelector('meta[name="csrf-token"]');
+  if (!meta) return;
+  var token = meta.getAttribute('content');
+  // Augment every form on the page so plain <form method=post> works
+  // without touching each call site.
+  document.querySelectorAll('form').forEach(function (form) {
+    if ((form.method || '').toLowerCase() !== 'post') return;
+    var existing = form.querySelector('input[name="csrf_token"]');
+    if (existing) { existing.value = token; return; }
+    var input = document.createElement('input');
+    input.type = 'hidden';
+    input.name = 'csrf_token';
+    input.value = token;
+    form.appendChild(input);
+  });
+  // Patch fetch so any future inline JS that wants to POST inherits
+  // the header automatically.
+  var origFetch = window.fetch;
+  window.fetch = function (input, init) {
+    init = init || {};
+    var method = (init.method || (typeof input === 'object' && input.method) || 'GET').toUpperCase();
+    if (method !== 'GET' && method !== 'HEAD' && method !== 'OPTIONS') {
+      init.headers = new Headers(init.headers || {});
+      if (!init.headers.has('X-CSRF-Token')) {
+        init.headers.set('X-CSRF-Token', token);
+      }
+    }
+    return origFetch.call(this, input, init);
+  };
+})();
+"""
+
+
+def _layout(title: str, body: str, store_root: Path, csrf_token: str) -> str:
     """Render a full HTML page with the standard chrome.
 
     Title is HTML-escaped for safety; body is trusted (the route
     builds it from escaped pieces internally). Header carries the
     nav and a small "served from" indicator so a user juggling
     multiple stores can tell at a glance which one they're in.
+
+    Every page carries a <meta name="csrf-token"> tag plus the
+    `_CSRF_JS` helper that injects the token onto every same-origin
+    mutating form / fetch(). The server side checks the token on
+    every mutating endpoint — see `_check_csrf` in `build_app`. The
+    token is per-process (regenerated on every server restart); we
+    don't bother with rotating-per-request tokens because the local
+    UI's session lifetime is "user has the tab open" and rotating
+    would break submits across tabs without buying real defence.
     """
     return (
         "<!doctype html>"
         "<html><head>"
         f"<title>{html.escape(title)} · bettermemory</title>"
+        f'<meta name="csrf-token" content="{html.escape(csrf_token)}"/>'
         f"<style>{_BASE_STYLE}</style>"
         "</head><body>"
         "<header>"
@@ -170,6 +223,7 @@ def _layout(title: str, body: str, store_root: Path) -> str:
         "</header>"
         f"<h1>{html.escape(title)}</h1>"
         f"{body}"
+        f"<script>{_CSRF_JS}</script>"
         "</body></html>"
     )
 
@@ -458,6 +512,19 @@ def build_app(config: Config, store: Store | None = None) -> "FastAPI":
     store = store or Store(config.resolved_directory())
     app = FastAPI(title="bettermemory")
 
+    # audit H4 — per-process random CSRF token. Generated once at
+    # app-build time, served in every page's <meta name="csrf-token">
+    # tag, and required on every mutating endpoint. Loopback-name-only
+    # same-origin checks (the prior defence) are bypassable when the
+    # operator binds --host 0.0.0.0 (DNS rebinding, attacker-controlled
+    # Origin header from non-browser clients), so the load-bearing
+    # defence is now the token. 32 random bytes -> ~43 url-safe chars,
+    # large enough that brute-force during the UI's session lifetime
+    # is not a concern.
+    csrf_token = secrets.token_urlsafe(32)
+    # Stash on the app so tests can read the value without scraping HTML.
+    app.state.csrf_token = csrf_token
+
     # Cap the verify note at 500 chars — same discipline as
     # `claim_excerpts` on `memory_record_use`. The UI's note field is a
     # short "what did I check" prompt, not a free-form blob; bounding
@@ -465,7 +532,21 @@ def build_app(config: Config, store: Store | None = None) -> "FastAPI":
     _NOTE_MAX_CHARS = 500
 
     def _layout_resp(title: str, body: str) -> HTMLResponse:
-        return HTMLResponse(_layout(title, body, store.root))
+        return HTMLResponse(_layout(title, body, store.root, csrf_token))
+
+    def _check_csrf(header_token: str | None, form_token: str | None) -> None:
+        """audit H4 — constant-time check against the per-process
+        token. Accepts the token in either the X-CSRF-Token header
+        (fetch path) or a `csrf_token` form field (plain <form>
+        path, since forms can't set custom request headers). Raises
+        403 on miss; the caller doesn't have to do anything else.
+        """
+        supplied = header_token or form_token or ""
+        if not supplied or not secrets.compare_digest(supplied, csrf_token):
+            raise HTTPException(
+                status_code=403,
+                detail="missing or invalid CSRF token",
+            )
 
     @app.get("/", response_class=HTMLResponse)
     def index() -> HTMLResponse:
@@ -516,16 +597,25 @@ def build_app(config: Config, store: Store | None = None) -> "FastAPI":
     def memory_verify(
         memory_id: str,
         note: str = Form(default=""),
+        csrf_token_form: str | None = Form(default=None, alias="csrf_token"),
         origin: str | None = Header(default=None),
         referer: str | None = Header(default=None),
+        x_csrf_token: str | None = Header(default=None, alias="X-CSRF-Token"),
     ) -> RedirectResponse:
-        # CSRF defence: even though the UI binds to 127.0.0.1 by default,
-        # any open browser tab on the user's machine can submit a form
-        # against localhost — a malicious page could forge a bump to
-        # `last_verified_at` and corrupt the trust signal. Require the
-        # request's Origin (preferred) or Referer to point at this same
-        # UI so cross-site forms are rejected. Both headers are sent by
-        # mainstream browsers on form POSTs.
+        # audit H4 — primary CSRF defence is the per-process token.
+        # Without it the prior `_same_origin` gate was bypassable when
+        # the operator passed --host 0.0.0.0: an attacker could forge
+        # `Origin: http://localhost:8765` from any non-browser client
+        # on the LAN (DNS rebinding from a browser also defeats it).
+        # The token is unguessable to anyone who hasn't pulled an HTML
+        # page from this same process.
+        _check_csrf(x_csrf_token, csrf_token_form)
+        # Belt-and-suspenders: keep the loopback-name same-origin gate
+        # so plain `curl -X POST` from another host on the LAN still
+        # gets rejected even before the token check runs (defence in
+        # depth — the token is the load-bearing check, but rejecting
+        # the obviously-cross-origin case early surfaces a clearer
+        # error). Browsers reliably send Origin on POST.
         if not _same_origin(origin, referer):
             raise HTTPException(
                 status_code=403,
@@ -596,14 +686,64 @@ def serve(
         ) from exc
 
     app = build_app(config)
-    if host != "127.0.0.1" and host != "localhost":
-        log.warning(
-            "binding to non-loopback host %s — the web UI is read-mostly "
-            "but exposes curation surfaces to anyone on the network",
-            host,
-        )
+    _warn_if_non_loopback_bind(host)
     log.info("bettermemory ui starting on http://%s:%d", host, port)
     uvicorn.run(app, host=host, port=port, log_level="warning")
+
+
+def _warn_if_non_loopback_bind(host: str) -> bool:
+    """Emit the H4 non-loopback warning when ``host`` isn't loopback.
+
+    Returns ``True`` if the warning was emitted, ``False`` otherwise.
+    Extracted from ``serve()`` so tests can exercise the warning path
+    without launching uvicorn — the prior shape had the warning inline
+    in ``serve()``, so the only way to assert it fired was to mock
+    uvicorn and run the full launch path, which `test_web.py` punted
+    on (and ended up testing only the predicate, not the warning).
+
+    audit H4 — resolve the bind address against the canonical loopback
+    set rather than name-matching "localhost" / "127.0.0.1" only.
+    `--host 0.0.0.0`, `--host ::`, or a non-loopback hostname all
+    surface as non-loopback here, so the warning fires on every
+    exposed deployment instead of the prior name-only check.
+    """
+    if _is_loopback_bind(host):
+        return False
+    log.warning(
+        "Binding to a non-loopback address; CSRF token protects "
+        "mutations but transport is unencrypted. Use loopback or "
+        "front with TLS for sensitive deployments."
+    )
+    return True
+
+
+def _is_loopback_bind(host: str) -> bool:
+    """Return True if the requested bind host resolves to loopback.
+
+    Resolves the host via the stdlib resolver so a custom hostname
+    that points at 127.0.0.1 still counts as loopback. Falls back to
+    a string compare when DNS lookup fails — better to err on the
+    side of warning than to silently skip the warning on a transient
+    resolver failure.
+    """
+    import socket
+    from ipaddress import ip_address
+
+    loopback_names = {"localhost", "127.0.0.1", "::1"}
+    if host in loopback_names:
+        return True
+    try:
+        infos = socket.getaddrinfo(host, None)
+    except OSError:
+        return False
+    for info in infos:
+        try:
+            addr = ip_address(info[4][0])
+        except (ValueError, IndexError):
+            continue
+        if not addr.is_loopback:
+            return False
+    return bool(infos)
 
 
 __all__ = ["build_app", "serve"]

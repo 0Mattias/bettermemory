@@ -518,3 +518,87 @@ def test_subprocess_version_pins_packaging(tmp_path: Path) -> None:
         "the package metadata fallback fired during a normal subprocess "
         "run — wheel packaging probably stripped the .dist-info"
     )
+
+
+# ---------------------------------------------------------------------------
+# Registry-vs-dispatch parity for `cli/__init__.py` (Class 7 — closed by
+# this commit).
+#
+# `_build_parser` returns a `subparsers: dict[str, ArgumentParser]` (one
+# entry per `bettermemory <cmd>` subcommand) and `main()` sequentially
+# dispatches with a chain of `if cmd == "<key>": ... return` arms. The
+# two enumerations MUST agree:
+#
+#   - Registry-only (dict key without dispatch arm): `bettermemory foo`
+#     parses cleanly (argparse accepts the subcommand) but falls through
+#     to `parser.error(f"unknown subcommand: {cmd!r}")` — user-visible
+#     failure that looks like a typo even though the subcommand was
+#     just registered.
+#   - Dispatch-only (arm without dict key): unreachable code; argparse
+#     rejects the subcommand before dispatch ever sees it.
+#
+# Existing coverage doesn't catch either drift: the per-subcommand
+# `test_subcommand_help_works` parametrise above iterates a hardcoded
+# tuple, `test_help_lists_all_subcommands` only asserts a 6-name subset,
+# and the direct-import smoke tests don't cross-check the two
+# enumerations. Hazard tier: medium-high (user-visible CLI fallback on
+# the registry-drift side; silent unreachable code on the dispatch-only
+# side).
+#
+# Implementation note: the test AST-walks `main()`'s source rather than
+# instrumenting the dispatch (no test-only hooks in production code).
+# Filter requires `ast.Eq` ops specifically — `if cmd is None:` at the
+# top of `main()` would otherwise match (`ast.Is` vs `ast.Eq`) and pull
+# `None` into the arms set, which would always trip the assertion.
+# Stringly-typed only (`isinstance(value, str)`) so a hypothetical
+# `if cmd == 42:` doesn't crash the sort in the failure message.
+#
+# Negative-control verified at commit time (see commit message for
+# detail).
+# ---------------------------------------------------------------------------
+
+
+def test_subparser_registry_matches_main_dispatch() -> None:
+    """Every key in `_build_parser`'s `subparsers` dict MUST have a
+    corresponding `if cmd == "<key>"` arm in `main()`, and vice versa.
+    Drift on the registry side produces a user-visible
+    `parser.error("unknown subcommand: ...")` fallback; drift on the
+    dispatch side produces unreachable code that argparse never reaches.
+
+    Closes Class 7 (same-file string-key registry-dict vs sequential
+    dispatch-arm parity) from the tick-25 Branch B audit."""
+    import ast
+    import inspect
+
+    from bettermemory.cli import _build_parser, main
+
+    _, subparsers = _build_parser()
+    main_src = inspect.getsource(main)
+    tree = ast.parse(main_src)
+    arms: set[str] = set()
+    for node in ast.walk(tree):
+        # Filter for `if cmd == "<literal-string>":` specifically — the
+        # `if cmd is None:` early-return at the top of `main()` is an
+        # `ast.Is` op, not `ast.Eq`, and would otherwise drag `None`
+        # into the set and trip the assertion on every run.
+        if (
+            isinstance(node, ast.If)
+            and isinstance(node.test, ast.Compare)
+            and len(node.test.comparators) == 1
+            and len(node.test.ops) == 1
+            and isinstance(node.test.ops[0], ast.Eq)
+            and isinstance(node.test.left, ast.Name)
+            and node.test.left.id == "cmd"
+            and isinstance(node.test.comparators[0], ast.Constant)
+            and isinstance(node.test.comparators[0].value, str)
+        ):
+            arms.add(node.test.comparators[0].value)
+    assert set(subparsers) == arms, (
+        "cli subparser registry / main() dispatch arms drifted; "
+        "see cli/__init__.py:_build_parser (subparsers dict) and "
+        "cli/__init__.py:main (if cmd == '<key>' chain). "
+        f"registry-only={set(subparsers) - arms} (would fall through "
+        f"to parser.error 'unknown subcommand'); "
+        f"dispatch-only={arms - set(subparsers)} (unreachable code, "
+        "argparse rejects the subcommand before dispatch sees it)."
+    )
