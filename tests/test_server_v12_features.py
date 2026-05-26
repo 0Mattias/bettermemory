@@ -723,6 +723,86 @@ async def test_staleness_verdict_string_matches_constant_across_show_and_search(
 
 
 # ---------------------------------------------------------------------------
+# Change 3 (cont.) — pin verdict emission on the memory_list surfaces too
+# ---------------------------------------------------------------------------
+#
+# ``compute_staleness_verdict`` has 5 call sites in
+# ``_response.py`` + ``handlers/show.py``:
+#
+# - ``_response.py:103``  — ``hit_to_dict`` (memory_search)
+# - ``_response.py:161``  — ``summary_to_dict`` (memory_list summary)
+# - ``_response.py:224``  — ``memory_to_dict`` (memory_list with_bodies)
+# - ``_response.py:415``  — ``attach_commit_drift_counts`` recompute
+# - ``handlers/show.py``  — memory_show
+#
+# The cross-surface tests above triangulate three of them
+# (memory_show, memory_search hit, and the per-search recompute) but
+# leave the two memory_list paths unpinned. A single-site hardcoded
+# literal at ``_response.py:161`` or ``:224`` — e.g. a refactor that
+# inlined ``"spot_check_required"`` for "clarity" — would silently
+# desync the memory_list verdict from every other surface while every
+# existing test still passed. This test extends the cross-surface
+# coverage to both list shapes (summary + with_bodies) so a literal
+# at either site fails loudly.
+#
+# Negative-control: temporarily hardcoding the literal ``"wrong"`` at
+# ``_response.py:161`` flips the summary-path assertion below;
+# temporarily hardcoding it at ``_response.py:224`` flips the
+# with_bodies-path assertion. Both reverts confirmed.
+
+
+async def test_staleness_verdict_string_matches_constant_across_list_surfaces(
+    stale_server: Any,
+) -> None:
+    """Cross-surface OUTPUT pin on the memory_list paths: for a stale
+    memory routed through both ``memory_list`` (summary) and
+    ``memory_list(with_bodies=True)``, the emitted ``staleness_verdict``
+    on each returned row must equal the shared ``_VERDICT_REQUIRED``
+    constant. Catches a single-site hardcoded literal at
+    ``_response.py:161`` (``summary_to_dict``) or ``:224``
+    (``memory_to_dict``) — both are independent emission sites the
+    other cross-surface tests don't reach.
+
+    Uses the ``stale_server`` fixture (``verification_stale_days=0``)
+    plus the existing ``_write_memory_in_state(..., status="stale")``
+    helper so the produced memory is classified ``stale`` on the next
+    ``compute_verification_status`` call — driving the
+    ``_VERDICT_RAISE_STATUSES`` branch that pre-empts every drift
+    input."""
+    memory_id = await _write_memory_in_state(stale_server, status="stale")
+
+    # Summary path (`_response.py:161` → `summary_to_dict`).
+    summary_rows = _unwrap(await _call(stale_server, "memory_list"))
+    summary_row = next((r for r in summary_rows if r["id"] == memory_id), None)
+    assert summary_row is not None, (
+        f"seeded memory {memory_id!r} missing from memory_list summary"
+    )
+    assert summary_row["verification"]["status"] == "stale"
+    assert summary_row["staleness_verdict"] == _VERDICT_REQUIRED, (
+        f"memory_list (summary) emitted "
+        f"{summary_row['staleness_verdict']!r}, expected "
+        f"{_VERDICT_REQUIRED!r} (the shared constant) — possible "
+        f"single-site drift away from verify.py's _VERDICT_REQUIRED "
+        f"at _response.py:161 (summary_to_dict)"
+    )
+
+    # With-bodies path (`_response.py:224` → `memory_to_dict`).
+    body_rows = _unwrap(await _call(stale_server, "memory_list", with_bodies=True))
+    body_row = next((r for r in body_rows if r["id"] == memory_id), None)
+    assert body_row is not None, (
+        f"seeded memory {memory_id!r} missing from memory_list with_bodies"
+    )
+    assert body_row["verification"]["status"] == "stale"
+    assert body_row["staleness_verdict"] == _VERDICT_REQUIRED, (
+        f"memory_list (with_bodies) emitted "
+        f"{body_row['staleness_verdict']!r}, expected "
+        f"{_VERDICT_REQUIRED!r} (the shared constant) — possible "
+        f"single-site drift away from verify.py's _VERDICT_REQUIRED "
+        f"at _response.py:224 (memory_to_dict)"
+    )
+
+
+# ---------------------------------------------------------------------------
 # Change 4 — auto-record_use via use_token
 # ---------------------------------------------------------------------------
 

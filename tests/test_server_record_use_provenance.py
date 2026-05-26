@@ -23,9 +23,54 @@ import pytest
 
 from bettermemory.config import Config, StorageConfig
 from bettermemory.events import Recorder, iter_events
+from bettermemory.handlers._shared import _USE_OUTCOMES
 from bettermemory.server import build_server
 from bettermemory.session import SessionState
 from bettermemory.store import Store
+
+
+# ---------------------------------------------------------------------------
+# Closed-protocol pin for the `outcome` whitelist consumed by
+# `memory_record_use`.
+#
+# `_USE_OUTCOMES` lives at `handlers/_shared.py:49` as a frozenset; the
+# handler at `handlers/record_use.py:72` uses it as the membership gate
+# for the `outcome` kwarg, and the values land verbatim in the event
+# log (consumed by health rollups, eval CLI, the web /verify UI). The
+# set is closed-protocol: a deletion silently widens the rejection
+# bucket (an outcome that used to be valid now raises), and an
+# addition silently broadens what the audit log can carry — both
+# regression-shaped without a coverage pin.
+#
+# The for-loop in `test_claim_excerpts_work_for_all_outcomes` below
+# already covers deletions per-iteration (a dropped member fails
+# either the loop's record_use call or the `outcome in by_outcome`
+# assertion) but never imported `_USE_OUTCOMES`, so an addition
+# couldn't be caught by either site. The two pins below close that
+# gap on the same pattern as `_EXPECTED_RAISE_STATUSES` /
+# `test_staleness_verdict_raise_statuses_match_frozenset` in
+# `tests/test_server_v12_features.py`:
+#
+# - `_EXPECTED_USE_OUTCOMES` is hardcoded (sorted/alphabetised), NOT
+#   derived from `_USE_OUTCOMES` itself, so a deletion from the source
+#   set causes the parametrised `test_claim_excerpts_per_outcome` case
+#   to fail loudly instead of silently dropping the case. Deriving from
+#   the source would mean a shrunk source produces a shrunk
+#   parametrise list — invisible regression.
+# - `test_use_outcomes_match_frozenset` is the addition-side guard:
+#   the equality assertion fires the moment a new outcome joins
+#   `_USE_OUTCOMES` without being mirrored here.
+#
+# Negative-control: adding `"bogus"` to `_USE_OUTCOMES` in
+# `handlers/_shared.py:49` fails `test_use_outcomes_match_frozenset`
+# (`set(_EXPECTED_USE_OUTCOMES) == set(_USE_OUTCOMES)` no longer
+# holds). Revert restores green.
+_EXPECTED_USE_OUTCOMES: tuple[str, ...] = (
+    "applied",
+    "contradicted",
+    "corrected",
+    "ignored",
+)
 
 
 @pytest.fixture
@@ -222,15 +267,64 @@ async def test_claim_excerpts_strips_surrounding_whitespace(
     assert events[0]["claim_excerpts"] == ["the trimmed phrase"]
 
 
+def test_use_outcomes_match_frozenset() -> None:
+    """Guard so additions to ``_USE_OUTCOMES`` (the closed-protocol
+    whitelist consumed by ``memory_record_use``) are mirrored in the
+    parametrise list below — otherwise a new outcome could ship without
+    a regression case in any audit-trail or claim-excerpt test. Mirrors
+    ``test_staleness_verdict_raise_statuses_match_frozenset`` in
+    ``tests/test_server_v12_features.py`` — same closed-protocol
+    addition-guard pattern on a different surface."""
+    assert set(_EXPECTED_USE_OUTCOMES) == set(_USE_OUTCOMES)
+
+
+@pytest.mark.parametrize("outcome", _EXPECTED_USE_OUTCOMES)
+async def test_claim_excerpts_per_outcome(
+    server_with_events: tuple[Any, Path],
+    outcome: str,
+) -> None:
+    """Parametrised delete-side coverage: every member of
+    ``_USE_OUTCOMES`` must accept ``claim_excerpts`` and round-trip the
+    excerpt through the event log. Parametrising off the hardcoded
+    ``_EXPECTED_USE_OUTCOMES`` tuple (not off ``_USE_OUTCOMES`` itself)
+    means a silent deletion from the source set causes the
+    corresponding case to fail loudly — parametrising off the source
+    would just shrink the case count, silently dropping coverage."""
+    server, memory_dir = server_with_events
+    written = await _call(
+        server,
+        "memory_write",
+        content=f"body for {outcome}",
+        scopes=["tools"],
+    )
+    await _call(
+        server,
+        "memory_record_use",
+        memory_ids=[written["id"]],
+        outcome=outcome,
+        claim_excerpts=[f"the {outcome} claim"],
+    )
+
+    events = _use_events(memory_dir)
+    matching = [e for e in events if e["outcome"] == outcome]
+    assert matching, f"no use event recorded for outcome {outcome!r}"
+    assert matching[-1]["claim_excerpts"] == [f"the {outcome} claim"]
+
+
 async def test_claim_excerpts_work_for_all_outcomes(
     server_with_events: tuple[Any, Path],
 ) -> None:
     """All four outcomes accept claim_excerpts — provenance is just as
     valuable when recording a contradiction or correction as when
     recording an applied claim. The audit log gets to record which
-    specific claim was contradicted, not just that something was."""
+    specific claim was contradicted, not just that something was.
+
+    Pinned against the hardcoded ``_EXPECTED_USE_OUTCOMES`` tuple so a
+    deletion from ``_USE_OUTCOMES`` fails the loop loudly rather than
+    silently shrinking. The companion
+    ``test_use_outcomes_match_frozenset`` catches the addition side."""
     server, memory_dir = server_with_events
-    for outcome in ("applied", "ignored", "contradicted", "corrected"):
+    for outcome in _EXPECTED_USE_OUTCOMES:
         a = await _call(
             server,
             "memory_write",
@@ -247,7 +341,7 @@ async def test_claim_excerpts_work_for_all_outcomes(
 
     events = _use_events(memory_dir)
     by_outcome = {e["outcome"]: e for e in events}
-    for outcome in ("applied", "ignored", "contradicted", "corrected"):
+    for outcome in _EXPECTED_USE_OUTCOMES:
         assert outcome in by_outcome, f"missing outcome {outcome}"
         assert by_outcome[outcome]["claim_excerpts"] == [f"the {outcome} claim"]
 
