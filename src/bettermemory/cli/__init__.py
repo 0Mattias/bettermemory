@@ -26,6 +26,7 @@ from . import (
     audit_turn_cmd,
     consolidate,
     doctor,
+    episodes,
     eval as eval_cmd,
     export,
     health_cmd,
@@ -92,6 +93,7 @@ def _build_parser() -> tuple[
         "migrate": migrate.add_subparser(sub),
         "export": export.add_subparser(sub),
         "tombstones": tombstones.add_subparser(sub),
+        "episodes": episodes.add_subparser(sub),
         "ui": ui.add_subparser(sub),
         "sync": sync.add_subparser(sub),
         "reindex": reindex.add_subparser(sub),
@@ -138,6 +140,9 @@ def main() -> None:
         return
     if cmd == "tombstones":
         tombstones.run(args, root_parser=parser, sub_parser=subparsers["tombstones"])
+        return
+    if cmd == "episodes":
+        episodes.run(args, sub_parser=subparsers["episodes"])
         return
     if cmd == "ui":
         ui.run(args)

@@ -53,6 +53,7 @@ from ._shared import (
     Context,
     _AMBIENT_LONG_BODY_WORDS,
     _advance_turn,
+    _maybe_attach_curation_hint,
     _validate_write_payload,
 )
 
@@ -573,7 +574,7 @@ async def memory_write(
             acknowledged=acknowledged,
         )
 
-    return _commit_write(
+    response = _commit_write(
         deps,
         payload=payload,
         related=gc.related,
@@ -581,6 +582,8 @@ async def memory_write(
         forced=force,
         acknowledged=acknowledged,
     )
+    _maybe_attach_curation_hint(response, deps, state)
+    return response
 
 
 def _stage_pending(
@@ -721,7 +724,9 @@ async def memory_write_confirm(
         id=memory.id,
         scopes=memory.scopes,
     )
-    return deps.responses.committed(memory)
+    response = deps.responses.committed(memory)
+    _maybe_attach_curation_hint(response, deps, state)
+    return response
 
 
 async def memory_write_cancel(

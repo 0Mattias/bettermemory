@@ -154,4 +154,29 @@ personal-context. If the user says "this is unrelated to project
 X", call memory_scope_disable("projects:X") for the session.
 memory_health.rare_scopes flags typo singletons; fix with
 memory_rename_scope(old, new).
+
+## Episodes: the sibling tier for run-state
+
+Episodes are NOT memories. They live in a sibling subtree and the
+durability check does not apply. Use them for journal-shaped
+content memory_write would (correctly) reject: loop-iteration
+takeaways, "what we tried", run-local context that needs to survive
+one context reset but isn't a durable fact.
+
+Loop iteration pattern:
+- At entry: episode_handoff() — returns the prior session's recent
+  takeaways. {prior_session_id, episodes: [{id, created, takeaway,
+  body, scopes}]}. Distinguish prior_session_id=None (no baseline)
+  from episodes=[] (prior session left no journal).
+- At exit: episode_write(body=…, takeaway="one-line summary"). The
+  takeaway is what the next iteration sees first.
+- When a takeaway hardens into a durable fact: episode_promote
+  (episode_id, scopes=…) routes through memory_write so the
+  durability gate fires; on commit the episode is deleted.
+
+memory_search(since_prior_session=True) is the memory-tier
+companion: filter the durable store to entries updated since the
+prior-session boundary. Semantic = "what THIS session has changed
+since the last other-session activity" — your own intra-session
+diff. For what the *prior* iteration did, use episode_handoff.
 ```

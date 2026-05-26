@@ -82,6 +82,9 @@ async def memory_health(
         heavily_used_top_k=int(heavily_used_top_k),
         heavily_used_min_applied=threshold,
         verification_stale_days=deps.config.behavior.verification_stale_days,
+        endorsement_debt_ratio_threshold=(
+            deps.config.behavior.endorsement_debt_ratio_threshold
+        ),
         # Pass caller_origin so the cwd-aware `commit_drift_debt`
         # rollup populates when the server is running inside a repo
         # whose memories live in this store.

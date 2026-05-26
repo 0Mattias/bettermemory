@@ -314,6 +314,38 @@ _ENDORSEMENT_DEBT_MIN_RETRIEVALS = 5
 _ENDORSEMENT_DEBT_CAP = 20
 
 
+def _is_weakly_endorsed(stats: MemoryStats, ratio_threshold: float) -> bool:
+    """Predicate for the endorsement_debt bucket.
+
+    Returns True when the memory looks weakly endorsed under either
+    of two checks:
+
+    - **Binary** (always on): `explicit_applied_count == 0`. The
+      memory has been retrieved enough times to cross the floor but
+      the model never deliberately called `memory_record_use(applied)`
+      — every applied event came from the server's auto-fallback.
+
+    - **Ratio** (off by default, on when `ratio_threshold > 0`):
+      `explicit_applied_count / (auto + explicit) < ratio_threshold`.
+      The model has reached for it occasionally, but the auto pass
+      is doing most of the work — a "1 explicit out of 50 auto" case
+      the binary check would miss.
+
+    Default `ratio_threshold=0.0` preserves the original binary
+    semantics exactly: the predicate reduces to the equality check
+    because the ratio branch needs `ratio_threshold > 0` to fire.
+    """
+    if stats.explicit_applied_count == 0:
+        return True
+    if ratio_threshold <= 0.0:
+        return False
+    total_applied = stats.auto_applied_count + stats.explicit_applied_count
+    if total_applied <= 0:
+        return False
+    ratio = stats.explicit_applied_count / total_applied
+    return ratio < ratio_threshold
+
+
 @dataclass
 class CommitDriftRow:
     """One memory whose verification anchor sits behind the current HEAD.
@@ -454,6 +486,74 @@ class SilentMissStats:
 
 
 @dataclass
+class Recommendation:
+    """One actionable curation suggestion distilled from the bucket
+    rollups.
+
+    The buckets (dead_weight, contradicted, endorsement_debt,
+    rare_scopes, commit_drift_debt) carry the raw rows. A
+    Recommendation collapses each one into "you have N memories of
+    kind K, here's the one-line action that resolves them." Designed
+    for proactive in-conversation surfacing where the full bucket
+    detail would be too verbose.
+
+    Pull-based discovery via the raw bucket fields remains the
+    primary path. Recommendations are an additive convenience for the
+    model / CLI that wants the digest.
+
+    `kind` is the discriminator — closed set, listed in
+    `RECOMMENDATION_KINDS`. `summary` describes the state, `action`
+    names the fix. `memory_ids` carries up to
+    `_RECOMMENDATION_ROW_CAP` ids (10 by default) so the model can
+    drill in without an unbounded list. `scope` is populated only on
+    scope-level recommendations (the typo-singleton case).
+    """
+
+    kind: str
+    summary: str
+    action: str
+    count: int
+    memory_ids: list[str] = field(default_factory=list)
+    scope: str | None = None
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "kind": self.kind,
+            "summary": self.summary,
+            "action": self.action,
+            "count": self.count,
+            "memory_ids": list(self.memory_ids),
+            "scope": self.scope,
+        }
+
+
+# Cap on memory_ids surfaced per Recommendation. Keeps the
+# recommendations block bounded even on a large rotting store; the
+# uncapped `count` field still tells the consumer the true size.
+_RECOMMENDATION_ROW_CAP = 10
+
+# Minimum bucket size that triggers a recommendation for size-driven
+# kinds (dead_weight, endorsement_debt, drifted). Below this floor the
+# bucket is too small to warrant a proactive surface — the model
+# doesn't need to be nudged to remove 1 dead-weight memory. The
+# contradicted and rare_scopes recommendations use floor=1 because
+# even a single instance is actionable (one stuck contradiction is
+# still a stuck contradiction; one typo singleton is still a typo).
+_RECOMMENDATION_SIZE_FLOOR = 3
+
+# Closed set of recommendation kinds. Exhaustive enumeration so a
+# consumer can switch over them without a missing-case branch. Adding
+# a new kind requires extending this constant and `_compute_recommendations`.
+RECOMMENDATION_KINDS: tuple[str, ...] = (
+    "remove_dead_weight",
+    "resolve_contradicted",
+    "cleanup_endorsement_debt",
+    "verify_drifted",
+    "fix_typo_scopes",
+)
+
+
+@dataclass
 class HealthReport:
     """The full aggregate view returned by `memory_health`."""
 
@@ -532,6 +632,14 @@ class HealthReport:
             min_retrievals=_ENDORSEMENT_DEBT_MIN_RETRIEVALS,
         )
     )
+    # Proactive curation recommendations distilled from the buckets
+    # above. Each entry collapses "N memories of kind K" into the
+    # one-line action that resolves them. Empty list when no bucket
+    # crosses the size floor — a healthy store surfaces nothing.
+    # Populated by `_compute_recommendations` during `compute_health`;
+    # consumers can ignore the field entirely and read the raw buckets
+    # directly, which is what the existing CLI text rendering does.
+    recommendations: list[Recommendation] = field(default_factory=list)
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -557,6 +665,7 @@ class HealthReport:
             ),
             "silent_misses": self.silent_misses.to_dict(),
             "endorsement_debt": self.endorsement_debt.to_dict(),
+            "recommendations": [r.to_dict() for r in self.recommendations],
         }
 
 
@@ -852,6 +961,7 @@ def compute_health(
     heavily_used_min_applied: int = 3,
     verification_stale_days: int = 30,
     endorsement_debt_min_retrievals: int = _ENDORSEMENT_DEBT_MIN_RETRIEVALS,
+    endorsement_debt_ratio_threshold: float = 0.0,
     caller_origin: Origin | None = None,
     now: datetime | None = None,
     tombstoned_ids: set[str] | None = None,
@@ -1096,12 +1206,20 @@ def compute_health(
     # over-surfaced." The bucket is uncapped in `total`; rows are
     # capped at `_ENDORSEMENT_DEBT_CAP` for inline display.
     endorsement_floor = max(1, int(endorsement_debt_min_retrievals))
+    # Build the predicate once. `explicit_applied_count == 0` is the
+    # binary "never deliberately endorsed" signal (the original
+    # bucket semantic). When `endorsement_debt_ratio_threshold > 0`,
+    # also flag memories whose explicit-to-total-applied ratio is
+    # below the threshold — catches the "1 explicit out of 50 auto"
+    # case the binary check misses. Default 0.0 preserves the
+    # pre-existing behaviour exactly (the ratio branch never fires).
+    ratio_threshold = max(0.0, float(endorsement_debt_ratio_threshold))
     endorsement_candidates = [
         s
         for s in by_id.values()
         if s.category != Category.AMBIENT
         and s.retrieval_count >= endorsement_floor
-        and s.explicit_applied_count == 0
+        and _is_weakly_endorsed(s, ratio_threshold)
     ]
     endorsement_candidates.sort(
         key=lambda s: (
@@ -1116,7 +1234,7 @@ def compute_health(
         total=len(endorsement_candidates),
     )
 
-    return HealthReport(
+    report = HealthReport(
         generated_at=now,
         window_days=window_days,
         total_active_memories=len(by_id),
@@ -1141,6 +1259,133 @@ def compute_health(
         ),
         endorsement_debt=endorsement_debt,
     )
+    report.recommendations = _compute_recommendations(report)
+    return report
+
+
+def _compute_recommendations(report: "HealthReport") -> list["Recommendation"]:
+    """Distill the bucket rollups into proactive curation suggestions.
+
+    Order is fixed (matches `RECOMMENDATION_KINDS`) so the first
+    actionable item is the one that most likely warrants attention.
+    Size-driven kinds (dead_weight, endorsement_debt, drifted) only
+    fire when the bucket crosses `_RECOMMENDATION_SIZE_FLOOR`; per-row
+    kinds (contradicted, rare_scopes) fire on first occurrence
+    because each instance is independently actionable.
+    """
+    out: list[Recommendation] = []
+
+    if len(report.dead_weight) >= _RECOMMENDATION_SIZE_FLOOR:
+        out.append(
+            Recommendation(
+                kind="remove_dead_weight",
+                summary=(
+                    f"{len(report.dead_weight)} memories are retrieved but "
+                    "never applied — the ranker keeps surfacing them but "
+                    "they don't shape replies."
+                ),
+                action=(
+                    "memory_remove(id, reason=...) on the unhelpful ones, "
+                    "or `bettermemory consolidate --acknowledge-debt` to "
+                    "clear the signal without touching bodies if the "
+                    "memories are still valuable."
+                ),
+                count=len(report.dead_weight),
+                memory_ids=[s.id for s in report.dead_weight[:_RECOMMENDATION_ROW_CAP]],
+            )
+        )
+
+    if report.contradicted:
+        out.append(
+            Recommendation(
+                kind="resolve_contradicted",
+                summary=(
+                    f"{len(report.contradicted)} memories carry an "
+                    "unresolved contradiction — recorded as `contradicted` "
+                    "and not since updated or re-verified."
+                ),
+                action=(
+                    "memory_update(id, content=...) with the corrected "
+                    "fact, then memory_verify(id, verified_paths=...) to "
+                    "clear the flag."
+                ),
+                count=len(report.contradicted),
+                memory_ids=[
+                    s.id for s in report.contradicted[:_RECOMMENDATION_ROW_CAP]
+                ],
+            )
+        )
+
+    if report.endorsement_debt.total >= _RECOMMENDATION_SIZE_FLOOR:
+        out.append(
+            Recommendation(
+                kind="cleanup_endorsement_debt",
+                summary=(
+                    f"{report.endorsement_debt.total} memories crossed the "
+                    f"retrieval floor ({report.endorsement_debt.min_retrievals}+ "
+                    "retrievals) but were never explicitly endorsed — the "
+                    "auto-applied pass has been closing the loop without "
+                    "the model deliberately reaching for them."
+                ),
+                action=(
+                    "`bettermemory consolidate --acknowledge-debt` to clear "
+                    "the signal once you're sure the memories are useful; "
+                    "memory_remove on the ones that aren't."
+                ),
+                count=report.endorsement_debt.total,
+                memory_ids=[
+                    s.id for s in report.endorsement_debt.rows[:_RECOMMENDATION_ROW_CAP]
+                ],
+            )
+        )
+
+    if (
+        report.commit_drift_debt is not None
+        and report.commit_drift_debt.total_drifted >= _RECOMMENDATION_SIZE_FLOOR
+    ):
+        out.append(
+            Recommendation(
+                kind="verify_drifted",
+                summary=(
+                    f"{report.commit_drift_debt.total_drifted} memories "
+                    "anchored in this repo are behind HEAD — verified "
+                    "before recent commits landed."
+                ),
+                action=(
+                    "memory_verify(id, verified_commits=[...]) to re-anchor "
+                    "if claims still hold; memory_update where the body "
+                    "needs to track the new code."
+                ),
+                count=report.commit_drift_debt.total_drifted,
+                memory_ids=[
+                    r.id
+                    for r in report.commit_drift_debt.rows[:_RECOMMENDATION_ROW_CAP]
+                ],
+            )
+        )
+
+    if report.rare_scopes:
+        # One recommendation per typo singleton — each carries its own
+        # candidate fix surfaced via the scope name. The model reads
+        # the list and picks the rename target.
+        out.append(
+            Recommendation(
+                kind="fix_typo_scopes",
+                summary=(
+                    f"{len(report.rare_scopes)} singleton scopes look like "
+                    "typos of more common scopes."
+                ),
+                action=(
+                    "memory_rename_scope(old, new) to fold each singleton "
+                    "into the intended scope name."
+                ),
+                count=len(report.rare_scopes),
+                memory_ids=[],
+                scope=", ".join(report.rare_scopes[:_RECOMMENDATION_ROW_CAP]),
+            )
+        )
+
+    return out
 
 
 def _compute_commit_drift_debt(
@@ -1516,6 +1761,7 @@ def curation_counts(
     window_days: int = 30,
     verification_stale_days: int = 30,
     endorsement_debt_min_retrievals: int = _ENDORSEMENT_DEBT_MIN_RETRIEVALS,
+    endorsement_debt_ratio_threshold: float = 0.0,
     caller_origin: Origin | None = None,
     now: datetime | None = None,
     since: datetime | None = None,
@@ -1667,17 +1913,23 @@ def curation_counts(
             elif a == 0:
                 dead += 1
         # Endorsement-debt count: heavily retrieved (over the floor)
-        # AND no explicit applied event ever, regardless of window. We
-        # don't apply the `created < cutoff` window here because the
-        # retrieval floor itself is the "has had time to accumulate
-        # signal" guard — a brand-new memory with 5+ retrievals is
-        # already a candidate. Mirrors the compute_health rollup.
-        if (
-            not is_ambient
-            and retrieval_counts.get(m.id, 0) >= endorsement_floor
-            and explicit_applied_counts.get(m.id, 0) == 0
-        ):
-            endorsement_debt += 1
+        # AND weakly endorsed under the same predicate compute_health
+        # uses. Default ratio_threshold=0.0 reduces to the original
+        # binary "no explicit applied event ever" check; setting
+        # ratio_threshold > 0 catches the "1 explicit out of 50 auto"
+        # case. We don't apply the `created < cutoff` window here
+        # because the retrieval floor itself is the "has had time to
+        # accumulate signal" guard.
+        if not is_ambient and retrieval_counts.get(m.id, 0) >= endorsement_floor:
+            explicit = explicit_applied_counts.get(m.id, 0)
+            total_applied = applied_counts.get(m.id, 0)
+            ratio_threshold = max(0.0, float(endorsement_debt_ratio_threshold))
+            if explicit == 0:
+                endorsement_debt += 1
+            elif ratio_threshold > 0.0 and total_applied > 0:
+                ratio = explicit / total_applied
+                if ratio < ratio_threshold:
+                    endorsement_debt += 1
 
     drifted = 0
     if caller_origin is not None and caller_origin.repo and caller_origin.cwd:
@@ -1769,6 +2021,7 @@ def report_for_directory(
     heavily_used_min_applied: int = 3,
     verification_stale_days: int = 30,
     endorsement_debt_min_retrievals: int = _ENDORSEMENT_DEBT_MIN_RETRIEVALS,
+    endorsement_debt_ratio_threshold: float = 0.0,
     caller_origin: Origin | None = None,
     now: datetime | None = None,
 ) -> HealthReport:
@@ -1791,6 +2044,7 @@ def report_for_directory(
         heavily_used_min_applied=heavily_used_min_applied,
         verification_stale_days=verification_stale_days,
         endorsement_debt_min_retrievals=endorsement_debt_min_retrievals,
+        endorsement_debt_ratio_threshold=endorsement_debt_ratio_threshold,
         caller_origin=caller_origin,
         now=now,
         tombstoned_ids=tombstoned_ids,
@@ -1803,6 +2057,8 @@ __all__ = [
     "EndorsementDebt",
     "MemoryStats",
     "MarkerStats",
+    "RECOMMENDATION_KINDS",
+    "Recommendation",
     "ScopeHealth",
     "SilentMissStats",
     "VerificationDebt",

@@ -232,6 +232,7 @@ def test_unknown_subcommand_exits_nonzero(
         "migrate",
         "export",
         "tombstones",
+        "episodes",
         "sync",
         "reindex",
         "consolidate",
@@ -328,6 +329,50 @@ def test_tombstones_list_json_subcommand_runs_on_empty_store(
     payload = json.loads(capsys.readouterr().out)
     assert isinstance(payload, list)
     assert payload == []
+
+
+def test_episodes_list_subcommand_runs_on_empty_store(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """`episodes list` on an empty store reports zero entries
+    cleanly. CLI is a thin wrapper over `EpisodeStore.list_by_session`."""
+    _run_main(["episodes", "list"], monkeypatch=monkeypatch, storage=tmp_path)
+    out = capsys.readouterr().out
+    assert "no episodes" in out.lower()
+
+
+def test_episodes_list_json_subcommand_runs_on_empty_store(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    _run_main(
+        ["episodes", "list", "--json"],
+        monkeypatch=monkeypatch,
+        storage=tmp_path,
+    )
+    payload = json.loads(capsys.readouterr().out)
+    assert isinstance(payload, list)
+    assert payload == []
+
+
+def test_episodes_prune_dry_run_on_empty_store(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """`episodes prune --dry-run` reports zero candidates on an empty
+    store and does not touch disk."""
+    _run_main(
+        ["episodes", "prune", "--dry-run", "--json"],
+        monkeypatch=monkeypatch,
+        storage=tmp_path,
+    )
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["would_delete"] == []
+    assert "ttl_days" in payload
 
 
 def test_export_subcommand_emits_json(

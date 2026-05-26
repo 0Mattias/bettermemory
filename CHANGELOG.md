@@ -9,6 +9,98 @@ spells out exactly what's stable.
 
 ## Unreleased
 
+The **loop story**: a sibling tier for journal-shaped run-state, plus
+five surface improvements that close adjacent audit gaps. Tool count
+goes from 18 to 22; on-disk format unchanged (SCHEMA_VERSION stays at
+1, additive-only).
+
+### Added — episode tier (sibling to memory)
+
+- **`episode_write(body, takeaway?, scopes?)`.** Journal-shaped writes
+  for run-state and iteration takeaways. The `durability` gate
+  (`TRANSIENT_PHRASE_MARKERS`) that rejects state-shaped content on
+  `memory_write` doesn't apply here — episodes are the alternative
+  home transient content used to lack. Storage at
+  `<root>/episodes/<session_id>/<ulid>.md`, 30-day TTL, pruned on
+  each write. Invisible to `memory_search` / `memory_health` /
+  `memory_list`.
+- **`episode_handoff(prior_session_id?, max_episodes?)`.** Read the
+  most-recent N takeaways from a prior session in this worktree.
+  Auto-resolves the session via the event-log boundary when
+  `prior_session_id` is omitted. Designed as the first MCP call at
+  `/loop` iteration entry.
+- **`episode_search(scopes?, parent_session_id?, since?, max_results?)`.**
+  Cross-session lookup. Not ranked — episodes are chronological,
+  filtered by scope intersection / session id / ISO timestamp.
+- **`episode_promote(episode_id, scopes, category?, ..., use_body?)`.**
+  Distill a takeaway into a durable memory via the standard
+  `memory_write` path (full durability gate fires). Deletes the
+  source episode on commit; leaves it intact on any non-committed
+  status so the caller can adjust and retry.
+- **`bettermemory episodes list | prune` CLI.** Mirrors
+  `bettermemory tombstones` in shape — offline inspection and a
+  manual TTL-based cleanup pass.
+
+### Added — memory_search proactive surface
+
+- **`memory_search(since_prior_session=True)` filter.** Restricts
+  candidates to memories `updated` at or after the prior-session
+  boundary (`find_prior_session_boundary` against the recorder's
+  session_id). Loop entry can now ask "what's changed in this
+  worktree since last time I was here?" without scanning. Empty
+  return when no prior session exists — caller distinguishes
+  "nothing new" from "no baseline" via
+  `curation_pending_new_since_last_session`.
+- **`depends_on_resolved` on hits.** When a hit's memory carries
+  `MemoryLink(type="depends_on", ...)` links, the targets'
+  summaries (and link notes) are inlined automatically. Bounded:
+  3 per hit, 10 total. Closes the "graph in the schema, retrieval
+  ignores it" gap that's been open since 2.x.
+
+### Added — proactive curation surface
+
+- **`HealthReport.recommendations`.** Distills the bucket rollups
+  (dead_weight, contradicted, endorsement_debt, drifted, rare_scopes)
+  into actionable one-line suggestions with `{kind, summary, action,
+  count, memory_ids}` shape. Closed enum `RECOMMENDATION_KINDS` so a
+  consumer can switch over them. Size-driven kinds fire at 3+; per-row
+  kinds at 1+.
+- **Inline `curation_hint` on `memory_write` responses.** One-shot per
+  session: when `dead + drifted + endorsement_debt >= threshold`
+  (configurable, default 5), the first successful write inlines a
+  one-line nudge. New `curation_hint_threshold` and
+  `curation_hint_enabled` config knobs; 0 / false disables.
+- **`endorsement_debt_ratio_threshold` config knob.** Default 0.0
+  preserves the existing strict "zero explicit applies" rule. Setting
+  > 0 also flags memories whose explicit/total-applied ratio falls
+  below the threshold — catches the "1 explicit endorsement out of 50
+  auto" case the binary check misses.
+- **`recently_removed_in_worktree` on `memory_scope_overview`.** Count
+  of tombstones removed in the last 7 days, filtered by
+  `origin.worktree_root` under `auto_scope=True`. Hint when the model
+  is about to re-cover ground it already explicitly trimmed.
+
+### Internal
+
+- New `Episode` Pydantic model + `EpisodeStore` (lazy directory
+  creation, atomic frontmatter writes, traversal-safe `session_id`
+  validation, TTL-based prune that exempts the active session).
+- `_TOOL_REF_RE` in `tests/test_prompts.py` broadened to cover both
+  `memory_*` and `episode_*` families so SKILL.md / system prompt
+  parity catches drift in either tool group.
+- FastMCP `instructions` block carries a one-line loop pointer
+  (`episode_handoff` at entry, `episode_write(takeaway)` at exit)
+  under the 1700-char ceiling.
+- `plugin/skills/bettermemory/SKILL.md` gains a full **Episodes:
+  the sibling tier for run-state** section with the loop-iteration
+  pattern, storage layout, and the `episode_promote` lifecycle note.
+- README, `docs/api.md`, `docs/ROADMAP.md`, `CONTRIBUTING.md`, and
+  `plugin/README.md` all updated to the new 22-tool count with the
+  `memory_*` + `episode_*` split called out.
+- 50+ new tests across `test_episodes.py`, `test_server.py`,
+  `test_health.py`, `test_cli_smoke.py`, `test_config.py`,
+  `test_direct_imports.py`, `test_prompts.py`, `test_eval.py`.
+
 ## 3.0.2 - 2026-05-26
 
 Post-3.0.1 hotfix. Closes the Windows-matrix mypy gaps + flaky

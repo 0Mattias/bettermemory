@@ -510,6 +510,69 @@ class SimilarHit(BaseModel):
 
 
 # ---------------------------------------------------------------------------
+# Episodes — sibling tier to Memory for run-state / journal-shaped entries
+# ---------------------------------------------------------------------------
+#
+# Episodes are NOT durable facts. They exist for journal-shaped writes the
+# durability gate (durability.TRANSIENT_PHRASE_MARKERS) explicitly rejects on
+# memory_write: loop-iteration state, "what we tried", run-local takeaways.
+# Stored at `<root>/episodes/<session_id>/<ulid>.md`, TTL-pruned to keep the
+# directory bounded (default 30 days). Excluded from memory_search,
+# memory_health, memory_list — episodes are a sibling primitive, not a tier
+# of memory. A useful episodic takeaway can be *promoted* into a durable
+# memory via `episode_promote`, which routes through `memory_write` so the
+# durability gate fires as normal.
+
+
+class Episode(BaseModel):
+    """A journal-shaped entry written by a session for its own or a
+    future session's reference.
+
+    Fields:
+    - `id`: ULID (lexicographic time order at ms resolution).
+    - `session_id`: the writer's session id at write time. Defines the
+      grouping for `episode_handoff` (last takeaways from prior session
+      in this worktree) and the storage subdirectory.
+    - `created`: write time (UTC). No `updated` field — episodes are
+      append-only; if a takeaway changes, write a new episode.
+    - `body`: the full journal entry. Free-form markdown.
+    - `takeaway`: optional one-sentence summary surfaced at handoff.
+      When None, handoff falls back to the first line of `body`.
+    - `scopes`: free-form tags. Auto-defaulted from origin (e.g.
+      `projects:<name>`) at the handler layer when not provided, the
+      same way memory scopes are.
+    - `origin`: cwd / repo / branch / worktree_root snapshot at write
+      time. Drives the worktree filter on `episode_handoff` so only
+      episodes from the same workspace are surfaced.
+    """
+
+    id: str
+    session_id: str
+    created: datetime
+    body: str
+    # Free-form scope tags. Empty is allowed — episodes are keyed by
+    # session_id, not scope, so a tagless episode is still routable
+    # via `episode_handoff`. When populated, each scope must pass the
+    # same validator memory scopes use so the on-disk shape stays
+    # consistent across the two stores.
+    scopes: list[str] = Field(default_factory=list)
+    takeaway: str | None = None
+    origin: Origin | None = None
+
+    @field_validator("id")
+    @classmethod
+    def _check_id(cls, v: str) -> str:
+        if not is_valid_ulid(v):
+            raise ValueError(f"invalid ULID: {v!r}")
+        return v
+
+    @field_validator("scopes")
+    @classmethod
+    def _check_scopes(cls, v: list[str]) -> list[str]:
+        return [validate_scope(s) for s in v]
+
+
+# ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
 

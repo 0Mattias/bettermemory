@@ -2075,3 +2075,194 @@ def test_handlers_table_matches_handle_methods() -> None:
         f"methods-only={handler_methods - registry_keys} "
         "(SILENTLY no-ops in handle_event — health rollup loses the metric)."
     )
+
+
+# ---------------------------------------------------------------------------
+# Proactive recommendations
+# ---------------------------------------------------------------------------
+
+
+def test_recommendations_empty_on_healthy_store() -> None:
+    """A clean store with no bucket pressure surfaces no recommendations.
+    The field must be present (so consumers don't need a missing-key
+    guard) but empty."""
+    report = compute_health([], [], now=_utc(2026, 5, 1))
+    assert report.recommendations == []
+    # The to_dict roundtrip carries the field as well.
+    assert report.to_dict()["recommendations"] == []
+
+
+def test_recommendations_surfaces_dead_weight_when_above_floor() -> None:
+    """3+ dead-weight memories trips the remove_dead_weight
+    recommendation. 2 or fewer stays silent — the model doesn't need
+    a nudge to remove a single memory."""
+    memories = [_memory(created=_utc(2026, 1, i + 1)) for i in range(3)]
+    events = [_event("search", ts=_utc(2026, 4, 1), returned=[m.id]) for m in memories]
+    report = compute_health(memories, events, window_days=30, now=_utc(2026, 5, 1))
+    kinds = [r.kind for r in report.recommendations]
+    assert "remove_dead_weight" in kinds
+    dead_rec = next(r for r in report.recommendations if r.kind == "remove_dead_weight")
+    assert dead_rec.count == 3
+    assert len(dead_rec.memory_ids) == 3
+    assert "memory_remove" in dead_rec.action
+
+
+def test_recommendations_dead_weight_silent_below_floor() -> None:
+    """2 dead-weight memories is below the floor of 3 — stays quiet."""
+    memories = [_memory(created=_utc(2026, 1, i + 1)) for i in range(2)]
+    events = [_event("search", ts=_utc(2026, 4, 1), returned=[m.id]) for m in memories]
+    report = compute_health(memories, events, window_days=30, now=_utc(2026, 5, 1))
+    assert not any(r.kind == "remove_dead_weight" for r in report.recommendations)
+
+
+def test_recommendations_surfaces_contradicted_on_first_occurrence() -> None:
+    """`resolve_contradicted` fires at count=1 because each instance is
+    independently actionable — one stuck contradiction is still a stuck
+    contradiction."""
+    m = _memory(created=_utc(2026, 1, 1))
+    events = [
+        _event("search", ts=_utc(2026, 4, 1), returned=[m.id]),
+        _event(
+            "use",
+            ts=_utc(2026, 4, 2),
+            ids=[m.id],
+            outcome="contradicted",
+        ),
+    ]
+    report = compute_health([m], events, window_days=30, now=_utc(2026, 5, 1))
+    kinds = [r.kind for r in report.recommendations]
+    assert "resolve_contradicted" in kinds
+    rec = next(r for r in report.recommendations if r.kind == "resolve_contradicted")
+    assert rec.count == 1
+    assert "memory_update" in rec.action
+
+
+def test_recommendations_memory_ids_capped_at_row_cap() -> None:
+    """The `memory_ids` field is bounded for inline display — uncapped
+    `count` still tells the consumer the true bucket size."""
+    from bettermemory.health import _RECOMMENDATION_ROW_CAP
+
+    # Build more memories than the cap.
+    memories = [
+        _memory(created=_utc(2026, 1, 1)) for _ in range(_RECOMMENDATION_ROW_CAP + 5)
+    ]
+    events = [_event("search", ts=_utc(2026, 4, 1), returned=[m.id]) for m in memories]
+    report = compute_health(memories, events, window_days=30, now=_utc(2026, 5, 1))
+    dead_rec = next(r for r in report.recommendations if r.kind == "remove_dead_weight")
+    assert dead_rec.count == _RECOMMENDATION_ROW_CAP + 5  # uncapped
+    assert len(dead_rec.memory_ids) == _RECOMMENDATION_ROW_CAP  # capped
+
+
+def test_recommendations_to_dict_shape_is_stable() -> None:
+    """Recommendation.to_dict carries the closed set of fields the
+    consumer reads. Keep this pinned so a future field addition doesn't
+    silently rename existing keys."""
+    memories = [_memory(created=_utc(2026, 1, i + 1)) for i in range(3)]
+    events = [_event("search", ts=_utc(2026, 4, 1), returned=[m.id]) for m in memories]
+    report = compute_health(memories, events, window_days=30, now=_utc(2026, 5, 1))
+    raw = report.recommendations[0].to_dict()
+    assert set(raw.keys()) == {
+        "kind",
+        "summary",
+        "action",
+        "count",
+        "memory_ids",
+        "scope",
+    }
+
+
+def test_endorsement_debt_ratio_threshold_off_by_default() -> None:
+    """Default `endorsement_debt_ratio_threshold=0.0` preserves the
+    original semantic: only memories with ZERO explicit_applied land
+    in the bucket. A memory with even one explicit endorsement stays
+    out, regardless of how lopsided the auto-vs-explicit ratio is."""
+    m = _memory(created=_utc(2026, 1, 1))
+    # 9 retrievals → above the floor of 5.
+    events: list[dict[str, Any]] = [
+        _event("search", ts=_utc(2026, 2, 1), returned=[m.id]) for _ in range(9)
+    ]
+    # Make most of those count as auto-applied + one explicit.
+    events.extend(
+        _event("use", ts=_utc(2026, 3, i + 1), ids=[m.id], outcome="applied", auto=True)
+        for i in range(8)
+    )
+    events.append(_event("use", ts=_utc(2026, 4, 1), ids=[m.id], outcome="applied"))
+
+    report = compute_health(
+        [m],
+        events,
+        window_days=30,
+        now=_utc(2026, 5, 1),
+    )
+    # Binary check: one explicit endorsement is enough to stay out.
+    assert report.endorsement_debt.total == 0
+
+
+def test_endorsement_debt_ratio_threshold_surfaces_lopsided_memory() -> None:
+    """With `ratio_threshold=0.2`, a memory whose explicit-applied
+    ratio is below 20% lands in the bucket even when the binary
+    check would skip it."""
+    m = _memory(created=_utc(2026, 1, 1))
+    events: list[dict[str, Any]] = [
+        _event("search", ts=_utc(2026, 2, 1), returned=[m.id]) for _ in range(9)
+    ]
+    # 8 auto + 1 explicit → ratio 1/9 ≈ 0.11, below the 0.2 threshold.
+    events.extend(
+        _event("use", ts=_utc(2026, 3, i + 1), ids=[m.id], outcome="applied", auto=True)
+        for i in range(8)
+    )
+    events.append(_event("use", ts=_utc(2026, 4, 1), ids=[m.id], outcome="applied"))
+
+    report = compute_health(
+        [m],
+        events,
+        window_days=30,
+        endorsement_debt_ratio_threshold=0.2,
+        now=_utc(2026, 5, 1),
+    )
+    assert report.endorsement_debt.total == 1
+    assert report.endorsement_debt.rows[0].id == m.id
+
+
+def test_endorsement_debt_ratio_threshold_skips_high_ratio_memory() -> None:
+    """A memory with a healthy explicit ratio stays out of the bucket
+    even when the threshold is set."""
+    m = _memory(created=_utc(2026, 1, 1))
+    events: list[dict[str, Any]] = [
+        _event("search", ts=_utc(2026, 2, 1), returned=[m.id]) for _ in range(9)
+    ]
+    # 1 auto + 8 explicit → ratio 8/9 ≈ 0.89, well above 0.2 threshold.
+    events.append(
+        _event("use", ts=_utc(2026, 3, 1), ids=[m.id], outcome="applied", auto=True)
+    )
+    events.extend(
+        _event("use", ts=_utc(2026, 3, i + 2), ids=[m.id], outcome="applied")
+        for i in range(8)
+    )
+
+    report = compute_health(
+        [m],
+        events,
+        window_days=30,
+        endorsement_debt_ratio_threshold=0.2,
+        now=_utc(2026, 5, 1),
+    )
+    assert report.endorsement_debt.total == 0
+
+
+def test_recommendation_kinds_constant_matches_compute_output() -> None:
+    """Every kind `_compute_recommendations` can emit must appear in the
+    public `RECOMMENDATION_KINDS` enumeration — a consumer that
+    switches over the constant won't hit an unknown kind."""
+    from bettermemory.health import RECOMMENDATION_KINDS
+
+    # The kinds we know exist today. Update this set alongside any new
+    # recommendation added to `_compute_recommendations`.
+    expected = {
+        "remove_dead_weight",
+        "resolve_contradicted",
+        "cleanup_endorsement_debt",
+        "verify_drifted",
+        "fix_typo_scopes",
+    }
+    assert set(RECOMMENDATION_KINDS) == expected

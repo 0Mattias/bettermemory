@@ -687,6 +687,843 @@ async def test_search_hit_includes_updated_timestamp(server: Any) -> None:
 
 
 # ---------------------------------------------------------------------------
+# memory_search(since_prior_session=True)
+# ---------------------------------------------------------------------------
+
+
+async def test_search_since_prior_session_empty_on_first_session(
+    server: Any,
+) -> None:
+    """Fresh store + first session: no prior session boundary exists,
+    so the filter returns empty regardless of how many hits would
+    otherwise match. The caller (a loop iteration entering for the
+    first time) distinguishes this from 'nothing new' by also
+    calling memory_scope_overview and checking that
+    `curation_pending_new_since_last_session is None`."""
+    await _call(
+        server,
+        "memory_write",
+        content="kubernetes networking notes",
+        scopes=["infrastructure"],
+    )
+    hits = _unwrap(
+        await _call(
+            server,
+            "memory_search",
+            query="kubernetes",
+            since_prior_session=True,
+        )
+    )
+    assert hits == []
+
+
+async def test_search_since_prior_session_filters_to_post_boundary(
+    memory_dir: Path,
+) -> None:
+    """Memories written in a prior session don't appear; memories
+    written in the current session do. The boundary is the latest
+    event ts from a different recorder session_id."""
+    cfg = Config(storage=StorageConfig(directory=str(memory_dir)))
+
+    # Session A: write a memory and record an event so a prior boundary
+    # exists in the log.
+    server_a = build_server(config=cfg, store=Store(memory_dir), state=SessionState())
+    await _call(
+        server_a, "memory_write", content="written in session A", scopes=["tools"]
+    )
+
+    # Session B: a new server (fresh recorder = new session_id) writes
+    # another memory after the boundary. The since_prior_session search
+    # should surface only the session-B memory.
+    server_b = build_server(config=cfg, store=Store(memory_dir), state=SessionState())
+    written_b = await _call(
+        server_b,
+        "memory_write",
+        content="written in session B about beta gophers",
+        scopes=["tools"],
+    )
+    hits = _unwrap(
+        await _call(
+            server_b,
+            "memory_search",
+            query="gophers session",
+            since_prior_session=True,
+        )
+    )
+    ids = [h["id"] for h in hits]
+    assert written_b["id"] in ids
+    # Session-A memory must NOT appear — its `updated` predates the
+    # boundary recorded for session B.
+    assert all(h["body"] != "written in session A" for h in hits if "body" in h)
+
+
+async def test_search_since_prior_session_records_boundary_on_event(
+    memory_dir: Path,
+) -> None:
+    """The recorded `search` event carries `since_prior_session` and
+    `prior_session_boundary` so an eval pass can correlate the filter
+    state back to the cutoff that produced the result list."""
+    cfg = Config(storage=StorageConfig(directory=str(memory_dir)))
+    # Seed a prior session.
+    server_a = build_server(config=cfg, store=Store(memory_dir), state=SessionState())
+    await _call(server_a, "memory_write", content="seed", scopes=["tools"])
+
+    server_b = build_server(config=cfg, store=Store(memory_dir), state=SessionState())
+    await _call(
+        server_b,
+        "memory_search",
+        query="anything",
+        since_prior_session=True,
+    )
+
+    events_path = memory_dir / ".events.jsonl"
+    search_events = [
+        json.loads(line)
+        for line in events_path.read_text().splitlines()
+        if json.loads(line)["kind"] == "search"
+    ]
+    assert search_events, "expected at least one search event"
+    latest = search_events[-1]
+    assert latest["since_prior_session"] is True
+    assert latest["prior_session_boundary"] is not None
+
+
+async def test_search_since_prior_session_default_false_keeps_old_shape(
+    server: Any,
+) -> None:
+    """Default-off: when the flag isn't set, the search event omits
+    a non-null boundary and behaviour matches the pre-flag code path
+    (no candidate filtering)."""
+    await _call(server, "memory_write", content="alpha gophers", scopes=["tools"])
+    hits = _unwrap(await _call(server, "memory_search", query="gophers"))
+    assert len(hits) == 1
+
+
+# ---------------------------------------------------------------------------
+# memory_search — depends_on_resolved auto-pull
+# ---------------------------------------------------------------------------
+
+
+async def test_search_attaches_depends_on_resolved_for_linked_hit(
+    server: Any,
+) -> None:
+    """A hit whose memory has a depends_on link surfaces the target's
+    summary inline so the model can see the dependency chain without
+    a memory_show round-trip."""
+    target = await _call(
+        server,
+        "memory_write",
+        content="auth uses JWT with 24h rolling refresh tokens",
+        scopes=["projects:auth"],
+    )
+    dependent = await _call(
+        server,
+        "memory_write",
+        content="rate limiter relies on auth identity",
+        scopes=["projects:auth"],
+    )
+    # Add a depends_on link on `dependent` pointing at `target`.
+    await _call(
+        server,
+        "memory_update",
+        id=dependent["id"],
+        links=[
+            {
+                "type": "depends_on",
+                "target_id": target["id"],
+                "note": "needs identity from auth",
+            }
+        ],
+    )
+
+    hits = _unwrap(await _call(server, "memory_search", query="rate limiter"))
+    hit = next(h for h in hits if h["id"] == dependent["id"])
+    assert "depends_on_resolved" in hit
+    resolved = hit["depends_on_resolved"]
+    assert len(resolved) == 1
+    assert resolved[0]["id"] == target["id"]
+    assert "JWT" in resolved[0]["summary"]
+    assert resolved[0]["link_note"] == "needs identity from auth"
+
+
+async def test_search_omits_depends_on_resolved_when_no_links(
+    server: Any,
+) -> None:
+    """A hit with no links must not carry the field — absence-as-signal,
+    matching the path_drift / commit_drift / recent_negative_outcomes
+    contracts."""
+    await _call(server, "memory_write", content="lonely memory", scopes=["tools"])
+    hits = _unwrap(await _call(server, "memory_search", query="lonely"))
+    assert len(hits) == 1
+    assert "depends_on_resolved" not in hits[0]
+
+
+async def test_search_depends_on_resolved_caps_per_hit(server: Any) -> None:
+    """No more than 3 resolved targets surface per hit. The 4th+ link
+    still exists on the memory; the model can call memory_show to see
+    the full graph."""
+    targets = []
+    for i in range(5):
+        t = await _call(
+            server,
+            "memory_write",
+            content=f"dependency {i} body",
+            scopes=["projects:foo"],
+        )
+        targets.append(t)
+    dependent = await _call(
+        server,
+        "memory_write",
+        content="the dependent memory",
+        scopes=["projects:foo"],
+    )
+    await _call(
+        server,
+        "memory_update",
+        id=dependent["id"],
+        links=[{"type": "depends_on", "target_id": t["id"]} for t in targets],
+    )
+
+    hits = _unwrap(await _call(server, "memory_search", query="dependent"))
+    hit = next(h for h in hits if h["id"] == dependent["id"])
+    assert "depends_on_resolved" in hit
+    assert len(hit["depends_on_resolved"]) == 3  # capped
+
+
+async def test_search_depends_on_resolved_skips_tombstoned_target(
+    server: Any,
+) -> None:
+    """A tombstoned dependency must not surface in the resolved list —
+    the link's target_id is preserved on the source memory but the
+    auto-pull silently drops it. Inspect via memory_list_tombstones."""
+    target = await _call(
+        server,
+        "memory_write",
+        content="will be removed",
+        scopes=["projects:foo"],
+    )
+    dependent = await _call(
+        server,
+        "memory_write",
+        content="depends on a memory we'll remove",
+        scopes=["projects:foo"],
+    )
+    await _call(
+        server,
+        "memory_update",
+        id=dependent["id"],
+        links=[{"type": "depends_on", "target_id": target["id"]}],
+    )
+    await _call(server, "memory_remove", id=target["id"], reason="superseded")
+
+    hits = _unwrap(await _call(server, "memory_search", query="depends remove"))
+    hit = next(h for h in hits if h["id"] == dependent["id"])
+    # Either omitted (the only link's target is gone) or empty list.
+    assert "depends_on_resolved" not in hit or hit["depends_on_resolved"] == []
+
+
+# ---------------------------------------------------------------------------
+# memory_write — inline curation hint (one-shot per session)
+# ---------------------------------------------------------------------------
+
+
+async def test_write_curation_hint_absent_when_no_pressure(server: Any) -> None:
+    """Fresh store with no events: pressure is zero, hint should not
+    attach regardless of threshold. The default-on behaviour stays
+    silent for sessions with a clean store."""
+    res = await _call(server, "memory_write", content="alpha", scopes=["tools"])
+    assert res["status"] == "committed"
+    assert "curation_hint" not in res
+
+
+async def test_write_curation_hint_attaches_when_pressure_exceeds_threshold(
+    memory_dir: Path,
+    monkeypatch: Any,
+) -> None:
+    """Monkeypatch curation_counts to simulate accumulated pressure.
+    Hint should attach to the first write of the session with the
+    expected fields."""
+    from bettermemory import health as _health
+
+    def fake_counts(*_args: Any, **_kwargs: Any) -> dict[str, int]:
+        return {
+            "stale": 0,
+            "never_verified": 0,
+            "drifted": 2,
+            "cold": 0,
+            "dead": 4,
+            "silent_misses": 0,
+            "endorsement_debt": 1,
+        }
+
+    monkeypatch.setattr(_health, "curation_counts", fake_counts)
+
+    cfg = Config(storage=StorageConfig(directory=str(memory_dir)))
+    server_x = build_server(config=cfg, store=Store(memory_dir), state=SessionState())
+    res = await _call(server_x, "memory_write", content="first", scopes=["tools"])
+    assert res["status"] == "committed"
+    assert "curation_hint" in res
+    hint = res["curation_hint"]
+    assert hint["pressure"] == 4 + 2 + 1
+    assert hint["threshold"] == 5  # the BehaviorConfig default
+    assert hint["counts"] == {
+        "dead_weight": 4,
+        "drifted": 2,
+        "endorsement_debt": 1,
+    }
+    assert "message" in hint
+
+
+async def test_write_curation_hint_is_one_shot_per_session(
+    memory_dir: Path,
+    monkeypatch: Any,
+) -> None:
+    """Only the first write of a session gets the hint. Subsequent
+    writes stay quiet — the model gets one nudge, not a stream."""
+    from bettermemory import health as _health
+
+    monkeypatch.setattr(
+        _health,
+        "curation_counts",
+        lambda *_a, **_k: {
+            "stale": 0,
+            "never_verified": 0,
+            "drifted": 0,
+            "cold": 0,
+            "dead": 99,
+            "silent_misses": 0,
+            "endorsement_debt": 0,
+        },
+    )
+    cfg = Config(storage=StorageConfig(directory=str(memory_dir)))
+    state = SessionState()
+    server_x = build_server(config=cfg, store=Store(memory_dir), state=state)
+
+    first = await _call(server_x, "memory_write", content="first", scopes=["tools"])
+    second = await _call(server_x, "memory_write", content="second", scopes=["tools"])
+    assert "curation_hint" in first
+    assert "curation_hint" not in second
+    assert state.curation_hint_checked is True
+
+
+async def test_write_curation_hint_disabled_by_config_flag(
+    memory_dir: Path,
+    monkeypatch: Any,
+) -> None:
+    """`curation_hint_enabled = False` short-circuits the helper before
+    the event-log walk happens. No hint attaches even at very high
+    simulated pressure."""
+    from bettermemory import health as _health
+    from bettermemory.config import BehaviorConfig
+
+    monkeypatch.setattr(
+        _health,
+        "curation_counts",
+        lambda *_a, **_k: {
+            "stale": 0,
+            "never_verified": 0,
+            "drifted": 0,
+            "cold": 0,
+            "dead": 999,
+            "silent_misses": 0,
+            "endorsement_debt": 0,
+        },
+    )
+    cfg = Config(
+        storage=StorageConfig(directory=str(memory_dir)),
+        behavior=BehaviorConfig(curation_hint_enabled=False),
+    )
+    server_x = build_server(config=cfg, store=Store(memory_dir), state=SessionState())
+    res = await _call(server_x, "memory_write", content="x", scopes=["tools"])
+    assert "curation_hint" not in res
+
+
+# ---------------------------------------------------------------------------
+# episode_write — sibling primitive for journal-shaped writes
+# ---------------------------------------------------------------------------
+
+
+async def test_episode_write_commits_with_minimum_payload(server: Any) -> None:
+    """A body alone is enough — scopes/takeaway default to empty/None."""
+    res = await _call(
+        server,
+        "episode_write",
+        body="iteration 1 tried strategy A, broke at step 3",
+    )
+    assert res["status"] == "committed"
+    assert res["takeaway"] is None
+    assert res["scopes"] == []
+    assert res["pruned_sessions"] == []  # fresh store, nothing to prune
+    # Returned session_id matches the recorder's process-wide id.
+    assert res["session_id"].startswith("sess_")
+
+
+async def test_episode_write_persists_takeaway_and_scopes(server: Any) -> None:
+    res = await _call(
+        server,
+        "episode_write",
+        body="ran the fix, all green",
+        takeaway="fix landed, regression suite clean",
+        scopes=["projects:loops"],
+    )
+    assert res["status"] == "committed"
+    assert res["takeaway"] == "fix landed, regression suite clean"
+    assert res["scopes"] == ["projects:loops"]
+
+
+async def test_episode_write_rejects_empty_body(server: Any) -> None:
+    """Empty/whitespace-only body raises a clear error — the
+    write surface enforces the same non-empty invariant `memory_write`
+    does, just without the durability gate. FastMCP wraps the
+    underlying ValueError as a ToolError; both pass through `Exception`."""
+    with pytest.raises(Exception, match="non-empty"):
+        await _call(server, "episode_write", body="")
+    with pytest.raises(Exception, match="non-empty"):
+        await _call(server, "episode_write", body="   \n\t  ")
+
+
+async def test_episode_write_is_invisible_to_memory_iterators(server: Any) -> None:
+    """Episodes live in a sibling subtree — memory_list /
+    memory_search must not surface them."""
+    await _call(
+        server,
+        "episode_write",
+        body="this is an episode, not a memory",
+    )
+    listing = _unwrap(await _call(server, "memory_list"))
+    assert listing == []
+    hits = _unwrap(await _call(server, "memory_search", query="episode memory not"))
+    assert hits == []
+
+
+async def test_episode_write_event_recorded_with_kind_episode_write(
+    server: Any, memory_dir: Path
+) -> None:
+    """The recorder fires a dedicated `episode_write` event so the
+    tool-usage rollup counts it independently from memory_write."""
+    await _call(server, "episode_write", body="some takeaway")
+    events_path = memory_dir / ".events.jsonl"
+    lines = events_path.read_text().splitlines()
+    ep_events = [
+        json.loads(line)
+        for line in lines
+        if json.loads(line)["kind"] == "episode_write"
+    ]
+    assert ep_events
+    assert ep_events[-1]["session"].startswith("sess_")
+
+
+# ---------------------------------------------------------------------------
+# episode_handoff — first call at loop-iteration entry
+# ---------------------------------------------------------------------------
+
+
+async def test_episode_handoff_empty_when_no_prior_session(server: Any) -> None:
+    """Fresh store, current session has the only events. Handoff
+    returns prior_session_id=None + episodes=[] so the caller can
+    branch on 'no baseline' vs. 'baseline exists but is empty'."""
+    res = await _call(server, "episode_handoff")
+    assert res["prior_session_id"] is None
+    assert res["episodes"] == []
+
+
+async def test_episode_handoff_surfaces_prior_session_takeaways(
+    memory_dir: Path,
+) -> None:
+    """Two sessions: A writes episodes, B asks for a handoff. B sees
+    A's takeaways and ids."""
+    cfg = Config(storage=StorageConfig(directory=str(memory_dir)))
+
+    server_a = build_server(config=cfg, store=Store(memory_dir), state=SessionState())
+    await _call(
+        server_a,
+        "episode_write",
+        body="iter 1 — tried A, broke at step 3",
+        takeaway="A blocks on auth header",
+    )
+    await _call(
+        server_a,
+        "episode_write",
+        body="iter 2 — tried B, partial success",
+        takeaway="B partial; needs retry",
+    )
+
+    server_b = build_server(config=cfg, store=Store(memory_dir), state=SessionState())
+    res = await _call(server_b, "episode_handoff")
+    assert res["prior_session_id"] is not None
+    assert res["prior_session_id"].startswith("sess_")
+    takeaways = [e["takeaway"] for e in res["episodes"]]
+    assert takeaways == ["A blocks on auth header", "B partial; needs retry"]
+    # Body is included alongside the takeaway so the reader can drill in.
+    assert "iter 1" in res["episodes"][0]["body"]
+
+
+async def test_episode_handoff_respects_max_episodes_cap(memory_dir: Path) -> None:
+    """`max_episodes` defaults to 5 and caps at 50. When the prior
+    session has more episodes than requested, surface the most recent
+    slice (chronological within the surfaced window)."""
+    cfg = Config(storage=StorageConfig(directory=str(memory_dir)))
+
+    server_a = build_server(config=cfg, store=Store(memory_dir), state=SessionState())
+    for i in range(7):
+        await _call(
+            server_a,
+            "episode_write",
+            body=f"iter {i}",
+            takeaway=f"takeaway {i}",
+        )
+
+    server_b = build_server(config=cfg, store=Store(memory_dir), state=SessionState())
+    res = await _call(server_b, "episode_handoff", max_episodes=3)
+    assert len(res["episodes"]) == 3
+    # Most recent 3 episodes: iter 4, 5, 6 (oldest first within the slice).
+    takeaways = [e["takeaway"] for e in res["episodes"]]
+    assert takeaways == ["takeaway 4", "takeaway 5", "takeaway 6"]
+
+
+# ---------------------------------------------------------------------------
+# episode_search — cross-session lookup
+# ---------------------------------------------------------------------------
+
+
+async def test_episode_search_returns_all_episodes_when_unfiltered(
+    memory_dir: Path,
+) -> None:
+    """No filters → list every episode across every session,
+    chronological (oldest first)."""
+    cfg = Config(storage=StorageConfig(directory=str(memory_dir)))
+    server_a = build_server(config=cfg, store=Store(memory_dir), state=SessionState())
+    await _call(server_a, "episode_write", body="A1", takeaway="a1")
+    await _call(server_a, "episode_write", body="A2", takeaway="a2")
+
+    server_b = build_server(config=cfg, store=Store(memory_dir), state=SessionState())
+    await _call(server_b, "episode_write", body="B1", takeaway="b1")
+
+    res = _unwrap(await _call(server_b, "episode_search"))
+    assert [e["takeaway"] for e in res] == ["a1", "a2", "b1"]
+
+
+async def test_episode_search_filters_by_scope_intersection(
+    memory_dir: Path,
+) -> None:
+    """Scope filter is an intersection — an episode passes when ANY
+    of its scopes is in the filter set."""
+    cfg = Config(storage=StorageConfig(directory=str(memory_dir)))
+    server = build_server(config=cfg, store=Store(memory_dir), state=SessionState())
+    await _call(server, "episode_write", body="auth notes", scopes=["projects:auth"])
+    await _call(
+        server, "episode_write", body="ranker notes", scopes=["projects:ranker"]
+    )
+    await _call(server, "episode_write", body="no scopes")  # empty scopes
+
+    res = _unwrap(await _call(server, "episode_search", scopes=["projects:auth"]))
+    assert len(res) == 1
+    assert "auth" in res[0]["body"]
+
+
+async def test_episode_search_filters_by_parent_session_id(
+    memory_dir: Path,
+) -> None:
+    """`parent_session_id` restricts the walk to one session's dir."""
+    cfg = Config(storage=StorageConfig(directory=str(memory_dir)))
+    server_a = build_server(config=cfg, store=Store(memory_dir), state=SessionState())
+    res_a = await _call(server_a, "episode_write", body="A's note", takeaway="from A")
+
+    server_b = build_server(config=cfg, store=Store(memory_dir), state=SessionState())
+    await _call(server_b, "episode_write", body="B's note", takeaway="from B")
+
+    res = _unwrap(
+        await _call(
+            server_b,
+            "episode_search",
+            parent_session_id=res_a["session_id"],
+        )
+    )
+    assert len(res) == 1
+    assert res[0]["takeaway"] == "from A"
+
+
+async def test_episode_search_max_results_caps_output(
+    memory_dir: Path,
+) -> None:
+    cfg = Config(storage=StorageConfig(directory=str(memory_dir)))
+    server = build_server(config=cfg, store=Store(memory_dir), state=SessionState())
+    for i in range(25):
+        await _call(server, "episode_write", body=f"entry {i}")
+    res = _unwrap(await _call(server, "episode_search", max_results=5))
+    assert len(res) == 5
+
+
+# ---------------------------------------------------------------------------
+# episode_promote — distill into durable memory
+# ---------------------------------------------------------------------------
+
+
+async def test_episode_promote_commits_takeaway_as_memory(server: Any) -> None:
+    """Default flow: takeaway becomes a durable memory's body, source
+    episode is deleted."""
+    ep = await _call(
+        server,
+        "episode_write",
+        body="iter 3 — found the bug in src/auth.py:42, missing null check",
+        takeaway="auth.py:42 needs null check on session token",
+    )
+    res = await _call(
+        server,
+        "episode_promote",
+        episode_id=ep["id"],
+        scopes=["projects:auth"],
+    )
+    assert res["status"] == "committed"
+    assert "auth.py:42 needs null check" in res["body"] if "body" in res else True
+    assert res["promoted_from_episode_id"] == ep["id"]
+
+    # Source episode is gone now.
+    remaining = _unwrap(await _call(server, "episode_search"))
+    assert remaining == []  # nothing left
+
+    # And the durable memory landed where it should — searchable.
+    hits = _unwrap(await _call(server, "memory_search", query="null check auth"))
+    assert any("null check" in h.get("snippet", "") for h in hits)
+
+
+async def test_episode_promote_use_body_uses_full_body(server: Any) -> None:
+    """`use_body=True` promotes the full body instead of the takeaway.
+    Required when the episode has no takeaway."""
+    ep = await _call(
+        server,
+        "episode_write",
+        body="full body content with all the details",
+    )
+    res = await _call(
+        server,
+        "episode_promote",
+        episode_id=ep["id"],
+        scopes=["tools"],
+        use_body=True,
+    )
+    assert res["status"] == "committed"
+
+
+async def test_episode_promote_without_takeaway_requires_use_body(
+    server: Any,
+) -> None:
+    """Episode without a takeaway + use_body=False → clear error
+    rather than silently promoting an empty body."""
+    ep = await _call(server, "episode_write", body="only body, no takeaway")
+    with pytest.raises(Exception, match="no takeaway"):
+        await _call(
+            server,
+            "episode_promote",
+            episode_id=ep["id"],
+            scopes=["tools"],
+        )
+
+
+async def test_episode_promote_unknown_id_raises(server: Any) -> None:
+    """Unknown episode_id raises a clear error so the caller doesn't
+    silently no-op."""
+    with pytest.raises(Exception, match="no episode with id"):
+        await _call(
+            server,
+            "episode_promote",
+            episode_id="01ABCDEFGHJKMNPQRSTVWXYZ00",
+            scopes=["tools"],
+        )
+
+
+async def test_loop_iteration_end_to_end_pattern(memory_dir: Path) -> None:
+    """End-to-end exercise of the loop-iteration pattern documented in
+    SKILL.md and the FastMCP instructions block.
+
+    Iteration A:
+    1. Writes durable memory + a journal entry with a takeaway.
+
+    Iteration B (a fresh server = fresh recorder session_id, simulating
+    a /loop subprocess):
+    2. Calls episode_handoff() — sees A's takeaway.
+    3. Promotes A's takeaway via episode_promote — durable memory
+       commits, source episode is deleted.
+    4. Writes its own memory; memory_search(since_prior_session=True)
+       returns only B's writes (not A's), pinning the filter's
+       "what THIS session has changed since the last other-session
+       activity" semantic.
+    5. A second episode_handoff() sees prior_session_id still resolved
+       but the episode list is empty (it was promoted out).
+
+    Pins the contract the docs / SKILL.md describe so a future refactor
+    of any of the four episode tools surfaces immediately."""
+    cfg = Config(storage=StorageConfig(directory=str(memory_dir)))
+
+    # Iteration A: durable memory + journal entry.
+    server_a = build_server(config=cfg, store=Store(memory_dir), state=SessionState())
+    await _call(
+        server_a,
+        "memory_write",
+        content="alpha gophers run at 60fps when GC is tuned",
+        scopes=["projects:alpha"],
+    )
+    ep_a = await _call(
+        server_a,
+        "episode_write",
+        body="iter 1 — tuned GC, gophers cleared",
+        takeaway="GC tuning fixed gopher frame drops",
+    )
+
+    # Iteration B: new session, picks up the handoff.
+    server_b = build_server(config=cfg, store=Store(memory_dir), state=SessionState())
+
+    handoff = await _call(server_b, "episode_handoff")
+    assert handoff["prior_session_id"] is not None
+    assert len(handoff["episodes"]) == 1
+    assert handoff["episodes"][0]["takeaway"] == "GC tuning fixed gopher frame drops"
+
+    # Promote A's takeaway into a durable memory.
+    promotion = await _call(
+        server_b,
+        "episode_promote",
+        episode_id=ep_a["id"],
+        scopes=["projects:alpha"],
+    )
+    assert promotion["status"] == "committed"
+    assert promotion["promoted_from_episode_id"] == ep_a["id"]
+
+    # B writes its own memory. since_prior_session restricts to
+    # memories updated AFTER the latest other-session event — A's
+    # memory falls before that cut, B's promoted memory and this new
+    # write fall after.
+    await _call(
+        server_b,
+        "memory_write",
+        content="beta benchmark hits the same 60fps target post-tune",
+        scopes=["projects:alpha"],
+    )
+    own_session_hits = _unwrap(
+        await _call(
+            server_b,
+            "memory_search",
+            query="alpha 60fps",
+            since_prior_session=True,
+        )
+    )
+    own_bodies = [h.get("snippet", "") for h in own_session_hits]
+    # B's write is present.
+    assert any("beta benchmark" in body for body in own_bodies)
+    # A's pre-boundary memory is NOT — it sits before the boundary.
+    assert not any("alpha gophers" in body for body in own_bodies)
+
+    # Second handoff: prior session still resolves, but the episode is
+    # gone (deleted by promote on commit).
+    handoff_2 = await _call(server_b, "episode_handoff")
+    assert handoff_2["prior_session_id"] is not None
+    assert handoff_2["episodes"] == []
+
+
+async def test_episode_promote_keeps_episode_when_durability_rejects(
+    server: Any,
+) -> None:
+    """If the promotion's body trips the durability gate (a transient
+    marker), memory_write returns transient_warning and the source
+    episode is LEFT IN PLACE so the caller can rephrase and retry."""
+    ep = await _call(
+        server,
+        "episode_write",
+        body="full context body for retry",
+        # A transient marker in the takeaway — it'd get rejected by
+        # the durability gate on promotion.
+        takeaway="currently failing on step 3",
+    )
+    res = await _call(
+        server,
+        "episode_promote",
+        episode_id=ep["id"],
+        scopes=["tools"],
+    )
+    assert res["status"] == "transient_warning"
+    # Source episode should still exist.
+    listed = _unwrap(await _call(server, "episode_search"))
+    assert any(e["id"] == ep["id"] for e in listed)
+
+
+async def test_episode_handoff_respects_explicit_prior_session_id(
+    memory_dir: Path,
+) -> None:
+    """When the caller passes `prior_session_id`, the handler skips the
+    event-log walk and reads directly from that session's directory.
+    Useful for subagent handoff where the parent's session_id is
+    already known."""
+    cfg = Config(storage=StorageConfig(directory=str(memory_dir)))
+
+    # Sessions A and B both write episodes.
+    server_a = build_server(config=cfg, store=Store(memory_dir), state=SessionState())
+    await _call(server_a, "episode_write", body="A's note", takeaway="from A")
+
+    server_b = build_server(config=cfg, store=Store(memory_dir), state=SessionState())
+    await _call(server_b, "episode_write", body="B's note", takeaway="from B")
+
+    # Session C explicitly asks for A's session id (not the most recent).
+    server_c = build_server(config=cfg, store=Store(memory_dir), state=SessionState())
+    # Resolve A's id from its episode file. The frontmatter persists
+    # session_id; iterating the episode store and matching on the body
+    # is a known-good way to identify it without poking into the
+    # server's private session attributes.
+    from bettermemory.episodes import EpisodeStore
+
+    ep_store = EpisodeStore(memory_dir)
+    a_session_id: str
+    for sid in ep_store.iter_session_ids():
+        eps = ep_store.list_by_session(sid)
+        if any("A's note" in e.body for e in eps):
+            a_session_id = sid
+            break
+    else:
+        raise AssertionError("could not locate session A's id")
+
+    res = await _call(server_c, "episode_handoff", prior_session_id=a_session_id)
+    assert res["prior_session_id"] == a_session_id
+    assert len(res["episodes"]) == 1
+    assert res["episodes"][0]["takeaway"] == "from A"
+
+
+# ---------------------------------------------------------------------------
+# memory_write — inline curation hint (continued)
+# ---------------------------------------------------------------------------
+
+
+async def test_write_curation_hint_threshold_zero_disables(
+    memory_dir: Path,
+    monkeypatch: Any,
+) -> None:
+    """`curation_hint_threshold = 0` is the documented disable knob.
+    Sets a numerical disable that's symmetric with the boolean
+    `curation_hint_enabled` so config-driven kill switches don't
+    require touching the boolean."""
+    from bettermemory import health as _health
+    from bettermemory.config import BehaviorConfig
+
+    monkeypatch.setattr(
+        _health,
+        "curation_counts",
+        lambda *_a, **_k: {
+            "stale": 0,
+            "never_verified": 0,
+            "drifted": 0,
+            "cold": 0,
+            "dead": 999,
+            "silent_misses": 0,
+            "endorsement_debt": 0,
+        },
+    )
+    cfg = Config(
+        storage=StorageConfig(directory=str(memory_dir)),
+        behavior=BehaviorConfig(curation_hint_threshold=0),
+    )
+    server_x = build_server(config=cfg, store=Store(memory_dir), state=SessionState())
+    res = await _call(server_x, "memory_write", content="x", scopes=["tools"])
+    assert "curation_hint" not in res
+
+
+# ---------------------------------------------------------------------------
 # memory_update
 # ---------------------------------------------------------------------------
 
@@ -1982,6 +2819,32 @@ async def test_scope_overview_delta_event_recorded_carries_boundary(
     assert "prior_session_boundary" in latest
     assert latest["prior_session_boundary"] is not None
     assert "curation_pending_new_since_last_session" in latest
+
+
+async def test_scope_overview_recently_removed_counts_recent_tombstones(
+    server: Any,
+) -> None:
+    """A memory removed within the trailing 7-day window surfaces in
+    `recently_removed_in_worktree` so the model knows it shouldn't
+    re-cover that ground without a reason."""
+    written = await _call(
+        server,
+        "memory_write",
+        content="auth uses bcrypt",
+        scopes=["projects:auth"],
+    )
+    await _call(server, "memory_remove", id=written["id"], reason="outdated")
+
+    overview = await _call(server, "memory_scope_overview", auto_scope=False)
+    assert overview["recently_removed_in_worktree"] >= 1
+
+
+async def test_scope_overview_recently_removed_zero_when_clean(
+    server: Any,
+) -> None:
+    """A fresh store has no removals; the field surfaces 0."""
+    overview = await _call(server, "memory_scope_overview", auto_scope=False)
+    assert overview["recently_removed_in_worktree"] == 0
 
 
 # ---------------------------------------------------------------------------
