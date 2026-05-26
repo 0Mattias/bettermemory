@@ -151,7 +151,7 @@ The `silent_misses` rollup honors a `silent_miss_cutoff` event when present — 
 
 ### `memory_audit_turn(user_message, assistant_response?, lookback_seconds?)`
 
-Silent-miss telemetry. Fires from a client-side end-of-turn hook with the user's message. Runs a search probe over the active store using the configured ranker and asks whether a `search` or `show` event landed in the same session within `lookback_seconds` (default 60s, clamped to [1, 600]).
+Silent-miss telemetry. Fires from a client-side end-of-turn hook with the user's message. Runs a search probe over the active store using the configured ranker and asks whether a `search`, `show`, or `list` event landed in the same session within `lookback_seconds` (default 60s, clamped to [1, 600]).
 
 Always emits `turn_audited` so audit cadence stays visible. Emits `search_miss` additionally when a high-relevance probe hit exists AND no retrieval happened in the window. The threshold rule is versioned (`THRESHOLD_RULE_V1 = "v1_top1_high"`) and recorded on every event so a calibration pass can replay historical logs.
 
