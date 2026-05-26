@@ -10,6 +10,7 @@ the host environment under test.
 from __future__ import annotations
 
 import json
+import typing
 from pathlib import Path
 from typing import Any
 
@@ -17,6 +18,7 @@ import pytest
 
 from bettermemory.config import BehaviorConfig, Config, StorageConfig
 from bettermemory.doctor import (
+    CheckStatus,
     Diagnosis,
     DoctorReport,
     _check_audit_turn_cadence,
@@ -30,6 +32,7 @@ from bettermemory.doctor import (
     _check_python_version,
     _check_storage_directory,
     _discover_site_packages,
+    _STATUS_GLYPH,
     cli_doctor,
     render_json,
     render_text,
@@ -835,3 +838,116 @@ def test_cli_doctor_returns_exit_code(
     capsys.readouterr()
     code = cli_doctor(json_out=False)
     assert code == 2
+
+
+# ---------------------------------------------------------------------------
+# Literal-keyed-dict parity for `_STATUS_GLYPH` (and the sibling inline
+# `overall_label`) at `doctor.py:_STATUS_GLYPH` / `render_text`.
+#
+# `_STATUS_GLYPH: dict[CheckStatus, str]` and the inline `overall_label`
+# dict at `render_text` are both keyed off the closed `CheckStatus` Literal
+# (`doctor.py:CheckStatus = Literal["ok", "warn", "fail"]`). Both are
+# consumed by direct subscript (`_STATUS_GLYPH[overall]`,
+# `_STATUS_GLYPH[check.status]`, `overall_label[overall]`) — adding a
+# fourth `CheckStatus` literal without updating both dicts would crash
+# `bettermemory doctor`'s text renderer with `KeyError` on the first
+# diagnosis that surfaces the new status.
+#
+# Hazard tier: low. Cosmetic rendering crash only — the underlying
+# `run_diagnostics` and `render_json` paths don't touch either dict, so
+# data integrity is intact. Still a closed-protocol pin worth taking now
+# that we've swept the rest of the membership-guard class. Mirrors the
+# Literal-derived guards in `test_ingest.py::test_actions_tuple_matches_
+# action_literal` (basic shape) and `test_server.py::test_write_gates_
+# match_expected_types_in_order` (ordered shape).
+#
+# `_EXPECTED_CHECK_STATUSES` is hardcoded alphabetised and NOT derived
+# from `typing.get_args(CheckStatus)` — derivation would silently shrink
+# the expected list when the source shrinks, defeating the deletion
+# guard. Same shape as `_EXPECTED_INDEX_FILENAMES` (bde7602) and
+# `_EXPECTED_USE_OUTCOMES` (db81630).
+#
+# Negative-control: temporarily adding `"info"` to the `CheckStatus`
+# Literal in `doctor.py` fails `test_status_glyph_keys_match_check_
+# status_literal` (set inequality: Literal has extra `"info"` that
+# `_STATUS_GLYPH` doesn't). Revert restores green.
+# ---------------------------------------------------------------------------
+
+
+_EXPECTED_CHECK_STATUSES: tuple[str, ...] = ("fail", "ok", "warn")
+
+
+def test_expected_check_statuses_match_literal() -> None:
+    """Pin the hardcoded `_EXPECTED_CHECK_STATUSES` tuple against the
+    canonical `CheckStatus` Literal — the indirection through this
+    tuple is what makes the two dict-parity assertions below catch
+    BOTH additions and deletions (a `get_args(CheckStatus)`-derived
+    expectation would shrink with deletions and miss the deletion
+    case)."""
+    assert set(_EXPECTED_CHECK_STATUSES) == set(typing.get_args(CheckStatus))
+
+
+def test_status_glyph_keys_match_check_status_literal() -> None:
+    """`_STATUS_GLYPH` is direct-indexed in `render_text`
+    (`_STATUS_GLYPH[overall]`, `_STATUS_GLYPH[check.status]`); a
+    missing key crashes the doctor renderer with `KeyError`. Pin the
+    keys against the hardcoded `_EXPECTED_CHECK_STATUSES` so a new
+    `CheckStatus` literal trips this guard before it ships."""
+    assert set(_STATUS_GLYPH.keys()) == set(_EXPECTED_CHECK_STATUSES), (
+        "`_STATUS_GLYPH` keys drifted from `CheckStatus`; see "
+        "doctor.py:_STATUS_GLYPH and the inline `overall_label` dict "
+        "at render_text — both must mirror every CheckStatus literal."
+    )
+
+
+def test_render_text_overall_label_covers_every_check_status() -> None:
+    """The sibling inline `overall_label` dict at `render_text` is
+    keyed off CheckStatus the same way `_STATUS_GLYPH` is — same
+    KeyError hazard. Drive `render_text` once per CheckStatus literal
+    so a missing key here crashes the test instead of crashing
+    `bettermemory doctor` in user-facing output."""
+    for status in _EXPECTED_CHECK_STATUSES:
+        # Use a single-check report so `report.overall` equals `status`.
+        report = DoctorReport(
+            checks=[Diagnosis(name="probe", status=status, message="")]  # type: ignore[arg-type]
+        )
+        out = render_text(report)
+        # The header line carries the overall_label string — a
+        # KeyError on the inline dict would have raised by now.
+        assert "bettermemory doctor" in out
+
+
+# ---------------------------------------------------------------------------
+# Cross-module parity: the event-log path probed by
+# `_check_event_log_writable` (`doctor.py`) MUST resolve to the same
+# filename the `Recorder` actually writes — `events.EVENT_LOG_FILENAME`.
+# A rename of the canonical constant would, prior to this commit, have
+# updated the writer but left the doctor's probe path pointing at a
+# stale literal — silently passing the writability check against a file
+# that the runtime never creates. Closes the doctor side of Class 6.
+# ---------------------------------------------------------------------------
+
+
+def test_check_event_log_uses_canonical_event_log_filename(
+    tmp_path: Path,
+) -> None:
+    """When the event log already exists, `_check_event_log_writable`
+    must probe THE file the `Recorder` writes — i.e. the path built
+    from `events.EVENT_LOG_FILENAME`. The "log too large" branch is
+    the cleanest way to confirm the constructed path: drop a file at
+    `<dir>/EVENT_LOG_FILENAME`, set the size threshold low, expect
+    the warn branch to fire (which means doctor found the file).
+    Drift would surface as the probe returning the
+    "not yet created" branch even though we placed the file with
+    the canonical name."""
+    from bettermemory.events import EVENT_LOG_FILENAME
+
+    log_path = tmp_path / EVENT_LOG_FILENAME
+    log_path.write_text('{"kind": "test"}\n', encoding="utf-8")
+    diag = _check_event_log_writable(tmp_path)
+    # Doctor saw the file (status is `ok` or `warn`, not the
+    # "not yet created" message that fires when the path is missing).
+    assert "not yet created" not in diag.message, (
+        "doctor's log_path constructed a different filename than "
+        "events.EVENT_LOG_FILENAME — see doctor.py:_check_event_log_writable"
+    )

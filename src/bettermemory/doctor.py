@@ -37,12 +37,19 @@ from pathlib import Path
 from typing import Any, Literal
 
 from .config import Config, load_config
-from .events import iter_all_events
+from .events import EVENT_LOG_FILENAME, iter_all_events
 from .init import KNOWN_CLIENTS, find_binary
 from .store import Store
 
 
 CheckStatus = Literal["ok", "warn", "fail"]
+
+
+# Sentinel filename the storage-directory probe writes and unlinks. Lifted
+# to a module-level constant so `sync.py`'s gitignore writer can import the
+# name rather than hardcode a sibling literal (which would drift silently
+# if the probe ever moved). See `_check_storage_directory` below.
+DOCTOR_PROBE_FILENAME = ".doctor-probe"
 
 
 # ---------------------------------------------------------------------------
@@ -264,7 +271,7 @@ def _check_storage_directory(cfg: Config) -> tuple[Diagnosis, Path | None]:
     # Without the finally arm a subsequent `doctor` run would still
     # report `fail`, but the user would also be wondering where that
     # stray file came from.
-    probe = directory / ".doctor-probe"
+    probe = directory / DOCTOR_PROBE_FILENAME
     try:
         try:
             probe.write_text("ok", encoding="utf-8")
@@ -350,7 +357,7 @@ def _check_event_log_writable(directory: Path) -> Diagnosis:
             status="ok",
             message="Event log not yet created (storage dir is brand new).",
         )
-    log_path = directory / ".events.jsonl"
+    log_path = directory / EVENT_LOG_FILENAME
     if not log_path.exists():
         # Probe writability of the directory itself; the log file will
         # be created on first server start.
