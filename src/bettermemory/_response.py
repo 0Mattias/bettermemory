@@ -30,6 +30,7 @@ from .origin import Origin, commit_author_timestamps, repos_match
 from .time_utils import isoformat_utc as _isoformat_utc
 from .time_utils import isoformat_utc_optional as _isoformat_utc_optional
 from .verify import (
+    _VERDICT_RAISE_STATUSES,
     compute_staleness_verdict,
     compute_verification_status,
     detect_path_drift,
@@ -403,7 +404,12 @@ class ResponseBuilder:
             # actually applicable.
             verification_dict = hit_dict["verification"]
             verification_status = verification_dict["status"]
-            verdict_required = verification_status in {"never", "stale"}
+            # Mirror the gate in `compute_staleness_verdict` — same
+            # closed-protocol whitelist, single source of truth. Silent
+            # divergence here would let `memory_search`'s top hit
+            # surface a different verdict than `memory_show` does for
+            # the same stale memory.
+            verdict_required = verification_status in _VERDICT_RAISE_STATUSES
             if verdict_required:
                 hit_dict["staleness_verdict"] = "spot_check_required"
             elif count > 0 or hit_dict.get("path_drift_missing", 0) > 0:

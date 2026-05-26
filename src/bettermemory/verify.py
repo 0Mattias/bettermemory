@@ -818,6 +818,20 @@ _VERDICT_FRESH = "fresh"
 _VERDICT_RECOMMENDED = "spot_check_recommended"
 _VERDICT_REQUIRED = "spot_check_required"
 
+# Closed-protocol whitelist: the `verification.status` values that
+# pre-empt every drift input and force the verdict to
+# ``spot_check_required``. Lives as a module-level frozenset so the
+# two consumers (``compute_staleness_verdict`` below and
+# ``ResponseBuilder.attach_commit_drift_counts`` in ``_response.py``,
+# which re-runs the same gate after folding in commit-drift) share a
+# single source of truth. Silent divergence between the two sites
+# would let a stale memory surfaced by ``memory_search`` carry a
+# different verdict than the same memory surfaced by ``memory_show``
+# — the loudest re-verify signal we emit, downgraded by a one-site
+# typo. Pinned by ``_EXPECTED_RAISE_STATUSES`` in
+# ``tests/test_server_v12_features.py``.
+_VERDICT_RAISE_STATUSES: frozenset[str] = frozenset({"never", "stale"})
+
 
 def compute_staleness_verdict(
     *,
@@ -837,15 +851,16 @@ def compute_staleness_verdict(
       this memory came from has commits since the last verify. Worth
       a quick check before relying on the body.
     - ``"spot_check_required"``: ``verification.status`` in
-      ``{"never", "stale"}``. Pre-empts the drift inputs because the
-      verification anchor itself is missing or expired.
+      ``_VERDICT_RAISE_STATUSES`` (``{"never", "stale"}``). Pre-empts
+      the drift inputs because the verification anchor itself is
+      missing or expired.
 
     `commit_drift_count` is `None` when the signal isn't applicable
     (caller not in a repo, hit from a different repo, hit never
     verified). None never elevates the verdict on a fresh memory; it
     behaves the same as 0.
     """
-    if verification.status in {"never", "stale"}:
+    if verification.status in _VERDICT_RAISE_STATUSES:
         return _VERDICT_REQUIRED
     drifty = path_drift_missing > 0 or (
         commit_drift_count is not None and commit_drift_count > 0
