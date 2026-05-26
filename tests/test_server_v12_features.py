@@ -1077,6 +1077,123 @@ async def test_scope_overview_curation_never_verified_increments(
     assert res["curation_pending"]["never_verified"] == 1
 
 
+# Wire-shape parity for the DESC_* tool descriptions — the prose the LLM
+# client sees has to enumerate the same bucket keys the runtime emits, or
+# the model will branch on names that don't exist (or miss names that do).
+# The existing pins above lock the runtime side
+# (`test_scope_overview_returns_curation_pending`,
+# `test_scope_overview_curation_pending_zero_on_empty`); these two pin
+# the prose side via regex extraction so a future docstring edit that
+# drops or renames a bucket fails CI instead of silently misleading
+# clients.
+
+
+def test_desc_memory_scope_overview_enumerates_curation_pending_keys() -> None:
+    """`DESC_MEMORY_SCOPE_OVERVIEW` prose lists the seven
+    `curation_pending` keys in a brace-delimited block. Extract them via
+    regex and assert set equality against the runtime wire shape (which
+    is pinned at `test_scope_overview_curation_pending_zero_on_empty`)."""
+    import re
+
+    from bettermemory.handlers.scope_overview import DESC_MEMORY_SCOPE_OVERVIEW
+
+    # The prose lays out the rollup as:
+    #     "{stale, never_verified, drifted, cold, dead, "
+    #     "silent_misses, endorsement_debt}"
+    # The literal C-style string concatenation in the source becomes one
+    # contiguous "{...}" at runtime — the regex matches that block.
+    match = re.search(r"\{([a-z_,\s]+)\}", DESC_MEMORY_SCOPE_OVERVIEW)
+    assert match is not None, (
+        "DESC_MEMORY_SCOPE_OVERVIEW no longer contains a brace-delimited "
+        "list of curation_pending bucket names. The prose lost its "
+        "self-documenting structure; restore the `{name, name, ...}` "
+        "block or update this extraction."
+    )
+    extracted = {name.strip() for name in match.group(1).split(",")}
+
+    expected = {
+        "stale",
+        "never_verified",
+        "drifted",
+        "cold",
+        "dead",
+        "silent_misses",
+        "endorsement_debt",
+    }
+    assert extracted == expected, (
+        "DESC_MEMORY_SCOPE_OVERVIEW's curation_pending key list drifted "
+        f"from the runtime wire shape. Only in prose: "
+        f"{sorted(extracted - expected)}; only in runtime: "
+        f"{sorted(expected - extracted)}. Sync the docstring with the "
+        "dict returned by `curation_counts` (and the test_server_v12 pin "
+        "above)."
+    )
+
+
+def test_desc_memory_health_enumerates_report_bucket_keys() -> None:
+    """`DESC_MEMORY_HEALTH` prose enumerates every bucket key returned by
+    `HealthReport.to_dict()`. Regex-extract the bucket region between
+    "Returns buckets" and "CLI equivalent", then assert set equality
+    against the expected bucket names — drift here misleads clients
+    about what `memory_health` actually returns."""
+    import re
+
+    from bettermemory.handlers.health import DESC_MEMORY_HEALTH
+
+    # Slice the bucket-enumeration region. Anchoring on the surrounding
+    # prose ("Returns buckets" / "CLI equivalent:") keeps the extraction
+    # robust against future edits that add unrelated backticked tokens
+    # outside the bucket list (e.g. a tool-reference in a leading sentence).
+    start = DESC_MEMORY_HEALTH.index("Returns buckets")
+    end = DESC_MEMORY_HEALTH.index("CLI equivalent:")
+    region = DESC_MEMORY_HEALTH[start:end]
+
+    # Bucket names appear backticked inside the region. Parameter
+    # references — `window_days`, `min_applied`, `resolution_timeline`,
+    # `verification_stale_days`, and the cross-tool reference
+    # `memory_audit_turn` — also live here; filter them out explicitly so
+    # the assertion focuses on actual bucket names.
+    all_ticked = set(re.findall(r"`([a-z_][a-z_0-9]*)`", region))
+    NON_BUCKET = {
+        "window_days",
+        "min_applied",
+        "resolution_timeline",
+        "verification_stale_days",
+        "memory_audit_turn",
+    }
+    extracted = all_ticked - NON_BUCKET
+
+    # Match `HealthReport.to_dict()` keys (see `health.py`). The five
+    # report-metadata keys (`generated_at`, `window_days`,
+    # `total_active_memories`, `total_events`, `distinct_sessions`) are
+    # intentionally NOT in the prose's "Returns buckets" section — they
+    # surface above it in the same DESC string but aren't buckets. This
+    # set is the bucket subset, kept in lockstep with the wire shape.
+    expected = {
+        "dead_weight",
+        "cold_memories",
+        "heavily_used",
+        "contradicted",
+        "verification_debt",
+        "commit_drift_debt",
+        "silent_misses",
+        "endorsement_debt",
+        "scope_distribution",
+        "scope_health",
+        "rare_scopes",
+        "orphan_use_events",
+        "marker_stats",
+    }
+    assert extracted == expected, (
+        "DESC_MEMORY_HEALTH's enumerated bucket names drifted from "
+        f"HealthReport.to_dict(). Only in prose: "
+        f"{sorted(extracted - expected)}; only in runtime: "
+        f"{sorted(expected - extracted)}. Sync the docstring with the "
+        "report's wire shape — clients build mental models from this "
+        "description."
+    )
+
+
 # ---------------------------------------------------------------------------
 # Change 6 — scope_mismatch warning at write time
 # ---------------------------------------------------------------------------

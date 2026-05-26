@@ -1013,6 +1013,71 @@ class TestComputeToolUsage:
 
 
 # ---------------------------------------------------------------------------
+# Tool-count parity — runtime registrations vs. eval-side enumeration
+# ---------------------------------------------------------------------------
+
+
+# The canonical tool count surfaced in prose ("18 MCP tools" in README /
+# api.md / marketplace / plugin README). Pinned here as the single source
+# of truth so a regression in either the runtime registrations or the
+# eval-side enumeration trips one assertion instead of leaving the prose
+# silently out of sync. Prose authors verify against this constant.
+_EXPECTED_TOOL_COUNT = 18
+
+
+async def test_tool_count_matches_registered_count(tmp_path: Path) -> None:
+    """The eval-side tool enumeration agrees with the runtime registry.
+
+    Two independent sources of truth name "the tools that exist":
+
+    1. ``builder._register_tools`` — one ``mcp.tool(name=...)`` call per
+       tool, surfaced at runtime via ``mcp.list_tools()``.
+    2. ``eval._TOOL_EVENT_KIND_TO_TOOL`` values plus
+       ``eval.TOOLS_WITHOUT_TELEMETRY`` — drives ``compute_tool_usage``'s
+       per-tool row set so a consumer can iterate every tool without a
+       missing-key guard.
+
+    Both must enumerate the same set, or:
+
+    - A new ``mcp.tool(...)`` registration that nobody added to the eval
+      map produces a tool that ``compute_tool_usage`` silently ignores.
+    - A new entry in the eval map without a runtime registration produces
+      a "tool" the server can't actually serve, surfacing as a zero-count
+      row that never moves.
+
+    This test pins the set-equality, and pins the count to
+    ``_EXPECTED_TOOL_COUNT`` so prose claims of "18 MCP tools" have
+    something to track against.
+    """
+    from bettermemory.config import Config, StorageConfig
+    from bettermemory.server import build_server
+    from bettermemory.session import SessionState
+    from bettermemory.store import Store
+
+    cfg = Config(storage=StorageConfig(directory=str(tmp_path)))
+    mcp = build_server(config=cfg, store=Store(tmp_path), state=SessionState())
+    registered = {tool.name for tool in await mcp.list_tools()}
+
+    eval_side = set(_TOOL_EVENT_KIND_TO_TOOL.values()) | set(TOOLS_WITHOUT_TELEMETRY)
+
+    assert eval_side == registered, (
+        "Eval-side tool enumeration drifted from runtime-registered tools. "
+        f"Only in eval map: {sorted(eval_side - registered)}; "
+        f"only on server: {sorted(registered - eval_side)}. "
+        "Update _TOOL_EVENT_KIND_TO_TOOL / TOOLS_WITHOUT_TELEMETRY in "
+        "eval.py, or add the missing mcp.tool(...) registration in "
+        "builder._register_tools, to bring the two surfaces back in sync."
+    )
+    assert len(registered) == _EXPECTED_TOOL_COUNT, (
+        f"Runtime tool count is {len(registered)} but _EXPECTED_TOOL_COUNT "
+        f"is {_EXPECTED_TOOL_COUNT}. Either a tool was added/removed and "
+        "the constant + prose ('18 MCP tools' in README / api.md / "
+        "marketplace / plugin README) needs to track it, or the "
+        "registration list grew without the docs catching up."
+    )
+
+
+# ---------------------------------------------------------------------------
 # render_tool_usage_text — CLI rendering
 # ---------------------------------------------------------------------------
 
