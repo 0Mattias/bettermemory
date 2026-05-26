@@ -94,6 +94,29 @@ def _show_event(
     }
 
 
+def _list_event(
+    *,
+    session: str,
+    ts: datetime,
+    returned: list[str] | None = None,
+) -> dict[str, Any]:
+    """A `memory_list` event — shape mirrors what the server emits at
+    `test_server_events.py::test_list_records_count_and_returned`.
+
+    `memory_list` is the third retrieval primitive (alongside search and
+    show): surfaces a scope's ids and, with `with_bodies=True`, full
+    bodies — same effect as a search hit from the model's perspective.
+    """
+    returned_ids = returned or []
+    return {
+        "ts": ts.isoformat().replace("+00:00", "Z"),
+        "session": session,
+        "kind": "list",
+        "count": len(returned_ids),
+        "returned": returned_ids,
+    }
+
+
 # ---------------------------------------------------------------------------
 # probe_for_miss — no-signal branches
 # ---------------------------------------------------------------------------
@@ -536,20 +559,32 @@ def test_caller_in_top_hit_project_helper_normalizes_remote_urls() -> None:
     assert _caller_in_top_hit_project((hit,), [mem], caller) is True
 
 
-def test_search_and_show_both_count_toward_recent_retrieval() -> None:
-    """Mixed search and show events accumulate. The count surfaces both."""
+def test_search_show_and_list_all_count_toward_recent_retrieval() -> None:
+    """Mixed search, show, and list events accumulate. The count surfaces
+    all three. Pins the `_RETRIEVAL_EVENT_KINDS` consumer clause for the
+    `list` kind alongside `search` and `show` — a regression that dropped
+    `"list"` from the frozenset would silently increase false-positive
+    `search_miss` flags whenever the model used `memory_list` (e.g.
+    session-start scope overview) as its retrieval primitive. Mirrors
+    the per-kind shielding tests above; the load-bearing assertion is
+    the count==3 — drop any one kind and the count drops to 2."""
     m = _memory("backup strategy uses triangular restic replication")
     now = _utc(2026, 5, 1)
     events = [
         _search_event(
             session="sess_x",
-            ts=now - timedelta(seconds=20),
+            ts=now - timedelta(seconds=30),
             returned=[m.id],
         ),
         _show_event(
             session="sess_x",
-            ts=now - timedelta(seconds=10),
+            ts=now - timedelta(seconds=20),
             memory_id=m.id,
+        ),
+        _list_event(
+            session="sess_x",
+            ts=now - timedelta(seconds=10),
+            returned=[m.id],
         ),
     ]
     report = probe_for_miss(
@@ -561,7 +596,7 @@ def test_search_and_show_both_count_toward_recent_retrieval() -> None:
         lookback_seconds=60,
     )
     assert report.verdict == "ok"
-    assert report.recent_retrieval_count == 2
+    assert report.recent_retrieval_count == 3
 
 
 def test_probe_mode_rejects_unknown_value() -> None:
