@@ -13,7 +13,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any
 
-from ..models import Category, Confidence, validate_scope
+from ..models import Category, Confidence, _PROPOSABLE_CATEGORIES, validate_scope
 from ..store import MemoryNotFoundError, TombstonedError
 from ._shared import Context, _advance_turn, _validate_content_size
 
@@ -127,12 +127,19 @@ async def memory_update(
         # `user-inference` is a write-time gate (pending-confirm flow);
         # there's no analogous gate on update, so allowing a retag
         # *into* `user-inference` would silently bypass that gate.
-        # Allow `fact` and `ambient` only.
-        allowed_update_categories = {Category.FACT.value, Category.AMBIENT.value}
-        if category not in allowed_update_categories:
+        # Allow `fact` and `ambient` only. Sourced from
+        # `models._PROPOSABLE_CATEGORIES` — the same closed-protocol
+        # whitelist gates the LLM-consolidation validators
+        # (`_validate_demote`, `_validate_propose_new` in `llm.py`),
+        # which can't supply the user confirmation `user-inference`
+        # demands either. Sharing the constant means a future
+        # ``Category`` member ships the automation-eligibility
+        # decision to one place; silent divergence between this site
+        # and the LLM validators can't happen.
+        if category not in _PROPOSABLE_CATEGORIES:
             raise ValueError(
                 "category must be one of "
-                f"{sorted(allowed_update_categories)} on update "
+                f"{sorted(_PROPOSABLE_CATEGORIES)} on update "
                 "(`user-inference` is write-only — it gates the "
                 "pending-confirm flow which has no equivalent here)"
             )

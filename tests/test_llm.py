@@ -29,7 +29,6 @@ from bettermemory.llm import (
     ProposeNewProposal,
     ResolveContradictionProposal,
     RewriteRelativeDateProposal,
-    _LLM_PROPOSABLE_CATEGORIES,
     build_clusters,
     build_prompt,
     make_provider,
@@ -42,6 +41,7 @@ from bettermemory.models import (
     Confidence,
     Memory,
     Source,
+    _PROPOSABLE_CATEGORIES,
     generate_ulid,
 )
 
@@ -1137,9 +1137,11 @@ def test_render_propose_new_diff_shows_new_body() -> None:
 #
 # `_validate_demote` and `_validate_propose_new` in `llm.py` both gate
 # the proposal's category on the same closed-protocol whitelist of
-# tiers an LLM is allowed to propose. Since this pin landed the two
-# sites share `_LLM_PROPOSABLE_CATEGORIES`; the tests below pin both
-# ends of the contract:
+# tiers an LLM is allowed to propose. The whitelist lives in
+# `models._PROPOSABLE_CATEGORIES`; `handlers/update.py`'s category
+# retag gate consumes the same constant (a third site, pinned in
+# `tests/test_server.py`). The tests below pin both ends of the
+# LLM-side contract:
 #
 # - the membership guard
 #   (`test_llm_proposable_categories_match_frozenset`) catches
@@ -1155,15 +1157,16 @@ def test_render_propose_new_diff_shows_new_body() -> None:
 #   `ProposeNewProposal.category` mirror this set but are mypy-only;
 #   the frozenset is the runtime enforcement these tests pin.
 #
-# Negative-control: temporarily replacing `_LLM_PROPOSABLE_CATEGORIES`
-# with `frozenset({"ambient"})` fails the membership guard plus the
-# two `[fact]` parametrise cases (the demote and propose_new fact
-# proposals get rejected with the "must be 'fact' or 'ambient'"
-# warning); replacing with `frozenset({"fact"})` fails the membership
-# guard plus the two `[ambient]` parametrise cases. Reverted to
-# `frozenset({"fact", "ambient"})`.
+# Negative-control: temporarily replacing `_PROPOSABLE_CATEGORIES`
+# in `models.py` with `frozenset({"ambient"})` fails the membership
+# guard plus the two `[fact]` parametrise cases here AND the
+# `test_update_accepts_every_proposable_category[fact]` case in
+# `tests/test_server.py` (the update-side gate that consumes the
+# same constant); replacing with `frozenset({"fact"})` fails the
+# `[ambient]` cases on both files plus the guards. Reverted to
+# `frozenset({Category.FACT.value, Category.AMBIENT.value})`.
 
-# Hardcoded so a deletion from `_LLM_PROPOSABLE_CATEGORIES` causes the
+# Hardcoded so a deletion from `_PROPOSABLE_CATEGORIES` causes the
 # corresponding parametrise case to fail (parametrising off the
 # frozenset itself would just drop the case, silently). The membership
 # guard below ensures additions still require touching this list.
@@ -1171,20 +1174,21 @@ _EXPECTED_PROPOSABLE_CATEGORIES: tuple[str, ...] = ("fact", "ambient")
 
 
 def test_llm_proposable_categories_match_frozenset() -> None:
-    """Guard so additions to ``_LLM_PROPOSABLE_CATEGORIES`` are mirrored
+    """Guard so additions to ``_PROPOSABLE_CATEGORIES`` are mirrored
     in the parametrise list — otherwise a new tier joining the
     proposable set could ship without regression coverage on either
     validator (``_validate_demote`` or ``_validate_propose_new``).
     Also catches accidental drift between the runtime frozenset and
     the ``Literal[…]`` typedefs on ``DemoteTierProposal.new_category``
     / ``ProposeNewProposal.category`` if a future change adds a
-    member to one but not the other."""
-    assert set(_EXPECTED_PROPOSABLE_CATEGORIES) == set(_LLM_PROPOSABLE_CATEGORIES)
+    member to one but not the other. The matching guard on the
+    update-handler side lives in ``tests/test_server.py``."""
+    assert set(_EXPECTED_PROPOSABLE_CATEGORIES) == set(_PROPOSABLE_CATEGORIES)
 
 
 @pytest.mark.parametrize("category", _EXPECTED_PROPOSABLE_CATEGORIES)
 def test_validate_demote_accepts_every_proposable_category(category: str) -> None:
-    """Every member of ``_LLM_PROPOSABLE_CATEGORIES`` must flow through
+    """Every member of ``_PROPOSABLE_CATEGORIES`` must flow through
     ``_validate_demote`` end-to-end (via ``parse_and_validate``) and
     materialise as a ``DemoteTierProposal`` with the requested
     ``new_category``. Routes through the ``in``-membership lookup at
@@ -1210,7 +1214,7 @@ def test_validate_demote_accepts_every_proposable_category(category: str) -> Non
     assert len(proposals) == 1, (
         f"demote_tier proposal with new_category={category!r} was "
         f"warning-log-rejected — the validator's category gate has "
-        f"drifted from _LLM_PROPOSABLE_CATEGORIES"
+        f"drifted from _PROPOSABLE_CATEGORIES"
     )
     assert isinstance(proposals[0], DemoteTierProposal)
     assert proposals[0].new_category == category
@@ -1248,7 +1252,7 @@ def test_validate_propose_new_accepts_every_proposable_category(category: str) -
     assert len(proposals) == 1, (
         f"propose_new proposal with category={category!r} was "
         f"warning-log-rejected — the validator's category gate has "
-        f"drifted from _LLM_PROPOSABLE_CATEGORIES"
+        f"drifted from _PROPOSABLE_CATEGORIES"
     )
     assert isinstance(proposals[0], ProposeNewProposal)
     assert proposals[0].category == category

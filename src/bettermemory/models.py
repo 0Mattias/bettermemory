@@ -117,6 +117,35 @@ class Category(str, Enum):
     AMBIENT = "ambient"
 
 
+# Closed-protocol whitelist: the `Category` values an automated /
+# unattended path is allowed to set without explicit user
+# confirmation. ``user-inference`` is deliberately excluded — that
+# tier requires explicit user confirmation, supplied by
+# ``memory_write``'s pending-confirm flow. Two production sites need
+# the same set:
+#
+# - ``handlers.update.memory_update``'s ``category`` retag gate: a
+#   retag *into* ``user-inference`` would silently bypass the
+#   write-time pending-confirm gate (update has no equivalent), so
+#   ``fact`` and ``ambient`` only.
+# - ``llm._validate_demote`` and ``llm._validate_propose_new``: an
+#   LLM running ``consolidate --llm`` can't supply the user
+#   confirmation that the ``user-inference`` tier demands, so the
+#   proposable set is the same ``{fact, ambient}``.
+#
+# Shared here (alongside the ``Category`` enum that defines the
+# universe of values) so silent divergence between the two sites
+# can't happen — and so adding a fourth ``Category`` member ships
+# the decision about whether it's automation-eligible to one place.
+# Enum-anchored (not bare string literals) so renaming a member is
+# caught by mypy at the import site. Pinned by ``_EXPECTED_
+# PROPOSABLE_CATEGORIES`` in ``tests/test_llm.py`` and
+# ``tests/test_server.py``.
+_PROPOSABLE_CATEGORIES: frozenset[str] = frozenset(
+    {Category.FACT.value, Category.AMBIENT.value}
+)
+
+
 # ---------------------------------------------------------------------------
 # Scope validation
 # ---------------------------------------------------------------------------

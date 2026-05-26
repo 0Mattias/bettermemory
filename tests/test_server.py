@@ -1002,6 +1002,96 @@ async def test_update_category_only_satisfies_at_least_one_field(
 
 
 # ---------------------------------------------------------------------------
+# Pin {"fact", "ambient"} membership of the update-handler category gate
+# ---------------------------------------------------------------------------
+#
+# `handlers.update.memory_update` rejects any `category` retag whose
+# value is outside `models._PROPOSABLE_CATEGORIES` — the same closed-
+# protocol whitelist that gates the LLM-consolidation validators
+# (`_validate_demote` / `_validate_propose_new` in `llm.py`, pinned
+# in `tests/test_llm.py`). `user-inference` is deliberately excluded
+# because that tier requires the pending-confirm flow and update has
+# no equivalent gate. Existing coverage hits both members
+# tangentially (`test_update_can_retag_to_ambient` exercises
+# `ambient`, `test_update_can_retag_back_to_fact` exercises `fact`)
+# but the tests below pin the contract explicitly — a deletion from
+# the source set fails the corresponding parametrise case loudly
+# instead of looking like an unrelated regression on a retag test.
+#
+# Negative-control: temporarily replacing `_PROPOSABLE_CATEGORIES`
+# in `models.py` with `frozenset({"ambient"})` fails the membership
+# guard plus this file's `[fact]` parametrise case AND both of
+# `tests/test_llm.py`'s `[fact]` validator parametrise cases (the
+# constant is shared); replacing with `frozenset({"fact"})` mirrors
+# the failure across the `[ambient]` cases. Reverted to
+# `frozenset({Category.FACT.value, Category.AMBIENT.value})`.
+
+# Hardcoded so a deletion from `_PROPOSABLE_CATEGORIES` causes the
+# corresponding parametrise case to fail (parametrising off the
+# frozenset itself would just drop the case, silently). The
+# membership guard ensures additions still require touching this
+# list. Mirrors the same constant in `tests/test_llm.py`; the two
+# guards live independently because the two pinning surfaces
+# (test_server's MCP-server fixture vs. test_llm's parse_and_validate
+# unit) shouldn't share imports beyond the production module.
+_EXPECTED_UPDATE_PROPOSABLE_CATEGORIES: tuple[str, ...] = ("fact", "ambient")
+
+
+def test_update_proposable_categories_match_frozenset() -> None:
+    """Guard so additions to ``_PROPOSABLE_CATEGORIES`` are mirrored
+    in the parametrise list below — otherwise a new tier joining the
+    proposable set could ship without regression coverage on the
+    `memory_update` retag gate. Paired with the same-named guard in
+    `tests/test_llm.py` so additions to the shared constant must
+    land regression cases on every production site that consumes
+    it."""
+    from bettermemory.models import _PROPOSABLE_CATEGORIES
+
+    assert set(_EXPECTED_UPDATE_PROPOSABLE_CATEGORIES) == set(_PROPOSABLE_CATEGORIES)
+
+
+@pytest.mark.parametrize("category", _EXPECTED_UPDATE_PROPOSABLE_CATEGORIES)
+async def test_update_accepts_every_proposable_category(
+    server: Any, category: str
+) -> None:
+    """Every member of ``_PROPOSABLE_CATEGORIES`` must be accepted by
+    `memory_update`'s category-retag gate at `handlers/update.py`.
+    Routes through the ``in``-membership lookup against
+    `_PROPOSABLE_CATEGORIES`. A silent drop of either member here
+    lets the handler raise ``ValueError("category must be one of
+    …")`` for a legitimately formed retag request — the user's
+    ``memory_update id=… category=fact`` (or ``=ambient``) call
+    bounces with a confusing "must be one of" error citing a list
+    that *contains* the value they asked for."""
+    # Seed with the *other* category so the update is a real retag,
+    # not a no-op (which the handler would still commit but doesn't
+    # exercise the gate's surface meaningfully).
+    seed_category = "ambient" if category == "fact" else "fact"
+    written = await _call(
+        server,
+        "memory_write",
+        content=f"to be retagged to {category}",
+        scopes=["tools"],
+        category=seed_category,
+    )
+    res = await _call(
+        server,
+        "memory_update",
+        id=written["id"],
+        category=category,
+    )
+    assert res["status"] == "committed", (
+        f"memory_update retag to category={category!r} was rejected — "
+        f"the handler's category gate has drifted from "
+        f"_PROPOSABLE_CATEGORIES"
+    )
+    assert res["category"] == category
+    # Persisted to disk.
+    shown = await _call(server, "memory_show", id=written["id"])
+    assert shown["category"] == category
+
+
+# ---------------------------------------------------------------------------
 # Content dedup at write time
 #
 # memory_write runs find_similar against the current store before staging or
