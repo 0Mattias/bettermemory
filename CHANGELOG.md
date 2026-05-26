@@ -9,6 +9,96 @@ spells out exactly what's stable.
 
 ## Unreleased
 
+Post-3.0.0 audit-loop follow-up. Mostly low-impact: one
+defense-in-depth security tightening, one CI-gate repair, and a
+sweep of test-rigour pins closing the same class hazard
+(asymmetric whitelist coverage) the prior audit-loop already
+worked through. No on-disk format changes, no public API changes.
+
+### Security — Defense-in-depth
+
+- **`llm.py` transcript fence scan symmetrised across all four
+  nonce-anchored markers.** Pre-`520bb6d` the transcript scan
+  checked only `{trn_end, mem_end}`; the body and excerpt scans
+  already checked all four (`{trn_end, trn_begin, mem_end,
+  mem_begin}`). The random per-prompt nonce already makes
+  hard-coding a marker infeasible, so this is defense-in-depth
+  rather than a live break — but the three scan sites now line
+  up on the same predicate. Pinned by parametrised regression
+  tests covering both `<<<BM_TRANSCRIPT_*_BEGIN>>>` and
+  `<<<BM_MEMORY_*_BEGIN>>>` in the transcript body.
+
+### Fixed — CI gate
+
+- **Wider CI gate (ruff lint / ruff format / mypy strict) green
+  at HEAD.** The post-2.7.3 audit-loop converged with pytest
+  green but the wider gate was never run during the loop; five
+  distinct gaps surfaced at the 3.0.0 release boundary and were
+  closed in `25d2dea`: an obsolete `# type: ignore[import-not-
+  found]` on `import msvcrt` in `_fsutil.py` (typeshed's
+  cross-platform stub made it unused), two mid-file imports
+  flagged E402 (`store.py` and `test_concurrency.py`), four
+  `test_llm.py` fence-injection tests monkeypatching
+  `bettermemory.llm.secrets.token_hex` directly on the module
+  namespace (rewritten to `pytest.MonkeyPatch.setattr` with
+  dotted-path form — mypy-clean and removes manual cleanup
+  boilerplate), and 21 files needing `ruff format` reflow.
+  Behaviour unchanged.
+
+### Fixed — Test rigour (asymmetric whitelist coverage)
+
+- **Closed-protocol whitelists pinned at every member.** Eight
+  test commits closed the same class hazard the prior
+  audit-loop worked through: a closed-protocol frozenset
+  (`_PLACEHOLDER_PATHS`, `_INDEX_FILENAMES`,
+  `_RETRIEVAL_EVENT_KINDS`, `_same_origin` loopback hosts,
+  `_VERDICT_RAISE_STATUSES`, plus the four nonce-anchored
+  llm.py fence markers) had only partial regression coverage,
+  so a stray deletion would silently re-introduce false
+  positives or 403 users without CI noticing. Representative
+  pins: all 8 members of `_PLACEHOLDER_PATHS` (`55431ae`); the
+  `INDEX.md` clause of `_INDEX_FILENAMES` (`cc2345b`); the
+  `list` clause of `_RETRIEVAL_EVENT_KINDS` (`e360058`); all
+  three loopback hosts (`localhost`, `127.0.0.1`, `::1`) in
+  `_same_origin` (`f4dd2a4`); `{never, stale}` membership of
+  the `staleness_verdict` raise-gate across `verify.py` and
+  `_response.py` (`0d56a50`, paired with a `_VERDICT_RAISE_
+  STATUSES` DRY extraction); and BEGIN+END fence symmetry
+  across all three scan sites in `llm.py` — excerpt
+  (`40341a2`), transcript-end (`a14dd6b`), and body
+  (`93838db`). Each pin uses a hardcoded expected-membership
+  tuple plus a separate guard against additions to the source
+  set, so the assertion keeps firing on a deleted member
+  rather than being silently skipped. All verified by negative
+  control.
+
+### Documentation
+
+- **`{search, show, list}` retrieval-event drift sweep
+  completed.** `520bb6d` updated one site
+  (`_count_recent_retrieval_events`); a fresh-eyes pass caught
+  five parallel sites in `audit.py` with the same {search,
+  show} drift (list omitted) plus one stale handler pointer
+  invalidated by the post-`582a5d2` handler decomposition
+  (`9437d1c`). The two user-facing copies in `docs/api.md` and
+  `docs/eval.md` were then mirrored to match (`a24eade`).
+  Where prose was abstractable, the rewrite anchors to the
+  existing `_RETRIEVAL_EVENT_KINDS` constant so a future
+  addition to the frozenset doesn't re-fork the docs.
+- **2.x → 3.x live-contract framing swept across user-facing
+  docs.** 3.0.0 shipped at `1322b53` but `docs/api.md`,
+  `CONTRIBUTING.md`, `SECURITY.md`, and `docs/ROADMAP.md`
+  still advertised 2.x as the live contract (`948e04e`). The
+  `memory_search.mode` default in `CONTRIBUTING.md` was also
+  corrected from "keyword (new in 2.0)" to "hybrid (since
+  2.6.8)" since that flip already shipped. `README.md`
+  "Further reading" ROADMAP summary similarly framed
+  `consolidate --acknowledge-misses-before` as an "unreleased
+  follow-up" though it shipped in 3.0.0; reframed to
+  declarative past tense under a 3.0.0 milestone with the
+  companion `bettermemory.server` re-export trim noted as the
+  second 3.0.0 line item (`6a980a6`).
+
 ## 3.0.0 - 2026-05-25
 
 **Companion escape hatch for the 2.7.3 cwd-suppression fix.** v2.7.3
