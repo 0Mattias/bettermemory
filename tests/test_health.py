@@ -2003,3 +2003,75 @@ def test_endorsement_debt_to_dict_shape() -> None:
     assert payload["endorsement_debt"]["total"] == 0
     assert payload["endorsement_debt"]["rows"] == []
     assert payload["endorsement_debt"]["min_retrievals"] >= 1
+
+
+# ---------------------------------------------------------------------------
+# Registry-vs-handler-methods parity for `_StatsAccumulator` (Class 7 —
+# closed by this commit).
+#
+# `_StatsAccumulator._HANDLERS` (`health.py:833`) is a class-level
+# `dict[str, Callable]` that routes each event `kind` to a sibling
+# `_handle_<kind>` instance method. `handle_event` (`:651`) consumes the
+# table by `_HANDLERS.get(kind)` and `handler is not None` — events
+# whose kind is missing from the table are silently dropped (the
+# fallback is `if handler is not None`, NOT `else: raise`).
+#
+# The two enumerations MUST agree:
+#
+#   - Registry-only (key without method): would crash on first event of
+#     that kind with `AttributeError` when the stored callable is
+#     dereferenced — loud, but later than necessary.
+#   - Method-only (sibling `_handle_*` method without registry entry):
+#     SILENT — `handle_event` no-ops on the kind, the health rollup
+#     drops the metric, and the contributor's "I added the handler"
+#     belief survives until someone manually validates the rollup. This
+#     is the bad direction: tracked-metric drift with no test failure.
+#
+# Hazard tier: medium (silent metric degradation on the dispatch-arm
+# side; loud-but-late on the registry-only side). The mapping is
+# 1:1 with no renaming (key `"foo"` maps to method `_handle_foo`) so
+# the `name[len('_handle_'):]` strip is faithful.
+#
+# Note: `_HANDLERS` lives INSIDE the `_StatsAccumulator` class (not as
+# a module-level constant) — the table is built once per class rather
+# than per `handle_event` call. The methods are bound to `self` via the
+# `handler(self, ev)` call site in `handle_event`. Importing via the
+# class attribute (`_StatsAccumulator._HANDLERS`) rather than module
+# scope is the correct discovery path.
+#
+# Negative-control verified at commit time (see commit message for
+# detail).
+# ---------------------------------------------------------------------------
+
+
+def test_handlers_table_matches_handle_methods() -> None:
+    """Every `_handle_<kind>` method on `_StatsAccumulator` MUST be
+    wired into `_StatsAccumulator._HANDLERS`, and vice versa.
+
+    Drift on the method-only side is the silent-bad direction: a
+    contributor adds `_handle_remove` for a new event kind and forgets
+    the `"remove": _handle_remove` table entry — `handle_event` silently
+    drops the event (`if handler is not None:`), the health rollup loses
+    the metric, and no test fails. Drift on the registry-only side
+    crashes loudly on first event of that kind (`AttributeError` on the
+    stored callable) but later than necessary.
+
+    Closes Class 7 (same-file string-key registry-dict vs sequential
+    dispatch-arm parity) from the tick-25 Branch B audit."""
+    from bettermemory.health import _StatsAccumulator
+
+    handler_methods = {
+        name[len("_handle_") :]
+        for name in dir(_StatsAccumulator)
+        if name.startswith("_handle_")
+    }
+    registry_keys = set(_StatsAccumulator._HANDLERS)
+    assert registry_keys == handler_methods, (
+        "_StatsAccumulator._HANDLERS keys / _handle_* methods drifted; "
+        "see health.py:_StatsAccumulator._HANDLERS (the dispatch table) "
+        "and the sibling _handle_* methods on the same class. "
+        f"registry-only={registry_keys - handler_methods} "
+        "(would AttributeError on first event of that kind); "
+        f"methods-only={handler_methods - registry_keys} "
+        "(SILENTLY no-ops in handle_event — health rollup loses the metric)."
+    )
