@@ -29,6 +29,7 @@ from bettermemory.verify import (
     PathDriftReport,
     VerificationStatus,
     _PLACEHOLDER_PATHS,
+    _PLACEHOLDER_PREFIXES,
     compute_commit_drift,
     compute_verification_status,
     detect_path_drift,
@@ -317,6 +318,47 @@ def test_placeholder_paths_list_matches_frozenset() -> None:
     parametrise list — otherwise a new member could ship without
     regression coverage."""
     assert set(_EXPECTED_PLACEHOLDER_PATHS) == set(_PLACEHOLDER_PATHS)
+
+
+# Sibling pin for the prefix-form placeholder whitelist consumed by
+# the same `_is_placeholder` filter (`verify.py:473` and `:481`). The
+# `_PLACEHOLDER_PREFIXES` tuple (`verify.py:153`, `("/path/to/",
+# "~/path/to/")` — note: a tuple, not a frozenset, because the
+# `str.startswith` API accepts a tuple-of-prefixes directly) carries
+# the same hazard surface as `_PLACEHOLDER_PATHS`: a deletion turns
+# legitimate documentation placeholders into phantom `path_drift_
+# missing` entries (a memory verifying `/path/to/file` as an
+# illustrative example would start surfacing as broken-path drift),
+# and an addition could over-filter (a real path under one of the
+# prefixes silently dropped from drift coverage). The existing
+# `test_path_to_prefix_placeholder_skipped` and
+# `test_home_path_to_prefix_placeholder_skipped` cover the two
+# current members per-prefix (deletion side) but neither imports
+# `_PLACEHOLDER_PREFIXES`, so an addition couldn't fail any test.
+#
+# The hardcoded tuple is NOT derived from the source — sibling
+# pattern to `_EXPECTED_PLACEHOLDER_PATHS` above. Mirrors the
+# `_EXPECTED_USE_OUTCOMES` shape (db81630) on the prefix-filter
+# surface.
+#
+# Negative-control: adding `"/bogus/"` to `_PLACEHOLDER_PREFIXES`
+# fails `test_placeholder_prefixes_match_tuple` (set inequality).
+# Revert restores green.
+_EXPECTED_PLACEHOLDER_PREFIXES: tuple[str, ...] = (
+    "/path/to/",
+    "~/path/to/",
+)
+
+
+def test_placeholder_prefixes_match_tuple() -> None:
+    """Guard so additions to ``_PLACEHOLDER_PREFIXES`` (the closed-protocol
+    prefix-form whitelist consumed by ``_is_placeholder`` via
+    ``str.startswith``) are mirrored in the hardcoded
+    ``_EXPECTED_PLACEHOLDER_PREFIXES`` tuple — otherwise a new prefix
+    could ship without regression coverage and over-filter real paths
+    out of drift detection. Sibling guard to
+    ``test_placeholder_paths_list_matches_frozenset`` above."""
+    assert set(_EXPECTED_PLACEHOLDER_PREFIXES) == set(_PLACEHOLDER_PREFIXES)
 
 
 @pytest.mark.parametrize("placeholder", _EXPECTED_PLACEHOLDER_PATHS)

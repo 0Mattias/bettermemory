@@ -18,6 +18,7 @@ import pytest
 
 from bettermemory.ingest import (
     DEFAULT_PROVENANCE_SCOPE,
+    _INDEX_FILENAMES,
     apply_ingest_plan,
     compute_ingest_plan,
     discover_default_source_root,
@@ -69,6 +70,52 @@ def store_dir(tmp_path: Path) -> Path:
 @pytest.fixture
 def store(store_dir: Path) -> Store:
     return Store(store_dir)
+
+
+# ---------------------------------------------------------------------------
+# Closed-protocol pin for the index-filename whitelist consumed at
+# `ingest.py:436` (`if path.name in _INDEX_FILENAMES`). The
+# `_INDEX_FILENAMES` frozenset (`ingest.py:110`, `{"MEMORY.md",
+# "INDEX.md", "README.md"}`) names every navigation-artefact filename
+# the ingest walker must skip — auto-memory's `MEMORY.md` index file,
+# the conventional `INDEX.md` / `README.md` siblings. The hazard tier
+# is low (additions are non-blocking — a new auto-memory release
+# shipping, say, `TOC.md` would just slip through and ingest as a
+# memory until somebody noticed; deletions silently allow stored-as-
+# memory copies of the named index files), but per Agent-4's bulk-pass
+# recommendation we close the failure-mode class for completeness.
+# The existing `test_index_files_are_skipped` in `TestComputeIngestPlan`
+# below covers all three current members in one shot (skipping all
+# three at once and asserting they don't surface in the plan rows) —
+# catches a deletion (the asserted-skipped file would surface) but
+# never imports `_INDEX_FILENAMES`, so an addition couldn't be caught.
+#
+# The hardcoded tuple is alphabetised and NOT derived from the source
+# set — derivation would silently shrink the expected list when the
+# source shrinks, defeating the deletion guard. Mirrors the
+# `_EXPECTED_USE_OUTCOMES` shape (db81630) on the ingest-filter
+# surface.
+#
+# Negative-control: adding `"bogus.md"` to `_INDEX_FILENAMES` fails
+# `test_index_filenames_match_frozenset` (set inequality). Revert
+# restores green.
+_EXPECTED_INDEX_FILENAMES: tuple[str, ...] = (
+    "INDEX.md",
+    "MEMORY.md",
+    "README.md",
+)
+
+
+def test_index_filenames_match_frozenset() -> None:
+    """Guard so additions to ``_INDEX_FILENAMES`` (the closed-protocol
+    nav-artefact whitelist consumed by the ingest walker) are mirrored
+    in the hardcoded ``_EXPECTED_INDEX_FILENAMES`` tuple — otherwise a
+    new index-filename convention could land in the source set and the
+    existing ``test_index_files_are_skipped`` regression case wouldn't
+    cover it. Closes the addition side of the membership-guard pattern
+    on the ingest surface — mirrors ``test_use_outcomes_match_frozenset``
+    in ``tests/test_server_record_use_provenance.py``."""
+    assert set(_EXPECTED_INDEX_FILENAMES) == set(_INDEX_FILENAMES)
 
 
 # ---------------------------------------------------------------------------

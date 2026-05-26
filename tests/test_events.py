@@ -13,6 +13,7 @@ import pytest
 from bettermemory.events import (
     EVENT_LOG_FILENAME,
     Recorder,
+    _REDACTED_TEXT_FIELDS,
     iter_all_events,
     iter_events,
 )
@@ -317,6 +318,46 @@ def test_iter_all_events_handles_missing_root(tmp_path: Path) -> None:
 # pasted into a search doesn't land on disk. Verbatim mode opts back in
 # via `Recorder(log_queries_verbatim=True)`.
 # ---------------------------------------------------------------------------
+
+
+# Closed-protocol pin for the field-name whitelist consumed by
+# `_redact_event_fields` at `events.py:145`. `_REDACTED_TEXT_FIELDS`
+# (`events.py:51`, frozenset of `{"query", "probe_query"}`) names every
+# event-field whose value is treated as model/user-typed free text and
+# replaced with a `{"hash", "preview", "len"}` redaction before the
+# event hits the JSONL log. A silent addition of a new recorder field
+# name (e.g. a hypothetical `prompt` field on some new event kind)
+# without a matching entry in this frozenset would silently leak
+# verbatim values to disk — the very thing the 2.6.8 default-redact
+# switch exists to prevent. A silent deletion would un-redact the
+# affected field, also silently. The existing
+# `test_record_redacts_query_by_default` / `test_record_redacts_
+# probe_query_field` tests cover the two current members per-name
+# (they'd fail if either name dropped out) but neither imports the
+# frozenset, so an addition couldn't be caught.
+#
+# The hardcoded tuple is alphabetised and NOT derived from the source
+# set — derivation would silently shrink the expected list when the
+# source shrinks, defeating the deletion guard. Mirrors the
+# `_EXPECTED_USE_OUTCOMES` shape (db81630) on the privacy surface.
+#
+# Negative-control: adding `"bogus"` to `_REDACTED_TEXT_FIELDS` fails
+# `test_redacted_text_fields_match_frozenset` (set inequality). Revert
+# restores green.
+_EXPECTED_REDACTED_TEXT_FIELDS: tuple[str, ...] = ("probe_query", "query")
+
+
+def test_redacted_text_fields_match_frozenset() -> None:
+    """Guard so additions to ``_REDACTED_TEXT_FIELDS`` (the closed-protocol
+    field-name whitelist consumed by ``_redact_event_fields``) are
+    mirrored in the hardcoded ``_EXPECTED_REDACTED_TEXT_FIELDS`` tuple
+    — otherwise a new free-text recorder field could ship without
+    redaction coverage, silently leaking verbatim values (possibly
+    carrying secrets) into the JSONL event log. Mirrors
+    ``test_use_outcomes_match_frozenset`` in
+    ``tests/test_server_record_use_provenance.py`` — same closed-protocol
+    addition-guard pattern on the privacy surface."""
+    assert set(_EXPECTED_REDACTED_TEXT_FIELDS) == set(_REDACTED_TEXT_FIELDS)
 
 
 def test_record_redacts_query_by_default(tmp_path: Path) -> None:
