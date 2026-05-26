@@ -11,6 +11,7 @@ import contextlib
 import errno
 import logging as _logging
 import os
+import sys
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 from pathlib import Path
@@ -1231,8 +1232,11 @@ def _atomic_write_post(path: Path, post: frontmatter.Post) -> None:
             # it appears at `path`. Suppressed — Windows has no mode
             # bits and some sandbox filesystems reject fchmod; that's
             # not a corruption risk, just a permission-bit loss.
-            with contextlib.suppress(OSError):
-                os.fchmod(f.fileno(), 0o600)
+            # `sys.platform` narrowing keeps mypy happy on Windows
+            # where `os.fchmod` is absent from typeshed.
+            if sys.platform != "win32":
+                with contextlib.suppress(OSError):
+                    os.fchmod(f.fileno(), 0o600)
             fsync_file(f.fileno())
         tmp_path.replace(path)
         renamed = True

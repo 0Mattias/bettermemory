@@ -311,7 +311,7 @@ def _flock_windows(
                 # the current file position. Raises OSError on
                 # contention. The byte-range is the conventional
                 # whole-file proxy for advisory locks on Windows.
-                msvcrt.locking(fd, msvcrt.LK_NBLCK, 1)  # type: ignore[attr-defined]
+                msvcrt.locking(fd, msvcrt.LK_NBLCK, 1)  # type: ignore[attr-defined,unused-ignore]
                 acquired = True
                 break
             except OSError:
@@ -334,7 +334,7 @@ def _flock_windows(
                     # Release the same byte we locked. Errors here
                     # would orphan the lock; suppress and log via the
                     # close path so the process can continue.
-                    msvcrt.locking(fd, msvcrt.LK_UNLCK, 1)  # type: ignore[attr-defined]
+                    msvcrt.locking(fd, msvcrt.LK_UNLCK, 1)  # type: ignore[attr-defined,unused-ignore]
                 except OSError:
                     pass
     finally:

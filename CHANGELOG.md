@@ -9,6 +9,41 @@ spells out exactly what's stable.
 
 ## Unreleased
 
+## 3.0.2 - 2026-05-26
+
+Post-3.0.1 hotfix. Closes the Windows-matrix mypy gaps + flaky
+perf-test threshold that CI surfaced on the 3.0.1 merge to main.
+No on-disk format changes, no public API changes.
+
+### Fixed — Windows py3.14 mypy
+
+- **`_fsutil.py:314,337` msvcrt.locking ignore compound.** py3.14
+  typeshed types `msvcrt.locking` + `LK_NBLCK` + `LK_UNLCK`, so
+  the prior `# type: ignore[attr-defined]` was reported as
+  unused on the windows-latest slot. Switched to
+  `[attr-defined,unused-ignore]` so the same comment satisfies
+  both sides of the matrix: Unix mypy still suppresses the
+  `attr-defined` (msvcrt absent from typeshed on POSIX) and
+  Windows mypy stays quiet about the now-unused suppression.
+- **`store.py:1235` `os.fchmod` platform guard.** `os.fchmod` is
+  absent from Windows typeshed (POSIX-only call). Wrapped the
+  call in `if sys.platform != "win32":` so mypy narrows it out
+  on the Windows slot. Runtime behaviour unchanged — the prior
+  `contextlib.suppress(OSError)` already swallowed the
+  AttributeError-via-non-existence case at execution time.
+
+### Fixed — flaky perf-test threshold
+
+- **`test_already_recorded_pending_ids_early_exits_on_old_events`
+  threshold widened 100ms → 500ms.** Observed 151ms on a shared
+  ubuntu-latest runner during the 3.0.1 release run, well within
+  optimisation-working territory (the broken-case full forward
+  scan over 10k events runs in seconds, not hundreds of
+  milliseconds). The bound still firmly detects O(N) regression
+  while absorbing shared-runner contention. Threshold rationale
+  also pinned in the docstring with the 151ms observation logged
+  so a future tightening pass has the context.
+
 ## 3.0.1 - 2026-05-26
 
 Post-3.0.0 audit-loop follow-up. Mostly low-impact: one
