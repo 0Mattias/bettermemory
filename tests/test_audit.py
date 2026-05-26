@@ -27,6 +27,8 @@ from bettermemory.audit import (
     DEFAULT_LOOKBACK_SECONDS,
     THRESHOLD_RULE_V1,
     _caller_in_top_hit_project,
+    _RETRIEVAL_EVENT_KINDS,
+    _VALID_TRIGGERED_FROM,
     probe_for_miss,
 )
 from bettermemory.config import Config, StorageConfig
@@ -559,6 +561,46 @@ def test_caller_in_top_hit_project_helper_normalizes_remote_urls() -> None:
     assert _caller_in_top_hit_project((hit,), [mem], caller) is True
 
 
+# ---------------------------------------------------------------------------
+# Closed-protocol pin for the `kind` whitelist consumed by
+# `recent_retrieval_count` accumulator in `probe_for_miss`.
+#
+# `_RETRIEVAL_EVENT_KINDS` (`audit.py:96`) gates which event kinds count
+# as "the model already retrieved" — `search`, `show`, `list`. A silent
+# addition to the source set (e.g. a hypothetical `replay` kind) would
+# shield turns that shouldn't be shielded — under-counting fresh
+# retrievals and inflating `search_miss` false-positives. A silent
+# deletion would over-count misses (a retrieval that no longer counts
+# triggers a false miss). The existing
+# `test_search_show_and_list_all_count_toward_recent_retrieval` below
+# pins all three via `count == 3` against three events — catches a
+# deletion (count drops to 2) but never imports `_RETRIEVAL_EVENT_KINDS`,
+# so an addition slips through silently.
+#
+# The hardcoded tuple is alphabetised and NOT derived from the source
+# set — derivation would silently shrink the expected list when the
+# source shrinks, defeating the deletion guard. Mirrors the
+# `_EXPECTED_USE_OUTCOMES` shape (db81630) on a different surface.
+#
+# Negative-control: adding `"bogus"` to `_RETRIEVAL_EVENT_KINDS` fails
+# `test_retrieval_event_kinds_match_frozenset` (set inequality). Revert
+# restores green.
+_EXPECTED_RETRIEVAL_EVENT_KINDS: tuple[str, ...] = ("list", "search", "show")
+
+
+def test_retrieval_event_kinds_match_frozenset() -> None:
+    """Guard so additions to ``_RETRIEVAL_EVENT_KINDS`` (the closed-protocol
+    whitelist consumed by the ``recent_retrieval_count`` accumulator in
+    ``probe_for_miss``) are mirrored in the hardcoded
+    ``_EXPECTED_RETRIEVAL_EVENT_KINDS`` tuple — otherwise a new retrieval
+    kind could ship without a regression case, silently under-counting
+    fresh retrievals and inflating ``search_miss`` false-positives.
+    Mirrors ``test_use_outcomes_match_frozenset`` in
+    ``tests/test_server_record_use_provenance.py`` — same closed-protocol
+    addition-guard pattern on a different surface."""
+    assert set(_EXPECTED_RETRIEVAL_EVENT_KINDS) == set(_RETRIEVAL_EVENT_KINDS)
+
+
 def test_search_show_and_list_all_count_toward_recent_retrieval() -> None:
     """Mixed search, show, and list events accumulate. The count surfaces
     all three. Pins the `_RETRIEVAL_EVENT_KINDS` consumer clause for the
@@ -1035,6 +1077,44 @@ def test_event_field_builders_pin_canonical_shape() -> None:
     assert sm["top_hits"][0]["id"] == "m1"
 
 
+# ---------------------------------------------------------------------------
+# Closed-protocol pin for the `triggered_from` discriminator consumed by
+# `turn_audited_fields` and `search_miss_fields`.
+#
+# `_VALID_TRIGGERED_FROM` (`audit.py:134`) is the source discriminator
+# that downstream eval rollups `groupby`-split on. A silent addition
+# produces unsplittable eval rows (a new source emits a value the
+# downstream consumer doesn't know how to bucket); a silent deletion
+# means a legitimate source raises at the dispatch boundary. The
+# existing for-loop in `test_turn_audited_fields_rejects_unknown_
+# triggered_from` below covers deletions per-iteration (a dropped
+# member fails the positive-case round-trip) but never imports
+# `_VALID_TRIGGERED_FROM`, so an addition couldn't be caught.
+#
+# The hardcoded tuple is alphabetised and NOT derived from the source
+# set — derivation would silently shrink the expected list when the
+# source shrinks, defeating the deletion guard. Mirrors the
+# `_EXPECTED_USE_OUTCOMES` shape (db81630) on a different surface.
+#
+# Negative-control: adding `"bogus"` to `_VALID_TRIGGERED_FROM` fails
+# `test_valid_triggered_from_match_frozenset` (set inequality). Revert
+# restores green.
+_EXPECTED_VALID_TRIGGERED_FROM: tuple[str, ...] = ("mcp_tool", "stop_hook")
+
+
+def test_valid_triggered_from_match_frozenset() -> None:
+    """Guard so additions to ``_VALID_TRIGGERED_FROM`` (the closed-protocol
+    discriminator consumed by ``turn_audited_fields`` /
+    ``search_miss_fields``) are mirrored in the hardcoded
+    ``_EXPECTED_VALID_TRIGGERED_FROM`` tuple — otherwise a new source
+    could ship and downstream eval rollups would silently emit
+    unsplittable rows (the ``groupby`` consumer has no bucket for it).
+    Mirrors ``test_use_outcomes_match_frozenset`` in
+    ``tests/test_server_record_use_provenance.py`` — same closed-protocol
+    addition-guard pattern on a different surface."""
+    assert set(_EXPECTED_VALID_TRIGGERED_FROM) == set(_VALID_TRIGGERED_FROM)
+
+
 def test_turn_audited_fields_rejects_unknown_triggered_from() -> None:
     """`triggered_from` is a closed-set discriminator
     (`"stop_hook" | "mcp_tool"`) but Python doesn't enforce the
@@ -1043,6 +1123,12 @@ def test_turn_audited_fields_rejects_unknown_triggered_from() -> None:
     downstream consumers `groupby`-split on this field. The builder
     raises at the dispatch boundary, mirroring the search-mode guard
     in `search.py:761`.
+
+    Pinned against the hardcoded ``_EXPECTED_VALID_TRIGGERED_FROM``
+    tuple so a deletion from ``_VALID_TRIGGERED_FROM`` fails the loop
+    loudly rather than silently shrinking. The companion
+    ``test_valid_triggered_from_match_frozenset`` catches the addition
+    side.
     """
     from bettermemory.audit import (
         MissHit,
@@ -1085,8 +1171,10 @@ def test_turn_audited_fields_rejects_unknown_triggered_from() -> None:
     # Positive case: the two canonical values still flow through
     # unchanged. Keeps the closed set honest — a future broadening
     # would require adding the new value to `_VALID_TRIGGERED_FROM`
-    # and updating this assertion in one diff.
-    for value in ("stop_hook", "mcp_tool"):
+    # and updating `_EXPECTED_VALID_TRIGGERED_FROM` in one diff (the
+    # companion `test_valid_triggered_from_match_frozenset` enforces
+    # the latter).
+    for value in _EXPECTED_VALID_TRIGGERED_FROM:
         ta = turn_audited_fields(
             report,
             session_id="s1",
