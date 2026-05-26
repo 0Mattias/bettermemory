@@ -72,7 +72,7 @@ LongMemEval is a question-answering benchmark. It scores whether a system, given
 
 The three rates above are complementary: they require an actual deployment with real user-model interaction, and they instrument the loop rather than the QA endpoint. A system can have great LongMemEval recall and a terrible `endorsement_rate` (lots of facts pulled in, model ignores them). It can have great `endorsement_rate` on a tiny memory store but be useless for the questions LongMemEval cares about.
 
-We'll publish bettermemory's LongMemEval numbers once the optional embedding mode lands (see [ROADMAP](ROADMAP.md)). In the meantime, the three rates above are computable today from any deployment's `.events.jsonl` and don't depend on embeddings.
+bettermemory's LongMemEval numbers will land in the comparative-publication pass on the [roadmap](ROADMAP.md) — the `[embeddings]` extra shipped in 1.0.0 and the lighter `[embeddings-fast]` extra in 2.5.0, so the install-friction blocker for apples-to-apples retrieval comparisons is closed. In the meantime, the three rates above are computable today from any deployment's `.events.jsonl` and don't depend on embeddings.
 
 ## Reference implementation: `bettermemory eval`
 
@@ -80,7 +80,7 @@ We'll publish bettermemory's LongMemEval numbers once the optional embedding mod
 bettermemory eval [--since 30d] [--scope SCOPE] [--min-retrievals N] [--silent-miss-limit N] [--json]
 ```
 
-Shipped in the Unreleased section of the CHANGELOG. Reads
+Shipped in 2.5.0. Reads
 `<store>/.events.jsonl` plus any rotated `.events-*.jsonl.gz` archives
 via `iter_all_events`, joins against the active store, and reports the
 three rates with Wilson 95% confidence intervals. The pure compute
@@ -189,7 +189,7 @@ Most systems do (1). Few do (2). Almost none do (3). When you're comparing memor
 
 ## Publication plan
 
-The numbers from running this eval against bettermemory's own dogfood usage, plus the same workload re-run against Mem0 (OpenMemory self-host), Anthropic's reference `server-memory`, claude-mem, and agentmemory, will go into a follow-up post: *"What memory actually helped, by the numbers."* If you'd like to contribute a system to the comparison, open an issue with the eval harness output for your system; runnable harness code lives at `tests/eval/` once the CLI ships.
+The numbers from running this eval against bettermemory's own dogfood usage, plus the same workload re-run against Mem0 (OpenMemory self-host), Anthropic's reference `server-memory`, claude-mem, and agentmemory, will go into a follow-up post: *"What memory actually helped, by the numbers."* If you'd like to contribute a system to the comparison, open an issue with the eval harness output for your system; runnable harness code lives at `tests/eval/`.
 
 ## Caveats and open calibration
 

@@ -826,8 +826,10 @@ def compute_commit_drift(
 # would still emit the old one for any memory matched by the
 # commit-drift recompute path. Same divergence-hazard pattern as
 # ``_VERDICT_RAISE_STATUSES`` below, but on the OUTPUT side of the
-# rollup. Pinned by ``test_staleness_verdict_tier_strings_match_*`` in
-# ``tests/test_server_v12_features.py``.
+# rollup. Pinned by
+# ``test_staleness_verdict_tier_string_values_unchanged`` (wire values)
+# and ``test_staleness_verdict_string_matches_constant_across_show_and_search``
+# (cross-surface equality) in ``tests/test_server_v12_features.py``.
 _VERDICT_FRESH: str = "fresh"
 _VERDICT_RECOMMENDED: str = "spot_check_recommended"
 _VERDICT_REQUIRED: str = "spot_check_required"

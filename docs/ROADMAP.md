@@ -28,7 +28,7 @@ Published roadmap is part of the distribution strategy: people deciding between 
 
 ✅ **`bettermemory eval` CLI**. Reads `.events.jsonl` plus the active store, reports `memory_helped_rate`, `endorsement_rate`, `silent_miss_rate` with Wilson 95% confidence intervals. Lists endorsement-debt memories and silent-miss candidates. JSON output for CI. Methodology in [`docs/eval.md`](eval.md); pure compute in `src/bettermemory/eval.py`; 52 tests in `tests/test_eval.py`.
 
-**Still pending: comparative publication.** Run the same workload against bettermemory, Mem0 (OpenMemory self-host), Anthropic's reference `server-memory`, claude-mem, and agentmemory. Publish the numbers. The metric and the harness are owned territory — *every other comparison article in this market is about retrieval recall.* Owning *"did memory shape the reply?"* is the lane-claim. Harness shape: `tests/eval/comparative.py` to land alongside the embedding extra.
+**Still pending: comparative publication.** Run the same workload against bettermemory, Mem0 (OpenMemory self-host), Anthropic's reference `server-memory`, claude-mem, and agentmemory. Publish the numbers. The metric and the harness are owned territory — *every other comparison article in this market is about retrieval recall.* Owning *"did memory shape the reply?"* is the lane-claim. Harness shape: `tests/eval/comparative.py`. The `[embeddings]` and `[embeddings-fast]` extras (1.0.0 and 2.5.0) close the install-friction gap, so what remains is wiring + write-up.
 
 ## ~~After that~~ Shipped (2.5.0, `--from-transcript` 2.6.0) — Dreaming defense via local consolidation
 

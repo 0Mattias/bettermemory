@@ -76,7 +76,7 @@ worked through. No on-disk format changes, no public API changes.
 
 - **`{search, show, list}` retrieval-event drift sweep
   completed.** `520bb6d` updated one site
-  (`_count_recent_retrieval_events`); a fresh-eyes pass caught
+  (`_count_recent_retrievals`); a fresh-eyes pass caught
   five parallel sites in `audit.py` with the same {search,
   show} drift (list omitted) plus one stale handler pointer
   invalidated by the post-`582a5d2` handler decomposition
