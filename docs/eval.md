@@ -72,7 +72,7 @@ LongMemEval is a question-answering benchmark. It scores whether a system, given
 
 The three rates above are complementary: they require an actual deployment with real user-model interaction, and they instrument the loop rather than the QA endpoint. A system can have great LongMemEval recall and a terrible `endorsement_rate` (lots of facts pulled in, model ignores them). It can have great `endorsement_rate` on a tiny memory store but be useless for the questions LongMemEval cares about.
 
-We'll publish bettermemory's LongMemEval numbers once the optional embedding mode lands (see [ROADMAP](../ROADMAP.md)). In the meantime, the three rates above are computable today from any deployment's `.events.jsonl` and don't depend on embeddings.
+We'll publish bettermemory's LongMemEval numbers once the optional embedding mode lands (see [ROADMAP](ROADMAP.md)). In the meantime, the three rates above are computable today from any deployment's `.events.jsonl` and don't depend on embeddings.
 
 ## Reference implementation: `bettermemory eval`
 

@@ -77,6 +77,6 @@ These come up; here's why they aren't on the list:
 
 The high-leverage contribution shapes:
 
-- **Run `bettermemory eval` against your own usage** once it lands and open an issue with anomalies. The threshold rule for silent-miss detection (`v1_top1_high`) is calibrated against the author's data; recalibrating against more usage patterns is the open question.
+- **Run `bettermemory eval` against your own usage** and open an issue with anomalies. The threshold rule for silent-miss detection (`v1_top1_high`) is calibrated against the author's data; recalibrating against more usage patterns is the open question.
 - **Integration cookbooks** for clients that aren't Claude Code / Claude Desktop / Cursor / Continue / Cline. The MCP protocol is universal; the friction is the per-client config bit.
 - **Memory-rot war stories.** If a stored memory misled you in a way the verification surface didn't catch, the bug report is the most valuable thing — it tells us where the drift extractor, threshold rule, or path-token grammar needs to widen.
