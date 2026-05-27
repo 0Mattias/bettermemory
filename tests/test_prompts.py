@@ -234,6 +234,159 @@ def test_handler_descs_enumerate_loop_phase_fields() -> None:
     )
 
 
+def test_handler_descs_enumerate_episode_tier_fields() -> None:
+    """Per-tool DESC strings for the episode_* family enumerate the
+    post-polish fields the api.md contract documents.
+
+    Sibling pin to `test_handler_descs_enumerate_loop_phase_fields`:
+    audit-3 (A3-09) flagged that the t14/t23 docs+DESC sweep covered the
+    memory_* family but missed the episode_* family. Several post-t14
+    fixes (t16 takeaway cap, t21 most-recent-N slice, t22 worktree
+    strict equality, t11 disabled_scopes cascade) updated the handler
+    code without updating the model-facing DESC string. Pin each
+    field's presence in its own DESC so a future trim trips here rather
+    than silently regressing episode-tier discoverability:
+
+    - `max_takeaway_bytes` (t16 cap) on DESC_EPISODE_WRITE
+    - `pruned_sessions` return field on DESC_EPISODE_WRITE
+    - "most-recent" (t21 cap direction) on DESC_EPISODE_SEARCH
+    - `worktree` (t22 strict equality) on DESC_EPISODE_HANDOFF
+    - `disabled_scopes` (t11 cascade) on DESC_EPISODE_HANDOFF
+    - `promoted_from_episode_id` return field on DESC_EPISODE_PROMOTE
+    """
+    from bettermemory.handlers.episode_handoff import DESC_EPISODE_HANDOFF
+    from bettermemory.handlers.episode_promote import DESC_EPISODE_PROMOTE
+    from bettermemory.handlers.episode_search import DESC_EPISODE_SEARCH
+    from bettermemory.handlers.episode_write import DESC_EPISODE_WRITE
+
+    assert "max_takeaway_bytes" in DESC_EPISODE_WRITE, (
+        "DESC_EPISODE_WRITE no longer mentions `max_takeaway_bytes`; "
+        "t16 (4d36967) added the cap because over-cap takeaways "
+        "silently corrupt the YAML frontmatter — the model needs the "
+        "limit advertised so it can size its summary."
+    )
+    assert "pruned_sessions" in DESC_EPISODE_WRITE, (
+        "DESC_EPISODE_WRITE no longer names `pruned_sessions`; the "
+        "handler returns it on every write but the model can't "
+        "discover the field from the registered description."
+    )
+    assert "most-recent" in DESC_EPISODE_SEARCH, (
+        "DESC_EPISODE_SEARCH no longer documents the most-recent-N "
+        "cap direction; t21 fixed the slice so callers reading the "
+        "DESC see which end of the list survives the cap."
+    )
+    lowered_handoff = DESC_EPISODE_HANDOFF.lower()
+    assert "worktree" in lowered_handoff, (
+        "DESC_EPISODE_HANDOFF no longer mentions the worktree "
+        "isolation filter; t22 established strict equality for "
+        "auto-resolution but the model can't reason about which "
+        "prior session it'll adopt without the contract in the DESC."
+    )
+    assert "disabled_scopes" in DESC_EPISODE_HANDOFF, (
+        "DESC_EPISODE_HANDOFF no longer mentions the disabled_scopes "
+        "cascade; t11 added the filter to mirror memory_search / "
+        "memory_list, but the DESC needs to surface it as an "
+        "implicit filter so the model isn't surprised when a "
+        "scope-disabled session's prior takeaways don't appear."
+    )
+    assert "promoted_from_episode_id" in DESC_EPISODE_PROMOTE, (
+        "DESC_EPISODE_PROMOTE no longer names "
+        "`promoted_from_episode_id`; the handler annotates this on "
+        "every response (committed / pending / rejected) but the "
+        "model can't correlate the promotion attempt back to its "
+        "source episode without the field advertised."
+    )
+
+
+def test_audit_turn_desc_enumerates_retrieval_event_kinds() -> None:
+    """DESC_MEMORY_AUDIT_TURN names every event kind that shields the
+    miss probe.
+
+    audit-3 (A3-01) flagged that `_RETRIEVAL_EVENT_KINDS` includes
+    `list` but the DESC + docstring only named `search` / `show`. A
+    silent-miss verdict is gated on "no retrieval in the lookback
+    window," so a caller reading the DESC needs to see the full set
+    of events that count as "the model retrieved" — otherwise the
+    contract reads tighter than it actually is.
+    """
+    from bettermemory.handlers.audit_turn import DESC_MEMORY_AUDIT_TURN
+
+    assert "memory_list" in DESC_MEMORY_AUDIT_TURN, (
+        "DESC_MEMORY_AUDIT_TURN no longer names `memory_list` in the "
+        "retrieval-event predicate; `_RETRIEVAL_EVENT_KINDS` "
+        "(audit.py) includes it but the DESC stops short — a caller "
+        "would assume a list call doesn't shield the audit."
+    )
+
+
+def test_api_md_since_prior_session_strict_after() -> None:
+    """api.md memory_search documents the strict-after boundary semantic.
+
+    audit-3 (A3-02) flagged that api.md said "at or after" but the
+    code path was strict-`>` post-t20 (ffad750) — the boundary IS the
+    prior session's last-event ts so a memory whose `updated` equals
+    it belongs to that prior session, not the current-session delta.
+    Pin the corrected wording so a future doc rewording can't drift
+    back to the inclusive form (which would double-count the
+    boundary memory across memory_search and
+    `curation_pending_new_since_last_session`).
+    """
+    api_md = Path(__file__).resolve().parents[1] / "docs" / "api.md"
+    text = api_md.read_text(encoding="utf-8")
+    assert "strictly after" in text, (
+        "docs/api.md memory_search no longer says `strictly after` "
+        "for since_prior_session; the boundary is exclusive — strict-`>` "
+        "in the handler — and the doc has to match or the two "
+        "'what's new' surfaces drift on the boundary-equal memory."
+    )
+
+
+def test_api_md_memory_show_documents_commit_drift_recommendation() -> None:
+    """api.md memory_show enumerates the `commit_drift.recommendation` field.
+
+    audit-3 (A3-08) flagged that the api.md commit_drift mention
+    stopped at the block-existence note without enumerating the
+    fields. `CommitDriftStatus.to_dict` (verify.py:719-724) returns
+    `{status, commits_since_verify, recommendation}`; the
+    `recommendation` string is the actionable surface the model would
+    use, and a caller reading the doc needs to know it's there.
+    """
+    api_md = Path(__file__).resolve().parents[1] / "docs" / "api.md"
+    text = api_md.read_text(encoding="utf-8")
+    # Look for `recommendation` near a commit_drift mention so the
+    # assertion targets the right block. We can't anchor on a paragraph
+    # because the doc evolves; a presence check across the file is
+    # sufficient — `recommendation` appears only on commit_drift /
+    # staleness rollups, both of which are part of the documented
+    # return surface.
+    assert "recommendation" in text, (
+        "docs/api.md no longer documents the `recommendation` field "
+        "on commit_drift; CommitDriftStatus.to_dict returns it but "
+        "the doc stops at the block-existence note — callers can't "
+        "discover the actionable string is part of the return shape."
+    )
+
+
+def test_api_md_documents_max_takeaway_bytes() -> None:
+    """api.md episode_write enumerates the `max_takeaway_bytes` cap.
+
+    audit-3 (A3-07) flagged that t16 (4d36967) added the cap to the
+    handler but never landed in api.md. The cap exists because
+    takeaways serialize into the YAML frontmatter region (64 KB
+    ceiling) — an over-cap takeaway corrupts the file and the episode
+    vanishes from every read surface despite returning `committed`.
+    Pin the doc mention so a caller writing against the contract
+    knows the limit before they discover it via a vanished episode.
+    """
+    api_md = Path(__file__).resolve().parents[1] / "docs" / "api.md"
+    text = api_md.read_text(encoding="utf-8")
+    assert "max_takeaway_bytes" in text, (
+        "docs/api.md no longer documents the `max_takeaway_bytes` "
+        "cap on episode_write; the handler enforces it but a "
+        "caller can't discover the limit from the contract doc."
+    )
+
+
 async def test_addendum_tool_names_exist_on_server(tmp_path: Path) -> None:
     """Every `memory_*` tool referenced in the addendum is registered on the server.
 

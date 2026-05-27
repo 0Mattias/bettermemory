@@ -36,8 +36,9 @@ DESC_MEMORY_AUDIT_TURN = (
     "detect turns where memory *should* have been retrieved but wasn't. "
     "Runs a cheap search probe over the active store using the model's "
     "configured search mode (matches what the model would have done), "
-    "then checks whether a `memory_search` OR `memory_show` event fired "
-    "in the same session within `lookback_seconds` (default 60). When "
+    "then checks whether a `memory_search`, `memory_show`, or "
+    "`memory_list` event fired in the same session within "
+    "`lookback_seconds` (default 60). When "
     "a high-relevance hit exists AND no retrieval happened in the "
     "window, emits a `search_miss` event so memory_health / "
     "memory_scope_overview can surface the rate. Returns a structured "
@@ -66,9 +67,10 @@ async def memory_audit_turn(
     Fires from a client-side hook (Claude Code Stop hook, etc.) with
     the user's message. Runs a search probe (using the model's
     configured search mode) over the active store; if a
-    high-relevance hit exists AND no retrieval event (`search` or
-    `show`) fired in the same session within the lookback window,
-    emits `search_miss` so curation views can surface the rate.
+    high-relevance hit exists AND no retrieval event (`search`,
+    `show`, or `list`) fired in the same session within the
+    lookback window, emits `search_miss` so curation views can
+    surface the rate.
 
     `assistant_response` is accepted but currently used only to keep
     the API shape stable — a future probe will run against it too
