@@ -2101,6 +2101,30 @@ async def test_episode_search_max_results_caps_output(
     assert len(res) == 5
 
 
+async def test_episode_search_max_results_returns_most_recent(
+    memory_dir: Path,
+) -> None:
+    """When more episodes match than `max_results`, the cap surfaces the
+    MOST-RECENT N (sorted oldest-first within that window) — same pattern
+    as `episode_handoff`'s `all_eps[-max_episodes:]`. Pin the slice
+    direction so the contract can't silently drift back to "oldest N",
+    which is the opposite of caller intuition for ad-hoc journal lookup.
+    """
+    import time as _time
+
+    cfg = Config(storage=StorageConfig(directory=str(memory_dir)))
+    server = build_server(config=cfg, store=Store(memory_dir), state=SessionState())
+    # ULIDs encode ms-resolution timestamps and `created` is `utcnow()`;
+    # sleep ≥1ms between writes so the sort key (`e["created"]` ISO
+    # string) yields stable, distinct ordering across all 5 episodes.
+    for i in range(1, 6):
+        await _call(server, "episode_write", body=f"body {i}", takeaway=f"T{i}")
+        _time.sleep(0.01)
+
+    res = _unwrap(await _call(server, "episode_search", max_results=3))
+    assert [e["takeaway"] for e in res] == ["T3", "T4", "T5"]
+
+
 async def test_episode_search_respects_disabled_scopes(server: Any) -> None:
     """Episodes are part of the read surface — `memory_scope_disable`
     has to hide them too, mirroring `memory_search` / `memory_list`.

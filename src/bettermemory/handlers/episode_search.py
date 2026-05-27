@@ -116,7 +116,13 @@ async def episode_search(
             )
 
     out.sort(key=lambda e: e["created"])
-    out = out[:max_results]
+    # Cap to the most-recent N (matches `episode_handoff`'s
+    # `all_eps[-max_episodes:]` pattern and caller intuition for ad-hoc
+    # journal lookup — "what did I conclude across the last few
+    # sessions?" reads the tail, not the head). The slice keeps the
+    # ascending order inside the recent-N window so output stays
+    # oldest-first within the surfaced subset.
+    out = out[-max_results:]
 
     deps.recorder.record(
         "episode_search",
