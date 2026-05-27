@@ -96,6 +96,8 @@ At least one of `content`, `scopes`, `confidence`, `category`, `links` must be p
 
 Preserves `id`, `created`, `source`. Bumps `updated`. Content changes reset `last_verified_at` to `null` AND clear the `verified_paths` / `verified_commits` / `verified_versions` attestation lists — the old attestation was for prose that no longer exists. Scope, confidence, category, and links edits preserve verification (they don't touch the body's claims).
 
+Optimistic-concurrency CAS (W2, since 3.2.0). The handler snapshots the on-disk `updated` via `memory_show` (or an equivalent prior read) and the store's under-lock check refuses the write when another agent landed an update in between. Returns `{"status": "stale", "memory_id", "current_updated", "hint"}` — `current_updated` is the on-disk `updated` ISO timestamp at the moment the CAS failed; `hint` is the human-readable retry instruction. No partial write — the prior writer's change is intact. Re-fetch with `memory_show` and retry the edit on top of the current snapshot; do not auto-retry from the same caller stack, the conflict may need reconciliation (e.g. both edits touched the same sentence). Distinct from the genuine-not-found / tombstoned `ValueError` paths, which still surface as raised exceptions.
+
 ### Inter-memory links
 
 `links: list[MemoryLink]` is persisted in YAML frontmatter. Each `MemoryLink` is `{type, target_id, note?}`:
@@ -119,6 +121,8 @@ Self-links are rejected. `memory_show` surfaces forward `links` on the source an
 
 Strips removal frontmatter; preserves `created`, `updated`, `last_verified_at`.
 
+Race-loss surface (W7, since 3.2.1). The handler translates `MemoryNotFoundError`, `NotTombstonedError`, and bare `OSError` from the store layer into `ValueError` at the MCP boundary — a structured callers-of-MCP boundary error rather than a leaked store-layer exception. Race-loss vs. genuine-not-found is disambiguated by the message: a `ValueError` whose message contains the substring `"raced with"` is the race-loss shape (a concurrent restore or prune completed between the find and the under-lock recheck — the id either already-active or already-gone), while a `ValueError` without that substring is a genuine not-found or already-active case (e.g. `"memory <id> is active; nothing to restore"` without the parenthetical hint). Callers that want to differentiate programmatically can match on the `"raced with"` substring; callers that just want to surface the message to the user can treat all `ValueError`s uniformly. No partial restore — either the active record exists with the full restored frontmatter, or the tombstone is untouched. Re-fetch via `memory_list` / `memory_list_tombstones` to determine which side of the race won and act accordingly.
+
 ### `memory_list_tombstones(scopes?)`
 
 - `scopes: list[str] | None = None`. Filter as in `memory_list`.
@@ -134,6 +138,8 @@ Strips removal frontmatter; preserves `created`, `updated`, `last_verified_at`.
 - `verified_versions: list[str] | None = None`. The actual version strings spot-checked.
 
 Bumps `last_verified_at` without touching `updated`. Idempotent. The structured attestation lists are persisted on the record. The path-drift detector uses `verified_paths` to mark previously-attested paths that still exist as `verified`, downgrading the verdict. The commit-drift signal narrows its count to commits that touched any `verified_paths`. Calling with `verified_paths=None` preserves any prior attestation; an explicit `[]` clears it.
+
+Optimistic-concurrency CAS (W8, since 3.2.1). The handler snapshots the record via `memory_show` and the store's under-lock check refuses the write when another agent landed a verify in between. The fingerprint is `last_verified_at` (NOT `updated` — verify is orthogonal to content edits, so `updated` is the wrong axis to watch; snapshot `last_verified_at` instead). Returns the same shape as `memory_update`'s stale response: `{"status": "stale", "memory_id", "current_updated", "hint"}`. `current_updated` echoes the on-disk `updated` for uniformity with the W2 contract — the caller's rebase action is identical (`memory_show` re-fetch), so the field name stays stable across the two surfaces. No partial write — the prior verifier's `verified_*` lists are intact (REPLACE semantics on those lists make this race especially nasty: a silent merge would lose one agent's attestation, so the contract is reread + reattest). Re-fetch, reassess your attestation against the now-current `verified_*` lists, and retry.
 
 ## Curation
 
