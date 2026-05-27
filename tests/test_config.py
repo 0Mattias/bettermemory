@@ -428,8 +428,10 @@ def test_load_config_neither_key_uses_default(
     _reset_deprecated_key_guard()
     config_path = tmp_path / "config.toml"
     # A behavior section that touches neither key — proves the shim
-    # doesn't fire on the empty case where `endorsement_debt_ratio_threshold`
-    # would be a falsy default rather than absent.
+    # doesn't fire on the absent-key path. The falsy-but-present case
+    # (explicit `endorsement_debt_ratio_threshold = 0.0`) is covered by
+    # `test_load_config_falsy_old_key_emits_warning` below, which pins
+    # the "presence triggers, value doesn't matter" contract.
     config_path.write_text(
         "[behavior]\nsemantic_dedup = false\n",
         encoding="utf-8",
@@ -442,6 +444,46 @@ def test_load_config_neither_key_uses_default(
     ), (
         "no deprecation warning should fire when neither key is present, "
         f"got: {[r.getMessage() for r in caplog.records]}"
+    )
+
+
+def test_load_config_falsy_old_key_emits_warning(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    """Old key explicitly set to a FALSY value (0.0) still triggers the
+    deprecation warning and still migrates to the new field. Pins the
+    "presence triggers, value doesn't matter" contract: the shim keys
+    off `old_key in behavior_raw` (see `_apply_legacy_endorsement_debt_alias`),
+    not off the value's truthiness, so a 3.1.x user who explicitly
+    disabled the threshold by writing `endorsement_debt_ratio_threshold
+    = 0.0` still sees the migration nudge."""
+    _reset_deprecated_key_guard()
+    config_path = tmp_path / "config.toml"
+    config_path.write_text(
+        "[behavior]\nendorsement_debt_ratio_threshold = 0.0\n",
+        encoding="utf-8",
+    )
+    with caplog.at_level("WARNING", logger="bettermemory.config"):
+        cfg = load_config(config_path)
+    # The falsy value migrated to the new field — the shim didn't skip
+    # the assignment on the basis of `if value:` or similar.
+    assert cfg.behavior.cold_endorsement_ratio_threshold == 0.0
+    deprecation_records = [
+        r
+        for r in caplog.records
+        if r.levelname == "WARNING"
+        and "endorsement_debt_ratio_threshold" in r.getMessage()
+    ]
+    assert len(deprecation_records) == 1, (
+        f"expected exactly one deprecation warning for falsy-old-key, got "
+        f"{[r.getMessage() for r in deprecation_records]}"
+    )
+    message = deprecation_records[0].getMessage()
+    assert "cold_endorsement_ratio_threshold" in message, (
+        f"warning must name the new key, got: {message!r}"
+    )
+    assert "3.2.0" in message, (
+        f"warning must name the release boundary, got: {message!r}"
     )
 
 

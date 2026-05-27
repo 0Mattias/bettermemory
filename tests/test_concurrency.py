@@ -2119,11 +2119,36 @@ def test_multi_process_concurrent_restore_no_oserror_leak(
         f"Expected exactly one restore winner, got {len(winners)}. Outcomes: {outcomes}"
     )
     # All non-winners must report a structured race-loss outcome.
-    losers = [o for o in outcomes if o in ("lost-not-tombstoned", "lost-not-found")]
+    losers = [
+        r for r in results if r["outcome"] in ("lost-not-tombstoned", "lost-not-found")
+    ]
     assert len(losers) == n_workers - 1, (
         f"Expected {n_workers - 1} structured race-losses, got {len(losers)}. "
         f"Outcomes: {outcomes}"
     )
+    # Per-loser message structure. Spawn-mode losers can land in two
+    # places: the unlocked pre-lock checks in `Store.restore` (whose
+    # messages predate W7 and don't carry the hint), or the under-lock
+    # W7 rechecks (whose messages carry the "raced with" hint added in
+    # commit e41c5ca). Both are legitimate structured race-loss outcomes,
+    # but only the under-lock path engages W7 — so the strict "raced
+    # with" assertion the threaded variant uses (line 2047) is too tight
+    # for multi-process where the winner often finishes before the other
+    # workers complete spawn startup. We assert the closed set: each
+    # loser's message matches one of the known shapes; anything else
+    # (e.g., a bare OSError stringified into the message, or a KeyError
+    # repr) means the race-loss path regressed to an unstructured form.
+    known_loser_shapes = (
+        "raced with",  # under-lock W7 form (post-e41c5ca; pins W7 directly)
+        "is active; nothing to restore",  # pre-lock active fast path
+        "no tombstone with id",  # pre-lock tombstone-gone fast path
+    )
+    for r in losers:
+        assert any(shape in r["msg"] for shape in known_loser_shapes), (
+            f"Loser's message {r['msg']!r} matches no known structured "
+            f"race-loss shape ({known_loser_shapes!r}). W7 regression: "
+            f"the race-loss path produced an unstructured failure."
+        )
 
     # Disk invariant: exactly one active file for the id, no tombstone.
     fresh = Store(tmp_path)

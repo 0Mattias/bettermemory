@@ -19,8 +19,9 @@ tracing `_load_path` / `_locked` / `frontmatter.load` events.
 from __future__ import annotations
 
 import contextlib
+from collections.abc import Generator
 from pathlib import Path
-from typing import Any, Iterator
+from typing import Any
 
 import pytest
 
@@ -52,7 +53,7 @@ def traced(monkeypatch: pytest.MonkeyPatch) -> list[str]:
         return original_fm_load(path)
 
     @contextlib.contextmanager
-    def traced_locked(path: Path) -> Iterator[None]:
+    def traced_locked(path: Path) -> Generator[None, None, None]:
         events.append(f"lock_enter:{path.name}")
         with original_locked(path):
             yield
