@@ -1155,6 +1155,285 @@ async def test_search_depends_on_resolved_skips_disabled_scope_target(
         assert target["id"] not in {r["id"] for r in resolved}
 
 
+async def test_search_depends_on_resolved_targeted_loads_cross_topic_target(
+    server: Any, monkeypatch: Any
+) -> None:
+    """Cross-topic depends_on auto-pull. Pre-fix: the side-map built
+    from the FTS prefilter (cap 50 query-relevant rows) silently
+    skipped depended-on targets whose body didn't match the query —
+    exactly the auto-pull case that exists because B depends_on A
+    when A provides context the query for B won't surface. Post-fix:
+    `attach_depends_on_resolved` calls `store.load_one` for missing
+    target ids and merges them into the side-map.
+
+    Forcing the FTS prefilter via `BETTERMEMORY_INDEX_THRESHOLD=1`
+    is what actually exercises the targeted-load path: at default
+    threshold (500) the store falls back to `load_all` which
+    includes A in the side-map even when the query doesn't match.
+    """
+    monkeypatch.setenv("BETTERMEMORY_INDEX_THRESHOLD", "1")
+    target = await _call(
+        server,
+        "memory_write",
+        content="xylophone zebra unrelated phrasing nobody queries for",
+        scopes=["projects:foo"],
+        category="fact",
+    )
+    dependent = await _call(
+        server,
+        "memory_write",
+        content="rate limiter relies on the xylophone identity service",
+        scopes=["projects:foo"],
+        category="fact",
+    )
+    await _call(
+        server,
+        "memory_update",
+        id=dependent["id"],
+        links=[
+            {
+                "type": "depends_on",
+                "target_id": target["id"],
+                "note": "needs xylophone for identity",
+            }
+        ],
+    )
+
+    # Query for B's distinctive phrase ("rate limiter") — the FTS
+    # prefilter surfaces B but not A (A's body has no overlapping
+    # tokens with the query). The targeted-load path must pull A
+    # in via `load_one` and surface it in B's `depends_on_resolved`.
+    hits = _unwrap(await _call(server, "memory_search", query="rate limiter"))
+    hit = next(h for h in hits if h["id"] == dependent["id"])
+    assert "depends_on_resolved" in hit
+    resolved = hit["depends_on_resolved"]
+    assert {r["id"] for r in resolved} == {target["id"]}
+    assert resolved[0]["link_note"] == "needs xylophone for identity"
+
+
+async def test_search_depends_on_resolved_targeted_load_honors_disabled_scope(
+    server: Any, monkeypatch: Any
+) -> None:
+    """Counterpart to bf92912 for the targeted-load path. A
+    cross-topic `depends_on` target whose scope is session-disabled
+    must NOT surface via the targeted-load fallback either — the
+    same `excluded_scopes` filter that the side-map path applies has
+    to run at load time, otherwise the targeted-load reintroduces
+    the scope-leak."""
+    monkeypatch.setenv("BETTERMEMORY_INDEX_THRESHOLD", "1")
+    target = await _call(
+        server,
+        "memory_write",
+        content="kryptonite alpha-scope only secret",
+        scopes=["projects:alpha"],
+        category="fact",
+    )
+    dependent = await _call(
+        server,
+        "memory_write",
+        content="rate limiter in beta needs kryptonite",
+        scopes=["projects:beta"],
+        category="fact",
+        acknowledge_scope_mismatch=True,
+    )
+    await _call(
+        server,
+        "memory_update",
+        id=dependent["id"],
+        links=[{"type": "depends_on", "target_id": target["id"]}],
+    )
+
+    # Disable the target's scope. Query for B's distinctive phrase
+    # (so A is NOT in the FTS prefilter — pure targeted-load path).
+    await _call(server, "memory_scope_disable", scope="projects:alpha")
+    hits = _unwrap(await _call(server, "memory_search", query="rate limiter"))
+    hit = next(h for h in hits if h["id"] == dependent["id"])
+    resolved = hit.get("depends_on_resolved")
+    # The targeted-load must drop A at load time before it joins the
+    # side-map; either the key is omitted (only link's target was
+    # filtered) or the list is non-empty without A.
+    if resolved is not None:
+        assert target["id"] not in {r["id"] for r in resolved}
+
+
+async def test_search_depends_on_resolved_targeted_load_honors_cross_project_origin(
+    memory_dir: Path,
+    monkeypatch: Any,
+) -> None:
+    """Counterpart to bf92912 for the targeted-load path against the
+    auto-scope filter. A cross-topic `depends_on` target written
+    from a different repo must NOT surface via the targeted-load
+    fallback when the caller is auto-scoped to their own repo —
+    `should_include_for_caller` re-runs at load time, mirroring
+    the side-map path."""
+    monkeypatch.setenv("BETTERMEMORY_INDEX_THRESHOLD", "1")
+    import bettermemory._handlers as handlers_module
+    import bettermemory.server as server_module
+    from bettermemory.origin import Origin
+
+    origin_foo = Origin(
+        cwd="/work/foo",
+        repo="git@github.com:example/foo.git",
+        branch="main",
+        worktree_root="/work/foo",
+    )
+    origin_bar = Origin(
+        cwd="/work/bar",
+        repo="git@github.com:example/bar.git",
+        branch="main",
+        worktree_root="/work/bar",
+    )
+
+    def make_capture(origin: Origin):
+        def _capture(cwd: Any = None) -> Origin:
+            return origin
+
+        return _capture
+
+    cfg = Config(storage=StorageConfig(directory=str(memory_dir)))
+
+    # Write the cross-project target as repo bar. Body is deliberately
+    # NOT matching the eventual query so the FTS prefilter cannot
+    # rescue it — pure targeted-load path.
+    monkeypatch.setattr(handlers_module, "capture_origin", make_capture(origin_bar))
+    monkeypatch.setattr(server_module, "capture_origin", make_capture(origin_bar))
+    server_bar = build_server(config=cfg, store=Store(memory_dir), state=SessionState())
+    target = await _call(
+        server_bar,
+        "memory_write",
+        content="bar-only payload nobody queries for",
+        scopes=["projects:bar"],
+        category="fact",
+    )
+
+    # Switch to repo foo and write the dependent with a depends_on
+    # link pointing at the cross-project target.
+    monkeypatch.setattr(handlers_module, "capture_origin", make_capture(origin_foo))
+    monkeypatch.setattr(server_module, "capture_origin", make_capture(origin_foo))
+    server_foo = build_server(config=cfg, store=Store(memory_dir), state=SessionState())
+    dependent = await _call(
+        server_foo,
+        "memory_write",
+        content="rate limiter foo-side note",
+        scopes=["projects:foo"],
+        category="fact",
+    )
+    await _call(
+        server_foo,
+        "memory_update",
+        id=dependent["id"],
+        links=[{"type": "depends_on", "target_id": target["id"]}],
+    )
+
+    # Search from repo foo (auto_scope defaults True). B's query
+    # ("rate limiter") does not match A's body — the targeted-load
+    # is the only path that could surface A, and it must drop A
+    # because the cross-project origin filter is applied at load.
+    hits = _unwrap(await _call(server_foo, "memory_search", query="rate limiter"))
+    hit = next(h for h in hits if h["id"] == dependent["id"])
+    resolved = hit.get("depends_on_resolved")
+    if resolved is not None:
+        assert target["id"] not in {r["id"] for r in resolved}
+
+
+async def test_search_depends_on_resolved_max_total_caps_across_hits(
+    server: Any, monkeypatch: Any
+) -> None:
+    """The cross-hit `max_total=10` cap on `depends_on_resolved`
+    survives the targeted-load fallback: even when every hit has
+    many distinct cross-topic missing targets, the SUM of the
+    `depends_on_resolved` list lengths across the result set must
+    not exceed 10. Pins the cap that the new targeted-load path
+    must respect; closes the side observation that no test
+    previously locked this cross-hit cap down."""
+    monkeypatch.setenv("BETTERMEMORY_INDEX_THRESHOLD", "1")
+    # Build 5 hits, each with 5 distinct cross-topic depends_on
+    # targets (25 targets total). Pre-fix: most would silently drop
+    # because they're cross-topic. Post-fix: targeted-load surfaces
+    # them, but the cap clamps the response to <=10.
+    target_ids: list[str] = []
+    for i in range(25):
+        t = await _call(
+            server,
+            "memory_write",
+            content=f"obscure-target-{i} body nobody queries",
+            scopes=["projects:targets"],
+            category="fact",
+        )
+        target_ids.append(t["id"])
+
+    dependent_ids: list[str] = []
+    for i in range(5):
+        d = await _call(
+            server,
+            "memory_write",
+            content=f"rate limiter dependent number {i}",
+            scopes=["projects:targets"],
+            category="fact",
+        )
+        # 5 distinct depends_on per dependent, all cross-topic.
+        chunk = target_ids[i * 5 : (i + 1) * 5]
+        await _call(
+            server,
+            "memory_update",
+            id=d["id"],
+            links=[{"type": "depends_on", "target_id": tid} for tid in chunk],
+        )
+        dependent_ids.append(d["id"])
+
+    hits = _unwrap(
+        await _call(server, "memory_search", query="rate limiter", max_results=10)
+    )
+    total_resolved = sum(
+        len(h.get("depends_on_resolved", []))
+        for h in hits
+        if h["id"] in set(dependent_ids)
+    )
+    assert total_resolved <= 10
+
+
+async def test_search_depends_on_resolved_targeted_load_skips_deleted_target(
+    server: Any, monkeypatch: Any
+) -> None:
+    """`store.load_one` raises for tombstoned / missing targets; the
+    targeted-load fallback must absorb that exception silently and
+    leave the resolved list empty (or omit it entirely) — same
+    behaviour as the pre-existing prefilter-miss skip. No crash, no
+    half-loaded entry."""
+    monkeypatch.setenv("BETTERMEMORY_INDEX_THRESHOLD", "1")
+    target = await _call(
+        server,
+        "memory_write",
+        content="xylophone target slated for removal",
+        scopes=["projects:foo"],
+        category="fact",
+    )
+    dependent = await _call(
+        server,
+        "memory_write",
+        content="rate limiter depends on the doomed target",
+        scopes=["projects:foo"],
+        category="fact",
+    )
+    await _call(
+        server,
+        "memory_update",
+        id=dependent["id"],
+        links=[{"type": "depends_on", "target_id": target["id"]}],
+    )
+    await _call(server, "memory_remove", id=target["id"], reason="superseded")
+
+    # Query for B's phrase only — A is tombstoned, the targeted-load
+    # path `load_one`s it and must absorb the TombstonedError.
+    hits = _unwrap(await _call(server, "memory_search", query="rate limiter"))
+    hit = next(h for h in hits if h["id"] == dependent["id"])
+    # Same silent-skip contract as the existing tombstoned-target
+    # test (line ~1033): key omitted OR list without the dead target.
+    resolved = hit.get("depends_on_resolved")
+    if resolved is not None:
+        assert target["id"] not in {r["id"] for r in resolved}
+
+
 # ---------------------------------------------------------------------------
 # memory_write — inline curation hint (one-shot per session)
 # ---------------------------------------------------------------------------

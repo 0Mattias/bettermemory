@@ -302,6 +302,18 @@ async def memory_search(
             memories,
             caller_origin=current_origin if auto_scope else None,
             excluded_scopes=set(state.disabled_scopes),
+            # Pass the store so the helper can targeted-load
+            # `depends_on` targets unrelated to the query. The
+            # `memories` list is the FTS prefilter set (cap 50, ranked
+            # by query relevance), so a depended-on target whose text
+            # doesn't match the query is missing from the side-map —
+            # the exact case the auto-pull feature exists to handle
+            # (B depends_on A precisely because A provides context
+            # B's query won't surface on its own). Filter discipline
+            # for the targeted-load path is identical to the side-map
+            # path: `caller_origin` + `excluded_scopes` re-applied at
+            # load time to prevent cross-project / disabled-scope leak.
+            store=deps.store,
         )
 
     # Optional auto-expansion of the top hit. Conservative: only fires

@@ -441,6 +441,7 @@ class ResponseBuilder:
         max_total: int = 10,
         caller_origin: Origin | None = None,
         excluded_scopes: set[str] | None = None,
+        store: Any = None,
     ) -> None:
         """Mutate `out` in-place, adding `depends_on_resolved` to any hit
         whose memory carries `depends_on`-typed links.
@@ -488,13 +489,95 @@ class ResponseBuilder:
         omitted `caller_origin` means "no auto-scope check" (mirroring
         `auto_scope=False` at the caller), and an omitted
         `excluded_scopes` means "no session disables".
+
+        `store` enables the targeted-load fallback: a `depends_on`
+        target unrelated to the query is not in the FTS prefilter
+        candidate set (`memories` is capped at 50 query-relevant
+        rows), so the side-map built from it would silently skip the
+        target — defeating the auto-pull contract for the cross-topic
+        case (B depends_on A precisely because A provides context B
+        needs to be intelligible; the query that finds B usually
+        won't find A). When `store` is supplied, missing target ids
+        referenced by any hit are loaded directly via `store.load_one`
+        and merged into the side-map, capped at `max_total` loads
+        per call so the targeted path can't dominate the response
+        budget. Tombstoned or missing targets are absorbed silently
+        (same as the pre-existing prefilter-miss branch). The same
+        `caller_origin` + `excluded_scopes` filter is re-applied to
+        the loaded targets at the same place as side-map hits, so
+        the targeted-load path cannot reintroduce the scope-leak
+        that the per-target filter closed for the prefilter path.
+        Default `None` for back-compat: when omitted, behaviour is
+        identical to before (silent prefilter-miss skip).
         """
         from .models import first_summary_line
+        from .store import MemoryNotFoundError, TombstonedError
 
         # Build the id → memory side-map once. The caller (`search.py`)
         # has already paid the load cost for ranking; reuse it here.
         memory_by_id = {m.id: m for m in memories}
         excluded = excluded_scopes or set()
+
+        # Targeted-load fallback. Without this, a `depends_on` target
+        # whose text doesn't match the query is never in the FTS
+        # prefilter candidate set, so `memory_by_id.get(...)` returns
+        # None and we silently skip — the exact case the auto-pull
+        # feature exists to handle (B depends_on A because A provides
+        # context the query for B usually won't surface). When a store
+        # handle is supplied, collect every depends_on target id any
+        # hit's source carries, subtract the ids already resolvable
+        # via the side-map, and `load_one` the rest. Cap the load count
+        # at `max_total` so a pathological hit (1000 depends_on links)
+        # can't balloon the lookup budget — `max_total` is the natural
+        # ceiling because nothing past that ever appears in the output
+        # anyway. Tombstoned / removed targets raise here; absorb as
+        # missing so the resolved list mirrors the pre-existing
+        # "silently skip" semantics of the prefilter-miss branch.
+        if store is not None:
+            missing_target_ids: list[str] = []
+            seen: set[str] = set()
+            for hit in hits:
+                source = memory_by_id.get(hit.id)
+                if source is None or not source.links:
+                    continue
+                for link in source.links:
+                    if link.type.value != "depends_on":
+                        continue
+                    tid = link.target_id
+                    if tid in memory_by_id or tid in seen:
+                        continue
+                    seen.add(tid)
+                    missing_target_ids.append(tid)
+                    if len(missing_target_ids) >= max_total:
+                        break
+                if len(missing_target_ids) >= max_total:
+                    break
+            for tid in missing_target_ids:
+                try:
+                    target = store.load_one(tid)
+                except (MemoryNotFoundError, TombstonedError):
+                    # Same silent-skip semantics as the existing
+                    # prefilter-miss branch below: a deleted or
+                    # tombstoned target is best-effort dropped from
+                    # auto-pull. The link still exists on disk for
+                    # explicit `memory_show` investigation.
+                    continue
+                # Apply the caller's scope/origin filter at load time
+                # — must mirror the per-target check below so a
+                # targeted load can't sneak a session-disabled or
+                # cross-project target into the side-map. Without
+                # this, the targeted-load path would reintroduce the
+                # exact scope leak the per-target check (bf92912)
+                # closed for the prefilter path.
+                if excluded and (set(target.scopes) & excluded):
+                    continue
+                if caller_origin is not None and not should_include_for_caller(
+                    target.origin,
+                    caller_origin.repo,
+                    caller_worktree_root=caller_origin.worktree_root,
+                ):
+                    continue
+                memory_by_id[tid] = target
 
         total = 0
         for hit_dict, hit in zip(out, hits):
@@ -516,10 +599,13 @@ class ResponseBuilder:
                 target = memory_by_id.get(link.target_id)
                 if target is None:
                     # Not in the loaded candidate set (the target may be
-                    # outside the search's auto-scope, or just not in
-                    # the FTS5 prefilter). Skip silently — the link
-                    # still exists on disk and `memory_show` will
-                    # surface it; auto-pull is a best-effort surface.
+                    # outside the search's auto-scope, just not in the
+                    # FTS5 prefilter, or — when `store` was supplied —
+                    # dropped by the targeted-load filter above as
+                    # tombstoned / scope-excluded / cross-project).
+                    # Skip silently — the link still exists on disk
+                    # and `memory_show` will surface it; auto-pull is
+                    # a best-effort surface.
                     continue
                 # Re-apply the caller's scope filter to the resolved
                 # target. The side-map is built from the pre-filter
