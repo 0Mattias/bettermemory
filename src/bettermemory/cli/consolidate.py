@@ -147,14 +147,14 @@ def add_subparser(
         "--acknowledge-debt",
         action="store_true",
         help=(
-            "Walk the endorsement_debt bucket (memories the ranker keeps "
-            "surfacing without an explicit `memory_record_use(applied)` "
-            "ever firing) and write one explicit `use(applied)` event "
-            "per id. Retroactively clears the curation signal without "
-            "touching bodies or scopes. Always commits — no --apply "
-            "gate, because the events are purely additive and a "
-            "misapplied acknowledgement can be reversed with a "
-            "follow-up `corrected` event."
+            "Walk the cold_endorsement_memories bucket (memories the "
+            "ranker keeps surfacing without an explicit "
+            "`memory_record_use(applied)` ever firing) and write one "
+            "explicit `use(applied)` event per id. Retroactively clears "
+            "the curation signal without touching bodies or scopes. "
+            "Always commits — no --apply gate, because the events are "
+            "purely additive and a misapplied acknowledgement can be "
+            "reversed with a follow-up `corrected` event."
         ),
     )
     parser.add_argument(
@@ -327,18 +327,18 @@ def _cli_consolidate_acknowledge_debt(
     session_id: str,
     json_out: bool,
 ) -> None:
-    """Retroactively endorse memories in the ``endorsement_debt`` bucket.
+    """Retroactively endorse memories in the ``cold_endorsement_memories`` bucket.
 
-    Endorsement debt = memories the ranker keeps surfacing
+    Cold-endorsement memories = memories the ranker keeps surfacing
     (``retrieval_count >= endorsement_floor``) where every applied event
     came from the server's auto-fallback path (``auto=True``) rather
     than from a deliberate ``memory_record_use(applied)``. The
-    ``health.endorsement_debt`` rollup surfaces them; this pass clears
-    them by writing one explicit ``use(applied)`` event per id —
-    structurally identical to what an attentive model would have
-    emitted on the next deliberate retrieval. No body or scope change;
-    no tombstone; the original auto-applies stay in the log alongside
-    the new explicit endorsements.
+    ``health.cold_endorsement_memories`` rollup surfaces them; this
+    pass clears them by writing one explicit ``use(applied)`` event
+    per id — structurally identical to what an attentive model would
+    have emitted on the next deliberate retrieval. No body or scope
+    change; no tombstone; the original auto-applies stay in the log
+    alongside the new explicit endorsements.
 
     Always commits regardless of ``--apply`` because the writes are
     additive: a mistaken acknowledgement can be reversed with a
@@ -349,16 +349,16 @@ def _cli_consolidate_acknowledge_debt(
     :class:`Recorder` so file locking and rotation behave the same.
 
     Filter is re-derived inline because
-    :class:`~bettermemory.health.EndorsementDebt` caps its ``rows``
-    list at ``_ENDORSEMENT_DEBT_CAP`` for inline display and we need
-    every debt id, not just the top N. The three predicates match
-    :func:`bettermemory.health.compute_health` exactly — if that
-    canonical filter changes, this one must too.
+    :class:`~bettermemory.health.ColdEndorsementMemories` caps its
+    ``rows`` list at ``_COLD_ENDORSEMENT_CAP`` for inline display and
+    we need every debt id, not just the top N. The three predicates
+    match :func:`bettermemory.health.compute_health` exactly — if
+    that canonical filter changes, this one must too.
     """
     import json as _json
 
     from ..events import Recorder, iter_all_events
-    from ..health import _ENDORSEMENT_DEBT_MIN_RETRIEVALS
+    from ..health import _COLD_ENDORSEMENT_MIN_RETRIEVALS
     from ..models import Category
 
     memories = store.load_all()
@@ -381,7 +381,7 @@ def _cli_consolidate_acknowledge_debt(
                 if mid in explicit_applied:
                     explicit_applied[mid] += 1
 
-    floor = _ENDORSEMENT_DEBT_MIN_RETRIEVALS
+    floor = _COLD_ENDORSEMENT_MIN_RETRIEVALS
     candidates = [
         m
         for m in memories
@@ -401,7 +401,7 @@ def _cli_consolidate_acknowledge_debt(
             )
         else:
             sys.stdout.write(
-                f"acknowledge-debt: no endorsement-debt memories "
+                f"acknowledge-debt: no cold-endorsement memories "
                 f"(floor: retrieval_count >= {floor} AND "
                 f"explicit_applied_count == 0).\n"
             )
@@ -443,7 +443,7 @@ def _cli_consolidate_acknowledge_debt(
 
     sys.stdout.write(
         f"acknowledge-debt: wrote {len(acknowledged_ids)} explicit "
-        f"`use(applied)` events for endorsement-debt memories "
+        f"`use(applied)` events for cold-endorsement memories "
         f"(floor: retrieval_count >= {floor}).\n"
     )
     display_cap = 20

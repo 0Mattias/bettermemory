@@ -9,6 +9,38 @@ spells out exactly what's stable.
 
 ## Unreleased
 
+### Changed
+
+- **`endorsement_debt` → `cold_endorsement_memories` (T1).** Renamed
+  the field on `HealthReport`, the dataclass (`EndorsementDebt` →
+  `ColdEndorsementMemories`), the `curation_counts` dict key, the
+  parameter prefix (`endorsement_debt_min_retrievals` →
+  `cold_endorsement_min_retrievals`,
+  `endorsement_debt_ratio_threshold` →
+  `cold_endorsement_ratio_threshold`), the `BehaviorConfig` field
+  and TOML key (`[behavior] endorsement_debt_ratio_threshold` →
+  `cold_endorsement_ratio_threshold`), and the recommendation
+  kind (`cleanup_endorsement_debt` → `cleanup_cold_endorsements`).
+  DESC strings for `memory_health` and `memory_scope_overview`
+  now describe the field accurately as "memories with `retrieval_count
+  >= N` AND zero explicit applies — per-memory count, NOT per-turn."
+  The old name suggested "9 turns where retrieval shaped the reply
+  without `record_use`" but the actual semantic is "9 distinct
+  memories that crossed the retrieval floor with zero explicit
+  endorsement" — a per-memory state, so the name now matches.
+  Wire-shape: `memory_health` response replaces the
+  `endorsement_debt` key with `cold_endorsement_memories` (same
+  payload shape: `{min_retrievals, total, rows}`);
+  `memory_scope_overview.curation_pending` and the `curation_hint`
+  block emitted on `memory_write` likewise rename the key. Pure
+  rename — no alias — since the MCP responses are read by Claude
+  (which gets fresh tool descriptions per session) and no
+  persisted state references the old key. TOML configs carrying the
+  old `endorsement_debt_ratio_threshold` key will silently fall
+  back to the default `0.0` after upgrade; rename to
+  `cold_endorsement_ratio_threshold` if a non-default value
+  matters.
+
 ### Added
 
 - **`silent_misses.unique_miss_memories` + `curation_pending.unique_silent_miss_memories`.**

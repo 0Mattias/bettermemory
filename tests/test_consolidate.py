@@ -706,7 +706,7 @@ _skip_without_cli = pytest.mark.skipif(
 #
 # `_cli_consolidate_acknowledge_debt` clears the curation signal for
 # memories the ranker keeps surfacing but the model never explicitly
-# endorsed. The filter matches `compute_health`'s endorsement_debt
+# endorsed. The filter matches `compute_health`'s cold_endorsement_memories
 # predicate exactly; these tests pin each predicate (high retrieval,
 # zero explicit-applied, non-ambient) and confirm the event written
 # is what `health._silent_miss_from_event` and the `applied_counts`
@@ -779,7 +779,7 @@ def test_acknowledge_debt_skips_already_endorsed_memory(
         if e.get("kind") == "use" and e.get("attribution") == "cli_acknowledge_debt"
     ]
     assert use_events_after == []
-    assert "no endorsement-debt memories" in capsys.readouterr().out
+    assert "no cold-endorsement memories" in capsys.readouterr().out
 
 
 def test_acknowledge_debt_does_not_count_auto_applied_as_endorsement(
@@ -787,7 +787,7 @@ def test_acknowledge_debt_does_not_count_auto_applied_as_endorsement(
     capsys: pytest.CaptureFixture[str],
 ) -> None:
     """The auto-fallback `_advance_turn` writes `use(applied, auto=True)`
-    on every retrieval whose token aged out. The endorsement_debt
+    on every retrieval whose token aged out. The cold_endorsement_memories
     rollup excludes these — the whole point is to surface memories
     where every applied came from auto. Pin that an auto event does
     NOT block the acknowledgement."""
@@ -844,7 +844,7 @@ def test_acknowledge_debt_skips_ambient_memory(
         if e.get("kind") == "use" and e.get("attribution") == "cli_acknowledge_debt"
     ]
     assert cli_acks == []
-    assert "no endorsement-debt memories" in capsys.readouterr().out
+    assert "no cold-endorsement memories" in capsys.readouterr().out
 
 
 def test_acknowledge_debt_skips_memory_below_retrieval_floor(
@@ -872,7 +872,7 @@ def test_acknowledge_debt_skips_memory_below_retrieval_floor(
         if e.get("kind") == "use" and e.get("attribution") == "cli_acknowledge_debt"
     ]
     assert cli_acks == []
-    assert "no endorsement-debt memories" in capsys.readouterr().out
+    assert "no cold-endorsement memories" in capsys.readouterr().out
 
 
 def test_acknowledge_debt_json_output_carries_acknowledged_ids(

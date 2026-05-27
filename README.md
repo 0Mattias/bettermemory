@@ -168,7 +168,7 @@ bettermemory consolidate --apply            # commit dedup + demotions
 bettermemory consolidate --llm              # +LLM pass: merges, contradictions, date rewrites, demotions
 bettermemory consolidate --llm --from-transcript PATH  # +propose new memories from a Claude Code session JSONL / plain transcript
 bettermemory consolidate --llm --apply      # interactive accept; or --apply --yes for batch
-bettermemory consolidate --acknowledge-debt                        # one-shot clear of the endorsement_debt curation bucket
+bettermemory consolidate --acknowledge-debt                        # one-shot clear of the cold_endorsement_memories curation bucket
 bettermemory consolidate --acknowledge-misses-before <ISO_TS>      # invalidate stale silent-miss events after a fix lands
 bettermemory eval                           # memory_helped_rate / endorsement_rate / silent_miss_rate
 bettermemory eval --since 7d --scope tools  # narrow to a window or a scope

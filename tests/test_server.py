@@ -1553,7 +1553,7 @@ async def test_write_curation_hint_attaches_when_pressure_exceeds_threshold(
             "dead": 4,
             "silent_misses": 0,
             "unique_silent_miss_memories": 0,
-            "endorsement_debt": 1,
+            "cold_endorsement_memories": 1,
         }
 
     monkeypatch.setattr(_health, "curation_counts", fake_counts)
@@ -1569,7 +1569,7 @@ async def test_write_curation_hint_attaches_when_pressure_exceeds_threshold(
     assert hint["counts"] == {
         "dead_weight": 4,
         "drifted": 2,
-        "endorsement_debt": 1,
+        "cold_endorsement_memories": 1,
     }
     assert "message" in hint
 
@@ -1593,7 +1593,7 @@ async def test_write_curation_hint_is_one_shot_per_session(
             "dead": 99,
             "silent_misses": 0,
             "unique_silent_miss_memories": 0,
-            "endorsement_debt": 0,
+            "cold_endorsement_memories": 0,
         },
     )
     cfg = Config(storage=StorageConfig(directory=str(memory_dir)))
@@ -1628,7 +1628,7 @@ async def test_write_curation_hint_disabled_by_config_flag(
             "dead": 999,
             "silent_misses": 0,
             "unique_silent_miss_memories": 0,
-            "endorsement_debt": 0,
+            "cold_endorsement_memories": 0,
         },
     )
     cfg = Config(
@@ -3516,7 +3516,7 @@ async def test_write_curation_hint_threshold_zero_disables(
             "dead": 999,
             "silent_misses": 0,
             "unique_silent_miss_memories": 0,
-            "endorsement_debt": 0,
+            "cold_endorsement_memories": 0,
         },
     )
     cfg = Config(
@@ -4999,32 +4999,33 @@ async def test_scope_overview_recently_removed_filtered_by_worktree(
     assert overview_same["recently_removed_in_worktree"] >= 1
 
 
-async def test_endorsement_debt_ratio_threshold_threaded_to_all_callsites(
+async def test_cold_endorsement_ratio_threshold_threaded_to_all_callsites(
     memory_dir: Path,
 ) -> None:
-    """Regression: `BehaviorConfig.endorsement_debt_ratio_threshold` must
-    drive every `curation_counts` callsite, not just `memory_health`.
-    Earlier, only the deep `memory_health` surface read the knob — the
-    `memory_scope_overview` rollup and the per-write `curation_hint`
-    nudge fell back to the strict 0.0 default, so a user who configured
-    `endorsement_debt_ratio_threshold=0.5` saw the loosened bucket on
+    """Regression: `BehaviorConfig.cold_endorsement_ratio_threshold`
+    must drive every `curation_counts` callsite, not just
+    `memory_health`. Earlier, only the deep `memory_health` surface
+    read the knob — the `memory_scope_overview` rollup and the
+    per-write `curation_hint` nudge fell back to the strict 0.0
+    default, so a user who configured
+    `cold_endorsement_ratio_threshold=0.5` saw the loosened bucket on
     `memory_health` but the strict bucket on every session-start hint.
 
     We seed a memory with 5 retrievals and 4 applieds where exactly 1
     is explicit (ratio 1/4 = 0.25). At the configured 0.5 threshold the
-    memory IS endorsement debt (count = 1); at the strict 0.0 default
-    it is NOT (count = 0). Both `memory_scope_overview` and the
+    memory IS a cold-endorsement memory (count = 1); at the strict 0.0
+    default it is NOT (count = 0). Both `memory_scope_overview` and the
     `curation_hint` block must surface the 0.5 reading.
     """
     from bettermemory.config import BehaviorConfig
 
     # Build the server with the loosened threshold and a low
-    # curation-hint threshold so a single endorsement_debt entry trips
+    # curation-hint threshold so a single cold-endorsement entry trips
     # the inline nudge on `memory_write`.
     cfg = Config(
         storage=StorageConfig(directory=str(memory_dir)),
         behavior=BehaviorConfig(
-            endorsement_debt_ratio_threshold=0.5,
+            cold_endorsement_ratio_threshold=0.5,
             curation_hint_threshold=1,
         ),
     )
@@ -5036,7 +5037,8 @@ async def test_endorsement_debt_ratio_threshold_threaded_to_all_callsites(
 
     # Write the candidate memory through the server so it lives in the
     # store with a real id. Use an `infrastructure` scope so it isn't
-    # tagged ambient (ambient memories never land in endorsement_debt).
+    # tagged ambient (ambient memories never land in
+    # cold_endorsement_memories).
     written = await _call(
         server_x,
         "memory_write",
@@ -5046,7 +5048,7 @@ async def test_endorsement_debt_ratio_threshold_threaded_to_all_callsites(
     mem_id = written["id"]
 
     # Seed events directly into the active log so the retrieval /
-    # applied counts cross the endorsement-debt floor (5 retrievals).
+    # applied counts cross the cold-endorsement floor (5 retrievals).
     # We bypass the recorder here because the recorder timestamps with
     # `_utcnow_iso()` and we want determinism; the on-disk format is
     # one JSON object per line, so a direct append matches what
@@ -5095,17 +5097,17 @@ async def test_endorsement_debt_ratio_threshold_threaded_to_all_callsites(
 
     # --- Surface 1: memory_scope_overview ---
     overview = await _call(server_x, "memory_scope_overview", auto_scope=False)
-    assert overview["curation_pending"]["endorsement_debt"] == 1, (
+    assert overview["curation_pending"]["cold_endorsement_memories"] == 1, (
         "scope_overview must apply the configured threshold (0.5); the "
         "seeded memory has ratio 1/4 = 0.25 < 0.5 and should land in the "
-        "endorsement_debt bucket."
+        "cold_endorsement_memories bucket."
     )
 
     # --- Surface 2: curation_hint on memory_write ---
     # Fresh SessionState so the one-shot `curation_hint_checked` flag
     # is False, and a real event store so the second callsite walks
     # the same seeded log. With curation_hint_threshold=1 and at least
-    # one endorsement_debt entry, the hint must attach.
+    # one cold-endorsement entry, the hint must attach.
     server_hint = build_server(
         config=cfg,
         store=Store(memory_dir),
@@ -5121,16 +5123,17 @@ async def test_endorsement_debt_ratio_threshold_threaded_to_all_callsites(
         "curation_hint on memory_write must also see the loosened "
         "threshold; otherwise the hint disagrees with the overview."
     )
-    assert hint_res["curation_hint"]["counts"]["endorsement_debt"] == 1
+    assert hint_res["curation_hint"]["counts"]["cold_endorsement_memories"] == 1
 
 
-async def test_endorsement_debt_ratio_threshold_default_still_strict(
+async def test_cold_endorsement_ratio_threshold_default_still_strict(
     memory_dir: Path,
 ) -> None:
     """Back-compat: with the default 0.0 threshold, the same seeded
     state (one explicit applied present) must NOT count as
-    endorsement_debt on any surface. This locks the default behaviour
-    against accidental loosening when threading the knob through."""
+    cold_endorsement_memories on any surface. This locks the default
+    behaviour against accidental loosening when threading the knob
+    through."""
     cfg = Config(storage=StorageConfig(directory=str(memory_dir)))
     server_x = build_server(
         config=cfg,
@@ -5186,7 +5189,7 @@ async def test_endorsement_debt_ratio_threshold_default_still_strict(
         f.write(("\n".join(extra_lines) + "\n").encode("utf-8"))
 
     overview = await _call(server_x, "memory_scope_overview", auto_scope=False)
-    assert overview["curation_pending"]["endorsement_debt"] == 0
+    assert overview["curation_pending"]["cold_endorsement_memories"] == 0
 
 
 # ---------------------------------------------------------------------------

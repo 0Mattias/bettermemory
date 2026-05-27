@@ -109,8 +109,8 @@ def test_default_config_round_trips_through_load_config(tmp_path: Path) -> None:
         == fresh.behavior.heavily_used_min_applied
     )
     assert (
-        loaded.behavior.endorsement_debt_ratio_threshold
-        == fresh.behavior.endorsement_debt_ratio_threshold
+        loaded.behavior.cold_endorsement_ratio_threshold
+        == fresh.behavior.cold_endorsement_ratio_threshold
     )
     assert (
         loaded.behavior.tombstone_retention_days

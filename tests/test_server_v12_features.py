@@ -1048,7 +1048,7 @@ async def test_scope_overview_returns_curation_pending(server: Any) -> None:
         "dead",
         "silent_misses",
         "unique_silent_miss_memories",
-        "endorsement_debt",
+        "cold_endorsement_memories",
     }
     # All counts must be integers.
     for v in res["curation_pending"].values():
@@ -1065,7 +1065,7 @@ async def test_scope_overview_curation_pending_zero_on_empty(server: Any) -> Non
         "dead": 0,
         "silent_misses": 0,
         "unique_silent_miss_memories": 0,
-        "endorsement_debt": 0,
+        "cold_endorsement_memories": 0,
     }
 
 
@@ -1101,7 +1101,8 @@ def test_desc_memory_scope_overview_enumerates_curation_pending_keys() -> None:
 
     # The prose lays out the rollup as:
     #     "{stale, never_verified, drifted, cold, dead, "
-    #     "silent_misses, unique_silent_miss_memories, endorsement_debt}"
+    #     "silent_misses, unique_silent_miss_memories, "
+    #     "cold_endorsement_memories}"
     # The literal C-style string concatenation in the source becomes one
     # contiguous "{...}" at runtime — the regex matches that block.
     match = re.search(r"\{([a-z_,\s]+)\}", DESC_MEMORY_SCOPE_OVERVIEW)
@@ -1121,7 +1122,7 @@ def test_desc_memory_scope_overview_enumerates_curation_pending_keys() -> None:
         "dead",
         "silent_misses",
         "unique_silent_miss_memories",
-        "endorsement_debt",
+        "cold_endorsement_memories",
     }
     assert extracted == expected, (
         "DESC_MEMORY_SCOPE_OVERVIEW's curation_pending key list drifted "
@@ -1175,7 +1176,7 @@ def test_desc_memory_health_enumerates_report_bucket_keys() -> None:
         # model can switch over them; not bucket names.
         "remove_dead_weight",
         "resolve_contradicted",
-        "cleanup_endorsement_debt",
+        "cleanup_cold_endorsements",
         "verify_drifted",
         "fix_typo_scopes",
         # `silent_misses` sub-fields — documented inline to explain the
@@ -1208,7 +1209,7 @@ def test_desc_memory_health_enumerates_report_bucket_keys() -> None:
         "verification_debt",
         "commit_drift_debt",
         "silent_misses",
-        "endorsement_debt",
+        "cold_endorsement_memories",
         "scope_distribution",
         "scope_health",
         "rare_scopes",
@@ -1223,6 +1224,55 @@ def test_desc_memory_health_enumerates_report_bucket_keys() -> None:
         f"{sorted(expected - extracted)}. Sync the docstring with the "
         "report's wire shape — clients build mental models from this "
         "description."
+    )
+
+
+def test_desc_strings_use_cold_endorsement_memories_not_endorsement_debt() -> None:
+    """Pin the rename target: the DESC strings for `memory_health` and
+    `memory_scope_overview` must enumerate the NEW name
+    `cold_endorsement_memories` and NOT the OLD `endorsement_debt`.
+
+    Catches future drift where someone copy-pastes prose from an older
+    release or a stale comment back into the active DESC strings. The
+    old name was renamed because it suggested per-turn counting; any
+    re-introduction silently regresses the dashboard-clarity fix.
+
+    Recommendation-kind drift is covered alongside: the
+    `cleanup_cold_endorsements` recommendation kind must appear, and
+    the legacy `cleanup_endorsement_debt` must not."""
+    from bettermemory.handlers.health import DESC_MEMORY_HEALTH
+    from bettermemory.handlers.scope_overview import DESC_MEMORY_SCOPE_OVERVIEW
+    from bettermemory.handlers.write import DESC_MEMORY_WRITE
+
+    for desc_name, desc in (
+        ("DESC_MEMORY_HEALTH", DESC_MEMORY_HEALTH),
+        ("DESC_MEMORY_SCOPE_OVERVIEW", DESC_MEMORY_SCOPE_OVERVIEW),
+        ("DESC_MEMORY_WRITE", DESC_MEMORY_WRITE),
+    ):
+        assert "endorsement_debt" not in desc, (
+            f"{desc_name} still references the legacy `endorsement_debt` "
+            "name. Rename to `cold_endorsement_memories` — the field was "
+            "renamed because it counts memories, not turns, and "
+            "endorsement_debt misled readers into per-turn interpretation."
+        )
+        assert "cleanup_endorsement_debt" not in desc, (
+            f"{desc_name} still references the legacy "
+            "`cleanup_endorsement_debt` recommendation kind. Rename to "
+            "`cleanup_cold_endorsements`."
+        )
+
+    assert "cold_endorsement_memories" in DESC_MEMORY_HEALTH, (
+        "DESC_MEMORY_HEALTH must enumerate `cold_endorsement_memories` "
+        "so the model knows the bucket exists and what it counts."
+    )
+    assert "cold_endorsement_memories" in DESC_MEMORY_SCOPE_OVERVIEW, (
+        "DESC_MEMORY_SCOPE_OVERVIEW must enumerate "
+        "`cold_endorsement_memories` in the curation_pending rollup."
+    )
+    assert "cleanup_cold_endorsements" in DESC_MEMORY_HEALTH, (
+        "DESC_MEMORY_HEALTH must enumerate `cleanup_cold_endorsements` "
+        "in the closed recommendation-kinds set so the model can "
+        "switch over the kind exhaustively."
     )
 
 

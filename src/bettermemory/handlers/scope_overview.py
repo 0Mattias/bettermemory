@@ -33,16 +33,21 @@ DESC_MEMORY_SCOPE_OVERVIEW = (
     "`curation_pending` is an integer-count rollup the model "
     "should branch on:\n"
     "  {stale, never_verified, drifted, cold, dead, "
-    "silent_misses, unique_silent_miss_memories, endorsement_debt}\n"
+    "silent_misses, unique_silent_miss_memories, "
+    "cold_endorsement_memories}\n"
     "Any non-zero `dead` or `drifted` is a cue to suggest a "
     "curation pass when the conversation has time. Non-zero "
-    "`silent_misses` / `endorsement_debt` means the audit-turn "
-    "telemetry has actionable backlog. `silent_misses` counts "
-    "events; `unique_silent_miss_memories` counts the distinct "
-    "memories those misses pointed at (dedup'd by top-hit id) — "
-    "the gap between the two flags `9 events against 1 memory` "
-    "vs. `9 events across 9 memories`. Misses whose top-hit "
-    "memory has been tombstoned are excluded from both counters.\n\n"
+    "`silent_misses` / `cold_endorsement_memories` means the "
+    "audit-turn telemetry has actionable backlog. `silent_misses` "
+    "counts events; `unique_silent_miss_memories` counts the "
+    "distinct memories those misses pointed at (dedup'd by top-hit "
+    "id) — the gap between the two flags `9 events against 1 "
+    "memory` vs. `9 events across 9 memories`. Misses whose "
+    "top-hit memory has been tombstoned are excluded from both "
+    "counters. `cold_endorsement_memories` counts distinct "
+    "memories (NOT turns) with `retrieval_count >= N` AND zero "
+    "explicit applies — usually a sign the memory is over-surfaced "
+    "or stale; one memory hit 50 times contributes 1, not 50.\n\n"
     "`recently_removed_in_worktree` is the integer count of "
     "tombstones removed in the trailing 7 days; under "
     "`auto_scope=True` it's filtered to this worktree (tombstones "
@@ -158,8 +163,8 @@ async def memory_scope_overview(
         events_snapshot,
         window_days=30,
         verification_stale_days=deps.config.behavior.verification_stale_days,
-        endorsement_debt_ratio_threshold=(
-            deps.config.behavior.endorsement_debt_ratio_threshold
+        cold_endorsement_ratio_threshold=(
+            deps.config.behavior.cold_endorsement_ratio_threshold
         ),
         caller_origin=current_origin,
         tombstoned_ids=tombstoned_ids,
@@ -195,8 +200,8 @@ async def memory_scope_overview(
             events_snapshot,
             window_days=30,
             verification_stale_days=deps.config.behavior.verification_stale_days,
-            endorsement_debt_ratio_threshold=(
-                deps.config.behavior.endorsement_debt_ratio_threshold
+            cold_endorsement_ratio_threshold=(
+                deps.config.behavior.cold_endorsement_ratio_threshold
             ),
             caller_origin=current_origin,
             since=prior_boundary,

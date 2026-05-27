@@ -464,9 +464,9 @@ def _maybe_attach_curation_hint(
     `load_all` of the memory directory. Both are bounded (rotation
     cap on the log, store size in practice). Paid once per session
     because the underlying counts (dead_weight, drifted,
-    endorsement_debt) accumulate across sessions and don't shift
-    meaningfully within one, so re-walking on every write would burn
-    cost for no signal.
+    cold_endorsement_memories) accumulate across sessions and don't
+    shift meaningfully within one, so re-walking on every write
+    would burn cost for no signal.
     """
     if state.curation_hint_checked:
         return
@@ -489,9 +489,9 @@ def _maybe_attach_curation_hint(
         iter_all_events(deps.store.root),
         window_days=30,
         verification_stale_days=behavior.verification_stale_days,
-        endorsement_debt_ratio_threshold=behavior.endorsement_debt_ratio_threshold,
+        cold_endorsement_ratio_threshold=behavior.cold_endorsement_ratio_threshold,
     )
-    pressure = counts["dead"] + counts["drifted"] + counts["endorsement_debt"]
+    pressure = counts["dead"] + counts["drifted"] + counts["cold_endorsement_memories"]
     if pressure < threshold:
         return
 
@@ -501,14 +501,15 @@ def _maybe_attach_curation_hint(
         "counts": {
             "dead_weight": counts["dead"],
             "drifted": counts["drifted"],
-            "endorsement_debt": counts["endorsement_debt"],
+            "cold_endorsement_memories": counts["cold_endorsement_memories"],
         },
         "message": (
             f"Curation pressure {pressure} >= threshold {threshold}: "
             f"{counts['dead']} dead_weight + {counts['drifted']} drifted + "
-            f"{counts['endorsement_debt']} endorsement_debt. Call "
-            "memory_health for full buckets; memory_remove or "
-            "memory_verify to resolve. One-shot per session."
+            f"{counts['cold_endorsement_memories']} "
+            "cold_endorsement_memories. Call memory_health for full "
+            "buckets; memory_remove or memory_verify to resolve. "
+            "One-shot per session."
         ),
     }
 

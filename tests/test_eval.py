@@ -738,7 +738,7 @@ class TestCLI:
         assert parsed["counts"]["retrieval_occurrences"] == 0
         assert parsed["memory_helped_rate"]["rate"] is None
         assert (
-            parsed["endorsement_debt"]["min_retrievals"]
+            parsed["cold_endorsement_memories"]["min_retrievals"]
             == DEFAULT_ENDORSEMENT_MIN_RETRIEVALS
         )
         assert parsed["window_seconds"] is None  # 'all'

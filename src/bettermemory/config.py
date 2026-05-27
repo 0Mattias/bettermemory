@@ -113,15 +113,15 @@ semantic_medium_threshold = 0.65
 # once the event log has weeks of data.
 heavily_used_min_applied = 3
 
-# Endorsement-debt ratio threshold (0.0-1.0). When > 0, the
-# `endorsement_debt` bucket in `memory_health` ALSO flags memories whose
-# explicit-applied / total-applied ratio falls below this fraction —
-# catching the "1 explicit endorsement out of 50 auto" case the
-# strict "explicit == 0" check misses. Default 0.0 keeps the strict
-# behaviour (only zero-explicit memories surface). Set to 0.1 to
-# additionally surface memories where less than 10% of applies are
-# explicit endorsements.
-endorsement_debt_ratio_threshold = 0.0
+# Cold-endorsement ratio threshold (0.0-1.0). When > 0, the
+# `cold_endorsement_memories` bucket in `memory_health` ALSO flags
+# memories whose explicit-applied / total-applied ratio falls below
+# this fraction — catching the "1 explicit endorsement out of 50
+# auto" case the strict "explicit == 0" check misses. Default 0.0
+# keeps the strict behaviour (only zero-explicit memories surface).
+# Set to 0.1 to additionally surface memories where less than 10% of
+# applies are explicit endorsements.
+cold_endorsement_ratio_threshold = 0.0
 
 # Days after `last_verified_at` past which a memory's verification is
 # considered "stale" — the retrieval surface attaches a re-spot-check
@@ -175,15 +175,16 @@ max_takeaway_bytes = 4096
 max_scopes_per_write = 64
 
 # Passive in-conversation curation surface. When the sum of dead_weight
-# + drifted + endorsement_debt counts (the `curation_pending` rollup
-# you'd otherwise have to call `memory_scope_overview` to see) crosses
-# this threshold, the FIRST successful `memory_write` of each session
-# inlines a one-line `curation_hint` block on its response so a model
-# that never asks for the overview still gets the nudge. One-shot per
-# session — subsequent writes stay quiet. Pull-based discovery via
-# `memory_health` / `memory_scope_overview` remains the primary path;
-# this is a non-detour notification. Set to 0 to disable numerically,
-# or set `curation_hint_enabled = false` to disable structurally.
+# + drifted + cold_endorsement_memories counts (the `curation_pending`
+# rollup you'd otherwise have to call `memory_scope_overview` to see)
+# crosses this threshold, the FIRST successful `memory_write` of each
+# session inlines a one-line `curation_hint` block on its response so
+# a model that never asks for the overview still gets the nudge.
+# One-shot per session — subsequent writes stay quiet. Pull-based
+# discovery via `memory_health` / `memory_scope_overview` remains the
+# primary path; this is a non-detour notification. Set to 0 to disable
+# numerically, or set `curation_hint_enabled = false` to disable
+# structurally.
 curation_hint_threshold = 5
 curation_hint_enabled = true
 
@@ -259,15 +260,15 @@ class BehaviorConfig:
     # of seeing fewer rows when the event log is young; lowering it makes
     # the bucket more inclusive for fresh stores. Tune to taste.
     heavily_used_min_applied: int = 3
-    # Endorsement-debt ratio threshold (0.0-1.0). When > 0, the
-    # endorsement_debt bucket also flags memories whose
+    # Cold-endorsement ratio threshold (0.0-1.0). When > 0, the
+    # cold_endorsement_memories bucket also flags memories whose
     # explicit/total-applied ratio falls below this fraction, catching
     # the "1 explicit out of 50 auto" case the binary "explicit == 0"
     # check misses. Default 0.0 preserves the original strict
     # semantics (must have ZERO explicit endorsements to land in the
     # bucket). Try 0.1 to surface memories where less than 10% of
     # applies are explicit endorsements.
-    endorsement_debt_ratio_threshold: float = 0.0
+    cold_endorsement_ratio_threshold: float = 0.0
     # Default --older-than (days) for `bettermemory tombstones prune`.
     # 0 means "no default" — the CLI requires the flag explicitly.
     # Tombstones are never auto-pruned at runtime; this only affects
@@ -311,7 +312,7 @@ class BehaviorConfig:
     # handler-boundary cap (the model-layer cap still fires).
     max_scopes_per_write: int = 64
     # One-shot per-session passive curation hint. When the sum of
-    # dead_weight + drifted + endorsement_debt counts (the
+    # dead_weight + drifted + cold_endorsement_memories counts (the
     # `curation_pending` rollup the model would otherwise have to
     # call `memory_scope_overview` to see) exceeds this threshold,
     # the first successful `memory_write` of the session inlines a
@@ -506,8 +507,8 @@ def load_config(path: Path | None = None) -> Config:
             heavily_used_min_applied=int(
                 behavior_raw.get("heavily_used_min_applied", 3)
             ),
-            endorsement_debt_ratio_threshold=float(
-                behavior_raw.get("endorsement_debt_ratio_threshold", 0.0)
+            cold_endorsement_ratio_threshold=float(
+                behavior_raw.get("cold_endorsement_ratio_threshold", 0.0)
             ),
             tombstone_retention_days=int(
                 behavior_raw.get("tombstone_retention_days", 0)

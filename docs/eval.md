@@ -38,7 +38,7 @@ Numerator: per-memory-id references inside `record_use` events with `outcome="ap
 
 Denominator: per-memory-id references inside all `record_use` events with `outcome="applied"` (same per-id granularity as the numerator).
 
-This is the dead-letter detector. A low rate (mostly auto-applied) means nothing produced evidence the retrieval shaped a reply — the model didn't explicitly endorse, and the hook didn't find a substring match either. The companion view in `memory_health` is `endorsement_debt`: memories with `retrieval_count >= 5` AND `explicit_applied_count == 0`. With hook attribution counting toward `explicit_applied_count`, this bucket narrows to memories that retrieve frequently but never visibly shape a reply — a tighter signal for what's worth pruning.
+This is the dead-letter detector. A low rate (mostly auto-applied) means nothing produced evidence the retrieval shaped a reply — the model didn't explicitly endorse, and the hook didn't find a substring match either. The companion view in `memory_health` is `cold_endorsement_memories`: distinct memories (per-memory, not per-turn) with `retrieval_count >= 5` AND `explicit_applied_count == 0`. With hook attribution counting toward `explicit_applied_count`, this bucket narrows to memories that retrieve frequently but never visibly shape a reply — a tighter signal for what's worth pruning.
 
 ### `silent_miss_rate`
 

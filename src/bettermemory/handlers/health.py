@@ -43,14 +43,17 @@ DESC_MEMORY_HEALTH = (
     "fresh against `verification_stale_days`.\n"
     "- `commit_drift_debt` — when the server's in the memory's "
     "origin repo, memories with commits since last_verified_at.\n"
-    "- `silent_misses` / `endorsement_debt` — populated when "
-    "`memory_audit_turn` has been firing (see that tool). The "
+    "- `silent_misses` / `cold_endorsement_memories` — populated "
+    "when `memory_audit_turn` has been firing (see that tool). The "
     "`silent_misses` payload carries `{audited_total, miss_total, "
     "unique_miss_memories}`: `miss_total` counts events, "
     "`unique_miss_memories` counts the distinct memories those "
     "misses pointed at (dedup'd by top-hit id). Misses against "
     "tombstoned memories are dropped from both — no longer "
-    "actionable.\n"
+    "actionable. `cold_endorsement_memories` counts distinct "
+    "memories (NOT turns) with `retrieval_count >= N` AND zero "
+    "explicit applies — usually a sign the memory is over-surfaced "
+    "by the ranker or stale.\n"
     "- `scope_distribution` + `scope_health` per-scope rollup; "
     "`rare_scopes` flags Levenshtein-near-others singletons "
     "(likely typos — fix with memory_rename_scope).\n"
@@ -61,7 +64,7 @@ DESC_MEMORY_HEALTH = (
     "buckets above that crossed thresholds. Each entry: `{kind, "
     "summary, action, count, memory_ids, scope}` where `kind` is "
     "one of `remove_dead_weight` / `resolve_contradicted` / "
-    "`cleanup_endorsement_debt` / `verify_drifted` / "
+    "`cleanup_cold_endorsements` / `verify_drifted` / "
     "`fix_typo_scopes`; empty list means nothing crossed.\n\n"
     "CLI equivalent: `bettermemory health [--json]`."
 )
@@ -94,8 +97,8 @@ async def memory_health(
         heavily_used_top_k=int(heavily_used_top_k),
         heavily_used_min_applied=threshold,
         verification_stale_days=deps.config.behavior.verification_stale_days,
-        endorsement_debt_ratio_threshold=(
-            deps.config.behavior.endorsement_debt_ratio_threshold
+        cold_endorsement_ratio_threshold=(
+            deps.config.behavior.cold_endorsement_ratio_threshold
         ),
         # Pass caller_origin so the cwd-aware `commit_drift_debt`
         # rollup populates when the server is running inside a repo

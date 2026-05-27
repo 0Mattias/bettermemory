@@ -60,8 +60,8 @@ from .time_utils import parse_event_ts
 # site.
 DEFAULT_SINCE_SPEC = "30d"
 
-# Default floor for ``endorsement_debt`` row inclusion. Shared with
-# ``health._ENDORSEMENT_DEBT_MIN_RETRIEVALS`` — duplicating the literal
+# Default floor for endorsement-debt row inclusion. Shared with
+# ``health._COLD_ENDORSEMENT_MIN_RETRIEVALS`` — duplicating the literal
 # keeps the module dependency-light (we don't reach into health's
 # privates), and the value is conservative enough that drift between
 # the two would be inert in practice.
@@ -255,7 +255,7 @@ class EvalReport:
             "memory_helped_rate": self.memory_helped_rate.to_dict(),
             "endorsement_rate": self.endorsement_rate.to_dict(),
             "silent_miss_rate": self.silent_miss_rate.to_dict(),
-            "endorsement_debt": {
+            "cold_endorsement_memories": {
                 "min_retrievals": self.endorsement_min_retrievals,
                 "total": self.endorsement_debt_total,
                 "rows": [r.to_dict() for r in self.endorsement_debt_rows],
@@ -316,7 +316,7 @@ def compute_eval(
 
     A memory that's been tombstoned (no longer in ``memories``) still
     counts toward retrieval / use occurrences — we attribute via id, not
-    via live status — but it cannot participate in ``endorsement_debt``
+    via live status — but it cannot participate in endorsement-debt
     rows because we need its body/scopes for display.
     """
     now = now or datetime.now(timezone.utc)
@@ -480,8 +480,8 @@ def compute_eval(
 
     # Endorsement-debt rows: retrieval_count >= floor AND
     # explicit_applied_count == 0. Ambient memories are excluded — same
-    # rationale as health's endorsement_debt bucket (their value is
-    # implicit; an explicit use event is structurally rare).
+    # rationale as health's cold_endorsement_memories bucket (their
+    # value is implicit; an explicit use event is structurally rare).
     floor = max(1, int(endorsement_min_retrievals))
     debt_rows: list[EndorsementDebtRow] = []
     debt_total = 0

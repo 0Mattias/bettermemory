@@ -149,7 +149,7 @@ class SessionState:
     # check that may inline a hint on the first `memory_write` of a
     # session. Set True the first time the check runs regardless of
     # whether the threshold was crossed — dead_weight, drifted, and
-    # endorsement_debt all accumulate across sessions and don't move
+    # cold_endorsement_memories all accumulate across sessions and don't move
     # meaningfully within one, so a single check at first write is
     # the right cadence. Keeps the model from re-walking the event
     # log on every subsequent write.

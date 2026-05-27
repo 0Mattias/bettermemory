@@ -89,7 +89,7 @@ class MemoryStats:
     # `auto_applied_count` with zero `explicit_applied_count` is the
     # "weakly endorsed" signal: the ranker keeps surfacing it, the auto
     # pass keeps logging it, but the model never deliberately reaches
-    # for it. Pairs with the endorsement_debt rollup.
+    # for it. Pairs with the cold_endorsement_memories rollup.
     auto_applied_count: int = 0
     # The model called memory_record_use(applied) directly. The
     # deliberate-endorsement signal; a non-zero value means at least
@@ -299,23 +299,23 @@ class VerificationDebt:
 _VERIFICATION_DEBT_CAP = 20
 
 # Minimum `retrieval_count` for a memory to be eligible for the
-# `endorsement_debt` bucket. Below this floor we treat the absence of
-# explicit endorsement as "not enough traffic to judge" rather than a
-# real signal. Five mirrors the same intuition behind
+# `cold_endorsement_memories` bucket. Below this floor we treat the
+# absence of explicit endorsement as "not enough traffic to judge"
+# rather than a real signal. Five mirrors the same intuition behind
 # `heavily_used_min_applied=3`: a handful of retrievals is enough to
 # call a pattern, fewer is single-incident noise. Tunable inline on
 # the compute_health call so tests can lower the floor without forcing
 # a config bump for the common case.
-_ENDORSEMENT_DEBT_MIN_RETRIEVALS = 5
+_COLD_ENDORSEMENT_MIN_RETRIEVALS = 5
 
 # Cap the inline row list. Same shape as the verification_debt and
 # commit_drift_debt rollups — uncapped `total` for the bucket size,
 # capped rows for inline display.
-_ENDORSEMENT_DEBT_CAP = 20
+_COLD_ENDORSEMENT_CAP = 20
 
 
 def _is_weakly_endorsed(stats: MemoryStats, ratio_threshold: float) -> bool:
-    """Predicate for the endorsement_debt bucket.
+    """Predicate for the cold_endorsement_memories bucket.
 
     Returns True when the memory looks weakly endorsed under either
     of two checks:
@@ -412,23 +412,29 @@ _COMMIT_DRIFT_DEBT_CAP = 20
 
 
 @dataclass
-class EndorsementDebt:
+class ColdEndorsementMemories:
     """Curation pivot for retrieved-but-never-endorsed memories.
 
-    A memory the ranker keeps surfacing (`retrieval_count >=
-    min_retrievals`) but the model never deliberately reaches for
-    (`explicit_applied_count == 0`) is the *weakly endorsed* pattern.
-    The server's auto-commit pass has been closing the loop on every
-    retrieval, but no `memory_record_use(applied)` has ever fired
-    explicitly. Either the memory IS useful and deserves a deliberate
-    spot-check (verify + an explicit applied on the next hit), or the
-    ranker is over-surfacing it and the right move is a narrower scope
-    or a removal.
+    Counts MEMORIES, not turns: every entry is one distinct memory
+    that crossed the retrieval floor (`retrieval_count >=
+    min_retrievals`) AND has `explicit_applied_count == 0` (or, when
+    the ratio threshold is on, a ratio of explicit-to-total applies
+    below the threshold). A single memory hit 50 times by the ranker
+    contributes ONE row, not 50 — the bucket is "memories whose
+    endorsement signal is cold despite heavy retrieval," not a count
+    of cold-endorsement events.
+
+    The "weakly endorsed" pattern: the server's auto-commit pass has
+    been closing the loop on every retrieval, but no
+    `memory_record_use(applied)` has ever fired explicitly. Either the
+    memory IS useful and deserves a deliberate spot-check (verify + an
+    explicit applied on the next hit), or the ranker is over-surfacing
+    it and the right move is a narrower scope or a removal.
 
     Distinct from `dead_weight` (retrieved but never *applied* at all,
     auto included): dead_weight says the model doesn't even let the
     auto pass run on this — it must have called something that purged
-    the use-token without recording. Endorsement-debt says the
+    the use-token without recording. Cold-endorsement says the
     opposite: applies happened, but every single one was the auto
     fallback. The two together cover the spectrum of "applied signal
     is weak."
@@ -440,7 +446,8 @@ class EndorsementDebt:
 
     Same shape as `VerificationDebt`: capped `rows` for inline display
     plus an uncapped `total` so a downstream reader can distinguish
-    "3 weakly endorsed" from "300 weakly endorsed" without re-counting.
+    "3 weakly endorsed memories" from "300 weakly endorsed memories"
+    without re-counting.
     """
 
     min_retrievals: int
@@ -505,7 +512,7 @@ class Recommendation:
     """One actionable curation suggestion distilled from the bucket
     rollups.
 
-    The buckets (dead_weight, contradicted, endorsement_debt,
+    The buckets (dead_weight, contradicted, cold_endorsement_memories,
     rare_scopes, commit_drift_debt) carry the raw rows. A
     Recommendation collapses each one into "you have N memories of
     kind K, here's the one-line action that resolves them." Designed
@@ -548,9 +555,9 @@ class Recommendation:
 _RECOMMENDATION_ROW_CAP = 10
 
 # Minimum bucket size that triggers a recommendation for size-driven
-# kinds (dead_weight, endorsement_debt, drifted). Below this floor the
-# bucket is too small to warrant a proactive surface — the model
-# doesn't need to be nudged to remove 1 dead-weight memory. The
+# kinds (dead_weight, cold_endorsement_memories, drifted). Below this
+# floor the bucket is too small to warrant a proactive surface — the
+# model doesn't need to be nudged to remove 1 dead-weight memory. The
 # contradicted and rare_scopes recommendations use floor=1 because
 # even a single instance is actionable (one stuck contradiction is
 # still a stuck contradiction; one typo singleton is still a typo).
@@ -562,7 +569,7 @@ _RECOMMENDATION_SIZE_FLOOR = 3
 RECOMMENDATION_KINDS: tuple[str, ...] = (
     "remove_dead_weight",
     "resolve_contradicted",
-    "cleanup_endorsement_debt",
+    "cleanup_cold_endorsements",
     "verify_drifted",
     "fix_typo_scopes",
 )
@@ -636,15 +643,18 @@ class HealthReport:
     # window (or fired but only produced no_signal verdicts) — distinct
     # from "audited heavily, no misses found."
     silent_misses: SilentMissStats = field(default_factory=SilentMissStats)
-    # Endorsement-debt rollup — memories the ranker keeps surfacing
-    # (retrieval_count >= min) but the model never explicitly endorses
-    # (explicit_applied_count == 0). The "weakly endorsed" pattern;
-    # complement to dead_weight (which is "never applied at all"). Empty
-    # bucket = either no memory has crossed the retrieval floor or every
-    # heavily-retrieved memory has at least one explicit applied event.
-    endorsement_debt: EndorsementDebt = field(
-        default_factory=lambda: EndorsementDebt(
-            min_retrievals=_ENDORSEMENT_DEBT_MIN_RETRIEVALS,
+    # Cold-endorsement-memories rollup — counts distinct memories the
+    # ranker keeps surfacing (retrieval_count >= min) but the model
+    # never explicitly endorses (explicit_applied_count == 0). The
+    # "weakly endorsed" pattern; complement to dead_weight (which is
+    # "never applied at all"). One memory hit 50 times contributes 1
+    # to total, not 50 — this is a per-memory count, not a per-event
+    # or per-turn count. Empty bucket = either no memory has crossed
+    # the retrieval floor or every heavily-retrieved memory has at
+    # least one explicit applied event.
+    cold_endorsement_memories: ColdEndorsementMemories = field(
+        default_factory=lambda: ColdEndorsementMemories(
+            min_retrievals=_COLD_ENDORSEMENT_MIN_RETRIEVALS,
         )
     )
     # Proactive curation recommendations distilled from the buckets
@@ -679,7 +689,7 @@ class HealthReport:
                 else None
             ),
             "silent_misses": self.silent_misses.to_dict(),
-            "endorsement_debt": self.endorsement_debt.to_dict(),
+            "cold_endorsement_memories": self.cold_endorsement_memories.to_dict(),
             "recommendations": [r.to_dict() for r in self.recommendations],
         }
 
@@ -1009,8 +1019,8 @@ def compute_health(
     heavily_used_top_k: int = 10,
     heavily_used_min_applied: int = 3,
     verification_stale_days: int = 30,
-    endorsement_debt_min_retrievals: int = _ENDORSEMENT_DEBT_MIN_RETRIEVALS,
-    endorsement_debt_ratio_threshold: float = 0.0,
+    cold_endorsement_min_retrievals: int = _COLD_ENDORSEMENT_MIN_RETRIEVALS,
+    cold_endorsement_ratio_threshold: float = 0.0,
     caller_origin: Origin | None = None,
     now: datetime | None = None,
     tombstoned_ids: set[str] | None = None,
@@ -1245,24 +1255,25 @@ def compute_health(
         caller_origin=caller_origin,
     )
 
-    # Endorsement debt — memories the ranker keeps surfacing (retrieval
-    # crossed the floor) that the model has never explicitly endorsed
-    # (zero `explicit_applied_count`). Ambient excluded by construction
-    # — their value is implicit and they're structurally unlikely to
-    # carry explicit use events. Sort by retrieval_count desc (most
-    # over-surfaced first), then by last_used_at desc so the rows
-    # surface "actively over-surfaced" before "historically
-    # over-surfaced." The bucket is uncapped in `total`; rows are
-    # capped at `_ENDORSEMENT_DEBT_CAP` for inline display.
-    endorsement_floor = max(1, int(endorsement_debt_min_retrievals))
+    # Cold-endorsement memories — distinct memories the ranker keeps
+    # surfacing (retrieval crossed the floor) that the model has never
+    # explicitly endorsed (zero `explicit_applied_count`). Ambient
+    # excluded by construction — their value is implicit and they're
+    # structurally unlikely to carry explicit use events. Sort by
+    # retrieval_count desc (most over-surfaced first), then by
+    # last_used_at desc so the rows surface "actively over-surfaced"
+    # before "historically over-surfaced." The bucket is uncapped in
+    # `total`; rows are capped at `_COLD_ENDORSEMENT_CAP` for inline
+    # display.
+    endorsement_floor = max(1, int(cold_endorsement_min_retrievals))
     # Build the predicate once. `explicit_applied_count == 0` is the
     # binary "never deliberately endorsed" signal (the original
-    # bucket semantic). When `endorsement_debt_ratio_threshold > 0`,
+    # bucket semantic). When `cold_endorsement_ratio_threshold > 0`,
     # also flag memories whose explicit-to-total-applied ratio is
     # below the threshold — catches the "1 explicit out of 50 auto"
     # case the binary check misses. Default 0.0 preserves the
     # pre-existing behaviour exactly (the ratio branch never fires).
-    ratio_threshold = max(0.0, float(endorsement_debt_ratio_threshold))
+    ratio_threshold = max(0.0, float(cold_endorsement_ratio_threshold))
     endorsement_candidates = [
         s
         for s in by_id.values()
@@ -1277,9 +1288,9 @@ def compute_health(
         ),
         reverse=True,
     )
-    endorsement_debt = EndorsementDebt(
+    cold_endorsement_memories = ColdEndorsementMemories(
         min_retrievals=endorsement_floor,
-        rows=endorsement_candidates[:_ENDORSEMENT_DEBT_CAP],
+        rows=endorsement_candidates[:_COLD_ENDORSEMENT_CAP],
         total=len(endorsement_candidates),
     )
 
@@ -1306,7 +1317,7 @@ def compute_health(
             cutoff=latest_miss_cutoff,
             tombstoned_ids=tombstoned_ids,
         ),
-        endorsement_debt=endorsement_debt,
+        cold_endorsement_memories=cold_endorsement_memories,
     )
     report.recommendations = _compute_recommendations(report)
     return report
@@ -1317,10 +1328,11 @@ def _compute_recommendations(report: "HealthReport") -> list["Recommendation"]:
 
     Order is fixed (matches `RECOMMENDATION_KINDS`) so the first
     actionable item is the one that most likely warrants attention.
-    Size-driven kinds (dead_weight, endorsement_debt, drifted) only
-    fire when the bucket crosses `_RECOMMENDATION_SIZE_FLOOR`; per-row
-    kinds (contradicted, rare_scopes) fire on first occurrence
-    because each instance is independently actionable.
+    Size-driven kinds (dead_weight, cold_endorsement_memories,
+    drifted) only fire when the bucket crosses
+    `_RECOMMENDATION_SIZE_FLOOR`; per-row kinds (contradicted,
+    rare_scopes) fire on first occurrence because each instance is
+    independently actionable.
     """
     out: list[Recommendation] = []
 
@@ -1365,13 +1377,14 @@ def _compute_recommendations(report: "HealthReport") -> list["Recommendation"]:
             )
         )
 
-    if report.endorsement_debt.total >= _RECOMMENDATION_SIZE_FLOOR:
+    if report.cold_endorsement_memories.total >= _RECOMMENDATION_SIZE_FLOOR:
         out.append(
             Recommendation(
-                kind="cleanup_endorsement_debt",
+                kind="cleanup_cold_endorsements",
                 summary=(
-                    f"{report.endorsement_debt.total} memories crossed the "
-                    f"retrieval floor ({report.endorsement_debt.min_retrievals}+ "
+                    f"{report.cold_endorsement_memories.total} memories "
+                    f"crossed the retrieval floor "
+                    f"({report.cold_endorsement_memories.min_retrievals}+ "
                     "retrievals) but were never explicitly endorsed — the "
                     "auto-applied pass has been closing the loop without "
                     "the model deliberately reaching for them."
@@ -1381,9 +1394,12 @@ def _compute_recommendations(report: "HealthReport") -> list["Recommendation"]:
                     "the signal once you're sure the memories are useful; "
                     "memory_remove on the ones that aren't."
                 ),
-                count=report.endorsement_debt.total,
+                count=report.cold_endorsement_memories.total,
                 memory_ids=[
-                    s.id for s in report.endorsement_debt.rows[:_RECOMMENDATION_ROW_CAP]
+                    s.id
+                    for s in report.cold_endorsement_memories.rows[
+                        :_RECOMMENDATION_ROW_CAP
+                    ]
                 ],
             )
         )
@@ -1669,23 +1685,23 @@ def render_text(report: HealthReport) -> str:
         if debt.stale_total > len(debt.stale):
             lines.append(f"    ... and {debt.stale_total - len(debt.stale)} more")
 
-    ed = report.endorsement_debt
-    if ed.total > 0:
+    ce = report.cold_endorsement_memories
+    if ce.total > 0:
         lines.append("")
         lines.append(
-            f"Endorsement debt ({ed.total}) — retrieved >= "
-            f"{ed.min_retrievals} times, never explicitly applied "
+            f"Cold-endorsement memories ({ce.total}) — retrieved >= "
+            f"{ce.min_retrievals} times, never explicitly applied "
             "(model never deliberately endorsed the memory; every "
             "applied event came from the auto-commit pass):"
         )
-        for s in ed.rows:
+        for s in ce.rows:
             lines.append(
                 f"  {s.id} [retrievals={s.retrieval_count} "
                 f"auto_applied={s.auto_applied_count}] "
                 f"{','.join(s.scopes)}: {s.summary}"
             )
-        if ed.total > len(ed.rows):
-            lines.append(f"  ... and {ed.total - len(ed.rows)} more")
+        if ce.total > len(ce.rows):
+            lines.append(f"  ... and {ce.total - len(ce.rows)} more")
 
     sm = report.silent_misses
     if sm.audited_total > 0 or sm.miss_total > 0:
@@ -1859,8 +1875,8 @@ def curation_counts(
     *,
     window_days: int = 30,
     verification_stale_days: int = 30,
-    endorsement_debt_min_retrievals: int = _ENDORSEMENT_DEBT_MIN_RETRIEVALS,
-    endorsement_debt_ratio_threshold: float = 0.0,
+    cold_endorsement_min_retrievals: int = _COLD_ENDORSEMENT_MIN_RETRIEVALS,
+    cold_endorsement_ratio_threshold: float = 0.0,
     caller_origin: Origin | None = None,
     now: datetime | None = None,
     since: datetime | None = None,
@@ -1871,7 +1887,7 @@ def curation_counts(
     Returns
     ``{"stale", "never_verified", "drifted", "cold", "dead",
     "silent_misses", "unique_silent_miss_memories",
-    "endorsement_debt"}`` —
+    "cold_endorsement_memories"}`` —
     integer counts only, no row materialisation. Used by
     `memory_scope_overview` so the model can see at a glance whether
     the store has anything worth a curation pass without paying the
@@ -1886,9 +1902,10 @@ def curation_counts(
     `unique_silent_miss_memories` is the cardinality of the set of
     top-hit memory_ids on those events — distinguishes "9 events
     against 1 mis-tagged memory" from "9 events against 9 memories."
-    `endorsement_debt` is the count of memories the ranker keeps
-    surfacing (retrieval_count >= min) that the model never explicitly
-    endorsed — same shape decision as silent_misses: surface the
+    `cold_endorsement_memories` is the count of distinct memories the
+    ranker keeps surfacing (retrieval_count >= min) that the model
+    never explicitly endorsed — per-memory, not per-turn or
+    per-event. Same shape decision as silent_misses: surface the
     actionable count, defer the full bucket to compute_health.
 
     Numerical contract: each count must agree with the corresponding
@@ -1921,8 +1938,8 @@ def curation_counts(
     `curation_pending_new_since_last_session`. Retrieval counts in
     delta mode reflect only the post-`since` slice of the event log,
     so a memory written before `since` that has had no new
-    retrievals will not light up `endorsement_debt`. Drift detection
-    follows the same "newly appeared" framing as the other
+    retrievals will not light up `cold_endorsement_memories`. Drift
+    detection follows the same "newly appeared" framing as the other
     state-derived buckets: the drift count is filtered to memories
     created after `since`, so an older row that drifted in the prior
     session won't double-surface in the next session's delta.
@@ -1951,9 +1968,9 @@ def curation_counts(
 
     retrieval_counts: dict[str, int] = {m.id: 0 for m in mem_list}
     applied_counts: dict[str, int] = {m.id: 0 for m in mem_list}
-    # Tracks explicit-only applies for the endorsement_debt count.
-    # An auto-flagged applied event is the server closing the loop,
-    # not the model endorsing — same discriminator
+    # Tracks explicit-only applies for the cold_endorsement_memories
+    # count. An auto-flagged applied event is the server closing the
+    # loop, not the model endorsing — same discriminator
     # `_advance_turn`/`memory_record_use` use.
     explicit_applied_counts: dict[str, int] = {m.id: 0 for m in mem_list}
     # Per-miss-event tuples of `(ts, top_hit_id)`. The id is the first
@@ -2035,8 +2052,8 @@ def curation_counts(
     stale = 0
     cold = 0
     dead = 0
-    endorsement_debt = 0
-    endorsement_floor = max(1, int(endorsement_debt_min_retrievals))
+    cold_endorsement_memories = 0
+    endorsement_floor = max(1, int(cold_endorsement_min_retrievals))
     for m in mem_list:
         is_ambient = m.category == Category.AMBIENT
         if m.last_verified_at is None:
@@ -2050,24 +2067,26 @@ def curation_counts(
                 cold += 1
             elif a == 0:
                 dead += 1
-        # Endorsement-debt count: heavily retrieved (over the floor)
-        # AND weakly endorsed under the same predicate compute_health
-        # uses. Default ratio_threshold=0.0 reduces to the original
-        # binary "no explicit applied event ever" check; setting
-        # ratio_threshold > 0 catches the "1 explicit out of 50 auto"
-        # case. We don't apply the `created < cutoff` window here
-        # because the retrieval floor itself is the "has had time to
-        # accumulate signal" guard.
+        # Cold-endorsement-memories count: heavily retrieved (over the
+        # floor) AND weakly endorsed under the same predicate
+        # compute_health uses. Default ratio_threshold=0.0 reduces to
+        # the original binary "no explicit applied event ever" check;
+        # setting ratio_threshold > 0 catches the "1 explicit out of
+        # 50 auto" case. We don't apply the `created < cutoff` window
+        # here because the retrieval floor itself is the "has had
+        # time to accumulate signal" guard. Per-memory count: one
+        # memory contributes one to the total even if hit hundreds
+        # of times by the ranker.
         if not is_ambient and retrieval_counts.get(m.id, 0) >= endorsement_floor:
             explicit = explicit_applied_counts.get(m.id, 0)
             total_applied = applied_counts.get(m.id, 0)
-            ratio_threshold = max(0.0, float(endorsement_debt_ratio_threshold))
+            ratio_threshold = max(0.0, float(cold_endorsement_ratio_threshold))
             if explicit == 0:
-                endorsement_debt += 1
+                cold_endorsement_memories += 1
             elif ratio_threshold > 0.0 and total_applied > 0:
                 ratio = explicit / total_applied
                 if ratio < ratio_threshold:
-                    endorsement_debt += 1
+                    cold_endorsement_memories += 1
 
     drifted = 0
     if caller_origin is not None and caller_origin.repo and caller_origin.cwd:
@@ -2097,7 +2116,7 @@ def curation_counts(
         "dead": dead,
         "silent_misses": silent_misses,
         "unique_silent_miss_memories": unique_silent_miss_memories,
-        "endorsement_debt": endorsement_debt,
+        "cold_endorsement_memories": cold_endorsement_memories,
     }
 
 
@@ -2159,8 +2178,8 @@ def report_for_directory(
     heavily_used_top_k: int = 10,
     heavily_used_min_applied: int = 3,
     verification_stale_days: int = 30,
-    endorsement_debt_min_retrievals: int = _ENDORSEMENT_DEBT_MIN_RETRIEVALS,
-    endorsement_debt_ratio_threshold: float = 0.0,
+    cold_endorsement_min_retrievals: int = _COLD_ENDORSEMENT_MIN_RETRIEVALS,
+    cold_endorsement_ratio_threshold: float = 0.0,
     caller_origin: Origin | None = None,
     now: datetime | None = None,
 ) -> HealthReport:
@@ -2182,8 +2201,8 @@ def report_for_directory(
         heavily_used_top_k=heavily_used_top_k,
         heavily_used_min_applied=heavily_used_min_applied,
         verification_stale_days=verification_stale_days,
-        endorsement_debt_min_retrievals=endorsement_debt_min_retrievals,
-        endorsement_debt_ratio_threshold=endorsement_debt_ratio_threshold,
+        cold_endorsement_min_retrievals=cold_endorsement_min_retrievals,
+        cold_endorsement_ratio_threshold=cold_endorsement_ratio_threshold,
         caller_origin=caller_origin,
         now=now,
         tombstoned_ids=tombstoned_ids,
@@ -2191,9 +2210,9 @@ def report_for_directory(
 
 
 __all__ = [
+    "ColdEndorsementMemories",
     "CommitDriftDebt",
     "CommitDriftRow",
-    "EndorsementDebt",
     "MemoryStats",
     "MarkerStats",
     "RECOMMENDATION_KINDS",

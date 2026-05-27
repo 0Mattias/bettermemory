@@ -246,7 +246,7 @@ def test_curation_counts_zero_on_empty_store() -> None:
         "dead": 0,
         "silent_misses": 0,
         "unique_silent_miss_memories": 0,
-        "endorsement_debt": 0,
+        "cold_endorsement_memories": 0,
     }
 
 
@@ -362,7 +362,7 @@ def test_curation_counts_since_zero_when_nothing_new() -> None:
         "dead": 0,
         "silent_misses": 0,
         "unique_silent_miss_memories": 0,
-        "endorsement_debt": 0,
+        "cold_endorsement_memories": 0,
     }
 
 
@@ -420,11 +420,11 @@ def test_curation_counts_since_filter_is_exclusive_at_boundary() -> None:
     assert delta["never_verified"] == 0
 
 
-def test_curation_counts_since_filters_endorsement_debt_to_post_boundary() -> None:
-    """`endorsement_debt` rides the same `mem_list` filter as stale /
-    cold / dead, so a heavily-retrieved memory created before `since`
-    must not surface in the delta even if its post-`since` retrievals
-    push it over the floor."""
+def test_curation_counts_since_filters_cold_endorsement_to_post_boundary() -> None:
+    """`cold_endorsement_memories` rides the same `mem_list` filter as
+    stale / cold / dead, so a heavily-retrieved memory created before
+    `since` must not surface in the delta even if its post-`since`
+    retrievals push it over the floor."""
     old = _memory(created=_utc(2026, 1, 1))
     # 10 retrievals all after `since` would normally flag the row;
     # the row itself predates `since` so the delta must exclude it.
@@ -435,17 +435,17 @@ def test_curation_counts_since_filters_endorsement_debt_to_post_boundary() -> No
         [old],
         search_events,
         now=_utc(2026, 5, 1),
-        endorsement_debt_min_retrievals=5,
+        cold_endorsement_min_retrievals=5,
     )
     delta = curation_counts(
         [old],
         search_events,
         now=_utc(2026, 5, 1),
         since=_utc(2026, 4, 10),
-        endorsement_debt_min_retrievals=5,
+        cold_endorsement_min_retrievals=5,
     )
-    assert absolute["endorsement_debt"] == 1
-    assert delta["endorsement_debt"] == 0
+    assert absolute["cold_endorsement_memories"] == 1
+    assert delta["cold_endorsement_memories"] == 0
 
 
 # ---------------------------------------------------------------------------
@@ -2062,13 +2062,17 @@ def test_to_dict_carries_split_counts_and_ratio() -> None:
 
 
 # ---------------------------------------------------------------------------
-# Change D — endorsement_debt rollup
+# Change D — cold_endorsement_memories rollup
 # ---------------------------------------------------------------------------
 
 
-def test_endorsement_debt_picks_up_heavy_retrieval_with_zero_explicit() -> None:
+def test_cold_endorsement_picks_up_heavy_retrieval_with_zero_explicit() -> None:
     """The flagship case: a memory retrieved 5+ times, every applied
-    event was auto, never explicitly endorsed → endorsement_debt."""
+    event was auto, never explicitly endorsed → counts as one
+    cold-endorsement memory.
+
+    Per-memory semantic: the rollup counts MEMORIES, not turns. One
+    memory retrieved 5 times here contributes 1 to total — not 5."""
     m = _memory()
     events = []
     for _ in range(5):
@@ -2077,11 +2081,33 @@ def test_endorsement_debt_picks_up_heavy_retrieval_with_zero_explicit() -> None:
     report = compute_health(
         [m], events, heavily_used_min_applied=1, now=_utc(2026, 5, 1)
     )
-    assert report.endorsement_debt.total == 1
-    assert report.endorsement_debt.rows[0].id == m.id
+    assert report.cold_endorsement_memories.total == 1
+    assert report.cold_endorsement_memories.rows[0].id == m.id
 
 
-def test_endorsement_debt_respects_min_retrievals_floor() -> None:
+def test_cold_endorsement_counts_memories_not_turns() -> None:
+    """Pin the per-memory semantic that motivated the rename: a single
+    memory retrieved many times across many turns contributes ONE to
+    `cold_endorsement_memories.total`, not one per turn or per
+    retrieval event. The old `endorsement_debt` label suggested per-
+    turn counting; this test locks the actual per-memory contract."""
+    m = _memory()
+    events = []
+    # 5 turns, each turn retrieves and auto-applies the same memory.
+    for _ in range(5):
+        events.append(_event("search", returned=[m.id]))
+        events.append(_event("use", ids=[m.id], outcome="applied", auto=True))
+    report = compute_health(
+        [m], events, heavily_used_min_applied=1, now=_utc(2026, 5, 1)
+    )
+    # ONE memory, regardless of how many turns hit it.
+    assert report.cold_endorsement_memories.total == 1
+    # The same value surfaces through curation_counts.
+    counts = curation_counts([m], events, window_days=30, now=_utc(2026, 5, 1))
+    assert counts["cold_endorsement_memories"] == 1
+
+
+def test_cold_endorsement_respects_min_retrievals_floor() -> None:
     """Below the floor (4 retrievals), the memory doesn't qualify —
     not enough traffic to call a pattern."""
     m = _memory()
@@ -2092,12 +2118,12 @@ def test_endorsement_debt_respects_min_retrievals_floor() -> None:
     report = compute_health(
         [m], events, heavily_used_min_applied=1, now=_utc(2026, 5, 1)
     )
-    assert report.endorsement_debt.total == 0
+    assert report.cold_endorsement_memories.total == 0
 
 
-def test_endorsement_debt_excludes_explicitly_endorsed() -> None:
-    """One explicit applied event lifts the memory out of debt — the
-    model has reached for it deliberately at least once."""
+def test_cold_endorsement_excludes_explicitly_endorsed() -> None:
+    """One explicit applied event lifts the memory out of the bucket
+    — the model has reached for it deliberately at least once."""
     m = _memory()
     events = []
     for _ in range(10):
@@ -2108,10 +2134,10 @@ def test_endorsement_debt_excludes_explicitly_endorsed() -> None:
     report = compute_health(
         [m], events, heavily_used_min_applied=1, now=_utc(2026, 5, 1)
     )
-    assert report.endorsement_debt.total == 0
+    assert report.cold_endorsement_memories.total == 0
 
 
-def test_endorsement_debt_excludes_ambient() -> None:
+def test_cold_endorsement_excludes_ambient() -> None:
     """Ambient memories shape responses without being cited; explicit
     use events are structurally rare. They must not land here for the
     same reason they don't land in dead_weight or cold_memories."""
@@ -2123,10 +2149,10 @@ def test_endorsement_debt_excludes_ambient() -> None:
     report = compute_health(
         [m], events, heavily_used_min_applied=1, now=_utc(2026, 5, 1)
     )
-    assert report.endorsement_debt.total == 0
+    assert report.cold_endorsement_memories.total == 0
 
 
-def test_endorsement_debt_sorted_by_retrieval_count_desc() -> None:
+def test_cold_endorsement_sorted_by_retrieval_count_desc() -> None:
     """Heaviest-trafficked first."""
     light = _memory()
     medium = _memory()
@@ -2147,14 +2173,14 @@ def test_endorsement_debt_sorted_by_retrieval_count_desc() -> None:
         heavily_used_min_applied=1,
         now=_utc(2026, 5, 1),
     )
-    assert [r.id for r in report.endorsement_debt.rows] == [
+    assert [r.id for r in report.cold_endorsement_memories.rows] == [
         heavy.id,
         medium.id,
         light.id,
     ]
 
 
-def test_endorsement_debt_threshold_overridable() -> None:
+def test_cold_endorsement_threshold_overridable() -> None:
     """Lower the floor so tests can exercise the bucket without 5+
     retrievals — and so a noisy store can tighten the criterion."""
     m = _memory()
@@ -2166,14 +2192,14 @@ def test_endorsement_debt_threshold_overridable() -> None:
         [m],
         events,
         heavily_used_min_applied=1,
-        endorsement_debt_min_retrievals=1,
+        cold_endorsement_min_retrievals=1,
         now=_utc(2026, 5, 1),
     )
-    assert report.endorsement_debt.total == 1
-    assert report.endorsement_debt.min_retrievals == 1
+    assert report.cold_endorsement_memories.total == 1
+    assert report.cold_endorsement_memories.min_retrievals == 1
 
 
-def test_endorsement_debt_min_retrievals_floor_clamped_above_zero() -> None:
+def test_cold_endorsement_min_retrievals_floor_clamped_above_zero() -> None:
     """A zero / negative threshold doesn't get interpreted literally
     (it would let zero-retrieval memories qualify) — clamped to 1."""
     m = _memory()
@@ -2181,16 +2207,17 @@ def test_endorsement_debt_min_retrievals_floor_clamped_above_zero() -> None:
         [m],
         [],
         heavily_used_min_applied=1,
-        endorsement_debt_min_retrievals=0,
+        cold_endorsement_min_retrievals=0,
         now=_utc(2026, 5, 1),
     )
-    assert report.endorsement_debt.min_retrievals == 1
-    assert report.endorsement_debt.total == 0
+    assert report.cold_endorsement_memories.min_retrievals == 1
+    assert report.cold_endorsement_memories.total == 0
 
 
-def test_curation_counts_endorsement_debt_matches_health_bucket() -> None:
-    """Numerical contract: curation_counts['endorsement_debt'] equals
-    HealthReport.endorsement_debt.total over the same inputs."""
+def test_curation_counts_cold_endorsement_matches_health_bucket() -> None:
+    """Numerical contract: curation_counts['cold_endorsement_memories']
+    equals HealthReport.cold_endorsement_memories.total over the same
+    inputs."""
     m = _memory()
     events = []
     for _ in range(5):
@@ -2200,16 +2227,16 @@ def test_curation_counts_endorsement_debt_matches_health_bucket() -> None:
         [m], events, heavily_used_min_applied=1, now=_utc(2026, 5, 1)
     )
     counts = curation_counts([m], events, window_days=30, now=_utc(2026, 5, 1))
-    assert counts["endorsement_debt"] == report.endorsement_debt.total
+    assert counts["cold_endorsement_memories"] == report.cold_endorsement_memories.total
 
 
-def test_endorsement_debt_to_dict_shape() -> None:
+def test_cold_endorsement_to_dict_shape() -> None:
     report = compute_health([], [], now=_utc(2026, 5, 1))
     payload = report.to_dict()
-    assert "endorsement_debt" in payload
-    assert payload["endorsement_debt"]["total"] == 0
-    assert payload["endorsement_debt"]["rows"] == []
-    assert payload["endorsement_debt"]["min_retrievals"] >= 1
+    assert "cold_endorsement_memories" in payload
+    assert payload["cold_endorsement_memories"]["total"] == 0
+    assert payload["cold_endorsement_memories"]["rows"] == []
+    assert payload["cold_endorsement_memories"]["min_retrievals"] >= 1
 
 
 # ---------------------------------------------------------------------------
@@ -2378,8 +2405,8 @@ def test_recommendations_to_dict_shape_is_stable() -> None:
     }
 
 
-def test_endorsement_debt_ratio_threshold_off_by_default() -> None:
-    """Default `endorsement_debt_ratio_threshold=0.0` preserves the
+def test_cold_endorsement_ratio_threshold_off_by_default() -> None:
+    """Default `cold_endorsement_ratio_threshold=0.0` preserves the
     original semantic: only memories with ZERO explicit_applied land
     in the bucket. A memory with even one explicit endorsement stays
     out, regardless of how lopsided the auto-vs-explicit ratio is."""
@@ -2402,10 +2429,10 @@ def test_endorsement_debt_ratio_threshold_off_by_default() -> None:
         now=_utc(2026, 5, 1),
     )
     # Binary check: one explicit endorsement is enough to stay out.
-    assert report.endorsement_debt.total == 0
+    assert report.cold_endorsement_memories.total == 0
 
 
-def test_endorsement_debt_ratio_threshold_surfaces_lopsided_memory() -> None:
+def test_cold_endorsement_ratio_threshold_surfaces_lopsided_memory() -> None:
     """With `ratio_threshold=0.2`, a memory whose explicit-applied
     ratio is below 20% lands in the bucket even when the binary
     check would skip it."""
@@ -2424,14 +2451,14 @@ def test_endorsement_debt_ratio_threshold_surfaces_lopsided_memory() -> None:
         [m],
         events,
         window_days=30,
-        endorsement_debt_ratio_threshold=0.2,
+        cold_endorsement_ratio_threshold=0.2,
         now=_utc(2026, 5, 1),
     )
-    assert report.endorsement_debt.total == 1
-    assert report.endorsement_debt.rows[0].id == m.id
+    assert report.cold_endorsement_memories.total == 1
+    assert report.cold_endorsement_memories.rows[0].id == m.id
 
 
-def test_endorsement_debt_ratio_threshold_skips_high_ratio_memory() -> None:
+def test_cold_endorsement_ratio_threshold_skips_high_ratio_memory() -> None:
     """A memory with a healthy explicit ratio stays out of the bucket
     even when the threshold is set."""
     m = _memory(created=_utc(2026, 1, 1))
@@ -2451,10 +2478,10 @@ def test_endorsement_debt_ratio_threshold_skips_high_ratio_memory() -> None:
         [m],
         events,
         window_days=30,
-        endorsement_debt_ratio_threshold=0.2,
+        cold_endorsement_ratio_threshold=0.2,
         now=_utc(2026, 5, 1),
     )
-    assert report.endorsement_debt.total == 0
+    assert report.cold_endorsement_memories.total == 0
 
 
 def test_recommendation_kinds_constant_matches_compute_output() -> None:
@@ -2468,7 +2495,7 @@ def test_recommendation_kinds_constant_matches_compute_output() -> None:
     expected = {
         "remove_dead_weight",
         "resolve_contradicted",
-        "cleanup_endorsement_debt",
+        "cleanup_cold_endorsements",
         "verify_drifted",
         "fix_typo_scopes",
     }
