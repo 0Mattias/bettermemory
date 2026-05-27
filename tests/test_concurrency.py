@@ -1347,3 +1347,466 @@ def test_multi_process_concurrent_disjoint_updates_no_silent_clobber(
     other_markers = [r["marker"] for r in results if r.get("outcome") == "won"][1:]
     for m in other_markers:
         assert f"edit from worker {m}" not in final.body
+
+
+# ---------------------------------------------------------------------------
+# W8 regression — `Store.mark_verified` is silent last-write-wins under
+# concurrent attestations
+# ---------------------------------------------------------------------------
+#
+# Pre-W8 two parallel `mark_verified` calls on the same id with disjoint
+# `verified_paths` (or `_commits` / `_versions`) lists would both serialise
+# on the file lock, but neither verified the on-disk verification snapshot
+# against what the caller saw when they decided to attest. The
+# `verified_*` lists have REPLACE (not append) semantics by design — the
+# event log is the audit trail — so whichever serialised second silently
+# dropped the first writer's attestation: agent A attesting path #1 and
+# agent B attesting path #2 simultaneously left only one path on disk.
+#
+# The fix mirrors W2's CAS pattern: `Store.mark_verified` accepts an
+# optional `expected_last_verified_at` snapshot fingerprint and
+# `check_expected=True` opt-in; under the lock, after the C2 recheck,
+# the on-disk `last_verified_at` is compared to the caller's snapshot.
+# On mismatch raise `ConcurrentUpdateError` carrying the on-disk
+# `updated` (kept uniform with W2's exception contract — the caller's
+# rebase action is "re-fetch via memory_show and retry," same as W2,
+# regardless of which field actually moved). The `memory_verify`
+# handler loads its snapshot first and opts in; legacy direct-store
+# callers (web.py verify form, no-arg slide-forward use cases, the
+# existing test suite) keep the back-compat `check_expected=False`
+# default.
+#
+# Fingerprint choice: `updated` doesn't move on a `mark_verified` call
+# (verification is orthogonal to content edits), so checking `updated`
+# would never catch the verify-vs-verify race. `last_verified_at` is
+# the field that always moves on a successful verify, so it's the
+# cheapest correct fingerprint for this race.
+
+
+def test_mark_verified_cas_detects_stale_snapshot(tmp_path: Path) -> None:
+    """W8 regression. Two `Store.mark_verified` calls on the same id
+    with disjoint attestations: the second must raise
+    `ConcurrentUpdateError` rather than silently clobber the first
+    writer's attestation.
+
+    Sequential variant — caller B's `mark_verified` lands first
+    (advancing the on-disk `last_verified_at`), then caller A tries
+    to attest on top of an older snapshot and must lose.
+    """
+    store = Store(tmp_path)
+    original = store.write(
+        content="durable claim about /a and /b",
+        scopes=["tools"],
+    )
+
+    # Caller A reads the snapshot — `last_verified_at` is None (fresh
+    # write). Caller A plans to attest path /a.
+    snapshot_a = store.load_one(original.id)
+    assert snapshot_a.last_verified_at is None
+
+    # Caller B reads the SAME snapshot and lands its attestation for
+    # /b first. After B's write, on-disk `last_verified_at` is
+    # non-None.
+    snapshot_b = store.load_one(original.id)
+    assert snapshot_b.last_verified_at is None
+    after_b = store.mark_verified(
+        original.id,
+        verified_paths=["/b"],
+        expected_last_verified_at=snapshot_b.last_verified_at,
+        check_expected=True,
+    )
+    assert after_b.last_verified_at is not None, (
+        "sanity: B's verify must move `last_verified_at` forward"
+    )
+    assert after_b.verified_paths == ["/b"]
+
+    # Caller A now tries to attest /a on top of the stale snapshot.
+    # On-disk `last_verified_at` is no longer None — CAS fires.
+    with pytest.raises(ConcurrentUpdateError) as excinfo:
+        store.mark_verified(
+            original.id,
+            verified_paths=["/a"],
+            expected_last_verified_at=snapshot_a.last_verified_at,
+            check_expected=True,
+        )
+
+    err = excinfo.value
+    assert err.memory_id == original.id
+    # The error's `current_updated` mirrors W2's contract — it's the
+    # on-disk `updated`, not the moved-forward `last_verified_at`. The
+    # caller's rebase action is the same regardless: re-fetch with
+    # memory_show.
+    assert err.current_updated == after_b.updated
+
+    # Disk invariant: B's attestation wins. A's silent-clobber attempt
+    # left no trace — `/a` is NOT silently merged in.
+    final = store.load_one(original.id)
+    assert final.verified_paths == ["/b"]
+    assert "/a" not in final.verified_paths
+
+
+def test_mark_verified_cas_detects_stale_snapshot_via_patched_reload(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Deterministic W8 CAS test via monkeypatch on `_load_path`.
+
+    The under-lock recheck-then-CAS sequence reads `_load_path` once
+    for the CAS comparison (the C2 recheck uses `_id_still_at_path`,
+    which only reads the frontmatter id). Patch `_load_path` to return
+    a Memory whose `last_verified_at` has moved forward, simulating an
+    interleaved verify landing between the file-lock acquisition and
+    the CAS read. The CAS must fire.
+    """
+    store = Store(tmp_path)
+    original = store.write(content="will race verify CAS", scopes=["tools"])
+    snapshot = store.load_one(original.id)
+    assert snapshot.last_verified_at is None
+
+    from datetime import timedelta
+
+    from bettermemory.models import Memory, utcnow
+
+    original_load_path = Store._load_path
+    forged_lva = utcnow() + timedelta(seconds=1)
+
+    def racing_load_path(self: Store, path: Path) -> Memory:
+        memory = original_load_path(self, path)
+        if memory.id == original.id:
+            return memory.model_copy(update={"last_verified_at": forged_lva})
+        return memory
+
+    monkeypatch.setattr(Store, "_load_path", racing_load_path)
+
+    with pytest.raises(ConcurrentUpdateError) as excinfo:
+        store.mark_verified(
+            original.id,
+            verified_paths=["/x"],
+            expected_last_verified_at=snapshot.last_verified_at,
+            check_expected=True,
+        )
+    err = excinfo.value
+    assert err.memory_id == original.id
+
+
+def test_mark_verified_cas_happy_path_passthrough(tmp_path: Path) -> None:
+    """Happy-path passthrough: a single-writer `load_one`-then-
+    `mark_verified` sequence (no contention) must continue to work —
+    the CAS check is a no-false-positive invariant under single-writer
+    use, regardless of whether the snapshot's `last_verified_at` is
+    None (fresh write) or a real timestamp (already-verified memory).
+    """
+    store = Store(tmp_path)
+    original = store.write(content="happy path verify", scopes=["tools"])
+
+    # First verify: snapshot's `last_verified_at` is None.
+    snapshot = store.load_one(original.id)
+    first = store.mark_verified(
+        original.id,
+        verified_paths=["/p1"],
+        expected_last_verified_at=snapshot.last_verified_at,
+        check_expected=True,
+    )
+    assert first.last_verified_at is not None
+    assert first.verified_paths == ["/p1"]
+
+    # Second verify: snapshot's `last_verified_at` is the timestamp
+    # from the first verify. CAS must pass.
+    snapshot2 = store.load_one(original.id)
+    assert snapshot2.last_verified_at == first.last_verified_at
+    second = store.mark_verified(
+        original.id,
+        verified_paths=["/p1", "/p2"],
+        expected_last_verified_at=snapshot2.last_verified_at,
+        check_expected=True,
+    )
+    assert second.last_verified_at is not None
+    assert second.last_verified_at >= first.last_verified_at
+    assert second.verified_paths == ["/p1", "/p2"]
+
+
+def test_mark_verified_check_expected_false_bypasses_cas(tmp_path: Path) -> None:
+    """`check_expected=False` (the default) is the back-compat path —
+    legacy callers without a snapshot (web.py verify form, no-arg
+    slide-forward, direct in-process tooling) must continue to work
+    without triggering the CAS.
+    """
+    store = Store(tmp_path)
+    original = store.write(content="will be verified twice no CAS", scopes=["tools"])
+
+    # First mark_verified moves `last_verified_at` forward.
+    first = store.mark_verified(original.id, verified_paths=["/legacy/1"])
+    assert first.last_verified_at is not None
+    # Second mark_verified with NO snapshot must still succeed — the
+    # default `check_expected=False` bypasses the CAS.
+    second = store.mark_verified(original.id, verified_paths=["/legacy/2"])
+    assert second.last_verified_at is not None
+    assert second.verified_paths == ["/legacy/2"]
+
+    # And explicitly: passing a stale snapshot WITHOUT opting in
+    # (`check_expected=False`) also bypasses — the parameter is purely
+    # advisory when the flag is off.
+    third = store.mark_verified(
+        original.id,
+        verified_paths=["/legacy/3"],
+        expected_last_verified_at=None,  # deliberately stale
+        check_expected=False,
+    )
+    assert third.verified_paths == ["/legacy/3"]
+
+
+def test_mark_verified_cas_threaded_one_winner(tmp_path: Path) -> None:
+    """W8 regression with real threads + `threading.Event` rendezvous.
+
+    Two threads load the same snapshot, sync on a `threading.Event`
+    barrier so both have read the same pre-race `last_verified_at`,
+    then race the `mark_verified` write. Exactly one thread wins;
+    the other must raise `ConcurrentUpdateError`.
+
+    GIL-bound but the file lock + CAS serialises the writes — so the
+    race-loser deterministically gets the structured stale signal,
+    not a torn write or a silent clobber. The disk-state assertion
+    pins the contract: the winner's `verified_paths` is intact; the
+    loser's `verified_paths` is NOT silently merged in.
+    """
+    import threading
+
+    store = Store(tmp_path)
+    memory = store.write(
+        content="threaded attestation race target",
+        scopes=["tools"],
+    )
+
+    # Both threads will read this snapshot before either writes.
+    go = threading.Event()
+    results_lock = threading.Lock()
+    results: list[dict[str, object]] = []
+
+    def worker(marker: str, attest_path: str) -> None:
+        snapshot = store.load_one(memory.id)
+        # Wait for both snapshots to be taken before either writes,
+        # so both threads' `expected_last_verified_at` is the same
+        # pre-race value.
+        go.wait(timeout=30)
+        try:
+            updated = store.mark_verified(
+                memory.id,
+                verified_paths=[attest_path],
+                expected_last_verified_at=snapshot.last_verified_at,
+                check_expected=True,
+            )
+            with results_lock:
+                results.append(
+                    {
+                        "outcome": "won",
+                        "marker": marker,
+                        "verified_paths": list(updated.verified_paths),
+                    }
+                )
+        except ConcurrentUpdateError as exc:
+            with results_lock:
+                results.append(
+                    {
+                        "outcome": "lost-stale",
+                        "marker": marker,
+                        "memory_id": exc.memory_id,
+                    }
+                )
+
+    threads = [
+        threading.Thread(target=worker, args=("A", "/path-a")),
+        threading.Thread(target=worker, args=("B", "/path-b")),
+    ]
+    for t in threads:
+        t.start()
+    # Give both workers time to take their snapshot. The file-lock
+    # contention happens AFTER `go.set()`, so a tiny pause here
+    # ensures both `load_one`s complete and both worker `snapshot`
+    # locals are bound before either races to write.
+    time.sleep(0.05)
+    go.set()
+    for t in threads:
+        t.join(timeout=30)
+
+    outcomes = [r["outcome"] for r in results]
+    winners = [r for r in results if r["outcome"] == "won"]
+    losers = [r for r in results if r["outcome"] == "lost-stale"]
+    assert len(winners) == 1, (
+        f"Expected exactly one mark_verified winner under CAS, got "
+        f"{len(winners)}. Outcomes: {outcomes}"
+    )
+    assert len(losers) == 1, (
+        f"Expected exactly one stale-CAS loser, got {len(losers)}. Outcomes: {outcomes}"
+    )
+
+    # Disk invariant: the winner's attestation is intact; the loser's
+    # path is NOT silently merged in. Contract is reread + reattest,
+    # not silent merge.
+    final = store.load_one(memory.id)
+    winner_marker = winners[0]["marker"]
+    assert isinstance(winner_marker, str)
+    expected_winning_path = f"/path-{winner_marker.lower()}"
+    assert final.verified_paths == [expected_winning_path], (
+        f"Winner's attestation not intact on disk. winner={winner_marker!r}, "
+        f"disk verified_paths={final.verified_paths!r}"
+    )
+    loser_marker = losers[0]["marker"]
+    assert isinstance(loser_marker, str)
+    losing_path = f"/path-{loser_marker.lower()}"
+    assert losing_path not in final.verified_paths, (
+        f"Loser's attestation silently merged on disk. loser={loser_marker!r}, "
+        f"disk verified_paths={final.verified_paths!r}"
+    )
+
+
+def _w8_disjoint_verify_worker(
+    args: tuple[str, str, str, str, str],
+) -> dict[str, str]:
+    """Worker for the cross-process W8 variant.
+
+    Each worker process:
+      1. `load_one(memory_id)` to take a snapshot.
+      2. Signals "snapshot taken" by touching its own ready-marker.
+      3. Waits for the parent to release via a shared go-marker —
+         this barrier guarantees every worker has read the same
+         pre-race `last_verified_at` BEFORE any of them tries to
+         write. Without the barrier the first-spawned worker's
+         `mark_verified` could land before later workers' `load_one`,
+         masking the regression we're trying to pin (the late
+         workers would read the bumped on-disk timestamp and
+         trivially pass the CAS).
+      4. Calls `Store.mark_verified` with its own per-worker
+         `verified_paths` attestation and the snapshot's
+         `last_verified_at` as the CAS fingerprint.
+
+    Exactly one worker must win; the rest must lose with
+    `ConcurrentUpdateError`.
+    """
+    root, memory_id, marker, ready_marker, go_marker = args
+    store = Store(Path(root))
+    try:
+        snapshot = store.load_one(memory_id)
+    except (MemoryNotFoundError, TombstonedError) as exc:
+        return {"outcome": "snapshot-failed", "msg": str(exc)}
+
+    Path(ready_marker).touch()
+    deadline = time.monotonic() + 30
+    while time.monotonic() < deadline:
+        if Path(go_marker).exists():
+            break
+        time.sleep(0.01)
+    else:  # noqa: PLW0120 — explicit timeout signaling for the parent
+        return {"outcome": "barrier-timeout"}
+
+    try:
+        store.mark_verified(
+            memory_id,
+            verified_paths=[f"/path/{marker}"],
+            expected_last_verified_at=snapshot.last_verified_at,
+            check_expected=True,
+        )
+        return {"outcome": "won", "marker": marker}
+    except ConcurrentUpdateError as exc:
+        return {"outcome": "lost-stale", "msg": str(exc), "marker": marker}
+    except (MemoryNotFoundError, TombstonedError) as exc:
+        return {"outcome": "lost-other", "msg": str(exc), "marker": marker}
+
+
+@pytest.mark.skipif(
+    sys.platform == "win32",
+    reason="fcntl-based locking is POSIX-only; MVP single-process on Windows",
+)
+def test_multi_process_concurrent_disjoint_verifies_no_silent_clobber(
+    tmp_path: Path,
+) -> None:
+    """W8 regression across REAL processes (no GIL).
+
+    Six workers race on `Store.mark_verified(same_id)` from separate
+    Python interpreters, each carrying a different `verified_paths`
+    attestation built on top of a snapshot they took before the race.
+    Pre-W8 all six writes silently serialised on the file lock and
+    only the last one's `verified_paths` survived — five attestations
+    dropped without surface. Post-W8 exactly one wins; the others
+    must lose with `ConcurrentUpdateError` so the caller can
+    re-fetch + reassess + retry.
+
+    The post-condition that retires the silent-last-write-wins
+    semantic for multi-agent concurrent verifies: the eventual disk
+    state must reflect the winner's `verified_paths` only — no torn
+    merge, no other worker's attestation silently lingering.
+    """
+    n_workers = 6
+    setup = Store(tmp_path)
+    memory = setup.write(
+        content="raced disjoint verifies across processes",
+        scopes=["tools"],
+    )
+
+    barrier_dir = tmp_path / "_w8_barriers"
+    barrier_dir.mkdir()
+    go_marker = barrier_dir / "go"
+    ready_markers = [barrier_dir / f"ready_{w}" for w in range(n_workers)]
+
+    ctx = mp.get_context("spawn")
+    pool = ctx.Pool(n_workers)
+    try:
+        async_result = pool.map_async(
+            _w8_disjoint_verify_worker,
+            [
+                (
+                    str(tmp_path),
+                    memory.id,
+                    str(w),
+                    str(ready_markers[w]),
+                    str(go_marker),
+                )
+                for w in range(n_workers)
+            ],
+        )
+
+        deadline = time.monotonic() + 30
+        while time.monotonic() < deadline:
+            if all(m.exists() for m in ready_markers):
+                break
+            time.sleep(0.01)
+        else:  # noqa: PLW0120 — explicit timeout for the readiness rendezvous
+            pool.terminate()
+            pool.join()
+            pytest.fail(
+                "not all workers signalled snapshot-taken within 30s; "
+                f"ready: {[m.name for m in ready_markers if m.exists()]}"
+            )
+
+        go_marker.touch()
+        results = async_result.get(timeout=60)
+    finally:
+        pool.close()
+        pool.join()
+
+    outcomes = [r["outcome"] for r in results]
+    winners = [r for r in results if r["outcome"] == "won"]
+    losers = [r for r in results if r["outcome"] == "lost-stale"]
+    assert len(winners) == 1, (
+        f"Expected exactly one verify winner under CAS, got {len(winners)}. "
+        f"Outcomes: {outcomes}"
+    )
+    assert len(losers) == n_workers - 1, (
+        f"Expected {n_workers - 1} stale-CAS losers, got {len(losers)}. "
+        f"Outcomes: {outcomes}"
+    )
+
+    # Disk invariant: the winner's `verified_paths` is intact; no
+    # other worker's path may appear (no silent merge).
+    fresh = Store(tmp_path)
+    final = fresh.load_one(memory.id)
+    winner_marker = winners[0]["marker"]
+    assert final.verified_paths == [f"/path/{winner_marker}"], (
+        f"Disk verified_paths {final.verified_paths!r} does not reflect "
+        f"the winner's attestation (marker {winner_marker!r}). "
+        f"Outcomes: {outcomes}"
+    )
+    for loser in losers:
+        loser_path = f"/path/{loser['marker']}"
+        assert loser_path not in final.verified_paths, (
+            f"Loser's attestation {loser_path!r} silently merged on disk. "
+            f"Outcomes: {outcomes}"
+        )

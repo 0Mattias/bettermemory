@@ -512,6 +512,8 @@ class Store:
         verified_paths: list[str] | None = None,
         verified_commits: list[str] | None = None,
         verified_versions: list[str] | None = None,
+        expected_last_verified_at: datetime | None = None,
+        check_expected: bool = False,
     ) -> Memory:
         """Bump `last_verified_at` to now without touching `updated`.
 
@@ -530,6 +532,26 @@ class Store:
         Passing a populated list replaces the prior list — verification
         is per-event, not append-only, and the event log is the audit
         trail for the history.
+
+        Optimistic concurrency (W8): when `check_expected=True`, the
+        caller's `expected_last_verified_at` is the snapshot value they
+        READ when they decided to attest (via `load_one(id).last_verified_at`).
+        Under the lock, after the C2 recheck, we compare the on-disk
+        `last_verified_at` to the caller's snapshot. On mismatch we raise
+        `ConcurrentUpdateError` so the caller can re-fetch, reassess
+        their attestation against the now-current state, and retry —
+        rather than silently clobbering whoever attested in the interim.
+        REPLACE semantics for `verified_*` lists makes this race especially
+        nasty: agent A attesting path #1 and agent B attesting path #2
+        simultaneously would otherwise lose one of the attestations, and
+        the contract is "reread + reattest," not "silent merge."
+
+        `check_expected=False` (the default) is the back-compat escape
+        hatch for callers that don't have a snapshot — e.g. the web UI
+        verify form, the legacy direct-store callers in tests, the
+        no-arg slide-the-timestamp-forward use case. Not exposed through
+        the MCP `memory_verify` handler boundary; that handler always
+        loads its snapshot first and opts in.
         """
         existing_path = self._find_path_for_id(memory_id)
         if existing_path is None:
@@ -577,6 +599,25 @@ class Store:
                     f"concurrent tombstone or rename)"
                 )
             existing = self._load_path(existing_path)
+            # W8: optimistic-concurrency CAS on `last_verified_at`. The
+            # field that moves on every successful `mark_verified` is
+            # `last_verified_at` (not `updated` — verification doesn't
+            # bump `updated` by design), so it's the cheapest correct
+            # fingerprint for detecting a concurrent attestation. Mirror
+            # of W2 in shape: compare the on-disk snapshot fingerprint
+            # to the caller's; on mismatch raise `ConcurrentUpdateError`
+            # with the on-disk `updated` so the caller's rebase action
+            # is identical to the W2 retry flow (re-fetch via
+            # `memory_show`, retry on top). The on-disk `updated` is
+            # used as the error's `current_updated` payload to keep the
+            # exception's contract uniform with W2 — what the caller
+            # needs is "something changed, re-fetch," not the specific
+            # field that moved.
+            if (
+                check_expected
+                and existing.last_verified_at != expected_last_verified_at
+            ):
+                raise ConcurrentUpdateError(memory_id, existing.updated)
             update: dict[str, object] = {"last_verified_at": utcnow()}
             if verified_paths is not None:
                 update["verified_paths"] = list(verified_paths)

@@ -9,6 +9,38 @@ spells out exactly what's stable.
 
 ## Unreleased
 
+### Fixed
+
+- **`Store.mark_verified` race shape — attestation overwrite (W8).**
+  Mirror of the W2 `Store.update` CAS pattern, applied to the
+  verification path. Pre-W8 two agents calling `memory_verify` on the
+  same id with disjoint attestations (e.g. agent A spot-checking path
+  #1, agent B spot-checking path #2 simultaneously) would silently
+  last-write-wins on the `verified_paths` / `verified_commits` /
+  `verified_versions` lists, because both `mark_verified` calls read
+  the same on-disk snapshot and the second write clobbered the first
+  without a CAS check. The REPLACE-not-append semantics on those
+  lists (by design — the event log is the audit trail) made the
+  silent loss especially nasty: one of the two agents' attestations
+  vanished without surface. Post-W8 `Store.mark_verified` gains an
+  optional `expected_last_verified_at` snapshot fingerprint plus a
+  `check_expected=True` opt-in; under the lock, after the C2 recheck,
+  the on-disk `last_verified_at` is compared to the caller's
+  snapshot. On mismatch raise `ConcurrentUpdateError` carrying the
+  on-disk `updated` (kept uniform with W2's exception contract — the
+  caller's rebase action is the same: re-fetch via memory_show and
+  retry). The `memory_verify` handler loads its snapshot first and
+  opts in; legacy direct-store callers (the web UI verify form, the
+  no-arg slide-the-timestamp-forward use cases, the existing tests)
+  keep the back-compat `check_expected=False` default. MCP response
+  shape on CAS failure exactly mirrors `memory_update`'s W2 stale
+  payload: `{"status": "stale", "memory_id": ..., "current_updated":
+  ..., "hint": ...}`. Fingerprint choice: `updated` doesn't move on a
+  verify (orthogonal to content edits) so checking it would never
+  catch the verify-vs-verify race; `last_verified_at` is the field
+  that always moves on a successful verify, so it's the cheapest
+  correct fingerprint.
+
 ## 3.2.0 - 2026-05-27
 
 The **multi-agent hardening + audit-turn semantics** release: a
