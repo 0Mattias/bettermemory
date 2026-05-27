@@ -31,9 +31,27 @@ async def memory_restore(
     try:
         memory = deps.store.restore(id)
     except NotTombstonedError as exc:
+        # W7: also fires when a concurrent restore won the race and the
+        # id is now active under the lock — message carries the
+        # "(raced with concurrent restore)" hint so the caller can
+        # distinguish from the plain "id is active" case if they want.
         raise ValueError(str(exc)) from exc
     except MemoryNotFoundError as exc:
+        # W7: also fires when a concurrent restore / prune removed the
+        # tombstone between the find walk and the under-lock recheck;
+        # the message carries the "(raced with concurrent restore or
+        # prune)" hint so the caller can recognise the race-loss shape.
         raise ValueError(str(exc)) from exc
+    except OSError as exc:
+        # W7 closes the most common race paths via the under-lock
+        # recheck in `Store.restore`. Bare OSError can still surface
+        # from genuine disk-level failures during the restore write or
+        # unlink (EIO mid-write, ENOSPC during the rename, EACCES on
+        # the unlink, …). Surface as ValueError so the MCP tool
+        # boundary returns a clean structured error rather than letting
+        # the bare OSError leak — mirror of the W1 `memory_remove`
+        # arm in handlers/remove.py.
+        raise ValueError(f"failed to restore memory {id}: {exc}") from exc
     except ValueError:
         # _load_tombstone_path raises ValueError on a malformed file
         # (e.g. missing `created`). Surface verbatim — the message

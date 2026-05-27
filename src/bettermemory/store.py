@@ -902,9 +902,13 @@ class Store:
 
         Raises:
             MemoryNotFoundError: no record (active or tombstoned) with
-              that id.
+              that id, or the tombstone was removed concurrently (by a
+              parallel restore, a prune, or any other tombstone-deleting
+              path) between the find walk and the under-lock recheck.
             NotTombstonedError: id is active. The caller probably meant
-              `memory_update`; restore is only for tombstones.
+              `memory_update`; restore is only for tombstones. Also raised
+              if a parallel restore won the race and the id is now active
+              under the lock.
         """
         if not is_valid_ulid(memory_id):
             raise MemoryNotFoundError(f"invalid id: {memory_id!r}")
@@ -930,10 +934,56 @@ class Store:
         # tombstone lock serializes the sequence; the second restore
         # then sees the tombstone is gone and raises clearly.
         with _locked(tombstone_path):
+            # W7: under-lock recheck mirroring W1's `tombstone()` fix.
+            # `_find_tombstone_path_for_id` above walked the tombstone
+            # directory unlocked, so a concurrent `restore()` /
+            # `prune_tombstones()` (or any tombstone-deleting path)
+            # may have moved or unlinked the file between the find and
+            # this lock acquisition. Without the recheck, the
+            # `frontmatter.load(tombstone_path)` below raises a bare
+            # `FileNotFoundError` that the handler layer historically
+            # catches via the `except FileNotFoundError` arm below — but
+            # the recheck also covers the tombstone-stem-reuse edge
+            # (extremely unlikely with ULID-suffixed filenames, but
+            # symmetric with the W1 discipline) and gives a uniform
+            # "raced with concurrent restore/prune" message regardless
+            # of which mutator detected the race.
+            if not _id_still_at_path(tombstone_path, memory_id):
+                raise MemoryNotFoundError(
+                    f"no tombstone with id {memory_id} (raced with "
+                    f"concurrent restore or prune)"
+                )
+            # W7: also re-check active-record absence under the lock.
+            # The unlocked pre-lock check above can miss a concurrent
+            # restore that completed in the window between our active
+            # check and our tombstone-lock acquisition: a parallel
+            # restorer would create the active record AND unlink the
+            # tombstone before we got here. The tombstone-gone branch
+            # above usually catches this first — but if for any reason
+            # the tombstone is still present (e.g. a prune raced AGAINST
+            # the parallel restore's unlink and the tombstone got
+            # re-written elsewhere — extremely contrived), the active
+            # recheck keeps `_atomic_write_post(active_path, …)` below
+            # from silently clobbering the parallel restore's active
+            # file. Symmetric with W1's `_id_still_at_path`: cheap
+            # recheck under the lock that the pre-lock invariant still
+            # holds.
+            if self._find_path_for_id(memory_id) is not None:
+                raise NotTombstonedError(
+                    f"memory {memory_id} is active; nothing to restore "
+                    f"(raced with concurrent restore)"
+                )
             try:
                 post = frontmatter.load(tombstone_path)
             except FileNotFoundError:
-                raise MemoryNotFoundError(f"no tombstone with id {memory_id}") from None
+                # Defense in depth: the W7 recheck above is the primary
+                # guard, but keep this arm for the narrow case where the
+                # frontmatter.load fails mid-read on a file that vanished
+                # AFTER the recheck and BEFORE the parse completed.
+                raise MemoryNotFoundError(
+                    f"no tombstone with id {memory_id} (raced with "
+                    f"concurrent restore or prune)"
+                ) from None
             post.metadata.pop("removed", None)
             post.metadata.pop("removed_reason", None)
             post.metadata.pop("removed_session", None)

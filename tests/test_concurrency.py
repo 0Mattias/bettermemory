@@ -1810,3 +1810,323 @@ def test_multi_process_concurrent_disjoint_verifies_no_silent_clobber(
             f"Loser's attestation {loser_path!r} silently merged on disk. "
             f"Outcomes: {outcomes}"
         )
+
+
+# ---------------------------------------------------------------------------
+# W7 regression — `Store.restore` missing under-lock recheck (mirror of W1).
+# ---------------------------------------------------------------------------
+#
+# Pre-W7 `Store.restore` walked `_find_tombstone_path_for_id` and
+# `_find_path_for_id` unlocked, then acquired `_locked(tombstone_path)`
+# and called `frontmatter.load(tombstone_path)`. Two restorers of the
+# same id would both find the same tombstone path; agent A acquired the
+# lock, restored, unlinked the tombstone, released; agent B then
+# acquired the now-stale lock and hit `FileNotFoundError` inside
+# `frontmatter.load` — caught by an inline arm and re-raised as
+# `MemoryNotFoundError`, but with no symmetric "raced with" message
+# and no recheck for the case where the active record was re-created
+# in the restore window. The fix mirrors the W1 under-lock
+# `_id_still_at_path` recheck `tombstone()` adopted in 8679e89, plus
+# a symmetric active-record recheck so a concurrent restore-then-
+# anything pattern still surfaces a clean structured exception
+# (never a silent clobber via `_atomic_write_post` to `active_path`).
+
+
+def test_restore_happy_path_single_restore_succeeds(tmp_path: Path) -> None:
+    """W7 baseline: a lone restore of a tombstone returns the original
+    memory with body + timestamps preserved. Sanity check that the
+    new under-lock rechecks don't break the no-contention path."""
+    store = Store(tmp_path)
+    original = store.write(content="restore happy path target", scopes=["tools"])
+    pre_tombstone_body = original.body
+    pre_tombstone_created = original.created
+    store.tombstone(original.id, reason="W7 happy-path setup")
+
+    restored = store.restore(original.id)
+
+    assert restored.id == original.id
+    assert restored.body == pre_tombstone_body, (
+        f"restored body diverged: {restored.body!r} != {pre_tombstone_body!r}"
+    )
+    assert restored.created == pre_tombstone_created, (
+        "restore must preserve the original `created` timestamp"
+    )
+    # Active load round-trip — restored file is on disk, tombstone is gone.
+    assert store.load_one(original.id).id == original.id
+    with pytest.raises(MemoryNotFoundError):
+        store.load_tombstone(original.id)
+
+
+def test_restore_after_concurrent_restore_raises_structured_failure(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """W7 regression for `restore`. Deterministically inject a
+    concurrent restore between `_find_tombstone_path_for_id` and the
+    lock acquisition: the second `restore` call must surface a
+    structured exception (NotTombstonedError or MemoryNotFoundError
+    with the "raced with" hint), NEVER a silent success that would
+    clobber the parallel restore's active file, and NEVER a bare
+    `FileNotFoundError` / OSError that would leak through the handler
+    layer as a 500-shaped MCP error."""
+    store = Store(tmp_path)
+    memory = store.write(content="will be raced on restore", scopes=["tools"])
+    store.tombstone(memory.id, reason="W7 setup")
+
+    original_find = Store._find_tombstone_path_for_id
+    fired = {"done": False}
+
+    def racing_find(self: Store, mid: str) -> Path | None:
+        path = original_find(self, mid)
+        # Only fire on the OUTER restore call (the one whose race we're
+        # simulating). The nested `self.restore` below will itself call
+        # `_find_tombstone_path_for_id`; the flag guards against
+        # recursion.
+        if path is not None and mid == memory.id and not fired["done"]:
+            fired["done"] = True
+            self.restore(mid)
+        return path
+
+    monkeypatch.setattr(Store, "_find_tombstone_path_for_id", racing_find)
+
+    # The outer restore must lose cleanly. The active-record recheck
+    # catches it as `NotTombstonedError` because the injected restore
+    # ran to completion (active file written) before the outer
+    # `_find_tombstone_path_for_id` returned — so the outer call's
+    # pre-lock `_find_path_for_id` happened BEFORE the active was
+    # created (we patched the tombstone-find, not the active-find), and
+    # the under-lock active-recheck catches the now-active id. Either
+    # exception class is a clean W7 outcome (NotTombstonedError or
+    # MemoryNotFoundError); both must carry a "raced with" hint.
+    with pytest.raises((NotTombstonedError, MemoryNotFoundError), match="raced with"):
+        store.restore(memory.id)
+
+    # Disk invariant: exactly one active file for the id (the winner
+    # restored exactly once); no resurrected tombstone alongside.
+    final = store.load_one(memory.id)
+    assert final.id == memory.id
+    with pytest.raises(MemoryNotFoundError):
+        store.load_tombstone(memory.id)
+
+
+def test_restore_after_concurrent_prune_raises_missing_tombstone(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """W7 regression for `restore` racing with a tombstone-deleter
+    (prune, in this case). The tombstone vanishes between the find
+    walk and the lock acquisition; `restore` must surface
+    `MemoryNotFoundError` with the "raced with" hint — NOT a bare
+    `FileNotFoundError` from inside `frontmatter.load` after the lock
+    is acquired."""
+    store = Store(tmp_path)
+    memory = store.write(content="will be pruned mid-restore", scopes=["tools"])
+    store.tombstone(memory.id, reason="W7 prune-race setup")
+    # Confirm tombstone exists pre-race.
+    assert store.load_tombstone(memory.id).id == memory.id
+
+    original_find = Store._find_tombstone_path_for_id
+    fired = {"done": False}
+
+    def racing_find(self: Store, mid: str) -> Path | None:
+        path = original_find(self, mid)
+        # Inject the prune-race between the find and the lock: directly
+        # unlink the tombstone path the find returned. Mirrors what a
+        # concurrent `prune_tombstones` would do (modulo the per-file
+        # lock prune holds — but the lock is fcntl, advisory, so an
+        # unlink racing through is the equivalent failure mode).
+        if path is not None and mid == memory.id and not fired["done"]:
+            fired["done"] = True
+            path.unlink()
+        return path
+
+    monkeypatch.setattr(Store, "_find_tombstone_path_for_id", racing_find)
+
+    with pytest.raises(MemoryNotFoundError, match="raced with"):
+        store.restore(memory.id)
+
+    # Disk invariant: no active file resurrected, no leftover tombstone.
+    md_files = [p for p in tmp_path.iterdir() if p.is_file() and p.suffix == ".md"]
+    from bettermemory._frontmatter import load as fm_load
+
+    for p in md_files:
+        post = fm_load(p)
+        assert post.metadata.get("id") != memory.id, (
+            f"Active file {p.name} carries raced-tombstone id {memory.id} — "
+            f"W7 regression: restore wrote past the missing tombstone."
+        )
+
+
+def test_restore_threaded_one_winner(tmp_path: Path) -> None:
+    """W7 regression with real threads + `threading.Event` rendezvous.
+
+    Two threads both call `Store.restore(memory_id)` for the same
+    tombstoned id, gated on a `threading.Event` so they fire as close
+    to simultaneously as the GIL allows. Exactly one must win; the
+    other must lose with a structured exception
+    (`NotTombstonedError` or `MemoryNotFoundError` with the "raced
+    with" hint).
+
+    GIL-bound but the tombstone lock + under-lock recheck serialises
+    the writes — so the race-loser deterministically gets the
+    structured signal, not a torn write or a silent clobber. The
+    disk-state assertion pins the contract: exactly one active file
+    for the id; no leftover tombstone.
+    """
+    import threading
+
+    store = Store(tmp_path)
+    memory = store.write(
+        content="threaded restore race target",
+        scopes=["tools"],
+    )
+    store.tombstone(memory.id, reason="W7 threaded-race setup")
+
+    go = threading.Event()
+    results_lock = threading.Lock()
+    results: list[dict[str, object]] = []
+
+    def worker(marker: str) -> None:
+        go.wait(timeout=30)
+        try:
+            restored = store.restore(memory.id)
+            with results_lock:
+                results.append(
+                    {
+                        "outcome": "won",
+                        "marker": marker,
+                        "id": restored.id,
+                    }
+                )
+        except NotTombstonedError as exc:
+            with results_lock:
+                results.append(
+                    {
+                        "outcome": "lost-not-tombstoned",
+                        "marker": marker,
+                        "msg": str(exc),
+                    }
+                )
+        except MemoryNotFoundError as exc:
+            with results_lock:
+                results.append(
+                    {
+                        "outcome": "lost-not-found",
+                        "marker": marker,
+                        "msg": str(exc),
+                    }
+                )
+
+    threads = [
+        threading.Thread(target=worker, args=("A",)),
+        threading.Thread(target=worker, args=("B",)),
+    ]
+    for t in threads:
+        t.start()
+    # Give both workers time to enter `go.wait`; the file-lock
+    # contention happens AFTER `go.set()`.
+    time.sleep(0.05)
+    go.set()
+    for t in threads:
+        t.join(timeout=30)
+
+    outcomes = [r["outcome"] for r in results]
+    winners = [r for r in results if r["outcome"] == "won"]
+    losers = [
+        r for r in results if r["outcome"] in ("lost-not-tombstoned", "lost-not-found")
+    ]
+    assert len(winners) == 1, (
+        f"Expected exactly one restore winner, got {len(winners)}. Outcomes: {outcomes}"
+    )
+    assert len(losers) == 1, (
+        f"Expected exactly one race-loss outcome, got {len(losers)}. "
+        f"Outcomes: {outcomes}"
+    )
+    # Loser's message must carry the "raced with" hint — otherwise it's
+    # the legacy bare-error shape that the W7 fix retired.
+    loser_msg = losers[0]["msg"]
+    assert isinstance(loser_msg, str)
+    assert "raced with" in loser_msg, (
+        f"Loser's message {loser_msg!r} missing the 'raced with' hint — "
+        f"W7 regression: the race-loss shape is no longer structured."
+    )
+
+    # Disk invariant: exactly one active .md for the id, no tombstone.
+    fresh = Store(tmp_path)
+    assert fresh.load_one(memory.id).id == memory.id
+    with pytest.raises(MemoryNotFoundError):
+        fresh.load_tombstone(memory.id)
+
+
+def _w7_concurrent_restore_worker(args: tuple[str, str]) -> dict[str, str]:
+    """Worker for the cross-process W7 variant.
+
+    Each worker process attempts `Store.restore(memory_id)`. One worker
+    wins; the rest must lose with `NotTombstonedError` or
+    `MemoryNotFoundError`. No bare OSError may leak — that's the W7
+    bug. Returns a dict describing the outcome so the parent can
+    assert on the distribution.
+    """
+    root, memory_id = args
+    s = Store(Path(root))
+    try:
+        s.restore(memory_id)
+        return {"outcome": "won"}
+    except NotTombstonedError as exc:
+        return {"outcome": "lost-not-tombstoned", "msg": str(exc)}
+    except MemoryNotFoundError as exc:
+        return {"outcome": "lost-not-found", "msg": str(exc)}
+    except OSError as exc:  # noqa: BLE001 — this is the W7 leak we're testing
+        return {"outcome": "leaked-oserror", "msg": f"{type(exc).__name__}: {exc}"}
+
+
+@pytest.mark.skipif(
+    sys.platform == "win32",
+    reason="fcntl-based locking is POSIX-only; MVP single-process on Windows",
+)
+def test_multi_process_concurrent_restore_no_oserror_leak(
+    tmp_path: Path,
+) -> None:
+    """W7 regression across REAL processes (no GIL).
+
+    Six workers race on `Store.restore(same_id)` from separate Python
+    interpreters. Exactly one wins; the rest must lose with a clean
+    structured exception (`NotTombstonedError` if the active recheck
+    fires, `MemoryNotFoundError` if the tombstone-gone recheck fires).
+    A bare `OSError` (specifically `FileNotFoundError`) escaping from
+    `frontmatter.load(tombstone_path)` inside the under-lock block IS
+    the W7 bug; any worker reporting `leaked-oserror` fails this test.
+    """
+    n_workers = 6
+    setup = Store(tmp_path)
+    memory = setup.write(content="raced restore across processes", scopes=["tools"])
+    setup.tombstone(memory.id, reason="W7 multi-process setup")
+
+    ctx = mp.get_context("spawn")
+    with ctx.Pool(n_workers) as pool:
+        results = pool.map(
+            _w7_concurrent_restore_worker,
+            [(str(tmp_path), memory.id) for _ in range(n_workers)],
+        )
+
+    outcomes = [r["outcome"] for r in results]
+    leaks = [r for r in results if r["outcome"] == "leaked-oserror"]
+    assert not leaks, (
+        f"W7 regression: at least one worker leaked a bare OSError from "
+        f"`Store.restore` under concurrent contention. Leaks: {leaks}. "
+        f"All outcomes: {outcomes}"
+    )
+    winners = [o for o in outcomes if o == "won"]
+    assert len(winners) == 1, (
+        f"Expected exactly one restore winner, got {len(winners)}. Outcomes: {outcomes}"
+    )
+    # All non-winners must report a structured race-loss outcome.
+    losers = [o for o in outcomes if o in ("lost-not-tombstoned", "lost-not-found")]
+    assert len(losers) == n_workers - 1, (
+        f"Expected {n_workers - 1} structured race-losses, got {len(losers)}. "
+        f"Outcomes: {outcomes}"
+    )
+
+    # Disk invariant: exactly one active file for the id, no tombstone.
+    fresh = Store(tmp_path)
+    assert fresh.load_one(memory.id).id == memory.id
+    with pytest.raises(MemoryNotFoundError):
+        fresh.load_tombstone(memory.id)
