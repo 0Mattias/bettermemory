@@ -21,14 +21,18 @@ sibling subtree, so the existing iteration helpers never see them.
 
 from __future__ import annotations
 
+import contextlib
 import os
 import shutil
+import sys
+import tempfile
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Iterator
 
 from . import _frontmatter as frontmatter
+from ._fsutil import fsync_dir, fsync_file
 from .models import (
     Episode,
     SCHEMA_VERSION,
@@ -132,13 +136,59 @@ class EpisodeStore:
             if origin_dict:
                 meta["origin"] = origin_dict
         post.metadata = meta
-        # Atomic write via temp + rename so a crash mid-write doesn't
-        # leave a half-written file in the session dir. Same pattern
-        # `store._atomic_write_post` uses; reimplemented locally to
-        # avoid taking a dependency on a private symbol.
-        tmp = path.with_suffix(path.suffix + ".tmp")
-        tmp.write_text(frontmatter.dumps(post), encoding="utf-8")
-        os.replace(tmp, path)
+        # Atomic + durable write: write to a per-process tmp file, fchmod
+        # 0o600 on the open fd, fsync the file, rename into place, fsync
+        # the parent directory. Mirrors `store._atomic_write_post`'s
+        # discipline — reimplemented locally rather than importing a
+        # private symbol from `store`, but the durability primitives are
+        # the same.
+        #
+        # The rename is POSIX-atomic for the directory entry, but without
+        # the file-fsync we can land a renamed-but-empty file on power
+        # loss (the dirent exists, the page-cache bytes never reached
+        # disk); without the dir-fsync the rename itself isn't durable
+        # past a crash. Pre-fix this helper used `Path.write_text` +
+        # `os.replace` with no fsyncs, which is exactly the zero-byte-on-
+        # crash failure mode.
+        #
+        # Per-process tmp suffix via `NamedTemporaryFile` rather than a
+        # deterministic `<path>.tmp` removes the secondary tmp-name
+        # collision risk if two writers ever race on the same target.
+        parent = path.parent
+        tmp_file = tempfile.NamedTemporaryFile(
+            dir=str(parent),
+            prefix=path.name + ".",
+            suffix=".tmp",
+            delete=False,
+        )
+        tmp_path = Path(tmp_file.name)
+        renamed = False
+        try:
+            with tmp_file as f:
+                f.write(frontmatter.dumps(post).encode("utf-8"))
+                f.flush()
+                # fchmod BEFORE the rename so the file is 0o600 the moment
+                # it appears at `path`. Windows has no mode bits and
+                # `os.fchmod` is missing from typeshed there, so guard on
+                # `sys.platform`. Suppress OSError so sandbox filesystems
+                # that reject fchmod don't break the write.
+                if sys.platform != "win32":
+                    with contextlib.suppress(OSError):
+                        os.fchmod(f.fileno(), 0o600)
+                fsync_file(f.fileno())
+            os.replace(tmp_path, path)
+            renamed = True
+            # Defensive post-rename chmod: a no-op when fchmod succeeded
+            # above, but recovers the mode if the filesystem dropped it
+            # on rename (rare).
+            with contextlib.suppress(OSError):
+                os.chmod(path, 0o600)
+            # `fsync_dir` no-ops on Windows; see `_fsutil.fsync_dir`.
+            fsync_dir(parent)
+        finally:
+            if not renamed:
+                with contextlib.suppress(OSError):
+                    tmp_path.unlink()
 
     # ---- read -------------------------------------------------------------
 

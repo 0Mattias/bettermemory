@@ -8,6 +8,8 @@ contract.
 
 from __future__ import annotations
 
+import stat
+import sys
 import time
 from pathlib import Path
 
@@ -130,6 +132,52 @@ def test_prune_zero_ttl_is_noop(episode_store: EpisodeStore) -> None:
     pruned = episode_store.prune_old_sessions(ttl_days=0)
     assert pruned == []
     assert (episode_store.episodes_dir / "sess_aaaa1111").exists()
+
+
+def test_write_is_atomic_and_durable(
+    episode_store: EpisodeStore, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The write path must (a) leave no `.tmp` artifacts behind,
+    (b) chmod the final file to 0o600 on POSIX, and (c) call both
+    durability primitives (`fsync_file` on the open fd, `fsync_dir` on
+    the parent). Pre-fix `_write_path` used `Path.write_text` +
+    `os.replace` with no fsyncs, so power-loss between rename and
+    kernel flush could leave a zero-byte `<ulid>.md` at the target."""
+    fsync_file_calls: list[int] = []
+    fsync_dir_calls: list[Path] = []
+
+    import bettermemory.episodes as episodes_mod
+
+    def spy_fsync_file(fd: int) -> None:
+        fsync_file_calls.append(fd)
+
+    def spy_fsync_dir(p: Path) -> None:
+        fsync_dir_calls.append(p)
+
+    monkeypatch.setattr(episodes_mod, "fsync_file", spy_fsync_file)
+    monkeypatch.setattr(episodes_mod, "fsync_dir", spy_fsync_dir)
+
+    ep = episode_store.write(session_id="sess_aaaa1111", body="durable")
+
+    session_dir = episode_store.episodes_dir / "sess_aaaa1111"
+    target = session_dir / f"{ep.id}.md"
+    assert target.is_file()
+
+    # No `.tmp` artifacts left behind after a successful write.
+    stragglers = [
+        p for p in session_dir.iterdir() if p.suffix == ".tmp" or ".tmp" in p.name
+    ]
+    assert stragglers == [], f"unexpected tmp artifacts: {stragglers}"
+
+    # Both fsync primitives were invoked — fsync_file on the tmp fd
+    # before rename, fsync_dir on the session dir after rename.
+    assert len(fsync_file_calls) == 1
+    assert fsync_dir_calls == [session_dir]
+
+    # 0o600 mode on POSIX. Windows has no mode bits, so skip there.
+    if sys.platform != "win32":
+        mode = stat.S_IMODE(target.stat().st_mode)
+        assert mode == 0o600, f"expected 0o600, got {oct(mode)}"
 
 
 def test_excluded_from_memory_store_iteration(tmp_path: Path) -> None:
