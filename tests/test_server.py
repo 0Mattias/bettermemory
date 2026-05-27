@@ -2613,6 +2613,73 @@ async def test_delete_source_episode_filenotfound_still_succeeds(
     assert committed["status"] == "committed"
 
 
+async def test_delete_source_episode_fsyncs_session_dir(
+    server: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Audit-3 A3-06: after `ep_path.unlink()` inside the per-session
+    flock, `_delete_source_episode` must call `fsync_dir(session_dir)`
+    so the dropped dirent survives a crash. Without this, a power
+    cut between `memory_write_confirm` returning "committed" and the
+    kernel flushing dirty pages can resurrect the episode file on
+    reboot — the durable memory exists, the journal entry comes back
+    as a duplicate that lives until the 30-day TTL or the next prune.
+    Symmetric to the `fsync_dir(episodes_dir)` ceremony on the prune
+    branches.
+
+    Spy on the `fsync_dir` binding the `episode_promote` module
+    imported. Run the full promote → confirm round-trip (user-inference
+    forces the deferred delete path via `memory_write_confirm`). After
+    confirm, assert the spy recorded a call against the session_dir.
+
+    Note: `import bettermemory.handlers.episode_promote as m` would
+    resolve to the FUNCTION `episode_promote` (re-exported from the
+    handlers package `__init__.py` and bound as an attribute on the
+    `handlers` package, shadowing the submodule on attribute lookup).
+    Use `importlib.import_module` to get the actual module object so
+    `monkeypatch.setattr(module, "fsync_dir", ...)` finds the rebound
+    name.
+    """
+    import importlib
+
+    promote_mod = importlib.import_module("bettermemory.handlers.episode_promote")
+
+    ep = await _call(
+        server,
+        "episode_write",
+        body="Iter — promotion fsync_dir signal.",
+        takeaway="user prefers terse summaries over verbose walkthroughs",
+    )
+    pending = await _call(
+        server,
+        "episode_promote",
+        episode_id=ep["id"],
+        scopes=["learning-style"],
+        category="user-inference",
+    )
+    assert pending["status"] == "pending"
+
+    fsync_dir_calls: list[Path] = []
+
+    def spy_fsync_dir(p: Path) -> None:
+        fsync_dir_calls.append(p)
+
+    monkeypatch.setattr(promote_mod, "fsync_dir", spy_fsync_dir)
+
+    committed = await _call(
+        server, "memory_write_confirm", pending_id=pending["pending_id"]
+    )
+    assert committed["status"] == "committed"
+
+    # The deferred delete path inside the locked section must fsync
+    # the session_dir after unlink. Identify session_dir by suffix
+    # match on the episode_session_id; the spy captured the exact
+    # Path object passed in.
+    assert any(p.name.startswith("sess_") for p in fsync_dir_calls), (
+        f"_delete_source_episode must fsync_dir(session_dir) after the "
+        f"unlink to persist the dropped dirent; saw: {fsync_dir_calls}"
+    )
+
+
 async def test_episode_handoff_respects_explicit_prior_session_id(
     memory_dir: Path,
 ) -> None:

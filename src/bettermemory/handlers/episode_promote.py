@@ -32,7 +32,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any
 
-from .._fsutil import flock_excl
+from .._fsutil import flock_excl, fsync_dir
 from ._shared import Context, _advance_turn
 
 if TYPE_CHECKING:
@@ -82,6 +82,26 @@ def _delete_source_episode(
         try:
             ep_path.unlink()
         except FileNotFoundError:
+            pass
+        # Durability gate (audit-3 A3-06): unlink() drops the dirent
+        # from session_dir, but that metadata change lives in the
+        # directory's page-cache until a dir-fsync hits disk. Without
+        # this, a crash between the confirm returning "committed" and
+        # the kernel flushing dirty pages can resurrect the episode
+        # file on reboot — the durable memory exists, the journal
+        # entry comes back as a duplicate that survives until the
+        # 30-day TTL or the next prune pass. Symmetric to the
+        # `fsync_dir` ceremony on the prune branches in
+        # `EpisodeStore.prune_old_sessions`.
+        #
+        # Wrap in try/except OSError so a vanished session_dir (peer
+        # prune raced past our FileNotFoundError catch above and
+        # rmtree'd the parent too) doesn't crash this helper —
+        # `fsync_dir` already swallows OSError internally, but a
+        # narrow belt-and-suspenders here documents the intent.
+        try:
+            fsync_dir(session_dir)
+        except OSError:
             pass
 
 

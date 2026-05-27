@@ -112,7 +112,22 @@ class EpisodeStore:
         # gets the 0o700 treatment the tombstone directory does, since
         # episodes carry the same trust boundary as memories (origin
         # capture includes cwd, branch).
+        #
+        # Track whether the `episodes/` dirent was created by us. If
+        # so, fsync the memory root (its parent) after the mkdir so the
+        # new dirent survives a crash. POSIX requires an explicit
+        # dir-fsync on the parent for a freshly-created subdir entry to
+        # be durable; without it, a crash after the first-ever episode
+        # write can resurrect a state where the file exists on disk but
+        # `episodes/` is missing from `root`'s directory listing — the
+        # file is orphan (no path traversal can reach it). Mirrors
+        # `events.Recorder.record`'s `fsync_dir(self.root)` on first
+        # write at `events.py:264`. Best-effort: `fsync_dir` no-ops on
+        # Windows and swallows OSError on pseudo-filesystems.
+        episodes_dir_was_created = not self.episodes_dir.exists()
         self.episodes_dir.mkdir(mode=0o700, exist_ok=True)
+        if episodes_dir_was_created:
+            fsync_dir(self.root)
         session_dir = self._session_dir(session_id)
         # Cross-process coordination with `prune_old_sessions`. Multi-MCP
         # racing: process A's prune (TTL eviction or maintenance call)
@@ -132,9 +147,27 @@ class EpisodeStore:
         # both filter `is_dir()` so the lockfiles are invisible to
         # session enumeration.
         with flock_excl(self.episodes_dir / f".session-{session_id}"):
+            # Track whether session_dir was created so we can fsync the
+            # parent (episodes_dir) on first creation only. `_write_path`
+            # below fsyncs `session_dir` itself for the rename, but the
+            # NEW dirent for `session_dir` inside `episodes_dir` lives
+            # in episodes_dir's own page-cache until a dir-fsync hits
+            # disk. On crash after the first write into a fresh
+            # session_id, the file + session_dir survive on disk but
+            # are unreachable via path traversal (the dirent for
+            # session_dir is missing from the recovered episodes_dir
+            # listing). Mirrors the events.Recorder.record discipline
+            # at `events.py:264` and stays inside the flock so the
+            # metadata flush completes before any peer prune's
+            # rmdir/rmtree can interleave. Subsequent writes to the
+            # same session_dir don't need re-syncing — the dirent
+            # already exists.
+            session_dir_was_created = not session_dir.exists()
             session_dir.mkdir(mode=0o700, exist_ok=True)
             path = session_dir / f"{episode.id}.md"
             self._write_path(path, episode)
+            if session_dir_was_created:
+                fsync_dir(self.episodes_dir)
         return episode
 
     def _write_path(self, path: Path, episode: Episode) -> None:
@@ -333,6 +366,19 @@ class EpisodeStore:
                             # past-cutoff branch.
                             continue
                         session_dir.rmdir()
+                        # Durability gate (audit-3 A3-04): rmdir drops
+                        # the dirent from `episodes_dir`, but the
+                        # metadata change lives in the parent's
+                        # page-cache until a dir-fsync hits disk. On
+                        # crash, the kernel can present a recovered
+                        # `episodes_dir` that still lists the deleted
+                        # session_dir as a phantom entry — next list
+                        # would attempt to iterate it and trip
+                        # FileNotFoundError or, worse, the dir gets
+                        # half-resurrected. Fsync inside the flock so
+                        # the metadata flush completes before the lock
+                        # releases and any peer can re-observe the dir.
+                        fsync_dir(self.episodes_dir)
                     pruned.append(session_name)
                 except FileNotFoundError:
                     # Peer pruner won the race between our unlocked
@@ -381,6 +427,19 @@ class EpisodeStore:
                             # rename). Either way, don't delete.
                             continue
                         shutil.rmtree(session_dir)
+                        # Durability gate (audit-3 A3-04): rmtree drops
+                        # the session_dir's dirent from `episodes_dir`,
+                        # but the metadata change lives in the parent's
+                        # page-cache until a dir-fsync hits disk. On
+                        # crash, the kernel can present a recovered
+                        # `episodes_dir` that still lists the deleted
+                        # session as a phantom entry, with the inner
+                        # files already wiped — readers attempting to
+                        # iterate it would trip FileNotFoundError or
+                        # surface stale episodes briefly. Fsync inside
+                        # the flock so the metadata flush completes
+                        # before the lock releases.
+                        fsync_dir(self.episodes_dir)
                     pruned.append(session_name)
                 except FileNotFoundError:
                     # Another prune in a peer process already rmtree'd

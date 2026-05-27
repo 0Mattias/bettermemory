@@ -408,11 +408,16 @@ def test_write_is_atomic_and_durable(
     episode_store: EpisodeStore, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """The write path must (a) leave no `.tmp` artifacts behind,
-    (b) chmod the final file to 0o600 on POSIX, and (c) call both
-    durability primitives (`fsync_file` on the open fd, `fsync_dir` on
-    the parent). Pre-fix `_write_path` used `Path.write_text` +
-    `os.replace` with no fsyncs, so power-loss between rename and
-    kernel flush could leave a zero-byte `<ulid>.md` at the target."""
+    (b) chmod the final file to 0o600 on POSIX, and (c) call all three
+    durability primitives expected on a first-ever write:
+    `fsync_file` on the open fd, `fsync_dir` on the leaf parent
+    (session_dir), AND the dirent-flush ceremony introduced for
+    audit-3 A3-05 — `fsync_dir` on `root` (because episodes_dir was
+    just created) and `fsync_dir` on `episodes_dir` (because
+    session_dir was just created). Pre-fix `_write_path` used
+    `Path.write_text` + `os.replace` with no fsyncs, so power-loss
+    between rename and kernel flush could leave a zero-byte
+    `<ulid>.md` at the target."""
     fsync_file_calls: list[int] = []
     fsync_dir_calls: list[Path] = []
 
@@ -439,10 +444,22 @@ def test_write_is_atomic_and_durable(
     ]
     assert stragglers == [], f"unexpected tmp artifacts: {stragglers}"
 
-    # Both fsync primitives were invoked — fsync_file on the tmp fd
-    # before rename, fsync_dir on the session dir after rename.
+    # fsync_file: one call on the per-write tmp fd before rename.
     assert len(fsync_file_calls) == 1
-    assert fsync_dir_calls == [session_dir]
+
+    # fsync_dir: three calls on a first-ever write to a fresh store.
+    # Order matches the durability ceremony:
+    #   1. `root` after `episodes_dir.mkdir` (audit-3 A3-05) — the
+    #      new `episodes/` dirent in root.
+    #   2. `session_dir` from `_write_path`'s rename ceremony — the
+    #      `<ulid>.md` rename.
+    #   3. `episodes_dir` after `_write_path` returns inside the flock
+    #      (audit-3 A3-05) — the new session_dir dirent.
+    assert fsync_dir_calls == [
+        episode_store.root,
+        session_dir,
+        episode_store.episodes_dir,
+    ], f"expected 3-stage first-write fsync_dir ceremony, got: {fsync_dir_calls}"
 
     # 0o600 mode on POSIX. Windows has no mode bits, so skip there.
     if sys.platform != "win32":
@@ -649,3 +666,140 @@ def test_prune_empty_dir_treats_vanished_dir_as_success(
         "empty-dir branch should record a peer-raced rmdir as a successful prune"
     )
     assert not target.exists()
+
+
+def test_prune_past_cutoff_fsyncs_episodes_dir(
+    episode_store: EpisodeStore, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Audit-3 A3-04: after `shutil.rmtree(session_dir)` in the past-
+    cutoff prune branch, the parent `episodes_dir`'s dirent listing has
+    changed (the session_dir entry is gone). Without an explicit
+    `fsync_dir(episodes_dir)`, that metadata change lives in the
+    parent's page-cache until a natural flush — on power loss between
+    rmtree returning and the kernel persisting dirty pages, the kernel
+    can present a recovered `episodes_dir` that still lists the
+    deleted session as a phantom entry.
+    """
+    import os as _os
+    import bettermemory.episodes as episodes_mod
+
+    episode_store.write(session_id="sess_past_cutoff_fsync", body="ancient")
+    stale_dir = episode_store.episodes_dir / "sess_past_cutoff_fsync"
+    past = time.time() - (40 * 24 * 60 * 60)
+    for f in stale_dir.iterdir():
+        _os.utime(f, (past, past))
+
+    # Spy on the fsync_dir binding the episodes module imports; the
+    # write path that created the seed episode above will have called
+    # fsync_dir on session_dir (for the rename) AND on episodes_dir
+    # (first-create dirent flush, audit-3 A3-05). Reset the spy AFTER
+    # the seed write so the assertion below only sees the prune's
+    # fsync.
+    fsync_dir_calls: list[Path] = []
+
+    def spy_fsync_dir(p: Path) -> None:
+        fsync_dir_calls.append(p)
+
+    monkeypatch.setattr(episodes_mod, "fsync_dir", spy_fsync_dir)
+
+    pruned = episode_store.prune_old_sessions(ttl_days=30)
+    assert "sess_past_cutoff_fsync" in pruned
+    assert not stale_dir.exists()
+
+    # The past-cutoff branch must fsync episodes_dir AFTER rmtree to
+    # make the dropped dirent durable. A missing call would mean a
+    # crash between rmtree returning and the next dir-fsync (which
+    # only happens on the next write to a fresh session_id, hours or
+    # days away) could resurrect a phantom dirent for the deleted
+    # session.
+    assert episode_store.episodes_dir in fsync_dir_calls, (
+        f"prune past-cutoff branch must fsync_dir(episodes_dir) after "
+        f"rmtree; saw calls only on: {fsync_dir_calls}"
+    )
+
+
+def test_prune_empty_dir_fsyncs_episodes_dir(
+    episode_store: EpisodeStore, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Audit-3 A3-04: symmetric to the past-cutoff test above but for
+    the empty-dir branch. `Path.rmdir(session_dir)` drops the session
+    dirent from `episodes_dir`; without an explicit `fsync_dir` the
+    metadata change can be lost on crash."""
+    import bettermemory.episodes as episodes_mod
+
+    # Empty session_dir — no files inside, so the prune takes the
+    # empty-dir branch (newest_mtime is None).
+    episode_store.episodes_dir.mkdir(mode=0o700, exist_ok=True)
+    empty_dir = episode_store.episodes_dir / "sess_empty_fsync"
+    empty_dir.mkdir(mode=0o700)
+
+    fsync_dir_calls: list[Path] = []
+
+    def spy_fsync_dir(p: Path) -> None:
+        fsync_dir_calls.append(p)
+
+    monkeypatch.setattr(episodes_mod, "fsync_dir", spy_fsync_dir)
+
+    pruned = episode_store.prune_old_sessions(ttl_days=30)
+    assert "sess_empty_fsync" in pruned
+    assert not empty_dir.exists()
+
+    assert episode_store.episodes_dir in fsync_dir_calls, (
+        f"prune empty-dir branch must fsync_dir(episodes_dir) after "
+        f"rmdir; saw calls only on: {fsync_dir_calls}"
+    )
+
+
+def test_episode_write_fsyncs_episodes_dir_on_first_create(
+    episode_store: EpisodeStore, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Audit-3 A3-05: the first write to a fresh session_id creates a
+    new session_dir under `episodes_dir`. `_write_path` fsyncs the
+    leaf parent (session_dir) so the file rename is durable, but the
+    NEW dirent for session_dir itself in `episodes_dir` needs its own
+    dir-fsync — without it, a crash after the very first write leaves
+    the file + session_dir on disk but unreachable via path traversal
+    (the dirent is missing from the recovered episodes_dir listing).
+    Subsequent writes into the same session_dir don't re-trigger the
+    fsync — the dirent already exists.
+    """
+    import bettermemory.episodes as episodes_mod
+
+    fsync_dir_calls: list[Path] = []
+
+    def spy_fsync_dir(p: Path) -> None:
+        fsync_dir_calls.append(p)
+
+    monkeypatch.setattr(episodes_mod, "fsync_dir", spy_fsync_dir)
+
+    # First write: episodes_dir doesn't exist yet, session_dir doesn't
+    # exist yet. We expect fsync_dir on:
+    #  - self.root (because episodes_dir was just created)
+    #  - session_dir (from _write_path's existing rename ceremony)
+    #  - self.episodes_dir (because session_dir was just created — the
+    #    fix this test pins)
+    episode_store.write(session_id="sess_first_create_fsync", body="first")
+    session_dir = episode_store.episodes_dir / "sess_first_create_fsync"
+
+    assert episode_store.episodes_dir in fsync_dir_calls, (
+        f"first write to a fresh session_id must fsync_dir(episodes_dir) "
+        f"to persist the new session_dir dirent; saw: {fsync_dir_calls}"
+    )
+    assert session_dir in fsync_dir_calls, (
+        f"_write_path's rename ceremony should still fsync_dir(session_dir); "
+        f"saw: {fsync_dir_calls}"
+    )
+
+    # Second write into the SAME session_dir — the dirent already
+    # exists, so no extra fsync_dir(episodes_dir) call. Only the
+    # session_dir fsync from _write_path's rename should fire.
+    fsync_dir_calls.clear()
+    episode_store.write(session_id="sess_first_create_fsync", body="second")
+    assert episode_store.episodes_dir not in fsync_dir_calls, (
+        f"subsequent writes to an existing session_dir must NOT re-fsync "
+        f"episodes_dir; saw: {fsync_dir_calls}"
+    )
+    assert session_dir in fsync_dir_calls, (
+        f"_write_path should still fsync session_dir on every write; "
+        f"saw: {fsync_dir_calls}"
+    )
