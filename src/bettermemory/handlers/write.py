@@ -531,6 +531,7 @@ async def memory_write(
         allowed_scopes=deps.config.scopes.allowed,
         category=category,
         max_content_bytes=deps.config.behavior.max_content_bytes,
+        max_scopes_per_write=deps.config.behavior.max_scopes_per_write,
     )
 
     # Origin is captured before the gate chain so it's part of the

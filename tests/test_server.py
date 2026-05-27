@@ -1796,6 +1796,177 @@ async def test_episode_write_no_takeaway_still_commits(memory_dir: Path) -> None
     assert res["takeaway"] is None
 
 
+async def test_episode_write_rejects_oversized_scope_list(memory_dir: Path) -> None:
+    """A scopes list exceeding [behavior] max_scopes_per_write is rejected
+    at the handler. Same silent-data-loss class as the takeaway cap (t16):
+    scopes serialise into YAML frontmatter, which `_frontmatter._MAX_YAML_BYTES`
+    caps at 64 KB to neutralise alias-expansion DoS. Roughly 2200 short
+    scope names push the frontmatter past that ceiling — the loader then
+    raises `ValueError` on every subsequent read and the episode vanishes
+    from every read surface (search / handoff / promote) despite the write
+    returning `status="committed"`. The handler-boundary cap closes the
+    path before the file ever lands on disk."""
+    from bettermemory.config import BehaviorConfig
+
+    cap = 5
+    cfg = Config(
+        storage=StorageConfig(directory=str(memory_dir)),
+        behavior=BehaviorConfig(max_scopes_per_write=cap),
+    )
+    server = build_server(config=cfg, store=Store(memory_dir), state=SessionState())
+    # cap + 1 short scope names — derive from the config field rather than
+    # hardcoding so the test stays correct if the default ever shifts.
+    big_scopes = [f"scope-{i}" for i in range(cap + 1)]
+    with pytest.raises(Exception, match="max_scopes_per_write"):
+        await _call(
+            server,
+            "episode_write",
+            body="small body",
+            scopes=big_scopes,
+        )
+
+
+async def test_episode_write_under_scope_cap_still_commits(memory_dir: Path) -> None:
+    """A small scope list under the cap commits unchanged — the new
+    scope-count validator must not regress the happy path. Pairs with the
+    oversize-reject test above to pin both sides of the boundary."""
+    from bettermemory.config import BehaviorConfig
+
+    cfg = Config(
+        storage=StorageConfig(directory=str(memory_dir)),
+        behavior=BehaviorConfig(max_scopes_per_write=64),
+    )
+    server = build_server(config=cfg, store=Store(memory_dir), state=SessionState())
+    res = await _call(
+        server,
+        "episode_write",
+        body="under all caps",
+        scopes=["tools", "infrastructure"],
+    )
+    assert res["status"] == "committed"
+    assert res["scopes"] == ["tools", "infrastructure"]
+
+
+async def test_memory_write_rejects_oversized_scope_list(memory_dir: Path) -> None:
+    """memory_write applies the same scope-list cap as episode_write.
+    Defense-in-depth: the same YAML-corruption silent-data-loss path
+    exists on the memory tier (scopes land in frontmatter the same way),
+    so an unbounded scope list would corrupt the memory file and erase
+    the record from search / list / show despite a committed-looking
+    write. Mirrors the discipline `_validate_content_size` set for
+    byte caps — every list-shaped frontmatter field gets a count cap."""
+    from bettermemory.config import BehaviorConfig
+
+    cap = 5
+    cfg = Config(
+        storage=StorageConfig(directory=str(memory_dir)),
+        behavior=BehaviorConfig(max_scopes_per_write=cap),
+    )
+    server = build_server(config=cfg, store=Store(memory_dir), state=SessionState())
+    big_scopes = [f"scope-{i}" for i in range(cap + 1)]
+    with pytest.raises(Exception, match="max_scopes_per_write"):
+        await _call(
+            server,
+            "memory_write",
+            content="some durable fact",
+            scopes=big_scopes,
+        )
+
+
+async def test_memory_update_rejects_oversized_scope_list(memory_dir: Path) -> None:
+    """memory_update applies the same cap — otherwise a caller could
+    bypass the bound by writing under-cap then retag-updating to ~2200
+    scopes, corrupting the frontmatter and erasing the record from every
+    read surface. Same class as the body cap on update (which closes the
+    write-small-then-update-big bypass for the content axis)."""
+    from bettermemory.config import BehaviorConfig
+
+    cap = 5
+    cfg = Config(
+        storage=StorageConfig(directory=str(memory_dir)),
+        behavior=BehaviorConfig(max_scopes_per_write=cap),
+    )
+    server = build_server(config=cfg, store=Store(memory_dir), state=SessionState())
+    small = await _call(
+        server,
+        "memory_write",
+        content="some durable fact",
+        scopes=["tools"],
+    )
+    memory_id = small["id"]
+    big_scopes = [f"scope-{i}" for i in range(cap + 1)]
+    with pytest.raises(Exception, match="max_scopes_per_write"):
+        await _call(server, "memory_update", id=memory_id, scopes=big_scopes)
+
+
+async def test_episode_model_scopes_count_validator() -> None:
+    """Direct Pydantic test: `Episode(scopes=[…] * 65)` raises
+    ValidationError. Model-layer defense-in-depth — a programmatic caller
+    that bypasses the handler (sync pull, future in-process API,
+    migration) still can't smuggle an unbounded scope list onto disk.
+    The model-layer cap is hardcoded at 64 to match the established
+    verified_paths / verified_commits / verified_versions / links
+    ceiling."""
+    from datetime import datetime, timezone
+
+    from bettermemory.models import Episode, generate_ulid
+    from pydantic import ValidationError
+
+    too_many_scopes = [f"s-{i}" for i in range(65)]
+    with pytest.raises(ValidationError, match="scopes list capped at 64"):
+        Episode(
+            id=generate_ulid(),
+            session_id="sess_test",
+            created=datetime.now(timezone.utc),
+            body="body",
+            scopes=too_many_scopes,
+        )
+
+
+async def test_memory_model_scopes_count_validator() -> None:
+    """Direct Pydantic test: `Memory(scopes=[…] * 65)` raises
+    ValidationError. Same model-layer ceiling as Episode — applies
+    symmetrically across the two tiers because the YAML-corruption
+    failure mode is identical."""
+    from datetime import datetime, timezone
+
+    from bettermemory.models import Confidence, Memory, Source, generate_ulid
+    from pydantic import ValidationError
+
+    too_many_scopes = [f"s-{i}" for i in range(65)]
+    now = datetime.now(timezone.utc)
+    with pytest.raises(ValidationError, match="scopes list capped at 64"):
+        Memory(
+            id=generate_ulid(),
+            created=now,
+            updated=now,
+            scopes=too_many_scopes,
+            confidence=Confidence.MEDIUM,
+            source=Source.EXPLICIT,
+            body="body",
+        )
+
+
+async def test_episode_model_scopes_at_cap_accepted() -> None:
+    """Exactly 64 scopes is accepted — the cap is inclusive of the
+    boundary. Pins the off-by-one: a regression that flips `>` to `>=`
+    would reject 64-scope records, breaking the very ceiling
+    verified_paths sets as the project's per-record list cap."""
+    from datetime import datetime, timezone
+
+    from bettermemory.models import Episode, generate_ulid
+
+    at_cap_scopes = [f"s-{i}" for i in range(64)]
+    ep = Episode(
+        id=generate_ulid(),
+        session_id="sess_test",
+        created=datetime.now(timezone.utc),
+        body="body",
+        scopes=at_cap_scopes,
+    )
+    assert len(ep.scopes) == 64
+
+
 async def test_episode_write_is_invisible_to_memory_iterators(server: Any) -> None:
     """Episodes live in a sibling subtree — memory_list /
     memory_search must not surface them."""

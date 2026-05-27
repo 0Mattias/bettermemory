@@ -15,7 +15,12 @@ from typing import TYPE_CHECKING, Any
 
 from ..models import Category, Confidence, _PROPOSABLE_CATEGORIES, validate_scope
 from ..store import MemoryNotFoundError, TombstonedError
-from ._shared import Context, _advance_turn, _validate_content_size
+from ._shared import (
+    Context,
+    _advance_turn,
+    _validate_content_size,
+    _validate_scope_count,
+)
 
 if TYPE_CHECKING:
     from .._handlers import ToolHandlers
@@ -103,6 +108,14 @@ async def memory_update(
     if scopes is not None:
         if not scopes:
             raise ValueError("scopes must contain at least one entry if provided")
+        # Mirror the cap memory_write / episode_write enforce so an update
+        # can't smuggle past the handler-boundary ceiling memory_write closes.
+        # Without this, retag-then-update would let a caller bypass the
+        # configurable cap by writing under-cap then updating to ~2200 scopes,
+        # corrupting the YAML frontmatter and erasing the record from every
+        # read surface — same silent-data-loss path the takeaway cap closed
+        # in t16.
+        _validate_scope_count(scopes, deps.config.behavior.max_scopes_per_write)
         new_scopes = [validate_scope(s) for s in scopes]
         if deps.config.scopes.allowed:
             allowed = set(deps.config.scopes.allowed)

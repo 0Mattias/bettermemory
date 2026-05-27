@@ -165,9 +165,40 @@ def validate_scope(scope: str) -> str:
     return scope
 
 
-def _validate_scopes_list(scopes: list[str]) -> list[str]:
-    if not scopes:
+# Defensive cap on the per-record scope list — every list-shaped frontmatter
+# field needs one. The risk is the same silent-data-loss path the takeaway cap
+# (t16) closed: each scope serialises into YAML frontmatter, which
+# `_frontmatter._MAX_YAML_BYTES` caps at 64 KB to neutralise alias-expansion
+# DoS. Roughly 2200 short scope names (e.g. `"abc-def" * 2200`) would push the
+# frontmatter past that ceiling — the loader would then raise `ValueError` on
+# every subsequent read and the record would vanish from `memory_search` /
+# `memory_list` / `episode_handoff` despite the write returning
+# `status="committed"`. 64 matches the established ceiling on
+# `verified_paths` / `verified_commits` / `verified_versions` / `links` (see
+# `_cap_verified_list` / `_check_links` below) — well above any realistic
+# per-record scope count (1-5 in practice) but low enough that an
+# uncontrolled-append regression surfaces as an immediate write-time failure
+# instead of slow on-disk bloat. The model-layer cap is defense-in-depth: the
+# handler layer applies a configurable cap via `BehaviorConfig.max_scopes_per_write`,
+# but a programmatic caller that bypasses the handler (sync, migration, future
+# in-process API) still can't smuggle an unbounded list onto disk.
+_MAX_SCOPES_PER_RECORD = 64
+
+
+def _validate_scopes_list(scopes: list[str], *, allow_empty: bool = False) -> list[str]:
+    """Per-scope validity + list-length cap.
+
+    `allow_empty=True` is set by the Episode validator only — episodes are
+    keyed by `session_id` not by scope, so a tagless episode is still
+    routable via `episode_handoff`. Memory records (which require a non-
+    empty list for retrieval) leave the flag at False.
+    """
+    if not scopes and not allow_empty:
         raise ValueError("scopes must contain at least one entry")
+    if len(scopes) > _MAX_SCOPES_PER_RECORD:
+        raise ValueError(
+            f"scopes list capped at {_MAX_SCOPES_PER_RECORD} entries (got {len(scopes)})"
+        )
     return [validate_scope(s) for s in scopes]
 
 
@@ -569,7 +600,11 @@ class Episode(BaseModel):
     @field_validator("scopes")
     @classmethod
     def _check_scopes(cls, v: list[str]) -> list[str]:
-        return [validate_scope(s) for s in v]
+        # Episodes allow an empty scope list (handoff keys on session_id, not
+        # scope) — route through the shared validator with `allow_empty=True`
+        # so the 64-entry cap is enforced uniformly with Memory/TombstonedMemory
+        # while the empty-list semantics for the episode tier are preserved.
+        return _validate_scopes_list(v, allow_empty=True)
 
 
 # ---------------------------------------------------------------------------

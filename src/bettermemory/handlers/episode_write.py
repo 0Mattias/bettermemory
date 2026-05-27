@@ -16,7 +16,12 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any
 
-from ._shared import Context, _advance_turn, _validate_content_size
+from ._shared import (
+    Context,
+    _advance_turn,
+    _validate_content_size,
+    _validate_scope_count,
+)
 
 if TYPE_CHECKING:
     from .._handlers import ToolHandlers
@@ -54,7 +59,11 @@ DESC_EPISODE_WRITE = (
     "would corrupt the file and the episode would vanish from "
     "every read surface despite returning `committed`.\n"
     "- `scopes` (optional): list of scope tags. Empty list is "
-    "valid (handoff keys on session_id, not scope)."
+    "valid (handoff keys on session_id, not scope). Capped by "
+    "`max_scopes_per_write` (default 64) — scopes serialise into "
+    "the YAML frontmatter (64 KB ceiling), so a runaway scope list "
+    "would corrupt the file and the episode would vanish from every "
+    "read surface despite returning `committed`."
 )
 
 
@@ -105,6 +114,16 @@ async def episode_write(
             field_name="takeaway",
             config_key="max_takeaway_bytes",
         )
+    # Cap the scope list alongside the body + takeaway byte caps. Same
+    # silent-data-loss class as t16: scopes serialise into YAML
+    # frontmatter, and a ~2200-entry list would push the frontmatter
+    # past `_frontmatter._MAX_YAML_BYTES`. The loader would then raise
+    # `ValueError` on every subsequent read and the episode would
+    # vanish from every read surface (search / handoff / promote)
+    # despite the write returning `status="committed"`. Empty scope
+    # list is valid (handoff keys on session_id), so no min-count check.
+    if scopes is not None:
+        _validate_scope_count(scopes, deps.config.behavior.max_scopes_per_write)
 
     origin = _h.capture_origin()
     # The recorder's session_id is the canonical per-process id that's
