@@ -60,11 +60,27 @@ from .time_utils import parse_event_ts
 # site.
 DEFAULT_SINCE_SPEC = "30d"
 
-# Default floor for cold-endorsement row inclusion. Shared with
-# ``health._COLD_ENDORSEMENT_MIN_RETRIEVALS`` — duplicating the literal
-# keeps the module dependency-light (we don't reach into health's
-# privates), and the value is conservative enough that drift between
-# the two would be inert in practice.
+# Default floor for cold-endorsement row inclusion. Two design choices
+# baked in here that look like sloppiness but aren't:
+#
+# 1. Value-duplication of the literal ``5``. The same integer lives at
+#    ``health._COLD_ENDORSEMENT_MIN_RETRIEVALS``. We duplicate rather
+#    than import so the eval module stays dependency-light (no reach
+#    into health's privates), and the value is conservative enough
+#    that drift between the two would be inert in practice.
+#
+# 2. Bare ``ENDORSEMENT`` prefix instead of ``COLD_ENDORSEMENT``. The
+#    constant feeds ``endorsement_min_retrievals`` on ``compute_eval``
+#    and ``EvalReport``, which serialises to wire-key ``min_retrievals``
+#    nested under ``cold_endorsement_memories`` (see
+#    ``EvalReport.to_dict``). The bucket scope is supplied by the
+#    nesting, not by the identifier prefix — the parameter is
+#    conceptually "threshold-for-the-bucket-named-at-the-call-site",
+#    so prefixing it with ``cold_`` would be redundant once read in
+#    context. Health's ``cold_endorsement_min_retrievals`` doesn't get
+#    this nesting (it's a kwarg passed flat through several layers),
+#    which is why the two modules diverge on the identifier even
+#    though they share the literal.
 DEFAULT_ENDORSEMENT_MIN_RETRIEVALS = 5
 
 # Default cap for the inline silent-miss list. Recent enough to triage
