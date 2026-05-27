@@ -66,6 +66,57 @@ def test_addendum_matches_docs() -> None:
     )
 
 
+def test_addendum_tools_headline_enumerates_episode_family() -> None:
+    """The single-line "Tools:" headline names every episode_* tool.
+
+    The headline is the model's only place to learn — without calling
+    `list_tools` — that the episode_* sibling family exists alongside
+    memory_*. Earlier revisions enumerated only `memory_*`, leaving a
+    model that paste-loaded the addendum unaware of the loop-iteration
+    surface. Pin each name explicitly so a future trim can't silently
+    drop one.
+    """
+    assert "episode_write" in SYSTEM_PROMPT_ADDENDUM
+    assert "episode_handoff" in SYSTEM_PROMPT_ADDENDUM
+    assert "episode_search" in SYSTEM_PROMPT_ADDENDUM
+    assert "episode_promote" in SYSTEM_PROMPT_ADDENDUM
+
+
+def test_api_md_documents_loop_phase_surface() -> None:
+    """`docs/api.md` documents the feature/loops-phase-1 additions.
+
+    Four contract additions landed across feature/loops-phase-1 that
+    callers (Claude Code clients + the model itself) read from
+    `docs/api.md`. Out-of-sync docs ship as user-visible bugs — the
+    model can't use a feature it doesn't know exists. Pin a short
+    text-presence check for each addition so a future doc trim trips
+    one assertion rather than silently regressing the contract:
+
+    - `since_prior_session` param on `memory_search`
+    - `recently_removed_in_worktree` + `curation_pending_new_since_last_session`
+      on `memory_scope_overview`
+    - inline `curation_hint` on `memory_write`
+    - `depends_on_resolved` on search hits
+    - `recommendations` on the `memory_health` rollup
+    """
+    api_md = Path(__file__).resolve().parents[1] / "docs" / "api.md"
+    text = api_md.read_text(encoding="utf-8")
+    # memory_search since_prior_session — signature + bullet
+    assert "since_prior_session" in text, (
+        "docs/api.md missing the since_prior_session parameter; "
+        "memory_search signature is out of sync with the handler."
+    )
+    # memory_scope_overview new fields
+    assert "recently_removed_in_worktree" in text
+    assert "curation_pending_new_since_last_session" in text
+    # memory_write inline curation_hint
+    assert "curation_hint" in text
+    # memory_search hits — depends_on_resolved
+    assert "depends_on_resolved" in text
+    # memory_health rollup — recommendations
+    assert "recommendations" in text
+
+
 async def test_addendum_tool_names_exist_on_server(tmp_path: Path) -> None:
     """Every `memory_*` tool referenced in the addendum is registered on the server.
 

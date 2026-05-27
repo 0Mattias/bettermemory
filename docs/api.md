@@ -12,7 +12,7 @@ The contractual list of MCP tools bettermemory exposes. Signatures, defaults, an
 
 ## Retrieval
 
-### `memory_search(query, scopes?, max_results?, expand_top?, auto_scope?, mode?)`
+### `memory_search(query, scopes?, max_results?, expand_top?, auto_scope?, since_prior_session?, mode?)`
 
 Rank stored memories against a free-text query.
 
@@ -21,11 +21,14 @@ Rank stored memories against a free-text query.
 - `max_results: int | None = None`. Falls through to `behavior.default_max_results` (config default `5`). Capped at 50.
 - `expand_top: bool = False`. When the top hit's relevance is `"high"`, inline its full body and a freshly-computed `path_drift` + `commit_drift` report. No-op otherwise. (Per-hit `path_drift` already surfaces on any hit with drifted or attested paths, so `expand_top` is now mainly about the body inline, not the drift detail.)
 - `auto_scope: bool = True`. Filter by the caller's current repo + worktree. Memories with no recorded `origin` are treated as global.
+- `since_prior_session: bool = False`. When True, narrow candidates to memories whose `updated` is at or after the latest event timestamp from any other `session_id` in the log — the current session's intra-session diff. Returns an empty list when no prior session boundary exists (first run, wiped log). Bypasses the FTS5 prefilter so newly-written rows outside the top-50 prefilter slice can't silently drop; the post-boundary set is bounded by session activity, so the linear scan is cheap regardless of corpus size. Pairs with `episode_handoff` (which surfaces what the prior iteration did). To distinguish "nothing new" (empty result) from "no baseline" (no prior session at all), also call `memory_scope_overview` and check `curation_pending_new_since_last_session is None`.
 - `mode: str | None = None`. Ranker — `"hybrid"` (default since 2.6.8: RRF fusion of keyword + BM25 + semantic when the `[embeddings]` extra is installed; degrades gracefully to keyword+BM25 fusion without it), `"keyword"` (legacy TF + coverage + recency; no IDF, weaker on rare-term queries), `"bm25"` (Okapi BM25 with the same scope-bonus + recency), or `"semantic"` (sentence-transformers cosine; requires the `[embeddings]` extra). Per-call override beats `[behavior] search_mode`. Use `"keyword"` for literal identifiers / file paths if you need byte-stable 1.6.0 ranking; otherwise hybrid is a strict improvement. The fused hybrid score lives in a smaller scale (~0.01–0.05) than single-ranker scores — compare across modes via `relevance`, not raw `score`.
 
 Returns a list of hits. Each hit carries `id`, `scopes`, `relevance` (`"high"` / `"medium"` / `"low"`), `match_terms`, `snippet`, `created`, `updated`, `last_verified_at`, `verification`, `path_drift_checked` / `path_drift_missing` counts, `staleness_verdict`, a `use_token`, and a `commit_drift_count` when applicable (omitted when the caller isn't in the memory's repo, or the memory was never verified). When the body cites paths that no longer exist (or paths the user previously attested via `memory_verify`), the hit also carries `path_drift` with `{checked, missing, verified}` lists — the missing list is directly actionable, no `memory_show` round-trip needed.
 
 Hits also carry `recent_negative_outcomes` when the memory was `ignored` or `contradicted` within the last 30 days AND not since `applied`. Each entry has shape `{outcome, most_recent_ts, count_in_window, session_id, note, claim_excerpt}` — at most one per outcome type. An `applied` event after a negative event clears the bucket. The field is omitted (not null) when no qualifying negatives exist.
+
+Hits also carry `depends_on_resolved` when the hit's memory carries `depends_on`-typed links. Shape is a list of `{id, scopes, summary, link_note}` entries, where `summary` is the target's first-line summary and `link_note` is the link's optional free-form note. Bounded per call: at most 3 entries per hit, at most 10 entries across the full result set. Targets a hit depends on are auto-pulled even when the query wouldn't surface them on its own — the search layer issues targeted `store.load_one` calls for `depends_on` target ids missing from the FTS prefilter slice, then re-applies the same `auto_scope` + session-disabled-scope filter so a dependency edge can't leak cross-project or hidden-scope content into the response. Tombstoned or removed targets are skipped silently. The field is omitted (not null) when the hit has no `depends_on` links or all targets resolve out.
 
 ### `memory_show(id)`
 
@@ -44,7 +47,10 @@ Cheap session-start hint. Counts per scope without bodies or IDs.
 
 - `auto_scope: bool = True`. Same semantics as `memory_search.auto_scope`.
 
-Returns `{current_repo, scopes: {scope: count}, total, curation_pending}`. The `curation_pending` rollup is integer counts (`stale`, `never_verified`, `drifted`, `cold`, `dead`, `silent_misses`, `endorsement_debt`) derived from the same logic as `memory_health` but without row materialisation.
+Returns `{current_repo, current_cwd, auto_scope, scopes: {scope: count}, total, disabled_scopes, curation_pending, curation_pending_new_since_last_session, recently_removed_in_worktree}`. The `curation_pending` rollup is integer counts (`stale`, `never_verified`, `drifted`, `cold`, `dead`, `silent_misses`, `endorsement_debt`) derived from the same logic as `memory_health` but without row materialisation.
+
+- `curation_pending_new_since_last_session: dict[str, int] | None`. Same shape as `curation_pending`, filtered to events emitted and memories *created* since the prior-session boundary. An older record aging into `stale` between sessions stays visible only in the absolute `curation_pending`. Branch on this dict when deciding whether to *prompt* the user about curation — non-zero values here mean new rot has accumulated since you were last around. `null` on the very first session (no prior boundary to delta against); fall back to `curation_pending` in that case. This is also the signal that disambiguates an empty `memory_search(since_prior_session=True)` between "nothing new" (key present, all zeros or non-null) and "no baseline" (`null`).
+- `recently_removed_in_worktree: int`. Count of tombstones whose `removed` timestamp lands in the last 7 days. Under `auto_scope=True`, restricted to tombstones whose `origin.worktree_root` matches the caller's; tombstones with no recorded origin are excluded under that branch. Under `auto_scope=False`, every tombstone in the window counts. Non-zero is a cue that the model previously trimmed material in this area — useful before re-suggesting something that may have already been removed.
 
 ## Writing
 
@@ -73,6 +79,8 @@ Result statuses:
 - `"scope_mismatch"` — body cites a known `projects:<name>` scope's name (or a path under another project's tree) AND that scope isn't declared. `suggested_scopes` and `matches` returned.
 - `"pending"` — when `category="user-inference"` OR `require_write_confirmation = true`. `pending_reason` distinguishes the two.
 - `"ungrounded"` — groundedness gate fired. `claims: [{sentence, overlap_ratio}, ...]` returned. No commit.
+
+A `committed` or pending-confirm response may carry an inline `curation_hint` block once per session. It fires on the first `memory_write` (or `memory_write_confirm`) whose call would otherwise return successfully AND whose `dead_weight + drifted + endorsement_debt` pressure crosses `[behavior] curation_hint_threshold` (default `5`). Shape: `{pressure: int, threshold: int, counts: {dead_weight, drifted, endorsement_debt}, message: str}`. One-shot per session — the check sets a session flag whether or not it crossed the threshold, so subsequent writes don't re-walk the event log. Disable structurally with `curation_hint_enabled = false` or `curation_hint_threshold = 0` in `[behavior]`. Pull-based discovery (calling `memory_scope_overview` / `memory_health`) remains the primary surface; this is a passive notification for a model that never asks.
 
 ### `memory_write_confirm(pending_id)` and `memory_write_cancel(pending_id)`
 
@@ -144,7 +152,9 @@ Hook attribution: the Stop hook (`bettermemory audit-turn`) also looks at the as
 - `heavily_used_top_k: int = 10`.
 - `min_applied: int | None = None`. Falls through to `behavior.heavily_used_min_applied` (config default `3`).
 
-Returns the aggregate rollup: `total_active_memories`, `total_events`, `distinct_sessions`, `dead_weight`, `cold_memories`, `heavily_used` (with per-row `applied=N (auto=X exp=Y)` split), `contradicted` (each row carries a `resolution_timeline`), `marker_stats`, `scope_distribution`, `scope_health`, `rare_scopes`, `orphan_use_events`, `verification_debt`, `commit_drift_debt` (null when the server isn't in a repo whose memories live in this store), `silent_misses`, and `endorsement_debt`.
+Returns the aggregate rollup: `total_active_memories`, `total_events`, `distinct_sessions`, `dead_weight`, `cold_memories`, `heavily_used` (with per-row `applied=N (auto=X exp=Y)` split), `contradicted` (each row carries a `resolution_timeline`), `marker_stats`, `scope_distribution`, `scope_health`, `rare_scopes`, `orphan_use_events`, `verification_debt`, `commit_drift_debt` (null when the server isn't in a repo whose memories live in this store), `silent_misses`, `endorsement_debt`, and `recommendations`.
+
+`recommendations: list[Recommendation]` distills the bucket detail above into one-line actions. Each entry is `{kind, summary, action, count, memory_ids, scope}`, where `kind` is one of the closed set `"remove_dead_weight" | "resolve_contradicted" | "cleanup_endorsement_debt" | "verify_drifted" | "fix_typo_scopes"`, `memory_ids` is capped at 10 entries (the uncapped `count` still reports true size), and `scope` is populated only on scope-level recommendations (the typo-singleton case). Size-driven kinds (`remove_dead_weight`, `cleanup_endorsement_debt`, `verify_drifted`) require at least 3 rows in the underlying bucket before they fire; `resolve_contradicted` and `fix_typo_scopes` surface from a single row. Empty list means every bucket sits below its floor — pull-based reads of the raw buckets remain the primary path; `recommendations` is the additive digest for in-conversation surfacing.
 
 The `silent_misses` rollup honors a `silent_miss_cutoff` event when present — written by `bettermemory consolidate --acknowledge-misses-before <ISO_TS>` to invalidate pre-fix `turn_audited` / `search_miss` events after a change that obsoletes them. CLI-only; no MCP surface.
 
