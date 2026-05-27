@@ -557,7 +557,10 @@ class Store:
                 ):
                     continue
                 if post.metadata.get("id") == memory_id:
-                    raise TombstonedError(f"memory {memory_id} is already tombstoned")
+                    raise TombstonedError(
+                        f"memory {memory_id} is already tombstoned "
+                        f"(raced with concurrent tombstone)"
+                    )
             raise MemoryNotFoundError(f"no memory with id {memory_id}")
 
         # Unconditionally include the ULID in the tombstone filename so
@@ -579,6 +582,24 @@ class Store:
         # tombstone containing the pre-update body, losing the in-flight
         # edit silently.
         with _locked(path):
+            # Same C2 recheck as `update` / `mark_verified`:
+            # `_find_path_for_id` above walked the directory unlocked, so
+            # a concurrent `tombstone()` may have moved the file into
+            # `.tombstones/` between the find and this lock. Without the
+            # recheck, `frontmatter.load(path)` raises a bare
+            # `FileNotFoundError` that escapes the handler layer as a
+            # 500-shaped MCP error for what is semantically just "another
+            # agent already tombstoned this id" — a clean, expected
+            # outcome under sub-agent concurrency. Surface
+            # `TombstonedError` with a message that mirrors the
+            # find-time pre-lock fallback above so the user-facing
+            # error is consistent regardless of which path detected
+            # the race.
+            if not _id_still_at_path(path, memory_id):
+                raise TombstonedError(
+                    f"memory {memory_id} is already tombstoned "
+                    f"(raced with concurrent tombstone)"
+                )
             post = frontmatter.load(path)
             post.metadata["removed"] = utcnow()
             post.metadata["removed_reason"] = reason

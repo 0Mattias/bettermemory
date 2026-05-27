@@ -871,3 +871,135 @@ def test_mark_verified_after_concurrent_tombstone_raises(
     # Tombstone state is preserved.
     with pytest.raises(TombstonedError):
         store.load_one(memory.id)
+
+
+# ---------------------------------------------------------------------------
+# W1 regression — tombstone() missing under-lock _id_still_at_path recheck
+# ---------------------------------------------------------------------------
+#
+# Pre-W1 `Store.tombstone` walked `_find_path_for_id` unlocked, acquired
+# `_locked(path)`, then `frontmatter.load(path)` — without a recheck.
+# Two agents calling `tombstone(id)` concurrently would both find the same
+# path; agent A won the lock, tombstoned, unlinked, and released; agent B
+# then acquired the now-stale lock and `frontmatter.load(path)` raised a
+# bare `FileNotFoundError`. The handler layer caught `TombstonedError` /
+# `MemoryNotFoundError` but not the bare OSError, so sub-agent B saw a
+# 500-shaped MCP error for what should be a clean "already tombstoned"
+# semantic. The fix adds the same `_id_still_at_path` recheck `update()`
+# and `mark_verified()` use, raising `TombstonedError` with a message
+# that mirrors the find-time pre-lock fallback.
+
+
+def test_tombstone_after_concurrent_tombstone_raises_tombstoned_error(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """W1 regression for `tombstone`. Deterministically inject a
+    concurrent tombstone between `_find_path_for_id` and the lock
+    acquisition: the second tombstone call must surface
+    `TombstonedError` (NOT a bare `FileNotFoundError` / OSError) so the
+    handler layer can convert cleanly to a structured ValueError."""
+    store = Store(tmp_path)
+    memory = store.write(content="will be raced on tombstone", scopes=["tools"])
+
+    original_find = Store._find_path_for_id
+    fired = {"done": False}
+
+    def racing_find(self: Store, mid: str) -> Path | None:
+        path = original_find(self, mid)
+        # Only fire on the OUTER tombstone call (the one whose race we're
+        # simulating). The nested `self.tombstone` below will itself call
+        # `_find_path_for_id`; the flag guards against recursion.
+        if path is not None and mid == memory.id and not fired["done"]:
+            fired["done"] = True
+            self.tombstone(mid, reason="raced by other process")
+        return path
+
+    monkeypatch.setattr(Store, "_find_path_for_id", racing_find)
+
+    with pytest.raises(TombstonedError, match="already tombstoned"):
+        store.tombstone(memory.id, reason="lost the race")
+
+    # Disk invariant: exactly one tombstone exists for this id, and the
+    # winning reason — not the loser's — is recorded. (We injected the
+    # racing tombstone with reason="raced by other process".)
+    tombstone = store.load_tombstone(memory.id)
+    assert tombstone.removed_reason == "raced by other process"
+
+
+def _w1_concurrent_tombstone_worker(args: tuple[str, str]) -> dict[str, str]:
+    """Worker for the cross-process W1 variant.
+
+    Each worker process attempts `Store.tombstone(memory_id)`. One worker
+    wins, the others must lose with `TombstonedError`. No bare OSError
+    (FileNotFoundError specifically) may leak — that's the W1 bug.
+    Returns a dict describing the outcome so the parent can assert on
+    the distribution.
+    """
+    root, memory_id = args
+    s = Store(Path(root))
+    try:
+        s.tombstone(memory_id, reason="worker tombstone")
+        return {"outcome": "won"}
+    except TombstonedError as exc:
+        return {"outcome": "lost-tombstoned", "msg": str(exc)}
+    except MemoryNotFoundError as exc:
+        # `_find_path_for_id` race result if a worker arrives after both
+        # the active file and the tombstone-frontmatter walk completed —
+        # unlikely with this harness but accept it as a non-bug outcome.
+        return {"outcome": "lost-not-found", "msg": str(exc)}
+    except OSError as exc:  # noqa: BLE001 — this is the W1 leak we're testing
+        return {"outcome": "leaked-oserror", "msg": f"{type(exc).__name__}: {exc}"}
+
+
+@pytest.mark.skipif(
+    sys.platform == "win32",
+    reason="fcntl-based locking is POSIX-only; MVP single-process on Windows",
+)
+def test_multi_process_concurrent_tombstone_no_oserror_leak(
+    tmp_path: Path,
+) -> None:
+    """W1 regression across REAL processes (no GIL).
+
+    Six workers race on `Store.tombstone(same_id)` from separate Python
+    interpreters. Exactly one wins; the rest must lose with
+    `TombstonedError` (or, on extremely tight timing, `MemoryNotFoundError`
+    if the tombstone-frontmatter walk also raced — accepted as not-W1).
+    A bare `OSError` (specifically `FileNotFoundError`) escaping from
+    `frontmatter.load(path)` inside the under-lock block IS the W1 bug;
+    any worker reporting `leaked-oserror` fails this test.
+    """
+    n_workers = 6
+    setup = Store(tmp_path)
+    memory = setup.write(content="raced tombstone across processes", scopes=["tools"])
+
+    ctx = mp.get_context("spawn")
+    with ctx.Pool(n_workers) as pool:
+        results = pool.map(
+            _w1_concurrent_tombstone_worker,
+            [(str(tmp_path), memory.id) for _ in range(n_workers)],
+        )
+
+    outcomes = [r["outcome"] for r in results]
+    leaks = [r for r in results if r["outcome"] == "leaked-oserror"]
+    assert not leaks, (
+        f"W1 regression: at least one worker leaked a bare OSError from "
+        f"`Store.tombstone` under concurrent contention. Leaks: {leaks}. "
+        f"All outcomes: {outcomes}"
+    )
+    # Exactly one winner — the file lock + recheck must serialize the
+    # tombstone such that no two workers both succeed.
+    winners = [o for o in outcomes if o == "won"]
+    assert len(winners) == 1, (
+        f"Expected exactly one tombstone winner, got {len(winners)}. "
+        f"Outcomes: {outcomes}"
+    )
+    # All non-winners must report a clean semantic loss (tombstoned or
+    # not-found), not a leaked OSError.
+    losers = [o for o in outcomes if o in {"lost-tombstoned", "lost-not-found"}]
+    assert len(winners) + len(losers) == n_workers, (
+        f"Unexpected outcome distribution: {outcomes}"
+    )
+
+    # Disk invariant: exactly one tombstone for the id.
+    tombstone = setup.load_tombstone(memory.id)
+    assert tombstone.id == memory.id

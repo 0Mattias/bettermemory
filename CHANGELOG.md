@@ -13,6 +13,24 @@ spells out exactly what's stable.
 
 ### Fixed
 
+- **`store.tombstone()` under-lock recheck (W1).** The mutator was the
+  one missing the `_id_still_at_path` recheck under `_locked(path)`
+  that `update()` / `mark_verified()` use. Two agents calling
+  `tombstone(id)` concurrently would both find the same path; agent A
+  won the lock, tombstoned, unlinked, released; agent B then acquired
+  the now-stale lock and `frontmatter.load(path)` raised a bare
+  `FileNotFoundError` that escaped through the handler as a 500-shaped
+  MCP error for what should be a clean "already tombstoned" semantic.
+  The under-lock recheck now raises `TombstonedError` with a message
+  that mirrors the find-time pre-lock fallback.
+- **`memory_remove` catches `OSError` (W5).** Independent of the W1
+  race fix, bare `OSError` from genuine disk-level failures during
+  the tombstone write (EIO mid-write, ENOSPC during the atomic
+  rename, EACCES on the unlink, …) still leaked through the handler
+  to the MCP boundary. Converted to `ValueError` with a descriptive
+  message; the original `OSError` is preserved on `__cause__` for
+  diagnostics.
+
 ### Internal
 
 ## 3.1.0 - 2026-05-27

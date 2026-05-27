@@ -172,3 +172,74 @@ async def test_restore_emits_event(server_with_state: Any, memory_dir: Path) -> 
     assert "restore" in kinds
     restore_events = [e for e in events if e["kind"] == "restore"]
     assert restore_events[-1]["id"] == written["id"]
+
+
+# ---------------------------------------------------------------------------
+# W5 regression — memory_remove handler must catch OSError from
+# `store.tombstone` and re-raise as a structured ValueError
+# ---------------------------------------------------------------------------
+#
+# Pre-W5 the handler caught only `TombstonedError` / `MemoryNotFoundError`.
+# A bare OSError from a genuine disk-level failure (EIO mid-write, ENOSPC
+# during the atomic rename, EACCES on the unlink, …) would escape the
+# handler and surface as a 500-shaped MCP error rather than the clean
+# structured ValueError shape every other failure mode uses. W1 closes
+# the most common race path (FileNotFoundError under concurrent
+# tombstone) by raising `TombstonedError` inside `Store.tombstone`, but
+# the broader gap remains. The fix adds an `except OSError` clause that
+# converts the bare error to ValueError with a descriptive message.
+
+
+async def test_remove_handler_converts_oserror_to_value_error(
+    server_with_state: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """W5 regression at the handler boundary. Mock `Store.tombstone`
+    to raise an OSError that simulates a genuine disk failure (e.g.
+    ENOSPC during the atomic rename). The handler must convert it to
+    a ValueError — NOT leak the bare OSError.
+
+    We exercise the handler via the MCP `call_tool` boundary (which
+    wraps the handler exception in `ToolError`) and assert two
+    invariants:
+
+      1. The error reaches the caller — i.e. no swallowing.
+      2. Walking the `__cause__` chain, the handler's own exception
+         is a `ValueError` whose cause is the original `OSError`.
+         If W5 regresses (handler doesn't catch `OSError`), the
+         direct cause of the wrapped ToolError would be an `OSError`
+         with no intermediate `ValueError` — the assertion fails.
+    """
+    server, _, store = server_with_state
+    written = await _call(server, "memory_write", content="x", scopes=["tools"])
+
+    def raising_tombstone(*args: Any, **kwargs: Any) -> Any:
+        # Simulate a genuine disk-level failure (not a race — those are
+        # converted to TombstonedError inside Store.tombstone by W1).
+        raise OSError(28, "No space left on device")
+
+    monkeypatch.setattr(store, "tombstone", raising_tombstone)
+
+    with pytest.raises(Exception) as excinfo:
+        await _call(server, "memory_remove", id=written["id"], reason="r")
+    # Walk the cause chain: handler-emitted ValueError(failed to
+    # tombstone ...) → cause = OSError(ENOSPC).
+    chain: list[BaseException] = []
+    cur: BaseException | None = excinfo.value
+    while cur is not None and cur not in chain:
+        chain.append(cur)
+        cur = cur.__cause__ or cur.__context__
+    handler_value_errors = [
+        e
+        for e in chain
+        if isinstance(e, ValueError) and "failed to tombstone" in str(e)
+    ]
+    assert handler_value_errors, (
+        f"W5 regression: handler did not wrap OSError into ValueError. "
+        f"Cause chain: {[type(e).__name__ + ': ' + str(e) for e in chain]}"
+    )
+    underlying = [e for e in chain if isinstance(e, OSError) and e.errno == 28]
+    assert underlying, (
+        f"Original OSError must be preserved via `from exc` cause chain "
+        f"for diagnostics. Cause chain: "
+        f"{[type(e).__name__ + ': ' + str(e) for e in chain]}"
+    )
