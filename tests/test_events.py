@@ -254,6 +254,79 @@ def test_rotation_fsyncs_archive_after_gzip_trailer_is_flushed(
     assert decoded, "archive should decode to at least one event"
 
 
+def test_record_fsyncs_dir_on_first_write(tmp_path: Path) -> None:
+    """First write of a fresh event log must fsync the parent directory
+    so the new dirent survives power loss.
+
+    POSIX does not guarantee a freshly-created dirent is durable without
+    an explicit `fsync` on the parent directory fd — the file's own
+    bytes can land while the directory entry listing the file stays in
+    page-cache. The audit-loop tick-10 fix adds a `fsync_dir(self.root)`
+    call right after the chmod inside the `first_write` branch; this
+    pin proves the call lands on first write and only on first write.
+
+    Mirrors the rotation-fsync test's mock pattern: patch `fsync_dir`
+    in the `events` module namespace and observe call counts.
+    """
+    from bettermemory import events as events_mod
+
+    dir_fsync_calls: list[Path] = []
+    real_fsync_dir = getattr(events_mod, "fsync_dir")
+
+    def hooked_fsync_dir(path: Path) -> None:
+        dir_fsync_calls.append(Path(path))
+        real_fsync_dir(path)
+
+    with patch.object(events_mod, "fsync_dir", hooked_fsync_dir):
+        rec = Recorder(root=tmp_path, session_id="sess_first_write")
+        rec.record("write", id="01HXYZ", scopes=["tools"])
+
+    # First-write fsync_dir must have run, with self.root as the target.
+    # Other call sites (rotation paths) don't fire on a single write that
+    # doesn't trip max_bytes, so this whole list belongs to the first-
+    # write branch under test.
+    assert dir_fsync_calls == [tmp_path], (
+        f"expected exactly one fsync_dir(self.root) on first write, "
+        f"got: {dir_fsync_calls}"
+    )
+
+
+def test_record_does_not_fsync_dir_on_subsequent_writes(tmp_path: Path) -> None:
+    """Regression pin: subsequent writes append to an existing dirent
+    and don't need re-syncing. fsync_dir is a measurable cost (one
+    extra syscall per event); doing it on every append would double
+    the fsync overhead for no durability gain past the first write.
+
+    Pre-pin, a tempting "always fsync dir, just to be safe" refactor
+    would silently re-introduce that overhead.
+    """
+    from bettermemory import events as events_mod
+
+    dir_fsync_calls: list[Path] = []
+    real_fsync_dir = getattr(events_mod, "fsync_dir")
+
+    def hooked_fsync_dir(path: Path) -> None:
+        dir_fsync_calls.append(Path(path))
+        real_fsync_dir(path)
+
+    with patch.object(events_mod, "fsync_dir", hooked_fsync_dir):
+        rec = Recorder(root=tmp_path, session_id="sess_followup")
+        rec.record("write", id="01HXYZ0", scopes=["tools"])
+        first_count = len(dir_fsync_calls)
+        # Several follow-up writes within the same log, well under
+        # max_bytes so no rotation fires.
+        for i in range(1, 5):
+            rec.record("write", id=f"01HXYZ{i}", scopes=["tools"])
+
+    # Only the first write fsync'd the dir; the four follow-ups did not.
+    assert first_count == 1, f"expected 1 first-write fsync, got {first_count}"
+    assert len(dir_fsync_calls) == first_count, (
+        f"subsequent writes must not fsync the dir; "
+        f"first_count={first_count}, total={len(dir_fsync_calls)}, "
+        f"calls={dir_fsync_calls}"
+    )
+
+
 def test_rotation_collision_uses_session_suffix(tmp_path: Path) -> None:
     """Many rotations in the same UTC second mustn't clobber each other —
     the collision counter should ensure every archive name is unique."""

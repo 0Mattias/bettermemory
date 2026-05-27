@@ -245,6 +245,23 @@ class Recorder:
                             self.path,
                             chmod_exc,
                         )
+                    # Durability gate: the file's bytes were fsync'd above,
+                    # but the parent directory's *entry* for the newly-
+                    # created file lives in the directory's own page-cache
+                    # until a dir-fsync hits disk. POSIX does not guarantee
+                    # a fresh dirent survives power loss without an
+                    # explicit `fsync` on the directory fd, so on a brand-
+                    # new event log a crash between the first append and
+                    # the next natural dir-fsync (a rotation, several
+                    # writes later) could leave the file's data committed
+                    # but the directory listing it from the kernel's
+                    # perspective stale — readers see an empty/absent log.
+                    # Only on first-write: subsequent appends modify an
+                    # existing dirent and don't need re-syncing. Mirrors
+                    # the `fsync_dir` ceremony in `episodes._write_post`
+                    # (tick-3 fix 7017b2c) and `store._atomic_write_post`.
+                    # `fsync_dir` no-ops on Windows; see `_fsutil.fsync_dir`.
+                    fsync_dir(self.root)
         except Exception as exc:  # noqa: BLE001 — never break the caller.
             log.warning("event log write failed (kind=%s): %s", kind, exc)
 
