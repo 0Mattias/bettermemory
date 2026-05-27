@@ -1315,6 +1315,46 @@ async def test_episode_write_rejects_empty_body(server: Any) -> None:
         await _call(server, "episode_write", body="   \n\t  ")
 
 
+async def test_episode_write_rejects_oversized_body(memory_dir: Path) -> None:
+    """An episode_write body exceeding [behavior] max_content_bytes is
+    rejected at the handler — same cap as memory_write / memory_update.
+    Episodes share the same fsynced-file storage path as memories; without
+    this check a multi-MB body would land on disk uncapped, exposing the
+    same DoS/disk-fill surface the memory write path closes. The error
+    message mirrors the memory_write path so the MCP error surface stays
+    uniform across both write tiers."""
+    from bettermemory.config import BehaviorConfig
+
+    cap = 200
+    cfg = Config(
+        storage=StorageConfig(directory=str(memory_dir)),
+        behavior=BehaviorConfig(max_content_bytes=cap),
+    )
+    server = build_server(config=cfg, store=Store(memory_dir), state=SessionState())
+    # Body one byte past the configured cap — derive from the config
+    # field rather than hardcoding so the test stays correct if the
+    # default ever shifts.
+    big_body = "x" * (cap + 1)
+    with pytest.raises(Exception, match="max_content_bytes"):
+        await _call(server, "episode_write", body=big_body)
+
+
+async def test_episode_write_under_cap_still_commits(memory_dir: Path) -> None:
+    """Small body still commits even with a tight cap in place — the
+    new size check must not regress the happy path. Pairs with the
+    oversize-reject test above to pin both sides of the boundary."""
+    from bettermemory.config import BehaviorConfig
+
+    cfg = Config(
+        storage=StorageConfig(directory=str(memory_dir)),
+        behavior=BehaviorConfig(max_content_bytes=1_000),
+    )
+    server = build_server(config=cfg, store=Store(memory_dir), state=SessionState())
+    res = await _call(server, "episode_write", body="under the cap")
+    assert res["status"] == "committed"
+    assert res["session_id"].startswith("sess_")
+
+
 async def test_episode_write_is_invisible_to_memory_iterators(server: Any) -> None:
     """Episodes live in a sibling subtree — memory_list /
     memory_search must not surface them."""

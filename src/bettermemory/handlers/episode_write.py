@@ -16,7 +16,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any
 
-from ._shared import Context, _advance_turn
+from ._shared import Context, _advance_turn, _validate_content_size
 
 if TYPE_CHECKING:
     from .._handlers import ToolHandlers
@@ -71,6 +71,13 @@ async def episode_write(
 
     if not body or not body.strip():
         raise ValueError("episode body must be a non-empty string")
+    # Mirror the size cap memory_write / memory_update enforce so a
+    # multi-MB episode body can't slip past the write surface and land
+    # on disk uncapped. Episodes share the same fsynced-file storage
+    # path memories use; the DoS/disk-fill exposure is identical.
+    # Raises ValueError with the same message shape as the memory_write
+    # path, so the MCP error surface is uniform across both tiers.
+    _validate_content_size(body, deps.config.behavior.max_content_bytes)
 
     origin = _h.capture_origin()
     # The recorder's session_id is the canonical per-process id that's
