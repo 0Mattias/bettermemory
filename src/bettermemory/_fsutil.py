@@ -72,7 +72,7 @@ from __future__ import annotations
 import contextlib
 import os
 import sys
-from collections.abc import Generator, Iterator
+from collections.abc import Generator
 from pathlib import Path
 from typing import BinaryIO
 
@@ -338,7 +338,7 @@ def flock_excl(path: Path) -> Generator[None, None, None]:
 
 def _flock_windows(
     lock_path: Path,
-) -> Iterator[None]:  # pragma: no cover - non-unix in CI
+) -> Generator[None, None, None]:  # pragma: no cover - non-unix in CI
     """Windows-only exclusive lock helper for ``flock_excl``.
 
     Yields once the lock is held; releases on context exit. Splits out
