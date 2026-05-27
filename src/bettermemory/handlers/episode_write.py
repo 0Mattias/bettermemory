@@ -78,6 +78,24 @@ async def episode_write(
     # Raises ValueError with the same message shape as the memory_write
     # path, so the MCP error surface is uniform across both tiers.
     _validate_content_size(body, deps.config.behavior.max_content_bytes)
+    # Cap the takeaway separately from the body. Takeaway lives in the
+    # YAML frontmatter region, which `_frontmatter` caps at 64 KB to
+    # neutralise alias-expansion DoS — a takeaway over that threshold
+    # would corrupt the frontmatter, the loader would raise ValueError
+    # on every subsequent read, and `list_by_session` would silently
+    # skip the file. Net effect pre-fix: write returned status="committed"
+    # but the episode vanished from every read surface (search /
+    # handoff / promote). The default 4 KB cap is generous for the
+    # documented "one-sentence summary" while keeping the frontmatter
+    # comfortably inside the 64 KB ceiling. None-guard so absence of a
+    # takeaway (the common case) doesn't trip the validator.
+    if takeaway is not None:
+        _validate_content_size(
+            takeaway,
+            deps.config.behavior.max_takeaway_bytes,
+            field_name="takeaway",
+            config_key="max_takeaway_bytes",
+        )
 
     origin = _h.capture_origin()
     # The recorder's session_id is the canonical per-process id that's

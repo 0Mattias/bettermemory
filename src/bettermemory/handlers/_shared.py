@@ -95,25 +95,38 @@ _NOTE_MAX_LEN = 500
 # ---------------------------------------------------------------------------
 
 
-def _validate_content_size(content: str, max_bytes: int) -> None:
+def _validate_content_size(
+    content: str,
+    max_bytes: int,
+    *,
+    field_name: str = "content",
+    config_key: str = "max_content_bytes",
+) -> None:
     """Reject memory bodies whose UTF-8 byte length exceeds `max_bytes`.
 
     A no-op when `max_bytes <= 0` (cap disabled). Centralised so that
-    `memory_write`, `memory_update`, and any future write entry point
-    share the same bound. The check is on encoded byte length rather
-    than character count because that's the unit that lands on disk
-    and in the JSONL event log — a body of CJK or emoji characters
-    expands meaningfully under UTF-8 encoding.
+    `memory_write`, `memory_update`, `episode_write`, and any future
+    write entry point share the same bound. The check is on encoded byte
+    length rather than character count because that's the unit that
+    lands on disk and in the JSONL event log — a body of CJK or emoji
+    characters expands meaningfully under UTF-8 encoding.
+
+    `field_name` and `config_key` are message-only knobs so the
+    `episode_write` takeaway path can raise the same `ValueError`
+    shape with a takeaway-specific message ("takeaway exceeds
+    max_takeaway_bytes …") instead of misleadingly mentioning the
+    body cap. The defaults preserve the legacy message verbatim so
+    existing tests pinning `match="max_content_bytes"` keep passing.
     """
     if max_bytes <= 0:
         return
     encoded_size = len(content.encode("utf-8"))
     if encoded_size > max_bytes:
         raise ValueError(
-            f"content exceeds max_content_bytes "
+            f"{field_name} exceeds {config_key} "
             f"({encoded_size} bytes > {max_bytes} bytes). "
-            f"Split into multiple memories or raise the "
-            f"[behavior] max_content_bytes config setting."
+            f"Shorten the {field_name} or raise the "
+            f"[behavior] {config_key} config setting."
         )
 
 

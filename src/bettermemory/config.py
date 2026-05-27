@@ -148,6 +148,20 @@ tombstone_retention_days = 0
 # it for stricter resource boundaries. Set to 0 to disable the cap.
 max_content_bytes = 1000000
 
+# Hard cap on a single episode takeaway's UTF-8 byte length at
+# `episode_write` time. Separate from `max_content_bytes` because the
+# takeaway lives in the YAML frontmatter region, which is itself capped
+# at 64 KB (see `_frontmatter._MAX_YAML_BYTES`) — a takeaway over that
+# threshold would corrupt the frontmatter, the loader would raise
+# ValueError on every subsequent read, and `EpisodeStore.list_by_session`
+# would silently skip the file. The episode would look committed (the
+# write returned status="committed") but vanish from every read surface.
+# 4 KB is generous for the documented "one-sentence summary" while
+# leaving comfortable headroom inside the 64 KB YAML cap for the rest
+# of the frontmatter (id, session_id, created, scopes, origin). Set to
+# 0 to disable the cap.
+max_takeaway_bytes = 4096
+
 # Passive in-conversation curation surface. When the sum of dead_weight
 # + drifted + endorsement_debt counts (the `curation_pending` rollup
 # you'd otherwise have to call `memory_scope_overview` to see) crosses
@@ -259,6 +273,19 @@ class BehaviorConfig:
     # boundary; existing on-disk memories are never re-validated, so
     # raising the cap downward doesn't reject already-stored data.
     max_content_bytes: int = 1_000_000
+    # Hard cap on an episode takeaway's UTF-8 byte length at write time.
+    # Separate from `max_content_bytes` because the takeaway is stored
+    # in the YAML frontmatter region, which `_frontmatter` caps at
+    # 64 KB to neutralise an alias-expansion DoS. A takeaway over that
+    # threshold would corrupt the frontmatter, the loader would raise
+    # ValueError on every subsequent read, and `list_by_session` would
+    # silently skip — the episode would look committed but vanish from
+    # every read surface (search, handoff, promote). Default 4 KB is
+    # generous for the documented "one-sentence summary" while leaving
+    # comfortable headroom inside the 64 KB YAML cap for the rest of
+    # the frontmatter (id, session_id, created, scopes, origin). 0
+    # disables the cap.
+    max_takeaway_bytes: int = 4_096
     # One-shot per-session passive curation hint. When the sum of
     # dead_weight + drifted + endorsement_debt counts (the
     # `curation_pending` rollup the model would otherwise have to
@@ -465,6 +492,7 @@ def load_config(path: Path | None = None) -> Config:
                 behavior_raw.get("verification_stale_days", 30)
             ),
             max_content_bytes=int(behavior_raw.get("max_content_bytes", 1_000_000)),
+            max_takeaway_bytes=int(behavior_raw.get("max_takeaway_bytes", 4_096)),
             curation_hint_threshold=int(behavior_raw.get("curation_hint_threshold", 5)),
             curation_hint_enabled=bool(behavior_raw.get("curation_hint_enabled", True)),
         ),

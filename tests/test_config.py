@@ -134,6 +134,11 @@ def test_default_config_round_trips_through_load_config(tmp_path: Path) -> None:
         == fresh.behavior.semantic_model_fastembed
     )
     assert loaded.behavior.max_content_bytes == fresh.behavior.max_content_bytes
+    assert loaded.behavior.max_takeaway_bytes == fresh.behavior.max_takeaway_bytes
+    # Document the takeaway cap default — the absolute number matters
+    # for the bug class this field closes (a takeaway > 64 KB corrupts
+    # the YAML frontmatter; default must stay well under that).
+    assert loaded.behavior.max_takeaway_bytes == 4_096
     assert (
         loaded.behavior.curation_hint_threshold
         == fresh.behavior.curation_hint_threshold
@@ -197,7 +202,8 @@ def test_load_config_coerces_behavior_int_fields(tmp_path: Path) -> None:
         "default_max_results = 7\n"
         "heavily_used_min_applied = 5\n"
         "tombstone_retention_days = 365\n"
-        "verification_stale_days = 14\n",
+        "verification_stale_days = 14\n"
+        "max_takeaway_bytes = 8192\n",
         encoding="utf-8",
     )
     cfg = load_config(config_path)
@@ -206,6 +212,8 @@ def test_load_config_coerces_behavior_int_fields(tmp_path: Path) -> None:
     assert cfg.behavior.heavily_used_min_applied == 5
     assert cfg.behavior.tombstone_retention_days == 365
     assert cfg.behavior.verification_stale_days == 14
+    assert cfg.behavior.max_takeaway_bytes == 8192
+    assert isinstance(cfg.behavior.max_takeaway_bytes, int)
 
 
 def test_load_config_coerces_behavior_float_fields(tmp_path: Path) -> None:

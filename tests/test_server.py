@@ -1634,6 +1634,81 @@ async def test_episode_write_under_cap_still_commits(memory_dir: Path) -> None:
     assert res["session_id"].startswith("sess_")
 
 
+async def test_episode_write_rejects_oversized_takeaway(memory_dir: Path) -> None:
+    """An episode_write takeaway exceeding [behavior] max_takeaway_bytes
+    is rejected at the handler — same ValueError shape as the body cap,
+    but the message names the takeaway cap so the operator knows which
+    knob to turn. Pre-fix this was a silent data loss path: a takeaway
+    over 64 KB corrupted the YAML frontmatter, every subsequent
+    `_frontmatter.loads` raised ValueError, and `list_by_session`
+    swallowed — the episode looked committed (status="committed"
+    returned) but vanished from every read surface (search / handoff /
+    promote). The handler-boundary cap closes the path before the file
+    ever lands on disk."""
+    from bettermemory.config import BehaviorConfig
+
+    cap = 200
+    cfg = Config(
+        storage=StorageConfig(directory=str(memory_dir)),
+        behavior=BehaviorConfig(max_takeaway_bytes=cap),
+    )
+    server = build_server(config=cfg, store=Store(memory_dir), state=SessionState())
+    # Takeaway one byte past the configured cap; body stays small so
+    # only the takeaway check is exercised. Derive the takeaway size
+    # from the config field rather than hardcoding so the test stays
+    # correct if the default ever shifts.
+    big_takeaway = "x" * (cap + 1)
+    with pytest.raises(Exception, match="max_takeaway_bytes"):
+        await _call(
+            server,
+            "episode_write",
+            body="small body",
+            takeaway=big_takeaway,
+        )
+
+
+async def test_episode_write_under_takeaway_cap_still_commits(memory_dir: Path) -> None:
+    """A small takeaway under the cap commits unchanged — the new
+    takeaway validator must not regress the happy path. Pairs with the
+    oversize-reject test above to pin both sides of the boundary."""
+    from bettermemory.config import BehaviorConfig
+
+    cfg = Config(
+        storage=StorageConfig(directory=str(memory_dir)),
+        behavior=BehaviorConfig(max_takeaway_bytes=1_000),
+    )
+    server = build_server(config=cfg, store=Store(memory_dir), state=SessionState())
+    res = await _call(
+        server,
+        "episode_write",
+        body="under both caps",
+        takeaway="short summary",
+    )
+    assert res["status"] == "committed"
+    assert res["takeaway"] == "short summary"
+
+
+async def test_episode_write_no_takeaway_still_commits(memory_dir: Path) -> None:
+    """`takeaway=None` (the common path — handoff falls back to body
+    line 1) must NOT trip the takeaway cap. Pins the `if takeaway is
+    not None` guard in the handler so a future refactor that drops the
+    guard (and validates `None` as a zero-byte string) still passes
+    this test, while still rejecting a hostile-large takeaway via the
+    sibling test above."""
+    from bettermemory.config import BehaviorConfig
+
+    # Tight cap to make sure the guard, not the cap value, is what
+    # lets None through.
+    cfg = Config(
+        storage=StorageConfig(directory=str(memory_dir)),
+        behavior=BehaviorConfig(max_takeaway_bytes=10),
+    )
+    server = build_server(config=cfg, store=Store(memory_dir), state=SessionState())
+    res = await _call(server, "episode_write", body="no takeaway here")
+    assert res["status"] == "committed"
+    assert res["takeaway"] is None
+
+
 async def test_episode_write_is_invisible_to_memory_iterators(server: Any) -> None:
     """Episodes live in a sibling subtree — memory_list /
     memory_search must not surface them."""
