@@ -72,7 +72,7 @@ from __future__ import annotations
 import contextlib
 import os
 import sys
-from collections.abc import Iterator
+from collections.abc import Generator, Iterator
 from pathlib import Path
 from typing import BinaryIO
 
@@ -271,7 +271,7 @@ _FLOCK_WARNED = False
 
 
 @contextlib.contextmanager
-def flock_excl(path: Path) -> Iterator[None]:
+def flock_excl(path: Path) -> Generator[None, None, None]:
     """Cross-process exclusive lock on a sidecar lockfile next to ``path``.
 
     POSIX path: ``fcntl.flock(fd, LOCK_EX)`` on ``<path>.lock``. The
