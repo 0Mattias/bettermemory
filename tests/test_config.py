@@ -297,6 +297,186 @@ def test_load_config_missing_sections_use_defaults(tmp_path: Path) -> None:
 
 
 # ---------------------------------------------------------------------------
+# T9: back-compat for the 3.1.x -> 3.2.0 `endorsement_debt_ratio_threshold`
+# -> `cold_endorsement_ratio_threshold` rename. 3.2.0 (commit 7346ecc)
+# renamed the key with no alias; a user upgrading from 3.1.x with the old
+# key in their TOML would silently lose the threshold (fall back to 0.0).
+# The shim accepts the old key, maps its value to the new field, and emits
+# a one-shot deprecation warning naming both keys. If both are present the
+# new key wins and a stronger warning fires.
+# ---------------------------------------------------------------------------
+
+
+def _reset_deprecated_key_guard() -> None:
+    """Clear the module-level one-shot guard so each test sees a fresh
+    warning state. Mirrors the `_DIVERGENCE_WARNED_ROOTS.discard(...)`
+    pattern in test_index.py's once-per-root divergence tests."""
+    from bettermemory import config as _cfg
+
+    _cfg._DEPRECATED_KEY_WARNED_PATHS.clear()
+
+
+def test_load_config_legacy_endorsement_debt_key_migrates_value(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    """Old-only: the legacy `endorsement_debt_ratio_threshold` key
+    populates the new `cold_endorsement_ratio_threshold` field. Pins the
+    actual data path the shim closes — a 3.1.x user's `0.15` survives
+    the upgrade instead of silently reverting to the 0.0 default."""
+    _reset_deprecated_key_guard()
+    config_path = tmp_path / "config.toml"
+    config_path.write_text(
+        "[behavior]\nendorsement_debt_ratio_threshold = 0.15\n",
+        encoding="utf-8",
+    )
+    with caplog.at_level("WARNING", logger="bettermemory.config"):
+        cfg = load_config(config_path)
+    assert cfg.behavior.cold_endorsement_ratio_threshold == 0.15
+    # Deprecation warning fired and named BOTH keys plus the resolved path,
+    # so the operator has everything they need to fix their TOML without
+    # grepping changelogs.
+    deprecation_records = [
+        r
+        for r in caplog.records
+        if r.levelname == "WARNING"
+        and "endorsement_debt_ratio_threshold" in r.getMessage()
+    ]
+    assert len(deprecation_records) == 1, (
+        f"expected exactly one deprecation warning, got "
+        f"{[r.getMessage() for r in deprecation_records]}"
+    )
+    message = deprecation_records[0].getMessage()
+    assert "cold_endorsement_ratio_threshold" in message, (
+        f"warning must name the new key, got: {message!r}"
+    )
+    assert "3.2.0" in message, (
+        f"warning must name the release boundary, got: {message!r}"
+    )
+
+
+def test_load_config_new_key_only_no_warning(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    """New-only (the post-3.2.0 happy path): no deprecation warning fires.
+    Locks the silence — the shim must not nag users who already migrated
+    or who are on a fresh install."""
+    _reset_deprecated_key_guard()
+    config_path = tmp_path / "config.toml"
+    config_path.write_text(
+        "[behavior]\ncold_endorsement_ratio_threshold = 0.2\n",
+        encoding="utf-8",
+    )
+    with caplog.at_level("WARNING", logger="bettermemory.config"):
+        cfg = load_config(config_path)
+    assert cfg.behavior.cold_endorsement_ratio_threshold == 0.2
+    assert not any(
+        "endorsement_debt_ratio_threshold" in r.getMessage() for r in caplog.records
+    ), (
+        "no deprecation warning should fire when only the new key is "
+        f"present, got: {[r.getMessage() for r in caplog.records]}"
+    )
+
+
+def test_load_config_both_keys_new_wins_with_stronger_warning(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    """Both keys present: the new key wins (the user clearly added it
+    explicitly; the old one is stale config). A STRONGER warning fires
+    telling the user to delete the old key — distinguishing this case
+    from the silent old-only migration so the user gets the right
+    instruction."""
+    _reset_deprecated_key_guard()
+    config_path = tmp_path / "config.toml"
+    config_path.write_text(
+        "[behavior]\n"
+        "endorsement_debt_ratio_threshold = 0.99\n"  # stale value
+        "cold_endorsement_ratio_threshold = 0.25\n",  # the intent
+        encoding="utf-8",
+    )
+    with caplog.at_level("WARNING", logger="bettermemory.config"):
+        cfg = load_config(config_path)
+    # New-key value wins, NOT the legacy 0.99.
+    assert cfg.behavior.cold_endorsement_ratio_threshold == 0.25
+    both_records = [
+        r
+        for r in caplog.records
+        if r.levelname == "WARNING"
+        and "endorsement_debt_ratio_threshold" in r.getMessage()
+    ]
+    assert len(both_records) == 1, (
+        f"expected exactly one both-keys warning, got "
+        f"{[r.getMessage() for r in both_records]}"
+    )
+    message = both_records[0].getMessage()
+    # The both-keys warning must steer the user to DELETE the old key
+    # (not rename it — they already have the new one). The word "BOTH"
+    # also distinguishes this from the old-only migration warning at
+    # triage time.
+    assert "BOTH" in message, (
+        f"both-keys warning should call out the duplicate clearly, got: {message!r}"
+    )
+    assert "Delete" in message or "delete" in message, (
+        f"both-keys warning should instruct deletion, not rename, got: {message!r}"
+    )
+
+
+def test_load_config_neither_key_uses_default(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    """Neither key present: dataclass default applies and no warning fires.
+    The fresh-install / minimal-config path stays quiet."""
+    _reset_deprecated_key_guard()
+    config_path = tmp_path / "config.toml"
+    # A behavior section that touches neither key — proves the shim
+    # doesn't fire on the empty case where `endorsement_debt_ratio_threshold`
+    # would be a falsy default rather than absent.
+    config_path.write_text(
+        "[behavior]\nsemantic_dedup = false\n",
+        encoding="utf-8",
+    )
+    with caplog.at_level("WARNING", logger="bettermemory.config"):
+        cfg = load_config(config_path)
+    assert cfg.behavior.cold_endorsement_ratio_threshold == 0.0  # dataclass default
+    assert not any(
+        "endorsement_debt_ratio_threshold" in r.getMessage() for r in caplog.records
+    ), (
+        "no deprecation warning should fire when neither key is present, "
+        f"got: {[r.getMessage() for r in caplog.records]}"
+    )
+
+
+def test_load_config_legacy_key_deprecation_warning_is_one_shot(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    """One-shot per (config_path, key): three loads of the same diverged
+    config emit ONE warning, not three. Mirrors the
+    `test_divergence_warning_fires_only_once_per_root` guard in
+    test_index.py. Otherwise a long-lived server (`bettermemory serve`)
+    that rereads its config on signal would spam the log on every
+    reload."""
+    _reset_deprecated_key_guard()
+    config_path = tmp_path / "config.toml"
+    config_path.write_text(
+        "[behavior]\nendorsement_debt_ratio_threshold = 0.1\n",
+        encoding="utf-8",
+    )
+    with caplog.at_level("WARNING", logger="bettermemory.config"):
+        load_config(config_path)
+        load_config(config_path)
+        load_config(config_path)
+    deprecation_records = [
+        r
+        for r in caplog.records
+        if r.levelname == "WARNING"
+        and "endorsement_debt_ratio_threshold" in r.getMessage()
+    ]
+    assert len(deprecation_records) == 1, (
+        f"expected exactly one warning across three loads of the same "
+        f"config, got {[r.getMessage() for r in deprecation_records]}"
+    )
+
+
+# ---------------------------------------------------------------------------
 # Config.resolved_directory: the resolution decision tree
 # ---------------------------------------------------------------------------
 

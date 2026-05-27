@@ -459,6 +459,99 @@ def default_config_path() -> Path:
     return Path(platformdirs.user_config_dir("bettermemory")) / CONFIG_FILENAME
 
 
+# T9: 3.2.0 renamed `endorsement_debt_ratio_threshold` ->
+# `cold_endorsement_ratio_threshold` (commit 7346ecc) with no alias, so a
+# user upgrading from 3.1.x with the old key in their TOML silently lost
+# the threshold (fell back to the 0.0 default). This shim accepts the
+# old key, maps it to the new field, and emits a one-shot per-(path,key)
+# deprecation warning. Once-per-process matches the divergence-warning
+# guard in store.py: a long-lived server (`bettermemory serve`) that
+# rereads config on signal shouldn't spam the log on every reload, but
+# two distinct config paths in the same process each get their own
+# warning. Drop this shim no earlier than 3.4.x — long enough that any
+# 3.1.x user has seen the deprecation warning at least once.
+_DEPRECATED_KEY_WARNED_PATHS: set[tuple[Path, str]] = set()
+
+
+def _apply_legacy_endorsement_debt_alias(
+    behavior_raw: dict[str, object], config_path: Path
+) -> None:
+    """Translate the pre-3.2 `endorsement_debt_ratio_threshold` key to
+    its 3.2 successor `cold_endorsement_ratio_threshold` in place.
+
+    Four cases:
+
+    1. Only the old key present -> copy the value under the new key and
+       emit a one-shot DEPRECATION warning pointing at both names.
+    2. Only the new key present -> no-op.
+    3. Both present -> the new key wins (last writer wins on intent;
+       the user clearly added it explicitly). Emit a STRONGER one-shot
+       warning telling them to delete the stale old key.
+    4. Neither present -> no-op.
+
+    The (config_path, key) key on the warned-set lets a process serving
+    multiple memory directories surface each config's drift separately,
+    matching the `_DIVERGENCE_WARNED_ROOTS` discipline in store.py.
+    Best-effort key resolution: `config_path.resolve()` collapses
+    symlinks so two `load_config` calls naming the same file via
+    different paths share one warning.
+    """
+    old_key = "endorsement_debt_ratio_threshold"
+    new_key = "cold_endorsement_ratio_threshold"
+    if old_key not in behavior_raw:
+        return
+
+    try:
+        resolved = config_path.resolve()
+    except OSError:
+        # If the path can't be resolved (deleted out from under us between
+        # the `open()` and here), fall back to the unresolved path so the
+        # one-shot guard still works for the common case.
+        resolved = config_path
+
+    import logging
+
+    log = logging.getLogger("bettermemory.config")
+
+    if new_key in behavior_raw:
+        # Both keys present: the new one wins. Stronger nudge — the user
+        # is carrying dead config that's silently doing nothing.
+        guard_key = (resolved, f"{old_key}+both")
+        if guard_key not in _DEPRECATED_KEY_WARNED_PATHS:
+            _DEPRECATED_KEY_WARNED_PATHS.add(guard_key)
+            log.warning(
+                "bettermemory: TOML config at %s sets BOTH the legacy "
+                "`%s` and its 3.2.0 replacement `%s` under [behavior]. "
+                "The new key wins; the legacy key is being ignored. "
+                "Delete `%s` from your TOML to silence this warning.",
+                resolved,
+                old_key,
+                new_key,
+                old_key,
+            )
+        # Drop the legacy key so downstream code sees a clean dict.
+        behavior_raw.pop(old_key, None)
+        return
+
+    # Old key only: migrate the value and warn once.
+    behavior_raw[new_key] = behavior_raw.pop(old_key)
+    guard_key = (resolved, old_key)
+    if guard_key not in _DEPRECATED_KEY_WARNED_PATHS:
+        _DEPRECATED_KEY_WARNED_PATHS.add(guard_key)
+        log.warning(
+            "bettermemory: TOML config at %s uses the deprecated "
+            "`%s` key under [behavior]. The key was renamed to `%s` "
+            "in 3.2.0; the legacy name still works for now but will "
+            "be dropped in a future release. Rename "
+            "`%s` to `%s` in your TOML to silence this warning.",
+            resolved,
+            old_key,
+            new_key,
+            old_key,
+            new_key,
+        )
+
+
 def load_config(path: Path | None = None) -> Config:
     """Load config from `path`, creating it with defaults if missing."""
     config_path = path or default_config_path()
@@ -478,6 +571,11 @@ def load_config(path: Path | None = None) -> Config:
     behavior_raw = data.get("behavior", {})
     scopes_raw = data.get("scopes", {})
     telemetry_raw = data.get("telemetry", {})
+
+    # T9: back-compat for the 3.1.x -> 3.2.0 TOML key rename. Mutates
+    # `behavior_raw` so the downstream `behavior_raw.get(...)` lookups
+    # below pick up the legacy value under the new key.
+    _apply_legacy_endorsement_debt_alias(behavior_raw, config_path)
 
     return Config(
         storage=StorageConfig(directory=storage_raw.get("directory")),
