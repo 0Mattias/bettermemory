@@ -190,6 +190,12 @@ bettermemory export                         # backup
 
 Below ~500 memories, search uses `load_all` (byte-stable to 1.x). Above the threshold (`BETTERMEMORY_INDEX_THRESHOLD`), an SQLite FTS5 inverted index pre-filters candidates, capping per-search work regardless of corpus size. Files stay canonical; the index is a derived cache at `<store>/.index.sqlite`, kept live by Store hooks. Recovery from hand-edits: `bettermemory reindex`.
 
+### Index consistency
+
+The FTS5 index is updated automatically by every `memory_write`, `memory_update`, `memory_remove`, `memory_restore`, and `memory_rename_scope` call — these are the only paths through which a `.md` file change reaches the index. **Out-of-band writes leave the index stale** without an explicit reindex: editing a memory file in your editor, pulling new files via `bettermemory sync pull`, restoring from backup, or letting a sub-agent invoke the generic `Write` tool on a memory file path instead of `memory_write` all bypass the hook. `memory_search` will then rank against stale candidate ids and `memory_show` may resolve to filenames that no longer exist.
+
+The server now warns at startup when it detects this divergence (the on-disk active-memory count doesn't match the index's `indexed_count`), with a single WARNING log line pointing at `bettermemory reindex` to rebuild the index from canonical disk state. The warning fires once per `(root,)` per process and is purely additive — clean stores continue to construct silently.
+
 ### Embeddings for semantic / hybrid retrieval
 
 Hybrid retrieval (RRF over keyword + BM25) is the default and ships with zero extra deps — the hybrid mode gracefully degrades to keyword+BM25 fusion when no embedding extra is installed. To add the semantic third leg (paraphrase matching via sentence-transformers cosine), install one of two optional extras:

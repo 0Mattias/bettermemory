@@ -151,6 +151,19 @@ class Store:
         # in `removed_reason`, body hashes for dedup), so directory-listing
         # them should require the owner just like the active store.
         (self.root / TOMBSTONE_DIR).mkdir(mode=0o700, exist_ok=True)
+        # S4: one-shot startup divergence check. The FTS5 index is a
+        # derived cache kept consistent with disk only via Store hooks
+        # (`_index_upsert_quietly` / `_index_remove_quietly` under the
+        # per-file flock in every mutator). Any code path that writes
+        # `.md` files directly — an external editor, `sync pull`, a
+        # sub-agent using the generic `Write` tool on a memory file
+        # path instead of `memory_write` — leaves the index stale with
+        # no warning. `memory_search` then ranks against stale
+        # candidate ids and `filenames_for_ids` returns paths that may
+        # not exist. The warning surfaces the divergence at the first
+        # opportunity so the user can run `bettermemory reindex`
+        # before it cascades into a wrong answer.
+        _warn_on_index_divergence(self.root)
 
     @property
     def tombstone_dir(self) -> Path:
@@ -1232,6 +1245,102 @@ class Store:
 
 _INDEX_LOG = _logging.getLogger("bettermemory.store")
 _INDEX_REPAIR_HINT = "Run `bettermemory reindex` to repair."
+
+# S4: one-shot startup divergence check. Tracks which `(root,)` paths
+# have already emitted the FTS5-out-of-sync WARNING in this process so
+# multiple Store constructions on the same root (e.g. tests, the
+# `Store(memory_dir).write(...)` one-liner pattern) don't spam the log.
+# Set lives for the process lifetime; two distinct roots each get
+# their own warning. Module-level state (not weakref) because the keys
+# are `Path` instances, which are value-types rather than ownership
+# anchors — we want the warning suppressed across short-lived Store
+# objects on the same root, not just within one Store's lifetime.
+_DIVERGENCE_WARNED_ROOTS: set[Path] = set()
+
+
+def _warn_on_index_divergence(root: Path) -> None:
+    """Compare the on-disk active-memory count to the FTS5 index's
+    `indexed_count` and emit a one-shot WARNING per root if they
+    diverge. See ``Store.__post_init__`` for the motivating audit note
+    (S4: out-of-band ``.md`` writes silently desync the FTS5 index).
+
+    Three divergence shapes are surfaced:
+
+    - Missing index file but on-disk memories present (typical when a
+      `sync pull` populated the worktree before any hook ran).
+    - Corrupt index file (a `status()["corrupt"]` flag); the indexed
+      count is unknowable and the surface to fix it is the same:
+      `bettermemory reindex`.
+    - Mismatched counts on an otherwise healthy index.
+
+    Best-effort: failures inside the check (a transient OSError on
+    `iterdir`, a sqlite issue inside `status`) are swallowed. The
+    purpose is a friendly heads-up at construction; if we can't
+    decide cleanly, staying silent is safer than firing a false
+    positive that misleads the operator.
+
+    Lazy import on `index` to keep the Store module loadable in the
+    pure-file-store scenarios (`tests/test_store.py` runs without
+    touching the SQLite extension; same rationale as
+    `_index_upsert_quietly`).
+    """
+    if root in _DIVERGENCE_WARNED_ROOTS:
+        return
+    try:
+        from . import index as _index
+
+        status = _index.status(root)
+        # Walk `_iter_active_paths()` shape inline — we don't have a
+        # Store instance here. Symlinks and non-`.md` files are
+        # filtered exactly as `_iter_active_paths()` does so the disk
+        # count compares apples-to-apples with the indexed count.
+        disk_count = 0
+        for entry in root.iterdir():
+            if entry.is_file() and not entry.is_symlink() and entry.suffix == ".md":
+                disk_count += 1
+    except OSError:
+        # Best-effort. If we can't read the directory, the rest of
+        # the Store will surface a clearer error on its first real
+        # operation; don't compound it with a noisy startup warning.
+        return
+
+    if status.get("corrupt"):
+        # An unreadable index is a divergence we should always flag —
+        # the indexed count is unknowable, so we report what we can:
+        # the disk count and the corruption signal.
+        _DIVERGENCE_WARNED_ROOTS.add(root)
+        _INDEX_LOG.warning(
+            "bettermemory: FTS5 index at %s is corrupt (disk=%d memories). "
+            "Run `bettermemory reindex` to rebuild the index from "
+            "canonical disk state. Search results may be incomplete or "
+            "include stale references until then.",
+            status.get("path", root / ".index.sqlite"),
+            disk_count,
+        )
+        return
+
+    # `exists=False` is the "no index file yet" path. Treat as
+    # `indexed_count=0` so a pre-populated directory with no index
+    # (typical after a fresh `sync pull` into a worktree that's
+    # never had the server started against it) trips the warning.
+    indexed_count = (
+        int(status.get("indexed_count", 0) or 0) if status.get("exists") else 0
+    )
+    if indexed_count == disk_count:
+        return
+
+    _DIVERGENCE_WARNED_ROOTS.add(root)
+    _INDEX_LOG.warning(
+        "bettermemory: FTS5 index appears out-of-sync with disk "
+        "(index=%d memories, disk=%d). This usually means a memory "
+        "file was added/edited outside the Store API (external editor, "
+        "sync pull, or a process bypassing memory_write). "
+        "Run `bettermemory reindex` to rebuild the index from "
+        "canonical disk state. Search results may be incomplete or "
+        "include stale references until then.",
+        indexed_count,
+        disk_count,
+    )
 
 
 @best_effort(

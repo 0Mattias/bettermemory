@@ -484,3 +484,231 @@ def test_schema_rebuild_executescript_is_transactional(
         "original row — the DROP was committed before the failure, "
         "exactly the 2.6.4 bug shape"
     )
+
+
+# ---------------------------------------------------------------------------
+# Startup divergence check (S4)
+#
+# Out-of-band `.md` writes (external editor, `sync pull`, a sub-agent
+# using the generic `Write` tool on a memory file path) silently desync
+# the FTS5 index from disk. `Store.__post_init__` runs a one-shot
+# divergence check at construction and emits a single WARNING per
+# `(root,)` so the operator can `bettermemory reindex` before the stale
+# index cascades into a wrong answer. The four tests below pin the
+# four interesting cases: aligned (silent), diverged (warns), repeated
+# construction on the same root (one warning), and two distinct roots
+# (one warning each).
+# ---------------------------------------------------------------------------
+
+
+def test_aligned_store_construction_emits_no_warning(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    """The happy path: a store whose disk and index counts agree
+    constructs silently. Every memory was written through the Store
+    API, so the index and disk are in lockstep — no warning fires."""
+    from bettermemory import store as _store
+
+    # Use a tmp_path that the module-level guard set hasn't seen.
+    root = tmp_path / "aligned"
+    setup = Store(root)
+    setup.write(content="alpha", scopes=["tools"])
+    setup.write(content="beta", scopes=["tools"])
+
+    # Clear the warned-roots set so a second construction on the same
+    # root would warn if the counts didn't match. (They do, so it
+    # shouldn't warn — that's the assertion.)
+    _store._DIVERGENCE_WARNED_ROOTS.discard(root.expanduser().resolve())
+
+    caplog.clear()
+    with caplog.at_level("WARNING", logger="bettermemory.store"):
+        Store(root)
+    divergence_warnings = [
+        r
+        for r in caplog.records
+        if r.levelname == "WARNING"
+        and ("out-of-sync" in r.getMessage() or "corrupt" in r.getMessage())
+    ]
+    assert not divergence_warnings, (
+        f"aligned store should construct silently, got: {divergence_warnings!r}"
+    )
+
+
+def test_diverged_store_construction_emits_warning(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    """A `.md` file landed on disk via a path other than the Store API
+    (here: a direct `write_text` simulating `sync pull` / an external
+    editor / a sub-agent using the generic Write tool). On the next
+    Store construction the divergence check fires and surfaces the
+    actionable `bettermemory reindex` hint."""
+    from bettermemory import store as _store
+
+    root = tmp_path / "diverged"
+    # Seed an index that's in sync with one existing memory, then
+    # add a second file out-of-band so the index says 1 and disk
+    # says 2 — the canonical out-of-sync shape S4 catches.
+    setup = Store(root)
+    setup.write(content="indexed via store", scopes=["tools"])
+
+    # Reset the warned-roots set so the next construction is fresh.
+    _store._DIVERGENCE_WARNED_ROOTS.discard(root.expanduser().resolve())
+
+    out_of_band = root / "2026-01-01-external-write.md"
+    out_of_band.write_text(
+        "---\n"
+        "schema_version: 1\n"
+        "id: 01HXYZAAAAAAAAAAAAAAAAAAAA\n"
+        "created: 2026-01-01T00:00:00Z\n"
+        "updated: 2026-01-01T00:00:00Z\n"
+        "scopes:\n  - tools\n"
+        "confidence: medium\n"
+        "source: explicit-statement\n"
+        "---\n"
+        "body written outside the Store API\n",
+        encoding="utf-8",
+    )
+
+    caplog.clear()
+    with caplog.at_level("WARNING", logger="bettermemory.store"):
+        Store(root)
+    divergence_warnings = [
+        r
+        for r in caplog.records
+        if r.levelname == "WARNING" and "out-of-sync" in r.getMessage()
+    ]
+    assert len(divergence_warnings) == 1, (
+        f"expected exactly one out-of-sync WARNING, got {divergence_warnings!r}"
+    )
+    message = divergence_warnings[0].getMessage()
+    assert "bettermemory reindex" in message, (
+        f"warning must surface the actionable reindex hint, got: {message!r}"
+    )
+    assert "index=1" in message and "disk=2" in message, (
+        f"warning must report the actual counts, got: {message!r}"
+    )
+
+
+def test_divergence_warning_fires_only_once_per_root(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    """Construct two Stores on the same diverged root. The first
+    construction must warn; the second must stay silent — the
+    one-shot guard keeps the log clean for the `Store(root).write(...)`
+    one-liner pattern and the many-Stores-per-root concurrency
+    tests."""
+    from bettermemory import store as _store
+
+    root = tmp_path / "one_shot"
+    setup = Store(root)
+    setup.write(content="indexed via store", scopes=["tools"])
+    _store._DIVERGENCE_WARNED_ROOTS.discard(root.expanduser().resolve())
+
+    # Drop in an out-of-band file so the index is now stale.
+    (root / "2026-01-01-second-external.md").write_text(
+        "---\n"
+        "schema_version: 1\n"
+        "id: 01HXYZBBBBBBBBBBBBBBBBBBBB\n"
+        "created: 2026-01-01T00:00:00Z\n"
+        "updated: 2026-01-01T00:00:00Z\n"
+        "scopes:\n  - tools\n"
+        "confidence: medium\n"
+        "source: explicit-statement\n"
+        "---\n"
+        "second out-of-band body\n",
+        encoding="utf-8",
+    )
+
+    caplog.clear()
+    with caplog.at_level("WARNING", logger="bettermemory.store"):
+        Store(root)  # warns
+        Store(root)  # silent
+        Store(root)  # silent
+    divergence_warnings = [
+        r
+        for r in caplog.records
+        if r.levelname == "WARNING" and "out-of-sync" in r.getMessage()
+    ]
+    assert len(divergence_warnings) == 1, (
+        f"expected exactly one warning across three constructions on the "
+        f"same diverged root, got {divergence_warnings!r}"
+    )
+
+
+def test_divergence_warning_is_independent_per_root(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    """Two distinct diverged roots each get their own warning — the
+    one-shot guard is per-root, not global. Otherwise a process that
+    serves multiple memory directories (testing, a long-lived
+    `bettermemory ui` instance pointing at swapped configs) would
+    suppress the second root's warning silently."""
+    from bettermemory import store as _store
+
+    root_a = tmp_path / "root_a"
+    root_b = tmp_path / "root_b"
+    for root in (root_a, root_b):
+        setup = Store(root)
+        setup.write(content="indexed", scopes=["tools"])
+        _store._DIVERGENCE_WARNED_ROOTS.discard(root.expanduser().resolve())
+        (root / "2026-01-01-extra.md").write_text(
+            "---\n"
+            "schema_version: 1\n"
+            f"id: 01HXYZCCCCCCCCCCCCCCCCCC{('AA' if root is root_a else 'BB')}\n"
+            "created: 2026-01-01T00:00:00Z\n"
+            "updated: 2026-01-01T00:00:00Z\n"
+            "scopes:\n  - tools\n"
+            "confidence: medium\n"
+            "source: explicit-statement\n"
+            "---\n"
+            "out-of-band body\n",
+            encoding="utf-8",
+        )
+
+    caplog.clear()
+    with caplog.at_level("WARNING", logger="bettermemory.store"):
+        Store(root_a)
+        Store(root_b)
+    divergence_warnings = [
+        r
+        for r in caplog.records
+        if r.levelname == "WARNING" and "out-of-sync" in r.getMessage()
+    ]
+    assert len(divergence_warnings) == 2, (
+        f"each distinct root must get its own warning, got {divergence_warnings!r}"
+    )
+
+
+def test_corrupt_index_emits_divergence_warning(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    """A garbage / truncated index file still surfaces the divergence
+    warning. `index.status()` reports `corrupt=True` in that case;
+    the indexed count is unknowable but the fix is the same — rerun
+    `bettermemory reindex`."""
+    from bettermemory import index, store as _store
+
+    root = tmp_path / "corrupt"
+    setup = Store(root)
+    setup.write(content="seed", scopes=["tools"])
+
+    # Stomp the on-disk index with garbage so `status()` reports it
+    # as corrupt on the next read.
+    db_path = index.index_path(root)
+    db_path.write_bytes(b"this is not a sqlite database")
+
+    _store._DIVERGENCE_WARNED_ROOTS.discard(root.expanduser().resolve())
+
+    caplog.clear()
+    with caplog.at_level("WARNING", logger="bettermemory.store"):
+        Store(root)
+    warnings = [
+        r
+        for r in caplog.records
+        if r.levelname == "WARNING" and "corrupt" in r.getMessage()
+    ]
+    assert len(warnings) == 1, (
+        f"a corrupt index should produce exactly one corruption "
+        f"warning, got {warnings!r}"
+    )
+    assert "bettermemory reindex" in warnings[0].getMessage()
