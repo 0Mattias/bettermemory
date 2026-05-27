@@ -6,13 +6,13 @@
   },
   "metadata": {
     "description": "Memory you can verify — MCP-native memory with per-hit staleness verdicts and claim-level audit trails. Local-first, no cloud.",
-    "version": "3.1.0"
+    "version": "3.2.0"
   },
   "plugins": [
     {
       "name": "bettermemory",
       "source": "./plugin",
-      "description": "Verification-grade memory for Claude Code. Every retrieved fact carries a staleness verdict (calendar age + filesystem path drift + git commit drift) so the model knows when a stored memory has rotted before relying on it; retrievals are logged with three attribution tiers (model-explicit with claim-level excerpts, Stop-hook substring match, or auto-fallback) so a reply months later can be traced back to the load-bearing stored claim wherever it was recorded. Memories are plain markdown + YAML in ~/.claude-memory/; retrieval is opt-in per turn; writes about you always stage for confirmation. A sibling episode tier (4 episode_* tools) gives /loop iterations and subagent handoffs a home for journal-shaped run-state the durability gate rejects. Bundles 22 MCP tools (18 memory_* + 4 episode_*) and a memory-discipline skill that lands the policy in the system prompt.",
+      "description": "Verification-grade memory for Claude Code. Every retrieved fact carries a staleness verdict (calendar age + filesystem path drift + git commit drift) so the model knows when a stored memory has rotted before relying on it; retrievals are logged with three attribution tiers (model-explicit with claim-level excerpts, Stop-hook substring match, or auto-fallback) so a reply months later can be traced back to the load-bearing stored claim wherever it was recorded. Memories are plain markdown + YAML in ~/.claude-memory/; retrieval is opt-in per turn; writes about you always stage for confirmation. A sibling episode tier (4 episode_* tools) gives /loop iterations and subagent handoffs a home for journal-shaped run-state the durability gate rejects. Bundles 23 MCP tools (19 memory_* + 4 episode_*) and a memory-discipline skill that lands the policy in the system prompt.",
       "category": "memory",
       "tags": [
         "memory",

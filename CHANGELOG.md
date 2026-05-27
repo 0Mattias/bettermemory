@@ -9,6 +9,16 @@ spells out exactly what's stable.
 
 ## Unreleased
 
+## 3.2.0 - 2026-05-27
+
+The **multi-agent hardening + audit-turn semantics** release: a
+10-commit campaign hardening bettermemory for production-grade
+concurrent access by multiple Claude Code sub-agents, plus a
+telemetry overhaul that makes the dashboard counts accurate and
+individually-actionable. Tool count goes from 22 to 23 (new
+`memory_acknowledge_miss`); on-disk format unchanged
+(SCHEMA_VERSION stays at 1, additive-only).
+
 ### Changed
 
 - **Silent-miss rollup gains 4-stage filter (T4).** The 3-stage
@@ -112,6 +122,39 @@ spells out exactly what's stable.
   `unique_silent_miss_memories`. `memory_scope_overview` and
   `memory_health` tool descriptions updated to enumerate the new
   field.
+- **`_fsutil.atomic_write_bytes` helper (F5/F6).** New centralised
+  tmp+fsync+rename+fsync_dir primitive in `_fsutil.py`. Used by
+  `init.py:333` (user MCP client config write — e.g. `~/.claude.json`)
+  and `sync.py:313` (`.gitignore` write). The existing per-module
+  atomic writers (`store._atomic_write_post`, `episodes._write_path`,
+  `events` rotation) are unchanged this release — they keep their
+  fchmod-before-rename ceremony for private memory bodies; the new
+  helper uses chmod-after-rename since the new callsites carry
+  files that are explicitly NOT privacy-sensitive (the MCP config
+  is read by every other MCP client; `.gitignore` is committed to
+  git).
+- **`Store.__post_init__` index-divergence warning (S4).** When the
+  Store opens a root it compares `index.status(root).indexed_count`
+  to the live `.md` count from a single `iterdir()` walk. If they
+  diverge, emit a one-shot WARNING per resolved root naming both
+  counts and pointing at `bettermemory reindex` for recovery. The
+  check is idempotent per process (module-level
+  `_DIVERGENCE_WARNED_ROOTS: set[Path]`). Three shapes recognised:
+  missing index file, corrupt index (`status["corrupt"]`), and
+  count mismatch. Catches the architectural failure mode where an
+  external editor, a `sync pull`, or a sub-agent's generic `Write`
+  tool wrote an `.md` directly bypassing the Store hooks — pre-S4
+  `memory_search` would rank against stale candidate ids silently.
+  README's Performance section gains an "Index consistency"
+  subsection documenting the canonical writer set and the recovery
+  flow.
+- **`Episode.is_floor` field + `EpisodeStore.write_floor` (E2).**
+  New tag-shaped episode kind that carries an `origin` but no
+  takeaway content. Pure additive on the frontmatter (default
+  `false` is omitted from YAML so existing episodes serialise
+  identically). Written exclusively by `episode_handoff` at handler
+  entry to seed a journal floor for the current `session_id`
+  before recording the handoff event — see the Fixed entry below.
 
 ### Fixed
 
@@ -165,6 +208,94 @@ spells out exactly what's stable.
   `force=True` escape hatch on `Store.update` lets in-process
   reconciliation tooling bypass the CAS; it is NOT exposed through
   the MCP handler boundary.
+- **`yaml.YAMLError` translated to `ValueError` at the `_frontmatter`
+  parser boundary (F1).** PyYAML's `YAMLError` does not inherit from
+  `ValueError`, so the project-wide `except (ValueError, KeyError,
+  OSError)` defensive tuple in `store.py` (verified at lines 177,
+  193, 225, 522, 545, 629, 642, 760, 1043, 1314 at HEAD pre-fix)
+  silently failed to catch parse errors. One malformed `.md` file
+  (sync-pull truncation, hand-edit typo, partial-write recovery
+  leaving a torn `<!--` opener) raised `yaml.scanner.ScannerError`
+  straight out of `load_all` / `iter_active` / `_load_path` and
+  killed `memory_search` / `memory_list` / `memory_health` /
+  `memory_scope_overview`. `_frontmatter.loads` now catches
+  `yaml.YAMLError` and re-raises as `ValueError(f"malformed YAML:
+  {exc}") from exc` (`__cause__` preserves the original);
+  `_frontmatter.load(path)` prepends the file path to the message.
+  The defensive tuples downstream now catch the parse failure
+  cleanly. Also tightened the only other YAML-error-aware catch in
+  the repo (`ingest.py:243`) from a blanket `except Exception` to
+  the same `(ValueError, KeyError, OSError)` shape and refreshed
+  the comment.
+- **Unguarded `frontmatter.load` in tombstone-fallback branches
+  (F2).** Three call sites (`load_one`, `mark_verified`,
+  `tombstone` at `store.py:231-237, 452-458, 520-524` pre-fix)
+  iterated tombstones with `post = frontmatter.load(tpath)` and
+  no surrounding `try/except`. A truncated tombstone (sync-pull
+  race), a peer prune unlinking the file between
+  `_iter_tombstone_paths()` and the read, or a malformed YAML body
+  crashed `memory_show`, `memory_record_use`, and the hook's
+  attribution loop. Each iteration body now wraps in `try/except
+  (FileNotFoundError, ValueError, KeyError, OSError,
+  yaml.YAMLError): continue` — same discipline the existing
+  `load_tombstones` reader at `store.py:583` already used.
+- **`prune_old_sessions` unlinks per-session lockfile (E1, ≡
+  carryover A3-13).** Pre-E1, `episodes.py:149` wrote
+  `.session-<id>.lock` on first write to a fresh `session_id` and
+  the rmtree branch (`:443`) and rmdir branch (`:382`) deliberately
+  did not unlink it (per-inode-identity race documented inline).
+  With each `/loop` tick running in a fresh process under a fresh
+  `session_id`, the lockfiles accumulated unbounded across tick
+  count: after N≈10⁵ the `iterdir(episodes_dir)` over the orphans
+  dominated handoff latency (every prune pass, every
+  `iter_session_ids` call, every `episode_search` /
+  `episode_promote` walk hit it). Both prune branches now also
+  `unlink(missing_ok=True)` and `fsync_dir(episodes_dir)` after
+  the rmtree/rmdir, while still holding the per-session flock —
+  safe for past-TTL sessions because the per-inode race the comment
+  warned about only matters with live writers, and a 30-day-stale
+  `session_id` has no live writer. The peer-prune race (when
+  `fresh_mtime is None` because a peer already wiped the
+  `session_dir` during our unlocked stat → flock acquisition
+  window) is now also handled. A new `_cleanup_orphan_lockfiles`
+  sweep runs at the end of `prune_old_sessions` to mop up pre-fix
+  orphans on legacy stores; it is bounded (single `iterdir` +
+  per-file stat, skips lockfiles whose `session_dir` still exists).
+- **`init.py:333` writes user MCP client config atomically (F5).**
+  Pre-F5, the JSON write for the user's MCP client config (e.g.
+  `~/.claude.json`) used a plain `target_path.write_text(...)`. A
+  power loss or process kill mid-write would truncate the user's
+  ENTIRE Claude MCP config (every MCP server they had configured,
+  not just bettermemory). Bypassed the `_atomic_write_post`
+  discipline the rest of the codebase had internalised. Now routes
+  through `_fsutil.atomic_write_bytes`.
+- **`sync.init:313` writes `.gitignore` atomically (F6).** Pre-F6,
+  the `.gitignore` write used `gitignore.write_text(...)`. A
+  truncated gitignore would let the next `sync push` commit event
+  logs and lockfiles to the remote — a real privacy regression
+  vector. Now routes through `_fsutil.atomic_write_bytes`.
+- **`episode_handoff` writes session-tag floor episode before
+  recording the handoff event (E2).** Pre-E2, tick T calling
+  `episode_handoff` then crashing before `episode_write` left T
+  with an `episode_handoff` event in the event log but zero
+  journal files under `episodes/<T-session-id>/`. T+1's handoff
+  resolved T's `session_id` via the event log, called
+  `list_by_session(T-session-id)` → empty, hit the zero-episode
+  branch in `handlers/episode_handoff.py:234-242` (strict-worktree
+  filter: only adopt zero-episode candidates when caller's worktree
+  is None), and in a real worktree silently walked past T and
+  adopted T-1 — dropping T's full history. The exact "loop↔memory
+  boundary buggy" failure mode reported in the campaign brief.
+  The handler now writes a floor episode at the very top of the
+  handoff path (BEFORE recording the handoff event, so even crashes
+  between the floor write and the event record leave a journal
+  floor on disk that future `prune_old_sessions` will TTL-clean at
+  30 days). Floors are filtered out of `episode_search` candidate
+  sets and `episode_promote` rejects them with a clean error.
+  Floor-only adoption (when T crashed before any real
+  `episode_write`) surfaces `note: "Prior session crashed before
+  writing a takeaway."` so the model can distinguish a clean
+  crash from a benign no-write tick.
 
 ### Internal
 
