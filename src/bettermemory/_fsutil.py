@@ -21,14 +21,20 @@ exists, the data backing it never reached disk.
   so we no-op there.
 * `atomic_write_bytes(path, data, *, mode=None)` — the full
   tmp+fsync+rename+fsync_dir discipline packaged as a one-call helper
-  for small files. Two callsites (the user MCP config in `init.py`
-  and the sync `.gitignore` in `sync.py`) used `path.write_text(...)`
-  pre-3.1.0 and could leave truncated files on power loss; both now
-  route through this helper. The canonical `_atomic_write_post`
-  (frontmatter Post writer) and `episodes._write_path` keep their
-  bespoke implementations for now — queue item #29 lifts them onto
-  this primitive in a separate refactor so the well-tested paths
-  stay untouched here.
+  for small files. Caller shape it serves: a plain-bytes payload
+  (config TOML, JSON config blob, `.gitignore`, JSON export) where
+  the file is small enough to hold in memory, there is no
+  privacy-0o600 requirement, and no reader is racing the writer
+  through the rename-to-chmod window. The canonical `_atomic_write_post`
+  (frontmatter Post writer) and `episodes._write_path` deliberately
+  keep their bespoke implementations: memory bodies and episode
+  bodies are privacy-critical and need `fchmod` BEFORE the rename
+  (so the file is never world-readable on disk, even briefly).
+  Lifting them onto this helper requires a future API extension
+  (`atomic_write_bytes(..., mode_before_rename=0o600)` or similar);
+  Q29 deferred them and instead migrated `config.py`'s default-config
+  writer and `cli/export.py`'s `-o` output writer onto this helper,
+  since both fit the plain-bytes caller shape.
 
 Both fsync helpers swallow `OSError` and return. fsync legitimately
 fails on some pseudo-filesystems (`/proc`, certain tmpfs/overlayfs
@@ -134,9 +140,10 @@ def atomic_write_bytes(path: Path, data: bytes, *, mode: int | None = None) -> N
     no-one is racing readers in the rename-to-chmod window — the
     fchmod-before-rename ceremony that ``_atomic_write_post`` and
     ``episodes._write_path`` perform is privacy-critical for memory
-    bodies and warrants its own bespoke shape. For the MCP-config and
-    ``.gitignore`` callsites that don't carry private bytes,
-    chmod-after-rename is the simpler and equally-correct choice.
+    bodies and warrants its own bespoke shape. For plain-bytes
+    callers that don't carry private bytes (TOML config, JSON config
+    blob, ``.gitignore``, JSON export), chmod-after-rename is the
+    simpler and equally-correct choice.
 
     The tmp file is created via ``tempfile.NamedTemporaryFile(dir=
     path.parent, delete=False)`` so it lives on the same filesystem as
@@ -149,9 +156,11 @@ def atomic_write_bytes(path: Path, data: bytes, *, mode: int | None = None) -> N
     ``<path>.<random>.tmp`` files in the parent directory.
 
     The parent directory is created (``parents=True, exist_ok=True``)
-    if missing — bytes-level callers (``init.py``'s ``patch_client_config``,
-    ``sync.py``'s ``init``) often write under user-home paths that may
-    not exist yet on a fresh install.
+    if missing — plain-bytes callers often write under user-home or
+    user-chosen output paths (default-config under ``~/.config``, MCP
+    client config under ``~/.claude.json``, sync ``.gitignore``,
+    ``cli export -o`` to an arbitrary path) that may not exist yet on
+    a fresh install or first export.
     """
     import tempfile
 
