@@ -318,6 +318,43 @@ def test_patch_does_not_migrate_when_explicit_legacy_name_passed(
     assert DEFAULT_SERVER_NAME not in body["mcpServers"]
 
 
+def test_patch_uses_atomic_write_bytes(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The MCP-config writer must route through `_fsutil.atomic_write_bytes`
+    so a power loss / process kill mid-write can't truncate the user's
+    entire `~/.claude.json` — blast radius is every MCP server they had
+    registered, not just bettermemory. Pre-3.1.0 this was a plain
+    `target_path.write_text(...)`. This is a regression pin that bypassing
+    the atomic helper would surface here."""
+    target = tmp_path / "config.json"
+    calls: list[tuple[Path, bytes]] = []
+    real = patch_client_config.__globals__["_fsutil"].atomic_write_bytes
+
+    def spy(path: Path, data: bytes, *, mode: int | None = None) -> None:
+        calls.append((path, data))
+        real(path, data, mode=mode)
+
+    monkeypatch.setattr(
+        patch_client_config.__globals__["_fsutil"],
+        "atomic_write_bytes",
+        spy,
+    )
+    result = patch_client_config(target, binary="/x/bm")
+    assert result["action"] == "added"
+    assert len(calls) == 1, (
+        f"expected exactly one atomic_write_bytes call; got {len(calls)}. "
+        f"A regression to `target_path.write_text(...)` would surface as "
+        f"zero calls here."
+    )
+    path, data = calls[0]
+    assert path == target
+    # The bytes written must round-trip to the same JSON shape the test
+    # otherwise verifies via `target.read_text(...)`.
+    body = json.loads(data.decode("utf-8"))
+    assert body["mcpServers"][DEFAULT_SERVER_NAME] == _canonical_entry("/x/bm")
+
+
 def test_patch_migration_idempotent_after_first_run(tmp_path: Path) -> None:
     """Running init twice in a row should be a noop on the second call,
     even though the first call performed a legacy migration."""

@@ -105,6 +105,42 @@ def test_init_is_idempotent(memory_dir: Path) -> None:
     assert ignore.count(".index.sqlite\n") == 1
 
 
+def test_init_uses_atomic_write_for_gitignore(
+    memory_dir: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The .gitignore writer must route through `atomic_write_bytes` so
+    a power loss / process kill mid-write can't leave a truncated
+    gitignore. A truncated gitignore lets the next `sync push` commit
+    event logs / lockfiles / index sqlite to the remote — exactly the
+    privacy regression the canonical gitignore is there to prevent.
+    Pre-3.1.0 this was a plain `gitignore.write_text(...)`."""
+    from bettermemory import _fsutil
+
+    calls: list[tuple[Path, bytes]] = []
+    real = _fsutil.atomic_write_bytes
+
+    def spy(path: Path, data: bytes, *, mode: int | None = None) -> None:
+        calls.append((path, data))
+        real(path, data, mode=mode)
+
+    # The `sync.py` module imports `atomic_write_bytes` by name (from
+    # `._fsutil import atomic_write_bytes`), so the spy must replace
+    # the name in `sync`'s module namespace — patching `_fsutil` itself
+    # wouldn't shadow the local binding.
+    monkeypatch.setattr(sync, "atomic_write_bytes", spy, raising=False)
+    result = sync.init(memory_dir)
+    assert result["already_repo"] is False
+    assert len(calls) == 1, (
+        f"expected exactly one atomic_write_bytes call for the "
+        f".gitignore; got {len(calls)}. A regression to "
+        f"`gitignore.write_text(...)` would surface as zero calls."
+    )
+    path, data = calls[0]
+    assert path == memory_dir / ".gitignore"
+    assert b".index.sqlite" in data
+    assert b".events.jsonl" in data
+
+
 def test_init_sets_remote(memory_dir: Path, bare_remote: Path) -> None:
     """When `--remote` is passed, init adds (or updates) the origin
     remote. The actual URL ends up in `git remote get-url origin`."""

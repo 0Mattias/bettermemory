@@ -41,6 +41,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Callable
 
+from . import _fsutil
 from .prompts import SYSTEM_PROMPT_ADDENDUM
 
 
@@ -330,7 +331,17 @@ def patch_client_config(
     if legacy_present:
         del mcp_servers[LEGACY_SERVER_NAME]
 
-    target_path.write_text(json.dumps(existing, indent=2) + "\n", encoding="utf-8")
+    # Atomic + durable write via `_fsutil.atomic_write_bytes`: a plain
+    # `target_path.write_text(...)` here would truncate the file before
+    # writing the new content, so power loss / process kill mid-write
+    # could leave the user with an empty `~/.claude.json` — every MCP
+    # server they had registered (not just bettermemory) gone. The
+    # helper writes to a tmp sibling, fsyncs, atomic-renames into place,
+    # and fsyncs the parent directory.
+    _fsutil.atomic_write_bytes(
+        target_path,
+        (json.dumps(existing, indent=2) + "\n").encode("utf-8"),
+    )
     result: dict[str, Any] = {
         "action": action,
         "path": str(target_path),

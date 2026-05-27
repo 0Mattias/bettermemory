@@ -51,7 +51,7 @@ import subprocess
 from dataclasses import dataclass
 from pathlib import Path
 
-from ._fsutil import flock_excl
+from ._fsutil import atomic_write_bytes, flock_excl
 from .doctor import DOCTOR_PROBE_FILENAME
 from .events import EVENT_LOG_FILENAME
 from .index import INDEX_FILENAME
@@ -310,7 +310,12 @@ def init(
     desired = "\n".join(_GITIGNORE_LINES) + "\n"
     current = gitignore.read_text(encoding="utf-8") if gitignore.exists() else ""
     if current != desired:
-        gitignore.write_text(desired, encoding="utf-8")
+        # Atomic + durable write: a plain `gitignore.write_text(...)`
+        # truncates the file before writing the new content, so power
+        # loss / process kill mid-write can leave a half-written
+        # `.gitignore` — and a stale or truncated gitignore lets the
+        # next `sync push` commit event logs / lockfiles to the remote.
+        atomic_write_bytes(gitignore, desired.encode("utf-8"))
         actions.append(".gitignore written")
     else:
         actions.append(".gitignore already in canonical shape")

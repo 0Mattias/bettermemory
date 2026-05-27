@@ -2,15 +2,15 @@
 
 Two concerns live here, both narrow:
 
-**Durability (`fsync_file`, `fsync_dir`).** The store's write path is
-`write to .tmp → rename to target`. POSIX guarantees the rename itself
-is atomic, but the rename only updates the directory entry; the page
-cache holding the file's bytes (and the directory's own metadata) can
-still be lost on power loss between the rename returning and the kernel
-flushing dirty pages. Without an explicit fsync we can end up with a
-zero-byte file at the target path after an ungraceful shutdown — the
-directory entry says the file exists, the data backing it never reached
-disk.
+**Durability (`fsync_file`, `fsync_dir`, `atomic_write_bytes`).** The
+store's write path is `write to .tmp → rename to target`. POSIX
+guarantees the rename itself is atomic, but the rename only updates
+the directory entry; the page cache holding the file's bytes (and the
+directory's own metadata) can still be lost on power loss between the
+rename returning and the kernel flushing dirty pages. Without an
+explicit fsync we can end up with a zero-byte file at the target path
+after an ungraceful shutdown — the directory entry says the file
+exists, the data backing it never reached disk.
 
 * `fsync_file(fd)` — flush a file's data to disk. Cheap. The caller
   passes the open file descriptor (typically `f.fileno()` after
@@ -19,6 +19,16 @@ disk.
   it is durable. POSIX-only; on Windows you can't `open()` a directory
   for fsync and the OS handles rename durability differently anyway,
   so we no-op there.
+* `atomic_write_bytes(path, data, *, mode=None)` — the full
+  tmp+fsync+rename+fsync_dir discipline packaged as a one-call helper
+  for small files. Two callsites (the user MCP config in `init.py`
+  and the sync `.gitignore` in `sync.py`) used `path.write_text(...)`
+  pre-3.1.0 and could leave truncated files on power loss; both now
+  route through this helper. The canonical `_atomic_write_post`
+  (frontmatter Post writer) and `episodes._write_path` keep their
+  bespoke implementations for now — queue item #29 lifts them onto
+  this primitive in a separate refactor so the well-tested paths
+  stay untouched here.
 
 Both fsync helpers swallow `OSError` and return. fsync legitimately
 fails on some pseudo-filesystems (`/proc`, certain tmpfs/overlayfs
@@ -104,6 +114,86 @@ def fsync_dir(path: Path) -> None:
             os.fsync(fd)
     finally:
         os.close(fd)
+
+
+def atomic_write_bytes(path: Path, data: bytes, *, mode: int | None = None) -> None:
+    """Atomic, durable write of ``data`` to ``path``.
+
+    Write-to-tmp (same parent dir, so it's on the same filesystem and
+    ``os.replace`` is atomic), fsync the file, rename into place, fsync
+    the parent directory. The rename is POSIX-atomic for the directory
+    entry, but without the file-fsync we can end up with a renamed-but-
+    empty file after power loss (the dirent exists, the bytes never
+    reached disk); without the dir-fsync the rename itself isn't durable
+    past a crash. Both fsyncs are best-effort — see :func:`fsync_file`
+    and :func:`fsync_dir` for the platform/filesystem caveats.
+
+    ``mode`` is applied via ``os.chmod`` AFTER the rename if provided.
+    This helper is the bypass-callsite primitive (small JSON/config
+    files written outside the Store's frontmatter discipline) where
+    no-one is racing readers in the rename-to-chmod window — the
+    fchmod-before-rename ceremony that ``_atomic_write_post`` and
+    ``episodes._write_path`` perform is privacy-critical for memory
+    bodies and warrants its own bespoke shape. For the MCP-config and
+    ``.gitignore`` callsites that don't carry private bytes,
+    chmod-after-rename is the simpler and equally-correct choice.
+
+    The tmp file is created via ``tempfile.NamedTemporaryFile(dir=
+    path.parent, delete=False)`` so it lives on the same filesystem as
+    the target (required for ``os.replace`` atomicity) and the rename
+    can move it without copying. A per-process random suffix means two
+    writers racing on the same target serialise on the rename rather
+    than on the tmp name itself. On any failure between tmp creation
+    and successful rename, the tmp file is unlinked in a ``finally``
+    block so a crashed write doesn't accumulate orphan
+    ``<path>.<random>.tmp`` files in the parent directory.
+
+    The parent directory is created (``parents=True, exist_ok=True``)
+    if missing — bytes-level callers (``init.py``'s ``patch_client_config``,
+    ``sync.py``'s ``init``) often write under user-home paths that may
+    not exist yet on a fresh install.
+    """
+    import tempfile
+
+    parent = path.parent
+    parent.mkdir(parents=True, exist_ok=True)
+    # `delete=False` is required: we rename the tmp to `path` before the
+    # context manager closes it; the default `delete=True` would then
+    # try to unlink the (now-renamed) original tmp path on close and
+    # raise. `prefix=path.name + "."` keeps the tmp visibly associated
+    # with the target file in `ls` output, which helps post-crash
+    # inspection.
+    tmp_file = tempfile.NamedTemporaryFile(
+        dir=str(parent),
+        prefix=path.name + ".",
+        suffix=".tmp",
+        delete=False,
+    )
+    tmp_path = Path(tmp_file.name)
+    renamed = False
+    try:
+        with tmp_file as f:
+            f.write(data)
+            f.flush()
+            fsync_file(f.fileno())
+        os.replace(tmp_path, path)
+        renamed = True
+        if mode is not None:
+            # chmod-after-rename: see the docstring rationale. Best-
+            # effort — Windows has no POSIX mode bits and some sandbox
+            # filesystems reject chmod; that's not a corruption risk.
+            with contextlib.suppress(OSError):
+                os.chmod(path, mode)
+        fsync_dir(parent)
+    finally:
+        # If we never renamed (write or rename raised), the tmp is an
+        # orphan; clean it up so the parent directory doesn't accumulate
+        # `<path>.<random>.tmp` files on every failure. Suppressed
+        # because the more important error already on the way up the
+        # stack shouldn't be masked by a unlink failure.
+        if not renamed:
+            with contextlib.suppress(OSError):
+                tmp_path.unlink()
 
 
 def bounded_read(path: Path, max_bytes: int) -> bytes:
@@ -363,10 +453,11 @@ def bounded_stream_read(stream: BinaryIO, max_bytes: int) -> bytes:
 
 
 __all__ = [
-    "fsync_file",
-    "fsync_dir",
-    "flock_excl",
+    "atomic_write_bytes",
     "bounded_read",
-    "bounded_tail_read",
     "bounded_stream_read",
+    "bounded_tail_read",
+    "flock_excl",
+    "fsync_dir",
+    "fsync_file",
 ]

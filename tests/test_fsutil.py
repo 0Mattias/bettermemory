@@ -27,6 +27,7 @@ import pytest
 
 from bettermemory import _fsutil
 from bettermemory._fsutil import (
+    atomic_write_bytes,
     bounded_read,
     bounded_stream_read,
     bounded_tail_read,
@@ -598,3 +599,252 @@ class TestFlockWindows:
             f"{second_call_attempts} attempts. If this is 1, the env-var "
             f"was cached from the first call rather than re-read."
         )
+
+
+# ---------------------------------------------------------------------------
+# atomic_write_bytes — the bypass-callsite primitive
+# ---------------------------------------------------------------------------
+#
+# Two bypass sites pre-3.1.0 called `path.write_text(...)` and could
+# leave truncated files on power loss / process kill mid-write:
+# `init.py`'s user MCP config writer (`~/.claude.json`, blast radius =
+# every MCP server the user had registered) and `sync.py`'s `.gitignore`
+# writer (truncated gitignore → next `sync push` commits event logs and
+# lockfiles to the remote). Both now route through `atomic_write_bytes`.
+# These tests pin the contract end-to-end: the bytes land, the rename
+# is the durability boundary, the parent fsync fires, the mode is
+# applied if requested, and a mid-write failure cleans up the tmp.
+
+
+class TestAtomicWriteBytes:
+    def test_happy_path_writes_bytes_at_target(self, tmp_path: Path) -> None:
+        """The contents land at the target path and are byte-exact."""
+        path = tmp_path / "f.txt"
+        atomic_write_bytes(path, b"hello world")
+        assert path.read_bytes() == b"hello world"
+
+    def test_creates_parent_directories(self, tmp_path: Path) -> None:
+        """A nested path under a non-existent parent directory works
+        (parents=True, exist_ok=True). Bytes-level callers — init.py and
+        sync.py — write under user-home paths that may not exist on a
+        fresh install."""
+        path = tmp_path / "a" / "b" / "c.txt"
+        atomic_write_bytes(path, b"nested")
+        assert path.read_bytes() == b"nested"
+
+    def test_replaces_existing_file_atomically(self, tmp_path: Path) -> None:
+        """When the target already exists, the new content replaces it
+        atomically — no partial write window where the file is half the
+        old content and half the new."""
+        path = tmp_path / "f.txt"
+        path.write_bytes(b"old content here")
+        atomic_write_bytes(path, b"new")
+        assert path.read_bytes() == b"new"
+
+    def test_no_tmp_leftover_on_success(self, tmp_path: Path) -> None:
+        """After a clean write, the parent directory contains only the
+        target file — no orphan `<path>.<random>.tmp` siblings. A
+        regression that skipped the rename (or unlinked the wrong path)
+        would leave the tmp behind."""
+        path = tmp_path / "f.txt"
+        atomic_write_bytes(path, b"clean")
+        # Only the target file should be present in the parent dir.
+        entries = sorted(p.name for p in tmp_path.iterdir())
+        assert entries == ["f.txt"], (
+            f"expected only target file after clean write; "
+            f"got {entries} (a .tmp leak would surface here)"
+        )
+
+    def test_mode_applied_when_provided(self, tmp_path: Path) -> None:
+        """When `mode` is passed, the file lands with those permission
+        bits. Skipped on Windows — POSIX mode bits don't apply there."""
+        if sys.platform == "win32":
+            pytest.skip("POSIX permission bits don't apply on Windows")
+        path = tmp_path / "f.txt"
+        atomic_write_bytes(path, b"private", mode=0o600)
+        actual = path.stat().st_mode & 0o777
+        assert actual == 0o600, (
+            f"expected mode 0o600 from `mode=` arg; got {oct(actual)}"
+        )
+
+    def test_no_explicit_chmod_when_mode_not_provided(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Without `mode=`, the helper does NOT call `os.chmod` on the
+        target — it inherits whatever the tmp's permission bits were
+        (typically 0o600 from `tempfile.NamedTemporaryFile`'s defaults,
+        but that's the tmpfile module's choice, not ours). Pinning the
+        no-chmod contract leaves room for the future helper-migrate of
+        the canonical `_atomic_write_post` (queue #29) which would need
+        an explicit-mode story it can re-derive without surprise from
+        an unconditional chmod here."""
+        seen_chmods: list[tuple[str, int]] = []
+        real_chmod = os.chmod
+
+        def spy_chmod(p, m):
+            seen_chmods.append((str(p), m))
+            return real_chmod(p, m)
+
+        monkeypatch.setattr(os, "chmod", spy_chmod)
+        path = tmp_path / "f.txt"
+        atomic_write_bytes(path, b"y")
+        assert seen_chmods == [], (
+            f"expected zero os.chmod calls when mode is not provided; "
+            f"got {seen_chmods}. A regression that always chmods would "
+            f"surface here."
+        )
+
+    def test_uses_os_replace_for_atomicity(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """The rename hop MUST be `os.replace` (or equivalent atomic
+        primitive). A regression to `shutil.copy` or a plain truncate-
+        and-write would lose atomicity. We spy `os.replace` and assert
+        it fires with a tmp source path and the target as the dest."""
+        seen: list[tuple[str, str]] = []
+        real_replace = os.replace
+
+        def spy_replace(src, dst):
+            seen.append((str(src), str(dst)))
+            return real_replace(src, dst)
+
+        monkeypatch.setattr(os, "replace", spy_replace)
+        path = tmp_path / "f.txt"
+        atomic_write_bytes(path, b"atomic")
+        assert len(seen) == 1, (
+            f"expected exactly one os.replace call; got {len(seen)} "
+            f"({seen}). The atomic rename is the durability boundary; "
+            f"a non-replace path would silently bypass it."
+        )
+        src, dst = seen[0]
+        assert dst == str(path)
+        # The src must be a tmp sibling of the target — same parent dir
+        # is required for `os.replace` atomicity (cross-FS rename is
+        # not atomic).
+        assert Path(src).parent == path.parent, (
+            f"tmp source {src!r} must live in the target's parent dir "
+            f"{str(path.parent)!r} for the rename to be atomic"
+        )
+        assert ".tmp" in src
+
+    def test_fsync_dir_called_on_parent(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """`fsync_dir(parent)` runs after the rename so the new dirent
+        is durable past a crash. The 2.6.x audit cycle keeps catching
+        callers that skipped this — pin it explicitly."""
+        seen: list[Path] = []
+
+        def spy_fsync_dir(p: Path) -> None:
+            seen.append(p)
+
+        monkeypatch.setattr(_fsutil, "fsync_dir", spy_fsync_dir)
+        path = tmp_path / "f.txt"
+        atomic_write_bytes(path, b"durable")
+        assert path.parent in seen, (
+            f"expected fsync_dir({path.parent!r}); seen={seen}. "
+            f"Without it, the new dirent is not durable past power loss."
+        )
+
+    def test_fsync_file_called_before_rename(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """`fsync_file(fd)` runs before `os.replace`. Without it, the
+        bytes are still in the page cache when the rename returns — a
+        crash leaves a renamed-but-empty file (the exact zero-byte-on-
+        crash failure mode the discipline exists to prevent)."""
+        call_order: list[str] = []
+        real_fsync_file = _fsutil.fsync_file
+        real_replace = os.replace
+
+        def spy_fsync_file(fd: int) -> None:
+            call_order.append("fsync_file")
+            real_fsync_file(fd)
+
+        def spy_replace(src, dst):
+            call_order.append("replace")
+            return real_replace(src, dst)
+
+        monkeypatch.setattr(_fsutil, "fsync_file", spy_fsync_file)
+        monkeypatch.setattr(os, "replace", spy_replace)
+        path = tmp_path / "f.txt"
+        atomic_write_bytes(path, b"ordered")
+        assert "fsync_file" in call_order, "fsync_file was never called"
+        assert "replace" in call_order, "os.replace was never called"
+        assert call_order.index("fsync_file") < call_order.index("replace"), (
+            f"fsync_file must run before os.replace; got {call_order!r}. "
+            f"The opposite order means the bytes can be lost on crash "
+            f"even though the dirent appears."
+        )
+
+    def test_tmp_cleaned_up_on_replace_failure(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """If `os.replace` raises after the tmp has been written, the
+        orphan tmp file must be unlinked in the `finally` block — a
+        crashed-write loop must not accumulate `<path>.<random>.tmp`
+        siblings in the parent directory."""
+
+        def boom(src, dst):
+            raise OSError("simulated rename failure")
+
+        monkeypatch.setattr(os, "replace", boom)
+        path = tmp_path / "f.txt"
+        with pytest.raises(OSError, match="simulated rename failure"):
+            atomic_write_bytes(path, b"will not land")
+        # Target was never created.
+        assert not path.exists()
+        # No tmp siblings left behind in the parent.
+        leftovers = list(tmp_path.iterdir())
+        assert leftovers == [], (
+            f"expected zero leftover files after a rename failure; "
+            f"got {[p.name for p in leftovers]}. The finally-block "
+            f"cleanup of the tmp file regressed."
+        )
+
+    def test_tmp_cleaned_up_on_write_failure(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """If a step between tmp creation and rename raises (here:
+        `os.fsync` simulating a disk error during durability flush),
+        the tmp must still be unlinked — a crashed-write loop must not
+        accumulate stranded tmps even on the failure path before the
+        rename happens. We pick `os.fsync` rather than the tmp write
+        itself because the helper imports `tempfile` lazily inside the
+        function, and `NamedTemporaryFile` is harder to monkey-patch
+        cleanly without going through `sys.modules['tempfile']`. The
+        contract we're pinning is the same: a failure between tmp
+        creation and the rename triggers tmp cleanup via the `finally`
+        block."""
+
+        # `fsync_file` swallows OSError, so patch the underlying
+        # `os.fsync` to raise something that propagates — a bare
+        # Exception subclass that isn't OSError.
+        class _SimulatedDurabilityError(Exception):
+            pass
+
+        def boom_fsync(_fd: int) -> None:
+            raise _SimulatedDurabilityError("simulated durability failure")
+
+        monkeypatch.setattr(os, "fsync", boom_fsync)
+        path = tmp_path / "f.txt"
+        with pytest.raises(
+            _SimulatedDurabilityError, match="simulated durability failure"
+        ):
+            atomic_write_bytes(path, b"never lands")
+        assert not path.exists()
+        leftovers = list(tmp_path.iterdir())
+        assert leftovers == [], (
+            f"expected zero leftover files after a pre-rename failure; "
+            f"got {[p.name for p in leftovers]}. The tmp must be "
+            f"unlinked on any failure path before rename."
+        )
+
+    def test_empty_payload_is_valid(self, tmp_path: Path) -> None:
+        """Writing zero bytes is a valid use — empty config files,
+        sentinel files, etc. The helper must not special-case empty
+        and skip the rename."""
+        path = tmp_path / "empty"
+        atomic_write_bytes(path, b"")
+        assert path.exists()
+        assert path.read_bytes() == b""
