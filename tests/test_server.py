@@ -2338,10 +2338,15 @@ async def test_loop_iteration_end_to_end_pattern(memory_dir: Path) -> None:
     # A's pre-boundary memory is NOT — it sits before the boundary.
     assert not any("alpha gophers" in body for body in own_bodies)
 
-    # Second handoff: prior session still resolves, but the episode is
-    # gone (deleted by promote on commit).
+    # Second handoff: A's episode was promoted (and the source file
+    # deleted) so A is now a zero-episode candidate. Tick-22 tightened
+    # the zero-episode branch — events don't carry origin (queue #28),
+    # so a zero-episode candidate's worktree is unknown and the strict
+    # None-only-matches-None rule means callers in a named worktree
+    # skip it. With no other candidates in the event log, the result
+    # is the empty-store shape rather than A's session_id.
     handoff_2 = await _call(server_b, "episode_handoff")
-    assert handoff_2["prior_session_id"] is not None
+    assert handoff_2["prior_session_id"] is None
     assert handoff_2["episodes"] == []
 
 
@@ -2718,6 +2723,142 @@ async def test_episode_handoff_filters_prior_session_by_caller_worktree(
     # The cross-worktree case must look like "no prior session in this
     # worktree" from B's perspective — same shape as a fresh store.
     assert res["prior_session_id"] is None
+    assert res["episodes"] == []
+
+
+async def test_episode_handoff_skips_zero_episode_candidate_from_other_worktree(
+    memory_dir: Path,
+    monkeypatch: Any,
+) -> None:
+    """The zero-episode adoption branch must honor the same worktree
+    contract as the episode-bearing branch. Worktree A records events
+    (memory_write / memory_search) but never calls `episode_write` —
+    its session_id surfaces in the event log with no episode files on
+    disk. A fresh server in worktree B asks for a handoff; tick-22
+    fix says it must NOT adopt A's session_id as "the prior session
+    in B's worktree" because A's worktree is unknown (events don't
+    carry origin today, queue #28) and the strict
+    None-only-matches-None rule treats unknown-worktree as not-matching
+    when the caller has a worktree.
+
+    Pre-tick-22 the walk hit A's session, saw `candidate_eps == []`,
+    and adopted unconditionally — a leak of A's session_id as B's
+    "prior session", even though the bare ULID has no body to surface
+    it still conflicts with the explicit "this worktree" contract
+    that tick-2 established for sessions with episodes."""
+    import bettermemory._handlers as handlers_module
+    import bettermemory.server as server_module
+    from bettermemory.origin import Origin
+
+    cfg = Config(storage=StorageConfig(directory=str(memory_dir)))
+
+    origin_a = Origin(
+        cwd="/worktrees/repo-feature-x",
+        repo="git@github.com:example/repo.git",
+        branch="feature-x",
+        worktree_root="/worktrees/repo-feature-x",
+    )
+    origin_b = Origin(
+        cwd="/worktrees/repo-bug-fix",
+        repo="git@github.com:example/repo.git",
+        branch="bug-fix",
+        worktree_root="/worktrees/repo-bug-fix",
+    )
+
+    def make_capture(origin: Origin) -> Any:
+        def _capture(cwd: Any = None) -> Origin:
+            return origin
+
+        return _capture
+
+    monkeypatch.setattr(handlers_module, "capture_origin", make_capture(origin_a))
+    monkeypatch.setattr(server_module, "capture_origin", make_capture(origin_a))
+
+    # Worktree A: write a memory + run a search. Both record events
+    # under A's session_id but neither creates an episode on disk. A
+    # is therefore a "zero-episode session" from the episode_handoff
+    # walk's perspective.
+    server_a = build_server(config=cfg, store=Store(memory_dir), state=SessionState())
+    await _call(
+        server_a,
+        "memory_write",
+        content="A wrote this fact",
+        scopes=["tools"],
+    )
+    await _call(server_a, "memory_search", query="A's search")
+
+    # Flip to worktree B and ask for the handoff. Pre-fix, the walk
+    # would hit A's session_id from the event log, find zero episodes,
+    # and adopt it unconditionally. Post-fix, the strict
+    # None-only-matches-None rule treats A's unknown worktree as not
+    # matching B's named worktree, so the walk continues past — and
+    # since there's no older session, the result is the empty-store
+    # shape.
+    monkeypatch.setattr(handlers_module, "capture_origin", make_capture(origin_b))
+    monkeypatch.setattr(server_module, "capture_origin", make_capture(origin_b))
+
+    server_b = build_server(config=cfg, store=Store(memory_dir), state=SessionState())
+    res = await _call(server_b, "episode_handoff")
+    assert res["prior_session_id"] is None
+    assert res["episodes"] == []
+
+
+async def test_episode_handoff_adopts_zero_episode_candidate_when_caller_has_no_worktree(
+    memory_dir: Path,
+    monkeypatch: Any,
+) -> None:
+    """Companion to the cross-worktree skip test. A caller whose origin
+    has no worktree_root (running outside any git checkout) DOES adopt
+    a zero-episode candidate — under the strict None-only-matches-None
+    rule, unknown == None matches when the caller is also None.
+
+    This pins the "all-null state" branch tick-22 explicitly preserves:
+    when neither side has worktree info, the legacy zero-episode
+    adoption still fires so callers without a worktree get the
+    `{prior_session_id: sess_xxx, episodes: []}` middle state the
+    module docstring promises."""
+    import bettermemory._handlers as handlers_module
+    import bettermemory.server as server_module
+    from bettermemory.origin import Origin
+
+    cfg = Config(storage=StorageConfig(directory=str(memory_dir)))
+
+    origin_none = Origin(
+        cwd="/tmp/no-checkout",
+        repo=None,
+        branch=None,
+        worktree_root=None,
+    )
+
+    def make_capture(origin: Origin) -> Any:
+        def _capture(cwd: Any = None) -> Origin:
+            return origin
+
+        return _capture
+
+    monkeypatch.setattr(handlers_module, "capture_origin", make_capture(origin_none))
+    monkeypatch.setattr(server_module, "capture_origin", make_capture(origin_none))
+
+    # Session A: records events under origin_none (no worktree) but
+    # writes no episodes. Zero-episode session with caller-side None
+    # worktree.
+    server_a = build_server(config=cfg, store=Store(memory_dir), state=SessionState())
+    await _call(
+        server_a,
+        "memory_write",
+        content="A's no-worktree fact",
+        scopes=["tools"],
+    )
+
+    # A fresh server, still in the no-worktree state, asks for the
+    # handoff. Pre-tick-22 this was the adopted behavior; tick-22
+    # preserves it via `_worktrees_equal_strict(None, None) -> True`.
+    server_b = build_server(config=cfg, store=Store(memory_dir), state=SessionState())
+    res = await _call(server_b, "episode_handoff")
+    assert res["prior_session_id"] is not None
+    assert res["prior_session_id"].startswith("sess_")
+    # Zero episodes on disk means the "middle state" — session_id
+    # surfaced, episodes empty.
     assert res["episodes"] == []
 
 

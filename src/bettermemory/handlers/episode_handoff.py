@@ -16,12 +16,18 @@ that was passed its parent's session_id) can pass it explicitly.
 
 Returns `None`-rich shape so the caller can distinguish:
 
-- "no prior session in this store" — handoff returns
+- "no prior session in this worktree" — handoff returns
   `{"prior_session_id": None, "episodes": []}`. First-ever invocation
-  in a worktree.
+  in a worktree, or all prior sessions in the event log belong to a
+  different worktree.
 - "prior session existed but wrote no episodes" — returns
   `{"prior_session_id": "sess_xxx", "episodes": []}`. The prior
-  session did work but didn't journal a takeaway.
+  session did work but didn't journal a takeaway. Only surfaced
+  when the caller has no worktree (events don't carry origin
+  today, so a zero-episode session's worktree is unknown — the
+  strict None-only-matches-None rule means callers in a named
+  worktree see "no prior session" rather than risk surfacing a
+  cross-worktree session_id).
 - "prior session has takeaways" — `{"prior_session_id": "sess_xxx",
   "episodes": [...]}` with the latest N entries (oldest first within
   the slice).
@@ -88,9 +94,15 @@ async def episode_handoff(
     leak path. When the caller has no worktree (e.g., running
     outside any git checkout), symmetric isolation only accepts
     sessions whose episodes also have no worktree origin — see
-    `_worktrees_equal_strict`. An explicit `prior_session_id` is
-    respected verbatim; the caller passing one in is explicit
-    consent that they own the cross-tree concern.
+    `_worktrees_equal_strict`. Zero-episode candidates (sessions
+    that recorded events but never wrote a journal entry) are
+    treated as "unknown worktree" — events don't carry origin
+    today (queue #28), so the strict None-only-matches-None rule
+    means a caller in a named worktree skips them, and only a
+    caller with no worktree (the all-null state) can adopt one.
+    An explicit `prior_session_id` is respected verbatim; the
+    caller passing one in is explicit consent that they own the
+    cross-tree concern.
     """
     from .. import _handlers as _h
 
@@ -168,24 +180,54 @@ async def episode_handoff(
             #   1. It has at least one episode whose origin's
             #      worktree_root matches the caller's under the
             #      strict (None-only-matches-None) rule, OR
-            #   2. It has zero episodes at all (the session
-            #      existed but either never wrote a journal, or
-            #      had all of its episodes promoted away). In
-            #      that case we surface `{sid, episodes: []}` so
-            #      the caller can still distinguish "no prior
-            #      session" from "prior session existed but is
-            #      empty" — matching the original docstring
-            #      contract. There's no run-state leak in this
-            #      branch because there are no episode bodies
-            #      to surface; only the bare session_id is
-            #      exposed, which is an opaque ULID.
+            #   2. It has zero episodes at all AND the caller has
+            #      no worktree (caller_worktree is None). In that
+            #      case we surface `{sid, episodes: []}` so the
+            #      caller can still distinguish "no prior session"
+            #      from "prior session existed but is empty" —
+            #      matching the original docstring contract.
+            #      There's no run-state leak in this branch
+            #      because there are no episode bodies to surface;
+            #      only the bare session_id is exposed, which is
+            #      an opaque ULID. However, the session_id IS the
+            #      handle a caller would use to look up the prior
+            #      session's events / memories — surfacing the
+            #      WRONG worktree's session_id as "this worktree's
+            #      prior session" violates the "this worktree"
+            #      contract tick-2 (2988fff) established for
+            #      episode-bearing sessions, so we extend the same
+            #      isolation to the zero-episode branch.
+            #
+            #      Recorder.record (events.py:195-209) does not
+            #      stamp origin on events today (queue item #28),
+            #      so we cannot determine a zero-episode candidate's
+            #      worktree from the event log. We conservatively
+            #      treat its worktree as "unknown" (modeled as
+            #      None) and apply the same strict equality rule:
+            #      `_worktrees_equal_strict(None, caller_worktree)`
+            #      returns True only when the caller is ALSO in
+            #      the no-worktree state. This is strictly tighter
+            #      than the pre-fix behavior — a same-worktree
+            #      session that never called episode_write but
+            #      did call memory_search/memory_write will no
+            #      longer be adopted as `prior_session_id` for a
+            #      caller in a worktree. The trade-off is documented
+            #      in the commit: when queue #28 lands (events
+            #      carry origin), the zero-episode branch can
+            #      tighten further by reading origin from events.
             # The discriminator under (1) is the worktree_root
             # itself, not the branch — one session can legitimately
             # span branches inside one worktree, so we don't
             # require ALL episodes to match.
             if not candidate_eps:
-                resolved_session_id = sid
-                break
+                if _worktrees_equal_strict(None, caller_worktree):
+                    resolved_session_id = sid
+                    break
+                # Zero-episode candidate from an unknown worktree
+                # — under the strict "this worktree" contract we
+                # cannot prove it belongs to the caller, so walk
+                # past to the next-most-recent candidate.
+                continue
             # Apply session-disabled-scope filter BEFORE the worktree
             # match. If every episode in this candidate is in a
             # suppressed scope, treat the session as having nothing
