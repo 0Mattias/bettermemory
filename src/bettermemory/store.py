@@ -456,6 +456,17 @@ class Store:
         want to overwrite without the CAS — e.g. migration tooling that has
         already reconciled concurrent edits out-of-band. Not exposed through
         the MCP handler boundary; reach for it from in-process code only.
+
+        Raises:
+            MemoryNotFoundError: no active record with that id, or the file
+              was tombstoned/renamed concurrently (by a parallel `tombstone`
+              or any other path-moving mutator) between the find walk and
+              the under-lock recheck.
+            ConcurrentUpdateError: a parallel `update` landed between the
+              caller's snapshot read and our CAS — the on-disk `updated`
+              no longer matches `memory.updated`. The caller should re-fetch
+              via `memory_show` and retry on top of the current snapshot.
+              Not raised when `force=True`.
         """
         existing_path = self._find_path_for_id(memory.id)
         if existing_path is None:
@@ -552,6 +563,21 @@ class Store:
         no-arg slide-the-timestamp-forward use case. Not exposed through
         the MCP `memory_verify` handler boundary; that handler always
         loads its snapshot first and opts in.
+
+        Raises:
+            MemoryNotFoundError: no active or tombstoned record with that
+              id, or the active file was tombstoned/renamed concurrently
+              between the find walk and the under-lock recheck.
+            TombstonedError: id resolves to an existing tombstone — the
+              caller should restore before attesting, or attest something
+              else.
+            ConcurrentUpdateError: only raised when `check_expected=True`;
+              fires when a parallel `mark_verified` landed between the
+              caller's snapshot read and our CAS, so the on-disk
+              `last_verified_at` no longer matches
+              `expected_last_verified_at`. The caller should re-fetch via
+              `memory_show`, reassess the attestation against the
+              now-current `verified_*` lists, and retry.
         """
         existing_path = self._find_path_for_id(memory_id)
         if existing_path is None:
@@ -651,6 +677,15 @@ class Store:
         `removed_session` and load with `None` in that slot — the
         join is unavailable for legacy entries but the rest of the
         record is intact.
+
+        Raises:
+            MemoryNotFoundError: no record (active or tombstoned) with
+              that id.
+            TombstonedError: id is already tombstoned — either the
+              pre-lock active find missed and the tombstone scan found
+              it, or a parallel `tombstone()` won the race and moved the
+              file to `.tombstones/` between the find walk and the
+              under-lock recheck.
         """
         path = self._find_path_for_id(memory_id)
         if path is None:
