@@ -9,6 +9,7 @@ import sys
 from typing import Any
 
 from ..models import utcnow, validate_scope
+from .._fsutil import atomic_write_bytes
 from .._response import isoformat
 from ..store import Store
 
@@ -139,7 +140,12 @@ def _cli_export(
 
     if output:
         out_path = _Path(output)
-        out_path.write_text(text + "\n", encoding="utf-8")
+        # Atomic + durable write via `_fsutil.atomic_write_bytes`: a plain
+        # `out_path.write_text(...)` here would leave a truncated JSON on
+        # power loss / process kill mid-write, defeating the point of a
+        # backup. The helper writes to a tmp sibling, fsyncs, atomic-
+        # renames into place, and fsyncs the parent directory.
+        atomic_write_bytes(out_path, (text + "\n").encode("utf-8"))
         summary = f"Exported {len(active)} active memories"
         if include_tombstones:
             summary += f" + {tombstoned_count} tombstones"
