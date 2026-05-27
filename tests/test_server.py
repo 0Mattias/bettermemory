@@ -3316,6 +3316,60 @@ async def test_update_tombstoned_id_errors(server: Any) -> None:
 
 
 # ---------------------------------------------------------------------------
+# memory_update — W2 concurrent-edit CAS surface
+#
+# `Store.update` raises `ConcurrentUpdateError` when the on-disk
+# `updated` differs from the caller's snapshot. The handler converts
+# that to a structured `status="stale"` payload (mirroring the
+# soft-refusal shapes in handlers/write.py) rather than a stringified
+# ValueError, so a programmatic caller can branch on the status and
+# fast-path the rebase via the carried `current_updated` timestamp.
+# Direct deterministic store-level coverage lives in
+# tests/test_concurrency.py; the handler test below pins the
+# response shape specifically.
+# ---------------------------------------------------------------------------
+
+
+async def test_update_stale_snapshot_returns_structured_stale_response(
+    server: Any,
+) -> None:
+    """W2: when `Store.update` raises `ConcurrentUpdateError`, the
+    handler surfaces a `status="stale"` response carrying the current
+    on-disk `updated` and a retry hint. The store-level CAS is
+    exercised directly in test_concurrency.py; here we pin only the
+    handler-boundary translation.
+    """
+    from unittest.mock import patch
+
+    from bettermemory.store import ConcurrentUpdateError
+
+    written = await _call(server, "memory_write", content="initial", scopes=["tools"])
+
+    # Pretend a concurrent writer landed between our load_one and the
+    # store-level CAS. Patch `Store.update` to raise the exception that
+    # path would produce.
+    from datetime import datetime, timezone
+
+    current = datetime(2026, 5, 27, 12, 34, 56, tzinfo=timezone.utc)
+    with patch(
+        "bettermemory.store.Store.update",
+        side_effect=ConcurrentUpdateError(written["id"], current),
+    ):
+        res = await _call(
+            server,
+            "memory_update",
+            id=written["id"],
+            content="edit on stale snapshot",
+        )
+
+    assert res["status"] == "stale"
+    assert res["memory_id"] == written["id"]
+    # ISO-formatted timestamp, must round-trip back to the same instant.
+    assert res["current_updated"] == current.isoformat()
+    assert "Re-fetch with memory_show" in res["hint"]
+
+
+# ---------------------------------------------------------------------------
 # memory_update — category retag (added 1.3.0)
 #
 # Pre-1.3 the only way to change a memory's category was remove+rewrite,

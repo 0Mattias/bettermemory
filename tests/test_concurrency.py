@@ -49,6 +49,7 @@ from hypothesis import strategies as st
 
 from bettermemory.events import Recorder
 from bettermemory.store import (
+    ConcurrentUpdateError,
     MemoryNotFoundError,
     NotTombstonedError,
     Store,
@@ -1003,3 +1004,346 @@ def test_multi_process_concurrent_tombstone_no_oserror_leak(
     # Disk invariant: exactly one tombstone for the id.
     tombstone = setup.load_tombstone(memory.id)
     assert tombstone.id == memory.id
+
+
+# ---------------------------------------------------------------------------
+# W2 regression — `Store.update` is silent last-write-wins under concurrent
+# disjoint edits
+# ---------------------------------------------------------------------------
+#
+# Pre-W2 the locked-write sequence was:
+#   1. handler `load_one(id)` builds a snapshot (outside any lock).
+#   2. handler builds the merged Memory and calls `Store.update`.
+#   3. `Store.update` re-finds the path, locks, runs the C2
+#      `_id_still_at_path` recheck, then `_write_path`.
+# Between steps 1 and 3 another agent could land its own
+# `load_one`→`update` round trip on the same id with a disjoint edit.
+# Both writers' `_write_path` blocks serialise on the file lock, but
+# neither verified the on-disk `updated` against the snapshot they read,
+# so whichever serialised second silently dropped the first writer's
+# change. The fix adds an under-lock CAS: re-load the current Memory
+# under the lock and compare its `updated` to the caller's snapshot;
+# on mismatch raise `ConcurrentUpdateError`.
+#
+# The deterministic test below uses a monkeypatch on `_load_path` to
+# inject the concurrent edit at the moment between the C2 recheck and
+# the CAS check, which is the tightest race window. The cross-process
+# variant exercises the same invariant under real interpreter-level
+# parallelism.
+
+
+def test_update_cas_detects_stale_snapshot(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """W2 regression. Two `Store.update` calls on the same id with
+    disjoint edits: the second must raise `ConcurrentUpdateError`
+    rather than silently clobber the first writer's change.
+
+    Deterministic by monkeypatching `_load_path` to simulate a
+    concurrent edit landing between the lock acquisition and the CAS
+    check. The patched `_load_path` returns a Memory whose `updated`
+    has moved forward — exactly the on-disk state another agent's
+    completed update would leave behind.
+    """
+    store = Store(tmp_path)
+    original = store.write(
+        content="original body — durable claim about the system",
+        scopes=["tools"],
+    )
+
+    # Caller A reads the snapshot.
+    snapshot = store.load_one(original.id)
+    assert snapshot.updated == original.updated
+
+    # Caller B lands its disjoint edit in real time. The `updated`
+    # bump from this write is what makes A's snapshot stale.
+    bumped_by_b = snapshot.model_copy(
+        update={"body": "edit from B — orthogonal change\n"}
+    )
+    after_b = store.update(bumped_by_b)
+    assert after_b.updated > snapshot.updated, (
+        "sanity: B's update must move the on-disk `updated` forward"
+    )
+
+    # Now caller A tries to land its own disjoint edit on top of the
+    # original snapshot — the on-disk `updated` no longer matches.
+    edit_by_a = snapshot.model_copy(
+        update={"body": "edit from A — different orthogonal change\n"}
+    )
+    with pytest.raises(ConcurrentUpdateError) as excinfo:
+        store.update(edit_by_a)
+
+    err = excinfo.value
+    assert err.memory_id == original.id
+    # The reported `current_updated` must be exactly what B wrote —
+    # that's the timestamp the caller needs to rebase against.
+    assert err.current_updated == after_b.updated
+
+    # Disk invariant: B's edit wins. A's silent-clobber attempt left
+    # no trace.
+    final = store.load_one(original.id)
+    assert "edit from B" in final.body
+    assert "edit from A" not in final.body
+
+
+def test_update_cas_detects_stale_snapshot_via_patched_reload(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Deterministic CAS test via monkeypatch on `_load_path`.
+
+    The under-lock recheck-then-CAS sequence reads `_load_path` twice
+    in `Store.update`: once via `_id_still_at_path` (which reads the
+    frontmatter id), once via `_load_path` for the CAS comparison.
+    Patch the second to return a Memory whose `updated` has moved
+    forward, simulating an interleaved write landing between the
+    file-lock acquisition and the body re-read. The CAS must fire.
+    """
+    store = Store(tmp_path)
+    original = store.write(content="will race CAS", scopes=["tools"])
+    snapshot = store.load_one(original.id)
+
+    # Fast-forward the on-disk `updated` as seen by the CAS reload.
+    # We monkeypatch `_load_path` to return a Memory whose `updated`
+    # is one second ahead. The C2 recheck (which uses
+    # `_id_still_at_path`, not `_load_path`) is unaffected, so the
+    # patch isolates the CAS path specifically.
+    from datetime import timedelta
+
+    from bettermemory.models import Memory
+
+    original_load_path = Store._load_path
+
+    def racing_load_path(self: Store, path: Path) -> Memory:
+        memory = original_load_path(self, path)
+        if memory.id == original.id:
+            return memory.model_copy(
+                update={"updated": memory.updated + timedelta(seconds=1)}
+            )
+        return memory
+
+    monkeypatch.setattr(Store, "_load_path", racing_load_path)
+
+    bumped = snapshot.model_copy(update={"body": "edited on stale snapshot\n"})
+    with pytest.raises(ConcurrentUpdateError) as excinfo:
+        store.update(bumped)
+    err = excinfo.value
+    assert err.memory_id == original.id
+    assert err.current_updated > snapshot.updated
+
+
+def test_update_cas_happy_path_passthrough(tmp_path: Path) -> None:
+    """Happy-path passthrough: a single-writer `load_one`-then-`update`
+    sequence (no contention) must continue to work — the CAS check is
+    a no-false-positive invariant under single-writer use."""
+    store = Store(tmp_path)
+    original = store.write(content="happy path", scopes=["tools"])
+
+    snapshot = store.load_one(original.id)
+    edited = snapshot.model_copy(update={"body": "refined body\n"})
+    updated = store.update(edited)
+
+    assert updated.id == original.id
+    assert "refined body" in updated.body
+    assert updated.updated > original.updated
+
+    # Disk reflects the change.
+    reloaded = store.load_one(original.id)
+    assert reloaded.body.strip() == "refined body"
+
+
+def test_update_force_bypasses_cas(tmp_path: Path) -> None:
+    """`force=True` escape hatch: a low-level caller that has already
+    reconciled concurrent edits out-of-band can opt out of the CAS
+    check. Not exposed through the MCP handler — direct in-process
+    use only."""
+    store = Store(tmp_path)
+    original = store.write(content="will be forced", scopes=["tools"])
+
+    # Land a second edit so the on-disk `updated` moves forward.
+    snapshot = store.load_one(original.id)
+    intermediate = store.update(
+        snapshot.model_copy(update={"body": "intermediate edit\n"})
+    )
+    assert intermediate.updated > snapshot.updated
+
+    # Reach in with the now-stale snapshot AND `force=True`. The CAS
+    # would normally raise; `force=True` bypasses it.
+    forced = store.update(
+        snapshot.model_copy(update={"body": "forced overwrite\n"}),
+        force=True,
+    )
+    assert "forced overwrite" in forced.body
+
+    # Sanity: without `force`, the same stale snapshot raises.
+    with pytest.raises(ConcurrentUpdateError):
+        store.update(snapshot.model_copy(update={"body": "this would fail\n"}))
+
+
+def _w2_disjoint_update_worker(
+    args: tuple[str, str, str, str, str],
+) -> dict[str, str]:
+    """Worker for the cross-process W2 variant.
+
+    Each worker process:
+      1. `load_one(memory_id)` to take a snapshot.
+      2. Signals "snapshot taken" by touching its own ready-marker.
+      3. Waits for the parent to release via a shared go-marker —
+         this barrier guarantees every worker has read the same
+         pre-race `updated` BEFORE any of them tries to write. Without
+         the barrier the first-spawned worker's `update` could land
+         before later workers' `load_one`, so the later workers would
+         read the already-bumped on-disk timestamp and trivially pass
+         the CAS — masking the regression we're trying to pin.
+      4. Patches the body with its own worker-specific edit.
+      5. Calls `Store.update`.
+
+    Exactly one worker must win; the rest must lose with
+    `ConcurrentUpdateError`. A `MemoryNotFoundError` or `TombstonedError`
+    would only fire if a different mutator (tombstone/restore) raced —
+    we don't run any here, so neither outcome is expected. Returns a
+    dict describing the outcome so the parent can assert on the
+    distribution.
+    """
+    root, memory_id, marker, ready_marker, go_marker = args
+    store = Store(Path(root))
+    try:
+        snapshot = store.load_one(memory_id)
+    except (MemoryNotFoundError, TombstonedError) as exc:
+        return {"outcome": "snapshot-failed", "msg": str(exc)}
+
+    # Signal readiness and wait for the parent's go-signal.
+    Path(ready_marker).touch()
+    deadline = time.monotonic() + 30
+    while time.monotonic() < deadline:
+        if Path(go_marker).exists():
+            break
+        time.sleep(0.01)
+    else:  # noqa: PLW0120 — explicit timeout signaling for the parent
+        return {"outcome": "barrier-timeout"}
+
+    edit = snapshot.model_copy(update={"body": f"edit from worker {marker}\n"})
+    try:
+        store.update(edit)
+        return {"outcome": "won", "marker": marker}
+    except ConcurrentUpdateError as exc:
+        return {"outcome": "lost-stale", "msg": str(exc), "marker": marker}
+    except (MemoryNotFoundError, TombstonedError) as exc:
+        # Unexpected here (no concurrent tombstone in the harness),
+        # but keep the outcome distinguishable so a regression surfaces
+        # as a clean tag instead of an opaque crash.
+        return {"outcome": "lost-other", "msg": str(exc), "marker": marker}
+
+
+@pytest.mark.skipif(
+    sys.platform == "win32",
+    reason="fcntl-based locking is POSIX-only; MVP single-process on Windows",
+)
+def test_multi_process_concurrent_disjoint_updates_no_silent_clobber(
+    tmp_path: Path,
+) -> None:
+    """W2 regression across REAL processes (no GIL).
+
+    Six workers race on `Store.update(same_id)` from separate Python
+    interpreters, each carrying a different disjoint edit built on top
+    of a snapshot they took before the race. Pre-W2, all six writes
+    would silently serialise on the file lock and the last one wins —
+    five edits dropped without surface. Post-W2, exactly one wins; the
+    others must lose with `ConcurrentUpdateError` so the caller can
+    rebase and retry. A bare `OSError` or any other exception escaping
+    IS the W2 leak.
+
+    The post-condition that retires the silent-last-write-wins
+    semantic for multi-agent concurrent updates: the eventual disk
+    state must reflect the winning edit, not a torn merge, and every
+    losing worker must carry a structured stale signal.
+    """
+    n_workers = 6
+    setup = Store(tmp_path)
+    memory = setup.write(
+        content="raced disjoint updates across processes",
+        scopes=["tools"],
+    )
+
+    # File-system barrier: every worker signals "snapshot taken" by
+    # touching `ready_marker_<w>`; the parent waits for all N to appear
+    # then releases via `go_marker`. Mirrors the rendezvous pattern in
+    # `test_locked_serializes_two_spawned_processes` above (touch/poll
+    # rather than mp.Event) so the test exercises a realistic
+    # cross-process posture and stays deterministic vs. spawn-startup
+    # jitter, which on macOS dwarfs the contention window we care
+    # about.
+    barrier_dir = tmp_path / "_w2_barriers"
+    barrier_dir.mkdir()
+    go_marker = barrier_dir / "go"
+    ready_markers = [barrier_dir / f"ready_{w}" for w in range(n_workers)]
+
+    ctx = mp.get_context("spawn")
+    pool = ctx.Pool(n_workers)
+    try:
+        async_result = pool.map_async(
+            _w2_disjoint_update_worker,
+            [
+                (
+                    str(tmp_path),
+                    memory.id,
+                    str(w),
+                    str(ready_markers[w]),
+                    str(go_marker),
+                )
+                for w in range(n_workers)
+            ],
+        )
+
+        # Wait for all workers to take their snapshot.
+        deadline = time.monotonic() + 30
+        while time.monotonic() < deadline:
+            if all(m.exists() for m in ready_markers):
+                break
+            time.sleep(0.01)
+        else:  # noqa: PLW0120 — explicit timeout for the readiness rendezvous
+            pool.terminate()
+            pool.join()
+            pytest.fail(
+                "not all workers signalled snapshot-taken within 30s; "
+                f"ready: {[m.name for m in ready_markers if m.exists()]}"
+            )
+
+        # All snapshots taken at the same on-disk `updated`. Release
+        # the workers to race the writes.
+        go_marker.touch()
+        results = async_result.get(timeout=60)
+    finally:
+        pool.close()
+        pool.join()
+
+    outcomes = [r["outcome"] for r in results]
+    winners = [r for r in results if r["outcome"] == "won"]
+    losers = [r for r in results if r["outcome"] == "lost-stale"]
+    assert len(winners) == 1, (
+        f"Expected exactly one update winner under CAS, got {len(winners)}. "
+        f"Outcomes: {outcomes}"
+    )
+    # All non-winners must report `lost-stale` (the structured CAS
+    # signal) — not the legacy silent-success that pre-W2 produced.
+    assert len(losers) == n_workers - 1, (
+        f"Expected {n_workers - 1} stale-CAS losers, got {len(losers)}. "
+        f"Outcomes: {outcomes}"
+    )
+    assert len(winners) + len(losers) == n_workers, (
+        f"Unexpected outcome distribution: {outcomes}"
+    )
+
+    # Disk invariant: exactly one body wins. The body must match the
+    # winner's marker; no other worker's body may appear.
+    fresh = Store(tmp_path)
+    final = fresh.load_one(memory.id)
+    winner_marker = winners[0]["marker"]
+    assert f"edit from worker {winner_marker}" in final.body, (
+        f"Disk body {final.body!r} does not reflect the winner's edit "
+        f"(marker {winner_marker!r}). Outcomes: {outcomes}"
+    )
+    # Confirm no other worker's body silently lingered — would mean a
+    # partial-merge or torn write.
+    other_markers = [r["marker"] for r in results if r.get("outcome") == "won"][1:]
+    for m in other_markers:
+        assert f"edit from worker {m}" not in final.body

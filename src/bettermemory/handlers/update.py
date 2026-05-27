@@ -14,7 +14,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Any
 
 from ..models import Category, Confidence, _PROPOSABLE_CATEGORIES, validate_scope
-from ..store import MemoryNotFoundError, TombstonedError
+from ..store import ConcurrentUpdateError, MemoryNotFoundError, TombstonedError
 from ._shared import (
     Context,
     _advance_turn,
@@ -52,6 +52,14 @@ DESC_MEMORY_UPDATE = (
     "Refine an existing memory in place. Preferred over "
     "memory_remove + memory_write when correcting a stored fact — "
     "preserves `id`, `created`, and `source`; bumps `updated`.\n\n"
+    "Concurrency: under multi-agent contention, two disjoint edits "
+    "on the same memory used to silently last-write-wins. The handler "
+    "now performs an optimistic-concurrency check against the snapshot "
+    "the caller fetched via memory_show. If another agent updated the "
+    "memory between your read and write, the response is "
+    '`status="stale"` with the current on-disk `updated` timestamp; '
+    "re-fetch with memory_show and retry your edit on top of the "
+    "current snapshot.\n\n"
     "Parameters (pass at least one):\n"
     "- `id`: required.\n"
     "- `content`: new body. Replacing the body clears "
@@ -213,7 +221,37 @@ async def memory_update(
         update_fields["verified_versions"] = []
 
     merged = existing.model_copy(update=update_fields)
-    updated = deps.store.update(merged)
+    try:
+        updated = deps.store.update(merged)
+    except ConcurrentUpdateError as exc:
+        # W2: another agent landed an update between this handler's
+        # `load_one` snapshot above and the under-lock CAS in
+        # `Store.update`. The handler doesn't auto-retry — the caller's
+        # disjoint edit may now conflict with the winner's change in a
+        # way only the caller can reconcile (e.g. both edited the same
+        # sentence). Surface as a structured `status="stale"` payload
+        # mirroring the other soft-refusal shapes in `write.py`
+        # (`scope_mismatch`, `transient_warning`, …) so a programmatic
+        # caller can branch on the status and retry without parsing
+        # a stringified exception. The current on-disk `updated` is
+        # carried so the retry skips a redundant memory_show round
+        # trip if the caller wants to fast-path the rebase.
+        deps.recorder.record(
+            "update",
+            status="stale",
+            id=exc.memory_id,
+            current_updated=exc.current_updated.isoformat(),
+        )
+        return {
+            "status": "stale",
+            "memory_id": exc.memory_id,
+            "current_updated": exc.current_updated.isoformat(),
+            "hint": (
+                "Memory was updated concurrently. Re-fetch with "
+                "memory_show and retry your edit on top of the "
+                "current snapshot."
+            ),
+        }
     fields_changed = [
         name
         for name, value in (

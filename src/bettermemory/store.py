@@ -76,6 +76,35 @@ class NotTombstonedError(KeyError):
     """`restore` was called on an active memory, not a tombstone."""
 
 
+class ConcurrentUpdateError(Exception):
+    """`Store.update` saw a different `updated` on disk than the caller's
+    snapshot. The caller's edit was built on top of a now-stale read; the
+    write was refused rather than silently clobbering whoever bumped the
+    record in the interim.
+
+    `current_updated` is the on-disk `updated` timestamp at the moment the
+    CAS check failed — the caller should re-load via `Store.load_one` (or
+    `memory_show` at the handler boundary), rebase the edit on top, and
+    retry. The store retains the prior writer's change; this exception
+    means "your snapshot is older than the file, retry on top," not
+    "your write was lost."
+
+    Not a subclass of `KeyError` (unlike the sibling errors above) because
+    the record IS still findable by id — the failure mode is "stale
+    snapshot," not "id gone." Subclassing `Exception` keeps a
+    `try: ... except KeyError:` block from accidentally swallowing this
+    one as if it were a not-found case.
+    """
+
+    def __init__(self, memory_id: str, current_updated: datetime) -> None:
+        self.memory_id = memory_id
+        self.current_updated = current_updated
+        super().__init__(
+            f"memory {memory_id} was updated concurrently "
+            f"(your snapshot is stale; on-disk updated={current_updated.isoformat()})"
+        )
+
+
 # ---------------------------------------------------------------------------
 # File locking
 # ---------------------------------------------------------------------------
@@ -397,8 +426,24 @@ class Store:
             _index_upsert_quietly(self.root, memory, filename=path.name)
         return memory
 
-    def update(self, memory: Memory) -> Memory:
-        """Overwrite an existing memory in place; bump `updated`."""
+    def update(self, memory: Memory, *, force: bool = False) -> Memory:
+        """Overwrite an existing memory in place; bump `updated`.
+
+        Optimistic concurrency (W2): the caller's `memory.updated` is the
+        snapshot timestamp they READ when they built this edit (via
+        `load_one(id).updated`). Under the lock, after the C2 recheck,
+        we re-load the current Memory from disk and compare its `updated`
+        to the caller's. On mismatch we raise `ConcurrentUpdateError` so
+        the caller can re-fetch and retry on top of the current snapshot
+        rather than silently clobbering whoever bumped the record in the
+        interim. The two-agent disjoint-edit race that previously dropped
+        one write now surfaces as a structured retry signal.
+
+        `force=True` is a low-level escape hatch for callers who legitimately
+        want to overwrite without the CAS — e.g. migration tooling that has
+        already reconciled concurrent edits out-of-band. Not exposed through
+        the MCP handler boundary; reach for it from in-process code only.
+        """
         existing_path = self._find_path_for_id(memory.id)
         if existing_path is None:
             raise MemoryNotFoundError(f"no memory with id {memory.id}")
@@ -427,6 +472,21 @@ class Store:
                     f"no memory with id {memory.id} (raced with "
                     f"concurrent tombstone or rename)"
                 )
+            # W2: optimistic-concurrency CAS. Re-load under the lock and
+            # confirm the on-disk `updated` matches the caller's snapshot.
+            # If a second agent landed an update between the caller's
+            # read and our lock, the on-disk timestamp will have moved
+            # forward and our write would silently drop that agent's
+            # change. Refuse with `ConcurrentUpdateError` so the caller
+            # rebases. `_load_path` performs the same `_as_dt` UTC
+            # coercion the caller's `load_one`/`load_all` path does, so
+            # the comparison is between two aware datetimes in the same
+            # tz; equality compares to the microsecond, which is the
+            # resolution `utcnow()` writes.
+            if not force:
+                current = self._load_path(existing_path)
+                if current.updated != memory.updated:
+                    raise ConcurrentUpdateError(memory.id, current.updated)
             self._write_path(existing_path, new_memory)
             # perf: index upsert under lock is intentional — see audit H1.
             _index_upsert_quietly(self.root, new_memory, filename=existing_path.name)

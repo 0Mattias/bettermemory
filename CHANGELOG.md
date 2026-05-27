@@ -55,6 +55,27 @@ spells out exactly what's stable.
   to the MCP boundary. Converted to `ValueError` with a descriptive
   message; the original `OSError` is preserved on `__cause__` for
   diagnostics.
+- **`Store.update` optimistic-concurrency CAS (W2).** Pre-W2,
+  `memory_update` was silent last-write-wins: two agents concurrently
+  editing the same memory with disjoint changes would both load the
+  same snapshot via `load_one`, serialise on the per-file `_locked`
+  flock, and whichever wrote second silently clobbered the first
+  writer's edit. The existing `_id_still_at_path` C2 recheck only
+  defended against tombstone-vs-update; the body itself was never
+  compared against the snapshot the caller built their edit on.
+  `Store.update` now re-loads the current Memory under the lock and
+  compares its `updated` to the caller's `memory.updated` (the
+  snapshot timestamp). On mismatch it raises a new
+  `ConcurrentUpdateError` carrying the on-disk `updated`. The
+  `memory_update` handler catches it and returns a structured
+  `status="stale"` payload mirroring the other soft-refusal shapes
+  in `write.py` (`scope_mismatch`, `transient_warning`, …): the
+  caller re-fetches via `memory_show` and retries the edit on top of
+  the current snapshot. Single-writer happy-path callers
+  (`load_one` → edit → `update`) see no behavior change. A
+  `force=True` escape hatch on `Store.update` lets in-process
+  reconciliation tooling bypass the CAS; it is NOT exposed through
+  the MCP handler boundary.
 
 ### Internal
 

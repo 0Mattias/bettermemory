@@ -1234,9 +1234,12 @@ def _apply_llm_proposal(
         keeper = by_id.get(proposal.keeper_id)
         if keeper is None:
             raise RuntimeError(f"merge keeper {proposal.keeper_id} not found in store")
-        merged = keeper.model_copy(
-            update={"body": proposal.new_body, "updated": datetime.now(timezone.utc)}
-        )
+        # `updated` is stamped by `Store.update` itself; passing a
+        # pre-bumped value would break the W2 CAS check (caller's
+        # `memory.updated` is the snapshot timestamp the CAS compares
+        # against the on-disk record). The `model_copy` preserves the
+        # keeper's snapshot `updated`, which IS what the CAS needs.
+        merged = keeper.model_copy(update={"body": proposal.new_body})
         store.update(merged)
         actions.append(
             LLMProposalAction(
@@ -1270,7 +1273,16 @@ def _apply_llm_proposal(
                 store.tombstone(dup_id, reason=reason, session_id=session_id)
             except Exception:
                 try:
-                    store.update(keeper)
+                    # `force=True` bypasses the W2 CAS. The keeper's
+                    # snapshot `updated` no longer matches the on-disk
+                    # record (the just-completed `store.update(merged)`
+                    # call above bumped it); without `force`, the
+                    # rollback would itself raise `ConcurrentUpdateError`
+                    # and the operator would lose both the merge AND
+                    # the rollback. This is the canonical use case for
+                    # the escape hatch: we've already reconciled the
+                    # concurrent edit out-of-band (it was OUR write).
+                    store.update(keeper, force=True)
                 except Exception:  # noqa: BLE001 — log path
                     log.warning(
                         "merge rollback: keeper %s body could not be "
@@ -1316,12 +1328,10 @@ def _apply_llm_proposal(
         memory = by_id.get(proposal.memory_id)
         if memory is None:
             raise RuntimeError(f"rewrite target {proposal.memory_id} not found")
-        rewritten = memory.model_copy(
-            update={
-                "body": proposal.new_body,
-                "updated": datetime.now(timezone.utc),
-            }
-        )
+        # `updated` is stamped by `Store.update` itself; preserve the
+        # snapshot's `updated` for the W2 CAS check (see the
+        # MergeProposal branch above for the same fix).
+        rewritten = memory.model_copy(update={"body": proposal.new_body})
         store.update(rewritten)
         actions.append(
             LLMProposalAction(
