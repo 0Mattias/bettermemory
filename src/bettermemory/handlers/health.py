@@ -50,7 +50,13 @@ DESC_MEMORY_HEALTH = (
     "(likely typos — fix with memory_rename_scope).\n"
     "- `orphan_use_events` — record_use calls against ids that "
     "don't exist (fabrication smoke test).\n"
-    "- `marker_stats` — transient-marker fire/override rates.\n\n"
+    "- `marker_stats` — transient-marker fire/override rates.\n"
+    "- `recommendations` — closed-set actionable digest naming the "
+    "buckets above that crossed thresholds. Each entry: `{kind, "
+    "summary, action, count, memory_ids, scope}` where `kind` is "
+    "one of `remove_dead_weight` / `resolve_contradicted` / "
+    "`cleanup_endorsement_debt` / `verify_drifted` / "
+    "`fix_typo_scopes`; empty list means nothing crossed.\n\n"
     "CLI equivalent: `bettermemory health [--json]`."
 )
 

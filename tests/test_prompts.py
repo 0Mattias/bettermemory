@@ -117,6 +117,54 @@ def test_api_md_documents_loop_phase_surface() -> None:
     assert "recommendations" in text
 
 
+def test_handler_descs_enumerate_loop_phase_fields() -> None:
+    """Per-tool DESC strings enumerate the loop-phase-1 additions.
+
+    Sibling pin to `test_api_md_documents_loop_phase_surface`: api.md
+    and SYSTEM_PROMPT_ADDENDUM are the human/policy-facing surfaces,
+    but the model reads each tool's DESC directly off the MCP
+    registration when deciding what to call and how to interpret the
+    response. If api.md documents a field the DESC doesn't, the model
+    can't discover it from inside a conversation — by the time it
+    would look up api.md, it's already past the decision. Pin each
+    field's presence in its own DESC so a future trim trips here
+    rather than silently regressing feature discoverability:
+
+    - `recently_removed_in_worktree` on `memory_scope_overview`
+    - `recommendations` on `memory_health`
+    - `depends_on_resolved` on `memory_search` hits
+    - `curation_hint` on `memory_write` responses
+    """
+    from bettermemory.handlers.health import DESC_MEMORY_HEALTH
+    from bettermemory.handlers.scope_overview import DESC_MEMORY_SCOPE_OVERVIEW
+    from bettermemory.handlers.search import DESC_MEMORY_SEARCH
+    from bettermemory.handlers.write import DESC_MEMORY_WRITE
+
+    assert "recently_removed_in_worktree" in DESC_MEMORY_SCOPE_OVERVIEW, (
+        "DESC_MEMORY_SCOPE_OVERVIEW no longer names "
+        "`recently_removed_in_worktree`; the handler returns it "
+        "(scope_overview.py) but the model can't discover it from "
+        "the registered tool description. Restore the field or "
+        "remove the runtime return."
+    )
+    assert "recommendations" in DESC_MEMORY_HEALTH, (
+        "DESC_MEMORY_HEALTH no longer names `recommendations`; "
+        "`HealthReport.to_dict` returns it but clients reading the "
+        "registered description won't see the digest exists."
+    )
+    assert "depends_on_resolved" in DESC_MEMORY_SEARCH, (
+        "DESC_MEMORY_SEARCH no longer names `depends_on_resolved`; "
+        "the handler attaches it to hits but the model can't branch "
+        "on a field whose existence isn't advertised."
+    )
+    assert "curation_hint" in DESC_MEMORY_WRITE, (
+        "DESC_MEMORY_WRITE no longer mentions `curation_hint`; the "
+        "passive curation-pressure surface fires on committed writes "
+        "(`_maybe_attach_curation_hint`) but the model has no "
+        "advertised hook telling it the block may appear."
+    )
+
+
 async def test_addendum_tool_names_exist_on_server(tmp_path: Path) -> None:
     """Every `memory_*` tool referenced in the addendum is registered on the server.
 

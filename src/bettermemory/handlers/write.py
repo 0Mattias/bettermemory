@@ -120,7 +120,14 @@ DESC_MEMORY_WRITE = (
     "`acknowledge_scope_mismatch=True`.\n"
     "- `pending` — `category='user-inference'` or "
     "`require_write_confirmation`. `pending_reason` distinguishes.\n"
-    "- `ungrounded` — groundedness gate fired."
+    "- `ungrounded` — groundedness gate fired.\n\n"
+    "A `committed` or `memory_write_confirm` response may inline a "
+    "one-shot per-session `curation_hint` block when "
+    "`dead_weight + drifted + endorsement_debt` pressure crosses "
+    "the configured threshold. Shape: `{pressure, threshold, "
+    "counts: {dead_weight, drifted, endorsement_debt}, message}`. "
+    "Passive notification — call `memory_health` for full buckets, "
+    "`memory_remove` / `memory_verify` to resolve."
 )
 
 
