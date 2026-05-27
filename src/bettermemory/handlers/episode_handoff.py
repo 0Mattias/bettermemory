@@ -101,6 +101,18 @@ async def episode_handoff(
         max_episodes = 5
     max_episodes = max(1, min(int(max_episodes), 50))
 
+    # Session-disabled scopes hide episodes uniformly across the read
+    # surface — same contract `memory_search` / `memory_list` honor
+    # (list_active.py:46, search.py:226). For handoff the filter
+    # cascades into the candidate-selection walk too: a session whose
+    # episodes are ALL scope-suppressed behaves as if it wrote nothing,
+    # so auto-resolution skips it and adopts the next-most-recent
+    # session instead. An explicit `prior_session_id` still respects
+    # the filter on the emit step (the caller named a session, but the
+    # episode bodies themselves are still gated through the same hide
+    # rule).
+    excluded_scopes: set[str] = set(state.disabled_scopes)
+
     resolved_session_id: str | None = prior_session_id
     if resolved_session_id is None:
         from ..events import iter_all_events
@@ -174,12 +186,32 @@ async def episode_handoff(
             if not candidate_eps:
                 resolved_session_id = sid
                 break
+            # Apply session-disabled-scope filter BEFORE the worktree
+            # match. If every episode in this candidate is in a
+            # suppressed scope, treat the session as having nothing
+            # to surface (per the read-surface contract: hidden ==
+            # not there for this session). The handoff walk then
+            # continues to the next-most-recent candidate, which is
+            # exactly the user's expectation when they `scope_disable`
+            # a project: "rewind past the last X-session and surface
+            # what came before".
+            visible_eps = (
+                [ep for ep in candidate_eps if not (set(ep.scopes) & excluded_scopes)]
+                if excluded_scopes
+                else candidate_eps
+            )
+            if not visible_eps:
+                # Had episodes, but all hidden by disabled_scopes.
+                # Walk past; do NOT surface this as an "empty" prior
+                # session (that branch is reserved for the genuine
+                # zero-episode case caught above).
+                continue
             if any(
                 _worktrees_equal_strict(
                     ep.origin.worktree_root if ep.origin else None,
                     caller_worktree,
                 )
-                for ep in candidate_eps
+                for ep in visible_eps
             ):
                 resolved_session_id = sid
                 break
@@ -187,6 +219,15 @@ async def episode_handoff(
     episodes: list[dict[str, Any]] = []
     if resolved_session_id is not None:
         all_eps = deps.episode_store.list_by_session(resolved_session_id)
+        # Apply the same scope-hide filter to the emit stream. This
+        # matters in two cases the auto-resolution walk doesn't reach:
+        #  - Caller passed `prior_session_id` explicitly, bypassing
+        #    the candidate-walk filter — the bodies themselves are
+        #    still gated.
+        #  - Auto-resolved session mixed visible and hidden episodes;
+        #    only the visible ones should be surfaced.
+        if excluded_scopes:
+            all_eps = [ep for ep in all_eps if not (set(ep.scopes) & excluded_scopes)]
         # Oldest first within the recent slice: take the LAST
         # `max_episodes`, which is the most recent chunk. This matches
         # the way a reader expects "the prior session's recent

@@ -1454,6 +1454,139 @@ async def test_episode_handoff_respects_max_episodes_cap(memory_dir: Path) -> No
     assert takeaways == ["takeaway 4", "takeaway 5", "takeaway 6"]
 
 
+async def test_episode_handoff_walks_past_session_with_only_suppressed_scopes(
+    memory_dir: Path,
+) -> None:
+    """When `disabled_scopes` hides every episode of the most-recent
+    prior session, the auto-resolve walk treats that session as
+    'wrote nothing' and adopts the next-older session instead. Mirrors
+    the user mental model of `memory_scope_disable`: 'rewind past the
+    last X-session and surface what came before'."""
+    cfg = Config(storage=StorageConfig(directory=str(memory_dir)))
+
+    # Older session: tools episode (visible).
+    server_a = build_server(config=cfg, store=Store(memory_dir), state=SessionState())
+    await _call(
+        server_a,
+        "episode_write",
+        body="A's tools work",
+        takeaway="A on tools",
+        scopes=["tools"],
+    )
+
+    # Most-recent session before the reader: all episodes in
+    # projects:alpha (about to be suppressed).
+    server_b = build_server(config=cfg, store=Store(memory_dir), state=SessionState())
+    await _call(
+        server_b,
+        "episode_write",
+        body="B's alpha work A",
+        takeaway="B on alpha A",
+        scopes=["projects:alpha"],
+    )
+    await _call(
+        server_b,
+        "episode_write",
+        body="B's alpha work B",
+        takeaway="B on alpha B",
+        scopes=["projects:alpha"],
+    )
+
+    # Reader session disables projects:alpha. The auto-resolve walk
+    # should hop over server_b and adopt server_a's session.
+    server_c = build_server(config=cfg, store=Store(memory_dir), state=SessionState())
+    await _call(server_c, "memory_scope_disable", scope="projects:alpha")
+
+    res = await _call(server_c, "episode_handoff")
+    assert res["prior_session_id"] is not None
+    assert len(res["episodes"]) == 1
+    assert res["episodes"][0]["takeaway"] == "A on tools"
+
+
+async def test_episode_handoff_filters_emit_under_explicit_prior_session_id(
+    memory_dir: Path,
+) -> None:
+    """Explicit `prior_session_id` bypasses the candidate-walk, but the
+    emit step must still gate episode bodies through `disabled_scopes`.
+    A caller naming a session does NOT consent to override the
+    per-session hide rule — that's the user's explicit declaration of
+    what they want suppressed regardless of which session it lives in."""
+    cfg = Config(storage=StorageConfig(directory=str(memory_dir)))
+
+    server_a = build_server(config=cfg, store=Store(memory_dir), state=SessionState())
+    await _call(
+        server_a,
+        "episode_write",
+        body="alpha-tagged",
+        takeaway="alpha takeaway",
+        scopes=["projects:alpha"],
+    )
+    await _call(
+        server_a,
+        "episode_write",
+        body="tools-tagged",
+        takeaway="tools takeaway",
+        scopes=["tools"],
+    )
+
+    # Resolve A's session id from disk so we can pass it explicitly.
+    from bettermemory.episodes import EpisodeStore
+
+    ep_store = EpisodeStore(memory_dir)
+    a_session_id: str
+    for sid in ep_store.iter_session_ids():
+        eps = ep_store.list_by_session(sid)
+        if any("alpha-tagged" in e.body for e in eps):
+            a_session_id = sid
+            break
+    else:
+        raise AssertionError("could not locate session A's id")
+
+    server_b = build_server(config=cfg, store=Store(memory_dir), state=SessionState())
+    await _call(server_b, "memory_scope_disable", scope="projects:alpha")
+
+    res = await _call(
+        server_b,
+        "episode_handoff",
+        prior_session_id=a_session_id,
+    )
+    # Explicit prior_session_id honored, but the alpha-tagged episode
+    # is filtered out — only the tools-tagged one surfaces.
+    assert res["prior_session_id"] == a_session_id
+    takeaways = [e["takeaway"] for e in res["episodes"]]
+    assert takeaways == ["tools takeaway"]
+
+
+async def test_episode_handoff_no_filter_when_disabled_scopes_empty(
+    memory_dir: Path,
+) -> None:
+    """Regression pin: with no disabled scopes (default state), the
+    auto-resolved session surfaces every episode, exactly as before
+    the filter shipped."""
+    cfg = Config(storage=StorageConfig(directory=str(memory_dir)))
+
+    server_a = build_server(config=cfg, store=Store(memory_dir), state=SessionState())
+    await _call(
+        server_a,
+        "episode_write",
+        body="alpha",
+        takeaway="alpha take",
+        scopes=["projects:alpha"],
+    )
+    await _call(
+        server_a,
+        "episode_write",
+        body="tools",
+        takeaway="tools take",
+        scopes=["tools"],
+    )
+
+    server_b = build_server(config=cfg, store=Store(memory_dir), state=SessionState())
+    res = await _call(server_b, "episode_handoff")
+    takeaways = [e["takeaway"] for e in res["episodes"]]
+    assert takeaways == ["alpha take", "tools take"]
+
+
 # ---------------------------------------------------------------------------
 # episode_search — cross-session lookup
 # ---------------------------------------------------------------------------
@@ -1525,6 +1658,61 @@ async def test_episode_search_max_results_caps_output(
         await _call(server, "episode_write", body=f"entry {i}")
     res = _unwrap(await _call(server, "episode_search", max_results=5))
     assert len(res) == 5
+
+
+async def test_episode_search_respects_disabled_scopes(server: Any) -> None:
+    """Episodes are part of the read surface — `memory_scope_disable`
+    has to hide them too, mirroring `memory_search` / `memory_list`.
+    An episode whose scope set intersects the disabled set is dropped.
+    Mixing scopes on one episode is enough to suppress it; an episode
+    without any intersection passes through."""
+    await _call(
+        server,
+        "episode_write",
+        body="alpha-suppressed note",
+        scopes=["projects:alpha"],
+    )
+    await _call(
+        server,
+        "episode_write",
+        body="multi-scope note",
+        scopes=["projects:alpha", "tools"],
+    )
+    await _call(
+        server,
+        "episode_write",
+        body="tools-only note",
+        scopes=["tools"],
+    )
+
+    await _call(server, "memory_scope_disable", scope="projects:alpha")
+
+    res = _unwrap(await _call(server, "episode_search"))
+    bodies = sorted(e["body"] for e in res)
+    # Both `projects:alpha`-tagged episodes hidden, even the mixed one
+    # (intersection rule). The pure-tools episode survives.
+    assert bodies == ["tools-only note"]
+
+
+async def test_episode_search_no_filter_when_disabled_scopes_empty(
+    server: Any,
+) -> None:
+    """Regression pin: without any disabled scopes (default state),
+    every episode comes through. The new filter must be a no-op."""
+    await _call(
+        server,
+        "episode_write",
+        body="alpha note",
+        scopes=["projects:alpha"],
+    )
+    await _call(
+        server,
+        "episode_write",
+        body="tools note",
+        scopes=["tools"],
+    )
+    res = _unwrap(await _call(server, "episode_search"))
+    assert len(res) == 2
 
 
 # ---------------------------------------------------------------------------

@@ -83,6 +83,11 @@ async def episode_search(
         candidate_sessions = list(deps.episode_store.iter_session_ids())
 
     scope_filter: set[str] | None = set(scopes) if scopes else None
+    # Session-disabled scopes are an opt-out hide; honored uniformly
+    # across the read surface (memory_search, memory_list) — episodes
+    # are the third leg, so we mirror the same `excluded & scopes`
+    # short-circuit pattern from list_active.py:46 / search.py:226.
+    excluded_scopes: set[str] = set(state.disabled_scopes)
 
     out: list[dict[str, Any]] = []
     for sid in candidate_sessions:
@@ -96,6 +101,8 @@ async def episode_search(
             if since_dt is not None and ep.created < since_dt:
                 continue
             if scope_filter is not None and not (scope_filter & set(ep.scopes)):
+                continue
+            if excluded_scopes and (set(ep.scopes) & excluded_scopes):
                 continue
             out.append(
                 {
