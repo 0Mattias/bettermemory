@@ -61,6 +61,7 @@ import contextlib
 import logging
 import os
 import re
+import sys
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Literal
@@ -536,13 +537,32 @@ def flush_persistent_cache() -> None:
                     keys=np.array(keys),
                     vectors=np.stack(vectors),
                 )
+                # fchmod BEFORE the rename so the file is 0o600 the
+                # moment it appears at `_PERSISTENT_PATH`. `.npz`
+                # contains vector representations of memory bodies —
+                # same privacy bar as the source memories, which use
+                # 0o600. The pre-fix shape called `os.chmod(path,
+                # 0o600)` AFTER the rename, opening a window where the
+                # file was world-readable at the visible path (umask
+                # is typically 0o644 on Linux/macOS, sometimes 0o664
+                # on shared-user boxes). fchmod-before-rename closes
+                # that window — see `store._atomic_write_post` for the
+                # canonical write-up of this discipline. Suppressed —
+                # Windows has no mode bits and some sandbox
+                # filesystems reject fchmod; that's a permission-bit
+                # loss, not a corruption risk. `sys.platform`
+                # narrowing keeps mypy happy on Windows where
+                # `os.fchmod` is absent from typeshed.
+                if sys.platform != "win32":
+                    with contextlib.suppress(OSError):
+                        os.fchmod(f.fileno(), 0o600)
                 f.flush()
                 fsync_file(f.fileno())
             tmp.replace(_PERSISTENT_PATH)
-            # `.npz` contains vector representations of memory bodies —
-            # same privacy bar as the source memories, which use 0o600.
-            # Pre-2.6.4 this file inherited umask and could land
-            # world-readable on shared-user boxes.
+            # Defensive post-rename chmod (belt-and-suspenders): if
+            # the filesystem squashed the mode on rename (rare — most
+            # POSIX filesystems preserve it) we can still recover.
+            # This is a no-op when the fchmod above succeeded.
             with contextlib.suppress(OSError):
                 os.chmod(_PERSISTENT_PATH, 0o600)
             # fsync the parent directory so the rename survives crash —

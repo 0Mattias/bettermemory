@@ -9,6 +9,7 @@ isn't installed.
 from __future__ import annotations
 
 import logging
+import os
 from collections.abc import Iterator
 from pathlib import Path
 
@@ -184,3 +185,76 @@ def test_atomic_write_uses_tmp_rename(tmp_path: Path) -> None:
     target = tmp_path / ".embeddings.test-model.npz"
     assert target.exists()
     assert target.stat().st_size > 0
+
+
+def test_persistent_cache_file_is_owner_only(tmp_path: Path) -> None:
+    """`.npz` carries vector representations of memory bodies — same
+    privacy bar as the source memories (0o600). The post-flush file
+    must land owner-only, not at whatever the umask leaves behind."""
+    import sys
+
+    pytest.importorskip("numpy")
+    if sys.platform == "win32":
+        pytest.skip("POSIX permission bits don't apply on Windows")
+
+    configure_persistent_cache(tmp_path, "test-model")
+    cached_embed(_FakeModel(), "01" + "A" * 24, "k", "body")
+    flush_persistent_cache()
+    target = tmp_path / ".embeddings.test-model.npz"
+    assert target.exists()
+    mode = target.stat().st_mode & 0o777
+    assert mode == 0o600, (
+        f"embedding cache mode is {oct(mode)}, expected 0o600 — "
+        f"file is readable by group/world"
+    )
+
+
+def test_flush_chmods_before_rename(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Privacy ordering pin: `os.fchmod` on the tmp fd must run BEFORE
+    `Path.replace` moves the file into its visible path. The pre-fix
+    shape called `os.chmod(target, 0o600)` AFTER the rename, opening a
+    microsecond window where the `.npz` (which contains vector
+    representations of memory bodies — same privacy bar as the source
+    memories) was world-readable at the target path. This test pins
+    the fchmod-before-rename discipline mirroring
+    `store._atomic_write_post`.
+    """
+    import sys
+
+    pytest.importorskip("numpy")
+    if sys.platform == "win32":
+        pytest.skip("fchmod is unavailable on Windows; ordering is moot")
+
+    call_order: list[str] = []
+    real_fchmod = os.fchmod
+    real_replace = Path.replace
+
+    def spy_fchmod(fd: int, mode: int) -> None:
+        call_order.append("fchmod")
+        real_fchmod(fd, mode)
+
+    def spy_replace(self: Path, target: str | Path) -> Path:
+        call_order.append("replace")
+        return real_replace(self, target)
+
+    monkeypatch.setattr(os, "fchmod", spy_fchmod)
+    monkeypatch.setattr(Path, "replace", spy_replace)
+
+    configure_persistent_cache(tmp_path, "test-model")
+    cached_embed(_FakeModel(), "01" + "B" * 24, "k", "body")
+    flush_persistent_cache()
+
+    # The fchmod call must precede the replace call. If `fchmod` is
+    # missing entirely, the test catches a regression to the
+    # pre-fix shape (chmod-after-rename only).
+    assert "fchmod" in call_order, (
+        "os.fchmod was never called during flush — chmod-on-the-fd-"
+        "before-rename discipline is missing; the .npz is world-"
+        "readable at the visible path for a microsecond window."
+    )
+    assert "replace" in call_order, "Path.replace was never called"
+    assert call_order.index("fchmod") < call_order.index("replace"), (
+        f"fchmod must run before rename, got call order {call_order!r}"
+    )
