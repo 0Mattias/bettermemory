@@ -101,7 +101,7 @@ memory_helped_rate   0.61 ± 0.07   ▇▇▇▇▇▇▁▁▁▁   (k=121, n=1
 endorsement_rate     0.74 ± 0.06   ▇▇▇▇▇▇▇▁▁▁   (k=105, n=142)
 silent_miss_rate     0.09 ± 0.03   ▇▁▁▁▁▁▁▁▁▁   (k=37, n=412)
 
-Endorsement-debt memories (retrievals ≥ 5, 0 explicit applied): 2
+Cold-endorsement memories (retrievals ≥ 5, 0 explicit applied): 2
   01HXYZ123ABC  tools             "Use ripgrep instead of grep…"  (12 retrievals)
   01HXYZ456DEF  learning-style    "User prefers terse explan…"    (7 retrievals)
 
@@ -113,7 +113,7 @@ Silent-miss candidates (last 20):
 Threshold rule: v1_top1_high
 ```
 
-`--json` emits the same numbers as machine-readable JSON for CI pipelines. `--scope` filters to a single scope (useful for catching e.g. `projects:foo` going feral while `tools` stays healthy). `--min-retrievals` controls the endorsement-debt floor (default 5); `--silent-miss-limit` controls how many recent miss events are surfaced inline (default 20).
+`--json` emits the same numbers as machine-readable JSON for CI pipelines. `--scope` filters to a single scope (useful for catching e.g. `projects:foo` going feral while `tools` stays healthy). `--min-retrievals` controls the cold-endorsement floor (default 5); `--silent-miss-limit` controls how many recent miss events are surfaced inline (default 20).
 
 ### `--tool-usage` — per-MCP-tool call-count rollup
 

@@ -14,7 +14,7 @@ Published roadmap is part of the distribution strategy: people deciding between 
 - `memory_audit_turn` silent-miss probe, threshold rule versioned at `v1_top1_high`.
 - `bettermemory consolidate --llm` Dreaming-defense pass with five proposal types (merge / resolve_contradiction / rewrite_relative_date / demote_tier / propose_new); `--from-transcript PATH` closes the writing-reflex gap by proposing new memories from a conversation, all under the same audit-gate accept loop.
 - `bettermemory eval` CLI: `memory_helped_rate` / `endorsement_rate` / `silent_miss_rate` with Wilson 95% CIs.
-- Curation-debt-clearing surface: `bettermemory consolidate --acknowledge-debt` (2.7.3) writes one explicit-applied event per endorsement-debt memory to clear the signal without touching bodies; `bettermemory consolidate --acknowledge-misses-before <ISO_TS>` (3.0.0) writes a `silent_miss_cutoff` event that retroactively drops pre-cutoff `turn_audited` / `search_miss` events from the rollup. Both are purely additive — no `--apply` gate, reversible by a follow-up event.
+- Curation-debt-clearing surface: `bettermemory consolidate --acknowledge-debt` (2.7.3) writes one explicit-applied event per cold-endorsement memory to clear the signal without touching bodies; `bettermemory consolidate --acknowledge-misses-before <ISO_TS>` (3.0.0) writes a `silent_miss_cutoff` event that retroactively drops pre-cutoff `turn_audited` / `search_miss` events from the rollup. Both are purely additive — no `--apply` gate, reversible by a follow-up event.
 - Git-based cross-host sync via `bettermemory sync`.
 - FastAPI curation UI (`bettermemory ui`).
 - 1500+ tests, 80% coverage floor, Python 3.11–3.14, MIT.
@@ -29,7 +29,7 @@ Published roadmap is part of the distribution strategy: people deciding between 
 
 ## ~~Next~~ Shipped (2.5.0) — `bettermemory eval`
 
-✅ **`bettermemory eval` CLI**. Reads `.events.jsonl` plus the active store, reports `memory_helped_rate`, `endorsement_rate`, `silent_miss_rate` with Wilson 95% confidence intervals. Lists endorsement-debt memories and silent-miss candidates. JSON output for CI. Methodology in [`docs/eval.md`](eval.md); pure compute in `src/bettermemory/eval.py`; 52 tests in `tests/test_eval.py`.
+✅ **`bettermemory eval` CLI**. Reads `.events.jsonl` plus the active store, reports `memory_helped_rate`, `endorsement_rate`, `silent_miss_rate` with Wilson 95% confidence intervals. Lists cold-endorsement memories and silent-miss candidates. JSON output for CI. Methodology in [`docs/eval.md`](eval.md); pure compute in `src/bettermemory/eval.py`; 52 tests in `tests/test_eval.py`.
 
 **Still pending: comparative publication.** Run the same workload against bettermemory, Mem0 (OpenMemory self-host), Anthropic's reference `server-memory`, claude-mem, and agentmemory. Publish the numbers. The metric and the harness are owned territory — *every other comparison article in this market is about retrieval recall.* Owning *"did memory shape the reply?"* is the lane-claim. Harness shape: `tests/eval/comparative.py`. The `[embeddings]` and `[embeddings-fast]` extras (1.0.0 and 2.5.0) close the install-friction gap, so what remains is wiring + write-up.
 
