@@ -32,7 +32,7 @@ from pathlib import Path
 from typing import Iterator
 
 from . import _frontmatter as frontmatter
-from ._fsutil import fsync_dir, fsync_file
+from ._fsutil import flock_excl, fsync_dir, fsync_file
 from .models import (
     Episode,
     SCHEMA_VERSION,
@@ -114,9 +114,27 @@ class EpisodeStore:
         # capture includes cwd, branch).
         self.episodes_dir.mkdir(mode=0o700, exist_ok=True)
         session_dir = self._session_dir(session_id)
-        session_dir.mkdir(mode=0o700, exist_ok=True)
-        path = session_dir / f"{episode.id}.md"
-        self._write_path(path, episode)
+        # Cross-process coordination with `prune_old_sessions`. Multi-MCP
+        # racing: process A's prune (TTL eviction or maintenance call)
+        # could `shutil.rmtree(session_dir)` while process B is mid-write
+        # into the same dir — B's just-renamed `<ulid>.md` is wiped, or
+        # B crashes on a vanished parent dir during mkdir/rename. Both
+        # `write` (here) and `prune_old_sessions` take the same per-
+        # session flock; the writer holds it across mkdir + rename + dir
+        # fsync, the prune holds it across mtime recheck + rmtree, so
+        # the session_dir lifecycle is serialised end-to-end on POSIX
+        # and macOS. Windows uses `msvcrt.locking` via the same helper.
+        #
+        # The lockfile lives in `episodes_dir`, NOT inside `session_dir`,
+        # so a peer prune's rmtree can't wipe the lock mid-acquisition.
+        # The `.session-<id>` prefix keeps locks per-session (no global
+        # bottleneck), and `iter_session_ids` / `prune_old_sessions`
+        # both filter `is_dir()` so the lockfiles are invisible to
+        # session enumeration.
+        with flock_excl(self.episodes_dir / f".session-{session_id}"):
+            session_dir.mkdir(mode=0o700, exist_ok=True)
+            path = session_dir / f"{episode.id}.md"
+            self._write_path(path, episode)
         return episode
 
     def _write_path(self, path: Path, episode: Episode) -> None:
@@ -263,6 +281,16 @@ class EpisodeStore:
         `keep_session_id`, when provided, is exempt from pruning even
         if its newest episode is past the TTL. Used by the write path
         to keep the active session's directory alive across a pause.
+
+        Concurrency: serialised against `EpisodeStore.write` via a per-
+        session flock (`episodes_dir / .session-<id>.lock`). The walk
+        below stats mtimes unlocked (cheap), then takes the per-session
+        flock and re-stats under the lock before `rmtree` — a writer
+        racing in between the unlocked stat and the lock acquisition
+        has already bumped mtime past cutoff, so the recheck skips the
+        delete. Without this, a multi-MCP setup (two Claude Code
+        sessions on the same store) could `shutil.rmtree` a session
+        dir mid-write and silently lose B's just-rename'd episode.
         """
         if ttl_days <= 0 or not self.episodes_dir.exists():
             return []
@@ -277,7 +305,10 @@ class EpisodeStore:
                 continue
             newest_mtime = _newest_mtime_in_dir(session_dir)
             if newest_mtime is None:
-                # Empty subdir — drop it.
+                # Empty subdir — drop it. `rmdir` only succeeds on an
+                # empty dir, so a concurrent write that just landed a
+                # file in here will make this fail with ENOTEMPTY and
+                # we skip — the next prune pass will reconsider.
                 try:
                     session_dir.rmdir()
                     pruned.append(session_name)
@@ -285,8 +316,44 @@ class EpisodeStore:
                     continue
                 continue
             if newest_mtime < cutoff_epoch:
+                # Take the per-session flock to serialise against a
+                # concurrent writer. Recheck mtime inside the lock: a
+                # writer that started between our unlocked stat above
+                # and the flock acquisition will have rename'd a fresh
+                # `<ulid>.md` into the dir by the time we own the lock,
+                # so the recheck sees a fresh mtime and we skip the
+                # delete. The lockfile lives in `episodes_dir` rather
+                # than inside `session_dir` so the rmtree can't wipe
+                # the lockfile mid-acquisition by a peer prune.
+                #
+                # Deliberately leave the 0-byte lockfile in place after
+                # rmtree — same reason `_fsutil.flock_excl` documents:
+                # flock identity is per-inode, and an unlink-on-rmtree
+                # would let a third opener (a peer prune or a writer
+                # for the same session_id that's pending lock-acquire)
+                # race in between our unlink and their `os.open(...,
+                # O_CREAT)`, ending up holding the lock on a different
+                # inode than another concurrent acquirer. Stale lockfile
+                # bytes are 0 each; the orphan cost is negligible vs.
+                # the correctness gap.
+                lock_anchor = self.episodes_dir / f".session-{session_name}"
                 try:
-                    shutil.rmtree(session_dir)
+                    with flock_excl(lock_anchor):
+                        fresh_mtime = _newest_mtime_in_dir(session_dir)
+                        if fresh_mtime is None or fresh_mtime >= cutoff_epoch:
+                            # Either a writer raced in and rendered the
+                            # dir current again, OR the dir is now empty
+                            # (writer deleted its own tmp on a failed
+                            # rename). Either way, don't delete.
+                            continue
+                        shutil.rmtree(session_dir)
+                    pruned.append(session_name)
+                except FileNotFoundError:
+                    # Another prune in a peer process already rmtree'd
+                    # this session between our unlocked stat and our
+                    # flock acquisition. Treat as success — the
+                    # observable outcome (session_dir gone) is what
+                    # the caller wanted.
                     pruned.append(session_name)
                 except OSError:
                     continue
