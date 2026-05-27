@@ -22,6 +22,8 @@ from pathlib import Path
 
 import platformdirs
 
+from ._fsutil import atomic_write_bytes
+
 
 CONFIG_FILENAME = "config.toml"
 PROJECT_DIR_NAME = ".claude-memory"
@@ -557,7 +559,13 @@ def load_config(path: Path | None = None) -> Config:
     config_path = path or default_config_path()
     config_path.parent.mkdir(parents=True, exist_ok=True)
     if not config_path.exists():
-        config_path.write_text(DEFAULT_CONFIG, encoding="utf-8")
+        # Atomic + durable write via `_fsutil.atomic_write_bytes`: a plain
+        # `config_path.write_text(...)` here would leave a truncated TOML
+        # on power loss / process kill mid-write, and the next run would
+        # see a malformed config and crash at `tomllib.load`. The helper
+        # writes to a tmp sibling, fsyncs, atomic-renames into place, and
+        # fsyncs the parent directory.
+        atomic_write_bytes(config_path, DEFAULT_CONFIG.encode("utf-8"))
         # First-run notice on stderr so consumers see what happened.
         print(
             f"[bettermemory] created default config at {config_path}",
