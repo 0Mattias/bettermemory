@@ -355,6 +355,7 @@ class EpisodeStore:
                 # `session_dir`) and same persistence rationale as the
                 # past-cutoff branch — see the long comment below.
                 lock_anchor = self.episodes_dir / f".session-{session_name}"
+                lock_file = lock_anchor.with_suffix(lock_anchor.suffix + ".lock")
                 try:
                     with flock_excl(lock_anchor):
                         fresh_mtime = _newest_mtime_in_dir(session_dir)
@@ -379,6 +380,16 @@ class EpisodeStore:
                         # the metadata flush completes before the lock
                         # releases and any peer can re-observe the dir.
                         fsync_dir(self.episodes_dir)
+                        # Unlink the sidecar lockfile too — see the
+                        # extended note on the past-cutoff branch
+                        # below for the full rationale. Same argument
+                        # applies here: an empty session_dir past
+                        # TTL has no live writer, so the inode-
+                        # identity race the lock-persists discipline
+                        # protects against is closed by construction.
+                        _unlink_session_lockfile(
+                            self.episodes_dir, lock_file, session_dir
+                        )
                     pruned.append(session_name)
                 except FileNotFoundError:
                     # Peer pruner won the race between our unlocked
@@ -406,40 +417,74 @@ class EpisodeStore:
                 # than inside `session_dir` so the rmtree can't wipe
                 # the lockfile mid-acquisition by a peer prune.
                 #
-                # Deliberately leave the 0-byte lockfile in place after
-                # rmtree — same reason `_fsutil.flock_excl` documents:
-                # flock identity is per-inode, and an unlink-on-rmtree
-                # would let a third opener (a peer prune or a writer
-                # for the same session_id that's pending lock-acquire)
-                # race in between our unlink and their `os.open(...,
-                # O_CREAT)`, ending up holding the lock on a different
-                # inode than another concurrent acquirer. Stale lockfile
-                # bytes are 0 each; the orphan cost is negligible vs.
-                # the correctness gap.
+                # Lockfile lifecycle on this branch (audit-3 carryover
+                # A3-13 / E1): the sidecar lockfile IS unlinked here
+                # while we still hold the flock. Pre-E1 we deliberately
+                # left it in place to preserve flock-inode identity for
+                # any peer trying to acquire on the same path
+                # concurrently — but for a session whose newest-mtime
+                # is past TTL by 30+ days, no live writer can exist
+                # (every legitimate write refreshes the session_dir's
+                # mtime past cutoff via `_write_path` + rename). The
+                # only concurrent acquirers possible are peer prunes,
+                # and two peer prunes converging on the same dead
+                # session both reach the same observable outcome
+                # (session gone) — even if they end up on different
+                # inodes of the lockfile, neither does any session_dir
+                # work after the rmtree-then-recheck, and BOTH unlink
+                # the inode they hold before releasing, so no orphan
+                # accumulates from the race. Before E1 each fresh
+                # /loop tick (new process => new session_id) left a
+                # 0-byte lockfile that survived TTL prunes, and
+                # `iterdir()` over `episodes_dir` slowed handoff
+                # latency materially at N≈10⁵.
                 lock_anchor = self.episodes_dir / f".session-{session_name}"
+                lock_file = lock_anchor.with_suffix(lock_anchor.suffix + ".lock")
                 try:
                     with flock_excl(lock_anchor):
                         fresh_mtime = _newest_mtime_in_dir(session_dir)
-                        if fresh_mtime is None or fresh_mtime >= cutoff_epoch:
-                            # Either a writer raced in and rendered the
-                            # dir current again, OR the dir is now empty
-                            # (writer deleted its own tmp on a failed
-                            # rename). Either way, don't delete.
+                        if fresh_mtime is None and session_dir.exists():
+                            # The session_dir is now empty (writer
+                            # deleted its own tmp on a failed rename).
+                            # The empty-dir branch on the next prune
+                            # pass will pick it up; don't delete here.
+                            # Defense-in-depth: confirm session_dir
+                            # still exists before continuing — if a
+                            # peer prune already rmtree'd it we want
+                            # to fall through to the orphan-lockfile
+                            # cleanup below.
                             continue
-                        shutil.rmtree(session_dir)
-                        # Durability gate (audit-3 A3-04): rmtree drops
-                        # the session_dir's dirent from `episodes_dir`,
-                        # but the metadata change lives in the parent's
-                        # page-cache until a dir-fsync hits disk. On
-                        # crash, the kernel can present a recovered
-                        # `episodes_dir` that still lists the deleted
-                        # session as a phantom entry, with the inner
-                        # files already wiped — readers attempting to
-                        # iterate it would trip FileNotFoundError or
-                        # surface stale episodes briefly. Fsync inside
-                        # the flock so the metadata flush completes
-                        # before the lock releases.
-                        fsync_dir(self.episodes_dir)
+                        if fresh_mtime is not None and fresh_mtime >= cutoff_epoch:
+                            # Writer raced in and rendered the dir
+                            # current again — leave it alone.
+                            continue
+                        if session_dir.exists():
+                            shutil.rmtree(session_dir)
+                            # Durability gate (audit-3 A3-04): rmtree
+                            # drops the session_dir's dirent from
+                            # `episodes_dir`, but the metadata change
+                            # lives in the parent's page-cache until a
+                            # dir-fsync hits disk. On crash, the kernel
+                            # can present a recovered `episodes_dir`
+                            # that still lists the deleted session as
+                            # a phantom entry, with the inner files
+                            # already wiped — readers attempting to
+                            # iterate it would trip FileNotFoundError
+                            # or surface stale episodes briefly. Fsync
+                            # inside the flock so the metadata flush
+                            # completes before the lock releases.
+                            fsync_dir(self.episodes_dir)
+                        # session_dir is gone (we just rmtree'd it,
+                        # OR a peer prune wiped it during the unlocked-
+                        # stat → flock-acquire window and we observed
+                        # `fresh_mtime is None`). Either way, unlink
+                        # the sidecar lockfile while we still hold the
+                        # flock so the orphan can't linger past TTL.
+                        # See the long lifecycle comment above for why
+                        # this is safe on past-TTL sessions.
+                        _unlink_session_lockfile(
+                            self.episodes_dir, lock_file, session_dir
+                        )
                     pruned.append(session_name)
                 except FileNotFoundError:
                     # Another prune in a peer process already rmtree'd
@@ -450,7 +495,70 @@ class EpisodeStore:
                     pruned.append(session_name)
                 except OSError:
                     continue
+        # After per-session prunes finish, sweep any orphan lockfiles
+        # whose corresponding session_dir is already gone. Two sources
+        # of orphans: (a) lockfiles written by pre-E1 versions of
+        # bettermemory that ran TTL prunes on the same store, (b) an
+        # unlikely peer-prune race that left a fresh inode at the
+        # path between our unlink and lock-release. Cheap — one
+        # `iterdir()` + per-file `is_file()` + a `stat()` on the
+        # corresponding session_dir.
+        self._cleanup_orphan_lockfiles()
         return pruned
+
+    def _cleanup_orphan_lockfiles(self) -> None:
+        """Remove `.session-<id>.lock` files whose session_dir is gone.
+
+        Safe to call unconditionally at the end of `prune_old_sessions`:
+        a session_dir's absence proves no live writer holds (or is
+        waiting on) the lock. Peer prunes converging on the same dead
+        session both end up with the session_dir gone before they would
+        try to unlink the lockfile; the worst case is two prunes
+        racing on the unlink itself, which is benign — `missing_ok=True`
+        swallows the FileNotFoundError, and both prunes return success.
+
+        Pre-E1 lockfile leaks (one orphan per fresh /loop tick) are
+        mopped up on the first post-E1 prune call so the
+        `iterdir(episodes_dir)` cost stops growing.
+        """
+        if not self.episodes_dir.exists():
+            return
+        try:
+            entries = list(self.episodes_dir.iterdir())
+        except OSError:
+            return
+        cleaned = False
+        for entry in entries:
+            # `.session-<id>.lock` is the only sidecar pattern produced
+            # by `flock_excl` against an anchor like `.session-<id>`.
+            if not entry.is_file() or entry.is_symlink():
+                continue
+            name = entry.name
+            if not name.startswith(".session-") or not name.endswith(".lock"):
+                continue
+            session_name = name[len(".session-") : -len(".lock")]
+            if not session_name:
+                continue
+            session_dir = self.episodes_dir / session_name
+            if session_dir.exists():
+                # Live session — leave its lockfile alone. The
+                # session_dir's existence is the only signal that a
+                # writer might be racing for this lock.
+                continue
+            try:
+                entry.unlink()
+                cleaned = True
+            except FileNotFoundError:
+                # Peer prune unlinked between our scan and our unlink
+                # — same observable end-state, continue.
+                continue
+            except OSError:
+                # Don't propagate — orphan cleanup is opportunistic.
+                continue
+        if cleaned:
+            # Persist the unlinks so a crash can't resurrect the
+            # dirents we just cleared.
+            fsync_dir(self.episodes_dir)
 
 
 def _newest_mtime_in_dir(dir_path: Path) -> float | None:
@@ -465,6 +573,41 @@ def _newest_mtime_in_dir(dir_path: Path) -> float | None:
     except OSError:
         return None
     return newest
+
+
+def _unlink_session_lockfile(
+    episodes_dir: Path, lock_file: Path, session_dir: Path
+) -> None:
+    """Unlink a per-session sidecar lockfile and fsync the parent dir.
+
+    Called from the past-cutoff and empty-dir branches of
+    `prune_old_sessions` while the prune still holds the flock. Defense-
+    in-depth: verifies `session_dir` is gone before unlinking, so a
+    refactor that calls this on a live session is a no-op rather than a
+    silent correctness regression. The fsync persists the dirent
+    removal so a crash can't resurrect an orphan lockfile that pre-
+    E1's design intentionally left behind.
+
+    See the lifecycle comment in `prune_old_sessions` past-cutoff
+    branch for why unlinking here is safe (no live writers possible on
+    a past-TTL session).
+    """
+    if session_dir.exists():
+        # Defensive guard — should never fire from the prune branches
+        # because both call sites only reach this after rmtree/rmdir
+        # or after observing session_dir is already gone. If a future
+        # refactor breaks that invariant, refusing to unlink is the
+        # safer failure mode than racing a live writer.
+        return
+    try:
+        lock_file.unlink(missing_ok=True)
+    except OSError:
+        # Best-effort: a missing lockfile (already cleaned up by peer)
+        # or a transient filesystem error doesn't justify failing the
+        # prune. Next prune pass will retry the cleanup via the orphan
+        # sweep.
+        return
+    fsync_dir(episodes_dir)
 
 
 __all__ = [

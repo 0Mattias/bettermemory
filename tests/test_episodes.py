@@ -269,7 +269,18 @@ def test_prune_still_deletes_truly_stale_dirs(
     base case — a stale session dir with no concurrent writer still
     gets deleted on the next prune pass. Without this pin a future
     refactor could leave the recheck always-truthy and silently turn
-    `prune_old_sessions` into a no-op."""
+    `prune_old_sessions` into a no-op.
+
+    E1 / A3-13: the past-cutoff branch also unlinks the sidecar
+    lockfile while still holding the flock. Pre-fix the lockfile was
+    deliberately persisted to preserve flock-inode identity — but for
+    a past-TTL session there are no live writers, so the inode-
+    identity race is closed by construction (the only concurrent
+    acquirers can be peer prunes, and both prunes reach the same
+    "session gone, lockfile gone" end state). Without the unlink each
+    fresh /loop tick (new process => new session_id) leaks a 0-byte
+    file, and at N≈10⁵ ticks `iterdir(episodes_dir)` dominates
+    handoff latency."""
     import os as _os
 
     episode_store.write(session_id="sess_truly_stale", body="ancient")
@@ -281,15 +292,11 @@ def test_prune_still_deletes_truly_stale_dirs(
     pruned = episode_store.prune_old_sessions(ttl_days=30)
     assert "sess_truly_stale" in pruned
     assert not stale_dir.exists()
-    # The 0-byte lockfile is INTENTIONALLY left behind after rmtree —
-    # unlinking would open a flock-identity-per-inode race window where
-    # a peer process holding the lock on the old inode coexists with a
-    # fresh acquirer that O_CREAT'd a new inode and believes itself the
-    # holder. See the 2.6.3 audit note in `_fsutil.flock_excl`. Orphan
-    # cost is 0 bytes per pruned session — negligible vs. correctness.
     lock_path = episode_store.episodes_dir / ".session-sess_truly_stale.lock"
-    assert lock_path.exists(), (
-        "lockfile must persist after rmtree to keep flock identity stable"
+    assert not lock_path.exists(), (
+        "past-TTL prune must unlink the sidecar lockfile; otherwise "
+        "each fresh /loop tick (new session_id) leaks a 0-byte file "
+        "and iterdir(episodes_dir) slows handoff latency at N≈10⁵."
     )
 
 
@@ -803,3 +810,279 @@ def test_episode_write_fsyncs_episodes_dir_on_first_create(
         f"_write_path should still fsync session_dir on every write; "
         f"saw: {fsync_dir_calls}"
     )
+
+
+def test_prune_unlinks_lockfile_for_every_pruned_session(
+    episode_store: EpisodeStore,
+) -> None:
+    """Leak-prevention pin (E1 / A3-13): after a TTL prune, zero
+    `.session-*.lock` files remain in `episodes_dir`. Pre-E1 each
+    fresh /loop tick (new process => new session_id) left a 0-byte
+    lockfile behind on prune, and at N≈10⁵ ticks `iterdir()` over
+    `episodes_dir` dominated handoff latency. This pin asserts the
+    fix is unconditional across multiple sessions on a single prune
+    pass.
+    """
+    import os as _os
+
+    # Five distinct session_ids — bigger than 1 to catch a fix that
+    # only handles the first session in the loop, smaller than
+    # something that'd slow the test suite. Each write creates its
+    # own sidecar lockfile.
+    session_ids = [f"sess_leak_{i}" for i in range(5)]
+    for sid in session_ids:
+        episode_store.write(session_id=sid, body=f"body {sid}")
+
+    # Sanity-check: pre-prune, every session has its own lockfile.
+    lock_files_before = sorted(
+        p.name
+        for p in episode_store.episodes_dir.iterdir()
+        if p.is_file() and p.name.startswith(".session-") and p.name.endswith(".lock")
+    )
+    assert len(lock_files_before) == 5, (
+        f"expected one lockfile per session pre-prune; saw {lock_files_before}"
+    )
+
+    # Backdate every file in every session_dir past the TTL cutoff.
+    past = time.time() - (40 * 24 * 60 * 60)
+    for sid in session_ids:
+        sd = episode_store.episodes_dir / sid
+        for f in sd.iterdir():
+            _os.utime(f, (past, past))
+
+    pruned = episode_store.prune_old_sessions(ttl_days=30)
+    assert set(pruned) == set(session_ids), (
+        f"expected all 5 sessions pruned, got {pruned}"
+    )
+
+    # Post-prune: zero `.session-*.lock` files survive. iterdir cost
+    # over `episodes_dir` returns to baseline (just the bare
+    # `episodes/` if nothing else lives there).
+    lock_files_after = [
+        p.name
+        for p in episode_store.episodes_dir.iterdir()
+        if p.is_file() and p.name.startswith(".session-") and p.name.endswith(".lock")
+    ]
+    assert lock_files_after == [], (
+        f"prune leaked lockfiles — N≈10⁵ ticks would fill episodes_dir; "
+        f"survivors: {lock_files_after}"
+    )
+
+
+def test_prune_orphan_lockfile_swept_even_without_session_dir(
+    episode_store: EpisodeStore,
+) -> None:
+    """Orphan-cleanup pin (E1 / A3-13): a `.session-*.lock` file
+    whose corresponding session_dir doesn't exist (the pre-E1 leak
+    pattern, or a peer-prune race that left a fresh inode behind)
+    gets swept on the next prune pass. Without the orphan sweep,
+    pre-E1 leaks would never be reclaimed unless every old session
+    was independently re-pruned.
+
+    The orphan-cleanup case is independent of any TTL-pruned session
+    in the same call; we set up a store with NO past-TTL sessions
+    and assert the orphan still gets cleaned up.
+    """
+    # Materialise `episodes_dir` (the prune is a no-op against a
+    # non-existent dir) by writing one fresh, live session.
+    episode_store.write(session_id="sess_live", body="not stale")
+
+    # Pre-create an orphan lockfile mimicking the pre-E1 leak: a
+    # `.session-<id>.lock` with no corresponding session_dir.
+    orphan = episode_store.episodes_dir / ".session-sess_dead.lock"
+    orphan.touch()
+    assert orphan.exists()
+    assert not (episode_store.episodes_dir / "sess_dead").exists()
+
+    pruned = episode_store.prune_old_sessions(ttl_days=30)
+    # The live session is NOT pruned (mtime is fresh).
+    assert "sess_live" not in pruned
+    # The orphan lockfile got swept anyway by the cleanup-at-end pass.
+    assert not orphan.exists(), (
+        "orphan lockfile (no session_dir) should be swept by "
+        "_cleanup_orphan_lockfiles at the end of prune_old_sessions"
+    )
+
+
+def test_prune_preserves_lockfile_for_live_session(
+    episode_store: EpisodeStore,
+) -> None:
+    """Live-session protection pin (E1 / A3-13): a session whose
+    `session_dir` exists with fresh mtime must keep its lockfile.
+    The lockfile-cleanup logic must only fire for sessions whose
+    `session_dir` is GONE — never for live sessions where a future
+    writer might be racing for the flock.
+
+    Specifically: a session that's been written-to recently (mtime
+    < cutoff_age) and is still active. Without this pin, a future
+    refactor could broaden the unlink to live sessions, breaking
+    flock-inode identity for in-flight acquirers.
+    """
+    episode_store.write(session_id="sess_live_protected", body="recent write")
+    live_dir = episode_store.episodes_dir / "sess_live_protected"
+    lock_path = episode_store.episodes_dir / ".session-sess_live_protected.lock"
+    assert live_dir.exists()
+    assert lock_path.exists()
+
+    pruned = episode_store.prune_old_sessions(ttl_days=30)
+    assert "sess_live_protected" not in pruned
+    assert live_dir.exists(), "fresh session_dir must survive prune"
+    assert lock_path.exists(), (
+        "live session's lockfile must NOT be unlinked — a writer racing "
+        "for the flock could end up on a different inode than a peer "
+        "if the lockfile is recreated underneath it"
+    )
+
+
+def test_prune_empty_dir_unlinks_lockfile(
+    episode_store: EpisodeStore,
+) -> None:
+    """Empty-dir branch of `prune_old_sessions` must unlink the
+    sidecar lockfile too. Same lifecycle argument as the past-cutoff
+    branch (E1 / A3-13): an empty session_dir past the unlocked walk
+    has no live writer (the writer would have land its file by now,
+    or the dir would still be empty because the writer is mid-mkdir
+    behind the flock — in which case the locked recheck would have
+    seen a fresh mtime and skipped).
+    """
+    # Set up an empty session_dir + its sidecar lockfile manually.
+    # Easiest is to write once, delete the file, leaving an empty
+    # session_dir + its lockfile (which `write` created when it
+    # took the flock).
+    ep = episode_store.write(session_id="sess_empty_lock", body="trash")
+    empty_dir = episode_store.episodes_dir / "sess_empty_lock"
+    (empty_dir / f"{ep.id}.md").unlink()
+    assert empty_dir.exists()
+    assert list(empty_dir.iterdir()) == []  # empty session_dir
+
+    lock_path = episode_store.episodes_dir / ".session-sess_empty_lock.lock"
+    assert lock_path.exists()
+
+    pruned = episode_store.prune_old_sessions(ttl_days=30)
+    assert "sess_empty_lock" in pruned
+    assert not empty_dir.exists()
+    assert not lock_path.exists(), (
+        "empty-dir prune branch must unlink the sidecar lockfile too — "
+        "same lifecycle argument as past-cutoff (no live writers "
+        "possible past the locked emptiness recheck)."
+    )
+
+
+def test_prune_lockfile_unlink_persists_via_fsync(
+    episode_store: EpisodeStore, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The lockfile unlink in the prune path must call `fsync_dir`
+    on `episodes_dir` so the dropped dirent survives a crash — same
+    durability gate audit-3 A3-04 covered for rmtree/rmdir. Without
+    a post-unlink fsync, a crash between unlink returning and the
+    next natural flush could resurrect the lockfile dirent, partially
+    undoing the leak fix.
+    """
+    import os as _os
+    import bettermemory.episodes as episodes_mod
+
+    episode_store.write(session_id="sess_unlink_fsync", body="ancient")
+    stale_dir = episode_store.episodes_dir / "sess_unlink_fsync"
+    past = time.time() - (40 * 24 * 60 * 60)
+    for f in stale_dir.iterdir():
+        _os.utime(f, (past, past))
+
+    # Spy on fsync_dir AFTER the seed write — the seed write already
+    # called fsync_dir for its own durability ceremony.
+    fsync_dir_calls: list[Path] = []
+
+    def spy_fsync_dir(p: Path) -> None:
+        fsync_dir_calls.append(p)
+
+    monkeypatch.setattr(episodes_mod, "fsync_dir", spy_fsync_dir)
+
+    pruned = episode_store.prune_old_sessions(ttl_days=30)
+    assert "sess_unlink_fsync" in pruned
+
+    # The prune must fsync_dir(episodes_dir) at least twice:
+    #   1. After `shutil.rmtree(session_dir)` (existing A3-04).
+    #   2. After `lock_anchor.unlink()` (the new E1 / A3-13 work).
+    # We assert ≥2 calls on episodes_dir; an exact count would
+    # over-constrain the test against future refactors that add more
+    # fsync points (e.g. the orphan sweep's final fsync).
+    episodes_dir_fsyncs = fsync_dir_calls.count(episode_store.episodes_dir)
+    assert episodes_dir_fsyncs >= 2, (
+        f"prune must fsync_dir(episodes_dir) twice on the past-cutoff "
+        f"branch — once after rmtree, once after lockfile unlink. "
+        f"Saw {episodes_dir_fsyncs} calls on episodes_dir; full "
+        f"call list: {fsync_dir_calls}"
+    )
+
+
+def test_prune_peer_race_dual_process_cleans_both_dir_and_lockfile(
+    tmp_path: Path,
+) -> None:
+    """Peer-prune race pin (E1 / A3-13, task #3): two processes
+    converging on the same past-TTL session_dir + lockfile both
+    return success, and neither leaves a lockfile orphan behind.
+
+    The race window the unlink-inside-flock contract has to handle:
+    process A has rmtree'd the session_dir, is about to unlink the
+    lockfile and release. Process B is blocked on flock-acquire; once
+    A releases, B's `_newest_mtime_in_dir` returns None and
+    `session_dir.exists()` is False — B falls through to
+    `_unlink_session_lockfile`, which is a no-op for the (rare) case
+    of a fresh inode that A's unlink-then-release-then-O_CREAT might
+    have created. Either way, the final state is: session_dir gone,
+    lockfile gone.
+
+    Uses `multiprocessing.spawn` workers to mirror the pattern in
+    `tests/test_concurrency.py` — `spawn` is required so the second
+    process opens a fresh fd on the lockfile inode rather than
+    inheriting one from a fork.
+    """
+    import multiprocessing as mp
+    import os as _os
+
+    if sys.platform == "win32":
+        pytest.skip("fcntl-based locking is POSIX-only; race only fires on POSIX")
+
+    store = EpisodeStore(tmp_path)
+    store.write(session_id="sess_race", body="ancient")
+    raced_dir = store.episodes_dir / "sess_race"
+    past = time.time() - (40 * 24 * 60 * 60)
+    for f in raced_dir.iterdir():
+        _os.utime(f, (past, past))
+
+    ctx = mp.get_context("spawn")
+    with ctx.Pool(2) as pool:
+        results = pool.map(_prune_worker, [str(tmp_path)] * 2)
+
+    # Both workers must have completed without raising. The session
+    # may appear in one or both `pruned` lists (the loser sees the
+    # session_dir gone and falls through to "vanished — success").
+    assert all(r is not None for r in results), (
+        f"worker raised during peer-prune race: {results}"
+    )
+    combined = [s for r in results if r is not None for s in r]
+    assert "sess_race" in combined, (
+        f"at least one worker must record sess_race as pruned; saw {results}"
+    )
+
+    # End state: session_dir gone, lockfile gone.
+    assert not raced_dir.exists()
+    lock_path = store.episodes_dir / ".session-sess_race.lock"
+    assert not lock_path.exists(), (
+        "peer-prune race left an orphan lockfile — the contract "
+        "guarantees both prunes converge on a clean end state"
+    )
+
+
+def _prune_worker(root: str) -> list[str] | None:
+    """Module-level worker for the peer-prune race test.
+
+    `mp.get_context("spawn")` requires module-level callables for
+    pickling. Returns the prune's result list, or None on any error
+    so the parent can surface a structured failure.
+    """
+    try:
+        from bettermemory.episodes import EpisodeStore as _EpStore
+
+        return _EpStore(Path(root)).prune_old_sessions(ttl_days=30)
+    except BaseException:  # noqa: BLE001
+        return None
