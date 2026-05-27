@@ -2,7 +2,7 @@
 
 Covers parse_since, compute_eval on each numerator/denominator path,
 scope filtering, since-window filtering, Wilson intervals at the
-endpoints, the silent-miss buffer cap, the endorsement-debt
+endpoints, the silent-miss buffer cap, the cold-endorsement
 exclusions (ambient, tombstoned, has-explicit-applied), and an
 end-to-end CLI smoke through ``main()``.
 """
@@ -257,7 +257,7 @@ class TestComputeEvalEmpty:
         assert report.memory_helped_rate.rate is None
         assert report.endorsement_rate.rate is None
         assert report.silent_miss_rate.rate is None
-        assert report.endorsement_debt_rows == []
+        assert report.cold_endorsement_memories_rows == []
         assert report.silent_miss_recent == []
 
     def test_to_dict_round_trip(self) -> None:
@@ -494,11 +494,11 @@ class TestSilentMissRate:
 
 
 # ---------------------------------------------------------------------------
-# endorsement-debt rows
+# cold-endorsement rows
 # ---------------------------------------------------------------------------
 
 
-class TestEndorsementDebt:
+class TestColdEndorsementMemories:
     def _make_events(
         self, mem_id: str, retrievals: int, *, with_explicit: bool = False
     ) -> list[dict[str, Any]]:
@@ -524,8 +524,8 @@ class TestEndorsementDebt:
             events=self._make_events(mem.id, retrievals=5),
             endorsement_min_retrievals=5,
         )
-        assert report.endorsement_debt_total == 1
-        row = report.endorsement_debt_rows[0]
+        assert report.cold_endorsement_memories_total == 1
+        row = report.cold_endorsement_memories_rows[0]
         assert row.id == mem.id
         assert row.retrieval_count == 5
         assert row.auto_applied_count == 5
@@ -538,7 +538,7 @@ class TestEndorsementDebt:
             events=self._make_events(mem.id, retrievals=4),
             endorsement_min_retrievals=5,
         )
-        assert report.endorsement_debt_total == 0
+        assert report.cold_endorsement_memories_total == 0
 
     def test_row_excluded_when_explicit_applied_exists(self) -> None:
         mem = _mem()
@@ -547,7 +547,7 @@ class TestEndorsementDebt:
             events=self._make_events(mem.id, retrievals=5, with_explicit=True),
             endorsement_min_retrievals=5,
         )
-        assert report.endorsement_debt_total == 0
+        assert report.cold_endorsement_memories_total == 0
 
     def test_ambient_memory_excluded(self) -> None:
         mem = _mem(category=Category.AMBIENT)
@@ -556,7 +556,7 @@ class TestEndorsementDebt:
             events=self._make_events(mem.id, retrievals=10),
             endorsement_min_retrievals=5,
         )
-        assert report.endorsement_debt_total == 0
+        assert report.cold_endorsement_memories_total == 0
 
     def test_tombstoned_memory_excluded(self) -> None:
         # mem isn't in the memories list → can't be attributed to a row.
@@ -566,7 +566,7 @@ class TestEndorsementDebt:
             events=self._make_events(ghost_id, retrievals=10),
             endorsement_min_retrievals=5,
         )
-        assert report.endorsement_debt_total == 0
+        assert report.cold_endorsement_memories_total == 0
 
     def test_rows_sorted_by_retrieval_count_desc(self) -> None:
         m1 = _mem(body="m1")
@@ -579,7 +579,7 @@ class TestEndorsementDebt:
             events=events,
             endorsement_min_retrievals=5,
         )
-        assert [r.id for r in report.endorsement_debt_rows] == [m2.id, m1.id]
+        assert [r.id for r in report.cold_endorsement_memories_rows] == [m2.id, m1.id]
 
 
 # ---------------------------------------------------------------------------
@@ -676,7 +676,7 @@ class TestRenderText:
         assert "endorsement_rate" in text
         assert "1.00" in text  # rate at saturation
 
-    def test_endorsement_debt_section(self) -> None:
+    def test_cold_endorsement_memories_section(self) -> None:
         mem = _mem()
         events = []
         for _ in range(5):
@@ -686,7 +686,7 @@ class TestRenderText:
             memories=[mem], events=events, endorsement_min_retrievals=5
         )
         text = render_text(report)
-        assert "Endorsement-debt memories" in text
+        assert "Cold-endorsement memories" in text
         assert mem.id in text
 
 

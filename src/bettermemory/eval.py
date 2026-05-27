@@ -60,7 +60,7 @@ from .time_utils import parse_event_ts
 # site.
 DEFAULT_SINCE_SPEC = "30d"
 
-# Default floor for endorsement-debt row inclusion. Shared with
+# Default floor for cold-endorsement row inclusion. Shared with
 # ``health._COLD_ENDORSEMENT_MIN_RETRIEVALS`` — duplicating the literal
 # keeps the module dependency-light (we don't reach into health's
 # privates), and the value is conservative enough that drift between
@@ -154,7 +154,7 @@ class RateCI:
 
 
 @dataclass
-class EndorsementDebtRow:
+class ColdEndorsementMemoriesRow:
     """One memory the ranker keeps surfacing that the model never
     deliberately endorses. Mirrors ``health.MemoryStats`` minimally —
     we only carry what the eval renderer needs."""
@@ -231,8 +231,10 @@ class EvalReport:
         default_factory=lambda: RateCI(0, 0, None, None, None)
     )
 
-    endorsement_debt_rows: list[EndorsementDebtRow] = field(default_factory=list)
-    endorsement_debt_total: int = 0
+    cold_endorsement_memories_rows: list[ColdEndorsementMemoriesRow] = field(
+        default_factory=list
+    )
+    cold_endorsement_memories_total: int = 0
     endorsement_min_retrievals: int = DEFAULT_ENDORSEMENT_MIN_RETRIEVALS
 
     silent_miss_recent: list[SilentMissCandidate] = field(default_factory=list)
@@ -257,8 +259,8 @@ class EvalReport:
             "silent_miss_rate": self.silent_miss_rate.to_dict(),
             "cold_endorsement_memories": {
                 "min_retrievals": self.endorsement_min_retrievals,
-                "total": self.endorsement_debt_total,
-                "rows": [r.to_dict() for r in self.endorsement_debt_rows],
+                "total": self.cold_endorsement_memories_total,
+                "rows": [r.to_dict() for r in self.cold_endorsement_memories_rows],
             },
             "silent_miss_recent": [c.to_dict() for c in self.silent_miss_recent],
         }
@@ -316,13 +318,13 @@ def compute_eval(
 
     A memory that's been tombstoned (no longer in ``memories``) still
     counts toward retrieval / use occurrences — we attribute via id, not
-    via live status — but it cannot participate in endorsement-debt
+    via live status — but it cannot participate in cold-endorsement
     rows because we need its body/scopes for display.
     """
     now = now or datetime.now(timezone.utc)
     cutoff: datetime | None = (now - since) if since is not None else None
 
-    # Live store: id → memory, for endorsement-debt rows + scope filter.
+    # Live store: id → memory, for cold-endorsement rows + scope filter.
     by_id: dict[str, Memory] = {m.id: m for m in memories}
 
     # Scope filter: a memory passes if `scope` is in its scopes.
@@ -347,7 +349,7 @@ def compute_eval(
     silent_misses = 0
     total_events_scanned = 0
 
-    # Per-memory counts for endorsement-debt rollup.
+    # Per-memory counts for cold-endorsement rollup.
     retrieval_count: dict[str, int] = {}
     auto_applied_count: dict[str, int] = {}
     explicit_applied_count: dict[str, int] = {}
@@ -478,13 +480,13 @@ def compute_eval(
                 elif len(silent_miss_buffer) > silent_miss_limit:
                     silent_miss_buffer = silent_miss_buffer[-silent_miss_limit:]
 
-    # Endorsement-debt rows: retrieval_count >= floor AND
+    # Cold-endorsement rows: retrieval_count >= floor AND
     # explicit_applied_count == 0. Ambient memories are excluded — same
     # rationale as health's cold_endorsement_memories bucket (their
     # value is implicit; an explicit use event is structurally rare).
     floor = max(1, int(endorsement_min_retrievals))
-    debt_rows: list[EndorsementDebtRow] = []
-    debt_total = 0
+    cold_rows: list[ColdEndorsementMemoriesRow] = []
+    cold_total = 0
     for mid, rcount in retrieval_count.items():
         if rcount < floor:
             continue
@@ -495,9 +497,9 @@ def compute_eval(
             continue
         if mem.category == "ambient":
             continue
-        debt_total += 1
-        debt_rows.append(
-            EndorsementDebtRow(
+        cold_total += 1
+        cold_rows.append(
+            ColdEndorsementMemoriesRow(
                 id=mem.id,
                 scopes=list(mem.scopes),
                 summary=first_summary_line(mem.body),
@@ -508,7 +510,7 @@ def compute_eval(
         )
     # Sort by retrieval_count descending so the chattiest dead-letter
     # rows surface first; tie-break by id for determinism.
-    debt_rows.sort(key=lambda r: (-r.retrieval_count, r.id))
+    cold_rows.sort(key=lambda r: (-r.retrieval_count, r.id))
 
     report = EvalReport(
         generated_at=now,
@@ -522,8 +524,8 @@ def compute_eval(
         applied_explicit=applied_explicit,
         turns_audited=turns_audited,
         silent_misses=silent_misses,
-        endorsement_debt_rows=debt_rows,
-        endorsement_debt_total=debt_total,
+        cold_endorsement_memories_rows=cold_rows,
+        cold_endorsement_memories_total=cold_total,
         endorsement_min_retrievals=floor,
         silent_miss_recent=silent_miss_buffer,
     )
@@ -565,21 +567,21 @@ def render_text(report: EvalReport) -> str:
     lines.append(_format_rate("endorsement_rate ", report.endorsement_rate))
     lines.append(_format_rate("silent_miss_rate ", report.silent_miss_rate))
 
-    if report.endorsement_debt_rows or report.endorsement_debt_total:
+    if report.cold_endorsement_memories_rows or report.cold_endorsement_memories_total:
         lines.append("")
         lines.append(
-            f"Endorsement-debt memories "
+            f"Cold-endorsement memories "
             f"(retrievals ≥ {report.endorsement_min_retrievals}, 0 explicit applied): "
-            f"{report.endorsement_debt_total}"
+            f"{report.cold_endorsement_memories_total}"
         )
-        for row in report.endorsement_debt_rows[:10]:
+        for row in report.cold_endorsement_memories_rows[:10]:
             scopes = ",".join(row.scopes) or "—"
             lines.append(
                 f"  {row.id}  {scopes:<18s}  "
                 f'"{_truncate(row.summary, 50)}"  ({row.retrieval_count} retrievals)'
             )
-        if report.endorsement_debt_total > 10:
-            lines.append(f"  … plus {report.endorsement_debt_total - 10} more")
+        if report.cold_endorsement_memories_total > 10:
+            lines.append(f"  … plus {report.cold_endorsement_memories_total - 10} more")
 
     if report.silent_miss_recent:
         lines.append("")
@@ -1335,7 +1337,7 @@ def render_tool_usage_text(report: ToolUsageReport) -> str:
 __all__ = [
     "EvalReport",
     "RateCI",
-    "EndorsementDebtRow",
+    "ColdEndorsementMemoriesRow",
     "SilentMissCandidate",
     "ToolUsageReport",
     "ToolUsageRow",
