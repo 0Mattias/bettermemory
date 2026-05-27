@@ -922,6 +922,128 @@ async def test_search_depends_on_resolved_skips_tombstoned_target(
     assert "depends_on_resolved" not in hit or hit["depends_on_resolved"] == []
 
 
+async def test_search_depends_on_resolved_skips_cross_project_target(
+    memory_dir: Path,
+    monkeypatch: Any,
+) -> None:
+    """A depended-on memory in a different project must NOT be inlined
+    via `depends_on_resolved` when the search is auto-scoped to the
+    caller's repo. The hit itself is correctly scope-filtered upstream,
+    but the dependency auto-pull built its side-map from the pre-filter
+    loader output and would otherwise resolve cross-project targets —
+    leaking memory that the caller's auto-scope was explicitly hiding.
+    """
+    import bettermemory._handlers as handlers_module
+    import bettermemory.server as server_module
+    from bettermemory.origin import Origin
+
+    origin_foo = Origin(
+        cwd="/work/foo",
+        repo="git@github.com:example/foo.git",
+        branch="main",
+        worktree_root="/work/foo",
+    )
+    origin_bar = Origin(
+        cwd="/work/bar",
+        repo="git@github.com:example/bar.git",
+        branch="main",
+        worktree_root="/work/bar",
+    )
+
+    def make_capture(origin: Origin):
+        def _capture(cwd: Any = None) -> Origin:
+            return origin
+
+        return _capture
+
+    cfg = Config(storage=StorageConfig(directory=str(memory_dir)))
+
+    # Write the cross-project target (memory_B) as if we were in repo bar.
+    monkeypatch.setattr(handlers_module, "capture_origin", make_capture(origin_bar))
+    monkeypatch.setattr(server_module, "capture_origin", make_capture(origin_bar))
+    server_bar = build_server(config=cfg, store=Store(memory_dir), state=SessionState())
+    target = await _call(
+        server_bar,
+        "memory_write",
+        content="bar-side secret detail nobody else should see",
+        scopes=["projects:bar"],
+        category="fact",
+    )
+
+    # Switch to repo foo and write the dependent (memory_A) with a
+    # depends_on link pointing at the cross-project target.
+    monkeypatch.setattr(handlers_module, "capture_origin", make_capture(origin_foo))
+    monkeypatch.setattr(server_module, "capture_origin", make_capture(origin_foo))
+    server_foo = build_server(config=cfg, store=Store(memory_dir), state=SessionState())
+    dependent = await _call(
+        server_foo,
+        "memory_write",
+        content="foo-side note about cross-project dependency",
+        scopes=["projects:foo"],
+        category="fact",
+    )
+    await _call(
+        server_foo,
+        "memory_update",
+        id=dependent["id"],
+        links=[{"type": "depends_on", "target_id": target["id"]}],
+    )
+
+    # Search from repo foo (auto_scope defaults True). The hit list
+    # must contain A; A's depends_on_resolved must NOT contain B.
+    hits = _unwrap(
+        await _call(server_foo, "memory_search", query="cross-project dependency")
+    )
+    hit = next(h for h in hits if h["id"] == dependent["id"])
+    resolved = hit.get("depends_on_resolved")
+    # Either omitted (only link's target was filtered out) or list
+    # without the cross-project target — both shapes are acceptable;
+    # the leak case would put `target["id"]` into `resolved`.
+    if resolved is not None:
+        assert target["id"] not in {r["id"] for r in resolved}
+
+
+async def test_search_depends_on_resolved_skips_disabled_scope_target(
+    server: Any,
+) -> None:
+    """A depended-on memory in a session-disabled scope must NOT be
+    inlined via `depends_on_resolved`. The hit list itself is
+    already filtered via `excluded_scopes`, but the dependency
+    auto-pull would otherwise resolve targets from the pre-filter
+    loader output — undoing the disable via the dependency edge."""
+    target = await _call(
+        server,
+        "memory_write",
+        content="alpha target body for dependency lookup",
+        scopes=["projects:alpha"],
+        category="fact",
+    )
+    dependent = await _call(
+        server,
+        "memory_write",
+        content="dependent memory in projects:beta scope",
+        scopes=["projects:beta"],
+        category="fact",
+        acknowledge_scope_mismatch=True,
+    )
+    await _call(
+        server,
+        "memory_update",
+        id=dependent["id"],
+        links=[{"type": "depends_on", "target_id": target["id"]}],
+    )
+
+    # Disable the target's scope. Searching for the dependent should
+    # still find it (it lives in projects:beta), but the resolved
+    # depends_on must not surface the disabled-scope target.
+    await _call(server, "memory_scope_disable", scope="projects:alpha")
+    hits = _unwrap(await _call(server, "memory_search", query="beta dependent"))
+    hit = next(h for h in hits if h["id"] == dependent["id"])
+    resolved = hit.get("depends_on_resolved")
+    if resolved is not None:
+        assert target["id"] not in {r["id"] for r in resolved}
+
+
 # ---------------------------------------------------------------------------
 # memory_write — inline curation hint (one-shot per session)
 # ---------------------------------------------------------------------------

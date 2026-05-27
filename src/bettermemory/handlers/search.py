@@ -264,7 +264,21 @@ async def memory_search(
     # noisy `depends_on` graph would dominate the response, but the
     # caps make the default safe.
     if out:
-        deps.responses.attach_depends_on_resolved(out, hits, memories)
+        # Re-apply the caller's scope filters to the dependency
+        # auto-pull. The side-map inside `attach_depends_on_resolved`
+        # is built from `memories` (the pre-filter loader output)
+        # so cross-repo / session-disabled targets are still
+        # resolvable by id — without re-checking here, a hit in a
+        # caller-visible scope could pull in a target from a hidden
+        # scope, undoing the deliberate scope filter via the
+        # dependency edge.
+        deps.responses.attach_depends_on_resolved(
+            out,
+            hits,
+            memories,
+            caller_origin=current_origin if auto_scope else None,
+            excluded_scopes=set(state.disabled_scopes),
+        )
 
     # Optional auto-expansion of the top hit. Conservative: only fires
     # when the top hit clearly wins ("high" relevance) so the model

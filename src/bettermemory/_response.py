@@ -26,7 +26,12 @@ from .models import (
     SimilarHit,
     TombstonedSummary,
 )
-from .origin import Origin, commit_author_timestamps, repos_match
+from .origin import (
+    Origin,
+    commit_author_timestamps,
+    repos_match,
+    should_include_for_caller,
+)
 from .time_utils import isoformat_utc as _isoformat_utc
 from .time_utils import isoformat_utc_optional as _isoformat_utc_optional
 from .verify import (
@@ -434,6 +439,8 @@ class ResponseBuilder:
         *,
         max_per_hit: int = 3,
         max_total: int = 10,
+        caller_origin: Origin | None = None,
+        excluded_scopes: set[str] | None = None,
     ) -> None:
         """Mutate `out` in-place, adding `depends_on_resolved` to any hit
         whose memory carries `depends_on`-typed links.
@@ -468,12 +475,26 @@ class ResponseBuilder:
         Omitted (key absent from the dict, not null) when the hit has
         no `depends_on` links or all the targets are tombstoned —
         same absence-as-signal contract as the other attach_* helpers.
+
+        `caller_origin` and `excluded_scopes` re-apply the caller-side
+        scope filter the search layer ran against the hit list. The
+        side-map below is built from the pre-filter loader output (so
+        cross-repo and session-disabled targets are still resolvable
+        by id), but the deliberate scope/origin filter on the hit
+        list must extend to depended-on summaries too — otherwise a
+        memory in a session-disabled scope (or in a different
+        project under `auto_scope=True`) leaks back in via the
+        dependency edge. Default both to None for back-compat: an
+        omitted `caller_origin` means "no auto-scope check" (mirroring
+        `auto_scope=False` at the caller), and an omitted
+        `excluded_scopes` means "no session disables".
         """
         from .models import first_summary_line
 
         # Build the id → memory side-map once. The caller (`search.py`)
         # has already paid the load cost for ranking; reuse it here.
         memory_by_id = {m.id: m for m in memories}
+        excluded = excluded_scopes or set()
 
         total = 0
         for hit_dict, hit in zip(out, hits):
@@ -499,6 +520,20 @@ class ResponseBuilder:
                     # the FTS5 prefilter). Skip silently — the link
                     # still exists on disk and `memory_show` will
                     # surface it; auto-pull is a best-effort surface.
+                    continue
+                # Re-apply the caller's scope filter to the resolved
+                # target. The side-map is built from the pre-filter
+                # loader output (so we can find targets by id at all),
+                # but a depended-on memory in a session-disabled scope
+                # or a different project under auto_scope must not
+                # leak in via the dependency edge.
+                if excluded and (set(target.scopes) & excluded):
+                    continue
+                if caller_origin is not None and not should_include_for_caller(
+                    target.origin,
+                    caller_origin.repo,
+                    caller_worktree_root=caller_origin.worktree_root,
+                ):
                     continue
                 resolved.append(
                     {
