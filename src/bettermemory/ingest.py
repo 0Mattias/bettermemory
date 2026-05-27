@@ -240,12 +240,15 @@ def _classify_one(
 
     try:
         post = fm.load(source_path)
-    except Exception as exc:  # noqa: BLE001 — yaml.ParserError is not a ValueError
-        # `_frontmatter.load` raises ValueError on encoding / size
-        # issues and OSError on file-read failures, but the YAML
-        # backend can also raise `yaml.YAMLError` (which inherits
-        # from neither). Catch broadly so one malformed source file
-        # never aborts the rest of the batch.
+    except (ValueError, KeyError, OSError) as exc:
+        # `_frontmatter.load` raises ValueError on encoding / size /
+        # malformed-YAML issues (the YAML backend's `yaml.YAMLError`
+        # is translated to ValueError at the parser boundary — see
+        # `_frontmatter.loads`) and OSError on file-read failures.
+        # Catch the (ValueError, KeyError, OSError) trio so one
+        # malformed source file never aborts the rest of the batch;
+        # matches the discipline `store.load_all` uses on the active
+        # memory directory.
         blank.reason = f"parse error: {exc}"
         return blank
 

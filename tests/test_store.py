@@ -606,3 +606,111 @@ def test_store_show_is_an_alias_for_load_one(store: Store) -> None:
     assert via_show == via_load
     assert via_show.id == memory.id
     assert via_show.body == via_load.body
+
+
+# ---------------------------------------------------------------------------
+# Tombstone-fallback robustness — corrupt entries must not crash readers.
+#
+# `load_one`, `mark_verified`, and `tombstone` each fall back to iterating
+# `.tombstones/` when the id isn't found in the active set. The iteration
+# used to call `frontmatter.load(path)` without try/except: one corrupt
+# tombstone (sync-pull truncation, hand-edit typo, partial-write recovery)
+# would crash the whole tool — `memory_show`, `memory_record_use`, and
+# the hook's attribution loop. The fix mirrors `load_tombstones`'s
+# defensive catch tuple. These tests exercise each callsite by dropping
+# a junk tombstone into `.tombstones/` and asserting the callsite still
+# resolves cleanly.
+# ---------------------------------------------------------------------------
+
+
+def _drop_corrupt_tombstone(store: Store) -> Path:
+    """Place a corrupt-YAML tombstone in `.tombstones/` and return the path.
+
+    The content is malformed YAML (`{unterminated`) inside an otherwise
+    well-formed frontmatter wrapper, so the file passes the iteration
+    filter (regular `.md`, not a symlink) but blows up on parse — the
+    exact shape a torn sync-pull or hand-edit typo produces.
+    """
+    store.tombstone_dir.mkdir(mode=0o700, exist_ok=True)
+    corrupt = store.tombstone_dir / "00000000-corrupt.tombstone.md"
+    corrupt.write_text(
+        "---\nid: x\nbroken: {unterminated\n---\n\nbody\n",
+        encoding="utf-8",
+    )
+    return corrupt
+
+
+def test_load_one_skips_corrupt_tombstone_during_fallback(store: Store) -> None:
+    """`load_one` falls back to iterating tombstones when the id isn't
+    active. A corrupt tombstone in that iteration must not crash —
+    `memory_show` of a never-existing id should still raise the
+    expected `MemoryNotFoundError`, not propagate a parse error.
+    """
+    _drop_corrupt_tombstone(store)
+    # The corrupt tombstone exists; querying a fresh id should fall
+    # through cleanly to MemoryNotFoundError without the parser
+    # blowing up on the way.
+    with pytest.raises(MemoryNotFoundError):
+        store.load_one(generate_ulid())
+
+
+def test_load_one_finds_tombstone_alongside_corrupt_entry(store: Store) -> None:
+    """The corrupt-tombstone skip path must not eat *legitimate*
+    tombstones. Tombstone a real memory, drop a corrupt entry beside
+    it, and verify `load_one` still surfaces the `TombstonedError`
+    with the original removal reason — the skip is per-file, not per-
+    iteration."""
+    memory = store.write(content="real", scopes=["tools"])
+    store.tombstone(memory.id, reason="real-reason")
+    _drop_corrupt_tombstone(store)
+
+    with pytest.raises(TombstonedError) as excinfo:
+        store.load_one(memory.id)
+    assert "real-reason" in str(excinfo.value)
+
+
+def test_mark_verified_skips_corrupt_tombstone_during_fallback(store: Store) -> None:
+    """`mark_verified` falls back to the tombstone iteration when the
+    id isn't active. A corrupt tombstone must not crash the callsite —
+    a clean miss should still raise `MemoryNotFoundError`."""
+    _drop_corrupt_tombstone(store)
+    with pytest.raises(MemoryNotFoundError):
+        store.mark_verified(generate_ulid())
+
+
+def test_mark_verified_tombstoned_alongside_corrupt_entry(store: Store) -> None:
+    """When the id is actually tombstoned, a corrupt sibling must not
+    prevent `mark_verified` from raising `TombstonedError` with the
+    proper removal context."""
+    memory = store.write(content="x", scopes=["tools"])
+    store.tombstone(memory.id, reason="superseded")
+    _drop_corrupt_tombstone(store)
+
+    with pytest.raises(TombstonedError) as excinfo:
+        store.mark_verified(memory.id)
+    assert "superseded" in str(excinfo.value)
+
+
+def test_tombstone_skips_corrupt_tombstone_during_double_tombstone_check(
+    store: Store,
+) -> None:
+    """`tombstone(id)` falls back to the tombstone iteration when the
+    id isn't active, to give a clearer "already tombstoned" error. A
+    corrupt tombstone in that iteration must not crash the call —
+    a clean miss for an unknown id should still raise
+    `MemoryNotFoundError`."""
+    _drop_corrupt_tombstone(store)
+    with pytest.raises(MemoryNotFoundError):
+        store.tombstone(generate_ulid(), reason="never existed")
+
+
+def test_tombstone_already_tombstoned_alongside_corrupt_entry(store: Store) -> None:
+    """When the id is already tombstoned, a corrupt sibling must not
+    prevent `tombstone` from surfacing the clear
+    "already tombstoned" `TombstonedError`."""
+    memory = store.write(content="x", scopes=["tools"])
+    store.tombstone(memory.id, reason="first removal")
+    _drop_corrupt_tombstone(store)
+
+    with pytest.raises(TombstonedError, match="already tombstoned"):
+        store.tombstone(memory.id, reason="second attempt")

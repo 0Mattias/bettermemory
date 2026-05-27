@@ -17,6 +17,8 @@ from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Iterator
 
+import yaml
+
 from . import _frontmatter as frontmatter
 from ._decorators import best_effort
 from ._fsutil import flock_excl, fsync_dir, fsync_file
@@ -228,8 +230,17 @@ class Store:
                 return memory
 
         # If it's tombstoned, give a clearer error so the model can say so.
+        # Match the discipline `load_tombstones` (store.py:583) uses for the
+        # bulk reader: one corrupt/truncated tombstone or a race with
+        # `prune_tombstones` (FileNotFoundError) must not crash the whole
+        # callsite. `yaml.YAMLError` is redundant after the `_frontmatter`
+        # boundary fix translates it to ValueError, but we list it
+        # explicitly as defense-in-depth + signal to future readers.
         for path in self._iter_tombstone_paths():
-            post = frontmatter.load(path)
+            try:
+                post = frontmatter.load(path)
+            except (FileNotFoundError, ValueError, KeyError, OSError, yaml.YAMLError):
+                continue
             if post.metadata.get("id") == memory_id:
                 raise TombstonedError(
                     f"memory {memory_id} was removed: "
@@ -449,8 +460,21 @@ class Store:
         """
         existing_path = self._find_path_for_id(memory_id)
         if existing_path is None:
+            # Tombstone scan must tolerate corrupt/racing entries — same
+            # defensive pattern as `load_tombstones` (store.py:583).
+            # See `load_one` for the rationale on the explicit
+            # `yaml.YAMLError` + `FileNotFoundError` in the catch tuple.
             for tpath in self._iter_tombstone_paths():
-                post = frontmatter.load(tpath)
+                try:
+                    post = frontmatter.load(tpath)
+                except (
+                    FileNotFoundError,
+                    ValueError,
+                    KeyError,
+                    OSError,
+                    yaml.YAMLError,
+                ):
+                    continue
                 if post.metadata.get("id") == memory_id:
                     raise TombstonedError(
                         f"memory {memory_id} was removed: "
@@ -517,8 +541,21 @@ class Store:
         path = self._find_path_for_id(memory_id)
         if path is None:
             # Maybe it's already tombstoned — bubble up a clearer error.
+            # Tombstone scan must tolerate corrupt/racing entries — same
+            # defensive pattern as `load_tombstones` (store.py:583).
+            # See `load_one` for the rationale on the explicit
+            # `yaml.YAMLError` + `FileNotFoundError` in the catch tuple.
             for tpath in self._iter_tombstone_paths():
-                post = frontmatter.load(tpath)
+                try:
+                    post = frontmatter.load(tpath)
+                except (
+                    FileNotFoundError,
+                    ValueError,
+                    KeyError,
+                    OSError,
+                    yaml.YAMLError,
+                ):
+                    continue
                 if post.metadata.get("id") == memory_id:
                     raise TombstonedError(f"memory {memory_id} is already tombstoned")
             raise MemoryNotFoundError(f"no memory with id {memory_id}")

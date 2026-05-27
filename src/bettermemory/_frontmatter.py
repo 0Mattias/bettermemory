@@ -109,7 +109,20 @@ def loads(text: str) -> Post:
         body_lines = body_lines[1:]
     body = "\n".join(body_lines)
 
-    metadata = yaml.load(yaml_text, Loader=yaml.SafeLoader) or {}
+    # Translate the yaml package's exception hierarchy into ValueError
+    # at the parser boundary. `yaml.YAMLError` inherits from `Exception`,
+    # NOT from `ValueError`, so downstream callers in `store.py` that
+    # catch `(ValueError, KeyError, OSError)` to skip malformed files
+    # would otherwise crash on a single corrupt file — torn writes from
+    # `sync pull`, hand-edit typos, partial-write recovery. The
+    # frontmatter module owns the YAML boundary, so the translation
+    # belongs here, not threaded through every callsite. `from exc`
+    # preserves the original `yaml.YAMLError` on `__cause__` for
+    # debugging.
+    try:
+        metadata = yaml.load(yaml_text, Loader=yaml.SafeLoader) or {}
+    except yaml.YAMLError as exc:
+        raise ValueError(f"malformed YAML: {exc}") from exc
     if not isinstance(metadata, dict):
         # Frontmatter must be a mapping; anything else is malformed.
         raise ValueError("frontmatter metadata must be a YAML mapping")
@@ -132,13 +145,21 @@ def load(path: Path | str) -> Post:
     laundering the corruption permanently. Raising keeps the
     pre-2.6.4 contract (``read_text(encoding="utf-8")`` raised here
     too) so the store's malformed-file skip path fires.
+
+    Re-raises `ValueError` from :func:`loads` with the file path
+    prefixed — `loads` doesn't know which path it came from, but
+    diagnostic output (the store's `doctor`, error logs) is dramatically
+    more useful when the path is named.
     """
     raw = bounded_read(Path(path), _MAX_FILE_BYTES)
     try:
         text = raw.decode("utf-8")
     except UnicodeDecodeError as exc:
         raise ValueError(f"{path}: not valid UTF-8: {exc}") from exc
-    return loads(text)
+    try:
+        return loads(text)
+    except ValueError as exc:
+        raise ValueError(f"{path}: {exc}") from exc
 
 
 class _NoAliasDumper(yaml.SafeDumper):

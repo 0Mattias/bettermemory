@@ -227,6 +227,39 @@ def test_load_rejects_invalid_utf8(tmp_path) -> None:
         load(path)
 
 
+def test_loads_translates_yaml_errors_to_valueerror() -> None:
+    """Regression: `yaml.YAMLError` does not inherit from `ValueError`, so
+    downstream `store.py` callers that catch `(ValueError, KeyError, OSError)`
+    to skip malformed files used to crash on a single corrupt frontmatter
+    (a sync-pull truncation, hand-edit typo, partial-write recovery). The
+    parse boundary lives here, so the translation belongs here too: a
+    malformed YAML region must raise `ValueError` with the original
+    `yaml.YAMLError` chained on `__cause__` for debugging.
+    """
+    import yaml
+
+    # YAML scanner blow-up: unbalanced brace inside a flow mapping.
+    malformed = "---\nid: x\nbroken: {unterminated\n---\n\nbody\n"
+    with pytest.raises(ValueError, match="malformed YAML") as excinfo:
+        loads(malformed)
+    # PEP 3134 chaining preserves the original yaml-package error so the
+    # debug surface still has the parser's positional context.
+    assert isinstance(excinfo.value.__cause__, yaml.YAMLError)
+
+
+def test_load_prefixes_path_on_malformed_yaml(tmp_path) -> None:
+    """`loads` doesn't know which file it parsed; `load` does. When the
+    parser raises, `load` must re-raise with the path prefixed so error
+    logs and `doctor` output name the offending file. Pin both halves
+    of the contract: still a `ValueError`, but with the path in the
+    message.
+    """
+    p = tmp_path / "broken.md"
+    p.write_text("---\nid: x\nbroken: {unterminated\n---\n\nbody\n", encoding="utf-8")
+    with pytest.raises(ValueError, match=r"broken\.md.*malformed YAML"):
+        load(p)
+
+
 def test_loads_accepts_normal_sized_frontmatter() -> None:
     """Sanity check: normal-sized frontmatter (verified_paths, links,
     etc. all populated) is well under the 64 KB cap. Lock the
