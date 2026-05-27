@@ -473,15 +473,30 @@ class SilentMissStats:
     which would have a non-zero `audited_total`. The two-count shape is
     deliberate so a stalled hook ("nothing audited at all") doesn't
     look the same as a healthy run ("audited a lot, model behaved").
+
+    `miss_total` historically counted every `search_miss` event in the
+    window. That conflates "9 turns hammering the same unretrieved
+    memory" with "9 distinct unretrieved memories" — both look like 9.
+    The rollup now also surfaces `unique_miss_memories`: the cardinality
+    of the set of top-hit memory_ids on the in-window miss events. The
+    pair lets a consumer read "9 events across 1 memory" (one mis-tagged
+    memory the model keeps probing) vs. "9 events across 9 memories"
+    (genuinely broad retrieval slippage). Misses whose top-hit memory
+    has since been tombstoned are dropped from BOTH counters — once a
+    memory is gone the miss is no longer actionable. `miss_total` retains
+    its name for back-compat with existing consumers; the to_dict shape
+    surfaces both keys.
     """
 
     audited_total: int = 0
     miss_total: int = 0
+    unique_miss_memories: int = 0
 
     def to_dict(self) -> dict[str, Any]:
         return {
             "audited_total": self.audited_total,
             "miss_total": self.miss_total,
+            "unique_miss_memories": self.unique_miss_memories,
         }
 
 
@@ -691,7 +706,14 @@ class _AccumulatorRollups:
     total_events: int
     orphan_use_events: int
     silent_miss_audited_ts: list[datetime | None]
-    silent_miss_ts: list[datetime | None]
+    # Per-miss-event tuples of `(ts, top_hit_id)` rather than bare
+    # timestamps. The id is the first entry in the event's `top_hits`
+    # payload (audit.py:418-427) — the memory the probe found that the
+    # model should have retrieved. Kept on the rollup so the
+    # `compute_health` aggregation can both dedup by id
+    # (`unique_miss_memories`) and drop events whose target was later
+    # tombstoned (no longer actionable).
+    silent_miss_events: list[tuple[datetime | None, str | None]]
     latest_miss_cutoff: datetime | None
     resolution_events_by_id: dict[str, list[dict[str, Any]]]
 
@@ -741,7 +763,15 @@ class _StatsAccumulator:
         # the post-fix rollup hatch documented at the `_handle_search_miss`
         # branch.
         self._silent_miss_audited_ts: list[datetime | None] = []
-        self._silent_miss_ts: list[datetime | None] = []
+        # Each miss event contributes `(ts, top_hit_id_or_None)`. The
+        # second tuple element is the first id in the event's `top_hits`
+        # payload — present on every `search_miss` written via
+        # `search_miss_fields`, defensively None on malformed legacy
+        # events that lack the field entirely (the older `compute_health`
+        # rollup didn't read top_hits, so those events shipped without
+        # them; we accept the None and fall back to counting-only behavior
+        # so the rollup degrades cleanly rather than crashing).
+        self._silent_miss_events: list[tuple[datetime | None, str | None]] = []
         self._latest_miss_cutoff: datetime | None = None
         # Per-id chronological log of resolution-relevant events
         # (update / verify / use[contradicted|corrected]). Accumulated
@@ -884,7 +914,26 @@ class _StatsAccumulator:
         # filter the log on a single `kind=` value, and so the
         # `silent_miss_cutoff` hatch can target one kind cleanly
         # without rewriting the events log.
-        self._silent_miss_ts.append(_ensure_utc(parse_event_ts(ev.get("ts"))))
+        #
+        # Also capture the top-hit memory_id (first entry in `top_hits`)
+        # so the rollup can dedup by memory and drop misses whose target
+        # has since been tombstoned. Defensive against malformed events:
+        # a missing / non-list `top_hits`, a non-dict first entry, or a
+        # non-string `id` all degrade to `None` — the event still counts
+        # toward `miss_total` (the legacy count semantic), it just
+        # cannot contribute to `unique_miss_memories` and cannot be
+        # filtered by tombstone status.
+        top_hit_id: str | None = None
+        top_hits = ev.get("top_hits")
+        if isinstance(top_hits, list) and top_hits:
+            first = top_hits[0]
+            if isinstance(first, dict):
+                candidate = first.get("id")
+                if isinstance(candidate, str):
+                    top_hit_id = candidate
+        self._silent_miss_events.append(
+            (_ensure_utc(parse_event_ts(ev.get("ts"))), top_hit_id)
+        )
 
     def _handle_silent_miss_cutoff(self, ev: dict[str, Any]) -> None:
         # Additive escape hatch: when a fix lands that invalidates a
@@ -931,7 +980,7 @@ class _StatsAccumulator:
             total_events=self._total_events,
             orphan_use_events=self._orphan_use_events,
             silent_miss_audited_ts=self._silent_miss_audited_ts,
-            silent_miss_ts=self._silent_miss_ts,
+            silent_miss_events=self._silent_miss_events,
             latest_miss_cutoff=self._latest_miss_cutoff,
             resolution_events_by_id=self._resolution_events_by_id,
         )
@@ -1051,7 +1100,7 @@ def compute_health(
     total_events = rollups.total_events
     orphan_use_events = rollups.orphan_use_events
     silent_miss_audited_ts = rollups.silent_miss_audited_ts
-    silent_miss_ts = rollups.silent_miss_ts
+    silent_miss_events = rollups.silent_miss_events
     latest_miss_cutoff = rollups.latest_miss_cutoff
     resolution_events_by_id = rollups.resolution_events_by_id
     sessions = rollups.sessions
@@ -1251,11 +1300,11 @@ def compute_health(
         orphan_use_events=orphan_use_events,
         verification_debt=verification_debt,
         commit_drift_debt=commit_drift_debt,
-        silent_misses=SilentMissStats(
-            audited_total=_count_post_cutoff(
-                silent_miss_audited_ts, latest_miss_cutoff
-            ),
-            miss_total=_count_post_cutoff(silent_miss_ts, latest_miss_cutoff),
+        silent_misses=_silent_miss_stats(
+            audited_ts=silent_miss_audited_ts,
+            miss_events=silent_miss_events,
+            cutoff=latest_miss_cutoff,
+            tombstoned_ids=tombstoned_ids,
         ),
         endorsement_debt=endorsement_debt,
     )
@@ -1644,6 +1693,7 @@ def render_text(report: HealthReport) -> str:
         lines.append(
             f"Silent misses — audited={sm.audited_total}  "
             f"miss={sm.miss_total}  "
+            f"unique_memories={sm.unique_miss_memories}  "
             f"(emit via memory_audit_turn from a client-side end-of-turn hook):"
         )
         if sm.miss_total == 0:
@@ -1657,7 +1707,9 @@ def render_text(report: HealthReport) -> str:
             rate_str = f"{miss_rate_pct}%" if miss_rate_pct is not None else "?"
             lines.append(
                 f"  {sm.miss_total} of {sm.audited_total} audited turns "
-                f"flagged a miss (rate={rate_str})"
+                f"flagged a miss (rate={rate_str}) "
+                f"across {sm.unique_miss_memories} distinct memor"
+                f"{'y' if sm.unique_miss_memories == 1 else 'ies'}"
             )
 
     cd = report.commit_drift_debt
@@ -1714,6 +1766,53 @@ def _count_post_cutoff(
     return sum(1 for ts in timestamps if ts is not None and ts >= cutoff)
 
 
+def _silent_miss_stats(
+    *,
+    audited_ts: list[datetime | None],
+    miss_events: list[tuple[datetime | None, str | None]],
+    cutoff: datetime | None,
+    tombstoned_ids: set[str],
+) -> SilentMissStats:
+    """Fold the buffered audit telemetry into a `SilentMissStats`.
+
+    Three filters compose in order:
+
+    1. **Cutoff** — events whose ts predates the latest
+       `silent_miss_cutoff` are dropped (the additive escape hatch
+       documented at `_handle_silent_miss_cutoff`). Applied to both
+       audited and miss events so the rate denominator stays consistent.
+    2. **Tombstone** — miss events whose top-hit id is in
+       `tombstoned_ids` are dropped: once a memory is gone, a miss
+       against it is no longer actionable. Only applied to miss events
+       — `turn_audited` carries no per-memory payload, and the
+       denominator should reflect "audits the hook ran" regardless of
+       whether their probe hits have since been tombstoned. Events with
+       a None top-hit id (malformed legacy events without `top_hits`)
+       fall through this filter on the conservative interpretation
+       that we cannot prove the target was tombstoned.
+    3. **Dedup** — the survivors are folded into both `miss_total`
+       (events count) and `unique_miss_memories` (set cardinality of
+       top-hit ids; events with None ids contribute to the event
+       count but not to the unique-memories count).
+    """
+    audited_total = _count_post_cutoff(audited_ts, cutoff)
+    miss_total = 0
+    unique_ids: set[str] = set()
+    for ts, top_hit_id in miss_events:
+        if cutoff is not None and (ts is None or ts < cutoff):
+            continue
+        if top_hit_id is not None and top_hit_id in tombstoned_ids:
+            continue
+        miss_total += 1
+        if top_hit_id is not None:
+            unique_ids.add(top_hit_id)
+    return SilentMissStats(
+        audited_total=audited_total,
+        miss_total=miss_total,
+        unique_miss_memories=len(unique_ids),
+    )
+
+
 def _edit_distance_within(a: str, b: str, max_dist: int) -> bool:
     """True iff Levenshtein(a, b) <= max_dist.
 
@@ -1765,12 +1864,14 @@ def curation_counts(
     caller_origin: Origin | None = None,
     now: datetime | None = None,
     since: datetime | None = None,
+    tombstoned_ids: set[str] | None = None,
 ) -> dict[str, int]:
     """Cheap summary of curation pressure.
 
     Returns
     ``{"stale", "never_verified", "drifted", "cold", "dead",
-    "silent_misses", "endorsement_debt"}`` —
+    "silent_misses", "unique_silent_miss_memories",
+    "endorsement_debt"}`` —
     integer counts only, no row materialisation. Used by
     `memory_scope_overview` so the model can see at a glance whether
     the store has anything worth a curation pass without paying the
@@ -1782,6 +1883,9 @@ def curation_counts(
     Session-start surfaces just the numerator because a non-zero
     count is the actionable signal; the audit-cadence denominator
     matters for tuning, not for "should I look at this now."
+    `unique_silent_miss_memories` is the cardinality of the set of
+    top-hit memory_ids on those events — distinguishes "9 events
+    against 1 mis-tagged memory" from "9 events against 9 memories."
     `endorsement_debt` is the count of memories the ranker keeps
     surfacing (retrieval_count >= min) that the model never explicitly
     endorsed — same shape decision as silent_misses: surface the
@@ -1798,6 +1902,15 @@ def curation_counts(
     `caller_origin` drives the `drifted` count, mirroring
     `_compute_commit_drift_debt`. Pass None to skip the
     repo-aware portion (the count stays at zero).
+
+    `tombstoned_ids`, when set, drops silent-miss events whose top-hit
+    memory has been tombstoned. The miss is no longer actionable in
+    that case (the memory can't be retrieved anymore), so leaving it
+    in the rollup just inflates the count with stale signal. Both
+    `silent_misses` and `unique_silent_miss_memories` honor the
+    filter. The default (None / empty set) preserves the legacy
+    "every miss counts" semantic for callers that haven't been
+    updated.
 
     `since`, when set, switches the helper into *delta* mode:
     events older than `since` are skipped, and memories created
@@ -1818,6 +1931,7 @@ def curation_counts(
     cutoff = now - timedelta(days=window_days)
     verification_cutoff = now - timedelta(days=verification_stale_days)
     since_aware = _ensure_utc(since)
+    tombstoned_ids_set = tombstoned_ids or set()
 
     # Re-iterate only once over `memories` — pull the slim bookkeeping
     # we need. In delta mode, `since` filters here so every downstream
@@ -1842,11 +1956,12 @@ def curation_counts(
     # not the model endorsing — same discriminator
     # `_advance_turn`/`memory_record_use` use.
     explicit_applied_counts: dict[str, int] = {m.id: 0 for m in mem_list}
-    # Buffered with timestamps so a later `silent_miss_cutoff` event
-    # can retroactively drop pre-cutoff misses — same shape as the
-    # `compute_health` rollup, kept in sync because both paths feed
-    # the model's "should I look at this now?" decision.
-    silent_miss_ts_list: list[datetime | None] = []
+    # Per-miss-event tuples of `(ts, top_hit_id)`. The id is the first
+    # entry in the event's `top_hits` payload (audit.py:418-427) —
+    # needed for the tombstone filter and the unique-memories count.
+    # Mirrors the `compute_health` shape so the two paths stay in
+    # numerical agreement.
+    silent_miss_events_list: list[tuple[datetime | None, str | None]] = []
     latest_miss_cutoff: datetime | None = None
     for ev in events:
         kind = ev.get("kind")
@@ -1889,9 +2004,32 @@ def curation_counts(
                     if not is_auto and mid in explicit_applied_counts:
                         explicit_applied_counts[mid] += 1
         elif kind == "search_miss":
-            silent_miss_ts_list.append(_ensure_utc(_parse_event_ts(ev.get("ts"))))
+            # Capture the top-hit id alongside the timestamp. Same
+            # defensive handling as `_StatsAccumulator._handle_search_miss`:
+            # malformed events (missing / non-list / non-dict / non-string
+            # id) degrade to None — the event still counts toward
+            # `silent_misses` but can't contribute to
+            # `unique_silent_miss_memories` and can't be tombstone-filtered.
+            top_hit_id: str | None = None
+            top_hits = ev.get("top_hits")
+            if isinstance(top_hits, list) and top_hits:
+                first = top_hits[0]
+                if isinstance(first, dict):
+                    candidate = first.get("id")
+                    if isinstance(candidate, str):
+                        top_hit_id = candidate
+            silent_miss_events_list.append(
+                (_ensure_utc(_parse_event_ts(ev.get("ts"))), top_hit_id)
+            )
 
-    silent_misses = _count_post_cutoff(silent_miss_ts_list, latest_miss_cutoff)
+    silent_miss_stats = _silent_miss_stats(
+        audited_ts=[],  # curation_counts only surfaces the numerator
+        miss_events=silent_miss_events_list,
+        cutoff=latest_miss_cutoff,
+        tombstoned_ids=tombstoned_ids_set,
+    )
+    silent_misses = silent_miss_stats.miss_total
+    unique_silent_miss_memories = silent_miss_stats.unique_miss_memories
 
     never_verified = 0
     stale = 0
@@ -1958,6 +2096,7 @@ def curation_counts(
         "cold": cold,
         "dead": dead,
         "silent_misses": silent_misses,
+        "unique_silent_miss_memories": unique_silent_miss_memories,
         "endorsement_debt": endorsement_debt,
     }
 

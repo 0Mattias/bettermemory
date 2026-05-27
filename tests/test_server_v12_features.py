@@ -1047,6 +1047,7 @@ async def test_scope_overview_returns_curation_pending(server: Any) -> None:
         "cold",
         "dead",
         "silent_misses",
+        "unique_silent_miss_memories",
         "endorsement_debt",
     }
     # All counts must be integers.
@@ -1063,6 +1064,7 @@ async def test_scope_overview_curation_pending_zero_on_empty(server: Any) -> Non
         "cold": 0,
         "dead": 0,
         "silent_misses": 0,
+        "unique_silent_miss_memories": 0,
         "endorsement_debt": 0,
     }
 
@@ -1099,7 +1101,7 @@ def test_desc_memory_scope_overview_enumerates_curation_pending_keys() -> None:
 
     # The prose lays out the rollup as:
     #     "{stale, never_verified, drifted, cold, dead, "
-    #     "silent_misses, endorsement_debt}"
+    #     "silent_misses, unique_silent_miss_memories, endorsement_debt}"
     # The literal C-style string concatenation in the source becomes one
     # contiguous "{...}" at runtime — the regex matches that block.
     match = re.search(r"\{([a-z_,\s]+)\}", DESC_MEMORY_SCOPE_OVERVIEW)
@@ -1118,6 +1120,7 @@ def test_desc_memory_scope_overview_enumerates_curation_pending_keys() -> None:
         "cold",
         "dead",
         "silent_misses",
+        "unique_silent_miss_memories",
         "endorsement_debt",
     }
     assert extracted == expected, (
@@ -1175,6 +1178,12 @@ def test_desc_memory_health_enumerates_report_bucket_keys() -> None:
         "cleanup_endorsement_debt",
         "verify_drifted",
         "fix_typo_scopes",
+        # `silent_misses` sub-fields — documented inline to explain the
+        # dedup + tombstone-filter contract on the payload itself, not
+        # buckets in their own right.
+        "audited_total",
+        "miss_total",
+        "unique_miss_memories",
     }
     extracted = all_ticked - NON_BUCKET
 

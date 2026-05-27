@@ -1020,7 +1020,11 @@ def test_health_to_dict_carries_silent_misses() -> None:
     report = compute_health([], [], window_days=30, now=_utc(2026, 5, 1))
     payload = report.to_dict()
     assert "silent_misses" in payload
-    assert payload["silent_misses"] == {"audited_total": 0, "miss_total": 0}
+    assert payload["silent_misses"] == {
+        "audited_total": 0,
+        "miss_total": 0,
+        "unique_miss_memories": 0,
+    }
 
 
 def test_event_field_builders_pin_canonical_shape() -> None:

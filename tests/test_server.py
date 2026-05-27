@@ -1552,6 +1552,7 @@ async def test_write_curation_hint_attaches_when_pressure_exceeds_threshold(
             "cold": 0,
             "dead": 4,
             "silent_misses": 0,
+            "unique_silent_miss_memories": 0,
             "endorsement_debt": 1,
         }
 
@@ -1591,6 +1592,7 @@ async def test_write_curation_hint_is_one_shot_per_session(
             "cold": 0,
             "dead": 99,
             "silent_misses": 0,
+            "unique_silent_miss_memories": 0,
             "endorsement_debt": 0,
         },
     )
@@ -1625,6 +1627,7 @@ async def test_write_curation_hint_disabled_by_config_flag(
             "cold": 0,
             "dead": 999,
             "silent_misses": 0,
+            "unique_silent_miss_memories": 0,
             "endorsement_debt": 0,
         },
     )
@@ -3126,6 +3129,7 @@ async def test_write_curation_hint_threshold_zero_disables(
             "cold": 0,
             "dead": 999,
             "silent_misses": 0,
+            "unique_silent_miss_memories": 0,
             "endorsement_debt": 0,
         },
     )

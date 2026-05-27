@@ -245,6 +245,7 @@ def test_curation_counts_zero_on_empty_store() -> None:
         "cold": 0,
         "dead": 0,
         "silent_misses": 0,
+        "unique_silent_miss_memories": 0,
         "endorsement_debt": 0,
     }
 
@@ -360,6 +361,7 @@ def test_curation_counts_since_zero_when_nothing_new() -> None:
         "cold": 0,
         "dead": 0,
         "silent_misses": 0,
+        "unique_silent_miss_memories": 0,
         "endorsement_debt": 0,
     }
 
@@ -688,6 +690,211 @@ def test_silent_miss_cutoff_resolved_globally_under_since_delta() -> None:
     # Without the exemption, the cutoff would be silently dropped and
     # both misses (pre and post) would count as 2.
     assert counts["silent_misses"] == 1
+
+
+# ---------------------------------------------------------------------------
+# silent_misses dedup + tombstone filter (T2 / T3)
+# ---------------------------------------------------------------------------
+#
+# `miss_total` (the raw event count) historically conflated "9 turns
+# hammering the same mis-tagged memory" with "9 distinct memories the
+# model failed to retrieve" — both surfaced as 9. The
+# `unique_miss_memories` counter dedups by top-hit memory_id so a
+# consumer can tell the two cases apart. Separately, the rollup now
+# drops events whose top-hit memory has been tombstoned: once the
+# memory is gone the miss is no longer actionable, and other rollups
+# (`dead_weight`, `heavily_used`, `orphan_use_events`) already
+# cross-reference against the tombstone set. These tests pin both
+# behaviors against the public `compute_health` / `curation_counts`
+# surfaces — they're naturally coupled because the same accumulator
+# code path implements both.
+
+
+def _search_miss_with_top_hit(memory_id: str, ts: datetime) -> dict[str, Any]:
+    """A `search_miss` event carrying the canonical `top_hits` payload.
+
+    Mirrors the shape `search_miss_fields` produces: `top_hits` is a
+    list of dicts, each carrying at minimum an `id`. The other fields
+    (`score`, `relevance`, `scopes`, `snippet`) are present on real
+    events but irrelevant to the rollup so we keep the fixture
+    minimal — the rollup only reads `top_hits[0]["id"]`.
+    """
+    return _event(
+        "search_miss",
+        ts=ts,
+        top_hits=[{"id": memory_id, "score": 1.0, "relevance": "high"}],
+    )
+
+
+def test_silent_misses_dedup_by_top_hit_in_compute_health() -> None:
+    """Five `search_miss` events all pointing at the same memory: the
+    event count stays 5 (`miss_total` is unchanged shape), but the
+    distinct-memory count is 1. Without the dedup the rollup over-states
+    breadth — 5 events look like 5 mis-tagged memories rather than one
+    mis-tag the model kept probing."""
+    m = _memory(created=_utc(2026, 1, 1))
+    events = [
+        _search_miss_with_top_hit(m.id, ts=_utc(2026, 4, day))
+        for day in (1, 2, 3, 4, 5)
+    ]
+    report = compute_health([m], events, window_days=30, now=_utc(2026, 5, 1))
+    assert report.silent_misses.miss_total == 5
+    assert report.silent_misses.unique_miss_memories == 1
+
+
+def test_silent_misses_dedup_by_top_hit_in_curation_counts() -> None:
+    """Same dedup contract applies to the fast `curation_counts` helper
+    so the session-start rollup and the deep `memory_health` view agree
+    on the same store — otherwise the model would see 9 in scope-overview
+    and 1 in health and have no way to reconcile."""
+    m = _memory(created=_utc(2026, 1, 1))
+    events = [
+        _search_miss_with_top_hit(m.id, ts=_utc(2026, 4, day))
+        for day in (1, 2, 3, 4, 5)
+    ]
+    counts = curation_counts([m], events, window_days=30, now=_utc(2026, 5, 1))
+    assert counts["silent_misses"] == 5
+    assert counts["unique_silent_miss_memories"] == 1
+
+
+def test_silent_misses_unique_count_matches_event_count_when_distinct() -> None:
+    """When every miss targets a different memory the two counters
+    agree. Pins the floor of the dedup contract — `unique_miss_memories`
+    is never less than the count of distinct ids in the event stream."""
+    memories = [_memory(created=_utc(2026, 1, 1)) for _ in range(3)]
+    events = [
+        _search_miss_with_top_hit(m.id, ts=_utc(2026, 4, 1 + i))
+        for i, m in enumerate(memories)
+    ]
+    report = compute_health(memories, events, window_days=30, now=_utc(2026, 5, 1))
+    assert report.silent_misses.miss_total == 3
+    assert report.silent_misses.unique_miss_memories == 3
+
+
+def test_silent_misses_tombstone_filter_in_compute_health() -> None:
+    """Tombstoning the targeted memory drops its existing miss events
+    from BOTH the event count and the unique-memories count. The miss
+    is no longer actionable once the memory is gone — the rollup tracks
+    other code paths (dead_weight, heavily_used, orphan_use_events) that
+    already cross-reference against the tombstone set."""
+    m = _memory(created=_utc(2026, 1, 1))
+    events = [
+        _search_miss_with_top_hit(m.id, ts=_utc(2026, 4, day)) for day in (1, 2, 3, 4)
+    ]
+    # Without the filter both counters would carry the misses.
+    pre_tombstone = compute_health([m], events, window_days=30, now=_utc(2026, 5, 1))
+    assert pre_tombstone.silent_misses.miss_total == 4
+    assert pre_tombstone.silent_misses.unique_miss_memories == 1
+    # With m tombstoned the misses against it drop out.
+    post_tombstone = compute_health(
+        [m],
+        events,
+        window_days=30,
+        now=_utc(2026, 5, 1),
+        tombstoned_ids={m.id},
+    )
+    assert post_tombstone.silent_misses.miss_total == 0
+    assert post_tombstone.silent_misses.unique_miss_memories == 0
+
+
+def test_silent_misses_tombstone_filter_in_curation_counts() -> None:
+    """`curation_counts` honors the same filter — the scope-overview
+    fast path can't disagree with the deep health view on the same
+    store."""
+    m = _memory(created=_utc(2026, 1, 1))
+    events = [
+        _search_miss_with_top_hit(m.id, ts=_utc(2026, 4, day)) for day in (1, 2, 3, 4)
+    ]
+    counts = curation_counts(
+        [m],
+        events,
+        window_days=30,
+        now=_utc(2026, 5, 1),
+        tombstoned_ids={m.id},
+    )
+    assert counts["silent_misses"] == 0
+    assert counts["unique_silent_miss_memories"] == 0
+
+
+def test_silent_misses_mixed_live_and_tombstoned_targets() -> None:
+    """The combined T2+T3 case: misses against a live memory M1 (3
+    events) and a later-tombstoned memory M2 (4 events). After tombstone
+    filtering, `miss_total == 3` (M1 only) and
+    `unique_miss_memories == 1` (M1 only). The filters compose: the
+    tombstone filter runs before the dedup, so M2's contribution drops
+    from both counters."""
+    m1 = _memory(created=_utc(2026, 1, 1))
+    m2 = _memory(created=_utc(2026, 1, 1))
+    events = [
+        # 3 misses against the live memory
+        _search_miss_with_top_hit(m1.id, ts=_utc(2026, 4, 1)),
+        _search_miss_with_top_hit(m1.id, ts=_utc(2026, 4, 2)),
+        _search_miss_with_top_hit(m1.id, ts=_utc(2026, 4, 3)),
+        # 4 misses against the to-be-tombstoned memory
+        _search_miss_with_top_hit(m2.id, ts=_utc(2026, 4, 4)),
+        _search_miss_with_top_hit(m2.id, ts=_utc(2026, 4, 5)),
+        _search_miss_with_top_hit(m2.id, ts=_utc(2026, 4, 6)),
+        _search_miss_with_top_hit(m2.id, ts=_utc(2026, 4, 7)),
+    ]
+    report = compute_health(
+        [m1, m2],
+        events,
+        window_days=30,
+        now=_utc(2026, 5, 1),
+        tombstoned_ids={m2.id},
+    )
+    # M1's 3 misses survive both filters; M2's 4 drop out via tombstone.
+    assert report.silent_misses.miss_total == 3
+    assert report.silent_misses.unique_miss_memories == 1
+    # Same contract via the fast helper.
+    counts = curation_counts(
+        [m1, m2],
+        events,
+        window_days=30,
+        now=_utc(2026, 5, 1),
+        tombstoned_ids={m2.id},
+    )
+    assert counts["silent_misses"] == 3
+    assert counts["unique_silent_miss_memories"] == 1
+
+
+def test_silent_misses_malformed_top_hits_degrade_to_event_count_only() -> None:
+    """A `search_miss` event with no / non-list / non-dict `top_hits`
+    still counts toward `miss_total` (the legacy "count every event"
+    semantic) but cannot contribute to `unique_miss_memories` and
+    cannot be tombstone-filtered. Backward-compat shield for legacy
+    events written before this rollup read `top_hits` at all — the
+    rollup degrades cleanly rather than crashing on missing fields."""
+    no_top_hits = _event("search_miss", ts=_utc(2026, 4, 1))
+    empty_list = _event("search_miss", ts=_utc(2026, 4, 2), top_hits=[])
+    non_dict = _event("search_miss", ts=_utc(2026, 4, 3), top_hits=["not-a-dict"])
+    no_id = _event("search_miss", ts=_utc(2026, 4, 4), top_hits=[{"score": 0.9}])
+    report = compute_health(
+        [], [no_top_hits, empty_list, non_dict, no_id], now=_utc(2026, 5, 1)
+    )
+    # All four count as events (legacy semantic preserved) but none
+    # produces a usable id for dedup.
+    assert report.silent_misses.miss_total == 4
+    assert report.silent_misses.unique_miss_memories == 0
+
+
+def test_silent_misses_to_dict_carries_unique_miss_memories() -> None:
+    """The serialized shape exposes `unique_miss_memories` alongside
+    `miss_total` and `audited_total` — consumers reading the JSON
+    payload (the CLI, downstream eval tools) need the new key without
+    re-deriving it."""
+    m = _memory(created=_utc(2026, 1, 1))
+    events = [
+        _search_miss_with_top_hit(m.id, ts=_utc(2026, 4, 1)),
+        _search_miss_with_top_hit(m.id, ts=_utc(2026, 4, 2)),
+    ]
+    report = compute_health([m], events, window_days=30, now=_utc(2026, 5, 1))
+    payload = report.to_dict()
+    assert payload["silent_misses"] == {
+        "audited_total": 0,
+        "miss_total": 2,
+        "unique_miss_memories": 1,
+    }
 
 
 # ---------------------------------------------------------------------------

@@ -11,8 +11,33 @@ spells out exactly what's stable.
 
 ### Added
 
+- **`silent_misses.unique_miss_memories` + `curation_pending.unique_silent_miss_memories`.**
+  Additive `int` field on `SilentMissStats` and matching key on the
+  `curation_counts` dict. Dedups in-window `search_miss` events by
+  their top-hit `memory_id` so the rollup distinguishes "9 events
+  hammering 1 mis-tagged memory" from "9 distinct unretrieved
+  memories" (the existing `miss_total` / `silent_misses` event count
+  is preserved unchanged for back-compat — both surfaces now ship).
+  Wire-shape: `silent_misses` payload gains `unique_miss_memories`;
+  `memory_scope_overview.curation_pending` gains
+  `unique_silent_miss_memories`. `memory_scope_overview` and
+  `memory_health` tool descriptions updated to enumerate the new
+  field.
+
 ### Fixed
 
+- **Silent-miss rollup drops tombstone-targeted events (T3).** The
+  `silent_miss` aggregation in `compute_health` and `curation_counts`
+  now drops events whose top-hit `memory_id` is in `tombstoned_ids` —
+  once the memory is gone, the miss is no longer actionable. Other
+  rollups (`dead_weight`, `heavily_used`, `orphan_use_events`)
+  already cross-reference against the tombstone set at the same
+  call site; the silent-miss bucket was the holdout, so a memory
+  tombstoned after accruing miss events kept inflating the count
+  forever. Applies to both `miss_total` and the new
+  `unique_miss_memories` counter. `scope_overview` now threads the
+  store's tombstone set through `curation_counts` so the session-start
+  view agrees with the deep health view.
 - **`store.tombstone()` under-lock recheck (W1).** The mutator was the
   one missing the `_id_still_at_path` recheck under `_locked(path)`
   that `update()` / `mark_verified()` use. Two agents calling

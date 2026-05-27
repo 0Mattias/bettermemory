@@ -33,11 +33,16 @@ DESC_MEMORY_SCOPE_OVERVIEW = (
     "`curation_pending` is an integer-count rollup the model "
     "should branch on:\n"
     "  {stale, never_verified, drifted, cold, dead, "
-    "silent_misses, endorsement_debt}\n"
+    "silent_misses, unique_silent_miss_memories, endorsement_debt}\n"
     "Any non-zero `dead` or `drifted` is a cue to suggest a "
     "curation pass when the conversation has time. Non-zero "
     "`silent_misses` / `endorsement_debt` means the audit-turn "
-    "telemetry has actionable backlog.\n\n"
+    "telemetry has actionable backlog. `silent_misses` counts "
+    "events; `unique_silent_miss_memories` counts the distinct "
+    "memories those misses pointed at (dedup'd by top-hit id) — "
+    "the gap between the two flags `9 events against 1 memory` "
+    "vs. `9 events across 9 memories`. Misses whose top-hit "
+    "memory has been tombstoned are excluded from both counters.\n\n"
     "`recently_removed_in_worktree` is the integer count of "
     "tombstones removed in the trailing 7 days; under "
     "`auto_scope=True` it's filtered to this worktree (tombstones "
@@ -139,6 +144,15 @@ async def memory_scope_overview(
     # active log + rotated archives, which is the same scale
     # `compute_health` already pays at session-start once.
     events_snapshot = list(iter_all_events(deps.store.root))
+    # Pass tombstoned ids so `curation_counts` can drop silent-miss
+    # events whose top-hit memory has been removed — same filter
+    # `compute_health` applies. Without it the scope-overview
+    # `silent_misses` count and the `memory_health.silent_misses` count
+    # would diverge on the same store: the latter excludes
+    # tombstone-targeted misses, the former wouldn't. The two surfaces
+    # are read together by the model branching on session-start hints
+    # and following up with the deep view, so they must agree.
+    tombstoned_ids = {t.id for t in deps.store.load_tombstones()}
     curation = curation_counts(
         all_memories,
         events_snapshot,
@@ -148,6 +162,7 @@ async def memory_scope_overview(
             deps.config.behavior.endorsement_debt_ratio_threshold
         ),
         caller_origin=current_origin,
+        tombstoned_ids=tombstoned_ids,
     )
     # Use the recorder's session_id, not `state.session_id`.
     # Every event the recorder writes is tagged `session =
@@ -185,6 +200,7 @@ async def memory_scope_overview(
             ),
             caller_origin=current_origin,
             since=prior_boundary,
+            tombstoned_ids=tombstoned_ids,
         )
 
     # Tombstone activity in the last 7 days. Helps the model spot
