@@ -3104,6 +3104,392 @@ async def test_episode_handoff_adopts_zero_episode_candidate_when_caller_has_no_
 
 
 # ---------------------------------------------------------------------------
+# E2 — session-tag floor episodes at episode_handoff entry
+# ---------------------------------------------------------------------------
+
+
+async def test_handoff_writes_floor_for_current_session(
+    memory_dir: Path,
+) -> None:
+    """E2 regression: a fresh `episode_handoff` call writes a session-tag
+    floor episode for the CURRENT session on disk. The floor anchors
+    the worktree on disk so a tick that crashes before `episode_write`
+    is still discoverable by the next tick's handoff via the worktree
+    filter."""
+    from bettermemory.episodes import EpisodeStore
+
+    cfg = Config(storage=StorageConfig(directory=str(memory_dir)))
+    server = build_server(config=cfg, store=Store(memory_dir), state=SessionState())
+    await _call(server, "episode_handoff")
+
+    ep_store = EpisodeStore(memory_dir)
+    # The current session's id is exposed via the recorder; resolve it
+    # by walking session dirs. Exactly one floor should exist.
+    session_ids = list(ep_store.iter_session_ids())
+    assert len(session_ids) == 1, (
+        f"expected exactly one session dir from a fresh handoff, got {session_ids}"
+    )
+    sid = session_ids[0]
+    eps = ep_store.list_by_session(sid)
+    assert len(eps) == 1, f"expected one floor episode, got {len(eps)}"
+    assert eps[0].is_floor is True
+    assert eps[0].takeaway is None
+    assert eps[0].scopes == []
+
+
+async def test_handoff_floor_write_is_idempotent_in_same_process(
+    memory_dir: Path,
+) -> None:
+    """E2 idempotency: calling `episode_handoff` twice in the same
+    process (same session_id) must NOT produce two floors. The second
+    call sees the floor on disk and skips the write."""
+    from bettermemory.episodes import EpisodeStore
+
+    cfg = Config(storage=StorageConfig(directory=str(memory_dir)))
+    server = build_server(config=cfg, store=Store(memory_dir), state=SessionState())
+    await _call(server, "episode_handoff")
+    await _call(server, "episode_handoff")
+
+    ep_store = EpisodeStore(memory_dir)
+    session_ids = list(ep_store.iter_session_ids())
+    assert len(session_ids) == 1
+    eps = ep_store.list_by_session(session_ids[0])
+    assert len(eps) == 1, (
+        f"two handoffs in the same process should leave exactly one "
+        f"floor; got {len(eps)} episodes"
+    )
+    assert eps[0].is_floor is True
+
+
+async def test_handoff_skips_floor_when_real_takeaway_already_exists(
+    memory_dir: Path,
+) -> None:
+    """E2 idempotency: a session that wrote a real takeaway via
+    `episode_write` before calling `episode_handoff` should NOT get
+    a floor — the real takeaway already anchors the session, and a
+    floor would be redundant noise."""
+    from bettermemory.episodes import EpisodeStore
+
+    cfg = Config(storage=StorageConfig(directory=str(memory_dir)))
+    server = build_server(config=cfg, store=Store(memory_dir), state=SessionState())
+    # Write a real takeaway FIRST (unusual ordering — the protocol
+    # documents handoff-first, but it's valid to write a takeaway
+    # before issuing the handoff in a custom caller).
+    await _call(server, "episode_write", body="real body", takeaway="real takeaway")
+    await _call(server, "episode_handoff")
+
+    ep_store = EpisodeStore(memory_dir)
+    session_ids = list(ep_store.iter_session_ids())
+    assert len(session_ids) == 1
+    eps = ep_store.list_by_session(session_ids[0])
+    # Just the real episode, no floor.
+    assert len(eps) == 1
+    assert eps[0].is_floor is False
+    assert eps[0].takeaway == "real takeaway"
+
+
+async def test_handoff_followed_by_episode_write_yields_floor_plus_real(
+    memory_dir: Path,
+) -> None:
+    """E2 main flow: handoff writes a floor at entry; episode_write
+    later appends a real takeaway. `list_by_session` returns both;
+    the next tick's handoff filters the floor from its takeaway
+    summary AND uses the floor's worktree to match."""
+    from bettermemory.episodes import EpisodeStore
+
+    cfg = Config(storage=StorageConfig(directory=str(memory_dir)))
+
+    # Tick T: handoff (writes floor) → episode_write (real takeaway).
+    server_t = build_server(config=cfg, store=Store(memory_dir), state=SessionState())
+    await _call(server_t, "episode_handoff")
+    await _call(
+        server_t,
+        "episode_write",
+        body="real iteration body",
+        takeaway="real iteration takeaway",
+    )
+
+    ep_store = EpisodeStore(memory_dir)
+    session_ids = list(ep_store.iter_session_ids())
+    assert len(session_ids) == 1
+    eps = ep_store.list_by_session(session_ids[0])
+    # Floor + real — two episodes.
+    assert len(eps) == 2
+    assert eps[0].is_floor is True  # Floor written first
+    assert eps[1].is_floor is False  # Real takeaway written second
+    assert eps[1].takeaway == "real iteration takeaway"
+
+    # Tick T+1: a fresh server in the same process. Handoff should
+    # surface T's real takeaway and NOT the floor.
+    server_t1 = build_server(config=cfg, store=Store(memory_dir), state=SessionState())
+    res = await _call(server_t1, "episode_handoff")
+    assert res["prior_session_id"] is not None
+    takeaways = [e["takeaway"] for e in res["episodes"]]
+    # Exactly the real takeaway — no floor leaked into the summary.
+    assert takeaways == ["real iteration takeaway"]
+    # No crash signal — the real takeaway is present.
+    assert "note" not in res
+
+
+async def test_handoff_crash_recovery_floor_only_session_adopted_as_prior(
+    memory_dir: Path,
+) -> None:
+    """E2 crash-recovery main case: tick T calls `episode_handoff`
+    then crashes BEFORE `episode_write`. T+1 builds a fresh server
+    (new recorder/session_id) and calls `episode_handoff`. T's
+    session_id must be resolved as the prior session — NOT T-1's
+    (which is what would happen without the floor anchor).
+
+    Pre-E2: T has an event recorded but ZERO episodes on disk. T+1's
+    handoff finds T's session_id in the event log, calls
+    `list_by_session(T)` → []. The zero-episode branch ONLY adopts
+    when caller_worktree is None (strict-filter). In a real worktree
+    T+1 walks past T and silently adopts T-1, dropping T's history.
+
+    Post-E2: T's handoff entry wrote a floor for T with origin
+    capturing T's worktree. T+1's `list_by_session(T)` returns the
+    floor; the worktree filter matches (both ticks in the same
+    worktree); T is adopted. The crash-signal note surfaces."""
+    cfg = Config(storage=StorageConfig(directory=str(memory_dir)))
+
+    # Tick T-1: a fully successful tick — handoff + episode_write.
+    server_t_minus_1 = build_server(
+        config=cfg, store=Store(memory_dir), state=SessionState()
+    )
+    await _call(server_t_minus_1, "episode_handoff")
+    await _call(
+        server_t_minus_1,
+        "episode_write",
+        body="T-1 ran fine",
+        takeaway="T-1 takeaway",
+    )
+
+    # Tick T: handoff runs, then we simulate a crash — no episode_write.
+    server_t = build_server(config=cfg, store=Store(memory_dir), state=SessionState())
+    await _call(server_t, "episode_handoff")
+    # Simulated crash: tick T ends here, never calls episode_write.
+
+    # Tick T+1: a fresh server in the same worktree resolves the prior
+    # session. WITHOUT the floor, this would adopt T-1 (because T has
+    # no episodes and the zero-episode branch rejects a worktree-having
+    # caller). WITH the floor, T's session is adopted.
+    server_t_plus_1 = build_server(
+        config=cfg, store=Store(memory_dir), state=SessionState()
+    )
+    res = await _call(server_t_plus_1, "episode_handoff")
+
+    # The prior session is T (NOT T-1). T has a floor on disk; the
+    # worktree filter saw it.
+    assert res["prior_session_id"] is not None
+    # The episodes list is empty — the floor is filtered out of the
+    # takeaway summary.
+    assert res["episodes"] == []
+    # The crash-signal note IS surfaced — distinguishes "session
+    # crashed before takeaway" from "session existed but wrote
+    # nothing on purpose".
+    assert "note" in res, (
+        f"floor-only prior session should surface a crash-signal note; got: {res!r}"
+    )
+    assert "crashed" in res["note"].lower()
+
+
+async def test_handoff_floor_distinguishes_crash_vs_normal_empty(
+    memory_dir: Path,
+) -> None:
+    """Companion to the crash-recovery test: a fresh handoff with no
+    prior session at all returns `{prior_session_id: None, episodes: []}`
+    and NO crash note. The `note` key only fires for floor-only prior
+    sessions — empty results from "no prior session ever existed"
+    don't trip it."""
+    cfg = Config(storage=StorageConfig(directory=str(memory_dir)))
+    server = build_server(config=cfg, store=Store(memory_dir), state=SessionState())
+    res = await _call(server, "episode_handoff")
+    assert res["prior_session_id"] is None
+    assert res["episodes"] == []
+    assert "note" not in res, (
+        f"first-ever handoff should not surface crash-signal note; got: {res!r}"
+    )
+
+
+async def test_handoff_floor_carries_caller_worktree_for_filter_match(
+    memory_dir: Path,
+    monkeypatch: Any,
+) -> None:
+    """E2 worktree-filter test: a floor-only session in worktree A is
+    adopted by a caller in worktree A, NOT by a caller in worktree B.
+    The fix's whole point is that the floor's origin.worktree_root is
+    what the filter matches against."""
+    import bettermemory._handlers as handlers_module
+    import bettermemory.server as server_module
+    from bettermemory.origin import Origin
+
+    cfg = Config(storage=StorageConfig(directory=str(memory_dir)))
+
+    origin_a = Origin(
+        cwd="/worktrees/repo-feature-x",
+        repo="git@github.com:example/repo.git",
+        branch="feature-x",
+        worktree_root="/worktrees/repo-feature-x",
+    )
+    origin_b = Origin(
+        cwd="/worktrees/repo-bug-fix",
+        repo="git@github.com:example/repo.git",
+        branch="bug-fix",
+        worktree_root="/worktrees/repo-bug-fix",
+    )
+
+    def make_capture(origin: Origin) -> Any:
+        def _capture(cwd: Any = None) -> Origin:
+            return origin
+
+        return _capture
+
+    # Tick T in worktree A: handoff → crash (no episode_write). The
+    # handoff writes a floor with origin_a.
+    monkeypatch.setattr(handlers_module, "capture_origin", make_capture(origin_a))
+    monkeypatch.setattr(server_module, "capture_origin", make_capture(origin_a))
+    server_a = build_server(config=cfg, store=Store(memory_dir), state=SessionState())
+    await _call(server_a, "episode_handoff")
+    # No episode_write — simulated crash before takeaway.
+
+    # T+1 in worktree B: handoff should NOT see A's floor — A's
+    # worktree is /repo-feature-x, B's is /repo-bug-fix.
+    monkeypatch.setattr(handlers_module, "capture_origin", make_capture(origin_b))
+    monkeypatch.setattr(server_module, "capture_origin", make_capture(origin_b))
+    server_b = build_server(config=cfg, store=Store(memory_dir), state=SessionState())
+    res_b = await _call(server_b, "episode_handoff")
+    # B doesn't adopt A's session — different worktree.
+    assert res_b["prior_session_id"] is None
+    assert res_b["episodes"] == []
+    assert "note" not in res_b
+
+    # Now a peer in worktree A asks for handoff. It DOES adopt T's
+    # floor-only session, surfacing the crash-signal note.
+    monkeypatch.setattr(handlers_module, "capture_origin", make_capture(origin_a))
+    monkeypatch.setattr(server_module, "capture_origin", make_capture(origin_a))
+    server_a_peer = build_server(
+        config=cfg, store=Store(memory_dir), state=SessionState()
+    )
+    res_a = await _call(server_a_peer, "episode_handoff")
+    assert res_a["prior_session_id"] is not None
+    assert res_a["episodes"] == []
+    # Crash-signal note fires for the floor-only adoption.
+    assert "note" in res_a
+    assert "crashed" in res_a["note"].lower()
+
+
+async def test_handoff_floor_written_before_handoff_event_recorded(
+    memory_dir: Path,
+    monkeypatch: Any,
+) -> None:
+    """E2 ordering invariant: the floor write MUST happen BEFORE the
+    `episode_handoff` event is recorded. Crash-safety analysis: if we
+    crash after the event but before the floor, T+1's handoff sees
+    T's event in the log, calls `list_by_session(T)` → empty, hits
+    the zero-episode branch — exactly the bug E2 closes.
+
+    Pin by stubbing `Recorder.record` to raise when called with
+    `kind='episode_handoff'`; verify the floor exists on disk
+    afterwards (proving it landed BEFORE the record call)."""
+    from bettermemory.episodes import EpisodeStore
+    from bettermemory.events import Recorder
+
+    cfg = Config(storage=StorageConfig(directory=str(memory_dir)))
+    server = build_server(config=cfg, store=Store(memory_dir), state=SessionState())
+
+    real_record = Recorder.record
+    crash_msg = "simulated crash between floor write and event record"
+
+    def crashing_record(self: Recorder, kind: str, **fields: Any) -> None:
+        if kind == "episode_handoff":
+            raise RuntimeError(crash_msg)
+        real_record(self, kind, **fields)
+
+    monkeypatch.setattr(Recorder, "record", crashing_record)
+
+    # The handoff call raises (mimicking a crash after the floor
+    # write succeeded but during/before the event-record stage).
+    # FastMCP wraps the underlying RuntimeError in a ToolError —
+    # `_call` propagates whichever shape lands.
+    with pytest.raises(Exception, match=crash_msg):
+        await _call(server, "episode_handoff")
+
+    # CRITICAL: the floor exists on disk. If it doesn't, the ordering
+    # invariant is violated and the fix doesn't help under the most
+    # important crash window.
+    ep_store = EpisodeStore(memory_dir)
+    session_ids = list(ep_store.iter_session_ids())
+    assert len(session_ids) == 1, (
+        "ordering invariant broken: floor must be on disk even when "
+        "the handoff event-record stage raises"
+    )
+    eps = ep_store.list_by_session(session_ids[0])
+    assert len(eps) == 1
+    assert eps[0].is_floor is True
+
+
+async def test_episode_search_filters_out_floor_episodes(
+    memory_dir: Path,
+) -> None:
+    """E2 consumer pin: `episode_search` (the journal-summary read
+    surface) filters out floor episodes. A floor's body is a
+    placeholder marker, not journal content; surfacing it in
+    "what did I conclude across the last few sessions?" would be
+    indistinguishable from a takeaway from the model's perspective."""
+    cfg = Config(storage=StorageConfig(directory=str(memory_dir)))
+
+    # Tick T: handoff writes a floor; episode_write writes a real.
+    server_t = build_server(config=cfg, store=Store(memory_dir), state=SessionState())
+    await _call(server_t, "episode_handoff")
+    await _call(
+        server_t,
+        "episode_write",
+        body="real body",
+        takeaway="real takeaway",
+    )
+
+    # episode_search returns ONLY the real takeaway — floor filtered.
+    server_t1 = build_server(config=cfg, store=Store(memory_dir), state=SessionState())
+    res = _unwrap(await _call(server_t1, "episode_search"))
+    takeaways = [e["takeaway"] for e in res]
+    assert takeaways == ["real takeaway"]
+
+
+async def test_episode_promote_rejects_floor_episode(
+    memory_dir: Path,
+) -> None:
+    """E2 consumer pin: `episode_promote` rejects a floor with a
+    clear error message. Floors aren't content — promoting one
+    would either crash through the durability gate (transient
+    marker) or land a junk memory. Explicit rejection at the
+    promotion boundary surfaces the right "this isn't a takeaway"
+    error rather than blaming the caller for a "transient phrase"
+    in the body."""
+    from bettermemory.episodes import EpisodeStore
+
+    cfg = Config(storage=StorageConfig(directory=str(memory_dir)))
+    server = build_server(config=cfg, store=Store(memory_dir), state=SessionState())
+    await _call(server, "episode_handoff")
+
+    ep_store = EpisodeStore(memory_dir)
+    sid = next(iter(ep_store.iter_session_ids()))
+    floor = ep_store.list_by_session(sid)[0]
+    assert floor.is_floor is True
+
+    # Attempting to promote a floor raises with a floor-specific message.
+    # FastMCP wraps the underlying ValueError in a ToolError — match on
+    # the message which carries through either way.
+    with pytest.raises(Exception, match="floor"):
+        await _call(
+            server,
+            "episode_promote",
+            episode_id=floor.id,
+            scopes=["tools"],
+            use_body=True,  # bypasses the takeaway-None guard
+        )
+
+
+# ---------------------------------------------------------------------------
 # memory_write — inline curation hint (continued)
 # ---------------------------------------------------------------------------
 

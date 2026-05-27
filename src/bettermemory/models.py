@@ -575,6 +575,17 @@ class Episode(BaseModel):
     - `origin`: cwd / repo / branch / worktree_root snapshot at write
       time. Drives the worktree filter on `episode_handoff` so only
       episodes from the same workspace are surfaced.
+    - `is_floor`: True for a session-tag floor episode written at
+      `episode_handoff` entry to mark the current session on disk
+      BEFORE the handoff event is recorded. Floors carry no journal
+      content (empty body, empty takeaway, empty scopes) — they exist
+      purely so a tick that crashes between `episode_handoff` and
+      `episode_write` still leaves a worktree-tagged journal anchor
+      for the next tick's handoff to walk. Consumers that summarise
+      takeaways for the model (e.g. `episode_handoff`'s emit step)
+      filter out `is_floor=True` so the floor never shows up as
+      "what the prior session concluded". Defaults False; legacy
+      episodes written before the field shipped load as False.
     """
 
     id: str
@@ -589,6 +600,12 @@ class Episode(BaseModel):
     scopes: list[str] = Field(default_factory=list)
     takeaway: str | None = None
     origin: Origin | None = None
+    # Floor marker — see class docstring. Defaults False so non-floor
+    # episodes serialise identically to the pre-field shape; the
+    # episode writer only emits the frontmatter key when True (the
+    # opt-in path mirrors how `origin` / `takeaway` / `scopes` already
+    # omit when empty/None).
+    is_floor: bool = False
 
     @field_validator("id")
     @classmethod

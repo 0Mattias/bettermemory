@@ -1086,3 +1086,117 @@ def _prune_worker(root: str) -> list[str] | None:
         return _EpStore(Path(root)).prune_old_sessions(ttl_days=30)
     except BaseException:  # noqa: BLE001
         return None
+
+
+# ---------------------------------------------------------------------------
+# E2 — session-tag floor episodes (crash-recovery anchors)
+# ---------------------------------------------------------------------------
+
+
+def test_write_floor_creates_floor_episode(episode_store: EpisodeStore) -> None:
+    """`write_floor` produces a discoverable Episode with `is_floor=True`,
+    an empty takeaway, empty scopes, and the supplied origin. Reuses the
+    same on-disk discipline `write` does (atomic rename, fsync, etc.)
+    via the shared `_persist_episode`."""
+    origin = Origin(
+        cwd="/tmp/work",
+        repo="https://github.com/example/repo",
+        branch="main",
+        worktree_root="/tmp/work",
+    )
+    ep = episode_store.write_floor(session_id="sess_floor_test", origin=origin)
+
+    # The floor itself
+    assert ep.is_floor is True
+    assert ep.takeaway is None
+    assert ep.scopes == []
+    assert ep.origin is not None
+    assert ep.origin.worktree_root == "/tmp/work"
+
+    # Discoverable via list_by_session — the worktree-filter side of
+    # episode_handoff relies on this.
+    loaded = episode_store.list_by_session("sess_floor_test")
+    assert len(loaded) == 1
+    assert loaded[0].id == ep.id
+    assert loaded[0].is_floor is True
+    assert loaded[0].origin is not None
+    assert loaded[0].origin.worktree_root == "/tmp/work"
+
+
+def test_write_floor_persists_is_floor_in_frontmatter(
+    episode_store: EpisodeStore,
+) -> None:
+    """The `is_floor` flag round-trips through YAML frontmatter — a
+    floor written today and loaded tomorrow still reads as a floor.
+    Non-floor episodes do NOT emit the key (size + back-compat: legacy
+    readers ignore unknown keys, and omitting on the common path keeps
+    the on-disk shape stable for real-takeaway episodes)."""
+    floor = episode_store.write_floor(session_id="sess_persist_floor")
+    real = episode_store.write(session_id="sess_persist_real", body="actual body")
+
+    floor_path = episode_store.episodes_dir / "sess_persist_floor" / f"{floor.id}.md"
+    real_path = episode_store.episodes_dir / "sess_persist_real" / f"{real.id}.md"
+    floor_yaml = floor_path.read_text()
+    real_yaml = real_path.read_text()
+
+    # Floor frontmatter contains the key set to True.
+    assert "is_floor: true" in floor_yaml.lower(), (
+        f"floor frontmatter missing is_floor key: {floor_yaml!r}"
+    )
+    # Real episode frontmatter omits the key (default-False isn't
+    # serialised — keeps the on-disk shape stable for non-floors).
+    assert "is_floor" not in real_yaml, (
+        f"non-floor episode should not emit is_floor key: {real_yaml!r}"
+    )
+
+
+def test_floor_loads_from_disk_without_is_floor_key_as_false(
+    episode_store: EpisodeStore,
+) -> None:
+    """Back-compat regression: legacy episodes written before the
+    `is_floor` field shipped have no `is_floor` key in their frontmatter.
+    The loader must default to False, not raise."""
+    # Write a real episode (no is_floor key in frontmatter).
+    ep = episode_store.write(session_id="sess_legacy", body="legacy episode body")
+    assert ep.is_floor is False
+
+    loaded = episode_store.list_by_session("sess_legacy")
+    assert len(loaded) == 1
+    assert loaded[0].is_floor is False
+
+
+def test_floor_and_real_coexist_in_same_session(
+    episode_store: EpisodeStore,
+) -> None:
+    """A session can contain both a floor (written first by handoff at
+    entry) and a real takeaway (written later by episode_write). Both
+    appear in `list_by_session` so consumers that distinguish on the
+    flag can branch correctly."""
+    floor = episode_store.write_floor(session_id="sess_mixed")
+    time.sleep(0.005)
+    real = episode_store.write(
+        session_id="sess_mixed",
+        body="real body",
+        takeaway="real takeaway",
+    )
+
+    loaded = episode_store.list_by_session("sess_mixed")
+    assert len(loaded) == 2
+    # Sorted oldest first — floor was written first.
+    assert loaded[0].id == floor.id
+    assert loaded[0].is_floor is True
+    assert loaded[1].id == real.id
+    assert loaded[1].is_floor is False
+    assert loaded[1].takeaway == "real takeaway"
+
+
+def test_write_floor_atomic_no_tmp_stragglers(episode_store: EpisodeStore) -> None:
+    """`write_floor` shares the atomic-rename discipline `write` does
+    via `_persist_episode`. After a successful floor write, no `.tmp`
+    files survive in the session_dir."""
+    episode_store.write_floor(session_id="sess_atomic_floor")
+    session_dir = episode_store.episodes_dir / "sess_atomic_floor"
+    stragglers = [
+        p for p in session_dir.iterdir() if p.suffix == ".tmp" or ".tmp" in p.name
+    ]
+    assert stragglers == [], f"unexpected tmp artifacts: {stragglers}"

@@ -107,6 +107,19 @@ async def episode_search(
             # 500 the caller.
             continue
         for ep in episodes:
+            # Skip session-tag floor episodes (E2 crash-recovery anchors).
+            # They carry empty takeaways and a placeholder body; surfacing
+            # them in a journal-summary surface like episode_search would
+            # be noise indistinguishable from a takeaway from the model's
+            # perspective ("what did I conclude" → "(session-tag floor —
+            # no takeaway recorded)"). The candidate-walk side of
+            # episode_handoff still sees floors via list_by_session, which
+            # is what enables the worktree-filter match the floor was
+            # written for in the first place. Both reads use
+            # `list_by_session`, but only the summary surfaces filter the
+            # flag; that asymmetry is the load-bearing piece of the fix.
+            if ep.is_floor:
+                continue
             if since_dt is not None and ep.created < since_dt:
                 continue
             if scope_filter is not None and not (scope_filter & set(ep.scopes)):

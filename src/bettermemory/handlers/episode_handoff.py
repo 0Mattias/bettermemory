@@ -28,9 +28,26 @@ Returns `None`-rich shape so the caller can distinguish:
   strict None-only-matches-None rule means callers in a named
   worktree see "no prior session" rather than risk surfacing a
   cross-worktree session_id).
+- "prior session crashed before writing a takeaway" — returns
+  `{"prior_session_id": "sess_xxx", "episodes": [], "note": "..."}`.
+  The prior tick called `episode_handoff` (which wrote a session-tag
+  floor anchoring its worktree on disk) but crashed before its
+  `episode_write` could record the takeaway. The `note` key
+  distinguishes this from the benign no-write case above. E2 fix.
 - "prior session has takeaways" — `{"prior_session_id": "sess_xxx",
   "episodes": [...]}` with the latest N entries (oldest first within
   the slice).
+
+At handler entry the implementation writes a session-tag FLOOR
+episode for the current session BEFORE doing anything else. The
+floor anchors the current session's worktree on disk so a tick
+that crashes before `episode_write` still leaves a journal entry
+the next tick's handoff can resolve via the worktree filter. The
+write is idempotent — a session that already has any episode on
+disk skips the floor write. The floor's `is_floor=True` flag is
+how the emit step in this handler (and any future consumer that
+distinguishes takeaway-bearing vs. anchor-only episodes) filters
+them out of the takeaway summary surface.
 """
 
 from __future__ import annotations
@@ -125,6 +142,63 @@ async def episode_handoff(
         max_episodes = 5
     max_episodes = max(1, min(int(max_episodes), 50))
 
+    # ---- E2: floor-write at handoff entry -------------------------------
+    #
+    # Write a session-tag floor episode for the CURRENT session BEFORE
+    # recording the handoff event. The /loop pattern is:
+    #
+    #   tick T:   episode_handoff()  (reads T-1's journal, records event)
+    #             ... model does work ...
+    #             episode_write(takeaway=...)  (writes T's journal)
+    #   tick T+1: episode_handoff()  (reads T's journal, records event)
+    #
+    # If tick T crashes between handoff and episode_write (model
+    # timeout, OOM, Ctrl-C, power loss), T has an event recorded
+    # but ZERO journal files. T+1's handoff finds T's session_id in
+    # the event log, calls list_by_session(T) → empty, hits the
+    # zero-episode branch above. That branch ONLY adopts when the
+    # caller's worktree is None (strict-filter contract). In a real
+    # worktree (the production case), T+1 walks past T and silently
+    # adopts T-1, dropping T's full history.
+    #
+    # The fix: at handoff ENTRY, write a tiny floor episode tagged
+    # with the current session_id and origin (worktree). Even if T
+    # crashes immediately after, T+1's handoff sees the floor in
+    # `list_by_session(T)`, applies the worktree-filter against the
+    # floor's origin.worktree_root, and adopts T correctly.
+    #
+    # Idempotent: a session that calls episode_handoff twice in the
+    # same process (e.g., a /loop subagent that re-handshakes) only
+    # gets one floor — the second call sees a non-empty
+    # `list_by_session` and skips the write. A session that wrote a
+    # real takeaway via episode_write before the second handoff
+    # also skips (real takeaway → list is non-empty → floor would
+    # be redundant noise).
+    #
+    # Ordering invariant — the floor write MUST happen BEFORE the
+    # handoff event is recorded (`deps.recorder.record(...)` at the
+    # bottom of this function). Crash analysis:
+    #
+    #   - Crash between (1) floor and (2) event: floor exists, no
+    #     event. T+1's handoff doesn't see T (no event matching T's
+    #     session in the log), so the floor is harmless leftover
+    #     (TTL-pruned in 30 days).
+    #
+    #   - Crash between (2) event and (3) return: floor exists,
+    #     event recorded. T+1's handoff sees T's event, finds the
+    #     floor, worktree filter matches. T's session_id IS T+1's
+    #     prior-session — the fix's main path.
+    #
+    #   - Crash AFTER (3) return but BEFORE T's episode_write:
+    #     same as (2) above. The floor anchors T on disk; T+1's
+    #     handoff resolves T correctly.
+    #
+    # The floor write itself raises if it fails (disk full, etc.) —
+    # propagate to the MCP caller rather than silently degrading
+    # the durability contract.
+    handoff_origin = _h.capture_origin()
+    _maybe_write_session_floor(deps, handoff_origin)
+
     # Session-disabled scopes hide episodes uniformly across the read
     # surface — same contract `memory_search` / `memory_list` honor
     # (list_active.py:46, search.py:226). For handoff the filter
@@ -141,15 +215,14 @@ async def episode_handoff(
     if resolved_session_id is None:
         from ..events import iter_all_events
 
-        # Capture caller origin at handler entry — same shim
-        # discipline scope_overview / search / write use. The
-        # worktree_root field is the discriminator the auto-scope
-        # filter on `should_include_for_caller` uses for memories;
-        # we apply the same key here for episodes so the two
-        # surfaces stay in sync about what "this worktree's prior
-        # session" means.
-        caller_origin = _h.capture_origin()
-        caller_worktree = caller_origin.worktree_root if caller_origin else None
+        # Reuse the origin captured at handler entry above (used to
+        # tag the session-tag floor episode). Same shim discipline
+        # scope_overview / search / write use. The `worktree_root`
+        # field is the discriminator the auto-scope filter on
+        # `should_include_for_caller` uses for memories; we apply
+        # the same key here for episodes so the two surfaces stay
+        # in sync about what "this worktree's prior session" means.
+        caller_worktree = handoff_origin.worktree_root if handoff_origin else None
 
         # Walk the event log to collect candidate session_ids with
         # their max event timestamp (descending order = most recent
@@ -271,8 +344,28 @@ async def episode_handoff(
                 break
 
     episodes: list[dict[str, Any]] = []
+    # E2: when the resolved session has ONLY floor episodes (no real
+    # takeaway-bearing entries), surface a marker note so the caller
+    # can render "prior session crashed before writing a takeaway"
+    # instead of treating the empty episodes list as "session existed
+    # but wrote nothing on purpose". The two are observably distinct
+    # from the model's perspective: the latter is benign (the prior
+    # tick was a search-only session); the former is a crash signal.
+    prior_crashed_pre_takeaway = False
     if resolved_session_id is not None:
         all_eps = deps.episode_store.list_by_session(resolved_session_id)
+        # Track whether the session is floor-only BEFORE filtering, so
+        # the scope-disable cascade can't mask a crash signal (a
+        # floor's scopes are always [] so the scope filter never
+        # touches it, but we record the determination here for
+        # downstream clarity).
+        any_real_takeaway = any(not ep.is_floor for ep in all_eps)
+        if all_eps and not any_real_takeaway:
+            prior_crashed_pre_takeaway = True
+        # Filter floors from the emit stream — they carry no takeaway
+        # and the marker body is a placeholder, not content the model
+        # should reason over as "what the prior session concluded".
+        all_eps = [ep for ep in all_eps if not ep.is_floor]
         # Apply the same scope-hide filter to the emit stream. This
         # matters in two cases the auto-resolution walk doesn't reach:
         #  - Caller passed `prior_session_id` explicitly, bypassing
@@ -303,11 +396,82 @@ async def episode_handoff(
         prior_session_id=resolved_session_id,
         max_episodes=max_episodes,
         returned=len(episodes),
+        prior_crashed_pre_takeaway=prior_crashed_pre_takeaway,
     )
-    return {
+    result: dict[str, Any] = {
         "prior_session_id": resolved_session_id,
         "episodes": episodes,
     }
+    if prior_crashed_pre_takeaway:
+        # Additive surface key — only present when the floor-only
+        # crash-signal fires. A caller that doesn't know about the
+        # field sees the same shape as before; a caller that does
+        # can render "Prior session crashed before writing a
+        # takeaway." rather than silently treating the empty list
+        # as "nothing to surface".
+        result["note"] = (
+            "Prior session crashed before writing a takeaway. The "
+            "session-tag floor on disk anchored the worktree match "
+            "but no episode_write was issued before the crash."
+        )
+    return result
+
+
+def _maybe_write_session_floor(
+    deps: "ToolHandlers",
+    handoff_origin: Any,
+) -> None:
+    """Write a session-tag floor episode for the current session, if needed.
+
+    Idempotent: a session that already has at least one episode on
+    disk (floor or real) skips the write. The check uses
+    `list_by_session(recorder.session_id)` — a cheap directory walk
+    bounded by the per-session episode count (usually 0-10). Multi-MCP
+    racing on the same session_id is serialised by the per-session
+    flock inside `EpisodeStore.write_floor` (delegated to
+    `_persist_episode`); two handoffs in the same process landing
+    concurrently both check empty, both attempt the write, but the
+    flock serialises them — the second one's `list_by_session` under
+    the flock would see the first's floor, BUT we don't re-check
+    under the flock because the cost of a rare duplicate floor (one
+    extra small file in the session_dir, 100+ bytes) is far less than
+    the latency of holding the flock across a directory walk on
+    every handoff. The duplicate is benign: `episode_handoff`'s emit
+    step filters both out, and the TTL prune handles cleanup at the
+    30-day horizon.
+
+    The handoff handler at entry calls this UNCONDITIONALLY; the
+    decision-to-write happens here so the call site stays a one-
+    liner and the discipline (capture_origin once, route through
+    the recorder's session_id) is enforced in one place.
+    """
+    session_id = deps.recorder.session_id
+    # Cheap existence check. `list_by_session` returns oldest-first
+    # episodes; we only need to know whether any exists.
+    try:
+        existing = deps.episode_store.list_by_session(session_id)
+    except ValueError:
+        # Hostile session_id (shouldn't happen — the recorder's
+        # session_id is generated by us and validated at construction).
+        # If it does, surfacing a ValueError at handoff entry is
+        # better than silently skipping the floor and shipping a
+        # half-broken handoff.
+        raise
+    if existing:
+        # Session already has at least one episode — floor would
+        # be redundant. This branch fires when:
+        #   - The handler is called twice in the same process (e.g.
+        #     a /loop subagent re-handshakes its parent's session).
+        #   - The session called `episode_write` before its first
+        #     `episode_handoff` (uncommon but valid — the protocol
+        #     doesn't enforce order, and a session that started
+        #     writing journal entries before calling handoff has
+        #     no need for a floor anchor).
+        return
+    deps.episode_store.write_floor(
+        session_id=session_id,
+        origin=handoff_origin,
+    )
 
 
 def _worktrees_equal_strict(

@@ -179,6 +179,22 @@ async def episode_promote(
             "past its TTL or never existed)"
         )
 
+    # Floors are session-tag anchors, not content — they carry an
+    # empty takeaway and a placeholder body. Promoting one would
+    # either fail noisily through the durability gate (transient
+    # marker rejection) or, worse, succeed and land a junk memory.
+    # Reject explicitly at the promotion boundary so the error
+    # message points to the actual reason rather than blaming the
+    # caller for "transient phrase".
+    if episode.is_floor:
+        raise ValueError(
+            f"episode {episode_id} is a session-tag floor (no takeaway). "
+            "Floors anchor a session's worktree on disk so episode_handoff "
+            "can resolve a tick that crashed before episode_write; they "
+            "carry no journal content. Write a real takeaway via "
+            "episode_write and promote that instead."
+        )
+
     # Pick the body for the durable memory.
     if use_body:
         body_for_memory = episode.body

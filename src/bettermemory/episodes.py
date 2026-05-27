@@ -108,6 +108,84 @@ class EpisodeStore:
             takeaway=takeaway.strip() if takeaway else None,
             origin=origin,
         )
+        self._persist_episode(episode)
+        return episode
+
+    def write_floor(
+        self,
+        *,
+        session_id: str,
+        origin: Origin | None = None,
+        now: datetime | None = None,
+    ) -> Episode:
+        """Write a session-tag floor episode (E2 crash-recovery anchor).
+
+        Floors are tiny journal-anchor episodes the `episode_handoff`
+        handler writes at its own entry, BEFORE recording the handoff
+        event, so a tick that crashes between handoff entry and
+        `episode_write` still leaves the current session's worktree
+        tag on disk. The next tick's handoff resolves this session's
+        id via the event log, calls `list_by_session(sid)`, sees the
+        floor episode, and the worktree filter on `_worktrees_equal_
+        strict` matches the caller's worktree against the floor's
+        captured `origin.worktree_root` — so the prior-session resolution
+        adopts the crashed tick instead of silently walking past it
+        to the tick-before-last.
+
+        Floors carry empty body / empty takeaway / empty scopes and
+        the `is_floor=True` marker. Reuses the same atomic write
+        discipline (`_persist_episode`) as `write` — tmp+fchmod+fsync
+        +rename+fsync_dir+per-session flock — so the durability and
+        concurrency contracts are identical between the two write
+        paths. The on-disk `body` is the literal floor marker text
+        (still non-empty so `_persist_episode`'s file-shape invariants
+        hold) but consumers branch on the `is_floor` flag, not on
+        body inspection.
+
+        Callers (handler layer) are expected to gate this call on a
+        cheap `list_by_session` emptiness check first — a single
+        floor per session is the goal, not one floor per handoff
+        invocation. The handler also catches the case where a real
+        takeaway has already been written into this session by a
+        prior episode_write (then the floor is unnecessary).
+        """
+        created = now or utcnow()
+        episode = Episode(
+            id=generate_ulid(),
+            session_id=session_id,
+            created=created,
+            # Non-empty body to satisfy the on-disk file-shape
+            # invariant (`_write_path` writes the body verbatim into
+            # the post content, downstream readers tolerate it). The
+            # marker text is descriptive so a human walking the
+            # journal manually can immediately distinguish a floor
+            # from a real takeaway; consumers branching on the
+            # `is_floor` flag never inspect this string.
+            body="(session-tag floor — no takeaway recorded)\n",
+            scopes=[],
+            takeaway=None,
+            origin=origin,
+            is_floor=True,
+        )
+        self._persist_episode(episode)
+        return episode
+
+    def _persist_episode(self, episode: Episode) -> None:
+        """Write `episode` to its on-disk path with full durability.
+
+        Shared by `write` (real takeaway journal) and `write_floor`
+        (session-tag anchor). Encapsulates the directory-creation
+        ceremony, the per-session flock, the dir-fsync ceremony for
+        first-create dirents, and delegates the per-file atomic
+        rename to `_write_path`. Keeping a single implementation
+        site for the disk discipline guarantees floor writes inherit
+        every durability fix the real-write path has earned (audit-
+        3 A3-04 / A3-05, the per-session flock against prune races,
+        the first-create dir-fsync chain root → episodes_dir →
+        session_dir, the lockfile-placement-in-episodes_dir
+        invariant).
+        """
+        session_id = episode.session_id
         # Materialize the subdir on first write — the parent `episodes/`
         # gets the 0o700 treatment the tombstone directory does, since
         # episodes carry the same trust boundary as memories (origin
@@ -168,7 +246,6 @@ class EpisodeStore:
             self._write_path(path, episode)
             if session_dir_was_created:
                 fsync_dir(self.episodes_dir)
-        return episode
 
     def _write_path(self, path: Path, episode: Episode) -> None:
         post = frontmatter.Post(episode.body.strip() + "\n")
@@ -186,6 +263,15 @@ class EpisodeStore:
             origin_dict = episode.origin.model_dump(mode="json", exclude_none=True)
             if origin_dict:
                 meta["origin"] = origin_dict
+        # `is_floor` is opt-in additive — only emit when True. Legacy
+        # episodes written before the field shipped have no `is_floor`
+        # key in their frontmatter, and `_load_path` defaults to False
+        # for the missing-key case (see below). Real-takeaway episodes
+        # written post-E2 also omit the key (saves four bytes per file
+        # × N episodes per worktree) and load identically. Floors are
+        # the only writers that emit the key.
+        if episode.is_floor:
+            meta["is_floor"] = True
         post.metadata = meta
         # Atomic + durable write: write to a per-process tmp file, fchmod
         # 0o600 on the open fd, fsync the file, rename into place, fsync
@@ -289,6 +375,13 @@ class EpisodeStore:
         origin_obj: Origin | None = None
         if isinstance(origin_raw, dict):
             origin_obj = Origin.model_validate(origin_raw)
+        # Missing key → False (legacy default, real-takeaway episodes
+        # never emit the key). Coerce defensively so a hand-edited
+        # frontmatter that wrote `is_floor: "true"` (string) still
+        # loads as the expected boolean rather than crashing the
+        # model validator.
+        is_floor_raw = meta.get("is_floor", False)
+        is_floor = bool(is_floor_raw)
         return Episode(
             id=str(meta["id"]),
             session_id=str(meta["session_id"]),
@@ -297,6 +390,7 @@ class EpisodeStore:
             scopes=list(meta.get("scopes", [])),
             takeaway=meta.get("takeaway"),
             origin=origin_obj,
+            is_floor=is_floor,
         )
 
     # ---- prune ------------------------------------------------------------
