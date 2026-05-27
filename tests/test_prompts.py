@@ -117,6 +117,75 @@ def test_api_md_documents_loop_phase_surface() -> None:
     assert "recommendations" in text
 
 
+def test_api_md_documents_handler_return_shapes() -> None:
+    """`docs/api.md` enumerates the return-shape fields handlers emit.
+
+    Audit-2 (A2-12 / A2-13 / A2-14 / A2-15) flagged that several return
+    surfaces were under-specified in api.md: `episode_search` didn't
+    name its fields (notably `session_id`), `memory_show` enumerated
+    only a subset of its actual 18-field dict, `memory_health` omitted
+    `generated_at` + `window_days` from the rollup, and the
+    `episode_handoff` auto-resolution branch didn't document the
+    caller-worktree + disabled_scopes filters that tick-22 / tick-11
+    established. Pin each as a text-presence check so a future doc
+    trim trips a single assertion rather than silently regressing the
+    contract surface a caller relies on.
+    """
+    api_md = Path(__file__).resolve().parents[1] / "docs" / "api.md"
+    text = api_md.read_text(encoding="utf-8")
+    # A2-12: episode_search return shape includes session_id (cross-session
+    # surface) and documents the "most-recent N" cap direction (tick-21).
+    assert "session_id" in text, (
+        "docs/api.md no longer mentions `session_id` in any return "
+        "shape; episode_search emits it (cross-session lookup) but "
+        "callers can't discover the field if it's not documented."
+    )
+    assert "most-recent" in text, (
+        "docs/api.md no longer documents the most-recent-N cap "
+        "direction for episode_search; tick-21 fixed the slice but "
+        "callers reading the doc still won't know which end of the "
+        "list survives the cap."
+    )
+    # A2-13: memory_show enumerates the structured attestation fields
+    # (verified_paths / verified_commits / verified_versions) the
+    # handler returns from show.py:142-144.
+    assert "verified_paths" in text, (
+        "docs/api.md no longer enumerates `verified_paths` in the "
+        "memory_show return; the handler returns it (show.py) but "
+        "the documented shape stops short of the attestation block."
+    )
+    assert "verified_commits" in text
+    assert "verified_versions" in text
+    # A2-14: memory_health rollup includes generated_at + window_days
+    # (health.py HealthReport.to_dict).
+    assert "generated_at" in text, (
+        "docs/api.md memory_health rollup no longer names "
+        "`generated_at`; the report's ISO timestamp is the only way "
+        "to pin a stored snapshot's age."
+    )
+    assert "window_days" in text, (
+        "docs/api.md memory_health rollup no longer names "
+        "`window_days`; the echoed analysis window is part of the "
+        "return contract."
+    )
+    # A2-15: episode_handoff auto-resolve documents the caller-worktree
+    # filter (tick-22) and the disabled_scopes cascade (tick-11). Match
+    # case-insensitively so a prose rewording (sentence-leading capital
+    # vs in-paragraph lowercase) doesn't false-trip the contract check.
+    lowered = text.lower()
+    assert "caller-worktree" in lowered or "caller worktree" in lowered, (
+        "docs/api.md no longer documents the caller-worktree filter "
+        "on episode_handoff auto-resolution; tick-22 established "
+        "strict equality but callers reading the doc won't see "
+        "cross-worktree isolation as part of the contract."
+    )
+    assert "disabled_scopes" in text, (
+        "docs/api.md no longer mentions the disabled_scopes cascade "
+        "on episode_handoff; tick-11 added the filter but the doc "
+        "needs to surface it as an implicit filter."
+    )
+
+
 def test_handler_descs_enumerate_loop_phase_fields() -> None:
     """Per-tool DESC strings enumerate the loop-phase-1 additions.
 
