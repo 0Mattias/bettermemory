@@ -799,6 +799,117 @@ async def test_search_since_prior_session_default_false_keeps_old_shape(
     assert len(hits) == 1
 
 
+async def test_search_since_prior_session_bypasses_fts_prefilter_cap(
+    memory_dir: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Regression: on stores large enough to engage the FTS5 prefilter,
+    `since_prior_session=True` must NOT route through the prefilter — it
+    caps candidates at 50 by query relevance, which would silently drop
+    a newly-written matching memory ranked outside the cap. Fix: when
+    `since_prior_session=True`, the handler calls `load_all` directly
+    and applies the boundary filter to the full corpus."""
+    # Force the FTS prefilter into a tiny-cap regime so we can engage
+    # it without writing thousands of memories. Threshold of 1 means
+    # any non-empty index triggers the prefilter path.
+    monkeypatch.setenv("BETTERMEMORY_INDEX_THRESHOLD", "1")
+    cfg = Config(storage=StorageConfig(directory=str(memory_dir)))
+
+    # Session A: write a bunch of memories that all match "zzz" so they
+    # crowd the FTS prefilter's top-50 rows. These all predate the
+    # session boundary, so the boundary filter would drop them anyway —
+    # they exist purely to fill the prefilter cap. `force=True` skips
+    # the similarity-dedup check that would otherwise stage these as
+    # pending writes (they're intentionally near-duplicates).
+    server_a = build_server(config=cfg, store=Store(memory_dir), state=SessionState())
+    for i in range(60):
+        await _call(
+            server_a,
+            "memory_write",
+            content=f"zzz crowding memory {i} with extra zzz padding",
+            scopes=["tools"],
+            force=True,
+        )
+
+    # Session B: a fresh recorder establishes a new session_id, so the
+    # latest session-A event becomes the prior boundary. Write one new
+    # memory that also matches "zzz". With the buggy prefilter path, the
+    # 50-row cap on FTS results is filled with session-A memories that
+    # rank similarly on the query; the session-B write may not crack
+    # the top 50 — and even if it does, the boundary filter would still
+    # be applied to only those 50 rows, not the full corpus.
+    server_b = build_server(config=cfg, store=Store(memory_dir), state=SessionState())
+    written_b = await _call(
+        server_b,
+        "memory_write",
+        content="zzz arrival from session B with bonus zzz keyword",
+        scopes=["tools"],
+        force=True,
+    )
+    # Sanity: write should commit, not stage pending. The dedup-bypass
+    # `force=True` is paired with the test's deliberately near-duplicate
+    # content; if a future write-pipeline change re-routes this through
+    # a pending path, the test should fail loudly here, not at the hit
+    # assertion below.
+    assert written_b.get("status") == "committed", written_b
+    hits = _unwrap(
+        await _call(
+            server_b,
+            "memory_search",
+            query="zzz",
+            since_prior_session=True,
+        )
+    )
+    ids = [h["id"] for h in hits]
+    # The session-B write must surface despite the prefilter cap.
+    assert written_b["id"] in ids
+    # No session-A memory should leak through — they all predate the
+    # boundary.
+    assert ids == [written_b["id"]]
+
+
+async def test_search_since_prior_session_empty_query_returns_filtered_set(
+    memory_dir: Path,
+) -> None:
+    """Regression: `memory_search(query="", since_prior_session=True)` is
+    the natural "what's new since last session" usage. Pre-fix, the
+    stopword early-return in `search()` fired before the boundary filter
+    could surface anything, so this returned `[]` unconditionally. Fix:
+    when `since_prior_session=True`, the handler passes
+    `allow_empty_query=True` so `search()` returns the post-boundary
+    candidates sorted by `updated` desc."""
+    cfg = Config(storage=StorageConfig(directory=str(memory_dir)))
+
+    # Session A: seed an event so a prior session boundary exists.
+    server_a = build_server(config=cfg, store=Store(memory_dir), state=SessionState())
+    await _call(server_a, "memory_write", content="seed in A", scopes=["tools"])
+
+    # Session B: write three memories with distinct `updated` ordering.
+    # Bump `updated` between writes by calling `memory_update` so the
+    # sort key is unambiguous (the ULID-shaped id is the tiebreaker, so
+    # even creation order would suffice — but explicit updates make the
+    # ordering assertion test the intended behaviour, not an
+    # implementation accident).
+    server_b = build_server(config=cfg, store=Store(memory_dir), state=SessionState())
+    m1 = await _call(server_b, "memory_write", content="first new", scopes=["tools"])
+    m2 = await _call(server_b, "memory_write", content="second new", scopes=["tools"])
+    m3 = await _call(server_b, "memory_write", content="third new", scopes=["tools"])
+    hits = _unwrap(
+        await _call(
+            server_b,
+            "memory_search",
+            query="",
+            since_prior_session=True,
+        )
+    )
+    ids = [h["id"] for h in hits]
+    # All three session-B memories must appear; the session-A seed must
+    # not (it predates the boundary).
+    assert set(ids) == {m1["id"], m2["id"], m3["id"]}
+    # Sorted by `updated` desc — newest write first.
+    assert ids == [m3["id"], m2["id"], m1["id"]]
+
+
 # ---------------------------------------------------------------------------
 # memory_search — depends_on_resolved auto-pull
 # ---------------------------------------------------------------------------

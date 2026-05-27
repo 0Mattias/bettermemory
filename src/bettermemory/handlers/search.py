@@ -165,18 +165,6 @@ async def memory_search(
     # cross-project search keeps working without needing a second flag.
     worktree_filter: str | None = current_origin.worktree_root if auto_scope else None
 
-    # FTS5 candidate pre-filter (T3.1 phase B). When the index
-    # exists and the store is large enough that load_all would
-    # become the bottleneck, query the index for candidate ids
-    # and load just those — sidesteps the linear scan that bites
-    # at ~5K+ memories. The candidate pool is intentionally
-    # generous (50 candidates for a 5-result return) so the
-    # downstream rankers still see enough variety to do a good
-    # job. For small stores, or when no candidates come back
-    # (typical of stale index), we fall back to load_all so the
-    # result quality stays identical to the pre-index path.
-    memories = deps._load_search_candidates(query)
-
     # Prior-session boundary filter (loop-iteration entry path).
     # When set, narrow candidates to memories whose `updated` is
     # at/after the latest event-log timestamp from a session_id
@@ -187,6 +175,15 @@ async def memory_search(
     # the events were tagged with. Surface as empty when no prior
     # session exists; callers distinguish "nothing new" from "no
     # baseline" by also calling memory_scope_overview.
+    #
+    # Resolve the boundary *before* loading candidates so the
+    # "no prior session" shortcut can skip the load entirely, and
+    # so the `since_prior_session=True` branch below can take the
+    # full-corpus `load_all` path (the FTS prefilter's top-50-by-
+    # relevance cap silently hides newly-written memories that
+    # rank outside the cap — the post-boundary set is bounded by
+    # session activity, not corpus size, so the linear scan is
+    # cheap regardless of store size).
     prior_boundary = None
     if since_prior_session:
         from ..events import iter_all_events
@@ -196,10 +193,31 @@ async def memory_search(
             iter_all_events(deps.store.root),
             deps.recorder.session_id,
         )
+
+    # Candidate pool. Two paths:
+    #
+    # 1. `since_prior_session=True`: bypass the FTS5 prefilter and
+    #    take the full corpus via `load_all`, then narrow to the
+    #    post-boundary slice. Required for correctness — the
+    #    prefilter caps at 50 rows by query relevance, so a newly-
+    #    written memory matching the query but ranked outside top-N
+    #    would be dropped before the boundary filter ever sees it.
+    #    The post-boundary slice is bounded by session activity, so
+    #    even on a 10k-memory store only a handful of memories will
+    #    pass the `updated >= prior_boundary` check.
+    # 2. Default: FTS5 candidate prefilter (T3.1 phase B). When the
+    #    index exists and the store is large enough that load_all
+    #    would dominate the budget, query the index for candidate
+    #    ids and load just those. The candidate pool is generous
+    #    (50 candidates for a 5-result return) so the downstream
+    #    rankers see enough variety to score well.
+    if since_prior_session:
         if prior_boundary is None:
             memories = []
         else:
-            memories = [m for m in memories if m.updated >= prior_boundary]
+            memories = [m for m in deps.store.load_all() if m.updated >= prior_boundary]
+    else:
+        memories = deps._load_search_candidates(query)
 
     hits = run_search(
         memories,
@@ -212,6 +230,12 @@ async def memory_search(
         half_life_days=deps.config.behavior.recency_boost_half_life_days,
         mode=cast(SearchMode, resolved_mode),
         semantic_model=semantic_model,
+        # Browse mode for the natural "what's new since last session"
+        # usage: when the caller narrowed to the post-boundary slice
+        # and didn't supply a meaningful query, treat all surviving
+        # candidates as hits sorted by `updated` desc instead of
+        # short-circuiting to an empty list on the stopword check.
+        allow_empty_query=since_prior_session,
     )
     # Pin one `now` for the whole response so the verification verdict
     # is consistent across hits — the alternative (let each helper
