@@ -757,6 +757,93 @@ async def test_search_since_prior_session_filters_to_post_boundary(
     assert all(h["body"] != "written in session A" for h in hits if "body" in h)
 
 
+async def test_search_since_prior_session_excludes_boundary_memory(
+    memory_dir: Path,
+) -> None:
+    """`since_prior_session=True` is *exclusive* at the boundary: a memory
+    whose `updated` equals `prior_boundary` belongs to the prior session
+    (the boundary IS that session's last event ts, per
+    `find_prior_session_boundary`) and must not surface in the current
+    session's delta. Mirrors `test_curation_counts_since_filter_is_exclusive_at_boundary`
+    in tests/test_health.py — same concept, same answer across both surfaces
+    (memory_search + memory_scope_overview/curation_counts) the api docs
+    pair together as the "what's new since last session" workflow. A naive
+    inclusive `>=` would double-count the boundary memory across the two
+    surfaces."""
+    from bettermemory.events import iter_all_events
+    from bettermemory.health import find_prior_session_boundary
+
+    cfg = Config(storage=StorageConfig(directory=str(memory_dir)))
+
+    # Session A: write one memory. The `memory_write` recorder event lands
+    # in the log with its own `_utcnow_iso()` ts, which becomes session B's
+    # `prior_boundary` below. Memory A's `updated` is set by `Store.write`
+    # via a *separate* `utcnow()` call, so the two timestamps usually
+    # differ by microseconds — to pin the equality edge we re-stamp A's
+    # `updated` to exactly match the boundary after the fact.
+    state_a = SessionState()
+    server_a = build_server(config=cfg, store=Store(memory_dir), state=state_a)
+    written_a = await _call(
+        server_a,
+        "memory_write",
+        content="boundary memory written in session A",
+        scopes=["tools"],
+    )
+
+    # Session B: a fresh recorder establishes a new session_id so events
+    # from session A become "prior". Derive `prior_boundary` from the live
+    # event log the same way `search.py` does.
+    state_b = SessionState()
+    store_b = Store(memory_dir)
+    server_b = build_server(config=cfg, store=store_b, state=state_b)
+    prior_boundary = find_prior_session_boundary(
+        iter_all_events(memory_dir),
+        # Mirror the handler: the boundary is "latest event ts from a
+        # session other than the current one". `build_server` propagates
+        # the bare-`SessionState` path's `state.session_id` to the
+        # recorder (`builder.py:125`), so reading `state_b.session_id`
+        # gives us the same value the handler will use.
+        state_b.session_id,
+    )
+    assert prior_boundary is not None, "session A's write should have seeded a boundary"
+
+    # Force memory A's `updated` to exactly equal `prior_boundary`. The
+    # on-disk path is what `Store.load_all` re-reads, so writing through
+    # `_write_path` with a model_copy of A is sufficient — we deliberately
+    # bypass `Store.update` because that helper bumps `updated` to
+    # `utcnow()` and would defeat the test's pin.
+    path_a = store_b._find_path_for_id(written_a["id"])
+    assert path_a is not None
+    # Load the on-disk Memory and re-stamp `updated`. Going through the
+    # Store's own loader (rather than reconstructing from the dict) keeps
+    # this resilient to future Memory-model fields we'd otherwise drop.
+    loaded_a = next(m for m in store_b.load_all() if m.id == written_a["id"])
+    pinned_a = loaded_a.model_copy(update={"updated": prior_boundary})
+    store_b._write_path(path_a, pinned_a)
+
+    # Sanity: the rewrite landed.
+    reloaded_a = next(m for m in store_b.load_all() if m.id == written_a["id"])
+    assert reloaded_a.updated == prior_boundary
+
+    # Now run the since_prior_session search from session B. With the
+    # pre-fix inclusive `>=` filter, A would still surface; the fix
+    # makes the comparison strict so the boundary memory drops out.
+    hits = _unwrap(
+        await _call(
+            server_b,
+            "memory_search",
+            query="boundary",
+            since_prior_session=True,
+        )
+    )
+    ids = [h["id"] for h in hits]
+    assert written_a["id"] not in ids, (
+        "memory whose `updated` equals `prior_boundary` belongs to the prior "
+        "session and must not appear in the since_prior_session delta — "
+        "must agree with curation_counts' strict `<=` exclusion at the boundary"
+    )
+
+
 async def test_search_since_prior_session_records_boundary_on_event(
     memory_dir: Path,
 ) -> None:

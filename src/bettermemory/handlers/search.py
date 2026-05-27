@@ -204,7 +204,7 @@ async def memory_search(
     #    would be dropped before the boundary filter ever sees it.
     #    The post-boundary slice is bounded by session activity, so
     #    even on a 10k-memory store only a handful of memories will
-    #    pass the `updated >= prior_boundary` check.
+    #    pass the `updated > prior_boundary` check.
     # 2. Default: FTS5 candidate prefilter (T3.1 phase B). When the
     #    index exists and the store is large enough that load_all
     #    would dominate the budget, query the index for candidate
@@ -215,7 +215,16 @@ async def memory_search(
         if prior_boundary is None:
             memories = []
         else:
-            memories = [m for m in deps.store.load_all() if m.updated >= prior_boundary]
+            # Strict-`>` to match the `curation_counts` `<=` exclusion:
+            # the boundary IS the prior session's last event ts (per
+            # `find_prior_session_boundary`), so a memory whose `updated`
+            # equals it was written by the prior session and belongs to
+            # *that* session, not the current-session delta. A naive `>=`
+            # double-counts the boundary memory across the two surfaces
+            # (memory_search + memory_scope_overview/curation_counts) that
+            # the api docs pair together as the "what's new since last
+            # session" workflow.
+            memories = [m for m in deps.store.load_all() if m.updated > prior_boundary]
     else:
         memories = deps._load_search_candidates(query)
 
