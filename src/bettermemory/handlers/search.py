@@ -1,6 +1,6 @@
 """memory_search MCP tool — handler implementation + DESC.
 
-The handler is the busiest of the eighteen tools: it issues use-tokens,
+The handler is the busiest of the 22 tools: it issues use-tokens,
 attaches per-hit drift signals, optionally expands the top hit, and
 records its own event with a generous payload shape so the eval CLI
 can rebuild what the model saw.
@@ -72,6 +72,18 @@ DESC_MEMORY_SEARCH = (
     "- `auto_scope=True` (default): filter to current repo+worktree; "
     "memories with no recorded origin always pass as global. Set "
     "False for explicit cross-project queries.\n"
+    "- `since_prior_session=False` (default): when True, filter "
+    "to memories whose `updated` is at or after the prior session "
+    "boundary (latest event from a different session_id in the "
+    "log). The semantic is 'what has changed in the current "
+    "session, since the last activity by other sessions' — i.e. "
+    "this session's intra-session diff. A /loop iteration uses "
+    "this to track what IT has written/updated; for what the "
+    "prior iteration did, call episode_handoff instead. "
+    "Returns empty when there's no prior session in the log; "
+    "distinguish 'nothing new' (results=[]) from 'no baseline' "
+    "by also calling memory_scope_overview and checking "
+    "`curation_pending_new_since_last_session is None`.\n"
     "- `mode` (optional, default from config; package default `hybrid`): `keyword`, `bm25`, "
     "`semantic` (needs embeddings extra), or `hybrid` (RRF of the "
     "first three). `hybrid` for paraphrase recall; `keyword` for "
@@ -91,6 +103,7 @@ async def memory_search(
     max_results: int | None = None,
     expand_top: bool = False,
     auto_scope: bool = True,
+    since_prior_session: bool = False,
     mode: str | None = None,
     ctx: Context | None = None,
 ) -> list[dict[str, Any]]:
@@ -152,17 +165,59 @@ async def memory_search(
     # cross-project search keeps working without needing a second flag.
     worktree_filter: str | None = current_origin.worktree_root if auto_scope else None
 
-    # FTS5 candidate pre-filter (T3.1 phase B). When the index
-    # exists and the store is large enough that load_all would
-    # become the bottleneck, query the index for candidate ids
-    # and load just those — sidesteps the linear scan that bites
-    # at ~5K+ memories. The candidate pool is intentionally
-    # generous (50 candidates for a 5-result return) so the
-    # downstream rankers still see enough variety to do a good
-    # job. For small stores, or when no candidates come back
-    # (typical of stale index), we fall back to load_all so the
-    # result quality stays identical to the pre-index path.
-    memories = deps._load_search_candidates(query)
+    # Prior-session boundary filter (loop-iteration entry path).
+    # When set, narrow candidates to memories whose `updated` is
+    # at/after the latest event-log timestamp from a session_id
+    # other than the recorder's. We use the recorder's session
+    # (not state.session_id) for the same reason scope_overview
+    # does — the recorder is what stamps events with `session`,
+    # so the boundary check has to compare against the same id
+    # the events were tagged with. Surface as empty when no prior
+    # session exists; callers distinguish "nothing new" from "no
+    # baseline" by also calling memory_scope_overview.
+    #
+    # Resolve the boundary *before* loading candidates so the
+    # "no prior session" shortcut can skip the load entirely, and
+    # so the `since_prior_session=True` branch below can take the
+    # full-corpus `load_all` path (the FTS prefilter's top-50-by-
+    # relevance cap silently hides newly-written memories that
+    # rank outside the cap — the post-boundary set is bounded by
+    # session activity, not corpus size, so the linear scan is
+    # cheap regardless of store size).
+    prior_boundary = None
+    if since_prior_session:
+        from ..events import iter_all_events
+        from ..health import find_prior_session_boundary
+
+        prior_boundary = find_prior_session_boundary(
+            iter_all_events(deps.store.root),
+            deps.recorder.session_id,
+        )
+
+    # Candidate pool. Two paths:
+    #
+    # 1. `since_prior_session=True`: bypass the FTS5 prefilter and
+    #    take the full corpus via `load_all`, then narrow to the
+    #    post-boundary slice. Required for correctness — the
+    #    prefilter caps at 50 rows by query relevance, so a newly-
+    #    written memory matching the query but ranked outside top-N
+    #    would be dropped before the boundary filter ever sees it.
+    #    The post-boundary slice is bounded by session activity, so
+    #    even on a 10k-memory store only a handful of memories will
+    #    pass the `updated >= prior_boundary` check.
+    # 2. Default: FTS5 candidate prefilter (T3.1 phase B). When the
+    #    index exists and the store is large enough that load_all
+    #    would dominate the budget, query the index for candidate
+    #    ids and load just those. The candidate pool is generous
+    #    (50 candidates for a 5-result return) so the downstream
+    #    rankers see enough variety to score well.
+    if since_prior_session:
+        if prior_boundary is None:
+            memories = []
+        else:
+            memories = [m for m in deps.store.load_all() if m.updated >= prior_boundary]
+    else:
+        memories = deps._load_search_candidates(query)
 
     hits = run_search(
         memories,
@@ -175,6 +230,12 @@ async def memory_search(
         half_life_days=deps.config.behavior.recency_boost_half_life_days,
         mode=cast(SearchMode, resolved_mode),
         semantic_model=semantic_model,
+        # Browse mode for the natural "what's new since last session"
+        # usage: when the caller narrowed to the post-boundary slice
+        # and didn't supply a meaningful query, treat all surviving
+        # candidates as hits sorted by `updated` desc instead of
+        # short-circuiting to an empty list on the stopword check.
+        allow_empty_query=since_prior_session,
     )
     # Pin one `now` for the whole response so the verification verdict
     # is consistent across hits — the alternative (let each helper
@@ -215,6 +276,32 @@ async def memory_search(
         recent_events = list(iter_events(deps.store.root))
         deps.responses.attach_recent_negative_outcomes(
             out, hits, recent_events, now=now
+        )
+
+    # Per-hit `depends_on_resolved`: when a hit's memory carries
+    # `depends_on`-typed links, inline summaries of the targets so
+    # the model gets the dependency chain without a memory_show
+    # round-trip. Bounded (max 3 per hit, max 10 total). The
+    # MemoryLink type has existed in the schema since 2.x but
+    # retrieval has never surfaced it automatically — this closes
+    # that gap. Caller can disable via the response builder if a
+    # noisy `depends_on` graph would dominate the response, but the
+    # caps make the default safe.
+    if out:
+        # Re-apply the caller's scope filters to the dependency
+        # auto-pull. The side-map inside `attach_depends_on_resolved`
+        # is built from `memories` (the pre-filter loader output)
+        # so cross-repo / session-disabled targets are still
+        # resolvable by id — without re-checking here, a hit in a
+        # caller-visible scope could pull in a target from a hidden
+        # scope, undoing the deliberate scope filter via the
+        # dependency edge.
+        deps.responses.attach_depends_on_resolved(
+            out,
+            hits,
+            memories,
+            caller_origin=current_origin if auto_scope else None,
+            excluded_scopes=set(state.disabled_scopes),
         )
 
     # Optional auto-expansion of the top hit. Conservative: only fires
@@ -276,6 +363,8 @@ async def memory_search(
     # is about to act on.
     _attach_use_tokens(out, state)
 
+    from .._response import isoformat_optional
+
     deps.recorder.record(
         "search",
         query=query,
@@ -290,6 +379,8 @@ async def memory_search(
         expanded_commits_since_verify=expanded_commits_since_verify,
         auto_scope=auto_scope,
         repo_filter=repo_filter,
+        since_prior_session=since_prior_session,
+        prior_session_boundary=isoformat_optional(prior_boundary),
     )
     return out
 

@@ -13,6 +13,7 @@ from typing import TYPE_CHECKING, Any
 from .._response import isoformat_optional
 from ..events import iter_all_events
 from ..health import curation_counts, find_prior_session_boundary
+from ..models import utcnow
 from ..origin import Origin, should_include_for_caller
 from ._shared import Context, _advance_turn
 
@@ -135,6 +136,9 @@ async def memory_scope_overview(
         events_snapshot,
         window_days=30,
         verification_stale_days=deps.config.behavior.verification_stale_days,
+        endorsement_debt_ratio_threshold=(
+            deps.config.behavior.endorsement_debt_ratio_threshold
+        ),
         caller_origin=current_origin,
     )
     # Use the recorder's session_id, not `state.session_id`.
@@ -168,9 +172,32 @@ async def memory_scope_overview(
             events_snapshot,
             window_days=30,
             verification_stale_days=deps.config.behavior.verification_stale_days,
+            endorsement_debt_ratio_threshold=(
+                deps.config.behavior.endorsement_debt_ratio_threshold
+            ),
             caller_origin=current_origin,
             since=prior_boundary,
         )
+
+    # Tombstone activity in the last 7 days. Helps the model spot
+    # "you removed N memories about this area last week" before it
+    # re-covers ground already explicitly trimmed. Filtered by the
+    # same auto_scope rule as the active count above: when
+    # auto_scope=True and the caller is in a worktree, we restrict
+    # the count to tombstones whose origin.worktree_root matches.
+    # Tombstones without an origin (legacy or hand-edited) always
+    # count under auto_scope=False; under auto_scope=True they are
+    # excluded to keep the signal scoped tightly. The window mirrors
+    # the curation_pending rollup's spirit (recent activity is what
+    # matters, not the full lifetime of the store).
+    recent_removed = _count_recent_tombstones(
+        deps.store,
+        worktree_root=(
+            current_origin.worktree_root if auto_scope and current_origin else None
+        ),
+        now=utcnow(),
+        window_days=7,
+    )
 
     deps.recorder.record(
         "scope_overview",
@@ -181,6 +208,7 @@ async def memory_scope_overview(
         curation_pending=curation,
         curation_pending_new_since_last_session=curation_delta,
         prior_session_boundary=isoformat_optional(prior_boundary),
+        recently_removed_in_worktree=recent_removed,
     )
     return {
         "current_repo": repo_filter,
@@ -191,7 +219,44 @@ async def memory_scope_overview(
         "disabled_scopes": sorted(state.disabled_scopes),
         "curation_pending": curation,
         "curation_pending_new_since_last_session": curation_delta,
+        "recently_removed_in_worktree": recent_removed,
     }
+
+
+def _count_recent_tombstones(
+    store: Any,
+    *,
+    worktree_root: str | None,
+    now: Any,
+    window_days: int,
+) -> int:
+    """Count tombstones removed within the trailing window.
+
+    When `worktree_root` is provided (auto_scope=True path), only
+    tombstones whose `origin.worktree_root` matches are counted —
+    tombstones without an origin are excluded under this branch
+    because they can't be attributed to the current workspace. When
+    `worktree_root` is None (auto_scope=False), every tombstone in
+    the window counts.
+
+    Defensive: a tombstone with a missing/malformed `removed`
+    timestamp is skipped silently (treated as outside the window)
+    rather than crashing the overview path.
+    """
+    from datetime import timedelta
+
+    cutoff = now - timedelta(days=window_days)
+    count = 0
+    for tombstone in store.load_tombstones():
+        if tombstone.removed is None or tombstone.removed < cutoff:
+            continue
+        if worktree_root is not None:
+            tomb_origin = tombstone.origin
+            tomb_worktree = tomb_origin.worktree_root if tomb_origin else None
+            if tomb_worktree != worktree_root:
+                continue
+        count += 1
+    return count
 
 
 __all__ = ["DESC_MEMORY_SCOPE_OVERVIEW", "memory_scope_overview"]

@@ -60,6 +60,10 @@ from .store import Store
 # path the server uses. (Tests import handlers via the FastMCP tool
 # manager rather than these constants, so the re-export exists for
 # server.py's benefit and back-compat with any out-of-tree caller.)
+DESC_EPISODE_HANDOFF = _handlers_pkg.DESC_EPISODE_HANDOFF
+DESC_EPISODE_PROMOTE = _handlers_pkg.DESC_EPISODE_PROMOTE
+DESC_EPISODE_SEARCH = _handlers_pkg.DESC_EPISODE_SEARCH
+DESC_EPISODE_WRITE = _handlers_pkg.DESC_EPISODE_WRITE
 DESC_MEMORY_AUDIT_TURN = _handlers_pkg.DESC_MEMORY_AUDIT_TURN
 DESC_MEMORY_HEALTH = _handlers_pkg.DESC_MEMORY_HEALTH
 DESC_MEMORY_LINKS_TAIL = _handlers_pkg.DESC_MEMORY_LINKS_TAIL
@@ -107,8 +111,15 @@ class ToolHandlers:
         responses: ResponseBuilder,
         semantic_model_factory: "SemanticModelFactory",
     ) -> None:
+        from .episodes import EpisodeStore
+
         self.config = config
         self.store = store
+        # Episodes live in a sibling subtree of the memory root and
+        # share the trust boundary. Construct lazily so legacy callers
+        # that build a ToolHandlers without ever touching the episode
+        # surface don't materialize the `episodes/` directory.
+        self.episode_store = EpisodeStore(store.root)
         self.sessions = sessions
         self.recorder = recorder
         self.responses = responses
@@ -240,6 +251,7 @@ class ToolHandlers:
         max_results: int | None = None,
         expand_top: bool = False,
         auto_scope: bool = True,
+        since_prior_session: bool = False,
         mode: str | None = None,
         ctx: Context | None = None,
     ) -> list[dict[str, Any]]:
@@ -250,6 +262,7 @@ class ToolHandlers:
             max_results=max_results,
             expand_top=expand_top,
             auto_scope=auto_scope,
+            since_prior_session=since_prior_session,
             mode=mode,
             ctx=ctx,
         )
@@ -297,6 +310,72 @@ class ToolHandlers:
         self, pending_id: str, ctx: Context | None = None
     ) -> dict[str, Any]:
         return await _handlers_pkg.memory_write_cancel(self, pending_id, ctx=ctx)
+
+    async def episode_write(
+        self,
+        body: str,
+        takeaway: str | None = None,
+        scopes: list[str] | None = None,
+        ctx: Context | None = None,
+    ) -> dict[str, Any]:
+        return await _handlers_pkg.episode_write(
+            self,
+            body,
+            takeaway=takeaway,
+            scopes=scopes,
+            ctx=ctx,
+        )
+
+    async def episode_handoff(
+        self,
+        prior_session_id: str | None = None,
+        max_episodes: int | None = None,
+        ctx: Context | None = None,
+    ) -> dict[str, Any]:
+        return await _handlers_pkg.episode_handoff(
+            self,
+            prior_session_id=prior_session_id,
+            max_episodes=max_episodes,
+            ctx=ctx,
+        )
+
+    async def episode_search(
+        self,
+        scopes: list[str] | None = None,
+        parent_session_id: str | None = None,
+        since: str | None = None,
+        max_results: int | None = None,
+        ctx: Context | None = None,
+    ) -> list[dict[str, Any]]:
+        return await _handlers_pkg.episode_search(
+            self,
+            scopes=scopes,
+            parent_session_id=parent_session_id,
+            since=since,
+            max_results=max_results,
+            ctx=ctx,
+        )
+
+    async def episode_promote(
+        self,
+        episode_id: str,
+        scopes: list[str],
+        category: str = "fact",
+        confidence: str = "medium",
+        source: str = "explicit-statement",
+        use_body: bool = False,
+        ctx: Context | None = None,
+    ) -> dict[str, Any]:
+        return await _handlers_pkg.episode_promote(
+            self,
+            episode_id,
+            scopes=scopes,
+            category=category,
+            confidence=confidence,
+            source=source,
+            use_body=use_body,
+            ctx=ctx,
+        )
 
     async def memory_update(
         self,

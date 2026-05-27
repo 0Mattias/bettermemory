@@ -26,7 +26,12 @@ from .models import (
     SimilarHit,
     TombstonedSummary,
 )
-from .origin import Origin, commit_author_timestamps, repos_match
+from .origin import (
+    Origin,
+    commit_author_timestamps,
+    repos_match,
+    should_include_for_caller,
+)
 from .time_utils import isoformat_utc as _isoformat_utc
 from .time_utils import isoformat_utc_optional as _isoformat_utc_optional
 from .verify import (
@@ -425,6 +430,123 @@ class ResponseBuilder:
                 hit_dict["staleness_verdict"] = _VERDICT_RECOMMENDED
             else:
                 hit_dict["staleness_verdict"] = _VERDICT_FRESH
+
+    def attach_depends_on_resolved(  # type: ignore[no-untyped-def]
+        self,
+        out: list[dict[str, Any]],
+        hits: list[MemoryHit],
+        memories,
+        *,
+        max_per_hit: int = 3,
+        max_total: int = 10,
+        caller_origin: Origin | None = None,
+        excluded_scopes: set[str] | None = None,
+    ) -> None:
+        """Mutate `out` in-place, adding `depends_on_resolved` to any hit
+        whose memory carries `depends_on`-typed links.
+
+        `MemoryLink.depends_on` has been in the schema since 2.x but
+        retrieval has never surfaced the linked content automatically —
+        the model had to call `memory_show` on each target to see what
+        the hit depended on. This decorator closes that gap for the
+        common case: when a hit has explicit dependencies, the model
+        sees their summaries inline.
+
+        Bounded: at most `max_per_hit` resolved entries per hit, at
+        most `max_total` across the whole result set. Without the
+        caps a hit with N dependencies (each with M reverse-links)
+        could balloon the response; the caps keep the surface
+        predictable for the model.
+
+        Tombstoned targets are skipped silently — they remain
+        accessible via `memory_list_tombstones` if the caller needs
+        to investigate. A pruned target shouldn't surface as a stale
+        link in normal retrieval flow.
+
+        Shape per resolved entry:
+
+            {
+                "id": "...",
+                "scopes": [...],
+                "summary": "...",   # first_summary_line of the target's body
+                "link_note": str | None,
+            }
+
+        Omitted (key absent from the dict, not null) when the hit has
+        no `depends_on` links or all the targets are tombstoned —
+        same absence-as-signal contract as the other attach_* helpers.
+
+        `caller_origin` and `excluded_scopes` re-apply the caller-side
+        scope filter the search layer ran against the hit list. The
+        side-map below is built from the pre-filter loader output (so
+        cross-repo and session-disabled targets are still resolvable
+        by id), but the deliberate scope/origin filter on the hit
+        list must extend to depended-on summaries too — otherwise a
+        memory in a session-disabled scope (or in a different
+        project under `auto_scope=True`) leaks back in via the
+        dependency edge. Default both to None for back-compat: an
+        omitted `caller_origin` means "no auto-scope check" (mirroring
+        `auto_scope=False` at the caller), and an omitted
+        `excluded_scopes` means "no session disables".
+        """
+        from .models import first_summary_line
+
+        # Build the id → memory side-map once. The caller (`search.py`)
+        # has already paid the load cost for ranking; reuse it here.
+        memory_by_id = {m.id: m for m in memories}
+        excluded = excluded_scopes or set()
+
+        total = 0
+        for hit_dict, hit in zip(out, hits):
+            if total >= max_total:
+                break
+            source = memory_by_id.get(hit.id)
+            if source is None or not source.links:
+                continue
+            depends_links = [
+                link for link in source.links if link.type.value == "depends_on"
+            ]
+            if not depends_links:
+                continue
+
+            resolved: list[dict[str, Any]] = []
+            for link in depends_links:
+                if len(resolved) >= max_per_hit or total >= max_total:
+                    break
+                target = memory_by_id.get(link.target_id)
+                if target is None:
+                    # Not in the loaded candidate set (the target may be
+                    # outside the search's auto-scope, or just not in
+                    # the FTS5 prefilter). Skip silently — the link
+                    # still exists on disk and `memory_show` will
+                    # surface it; auto-pull is a best-effort surface.
+                    continue
+                # Re-apply the caller's scope filter to the resolved
+                # target. The side-map is built from the pre-filter
+                # loader output (so we can find targets by id at all),
+                # but a depended-on memory in a session-disabled scope
+                # or a different project under auto_scope must not
+                # leak in via the dependency edge.
+                if excluded and (set(target.scopes) & excluded):
+                    continue
+                if caller_origin is not None and not should_include_for_caller(
+                    target.origin,
+                    caller_origin.repo,
+                    caller_worktree_root=caller_origin.worktree_root,
+                ):
+                    continue
+                resolved.append(
+                    {
+                        "id": target.id,
+                        "scopes": list(target.scopes),
+                        "summary": first_summary_line(target.body),
+                        "link_note": link.note,
+                    }
+                )
+                total += 1
+
+            if resolved:
+                hit_dict["depends_on_resolved"] = resolved
 
     def attach_recent_negative_outcomes(
         self,

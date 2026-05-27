@@ -107,6 +107,32 @@ memory_write(
 
 Sentences whose content tokens overlap the transcript by less than 30% come back as `{status: "ungrounded", claims: [...]}`. Override via `acknowledge_ungrounded=True` when you have other grounding sources (file reads, tool results) not in the transcript. Off by default — opt in when you want a paper trail.
 
+## Episodes: the sibling tier for run-state
+
+Episodes are a **sibling primitive to memory**, not a tier of it. They're the home for journal-shaped writes the durability gate explicitly rejects: loop-iteration takeaways, "what we tried", run-local context that needs to survive one context reset but isn't a durable fact.
+
+Use episodes when `memory_write` would reject (or should reject) your content as transient:
+
+- *"iteration N tried X, fell over at step 3"* → `episode_write`
+- *"currently blocked on Y; next step is Z"* → `episode_write`
+- *"this branch's release plan"* (state that changes weekly) → `episode_write`
+
+Storage layout: `<root>/episodes/<session_id>/<ulid>.md`. Default 30-day TTL, pruned on each write. Episodes are **invisible to `memory_search` / `memory_health` / `memory_list`** — they live in a sibling subtree the memory iterators never see.
+
+### Loop-iteration pattern
+
+A `/loop` iteration (or any agent resuming work in a worktree) should:
+
+1. **At entry**: call `episode_handoff()`. Returns the prior session's recent takeaways with `{prior_session_id, episodes: [{id, created, takeaway, body, scopes}, ...]}`. Distinguish `prior_session_id is None` (no baseline) from `episodes == []` (prior session left no journal).
+2. **At exit**: call `episode_write(body=..., takeaway="one-line summary")`. The takeaway is what the next iteration sees first.
+3. **When a takeaway hardens into a durable fact**: call `episode_promote(episode_id, scopes=[...])`. Routes through `memory_write` so the durability gate fires; the source episode is deleted on commit, left in place on any rejection so you can adjust and retry.
+
+`memory_search(since_prior_session=True)` is the memory-tier companion: filter the durable memory store to entries `updated` since the prior session boundary. The semantic is "what THIS session has changed since the last other-session activity" — your own intra-session diff. For what the *prior* iteration did, use `episode_handoff` instead.
+
+### Subagent handoff
+
+When a parent agent spawns a subagent, pass the parent's `session_id` along; the subagent calls `episode_handoff(prior_session_id=<parent>)` to inherit context. The handler skips the event-log walk when the id is explicit.
+
 ## Negative-results suppression
 
 A `memory_search` hit whose memory was `ignored` or `contradicted` in the last 30 days AND not since `applied` carries `recent_negative_outcomes`. The user already rejected this recently. Don't re-surface unless you have new reason to think the rejection no longer applies. The `claim_excerpt` field (when present) lets you rephrase or skip just the offending sentence rather than the whole body.

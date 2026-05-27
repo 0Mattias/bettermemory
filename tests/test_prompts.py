@@ -40,13 +40,16 @@ from bettermemory.store import Store
 # Match the first ```...``` fence in the doc — the addendum is the first one.
 _DOC_FENCE_RE = re.compile(r"```\n(.*?)```", re.DOTALL)
 
-# Match any identifier of the form `memory_*` appearing in the addendum
-# that is NOT immediately followed by `=` (which would mark it as a
-# keyword-argument name like `memory_ids=[...]`, not a tool reference).
-# The addendum uses tool names in the explicit "Available tools:" list
-# and in call shapes ("call memory_write_confirm(...)"); both populations
-# need to map to real tools on the server.
-_TOOL_REF_RE = re.compile(r"\b(memory_[a-z_]+)\b(?!\s*=)")
+# Match any identifier of the form `memory_*` or `episode_*` appearing
+# in the addendum that is NOT immediately followed by `=` (which would
+# mark it as a keyword-argument name like `memory_ids=[...]`, not a
+# tool reference). The addendum uses tool names in the explicit
+# "Available tools:" list and in call shapes ("call
+# memory_write_confirm(...)"); both populations need to map to real
+# tools on the server. The episode_* family was added when the loop
+# story shipped — keep the regex covering both so a future rename of
+# either family catches the same parity check.
+_TOOL_REF_RE = re.compile(r"\b((?:memory|episode)_[a-z_]+)\b(?!\s*=)")
 
 
 def test_addendum_matches_docs() -> None:
@@ -88,7 +91,7 @@ async def test_addendum_tool_names_exist_on_server(tmp_path: Path) -> None:
     # Strip kwarg-shaped names the regex over-includes (`memory_ids`
     # is a parameter on `memory_record_use`, not a tool). Same
     # allowlist as the SKILL.md test below — keep them in sync.
-    KNOWN_KWARGS = {"memory_ids"}
+    KNOWN_KWARGS = {"memory_ids", "episode_id"}
     referenced = {
         name
         for name in referenced
@@ -136,7 +139,7 @@ async def test_skill_tool_names_exist_on_server(tmp_path: Path) -> None:
     # `_TOOL_REF_RE` already drops `name=`, but a bare `memory_ids` in
     # prose still matches. Explicit allowlist of known kwargs keeps the
     # assertion's signal sharp.
-    KNOWN_KWARGS = {"memory_ids"}
+    KNOWN_KWARGS = {"memory_ids", "episode_id"}
     referenced = {
         name
         for name in referenced

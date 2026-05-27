@@ -396,6 +396,80 @@ def _attach_use_tokens(
         h["use_token"] = tokens[h["id"]]
 
 
+def _maybe_attach_curation_hint(
+    response: dict[str, Any],
+    deps: Any,
+    state: SessionState,
+) -> None:
+    """One-shot per-session passive curation-pressure surface.
+
+    Closes the in-conversation surfacing loop the audit identified:
+    `curation_pending` aggregation has lived on
+    `memory_scope_overview` since 2.7.x, but the model has to call
+    that tool to see it. When pressure crosses the configured
+    threshold, attach a `curation_hint` block to the first
+    `memory_write` response of the session so a model that never
+    asks for `memory_scope_overview` still gets the nudge.
+
+    Pull-based discovery (calling `memory_health` /
+    `memory_scope_overview`) remains the primary surface. This is a
+    passive notification, not auto-detour. Flipped off by setting
+    `curation_hint_enabled = False` or `curation_hint_threshold = 0`
+    in `[behavior]`.
+
+    Cost: one `curation_counts` walk over the event log + a
+    `load_all` of the memory directory. Both are bounded (rotation
+    cap on the log, store size in practice). Paid once per session
+    because the underlying counts (dead_weight, drifted,
+    endorsement_debt) accumulate across sessions and don't shift
+    meaningfully within one, so re-walking on every write would burn
+    cost for no signal.
+    """
+    if state.curation_hint_checked:
+        return
+    behavior = deps.config.behavior
+    if not behavior.curation_hint_enabled:
+        return
+    threshold = behavior.curation_hint_threshold
+    if threshold <= 0:
+        return
+
+    # Mark checked unconditionally so a session that doesn't cross the
+    # threshold doesn't re-pay the walk on every subsequent write.
+    state.curation_hint_checked = True
+
+    from ..events import iter_all_events
+    from ..health import curation_counts
+
+    counts = curation_counts(
+        deps.store.load_all(),
+        iter_all_events(deps.store.root),
+        window_days=30,
+        verification_stale_days=behavior.verification_stale_days,
+        endorsement_debt_ratio_threshold=behavior.endorsement_debt_ratio_threshold,
+    )
+    pressure = counts["dead"] + counts["drifted"] + counts["endorsement_debt"]
+    if pressure < threshold:
+        return
+
+    response["curation_hint"] = {
+        "pressure": pressure,
+        "threshold": threshold,
+        "counts": {
+            "dead_weight": counts["dead"],
+            "drifted": counts["drifted"],
+            "endorsement_debt": counts["endorsement_debt"],
+        },
+        "message": (
+            f"Curation pressure {pressure} >= threshold {threshold}: "
+            f"{counts['dead']} dead_weight + {counts['drifted']} drifted + "
+            f"{counts['endorsement_debt']} endorsement_debt. Call "
+            "memory_health for full buckets; memory_remove or "
+            "memory_verify to resolve. One-shot per session."
+        ),
+    }
+
+
 __all__ = [
     "Context",
     "_AMBIENT_LONG_BODY_WORDS",
@@ -408,6 +482,7 @@ __all__ = [
     "_drain_pending_expired",
     "_event_ts_epoch",
     "_hook_attributed_pending_ids",
+    "_maybe_attach_curation_hint",
     "_validate_content_size",
     "_validate_write_payload",
 ]

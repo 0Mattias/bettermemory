@@ -37,6 +37,10 @@ import logging
 from mcp.server.fastmcp import FastMCP
 
 from ._handlers import (
+    DESC_EPISODE_HANDOFF,
+    DESC_EPISODE_PROMOTE,
+    DESC_EPISODE_SEARCH,
+    DESC_EPISODE_WRITE,
     DESC_MEMORY_AUDIT_TURN,
     DESC_MEMORY_HEALTH,
     DESC_MEMORY_LIST,
@@ -182,10 +186,11 @@ def build_server(
             '("Using your stored preference for…"). memory_record_use '
             "auto-commits as `applied` ~2 turns later; call to "
             "override.\n\n"
-            "Verify before relying. When `staleness_verdict` isn't "
-            "fresh, spot-check one claim; memory_verify(id, "
-            "verified_paths=…) if it holds, memory_update first if "
-            "drifted."
+            "Verify before relying. When staleness_verdict isn't fresh, "
+            "spot-check; memory_verify if it holds, memory_update if "
+            "drifted.\n\n"
+            "For /loop iterations: episode_handoff at entry, "
+            "episode_write(takeaway=…) at exit."
         ),
     )
 
@@ -226,7 +231,8 @@ def _register_tools(
     )
 
     # Order matches `server.py`'s module docstring's tool list so a reader
-    # can scan top-to-bottom and see all eighteen tools at once.
+    # can scan top-to-bottom and see all 22 tools at once (18 memory_*
+    # + 4 episode_*).
     mcp.tool(name="memory_search", description=DESC_MEMORY_SEARCH)(
         handlers.memory_search
     )
@@ -279,6 +285,21 @@ def _register_tools(
     )
     mcp.tool(name="memory_scope_enable", description=DESC_MEMORY_SCOPE_ENABLE)(
         handlers.memory_scope_enable
+    )
+
+    # Episode-tier tools — sibling to memory, journal-shaped writes for
+    # run-state and iteration takeaways the durability gate rejects.
+    mcp.tool(name="episode_write", description=DESC_EPISODE_WRITE)(
+        handlers.episode_write
+    )
+    mcp.tool(name="episode_handoff", description=DESC_EPISODE_HANDOFF)(
+        handlers.episode_handoff
+    )
+    mcp.tool(name="episode_search", description=DESC_EPISODE_SEARCH)(
+        handlers.episode_search
+    )
+    mcp.tool(name="episode_promote", description=DESC_EPISODE_PROMOTE)(
+        handlers.episode_promote
     )
 
 

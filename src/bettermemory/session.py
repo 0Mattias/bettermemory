@@ -136,6 +136,15 @@ class SessionState:
     # TTL — at that point the model has no live reference to it.
     _expired_pending: dict[str, "PendingWrite"] = field(default_factory=dict)
     _expired_pending_at: dict[str, float] = field(default_factory=dict)
+    # One-shot per-session marker for the passive curation-pressure
+    # check that may inline a hint on the first `memory_write` of a
+    # session. Set True the first time the check runs regardless of
+    # whether the threshold was crossed — dead_weight, drifted, and
+    # endorsement_debt all accumulate across sessions and don't move
+    # meaningfully within one, so a single check at first write is
+    # the right cadence. Keeps the model from re-walking the event
+    # log on every subsequent write.
+    curation_hint_checked: bool = False
 
     # ---- scopes ----------------------------------------------------------
 

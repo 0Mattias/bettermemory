@@ -1134,6 +1134,10 @@ _TOOL_EVENT_KIND_TO_TOOL: dict[str, str] = {
     "scope_disable": "memory_scope_disable",
     "scope_enable": "memory_scope_enable",
     "turn_audited": "memory_audit_turn",
+    "episode_write": "episode_write",
+    "episode_handoff": "episode_handoff",
+    "episode_search": "episode_search",
+    "episode_promote": "episode_promote",
 }
 
 # Tools that don't emit a dedicated event of their own; the rollup

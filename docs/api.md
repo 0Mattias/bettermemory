@@ -1,13 +1,14 @@
 # API surface (3.x)
 
-The contractual list of MCP tools bettermemory exposes. Signatures, defaults, and return shapes are stable within the 3.x line per the rules in [`CONTRIBUTING.md`](../CONTRIBUTING.md). The 18 tools group naturally:
+The contractual list of MCP tools bettermemory exposes. Signatures, defaults, and return shapes are stable within the 3.x line per the rules in [`CONTRIBUTING.md`](../CONTRIBUTING.md). The 22 tools group naturally:
 
-- **Retrieval** — `memory_search`, `memory_show`, `memory_list`, `memory_scope_overview`
+- **Retrieval** — `memory_search` (now with `since_prior_session` filter), `memory_show`, `memory_list`, `memory_scope_overview`
 - **Writing** — `memory_write` (plus `memory_write_confirm` / `memory_write_cancel` for the staged-write flow), `memory_update`
 - **Lifecycle** — `memory_remove`, `memory_restore`, `memory_list_tombstones`
 - **Verification** — `memory_verify`
 - **Curation** — `memory_record_use`, `memory_health`, `memory_audit_turn`, `memory_rename_scope`
 - **Session-local** — `memory_scope_disable`, `memory_scope_enable`
+- **Episodes** (sibling tier for journal-shaped run-state) — `episode_write`, `episode_handoff`, `episode_search`, `episode_promote`
 
 ## Retrieval
 
@@ -169,6 +170,51 @@ Returns `{active: [ids], tombstoned: [ids]}` for records actually touched.
 - `scope: str`. Singular.
 
 Resets when the server process restarts. Disabled scopes are filtered from `memory_search`, `memory_list`, and `memory_scope_overview`.
+
+## Episodes (sibling tier for journal-shaped run-state)
+
+Episodes are NOT memories. They live in a sibling subtree (`<root>/episodes/<session_id>/<ulid>.md`), are excluded from `memory_search` / `memory_health` / `memory_list`, and have no durability gate. Use them for loop-iteration takeaways, "what we tried", and any content `memory_write` would (correctly) reject as transient. A 30-day TTL on session directories runs on each `episode_write` so the directory stays bounded.
+
+### `episode_write(body, takeaway?, scopes?)`
+
+Append a new episode for the current session.
+
+- `body: str`. Required, non-empty. Free-form markdown.
+- `takeaway: str | None`. One-sentence summary. Surfaced preferentially at `episode_handoff`; falls back to the first body line when absent.
+- `scopes: list[str] | None`. Empty list is valid — episodes are keyed by `session_id`, scopes are tags for filtering.
+
+Returns `{status: "committed", id, session_id, created, scopes, takeaway, pruned_sessions: [<sid>...]}`. `session_id` is auto-captured from the recorder; `origin` (cwd / repo / branch / worktree_root) is captured the same way as `memory_write`. `pruned_sessions` lists any session directories that hit the TTL on this write.
+
+### `episode_handoff(prior_session_id?, max_episodes?)`
+
+Read recent takeaways from a prior session. Designed as the FIRST MCP call at `/loop` iteration entry.
+
+- `prior_session_id: str | None`. When omitted, the handler resolves the most recent session in the event log whose id differs from the current recorder's. Pass explicitly when the caller already knows the parent session (e.g. subagent handoff).
+- `max_episodes: int | None`. Default `5`, cap `50`.
+
+Returns `{prior_session_id: str | None, episodes: [{id, created, takeaway, body, scopes}, ...]}`. `prior_session_id is None` AND `episodes == []` is the "no baseline" case; `prior_session_id != None` AND `episodes == []` is "baseline exists but no journal" — branch on both.
+
+### `episode_search(scopes?, parent_session_id?, since?, max_results?)`
+
+Cross-session lookup. Unlike `memory_search`, NOT ranked — episodes are chronological and the filter set is the discovery surface.
+
+- `scopes: list[str] | None`. Intersection filter (a hit's scopes must include at least one).
+- `parent_session_id: str | None`. Restrict to one session directory.
+- `since: str | None`. ISO-8601 timestamp; only episodes created at or after.
+- `max_results: int | None`. Default `20`, cap `200`.
+
+Returns the matching episodes oldest-first.
+
+### `episode_promote(episode_id, scopes, category?, confidence?, source?, use_body?)`
+
+Distill a journal takeaway into a durable memory. Routes through `memory_write` — the full durability gate fires.
+
+- `episode_id: str`. Required.
+- `scopes: list[str]`. Required (memory scopes are non-empty).
+- `category: str = "fact"`, `confidence: str = "medium"`, `source: str = "explicit-statement"`. Standard `memory_write` fields.
+- `use_body: bool = False`. When False (default), the episode's `takeaway` becomes the memory body; when True, the full body. An episode without a takeaway requires `use_body=True`.
+
+Returns the `memory_write` response shape with one extra field: `promoted_from_episode_id: str` so the caller can correlate. On `status="committed"` the source episode is deleted; on any non-committed status (pending, duplicate, previously_removed, transient_warning, scope_mismatch, ungrounded) the episode is left intact.
 
 ## Naming conventions
 

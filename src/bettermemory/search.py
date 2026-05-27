@@ -710,6 +710,7 @@ def search(
     mode: SearchMode = "hybrid",
     semantic_model: Any | None = None,
     rrf_k: int = _RRF_K_DEFAULT,
+    allow_empty_query: bool = False,
 ) -> list[MemoryHit]:
     """Rank `memories` against `query` and return up to `max_results` hits.
 
@@ -743,6 +744,14 @@ def search(
     - `rrf_k`: smoothing constant for hybrid fusion. Larger spreads
       weight further down the list; smaller makes top ranks dominate.
       60 is the canonical default and almost always correct.
+    - `allow_empty_query`: when True, an empty or stopword-only query
+      no longer short-circuits to `[]`. Instead the function runs the
+      `_filter_candidates` pass (scope / repo / worktree / excluded)
+      and returns the survivors sorted by `updated` desc — a browse
+      mode. Hits get `score=0.0`, no `match_terms`, and the default
+      "low" relevance label. Used by callers that already narrowed
+      the candidate pool externally (e.g. `since_prior_session=True`)
+      and want recency ordering rather than relevance ranking.
 
     Score semantics vary by mode: keyword/BM25/semantic scores live on
     different scales and are not comparable across modes. Hybrid scores
@@ -770,10 +779,29 @@ def search(
     raw_tokens = tokenize(query)
     # Strip stopwords from the query — bodies stay unfiltered. If the query
     # was *only* stopwords ("what is the"), there's nothing meaningful left
-    # to match on; return empty rather than serving every memory at score 0.
+    # to match on; return empty rather than serving every memory at score 0
+    # (unless the caller explicitly asked for browse mode — see
+    # `allow_empty_query` above).
     query_tokens = _strip_stopwords(raw_tokens)
     if not query_tokens:
-        return []
+        if not allow_empty_query:
+            return []
+        # Browse mode: apply the same candidate filter the scored
+        # path would, then sort by `updated` desc and emit zero-score
+        # hits with no match terms. Mirrors the post-rank trim the
+        # scored branches do at the end of `search()`.
+        browse_candidates = _filter_candidates(
+            memories,
+            scopes=scopes,
+            excluded_scopes=excluded_scopes,
+            repo_filter=repo_filter,
+            worktree_filter=worktree_filter,
+        )
+        browse_candidates.sort(key=lambda m: (m.updated, m.id), reverse=True)
+        return [
+            _build_hit(memory, score=0.0, matched=[], query_unique=0)
+            for memory in browse_candidates[:max_results]
+        ]
 
     query_unique = len(set(query_tokens))
     candidates = _filter_candidates(

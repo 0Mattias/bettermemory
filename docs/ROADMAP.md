@@ -4,7 +4,7 @@ Published roadmap is part of the distribution strategy: people deciding between 
 
 ## Where we are (May 2026, v3.0.0)
 
-- 18 MCP tools across retrieval, writing, lifecycle, verification, curation, and session-local controls.
+- 22 MCP tools: 18 `memory_*` (retrieval, writing, lifecycle, verification, curation, session-local) + 4 `episode_*` (sibling tier for journal-shaped run-state — `/loop` iterations and subagent handoffs).
 - FTS5 inverted index pre-filtering candidates above ~500 memories.
 - Staleness verdict trifecta (calendar + path drift + commit drift) on every retrieval; `path_drift = {checked, missing, verified}` lists inline on every hit.
 - `memory_record_use` with claim-level `claim_excerpts`; Stop-hook post-hoc substring-match attribution closes the "model didn't bother attaching the excerpt" gap (`attribution ∈ {model, hook, auto}`, exactly one event per retrieval).

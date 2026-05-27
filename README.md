@@ -136,18 +136,21 @@ rows from both numerator and denominator.
 
 Tombstones move to `.tombstones/`. Optional fields are written only when populated: `origin`, `last_verified_at`, `category`, `verified_paths` / `verified_commits` / `verified_versions`, and `links`.
 
+Episodes (the sibling tier for journal-shaped run-state — loop iteration takeaways, "what we tried") live under `episodes/<session_id>/<ulid>.md` with the same YAML-frontmatter format but a slimmer field set (`session_id`, `takeaway`, no `confidence` / `source` / `category`). Auto-pruned at 30 days. Invisible to `memory_search` / `memory_list` / `memory_health` — see the `episode_*` tool family below.
+
 Storage resolution: `$BETTERMEMORY_DIR` if set, else `./.claude-memory/` if it exists, else `~/.claude-memory/`. Project-scoped overrides global; cross-project queries are explicit (`auto_scope=false`).
 
 ## Tools
 
-18 MCP tools, grouped:
+22 MCP tools, grouped:
 
-- **Retrieval** — `memory_search`, `memory_show`, `memory_list`, `memory_scope_overview`
+- **Retrieval** — `memory_search` (incl. `since_prior_session` filter), `memory_show`, `memory_list`, `memory_scope_overview`
 - **Writing** — `memory_write` (plus `memory_write_confirm` / `memory_write_cancel` for the staged-write flow), `memory_update`
 - **Lifecycle** — `memory_remove`, `memory_restore`, `memory_list_tombstones`
 - **Verification** — `memory_verify`
 - **Curation** — `memory_record_use`, `memory_health`, `memory_audit_turn`, `memory_rename_scope`
 - **Session-local** — `memory_scope_disable`, `memory_scope_enable`
+- **Episodes** (sibling tier for journal/run-state — `/loop` iterations, "what we tried") — `episode_write`, `episode_handoff`, `episode_search`, `episode_promote`
 
 Full signatures, defaults, and return shapes in [`docs/api.md`](docs/api.md).
 
@@ -177,6 +180,8 @@ bettermemory sync init --remote URL         # git-based cross-host sync
 bettermemory sync push | pull | auto | status
 bettermemory ui                             # local FastAPI curation UI (needs [ui] extra)
 bettermemory tombstones list | prune
+bettermemory episodes list [session_id]     # inspect the sibling journal store (loop iteration takeaways)
+bettermemory episodes prune --dry-run       # manual cleanup pass (TTL-based, normally runs on each episode_write)
 bettermemory export                         # backup
 ```
 

@@ -244,6 +244,7 @@ def test_handlers_search_direct_import() -> None:
         ("max_results", None),
         ("expand_top", False),
         ("auto_scope", True),
+        ("since_prior_session", False),
         ("mode", None),
         ("ctx", None),
     ]

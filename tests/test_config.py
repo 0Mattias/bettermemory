@@ -109,6 +109,10 @@ def test_default_config_round_trips_through_load_config(tmp_path: Path) -> None:
         == fresh.behavior.heavily_used_min_applied
     )
     assert (
+        loaded.behavior.endorsement_debt_ratio_threshold
+        == fresh.behavior.endorsement_debt_ratio_threshold
+    )
+    assert (
         loaded.behavior.tombstone_retention_days
         == fresh.behavior.tombstone_retention_days
     )
@@ -130,6 +134,11 @@ def test_default_config_round_trips_through_load_config(tmp_path: Path) -> None:
         == fresh.behavior.semantic_model_fastembed
     )
     assert loaded.behavior.max_content_bytes == fresh.behavior.max_content_bytes
+    assert (
+        loaded.behavior.curation_hint_threshold
+        == fresh.behavior.curation_hint_threshold
+    )
+    assert loaded.behavior.curation_hint_enabled == fresh.behavior.curation_hint_enabled
     assert loaded.telemetry.log_queries_verbatim == fresh.telemetry.log_queries_verbatim
     assert loaded.scopes.allowed == fresh.scopes.allowed
     assert loaded.telemetry.enabled == fresh.telemetry.enabled
