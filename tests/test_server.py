@@ -3153,6 +3153,99 @@ async def test_scope_overview_recently_removed_zero_when_clean(
     assert overview["recently_removed_in_worktree"] == 0
 
 
+async def test_scope_overview_recently_removed_filtered_by_worktree(
+    memory_dir: Path,
+    monkeypatch: Any,
+) -> None:
+    """Two worktrees of one repo sharing a memory root must not see each
+    other's tombstones counted into `recently_removed_in_worktree` under
+    auto_scope=True. Worktree A writes and removes a memory; a fresh
+    server in worktree B asks for a scope_overview and the recently-
+    removed count for B is zero — A's tombstone is excluded because its
+    `origin.worktree_root` does not match B's caller-origin.
+
+    `memory_search`, `memory_scope_overview`'s active-counts, and
+    `episode_handoff` all enforce worktree isolation through
+    `should_include_for_caller`; `_count_recent_tombstones` mirrors the
+    same rule for the removal-activity surface. Without this branch, a
+    sibling worktree's curation pass would look like rot belonging to
+    the current worktree and the model would be nudged to avoid ground
+    it never actually covered.
+
+    The companion `auto_scope=False` call confirms the tombstone still
+    exists on disk (the worktree filter is the only thing hiding it
+    from B), and the same-worktree positive control confirms a matching
+    origin counts under auto_scope=True.
+    """
+    import bettermemory._handlers as handlers_module
+    import bettermemory.server as server_module
+    from bettermemory.origin import Origin
+
+    cfg = Config(storage=StorageConfig(directory=str(memory_dir)))
+
+    origin_a = Origin(
+        cwd="/worktrees/repo-feature-x",
+        repo="git@github.com:example/repo.git",
+        branch="feature-x",
+        worktree_root="/worktrees/repo-feature-x",
+    )
+    origin_b = Origin(
+        cwd="/worktrees/repo-bug-fix",
+        repo="git@github.com:example/repo.git",
+        branch="bug-fix",
+        worktree_root="/worktrees/repo-bug-fix",
+    )
+
+    # Mirror the patch idiom from
+    # `test_episode_handoff_filters_prior_session_by_caller_worktree`:
+    # both the `_handlers` and `server` bindings get re-pointed so
+    # every callsite resolves to the same fake. `monkeypatch` restores
+    # both at teardown.
+    def make_capture(origin: Origin) -> Any:
+        def _capture(cwd: Any = None) -> Origin:
+            return origin
+
+        return _capture
+
+    monkeypatch.setattr(handlers_module, "capture_origin", make_capture(origin_a))
+    monkeypatch.setattr(server_module, "capture_origin", make_capture(origin_a))
+
+    server_a = build_server(config=cfg, store=Store(memory_dir), state=SessionState())
+    written = await _call(
+        server_a,
+        "memory_write",
+        content="auth uses bcrypt",
+        scopes=["projects:auth"],
+    )
+    await _call(server_a, "memory_remove", id=written["id"], reason="outdated")
+
+    # Flip to worktree B. Same memory root, same tombstone on disk, but
+    # the caller-origin now points at a sibling worktree. With the
+    # filter in place server_b sees zero recent removals; the
+    # auto_scope=False companion confirms the tombstone is still there.
+    monkeypatch.setattr(handlers_module, "capture_origin", make_capture(origin_b))
+    monkeypatch.setattr(server_module, "capture_origin", make_capture(origin_b))
+
+    server_b = build_server(config=cfg, store=Store(memory_dir), state=SessionState())
+    overview_auto = await _call(server_b, "memory_scope_overview")
+    assert overview_auto["recently_removed_in_worktree"] == 0
+
+    overview_all = await _call(server_b, "memory_scope_overview", auto_scope=False)
+    assert overview_all["recently_removed_in_worktree"] >= 1
+
+    # Same-worktree positive control: a fresh server whose caller-origin
+    # matches A's worktree_root must see the tombstone under
+    # auto_scope=True. This pins the equality branch of the filter so
+    # a regression that strips the worktree match entirely (counting
+    # zero for every auto_scope=True call) would still be caught.
+    monkeypatch.setattr(handlers_module, "capture_origin", make_capture(origin_a))
+    monkeypatch.setattr(server_module, "capture_origin", make_capture(origin_a))
+
+    server_a2 = build_server(config=cfg, store=Store(memory_dir), state=SessionState())
+    overview_same = await _call(server_a2, "memory_scope_overview")
+    assert overview_same["recently_removed_in_worktree"] >= 1
+
+
 async def test_endorsement_debt_ratio_threshold_threaded_to_all_callsites(
     memory_dir: Path,
 ) -> None:
