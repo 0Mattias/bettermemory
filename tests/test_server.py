@@ -1678,6 +1678,99 @@ async def test_episode_promote_keeps_episode_when_durability_rejects(
     assert any(e["id"] == ep["id"] for e in listed)
 
 
+async def test_episode_promote_user_inference_returns_pending_keeps_episode(
+    server: Any,
+) -> None:
+    """`category='user-inference'` routes through PendingGate — the
+    handler returns `status='pending'` and the source episode is kept
+    so memory_write_confirm can act on it later."""
+    ep = await _call(
+        server,
+        "episode_write",
+        body="Iter 2 — observed the user reaching for terse summaries.",
+        takeaway="user prefers terse summaries",
+    )
+    res = await _call(
+        server,
+        "episode_promote",
+        episode_id=ep["id"],
+        scopes=["learning-style"],
+        category="user-inference",
+    )
+    assert res["status"] == "pending"
+    assert res["pending_reason"] == "user-inference"
+    assert res["pending_id"].startswith("pending_")
+    assert res["promoted_from_episode_id"] == ep["id"]
+    # Source episode is still on disk — confirm/cancel hasn't happened.
+    listed = _unwrap(await _call(server, "episode_search"))
+    assert any(e["id"] == ep["id"] for e in listed)
+
+
+async def test_episode_promote_user_inference_confirm_deletes_source(
+    server: Any,
+) -> None:
+    """When the user confirms a promoted user-inference write, the
+    durable memory commits AND the source episode is deleted. This
+    pins the SessionState-stash hand-off between `episode_promote`
+    and `memory_write_confirm` — without it, the pending round-trip
+    leaks the journal entry past confirmation as a duplicate."""
+    ep = await _call(
+        server,
+        "episode_write",
+        body="Iter 3 — user reiterated terse-summary preference.",
+        takeaway="user prefers terse summaries over verbose walkthroughs",
+    )
+    pending = await _call(
+        server,
+        "episode_promote",
+        episode_id=ep["id"],
+        scopes=["learning-style"],
+        category="user-inference",
+    )
+    assert pending["status"] == "pending"
+    # User confirms.
+    committed = await _call(
+        server, "memory_write_confirm", pending_id=pending["pending_id"]
+    )
+    assert committed["status"] == "committed"
+    # Source episode is gone — it was distilled into the durable memory.
+    listed = _unwrap(await _call(server, "episode_search"))
+    assert not any(e["id"] == ep["id"] for e in listed)
+
+
+async def test_episode_promote_user_inference_cancel_keeps_source(
+    server: Any,
+) -> None:
+    """When the user declines a promoted user-inference write, the
+    pending is dropped but the source episode survives so the caller
+    can rephrase and re-promote. The promotion link should be cleared
+    so a redundant later cancel doesn't try to act on it."""
+    ep = await _call(
+        server,
+        "episode_write",
+        body="Iter 4 — possibly the user prefers terseness, ambiguous.",
+        takeaway="user prefers terse summaries",
+    )
+    pending = await _call(
+        server,
+        "episode_promote",
+        episode_id=ep["id"],
+        scopes=["learning-style"],
+        category="user-inference",
+    )
+    cancel = await _call(
+        server, "memory_write_cancel", pending_id=pending["pending_id"]
+    )
+    assert cancel["existed"] is True
+    # Source episode is STILL on disk — user can adjust and retry.
+    listed = _unwrap(await _call(server, "episode_search"))
+    assert any(e["id"] == ep["id"] for e in listed)
+    # Nothing landed in the durable store.
+    listing = await _call(server, "memory_list")
+    listing = listing.get("result", listing) if isinstance(listing, dict) else listing
+    assert listing == []
+
+
 async def test_episode_handoff_respects_explicit_prior_session_id(
     memory_dir: Path,
 ) -> None:

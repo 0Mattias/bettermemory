@@ -8,10 +8,18 @@ groundedness, dedup, dedup-tombstone, the user-inference pending flow
 gate stack; it just supplies the body+scopes from an existing episode.
 
 On successful commit, the source episode is deleted (its content has
-been distilled into the durable memory). On any non-committed status
-(pending, duplicate, previously_removed, transient_warning,
-scope_mismatch, ungrounded), the source episode is left in place so
-the caller can adjust and re-promote.
+been distilled into the durable memory). On a `pending` outcome
+(category='user-inference' or the global confirm flag), the source
+episode is left in place but a `pending_id → (session, episode_id)`
+link is stashed on the session so `memory_write_confirm` can delete
+the episode on user-confirm — without that linkage, the confirm path
+would commit the durable memory and leave the journal entry as a
+duplicate that survives until the 30-day TTL. `memory_write_cancel`
+drops the link without acting on the episode so the caller can retry.
+
+On any other non-committed status (duplicate, previously_removed,
+transient_warning, scope_mismatch, ungrounded), the source episode
+is left in place so the caller can adjust and re-promote.
 
 Body default: when `use_body=False` (the default), the durable memory's
 body is the episode's `takeaway`. When `use_body=True`, the full body
@@ -30,6 +38,25 @@ if TYPE_CHECKING:
     from .._handlers import ToolHandlers
 
 
+def _delete_source_episode(
+    deps: "ToolHandlers", episode_session_id: str, episode_id: str
+) -> None:
+    """Remove an episode file from disk.
+
+    Shared between the commit-immediately path (when `episode_promote`
+    sees `status='committed'` synchronously) and the deferred path
+    (when `memory_write_confirm` commits a previously-pending
+    promotion). FileNotFoundError is swallowed: a concurrent promote
+    or a manual rm leaves the durable memory as the authoritative
+    artifact, and the response should still surface to the caller."""
+    session_dir = deps.episode_store._session_dir(episode_session_id)
+    ep_path = session_dir / f"{episode_id}.md"
+    try:
+        ep_path.unlink()
+    except FileNotFoundError:
+        pass
+
+
 DESC_EPISODE_PROMOTE = (
     "Promote a journal entry (episode) into a durable memory. Routes "
     "through memory_write — the durability gate, scope-mismatch "
@@ -39,10 +66,12 @@ DESC_EPISODE_PROMOTE = (
     "Use this when an iteration's takeaway turns out to be a fact "
     "worth keeping across sessions, not just a run-state note.\n\n"
     "On successful commit the source episode is deleted (its content "
-    "has been distilled). On any non-committed status (pending, "
-    "duplicate, previously_removed, transient_warning, "
-    "scope_mismatch, ungrounded) the source episode is left "
-    "untouched so you can adjust and re-promote.\n\n"
+    "has been distilled). On `pending` (user-inference category), the "
+    "source episode is held for memory_write_confirm to delete — "
+    "memory_write_cancel keeps the episode so you can retry. On any "
+    "other non-committed status (duplicate, previously_removed, "
+    "transient_warning, scope_mismatch, ungrounded) the source "
+    "episode is left untouched so you can adjust and re-promote.\n\n"
     "Body default: when `use_body=False` (default), the durable "
     "memory's body is the episode's takeaway. Set `use_body=True` to "
     "use the full episode body. An episode with no takeaway requires "
@@ -129,20 +158,25 @@ async def episode_promote(
     response = dict(response)
     response["promoted_from_episode_id"] = episode_id
 
-    if response.get("status") == "committed":
-        # Distill: delete the source episode file. Other statuses
-        # (pending, duplicate, previously_removed, transient_warning,
+    status = response.get("status")
+    if status == "committed":
+        # Distill: delete the source episode file. Other terminal
+        # rejections (duplicate, previously_removed, transient_warning,
         # scope_mismatch, ungrounded) leave the episode alone so the
         # caller can retry with adjustments.
-        session_dir = deps.episode_store._session_dir(episode_session_id)
-        ep_path = session_dir / f"{episode_id}.md"
-        try:
-            ep_path.unlink()
-        except FileNotFoundError:
-            # Race: episode was already deleted (concurrent promote?)
-            # — fine, the durable memory is the authoritative artifact
-            # now. Don't crash the response.
-            pass
+        _delete_source_episode(deps, episode_session_id, episode_id)
+    elif status == "pending":
+        # Stash the linkage so memory_write_confirm can delete the
+        # source episode once the user confirms. memory_write_cancel
+        # will discard this link (keeping the episode for a retry).
+        # Without the stash, the confirm path commits the durable
+        # memory but leaves the episode behind as a duplicate journal
+        # entry surviving until the 30-day TTL.
+        pending_id = response.get("pending_id")
+        if pending_id is not None:
+            state.stash_promotion_episode(
+                str(pending_id), episode_session_id, episode_id
+            )
 
     deps.recorder.record(
         "episode_promote",
@@ -156,4 +190,4 @@ async def episode_promote(
     return response
 
 
-__all__ = ["DESC_EPISODE_PROMOTE", "episode_promote"]
+__all__ = ["DESC_EPISODE_PROMOTE", "_delete_source_episode", "episode_promote"]

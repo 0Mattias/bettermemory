@@ -718,6 +718,20 @@ async def memory_write_confirm(
             "been already committed or never existed)"
         )
     memory = deps.store.write(**pending.payload)
+    # If this pending write originated from `episode_promote`, delete
+    # the source episode now — the durable memory is the authoritative
+    # artifact and leaving the journal entry behind would survive past
+    # confirmation as a duplicate. The link was stashed at staging
+    # time by the promote handler; consume it (pop) so a redundant
+    # later call doesn't try to delete twice.
+    promo = state.take_promotion_episode(pending_id)
+    if promo is not None:
+        # Local import to break the cycle (episode_promote also imports
+        # `memory_write` from this module).
+        from .episode_promote import _delete_source_episode
+
+        ep_session_id, ep_id = promo
+        _delete_source_episode(deps, ep_session_id, ep_id)
     deps.recorder.record(
         "write_confirm",
         pending_id=pending_id,
@@ -735,6 +749,11 @@ async def memory_write_cancel(
     state = deps.sessions.for_request(ctx)
     _advance_turn(state, deps.recorder)
     existed = state.cancel_pending(pending_id)
+    # Drop the promotion linkage if there is one, but DON'T delete the
+    # source episode — cancel is the user saying "not yet", so the
+    # caller should be able to fix the wording and re-promote from the
+    # same journal entry.
+    state.discard_promotion_episode(pending_id)
     deps.recorder.record("write_cancel", pending_id=pending_id, existed=existed)
     return {"cancelled": pending_id, "existed": existed}
 

@@ -136,6 +136,15 @@ class SessionState:
     # TTL — at that point the model has no live reference to it.
     _expired_pending: dict[str, "PendingWrite"] = field(default_factory=dict)
     _expired_pending_at: dict[str, float] = field(default_factory=dict)
+    # Tracks pending writes that originated from `episode_promote`. The
+    # value is `(episode_session_id, episode_id)` — what the promote
+    # handler needs to delete the source episode once the user
+    # confirms. Without this, a `pending` round-trip would leak the
+    # source episode past `memory_write_confirm`: the confirm handler
+    # has no episode context on its own. Cleared on confirm (after the
+    # delete), on cancel (preserving the episode so the user can
+    # retry), and alongside `_expired_pending` when the TTL elapses.
+    _promotion_episodes: dict[str, tuple[str, str]] = field(default_factory=dict)
     # One-shot per-session marker for the passive curation-pressure
     # check that may inline a hint on the first `memory_write` of a
     # session. Set True the first time the check runs regardless of
@@ -179,6 +188,34 @@ class SessionState:
         """Discard a pending write without committing. True if it existed."""
         return self.pending_writes.pop(pending_id, None) is not None
 
+    # ---- pending promotion linkage --------------------------------------
+
+    def stash_promotion_episode(
+        self, pending_id: str, episode_session_id: str, episode_id: str
+    ) -> None:
+        """Remember that `pending_id` was staged by `episode_promote`.
+
+        When the user later confirms the pending write, the confirm
+        handler needs to delete the source episode so the journal entry
+        doesn't survive past commit as a duplicate. The confirm handler
+        has no episode context on its own (it only sees the pending id),
+        so the promotion handler stashes the linkage here at staging
+        time and the confirm handler reads it on commit. Cancel just
+        drops the link — the episode stays so the user can retry."""
+        self._promotion_episodes[pending_id] = (episode_session_id, episode_id)
+
+    def take_promotion_episode(self, pending_id: str) -> tuple[str, str] | None:
+        """Pop and return `(episode_session_id, episode_id)` if `pending_id`
+        was staged by `episode_promote`. Returns None otherwise."""
+        return self._promotion_episodes.pop(pending_id, None)
+
+    def discard_promotion_episode(self, pending_id: str) -> None:
+        """Drop the promotion linkage for `pending_id` without acting on
+        the source episode. Used by the cancel path so the episode
+        remains intact for a retry. Idempotent — calling on an unknown
+        id is a no-op."""
+        self._promotion_episodes.pop(pending_id, None)
+
     def _evict_expired(self) -> None:
         """Move stale pending writes into the `_expired_pending` queue.
 
@@ -196,6 +233,12 @@ class SessionState:
         for pid in stale:
             self._expired_pending[pid] = self.pending_writes.pop(pid)
             self._expired_pending_at[pid] = now
+            # Drop any promotion linkage too — the pending payload
+            # expired without confirmation, so the round-trip is
+            # done. The source episode stays in place (the promote
+            # handler's contract: any non-committed outcome leaves
+            # the episode for the caller to retry from).
+            self._promotion_episodes.pop(pid, None)
         for pid in list(self._expired_pending_at):
             if self._expired_pending_at[pid] < cutoff:
                 self._expired_pending_at.pop(pid, None)
@@ -322,6 +365,7 @@ class SessionState:
         self.pending_use_tokens.clear()
         self._expired_pending.clear()
         self._expired_pending_at.clear()
+        self._promotion_episodes.clear()
 
     # ---- SessionSource protocol -----------------------------------------
 
