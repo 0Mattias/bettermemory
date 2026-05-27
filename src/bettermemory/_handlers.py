@@ -64,6 +64,7 @@ DESC_EPISODE_HANDOFF = _handlers_pkg.DESC_EPISODE_HANDOFF
 DESC_EPISODE_PROMOTE = _handlers_pkg.DESC_EPISODE_PROMOTE
 DESC_EPISODE_SEARCH = _handlers_pkg.DESC_EPISODE_SEARCH
 DESC_EPISODE_WRITE = _handlers_pkg.DESC_EPISODE_WRITE
+DESC_MEMORY_ACKNOWLEDGE_MISS = _handlers_pkg.DESC_MEMORY_ACKNOWLEDGE_MISS
 DESC_MEMORY_AUDIT_TURN = _handlers_pkg.DESC_MEMORY_AUDIT_TURN
 DESC_MEMORY_HEALTH = _handlers_pkg.DESC_MEMORY_HEALTH
 DESC_MEMORY_LINKS_TAIL = _handlers_pkg.DESC_MEMORY_LINKS_TAIL
@@ -525,6 +526,19 @@ class ToolHandlers:
             ctx=ctx,
         )
 
+    async def memory_acknowledge_miss(
+        self,
+        event_id: str,
+        reason: str,
+        ctx: Context | None = None,
+    ) -> dict[str, Any]:
+        return await _handlers_pkg.memory_acknowledge_miss(
+            self,
+            event_id,
+            reason,
+            ctx=ctx,
+        )
+
 
 # A SemanticModelFactory is `(Config) -> Any | None` — the model object
 # (when `semantic_dedup` is enabled and the extras are installed) or
@@ -548,6 +562,7 @@ SemanticModelFactory: TypeAlias = Callable[[Config], Any]
 #   `handlers/_shared.py`.
 __all__ = [
     "Context",
+    "DESC_MEMORY_ACKNOWLEDGE_MISS",
     "DESC_MEMORY_AUDIT_TURN",
     "DESC_MEMORY_HEALTH",
     "DESC_MEMORY_LINKS_TAIL",

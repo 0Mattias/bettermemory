@@ -11,6 +11,29 @@ spells out exactly what's stable.
 
 ### Changed
 
+- **Silent-miss rollup gains 4-stage filter (T4).** The 3-stage
+  filter (cutoff + tombstone + dedup, post-T2/T3) now includes an
+  ack-filter step in both `compute_health` and `curation_counts`.
+  Pre-T4: `silent_miss_cutoff` was the only escape; tombstoning the
+  top-hit memory was the only per-event drop. Post-T4: the rollup
+  also drops events whose `event_id` appears in any `miss_ack` event
+  in the log. Both numerator (`miss_total`) and unique-memory count
+  (`unique_miss_memories`) honour the new filter; the denominator
+  (`audited_total`) stays at "audits the hook ran" because the
+  audit itself ran legitimately. `_silent_miss_stats` gains an
+  optional `acknowledged_event_ids` parameter (default empty set,
+  preserves legacy behaviour for callers that haven't been
+  updated). Event log entries without an `event_id` field continue
+  to read cleanly — the rollup degrades to event-count-only for
+  those legacy entries.
+- **`search_miss` event shape gains stable `event_id`.** Every new
+  `search_miss` written via `search_miss_fields` now carries a
+  per-event ULID under the top-level `event_id` field. Pure
+  additive — legacy consumers reading the event by `kind` and
+  field-set see no break. The id is the handle
+  `memory_acknowledge_miss` keys on; pre-T4 events lack it and
+  fall through the ack-filter (the bulk cutoff remains the only
+  escape for those).
 - **`endorsement_debt` → `cold_endorsement_memories` (T1).** Renamed
   the field on `HealthReport`, the dataclass (`EndorsementDebt` →
   `ColdEndorsementMemories`), the `curation_counts` dict key, the
@@ -43,6 +66,40 @@ spells out exactly what's stable.
 
 ### Added
 
+- **`memory_acknowledge_miss(event_id, reason)` MCP tool (T4).**
+  Per-event escape hatch for silent-miss false positives. Tool count
+  is now 23 (19 `memory_*` + 4 `episode_*`). The bulk
+  `bettermemory consolidate --acknowledge-misses-before <ts>`
+  command still exists and wipes EVERY pre-cutoff `search_miss` in
+  one stroke; this tool surgically targets one event so legitimate
+  misses keep counting. Each `search_miss` event now carries a
+  stable per-event ULID (`event_id` field stamped at emission time
+  by `search_miss_fields`); the model reads ids off
+  `memory_health.recent_silent_misses` (new bounded inline list,
+  cap 10, newest-first) and calls `memory_acknowledge_miss(event_id,
+  reason)` to acknowledge one. Emits one `miss_ack` event referencing
+  the original `event_id`; subsequent rollups drop the acked event
+  from both `miss_total` and `unique_miss_memories`. Idempotent —
+  a second ack for the same `event_id` returns the success shape
+  without emitting a duplicate. Returns `{"status": "not_found",
+  ...}` for unknown ids (including legacy `search_miss` events
+  written before T4 added the field — those remain ack-able only
+  through the bulk cutoff) and `{"status": "wrong_kind", ...}` when
+  the id points at a non-`search_miss` event. `reason` is required
+  (≥ 8 chars after stripping whitespace) so the audit trail carries
+  signal. Routes through the same `Recorder` / `_advance_turn` /
+  session-state plumbing every other handler uses. Existing event
+  log lines without the new `event_id` field continue to read
+  cleanly — the rollup degrades to event-count-only behaviour for
+  those entries.
+- **`HealthReport.recent_silent_misses` (T4).** Bounded inline list
+  (cap 10, newest-first) on the `memory_health` response payload.
+  Each entry: `{event_id, top_hit_id, query_preview, ts}` — the
+  triage surface the model reads to discover ack-able event ids.
+  Filtered against the same cutoff / tombstone / ack set the rollup
+  uses, so a non-empty `recent_silent_misses` always pairs with a
+  non-zero `miss_total` (modulo the legacy events that lack an
+  `event_id`).
 - **`silent_misses.unique_miss_memories` + `curation_pending.unique_silent_miss_memories`.**
   Additive `int` field on `SilentMissStats` and matching key on the
   `curation_counts` dict. Dedups in-window `search_miss` events by

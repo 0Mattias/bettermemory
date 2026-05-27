@@ -2500,3 +2500,300 @@ def test_recommendation_kinds_constant_matches_compute_output() -> None:
         "fix_typo_scopes",
     }
     assert set(RECOMMENDATION_KINDS) == expected
+
+
+# ---------------------------------------------------------------------------
+# miss_ack — per-event silent-miss escape hatch (T4)
+# ---------------------------------------------------------------------------
+#
+# The bulk `silent_miss_cutoff` hatch wipes EVERY pre-cutoff miss
+# in one stroke. T4 closes the granularity gap with
+# `memory_acknowledge_miss(event_id, reason)`, which emits one
+# `miss_ack` event referencing a single `search_miss` by id. The
+# rollup drops the matching miss from BOTH `miss_total` and
+# `unique_miss_memories`, just like the tombstone filter. Same
+# defensive shape: a `miss_ack` referencing a search_miss that never
+# existed degrades silently (it's idempotent — repeated acks are a
+# no-op via the set semantic the rollup uses).
+
+
+def _search_miss_with_event_id(
+    memory_id: str,
+    event_id: str,
+    *,
+    ts: datetime,
+    query_preview: str | None = None,
+) -> dict[str, Any]:
+    """A `search_miss` event carrying the T4 `event_id` + redacted
+    probe_query shape the real recorder produces.
+
+    Mirrors `search_miss_fields` output: `event_id` is a top-level
+    string (the per-event ULID); `top_hits` carries the targeted
+    memory id; `probe_query` is the `{hash, preview, len}` dict shape
+    when `log_queries_verbatim=False` (the default).
+    """
+    fields: dict[str, Any] = {
+        "event_id": event_id,
+        "top_hits": [{"id": memory_id, "score": 1.0, "relevance": "high"}],
+    }
+    if query_preview is not None:
+        fields["probe_query"] = {
+            "hash": "00000000000000ff",
+            "preview": query_preview,
+            "len": len(query_preview),
+        }
+    return _event("search_miss", ts=ts, **fields)
+
+
+def test_miss_ack_drops_acked_event_from_compute_health_rollup() -> None:
+    """A `miss_ack` event with event_id X drops the matching search_miss
+    from both `miss_total` and `unique_miss_memories`. Distinct from the
+    bulk `silent_miss_cutoff` hatch — only the one referenced event
+    drops, not every pre-cutoff event."""
+    m = _memory(created=_utc(2026, 1, 1))
+    a = _search_miss_with_event_id(m.id, "EVID_A", ts=_utc(2026, 4, 5))
+    b = _search_miss_with_event_id(m.id, "EVID_B", ts=_utc(2026, 4, 10))
+    ack = _event(
+        "miss_ack", ts=_utc(2026, 4, 15), event_id="EVID_A", reason="false positive"
+    )
+
+    pre_ack = compute_health([m], [a, b], now=_utc(2026, 5, 1))
+    assert pre_ack.silent_misses.miss_total == 2
+    assert pre_ack.silent_misses.unique_miss_memories == 1
+
+    post_ack = compute_health([m], [a, b, ack], now=_utc(2026, 5, 1))
+    # EVID_A drops out; EVID_B still counts. Unique-memory count stays
+    # at 1 because EVID_B still points at memory `m`.
+    assert post_ack.silent_misses.miss_total == 1
+    assert post_ack.silent_misses.unique_miss_memories == 1
+
+
+def test_miss_ack_drops_acked_event_from_curation_counts() -> None:
+    """The fast `curation_counts` helper honors the same ack filter
+    so the session-start view and the deep health view agree on the
+    same store — same parity contract as the tombstone filter (T3)."""
+    m = _memory(created=_utc(2026, 1, 1))
+    a = _search_miss_with_event_id(m.id, "EVID_A", ts=_utc(2026, 4, 5))
+    b = _search_miss_with_event_id(m.id, "EVID_B", ts=_utc(2026, 4, 10))
+    ack = _event(
+        "miss_ack", ts=_utc(2026, 4, 15), event_id="EVID_A", reason="false positive"
+    )
+
+    counts = curation_counts([m], [a, b, ack], now=_utc(2026, 5, 1))
+    assert counts["silent_misses"] == 1
+    assert counts["unique_silent_miss_memories"] == 1
+
+
+def test_miss_ack_unique_memories_drops_to_zero_when_all_acked() -> None:
+    """Acknowledging both misses against the only memory should drop
+    `unique_miss_memories` to zero — the set has no surviving id."""
+    m = _memory(created=_utc(2026, 1, 1))
+    a = _search_miss_with_event_id(m.id, "EVID_A", ts=_utc(2026, 4, 5))
+    b = _search_miss_with_event_id(m.id, "EVID_B", ts=_utc(2026, 4, 10))
+    ack_a = _event(
+        "miss_ack", ts=_utc(2026, 4, 15), event_id="EVID_A", reason="false positive 1"
+    )
+    ack_b = _event(
+        "miss_ack", ts=_utc(2026, 4, 16), event_id="EVID_B", reason="false positive 2"
+    )
+    report = compute_health([m], [a, b, ack_a, ack_b], now=_utc(2026, 5, 1))
+    assert report.silent_misses.miss_total == 0
+    assert report.silent_misses.unique_miss_memories == 0
+
+
+def test_miss_ack_legacy_events_without_event_id_cannot_be_acked() -> None:
+    """Search_miss events written before T4 lack the `event_id` field;
+    no ack event can reference them. They count toward `miss_total`
+    forever (until the bulk `silent_miss_cutoff` hatch wipes them).
+    This is the documented limit of the per-event hatch."""
+    m = _memory(created=_utc(2026, 1, 1))
+    # Legacy event — no event_id field.
+    legacy = _event(
+        "search_miss",
+        ts=_utc(2026, 4, 5),
+        top_hits=[{"id": m.id, "score": 1.0, "relevance": "high"}],
+    )
+    ack = _event("miss_ack", ts=_utc(2026, 4, 15), event_id="EVID_LEGACY")
+    report = compute_health([m], [legacy, ack], now=_utc(2026, 5, 1))
+    # The ack can't bind to the legacy event — it counts normally.
+    assert report.silent_misses.miss_total == 1
+
+
+def test_miss_ack_duplicate_acks_idempotent_rollup() -> None:
+    """Two `miss_ack` events for the same event_id collapse via the set
+    semantic — the rollup tolerates duplicate acks defensively."""
+    m = _memory(created=_utc(2026, 1, 1))
+    miss = _search_miss_with_event_id(m.id, "EVID_A", ts=_utc(2026, 4, 5))
+    ack1 = _event("miss_ack", ts=_utc(2026, 4, 10), event_id="EVID_A", reason="ack one")
+    ack2 = _event("miss_ack", ts=_utc(2026, 4, 11), event_id="EVID_A", reason="ack two")
+    report = compute_health([m], [miss, ack1, ack2], now=_utc(2026, 5, 1))
+    assert report.silent_misses.miss_total == 0
+
+
+def test_miss_ack_with_malformed_event_id_is_ignored() -> None:
+    """A `miss_ack` whose `event_id` field is missing / non-string is
+    silently dropped — the rollup falls through to counting every miss
+    normally rather than crashing on a malformed admin event."""
+    m = _memory(created=_utc(2026, 1, 1))
+    miss = _search_miss_with_event_id(m.id, "EVID_A", ts=_utc(2026, 4, 5))
+    bad_acks = [
+        _event("miss_ack", ts=_utc(2026, 4, 10)),  # no event_id
+        _event("miss_ack", ts=_utc(2026, 4, 11), event_id=12345),  # non-string
+        _event("miss_ack", ts=_utc(2026, 4, 12), event_id=""),  # empty string
+    ]
+    report = compute_health([m], [miss, *bad_acks], now=_utc(2026, 5, 1))
+    # None of the bad acks bind; the miss still counts.
+    assert report.silent_misses.miss_total == 1
+
+
+def test_combined_cutoff_tombstone_ack_filters_compose() -> None:
+    """The combined T2/T3/T4 test: one cutoff-dropped event, one
+    tombstone-dropped event, one acked event, one survivor. The
+    4-stage filter (cutoff + tombstone + ack + dedup) drops exactly
+    three of the four; the survivor counts."""
+    live = _memory(created=_utc(2026, 1, 1))
+    tombstoned = _memory(created=_utc(2026, 1, 1))
+
+    cutoff_event = _event(
+        "silent_miss_cutoff",
+        ts=_utc(2026, 4, 1),
+        cutoff_ts=_utc(2026, 4, 1).isoformat().replace("+00:00", "Z"),
+    )
+    # Drops via cutoff (pre-2026-04-01)
+    pre_cutoff = _search_miss_with_event_id(live.id, "EVID_PRE", ts=_utc(2026, 3, 20))
+    # Drops via tombstone filter
+    against_tombstone = _search_miss_with_event_id(
+        tombstoned.id, "EVID_TOMB", ts=_utc(2026, 4, 10)
+    )
+    # Drops via ack
+    acked = _search_miss_with_event_id(live.id, "EVID_ACK", ts=_utc(2026, 4, 11))
+    ack = _event(
+        "miss_ack", ts=_utc(2026, 4, 12), event_id="EVID_ACK", reason="false positive"
+    )
+    # Survivor — passes all four filters
+    survivor = _search_miss_with_event_id(live.id, "EVID_LIVE", ts=_utc(2026, 4, 20))
+
+    events = [cutoff_event, pre_cutoff, against_tombstone, acked, ack, survivor]
+    report = compute_health(
+        [live, tombstoned],
+        events,
+        now=_utc(2026, 5, 1),
+        tombstoned_ids={tombstoned.id},
+    )
+    assert report.silent_misses.miss_total == 1
+    assert report.silent_misses.unique_miss_memories == 1
+
+    counts = curation_counts(
+        [live, tombstoned],
+        events,
+        now=_utc(2026, 5, 1),
+        tombstoned_ids={tombstoned.id},
+    )
+    assert counts["silent_misses"] == 1
+    assert counts["unique_silent_miss_memories"] == 1
+
+
+def test_recent_silent_misses_surfaced_on_health_report() -> None:
+    """`compute_health` populates `recent_silent_misses` with the
+    triage shape (event_id + top_hit_id + query_preview + ts) so the
+    model has something to feed into `memory_acknowledge_miss`. Newest
+    first; capped."""
+    m = _memory(created=_utc(2026, 1, 1))
+    events = [
+        _search_miss_with_event_id(
+            m.id, "EVID_A", ts=_utc(2026, 4, 5), query_preview="why backup strategy"
+        ),
+        _search_miss_with_event_id(
+            m.id, "EVID_B", ts=_utc(2026, 4, 10), query_preview="restic config"
+        ),
+    ]
+    report = compute_health([m], events, now=_utc(2026, 5, 1))
+    assert len(report.recent_silent_misses) == 2
+    # Newest first — EVID_B (04-10) should precede EVID_A (04-05).
+    assert report.recent_silent_misses[0].event_id == "EVID_B"
+    assert report.recent_silent_misses[0].top_hit_id == m.id
+    assert report.recent_silent_misses[0].query_preview == "restic config"
+    assert report.recent_silent_misses[1].event_id == "EVID_A"
+
+
+def test_recent_silent_misses_filters_acked_and_tombstoned() -> None:
+    """The inline list matches the rollup's filter set — acked /
+    tombstoned events don't leak into the triage surface even though
+    they exist in the event log."""
+    live = _memory(created=_utc(2026, 1, 1))
+    tombstoned = _memory(created=_utc(2026, 1, 1))
+
+    events = [
+        _search_miss_with_event_id(live.id, "EVID_LIVE", ts=_utc(2026, 4, 5)),
+        _search_miss_with_event_id(tombstoned.id, "EVID_TOMB", ts=_utc(2026, 4, 6)),
+        _search_miss_with_event_id(live.id, "EVID_ACKED", ts=_utc(2026, 4, 7)),
+        _event(
+            "miss_ack",
+            ts=_utc(2026, 4, 8),
+            event_id="EVID_ACKED",
+            reason="false positive",
+        ),
+    ]
+    report = compute_health(
+        [live, tombstoned],
+        events,
+        now=_utc(2026, 5, 1),
+        tombstoned_ids={tombstoned.id},
+    )
+    surfaced_ids = {m.event_id for m in report.recent_silent_misses}
+    assert surfaced_ids == {"EVID_LIVE"}
+
+
+def test_recent_silent_misses_carries_legacy_events_with_none_event_id() -> None:
+    """Legacy search_miss events without event_id should still surface
+    in the triage list — the model needs to see them even though it
+    can't ack them (event_id=None tells it so)."""
+    m = _memory(created=_utc(2026, 1, 1))
+    legacy = _event(
+        "search_miss",
+        ts=_utc(2026, 4, 5),
+        top_hits=[{"id": m.id, "score": 1.0, "relevance": "high"}],
+    )
+    report = compute_health([m], [legacy], now=_utc(2026, 5, 1))
+    assert len(report.recent_silent_misses) == 1
+    assert report.recent_silent_misses[0].event_id is None
+    assert report.recent_silent_misses[0].top_hit_id == m.id
+
+
+def test_recent_silent_misses_cap_bounds_inline_list() -> None:
+    """The inline list is capped — newest entries win. Don't bloat
+    the JSON when 200 misses are in-window."""
+    from bettermemory.health import _RECENT_SILENT_MISSES_CAP
+
+    m = _memory(created=_utc(2026, 1, 1))
+    # Many misses, deterministic event_ids and ascending ts.
+    events = [
+        _search_miss_with_event_id(m.id, f"EVID_{i:03d}", ts=_utc(2026, 4, 1 + i))
+        for i in range(_RECENT_SILENT_MISSES_CAP * 3)
+    ]
+    report = compute_health([m], events, now=_utc(2026, 6, 1), window_days=120)
+    assert len(report.recent_silent_misses) == _RECENT_SILENT_MISSES_CAP
+    # Newest first — the highest-numbered event_id should lead.
+    assert report.recent_silent_misses[0].event_id == (
+        f"EVID_{(_RECENT_SILENT_MISSES_CAP * 3) - 1:03d}"
+    )
+
+
+def test_recent_silent_misses_serialised_in_to_dict() -> None:
+    """The serialised report payload exposes `recent_silent_misses` —
+    consumers reading the JSON (CLI, downstream tooling) need the
+    inline list without re-deriving."""
+    m = _memory(created=_utc(2026, 1, 1))
+    miss = _search_miss_with_event_id(m.id, "EVID_X", ts=_utc(2026, 4, 5))
+    report = compute_health([m], [miss], now=_utc(2026, 5, 1))
+    payload = report.to_dict()
+    assert "recent_silent_misses" in payload
+    assert len(payload["recent_silent_misses"]) == 1
+    entry = payload["recent_silent_misses"][0]
+    assert entry == {
+        "event_id": "EVID_X",
+        "top_hit_id": m.id,
+        "query_preview": None,
+        "ts": entry["ts"],  # ts shape varies — just pin the key exists
+    }
+    assert entry["ts"].startswith("2026-04-05")

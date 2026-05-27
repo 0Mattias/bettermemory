@@ -1104,9 +1104,9 @@ def render_threshold_sweep_text(report: ThresholdSweepReport) -> str:
 # Map from event `kind` to the MCP tool that emits it. Used by
 # `compute_tool_usage` so the rollup uses tool names rather than the
 # wire-format event kinds the recorder writes. The exact set is the
-# 18-tool surface listed in `server.py`'s module docstring; tools
-# without a dedicated event of their own appear in
-# `TOOLS_WITHOUT_TELEMETRY` instead.
+# 19-tool memory_* + 4-tool episode_* surface listed in `server.py`'s
+# module docstring; tools without a dedicated event of their own
+# appear in `TOOLS_WITHOUT_TELEMETRY` instead.
 #
 # Why an explicit map rather than counting raw `kind` values: some
 # event kinds (`search_miss`, `pending_expired`) are side-effects of
@@ -1134,6 +1134,7 @@ _TOOL_EVENT_KIND_TO_TOOL: dict[str, str] = {
     "scope_disable": "memory_scope_disable",
     "scope_enable": "memory_scope_enable",
     "turn_audited": "memory_audit_turn",
+    "miss_ack": "memory_acknowledge_miss",
     "episode_write": "episode_write",
     "episode_handoff": "episode_handoff",
     "episode_search": "episode_search",

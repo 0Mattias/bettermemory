@@ -41,6 +41,7 @@ from ._handlers import (
     DESC_EPISODE_PROMOTE,
     DESC_EPISODE_SEARCH,
     DESC_EPISODE_WRITE,
+    DESC_MEMORY_ACKNOWLEDGE_MISS,
     DESC_MEMORY_AUDIT_TURN,
     DESC_MEMORY_HEALTH,
     DESC_MEMORY_LIST,
@@ -231,7 +232,7 @@ def _register_tools(
     )
 
     # Order matches `server.py`'s module docstring's tool list so a reader
-    # can scan top-to-bottom and see all 22 tools at once (18 memory_*
+    # can scan top-to-bottom and see all 23 tools at once (19 memory_*
     # + 4 episode_*).
     mcp.tool(name="memory_search", description=DESC_MEMORY_SEARCH)(
         handlers.memory_search
@@ -275,6 +276,9 @@ def _register_tools(
     )
     mcp.tool(name="memory_audit_turn", description=DESC_MEMORY_AUDIT_TURN)(
         handlers.memory_audit_turn
+    )
+    mcp.tool(name="memory_acknowledge_miss", description=DESC_MEMORY_ACKNOWLEDGE_MISS)(
+        handlers.memory_acknowledge_miss
     )
     mcp.tool(name="memory_rename_scope", description=DESC_MEMORY_RENAME_SCOPE)(
         handlers.memory_rename_scope

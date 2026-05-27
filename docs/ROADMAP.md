@@ -4,7 +4,7 @@ Published roadmap is part of the distribution strategy: people deciding between 
 
 ## Where we are (May 2026, v3.1.0)
 
-- 22 MCP tools: 18 `memory_*` (retrieval, writing, lifecycle, verification, curation, session-local) + 4 `episode_*` (sibling tier for journal-shaped run-state — `/loop` iterations and subagent handoffs land in episodes; `episode_handoff` at iteration entry, `episode_write(takeaway=…)` at iteration exit, `episode_promote` distills a takeaway into a durable memory via the standard `memory_write` audit gate).
+- 23 MCP tools: 19 `memory_*` (retrieval, writing, lifecycle, verification, curation, session-local) + 4 `episode_*` (sibling tier for journal-shaped run-state — `/loop` iterations and subagent handoffs land in episodes; `episode_handoff` at iteration entry, `episode_write(takeaway=…)` at iteration exit, `episode_promote` distills a takeaway into a durable memory via the standard `memory_write` audit gate).
 - `memory_search(since_prior_session=True)` filter restricts candidates to memories updated since the prior-session boundary in this worktree — answers "what's changed since I was last here?" without scanning the full store.
 - `depends_on_resolved` inlines graph-edge target summaries on every hit (3 per hit, 10 total), closing the "graph in the schema, retrieval ignores it" gap.
 - Proactive curation surface: `HealthReport.recommendations` distills bucket rollups into actionable one-line suggestions; inline `curation_hint` on the first successful `memory_write` per session when curation pressure crosses the configurable threshold; `recently_removed_in_worktree` on `memory_scope_overview` flags when the model is about to re-cover trimmed ground.

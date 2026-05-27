@@ -143,13 +143,13 @@ Storage resolution: `$BETTERMEMORY_DIR` if set, else `./.claude-memory/` if it e
 
 ## Tools
 
-22 MCP tools, grouped:
+23 MCP tools, grouped:
 
 - **Retrieval** — `memory_search` (incl. `since_prior_session` filter), `memory_show`, `memory_list`, `memory_scope_overview`
 - **Writing** — `memory_write` (plus `memory_write_confirm` / `memory_write_cancel` for the staged-write flow), `memory_update`
 - **Lifecycle** — `memory_remove`, `memory_restore`, `memory_list_tombstones`
 - **Verification** — `memory_verify`
-- **Curation** — `memory_record_use`, `memory_health`, `memory_audit_turn`, `memory_rename_scope`
+- **Curation** — `memory_record_use`, `memory_health`, `memory_audit_turn`, `memory_acknowledge_miss`, `memory_rename_scope`
 - **Session-local** — `memory_scope_disable`, `memory_scope_enable`
 - **Episodes** (sibling tier for journal/run-state — `/loop` iterations, "what we tried") — `episode_write`, `episode_handoff`, `episode_search`, `episode_promote`
 

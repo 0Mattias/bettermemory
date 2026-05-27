@@ -76,7 +76,7 @@ from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 from typing import Any, Iterable, Literal, cast
 
-from .models import Memory, MemoryHit
+from .models import Memory, MemoryHit, generate_ulid
 from .origin import Origin, repos_match
 from .search import SearchMode, _strip_stopwords, search as run_search, tokenize
 from .time_utils import isoformat_utc, parse_event_ts
@@ -271,6 +271,7 @@ def search_miss_fields(
     *,
     session_id: str,
     triggered_from: str,
+    event_id: str | None = None,
 ) -> dict[str, Any]:
     """Canonical field set for a ``search_miss`` event. Pairs with
     :func:`turn_audited_fields` — see that docstring for the
@@ -280,6 +281,15 @@ def search_miss_fields(
     can render it: the 2.6.4 audit found that consumer reading the
     field off the ``search_miss`` event while every producer emitted
     it on ``turn_audited`` only — the eval column was always blank.
+
+    ``event_id`` is a stable per-event ULID stamped at emission time.
+    Surfaced so ``memory_acknowledge_miss`` can reference one specific
+    miss for resolution (the per-event escape hatch documented in T4 —
+    distinct from the bulk ``silent_miss_cutoff`` written by
+    ``bettermemory consolidate --acknowledge-misses-before``, which
+    wipes EVERY pre-cutoff miss). When omitted a fresh ULID is
+    generated; callers should not pass an explicit value outside of
+    tests that pin specific ids.
     """
     if triggered_from not in _VALID_TRIGGERED_FROM:
         raise ValueError(
@@ -287,6 +297,7 @@ def search_miss_fields(
             f"{sorted(_VALID_TRIGGERED_FROM)!r}, got {triggered_from!r}"
         )
     return {
+        "event_id": event_id if event_id is not None else generate_ulid(),
         "session_id": session_id,
         "threshold_rule": report.threshold_rule,
         "lookback_seconds": report.lookback_seconds,

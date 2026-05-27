@@ -411,6 +411,13 @@ class CommitDriftDebt:
 _COMMIT_DRIFT_DEBT_CAP = 20
 
 
+# Cap on the inline `recent_silent_misses` list — newest-first, bounded
+# so the JSON stays compact on large stores. Ten is enough for a model
+# to triage typical false-positive patterns at a glance; the full event
+# log remains the source of truth for an exhaustive sweep.
+_RECENT_SILENT_MISSES_CAP = 10
+
+
 @dataclass
 class ColdEndorsementMemories:
     """Curation pivot for retrieved-but-never-endorsed memories.
@@ -493,6 +500,13 @@ class SilentMissStats:
     memory is gone the miss is no longer actionable. `miss_total` retains
     its name for back-compat with existing consumers; the to_dict shape
     surfaces both keys.
+
+    Silent-miss events acknowledged via `memory_acknowledge_miss` (T4)
+    are also dropped from both counters — the per-event escape hatch
+    for false positives the bulk `silent_miss_cutoff` would over-wipe.
+    The ack-filter runs alongside the tombstone filter so the rollup
+    reflects "outstanding actionable misses" rather than "every miss
+    ever seen."
     """
 
     audited_total: int = 0
@@ -504,6 +518,44 @@ class SilentMissStats:
             "audited_total": self.audited_total,
             "miss_total": self.miss_total,
             "unique_miss_memories": self.unique_miss_memories,
+        }
+
+
+@dataclass
+class RecentSilentMiss:
+    """One unacknowledged ``search_miss`` event surfaced for triage.
+
+    Carried on ``HealthReport.recent_silent_misses`` so the model has
+    something to feed into ``memory_acknowledge_miss(event_id, reason)``
+    when it spots a false positive. The full event log is the source of
+    truth; this list is a small, bounded inline subset designed for
+    inline display — newest first, capped at
+    ``_RECENT_SILENT_MISSES_CAP``.
+
+    Fields:
+
+    - ``event_id``: the per-event ULID stamped at emission time. Echoed
+      back to ``memory_acknowledge_miss`` to scope an ack to one event.
+      ``None`` only for legacy events written before T4 added the field;
+      those rows surface for visibility but cannot be acknowledged.
+    - ``top_hit_id``: the first id in the event's ``top_hits`` payload —
+      the memory the probe found that the model should have retrieved.
+    - ``query_preview``: short triage string (first 32 chars of the
+      probe query, redacted shape under ``log_queries_verbatim=False``).
+    - ``ts``: the event's ISO timestamp.
+    """
+
+    event_id: str | None
+    top_hit_id: str | None
+    query_preview: str | None
+    ts: str | None
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "event_id": self.event_id,
+            "top_hit_id": self.top_hit_id,
+            "query_preview": self.query_preview,
+            "ts": self.ts,
         }
 
 
@@ -643,6 +695,15 @@ class HealthReport:
     # window (or fired but only produced no_signal verdicts) — distinct
     # from "audited heavily, no misses found."
     silent_misses: SilentMissStats = field(default_factory=SilentMissStats)
+    # Inline subset of unacknowledged `search_miss` events for triage.
+    # Newest first, capped at `_RECENT_SILENT_MISSES_CAP`. Each entry
+    # carries the per-event `event_id` the model feeds into
+    # `memory_acknowledge_miss(event_id, reason)` when a miss turns out
+    # to be a false positive (e.g. a stopword-heavy query). Tombstoned
+    # and already-acked events are filtered out so the surface only
+    # shows actionable misses. Empty when the audit hook hasn't been
+    # firing or every flagged miss has been acked.
+    recent_silent_misses: list[RecentSilentMiss] = field(default_factory=list)
     # Cold-endorsement-memories rollup — counts distinct memories the
     # ranker keeps surfacing (retrieval_count >= min) but the model
     # never explicitly endorses (explicit_applied_count == 0). The
@@ -689,6 +750,7 @@ class HealthReport:
                 else None
             ),
             "silent_misses": self.silent_misses.to_dict(),
+            "recent_silent_misses": [m.to_dict() for m in self.recent_silent_misses],
             "cold_endorsement_memories": self.cold_endorsement_memories.to_dict(),
             "recommendations": [r.to_dict() for r in self.recommendations],
         }
@@ -716,15 +778,26 @@ class _AccumulatorRollups:
     total_events: int
     orphan_use_events: int
     silent_miss_audited_ts: list[datetime | None]
-    # Per-miss-event tuples of `(ts, top_hit_id)` rather than bare
-    # timestamps. The id is the first entry in the event's `top_hits`
-    # payload (audit.py:418-427) — the memory the probe found that the
-    # model should have retrieved. Kept on the rollup so the
-    # `compute_health` aggregation can both dedup by id
-    # (`unique_miss_memories`) and drop events whose target was later
-    # tombstoned (no longer actionable).
-    silent_miss_events: list[tuple[datetime | None, str | None]]
+    # Per-miss-event records carrying everything downstream rollups
+    # need. Each entry is `(ts, top_hit_id_or_None, event_id_or_None,
+    # query_preview_or_None)`. The id is the first entry in the
+    # event's `top_hits` payload (audit.py:418-427) — the memory the
+    # probe found that the model should have retrieved. The event_id
+    # is the per-event ULID stamped by `search_miss_fields` since T4;
+    # legacy events written before that field existed degrade to
+    # None and can't be ack-filtered (the bulk
+    # `silent_miss_cutoff` hatch remains the only escape for those).
+    # The query_preview is the short triage string consumers display
+    # alongside the id in `recent_silent_misses`.
+    silent_miss_events: list[tuple[datetime | None, str | None, str | None, str | None]]
     latest_miss_cutoff: datetime | None
+    # Set of `event_id` values acknowledged via `memory_acknowledge_miss`
+    # (the per-event escape hatch — T4). Silent-miss events with a
+    # matching event_id drop out of both the rate and the unique-memory
+    # rollup. Distinct from the bulk `silent_miss_cutoff` hatch: an
+    # ack targets ONE event, the cutoff wipes everything before its
+    # timestamp.
+    acknowledged_miss_event_ids: set[str]
     resolution_events_by_id: dict[str, list[dict[str, Any]]]
 
 
@@ -773,16 +846,36 @@ class _StatsAccumulator:
         # the post-fix rollup hatch documented at the `_handle_search_miss`
         # branch.
         self._silent_miss_audited_ts: list[datetime | None] = []
-        # Each miss event contributes `(ts, top_hit_id_or_None)`. The
-        # second tuple element is the first id in the event's `top_hits`
+        # Each miss event contributes
+        # `(ts, top_hit_id_or_None, event_id_or_None, query_preview_or_None)`.
+        # `top_hit_id` is the first id in the event's `top_hits`
         # payload — present on every `search_miss` written via
         # `search_miss_fields`, defensively None on malformed legacy
         # events that lack the field entirely (the older `compute_health`
         # rollup didn't read top_hits, so those events shipped without
         # them; we accept the None and fall back to counting-only behavior
         # so the rollup degrades cleanly rather than crashing).
-        self._silent_miss_events: list[tuple[datetime | None, str | None]] = []
+        # `event_id` is the per-event ULID stamped on every miss
+        # written since T4 (Unreleased) — references the original
+        # event from a `miss_ack` so a `memory_acknowledge_miss` call
+        # can resolve one specific false positive without wiping the
+        # whole pre-cutoff window. Legacy events lack it (None) and
+        # cannot be ack-filtered.
+        # `query_preview` is the redacted-shape preview string the
+        # `recent_silent_misses` surface displays for triage.
+        self._silent_miss_events: list[
+            tuple[datetime | None, str | None, str | None, str | None]
+        ] = []
         self._latest_miss_cutoff: datetime | None = None
+        # `miss_ack` events captured during the same single pass over
+        # the event stream. The set carries the original `event_id`
+        # that each ack referenced. Resolved against
+        # `_silent_miss_events` after the pass to drop acknowledged
+        # misses from the rollup. Idempotent: duplicate acks for the
+        # same `event_id` collapse to one set entry (the handler also
+        # short-circuits a second ack, but the rollup tolerates the
+        # legacy case where two ack events exist in the log).
+        self._acknowledged_miss_event_ids: set[str] = set()
         # Per-id chronological log of resolution-relevant events
         # (update / verify / use[contradicted|corrected]). Accumulated
         # for every memory while we walk the event stream once;
@@ -933,6 +1026,12 @@ class _StatsAccumulator:
         # toward `miss_total` (the legacy count semantic), it just
         # cannot contribute to `unique_miss_memories` and cannot be
         # filtered by tombstone status.
+        #
+        # `event_id` is the per-event ULID stamped on every search_miss
+        # since T4. Legacy events written before that field existed read
+        # as None and cannot be referenced by `memory_acknowledge_miss`
+        # — the bulk `silent_miss_cutoff` remains the only escape hatch
+        # for those.
         top_hit_id: str | None = None
         top_hits = ev.get("top_hits")
         if isinstance(top_hits, list) and top_hits:
@@ -941,9 +1040,42 @@ class _StatsAccumulator:
                 candidate = first.get("id")
                 if isinstance(candidate, str):
                     top_hit_id = candidate
+        event_id_raw = ev.get("event_id")
+        event_id = event_id_raw if isinstance(event_id_raw, str) else None
+        # The recorder redacts `probe_query` into a `{hash, preview,
+        # len}` dict (events.py `_redact_event_fields`), so a bare
+        # string preview no longer lands in the event. Prefer the
+        # redacted preview when present; fall through to the raw
+        # string for tests / verbatim-mode events. None when neither
+        # shape is available.
+        query_preview: str | None = None
+        probe_query = ev.get("probe_query")
+        if isinstance(probe_query, dict):
+            preview_raw = probe_query.get("preview")
+            if isinstance(preview_raw, str):
+                query_preview = preview_raw
+        elif isinstance(probe_query, str):
+            query_preview = probe_query[:32]
         self._silent_miss_events.append(
-            (_ensure_utc(parse_event_ts(ev.get("ts"))), top_hit_id)
+            (
+                _ensure_utc(parse_event_ts(ev.get("ts"))),
+                top_hit_id,
+                event_id,
+                query_preview,
+            )
         )
+
+    def _handle_miss_ack(self, ev: dict[str, Any]) -> None:
+        # Per-event escape hatch for silent_miss false positives — T4.
+        # The handler `memory_acknowledge_miss` emits one `miss_ack`
+        # event per acknowledgment; the rollup collects the referenced
+        # `event_id` values and drops matching silent_miss events
+        # from BOTH the count and the unique-memory dedup. Distinct
+        # from the bulk `silent_miss_cutoff` hatch: an ack targets
+        # ONE event, the cutoff wipes everything before its ts.
+        target = ev.get("event_id")
+        if isinstance(target, str) and target:
+            self._acknowledged_miss_event_ids.add(target)
 
     def _handle_silent_miss_cutoff(self, ev: dict[str, Any]) -> None:
         # Additive escape hatch: when a fix lands that invalidates a
@@ -992,6 +1124,7 @@ class _StatsAccumulator:
             silent_miss_audited_ts=self._silent_miss_audited_ts,
             silent_miss_events=self._silent_miss_events,
             latest_miss_cutoff=self._latest_miss_cutoff,
+            acknowledged_miss_event_ids=self._acknowledged_miss_event_ids,
             resolution_events_by_id=self._resolution_events_by_id,
         )
 
@@ -1008,6 +1141,7 @@ class _StatsAccumulator:
         "turn_audited": _handle_turn_audited,
         "search_miss": _handle_search_miss,
         "silent_miss_cutoff": _handle_silent_miss_cutoff,
+        "miss_ack": _handle_miss_ack,
     }
 
 
@@ -1112,6 +1246,7 @@ def compute_health(
     silent_miss_audited_ts = rollups.silent_miss_audited_ts
     silent_miss_events = rollups.silent_miss_events
     latest_miss_cutoff = rollups.latest_miss_cutoff
+    acknowledged_miss_event_ids = rollups.acknowledged_miss_event_ids
     resolution_events_by_id = rollups.resolution_events_by_id
     sessions = rollups.sessions
 
@@ -1316,6 +1451,13 @@ def compute_health(
             miss_events=silent_miss_events,
             cutoff=latest_miss_cutoff,
             tombstoned_ids=tombstoned_ids,
+            acknowledged_event_ids=acknowledged_miss_event_ids,
+        ),
+        recent_silent_misses=_build_recent_silent_misses(
+            silent_miss_events,
+            cutoff=latest_miss_cutoff,
+            tombstoned_ids=tombstoned_ids,
+            acknowledged_event_ids=acknowledged_miss_event_ids,
         ),
         cold_endorsement_memories=cold_endorsement_memories,
     )
@@ -1785,13 +1927,14 @@ def _count_post_cutoff(
 def _silent_miss_stats(
     *,
     audited_ts: list[datetime | None],
-    miss_events: list[tuple[datetime | None, str | None]],
+    miss_events: list[tuple[datetime | None, str | None, str | None, str | None]],
     cutoff: datetime | None,
     tombstoned_ids: set[str],
+    acknowledged_event_ids: set[str] | None = None,
 ) -> SilentMissStats:
     """Fold the buffered audit telemetry into a `SilentMissStats`.
 
-    Three filters compose in order:
+    Four filters compose in order:
 
     1. **Cutoff** — events whose ts predates the latest
        `silent_miss_cutoff` are dropped (the additive escape hatch
@@ -1806,18 +1949,30 @@ def _silent_miss_stats(
        a None top-hit id (malformed legacy events without `top_hits`)
        fall through this filter on the conservative interpretation
        that we cannot prove the target was tombstoned.
-    3. **Dedup** — the survivors are folded into both `miss_total`
+    3. **Ack** — miss events whose `event_id` is in
+       `acknowledged_event_ids` are dropped: the per-event escape
+       hatch the T4 ``memory_acknowledge_miss`` handler writes. Like
+       the tombstone filter this only applies to miss events; the
+       denominator stays at "audits the hook ran" because the
+       audit ITSELF wasn't a false positive — the audit ran, the
+       probe found something, the model acknowledged the verdict.
+       Events with a None event_id (legacy events written before T4
+       added the field) cannot be acked and fall through this filter.
+    4. **Dedup** — the survivors are folded into both `miss_total`
        (events count) and `unique_miss_memories` (set cardinality of
        top-hit ids; events with None ids contribute to the event
        count but not to the unique-memories count).
     """
+    acknowledged_event_ids = acknowledged_event_ids or set()
     audited_total = _count_post_cutoff(audited_ts, cutoff)
     miss_total = 0
     unique_ids: set[str] = set()
-    for ts, top_hit_id in miss_events:
+    for ts, top_hit_id, event_id, _query_preview in miss_events:
         if cutoff is not None and (ts is None or ts < cutoff):
             continue
         if top_hit_id is not None and top_hit_id in tombstoned_ids:
+            continue
+        if event_id is not None and event_id in acknowledged_event_ids:
             continue
         miss_total += 1
         if top_hit_id is not None:
@@ -1827,6 +1982,54 @@ def _silent_miss_stats(
         miss_total=miss_total,
         unique_miss_memories=len(unique_ids),
     )
+
+
+def _build_recent_silent_misses(
+    miss_events: list[tuple[datetime | None, str | None, str | None, str | None]],
+    *,
+    cutoff: datetime | None,
+    tombstoned_ids: set[str],
+    acknowledged_event_ids: set[str],
+    cap: int = _RECENT_SILENT_MISSES_CAP,
+) -> list[RecentSilentMiss]:
+    """Build the inline list of unacknowledged silent_miss events for
+    triage in `HealthReport.recent_silent_misses`.
+
+    Applies the same cutoff / tombstone / ack filters
+    `_silent_miss_stats` uses so the inline list matches the rollup
+    counts: a non-zero `miss_total` and an empty `recent_silent_misses`
+    list shouldn't be possible unless every actionable miss is a
+    legacy event without an `event_id` (i.e., un-ack-able). Sorted
+    newest-first because the most recent events carry the most
+    triage value; capped at `_RECENT_SILENT_MISSES_CAP` so the JSON
+    stays compact. Events with None ts sort last (chronologically
+    indeterminate) so they don't push genuine recent events out of
+    the cap.
+    """
+    surviving: list[RecentSilentMiss] = []
+    for ts, top_hit_id, event_id, query_preview in miss_events:
+        if cutoff is not None and (ts is None or ts < cutoff):
+            continue
+        if top_hit_id is not None and top_hit_id in tombstoned_ids:
+            continue
+        if event_id is not None and event_id in acknowledged_event_ids:
+            continue
+        surviving.append(
+            RecentSilentMiss(
+                event_id=event_id,
+                top_hit_id=top_hit_id,
+                query_preview=query_preview,
+                ts=_iso(ts) if ts is not None else None,
+            )
+        )
+    # Newest first. `datetime.min` (tz-aware) is the sort floor for
+    # events whose ts didn't parse — they trail the in-order entries
+    # rather than crashing the sort on `None < datetime`.
+    surviving.sort(
+        key=lambda m: m.ts if isinstance(m.ts, str) else "",
+        reverse=True,
+    )
+    return surviving[:cap]
 
 
 def _edit_distance_within(a: str, b: str, max_dist: int) -> bool:
@@ -1973,13 +2176,29 @@ def curation_counts(
     # loop, not the model endorsing — same discriminator
     # `_advance_turn`/`memory_record_use` use.
     explicit_applied_counts: dict[str, int] = {m.id: 0 for m in mem_list}
-    # Per-miss-event tuples of `(ts, top_hit_id)`. The id is the first
+    # Per-miss-event tuples of
+    # `(ts, top_hit_id, event_id, query_preview)`. The id is the first
     # entry in the event's `top_hits` payload (audit.py:418-427) —
     # needed for the tombstone filter and the unique-memories count.
+    # The `event_id` was added in T4 so the ack-filter can drop
+    # individually-acknowledged misses; legacy events without it read
+    # as None and cannot be acked (the bulk `silent_miss_cutoff`
+    # remains the only escape for those).
     # Mirrors the `compute_health` shape so the two paths stay in
     # numerical agreement.
-    silent_miss_events_list: list[tuple[datetime | None, str | None]] = []
+    silent_miss_events_list: list[
+        tuple[datetime | None, str | None, str | None, str | None]
+    ] = []
     latest_miss_cutoff: datetime | None = None
+    # Per-event acknowledgments — T4 escape hatch.
+    # `miss_ack` events are global markers like `silent_miss_cutoff`:
+    # an ack written long ago still applies to any matching miss
+    # carrying its `event_id`, even in delta mode where the ack event
+    # itself falls outside the `--since` window. Without the
+    # delta-exemption a session-start scope_overview run could
+    # over-count freshly-emitted misses against an ack the user
+    # already recorded.
+    acknowledged_event_ids: set[str] = set()
     for ev in events:
         kind = ev.get("kind")
         # `silent_miss_cutoff` is a global marker — once written it
@@ -1995,6 +2214,13 @@ def curation_counts(
                 latest_miss_cutoff is None or parsed > latest_miss_cutoff
             ):
                 latest_miss_cutoff = parsed
+            continue
+        if kind == "miss_ack":
+            # Same global-marker treatment as `silent_miss_cutoff`:
+            # an ack remains valid regardless of when it was written.
+            target = ev.get("event_id")
+            if isinstance(target, str) and target:
+                acknowledged_event_ids.add(target)
             continue
         if since_aware is not None:
             ev_ts = _ensure_utc(_parse_event_ts(ev.get("ts")))
@@ -2021,8 +2247,9 @@ def curation_counts(
                     if not is_auto and mid in explicit_applied_counts:
                         explicit_applied_counts[mid] += 1
         elif kind == "search_miss":
-            # Capture the top-hit id alongside the timestamp. Same
-            # defensive handling as `_StatsAccumulator._handle_search_miss`:
+            # Capture the top-hit id, the per-event ULID (T4), and the
+            # redacted preview alongside the timestamp. Same defensive
+            # handling as `_StatsAccumulator._handle_search_miss`:
             # malformed events (missing / non-list / non-dict / non-string
             # id) degrade to None — the event still counts toward
             # `silent_misses` but can't contribute to
@@ -2035,8 +2262,23 @@ def curation_counts(
                     candidate = first.get("id")
                     if isinstance(candidate, str):
                         top_hit_id = candidate
+            event_id_raw = ev.get("event_id")
+            event_id_val = event_id_raw if isinstance(event_id_raw, str) else None
+            query_preview: str | None = None
+            probe_query = ev.get("probe_query")
+            if isinstance(probe_query, dict):
+                preview_raw = probe_query.get("preview")
+                if isinstance(preview_raw, str):
+                    query_preview = preview_raw
+            elif isinstance(probe_query, str):
+                query_preview = probe_query[:32]
             silent_miss_events_list.append(
-                (_ensure_utc(_parse_event_ts(ev.get("ts"))), top_hit_id)
+                (
+                    _ensure_utc(_parse_event_ts(ev.get("ts"))),
+                    top_hit_id,
+                    event_id_val,
+                    query_preview,
+                )
             )
 
     silent_miss_stats = _silent_miss_stats(
@@ -2044,6 +2286,7 @@ def curation_counts(
         miss_events=silent_miss_events_list,
         cutoff=latest_miss_cutoff,
         tombstoned_ids=tombstoned_ids_set,
+        acknowledged_event_ids=acknowledged_event_ids,
     )
     silent_misses = silent_miss_stats.miss_total
     unique_silent_miss_memories = silent_miss_stats.unique_miss_memories
@@ -2216,6 +2459,7 @@ __all__ = [
     "MemoryStats",
     "MarkerStats",
     "RECOMMENDATION_KINDS",
+    "RecentSilentMiss",
     "Recommendation",
     "ScopeHealth",
     "SilentMissStats",
