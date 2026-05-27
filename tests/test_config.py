@@ -518,6 +518,51 @@ def test_load_config_legacy_key_deprecation_warning_is_one_shot(
     )
 
 
+def test_load_config_both_keys_warning_is_one_shot(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    """One-shot per (config_path, key+"+both") for the both-keys branch:
+    three loads of the same config carrying BOTH the legacy and the new
+    key emit ONE warning, not three. Sibling to
+    `test_load_config_legacy_key_deprecation_warning_is_one_shot` —
+    `_apply_legacy_endorsement_debt_alias` uses a distinct guard tuple
+    (`f"{old_key}+both"`) for this branch so the old-only flow can't
+    cross-suppress the both-keys nudge on the same config path. A
+    regression that collapsed the `+both` suffix would either re-emit
+    the BOTH warning on every signal-driven reload (`bettermemory serve`
+    log spam) OR silently swap branches on a path that had already
+    tripped the old-only guard. Cross-asserts new-key-wins under repeat
+    loads — the value resolution shouldn't drift across reads either."""
+    _reset_deprecated_key_guard()
+    config_path = tmp_path / "config.toml"
+    config_path.write_text(
+        "[behavior]\n"
+        "endorsement_debt_ratio_threshold = 0.99\n"  # stale value
+        "cold_endorsement_ratio_threshold = 0.25\n",  # the intent
+        encoding="utf-8",
+    )
+    with caplog.at_level("WARNING", logger="bettermemory.config"):
+        cfg1 = load_config(config_path)
+        cfg2 = load_config(config_path)
+        cfg3 = load_config(config_path)
+    # New-key value wins on every read — the shim is idempotent on the
+    # value as well as on the warning.
+    assert cfg1.behavior.cold_endorsement_ratio_threshold == 0.25
+    assert cfg2.behavior.cold_endorsement_ratio_threshold == 0.25
+    assert cfg3.behavior.cold_endorsement_ratio_threshold == 0.25
+    both_records = [
+        r
+        for r in caplog.records
+        if r.levelname == "WARNING"
+        and "endorsement_debt_ratio_threshold" in r.getMessage()
+        and "BOTH" in r.getMessage()
+    ]
+    assert len(both_records) == 1, (
+        f"expected exactly one BOTH-keys warning across three loads of "
+        f"the same config, got {[r.getMessage() for r in both_records]}"
+    )
+
+
 # ---------------------------------------------------------------------------
 # Config.resolved_directory: the resolution decision tree
 # ---------------------------------------------------------------------------
