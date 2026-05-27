@@ -38,7 +38,8 @@ Tools: memory_search, memory_show, memory_list, memory_scope_overview,
 memory_write (+ memory_write_confirm / memory_write_cancel), memory_update,
 memory_remove, memory_restore, memory_list_tombstones, memory_verify,
 memory_record_use, memory_health, memory_audit_turn, memory_rename_scope,
-memory_scope_disable, memory_scope_enable.
+memory_scope_disable, memory_scope_enable, episode_write, episode_handoff,
+episode_search, episode_promote.
 
 ## When to retrieve
 

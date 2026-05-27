@@ -1160,6 +1160,21 @@ def test_desc_memory_health_enumerates_report_bucket_keys() -> None:
         "resolution_timeline",
         "verification_stale_days",
         "memory_audit_turn",
+        # `recommendations` row shape — fields documented inline to
+        # explain the digest, not bucket names.
+        "kind",
+        "summary",
+        "action",
+        "count",
+        "memory_ids",
+        "scope",
+        # Recommendation `kind` enum values — listed inline so the
+        # model can switch over them; not bucket names.
+        "remove_dead_weight",
+        "resolve_contradicted",
+        "cleanup_endorsement_debt",
+        "verify_drifted",
+        "fix_typo_scopes",
     }
     extracted = all_ticked - NON_BUCKET
 
@@ -1169,6 +1184,13 @@ def test_desc_memory_health_enumerates_report_bucket_keys() -> None:
     # intentionally NOT in the prose's "Returns buckets" section — they
     # surface above it in the same DESC string but aren't buckets. This
     # set is the bucket subset, kept in lockstep with the wire shape.
+    # `recommendations` is technically a derived digest (not a raw
+    # bucket) but appears in `to_dict` and gets enumerated alongside
+    # the buckets in DESC for the same model-discovery reason — added
+    # here so the parity check stays in lockstep with the prose.
+    # `kind`-token allowlist below filters out the recommendation
+    # kind names that share the backtick syntax (`remove_dead_weight`,
+    # etc.) but aren't bucket keys in the report shape.
     expected = {
         "dead_weight",
         "cold_memories",
@@ -1183,6 +1205,7 @@ def test_desc_memory_health_enumerates_report_bucket_keys() -> None:
         "rare_scopes",
         "orphan_use_events",
         "marker_stats",
+        "recommendations",
     }
     assert extracted == expected, (
         "DESC_MEMORY_HEALTH's enumerated bucket names drifted from "

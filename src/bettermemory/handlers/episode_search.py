@@ -37,8 +37,17 @@ DESC_EPISODE_SEARCH = (
     "about projects:auth across the last few sessions?'. For the "
     "loop-iteration-entry case prefer `episode_handoff`, which "
     "auto-resolves the prior session and caps the surface.\n\n"
-    "Returns the matching episodes oldest first, capped at "
-    "`max_results`.\n\n"
+    "Returns the matching episodes oldest first within the "
+    "most-recent-`max_results` window. When the filter set "
+    "produces more matches than the cap, the cap surfaces the "
+    "MOST-RECENT N (the slice keeps oldest-first ordering inside "
+    "that window — 'what did I conclude across the last few "
+    "sessions?' reads the tail, not the head).\n\n"
+    "Each row carries `{id, session_id, created, takeaway, body, "
+    "scopes}`. `session_id` is included because episode_search "
+    "spans sessions (unlike episode_handoff which scopes to one), "
+    "so the caller can correlate a takeaway back to its "
+    "originating session directory.\n\n"
     "Parameters:\n"
     "- `scopes` (optional): if set, only episodes whose scope list "
     "intersects this filter are returned.\n"
@@ -46,8 +55,8 @@ DESC_EPISODE_SEARCH = (
     "session's directory.\n"
     "- `since` (optional ISO-8601): if set, only episodes created "
     "at-or-after this instant.\n"
-    "- `max_results` (default 20, cap 200): hard cap on the returned "
-    "list size."
+    "- `max_results` (default 20, cap 200): cap on the returned "
+    "list size; surfaces the most-recent N."
 )
 
 
@@ -83,6 +92,11 @@ async def episode_search(
         candidate_sessions = list(deps.episode_store.iter_session_ids())
 
     scope_filter: set[str] | None = set(scopes) if scopes else None
+    # Session-disabled scopes are an opt-out hide; honored uniformly
+    # across the read surface (memory_search, memory_list) — episodes
+    # are the third leg, so we mirror the same `excluded & scopes`
+    # short-circuit pattern from list_active.py:46 / search.py:226.
+    excluded_scopes: set[str] = set(state.disabled_scopes)
 
     out: list[dict[str, Any]] = []
     for sid in candidate_sessions:
@@ -97,6 +111,8 @@ async def episode_search(
                 continue
             if scope_filter is not None and not (scope_filter & set(ep.scopes)):
                 continue
+            if excluded_scopes and (set(ep.scopes) & excluded_scopes):
+                continue
             out.append(
                 {
                     "id": ep.id,
@@ -109,7 +125,13 @@ async def episode_search(
             )
 
     out.sort(key=lambda e: e["created"])
-    out = out[:max_results]
+    # Cap to the most-recent N (matches `episode_handoff`'s
+    # `all_eps[-max_episodes:]` pattern and caller intuition for ad-hoc
+    # journal lookup — "what did I conclude across the last few
+    # sessions?" reads the tail, not the head). The slice keeps the
+    # ascending order inside the recent-N window so output stays
+    # oldest-first within the surfaced subset.
+    out = out[-max_results:]
 
     deps.recorder.record(
         "episode_search",

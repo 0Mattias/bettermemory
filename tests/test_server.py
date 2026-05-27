@@ -757,6 +757,93 @@ async def test_search_since_prior_session_filters_to_post_boundary(
     assert all(h["body"] != "written in session A" for h in hits if "body" in h)
 
 
+async def test_search_since_prior_session_excludes_boundary_memory(
+    memory_dir: Path,
+) -> None:
+    """`since_prior_session=True` is *exclusive* at the boundary: a memory
+    whose `updated` equals `prior_boundary` belongs to the prior session
+    (the boundary IS that session's last event ts, per
+    `find_prior_session_boundary`) and must not surface in the current
+    session's delta. Mirrors `test_curation_counts_since_filter_is_exclusive_at_boundary`
+    in tests/test_health.py — same concept, same answer across both surfaces
+    (memory_search + memory_scope_overview/curation_counts) the api docs
+    pair together as the "what's new since last session" workflow. A naive
+    inclusive `>=` would double-count the boundary memory across the two
+    surfaces."""
+    from bettermemory.events import iter_all_events
+    from bettermemory.health import find_prior_session_boundary
+
+    cfg = Config(storage=StorageConfig(directory=str(memory_dir)))
+
+    # Session A: write one memory. The `memory_write` recorder event lands
+    # in the log with its own `_utcnow_iso()` ts, which becomes session B's
+    # `prior_boundary` below. Memory A's `updated` is set by `Store.write`
+    # via a *separate* `utcnow()` call, so the two timestamps usually
+    # differ by microseconds — to pin the equality edge we re-stamp A's
+    # `updated` to exactly match the boundary after the fact.
+    state_a = SessionState()
+    server_a = build_server(config=cfg, store=Store(memory_dir), state=state_a)
+    written_a = await _call(
+        server_a,
+        "memory_write",
+        content="boundary memory written in session A",
+        scopes=["tools"],
+    )
+
+    # Session B: a fresh recorder establishes a new session_id so events
+    # from session A become "prior". Derive `prior_boundary` from the live
+    # event log the same way `search.py` does.
+    state_b = SessionState()
+    store_b = Store(memory_dir)
+    server_b = build_server(config=cfg, store=store_b, state=state_b)
+    prior_boundary = find_prior_session_boundary(
+        iter_all_events(memory_dir),
+        # Mirror the handler: the boundary is "latest event ts from a
+        # session other than the current one". `build_server` propagates
+        # the bare-`SessionState` path's `state.session_id` to the
+        # recorder (`builder.py:125`), so reading `state_b.session_id`
+        # gives us the same value the handler will use.
+        state_b.session_id,
+    )
+    assert prior_boundary is not None, "session A's write should have seeded a boundary"
+
+    # Force memory A's `updated` to exactly equal `prior_boundary`. The
+    # on-disk path is what `Store.load_all` re-reads, so writing through
+    # `_write_path` with a model_copy of A is sufficient — we deliberately
+    # bypass `Store.update` because that helper bumps `updated` to
+    # `utcnow()` and would defeat the test's pin.
+    path_a = store_b._find_path_for_id(written_a["id"])
+    assert path_a is not None
+    # Load the on-disk Memory and re-stamp `updated`. Going through the
+    # Store's own loader (rather than reconstructing from the dict) keeps
+    # this resilient to future Memory-model fields we'd otherwise drop.
+    loaded_a = next(m for m in store_b.load_all() if m.id == written_a["id"])
+    pinned_a = loaded_a.model_copy(update={"updated": prior_boundary})
+    store_b._write_path(path_a, pinned_a)
+
+    # Sanity: the rewrite landed.
+    reloaded_a = next(m for m in store_b.load_all() if m.id == written_a["id"])
+    assert reloaded_a.updated == prior_boundary
+
+    # Now run the since_prior_session search from session B. With the
+    # pre-fix inclusive `>=` filter, A would still surface; the fix
+    # makes the comparison strict so the boundary memory drops out.
+    hits = _unwrap(
+        await _call(
+            server_b,
+            "memory_search",
+            query="boundary",
+            since_prior_session=True,
+        )
+    )
+    ids = [h["id"] for h in hits]
+    assert written_a["id"] not in ids, (
+        "memory whose `updated` equals `prior_boundary` belongs to the prior "
+        "session and must not appear in the since_prior_session delta — "
+        "must agree with curation_counts' strict `<=` exclusion at the boundary"
+    )
+
+
 async def test_search_since_prior_session_records_boundary_on_event(
     memory_dir: Path,
 ) -> None:
@@ -1155,6 +1242,285 @@ async def test_search_depends_on_resolved_skips_disabled_scope_target(
         assert target["id"] not in {r["id"] for r in resolved}
 
 
+async def test_search_depends_on_resolved_targeted_loads_cross_topic_target(
+    server: Any, monkeypatch: Any
+) -> None:
+    """Cross-topic depends_on auto-pull. Pre-fix: the side-map built
+    from the FTS prefilter (cap 50 query-relevant rows) silently
+    skipped depended-on targets whose body didn't match the query —
+    exactly the auto-pull case that exists because B depends_on A
+    when A provides context the query for B won't surface. Post-fix:
+    `attach_depends_on_resolved` calls `store.load_one` for missing
+    target ids and merges them into the side-map.
+
+    Forcing the FTS prefilter via `BETTERMEMORY_INDEX_THRESHOLD=1`
+    is what actually exercises the targeted-load path: at default
+    threshold (500) the store falls back to `load_all` which
+    includes A in the side-map even when the query doesn't match.
+    """
+    monkeypatch.setenv("BETTERMEMORY_INDEX_THRESHOLD", "1")
+    target = await _call(
+        server,
+        "memory_write",
+        content="xylophone zebra unrelated phrasing nobody queries for",
+        scopes=["projects:foo"],
+        category="fact",
+    )
+    dependent = await _call(
+        server,
+        "memory_write",
+        content="rate limiter relies on the xylophone identity service",
+        scopes=["projects:foo"],
+        category="fact",
+    )
+    await _call(
+        server,
+        "memory_update",
+        id=dependent["id"],
+        links=[
+            {
+                "type": "depends_on",
+                "target_id": target["id"],
+                "note": "needs xylophone for identity",
+            }
+        ],
+    )
+
+    # Query for B's distinctive phrase ("rate limiter") — the FTS
+    # prefilter surfaces B but not A (A's body has no overlapping
+    # tokens with the query). The targeted-load path must pull A
+    # in via `load_one` and surface it in B's `depends_on_resolved`.
+    hits = _unwrap(await _call(server, "memory_search", query="rate limiter"))
+    hit = next(h for h in hits if h["id"] == dependent["id"])
+    assert "depends_on_resolved" in hit
+    resolved = hit["depends_on_resolved"]
+    assert {r["id"] for r in resolved} == {target["id"]}
+    assert resolved[0]["link_note"] == "needs xylophone for identity"
+
+
+async def test_search_depends_on_resolved_targeted_load_honors_disabled_scope(
+    server: Any, monkeypatch: Any
+) -> None:
+    """Counterpart to bf92912 for the targeted-load path. A
+    cross-topic `depends_on` target whose scope is session-disabled
+    must NOT surface via the targeted-load fallback either — the
+    same `excluded_scopes` filter that the side-map path applies has
+    to run at load time, otherwise the targeted-load reintroduces
+    the scope-leak."""
+    monkeypatch.setenv("BETTERMEMORY_INDEX_THRESHOLD", "1")
+    target = await _call(
+        server,
+        "memory_write",
+        content="kryptonite alpha-scope only secret",
+        scopes=["projects:alpha"],
+        category="fact",
+    )
+    dependent = await _call(
+        server,
+        "memory_write",
+        content="rate limiter in beta needs kryptonite",
+        scopes=["projects:beta"],
+        category="fact",
+        acknowledge_scope_mismatch=True,
+    )
+    await _call(
+        server,
+        "memory_update",
+        id=dependent["id"],
+        links=[{"type": "depends_on", "target_id": target["id"]}],
+    )
+
+    # Disable the target's scope. Query for B's distinctive phrase
+    # (so A is NOT in the FTS prefilter — pure targeted-load path).
+    await _call(server, "memory_scope_disable", scope="projects:alpha")
+    hits = _unwrap(await _call(server, "memory_search", query="rate limiter"))
+    hit = next(h for h in hits if h["id"] == dependent["id"])
+    resolved = hit.get("depends_on_resolved")
+    # The targeted-load must drop A at load time before it joins the
+    # side-map; either the key is omitted (only link's target was
+    # filtered) or the list is non-empty without A.
+    if resolved is not None:
+        assert target["id"] not in {r["id"] for r in resolved}
+
+
+async def test_search_depends_on_resolved_targeted_load_honors_cross_project_origin(
+    memory_dir: Path,
+    monkeypatch: Any,
+) -> None:
+    """Counterpart to bf92912 for the targeted-load path against the
+    auto-scope filter. A cross-topic `depends_on` target written
+    from a different repo must NOT surface via the targeted-load
+    fallback when the caller is auto-scoped to their own repo —
+    `should_include_for_caller` re-runs at load time, mirroring
+    the side-map path."""
+    monkeypatch.setenv("BETTERMEMORY_INDEX_THRESHOLD", "1")
+    import bettermemory._handlers as handlers_module
+    import bettermemory.server as server_module
+    from bettermemory.origin import Origin
+
+    origin_foo = Origin(
+        cwd="/work/foo",
+        repo="git@github.com:example/foo.git",
+        branch="main",
+        worktree_root="/work/foo",
+    )
+    origin_bar = Origin(
+        cwd="/work/bar",
+        repo="git@github.com:example/bar.git",
+        branch="main",
+        worktree_root="/work/bar",
+    )
+
+    def make_capture(origin: Origin):
+        def _capture(cwd: Any = None) -> Origin:
+            return origin
+
+        return _capture
+
+    cfg = Config(storage=StorageConfig(directory=str(memory_dir)))
+
+    # Write the cross-project target as repo bar. Body is deliberately
+    # NOT matching the eventual query so the FTS prefilter cannot
+    # rescue it — pure targeted-load path.
+    monkeypatch.setattr(handlers_module, "capture_origin", make_capture(origin_bar))
+    monkeypatch.setattr(server_module, "capture_origin", make_capture(origin_bar))
+    server_bar = build_server(config=cfg, store=Store(memory_dir), state=SessionState())
+    target = await _call(
+        server_bar,
+        "memory_write",
+        content="bar-only payload nobody queries for",
+        scopes=["projects:bar"],
+        category="fact",
+    )
+
+    # Switch to repo foo and write the dependent with a depends_on
+    # link pointing at the cross-project target.
+    monkeypatch.setattr(handlers_module, "capture_origin", make_capture(origin_foo))
+    monkeypatch.setattr(server_module, "capture_origin", make_capture(origin_foo))
+    server_foo = build_server(config=cfg, store=Store(memory_dir), state=SessionState())
+    dependent = await _call(
+        server_foo,
+        "memory_write",
+        content="rate limiter foo-side note",
+        scopes=["projects:foo"],
+        category="fact",
+    )
+    await _call(
+        server_foo,
+        "memory_update",
+        id=dependent["id"],
+        links=[{"type": "depends_on", "target_id": target["id"]}],
+    )
+
+    # Search from repo foo (auto_scope defaults True). B's query
+    # ("rate limiter") does not match A's body — the targeted-load
+    # is the only path that could surface A, and it must drop A
+    # because the cross-project origin filter is applied at load.
+    hits = _unwrap(await _call(server_foo, "memory_search", query="rate limiter"))
+    hit = next(h for h in hits if h["id"] == dependent["id"])
+    resolved = hit.get("depends_on_resolved")
+    if resolved is not None:
+        assert target["id"] not in {r["id"] for r in resolved}
+
+
+async def test_search_depends_on_resolved_max_total_caps_across_hits(
+    server: Any, monkeypatch: Any
+) -> None:
+    """The cross-hit `max_total=10` cap on `depends_on_resolved`
+    survives the targeted-load fallback: even when every hit has
+    many distinct cross-topic missing targets, the SUM of the
+    `depends_on_resolved` list lengths across the result set must
+    not exceed 10. Pins the cap that the new targeted-load path
+    must respect; closes the side observation that no test
+    previously locked this cross-hit cap down."""
+    monkeypatch.setenv("BETTERMEMORY_INDEX_THRESHOLD", "1")
+    # Build 5 hits, each with 5 distinct cross-topic depends_on
+    # targets (25 targets total). Pre-fix: most would silently drop
+    # because they're cross-topic. Post-fix: targeted-load surfaces
+    # them, but the cap clamps the response to <=10.
+    target_ids: list[str] = []
+    for i in range(25):
+        t = await _call(
+            server,
+            "memory_write",
+            content=f"obscure-target-{i} body nobody queries",
+            scopes=["projects:targets"],
+            category="fact",
+        )
+        target_ids.append(t["id"])
+
+    dependent_ids: list[str] = []
+    for i in range(5):
+        d = await _call(
+            server,
+            "memory_write",
+            content=f"rate limiter dependent number {i}",
+            scopes=["projects:targets"],
+            category="fact",
+        )
+        # 5 distinct depends_on per dependent, all cross-topic.
+        chunk = target_ids[i * 5 : (i + 1) * 5]
+        await _call(
+            server,
+            "memory_update",
+            id=d["id"],
+            links=[{"type": "depends_on", "target_id": tid} for tid in chunk],
+        )
+        dependent_ids.append(d["id"])
+
+    hits = _unwrap(
+        await _call(server, "memory_search", query="rate limiter", max_results=10)
+    )
+    total_resolved = sum(
+        len(h.get("depends_on_resolved", []))
+        for h in hits
+        if h["id"] in set(dependent_ids)
+    )
+    assert total_resolved <= 10
+
+
+async def test_search_depends_on_resolved_targeted_load_skips_deleted_target(
+    server: Any, monkeypatch: Any
+) -> None:
+    """`store.load_one` raises for tombstoned / missing targets; the
+    targeted-load fallback must absorb that exception silently and
+    leave the resolved list empty (or omit it entirely) — same
+    behaviour as the pre-existing prefilter-miss skip. No crash, no
+    half-loaded entry."""
+    monkeypatch.setenv("BETTERMEMORY_INDEX_THRESHOLD", "1")
+    target = await _call(
+        server,
+        "memory_write",
+        content="xylophone target slated for removal",
+        scopes=["projects:foo"],
+        category="fact",
+    )
+    dependent = await _call(
+        server,
+        "memory_write",
+        content="rate limiter depends on the doomed target",
+        scopes=["projects:foo"],
+        category="fact",
+    )
+    await _call(
+        server,
+        "memory_update",
+        id=dependent["id"],
+        links=[{"type": "depends_on", "target_id": target["id"]}],
+    )
+    await _call(server, "memory_remove", id=target["id"], reason="superseded")
+
+    # Query for B's phrase only — A is tombstoned, the targeted-load
+    # path `load_one`s it and must absorb the TombstonedError.
+    hits = _unwrap(await _call(server, "memory_search", query="rate limiter"))
+    hit = next(h for h in hits if h["id"] == dependent["id"])
+    # Same silent-skip contract as the existing tombstoned-target
+    # test (line ~1033): key omitted OR list without the dead target.
+    resolved = hit.get("depends_on_resolved")
+    if resolved is not None:
+        assert target["id"] not in {r["id"] for r in resolved}
+
+
 # ---------------------------------------------------------------------------
 # memory_write — inline curation hint (one-shot per session)
 # ---------------------------------------------------------------------------
@@ -1315,6 +1681,292 @@ async def test_episode_write_rejects_empty_body(server: Any) -> None:
         await _call(server, "episode_write", body="   \n\t  ")
 
 
+async def test_episode_write_rejects_oversized_body(memory_dir: Path) -> None:
+    """An episode_write body exceeding [behavior] max_content_bytes is
+    rejected at the handler — same cap as memory_write / memory_update.
+    Episodes share the same fsynced-file storage path as memories; without
+    this check a multi-MB body would land on disk uncapped, exposing the
+    same DoS/disk-fill surface the memory write path closes. The error
+    message mirrors the memory_write path so the MCP error surface stays
+    uniform across both write tiers."""
+    from bettermemory.config import BehaviorConfig
+
+    cap = 200
+    cfg = Config(
+        storage=StorageConfig(directory=str(memory_dir)),
+        behavior=BehaviorConfig(max_content_bytes=cap),
+    )
+    server = build_server(config=cfg, store=Store(memory_dir), state=SessionState())
+    # Body one byte past the configured cap — derive from the config
+    # field rather than hardcoding so the test stays correct if the
+    # default ever shifts.
+    big_body = "x" * (cap + 1)
+    with pytest.raises(Exception, match="max_content_bytes"):
+        await _call(server, "episode_write", body=big_body)
+
+
+async def test_episode_write_under_cap_still_commits(memory_dir: Path) -> None:
+    """Small body still commits even with a tight cap in place — the
+    new size check must not regress the happy path. Pairs with the
+    oversize-reject test above to pin both sides of the boundary."""
+    from bettermemory.config import BehaviorConfig
+
+    cfg = Config(
+        storage=StorageConfig(directory=str(memory_dir)),
+        behavior=BehaviorConfig(max_content_bytes=1_000),
+    )
+    server = build_server(config=cfg, store=Store(memory_dir), state=SessionState())
+    res = await _call(server, "episode_write", body="under the cap")
+    assert res["status"] == "committed"
+    assert res["session_id"].startswith("sess_")
+
+
+async def test_episode_write_rejects_oversized_takeaway(memory_dir: Path) -> None:
+    """An episode_write takeaway exceeding [behavior] max_takeaway_bytes
+    is rejected at the handler — same ValueError shape as the body cap,
+    but the message names the takeaway cap so the operator knows which
+    knob to turn. Pre-fix this was a silent data loss path: a takeaway
+    over 64 KB corrupted the YAML frontmatter, every subsequent
+    `_frontmatter.loads` raised ValueError, and `list_by_session`
+    swallowed — the episode looked committed (status="committed"
+    returned) but vanished from every read surface (search / handoff /
+    promote). The handler-boundary cap closes the path before the file
+    ever lands on disk."""
+    from bettermemory.config import BehaviorConfig
+
+    cap = 200
+    cfg = Config(
+        storage=StorageConfig(directory=str(memory_dir)),
+        behavior=BehaviorConfig(max_takeaway_bytes=cap),
+    )
+    server = build_server(config=cfg, store=Store(memory_dir), state=SessionState())
+    # Takeaway one byte past the configured cap; body stays small so
+    # only the takeaway check is exercised. Derive the takeaway size
+    # from the config field rather than hardcoding so the test stays
+    # correct if the default ever shifts.
+    big_takeaway = "x" * (cap + 1)
+    with pytest.raises(Exception, match="max_takeaway_bytes"):
+        await _call(
+            server,
+            "episode_write",
+            body="small body",
+            takeaway=big_takeaway,
+        )
+
+
+async def test_episode_write_under_takeaway_cap_still_commits(memory_dir: Path) -> None:
+    """A small takeaway under the cap commits unchanged — the new
+    takeaway validator must not regress the happy path. Pairs with the
+    oversize-reject test above to pin both sides of the boundary."""
+    from bettermemory.config import BehaviorConfig
+
+    cfg = Config(
+        storage=StorageConfig(directory=str(memory_dir)),
+        behavior=BehaviorConfig(max_takeaway_bytes=1_000),
+    )
+    server = build_server(config=cfg, store=Store(memory_dir), state=SessionState())
+    res = await _call(
+        server,
+        "episode_write",
+        body="under both caps",
+        takeaway="short summary",
+    )
+    assert res["status"] == "committed"
+    assert res["takeaway"] == "short summary"
+
+
+async def test_episode_write_no_takeaway_still_commits(memory_dir: Path) -> None:
+    """`takeaway=None` (the common path — handoff falls back to body
+    line 1) must NOT trip the takeaway cap. Pins the `if takeaway is
+    not None` guard in the handler so a future refactor that drops the
+    guard (and validates `None` as a zero-byte string) still passes
+    this test, while still rejecting a hostile-large takeaway via the
+    sibling test above."""
+    from bettermemory.config import BehaviorConfig
+
+    # Tight cap to make sure the guard, not the cap value, is what
+    # lets None through.
+    cfg = Config(
+        storage=StorageConfig(directory=str(memory_dir)),
+        behavior=BehaviorConfig(max_takeaway_bytes=10),
+    )
+    server = build_server(config=cfg, store=Store(memory_dir), state=SessionState())
+    res = await _call(server, "episode_write", body="no takeaway here")
+    assert res["status"] == "committed"
+    assert res["takeaway"] is None
+
+
+async def test_episode_write_rejects_oversized_scope_list(memory_dir: Path) -> None:
+    """A scopes list exceeding [behavior] max_scopes_per_write is rejected
+    at the handler. Same silent-data-loss class as the takeaway cap (t16):
+    scopes serialise into YAML frontmatter, which `_frontmatter._MAX_YAML_BYTES`
+    caps at 64 KB to neutralise alias-expansion DoS. Roughly 2200 short
+    scope names push the frontmatter past that ceiling — the loader then
+    raises `ValueError` on every subsequent read and the episode vanishes
+    from every read surface (search / handoff / promote) despite the write
+    returning `status="committed"`. The handler-boundary cap closes the
+    path before the file ever lands on disk."""
+    from bettermemory.config import BehaviorConfig
+
+    cap = 5
+    cfg = Config(
+        storage=StorageConfig(directory=str(memory_dir)),
+        behavior=BehaviorConfig(max_scopes_per_write=cap),
+    )
+    server = build_server(config=cfg, store=Store(memory_dir), state=SessionState())
+    # cap + 1 short scope names — derive from the config field rather than
+    # hardcoding so the test stays correct if the default ever shifts.
+    big_scopes = [f"scope-{i}" for i in range(cap + 1)]
+    with pytest.raises(Exception, match="max_scopes_per_write"):
+        await _call(
+            server,
+            "episode_write",
+            body="small body",
+            scopes=big_scopes,
+        )
+
+
+async def test_episode_write_under_scope_cap_still_commits(memory_dir: Path) -> None:
+    """A small scope list under the cap commits unchanged — the new
+    scope-count validator must not regress the happy path. Pairs with the
+    oversize-reject test above to pin both sides of the boundary."""
+    from bettermemory.config import BehaviorConfig
+
+    cfg = Config(
+        storage=StorageConfig(directory=str(memory_dir)),
+        behavior=BehaviorConfig(max_scopes_per_write=64),
+    )
+    server = build_server(config=cfg, store=Store(memory_dir), state=SessionState())
+    res = await _call(
+        server,
+        "episode_write",
+        body="under all caps",
+        scopes=["tools", "infrastructure"],
+    )
+    assert res["status"] == "committed"
+    assert res["scopes"] == ["tools", "infrastructure"]
+
+
+async def test_memory_write_rejects_oversized_scope_list(memory_dir: Path) -> None:
+    """memory_write applies the same scope-list cap as episode_write.
+    Defense-in-depth: the same YAML-corruption silent-data-loss path
+    exists on the memory tier (scopes land in frontmatter the same way),
+    so an unbounded scope list would corrupt the memory file and erase
+    the record from search / list / show despite a committed-looking
+    write. Mirrors the discipline `_validate_content_size` set for
+    byte caps — every list-shaped frontmatter field gets a count cap."""
+    from bettermemory.config import BehaviorConfig
+
+    cap = 5
+    cfg = Config(
+        storage=StorageConfig(directory=str(memory_dir)),
+        behavior=BehaviorConfig(max_scopes_per_write=cap),
+    )
+    server = build_server(config=cfg, store=Store(memory_dir), state=SessionState())
+    big_scopes = [f"scope-{i}" for i in range(cap + 1)]
+    with pytest.raises(Exception, match="max_scopes_per_write"):
+        await _call(
+            server,
+            "memory_write",
+            content="some durable fact",
+            scopes=big_scopes,
+        )
+
+
+async def test_memory_update_rejects_oversized_scope_list(memory_dir: Path) -> None:
+    """memory_update applies the same cap — otherwise a caller could
+    bypass the bound by writing under-cap then retag-updating to ~2200
+    scopes, corrupting the frontmatter and erasing the record from every
+    read surface. Same class as the body cap on update (which closes the
+    write-small-then-update-big bypass for the content axis)."""
+    from bettermemory.config import BehaviorConfig
+
+    cap = 5
+    cfg = Config(
+        storage=StorageConfig(directory=str(memory_dir)),
+        behavior=BehaviorConfig(max_scopes_per_write=cap),
+    )
+    server = build_server(config=cfg, store=Store(memory_dir), state=SessionState())
+    small = await _call(
+        server,
+        "memory_write",
+        content="some durable fact",
+        scopes=["tools"],
+    )
+    memory_id = small["id"]
+    big_scopes = [f"scope-{i}" for i in range(cap + 1)]
+    with pytest.raises(Exception, match="max_scopes_per_write"):
+        await _call(server, "memory_update", id=memory_id, scopes=big_scopes)
+
+
+async def test_episode_model_scopes_count_validator() -> None:
+    """Direct Pydantic test: `Episode(scopes=[…] * 65)` raises
+    ValidationError. Model-layer defense-in-depth — a programmatic caller
+    that bypasses the handler (sync pull, future in-process API,
+    migration) still can't smuggle an unbounded scope list onto disk.
+    The model-layer cap is hardcoded at 64 to match the established
+    verified_paths / verified_commits / verified_versions / links
+    ceiling."""
+    from datetime import datetime, timezone
+
+    from bettermemory.models import Episode, generate_ulid
+    from pydantic import ValidationError
+
+    too_many_scopes = [f"s-{i}" for i in range(65)]
+    with pytest.raises(ValidationError, match="scopes list capped at 64"):
+        Episode(
+            id=generate_ulid(),
+            session_id="sess_test",
+            created=datetime.now(timezone.utc),
+            body="body",
+            scopes=too_many_scopes,
+        )
+
+
+async def test_memory_model_scopes_count_validator() -> None:
+    """Direct Pydantic test: `Memory(scopes=[…] * 65)` raises
+    ValidationError. Same model-layer ceiling as Episode — applies
+    symmetrically across the two tiers because the YAML-corruption
+    failure mode is identical."""
+    from datetime import datetime, timezone
+
+    from bettermemory.models import Confidence, Memory, Source, generate_ulid
+    from pydantic import ValidationError
+
+    too_many_scopes = [f"s-{i}" for i in range(65)]
+    now = datetime.now(timezone.utc)
+    with pytest.raises(ValidationError, match="scopes list capped at 64"):
+        Memory(
+            id=generate_ulid(),
+            created=now,
+            updated=now,
+            scopes=too_many_scopes,
+            confidence=Confidence.MEDIUM,
+            source=Source.EXPLICIT,
+            body="body",
+        )
+
+
+async def test_episode_model_scopes_at_cap_accepted() -> None:
+    """Exactly 64 scopes is accepted — the cap is inclusive of the
+    boundary. Pins the off-by-one: a regression that flips `>` to `>=`
+    would reject 64-scope records, breaking the very ceiling
+    verified_paths sets as the project's per-record list cap."""
+    from datetime import datetime, timezone
+
+    from bettermemory.models import Episode, generate_ulid
+
+    at_cap_scopes = [f"s-{i}" for i in range(64)]
+    ep = Episode(
+        id=generate_ulid(),
+        session_id="sess_test",
+        created=datetime.now(timezone.utc),
+        body="body",
+        scopes=at_cap_scopes,
+    )
+    assert len(ep.scopes) == 64
+
+
 async def test_episode_write_is_invisible_to_memory_iterators(server: Any) -> None:
     """Episodes live in a sibling subtree — memory_list /
     memory_search must not surface them."""
@@ -1414,6 +2066,139 @@ async def test_episode_handoff_respects_max_episodes_cap(memory_dir: Path) -> No
     assert takeaways == ["takeaway 4", "takeaway 5", "takeaway 6"]
 
 
+async def test_episode_handoff_walks_past_session_with_only_suppressed_scopes(
+    memory_dir: Path,
+) -> None:
+    """When `disabled_scopes` hides every episode of the most-recent
+    prior session, the auto-resolve walk treats that session as
+    'wrote nothing' and adopts the next-older session instead. Mirrors
+    the user mental model of `memory_scope_disable`: 'rewind past the
+    last X-session and surface what came before'."""
+    cfg = Config(storage=StorageConfig(directory=str(memory_dir)))
+
+    # Older session: tools episode (visible).
+    server_a = build_server(config=cfg, store=Store(memory_dir), state=SessionState())
+    await _call(
+        server_a,
+        "episode_write",
+        body="A's tools work",
+        takeaway="A on tools",
+        scopes=["tools"],
+    )
+
+    # Most-recent session before the reader: all episodes in
+    # projects:alpha (about to be suppressed).
+    server_b = build_server(config=cfg, store=Store(memory_dir), state=SessionState())
+    await _call(
+        server_b,
+        "episode_write",
+        body="B's alpha work A",
+        takeaway="B on alpha A",
+        scopes=["projects:alpha"],
+    )
+    await _call(
+        server_b,
+        "episode_write",
+        body="B's alpha work B",
+        takeaway="B on alpha B",
+        scopes=["projects:alpha"],
+    )
+
+    # Reader session disables projects:alpha. The auto-resolve walk
+    # should hop over server_b and adopt server_a's session.
+    server_c = build_server(config=cfg, store=Store(memory_dir), state=SessionState())
+    await _call(server_c, "memory_scope_disable", scope="projects:alpha")
+
+    res = await _call(server_c, "episode_handoff")
+    assert res["prior_session_id"] is not None
+    assert len(res["episodes"]) == 1
+    assert res["episodes"][0]["takeaway"] == "A on tools"
+
+
+async def test_episode_handoff_filters_emit_under_explicit_prior_session_id(
+    memory_dir: Path,
+) -> None:
+    """Explicit `prior_session_id` bypasses the candidate-walk, but the
+    emit step must still gate episode bodies through `disabled_scopes`.
+    A caller naming a session does NOT consent to override the
+    per-session hide rule — that's the user's explicit declaration of
+    what they want suppressed regardless of which session it lives in."""
+    cfg = Config(storage=StorageConfig(directory=str(memory_dir)))
+
+    server_a = build_server(config=cfg, store=Store(memory_dir), state=SessionState())
+    await _call(
+        server_a,
+        "episode_write",
+        body="alpha-tagged",
+        takeaway="alpha takeaway",
+        scopes=["projects:alpha"],
+    )
+    await _call(
+        server_a,
+        "episode_write",
+        body="tools-tagged",
+        takeaway="tools takeaway",
+        scopes=["tools"],
+    )
+
+    # Resolve A's session id from disk so we can pass it explicitly.
+    from bettermemory.episodes import EpisodeStore
+
+    ep_store = EpisodeStore(memory_dir)
+    a_session_id: str
+    for sid in ep_store.iter_session_ids():
+        eps = ep_store.list_by_session(sid)
+        if any("alpha-tagged" in e.body for e in eps):
+            a_session_id = sid
+            break
+    else:
+        raise AssertionError("could not locate session A's id")
+
+    server_b = build_server(config=cfg, store=Store(memory_dir), state=SessionState())
+    await _call(server_b, "memory_scope_disable", scope="projects:alpha")
+
+    res = await _call(
+        server_b,
+        "episode_handoff",
+        prior_session_id=a_session_id,
+    )
+    # Explicit prior_session_id honored, but the alpha-tagged episode
+    # is filtered out — only the tools-tagged one surfaces.
+    assert res["prior_session_id"] == a_session_id
+    takeaways = [e["takeaway"] for e in res["episodes"]]
+    assert takeaways == ["tools takeaway"]
+
+
+async def test_episode_handoff_no_filter_when_disabled_scopes_empty(
+    memory_dir: Path,
+) -> None:
+    """Regression pin: with no disabled scopes (default state), the
+    auto-resolved session surfaces every episode, exactly as before
+    the filter shipped."""
+    cfg = Config(storage=StorageConfig(directory=str(memory_dir)))
+
+    server_a = build_server(config=cfg, store=Store(memory_dir), state=SessionState())
+    await _call(
+        server_a,
+        "episode_write",
+        body="alpha",
+        takeaway="alpha take",
+        scopes=["projects:alpha"],
+    )
+    await _call(
+        server_a,
+        "episode_write",
+        body="tools",
+        takeaway="tools take",
+        scopes=["tools"],
+    )
+
+    server_b = build_server(config=cfg, store=Store(memory_dir), state=SessionState())
+    res = await _call(server_b, "episode_handoff")
+    takeaways = [e["takeaway"] for e in res["episodes"]]
+    assert takeaways == ["alpha take", "tools take"]
+
+
 # ---------------------------------------------------------------------------
 # episode_search — cross-session lookup
 # ---------------------------------------------------------------------------
@@ -1485,6 +2270,85 @@ async def test_episode_search_max_results_caps_output(
         await _call(server, "episode_write", body=f"entry {i}")
     res = _unwrap(await _call(server, "episode_search", max_results=5))
     assert len(res) == 5
+
+
+async def test_episode_search_max_results_returns_most_recent(
+    memory_dir: Path,
+) -> None:
+    """When more episodes match than `max_results`, the cap surfaces the
+    MOST-RECENT N (sorted oldest-first within that window) — same pattern
+    as `episode_handoff`'s `all_eps[-max_episodes:]`. Pin the slice
+    direction so the contract can't silently drift back to "oldest N",
+    which is the opposite of caller intuition for ad-hoc journal lookup.
+    """
+    import time as _time
+
+    cfg = Config(storage=StorageConfig(directory=str(memory_dir)))
+    server = build_server(config=cfg, store=Store(memory_dir), state=SessionState())
+    # ULIDs encode ms-resolution timestamps and `created` is `utcnow()`;
+    # sleep ≥1ms between writes so the sort key (`e["created"]` ISO
+    # string) yields stable, distinct ordering across all 5 episodes.
+    for i in range(1, 6):
+        await _call(server, "episode_write", body=f"body {i}", takeaway=f"T{i}")
+        _time.sleep(0.01)
+
+    res = _unwrap(await _call(server, "episode_search", max_results=3))
+    assert [e["takeaway"] for e in res] == ["T3", "T4", "T5"]
+
+
+async def test_episode_search_respects_disabled_scopes(server: Any) -> None:
+    """Episodes are part of the read surface — `memory_scope_disable`
+    has to hide them too, mirroring `memory_search` / `memory_list`.
+    An episode whose scope set intersects the disabled set is dropped.
+    Mixing scopes on one episode is enough to suppress it; an episode
+    without any intersection passes through."""
+    await _call(
+        server,
+        "episode_write",
+        body="alpha-suppressed note",
+        scopes=["projects:alpha"],
+    )
+    await _call(
+        server,
+        "episode_write",
+        body="multi-scope note",
+        scopes=["projects:alpha", "tools"],
+    )
+    await _call(
+        server,
+        "episode_write",
+        body="tools-only note",
+        scopes=["tools"],
+    )
+
+    await _call(server, "memory_scope_disable", scope="projects:alpha")
+
+    res = _unwrap(await _call(server, "episode_search"))
+    bodies = sorted(e["body"] for e in res)
+    # Both `projects:alpha`-tagged episodes hidden, even the mixed one
+    # (intersection rule). The pure-tools episode survives.
+    assert bodies == ["tools-only note"]
+
+
+async def test_episode_search_no_filter_when_disabled_scopes_empty(
+    server: Any,
+) -> None:
+    """Regression pin: without any disabled scopes (default state),
+    every episode comes through. The new filter must be a no-op."""
+    await _call(
+        server,
+        "episode_write",
+        body="alpha note",
+        scopes=["projects:alpha"],
+    )
+    await _call(
+        server,
+        "episode_write",
+        body="tools note",
+        scopes=["tools"],
+    )
+    res = _unwrap(await _call(server, "episode_search"))
+    assert len(res) == 2
 
 
 # ---------------------------------------------------------------------------
@@ -1645,10 +2509,15 @@ async def test_loop_iteration_end_to_end_pattern(memory_dir: Path) -> None:
     # A's pre-boundary memory is NOT — it sits before the boundary.
     assert not any("alpha gophers" in body for body in own_bodies)
 
-    # Second handoff: prior session still resolves, but the episode is
-    # gone (deleted by promote on commit).
+    # Second handoff: A's episode was promoted (and the source file
+    # deleted) so A is now a zero-episode candidate. Tick-22 tightened
+    # the zero-episode branch — events don't carry origin (queue #28),
+    # so a zero-episode candidate's worktree is unknown and the strict
+    # None-only-matches-None rule means callers in a named worktree
+    # skip it. With no other candidates in the event log, the result
+    # is the empty-store shape rather than A's session_id.
     handoff_2 = await _call(server_b, "episode_handoff")
-    assert handoff_2["prior_session_id"] is not None
+    assert handoff_2["prior_session_id"] is None
     assert handoff_2["episodes"] == []
 
 
@@ -1676,6 +2545,310 @@ async def test_episode_promote_keeps_episode_when_durability_rejects(
     # Source episode should still exist.
     listed = _unwrap(await _call(server, "episode_search"))
     assert any(e["id"] == ep["id"] for e in listed)
+
+
+async def test_episode_promote_user_inference_returns_pending_keeps_episode(
+    server: Any,
+) -> None:
+    """`category='user-inference'` routes through PendingGate — the
+    handler returns `status='pending'` and the source episode is kept
+    so memory_write_confirm can act on it later."""
+    ep = await _call(
+        server,
+        "episode_write",
+        body="Iter 2 — observed the user reaching for terse summaries.",
+        takeaway="user prefers terse summaries",
+    )
+    res = await _call(
+        server,
+        "episode_promote",
+        episode_id=ep["id"],
+        scopes=["learning-style"],
+        category="user-inference",
+    )
+    assert res["status"] == "pending"
+    assert res["pending_reason"] == "user-inference"
+    assert res["pending_id"].startswith("pending_")
+    assert res["promoted_from_episode_id"] == ep["id"]
+    # Source episode is still on disk — confirm/cancel hasn't happened.
+    listed = _unwrap(await _call(server, "episode_search"))
+    assert any(e["id"] == ep["id"] for e in listed)
+
+
+async def test_episode_promote_user_inference_confirm_deletes_source(
+    server: Any,
+) -> None:
+    """When the user confirms a promoted user-inference write, the
+    durable memory commits AND the source episode is deleted. This
+    pins the SessionState-stash hand-off between `episode_promote`
+    and `memory_write_confirm` — without it, the pending round-trip
+    leaks the journal entry past confirmation as a duplicate."""
+    ep = await _call(
+        server,
+        "episode_write",
+        body="Iter 3 — user reiterated terse-summary preference.",
+        takeaway="user prefers terse summaries over verbose walkthroughs",
+    )
+    pending = await _call(
+        server,
+        "episode_promote",
+        episode_id=ep["id"],
+        scopes=["learning-style"],
+        category="user-inference",
+    )
+    assert pending["status"] == "pending"
+    # User confirms.
+    committed = await _call(
+        server, "memory_write_confirm", pending_id=pending["pending_id"]
+    )
+    assert committed["status"] == "committed"
+    # Source episode is gone — it was distilled into the durable memory.
+    listed = _unwrap(await _call(server, "episode_search"))
+    assert not any(e["id"] == ep["id"] for e in listed)
+
+
+async def test_episode_promote_user_inference_cancel_keeps_source(
+    server: Any,
+) -> None:
+    """When the user declines a promoted user-inference write, the
+    pending is dropped but the source episode survives so the caller
+    can rephrase and re-promote. The promotion link should be cleared
+    so a redundant later cancel doesn't try to act on it."""
+    ep = await _call(
+        server,
+        "episode_write",
+        body="Iter 4 — possibly the user prefers terseness, ambiguous.",
+        takeaway="user prefers terse summaries",
+    )
+    pending = await _call(
+        server,
+        "episode_promote",
+        episode_id=ep["id"],
+        scopes=["learning-style"],
+        category="user-inference",
+    )
+    cancel = await _call(
+        server, "memory_write_cancel", pending_id=pending["pending_id"]
+    )
+    assert cancel["existed"] is True
+    # Source episode is STILL on disk — user can adjust and retry.
+    listed = _unwrap(await _call(server, "episode_search"))
+    assert any(e["id"] == ep["id"] for e in listed)
+    # Nothing landed in the durable store.
+    listing = await _call(server, "memory_list")
+    listing = listing.get("result", listing) if isinstance(listing, dict) else listing
+    assert listing == []
+
+
+def test_delete_source_episode_holds_flock(memory_dir: Path) -> None:
+    """`_delete_source_episode` must respect the same per-session flock
+    `EpisodeStore.write` and `prune_old_sessions` take. The contract
+    (audit-2 finding A2-03 / tick-18): this is the third write-side
+    path that touches a session_dir's contents, so it has to serialise
+    on the t13/t17 anchor. The concrete race the lock prevents — a
+    peer `shutil.rmtree(session_dir)` interleaving with this unlink —
+    is absorbed today by the `FileNotFoundError` catch, but the
+    contract drift would trip future refactors (fsync_dir on the delete
+    path, audit telemetry, deletion-primitive migration).
+
+    Mirror-shape of `test_prune_empty_dir_holds_flock_while_writer_runs`
+    but reversed: a peer (here: a prune holder) holds the per-session
+    flock; the concurrent `_delete_source_episode` must BLOCK on the
+    flock-acquire (not race past it). When the holder releases, the
+    delete completes.
+    """
+    import threading
+    import time as _time
+    from types import SimpleNamespace
+
+    from bettermemory._fsutil import flock_excl
+    from bettermemory.episodes import EpisodeStore
+    from bettermemory.handlers.episode_promote import _delete_source_episode
+
+    # Seed an episode whose file we want to unlink.
+    ep_store = EpisodeStore(memory_dir)
+    episode = ep_store.write(session_id="sess_delflock", body="body", takeaway="t")
+    ep_path = ep_store.episodes_dir / "sess_delflock" / f"{episode.id}.md"
+    assert ep_path.exists()
+
+    # `_delete_source_episode` only touches `deps.episode_store`. A
+    # SimpleNamespace stand-in lets the test focus on the lock contract
+    # without spinning up the full ToolHandlers graph.
+    deps = SimpleNamespace(episode_store=ep_store)
+
+    lock_anchor = ep_store.episodes_dir / ".session-sess_delflock"
+    holder_holding = threading.Event()
+    holder_release = threading.Event()
+
+    def hold_session_lock() -> None:
+        with flock_excl(lock_anchor):
+            holder_holding.set()
+            holder_release.wait(timeout=5.0)
+
+    holder = threading.Thread(target=hold_session_lock)
+    holder.start()
+    try:
+        holder_holding.wait(timeout=5.0)
+        assert holder_holding.is_set()
+
+        delete_done = threading.Event()
+
+        def background_delete() -> None:
+            # The helper only touches `deps.episode_store` — see the
+            # SimpleNamespace stand-in built above. mypy can't see that
+            # the structural subset is satisfied, so we narrow with a
+            # `# type: ignore` rather than wiring the full ToolHandlers.
+            _delete_source_episode(deps, "sess_delflock", episode.id)  # type: ignore[arg-type]
+            delete_done.set()
+
+        dt = threading.Thread(target=background_delete)
+        dt.start()
+        # Give the delete a generous window to (incorrectly) race past
+        # the flock. If it completes here, `_delete_source_episode`
+        # isn't serialising — that's the bug we're protecting against.
+        _time.sleep(0.1)
+        assert not delete_done.is_set(), (
+            "_delete_source_episode raced through the per-session flock "
+            "— the delete window is not serialised against peer prune"
+        )
+        assert ep_path.exists(), "delete completed before holder released"
+
+        holder_release.set()
+        dt.join(timeout=5.0)
+        assert delete_done.is_set()
+        # After the holder released, the delete acquires the lock and
+        # unlinks the episode file. The 0-byte lockfile persists by
+        # design — same rationale as t13/t17 (flock identity is
+        # per-inode; unlinking would open a race window).
+        assert not ep_path.exists()
+        lock_path = ep_store.episodes_dir / ".session-sess_delflock.lock"
+        assert lock_path.exists(), (
+            "lockfile must persist so future acquirers share the inode"
+        )
+    finally:
+        holder_release.set()
+        holder.join(timeout=5.0)
+
+
+async def test_delete_source_episode_filenotfound_still_succeeds(
+    server: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The `FileNotFoundError` catch in `_delete_source_episode` is
+    preserved on purpose: a peer prune (or a duplicate confirm) that
+    deletes the source episode first is a valid completion state. With
+    the flock now wrapping the unlink, this pin makes sure the catch
+    still fires inside the locked section so the confirm flow surfaces
+    a normal committed status even when the file is already gone.
+
+    Stage a user-inference promote (forces the `_delete_source_episode`
+    path to fire from `memory_write_confirm`), monkeypatch
+    `pathlib.Path.unlink` to raise `FileNotFoundError` ONLY on the
+    episode file (so the durable store's writes aren't affected), and
+    assert the confirm call returns the standard committed envelope."""
+    import pathlib
+
+    ep = await _call(
+        server,
+        "episode_write",
+        body="Iter — user preference signal.",
+        takeaway="user prefers terse summaries",
+    )
+    pending = await _call(
+        server,
+        "episode_promote",
+        episode_id=ep["id"],
+        scopes=["learning-style"],
+        category="user-inference",
+    )
+    assert pending["status"] == "pending"
+
+    # Patch Path.unlink so the unlink targeting the episode file
+    # specifically raises FileNotFoundError. We must NOT affect store
+    # tempfile cleanup or other unlinks the confirm path performs.
+    real_unlink = pathlib.Path.unlink
+    target_name = f"{ep['id']}.md"
+
+    def selective_unlink(self: pathlib.Path, *args: Any, **kwargs: Any) -> None:
+        if self.name == target_name:
+            raise FileNotFoundError(self)
+        return real_unlink(self, *args, **kwargs)
+
+    monkeypatch.setattr(pathlib.Path, "unlink", selective_unlink)
+
+    committed = await _call(
+        server, "memory_write_confirm", pending_id=pending["pending_id"]
+    )
+    # The FileNotFoundError absorption inside the locked section must
+    # keep the confirm surface clean — the caller sees a normal
+    # committed write, not an exception or status-degradation.
+    assert committed["status"] == "committed"
+
+
+async def test_delete_source_episode_fsyncs_session_dir(
+    server: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Audit-3 A3-06: after `ep_path.unlink()` inside the per-session
+    flock, `_delete_source_episode` must call `fsync_dir(session_dir)`
+    so the dropped dirent survives a crash. Without this, a power
+    cut between `memory_write_confirm` returning "committed" and the
+    kernel flushing dirty pages can resurrect the episode file on
+    reboot — the durable memory exists, the journal entry comes back
+    as a duplicate that lives until the 30-day TTL or the next prune.
+    Symmetric to the `fsync_dir(episodes_dir)` ceremony on the prune
+    branches.
+
+    Spy on the `fsync_dir` binding the `episode_promote` module
+    imported. Run the full promote → confirm round-trip (user-inference
+    forces the deferred delete path via `memory_write_confirm`). After
+    confirm, assert the spy recorded a call against the session_dir.
+
+    Note: `import bettermemory.handlers.episode_promote as m` would
+    resolve to the FUNCTION `episode_promote` (re-exported from the
+    handlers package `__init__.py` and bound as an attribute on the
+    `handlers` package, shadowing the submodule on attribute lookup).
+    Use `importlib.import_module` to get the actual module object so
+    `monkeypatch.setattr(module, "fsync_dir", ...)` finds the rebound
+    name.
+    """
+    import importlib
+
+    promote_mod = importlib.import_module("bettermemory.handlers.episode_promote")
+
+    ep = await _call(
+        server,
+        "episode_write",
+        body="Iter — promotion fsync_dir signal.",
+        takeaway="user prefers terse summaries over verbose walkthroughs",
+    )
+    pending = await _call(
+        server,
+        "episode_promote",
+        episode_id=ep["id"],
+        scopes=["learning-style"],
+        category="user-inference",
+    )
+    assert pending["status"] == "pending"
+
+    fsync_dir_calls: list[Path] = []
+
+    def spy_fsync_dir(p: Path) -> None:
+        fsync_dir_calls.append(p)
+
+    monkeypatch.setattr(promote_mod, "fsync_dir", spy_fsync_dir)
+
+    committed = await _call(
+        server, "memory_write_confirm", pending_id=pending["pending_id"]
+    )
+    assert committed["status"] == "committed"
+
+    # The deferred delete path inside the locked section must fsync
+    # the session_dir after unlink. Identify session_dir by suffix
+    # match on the episode_session_id; the spy captured the exact
+    # Path object passed in.
+    assert any(p.name.startswith("sess_") for p in fsync_dir_calls), (
+        f"_delete_source_episode must fsync_dir(session_dir) after the "
+        f"unlink to persist the dropped dirent; saw: {fsync_dir_calls}"
+    )
 
 
 async def test_episode_handoff_respects_explicit_prior_session_id(
@@ -1788,6 +2961,142 @@ async def test_episode_handoff_filters_prior_session_by_caller_worktree(
     # The cross-worktree case must look like "no prior session in this
     # worktree" from B's perspective — same shape as a fresh store.
     assert res["prior_session_id"] is None
+    assert res["episodes"] == []
+
+
+async def test_episode_handoff_skips_zero_episode_candidate_from_other_worktree(
+    memory_dir: Path,
+    monkeypatch: Any,
+) -> None:
+    """The zero-episode adoption branch must honor the same worktree
+    contract as the episode-bearing branch. Worktree A records events
+    (memory_write / memory_search) but never calls `episode_write` —
+    its session_id surfaces in the event log with no episode files on
+    disk. A fresh server in worktree B asks for a handoff; tick-22
+    fix says it must NOT adopt A's session_id as "the prior session
+    in B's worktree" because A's worktree is unknown (events don't
+    carry origin today, queue #28) and the strict
+    None-only-matches-None rule treats unknown-worktree as not-matching
+    when the caller has a worktree.
+
+    Pre-tick-22 the walk hit A's session, saw `candidate_eps == []`,
+    and adopted unconditionally — a leak of A's session_id as B's
+    "prior session", even though the bare ULID has no body to surface
+    it still conflicts with the explicit "this worktree" contract
+    that tick-2 established for sessions with episodes."""
+    import bettermemory._handlers as handlers_module
+    import bettermemory.server as server_module
+    from bettermemory.origin import Origin
+
+    cfg = Config(storage=StorageConfig(directory=str(memory_dir)))
+
+    origin_a = Origin(
+        cwd="/worktrees/repo-feature-x",
+        repo="git@github.com:example/repo.git",
+        branch="feature-x",
+        worktree_root="/worktrees/repo-feature-x",
+    )
+    origin_b = Origin(
+        cwd="/worktrees/repo-bug-fix",
+        repo="git@github.com:example/repo.git",
+        branch="bug-fix",
+        worktree_root="/worktrees/repo-bug-fix",
+    )
+
+    def make_capture(origin: Origin) -> Any:
+        def _capture(cwd: Any = None) -> Origin:
+            return origin
+
+        return _capture
+
+    monkeypatch.setattr(handlers_module, "capture_origin", make_capture(origin_a))
+    monkeypatch.setattr(server_module, "capture_origin", make_capture(origin_a))
+
+    # Worktree A: write a memory + run a search. Both record events
+    # under A's session_id but neither creates an episode on disk. A
+    # is therefore a "zero-episode session" from the episode_handoff
+    # walk's perspective.
+    server_a = build_server(config=cfg, store=Store(memory_dir), state=SessionState())
+    await _call(
+        server_a,
+        "memory_write",
+        content="A wrote this fact",
+        scopes=["tools"],
+    )
+    await _call(server_a, "memory_search", query="A's search")
+
+    # Flip to worktree B and ask for the handoff. Pre-fix, the walk
+    # would hit A's session_id from the event log, find zero episodes,
+    # and adopt it unconditionally. Post-fix, the strict
+    # None-only-matches-None rule treats A's unknown worktree as not
+    # matching B's named worktree, so the walk continues past — and
+    # since there's no older session, the result is the empty-store
+    # shape.
+    monkeypatch.setattr(handlers_module, "capture_origin", make_capture(origin_b))
+    monkeypatch.setattr(server_module, "capture_origin", make_capture(origin_b))
+
+    server_b = build_server(config=cfg, store=Store(memory_dir), state=SessionState())
+    res = await _call(server_b, "episode_handoff")
+    assert res["prior_session_id"] is None
+    assert res["episodes"] == []
+
+
+async def test_episode_handoff_adopts_zero_episode_candidate_when_caller_has_no_worktree(
+    memory_dir: Path,
+    monkeypatch: Any,
+) -> None:
+    """Companion to the cross-worktree skip test. A caller whose origin
+    has no worktree_root (running outside any git checkout) DOES adopt
+    a zero-episode candidate — under the strict None-only-matches-None
+    rule, unknown == None matches when the caller is also None.
+
+    This pins the "all-null state" branch tick-22 explicitly preserves:
+    when neither side has worktree info, the legacy zero-episode
+    adoption still fires so callers without a worktree get the
+    `{prior_session_id: sess_xxx, episodes: []}` middle state the
+    module docstring promises."""
+    import bettermemory._handlers as handlers_module
+    import bettermemory.server as server_module
+    from bettermemory.origin import Origin
+
+    cfg = Config(storage=StorageConfig(directory=str(memory_dir)))
+
+    origin_none = Origin(
+        cwd="/tmp/no-checkout",
+        repo=None,
+        branch=None,
+        worktree_root=None,
+    )
+
+    def make_capture(origin: Origin) -> Any:
+        def _capture(cwd: Any = None) -> Origin:
+            return origin
+
+        return _capture
+
+    monkeypatch.setattr(handlers_module, "capture_origin", make_capture(origin_none))
+    monkeypatch.setattr(server_module, "capture_origin", make_capture(origin_none))
+
+    # Session A: records events under origin_none (no worktree) but
+    # writes no episodes. Zero-episode session with caller-side None
+    # worktree.
+    server_a = build_server(config=cfg, store=Store(memory_dir), state=SessionState())
+    await _call(
+        server_a,
+        "memory_write",
+        content="A's no-worktree fact",
+        scopes=["tools"],
+    )
+
+    # A fresh server, still in the no-worktree state, asks for the
+    # handoff. Pre-tick-22 this was the adopted behavior; tick-22
+    # preserves it via `_worktrees_equal_strict(None, None) -> True`.
+    server_b = build_server(config=cfg, store=Store(memory_dir), state=SessionState())
+    res = await _call(server_b, "episode_handoff")
+    assert res["prior_session_id"] is not None
+    assert res["prior_session_id"].startswith("sess_")
+    # Zero episodes on disk means the "middle state" — session_id
+    # surfaced, episodes empty.
     assert res["episodes"] == []
 
 

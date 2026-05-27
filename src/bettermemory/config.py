@@ -148,6 +148,32 @@ tombstone_retention_days = 0
 # it for stricter resource boundaries. Set to 0 to disable the cap.
 max_content_bytes = 1000000
 
+# Hard cap on a single episode takeaway's UTF-8 byte length at
+# `episode_write` time. Separate from `max_content_bytes` because the
+# takeaway lives in the YAML frontmatter region, which is itself capped
+# at 64 KB (see `_frontmatter._MAX_YAML_BYTES`) — a takeaway over that
+# threshold would corrupt the frontmatter, the loader would raise
+# ValueError on every subsequent read, and `EpisodeStore.list_by_session`
+# would silently skip the file. The episode would look committed (the
+# write returned status="committed") but vanish from every read surface.
+# 4 KB is generous for the documented "one-sentence summary" while
+# leaving comfortable headroom inside the 64 KB YAML cap for the rest
+# of the frontmatter (id, session_id, created, scopes, origin). Set to
+# 0 to disable the cap.
+max_takeaway_bytes = 4096
+
+# Hard cap on the number of scopes accepted by a single memory_write,
+# memory_update, or episode_write call. Defense-in-depth alongside the
+# model-layer cap (also 64) — every list-shaped frontmatter field needs one.
+# Roughly 2200 short scope names serialise to ~64 KB of YAML and push the
+# frontmatter past `_frontmatter._MAX_YAML_BYTES`, after which the loader
+# raises `ValueError` on every subsequent read and the record vanishes from
+# every read surface despite the write returning status="committed". 64
+# matches the verified_paths cap and is well above any realistic per-record
+# scope count (1-5 in practice). Set to 0 to disable the handler-boundary
+# cap (the model-layer cap still fires at 64).
+max_scopes_per_write = 64
+
 # Passive in-conversation curation surface. When the sum of dead_weight
 # + drifted + endorsement_debt counts (the `curation_pending` rollup
 # you'd otherwise have to call `memory_scope_overview` to see) crosses
@@ -259,6 +285,31 @@ class BehaviorConfig:
     # boundary; existing on-disk memories are never re-validated, so
     # raising the cap downward doesn't reject already-stored data.
     max_content_bytes: int = 1_000_000
+    # Hard cap on an episode takeaway's UTF-8 byte length at write time.
+    # Separate from `max_content_bytes` because the takeaway is stored
+    # in the YAML frontmatter region, which `_frontmatter` caps at
+    # 64 KB to neutralise an alias-expansion DoS. A takeaway over that
+    # threshold would corrupt the frontmatter, the loader would raise
+    # ValueError on every subsequent read, and `list_by_session` would
+    # silently skip — the episode would look committed but vanish from
+    # every read surface (search, handoff, promote). Default 4 KB is
+    # generous for the documented "one-sentence summary" while leaving
+    # comfortable headroom inside the 64 KB YAML cap for the rest of
+    # the frontmatter (id, session_id, created, scopes, origin). 0
+    # disables the cap.
+    max_takeaway_bytes: int = 4_096
+    # Hard cap on the number of scopes accepted by a single memory_write /
+    # memory_update / episode_write call. Defense-in-depth alongside the
+    # model-layer cap (`models._MAX_SCOPES_PER_RECORD`, also 64) — the same
+    # silent-data-loss class the takeaway cap closed in t16, applied to a
+    # list-shaped frontmatter field. ~2200 short scope names serialise to
+    # ~64 KB of YAML and push the frontmatter past `_frontmatter._MAX_YAML_BYTES`;
+    # the loader then raises `ValueError` on every subsequent read and the
+    # record vanishes from every read surface (search / list / handoff) despite
+    # `status="committed"` returning. 64 matches `verified_paths` and is well
+    # above the typical 1-5 scopes used in practice. Set to 0 to disable the
+    # handler-boundary cap (the model-layer cap still fires).
+    max_scopes_per_write: int = 64
     # One-shot per-session passive curation hint. When the sum of
     # dead_weight + drifted + endorsement_debt counts (the
     # `curation_pending` rollup the model would otherwise have to
@@ -465,6 +516,8 @@ def load_config(path: Path | None = None) -> Config:
                 behavior_raw.get("verification_stale_days", 30)
             ),
             max_content_bytes=int(behavior_raw.get("max_content_bytes", 1_000_000)),
+            max_takeaway_bytes=int(behavior_raw.get("max_takeaway_bytes", 4_096)),
+            max_scopes_per_write=int(behavior_raw.get("max_scopes_per_write", 64)),
             curation_hint_threshold=int(behavior_raw.get("curation_hint_threshold", 5)),
             curation_hint_enabled=bool(behavior_raw.get("curation_hint_enabled", True)),
         ),

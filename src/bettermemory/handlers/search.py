@@ -58,6 +58,11 @@ DESC_MEMORY_SEARCH = (
     "- `commit_drift_count` (int, when applicable) — commits since "
     "last_verified_at on the memory's origin repo. Non-zero means "
     "the project moved even if calendar-fresh.\n"
+    "- `depends_on_resolved` (when present) — bounded auto-pull of "
+    "`depends_on` link targets (max 3 per hit, max 10 per call). "
+    "Each entry: `{id, scopes, summary, link_note}`. Surfaces "
+    "context the query wouldn't on its own; saves a memory_show "
+    "round-trip. OMITTED when the hit has no `depends_on` links.\n"
     "- `recent_negative_outcomes` (when present) — list of recent "
     "ignored/contradicted events for this memory (max two, one "
     "per outcome). The user already rejected this; don't re-surface "
@@ -73,17 +78,21 @@ DESC_MEMORY_SEARCH = (
     "memories with no recorded origin always pass as global. Set "
     "False for explicit cross-project queries.\n"
     "- `since_prior_session=False` (default): when True, filter "
-    "to memories whose `updated` is at or after the prior session "
-    "boundary (latest event from a different session_id in the "
-    "log). The semantic is 'what has changed in the current "
-    "session, since the last activity by other sessions' — i.e. "
-    "this session's intra-session diff. A /loop iteration uses "
-    "this to track what IT has written/updated; for what the "
-    "prior iteration did, call episode_handoff instead. "
-    "Returns empty when there's no prior session in the log; "
-    "distinguish 'nothing new' (results=[]) from 'no baseline' "
-    "by also calling memory_scope_overview and checking "
-    "`curation_pending_new_since_last_session is None`.\n"
+    "to memories whose `updated` is strictly after the prior "
+    "session boundary (latest event from a different session_id "
+    "in the log). The boundary IS the prior session's last-event "
+    "ts, so a memory whose `updated` equals it belongs to that "
+    "prior session — strict-`>` mirrors "
+    "`curation_pending_new_since_last_session`'s exclusion so the "
+    "two surfaces never double-count. The semantic is 'what has "
+    "changed in the current session, since the last activity by "
+    "other sessions' — i.e. this session's intra-session diff. A "
+    "/loop iteration uses this to track what IT has "
+    "written/updated; for what the prior iteration did, call "
+    "episode_handoff instead. Returns empty when there's no prior "
+    "session in the log; distinguish 'nothing new' (results=[]) "
+    "from 'no baseline' by also calling memory_scope_overview and "
+    "checking `curation_pending_new_since_last_session is None`.\n"
     "- `mode` (optional, default from config; package default `hybrid`): `keyword`, `bm25`, "
     "`semantic` (needs embeddings extra), or `hybrid` (RRF of the "
     "first three). `hybrid` for paraphrase recall; `keyword` for "
@@ -204,7 +213,7 @@ async def memory_search(
     #    would be dropped before the boundary filter ever sees it.
     #    The post-boundary slice is bounded by session activity, so
     #    even on a 10k-memory store only a handful of memories will
-    #    pass the `updated >= prior_boundary` check.
+    #    pass the `updated > prior_boundary` check.
     # 2. Default: FTS5 candidate prefilter (T3.1 phase B). When the
     #    index exists and the store is large enough that load_all
     #    would dominate the budget, query the index for candidate
@@ -215,7 +224,16 @@ async def memory_search(
         if prior_boundary is None:
             memories = []
         else:
-            memories = [m for m in deps.store.load_all() if m.updated >= prior_boundary]
+            # Strict-`>` to match the `curation_counts` `<=` exclusion:
+            # the boundary IS the prior session's last event ts (per
+            # `find_prior_session_boundary`), so a memory whose `updated`
+            # equals it was written by the prior session and belongs to
+            # *that* session, not the current-session delta. A naive `>=`
+            # double-counts the boundary memory across the two surfaces
+            # (memory_search + memory_scope_overview/curation_counts) that
+            # the api docs pair together as the "what's new since last
+            # session" workflow.
+            memories = [m for m in deps.store.load_all() if m.updated > prior_boundary]
     else:
         memories = deps._load_search_candidates(query)
 
@@ -302,6 +320,18 @@ async def memory_search(
             memories,
             caller_origin=current_origin if auto_scope else None,
             excluded_scopes=set(state.disabled_scopes),
+            # Pass the store so the helper can targeted-load
+            # `depends_on` targets unrelated to the query. The
+            # `memories` list is the FTS prefilter set (cap 50, ranked
+            # by query relevance), so a depended-on target whose text
+            # doesn't match the query is missing from the side-map —
+            # the exact case the auto-pull feature exists to handle
+            # (B depends_on A precisely because A provides context
+            # B's query won't surface on its own). Filter discipline
+            # for the targeted-load path is identical to the side-map
+            # path: `caller_origin` + `excluded_scopes` re-applied at
+            # load time to prevent cross-project / disabled-scope leak.
+            store=deps.store,
         )
 
     # Optional auto-expansion of the top hit. Conservative: only fires

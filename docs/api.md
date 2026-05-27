@@ -12,7 +12,7 @@ The contractual list of MCP tools bettermemory exposes. Signatures, defaults, an
 
 ## Retrieval
 
-### `memory_search(query, scopes?, max_results?, expand_top?, auto_scope?, mode?)`
+### `memory_search(query, scopes?, max_results?, expand_top?, auto_scope?, since_prior_session?, mode?)`
 
 Rank stored memories against a free-text query.
 
@@ -21,15 +21,20 @@ Rank stored memories against a free-text query.
 - `max_results: int | None = None`. Falls through to `behavior.default_max_results` (config default `5`). Capped at 50.
 - `expand_top: bool = False`. When the top hit's relevance is `"high"`, inline its full body and a freshly-computed `path_drift` + `commit_drift` report. No-op otherwise. (Per-hit `path_drift` already surfaces on any hit with drifted or attested paths, so `expand_top` is now mainly about the body inline, not the drift detail.)
 - `auto_scope: bool = True`. Filter by the caller's current repo + worktree. Memories with no recorded `origin` are treated as global.
+- `since_prior_session: bool = False`. When True, narrow candidates to memories whose `updated` is strictly after the latest event timestamp from any other `session_id` in the log — the current session's intra-session diff. The boundary IS the prior session's last-event ts, so a memory whose `updated` equals it belongs to that prior session, not the current-session delta. Mirrors `curation_pending_new_since_last_session`'s exclusion of boundary memory so the two surfaces in the "what's new since last session" workflow never double-count. Returns an empty list when no prior session boundary exists (first run, wiped log). Bypasses the FTS5 prefilter so newly-written rows outside the top-50 prefilter slice can't silently drop; the post-boundary set is bounded by session activity, so the linear scan is cheap regardless of corpus size. Pairs with `episode_handoff` (which surfaces what the prior iteration did). To distinguish "nothing new" (empty result) from "no baseline" (no prior session at all), also call `memory_scope_overview` and check `curation_pending_new_since_last_session is None`.
 - `mode: str | None = None`. Ranker — `"hybrid"` (default since 2.6.8: RRF fusion of keyword + BM25 + semantic when the `[embeddings]` extra is installed; degrades gracefully to keyword+BM25 fusion without it), `"keyword"` (legacy TF + coverage + recency; no IDF, weaker on rare-term queries), `"bm25"` (Okapi BM25 with the same scope-bonus + recency), or `"semantic"` (sentence-transformers cosine; requires the `[embeddings]` extra). Per-call override beats `[behavior] search_mode`. Use `"keyword"` for literal identifiers / file paths if you need byte-stable 1.6.0 ranking; otherwise hybrid is a strict improvement. The fused hybrid score lives in a smaller scale (~0.01–0.05) than single-ranker scores — compare across modes via `relevance`, not raw `score`.
 
 Returns a list of hits. Each hit carries `id`, `scopes`, `relevance` (`"high"` / `"medium"` / `"low"`), `match_terms`, `snippet`, `created`, `updated`, `last_verified_at`, `verification`, `path_drift_checked` / `path_drift_missing` counts, `staleness_verdict`, a `use_token`, and a `commit_drift_count` when applicable (omitted when the caller isn't in the memory's repo, or the memory was never verified). When the body cites paths that no longer exist (or paths the user previously attested via `memory_verify`), the hit also carries `path_drift` with `{checked, missing, verified}` lists — the missing list is directly actionable, no `memory_show` round-trip needed.
 
 Hits also carry `recent_negative_outcomes` when the memory was `ignored` or `contradicted` within the last 30 days AND not since `applied`. Each entry has shape `{outcome, most_recent_ts, count_in_window, session_id, note, claim_excerpt}` — at most one per outcome type. An `applied` event after a negative event clears the bucket. The field is omitted (not null) when no qualifying negatives exist.
 
+Hits also carry `depends_on_resolved` when the hit's memory carries `depends_on`-typed links. Shape is a list of `{id, scopes, summary, link_note}` entries, where `summary` is the target's first-line summary and `link_note` is the link's optional free-form note. Bounded per call: at most 3 entries per hit, at most 10 entries across the full result set. Targets a hit depends on are auto-pulled even when the query wouldn't surface them on its own — the search layer issues targeted `store.load_one` calls for `depends_on` target ids missing from the FTS prefilter slice, then re-applies the same `auto_scope` + session-disabled-scope filter so a dependency edge can't leak cross-project or hidden-scope content into the response. Tombstoned or removed targets are skipped silently. The field is omitted (not null) when the hit has no `depends_on` links or all targets resolve out.
+
 ### `memory_show(id)`
 
-Full body plus `verification` block, `path_drift` report (`null` when no drift), `staleness_verdict`, `use_token`, `commit_drift` block (`null` when not applicable), and typed inter-memory edges as `links` (forward) and `reverse_links` (entries from the target side carry `source_id` instead of `target_id`).
+Full body plus `verification` block, `path_drift` report (`null` when no drift), `staleness_verdict`, `use_token`, `commit_drift` block (`null` when not applicable; non-null shape is `{status, commits_since_verify, recommendation}` — `recommendation` is the actionable string to surface when `status == "drift"`, `null` on `"clean"`), and typed inter-memory edges as `links` (forward) and `reverse_links` (entries from the target side carry `source_id` instead of `target_id`).
+
+Full return shape: `{id, scopes, confidence, source, category, created, updated, last_verified_at, verification, staleness_verdict, body, origin, path_drift, commit_drift, use_token, verified_paths, verified_commits, verified_versions}` plus `links` and `reverse_links` (each omitted entirely when the underlying list is empty — absence-as-signal, matching `path_drift` / `commit_drift`).
 
 ### `memory_list(scopes?, with_bodies?)`
 
@@ -44,7 +49,10 @@ Cheap session-start hint. Counts per scope without bodies or IDs.
 
 - `auto_scope: bool = True`. Same semantics as `memory_search.auto_scope`.
 
-Returns `{current_repo, scopes: {scope: count}, total, curation_pending}`. The `curation_pending` rollup is integer counts (`stale`, `never_verified`, `drifted`, `cold`, `dead`, `silent_misses`, `endorsement_debt`) derived from the same logic as `memory_health` but without row materialisation.
+Returns `{current_repo, current_cwd, auto_scope, scopes: {scope: count}, total, disabled_scopes, curation_pending, curation_pending_new_since_last_session, recently_removed_in_worktree}`. The `curation_pending` rollup is integer counts (`stale`, `never_verified`, `drifted`, `cold`, `dead`, `silent_misses`, `endorsement_debt`) derived from the same logic as `memory_health` but without row materialisation.
+
+- `curation_pending_new_since_last_session: dict[str, int] | None`. Same shape as `curation_pending`, filtered to events emitted and memories *created* since the prior-session boundary. An older record aging into `stale` between sessions stays visible only in the absolute `curation_pending`. Branch on this dict when deciding whether to *prompt* the user about curation — non-zero values here mean new rot has accumulated since you were last around. `null` on the very first session (no prior boundary to delta against); fall back to `curation_pending` in that case. This is also the signal that disambiguates an empty `memory_search(since_prior_session=True)` between "nothing new" (key present, all zeros or non-null) and "no baseline" (`null`).
+- `recently_removed_in_worktree: int`. Count of tombstones whose `removed` timestamp lands in the last 7 days. Under `auto_scope=True`, restricted to tombstones whose `origin.worktree_root` matches the caller's; tombstones with no recorded origin are excluded under that branch. Under `auto_scope=False`, every tombstone in the window counts. Non-zero is a cue that the model previously trimmed material in this area — useful before re-suggesting something that may have already been removed.
 
 ## Writing
 
@@ -73,6 +81,8 @@ Result statuses:
 - `"scope_mismatch"` — body cites a known `projects:<name>` scope's name (or a path under another project's tree) AND that scope isn't declared. `suggested_scopes` and `matches` returned.
 - `"pending"` — when `category="user-inference"` OR `require_write_confirmation = true`. `pending_reason` distinguishes the two.
 - `"ungrounded"` — groundedness gate fired. `claims: [{sentence, overlap_ratio}, ...]` returned. No commit.
+
+A `committed` or pending-confirm response may carry an inline `curation_hint` block once per session. It fires on the first `memory_write` (or `memory_write_confirm`) whose call would otherwise return successfully AND whose `dead_weight + drifted + endorsement_debt` pressure crosses `[behavior] curation_hint_threshold` (default `5`). Shape: `{pressure: int, threshold: int, counts: {dead_weight, drifted, endorsement_debt}, message: str}`. One-shot per session — the check sets a session flag whether or not it crossed the threshold, so subsequent writes don't re-walk the event log. Disable structurally with `curation_hint_enabled = false` or `curation_hint_threshold = 0` in `[behavior]`. Pull-based discovery (calling `memory_scope_overview` / `memory_health`) remains the primary surface; this is a passive notification for a model that never asks.
 
 ### `memory_write_confirm(pending_id)` and `memory_write_cancel(pending_id)`
 
@@ -144,7 +154,9 @@ Hook attribution: the Stop hook (`bettermemory audit-turn`) also looks at the as
 - `heavily_used_top_k: int = 10`.
 - `min_applied: int | None = None`. Falls through to `behavior.heavily_used_min_applied` (config default `3`).
 
-Returns the aggregate rollup: `total_active_memories`, `total_events`, `distinct_sessions`, `dead_weight`, `cold_memories`, `heavily_used` (with per-row `applied=N (auto=X exp=Y)` split), `contradicted` (each row carries a `resolution_timeline`), `marker_stats`, `scope_distribution`, `scope_health`, `rare_scopes`, `orphan_use_events`, `verification_debt`, `commit_drift_debt` (null when the server isn't in a repo whose memories live in this store), `silent_misses`, and `endorsement_debt`.
+Returns the aggregate rollup: `generated_at` (ISO timestamp of when the report was computed — caller-side time-pinning so a stored report's recency is unambiguous), `window_days` (the analysis window actually used; echoes the `window_days` argument with its config-fallback default of 30 applied), `total_active_memories`, `total_events`, `distinct_sessions`, `dead_weight`, `cold_memories`, `heavily_used` (with per-row `applied=N (auto=X exp=Y)` split), `contradicted` (each row carries a `resolution_timeline`), `marker_stats`, `scope_distribution`, `scope_health`, `rare_scopes`, `orphan_use_events`, `verification_debt`, `commit_drift_debt` (null when the server isn't in a repo whose memories live in this store), `silent_misses`, `endorsement_debt`, and `recommendations`.
+
+`recommendations: list[Recommendation]` distills the bucket detail above into one-line actions. Each entry is `{kind, summary, action, count, memory_ids, scope}`, where `kind` is one of the closed set `"remove_dead_weight" | "resolve_contradicted" | "cleanup_endorsement_debt" | "verify_drifted" | "fix_typo_scopes"`, `memory_ids` is capped at 10 entries (the uncapped `count` still reports true size), and `scope` is populated only on scope-level recommendations (the typo-singleton case). Size-driven kinds (`remove_dead_weight`, `cleanup_endorsement_debt`, `verify_drifted`) require at least 3 rows in the underlying bucket before they fire; `resolve_contradicted` and `fix_typo_scopes` surface from a single row. Empty list means every bucket sits below its floor — pull-based reads of the raw buckets remain the primary path; `recommendations` is the additive digest for in-conversation surfacing.
 
 The `silent_misses` rollup honors a `silent_miss_cutoff` event when present — written by `bettermemory consolidate --acknowledge-misses-before <ISO_TS>` to invalidate pre-fix `turn_audited` / `search_miss` events after a change that obsoletes them. CLI-only; no MCP surface.
 
@@ -185,12 +197,19 @@ Append a new episode for the current session.
 
 Returns `{status: "committed", id, session_id, created, scopes, takeaway, pruned_sessions: [<sid>...]}`. `session_id` is auto-captured from the recorder; `origin` (cwd / repo / branch / worktree_root) is captured the same way as `memory_write`. `pruned_sessions` lists any session directories that hit the TTL on this write.
 
+Size caps: `body` enforces `max_content_bytes` (default 1 MB, same cap `memory_write` / `memory_update` enforce); `takeaway` enforces `max_takeaway_bytes` (default 4 KB). The takeaway cap is separate because takeaways serialize into the YAML frontmatter region (64 KB ceiling) — an over-cap takeaway would silently corrupt the frontmatter, the loader would raise on every subsequent read, and the episode would vanish from `episode_search` / `episode_handoff` / `episode_promote` despite the write returning `status="committed"`.
+
 ### `episode_handoff(prior_session_id?, max_episodes?)`
 
 Read recent takeaways from a prior session. Designed as the FIRST MCP call at `/loop` iteration entry.
 
 - `prior_session_id: str | None`. When omitted, the handler resolves the most recent session in the event log whose id differs from the current recorder's. Pass explicitly when the caller already knows the parent session (e.g. subagent handoff).
 - `max_episodes: int | None`. Default `5`, cap `50`.
+
+Auto-resolution applies two implicit filters when `prior_session_id` is omitted:
+
+- **Caller-worktree strict equality.** A candidate session is only adopted when at least one of its episodes carries an `origin.worktree_root` equal to the caller's captured worktree, OR (the zero-episode branch) when both are `None`. `None` matches only `None` — a caller in a named worktree never adopts a candidate with unknown / null worktree, and a caller with no worktree never adopts a candidate from a named one. Two worktrees of the same repo never see each other's prior sessions; cross-worktree session ids can't leak through this surface.
+- **`disabled_scopes` cascade.** Sessions whose only episodes overlap the current session's `memory_scope_disable` set are filtered out of candidate adoption, AND any surviving candidate's emitted episodes are themselves scope-filtered against the disabled set before return. Mirrors the same opt-out cascade `memory_search` / `memory_list` honor.
 
 Returns `{prior_session_id: str | None, episodes: [{id, created, takeaway, body, scopes}, ...]}`. `prior_session_id is None` AND `episodes == []` is the "no baseline" case; `prior_session_id != None` AND `episodes == []` is "baseline exists but no journal" — branch on both.
 
@@ -201,9 +220,9 @@ Cross-session lookup. Unlike `memory_search`, NOT ranked — episodes are chrono
 - `scopes: list[str] | None`. Intersection filter (a hit's scopes must include at least one).
 - `parent_session_id: str | None`. Restrict to one session directory.
 - `since: str | None`. ISO-8601 timestamp; only episodes created at or after.
-- `max_results: int | None`. Default `20`, cap `200`.
+- `max_results: int | None`. Default `20`, cap `200`. The cap surfaces the **most-recent N** matches (the slice keeps oldest-first ordering inside that window — "what did I conclude across the last few sessions?" reads the tail, not the head).
 
-Returns the matching episodes oldest-first.
+Returns a list of `{id, session_id, created, takeaway, body, scopes}` dicts oldest-first within the most-recent-`max_results` window. `session_id` is included because `episode_search` spans sessions (unlike `episode_handoff`, which scopes to one), so the caller can correlate a takeaway back to its originating session directory.
 
 ### `episode_promote(episode_id, scopes, category?, confidence?, source?, use_body?)`
 
@@ -214,7 +233,7 @@ Distill a journal takeaway into a durable memory. Routes through `memory_write` 
 - `category: str = "fact"`, `confidence: str = "medium"`, `source: str = "explicit-statement"`. Standard `memory_write` fields.
 - `use_body: bool = False`. When False (default), the episode's `takeaway` becomes the memory body; when True, the full body. An episode without a takeaway requires `use_body=True`.
 
-Returns the `memory_write` response shape with one extra field: `promoted_from_episode_id: str` so the caller can correlate. On `status="committed"` the source episode is deleted; on any non-committed status (pending, duplicate, previously_removed, transient_warning, scope_mismatch, ungrounded) the episode is left intact.
+Returns the `memory_write` response shape with one extra field: `promoted_from_episode_id: str` so the caller can correlate. On `status="committed"` the source episode is deleted (the durable memory is the authoritative artifact). On `status="pending"` (user-inference promotion or `require_write_confirmation`), the episode is held; `memory_write_confirm(pending_id)` deletes the source episode on commit, and `memory_write_cancel(pending_id)` preserves the episode so the caller can rephrase and re-promote. On any other non-committed status (duplicate, previously_removed, transient_warning, scope_mismatch, ungrounded) the episode is left intact.
 
 ## Naming conventions
 

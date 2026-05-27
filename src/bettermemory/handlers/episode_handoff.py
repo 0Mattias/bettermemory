@@ -16,12 +16,18 @@ that was passed its parent's session_id) can pass it explicitly.
 
 Returns `None`-rich shape so the caller can distinguish:
 
-- "no prior session in this store" — handoff returns
+- "no prior session in this worktree" — handoff returns
   `{"prior_session_id": None, "episodes": []}`. First-ever invocation
-  in a worktree.
+  in a worktree, or all prior sessions in the event log belong to a
+  different worktree.
 - "prior session existed but wrote no episodes" — returns
   `{"prior_session_id": "sess_xxx", "episodes": []}`. The prior
-  session did work but didn't journal a takeaway.
+  session did work but didn't journal a takeaway. Only surfaced
+  when the caller has no worktree (events don't carry origin
+  today, so a zero-episode session's worktree is unknown — the
+  strict None-only-matches-None rule means callers in a named
+  worktree see "no prior session" rather than risk surfacing a
+  cross-worktree session_id).
 - "prior session has takeaways" — `{"prior_session_id": "sess_xxx",
   "episodes": [...]}` with the latest N entries (oldest first within
   the slice).
@@ -47,6 +53,18 @@ DESC_EPISODE_HANDOFF = (
     "the handler resolves it via the event log — the most recent "
     "session_id other than this process's own. Pass it explicitly "
     "when you know it (e.g., a child agent passed its parent's id).\n\n"
+    "Auto-resolution applies two implicit filters when "
+    "`prior_session_id` is omitted: (1) caller-worktree strict "
+    "equality — a candidate session is adopted only when at least "
+    "one of its episodes carries an `origin.worktree_root` equal to "
+    "the caller's captured worktree (`None` matches only `None`, so "
+    "two worktrees of the same repo never see each other's prior "
+    "sessions); (2) `disabled_scopes` cascade — sessions whose only "
+    "episodes overlap the current session's `memory_scope_disable` "
+    "set are filtered out of candidate adoption, and any surviving "
+    "candidate's emitted episodes are themselves scope-filtered "
+    "before return. Mirrors the same opt-out cascade memory_search "
+    "/ memory_list honor.\n\n"
     "Returns a dict:\n"
     "- `prior_session_id`: the resolved session id, or None when no "
     "prior session exists in the log.\n"
@@ -88,9 +106,15 @@ async def episode_handoff(
     leak path. When the caller has no worktree (e.g., running
     outside any git checkout), symmetric isolation only accepts
     sessions whose episodes also have no worktree origin — see
-    `_worktrees_equal_strict`. An explicit `prior_session_id` is
-    respected verbatim; the caller passing one in is explicit
-    consent that they own the cross-tree concern.
+    `_worktrees_equal_strict`. Zero-episode candidates (sessions
+    that recorded events but never wrote a journal entry) are
+    treated as "unknown worktree" — events don't carry origin
+    today (queue #28), so the strict None-only-matches-None rule
+    means a caller in a named worktree skips them, and only a
+    caller with no worktree (the all-null state) can adopt one.
+    An explicit `prior_session_id` is respected verbatim; the
+    caller passing one in is explicit consent that they own the
+    cross-tree concern.
     """
     from .. import _handlers as _h
 
@@ -100,6 +124,18 @@ async def episode_handoff(
     if max_episodes is None:
         max_episodes = 5
     max_episodes = max(1, min(int(max_episodes), 50))
+
+    # Session-disabled scopes hide episodes uniformly across the read
+    # surface — same contract `memory_search` / `memory_list` honor
+    # (list_active.py:46, search.py:226). For handoff the filter
+    # cascades into the candidate-selection walk too: a session whose
+    # episodes are ALL scope-suppressed behaves as if it wrote nothing,
+    # so auto-resolution skips it and adopts the next-most-recent
+    # session instead. An explicit `prior_session_id` still respects
+    # the filter on the emit step (the caller named a session, but the
+    # episode bodies themselves are still gated through the same hide
+    # rule).
+    excluded_scopes: set[str] = set(state.disabled_scopes)
 
     resolved_session_id: str | None = prior_session_id
     if resolved_session_id is None:
@@ -156,30 +192,80 @@ async def episode_handoff(
             #   1. It has at least one episode whose origin's
             #      worktree_root matches the caller's under the
             #      strict (None-only-matches-None) rule, OR
-            #   2. It has zero episodes at all (the session
-            #      existed but either never wrote a journal, or
-            #      had all of its episodes promoted away). In
-            #      that case we surface `{sid, episodes: []}` so
-            #      the caller can still distinguish "no prior
-            #      session" from "prior session existed but is
-            #      empty" — matching the original docstring
-            #      contract. There's no run-state leak in this
-            #      branch because there are no episode bodies
-            #      to surface; only the bare session_id is
-            #      exposed, which is an opaque ULID.
+            #   2. It has zero episodes at all AND the caller has
+            #      no worktree (caller_worktree is None). In that
+            #      case we surface `{sid, episodes: []}` so the
+            #      caller can still distinguish "no prior session"
+            #      from "prior session existed but is empty" —
+            #      matching the original docstring contract.
+            #      There's no run-state leak in this branch
+            #      because there are no episode bodies to surface;
+            #      only the bare session_id is exposed, which is
+            #      an opaque ULID. However, the session_id IS the
+            #      handle a caller would use to look up the prior
+            #      session's events / memories — surfacing the
+            #      WRONG worktree's session_id as "this worktree's
+            #      prior session" violates the "this worktree"
+            #      contract tick-2 (2988fff) established for
+            #      episode-bearing sessions, so we extend the same
+            #      isolation to the zero-episode branch.
+            #
+            #      Recorder.record (events.py:195-209) does not
+            #      stamp origin on events today (queue item #28),
+            #      so we cannot determine a zero-episode candidate's
+            #      worktree from the event log. We conservatively
+            #      treat its worktree as "unknown" (modeled as
+            #      None) and apply the same strict equality rule:
+            #      `_worktrees_equal_strict(None, caller_worktree)`
+            #      returns True only when the caller is ALSO in
+            #      the no-worktree state. This is strictly tighter
+            #      than the pre-fix behavior — a same-worktree
+            #      session that never called episode_write but
+            #      did call memory_search/memory_write will no
+            #      longer be adopted as `prior_session_id` for a
+            #      caller in a worktree. The trade-off is documented
+            #      in the commit: when queue #28 lands (events
+            #      carry origin), the zero-episode branch can
+            #      tighten further by reading origin from events.
             # The discriminator under (1) is the worktree_root
             # itself, not the branch — one session can legitimately
             # span branches inside one worktree, so we don't
             # require ALL episodes to match.
             if not candidate_eps:
-                resolved_session_id = sid
-                break
+                if _worktrees_equal_strict(None, caller_worktree):
+                    resolved_session_id = sid
+                    break
+                # Zero-episode candidate from an unknown worktree
+                # — under the strict "this worktree" contract we
+                # cannot prove it belongs to the caller, so walk
+                # past to the next-most-recent candidate.
+                continue
+            # Apply session-disabled-scope filter BEFORE the worktree
+            # match. If every episode in this candidate is in a
+            # suppressed scope, treat the session as having nothing
+            # to surface (per the read-surface contract: hidden ==
+            # not there for this session). The handoff walk then
+            # continues to the next-most-recent candidate, which is
+            # exactly the user's expectation when they `scope_disable`
+            # a project: "rewind past the last X-session and surface
+            # what came before".
+            visible_eps = (
+                [ep for ep in candidate_eps if not (set(ep.scopes) & excluded_scopes)]
+                if excluded_scopes
+                else candidate_eps
+            )
+            if not visible_eps:
+                # Had episodes, but all hidden by disabled_scopes.
+                # Walk past; do NOT surface this as an "empty" prior
+                # session (that branch is reserved for the genuine
+                # zero-episode case caught above).
+                continue
             if any(
                 _worktrees_equal_strict(
                     ep.origin.worktree_root if ep.origin else None,
                     caller_worktree,
                 )
-                for ep in candidate_eps
+                for ep in visible_eps
             ):
                 resolved_session_id = sid
                 break
@@ -187,6 +273,15 @@ async def episode_handoff(
     episodes: list[dict[str, Any]] = []
     if resolved_session_id is not None:
         all_eps = deps.episode_store.list_by_session(resolved_session_id)
+        # Apply the same scope-hide filter to the emit stream. This
+        # matters in two cases the auto-resolution walk doesn't reach:
+        #  - Caller passed `prior_session_id` explicitly, bypassing
+        #    the candidate-walk filter — the bodies themselves are
+        #    still gated.
+        #  - Auto-resolved session mixed visible and hidden episodes;
+        #    only the visible ones should be surfaced.
+        if excluded_scopes:
+            all_eps = [ep for ep in all_eps if not (set(ep.scopes) & excluded_scopes)]
         # Oldest first within the recent slice: take the LAST
         # `max_episodes`, which is the most recent chunk. This matches
         # the way a reader expects "the prior session's recent

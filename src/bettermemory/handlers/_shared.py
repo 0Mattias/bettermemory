@@ -95,25 +95,66 @@ _NOTE_MAX_LEN = 500
 # ---------------------------------------------------------------------------
 
 
-def _validate_content_size(content: str, max_bytes: int) -> None:
+def _validate_scope_count(scopes: list[str], max_count: int) -> None:
+    """Reject scope lists whose length exceeds `max_count`.
+
+    A no-op when `max_count <= 0` (cap disabled). Centralised so that
+    ``memory_write``, ``memory_update``, and ``episode_write`` share the
+    same bound. Mirrors the discipline ``_validate_content_size`` set for
+    byte caps: a configurable handler-boundary check on top of the model-
+    layer hard ceiling. Without this, a ~2200-entry scope list would
+    serialise to ~64 KB of YAML, push the frontmatter past
+    `_frontmatter._MAX_YAML_BYTES`, and the record would vanish from every
+    read surface despite the write returning ``status="committed"`` — the
+    same silent-data-loss class the takeaway cap closed in t16.
+
+    Raises ``ValueError`` with the same message shape as
+    ``_validate_content_size`` so the MCP error surface stays uniform across
+    the byte-cap and count-cap families.
+    """
+    if max_count <= 0:
+        return
+    if len(scopes) > max_count:
+        raise ValueError(
+            f"scopes exceeds max_scopes_per_write "
+            f"({len(scopes)} entries > {max_count} entries). "
+            f"Shorten the scope list or raise the "
+            f"[behavior] max_scopes_per_write config setting."
+        )
+
+
+def _validate_content_size(
+    content: str,
+    max_bytes: int,
+    *,
+    field_name: str = "content",
+    config_key: str = "max_content_bytes",
+) -> None:
     """Reject memory bodies whose UTF-8 byte length exceeds `max_bytes`.
 
     A no-op when `max_bytes <= 0` (cap disabled). Centralised so that
-    `memory_write`, `memory_update`, and any future write entry point
-    share the same bound. The check is on encoded byte length rather
-    than character count because that's the unit that lands on disk
-    and in the JSONL event log — a body of CJK or emoji characters
-    expands meaningfully under UTF-8 encoding.
+    `memory_write`, `memory_update`, `episode_write`, and any future
+    write entry point share the same bound. The check is on encoded byte
+    length rather than character count because that's the unit that
+    lands on disk and in the JSONL event log — a body of CJK or emoji
+    characters expands meaningfully under UTF-8 encoding.
+
+    `field_name` and `config_key` are message-only knobs so the
+    `episode_write` takeaway path can raise the same `ValueError`
+    shape with a takeaway-specific message ("takeaway exceeds
+    max_takeaway_bytes …") instead of misleadingly mentioning the
+    body cap. The defaults preserve the legacy message verbatim so
+    existing tests pinning `match="max_content_bytes"` keep passing.
     """
     if max_bytes <= 0:
         return
     encoded_size = len(content.encode("utf-8"))
     if encoded_size > max_bytes:
         raise ValueError(
-            f"content exceeds max_content_bytes "
+            f"{field_name} exceeds {config_key} "
             f"({encoded_size} bytes > {max_bytes} bytes). "
-            f"Split into multiple memories or raise the "
-            f"[behavior] max_content_bytes config setting."
+            f"Shorten the {field_name} or raise the "
+            f"[behavior] {config_key} config setting."
         )
 
 
@@ -126,6 +167,7 @@ def _validate_write_payload(
     allowed_scopes: list[str],
     category: str = "fact",
     max_content_bytes: int = 0,
+    max_scopes_per_write: int = 0,
 ) -> dict[str, Any]:
     """Validate and normalise the kwargs for `Store.write`.
 
@@ -137,6 +179,7 @@ def _validate_write_payload(
     if not scopes:
         raise ValueError("scopes must contain at least one entry")
     _validate_content_size(content, max_content_bytes)
+    _validate_scope_count(scopes, max_scopes_per_write)
 
     clean_scopes = [validate_scope(s) for s in scopes]
 
@@ -484,5 +527,6 @@ __all__ = [
     "_hook_attributed_pending_ids",
     "_maybe_attach_curation_hint",
     "_validate_content_size",
+    "_validate_scope_count",
     "_validate_write_payload",
 ]

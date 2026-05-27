@@ -16,7 +16,12 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any
 
-from ._shared import Context, _advance_turn
+from ._shared import (
+    Context,
+    _advance_turn,
+    _validate_content_size,
+    _validate_scope_count,
+)
 
 if TYPE_CHECKING:
     from .._handlers import ToolHandlers
@@ -39,13 +44,26 @@ DESC_EPISODE_WRITE = (
     "episode_search for cross-session lookup. Promote a takeaway to "
     "durable memory via episode_promote (routes through memory_write, "
     "durability gate fires as normal).\n\n"
+    "Returns `{status: 'committed', id, session_id, created, "
+    "scopes, takeaway, pruned_sessions}`. `pruned_sessions` lists "
+    "any prior session directories that hit the 30-day TTL on "
+    "this write (typically `[]`).\n\n"
     "Parameters:\n"
-    "- `body`: free-form markdown. Required, non-empty.\n"
+    "- `body`: free-form markdown. Required, non-empty. Capped by "
+    "`max_content_bytes` (default 1 MB).\n"
     "- `takeaway` (optional): one-sentence summary. Surfaced "
     "preferentially at episode_handoff; when None, handoff falls "
-    "back to the first line of body.\n"
+    "back to the first line of body. Capped by "
+    "`max_takeaway_bytes` (default 4 KB) — the takeaway lives in "
+    "YAML frontmatter (64 KB ceiling), so an over-cap takeaway "
+    "would corrupt the file and the episode would vanish from "
+    "every read surface despite returning `committed`.\n"
     "- `scopes` (optional): list of scope tags. Empty list is "
-    "valid (handoff keys on session_id, not scope)."
+    "valid (handoff keys on session_id, not scope). Capped by "
+    "`max_scopes_per_write` (default 64) — scopes serialise into "
+    "the YAML frontmatter (64 KB ceiling), so a runaway scope list "
+    "would corrupt the file and the episode would vanish from every "
+    "read surface despite returning `committed`."
 )
 
 
@@ -71,6 +89,41 @@ async def episode_write(
 
     if not body or not body.strip():
         raise ValueError("episode body must be a non-empty string")
+    # Mirror the size cap memory_write / memory_update enforce so a
+    # multi-MB episode body can't slip past the write surface and land
+    # on disk uncapped. Episodes share the same fsynced-file storage
+    # path memories use; the DoS/disk-fill exposure is identical.
+    # Raises ValueError with the same message shape as the memory_write
+    # path, so the MCP error surface is uniform across both tiers.
+    _validate_content_size(body, deps.config.behavior.max_content_bytes)
+    # Cap the takeaway separately from the body. Takeaway lives in the
+    # YAML frontmatter region, which `_frontmatter` caps at 64 KB to
+    # neutralise alias-expansion DoS — a takeaway over that threshold
+    # would corrupt the frontmatter, the loader would raise ValueError
+    # on every subsequent read, and `list_by_session` would silently
+    # skip the file. Net effect pre-fix: write returned status="committed"
+    # but the episode vanished from every read surface (search /
+    # handoff / promote). The default 4 KB cap is generous for the
+    # documented "one-sentence summary" while keeping the frontmatter
+    # comfortably inside the 64 KB ceiling. None-guard so absence of a
+    # takeaway (the common case) doesn't trip the validator.
+    if takeaway is not None:
+        _validate_content_size(
+            takeaway,
+            deps.config.behavior.max_takeaway_bytes,
+            field_name="takeaway",
+            config_key="max_takeaway_bytes",
+        )
+    # Cap the scope list alongside the body + takeaway byte caps. Same
+    # silent-data-loss class as t16: scopes serialise into YAML
+    # frontmatter, and a ~2200-entry list would push the frontmatter
+    # past `_frontmatter._MAX_YAML_BYTES`. The loader would then raise
+    # `ValueError` on every subsequent read and the episode would
+    # vanish from every read surface (search / handoff / promote)
+    # despite the write returning `status="committed"`. Empty scope
+    # list is valid (handoff keys on session_id), so no min-count check.
+    if scopes is not None:
+        _validate_scope_count(scopes, deps.config.behavior.max_scopes_per_write)
 
     origin = _h.capture_origin()
     # The recorder's session_id is the canonical per-process id that's

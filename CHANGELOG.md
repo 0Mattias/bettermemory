@@ -9,6 +9,14 @@ spells out exactly what's stable.
 
 ## Unreleased
 
+### Added
+
+### Fixed
+
+### Internal
+
+## 3.1.0 - 2026-05-27
+
 The **loop story**: a sibling tier for journal-shaped run-state, plus
 five surface improvements that close adjacent audit gaps. Tool count
 goes from 18 to 22; on-disk format unchanged (SCHEMA_VERSION stays at
@@ -79,6 +87,122 @@ goes from 18 to 22; on-disk format unchanged (SCHEMA_VERSION stays at
   of tombstones removed in the last 7 days, filtered by
   `origin.worktree_root` under `auto_scope=True`. Hint when the model
   is about to re-cover ground it already explicitly trimmed.
+
+### Fixed
+
+The loops-phase-1 surface ran two audit drains and a post-merge polish
+pass before this release; the fixes below catch the airtight-blocking
+items the audit cycle surfaced. Each line names the user-visible win;
+the commit hash carries the implementation.
+
+**Concurrency / multi-MCP correctness:**
+
+- Empty-dir prune branch now serialised against concurrent
+  `episode_write` under the per-session flock, with a recheck after
+  acquisition so a sibling worktree can't lose its just-written
+  episode to a stale prune decision [cef3e23].
+- `_delete_source_episode` (called from `episode_promote`) holds the
+  per-session flock for the unlink + empty-dir rmdir window, so a
+  concurrent `episode_write` to the same session can't observe a
+  half-deleted directory tree [5910a39].
+- `prune_old_sessions` past-cutoff branch acquires the same
+  per-session flock and re-checks the prune predicate after lock
+  acquisition, closing a TOCTOU window where a concurrent
+  `episode_write` could land an episode mid-prune [a4565b8].
+
+**Durability (POSIX fsync discipline):**
+
+- `Episode._write_path` now uses `fsync_file` + `fsync_dir` on the
+  atomic rename, matching the memory writer's crash-durability
+  guarantees [7017b2c].
+- First write of a fresh event log calls `fsync_dir` on the parent so
+  an OS-level crash between create-and-write doesn't leave the dirent
+  in flight [0ea5094].
+- Episode prune (rmdir + rmtree), the first write to a brand-new
+  `session_dir`, and `_delete_source_episode` all now `fsync_dir` the
+  parent after dirent-mutating operations so the directory state
+  survives a crash on the same footing as the file contents
+  [36fc35f].
+- `semantic.flush_persistent_cache` chmods the temp file *before*
+  atomic-rename so a process crash between rename and chmod can't
+  leave the cache world-readable [d77217b].
+
+**Scoping / privacy:**
+
+- `episode_search` and `episode_handoff` now honor `disabled_scopes`,
+  so the same session-local opt-out users already trust on the memory
+  side applies to the episode tier [b982ad0].
+- `episode_handoff` filters `prior_session_id` candidates by the
+  caller's worktree before adoption, so an episode-bearing prior
+  session from a sibling worktree isn't accidentally adopted
+  [2988fff].
+- `episode_handoff` applies the same worktree filter to the
+  zero-episode candidate-adoption path, closing the gap where a
+  prior session with no episodes could still be adopted across
+  worktrees [1a77999].
+- `memory_search` re-applies the active scope filter to the FTS
+  prefilter result before depends_on auto-pull, so a graph edge
+  can't drag in a target from a disabled scope [bf92912].
+- depends_on auto-pull targeted-load applies scope and origin
+  filters to targets fetched outside the FTS prefilter set, so the
+  graph-edge expansion respects the same isolation as direct hits
+  [00ac037].
+
+**Size caps / data integrity:**
+
+- `episode_write` enforces `max_content_bytes` on the body and
+  returns a structured rejection, so an oversized journal entry
+  can't silently truncate at the storage layer [a60bce2].
+- `episode_write` enforces `max_takeaway_bytes` on the takeaway
+  field separately from the body so a giant takeaway can't silently
+  drop on commit [4d36967].
+- `Episode.scopes` and `Memory.scopes` both cap at 64 entries on
+  load, preventing pathological scope lists from blowing up FTS
+  prefilter cost or scope-overview pagination [e928b33].
+
+**Search correctness:**
+
+- `memory_search(since_prior_session=True)` bypasses the FTS
+  prefilter so candidates that genuinely matter after the prior
+  session boundary aren't dropped by a pre-boundary token-frequency
+  cutoff [3bd27dc].
+- `since_prior_session` boundary is now strict-after — the
+  prior-session boundary memory itself is excluded from results, so
+  the count aligns with `curation_pending_new_since_last_session`'s
+  delta semantics [ffad750].
+- `endorsement_debt_ratio_threshold` config knob now threads through
+  every callsite (`compute_health`, `curation_counts`, the CLI), so
+  setting it once actually changes the rollups everywhere they're
+  surfaced [3db9cfc].
+- `episode_search(max_results=N)` returns the most-recent N
+  episodes instead of the oldest N, matching the loop-iteration
+  intent where recent run-state is the relevant slice [3d77bac].
+
+**Tests pinning previously-implicit invariants:**
+
+- `recently_removed_in_worktree` worktree filter pinned by an
+  explicit test so a future refactor of `memory_scope_overview`
+  can't quietly drop the per-worktree slicing [0c131b9].
+- `max_total` cross-hit cap for depends_on auto-pull pinned in
+  `00ac037` so a graph-heavy memory can't blow the global budget
+  even when each hit stays under its per-hit cap.
+
+**Documentation accuracy (model-facing):**
+
+- Public API docs sync for the episode tier and the curation
+  surface so a consumer reading `docs/api.md` gets shape-accurate
+  return values for every tool in the 22-tool surface [1b41b51].
+- Handler DESC strings synced across `memory_search`,
+  `memory_health`, `memory_scope_overview`, and `memory_write` so
+  the FastMCP-published descriptions match the implementation's
+  field enumeration [053ab9d].
+- `docs/api.md` sweep: `episode_search` shape, `memory_show` full
+  field enumeration, `memory_health` timestamp surface, and
+  `episode_handoff` filter semantics all corrected so the page
+  ships as the canonical reference [8c072f9].
+- DESC drift cleanup: `memory_audit_turn` predicate language,
+  `since_prior_session` wording, and the four episode-tier DESCs
+  all reworded for accuracy against the implementation [a2076d8].
 
 ### Internal
 
