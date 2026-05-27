@@ -32,6 +32,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any
 
+from .._fsutil import flock_excl
 from ._shared import Context, _advance_turn
 
 if TYPE_CHECKING:
@@ -46,15 +47,42 @@ def _delete_source_episode(
     Shared between the commit-immediately path (when `episode_promote`
     sees `status='committed'` synchronously) and the deferred path
     (when `memory_write_confirm` commits a previously-pending
-    promotion). FileNotFoundError is swallowed: a concurrent promote
-    or a manual rm leaves the durable memory as the authoritative
-    artifact, and the response should still surface to the caller."""
+    promotion).
+
+    Holds the per-session flock anchored at
+    `episodes_dir / .session-<id>` — the same anchor `EpisodeStore.write`
+    and `EpisodeStore.prune_old_sessions` take. This is the third
+    write-side path that touches a session_dir's contents (write + prune
+    are the other two); leaving it unlocked drifts from the t13/t17
+    contract that says BOTH directions of the session_dir lifecycle
+    serialise on this anchor. The concrete race the lock prevents: a
+    peer process's `prune_old_sessions` could `shutil.rmtree` the same
+    session_dir between our `_session_dir` resolution and the `unlink`,
+    and while the `FileNotFoundError` catch absorbs the visible failure
+    today, the contract drift would trip future refactors (adding
+    fsync_dir on the delete path, audit-telemetry, migrating to a
+    different deletion primitive).
+
+    The `FileNotFoundError` catch is preserved on purpose — a peer
+    prune (or a duplicate confirm that landed first) deleting the
+    source episode before us is a valid completion state: the
+    post-condition this helper exists to establish (source episode is
+    gone) holds either way.
+
+    Lock ordering: `memory_write_confirm` calls into this helper AFTER
+    `deps.store.write(...)` has returned, so the durable-store's
+    per-memory-id flock (anchored under `<memory_id>.md.lock`) has
+    already been released. The two flocks are anchored on different
+    paths and never nested, so there's no deadlock risk between the
+    confirm path and a concurrent peer prune."""
     session_dir = deps.episode_store._session_dir(episode_session_id)
     ep_path = session_dir / f"{episode_id}.md"
-    try:
-        ep_path.unlink()
-    except FileNotFoundError:
-        pass
+    lock_anchor = deps.episode_store.episodes_dir / f".session-{episode_session_id}"
+    with flock_excl(lock_anchor):
+        try:
+            ep_path.unlink()
+        except FileNotFoundError:
+            pass
 
 
 DESC_EPISODE_PROMOTE = (

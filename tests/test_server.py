@@ -2353,6 +2353,150 @@ async def test_episode_promote_user_inference_cancel_keeps_source(
     assert listing == []
 
 
+def test_delete_source_episode_holds_flock(memory_dir: Path) -> None:
+    """`_delete_source_episode` must respect the same per-session flock
+    `EpisodeStore.write` and `prune_old_sessions` take. The contract
+    (audit-2 finding A2-03 / tick-18): this is the third write-side
+    path that touches a session_dir's contents, so it has to serialise
+    on the t13/t17 anchor. The concrete race the lock prevents — a
+    peer `shutil.rmtree(session_dir)` interleaving with this unlink —
+    is absorbed today by the `FileNotFoundError` catch, but the
+    contract drift would trip future refactors (fsync_dir on the delete
+    path, audit telemetry, deletion-primitive migration).
+
+    Mirror-shape of `test_prune_empty_dir_holds_flock_while_writer_runs`
+    but reversed: a peer (here: a prune holder) holds the per-session
+    flock; the concurrent `_delete_source_episode` must BLOCK on the
+    flock-acquire (not race past it). When the holder releases, the
+    delete completes.
+    """
+    import threading
+    import time as _time
+    from types import SimpleNamespace
+
+    from bettermemory._fsutil import flock_excl
+    from bettermemory.episodes import EpisodeStore
+    from bettermemory.handlers.episode_promote import _delete_source_episode
+
+    # Seed an episode whose file we want to unlink.
+    ep_store = EpisodeStore(memory_dir)
+    episode = ep_store.write(session_id="sess_delflock", body="body", takeaway="t")
+    ep_path = ep_store.episodes_dir / "sess_delflock" / f"{episode.id}.md"
+    assert ep_path.exists()
+
+    # `_delete_source_episode` only touches `deps.episode_store`. A
+    # SimpleNamespace stand-in lets the test focus on the lock contract
+    # without spinning up the full ToolHandlers graph.
+    deps = SimpleNamespace(episode_store=ep_store)
+
+    lock_anchor = ep_store.episodes_dir / ".session-sess_delflock"
+    holder_holding = threading.Event()
+    holder_release = threading.Event()
+
+    def hold_session_lock() -> None:
+        with flock_excl(lock_anchor):
+            holder_holding.set()
+            holder_release.wait(timeout=5.0)
+
+    holder = threading.Thread(target=hold_session_lock)
+    holder.start()
+    try:
+        holder_holding.wait(timeout=5.0)
+        assert holder_holding.is_set()
+
+        delete_done = threading.Event()
+
+        def background_delete() -> None:
+            # The helper only touches `deps.episode_store` — see the
+            # SimpleNamespace stand-in built above. mypy can't see that
+            # the structural subset is satisfied, so we narrow with a
+            # `# type: ignore` rather than wiring the full ToolHandlers.
+            _delete_source_episode(deps, "sess_delflock", episode.id)  # type: ignore[arg-type]
+            delete_done.set()
+
+        dt = threading.Thread(target=background_delete)
+        dt.start()
+        # Give the delete a generous window to (incorrectly) race past
+        # the flock. If it completes here, `_delete_source_episode`
+        # isn't serialising — that's the bug we're protecting against.
+        _time.sleep(0.1)
+        assert not delete_done.is_set(), (
+            "_delete_source_episode raced through the per-session flock "
+            "— the delete window is not serialised against peer prune"
+        )
+        assert ep_path.exists(), "delete completed before holder released"
+
+        holder_release.set()
+        dt.join(timeout=5.0)
+        assert delete_done.is_set()
+        # After the holder released, the delete acquires the lock and
+        # unlinks the episode file. The 0-byte lockfile persists by
+        # design — same rationale as t13/t17 (flock identity is
+        # per-inode; unlinking would open a race window).
+        assert not ep_path.exists()
+        lock_path = ep_store.episodes_dir / ".session-sess_delflock.lock"
+        assert lock_path.exists(), (
+            "lockfile must persist so future acquirers share the inode"
+        )
+    finally:
+        holder_release.set()
+        holder.join(timeout=5.0)
+
+
+async def test_delete_source_episode_filenotfound_still_succeeds(
+    server: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The `FileNotFoundError` catch in `_delete_source_episode` is
+    preserved on purpose: a peer prune (or a duplicate confirm) that
+    deletes the source episode first is a valid completion state. With
+    the flock now wrapping the unlink, this pin makes sure the catch
+    still fires inside the locked section so the confirm flow surfaces
+    a normal committed status even when the file is already gone.
+
+    Stage a user-inference promote (forces the `_delete_source_episode`
+    path to fire from `memory_write_confirm`), monkeypatch
+    `pathlib.Path.unlink` to raise `FileNotFoundError` ONLY on the
+    episode file (so the durable store's writes aren't affected), and
+    assert the confirm call returns the standard committed envelope."""
+    import pathlib
+
+    ep = await _call(
+        server,
+        "episode_write",
+        body="Iter — user preference signal.",
+        takeaway="user prefers terse summaries",
+    )
+    pending = await _call(
+        server,
+        "episode_promote",
+        episode_id=ep["id"],
+        scopes=["learning-style"],
+        category="user-inference",
+    )
+    assert pending["status"] == "pending"
+
+    # Patch Path.unlink so the unlink targeting the episode file
+    # specifically raises FileNotFoundError. We must NOT affect store
+    # tempfile cleanup or other unlinks the confirm path performs.
+    real_unlink = pathlib.Path.unlink
+    target_name = f"{ep['id']}.md"
+
+    def selective_unlink(self: pathlib.Path, *args: Any, **kwargs: Any) -> None:
+        if self.name == target_name:
+            raise FileNotFoundError(self)
+        return real_unlink(self, *args, **kwargs)
+
+    monkeypatch.setattr(pathlib.Path, "unlink", selective_unlink)
+
+    committed = await _call(
+        server, "memory_write_confirm", pending_id=pending["pending_id"]
+    )
+    # The FileNotFoundError absorption inside the locked section must
+    # keep the confirm surface clean — the caller sees a normal
+    # committed write, not an exception or status-degradation.
+    assert committed["status"] == "committed"
+
+
 async def test_episode_handoff_respects_explicit_prior_session_id(
     memory_dir: Path,
 ) -> None:
