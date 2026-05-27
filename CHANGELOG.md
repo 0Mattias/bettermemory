@@ -11,6 +11,83 @@ spells out exactly what's stable.
 
 ### Fixed
 
+- **TOML back-compat shim for `endorsement_debt_ratio_threshold` (T9).**
+  3.2.0's T1 rename of the `[behavior] endorsement_debt_ratio_threshold`
+  key to `cold_endorsement_ratio_threshold` shipped without an alias,
+  so a user upgrading from 3.1.x with the old key in their config
+  silently lost the threshold:
+  `behavior_raw.get("cold_endorsement_ratio_threshold", 0.0)` fell
+  through to the dataclass default and the bucket reverted to the
+  strict "explicit == 0" check, dropping the loosened-ratio behaviour
+  the user had configured. No warning fired — the misconfiguration
+  was invisible. T9 adds a shim inside `load_config` (before
+  `BehaviorConfig` construction) covering four cases: (1) old key
+  only → populate the new key with the legacy value and emit a
+  one-shot DEPRECATION warning naming both keys plus the resolved
+  path; (2) new key only → no-op (post-3.2.0 happy path); (3) both
+  present → the new key wins and a STRONGER one-shot warning instructs
+  deletion rather than rename; (4) neither → no-op, dataclass default
+  applies. The one-shot guard is keyed on `(resolved_config_path,
+  key_kind)` and mirrors the `_DIVERGENCE_WARNED_ROOTS` discipline
+  in `store.py`: a long-lived server that rereads config on signal
+  doesn't spam the log, but two distinct configs in the same process
+  each get their own warning. Path resolution falls back to the
+  unresolved path on `OSError` so the guard still works if the config
+  moved between `open()` and warn-time. This supersedes the
+  "silently fall back to the default `0.0`" guidance in the 3.2.0
+  T1 entry above — the deprecation window is now explicit and
+  loud-on-load instead of silent-on-rollup.
+- **`Store.restore` under-lock recheck (W7).** Mirror of the W1
+  `tombstone()` recheck. Pre-W7 `Store.restore` walked
+  `_find_tombstone_path_for_id` and `_find_path_for_id` unlocked,
+  then acquired `_locked(tombstone_path)` and called
+  `frontmatter.load(tombstone_path)` without a recheck. Two
+  restorers of the same id, or a restore racing with a concurrent
+  `prune_tombstones`, would both pass the unlocked finds; the loser
+  hit a bare `FileNotFoundError` from inside `frontmatter.load` —
+  caught by an inline arm and re-raised as `MemoryNotFoundError`,
+  but with no symmetric "raced with" message and no recheck for the
+  case where the active record was re-created in the restore window
+  (silent `_atomic_write_post` clobber). Fix adds two under-lock
+  rechecks mirroring W1's discipline: (1) `_id_still_at_path(tombstone_path,
+  memory_id)` — the tombstone still carries the expected id (catches
+  the parallel-restore / prune race and the extremely-unlikely
+  tombstone-stem-reuse edge); (2) `_find_path_for_id(memory_id) is None`
+  — defensive against the narrow case where a parallel restore
+  unlinked the tombstone AND a separate path re-created an active
+  file at the predicted slug-suffix-determined `active_path` between
+  the pre-lock active check and the lock acquisition. Either recheck
+  failing raises a typed exception (`MemoryNotFoundError` /
+  `NotTombstonedError`) with a "raced with concurrent restore [or
+  prune]" hint, matching W1's find-time pre-lock fallback message
+  shape. The `memory_restore` handler gains an `OSError` arm mirroring
+  W1's `memory_remove` so genuine disk-level failures during the
+  restore write / unlink (EIO, ENOSPC, EACCES, …) surface as
+  structured `ValueError` instead of leaking as bare `OSError`.
+- **`config.load_config` first-run default-config write is now atomic
+  (Q29).** The first-run writer used
+  `config_path.write_text(DEFAULT_CONFIG, encoding="utf-8")`, which
+  leaves a truncated TOML on power loss / process kill mid-write;
+  the next run would see the malformed config and crash at
+  `tomllib.load`, turning a single bad shutdown into a hard-block
+  first-run experience. Now routes through `_fsutil.atomic_write_bytes`
+  (the F5/F6 helper), same shape as the F5 `init.py` MCP-client-config
+  and F6 `sync.py` `.gitignore` migrations: plain bytes payload, no
+  special mode bits, no privacy bar — the helper's chmod-after-rename
+  posture is the right fit.
+- **`bettermemory export -o PATH` is now atomic (Q29).** The CLI
+  export writer used `out_path.write_text(text + "\n", encoding="utf-8")`,
+  which leaves a truncated JSON on power loss / process kill
+  mid-write. For a CLI intended for scripted backup
+  (`bettermemory export -o backup.json`), a half-written file is the
+  exact failure mode the user is trying to guard against. Now routes
+  through `_fsutil.atomic_write_bytes`, completing Queue #29's
+  simple-bytes Branch A targets (F5 init.py, F6 sync.py, Q29 config.py,
+  Q29 cli/export.py). The remaining deferred sites
+  (`_atomic_write_post`, `episodes._write_path`,
+  `semantic.flush_persistent_cache`, `events._compress_rotating`)
+  all need fchmod-before-rename, which the current helper contract
+  doesn't cover.
 - **`Store.mark_verified` race shape — attestation overwrite (W8).**
   Mirror of the W2 `Store.update` CAS pattern, applied to the
   verification path. Pre-W8 two agents calling `memory_verify` on the
@@ -40,6 +117,48 @@ spells out exactly what's stable.
   catch the verify-vs-verify race; `last_verified_at` is the field
   that always moves on a successful verify, so it's the cheapest
   correct fingerprint.
+
+### Internal
+
+- **`EndorsementDebtRow` → `ColdEndorsementMemoriesRow` eval-module
+  rename (T8).** 3.2.0's T1 renamed the public `endorsement_debt`
+  field to `cold_endorsement_memories` across the health surface
+  but explicitly deferred the eval-module internal classes
+  (`EndorsementDebtRow`, `endorsement_debt_rows`,
+  `endorsement_debt_total`) as a separate API. That left drift
+  between the renamed public JSON key (already
+  `cold_endorsement_memories`) and the still-old internal Python
+  identifiers that filled it. T8 closes the drift:
+  `EndorsementDebtRow` → `ColdEndorsementMemoriesRow`;
+  `EvalReport.endorsement_debt_rows` → `cold_endorsement_memories_rows`;
+  `EvalReport.endorsement_debt_total` → `cold_endorsement_memories_total`;
+  function-local `debt_rows`/`debt_total` → `cold_rows`/`cold_total`;
+  comments/docstrings/render-text header ("Endorsement-debt memories"
+  → "Cold-endorsement memories") plus CLI `--min-retrievals` help
+  text; `TestEndorsementDebt` → `TestColdEndorsementMemories` and
+  `test_endorsement_debt_section` →
+  `test_cold_endorsement_memories_section`. Internal-only rename:
+  the MCP wire shape and eval JSON output key were already renamed
+  by T1; this only touches Python-level identifiers and CLI text.
+  No alias — the eval module's only external consumers are its
+  tests and the CLI wrapper, both migrated. Remaining
+  `endorsement_debt` snake_case sightings are confined to T9's
+  back-compat TOML alias in `config.py` and its tests, and
+  explanatory DESC-string regression-guard assertions in
+  `test_server_v12_features.py` / `test_health.py`.
+- **`flock_excl` annotation tightened to `Generator[None, None, None]`
+  (F15).** The `@contextlib.contextmanager`-decorated `flock_excl`
+  in `_fsutil.py` was typed as `Iterator[None]`, which loses
+  `send()` / return-T type information that `Generator[YieldT,
+  SendT, ReturnT]` preserves. Explicit three-arg form for Python
+  3.11+ compatibility (the single-arg `Generator[T]` shorthand is
+  3.13+ only). Purely type-annotation; no runtime impact.
+- **`_flock_windows` annotation matches F15 (F15-followup).**
+  Completes the F15 pattern sweep. `_flock_windows` is the generator
+  helper used via `yield from _flock_windows(...)` inside
+  `flock_excl`'s Windows branch; same shape, same fix. `Iterator`
+  is now unused in `_fsutil.py` and leaves the imports too. Purely
+  type-annotation; no runtime impact.
 
 ## 3.2.0 - 2026-05-27
 
@@ -104,7 +223,13 @@ individually-actionable. Tool count goes from 22 to 23 (new
   old `endorsement_debt_ratio_threshold` key will silently fall
   back to the default `0.0` after upgrade; rename to
   `cold_endorsement_ratio_threshold` if a non-default value
-  matters.
+  matters. **Note (corrected in 3.2.1):** the silent-fallback
+  behaviour described in the preceding two sentences no longer
+  applies. T9 adds a back-compat shim in `config.load_config` that
+  honours the legacy key (mapping it to `cold_endorsement_ratio_threshold`
+  when the new key is absent) and emits a one-shot deprecation
+  warning naming both keys plus the resolved config path. See the
+  T9 entry under Unreleased / 3.2.1 for the full four-case behaviour.
 
 ### Added
 
