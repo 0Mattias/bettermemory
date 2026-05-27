@@ -136,6 +136,9 @@ async def memory_scope_overview(
         events_snapshot,
         window_days=30,
         verification_stale_days=deps.config.behavior.verification_stale_days,
+        endorsement_debt_ratio_threshold=(
+            deps.config.behavior.endorsement_debt_ratio_threshold
+        ),
         caller_origin=current_origin,
     )
     # Use the recorder's session_id, not `state.session_id`.
@@ -169,6 +172,9 @@ async def memory_scope_overview(
             events_snapshot,
             window_days=30,
             verification_stale_days=deps.config.behavior.verification_stale_days,
+            endorsement_debt_ratio_threshold=(
+                deps.config.behavior.endorsement_debt_ratio_threshold
+            ),
             caller_origin=current_origin,
             since=prior_boundary,
         )

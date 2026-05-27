@@ -446,6 +446,7 @@ def _maybe_attach_curation_hint(
         iter_all_events(deps.store.root),
         window_days=30,
         verification_stale_days=behavior.verification_stale_days,
+        endorsement_debt_ratio_threshold=behavior.endorsement_debt_ratio_threshold,
     )
     pressure = counts["dead"] + counts["drifted"] + counts["endorsement_debt"]
     if pressure < threshold:

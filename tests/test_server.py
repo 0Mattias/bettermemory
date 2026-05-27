@@ -3153,6 +3153,196 @@ async def test_scope_overview_recently_removed_zero_when_clean(
     assert overview["recently_removed_in_worktree"] == 0
 
 
+async def test_endorsement_debt_ratio_threshold_threaded_to_all_callsites(
+    memory_dir: Path,
+) -> None:
+    """Regression: `BehaviorConfig.endorsement_debt_ratio_threshold` must
+    drive every `curation_counts` callsite, not just `memory_health`.
+    Earlier, only the deep `memory_health` surface read the knob — the
+    `memory_scope_overview` rollup and the per-write `curation_hint`
+    nudge fell back to the strict 0.0 default, so a user who configured
+    `endorsement_debt_ratio_threshold=0.5` saw the loosened bucket on
+    `memory_health` but the strict bucket on every session-start hint.
+
+    We seed a memory with 5 retrievals and 4 applieds where exactly 1
+    is explicit (ratio 1/4 = 0.25). At the configured 0.5 threshold the
+    memory IS endorsement debt (count = 1); at the strict 0.0 default
+    it is NOT (count = 0). Both `memory_scope_overview` and the
+    `curation_hint` block must surface the 0.5 reading.
+    """
+    from bettermemory.config import BehaviorConfig
+
+    # Build the server with the loosened threshold and a low
+    # curation-hint threshold so a single endorsement_debt entry trips
+    # the inline nudge on `memory_write`.
+    cfg = Config(
+        storage=StorageConfig(directory=str(memory_dir)),
+        behavior=BehaviorConfig(
+            endorsement_debt_ratio_threshold=0.5,
+            curation_hint_threshold=1,
+        ),
+    )
+    server_x = build_server(
+        config=cfg,
+        store=Store(memory_dir),
+        state=SessionState(),
+    )
+
+    # Write the candidate memory through the server so it lives in the
+    # store with a real id. Use an `infrastructure` scope so it isn't
+    # tagged ambient (ambient memories never land in endorsement_debt).
+    written = await _call(
+        server_x,
+        "memory_write",
+        content="postgres listens on 5432 in prod",
+        scopes=["infrastructure"],
+    )
+    mem_id = written["id"]
+
+    # Seed events directly into the active log so the retrieval /
+    # applied counts cross the endorsement-debt floor (5 retrievals).
+    # We bypass the recorder here because the recorder timestamps with
+    # `_utcnow_iso()` and we want determinism; the on-disk format is
+    # one JSON object per line, so a direct append matches what
+    # `iter_all_events` consumes.
+    events_path = memory_dir / ".events.jsonl"
+    extra_lines: list[str] = []
+    for i in range(5):
+        extra_lines.append(
+            json.dumps(
+                {
+                    "ts": f"2026-04-{i + 1:02d}T00:00:00Z",
+                    "session": "sess_seed",
+                    "kind": "search",
+                    "returned": [mem_id],
+                }
+            )
+        )
+    # 3 auto applieds.
+    for i in range(3):
+        extra_lines.append(
+            json.dumps(
+                {
+                    "ts": f"2026-04-{i + 10:02d}T00:00:00Z",
+                    "session": "sess_seed",
+                    "kind": "use",
+                    "ids": [mem_id],
+                    "outcome": "applied",
+                    "auto": True,
+                }
+            )
+        )
+    # 1 explicit applied → ratio 1/4 = 0.25.
+    extra_lines.append(
+        json.dumps(
+            {
+                "ts": "2026-04-15T00:00:00Z",
+                "session": "sess_seed",
+                "kind": "use",
+                "ids": [mem_id],
+                "outcome": "applied",
+            }
+        )
+    )
+    with events_path.open("ab") as f:
+        f.write(("\n".join(extra_lines) + "\n").encode("utf-8"))
+
+    # --- Surface 1: memory_scope_overview ---
+    overview = await _call(server_x, "memory_scope_overview", auto_scope=False)
+    assert overview["curation_pending"]["endorsement_debt"] == 1, (
+        "scope_overview must apply the configured threshold (0.5); the "
+        "seeded memory has ratio 1/4 = 0.25 < 0.5 and should land in the "
+        "endorsement_debt bucket."
+    )
+
+    # --- Surface 2: curation_hint on memory_write ---
+    # Fresh SessionState so the one-shot `curation_hint_checked` flag
+    # is False, and a real event store so the second callsite walks
+    # the same seeded log. With curation_hint_threshold=1 and at least
+    # one endorsement_debt entry, the hint must attach.
+    server_hint = build_server(
+        config=cfg,
+        store=Store(memory_dir),
+        state=SessionState(),
+    )
+    hint_res = await _call(
+        server_hint,
+        "memory_write",
+        content="another write to trigger the curation_hint",
+        scopes=["tools"],
+    )
+    assert "curation_hint" in hint_res, (
+        "curation_hint on memory_write must also see the loosened "
+        "threshold; otherwise the hint disagrees with the overview."
+    )
+    assert hint_res["curation_hint"]["counts"]["endorsement_debt"] == 1
+
+
+async def test_endorsement_debt_ratio_threshold_default_still_strict(
+    memory_dir: Path,
+) -> None:
+    """Back-compat: with the default 0.0 threshold, the same seeded
+    state (one explicit applied present) must NOT count as
+    endorsement_debt on any surface. This locks the default behaviour
+    against accidental loosening when threading the knob through."""
+    cfg = Config(storage=StorageConfig(directory=str(memory_dir)))
+    server_x = build_server(
+        config=cfg,
+        store=Store(memory_dir),
+        state=SessionState(),
+    )
+    written = await _call(
+        server_x,
+        "memory_write",
+        content="postgres listens on 5432 in prod",
+        scopes=["infrastructure"],
+    )
+    mem_id = written["id"]
+
+    events_path = memory_dir / ".events.jsonl"
+    extra_lines: list[str] = []
+    for i in range(5):
+        extra_lines.append(
+            json.dumps(
+                {
+                    "ts": f"2026-04-{i + 1:02d}T00:00:00Z",
+                    "session": "sess_seed",
+                    "kind": "search",
+                    "returned": [mem_id],
+                }
+            )
+        )
+    for i in range(3):
+        extra_lines.append(
+            json.dumps(
+                {
+                    "ts": f"2026-04-{i + 10:02d}T00:00:00Z",
+                    "session": "sess_seed",
+                    "kind": "use",
+                    "ids": [mem_id],
+                    "outcome": "applied",
+                    "auto": True,
+                }
+            )
+        )
+    extra_lines.append(
+        json.dumps(
+            {
+                "ts": "2026-04-15T00:00:00Z",
+                "session": "sess_seed",
+                "kind": "use",
+                "ids": [mem_id],
+                "outcome": "applied",
+            }
+        )
+    )
+    with events_path.open("ab") as f:
+        f.write(("\n".join(extra_lines) + "\n").encode("utf-8"))
+
+    overview = await _call(server_x, "memory_scope_overview", auto_scope=False)
+    assert overview["curation_pending"]["endorsement_debt"] == 0
+
+
 # ---------------------------------------------------------------------------
 # Tools list — new tools registered
 # ---------------------------------------------------------------------------
