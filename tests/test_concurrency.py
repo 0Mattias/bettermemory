@@ -1860,14 +1860,25 @@ def test_restore_happy_path_single_restore_succeeds(tmp_path: Path) -> None:
 def test_restore_after_concurrent_restore_raises_structured_failure(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """W7 regression for `restore`. Deterministically inject a
-    concurrent restore between `_find_tombstone_path_for_id` and the
-    lock acquisition: the second `restore` call must surface a
-    structured exception (NotTombstonedError or MemoryNotFoundError
-    with the "raced with" hint), NEVER a silent success that would
-    clobber the parallel restore's active file, and NEVER a bare
-    `FileNotFoundError` / OSError that would leak through the handler
-    layer as a 500-shaped MCP error."""
+    """W7 regression for `restore` racing with a concurrent restore.
+
+    Deterministically inject a nested `restore` between
+    `_find_tombstone_path_for_id` and the lock acquisition. The
+    nested restore runs to completion: it writes the active file AND
+    unlinks the tombstone. The outer restore then takes the lock and
+    hits the under-lock tombstone-recheck FIRST — `_id_still_at_path`
+    sees the tombstone is gone and raises `MemoryNotFoundError` with
+    the "raced with" hint. The active-recheck (which would raise
+    `NotTombstonedError`) does NOT fire here because the
+    tombstone-recheck short-circuits first; the active-recheck branch
+    is exercised by
+    `test_restore_raises_not_tombstoned_when_active_appears_under_lock`.
+
+    Contract: the loser surfaces a structured exception, NEVER a
+    silent success that would clobber the parallel restore's active
+    file, and NEVER a bare `FileNotFoundError` / OSError that would
+    leak through the handler layer as a 500-shaped MCP error.
+    """
     store = Store(tmp_path)
     memory = store.write(content="will be raced on restore", scopes=["tools"])
     store.tombstone(memory.id, reason="W7 setup")
@@ -1888,16 +1899,10 @@ def test_restore_after_concurrent_restore_raises_structured_failure(
 
     monkeypatch.setattr(Store, "_find_tombstone_path_for_id", racing_find)
 
-    # The outer restore must lose cleanly. The active-record recheck
-    # catches it as `NotTombstonedError` because the injected restore
-    # ran to completion (active file written) before the outer
-    # `_find_tombstone_path_for_id` returned — so the outer call's
-    # pre-lock `_find_path_for_id` happened BEFORE the active was
-    # created (we patched the tombstone-find, not the active-find), and
-    # the under-lock active-recheck catches the now-active id. Either
-    # exception class is a clean W7 outcome (NotTombstonedError or
-    # MemoryNotFoundError); both must carry a "raced with" hint.
-    with pytest.raises((NotTombstonedError, MemoryNotFoundError), match="raced with"):
+    # The nested restore unlinked the tombstone, so the outer call's
+    # under-lock tombstone-recheck fires first with
+    # `MemoryNotFoundError ("raced with concurrent restore or prune")`.
+    with pytest.raises(MemoryNotFoundError, match="raced with"):
         store.restore(memory.id)
 
     # Disk invariant: exactly one active file for the id (the winner
@@ -1906,6 +1911,81 @@ def test_restore_after_concurrent_restore_raises_structured_failure(
     assert final.id == memory.id
     with pytest.raises(MemoryNotFoundError):
         store.load_tombstone(memory.id)
+
+
+def test_restore_raises_not_tombstoned_when_active_appears_under_lock(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """W7 regression for `restore`'s under-lock active-recheck branch.
+
+    Companion to
+    `test_restore_after_concurrent_restore_raises_structured_failure`:
+    that test races the tombstone away (so the tombstone-recheck fires
+    first), leaving the active-recheck branch at `store.py:1006`
+    unexercised. Here we keep the tombstone in place and inject the
+    active record specifically at the under-lock recheck call site, so
+    only the active-recheck branch can fire.
+
+    Setup: patch `_find_path_for_id` to return `None` on the FIRST
+    call (the pre-lock "is the id already active?" check at
+    `store.py:954`, which must return None so `restore` proceeds past
+    it into the locked region) and a non-None path on the SECOND call
+    (the under-lock recheck at `store.py:1006`, simulating a parallel
+    actor having created the active record in the window between the
+    pre-lock check and the lock acquisition). The tombstone stays
+    on disk, so `_id_still_at_path(tombstone_path, memory.id)` returns
+    True and the tombstone-recheck passes; execution reaches the
+    active-recheck and raises `NotTombstonedError` with the "raced
+    with" hint.
+    """
+    store = Store(tmp_path)
+    memory = store.write(content="active appears mid-restore", scopes=["tools"])
+    store.tombstone(memory.id, reason="W7 active-recheck setup")
+
+    call_count = {"n": 0}
+    # Any existing path is fine — the recheck only inspects whether the
+    # return value is `is not None`, not the path's identity. Reuse the
+    # tombstone path so we don't have to fabricate a file.
+    tombstone_path = store._find_tombstone_path_for_id(memory.id)
+    assert tombstone_path is not None, "tombstone setup failed"
+
+    def fake_find_path_for_id(self: Store, mid: str) -> Path | None:
+        if mid != memory.id:
+            # Don't perturb unrelated lookups (e.g. internal calls for
+            # other ids — none expected in this flow, but defensive).
+            return None
+        call_count["n"] += 1
+        if call_count["n"] == 1:
+            # Pre-lock check at store.py:954 — must return None so
+            # `restore` proceeds past the up-front "already active?"
+            # guard.
+            return None
+        # Under-lock recheck at store.py:1006 — simulate a parallel
+        # restore having created the active record while we waited
+        # for the tombstone lock. Returning any non-None path trips
+        # the recheck.
+        return tombstone_path
+
+    monkeypatch.setattr(Store, "_find_path_for_id", fake_find_path_for_id)
+
+    with pytest.raises(NotTombstonedError, match="raced with"):
+        store.restore(memory.id)
+
+    # Confirm both rechecks ran (pre-lock + under-lock); a third call
+    # would mean we wandered off-flow.
+    assert call_count["n"] == 2, (
+        f"expected exactly two _find_path_for_id calls (pre-lock + "
+        f"under-lock), got {call_count['n']}"
+    )
+
+    # Disk invariant: the tombstone is still on disk (we never let the
+    # restore complete) and no active file got written for `memory.id`.
+    # `load_one` walks `_iter_active_paths` directly (so our
+    # `_find_path_for_id` patch is irrelevant), finds no active record,
+    # then matches the tombstone and raises `TombstonedError`.
+    assert store.load_tombstone(memory.id).id == memory.id
+    with pytest.raises(TombstonedError):
+        store.load_one(memory.id)
 
 
 def test_restore_after_concurrent_prune_raises_missing_tombstone(
