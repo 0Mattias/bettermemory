@@ -140,6 +140,25 @@ def _cli_export(
 
     if output:
         out_path = _Path(output)
+        # Pre-check the parent dir exists. `atomic_write_bytes` would
+        # otherwise silently create the parent tree via
+        # `parent.mkdir(parents=True, exist_ok=True)` — that auto-mkdir
+        # is intentional for fresh-install callers (init.py creating
+        # ~/.claude.json under a missing ~/.config, sync.py creating a
+        # .gitignore under a fresh sync root) but wrong here: a user
+        # who typed `bettermemory export -o /typod/path/backup.json`
+        # wants a loud error, not a silently-created
+        # /typod/path/ tree with their backup buried inside. Pre-3.2.1
+        # the bare `write_text` raised FileNotFoundError for missing
+        # parents; this restores that contract while preserving the
+        # atomic-write durability benefit. `out_path.parent` is
+        # Path(".") when output is a bare filename, which always
+        # exists — so this only fires on actually-missing parents.
+        parent = out_path.parent
+        if not parent.exists():
+            raise FileNotFoundError(
+                f"--output parent directory does not exist: {parent}"
+            )
         # Atomic + durable write via `_fsutil.atomic_write_bytes`: a plain
         # `out_path.write_text(...)` here would leave a truncated JSON on
         # power loss / process kill mid-write, defeating the point of a

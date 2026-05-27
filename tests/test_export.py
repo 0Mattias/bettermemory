@@ -208,3 +208,45 @@ def test_export_to_file_no_tombstones_skips_count_in_summary(
     assert "tombstones" not in captured.err
     parsed = json.loads(out_path.read_text(encoding="utf-8"))
     assert "tombstoned_memories" not in parsed
+
+
+def test_export_to_file_missing_parent_dir_raises(
+    populated_store: tuple[Path, Store],
+    tmp_path: Path,
+) -> None:
+    """`bettermemory export -o /missing/dir/out.json` should raise loudly
+    rather than silently creating the parent tree. Pre-3.2.1 the bare
+    ``write_text`` raised FileNotFoundError for a missing parent; the
+    Q29 migration to ``atomic_write_bytes`` inadvertently auto-created
+    the parent (the helper has ``parents=True, exist_ok=True`` for
+    fresh-install callers like ``init.py``). The pre-check in
+    ``_cli_export`` restores the 3.2.0 contract — a typo'd ``-o`` path
+    surfaces as a loud error, not a silently buried backup."""
+    missing_parent = tmp_path / "nonexistent_subdir"
+    out_path = missing_parent / "backup.json"
+    assert not missing_parent.exists()
+
+    with pytest.raises(FileNotFoundError) as exc_info:
+        _cli_export(output=str(out_path), include_tombstones=True, scopes=None)
+
+    # The message should name the missing parent so a user can spot the
+    # typo without re-reading the command they just typed.
+    assert str(missing_parent) in str(exc_info.value)
+
+    # And the helper did not paper over it — the parent tree was not
+    # created as a side effect of the failed call.
+    assert not missing_parent.exists()
+
+
+def test_export_to_file_bare_filename_does_not_raise(
+    populated_store: tuple[Path, Store],
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A bare filename has ``Path('.').parent == Path('.')``, which always
+    exists — the pre-check must not raise in that case. Guard against a
+    naïve ``if not parent.exists()`` regression that would reject every
+    cwd-relative export path."""
+    monkeypatch.chdir(tmp_path)
+    _cli_export(output="bare.json", include_tombstones=False, scopes=None)
+    assert (tmp_path / "bare.json").exists()
