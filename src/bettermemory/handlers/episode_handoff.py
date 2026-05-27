@@ -76,7 +76,24 @@ async def episode_handoff(
     `prior_session_id` is None. Caps `max_episodes` at 50 to keep the
     response bounded; defaults to 5 to match the rest of the read
     surface (`default_max_results`).
+
+    Auto-resolution honors caller worktree isolation: a candidate
+    session_id is only adopted when the session has at least one
+    episode whose `origin.worktree_root` matches the caller's
+    captured worktree. Two worktrees of one repository that share a
+    memory root (BETTERMEMORY_DIR) would otherwise see each other's
+    iteration state through this handoff — `memory_search` and
+    `memory_scope_overview` enforce the same isolation, and the
+    handoff primitive has to mirror it or it becomes the cross-tree
+    leak path. When the caller has no worktree (e.g., running
+    outside any git checkout), symmetric isolation only accepts
+    sessions whose episodes also have no worktree origin — see
+    `_worktrees_equal_strict`. An explicit `prior_session_id` is
+    respected verbatim; the caller passing one in is explicit
+    consent that they own the cross-tree concern.
     """
+    from .. import _handlers as _h
+
     state = deps.sessions.for_request(ctx)
     _advance_turn(state, deps.recorder)
 
@@ -88,20 +105,84 @@ async def episode_handoff(
     if resolved_session_id is None:
         from ..events import iter_all_events
 
-        # Walk the event log to find the most-recent session_id that
-        # isn't the recorder's. Same `find_prior_session_boundary`
-        # discipline `memory_scope_overview` uses — anchor on the
-        # recorder id because that's the id every event in the log
-        # carries.
-        latest_ts = None
+        # Capture caller origin at handler entry — same shim
+        # discipline scope_overview / search / write use. The
+        # worktree_root field is the discriminator the auto-scope
+        # filter on `should_include_for_caller` uses for memories;
+        # we apply the same key here for episodes so the two
+        # surfaces stay in sync about what "this worktree's prior
+        # session" means.
+        caller_origin = _h.capture_origin()
+        caller_worktree = caller_origin.worktree_root if caller_origin else None
+
+        # Walk the event log to collect candidate session_ids with
+        # their max event timestamp (descending order = most recent
+        # first). Same `find_prior_session_boundary` discipline
+        # `memory_scope_overview` uses — anchor on the recorder id
+        # because that's the id every event in the log carries.
+        # Events themselves don't stamp origin today, so the
+        # per-candidate worktree check happens against the episode
+        # files on disk (which DO carry origin via episode_write).
+        latest_ts_by_session: dict[str, str] = {}
         for ev in iter_all_events(deps.store.root):
             sid = ev.get("session") or ev.get("session_id")
             if not isinstance(sid, str) or sid == deps.recorder.session_id:
                 continue
             ts = ev.get("ts")
-            if latest_ts is None or (isinstance(ts, str) and ts > latest_ts):
-                latest_ts = ts
+            if not isinstance(ts, str):
+                continue
+            prev = latest_ts_by_session.get(sid)
+            if prev is None or ts > prev:
+                latest_ts_by_session[sid] = ts
+
+        # Most recent first. Tiebreak on session_id for determinism
+        # in the (very unlikely) ts-collision case across different
+        # sessions; without it the dict-iteration order would leak
+        # into the result.
+        ordered = sorted(
+            latest_ts_by_session.items(),
+            key=lambda kv: (kv[1], kv[0]),
+            reverse=True,
+        )
+        for sid, _ts in ordered:
+            try:
+                candidate_eps = deps.episode_store.list_by_session(sid)
+            except ValueError:
+                # Hostile session_id surfaced in the event log;
+                # `list_by_session` validates the on-disk path
+                # shape. Skip rather than crash the handler.
+                continue
+            # A candidate matches when EITHER:
+            #   1. It has at least one episode whose origin's
+            #      worktree_root matches the caller's under the
+            #      strict (None-only-matches-None) rule, OR
+            #   2. It has zero episodes at all (the session
+            #      existed but either never wrote a journal, or
+            #      had all of its episodes promoted away). In
+            #      that case we surface `{sid, episodes: []}` so
+            #      the caller can still distinguish "no prior
+            #      session" from "prior session existed but is
+            #      empty" — matching the original docstring
+            #      contract. There's no run-state leak in this
+            #      branch because there are no episode bodies
+            #      to surface; only the bare session_id is
+            #      exposed, which is an opaque ULID.
+            # The discriminator under (1) is the worktree_root
+            # itself, not the branch — one session can legitimately
+            # span branches inside one worktree, so we don't
+            # require ALL episodes to match.
+            if not candidate_eps:
                 resolved_session_id = sid
+                break
+            if any(
+                _worktrees_equal_strict(
+                    ep.origin.worktree_root if ep.origin else None,
+                    caller_worktree,
+                )
+                for ep in candidate_eps
+            ):
+                resolved_session_id = sid
+                break
 
     episodes: list[dict[str, Any]] = []
     if resolved_session_id is not None:
@@ -132,6 +213,39 @@ async def episode_handoff(
         "prior_session_id": resolved_session_id,
         "episodes": episodes,
     }
+
+
+def _worktrees_equal_strict(
+    candidate_worktree: str | None,
+    caller_worktree: str | None,
+) -> bool:
+    """Strict worktree equality for the handoff isolation filter.
+
+    Unlike `origin.worktrees_match` (which is permissive: either
+    side None → True so legacy memories without a worktree field
+    pass through), this is the stricter rule the handoff needs:
+
+      None == None → True
+      "A" == "A"   → True
+      None == "A"  → False
+      "A" == None  → False
+      "A" == "B"   → False
+
+    The asymmetry vs. `worktrees_match` matters because the
+    handoff is the iteration-entry adoption point for run-state.
+    A leak here surfaces the WRONG worktree's takeaways as "what
+    the prior session concluded" — the most embarrassing failure
+    mode the audit named. Symmetric None-only-matches-None
+    isolation closes that hole: a caller running outside any git
+    checkout never inherits a session whose episodes were
+    captured from inside a worktree (and vice versa). Legacy
+    episodes written before the worktree_root field shipped
+    (origin=None or origin.worktree_root=None) are visible only
+    to callers in the same all-null state — a strictly tighter
+    rule than `should_include_for_caller`'s, which is the right
+    call for isolation-vs-discovery surface trade.
+    """
+    return candidate_worktree == caller_worktree
 
 
 __all__ = ["DESC_EPISODE_HANDOFF", "episode_handoff"]

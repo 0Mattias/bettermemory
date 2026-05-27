@@ -1485,6 +1485,79 @@ async def test_episode_handoff_respects_explicit_prior_session_id(
     assert res["episodes"][0]["takeaway"] == "from A"
 
 
+async def test_episode_handoff_filters_prior_session_by_caller_worktree(
+    memory_dir: Path,
+    monkeypatch: Any,
+) -> None:
+    """Two worktrees of one repo sharing a memory root must not see each
+    other's iteration takeaways through the auto-resolve path. Worktree
+    A writes an event + episode; a fresh server in worktree B asks for
+    a handoff with no explicit `prior_session_id` and gets the empty
+    result. `memory_search` and `memory_scope_overview` already enforce
+    this via `should_include_for_caller`; the handoff has to mirror
+    that or it becomes the cross-tree leak path.
+
+    The caller's explicit-override semantic is preserved by
+    `test_episode_handoff_respects_explicit_prior_session_id` above —
+    this case only pins the auto-resolve filter."""
+    import bettermemory._handlers as handlers_module
+    import bettermemory.server as server_module
+    from bettermemory.origin import Origin
+
+    cfg = Config(storage=StorageConfig(directory=str(memory_dir)))
+
+    origin_a = Origin(
+        cwd="/worktrees/repo-feature-x",
+        repo="git@github.com:example/repo.git",
+        branch="feature-x",
+        worktree_root="/worktrees/repo-feature-x",
+    )
+    origin_b = Origin(
+        cwd="/worktrees/repo-bug-fix",
+        repo="git@github.com:example/repo.git",
+        branch="bug-fix",
+        worktree_root="/worktrees/repo-bug-fix",
+    )
+
+    # Patch capture_origin to return A's origin while server_a builds /
+    # writes. The handlers re-resolve the symbol from the module on each
+    # call, so re-assigning later for server_b is enough. `monkeypatch`
+    # restores both bindings at test teardown so we don't leak the
+    # fake into sibling tests.
+    def make_capture(origin: Origin):
+        def _capture(cwd: Any = None) -> Origin:
+            return origin
+
+        return _capture
+
+    monkeypatch.setattr(handlers_module, "capture_origin", make_capture(origin_a))
+    monkeypatch.setattr(server_module, "capture_origin", make_capture(origin_a))
+
+    server_a = build_server(config=cfg, store=Store(memory_dir), state=SessionState())
+    await _call(
+        server_a,
+        "episode_write",
+        body="iter 1 — A's worktree-local state",
+        takeaway="feature-x branch: blocked on auth refactor",
+    )
+
+    # Now flip to worktree B and ask for the handoff. server_b inherits
+    # the same memory root, the same event log (which carries A's
+    # session_id), but its caller-origin says it's in a different
+    # worktree of the same repo. The fix is what makes that case
+    # surface NO prior session — without it, A's takeaway would leak in
+    # as "what the prior session concluded" for B.
+    monkeypatch.setattr(handlers_module, "capture_origin", make_capture(origin_b))
+    monkeypatch.setattr(server_module, "capture_origin", make_capture(origin_b))
+
+    server_b = build_server(config=cfg, store=Store(memory_dir), state=SessionState())
+    res = await _call(server_b, "episode_handoff")
+    # The cross-worktree case must look like "no prior session in this
+    # worktree" from B's perspective — same shape as a fresh store.
+    assert res["prior_session_id"] is None
+    assert res["episodes"] == []
+
+
 # ---------------------------------------------------------------------------
 # memory_write — inline curation hint (continued)
 # ---------------------------------------------------------------------------
