@@ -73,11 +73,12 @@ bettermemory occupies the file-backed, retrieval-on-demand corner of the memory-
 | **Claim-level audit trail** | **`memory_record_use(claim_excerpts=…)`** | — | — | — | — | — |
 | **User-inference confirmation tier** | **Claims about the user always stage for veto** | Auto-extraction (no staging) | Background memory manager | Auto-ingest | Auto-write | Auto-compress |
 | **Endorsement-debt visibility** | **`memory_health` surfaces never-deliberately-used hits** | — | Letta Evals (offline) | — | — | — |
+| **Run-state journal tier (TTL-pruned, promote-gated)** | **`episode_*` family stores loop / subagent run-state separately, doesn't pollute durable retrieval** | Working memory (auto-decayed) | Core / recall / archival tiering | Time-versioned in one graph | Auto-injected filesystem mix | Per-session blob |
 | Inter-memory links | Typed (supersedes / contradicts / extends / depends_on) | Graph edges (optional Neo4j) | Implicit via tiers | Graph edges (Graphiti) | — | KG |
 | Cross-host sync | Built-in git wrapper, BYO remote | Self-host or managed cloud | Self-host or managed cloud | Self-host or managed cloud | Provider-managed | Per-machine |
 | License | MIT | Apache-2.0 | Apache-2.0 | Apache-2.0 (Graphiti) | Closed | MIT |
 
-The four bolded rows are the lane bettermemory deliberately runs in. The dashes elsewhere aren't gaps in those projects — they're choices, and most of those projects optimize for objectives bettermemory doesn't (multi-tenant cloud, graph reasoning over evolving facts, transparent in-context memory). Pick what fits.
+The five bolded rows are the lane bettermemory deliberately runs in. The dashes elsewhere aren't gaps in those projects — they're choices, and most of those projects optimize for objectives bettermemory doesn't (multi-tenant cloud, graph reasoning over evolving facts, transparent in-context memory). Pick what fits.
 
 ## Coexistence with Claude Code's built-in memory
 

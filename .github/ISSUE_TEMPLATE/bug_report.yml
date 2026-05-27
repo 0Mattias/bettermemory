@@ -57,7 +57,7 @@ body:
     attributes:
       label: bettermemory version
       description: Output of `bettermemory --version`.
-      placeholder: bettermemory 3.0.0
+      placeholder: bettermemory 3.1.0
     validations:
       required: true
 
