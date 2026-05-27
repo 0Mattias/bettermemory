@@ -305,14 +305,48 @@ class EpisodeStore:
                 continue
             newest_mtime = _newest_mtime_in_dir(session_dir)
             if newest_mtime is None:
-                # Empty subdir — drop it. `rmdir` only succeeds on an
-                # empty dir, so a concurrent write that just landed a
-                # file in here will make this fail with ENOTEMPTY and
-                # we skip — the next prune pass will reconsider.
+                # Empty subdir — drop it under the per-session flock.
+                # Without the lock there's a writer-race window: a
+                # concurrent `episode_write` that holds the flock has
+                # `mkdir(exist_ok=True)`'d the session_dir but not yet
+                # rename'd its `<ulid>.md` into place (the tempfile is
+                # still under construction). Our unlocked walk sees an
+                # empty dir, decides to rmdir, and wins between the
+                # writer's mkdir and its NamedTemporaryFile open —
+                # the writer's next syscall raises FileNotFoundError
+                # to the MCP caller. Mirror the past-cutoff branch's
+                # discipline: take the per-session flock, recheck
+                # emptiness under the lock, then rmdir.
+                #
+                # Same lockfile placement (`episodes_dir`, not
+                # `session_dir`) and same persistence rationale as the
+                # past-cutoff branch — see the long comment below.
+                lock_anchor = self.episodes_dir / f".session-{session_name}"
                 try:
-                    session_dir.rmdir()
+                    with flock_excl(lock_anchor):
+                        fresh_mtime = _newest_mtime_in_dir(session_dir)
+                        if fresh_mtime is not None:
+                            # Writer landed during our unlocked walk
+                            # and our flock-acquire — the dir is no
+                            # longer empty. Leave it alone; the next
+                            # prune pass will reconsider via the
+                            # past-cutoff branch.
+                            continue
+                        session_dir.rmdir()
+                    pruned.append(session_name)
+                except FileNotFoundError:
+                    # Peer pruner won the race between our unlocked
+                    # walk and our flock acquisition. Treat as success
+                    # — the observable outcome (session_dir gone) is
+                    # what the caller wanted.
                     pruned.append(session_name)
                 except OSError:
+                    # Either ENOTEMPTY (a writer slipped a file in
+                    # between our locked recheck and rmdir — possible
+                    # only via a non-flock-respecting peer, but cheap
+                    # to handle) or another transient filesystem
+                    # error. Skip this session; next prune pass will
+                    # reconsider.
                     continue
                 continue
             if newest_mtime < cutoff_epoch:

@@ -464,3 +464,188 @@ def test_excluded_from_memory_store_iteration(tmp_path: Path) -> None:
 
     memories = store.load_all()
     assert memories == []
+
+
+def test_prune_empty_dir_holds_flock_while_writer_runs(
+    episode_store: EpisodeStore,
+) -> None:
+    """Empty-dir branch of `prune_old_sessions` must respect the same
+    per-session flock the past-cutoff branch does. Symmetric to
+    `test_writer_progresses_while_prune_waits_on_lock` and
+    `test_prune_blocks_while_writer_holds_flock` but for the empty-dir
+    branch: a writer holds the per-session flock with an empty
+    session_dir in place; the concurrent prune must BLOCK on the
+    flock-acquire (not race past it and rmdir the dir that the writer
+    just `mkdir`'d, about to land a tempfile into).
+    """
+    import threading
+    from bettermemory._fsutil import flock_excl
+
+    # Set up an empty session_dir without writing any episode — this
+    # is the exact shape the bug targets (writer has mkdir'd but not
+    # yet rename'd its tempfile into place).
+    episode_store.episodes_dir.mkdir(mode=0o700, exist_ok=True)
+    empty_dir = episode_store.episodes_dir / "sess_empty"
+    empty_dir.mkdir(mode=0o700)
+
+    lock_anchor = episode_store.episodes_dir / ".session-sess_empty"
+    writer_holding = threading.Event()
+    writer_release = threading.Event()
+
+    def hold_writer_lock() -> None:
+        with flock_excl(lock_anchor):
+            writer_holding.set()
+            writer_release.wait(timeout=5.0)
+
+    holder = threading.Thread(target=hold_writer_lock)
+    holder.start()
+    try:
+        writer_holding.wait(timeout=5.0)
+        assert writer_holding.is_set()
+
+        prune_done = threading.Event()
+        prune_result: list[list[str]] = []
+
+        def background_prune() -> None:
+            prune_result.append(episode_store.prune_old_sessions(ttl_days=30))
+            prune_done.set()
+
+        pt = threading.Thread(target=background_prune)
+        pt.start()
+        # Give the prune a generous window to (incorrectly) race
+        # through and rmdir the held dir. If it completes here, the
+        # flock isn't serialising the empty-dir branch — that's the
+        # bug we're protecting against.
+        time.sleep(0.1)
+        assert not prune_done.is_set(), (
+            "prune raced through the per-session flock on the empty-dir "
+            "branch — writer's mkdir+tempfile window is not serialised"
+        )
+        assert empty_dir.exists(), "prune rmdir'd the empty dir before lock release"
+
+        writer_release.set()
+        pt.join(timeout=5.0)
+        assert prune_done.is_set()
+        # After the writer released, the prune acquires the lock, the
+        # recheck still sees an empty dir (we never landed a file),
+        # and the rmdir succeeds.
+        assert "sess_empty" in prune_result[0]
+        assert not empty_dir.exists()
+    finally:
+        writer_release.set()
+        holder.join(timeout=5.0)
+
+
+def test_prune_empty_dir_recheck_skips_when_writer_landed_after_unlocked_walk(
+    episode_store: EpisodeStore,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Multi-MCP race on the empty-dir branch: process A's
+    `prune_old_sessions` does an unlocked stat on an empty session_dir,
+    decides to rmdir. Between the stat and the flock-acquire, process
+    B's `episode_write` slipped in, completed its mkdir + tempfile
+    rename — the dir is no longer empty. The locked recheck must see
+    the fresh mtime and SKIP the rmdir, otherwise A wipes a directory
+    that's logically live.
+
+    Pin by stubbing `_newest_mtime_in_dir` to return None on the first
+    call (the unlocked walk) and a fresh mtime on the second call
+    (the locked recheck), reproducing the exact race deterministically
+    without threading."""
+    import bettermemory.episodes as episodes_mod
+
+    episode_store.episodes_dir.mkdir(mode=0o700, exist_ok=True)
+    raced_dir = episode_store.episodes_dir / "sess_emptied_then_filled"
+    raced_dir.mkdir(mode=0o700)
+
+    real_newest = episodes_mod._newest_mtime_in_dir
+    calls: list[Path] = []
+
+    def staggered_newest(path: Path) -> float | None:
+        calls.append(path)
+        if path == raced_dir:
+            # First call (unlocked walk): return None so prune takes
+            # the empty-dir branch. Second call (locked recheck):
+            # return a fresh mtime so prune skips the rmdir. Other
+            # paths get the real implementation untouched.
+            if calls.count(raced_dir) == 1:
+                return None
+            return time.time()
+        return real_newest(path)
+
+    monkeypatch.setattr(episodes_mod, "_newest_mtime_in_dir", staggered_newest)
+
+    pruned = episode_store.prune_old_sessions(ttl_days=30)
+
+    assert "sess_emptied_then_filled" not in pruned, (
+        f"prune deleted an empty dir whose locked-recheck saw a fresh "
+        f"mtime (writer landed during the race window): {pruned}"
+    )
+    assert raced_dir.exists(), (
+        "session_dir was rmdir'd despite the locked-recheck seeing fresh mtime"
+    )
+    # Both walks must have happened — the unlocked stat and the
+    # locked recheck. A single call would mean the recheck was
+    # skipped and the race window is still open.
+    assert calls.count(raced_dir) == 2, (
+        f"expected unlocked stat + locked recheck (2 calls on raced_dir), "
+        f"saw {calls.count(raced_dir)}"
+    )
+
+
+def test_prune_empty_dir_still_deletes_truly_empty_session(
+    episode_store: EpisodeStore,
+) -> None:
+    """Regression pin: the flock + recheck logic on the empty-dir
+    branch must NOT break the base case — a session_dir with no
+    files and no concurrent writer still gets deleted on the next
+    prune pass. Without this pin a future refactor could leave the
+    locked recheck always-truthy and silently turn the empty-dir
+    branch into a no-op."""
+    episode_store.episodes_dir.mkdir(mode=0o700, exist_ok=True)
+    empty_dir = episode_store.episodes_dir / "sess_truly_empty"
+    empty_dir.mkdir(mode=0o700)
+
+    pruned = episode_store.prune_old_sessions(ttl_days=30)
+    assert "sess_truly_empty" in pruned
+    assert not empty_dir.exists()
+
+
+def test_prune_empty_dir_treats_vanished_dir_as_success(
+    episode_store: EpisodeStore,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Peer-prune race on the empty-dir branch: another bettermemory
+    process pruning the same store rmdir'd the session dir between
+    OUR unlocked mtime stat and OUR flock acquisition. The empty-dir
+    branch must treat the resulting `FileNotFoundError` from `rmdir`
+    as "already gone, success" and append the session to `pruned`,
+    not swallow it as a generic OSError and lose the bookkeeping.
+
+    Patch `Path.rmdir` to raise FileNotFoundError, simulating a peer
+    prune that won the race."""
+    episode_store.episodes_dir.mkdir(mode=0o700, exist_ok=True)
+    target = episode_store.episodes_dir / "sess_peer_raced_empty"
+    target.mkdir(mode=0o700)
+
+    real_rmdir = Path.rmdir
+    raised = {"done": False}
+
+    def racing_rmdir(self: Path) -> None:
+        # Actually remove the dir (so the post-condition holds), then
+        # raise FileNotFoundError on the first call against our target
+        # to simulate a peer prune that won. Other rmdir callers
+        # (none in this test, but defensive) get the real behaviour.
+        if self == target and not raised["done"]:
+            real_rmdir(self)
+            raised["done"] = True
+            raise FileNotFoundError(2, "No such file or directory", str(self))
+        real_rmdir(self)
+
+    monkeypatch.setattr(Path, "rmdir", racing_rmdir)
+
+    pruned = episode_store.prune_old_sessions(ttl_days=30)
+    assert "sess_peer_raced_empty" in pruned, (
+        "empty-dir branch should record a peer-raced rmdir as a successful prune"
+    )
+    assert not target.exists()
