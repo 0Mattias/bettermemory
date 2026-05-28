@@ -16,6 +16,7 @@ import pytest
 
 from bettermemory.config import Config
 from bettermemory.consolidate import (
+    AUTO_CONSOLIDATE_EVENT,
     ColdScopeSuggestion,
     ConsolidateReport,
     DedupCandidate,
@@ -29,8 +30,9 @@ from bettermemory.consolidate import (
     find_scope_typo_pairs,
     render_json,
     render_text,
+    run_auto_consolidate,
 )
-from bettermemory.events import Recorder, iter_all_events
+from bettermemory.events import Recorder, iter_all_events, iter_events
 from bettermemory.models import Category, Confidence, Memory, Source, generate_ulid
 from bettermemory.server import (
     _cli_consolidate_acknowledge_debt,
@@ -1209,3 +1211,143 @@ async def test_cli_consolidate_acknowledge_misses_via_subprocess(
     ]
     assert len(cutoff_events) == 1
     assert cutoff_events[0]["cutoff_ts"] == cutoff
+
+
+# ---------------------------------------------------------------------------
+# run_auto_consolidate — the opt-in self-improving loop
+# (debounced, bounded, conservative, reversible, recorded)
+# ---------------------------------------------------------------------------
+
+
+def _auto_event(now: datetime, *, hours_ago: float) -> dict[str, Any]:
+    return {
+        "kind": AUTO_CONSOLIDATE_EVENT,
+        "ts": (now - timedelta(hours=hours_ago)).isoformat(),
+    }
+
+
+def test_auto_consolidate_applies_safe_subset_and_records_event(
+    store: Store, memory_dir: Path
+) -> None:
+    """First run (no prior event) applies the structurally-safe subset —
+    here, dedup of identical bodies — and records exactly one reviewable
+    `auto_consolidate` event (the audit-transparency contract)."""
+    store.write(content="alpha beta gamma delta epsilon zeta", scopes=["tools"])
+    store.write(content="alpha beta gamma delta epsilon zeta", scopes=["tools"])
+
+    rec = Recorder(root=memory_dir, session_id="sess_auto")
+    result = run_auto_consolidate(
+        store,
+        recorder=rec,
+        events=[],
+        session_id="sess_auto",
+        interval_hours=24.0,
+        max_memories=500,
+    )
+    assert result is not None
+    assert result["status"] == "ran"
+    assert result["tombstoned"] >= 1
+    # One keeper remains active; the duplicate was tombstoned.
+    assert len({m.id for m in store.load_all()}) == 1
+    auto_events = [
+        e for e in iter_events(memory_dir) if e.get("kind") == AUTO_CONSOLIDATE_EVENT
+    ]
+    assert len(auto_events) == 1
+    assert auto_events[0]["status"] == "ran"
+    assert auto_events[0]["tombstoned"] >= 1
+
+
+def test_auto_consolidate_debounces_within_interval(
+    store: Store, memory_dir: Path
+) -> None:
+    """A prior auto_consolidate event inside the window suppresses the run
+    entirely — returns None, mutates nothing, records nothing."""
+    store.write(content="alpha beta gamma delta", scopes=["tools"])
+    store.write(content="alpha beta gamma delta", scopes=["tools"])
+
+    now = datetime(2026, 1, 1, 12, 0, tzinfo=timezone.utc)
+    rec = Recorder(root=memory_dir, session_id="sess_auto")
+    result = run_auto_consolidate(
+        store,
+        recorder=rec,
+        events=[_auto_event(now, hours_ago=1)],
+        session_id="sess_auto",
+        interval_hours=24.0,
+        max_memories=500,
+        now=now,
+    )
+    assert result is None
+    assert len(store.load_all()) == 2  # untouched
+    assert not (memory_dir / ".events.jsonl").exists()  # nothing recorded
+
+
+def test_auto_consolidate_runs_after_interval_elapsed(
+    store: Store, memory_dir: Path
+) -> None:
+    """A prior event OLDER than the interval lets the pass run again."""
+    store.write(content="alpha beta gamma delta epsilon", scopes=["tools"])
+    store.write(content="alpha beta gamma delta epsilon", scopes=["tools"])
+
+    now = datetime(2026, 1, 1, 12, 0, tzinfo=timezone.utc)
+    rec = Recorder(root=memory_dir, session_id="sess_auto")
+    result = run_auto_consolidate(
+        store,
+        recorder=rec,
+        events=[_auto_event(now, hours_ago=48)],
+        session_id="sess_auto",
+        interval_hours=24.0,
+        max_memories=500,
+        now=now,
+    )
+    assert result is not None
+    assert result["status"] == "ran"
+    assert len(store.load_all()) == 1
+
+
+def test_auto_consolidate_skips_oversized_store(store: Store, memory_dir: Path) -> None:
+    """Above max_memories the pass defers to manual consolidate: it records
+    a skip event and mutates nothing (keeps the turn-end hook responsive)."""
+    store.write(content="alpha beta gamma", scopes=["tools"])
+    store.write(content="alpha beta gamma", scopes=["tools"])
+
+    rec = Recorder(root=memory_dir, session_id="sess_auto")
+    result = run_auto_consolidate(
+        store,
+        recorder=rec,
+        events=[],
+        session_id="sess_auto",
+        interval_hours=24.0,
+        max_memories=1,  # below the 2-memory store
+    )
+    assert result is not None
+    assert result["status"] == "skipped_store_too_large"
+    assert len(store.load_all()) == 2  # nothing tombstoned
+    auto_events = [
+        e for e in iter_events(memory_dir) if e.get("kind") == AUTO_CONSOLIDATE_EVENT
+    ]
+    assert len(auto_events) == 1
+    assert auto_events[0]["status"] == "skipped_store_too_large"
+
+
+def test_auto_consolidate_tombstone_is_reversible(
+    store: Store, memory_dir: Path
+) -> None:
+    """The reversal contract that makes unattended apply safe: an
+    auto-applied dedup tombstone is restorable via the normal path."""
+    store.write(content="alpha beta gamma delta epsilon zeta eta", scopes=["tools"])
+    store.write(content="alpha beta gamma delta epsilon zeta eta", scopes=["tools"])
+
+    rec = Recorder(root=memory_dir, session_id="sess_auto")
+    run_auto_consolidate(
+        store,
+        recorder=rec,
+        events=[],
+        session_id="sess_auto",
+        interval_hours=24.0,
+        max_memories=500,
+    )
+    tombstones = store.load_tombstones()
+    assert len(tombstones) == 1
+    restored = store.restore(tombstones[0].id)
+    assert restored.id == tombstones[0].id
+    assert len(store.load_all()) == 2  # both active again

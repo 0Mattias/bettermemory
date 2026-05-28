@@ -215,6 +215,29 @@ max_bytes = 10000000
 # Set true to restore the legacy verbatim shape — useful for debugging your
 # own ranker, less so for shared boxes.
 log_queries_verbatim = false
+
+[consolidate]
+# Opt-in unattended consolidation — the self-improving loop. OFF by
+# default. When enabled (and [telemetry] is on — the event log is both
+# the debounce clock and the audit trail), the Stop hook runs the
+# STRUCTURALLY-SAFE consolidation subset at turn end: conservative
+# near-duplicate dedup (a reversible tombstone) and demote-never-applied
+# (a non-destructive fact->ambient retag). No LLM passes, no contradiction
+# resolution — nothing that needs judgement. Every action lands as a
+# reviewable, reversible tombstone/event (memory_list_tombstones + the
+# event log) — the deliberate opposite of invisible "Dreaming"
+# consolidation. Turn this on to let the store quietly improve itself.
+auto_apply = false
+
+# Minimum hours between unattended runs. The Stop hook fires every turn;
+# this debounces so the O(N^2) dedup runs at most once per window.
+auto_apply_interval_hours = 24.0
+
+# Skip the unattended pass when the active set exceeds this many memories
+# — the pairwise dedup is O(N^2) and the turn-end hook must stay
+# responsive. Larger stores should run `bettermemory consolidate --apply`
+# by hand (or raise this once you've measured the cost on your store).
+auto_apply_max_memories = 500
 """
 
 
@@ -350,11 +373,33 @@ class TelemetryConfig:
 
 
 @dataclass
+class ConsolidateConfig:
+    """Opt-in unattended consolidation. See DEFAULT_CONFIG for prose.
+
+    Default OFF. When `auto_apply` is true AND telemetry is enabled (the
+    event log is both the debounce clock and the audit trail), the Stop
+    hook runs the *structurally-safe* consolidation subset — conservative
+    near-duplicate dedup (reversible tombstone) and demote-never-applied
+    (non-destructive fact→ambient retag) — at most once per
+    `auto_apply_interval_hours`, and only when the active set is at or
+    below `auto_apply_max_memories` (the pairwise dedup is O(N²); the cap
+    keeps the turn-end hook responsive). Every action lands as a
+    reviewable, reversible tombstone/event — the deliberate opposite of
+    invisible "Dreaming" consolidation.
+    """
+
+    auto_apply: bool = False
+    auto_apply_interval_hours: float = 24.0
+    auto_apply_max_memories: int = 500
+
+
+@dataclass
 class Config:
     storage: StorageConfig = field(default_factory=StorageConfig)
     behavior: BehaviorConfig = field(default_factory=BehaviorConfig)
     scopes: ScopesConfig = field(default_factory=ScopesConfig)
     telemetry: TelemetryConfig = field(default_factory=TelemetryConfig)
+    consolidate: ConsolidateConfig = field(default_factory=ConsolidateConfig)
     config_path: Path | None = None
 
     # ---- methods ----------------------------------------------------------
@@ -579,6 +624,7 @@ def load_config(path: Path | None = None) -> Config:
     behavior_raw = data.get("behavior", {})
     scopes_raw = data.get("scopes", {})
     telemetry_raw = data.get("telemetry", {})
+    consolidate_raw = data.get("consolidate", {})
 
     # T9: back-compat for the 3.1.x -> 3.2.0 TOML key rename. Mutates
     # `behavior_raw` so the downstream `behavior_raw.get(...)` lookups
@@ -635,6 +681,15 @@ def load_config(path: Path | None = None) -> Config:
             enabled=bool(telemetry_raw.get("enabled", True)),
             max_bytes=int(telemetry_raw.get("max_bytes", 10_000_000)),
             log_queries_verbatim=bool(telemetry_raw.get("log_queries_verbatim", False)),
+        ),
+        consolidate=ConsolidateConfig(
+            auto_apply=bool(consolidate_raw.get("auto_apply", False)),
+            auto_apply_interval_hours=float(
+                consolidate_raw.get("auto_apply_interval_hours", 24.0)
+            ),
+            auto_apply_max_memories=int(
+                consolidate_raw.get("auto_apply_max_memories", 500)
+            ),
         ),
         config_path=config_path,
     )

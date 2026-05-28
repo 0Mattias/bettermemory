@@ -9,12 +9,16 @@ spells out exactly what's stable.
 
 ## [Unreleased]
 
-Multi-agent **swarm fan-in for episodes** — the additive feature that
-lets one coordinator gather what all its parallel sub-agents learned —
-riding alongside the documentation-accuracy and durability test
-hardening already queued behind 3.2.2. The swarm work is additive (a
-new optional `swarm_id` parameter, no on-disk schema bump), so the
-batch lands as a minor bump rather than a patch.
+Two additive features land this batch, both serving the same north
+star — memory that compounds across many agents and over time.
+**Multi-agent swarm fan-in for episodes** lets one coordinator gather
+what all its parallel sub-agents learned; **opt-in self-improving
+consolidation** lets the store quietly curate itself between turns.
+Both ride alongside the documentation-accuracy and durability test
+hardening already queued behind 3.2.2. Everything here is additive
+(new optional parameters and an off-by-default config section, no
+on-disk schema bump), so the batch lands as a minor bump rather than a
+patch.
 
 ### Added
 
@@ -45,6 +49,27 @@ batch lands as a minor bump rather than a patch.
   validated to the filesystem-safe id charset with a 128-char cap so a
   runaway value can't bloat the episode frontmatter — it is matched for
   equality at fan-in time, never used as a path component.
+
+- **Opt-in self-improving consolidation (`[consolidate] auto_apply`).**
+  A new off-by-default config section lets the store curate itself
+  unattended. When enabled (and `[telemetry]` is on), the existing
+  `audit-turn` Stop hook runs the *structurally-safe* consolidation
+  subset at turn end — conservative near-duplicate dedup (a reversible
+  tombstone) and demote-never-applied (a non-destructive fact→ambient
+  retag). No LLM passes, no contradiction resolution; nothing that needs
+  judgement. The pass is **debounced** (at most once per
+  `auto_apply_interval_hours`, default 24h, clocked off the last
+  `auto_consolidate` event), **bounded** (skipped above
+  `auto_apply_max_memories`, default 500, so the O(N²) dedup never stalls
+  the turn-end hook), and **conservative** (Jaccard ≥ 0.90, stricter than
+  the 0.75 manual default, with no embedding model loaded in the hook).
+  Every action lands as a reviewable, reversible tombstone/event
+  (`memory_list_tombstones` + the event log) — the deliberate opposite of
+  invisible "Dreaming" consolidation. Gated on `telemetry.enabled`
+  because the event log is *both* the debounce clock and the audit trail:
+  no log, no auto-mutation. This closes the loop the curation telemetry
+  (silent-misses, cold-endorsements) previously only *surfaced* as
+  recommendations a human had to read and act on.
 
 ### Fixed
 

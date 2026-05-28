@@ -726,3 +726,88 @@ def test_hook_emits_no_attribution_event_when_reply_doesnt_quote(
     events = list(iter_events(mem_dir))
     use_events = [e for e in events if e["kind"] == "use"]
     assert use_events == []
+
+
+# ---------------------------------------------------------------------------
+# Opt-in self-improving loop — auto-consolidate fired from the Stop hook
+# ---------------------------------------------------------------------------
+
+
+def test_run_audit_auto_consolidates_when_opted_in(tmp_path: Path) -> None:
+    """With [consolidate] auto_apply on (and telemetry on), run_audit fires
+    the structurally-safe consolidation subset at turn end and records a
+    reviewable auto_consolidate event."""
+    from bettermemory.config import Config, ConsolidateConfig, StorageConfig
+    from bettermemory.hook import run_audit
+
+    mem_dir = tmp_path / "mem"
+    store = Store(mem_dir)
+    store.write(content="alpha beta gamma delta epsilon zeta", scopes=["tools"])
+    store.write(content="alpha beta gamma delta epsilon zeta", scopes=["tools"])
+
+    cfg = Config(
+        storage=StorageConfig(directory=str(mem_dir)),
+        consolidate=ConsolidateConfig(auto_apply=True),
+    )
+    run_audit(
+        user_message="hello",
+        assistant_response="hi",
+        session_id="sess-auto",
+        config=cfg,
+    )
+    auto_events = [e for e in iter_events(mem_dir) if e["kind"] == "auto_consolidate"]
+    assert len(auto_events) == 1
+    assert auto_events[0]["status"] == "ran"
+    assert len(store.load_all()) == 1  # duplicate consolidated away
+
+
+def test_run_audit_no_consolidate_when_disabled(tmp_path: Path) -> None:
+    """Default config (auto_apply off) never auto-mutates the store."""
+    from bettermemory.config import Config, StorageConfig
+    from bettermemory.hook import run_audit
+
+    mem_dir = tmp_path / "mem"
+    store = Store(mem_dir)
+    store.write(content="alpha beta gamma delta", scopes=["tools"])
+    store.write(content="alpha beta gamma delta", scopes=["tools"])
+
+    cfg = Config(storage=StorageConfig(directory=str(mem_dir)))
+    run_audit(
+        user_message="hello",
+        assistant_response="hi",
+        session_id="sess-noop",
+        config=cfg,
+    )
+    assert [e for e in iter_events(mem_dir) if e["kind"] == "auto_consolidate"] == []
+    assert len(store.load_all()) == 2  # untouched
+
+
+def test_run_audit_no_consolidate_when_telemetry_off(tmp_path: Path) -> None:
+    """Auto-consolidate refuses to run without the event log — its debounce
+    clock AND audit trail — even when auto_apply is on."""
+    from bettermemory.config import (
+        Config,
+        ConsolidateConfig,
+        StorageConfig,
+        TelemetryConfig,
+    )
+    from bettermemory.hook import run_audit
+
+    mem_dir = tmp_path / "mem"
+    store = Store(mem_dir)
+    store.write(content="alpha beta gamma delta", scopes=["tools"])
+    store.write(content="alpha beta gamma delta", scopes=["tools"])
+
+    cfg = Config(
+        storage=StorageConfig(directory=str(mem_dir)),
+        consolidate=ConsolidateConfig(auto_apply=True),
+        telemetry=TelemetryConfig(enabled=False),
+    )
+    run_audit(
+        user_message="hello",
+        assistant_response="hi",
+        session_id="sess-telemoff",
+        config=cfg,
+    )
+    assert len(store.load_all()) == 2  # not mutated
+    assert not (mem_dir / ".events.jsonl").exists()  # telemetry off → no log

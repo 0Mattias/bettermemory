@@ -234,6 +234,35 @@ def test_load_config_coerces_behavior_float_fields(tmp_path: Path) -> None:
     assert cfg.behavior.semantic_medium_threshold == 0.5
 
 
+def test_load_config_consolidate_defaults(tmp_path: Path) -> None:
+    """The [consolidate] section defaults to OFF with a 24h debounce and a
+    500-memory cap — unattended consolidation never runs unless opted in."""
+    config_path = tmp_path / "config.toml"
+    config_path.write_text("[storage]\ndirectory = '/tmp/x'\n", encoding="utf-8")
+    cfg = load_config(config_path)
+    assert cfg.consolidate.auto_apply is False
+    assert cfg.consolidate.auto_apply_interval_hours == 24.0
+    assert cfg.consolidate.auto_apply_max_memories == 500
+
+
+def test_load_config_reads_consolidate_section(tmp_path: Path) -> None:
+    """The [consolidate] knobs are read and coerced (interval to float,
+    cap to int) the same way the other sections are."""
+    config_path = tmp_path / "config.toml"
+    config_path.write_text(
+        "[consolidate]\n"
+        "auto_apply = true\n"
+        "auto_apply_interval_hours = 6\n"  # integer — must coerce to float
+        "auto_apply_max_memories = 1000\n",
+        encoding="utf-8",
+    )
+    cfg = load_config(config_path)
+    assert cfg.consolidate.auto_apply is True
+    assert cfg.consolidate.auto_apply_interval_hours == 6.0
+    assert isinstance(cfg.consolidate.auto_apply_interval_hours, float)
+    assert cfg.consolidate.auto_apply_max_memories == 1000
+
+
 def test_load_config_coerces_behavior_bool_fields(tmp_path: Path) -> None:
     """`bool(...)` wraps the lookup so a missing field defaults False/True
     via the dataclass without crashing, and an explicit value is coerced."""

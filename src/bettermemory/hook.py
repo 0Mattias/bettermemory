@@ -272,6 +272,33 @@ def run_audit(
             session_id=session_id,
             assistant_response=assistant_response,
         )
+
+    # Opt-in self-improving loop. Run the structurally-safe consolidation
+    # subset (conservative dedup + non-destructive demote), debounced, at
+    # turn end. Gated on `telemetry.enabled` because the event log is BOTH
+    # the debounce clock AND the audit trail — no log means no reviewable
+    # record, so we refuse to auto-mutate. Imported lazily so users who
+    # haven't opted in never pay consolidate's (semantic/health/search)
+    # import cost on every Stop event. Isolated in try/except so a
+    # consolidate hiccup can neither block the turn end nor drop the audit
+    # result above.
+    if cfg.consolidate.auto_apply and cfg.telemetry.enabled:
+        try:
+            from .consolidate import run_auto_consolidate
+
+            run_auto_consolidate(
+                store,
+                recorder=recorder,
+                events=recent,
+                session_id=session_id,
+                interval_hours=cfg.consolidate.auto_apply_interval_hours,
+                max_memories=cfg.consolidate.auto_apply_max_memories,
+                memories=memories,
+                now=utcnow(),
+            )
+        except Exception as exc:  # noqa: BLE001 — hook must never block turn end
+            print(f"bettermemory auto-consolidate: {exc}", file=sys.stderr)
+
     return report.to_dict()
 
 

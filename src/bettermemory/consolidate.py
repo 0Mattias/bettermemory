@@ -49,12 +49,13 @@ from pathlib import Path
 from typing import Any
 
 from ._fsutil import bounded_tail_read
-from .events import iter_events
+from .events import Recorder, iter_events
 from .health import _edit_distance_within
 from .models import Category, Memory, snippet_for
 from .search import _content_token_set
 from .semantic import cached_embed, cosine_similarity_normalized
 from .store import Store
+from .time_utils import parse_event_ts
 
 log = logging.getLogger("bettermemory.consolidate")
 
@@ -734,6 +735,141 @@ def consolidate(
             )
 
     return report
+
+
+# ---------------------------------------------------------------------------
+# Unattended (auto-apply) consolidation — the opt-in self-improving loop
+# ---------------------------------------------------------------------------
+#
+# This is the only place in the project that mutates the store WITHOUT a
+# human (or the model) in the loop. It is allowed to because every action
+# it takes is (1) opt-in, (2) debounced, (3) bounded, (4) conservative,
+# (5) reversible, and (6) recorded as a reviewable event/tombstone — the
+# deliberate opposite of invisible "Dreaming" consolidation. See
+# `run_auto_consolidate`'s docstring for the full safety contract.
+
+# Dedup threshold for the *unattended* path. The manual `consolidate
+# --apply` default is 0.75 Jaccard; auto-apply runs with no human
+# reviewing the diff, so it merges only near-identical bodies (>=0.90
+# token overlap). Higher = safer (fewer false merges), at the cost of
+# leaving looser near-dups for a manual pass.
+_AUTO_DEDUP_JACCARD_THRESHOLD = 0.90
+
+# Event kind recorded for every auto-consolidate decision (ran OR
+# skipped). It is BOTH the audit-transparency record AND the debounce
+# clock: the next hook invocation reads the latest one's `ts` to decide
+# whether `auto_apply_interval_hours` has elapsed.
+AUTO_CONSOLIDATE_EVENT = "auto_consolidate"
+
+
+def _latest_event_ts(events: Iterable[dict[str, Any]], kind: str) -> datetime | None:
+    """Timestamp of the most-recent event of `kind`, or None if absent.
+    Tolerant of malformed `ts` values (skips them) so one bad row can't
+    break the debounce check."""
+    latest: datetime | None = None
+    for ev in events:
+        if ev.get("kind") != kind:
+            continue
+        ts = parse_event_ts(ev.get("ts"))
+        if ts is None:
+            continue
+        if latest is None or ts > latest:
+            latest = ts
+    return latest
+
+
+def run_auto_consolidate(
+    store: Store,
+    *,
+    recorder: Recorder,
+    events: Iterable[dict[str, Any]],
+    session_id: str | None,
+    interval_hours: float,
+    max_memories: int,
+    memories: list[Memory] | None = None,
+    now: datetime | None = None,
+) -> dict[str, Any] | None:
+    """Debounced, unattended run of the structurally-safe consolidation
+    subset — the opt-in self-improving loop the Stop hook fires.
+
+    Returns None when the pass was NOT due (interval not elapsed) so the
+    caller stays silent; otherwise a small summary dict (status 'ran' or
+    'skipped_store_too_large'), recorded as an event either way.
+
+    Safety contract — why this may mutate the store unattended:
+    - **Debounced**: runs at most once per `interval_hours`, gated on the
+      latest `auto_consolidate` event (which is also the audit record).
+    - **Bounded**: skips when the active set exceeds `max_memories` — the
+      pairwise dedup is O(N²) and this runs in the turn-end hook, which
+      must stay responsive; oversized stores defer to manual `consolidate`.
+    - **Conservative**: dedup is Jaccard at `_AUTO_DEDUP_JACCARD_THRESHOLD`
+      (0.90, stricter than the 0.75 manual default) with NO embedding
+      model loaded in the hook; demotion is the non-destructive fact→
+      ambient retag. No LLM passes, no contradiction resolution — nothing
+      requiring judgment.
+    - **Reversible + reviewable**: every action is a tombstone (restorable
+      via `memory_restore`) or a retag (reversible via `memory_update`),
+      visible in `memory_list_tombstones` and the event log.
+
+    `memories`, when supplied, is reused for the size guard only (the Stop
+    hook already loaded the active set for its audit probe); the actual
+    `consolidate` re-loads a fresh view so it acts on current truth.
+    """
+    if now is None:
+        now = datetime.now(timezone.utc)
+
+    # Debounce: skip entirely if a prior decision landed within the window.
+    last = _latest_event_ts(events, AUTO_CONSOLIDATE_EVENT)
+    if last is not None:
+        elapsed_hours = (now - last).total_seconds() / 3600.0
+        if elapsed_hours < interval_hours:
+            return None
+
+    # Size guard: keep the turn-end hook responsive. Recording the skip
+    # as an event resets the debounce clock too, so a large store isn't
+    # re-scanned (re-`load_all`'d) on every subsequent turn.
+    active = memories if memories is not None else store.load_all()
+    if len(active) > max_memories:
+        recorder.record(
+            AUTO_CONSOLIDATE_EVENT,
+            status="skipped_store_too_large",
+            active_count=len(active),
+            max_memories=max_memories,
+            session_id=session_id,
+            triggered_from="stop_hook",
+        )
+        return {
+            "status": "skipped_store_too_large",
+            "active_count": len(active),
+            "max_memories": max_memories,
+        }
+
+    report = consolidate(
+        store,
+        apply=True,
+        semantic_model=None,  # Jaccard — never load a heavy model in the hook.
+        semantic_threshold=_AUTO_DEDUP_JACCARD_THRESHOLD,
+        session_id=session_id,
+        now=now,
+    )
+    tombstoned = sum(1 for a in report.actions_taken if a.kind == "tombstoned")
+    demoted = sum(1 for a in report.actions_taken if a.kind == "demoted_to_ambient")
+    recorder.record(
+        AUTO_CONSOLIDATE_EVENT,
+        status="ran",
+        tombstoned=tombstoned,
+        demoted=demoted,
+        failures=len(report.failures),
+        dedup_method=report.dedup_method,
+        session_id=session_id,
+        triggered_from="stop_hook",
+    )
+    return {
+        "status": "ran",
+        "tombstoned": tombstoned,
+        "demoted": demoted,
+        "failures": len(report.failures),
+    }
 
 
 # ---------------------------------------------------------------------------
