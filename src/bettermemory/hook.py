@@ -32,20 +32,30 @@ so the hook replays those toggles for the *current in-process server
 session* and feeds the net set into the probe as `excluded_scopes` —
 the same shield the in-process `memory_audit_turn` applies. A turn the
 user framed as "unrelated to project X" is therefore no longer
-false-flagged as a silent miss here. Reset-on-restart is preserved
-for free: a restarted server mints a fresh session id with no scope
-toggles under it yet, so the reconstructed set is empty until the
-user disables a scope again. See `_disabled_scopes_from_events`.
+false-flagged as a silent miss here. See `_disabled_scopes_from_events`.
 Stop-hook events still carry `triggered_from="stop_hook"` so
 downstream rollups can distinguish the two sources.
 
-Residual divergence: the reconstruction reads the *active* event log
-only (same bound as the retrieval shield), and under multiple
-concurrent Claude sessions sharing one memory dir the "most recent
-in-process session" anchor can attribute one server's disabled scopes
-to another's audit. Both bias toward suppressing a miss — the same
-conservative direction as the in-process audit — and match the
-single-active-server deployment.
+Reset-on-restart eventually holds, but not atomically. A restarted
+server mints a fresh session id with no scope toggles under it yet —
+but `_latest_in_process_session` anchors to the *most recent
+non-stop-hook event*, which is still the PRIOR session until the new
+server writes its first in-process event. During that gap window the
+prior session's `scope_disable` events keep being replayed, so a stale
+disable can shield a real miss until the new server's first in-process
+tool call flips the anchor. The bias is conservative (over-suppress)
+and self-correcting.
+
+Residual divergence (two cases, opposite directions):
+- Concurrent sessions: under multiple Claude sessions sharing one
+  memory dir, the "most recent in-process session" anchor can attribute
+  one server's disabled scopes to another's audit — biases toward
+  *suppressing* a miss.
+- Active-log bound: the reconstruction reads the *active* event log only
+  (same bound as the retrieval shield). If a `scope_disable` rotates out
+  of `.events.jsonl` while its session is still live, the disable is
+  lost and the shielded miss RE-FIRES — biases toward *over-flagging*.
+Both are narrow and match the single-active-server deployment.
 
 Failure mode: the hook must never block the turn end. Every error
 path is caught and exit code is forced to 0 so a parser hiccup or

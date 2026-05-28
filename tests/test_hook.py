@@ -991,7 +991,7 @@ def test_disabled_scopes_resets_on_new_server_session() -> None:
     NOT honoured once a fresh in-process session (the restarted server)
     appears in the log — the anchor moves to the new session, which has
     toggled nothing."""
-    events = [
+    events: list[dict[str, object]] = [
         _scope_event(session="sess_old", kind="scope_disable", scope="projects:a"),
         # The restarted server's first in-process activity, new session id.
         {"session": "sess_new", "kind": "search"},
@@ -1063,7 +1063,11 @@ def test_run_audit_disabled_scope_suppresses_stop_hook_miss(tmp_path: Path) -> N
         session_id="claude-disabled",
         config=_miss_config(mem_dir),  # type: ignore[arg-type]
     )
-    assert result["verdict"] != "miss"
+    # Pin the exact suppressed verdict: with the only matching memory's
+    # scope excluded, the probe sees no candidate at all -> "no_signal".
+    # (`!= "miss"` would also pass if the store were empty or the probe
+    # silently broke; this pins the real shield path.)
+    assert result["verdict"] == "no_signal"
 
 
 def test_run_audit_reenabled_scope_reflags_miss(tmp_path: Path) -> None:
@@ -1109,3 +1113,33 @@ def test_run_audit_disable_resets_after_server_restart(tmp_path: Path) -> None:
         config=_miss_config(mem_dir),  # type: ignore[arg-type]
     )
     assert result["verdict"] == "miss"
+
+
+def test_run_audit_stale_disable_shields_during_restart_gap(tmp_path: Path) -> None:
+    """Restart gap window (documented conservative bias): reset-on-restart
+    is NOT atomic. Until a restarted server writes its first in-process
+    event, `_latest_in_process_session` still anchors to the OLD session,
+    so the old session's `scope_disable` keeps shielding the hook. With
+    only the prior session's disable on disk (no new in-process activity),
+    the miss stays suppressed. This pins the gap window the module
+    docstring describes — biased toward over-suppression, self-correcting
+    once the new server records any in-process tool call (covered by
+    test_run_audit_disable_resets_after_server_restart)."""
+    mem_dir = tmp_path / "mem"
+    mem_dir.mkdir()
+    Store(mem_dir).write(content=_MISS_BODY, scopes=["infrastructure"])
+
+    # Prior server disabled the scope, then restarted. The new server has
+    # not yet written ANY in-process event, so the latest non-stop-hook
+    # event is still sess_old's disable.
+    Recorder(root=mem_dir, session_id="sess_old").record(
+        "scope_disable", scope="infrastructure"
+    )
+
+    result = run_audit(
+        user_message=_MISS_QUERY,
+        assistant_response=None,
+        session_id="claude-restart-gap",
+        config=_miss_config(mem_dir),  # type: ignore[arg-type]
+    )
+    assert result["verdict"] == "no_signal"

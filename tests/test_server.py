@@ -2502,7 +2502,9 @@ async def test_episode_promote_unknown_id_raises(server: Any) -> None:
         )
 
 
-async def test_loop_iteration_end_to_end_pattern(memory_dir: Path) -> None:
+async def test_loop_iteration_end_to_end_pattern(
+    memory_dir: Path, monkeypatch: Any
+) -> None:
     """End-to-end exercise of the loop-iteration pattern documented in
     SKILL.md and the FastMCP instructions block.
 
@@ -2523,7 +2525,31 @@ async def test_loop_iteration_end_to_end_pattern(memory_dir: Path) -> None:
 
     Pins the contract the docs / SKILL.md describe so a future refactor
     of any of the four episode tools surfaces immediately."""
+    import bettermemory._handlers as handlers_module
+    import bettermemory.server as server_module
+    from bettermemory.origin import Origin
+
     cfg = Config(storage=StorageConfig(directory=str(memory_dir)))
+
+    # Pin both sessions to the SAME named worktree. Without this the test
+    # captures the ambient cwd: inside a git checkout both servers get
+    # the real (equal) toplevel, but from a non-git dir both get a None
+    # worktree and the step-5 zero-episode adoption succeeds via
+    # None==None — which was ALSO true pre-#28, making the assertion
+    # vacuous. Pinning a named worktree forces the post-#28 worktree-match
+    # path (named == named), which a pre-#28 build would reject.
+    shared_origin = Origin(
+        cwd="/worktrees/repo-loop",
+        repo="git@github.com:example/repo.git",
+        branch="loop",
+        worktree_root="/worktrees/repo-loop",
+    )
+
+    def _capture(cwd: Any = None) -> Origin:
+        return shared_origin
+
+    monkeypatch.setattr(handlers_module, "capture_origin", _capture)
+    monkeypatch.setattr(server_module, "capture_origin", _capture)
 
     # Iteration A: durable memory + journal entry.
     server_a = build_server(config=cfg, store=Store(memory_dir), state=SessionState())
@@ -2586,11 +2612,12 @@ async def test_loop_iteration_end_to_end_pattern(memory_dir: Path) -> None:
     # Second handoff: A's episode was promoted (and the source file
     # deleted) so A is now a zero-episode candidate. With queue #28
     # landed, A's events carry worktree_root; A and B share the same
-    # worktree here, so the zero-episode branch's worktree match
-    # succeeds and A's session is still adopted as the prior session —
-    # just with an empty episode list (its only episode was promoted
-    # out). This is the contract the docstring describes: prior_session_id
-    # stays resolved, episodes go empty.
+    # pinned NAMED worktree here, so the zero-episode branch's worktree
+    # match succeeds (named == named, the post-#28 path) and A's session
+    # is still adopted as the prior session — just with an empty episode
+    # list (its only episode was promoted out). This is the contract the
+    # docstring describes: prior_session_id stays resolved, episodes go
+    # empty.
     handoff_2 = await _call(server_b, "episode_handoff")
     assert handoff_2["prior_session_id"] == a_session_id
     assert handoff_2["episodes"] == []
@@ -3047,12 +3074,17 @@ async def test_episode_handoff_skips_zero_episode_candidate_from_other_worktree(
     contract as the episode-bearing branch. Worktree A records events
     (memory_write / memory_search) but never calls `episode_write` —
     its session_id surfaces in the event log with no episode files on
-    disk. A fresh server in worktree B asks for a handoff; tick-22
+    disk. A fresh server in worktree B asks for a handoff; the tick-22
     fix says it must NOT adopt A's session_id as "the prior session
-    in B's worktree" because A's worktree is unknown (events don't
-    carry origin today, queue #28) and the strict
-    None-only-matches-None rule treats unknown-worktree as not-matching
-    when the caller has a worktree.
+    in B's worktree".
+
+    Since queue #28, A's events carry a `worktree_root` origin (here
+    "/worktrees/repo-feature-x"), so this exercises the named-A !=
+    named-B skip: `_worktrees_equal_strict` compares two distinct named
+    worktrees of the same repo and rejects. (The legacy branch — a
+    zero-episode candidate whose events lack `worktree_root` at all,
+    which a named caller must also reject — is covered by
+    test_episode_handoff_skips_zero_episode_legacy_candidate_no_worktree.)
 
     Pre-tick-22 the walk hit A's session, saw `candidate_eps == []`,
     and adopted unconditionally — a leak of A's session_id as B's
@@ -3107,6 +3139,71 @@ async def test_episode_handoff_skips_zero_episode_candidate_from_other_worktree(
     # matching B's named worktree, so the walk continues past — and
     # since there's no older session, the result is the empty-store
     # shape.
+    monkeypatch.setattr(handlers_module, "capture_origin", make_capture(origin_b))
+    monkeypatch.setattr(server_module, "capture_origin", make_capture(origin_b))
+
+    server_b = build_server(config=cfg, store=Store(memory_dir), state=SessionState())
+    res = await _call(server_b, "episode_handoff")
+    assert res["prior_session_id"] is None
+    assert res["episodes"] == []
+
+
+async def test_episode_handoff_skips_zero_episode_legacy_candidate_no_worktree(
+    memory_dir: Path,
+    monkeypatch: Any,
+) -> None:
+    """Backward-compat fallback (queue #28): a zero-episode candidate
+    whose events LACK `worktree_root` (legacy / pre-#28 events) must NOT
+    be adopted by a caller in a named worktree.
+
+    `Recorder.record` only stamps `worktree_root` when the captured
+    origin has one, so an origin with `worktree_root=None` produces
+    exactly the legacy event shape (no field on disk). The handoff then
+    resolves the candidate's worktree to None and
+    `_worktrees_equal_strict(None, named_B)` rejects — reproducing the
+    conservative pre-#28 behavior. This is the branch whose dedicated
+    guard evaporated when test 3042 moved A's events to carry a
+    worktree; pin it explicitly so the fallback can't silently regress.
+    """
+    import bettermemory._handlers as handlers_module
+    import bettermemory.server as server_module
+    from bettermemory.origin import Origin
+
+    cfg = Config(storage=StorageConfig(directory=str(memory_dir)))
+
+    # A's origin has NO worktree_root -> its events carry no worktree
+    # field, the legacy/pre-#28 shape.
+    origin_a_legacy = Origin(
+        cwd="/some/dir",
+        repo="git@github.com:example/repo.git",
+        branch="feature-x",
+        worktree_root=None,
+    )
+    origin_b = Origin(
+        cwd="/worktrees/repo-bug-fix",
+        repo="git@github.com:example/repo.git",
+        branch="bug-fix",
+        worktree_root="/worktrees/repo-bug-fix",
+    )
+
+    def make_capture(origin: Origin) -> Any:
+        def _capture(cwd: Any = None) -> Origin:
+            return origin
+
+        return _capture
+
+    monkeypatch.setattr(
+        handlers_module, "capture_origin", make_capture(origin_a_legacy)
+    )
+    monkeypatch.setattr(server_module, "capture_origin", make_capture(origin_a_legacy))
+
+    server_a = build_server(config=cfg, store=Store(memory_dir), state=SessionState())
+    await _call(server_a, "memory_write", content="A wrote this fact", scopes=["tools"])
+    await _call(server_a, "memory_search", query="A's search")
+
+    # Caller B is in a named worktree. The legacy candidate's worktree
+    # resolves to None; the strict rule rejects None vs named, so B must
+    # see the empty-store shape.
     monkeypatch.setattr(handlers_module, "capture_origin", make_capture(origin_b))
     monkeypatch.setattr(server_module, "capture_origin", make_capture(origin_b))
 

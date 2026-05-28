@@ -20,6 +20,17 @@ jobs:
     # `experimental` is wired up so we can re-add pre-release Pythons
     # later without having to rebuild the workflow scaffolding around
     # `continue-on-error`. None of the current entries set it.
+    #
+    # RELEASE-GATE CAVEAT: this workflow is reused by release.yml to gate
+    # the PyPI publish on the full matrix. A leg that sets
+    # `experimental: true` is `continue-on-error`, so its failure will
+    # NOT fail the `test` job, NOT fail this reusable workflow, and
+    # therefore NOT block the publish — it is silently exempt from the
+    # "publish only on a fully-green matrix" contract release.yml relies
+    # on. Before adding any `experimental` leg, decide deliberately:
+    # either it must NOT gate releases (current behavior — fine for a
+    # genuinely pre-release Python), or move it to a separate
+    # non-reusable job so the publish gate stays honest.
     continue-on-error: ${{ matrix.experimental || false }}
     strategy:
       fail-fast: false

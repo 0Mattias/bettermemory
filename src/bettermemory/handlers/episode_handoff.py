@@ -22,12 +22,13 @@ Returns `None`-rich shape so the caller can distinguish:
   different worktree.
 - "prior session existed but wrote no episodes" — returns
   `{"prior_session_id": "sess_xxx", "episodes": []}`. The prior
-  session did work but didn't journal a takeaway. Only surfaced
-  when the caller has no worktree (events don't carry origin
-  today, so a zero-episode session's worktree is unknown — the
-  strict None-only-matches-None rule means callers in a named
-  worktree see "no prior session" rather than risk surfacing a
-  cross-worktree session_id).
+  session did work but didn't journal a takeaway. Since queue #28,
+  events carry a `worktree_root` origin, so a zero-episode session's
+  worktree IS known when its events were stamped: a caller in a named
+  worktree adopts such a candidate only when the worktrees match, and
+  falls back to the strict None-only-matches-None rule for legacy
+  (pre-#28) events that lack the field. A caller with no worktree only
+  adopts a candidate that is also worktree-less.
 - "prior session crashed before writing a takeaway" — returns
   `{"prior_session_id": "sess_xxx", "episodes": [], "note": "..."}`.
   The prior tick called `episode_handoff` (which wrote a session-tag
@@ -124,11 +125,13 @@ async def episode_handoff(
     outside any git checkout), symmetric isolation only accepts
     sessions whose episodes also have no worktree origin — see
     `_worktrees_equal_strict`. Zero-episode candidates (sessions
-    that recorded events but never wrote a journal entry) are
-    treated as "unknown worktree" — events don't carry origin
-    today (queue #28), so the strict None-only-matches-None rule
-    means a caller in a named worktree skips them, and only a
-    caller with no worktree (the all-null state) can adopt one.
+    that recorded events but never wrote a journal entry) are matched
+    on their events' `worktree_root` origin: since queue #28 events
+    carry that field, a caller in a named worktree CAN adopt such a
+    candidate when the worktrees match, and skips it otherwise. Legacy
+    (pre-#28) events lack the field and fall back to the conservative
+    None-only-matches-None rule, so a named-worktree caller never
+    adopts a worktree-less legacy candidate.
     An explicit `prior_session_id` is respected verbatim; the
     caller passing one in is explicit consent that they own the
     cross-tree concern.
