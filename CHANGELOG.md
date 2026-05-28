@@ -7,6 +7,57 @@ breaking changes, minor for additive features, patch for fixes. The
 [compatibility contract](CONTRIBUTING.md#versioning-and-the-compatibility-contract)
 spells out exactly what's stable.
 
+## 3.2.2 - 2026-05-28
+
+Internal hardening, tooling, and documentation. No behavioral or API
+changes — a safe patch upgrade from 3.2.1.
+
+### Added
+
+- **Pyright as a second type-check gate in CI.** A dedicated
+  `typecheck-pyright` job runs `pyright` (standard mode, scoped to the
+  package) alongside the existing strict mypy gate, so the two checkers
+  cover each other's blind spots. Configuration moved into
+  `[tool.pyright]` in `pyproject.toml` (replacing a stray
+  `pyrightconfig.json` that pinned the MCP-server runtime venv, which CI
+  doesn't build); the optional lazy-imports (sentence-transformers,
+  fastembed, numpy, anthropic, openai) carry targeted
+  `# pyright: ignore[reportMissingImports]` mirroring the existing mypy
+  `ignore_missing_imports` override. `reportUnreachable` is left off
+  deliberately: the handlers' defense-in-depth `isinstance` / None
+  guards at the MCP-JSON boundary are "unreachable" to the static
+  checker but validate untyped runtime input — the same reason the mypy
+  config does not enable `warn_unreachable`.
+
+### Changed
+
+- **One definition of the durable-private-write discipline (Q29).**
+  `store._atomic_write_post` and `episodes._write_path` were two
+  near-identical hand-rolled copies of the tmp + fchmod-before-rename +
+  fsync + rename + dir-fsync ceremony. Both now delegate to
+  `_fsutil.atomic_write_bytes`, which gained a `mode_before_rename`
+  option — `os.fchmod` on the tmp file descriptor before the rename, so
+  a 0o600 file is never world-readable at its visible path even for an
+  instant (mutually exclusive with the existing chmod-after-rename
+  `mode`). Behaviour-preserving: identical privacy guarantee, fsync
+  ordering, dir-fsync ceremony, and orphan-tmp cleanup. The two
+  remaining bespoke writers stay bespoke for good reason —
+  `events._compress_rotating` streams gzip in 64 KB chunks and
+  `semantic.flush_persistent_cache` writes a numpy container under a
+  flock, so neither is a plain-bytes-in-memory caller. A future fix to
+  the write discipline now lands in one place instead of three.
+
+### Fixed
+
+- **Documentation accuracy.** Corrected a `Store.restore` `except`
+  comment that attributed the malformed-`created` `ValueError` to a
+  non-existent `_load_tombstone_path` symbol — it's raised inline in
+  `Store.restore` (Y9-fu3). Refreshed the `docs/ROADMAP.md` "where we
+  are" version label (v3.1.0 → v3.2.2), whose body already described the
+  3.2.x feature set. Added the missing `unique_silent_miss_memories`
+  field to the `curation_pending` rollup list in the plugin skill doc,
+  aligning it with `docs/api.md`.
+
 ## 3.2.1 - 2026-05-28
 
 ### Fixed
