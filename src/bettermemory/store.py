@@ -467,6 +467,10 @@ class Store:
               no longer matches `memory.updated`. The caller should re-fetch
               via `memory_show` and retry on top of the current snapshot.
               Not raised when `force=True`.
+            OSError: a genuine disk-level failure in the atomic write path
+              (`_write_path` → `_atomic_write_post`): EIO mid-write, ENOSPC
+              on the tmp write or rename, EACCES on the directory. The MCP
+              handler boundary translates this to a structured `ValueError`.
         """
         existing_path = self._find_path_for_id(memory.id)
         if existing_path is None:
@@ -578,6 +582,10 @@ class Store:
               `expected_last_verified_at`. The caller should re-fetch via
               `memory_show`, reassess the attestation against the
               now-current `verified_*` lists, and retry.
+            OSError: a genuine disk-level failure in the atomic write path
+              (`_write_path` → `_atomic_write_post`): EIO mid-write, ENOSPC
+              on the tmp write or rename, EACCES on the directory. The MCP
+              handler boundary translates this to a structured `ValueError`.
         """
         existing_path = self._find_path_for_id(memory_id)
         if existing_path is None:
@@ -686,6 +694,12 @@ class Store:
               it, or a parallel `tombstone()` won the race and moved the
               file to `.tombstones/` between the find walk and the
               under-lock recheck.
+            OSError: a genuine disk-level failure in the tombstone write
+              (`_atomic_write_post`) or the source unlink — EIO mid-write,
+              ENOSPC on the rename, EACCES on the unlink. The benign
+              ENOENT-on-unlink race is swallowed; everything else
+              propagates. `memory_remove` catches this and translates it
+              to a structured `ValueError`.
         """
         path = self._find_path_for_id(memory_id)
         if path is None:
@@ -944,6 +958,12 @@ class Store:
               `memory_update`; restore is only for tombstones. Also raised
               if a parallel restore won the race and the id is now active
               under the lock.
+            OSError: a genuine disk-level failure in the active-record write
+              (`_atomic_write_post`) or the tombstone unlink — EIO mid-write,
+              ENOSPC on the rename, EACCES on the unlink. The benign
+              ENOENT-on-unlink race is swallowed; everything else
+              propagates. `memory_restore` catches this and translates it
+              to a structured `ValueError`.
         """
         if not is_valid_ulid(memory_id):
             raise MemoryNotFoundError(f"invalid id: {memory_id!r}")
