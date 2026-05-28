@@ -2,7 +2,7 @@
 
 Published roadmap is part of the distribution strategy: people deciding between memory layers want to know where a project is going, not just where it's been. This document lists the planned work in roughly the order it will land. Plans change; the CHANGELOG is the source of truth for what shipped.
 
-## Where we are (May 2026, v3.1.0)
+## Where we are (May 2026, v3.2.2)
 
 - 23 MCP tools: 19 `memory_*` (retrieval, writing, lifecycle, verification, curation, session-local) + 4 `episode_*` (sibling tier for journal-shaped run-state — `/loop` iterations and subagent handoffs land in episodes; `episode_handoff` at iteration entry, `episode_write(takeaway=…)` at iteration exit, `episode_promote` distills a takeaway into a durable memory via the standard `memory_write` audit gate).
 - `memory_search(since_prior_session=True)` filter restricts candidates to memories updated since the prior-session boundary in this worktree — answers "what's changed since I was last here?" without scanning the full store.

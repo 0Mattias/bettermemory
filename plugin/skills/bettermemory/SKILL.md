@@ -35,7 +35,7 @@ Skip it for generic factual questions, self-contained technical questions, and f
 
 ### Session-start hint
 
-One call to `memory_scope_overview` returns per-scope counts plus a `curation_pending` rollup (`{stale, never_verified, drifted, cold, dead, silent_misses, cold_endorsement_memories}`: integer counts only). If `total=0`, skip `memory_search` for the rest of the session unless asked. Non-zero `dead` or `drifted` is the cue to suggest a curation pass when the conversation has time. Use this once per conversation; it's a yes/no signal, not something to poll.
+One call to `memory_scope_overview` returns per-scope counts plus a `curation_pending` rollup (`{stale, never_verified, drifted, cold, dead, silent_misses, unique_silent_miss_memories, cold_endorsement_memories}`: integer counts only). If `total=0`, skip `memory_search` for the rest of the session unless asked. Non-zero `dead` or `drifted` is the cue to suggest a curation pass when the conversation has time. Use this once per conversation; it's a yes/no signal, not something to poll.
 
 ### Auto-scoping
 
