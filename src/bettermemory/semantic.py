@@ -152,7 +152,9 @@ def _load_torch_model(model_name: str) -> Any | None:
     try:
         # Lazy import: the module loads cleanly without the extra. The
         # ImportError below is the user-friendly path.
-        from sentence_transformers import SentenceTransformer
+        from sentence_transformers import (  # pyright: ignore[reportMissingImports]
+            SentenceTransformer,
+        )
     except ImportError:
         if key not in _LOAD_FAILED_LOGGED:
             log.warning(
@@ -205,7 +207,7 @@ def _load_fastembed_model(model_name: str) -> Any | None:
         return None
 
     try:
-        from fastembed import TextEmbedding
+        from fastembed import TextEmbedding  # pyright: ignore[reportMissingImports]
     except ImportError:
         if key not in _LOAD_FAILED_LOGGED:
             log.warning(
@@ -444,7 +446,7 @@ def _hydrate_persistent_cache() -> None:
         # on numpy, so when this code runs numpy is available; we still
         # guard so a misconfiguration (persistent path set without the
         # extra) degrades gracefully.
-        import numpy as np
+        import numpy as np  # pyright: ignore[reportMissingImports]
     except ImportError:
         log.warning(
             "persistent embedding cache configured but numpy is not "
@@ -487,7 +489,7 @@ def flush_persistent_cache() -> None:
     if _PERSISTENT_PATH is None or not _DIRTY:
         return
     try:
-        import numpy as np
+        import numpy as np  # pyright: ignore[reportMissingImports]
     except ImportError:
         # Same as hydrate — silently fall back. This branch is unusual
         # because semantic dedup is what populates the cache in the

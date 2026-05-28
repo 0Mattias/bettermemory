@@ -433,7 +433,7 @@ class AnthropicProvider:
 
     def propose(self, cluster: Cluster, today: str) -> list[Proposal]:
         try:
-            import anthropic
+            import anthropic  # pyright: ignore[reportMissingImports]
         except ImportError as exc:
             raise RuntimeError(
                 "AnthropicProvider requires the `anthropic` SDK. "
@@ -487,7 +487,7 @@ class OpenAIProvider:
 
     def propose(self, cluster: Cluster, today: str) -> list[Proposal]:
         try:
-            import openai
+            import openai  # pyright: ignore[reportMissingImports]
         except ImportError as exc:
             raise RuntimeError(
                 "OpenAIProvider requires the `openai` SDK. Install "

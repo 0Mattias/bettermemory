@@ -534,7 +534,7 @@ def _check_embeddings_extra(cfg: Config) -> Diagnosis:
             message="semantic_dedup disabled (no extras needed).",
         )
     try:
-        import sentence_transformers  # noqa: F401
+        import sentence_transformers  # noqa: F401  # pyright: ignore[reportMissingImports]
     except ImportError:
         return Diagnosis(
             name="embeddings_extra",

@@ -38,6 +38,7 @@ dev = [
     "pytest-cov>=4.0",
     "ruff>=0.1",
     "mypy>=1.10",
+    "pyright>=1.1.400",
     "types-PyYAML>=6.0",
     # Property-based store invariants (tests/test_store_properties.py).
     # Pinned only on the lower bound; any reasonably modern hypothesis
@@ -129,6 +130,36 @@ module = [
     "openai",
 ]
 ignore_missing_imports = true
+
+[tool.pyright]
+# Secondary type gate alongside mypy (which stays the strict primary).
+# Scoped to the package: the test suite leans on dynamic pytest fixture /
+# monkeypatch patterns that pyright's standard mode flags as noise with no
+# safety win — the same reason the mypy config loosens `tests.*`.
+include = ["src/bettermemory"]
+extraPaths = ["src"]
+# Type-check against the uv-managed dev venv (.venv) that both `uv run
+# pyright` and CI's `uv sync --extra dev --extra ui` populate. (The repo
+# also keeps a separate `venv/` for the MCP server runtime — that is NOT
+# the type-check environment.)
+venvPath = "."
+venv = ".venv"
+pythonVersion = "3.11"
+typeCheckingMode = "standard"
+reportMissingImports = "error"
+# Optional runtime deps (sentence-transformers/torch, fastembed, numpy,
+# anthropic, openai) are lazy-imported inside try/except ImportError and
+# aren't installed in the lint env. Their import sites carry targeted
+# `# pyright: ignore[reportMissingImports]`, mirroring the mypy
+# `ignore_missing_imports` override above for the same modules.
+#
+# reportUnreachable stays off deliberately: the handlers carry
+# defense-in-depth `isinstance` / None guards at the MCP-JSON boundary
+# (e.g. verify.py, acknowledge_miss.py) that the static type system proves
+# "unreachable" but which validate runtime input the types can't enforce.
+# This matches the mypy config, which likewise does not enable
+# `warn_unreachable`.
+reportUnreachable = "none"
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
