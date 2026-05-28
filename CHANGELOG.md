@@ -7,6 +7,26 @@ breaking changes, minor for additive features, patch for fixes. The
 [compatibility contract](CONTRIBUTING.md#versioning-and-the-compatibility-contract)
 spells out exactly what's stable.
 
+## 3.3.1 - 2026-05-28
+
+A single targeted fix closing queue item #28.
+
+### Fixed
+
+- **`episode_handoff` now matches episode-less prior sessions in the
+  same worktree.** The `Recorder` captures its process worktree once at
+  construction and stamps `worktree_root` on every event it writes.
+  `episode_handoff`'s zero-episode branch reads the candidate session's
+  worktree from the event log rather than treating it as unknown, so a
+  prior session that wrote only events — a search-only loop tick, or one
+  that crashed before `episode_write` — is correctly adopted as
+  `prior_session_id` when it shares the caller's worktree. Previously
+  such a session was skipped (the conservative None-only-matches-None
+  rule), leaving a loop's next tick with no handoff anchor. Legacy
+  events written before this release lack the field and fall back to the
+  prior conservative behavior, so the change is backward compatible and
+  the on-disk schema is unchanged (patch bump).
+
 ## 3.3.0 - 2026-05-28
 
 Three additive features land this batch, all serving the same north
