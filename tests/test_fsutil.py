@@ -712,6 +712,45 @@ class TestAtomicWriteBytes:
             f"expected fchmod before replace (no world-readable window); got {order}"
         )
 
+    def test_mode_before_rename_fallback_chmods_when_fchmod_fails(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """The privacy guarantee must survive an `os.fchmod` that raises.
+        Some sandbox filesystems reject fchmod, so the call is wrapped in
+        `contextlib.suppress(OSError)` and a defensive post-rename
+        `os.chmod` recovers the requested mode. This pins BOTH halves at
+        once: with `os.fchmod` forced to raise, the write must (a) not
+        propagate the error, and (b) still land the file at the requested
+        bits via the fallback chmod — proving the suppression is real and
+        the fallback is load-bearing. Uses 0o640 (not the 0o600 tmp
+        default) so the assertion can only pass if the fallback actually
+        ran. Skipped on Windows where `os.fchmod` is absent and POSIX
+        bits don't apply."""
+        if sys.platform == "win32":
+            pytest.skip("os.fchmod is POSIX-only")
+
+        def boom_fchmod(_fd: int, _mode: int) -> None:
+            raise OSError("simulated sandbox fchmod rejection")
+
+        monkeypatch.setattr(os, "fchmod", boom_fchmod)
+        path = tmp_path / "f.txt"
+        # Must not raise even though fchmod failed — the suppress() holds.
+        atomic_write_bytes(path, b"private", mode_before_rename=0o640)
+        assert path.read_bytes() == b"private", (
+            "write must complete even when fchmod raises — the OSError is "
+            "suppressed, not propagated"
+        )
+        actual = path.stat().st_mode & 0o777
+        assert actual == 0o640, (
+            f"expected the defensive post-rename chmod to recover mode 0o640 "
+            f"after fchmod failed; got {oct(actual)}. The fallback "
+            f"`os.chmod(path, mode_before_rename)` regressed — a sandbox-FS "
+            f"caller would silently keep the 0o600 tmp default instead of the "
+            f"requested mode."
+        )
+        leftovers = [p.name for p in tmp_path.iterdir() if p.name != "f.txt"]
+        assert leftovers == [], f"unexpected leftover files: {leftovers}"
+
     def test_mode_and_mode_before_rename_are_mutually_exclusive(
         self, tmp_path: Path
     ) -> None:
@@ -732,10 +771,11 @@ class TestAtomicWriteBytes:
         target — it inherits whatever the tmp's permission bits were
         (typically 0o600 from `tempfile.NamedTemporaryFile`'s defaults,
         but that's the tmpfile module's choice, not ours). Pinning the
-        no-chmod contract leaves room for the future helper-migrate of
-        the canonical `_atomic_write_post` (queue #29) which would need
-        an explicit-mode story it can re-derive without surprise from
-        an unconditional chmod here."""
+        no-chmod contract matters for the canonical `_atomic_write_post`
+        (migrated onto this helper in Q29): it passes `mode_before_rename`
+        and relies on the absence of an unconditional chmod here, so a
+        regression that always chmod'd would silently change the mode of
+        every private memory write."""
         seen_chmods: list[tuple[str, int]] = []
         real_chmod = os.chmod
 

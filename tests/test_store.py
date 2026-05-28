@@ -578,6 +578,56 @@ def test_tombstone_file_is_owner_only(memory_dir: Path) -> None:
     assert mode == 0o600, f"tombstone mode is {oct(mode)}, expected 0o600"
 
 
+def test_atomic_write_post_runs_full_durability_ceremony(
+    memory_dir: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The store's canonical private-write helper `_atomic_write_post`
+    delegates to `_fsutil.atomic_write_bytes`, which owns the
+    fsync_file → rename → fsync_dir(parent) discipline. Episodes' own
+    write path has a dedicated spy test pinning this ceremony
+    (`test_episodes.test_write_is_atomic_and_durable`); the store path
+    was only pinned transitively through the `_fsutil` primitive tests.
+    Pin it directly so a future edit that re-inlined a partial copy of
+    the write in `store.py` and dropped the dir-fsync — the exact
+    regression the 2.6.x audit cycle kept catching — fails loudly here
+    instead of sailing through the 0o600/round-trip checks."""
+    fsync_file_calls: list[int] = []
+    fsync_dir_calls: list[Path] = []
+
+    from bettermemory import _fsutil
+
+    def spy_fsync_file(fd: int) -> None:
+        fsync_file_calls.append(fd)
+
+    def spy_fsync_dir(p: Path) -> None:
+        fsync_dir_calls.append(p)
+
+    monkeypatch.setattr(_fsutil, "fsync_file", spy_fsync_file)
+    monkeypatch.setattr(_fsutil, "fsync_dir", spy_fsync_dir)
+
+    store = Store(memory_dir)
+    store.write(content="durable body", scopes=["tools"])
+
+    md_files = [p for p in memory_dir.iterdir() if p.suffix == ".md"]
+    assert len(md_files) == 1
+    target = md_files[0]
+
+    # No `.tmp` artifacts left behind after a successful write.
+    stragglers = [p.name for p in memory_dir.iterdir() if ".tmp" in p.name]
+    assert stragglers == [], f"unexpected tmp artifacts: {stragglers}"
+
+    # fsync_file fired on the write's tmp fd before the rename.
+    assert len(fsync_file_calls) >= 1, (
+        "store write did not fsync the file before rename — a crash between "
+        "the rename and the kernel flush could leave a zero-byte memory file"
+    )
+    # fsync_dir fired on the memory file's parent so the new dirent is durable.
+    assert target.parent in fsync_dir_calls, (
+        f"expected fsync_dir({target.parent!r}) on the store write path; got "
+        f"{fsync_dir_calls!r}. Without it the rename is not durable past a crash."
+    )
+
+
 # ---------------------------------------------------------------------------
 # H13 — `Store.show` alias for MCP API symmetry
 #
