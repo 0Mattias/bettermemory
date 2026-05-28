@@ -23,15 +23,29 @@ decide whether the model retrieved memory this turn. The session
 id is carried in the Stop hook payload; recent events are read
 from `.events.jsonl`.
 
-Known divergence from the in-process audit: this hook does NOT
-see session-disabled scopes. The model-side `memory_audit_turn`
-filters out scopes the user disabled via `memory_scope_disable`
-(those live in `SessionState` and aren't persisted), so a turn the
-user explicitly framed as "unrelated to project X" can be flagged
-as a silent miss here even though the in-process audit would
-shield it. Stop-hook events carry `triggered_from="stop_hook"` so
-downstream rollups can distinguish the two sources; consumers
-that want the strict count should prefer the model-side events.
+Session-disabled scopes: the hook reconstructs them from the event
+log rather than the model's in-memory `SessionState` (which it can't
+see across the process boundary). `memory_scope_disable` /
+`memory_scope_enable` already append `scope_disable` / `scope_enable`
+events stamped with the MCP server's stable per-process session id,
+so the hook replays those toggles for the *current in-process server
+session* and feeds the net set into the probe as `excluded_scopes` —
+the same shield the in-process `memory_audit_turn` applies. A turn the
+user framed as "unrelated to project X" is therefore no longer
+false-flagged as a silent miss here. Reset-on-restart is preserved
+for free: a restarted server mints a fresh session id with no scope
+toggles under it yet, so the reconstructed set is empty until the
+user disables a scope again. See `_disabled_scopes_from_events`.
+Stop-hook events still carry `triggered_from="stop_hook"` so
+downstream rollups can distinguish the two sources.
+
+Residual divergence: the reconstruction reads the *active* event log
+only (same bound as the retrieval shield), and under multiple
+concurrent Claude sessions sharing one memory dir the "most recent
+in-process session" anchor can attribute one server's disabled scopes
+to another's audit. Both bias toward suppressing a miss — the same
+conservative direction as the in-process audit — and match the
+single-active-server deployment.
 
 Failure mode: the hook must never block the turn end. Every error
 path is caught and exit code is forced to 0 so a parser hiccup or
@@ -210,6 +224,12 @@ def run_audit(
     # session (queue #28). The hook runs as a fresh process in the
     # turn's cwd, so this reflects the user's working repo.
     caller_origin = capture_origin()
+    # Reconstruct the session-disabled scope set from the event log so the
+    # probe shields the same scopes the in-process audit would. Without
+    # this, a scope the user disabled via `memory_scope_disable` (e.g.
+    # "this is unrelated to project X") would still produce silent-miss
+    # flags here, since the hook can't read the server's in-memory state.
+    excluded_scopes = _disabled_scopes_from_events(recent)
     report = probe_for_miss(
         memories,
         user_message,
@@ -218,6 +238,7 @@ def run_audit(
         now=utcnow(),
         lookback_seconds=60,
         caller_origin=caller_origin,
+        excluded_scopes=excluded_scopes,
         mode=cfg.behavior.search_mode or "hybrid",
     )
     # Emit the audit event so cadence is visible even when there's
@@ -333,6 +354,69 @@ def run_audit(
             print(f"bettermemory proposals: {exc}", file=sys.stderr)
 
     return report.to_dict()
+
+
+def _disabled_scopes_from_events(events: list[dict[str, Any]]) -> set[str]:
+    """Reconstruct the session-disabled scope set from the event log.
+
+    `memory_scope_disable` / `memory_scope_enable` append `scope_disable`
+    / `scope_enable` events stamped with the MCP server's stable
+    per-process session id. The Stop hook runs in a separate process and
+    can't read the server's in-memory `SessionState.disabled_scopes`, but
+    it CAN replay those events off disk.
+
+    The replay is anchored to the *current in-process server session* —
+    the session id of the most recent event that did NOT originate from a
+    Stop hook (see `_latest_in_process_session`). Anchoring this way is
+    what preserves reset-on-restart semantics: a restarted server mints a
+    fresh session id and has emitted no scope toggles under it yet, so the
+    reconstructed set is empty until the user disables a scope again —
+    mirroring the in-memory state the server itself reset on startup.
+
+    Returns the net disabled set: each `scope_disable` adds, each later
+    `scope_enable` removes, walked in chronological (append) order. Empty
+    when no in-process session is found or it toggled no scopes.
+    """
+    server_session = _latest_in_process_session(events)
+    if server_session is None:
+        return set()
+    disabled: set[str] = set()
+    for event in events:
+        # Canonical-first session lookup with legacy fallback — same
+        # discipline `_pending_retrievals` uses.
+        if (event.get("session") or event.get("session_id")) != server_session:
+            continue
+        kind = event.get("kind")
+        if kind not in ("scope_disable", "scope_enable"):
+            continue
+        scope = event.get("scope")
+        if not isinstance(scope, str):
+            continue
+        if kind == "scope_disable":
+            disabled.add(scope)
+        else:
+            disabled.discard(scope)
+    return disabled
+
+
+def _latest_in_process_session(events: list[dict[str, Any]]) -> str | None:
+    """Session id of the most recent non-Stop-hook event, or None.
+
+    In-process MCP tool calls and the Stop hook write to the same event
+    log under different session-id spaces (the server's `sess_<hex>` vs.
+    Claude Code's transcript session id). Stop-hook events tag
+    `triggered_from="stop_hook"`; everything else is in-process. The last
+    such event identifies the live server session whose disabled-scope
+    toggles the hook should honour. `events` is in chronological (append)
+    order, so the latest match is found by walking in reverse.
+    """
+    for event in reversed(events):
+        if event.get("triggered_from") == "stop_hook":
+            continue
+        session = event.get("session") or event.get("session_id")
+        if isinstance(session, str):
+            return session
+    return None
 
 
 def _emit_hook_attributions(

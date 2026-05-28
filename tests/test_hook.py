@@ -24,12 +24,15 @@ from pathlib import Path
 
 import pytest
 
-from bettermemory.events import iter_events
+from bettermemory.events import Recorder, iter_events
 from bettermemory.hook import (
+    _disabled_scopes_from_events,
     _extract_last_exchange,
     _flatten_assistant_content,
+    _latest_in_process_session,
     _read_payload,
     main as hook_main,
+    run_audit,
 )
 from bettermemory.store import Store
 
@@ -932,3 +935,177 @@ def test_run_audit_isolates_proposals_failure(
     assert "proposals exploded" in capsys.readouterr().err
     kinds = [e.get("kind") for e in iter_events(mem_dir)]
     assert "turn_audited" in kinds
+
+
+# ---------------------------------------------------------------------------
+# Session-disabled scopes reconstructed from the event log (C3)
+# ---------------------------------------------------------------------------
+
+
+def _scope_event(*, session: str, kind: str, scope: str) -> dict[str, object]:
+    """An in-process scope_disable / scope_enable event as the server
+    writes it: stamped with the server session, no `triggered_from`."""
+    return {"session": session, "kind": kind, "scope": scope}
+
+
+def test_latest_in_process_session_skips_stop_hook_events() -> None:
+    """The anchor must ignore the hook's own events (which carry
+    `triggered_from="stop_hook"`) and return the most recent in-process
+    server session id."""
+    events = [
+        {"session": "sess_server", "kind": "search"},
+        {
+            "session": "claude-uuid",
+            "kind": "turn_audited",
+            "triggered_from": "stop_hook",
+        },
+    ]
+    assert _latest_in_process_session(events) == "sess_server"
+
+
+def test_latest_in_process_session_none_when_only_stop_hook() -> None:
+    """No in-process session in the log → None (nothing to anchor to)."""
+    events = [
+        {
+            "session": "claude-uuid",
+            "kind": "turn_audited",
+            "triggered_from": "stop_hook",
+        },
+    ]
+    assert _latest_in_process_session(events) is None
+
+
+def test_disabled_scopes_reconstructs_net_set() -> None:
+    """Replay disable/enable for the current server session: a scope
+    disabled then re-enabled drops out; one left disabled stays."""
+    events = [
+        _scope_event(session="sess_server", kind="scope_disable", scope="projects:a"),
+        _scope_event(session="sess_server", kind="scope_disable", scope="projects:b"),
+        _scope_event(session="sess_server", kind="scope_enable", scope="projects:a"),
+    ]
+    assert _disabled_scopes_from_events(events) == {"projects:b"}
+
+
+def test_disabled_scopes_resets_on_new_server_session() -> None:
+    """Reset-on-restart: a scope disabled under an OLD server session is
+    NOT honoured once a fresh in-process session (the restarted server)
+    appears in the log — the anchor moves to the new session, which has
+    toggled nothing."""
+    events = [
+        _scope_event(session="sess_old", kind="scope_disable", scope="projects:a"),
+        # The restarted server's first in-process activity, new session id.
+        {"session": "sess_new", "kind": "search"},
+    ]
+    assert _disabled_scopes_from_events(events) == set()
+
+
+def test_disabled_scopes_empty_when_no_in_process_session() -> None:
+    """Only stop-hook events in the log → no anchor → empty set, even if
+    a stray scope event somehow carried a stop-hook session."""
+    events = [
+        {
+            "session": "claude-uuid",
+            "kind": "turn_audited",
+            "triggered_from": "stop_hook",
+        },
+    ]
+    assert _disabled_scopes_from_events(events) == set()
+
+
+def _miss_config(mem_dir: Path) -> "object":
+    from bettermemory.config import Config, StorageConfig, TelemetryConfig
+
+    return Config(
+        storage=StorageConfig(directory=str(mem_dir)),
+        telemetry=TelemetryConfig(enabled=True),
+    )
+
+
+# A body + query pair that scores a deterministic high-relevance hit
+# (mirrors the load-bearing case in test_audit.py).
+_MISS_BODY = "backup strategy uses triangular restic replication"
+_MISS_QUERY = "backup strategy"
+
+
+def test_run_audit_baseline_flags_miss(tmp_path: Path) -> None:
+    """Control: with no disabled scopes, a high-relevance hit and no
+    recent retrieval is a silent miss."""
+    mem_dir = tmp_path / "mem"
+    mem_dir.mkdir()
+    Store(mem_dir).write(content=_MISS_BODY, scopes=["infrastructure"])
+
+    result = run_audit(
+        user_message=_MISS_QUERY,
+        assistant_response=None,
+        session_id="claude-baseline",
+        config=_miss_config(mem_dir),  # type: ignore[arg-type]
+    )
+    assert result["verdict"] == "miss"
+
+
+def test_run_audit_disabled_scope_suppresses_stop_hook_miss(tmp_path: Path) -> None:
+    """C3 core: a scope the user disabled in-session (recorded as a
+    `scope_disable` event) is excluded from the hook's probe, so the
+    same turn that would otherwise be flagged is no longer a miss."""
+    mem_dir = tmp_path / "mem"
+    mem_dir.mkdir()
+    Store(mem_dir).write(content=_MISS_BODY, scopes=["infrastructure"])
+
+    # Seed the in-process server's disable event onto disk, exactly as
+    # memory_scope_disable would. The hook reads it back cross-process.
+    Recorder(root=mem_dir, session_id="sess_server").record(
+        "scope_disable", scope="infrastructure"
+    )
+
+    result = run_audit(
+        user_message=_MISS_QUERY,
+        assistant_response=None,
+        session_id="claude-disabled",
+        config=_miss_config(mem_dir),  # type: ignore[arg-type]
+    )
+    assert result["verdict"] != "miss"
+
+
+def test_run_audit_reenabled_scope_reflags_miss(tmp_path: Path) -> None:
+    """The disable correctly resets: a scope disabled then re-enabled in
+    the same server session is back in scope, so the miss fires again."""
+    mem_dir = tmp_path / "mem"
+    mem_dir.mkdir()
+    Store(mem_dir).write(content=_MISS_BODY, scopes=["infrastructure"])
+
+    rec = Recorder(root=mem_dir, session_id="sess_server")
+    rec.record("scope_disable", scope="infrastructure")
+    rec.record("scope_enable", scope="infrastructure")
+
+    result = run_audit(
+        user_message=_MISS_QUERY,
+        assistant_response=None,
+        session_id="claude-reenabled",
+        config=_miss_config(mem_dir),  # type: ignore[arg-type]
+    )
+    assert result["verdict"] == "miss"
+
+
+def test_run_audit_disable_resets_after_server_restart(tmp_path: Path) -> None:
+    """Reset-on-restart end-to-end: a scope disabled under a prior server
+    session does NOT shield the audit once a fresh server session has
+    written in-process activity — the miss fires again."""
+    mem_dir = tmp_path / "mem"
+    mem_dir.mkdir()
+    Store(mem_dir).write(content=_MISS_BODY, scopes=["infrastructure"])
+
+    # Old server disabled the scope, then restarted; the new server's
+    # first in-process activity lands under a fresh session id and does
+    # NOT shield the hook's own session, so the miss must reappear.
+    Recorder(root=mem_dir, session_id="sess_old").record(
+        "scope_disable", scope="infrastructure"
+    )
+    Recorder(root=mem_dir, session_id="sess_new").record("search", returned=[])
+
+    result = run_audit(
+        user_message=_MISS_QUERY,
+        assistant_response=None,
+        session_id="claude-restart",
+        config=_miss_config(mem_dir),  # type: ignore[arg-type]
+    )
+    assert result["verdict"] == "miss"
