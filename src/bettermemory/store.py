@@ -964,6 +964,10 @@ class Store:
               ENOENT-on-unlink race is swallowed; everything else
               propagates. `memory_restore` catches this and translates it
               to a structured `ValueError`.
+            ValueError: the tombstone's `created` frontmatter is missing or
+              unparseable, so the restored active filename's date prefix
+              cannot be rebuilt. `memory_restore` re-raises this verbatim so
+              the caller learns which field is malformed.
         """
         if not is_valid_ulid(memory_id):
             raise MemoryNotFoundError(f"invalid id: {memory_id!r}")
