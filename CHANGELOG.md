@@ -117,6 +117,21 @@ spells out exactly what's stable.
   catch the verify-vs-verify race; `last_verified_at` is the field
   that always moves on a successful verify, so it's the cheapest
   correct fingerprint.
+- **`bettermemory export -o PATH` raises on a missing parent
+  directory again (Y1).** The Q29 atomic-write migration above
+  inadvertently changed user-facing semantics: pre-3.2.1 the CLI
+  used a bare `out_path.write_text(...)`, which raised
+  `FileNotFoundError` when `--output`'s parent directory didn't
+  exist; routing through `_fsutil.atomic_write_bytes` (whose
+  `mkdir(parents=True, exist_ok=True)` is intentional for
+  fresh-install callers like `init.py` under `~/.config` and
+  `sync.py` under a fresh sync root) silently created the parent
+  tree instead, burying a `bettermemory export -o /typod/path/backup.json`
+  backup at an unintended location with no error. A pre-check in
+  `_cli_export` restores the 3.2.0 loud-error contract for the
+  export caller while leaving the helper's auto-mkdir intact for
+  its other callers. A bare filename (`-o backup.json`, parent
+  `Path(".")`) still works since the cwd always exists.
 
 ### Internal
 
@@ -159,6 +174,90 @@ spells out exactly what's stable.
   `flock_excl`'s Windows branch; same shape, same fix. `Iterator`
   is now unused in `_fsutil.py` and leaves the imports too. Purely
   type-annotation; no runtime impact.
+- **`docs/api.md` documents the W2/W8 stale + W7 race-loss surfaces
+  (R3).** Three tools landed structured race-loss / stale responses
+  in 3.2.0–3.2.1 that the API contract documented only the happy
+  path of. Append a paragraph to each so multi-agent callers learn
+  about the `{"status": "stale", ...}` shape on `memory_update`
+  (W2) / `memory_verify` (W8) and the structured
+  `ValueError("raced with ...")` translation on `memory_restore`
+  (W7); W8 also calls out `last_verified_at` as the snapshot
+  fingerprint (not `updated`, since verify is orthogonal to content
+  edits). Documentation only.
+- **`_fsutil.atomic_write_bytes` docstrings refreshed post-Q29
+  (Y2).** Module + function docstrings claimed two callsites and a
+  forward-looking promise to migrate `_atomic_write_post` +
+  `episodes._write_path`; reality at HEAD is that Q29 deferred those
+  two privacy-critical writers (they need fchmod-before-rename,
+  which the helper doesn't support) and instead migrated
+  `config.py`'s default-config writer and `cli/export.py`'s `-o`
+  output writer. Switched to caller-shape framing ("plain-bytes
+  payload, no privacy-0o600 requirement") so the prose stops
+  drifting on every new caller, and rewrote the Q29 caveat to
+  reflect what shipped. Docstring only.
+- **T1 rename completed in user-facing prose (Y10+Y11+Y12).**
+  3.2.0's T1 finished renaming `endorsement_debt` →
+  `cold_endorsement_memories` in code, MCP wire keys, DESC strings,
+  and the eval render header, but prose docs still taught the old
+  branding. Swept `README.md`, `docs/ROADMAP.md`, and `docs/eval.md`
+  to the new vocabulary. Historical CHANGELOG / api.md references to
+  the old key are preserved on purpose — they document the 3.1.x →
+  3.2.0 wire-shape break and the T9 TOML back-compat shim. Docs only.
+- **`Raises:` blocks added to `Store.update` / `mark_verified` /
+  `tombstone` (Y9).** Symmetric with W7's `Store.restore`.
+  Documents the `ConcurrentUpdateError` / `MemoryNotFoundError` /
+  `TombstonedError` race-loss paths in structured form so IDE
+  introspection matches what the type checker already reads from the
+  bodies. Docstring only.
+- **Test-scaffold accuracy fixes (Y3+Y6+Y8).** Three small
+  test-only fixes batched: `test_store_locking.py`'s `traced_locked`
+  annotation upgraded `Iterator[None]` → `Generator[None, None,
+  None]` (completes the F15 sweep on the test side);
+  `test_concurrency.py`'s multi-process restore test gains a
+  closed-set assertion on the three known loser-message shapes
+  (the prior version was not a true W7 regression guard); and
+  `test_config.py` gains `test_load_config_falsy_old_key_emits_warning`
+  pinning that an explicit `endorsement_debt_ratio_threshold = 0.0`
+  still fires the deprecation warning and migrates (presence
+  triggers, value doesn't), with a corrected docstring on the
+  absent-key sibling.
+- **Test pinning the BOTH-keys legacy-alias one-shot guard (Y4).**
+  `_apply_legacy_endorsement_debt_alias`'s `+both` guard tuple is
+  logically distinct from the old-only one; a sibling test loads a
+  both-keys TOML three times and asserts exactly one BOTH warning
+  fires, guarding against a regression that collapses the suffix or
+  cross-suppresses between branches. Test only.
+- **Test covering `Store.restore`'s active-recheck branch (Y7).**
+  The existing W7 monkeypatch test exercised the tombstone-recheck
+  (which fires first) rather than the active-recheck
+  (`NotTombstonedError`) branch it claimed to. Added a dedicated
+  test that patches `_find_path_for_id` only on the under-lock call
+  site so the active-recheck runs deterministically, and tightened
+  the original test to the exception it actually raises
+  (`MemoryNotFoundError`). Test only.
+- **`eval.py` comment justifying the ENDORSEMENT vs
+  COLD_ENDORSEMENT name choice (Y5).** Expanded the
+  literal-duplication comment to also explain why the eval-side
+  identifier omits the `cold_` bucket prefix that health carries:
+  the eval output nests under `cold_endorsement_memories`, so the
+  bucket scope is already supplied and the parameter prefix would be
+  redundant — whereas health's flat-kwarg path needs it.
+  Comment only.
+- **Tests pinning cross-branch independence of the alias guards
+  (Y4-fu).** Y4 pinned same-branch repeat-suppression but reset the
+  guard at entry, leaving the cross-branch transition (old-only on
+  path P, then both-keys on the same path with no reset) untested.
+  Added both directions, asserting each branch's warning fires fresh
+  and both guard tuples are present, so a regression that collapsed
+  the `+both` suffix into a shared tuple can't cross-suppress and
+  still pass. Test only.
+- **Multi-process W7 race test rendezvous (Y6-fu).** Added a
+  file-based rendezvous (per-worker ready-marker + a shared
+  go-marker the parent touches once all workers are ready) so all
+  losers route through the W7 under-lock recheck and carry the
+  "raced with" hint, letting the strict assertion the threaded
+  variant already uses hold for the multi-process variant too —
+  upgrading Y6's pragmatic closed-set concession. Test only.
 
 ## 3.2.0 - 2026-05-27
 
