@@ -7,6 +7,38 @@ breaking changes, minor for additive features, patch for fixes. The
 [compatibility contract](CONTRIBUTING.md#versioning-and-the-compatibility-contract)
 spells out exactly what's stable.
 
+## [Unreleased]
+
+Documentation accuracy and durability test hardening — a follow-up to
+the 3.2.2 Q29 atomic-write consolidation. No behavioral or API change;
+these ride into the next release rather than warranting a standalone
+PyPI bump.
+
+### Fixed
+
+- **`_fsutil.atomic_write_bytes` docstring accuracy.** The module and
+  function docstrings described the chmod-after-rename `mode` parameter
+  as the path used by the config / `.gitignore` / JSON-export writers.
+  In fact no caller passes `mode`: those writers (`config.py`, `init.py`,
+  `cli/export.py`, `sync.py`) inherit `NamedTemporaryFile`'s 0o600
+  default — strictly safe (owner-only) for these owner-scoped files —
+  and `mode` currently has no callers, retained only as a documented
+  chmod-after-rename affordance. Corrected the attribution so the doc
+  matches the code. Also refreshed a `test_fsutil` docstring that still
+  framed the Q29 helper migration as future work.
+
+### Internal
+
+- **Durability test hardening (Q29 follow-up).** Added direct coverage
+  for two previously-untested branches of the consolidated atomic-write
+  path: (1) when `os.fchmod` raises (sandbox filesystems that reject it),
+  the suppressed error does not propagate and the defensive post-rename
+  `os.chmod` recovers the requested mode; (2) `store._atomic_write_post`
+  routes through the full `fsync_file → rename → fsync_dir(parent)`
+  ceremony — parity with the existing `episodes` spy test — so a future
+  edit that re-inlined the write and dropped the dir-fsync fails loudly
+  instead of passing the 0o600/round-trip checks.
+
 ## 3.2.2 - 2026-05-28
 
 Internal hardening, tooling, and documentation. No behavioral or API

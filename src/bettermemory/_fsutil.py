@@ -22,11 +22,12 @@ exists, the data backing it never reached disk.
 * `atomic_write_bytes(path, data, *, mode=None, mode_before_rename=None)`
   — the full tmp+fsync+rename+fsync_dir discipline packaged as a
   one-call helper for small files held in memory as plain bytes. Two
-  mutually-exclusive permission modes: `mode` chmods AFTER the rename
-  (non-private payloads — config TOML, JSON config blob, `.gitignore`,
-  JSON export), `mode_before_rename` fchmods the tmp fd BEFORE the
-  rename (privacy-critical 0o600 payloads — no world-readable window
-  at the visible name). The privacy-critical frontmatter writers route
+  mutually-exclusive permission affordances: `mode` chmods AFTER the
+  rename (for a payload that wants an explicit non-private bit,
+  accepting the harmless world-readable instant between rename and
+  chmod), `mode_before_rename` fchmods the tmp fd BEFORE the rename
+  (privacy-critical 0o600 payloads — no world-readable window at the
+  visible name). The privacy-critical frontmatter writers route
   through the `mode_before_rename` form: `_atomic_write_post` (the
   store's Post writer) and `episodes._write_path` both serialise a
   `frontmatter.Post` to bytes and delegate here (Q29), so the
@@ -38,8 +39,14 @@ exists, the data backing it never reached disk.
   the streaming), and `semantic.flush_persistent_cache` writes via
   `np.savez_compressed` to a file object under `flock_excl` (numpy's
   container format, not a bytes blob). Both already perform their own
-  before-rename chmod/fchmod. The plain-`mode` callers are `config.py`'s
-  default-config writer and `cli/export.py`'s `-o` output writer.
+  before-rename chmod/fchmod. The plain callers that pass neither mode
+  — `config.py`'s default-config writer, `init.py`'s MCP-client-config
+  writer, `cli/export.py`'s `-o` output writer, and `sync.py`'s
+  `.gitignore` writer — inherit `NamedTemporaryFile`'s 0o600 default,
+  which is strictly safe (owner-only) for these owner-scoped files.
+  `mode` itself currently has no callers; it's retained as the
+  documented chmod-after-rename affordance for a future genuinely
+  world-readable output writer.
 
 Both fsync helpers swallow `OSError` and return. fsync legitimately
 fails on some pseudo-filesystems (`/proc`, certain tmpfs/overlayfs
@@ -148,11 +155,14 @@ def atomic_write_bytes(
     Permission control (mutually exclusive — pass at most one;
     passing both raises ``ValueError``):
 
-    * ``mode`` — applied via ``os.chmod`` AFTER the rename. Correct for
-      non-private payloads (TOML config, JSON config blob,
-      ``.gitignore``, JSON export) where no reader races the
-      rename→chmod window; the world-readable instant between rename
-      and chmod is harmless when the bytes aren't private.
+    * ``mode`` — applied via ``os.chmod`` AFTER the rename. The
+      chmod-after-rename affordance for a non-private payload that wants
+      an explicit world- or group-readable bit: the world-readable
+      instant between rename and chmod is harmless when the bytes aren't
+      private. Currently has no callers — the config/init/export/sync
+      writers inherit the tmp's 0o600 default (strictly safe for those
+      owner-scoped files); the parameter is retained as a documented
+      affordance.
     * ``mode_before_rename`` — applied via ``os.fchmod`` on the tmp file
       descriptor BEFORE the rename, plus a defensive post-rename
       ``os.chmod`` fallback. Use for privacy-critical payloads (the
