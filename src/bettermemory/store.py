@@ -7,11 +7,8 @@ objects and get them back.
 
 from __future__ import annotations
 
-import contextlib
 import errno
 import logging as _logging
-import os
-import sys
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 from pathlib import Path
@@ -21,7 +18,7 @@ import yaml
 
 from . import _frontmatter as frontmatter
 from ._decorators import best_effort
-from ._fsutil import flock_excl, fsync_dir, fsync_file
+from ._fsutil import atomic_write_bytes, flock_excl, fsync_dir
 
 # We use a vendored frontmatter parser (`_frontmatter.py`) which pins the
 # pure-Python yaml.SafeLoader / yaml.SafeDumper. Two reasons:
@@ -1539,98 +1536,24 @@ def _index_remove_quietly(root: Path, memory_id: str) -> None:
 
 
 def _atomic_write_post(path: Path, post: frontmatter.Post) -> None:
-    """Atomic, durable write of a frontmatter Post to `path`.
+    """Atomic, durable, 0o600 write of a frontmatter Post to `path`.
 
-    Write-to-tmp, fchmod 0o600 on the tmp fd, fsync the file, rename
-    into place, fsync the parent directory. The rename alone is
-    POSIX-atomic for the directory entry, but without fsync on the
-    file we can end up with a renamed-but-empty file after power loss
-    (the entry exists, the bytes never reached disk); without fsync
-    on the directory the rename itself isn't durable past a crash.
-    Both fsyncs are best-effort — see `_fsutil` for the
-    platform/filesystem caveats.
+    Serialises the Post to UTF-8 bytes and delegates to
+    `atomic_write_bytes(..., mode_before_rename=0o600)`, which owns the
+    tmp + fchmod-before-rename + fsync + rename + dir-fsync discipline and
+    the orphan-tmp cleanup. The fchmod-before-rename keeps the file 0o600
+    from the instant it appears at `path` — memory bodies are
+    privacy-critical, so they must never be world-readable at the visible
+    name even briefly (see `_fsutil.atomic_write_bytes` for the
+    closed-window rationale and the platform/filesystem caveats).
 
-    Mode 0o600 (owner read/write only) is set on the tmp file BEFORE
-    the rename — `os.fchmod` on the open file descriptor — so the
-    rename brings the restricted mode atomically. The pre-2.7 shape
-    set the mode via `os.chmod(path, 0o600)` AFTER the rename, which
-    opened a window where the file was world-readable at the target
-    path (the umask is typically 0o644 on Linux/macOS, sometimes
-    0o664 on shared-user boxes). Concurrent readers in that window
-    could legally open and tail the file before we restricted it.
-    fchmod-before-rename closes the window — the file's permission
-    bits are 0o600 from the moment it appears under `path`.
-
-    The tmp file uses a per-process random suffix
-    (`tempfile.NamedTemporaryFile(dir=path.parent, prefix=path.name +
-    ".", suffix=".tmp", delete=False)`) rather than the deterministic
-    `<path>.tmp` it used pre-2.7. Two writers landing on the same
-    target path used to race on the deterministic tmp name itself —
-    one writer's flush-to-tmp could overlap the other's, and the
-    final rename's "winner" was just the last one to `replace`. With
-    a per-process tmp name the two writers fill separate files and
-    serialize only on the rename; one of them lands, the other's tmp
-    is left as `<path>.<random>.tmp` on disk (deterministic cleanup
-    happens via the `try/finally` below). The file-lock in
-    `_locked()` is still the primary correctness guarantee — this
-    just removes the secondary tmp-name collision risk that would
-    otherwise show up on platforms where the lock primitive is a
-    no-op (Windows pre-2.7) or when two writers don't share a lock
-    (e.g. a tooling bug that bypasses Store).
-
-    One helper, one definition of "durable write" for every persistent
-    write in the store: new memories, tombstones, restores, and
-    rename_scope in-place edits all share this pattern.
+    One definition of "durable private write" for every persistent write
+    in the store: new memories, tombstones, restores, and rename_scope
+    in-place edits all route through here.
     """
-    import tempfile
-
-    data = frontmatter.dumps(post).encode("utf-8")
-    # `delete=False` is required because we move the tmp to `path`
-    # before letting the context manager close it; `delete=True` would
-    # try to unlink the (now-renamed) original tmp path on context exit
-    # and crash. `prefix=path.name + "."` keeps the tmp visibly
-    # associated with the target file in `ls` output, which helps
-    # post-crash inspection.
-    parent = path.parent
-    parent.mkdir(parents=True, exist_ok=True)
-    tmp_file = tempfile.NamedTemporaryFile(
-        dir=str(parent),
-        prefix=path.name + ".",
-        suffix=".tmp",
-        delete=False,
+    atomic_write_bytes(
+        path, frontmatter.dumps(post).encode("utf-8"), mode_before_rename=0o600
     )
-    tmp_path = Path(tmp_file.name)
-    renamed = False
-    try:
-        with tmp_file as f:
-            f.write(data)
-            f.flush()
-            # fchmod BEFORE the rename so the file is 0o600 the moment
-            # it appears at `path`. Suppressed — Windows has no mode
-            # bits and some sandbox filesystems reject fchmod; that's
-            # not a corruption risk, just a permission-bit loss.
-            # `sys.platform` narrowing keeps mypy happy on Windows
-            # where `os.fchmod` is absent from typeshed.
-            if sys.platform != "win32":
-                with contextlib.suppress(OSError):
-                    os.fchmod(f.fileno(), 0o600)
-            fsync_file(f.fileno())
-        tmp_path.replace(path)
-        renamed = True
-        # Defensive post-rename chmod (belt-and-suspenders): if the
-        # filesystem squashed the mode on rename (rare — most POSIX
-        # filesystems preserve it) we can still recover. This is a
-        # no-op when fchmod above succeeded.
-        with contextlib.suppress(OSError):
-            os.chmod(path, 0o600)
-        fsync_dir(parent)
-    finally:
-        # If we never renamed (write or rename raised), the tmp is an
-        # orphan; clean it up so the directory doesn't accumulate
-        # `<path>.<random>.tmp` files on every failure.
-        if not renamed:
-            with contextlib.suppress(OSError):
-                tmp_path.unlink()
 
 
 def _as_dt(value: object) -> datetime:
