@@ -7,6 +7,57 @@ breaking changes, minor for additive features, patch for fixes. The
 [compatibility contract](CONTRIBUTING.md#versioning-and-the-compatibility-contract)
 spells out exactly what's stable.
 
+## 3.3.2 - 2026-05-28
+
+Closes deferred queue item C3, plus a round of audit hardening on the
+recent C3 / #28 changes.
+
+### Fixed
+
+- **The Stop hook now respects session-disabled scopes.** Previously a
+  scope the user disabled in-session via `memory_scope_disable` (e.g.
+  "this is unrelated to project X") still produced silent-miss flags from
+  the client-side Stop hook, because the hook runs in a separate process
+  and can't read the server's in-memory `SessionState`. The hook now
+  reconstructs the disabled set from the event log — `scope_disable` /
+  `scope_enable` are already persisted as events stamped with the
+  server's stable per-process session id — and feeds it into the audit
+  probe as `excluded_scopes`, the same shield the in-process
+  `memory_audit_turn` applies. A turn the user framed as out-of-scope is
+  no longer false-flagged. No new write path, no sidecar file, no schema
+  change — the event log was already the single source of truth (patch
+  bump). Reset-on-restart is eventual, not atomic: the reconstruction
+  anchors to the most recent in-process server session, so a restarted
+  server keeps replaying the prior session's disables until it writes its
+  first in-process event (a conservative, self-correcting gap window).
+  Residual divergence (two directions): under multiple concurrent
+  sessions sharing one memory dir the anchor can cross-attribute disabled
+  scopes (over-suppress), and the active-log-only read can drop a disable
+  that rotated out while its session is still live (over-flag) — both
+  narrow, matching the single-active-server deployment.
+
+### Internal
+
+Docstring accuracy and test/CI hardening from a multi-agent audit of the
+C3 and #28 commits (no behavioral change):
+
+- The C3 hook docstrings no longer describe reset-on-restart as "free" /
+  atomic, and the residual-divergence note now distinguishes the
+  over-suppress (concurrent sessions) and over-flag (active-log rotation)
+  cases instead of claiming both suppress.
+- `episode_handoff`'s module and handler docstrings are updated for the
+  post-#28 reality: events now carry `worktree_root`, so a named-worktree
+  caller can adopt a matching zero-episode prior session, with legacy
+  (pre-#28) events falling back to the conservative None-only-matches-None
+  rule.
+- Tests: added a legacy-no-worktree fallback guard and a restart-gap-window
+  test, tightened the C3 suppression assertion to pin the exact `no_signal`
+  verdict, and pinned the loop-iteration end-to-end test to a named
+  worktree so it no longer goes vacuous when run outside a git checkout.
+- `ci.yml` documents that an `experimental` matrix leg would be exempt from
+  the PyPI publish gate, so re-adding one is a deliberate decision rather
+  than a silent bypass of the full-matrix-green contract.
+
 ## 3.3.1 - 2026-05-28
 
 A single targeted fix closing queue item #28.
