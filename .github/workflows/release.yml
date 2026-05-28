@@ -32,6 +32,17 @@ permissions:
   contents: read
 
 jobs:
+  # Gate the whole release on the FULL CI matrix — every job in ci.yml
+  # (ubuntu 3.11-3.14 + macOS + Windows + embeddings + embeddings-fast +
+  # pyright), invoked as a reusable workflow against the tagged commit.
+  # The publish jobs below `needs:` this, so the immutable PyPI publish
+  # cannot fire unless the entire matrix is green. Previously the publish
+  # depended only on `build` (the core Linux gate), so a macOS/Windows-
+  # only failure could not block a publish.
+  ci:
+    name: Full CI matrix
+    uses: ./.github/workflows/ci.yml
+
   build:
     name: Build sdist + wheel
     runs-on: ubuntu-latest
@@ -97,7 +108,7 @@ jobs:
 
   publish-pypi:
     name: Publish to PyPI
-    needs: build
+    needs: [build, ci]
     # Tag push goes straight to PyPI; workflow_dispatch with target=pypi
     # is the manual-promotion escape hatch.
     if: github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && inputs.target == 'pypi')
@@ -120,7 +131,7 @@ jobs:
 
   publish-testpypi:
     name: Publish to TestPyPI
-    needs: build
+    needs: [build, ci]
     if: github.event_name == 'workflow_dispatch' && inputs.target == 'testpypi'
     runs-on: ubuntu-latest
     environment:

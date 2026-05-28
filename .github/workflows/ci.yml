@@ -5,6 +5,10 @@ on:
     branches: [main]
   pull_request:
     branches: [main]
+  # Callable as a reusable workflow so release.yml can gate the PyPI
+  # publish on the FULL matrix (macOS/Windows + embeddings + pyright),
+  # not just the core Linux gate. Additive: push/PR runs are unchanged.
+  workflow_call:
 
 permissions:
   contents: read
