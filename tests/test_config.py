@@ -563,6 +563,170 @@ def test_load_config_both_keys_warning_is_one_shot(
     )
 
 
+def test_load_config_legacy_key_cross_branch_no_cross_suppression(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    """The old-only and both-keys branches have INDEPENDENT one-shot guards
+    on the same `config_path`. Y4's sibling test
+    (`test_load_config_both_keys_warning_is_one_shot`) pins same-branch
+    repeat-suppression but resets the guard at entry, so it can't catch a
+    regression that collapses the `+both` suffix into a shared guard tuple.
+    This test exercises the cross-branch transition WITHOUT a reset
+    between loads:
+
+    1. Old-only TOML on path P -> old-only warning fires; guard tuple
+       `(P, "endorsement_debt_ratio_threshold")` is recorded.
+    2. SAME path P, rewritten to both-keys content; no
+       `_reset_deprecated_key_guard()` -> BOTH warning must fire fresh
+       (with `BOTH` in the message), not be silently cross-suppressed by
+       the old-only guard from step 1.
+
+    Cross-asserts both guard tuples are present after the two loads, so
+    a regression that merged the keys (or dropped the `+both` suffix)
+    would either skip the second warning OR leave a single guard entry
+    instead of two."""
+    from bettermemory import config as _cfg
+
+    _reset_deprecated_key_guard()
+    config_path = tmp_path / "config.toml"
+
+    # Step 1: old-only branch on path P.
+    config_path.write_text(
+        "[behavior]\nendorsement_debt_ratio_threshold = 0.15\n",
+        encoding="utf-8",
+    )
+    with caplog.at_level("WARNING", logger="bettermemory.config"):
+        cfg_old_only = load_config(config_path)
+    assert cfg_old_only.behavior.cold_endorsement_ratio_threshold == 0.15
+    old_only_records = [
+        r
+        for r in caplog.records
+        if r.levelname == "WARNING"
+        and "endorsement_debt_ratio_threshold" in r.getMessage()
+        and "BOTH" not in r.getMessage()
+    ]
+    assert len(old_only_records) == 1, (
+        f"step 1 (old-only) should fire exactly one old-only warning, got "
+        f"{[r.getMessage() for r in old_only_records]}"
+    )
+
+    # Step 2: SAME path P, rewritten to both-keys; NO reset between.
+    caplog.clear()
+    config_path.write_text(
+        "[behavior]\n"
+        "endorsement_debt_ratio_threshold = 0.99\n"  # stale value
+        "cold_endorsement_ratio_threshold = 0.25\n",  # the intent
+        encoding="utf-8",
+    )
+    with caplog.at_level("WARNING", logger="bettermemory.config"):
+        cfg_both = load_config(config_path)
+    # New key wins on the both-keys branch.
+    assert cfg_both.behavior.cold_endorsement_ratio_threshold == 0.25
+    both_records = [
+        r
+        for r in caplog.records
+        if r.levelname == "WARNING"
+        and "endorsement_debt_ratio_threshold" in r.getMessage()
+        and "BOTH" in r.getMessage()
+    ]
+    assert len(both_records) == 1, (
+        f"step 2 (both-keys after old-only on same path, no reset) should "
+        f"fire a fresh BOTH warning; got "
+        f"{[r.getMessage() for r in both_records]}"
+    )
+
+    # Both guard tuples now coexist for the same resolved path — that's the
+    # invariant a `+both` collapse regression would break.
+    resolved = config_path.resolve()
+    assert (
+        resolved,
+        "endorsement_debt_ratio_threshold",
+    ) in _cfg._DEPRECATED_KEY_WARNED_PATHS, (
+        "old-only guard tuple must remain set after the cross-branch transition"
+    )
+    assert (
+        resolved,
+        "endorsement_debt_ratio_threshold+both",
+    ) in _cfg._DEPRECATED_KEY_WARNED_PATHS, (
+        "both-keys guard tuple must be set independently of the old-only guard"
+    )
+
+
+def test_load_config_legacy_key_cross_branch_reverse_no_cross_suppression(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    """Reverse of `test_load_config_legacy_key_cross_branch_no_cross_suppression`:
+    BOTH branch triggers first on path P, then old-only on the same path
+    without a reset. The old-only warning must fire fresh; the BOTH guard
+    from step 1 must not silently swallow it. Pins the symmetry of the
+    two independent guards — a regression that wired the old-only branch
+    to check the `+both` tuple (or vice versa) would only show up in one
+    direction without both tests."""
+    from bettermemory import config as _cfg
+
+    _reset_deprecated_key_guard()
+    config_path = tmp_path / "config.toml"
+
+    # Step 1: both-keys branch on path P.
+    config_path.write_text(
+        "[behavior]\n"
+        "endorsement_debt_ratio_threshold = 0.99\n"
+        "cold_endorsement_ratio_threshold = 0.25\n",
+        encoding="utf-8",
+    )
+    with caplog.at_level("WARNING", logger="bettermemory.config"):
+        cfg_both = load_config(config_path)
+    assert cfg_both.behavior.cold_endorsement_ratio_threshold == 0.25
+    both_records = [
+        r
+        for r in caplog.records
+        if r.levelname == "WARNING"
+        and "endorsement_debt_ratio_threshold" in r.getMessage()
+        and "BOTH" in r.getMessage()
+    ]
+    assert len(both_records) == 1, (
+        f"step 1 (both-keys) should fire exactly one BOTH warning, got "
+        f"{[r.getMessage() for r in both_records]}"
+    )
+
+    # Step 2: SAME path P, rewritten to old-only; NO reset between.
+    caplog.clear()
+    config_path.write_text(
+        "[behavior]\nendorsement_debt_ratio_threshold = 0.15\n",
+        encoding="utf-8",
+    )
+    with caplog.at_level("WARNING", logger="bettermemory.config"):
+        cfg_old_only = load_config(config_path)
+    assert cfg_old_only.behavior.cold_endorsement_ratio_threshold == 0.15
+    old_only_records = [
+        r
+        for r in caplog.records
+        if r.levelname == "WARNING"
+        and "endorsement_debt_ratio_threshold" in r.getMessage()
+        and "BOTH" not in r.getMessage()
+    ]
+    assert len(old_only_records) == 1, (
+        f"step 2 (old-only after both-keys on same path, no reset) should "
+        f"fire a fresh old-only warning; got "
+        f"{[r.getMessage() for r in old_only_records]}"
+    )
+
+    # Both guard tuples set after the reverse-order cross-branch transition.
+    resolved = config_path.resolve()
+    assert (
+        resolved,
+        "endorsement_debt_ratio_threshold",
+    ) in _cfg._DEPRECATED_KEY_WARNED_PATHS, (
+        "old-only guard tuple must be set independently of the both-keys guard"
+    )
+    assert (
+        resolved,
+        "endorsement_debt_ratio_threshold+both",
+    ) in _cfg._DEPRECATED_KEY_WARNED_PATHS, (
+        "both-keys guard tuple must remain set after the cross-branch transition"
+    )
+
+
 # ---------------------------------------------------------------------------
 # Config.resolved_directory: the resolution decision tree
 # ---------------------------------------------------------------------------
