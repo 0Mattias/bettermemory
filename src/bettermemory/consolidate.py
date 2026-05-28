@@ -48,14 +48,14 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-from ._fsutil import bounded_tail_read
+from ._fsutil import atomic_write_bytes, bounded_tail_read
 from .events import Recorder, iter_events
 from .health import _edit_distance_within
 from .models import Category, Memory, snippet_for
 from .search import _content_token_set
 from .semantic import cached_embed, cosine_similarity_normalized
 from .store import Store
-from .time_utils import parse_event_ts
+from .time_utils import isoformat_utc, parse_event_ts
 
 log = logging.getLogger("bettermemory.consolidate")
 
@@ -755,34 +755,48 @@ def consolidate(
 # leaving looser near-dups for a manual pass.
 _AUTO_DEDUP_JACCARD_THRESHOLD = 0.90
 
-# Event kind recorded for every auto-consolidate decision (ran OR
-# skipped). It is BOTH the audit-transparency record AND the debounce
-# clock: the next hook invocation reads the latest one's `ts` to decide
-# whether `auto_apply_interval_hours` has elapsed.
+# Event kind recorded for every auto-consolidate decision (ran OR skipped) —
+# the audit-transparency record. It is NO LONGER the debounce clock: the
+# event log gzip-rotates at `telemetry.max_bytes`, so reading the clock back
+# from the active log alone would see "never ran" right after a rotation and
+# fire an unscheduled pass every turn until the active log re-accumulated one.
 AUTO_CONSOLIDATE_EVENT = "auto_consolidate"
 
+# Sidecar holding the debounce clock, decoupled from the rotating event log.
+# Contains the ISO-8601 timestamp of the last auto-consolidate DECISION (ran
+# or skipped-for-size); absent means "never run". Rewritten atomically at
+# 0o600 (it sits beside the memories and event log, same privacy bar). This
+# decoupling is what lets the debounce survive a log rotation.
+AUTO_CONSOLIDATE_CLOCK_FILENAME = ".auto_consolidate_last"
 
-def _latest_event_ts(events: Iterable[dict[str, Any]], kind: str) -> datetime | None:
-    """Timestamp of the most-recent event of `kind`, or None if absent.
-    Tolerant of malformed `ts` values (skips them) so one bad row can't
-    break the debounce check."""
-    latest: datetime | None = None
-    for ev in events:
-        if ev.get("kind") != kind:
-            continue
-        ts = parse_event_ts(ev.get("ts"))
-        if ts is None:
-            continue
-        if latest is None or ts > latest:
-            latest = ts
-    return latest
+
+def _read_last_run(root: Path) -> datetime | None:
+    """Last auto-consolidate decision time from the sidecar clock. Returns
+    None when the file is absent or unparseable — fail-safe to "due", which
+    costs at most one extra debounced pass (the pass is idempotent and every
+    action it takes is reversible)."""
+    try:
+        raw = (root / AUTO_CONSOLIDATE_CLOCK_FILENAME).read_text(encoding="utf-8")
+    except OSError:
+        return None
+    return parse_event_ts(raw.strip())
+
+
+def _write_last_run(root: Path, when: datetime) -> None:
+    """Persist the debounce clock atomically. Called on every decision (ran
+    or skipped-for-size) so the next turn debounces against it regardless of
+    whether the event log has since rotated."""
+    atomic_write_bytes(
+        root / AUTO_CONSOLIDATE_CLOCK_FILENAME,
+        isoformat_utc(when).encode("utf-8"),
+        mode_before_rename=0o600,
+    )
 
 
 def run_auto_consolidate(
     store: Store,
     *,
     recorder: Recorder,
-    events: Iterable[dict[str, Any]],
     session_id: str | None,
     interval_hours: float,
     max_memories: int,
@@ -797,8 +811,9 @@ def run_auto_consolidate(
     'skipped_store_too_large'), recorded as an event either way.
 
     Safety contract — why this may mutate the store unattended:
-    - **Debounced**: runs at most once per `interval_hours`, gated on the
-      latest `auto_consolidate` event (which is also the audit record).
+    - **Debounced**: runs at most once per `interval_hours`, gated on a
+      sidecar clock file (rotation-immune, unlike the event log it used to
+      read — see AUTO_CONSOLIDATE_CLOCK_FILENAME).
     - **Bounded**: skips when the active set exceeds `max_memories` — the
       pairwise dedup is O(N²) and this runs in the turn-end hook, which
       must stay responsive; oversized stores defer to manual `consolidate`.
@@ -819,15 +834,17 @@ def run_auto_consolidate(
         now = datetime.now(timezone.utc)
 
     # Debounce: skip entirely if a prior decision landed within the window.
-    last = _latest_event_ts(events, AUTO_CONSOLIDATE_EVENT)
+    # The clock is the sidecar file, not the event log, so a log rotation
+    # can't reset it and trigger an unscheduled pass.
+    last = _read_last_run(store.root)
     if last is not None:
         elapsed_hours = (now - last).total_seconds() / 3600.0
         if elapsed_hours < interval_hours:
             return None
 
     # Size guard: keep the turn-end hook responsive. Recording the skip
-    # as an event resets the debounce clock too, so a large store isn't
-    # re-scanned (re-`load_all`'d) on every subsequent turn.
+    # decision (event + sidecar clock) debounces it too, so a large store
+    # isn't re-scanned (re-`load_all`'d) on every subsequent turn.
     active = memories if memories is not None else store.load_all()
     if len(active) > max_memories:
         recorder.record(
@@ -838,6 +855,7 @@ def run_auto_consolidate(
             session_id=session_id,
             triggered_from="stop_hook",
         )
+        _write_last_run(store.root, now)
         return {
             "status": "skipped_store_too_large",
             "active_count": len(active),
@@ -864,6 +882,7 @@ def run_auto_consolidate(
         session_id=session_id,
         triggered_from="stop_hook",
     )
+    _write_last_run(store.root, now)
     return {
         "status": "ran",
         "tombstoned": tombstoned,

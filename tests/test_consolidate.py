@@ -23,6 +23,7 @@ from bettermemory.consolidate import (
     DemotionCandidate,
     ScopeTypoPair,
     _pick_keeper,
+    _write_last_run,
     consolidate,
     find_cold_scopes,
     find_dedup_candidates,
@@ -1219,13 +1220,6 @@ async def test_cli_consolidate_acknowledge_misses_via_subprocess(
 # ---------------------------------------------------------------------------
 
 
-def _auto_event(now: datetime, *, hours_ago: float) -> dict[str, Any]:
-    return {
-        "kind": AUTO_CONSOLIDATE_EVENT,
-        "ts": (now - timedelta(hours=hours_ago)).isoformat(),
-    }
-
-
 def test_auto_consolidate_applies_safe_subset_and_records_event(
     store: Store, memory_dir: Path
 ) -> None:
@@ -1239,7 +1233,6 @@ def test_auto_consolidate_applies_safe_subset_and_records_event(
     result = run_auto_consolidate(
         store,
         recorder=rec,
-        events=[],
         session_id="sess_auto",
         interval_hours=24.0,
         max_memories=500,
@@ -1260,17 +1253,17 @@ def test_auto_consolidate_applies_safe_subset_and_records_event(
 def test_auto_consolidate_debounces_within_interval(
     store: Store, memory_dir: Path
 ) -> None:
-    """A prior auto_consolidate event inside the window suppresses the run
-    entirely — returns None, mutates nothing, records nothing."""
+    """A prior decision inside the window suppresses the run entirely —
+    returns None, mutates nothing, records nothing."""
     store.write(content="alpha beta gamma delta", scopes=["tools"])
     store.write(content="alpha beta gamma delta", scopes=["tools"])
 
     now = datetime(2026, 1, 1, 12, 0, tzinfo=timezone.utc)
+    _write_last_run(store.root, now - timedelta(hours=1))  # decided 1h ago
     rec = Recorder(root=memory_dir, session_id="sess_auto")
     result = run_auto_consolidate(
         store,
         recorder=rec,
-        events=[_auto_event(now, hours_ago=1)],
         session_id="sess_auto",
         interval_hours=24.0,
         max_memories=500,
@@ -1284,16 +1277,16 @@ def test_auto_consolidate_debounces_within_interval(
 def test_auto_consolidate_runs_after_interval_elapsed(
     store: Store, memory_dir: Path
 ) -> None:
-    """A prior event OLDER than the interval lets the pass run again."""
+    """A prior decision OLDER than the interval lets the pass run again."""
     store.write(content="alpha beta gamma delta epsilon", scopes=["tools"])
     store.write(content="alpha beta gamma delta epsilon", scopes=["tools"])
 
     now = datetime(2026, 1, 1, 12, 0, tzinfo=timezone.utc)
+    _write_last_run(store.root, now - timedelta(hours=48))  # decided 48h ago
     rec = Recorder(root=memory_dir, session_id="sess_auto")
     result = run_auto_consolidate(
         store,
         recorder=rec,
-        events=[_auto_event(now, hours_ago=48)],
         session_id="sess_auto",
         interval_hours=24.0,
         max_memories=500,
@@ -1314,7 +1307,6 @@ def test_auto_consolidate_skips_oversized_store(store: Store, memory_dir: Path) 
     result = run_auto_consolidate(
         store,
         recorder=rec,
-        events=[],
         session_id="sess_auto",
         interval_hours=24.0,
         max_memories=1,  # below the 2-memory store
@@ -1341,7 +1333,6 @@ def test_auto_consolidate_tombstone_is_reversible(
     run_auto_consolidate(
         store,
         recorder=rec,
-        events=[],
         session_id="sess_auto",
         interval_hours=24.0,
         max_memories=500,
@@ -1351,3 +1342,41 @@ def test_auto_consolidate_tombstone_is_reversible(
     restored = store.restore(tombstones[0].id)
     assert restored.id == tombstones[0].id
     assert len(store.load_all()) == 2  # both active again
+
+
+def test_auto_consolidate_debounce_survives_event_log_rotation(
+    store: Store, memory_dir: Path
+) -> None:
+    """Regression: the debounce clock lives in a sidecar file, not the
+    rotating `.events.jsonl`. A rotation that archives the last
+    `auto_consolidate` event must NOT make the next turn re-run an
+    unscheduled pass while still inside the interval."""
+    store.write(content="alpha beta gamma delta epsilon", scopes=["tools"])
+    store.write(content="alpha beta gamma delta epsilon", scopes=["tools"])
+
+    now = datetime(2026, 1, 1, 12, 0, tzinfo=timezone.utc)
+    rec = Recorder(root=memory_dir, session_id="sess_auto")
+    first = run_auto_consolidate(
+        store,
+        recorder=rec,
+        session_id="sess_auto",
+        interval_hours=24.0,
+        max_memories=500,
+        now=now,
+    )
+    assert first is not None and first["status"] == "ran"
+    assert (store.root / ".auto_consolidate_last").exists()
+
+    # Model a rotation: empty the active log (the prior auto_consolidate event
+    # would now live in a .gz archive). Pre-fix this read as "never ran" and
+    # fired again; the sidecar clock makes the next turn debounce instead.
+    (memory_dir / ".events.jsonl").unlink(missing_ok=True)
+    second = run_auto_consolidate(
+        store,
+        recorder=rec,
+        session_id="sess_auto",
+        interval_hours=24.0,
+        max_memories=500,
+        now=now + timedelta(hours=1),
+    )
+    assert second is None

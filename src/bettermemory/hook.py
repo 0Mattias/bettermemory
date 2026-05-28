@@ -289,7 +289,6 @@ def run_audit(
             run_auto_consolidate(
                 store,
                 recorder=recorder,
-                events=recent,
                 session_id=session_id,
                 interval_hours=cfg.consolidate.auto_apply_interval_hours,
                 max_memories=cfg.consolidate.auto_apply_max_memories,
