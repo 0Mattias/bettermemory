@@ -125,12 +125,20 @@ def build_server(
         # client tests pass a SessionState directly and get that same
         # state's session_id — unchanged from the pre-registry behavior.
         recorder_session_id = sessions.for_request(None).session_id
+        # Capture the server's worktree once at construction (stable for
+        # the process lifetime) so events carry it for episode_handoff's
+        # worktree match (queue #28). Routed through the `_handlers`
+        # shim to honor the test-monkeypatch contract other origin
+        # captures use.
+        from . import _handlers as _h
+
         recorder = Recorder(
             root=config.resolved_directory(),
             session_id=recorder_session_id,
             enabled=config.telemetry.enabled,
             max_bytes=config.telemetry.max_bytes,
             log_queries_verbatim=config.telemetry.log_queries_verbatim,
+            worktree_root=_h.capture_origin().worktree_root,
         )
 
     # Wire the persistent embedding cache to this store's directory. The

@@ -176,6 +176,17 @@ class Recorder:
     session_id: str
     enabled: bool = True
     max_bytes: int = DEFAULT_MAX_BYTES
+    # Process-level worktree root (`git rev-parse --show-toplevel` at
+    # construction), stamped on every event when set. A process's
+    # working directory is stable for its lifetime, so capturing once
+    # at construction is both correct and cheap — no git subprocess per
+    # event. Lets cross-session consumers (`episode_handoff`) worktree-
+    # match a prior session even when it wrote NO episodes, only events
+    # (queue #28). None when the process isn't inside a git checkout or
+    # the construction site didn't supply it (web UI, legacy callers);
+    # downstream treats an absent field as "unknown worktree" and stays
+    # conservative.
+    worktree_root: str | None = None
     # When False (default since 2.6.8), fields in `_REDACTED_TEXT_FIELDS`
     # are replaced with `{"hash", "preview", "len"}` before the event is
     # serialised. Set True to keep the legacy verbatim shape — useful for
@@ -207,6 +218,13 @@ class Recorder:
                 "kind": kind,
                 **fields,
             }
+            # Stamp the process worktree (queue #28) so a prior session
+            # that wrote only events (e.g. a search-only loop tick that
+            # crashed before episode_write) is still worktree-matchable
+            # by episode_handoff. Only when known; a handler field of the
+            # same name (none exist today) is left untouched.
+            if self.worktree_root is not None:
+                event.setdefault("worktree_root", self.worktree_root)
             line = json.dumps(event, separators=(",", ":"), default=str) + "\n"
             with _locked(self.path):
                 self._rotate_if_needed()

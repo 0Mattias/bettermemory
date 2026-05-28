@@ -205,6 +205,11 @@ def run_audit(
     store = Store(root)
     memories = store.load_all()
     recent = list(iter_events(root))
+    # Capture once; reused for the probe's auto-scope and stamped on the
+    # hook's events so episode_handoff can worktree-match this turn's
+    # session (queue #28). The hook runs as a fresh process in the
+    # turn's cwd, so this reflects the user's working repo.
+    caller_origin = capture_origin()
     report = probe_for_miss(
         memories,
         user_message,
@@ -212,7 +217,7 @@ def run_audit(
         session_id=session_id,
         now=utcnow(),
         lookback_seconds=60,
-        caller_origin=capture_origin(),
+        caller_origin=caller_origin,
         mode=cfg.behavior.search_mode or "hybrid",
     )
     # Emit the audit event so cadence is visible even when there's
@@ -227,6 +232,7 @@ def run_audit(
         enabled=cfg.telemetry.enabled,
         max_bytes=cfg.telemetry.max_bytes,
         log_queries_verbatim=cfg.telemetry.log_queries_verbatim,
+        worktree_root=caller_origin.worktree_root,
     )
     # `turn_audited` / `search_miss` field sets come from the shared
     # builders in `audit.py`, so the Stop hook and the in-process MCP

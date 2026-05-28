@@ -229,10 +229,17 @@ async def episode_handoff(
         # first). Same `find_prior_session_boundary` discipline
         # `memory_scope_overview` uses — anchor on the recorder id
         # because that's the id every event in the log carries.
-        # Events themselves don't stamp origin today, so the
-        # per-candidate worktree check happens against the episode
-        # files on disk (which DO carry origin via episode_write).
+        # Events now stamp `worktree_root` (queue #28, events.py
+        # Recorder), so we also collect a per-session worktree here.
+        # That lets the zero-episode branch below worktree-match a
+        # session that wrote events but no episodes (a search-only
+        # tick, or a tick that crashed before episode_write). A
+        # session's events all share its process worktree, so any
+        # stamped value is representative; legacy events without the
+        # field leave the session's worktree unknown (None), which
+        # keeps the conservative pre-queue-#28 behavior.
         latest_ts_by_session: dict[str, str] = {}
+        worktree_by_session: dict[str, str] = {}
         for ev in iter_all_events(deps.store.root):
             sid = ev.get("session") or ev.get("session_id")
             if not isinstance(sid, str) or sid == deps.recorder.session_id:
@@ -243,6 +250,10 @@ async def episode_handoff(
             prev = latest_ts_by_session.get(sid)
             if prev is None or ts > prev:
                 latest_ts_by_session[sid] = ts
+            if sid not in worktree_by_session:
+                wt = ev.get("worktree_root")
+                if isinstance(wt, str):
+                    worktree_by_session[sid] = wt
 
         # Most recent first. Tiebreak on session_id for determinism
         # in the (very unlikely) ts-collision case across different
@@ -283,35 +294,37 @@ async def episode_handoff(
             #      episode-bearing sessions, so we extend the same
             #      isolation to the zero-episode branch.
             #
-            #      Recorder.record (events.py:195-209) does not
-            #      stamp origin on events today (queue item #28),
-            #      so we cannot determine a zero-episode candidate's
-            #      worktree from the event log. We conservatively
-            #      treat its worktree as "unknown" (modeled as
-            #      None) and apply the same strict equality rule:
-            #      `_worktrees_equal_strict(None, caller_worktree)`
-            #      returns True only when the caller is ALSO in
-            #      the no-worktree state. This is strictly tighter
-            #      than the pre-fix behavior — a same-worktree
-            #      session that never called episode_write but
-            #      did call memory_search/memory_write will no
-            #      longer be adopted as `prior_session_id` for a
-            #      caller in a worktree. The trade-off is documented
-            #      in the commit: when queue #28 lands (events
-            #      carry origin), the zero-episode branch can
-            #      tighten further by reading origin from events.
+            #      Recorder.record stamps `worktree_root` on events
+            #      (queue item #28, now landed), so we read the
+            #      candidate's worktree from the event log
+            #      (`worktree_by_session`) and apply the strict
+            #      equality rule against it. A same-worktree session
+            #      that wrote events but no episodes (a search-only
+            #      tick, or one that crashed before episode_write) is
+            #      now correctly adopted as `prior_session_id`. When
+            #      the candidate's events predate the stamp (legacy)
+            #      or were written outside a git checkout, its
+            #      worktree is unknown (None) and the rule falls back
+            #      to the conservative None-only-matches-None
+            #      behavior — a caller in a worktree never inherits an
+            #      unknown-worktree session.
             # The discriminator under (1) is the worktree_root
             # itself, not the branch — one session can legitimately
             # span branches inside one worktree, so we don't
             # require ALL episodes to match.
             if not candidate_eps:
-                if _worktrees_equal_strict(None, caller_worktree):
+                # Worktree read from the session's events (queue #28);
+                # None when the events predate the stamp or were
+                # written outside a git checkout.
+                candidate_worktree = worktree_by_session.get(sid)
+                if _worktrees_equal_strict(candidate_worktree, caller_worktree):
                     resolved_session_id = sid
                     break
-                # Zero-episode candidate from an unknown worktree
-                # — under the strict "this worktree" contract we
-                # cannot prove it belongs to the caller, so walk
-                # past to the next-most-recent candidate.
+                # Zero-episode candidate whose worktree doesn't match
+                # the caller (or is unknown while the caller is in a
+                # worktree) — under the strict "this worktree" contract
+                # we cannot adopt it, so walk past to the next-most-
+                # recent candidate.
                 continue
             # Apply session-disabled-scope filter BEFORE the worktree
             # match. If every episode in this candidate is in a

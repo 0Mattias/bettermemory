@@ -2545,6 +2545,7 @@ async def test_loop_iteration_end_to_end_pattern(memory_dir: Path) -> None:
 
     handoff = await _call(server_b, "episode_handoff")
     assert handoff["prior_session_id"] is not None
+    a_session_id = handoff["prior_session_id"]
     assert len(handoff["episodes"]) == 1
     assert handoff["episodes"][0]["takeaway"] == "GC tuning fixed gopher frame drops"
 
@@ -2583,14 +2584,15 @@ async def test_loop_iteration_end_to_end_pattern(memory_dir: Path) -> None:
     assert not any("alpha gophers" in body for body in own_bodies)
 
     # Second handoff: A's episode was promoted (and the source file
-    # deleted) so A is now a zero-episode candidate. Tick-22 tightened
-    # the zero-episode branch — events don't carry origin (queue #28),
-    # so a zero-episode candidate's worktree is unknown and the strict
-    # None-only-matches-None rule means callers in a named worktree
-    # skip it. With no other candidates in the event log, the result
-    # is the empty-store shape rather than A's session_id.
+    # deleted) so A is now a zero-episode candidate. With queue #28
+    # landed, A's events carry worktree_root; A and B share the same
+    # worktree here, so the zero-episode branch's worktree match
+    # succeeds and A's session is still adopted as the prior session —
+    # just with an empty episode list (its only episode was promoted
+    # out). This is the contract the docstring describes: prior_session_id
+    # stays resolved, episodes go empty.
     handoff_2 = await _call(server_b, "episode_handoff")
-    assert handoff_2["prior_session_id"] is None
+    assert handoff_2["prior_session_id"] == a_session_id
     assert handoff_2["episodes"] == []
 
 
