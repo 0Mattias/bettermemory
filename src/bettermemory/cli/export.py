@@ -140,8 +140,8 @@ def _cli_export(
 
     if output:
         out_path = _Path(output)
-        # Pre-check the parent dir exists. `atomic_write_bytes` would
-        # otherwise silently create the parent tree via
+        # Pre-check the parent is an existing directory. `atomic_write_bytes`
+        # would otherwise silently create the parent tree via
         # `parent.mkdir(parents=True, exist_ok=True)` — that auto-mkdir
         # is intentional for fresh-install callers (init.py creating
         # ~/.claude.json under a missing ~/.config, sync.py creating a
@@ -153,11 +153,21 @@ def _cli_export(
         # parents; this restores that contract while preserving the
         # atomic-write durability benefit. `out_path.parent` is
         # Path(".") when output is a bare filename, which always
-        # exists — so this only fires on actually-missing parents.
+        # exists as a directory — so this only fires on a genuinely
+        # bad parent.
+        #
+        # `is_dir()` (not `exists()`): if the parent path is a regular
+        # FILE, `exists()` returns True and the pre-check would pass,
+        # but the helper's `mkdir(parents=True, exist_ok=True)` then
+        # raises a confusing `FileExistsError` naming the internal
+        # `.tmp` path. `is_dir()` catches both the missing-parent and
+        # the parent-is-a-file cases here, so the export caller surfaces
+        # one clean error pointing at the parent the user actually typed.
         parent = out_path.parent
-        if not parent.exists():
+        if not parent.is_dir():
             raise FileNotFoundError(
-                f"--output parent directory does not exist: {parent}"
+                f"--output parent directory does not exist or is not a "
+                f"directory: {parent}"
             )
         # Atomic + durable write via `_fsutil.atomic_write_bytes`: a plain
         # `out_path.write_text(...)` here would leave a truncated JSON on

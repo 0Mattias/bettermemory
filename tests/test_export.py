@@ -238,6 +238,35 @@ def test_export_to_file_missing_parent_dir_raises(
     assert not missing_parent.exists()
 
 
+def test_export_to_file_parent_is_a_regular_file_raises_cleanly(
+    populated_store: tuple[Path, Store],
+    tmp_path: Path,
+) -> None:
+    """`bettermemory export -o some-file/out.json` where ``some-file`` is a
+    regular FILE must surface the same clean FileNotFoundError as the
+    missing-parent case — NOT the confusing FileExistsError that
+    ``atomic_write_bytes``'s ``mkdir(parents=True, exist_ok=True)`` would
+    raise (naming an internal ``.tmp`` path) if the pre-check used
+    ``parent.exists()`` instead of ``parent.is_dir()``. ``exists()``
+    returns True for a regular file, so it would slip past the guard."""
+    file_parent = tmp_path / "not_a_dir.txt"
+    file_parent.write_text("i am a file, not a directory", encoding="utf-8")
+    assert file_parent.is_file()
+    out_path = file_parent / "backup.json"
+
+    with pytest.raises(FileNotFoundError) as exc_info:
+        _cli_export(output=str(out_path), include_tombstones=True, scopes=None)
+
+    # The message names the bad parent the user typed, not an internal
+    # tmp path — and it is FileNotFoundError, not FileExistsError.
+    assert str(file_parent) in str(exc_info.value)
+    assert not isinstance(exc_info.value, FileExistsError)
+
+    # The regular file is untouched — no tmp sibling left behind, the
+    # file's contents are intact.
+    assert file_parent.read_text(encoding="utf-8") == "i am a file, not a directory"
+
+
 def test_export_to_file_bare_filename_does_not_raise(
     populated_store: tuple[Path, Store],
     tmp_path: Path,
