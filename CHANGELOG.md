@@ -60,16 +60,16 @@ lands as a minor bump rather than a patch.
   tombstone) and demote-never-applied (a non-destructive fact→ambient
   retag). No LLM passes, no contradiction resolution; nothing that needs
   judgement. The pass is **debounced** (at most once per
-  `auto_apply_interval_hours`, default 24h, clocked off the last
-  `auto_consolidate` event), **bounded** (skipped above
+  `auto_apply_interval_hours`, default 24h, clocked off a sidecar
+  timestamp file that survives event-log rotation), **bounded** (skipped above
   `auto_apply_max_memories`, default 500, so the O(N²) dedup never stalls
   the turn-end hook), and **conservative** (Jaccard ≥ 0.90, stricter than
   the 0.75 manual default, with no embedding model loaded in the hook).
-  Every action lands as a reviewable, reversible tombstone/event
-  (`memory_list_tombstones` + the event log) — the deliberate opposite of
-  invisible "Dreaming" consolidation. Gated on `telemetry.enabled`
-  because the event log is *both* the debounce clock and the audit trail:
-  no log, no auto-mutation. This closes the loop the curation telemetry
+  Every action lands as a reviewable, reversible tombstone plus an
+  `auto_consolidate` event (`memory_list_tombstones` + the event log) — the
+  deliberate opposite of invisible "Dreaming" consolidation. Gated on
+  `telemetry.enabled` because the event log is the reviewable audit trail for
+  every auto-mutation: no log, no auto-mutation. This closes the loop the curation telemetry
   (silent-misses, cold-endorsements) previously only *surfaced* as
   recommendations a human had to read and act on.
 
@@ -81,7 +81,8 @@ lands as a minor bump rather than a patch.
   statements the model didn't save (explicit "remember…" requests,
   first-person preferences/setup facts; questions, task-requests, and
   transient run-state are rejected) and queues them as **inert**
-  proposals at `<root>/.write_proposals.jsonl`. The new `memory_proposals`
+  proposals at `<root>/.write_proposals.jsonl` (recording a
+  `proposals_enqueued` event for observability). The new `memory_proposals`
   tool (24th MCP tool) is the review surface — `list` them, then `accept`
   one (a normal memory write, source=inferred — `scopes` required, the
   queue doesn't guess them) or `dismiss` it; `memory_scope_overview`
