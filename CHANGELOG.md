@@ -7,7 +7,7 @@ breaking changes, minor for additive features, patch for fixes. The
 [compatibility contract](CONTRIBUTING.md#versioning-and-the-compatibility-contract)
 spells out exactly what's stable.
 
-## [Unreleased]
+## 3.3.0 - 2026-05-28
 
 Three additive features land this batch, all serving the same north
 star — memory that compounds across many agents and over time.
