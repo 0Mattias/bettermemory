@@ -317,6 +317,7 @@ class ToolHandlers:
         body: str,
         takeaway: str | None = None,
         scopes: list[str] | None = None,
+        swarm_id: str | None = None,
         ctx: Context | None = None,
     ) -> dict[str, Any]:
         return await _handlers_pkg.episode_write(
@@ -324,6 +325,7 @@ class ToolHandlers:
             body,
             takeaway=takeaway,
             scopes=scopes,
+            swarm_id=swarm_id,
             ctx=ctx,
         )
 
@@ -344,6 +346,7 @@ class ToolHandlers:
         self,
         scopes: list[str] | None = None,
         parent_session_id: str | None = None,
+        swarm_id: str | None = None,
         since: str | None = None,
         max_results: int | None = None,
         ctx: Context | None = None,
@@ -352,6 +355,7 @@ class ToolHandlers:
             self,
             scopes=scopes,
             parent_session_id=parent_session_id,
+            swarm_id=swarm_id,
             since=since,
             max_results=max_results,
             ctx=ctx,

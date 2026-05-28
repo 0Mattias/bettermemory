@@ -45,12 +45,19 @@ DESC_EPISODE_WRITE = (
     "durable memory via episode_promote (routes through memory_write, "
     "durability gate fires as normal).\n\n"
     "Returns `{status: 'committed', id, session_id, created, "
-    "scopes, takeaway, pruned_sessions}`. `pruned_sessions` lists "
-    "any prior session directories that hit the 30-day TTL on "
+    "scopes, takeaway, swarm_id, pruned_sessions}`. `pruned_sessions` "
+    "lists any prior session directories that hit the 30-day TTL on "
     "this write (typically `[]`).\n\n"
     "Parameters:\n"
     "- `body`: free-form markdown. Required, non-empty. Capped by "
     "`max_content_bytes` (default 1 MB).\n"
+    "- `swarm_id` (optional): cohort id for multi-agent swarm fan-in. "
+    "When a coordinator fans out parallel sub-agents, each sub-agent "
+    "passes the coordinator's session id here so the coordinator can "
+    "later gather every sub-agent's takeaways via "
+    "`episode_search(swarm_id=…)`. The episode still lives under this "
+    "writer's own session; swarm_id is a cross-cutting label. Distinct "
+    "from `episode_handoff`'s single-chain predecessor link.\n"
     "- `takeaway` (optional): one-sentence summary. Surfaced "
     "preferentially at episode_handoff; when None, handoff falls "
     "back to the first line of body. Capped by "
@@ -72,6 +79,7 @@ async def episode_write(
     body: str,
     takeaway: str | None = None,
     scopes: list[str] | None = None,
+    swarm_id: str | None = None,
     ctx: Context | None = None,
 ) -> dict[str, Any]:
     """Handler body for the `episode_write` MCP tool.
@@ -133,11 +141,16 @@ async def episode_write(
     # actually carries.
     session_id = deps.recorder.session_id
 
+    # `swarm_id` (when set) is validated by the Episode model's
+    # `_check_swarm_id` (charset + length) inside `store.write`; an
+    # invalid value raises ValueError that surfaces uniformly with the
+    # body/takeaway/scope caps above.
     episode = deps.episode_store.write(
         session_id=session_id,
         body=body,
         takeaway=takeaway,
         scopes=list(scopes or []),
+        swarm_id=swarm_id,
         origin=origin,
     )
     # Prune old session dirs as a cheap side effect of the write path.
@@ -153,6 +166,7 @@ async def episode_write(
         session=session_id,
         scopes=episode.scopes,
         has_takeaway=episode.takeaway is not None,
+        swarm_id=episode.swarm_id,
         pruned_sessions=pruned,
     )
     return {
@@ -162,6 +176,7 @@ async def episode_write(
         "created": episode.created.isoformat().replace("+00:00", "Z"),
         "scopes": episode.scopes,
         "takeaway": episode.takeaway,
+        "swarm_id": episode.swarm_id,
         "pruned_sessions": pruned,
     }
 

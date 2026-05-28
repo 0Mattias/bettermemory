@@ -65,6 +65,91 @@ def test_write_persists_origin(episode_store: EpisodeStore) -> None:
     assert loaded[0].id == ep.id
 
 
+def test_swarm_id_persists_and_round_trips(episode_store: EpisodeStore) -> None:
+    ep = episode_store.write(
+        session_id="sess_subagent1",
+        body="sub-agent finding",
+        takeaway="found X",
+        swarm_id="sess_coordaaa",
+    )
+    loaded = episode_store.list_by_session("sess_subagent1")
+    assert len(loaded) == 1
+    assert loaded[0].id == ep.id
+    assert loaded[0].swarm_id == "sess_coordaaa"
+
+
+def test_swarm_id_omitted_from_frontmatter_when_absent(
+    episode_store: EpisodeStore,
+) -> None:
+    """A non-swarm episode keeps the pre-field on-disk shape: the
+    `swarm_id` frontmatter key is only emitted when set (parity with
+    `is_floor` / `takeaway` / `scopes`)."""
+    episode_store.write(session_id="sess_aaaa1111", body="no swarm here")
+    files = list((episode_store.episodes_dir / "sess_aaaa1111").glob("*.md"))
+    assert len(files) == 1
+    assert "swarm_id" not in files[0].read_text()
+    assert episode_store.list_by_session("sess_aaaa1111")[0].swarm_id is None
+
+
+def test_list_by_swarm_fans_in_across_sessions(
+    episode_store: EpisodeStore,
+) -> None:
+    """The multi-agent fan-in: episodes written under different
+    sub-agent session directories but tagged with the same coordinator
+    swarm_id are gathered together, globally oldest-first."""
+    coord = "sess_coordaaa"
+    a = episode_store.write(
+        session_id="sess_agent1", body="agent 1 takeaway", swarm_id=coord
+    )
+    time.sleep(0.002)
+    b = episode_store.write(
+        session_id="sess_agent2", body="agent 2 takeaway", swarm_id=coord
+    )
+    time.sleep(0.002)
+    c = episode_store.write(
+        session_id="sess_agent1", body="agent 1 second", swarm_id=coord
+    )
+    fan_in = episode_store.list_by_swarm(coord)
+    # Globally oldest-first across both sub-agent session directories.
+    assert [e.id for e in fan_in] == [a.id, b.id, c.id]
+    assert {e.session_id for e in fan_in} == {"sess_agent1", "sess_agent2"}
+
+
+def test_list_by_swarm_excludes_other_cohorts_and_legacy(
+    episode_store: EpisodeStore,
+) -> None:
+    """Fan-in returns only the matching cohort — episodes with a
+    different swarm_id, or none at all, are excluded."""
+    episode_store.write(session_id="sess_agent1", body="mine", swarm_id="sess_coordaaa")
+    episode_store.write(
+        session_id="sess_agent2", body="other swarm", swarm_id="sess_coordbbb"
+    )
+    episode_store.write(session_id="sess_agent3", body="legacy / no swarm")
+    fan_in = episode_store.list_by_swarm("sess_coordaaa")
+    assert len(fan_in) == 1
+    assert fan_in[0].body.strip() == "mine"
+
+
+def test_list_by_swarm_unknown_id_returns_empty(
+    episode_store: EpisodeStore,
+) -> None:
+    """An unknown swarm_id matches nothing (equality match, never used
+    as a path) — empty result, not a raise."""
+    episode_store.write(session_id="sess_agent1", body="x", swarm_id="sess_real")
+    assert episode_store.list_by_swarm("sess_nonesuch") == []
+
+
+def test_invalid_swarm_id_rejected(episode_store: EpisodeStore) -> None:
+    """swarm_id is constrained to the filesystem-safe id charset and a
+    length cap so a runaway / unsafe value can't reach the frontmatter."""
+    with pytest.raises(ValueError, match="swarm_id"):
+        episode_store.write(
+            session_id="sess_aaaa1111", body="x", swarm_id="bad/id with spaces!"
+        )
+    with pytest.raises(ValueError, match="swarm_id"):
+        episode_store.write(session_id="sess_aaaa1111", body="x", swarm_id="x" * 200)
+
+
 def test_list_by_session_sorts_oldest_first(episode_store: EpisodeStore) -> None:
     """ULIDs sort lexically by creation timestamp; list_by_session
     surfaces them oldest first so a handoff caller can take the most

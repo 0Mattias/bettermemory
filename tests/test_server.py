@@ -2264,6 +2264,76 @@ async def test_episode_search_filters_by_parent_session_id(
     assert res[0]["takeaway"] == "from A"
 
 
+async def test_episode_search_swarm_fan_in_gathers_all_subagents(
+    memory_dir: Path,
+) -> None:
+    """Multi-agent swarm fan-in: parallel sub-agents (distinct sessions)
+    each stamp their episodes with the coordinator's id; the coordinator
+    then gathers EVERY sub-agent's takeaway in one episode_search call —
+    the N:1 cohort read that single-chain episode_handoff can't express."""
+    cfg = Config(storage=StorageConfig(directory=str(memory_dir)))
+    coord = "sess_coordinator1"
+
+    # Two sub-agents, each a distinct session sharing the one store.
+    agent1 = build_server(config=cfg, store=Store(memory_dir), state=SessionState())
+    await _call(
+        agent1, "episode_write", body="a1", takeaway="from agent1", swarm_id=coord
+    )
+    agent2 = build_server(config=cfg, store=Store(memory_dir), state=SessionState())
+    await _call(
+        agent2, "episode_write", body="a2", takeaway="from agent2", swarm_id=coord
+    )
+
+    # A session NOT in the swarm — must be excluded from the fan-in.
+    outsider = build_server(config=cfg, store=Store(memory_dir), state=SessionState())
+    await _call(outsider, "episode_write", body="unrelated", takeaway="not in swarm")
+
+    # The coordinator gathers its cohort.
+    coordinator = build_server(
+        config=cfg, store=Store(memory_dir), state=SessionState()
+    )
+    res = _unwrap(await _call(coordinator, "episode_search", swarm_id=coord))
+    assert {e["takeaway"] for e in res} == {"from agent1", "from agent2"}
+    assert all(e["swarm_id"] == coord for e in res)
+
+
+async def test_episode_search_swarm_id_composes_with_parent_session(
+    memory_dir: Path,
+) -> None:
+    """`swarm_id` + `parent_session_id` narrows a fan-in to one
+    sub-agent's session within the cohort."""
+    cfg = Config(storage=StorageConfig(directory=str(memory_dir)))
+    coord = "sess_coordinator1"
+
+    agent1 = build_server(config=cfg, store=Store(memory_dir), state=SessionState())
+    a1 = await _call(
+        agent1, "episode_write", body="a1", takeaway="from agent1", swarm_id=coord
+    )
+    agent2 = build_server(config=cfg, store=Store(memory_dir), state=SessionState())
+    await _call(
+        agent2, "episode_write", body="a2", takeaway="from agent2", swarm_id=coord
+    )
+
+    res = _unwrap(
+        await _call(
+            agent1,
+            "episode_search",
+            swarm_id=coord,
+            parent_session_id=a1["session_id"],
+        )
+    )
+    assert [e["takeaway"] for e in res] == ["from agent1"]
+
+
+async def test_episode_write_returns_swarm_id(server: Any) -> None:
+    """episode_write echoes swarm_id in its committed payload; a
+    non-swarm write returns None."""
+    res = await _call(server, "episode_write", body="x", swarm_id="sess_coord")
+    assert res["swarm_id"] == "sess_coord"
+    res2 = await _call(server, "episode_write", body="y")
+    assert res2["swarm_id"] is None
+
+
 async def test_episode_search_max_results_caps_output(
     memory_dir: Path,
 ) -> None:

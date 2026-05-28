@@ -76,6 +76,20 @@ def is_valid_ulid(s: str) -> bool:
     return bool(_ULID_RE.match(s))
 
 
+# Allowed characters for id-shaped tokens (session ids, swarm ids).
+# Mirrors the filesystem-safe charset `episodes._session_dir` enforces
+# for directory names. `swarm_id` reuses it because the value is
+# normally a coordinator's `sess_<hex>` session id; ULIDs also pass.
+_ID_TOKEN_CHARS = frozenset(
+    "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_-"
+)
+# Cap the swarm_id length so a runaway value can't bloat the episode's
+# YAML frontmatter (same 64 KB ceiling concern the episode_write body /
+# takeaway / scope caps guard). 128 is generous for any session-id or
+# ULID-shaped coordinator token.
+_MAX_SWARM_ID_LEN = 128
+
+
 # ---------------------------------------------------------------------------
 # Enums
 # ---------------------------------------------------------------------------
@@ -586,6 +600,17 @@ class Episode(BaseModel):
       filter out `is_floor=True` so the floor never shows up as
       "what the prior session concluded". Defaults False; legacy
       episodes written before the field shipped load as False.
+    - `swarm_id`: optional cohort link for multi-agent swarm fan-in.
+      When a coordinator fans out N parallel sub-agents, each sub-agent
+      stamps its episodes with the coordinator's id here; the
+      coordinator then gathers every sub-agent's takeaways across their
+      individual session directories via `EpisodeStore.list_by_swarm`
+      / `episode_search(swarm_id=…)`. Distinct from the single-chain
+      `episode_handoff` predecessor link (1:1, temporal "my previous
+      self") — a swarm is an N:1 cohort. Optional/additive like
+      `is_floor`: legacy episodes load as None and the writer only
+      emits the frontmatter key when set, so the on-disk shape is
+      unchanged when absent (no SCHEMA_VERSION bump needed).
     """
 
     id: str
@@ -606,12 +631,40 @@ class Episode(BaseModel):
     # opt-in path mirrors how `origin` / `takeaway` / `scopes` already
     # omit when empty/None).
     is_floor: bool = False
+    # Swarm/cohort grouping for multi-agent fan-in — see class docstring.
+    # Defaults None (the non-swarm common case); the writer only emits
+    # the frontmatter key when set, so non-swarm episodes serialise
+    # identically to the pre-field shape.
+    swarm_id: str | None = None
 
     @field_validator("id")
     @classmethod
     def _check_id(cls, v: str) -> str:
         if not is_valid_ulid(v):
             raise ValueError(f"invalid ULID: {v!r}")
+        return v
+
+    @field_validator("swarm_id")
+    @classmethod
+    def _check_swarm_id(cls, v: str | None) -> str | None:
+        # None is the common case (a non-swarm episode). When set, the
+        # value is the coordinator's id (typically a `sess_<hex>`
+        # session id) and is only ever matched for equality at fan-in
+        # time — never used as a path component. Still constrain it to
+        # the filesystem-safe id charset and cap the length so a runaway
+        # value can't bloat the YAML frontmatter (the same ceiling the
+        # episode_write body / takeaway / scope caps guard).
+        if v is None:
+            return None
+        if (
+            not v
+            or len(v) > _MAX_SWARM_ID_LEN
+            or any(c not in _ID_TOKEN_CHARS for c in v)
+        ):
+            raise ValueError(
+                f"invalid swarm_id {v!r}: must be 1-{_MAX_SWARM_ID_LEN} "
+                "characters of [A-Za-z0-9_-]"
+            )
         return v
 
     @field_validator("scopes")

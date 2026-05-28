@@ -9,10 +9,42 @@ spells out exactly what's stable.
 
 ## [Unreleased]
 
-Documentation accuracy and durability test hardening — a follow-up to
-the 3.2.2 Q29 atomic-write consolidation. No behavioral or API change;
-these ride into the next release rather than warranting a standalone
-PyPI bump.
+Multi-agent **swarm fan-in for episodes** — the additive feature that
+lets one coordinator gather what all its parallel sub-agents learned —
+riding alongside the documentation-accuracy and durability test
+hardening already queued behind 3.2.2. The swarm work is additive (a
+new optional `swarm_id` parameter, no on-disk schema bump), so the
+batch lands as a minor bump rather than a patch.
+
+### Added
+
+- **Multi-agent swarm fan-in for episodes (`swarm_id`).** Episodes can
+  now carry an optional `swarm_id` cohort tag, and
+  `episode_search(swarm_id=…)` (plus the new `EpisodeStore.list_by_swarm`
+  primitive) gathers every episode bearing that tag across all session
+  directories. This fills the gap between `episode_handoff` — a *1:1,
+  single-chain* "my previous self → me" handoff resolved via the event
+  log — and the *N:1* shape a swarm needs: a coordinator that fans out
+  N parallel sub-agents (e.g. via the Agent tool) had no way to gather
+  their collective takeaways. The flow: the coordinator passes its
+  session id down to each sub-agent, every sub-agent stamps its
+  `episode_write(swarm_id=<coordinator id>)`, and the coordinator then
+  reads the whole cohort with `episode_search(swarm_id=<own id>)`
+  ("what did all my sub-agents conclude"). `swarm_id` composes with
+  `parent_session_id` to narrow a fan-in to a single sub-agent's
+  session, and the returned rows now include `swarm_id` so a caller can
+  correlate a takeaway back to its cohort. The storage layer already
+  serialized concurrent multi-agent writes safely (per-file `flock`,
+  index upsert inside the lock, WAL, CAS on update); this adds the
+  missing *semantic* coordination on top of that foundation.
+
+  Additive and backward-compatible: `swarm_id` defaults `None`, the
+  writer only emits the frontmatter key when set (so non-swarm episodes
+  keep their exact pre-field on-disk shape and `SCHEMA_VERSION` is
+  unchanged), and legacy episodes load as `swarm_id=None`. The value is
+  validated to the filesystem-safe id charset with a 128-char cap so a
+  runaway value can't bloat the episode frontmatter — it is matched for
+  equality at fan-in time, never used as a path component.
 
 ### Fixed
 

@@ -88,10 +88,18 @@ class EpisodeStore:
         body: str,
         scopes: list[str] | None = None,
         takeaway: str | None = None,
+        swarm_id: str | None = None,
         origin: Origin | None = None,
         now: datetime | None = None,
     ) -> Episode:
-        """Append a new episode under `<root>/episodes/<session_id>/`."""
+        """Append a new episode under `<root>/episodes/<session_id>/`.
+
+        `swarm_id`, when set, tags this episode as part of a multi-agent
+        swarm cohort (the coordinator's id) so `list_by_swarm` can fan
+        in every sub-agent's episodes later. The episode still lives
+        under the writer's own `session_id` directory; swarm_id is a
+        cross-cutting label, not a routing key.
+        """
         if not body or not body.strip():
             raise ValueError("episode body must be a non-empty string")
         created = now or utcnow()
@@ -102,6 +110,7 @@ class EpisodeStore:
             body=body.strip() + "\n",
             scopes=list(scopes or []),
             takeaway=takeaway.strip() if takeaway else None,
+            swarm_id=swarm_id,
             origin=origin,
         )
         self._persist_episode(episode)
@@ -268,6 +277,12 @@ class EpisodeStore:
         # the only writers that emit the key.
         if episode.is_floor:
             meta["is_floor"] = True
+        # Swarm cohort link — opt-in additive, only emitted when set
+        # (same pattern as `is_floor` / `takeaway` / `scopes`). A missing
+        # key loads as None, so non-swarm episodes keep the exact
+        # pre-field on-disk shape and no SCHEMA_VERSION bump is needed.
+        if episode.swarm_id is not None:
+            meta["swarm_id"] = episode.swarm_id
         post.metadata = meta
         # Atomic, durable, 0o600 write via the shared helper: tmp +
         # fchmod-before-rename + fsync + rename + fsync_dir(session_dir) +
@@ -299,6 +314,38 @@ class EpisodeStore:
                 out.append(self._load_path(path))
             except (ValueError, KeyError, OSError):
                 continue
+        out.sort(key=lambda e: e.created)
+        return out
+
+    def list_by_swarm(self, swarm_id: str) -> list[Episode]:
+        """All episodes across every session tagged with `swarm_id`,
+        oldest first — the multi-agent swarm fan-in.
+
+        A coordinator fans out N sub-agents, each writing episodes under
+        its own session directory but stamped with the coordinator's
+        `swarm_id`. This walks every session directory and returns the
+        cohort's episodes globally sorted, so the coordinator can gather
+        what all its sub-agents concluded in one read.
+
+        Cost is the same full-walk shape `episode_search` already uses
+        when no single session is named — bounded by the prune TTL
+        (`DEFAULT_EPISODE_TTL_DAYS`), so old swarms age out and the walk
+        stays cheap. Floors (`is_floor`) are included here for parity
+        with `list_by_session`; the `episode_search` summary surface
+        filters them out. `swarm_id` is matched for equality only —
+        never used as a path — so an empty result for an unknown id is
+        the correct (and only) failure mode, not a raise.
+        """
+        out: list[Episode] = []
+        for sid in self.iter_session_ids():
+            try:
+                episodes = self.list_by_session(sid)
+            except ValueError:
+                # Defensive: a directory name that fails session-id
+                # validation is skipped rather than crashing the fan-in
+                # (mirrors episode_search's per-session try/except).
+                continue
+            out.extend(ep for ep in episodes if ep.swarm_id == swarm_id)
         out.sort(key=lambda e: e.created)
         return out
 
@@ -336,6 +383,11 @@ class EpisodeStore:
         # model validator.
         is_floor_raw = meta.get("is_floor", False)
         is_floor = bool(is_floor_raw)
+        # Missing key → None (legacy / non-swarm episodes never emit it).
+        # Coerce to str so a hand-edited numeric frontmatter value still
+        # loads as the expected type rather than tripping the validator.
+        swarm_raw = meta.get("swarm_id")
+        swarm_id = str(swarm_raw) if swarm_raw is not None else None
         return Episode(
             id=str(meta["id"]),
             session_id=str(meta["session_id"]),
@@ -343,6 +395,7 @@ class EpisodeStore:
             body=post.content,
             scopes=list(meta.get("scopes", [])),
             takeaway=meta.get("takeaway"),
+            swarm_id=swarm_id,
             origin=origin_obj,
             is_floor=is_floor,
         )
