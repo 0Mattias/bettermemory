@@ -130,7 +130,13 @@ def fsync_dir(path: Path) -> None:
         os.close(fd)
 
 
-def atomic_write_bytes(path: Path, data: bytes, *, mode: int | None = None) -> None:
+def atomic_write_bytes(
+    path: Path,
+    data: bytes,
+    *,
+    mode: int | None = None,
+    mode_before_rename: int | None = None,
+) -> None:
     """Atomic, durable write of ``data`` to ``path``.
 
     Write-to-tmp (same parent dir, so it's on the same filesystem and
@@ -142,16 +148,24 @@ def atomic_write_bytes(path: Path, data: bytes, *, mode: int | None = None) -> N
     past a crash. Both fsyncs are best-effort — see :func:`fsync_file`
     and :func:`fsync_dir` for the platform/filesystem caveats.
 
-    ``mode`` is applied via ``os.chmod`` AFTER the rename if provided.
-    This helper is the bypass-callsite primitive (small JSON/config
-    files written outside the Store's frontmatter discipline) where
-    no-one is racing readers in the rename-to-chmod window — the
-    fchmod-before-rename ceremony that ``_atomic_write_post`` and
-    ``episodes._write_path`` perform is privacy-critical for memory
-    bodies and warrants its own bespoke shape. For plain-bytes
-    callers that don't carry private bytes (TOML config, JSON config
-    blob, ``.gitignore``, JSON export), chmod-after-rename is the
-    simpler and equally-correct choice.
+    Permission control (mutually exclusive — pass at most one;
+    passing both raises ``ValueError``):
+
+    * ``mode`` — applied via ``os.chmod`` AFTER the rename. Correct for
+      non-private payloads (TOML config, JSON config blob,
+      ``.gitignore``, JSON export) where no reader races the
+      rename→chmod window; the world-readable instant between rename
+      and chmod is harmless when the bytes aren't private.
+    * ``mode_before_rename`` — applied via ``os.fchmod`` on the tmp file
+      descriptor BEFORE the rename, plus a defensive post-rename
+      ``os.chmod`` fallback. Use for privacy-critical payloads (the
+      0o600 memory/episode bodies that ``_atomic_write_post`` and
+      ``episodes._write_path`` route through this helper for) so the
+      file is never world-readable at the visible path even for an
+      instant. Both the fchmod and the fallback are best-effort
+      (suppressed ``OSError``); Windows has no POSIX mode bits and
+      ``os.fchmod`` is absent from typeshed there, so the fchmod is
+      ``sys.platform``-guarded.
 
     The tmp file is created via ``tempfile.NamedTemporaryFile(dir=
     path.parent, delete=False)`` so it lives on the same filesystem as
@@ -176,6 +190,13 @@ def atomic_write_bytes(path: Path, data: bytes, *, mode: int | None = None) -> N
     """
     import tempfile
 
+    if mode is not None and mode_before_rename is not None:
+        raise ValueError(
+            "atomic_write_bytes: pass at most one of `mode` (chmod after "
+            "rename) or `mode_before_rename` (fchmod before rename); they "
+            "are mutually exclusive disciplines for the same concern"
+        )
+
     parent = path.parent
     parent.mkdir(parents=True, exist_ok=True)
     # `delete=False` is required: we rename the tmp to `path` before the
@@ -196,10 +217,25 @@ def atomic_write_bytes(path: Path, data: bytes, *, mode: int | None = None) -> N
         with tmp_file as f:
             f.write(data)
             f.flush()
+            # fchmod BEFORE the rename so the file carries the restricted
+            # mode the moment it appears at `path` — no world-readable
+            # window at the visible name. Platform-guarded (Windows has no
+            # POSIX mode bits, `os.fchmod` absent from typeshed there) and
+            # suppressed (sandbox filesystems may reject fchmod — a
+            # permission-bit loss, not a corruption risk).
+            if mode_before_rename is not None and sys.platform != "win32":
+                with contextlib.suppress(OSError):
+                    os.fchmod(f.fileno(), mode_before_rename)
             fsync_file(f.fileno())
         os.replace(tmp_path, path)
         renamed = True
-        if mode is not None:
+        if mode_before_rename is not None:
+            # Defensive post-rename chmod (belt-and-suspenders): a no-op
+            # when the fchmod above succeeded, but recovers the mode if the
+            # filesystem squashed it on rename (rare).
+            with contextlib.suppress(OSError):
+                os.chmod(path, mode_before_rename)
+        elif mode is not None:
             # chmod-after-rename: see the docstring rationale. Best-
             # effort — Windows has no POSIX mode bits and some sandbox
             # filesystems reject chmod; that's not a corruption risk.

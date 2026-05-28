@@ -667,6 +667,64 @@ class TestAtomicWriteBytes:
             f"expected mode 0o600 from `mode=` arg; got {oct(actual)}"
         )
 
+    def test_mode_before_rename_applied(self, tmp_path: Path) -> None:
+        """`mode_before_rename` lands the same end-state bits as `mode`,
+        but set via fchmod before the rename (see the ordering test for
+        the privacy guarantee). Skipped on Windows — POSIX mode bits
+        don't apply there."""
+        if sys.platform == "win32":
+            pytest.skip("POSIX permission bits don't apply on Windows")
+        path = tmp_path / "f.txt"
+        atomic_write_bytes(path, b"private", mode_before_rename=0o600)
+        actual = path.stat().st_mode & 0o777
+        assert actual == 0o600, (
+            f"expected mode 0o600 from `mode_before_rename=` arg; got {oct(actual)}"
+        )
+
+    def test_mode_before_rename_fchmods_before_replace(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """The privacy guarantee `mode_before_rename` exists for: the
+        fchmod on the tmp fd MUST precede the `os.replace` that brings the
+        file to the visible path, so it's never world-readable at the
+        target name even for an instant. A regression to chmod-after-
+        rename would flip the order and reopen the window. Skipped on
+        Windows where `os.fchmod` is a no-op."""
+        if sys.platform == "win32":
+            pytest.skip("os.fchmod is POSIX-only")
+        order: list[str] = []
+        real_fchmod = os.fchmod
+        real_replace = os.replace
+
+        def spy_fchmod(fd, m):
+            order.append("fchmod")
+            return real_fchmod(fd, m)
+
+        def spy_replace(src, dst):
+            order.append("replace")
+            return real_replace(src, dst)
+
+        monkeypatch.setattr(os, "fchmod", spy_fchmod)
+        monkeypatch.setattr(os, "replace", spy_replace)
+        path = tmp_path / "f.txt"
+        atomic_write_bytes(path, b"private", mode_before_rename=0o600)
+        assert order == ["fchmod", "replace"], (
+            f"expected fchmod before replace (no world-readable window); got {order}"
+        )
+
+    def test_mode_and_mode_before_rename_are_mutually_exclusive(
+        self, tmp_path: Path
+    ) -> None:
+        """Passing both `mode` and `mode_before_rename` is a caller bug —
+        two disciplines for the same concern. The guard raises ValueError
+        before any filesystem work, so no target or tmp file is created."""
+        path = tmp_path / "f.txt"
+        with pytest.raises(ValueError, match="mutually exclusive"):
+            atomic_write_bytes(path, b"x", mode=0o644, mode_before_rename=0o600)
+        assert list(tmp_path.iterdir()) == [], (
+            "mutual-exclusion guard must fire before any filesystem work"
+        )
+
     def test_no_explicit_chmod_when_mode_not_provided(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
