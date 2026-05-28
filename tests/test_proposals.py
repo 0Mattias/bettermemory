@@ -219,3 +219,40 @@ def test_propose_from_exchange_respects_max_pending(tmp_path: Path) -> None:
     )
     assert fresh == []
     assert len(q.load()) == 1
+
+
+# ---------------------------------------------------------------------------
+# append_within_cap — cap + dedup enforced under the lock (TOCTOU guard)
+# ---------------------------------------------------------------------------
+
+
+def test_append_within_cap_enforces_room_and_dedup(tmp_path: Path) -> None:
+    """The cap and the source_excerpt dedup are computed against the
+    under-lock snapshot, not a stale pre-lock read — so a batch larger than
+    the remaining room is trimmed and queue-duplicates are dropped."""
+    q = ProposalQueue(tmp_path)
+    q.append([_proposal("existing one", pid="e1")])
+    appended = q.append_within_cap(
+        [
+            _proposal("existing one", pid="dup"),  # dups e1 by excerpt → dropped
+            _proposal("brand new two", pid="n2"),
+            _proposal("brand new three", pid="n3"),  # over the room of 1 → trimmed
+        ],
+        max_pending=2,
+    )
+    assert [p.id for p in appended] == ["n2"]
+    assert [p.id for p in q.load()] == ["e1", "n2"]
+
+
+def test_append_within_cap_returns_empty_when_full(tmp_path: Path) -> None:
+    """A full queue admits nothing and leaves the file untouched."""
+    q = ProposalQueue(tmp_path)
+    q.append([_proposal("a body", pid="a1"), _proposal("b body", pid="b1")])
+    assert q.append_within_cap([_proposal("c body", pid="c1")], max_pending=2) == []
+    assert [p.id for p in q.load()] == ["a1", "b1"]
+
+
+def test_append_within_cap_empty_candidates_is_noop(tmp_path: Path) -> None:
+    q = ProposalQueue(tmp_path)
+    assert q.append_within_cap([], max_pending=5) == []
+    assert not (tmp_path / ".write_proposals.jsonl").exists()

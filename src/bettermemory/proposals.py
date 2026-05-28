@@ -206,6 +206,29 @@ class ProposalQueue:
             current.extend(proposals)
             self._write_all_locked(current)
 
+    def append_within_cap(
+        self, candidates: list[Proposal], *, max_pending: int
+    ) -> list[Proposal]:
+        """Append as many of `candidates` as fit under `max_pending`, deduped
+        against what's already queued by ``source_excerpt``. The room check,
+        dedup, and write all run inside the per-file ``flock`` so two Stop
+        hooks racing on a shared store root can't each size `room` against the
+        same stale pre-lock snapshot and overshoot the cap (or double-queue
+        the same sentence). Returns the proposals actually appended."""
+        if not candidates:
+            return []
+        with flock_excl(self.path):
+            current = self.load()
+            room = max_pending - len(current)
+            if room <= 0:
+                return []
+            seen = {p.source_excerpt for p in current}
+            fresh = [c for c in candidates if c.source_excerpt not in seen][:room]
+            if not fresh:
+                return []
+            self._write_all_locked(current + fresh)
+            return fresh
+
     def remove(self, proposal_id: str) -> Proposal | None:
         """Drop one proposal by id under the lock. Returns the removed
         proposal, or None if no proposal had that id."""
@@ -328,17 +351,12 @@ def propose_from_exchange(
     at review time (the model dismisses it); the cheap, always-on path is
     the one that matters for actually closing the capture gap.
     """
-    queue = ProposalQueue(root)
-    existing = queue.load()
-    room = max_pending - len(existing)
-    if room <= 0:
-        return []
-    seen = {p.source_excerpt for p in existing}
     candidates = extract_proposals(user_text, now=now)
-    fresh = [c for c in candidates if c.source_excerpt not in seen]
-    fresh = fresh[:room]
-    queue.append(fresh)
-    return fresh
+    if not candidates:
+        return []
+    # Cap + dedup + write happen together under the queue lock (see
+    # append_within_cap) so concurrent Stop hooks can't overshoot max_pending.
+    return ProposalQueue(root).append_within_cap(candidates, max_pending=max_pending)
 
 
 __all__ = [
