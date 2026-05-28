@@ -2299,17 +2299,38 @@ def test_multi_process_concurrent_restore_no_oserror_leak(
         f"Expected {n_workers - 1} structured race-losses, got {len(losers)}. "
         f"Outcomes: {outcomes}"
     )
-    # With the barrier above, every loser is forced through the W7
-    # under-lock recheck — so the strict "raced with" assertion the
-    # threaded variant uses (`test_restore_threaded_one_winner`) now
-    # holds here too. Any loser missing the hint means the race-loss
-    # path regressed to an unstructured form (or the under-lock
-    # recheck's structured-failure message no longer carries the
-    # "raced with" hint added in commit e41c5ca).
+    # Every loser must carry a recognised, structured race-loss message
+    # — never a bare/garbled error. Which of the two legitimate shapes a
+    # loser gets is a real race the barrier narrows but can't eliminate
+    # across separate processes:
+    #   - under-lock detection: the loser passed the pre-lock check while
+    #     the id was still tombstoned, then found it active / the
+    #     tombstone gone once it held the lock → message carries the W7
+    #     "raced with" hint.
+    #   - pre-lock fast-path: the winner completed the *entire* restore
+    #     (active file written + tombstone unlinked) before this loser
+    #     reached the pre-lock check → plain "is active; nothing to
+    #     restore" / "no tombstone with id ..." with no "raced with" hint.
+    #     Equally correct: the loser simply lost so decisively it never
+    #     reached contention.
+    # An earlier revision asserted *every* loser carried "raced with", on
+    # the theory the barrier forces all losers through the under-lock
+    # path. That held on Linux and locally but flaked on the macOS CI
+    # runner, whose process-scheduling jitter let a loser slip to the
+    # fast-path — a false failure on correct behaviour. The under-lock
+    # "raced with" message is pinned deterministically elsewhere
+    # (test_restore_*_raises_* + test_restore_threaded_one_winner); this
+    # cross-process test's job is the real-process invariants: no bare
+    # OSError, exactly one winner, and every loss structured.
     for r in losers:
-        assert "raced with" in r["msg"], (
-            f"Loser's message {r['msg']!r} missing the 'raced with' hint — "
-            f"W7 regression: the race-loss shape is no longer structured."
+        msg = r["msg"]
+        assert (
+            "raced with" in msg
+            or "is active; nothing to restore" in msg
+            or "no tombstone with id" in msg
+        ), (
+            f"Loser's message {msg!r} is not a recognised structured race-loss "
+            f"shape — W7 regression: race-loss regressed to an unstructured form."
         )
 
     # Disk invariant: exactly one active file for the id, no tombstone.
