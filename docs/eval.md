@@ -189,7 +189,12 @@ Most systems do (1). Few do (2). Almost none do (3). When you're comparing memor
 
 ## Publication plan
 
-The numbers from running this eval against bettermemory's own dogfood usage, plus the same workload re-run against Mem0 (OpenMemory self-host), Anthropic's reference `server-memory`, claude-mem, and agentmemory, will go into a follow-up post: *"What memory actually helped, by the numbers."* If you'd like to contribute a system to the comparison, open an issue with the eval harness output for your system; runnable harness code will live at `tests/eval/` when the harness lands.
+The numbers from running this eval against bettermemory's own dogfood usage, plus the same workload re-run against Mem0 (OpenMemory self-host), Anthropic's reference `server-memory`, claude-mem, and agentmemory, will go into a follow-up post: *"What memory actually helped, by the numbers."* If you'd like to contribute a system to the comparison, open an issue with the eval harness output for your system.
+
+Runnable harness code has landed at `tests/eval/` (`python -m tests.eval.comparative`, add `--json` for machine-readable output). It runs the real `search` and `probe_for_miss` code over a fixed synthetic workload (`workload.py`) and feeds the genuinely-derived audit events through `compute_eval`, so bettermemory's `recall@k` and `silent_miss_rate` are measured end-to-end. Two deliberate honesty constraints shape what it does and doesn't report:
+
+- `memory_helped_rate` and `endorsement_rate` come back as `n/a` offline, not `0.0`. They require a live agent emitting `record_use` events with claim excerpts; deriving them from the gold labels would just relabel recall. The remaining live-agent driver is the open piece before publication.
+- Competitor adapters (`adapters.py`) do not fabricate numbers. Absent the competing package or its API key they raise `SystemUnavailable` and contribute only a **capability matrix** row sourced from public docs — which is the structural finding the publication rests on: only bettermemory logs all three signals (1)–(3) above, so only bettermemory can compute the trio at all.
 
 ## Caveats and open calibration
 
