@@ -1380,3 +1380,64 @@ def test_auto_consolidate_debounce_survives_event_log_rotation(
         now=now + timedelta(hours=1),
     )
     assert second is None
+
+
+def test_auto_consolidate_demote_preserves_identity(
+    store: Store, memory_dir: Path
+) -> None:
+    """The second auto-applied mutation (fact->ambient demote) must preserve
+    id/created/body — only the category changes. Exercises run_auto_consolidate's
+    demote path end-to-end, not just the manual consolidate() one."""
+    store.write(content="a solitary stale fact worth keeping around", scopes=["tools"])
+    before = store.load_all()[0]
+    # Retrieved once, never applied → demotion candidate once it ages out.
+    rec = Recorder(root=memory_dir, session_id="sess_auto")
+    rec.record("search", query="anything", returned=[before.id])
+    # Run far enough ahead that `before` is older than the 30d demote window.
+    future = before.created + timedelta(days=60)
+    result = run_auto_consolidate(
+        store,
+        recorder=rec,
+        session_id="sess_auto",
+        interval_hours=24.0,
+        max_memories=500,
+        now=future,
+    )
+    assert result is not None and result["status"] == "ran"
+    assert result["demoted"] == 1
+    after = store.load_all()
+    assert len(after) == 1
+    demoted = after[0]
+    assert demoted.category == Category.AMBIENT
+    assert demoted.id == before.id  # identity preserved through the retag
+    assert demoted.created == before.created
+    assert demoted.body == before.body
+
+
+def test_auto_consolidate_dedup_keeper_retains_identity(
+    store: Store, memory_dir: Path
+) -> None:
+    """When auto-dedup tombstones a near-duplicate, the survivor must be one
+    of the originals with id/created/body intact — never a freshly minted
+    record."""
+    store.write(content="alpha beta gamma delta epsilon zeta", scopes=["tools"])
+    store.write(content="alpha beta gamma delta epsilon zeta", scopes=["tools"])
+    originals = {m.id: m for m in store.load_all()}
+    assert len(originals) == 2
+
+    rec = Recorder(root=memory_dir, session_id="sess_auto")
+    result = run_auto_consolidate(
+        store,
+        recorder=rec,
+        session_id="sess_auto",
+        interval_hours=24.0,
+        max_memories=500,
+    )
+    assert result is not None and result["tombstoned"] == 1
+    survivors = store.load_all()
+    assert len(survivors) == 1
+    keeper = survivors[0]
+    assert keeper.id in originals  # an original, not a new id
+    original = originals[keeper.id]
+    assert keeper.created == original.created
+    assert keeper.body == original.body

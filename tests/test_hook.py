@@ -856,3 +856,79 @@ def test_run_audit_no_proposals_when_disabled(tmp_path: Path) -> None:
         config=cfg,
     )
     assert ProposalQueue(mem_dir).load() == []
+
+
+# ---------------------------------------------------------------------------
+# Failure isolation — a consolidate / proposals hiccup must neither block the
+# turn end nor drop the audit result. run_audit's comments assert this; these
+# pin it so a regression that lets the exception escape would fail CI.
+# ---------------------------------------------------------------------------
+
+
+def test_run_audit_isolates_consolidate_failure(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """A raising auto-consolidate is swallowed: run_audit still returns the
+    report and the already-recorded turn_audited event survives."""
+    from bettermemory.config import (
+        Config,
+        ConsolidateConfig,
+        StorageConfig,
+        TelemetryConfig,
+    )
+    from bettermemory.hook import run_audit
+
+    def boom(*_a: object, **_k: object) -> None:
+        raise RuntimeError("consolidate exploded")
+
+    monkeypatch.setattr("bettermemory.consolidate.run_auto_consolidate", boom)
+    mem_dir = tmp_path / "mem"
+    cfg = Config(
+        storage=StorageConfig(directory=str(mem_dir)),
+        consolidate=ConsolidateConfig(auto_apply=True),
+        telemetry=TelemetryConfig(enabled=True),
+    )
+    result = run_audit(
+        user_message="some durable turn content here",
+        assistant_response=None,
+        session_id="sess-iso-c",
+        config=cfg,
+    )
+    assert isinstance(result, dict)  # returned, did not propagate
+    assert "consolidate exploded" in capsys.readouterr().err  # caught + logged
+    kinds = [e.get("kind") for e in iter_events(mem_dir)]
+    assert "turn_audited" in kinds  # audit result was NOT dropped
+
+
+def test_run_audit_isolates_proposals_failure(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """Same isolation guarantee for the write-reflex capture half."""
+    from bettermemory.config import (
+        Config,
+        ProposalsConfig,
+        StorageConfig,
+        TelemetryConfig,
+    )
+    from bettermemory.hook import run_audit
+
+    def boom(*_a: object, **_k: object) -> None:
+        raise RuntimeError("proposals exploded")
+
+    monkeypatch.setattr("bettermemory.proposals.propose_from_exchange", boom)
+    mem_dir = tmp_path / "mem"
+    cfg = Config(
+        storage=StorageConfig(directory=str(mem_dir)),
+        proposals=ProposalsConfig(auto_propose=True),
+        telemetry=TelemetryConfig(enabled=True),
+    )
+    result = run_audit(
+        user_message="I prefer hands-on tutorials with runnable code.",
+        assistant_response=None,
+        session_id="sess-iso-p",
+        config=cfg,
+    )
+    assert isinstance(result, dict)
+    assert "proposals exploded" in capsys.readouterr().err
+    kinds = [e.get("kind") for e in iter_events(mem_dir)]
+    assert "turn_audited" in kinds

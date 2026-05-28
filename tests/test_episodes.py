@@ -148,6 +148,8 @@ def test_invalid_swarm_id_rejected(episode_store: EpisodeStore) -> None:
         )
     with pytest.raises(ValueError, match="swarm_id"):
         episode_store.write(session_id="sess_aaaa1111", body="x", swarm_id="x" * 200)
+    with pytest.raises(ValueError, match="swarm_id"):
+        episode_store.write(session_id="sess_aaaa1111", body="x", swarm_id="")
 
 
 def test_list_by_session_sorts_oldest_first(episode_store: EpisodeStore) -> None:
