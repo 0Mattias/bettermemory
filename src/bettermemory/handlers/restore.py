@@ -53,9 +53,10 @@ async def memory_restore(
         # arm in handlers/remove.py.
         raise ValueError(f"failed to restore memory {id}: {exc}") from exc
     except ValueError:
-        # _load_tombstone_path raises ValueError on a malformed file
-        # (e.g. missing `created`). Surface verbatim — the message
-        # tells the caller which field is missing.
+        # Store.restore re-raises ValueError when a tombstone's `created`
+        # field is missing or unparseable — `_as_dt(post.metadata["created"])`
+        # wrapped as "cannot restore — missing/invalid created". Surface
+        # verbatim; the message names the offending tombstone file.
         raise
     deps.recorder.record(
         "restore",
