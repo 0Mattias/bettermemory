@@ -46,6 +46,7 @@ from ._handlers import (
     DESC_MEMORY_HEALTH,
     DESC_MEMORY_LIST,
     DESC_MEMORY_LIST_TOMBSTONES,
+    DESC_MEMORY_PROPOSALS,
     DESC_MEMORY_RECORD_USE,
     DESC_MEMORY_REMOVE,
     DESC_MEMORY_RENAME_SCOPE,
@@ -232,7 +233,7 @@ def _register_tools(
     )
 
     # Order matches `server.py`'s module docstring's tool list so a reader
-    # can scan top-to-bottom and see all 23 tools at once (19 memory_*
+    # can scan top-to-bottom and see all 24 tools at once (20 memory_*
     # + 4 episode_*).
     mcp.tool(name="memory_search", description=DESC_MEMORY_SEARCH)(
         handlers.memory_search
@@ -289,6 +290,13 @@ def _register_tools(
     )
     mcp.tool(name="memory_scope_enable", description=DESC_MEMORY_SCOPE_ENABLE)(
         handlers.memory_scope_enable
+    )
+
+    # Write-reflex closure — review the proposal queue the Stop hook fills
+    # (opt-in [proposals] auto_propose). The capture half of the
+    # self-improving loop; accepting a proposal is a normal memory write.
+    mcp.tool(name="memory_proposals", description=DESC_MEMORY_PROPOSALS)(
+        handlers.memory_proposals
     )
 
     # Episode-tier tools — sibling to memory, journal-shaped writes for

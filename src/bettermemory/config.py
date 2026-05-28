@@ -238,6 +238,23 @@ auto_apply_interval_hours = 24.0
 # responsive. Larger stores should run `bettermemory consolidate --apply`
 # by hand (or raise this once you've measured the cost on your store).
 auto_apply_max_memories = 500
+
+[proposals]
+# Opt-in write-reflex closure — the capture half of the self-improving
+# loop. OFF by default. When enabled, the Stop hook scans each turn's
+# USER message for durable-looking statements you made but the model
+# didn't save (explicit "remember…" requests, first-person
+# preferences/setup facts) and queues them as INERT proposals. Nothing
+# is ever written to memory automatically: review the queue with the
+# `memory_proposals` tool and accept (a normal memory write) or dismiss.
+# Closes the gap where durable content slips by during head-down work
+# without breaking the "writes are confirmed, never silent" contract.
+auto_propose = false
+
+# Cap on the pending-proposal queue. Once it holds this many, extraction
+# stops until you accept or dismiss some — bounds growth and avoids
+# nagging.
+max_pending = 20
 """
 
 
@@ -394,12 +411,29 @@ class ConsolidateConfig:
 
 
 @dataclass
+class ProposalsConfig:
+    """Opt-in write-reflex closure. See DEFAULT_CONFIG for prose.
+
+    Default OFF. When `auto_propose` is true, the Stop hook scans each
+    turn's user message for durable-looking statements the model didn't
+    write and queues them — inert and review-gated — for the
+    `memory_proposals` tool. `max_pending` caps the queue so it can't
+    grow without bound or nag: once full, extraction stops until
+    proposals are accepted or dismissed.
+    """
+
+    auto_propose: bool = False
+    max_pending: int = 20
+
+
+@dataclass
 class Config:
     storage: StorageConfig = field(default_factory=StorageConfig)
     behavior: BehaviorConfig = field(default_factory=BehaviorConfig)
     scopes: ScopesConfig = field(default_factory=ScopesConfig)
     telemetry: TelemetryConfig = field(default_factory=TelemetryConfig)
     consolidate: ConsolidateConfig = field(default_factory=ConsolidateConfig)
+    proposals: ProposalsConfig = field(default_factory=ProposalsConfig)
     config_path: Path | None = None
 
     # ---- methods ----------------------------------------------------------
@@ -625,6 +659,7 @@ def load_config(path: Path | None = None) -> Config:
     scopes_raw = data.get("scopes", {})
     telemetry_raw = data.get("telemetry", {})
     consolidate_raw = data.get("consolidate", {})
+    proposals_raw = data.get("proposals", {})
 
     # T9: back-compat for the 3.1.x -> 3.2.0 TOML key rename. Mutates
     # `behavior_raw` so the downstream `behavior_raw.get(...)` lookups
@@ -690,6 +725,10 @@ def load_config(path: Path | None = None) -> Config:
             auto_apply_max_memories=int(
                 consolidate_raw.get("auto_apply_max_memories", 500)
             ),
+        ),
+        proposals=ProposalsConfig(
+            auto_propose=bool(proposals_raw.get("auto_propose", False)),
+            max_pending=int(proposals_raw.get("max_pending", 20)),
         ),
         config_path=config_path,
     )

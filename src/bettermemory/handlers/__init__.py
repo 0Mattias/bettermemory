@@ -30,6 +30,7 @@ from .episode_search import DESC_EPISODE_SEARCH, episode_search
 from .episode_write import DESC_EPISODE_WRITE, episode_write
 from .health import DESC_MEMORY_HEALTH, memory_health
 from .list_active import DESC_MEMORY_LIST, memory_list
+from .proposals import DESC_MEMORY_PROPOSALS, memory_proposals
 from .record_use import DESC_MEMORY_RECORD_USE, memory_record_use
 from .remove import DESC_MEMORY_REMOVE, memory_remove
 from .rename_scope import DESC_MEMORY_RENAME_SCOPE, memory_rename_scope
@@ -66,6 +67,7 @@ __all__ = [
     "DESC_MEMORY_LINKS_TAIL",
     "DESC_MEMORY_LIST",
     "DESC_MEMORY_LIST_TOMBSTONES",
+    "DESC_MEMORY_PROPOSALS",
     "DESC_MEMORY_RECORD_USE",
     "DESC_MEMORY_REMOVE",
     "DESC_MEMORY_RENAME_SCOPE",
@@ -89,6 +91,7 @@ __all__ = [
     "memory_health",
     "memory_list",
     "memory_list_tombstones",
+    "memory_proposals",
     "memory_record_use",
     "memory_remove",
     "memory_rename_scope",

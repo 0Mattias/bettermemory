@@ -263,6 +263,27 @@ def test_load_config_reads_consolidate_section(tmp_path: Path) -> None:
     assert cfg.consolidate.auto_apply_max_memories == 1000
 
 
+def test_load_config_proposals_defaults(tmp_path: Path) -> None:
+    """The [proposals] section defaults to OFF with a 20-item queue cap —
+    the write-reflex capture never runs unless opted in."""
+    config_path = tmp_path / "config.toml"
+    config_path.write_text("[storage]\ndirectory = '/tmp/x'\n", encoding="utf-8")
+    cfg = load_config(config_path)
+    assert cfg.proposals.auto_propose is False
+    assert cfg.proposals.max_pending == 20
+
+
+def test_load_config_reads_proposals_section(tmp_path: Path) -> None:
+    config_path = tmp_path / "config.toml"
+    config_path.write_text(
+        "[proposals]\nauto_propose = true\nmax_pending = 5\n",
+        encoding="utf-8",
+    )
+    cfg = load_config(config_path)
+    assert cfg.proposals.auto_propose is True
+    assert cfg.proposals.max_pending == 5
+
+
 def test_load_config_coerces_behavior_bool_fields(tmp_path: Path) -> None:
     """`bool(...)` wraps the lookup so a missing field defaults False/True
     via the dataclass without crashing, and an explicit value is coerced."""

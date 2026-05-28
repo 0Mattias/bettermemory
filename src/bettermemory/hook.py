@@ -299,6 +299,34 @@ def run_audit(
         except Exception as exc:  # noqa: BLE001 — hook must never block turn end
             print(f"bettermemory auto-consolidate: {exc}", file=sys.stderr)
 
+    # Opt-in write-reflex closure (the capture half of the self-improving
+    # loop). Scan this turn's user message for durable-looking statements
+    # the model didn't write and queue them as inert, review-gated
+    # proposals for the `memory_proposals` tool. Imported lazily so users
+    # who haven't opted in pay nothing per turn; best-effort so it can
+    # never block the turn end. No telemetry gate — the proposal queue is
+    # its own file and proposals are inert until the model reviews them;
+    # the recorded event is best-effort observability only.
+    if cfg.proposals.auto_propose:
+        try:
+            from .proposals import propose_from_exchange
+
+            proposed = propose_from_exchange(
+                root,
+                user_text=user_message,
+                max_pending=cfg.proposals.max_pending,
+                now=utcnow(),
+            )
+            if proposed:
+                recorder.record(
+                    "proposals_enqueued",
+                    count=len(proposed),
+                    session_id=session_id,
+                    triggered_from="stop_hook",
+                )
+        except Exception as exc:  # noqa: BLE001 — hook must never block turn end
+            print(f"bettermemory proposals: {exc}", file=sys.stderr)
+
     return report.to_dict()
 
 

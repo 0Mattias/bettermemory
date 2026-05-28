@@ -5663,3 +5663,115 @@ def test_already_recorded_pending_ids_respects_issued_at_guard(
         f"stale event falsely matched fresh token; got {result}. "
         "The event.ts >= token.issued_at guard regressed."
     )
+
+
+# ---------------------------------------------------------------------------
+# memory_proposals — write-reflex review surface
+# ---------------------------------------------------------------------------
+
+
+def _seed_proposal(memory_dir: Path, *, pid: str, body: str, cat: str = "fact") -> None:
+    from bettermemory.proposals import Proposal, ProposalQueue
+
+    ProposalQueue(memory_dir).append(
+        [
+            Proposal(
+                id=pid,
+                body=body,
+                source_excerpt=body,
+                suggested_category=cat,
+                created="2026-01-01T00:00:00Z",
+            )
+        ]
+    )
+
+
+async def test_memory_proposals_list_empty(server: Any) -> None:
+    res = await _call(server, "memory_proposals")
+    assert res["status"] == "ok"
+    assert res["count"] == 0
+    assert res["proposals"] == []
+
+
+async def test_memory_proposals_list_returns_queued(
+    server: Any, memory_dir: Path
+) -> None:
+    _seed_proposal(
+        memory_dir, pid="p1", body="user prefers terse explanations over prose"
+    )
+    res = await _call(server, "memory_proposals", action="list")
+    assert res["count"] == 1
+    assert res["proposals"][0]["id"] == "p1"
+    assert res["proposals"][0]["suggested_category"] == "fact"
+
+
+async def test_memory_proposals_accept_writes_memory_and_removes(
+    server: Any, memory_dir: Path
+) -> None:
+    from bettermemory.proposals import ProposalQueue
+    from bettermemory.store import Store
+
+    _seed_proposal(
+        memory_dir,
+        pid="p1",
+        body="user prefers terse explanations over prose",
+        cat="user-inference",
+    )
+    res = await _call(
+        server,
+        "memory_proposals",
+        action="accept",
+        proposal_id="p1",
+        scopes=["learning-style"],
+    )
+    assert res["status"] == "accepted"
+    assert res["category"] == "user-inference"
+    # Proposal consumed; a real memory now exists with that body.
+    assert ProposalQueue(memory_dir).load() == []
+    bodies = [m.body for m in Store(memory_dir).load_all()]
+    assert any("terse explanations" in b for b in bodies)
+
+
+async def test_memory_proposals_accept_requires_scopes(
+    server: Any, memory_dir: Path
+) -> None:
+    _seed_proposal(
+        memory_dir, pid="p1", body="user prefers terse explanations over prose"
+    )
+    with pytest.raises(Exception, match="scopes"):
+        await _call(server, "memory_proposals", action="accept", proposal_id="p1")
+
+
+async def test_memory_proposals_accept_unknown_id_not_found(server: Any) -> None:
+    res = await _call(
+        server, "memory_proposals", action="accept", proposal_id="nope", scopes=["x"]
+    )
+    assert res["status"] == "not_found"
+
+
+async def test_memory_proposals_dismiss_removes(server: Any, memory_dir: Path) -> None:
+    from bettermemory.proposals import ProposalQueue
+
+    _seed_proposal(
+        memory_dir, pid="p1", body="user prefers terse explanations over prose"
+    )
+    res = await _call(server, "memory_proposals", action="dismiss", proposal_id="p1")
+    assert res["status"] == "dismissed"
+    assert ProposalQueue(memory_dir).load() == []
+
+
+async def test_memory_proposals_unknown_action_errors(server: Any) -> None:
+    with pytest.raises(Exception, match="unknown action"):
+        await _call(server, "memory_proposals", action="frobnicate")
+
+
+async def test_scope_overview_reports_proposals_pending(
+    server: Any, memory_dir: Path
+) -> None:
+    res0 = await _call(server, "memory_scope_overview")
+    assert res0["proposals_pending"] == 0
+    _seed_proposal(
+        memory_dir, pid="p1", body="user prefers terse explanations over prose"
+    )
+    res1 = await _call(server, "memory_scope_overview")
+    assert res1["proposals_pending"] == 1

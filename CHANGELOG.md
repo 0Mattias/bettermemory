@@ -9,16 +9,18 @@ spells out exactly what's stable.
 
 ## [Unreleased]
 
-Two additive features land this batch, both serving the same north
+Three additive features land this batch, all serving the same north
 star — memory that compounds across many agents and over time.
 **Multi-agent swarm fan-in for episodes** lets one coordinator gather
 what all its parallel sub-agents learned; **opt-in self-improving
-consolidation** lets the store quietly curate itself between turns.
-Both ride alongside the documentation-accuracy and durability test
-hardening already queued behind 3.2.2. Everything here is additive
-(new optional parameters and an off-by-default config section, no
-on-disk schema bump), so the batch lands as a minor bump rather than a
-patch.
+consolidation** lets the store quietly curate itself between turns; and
+**opt-in write-reflex capture** closes the other half of that loop by
+proposing durable statements the model forgot to save, for one-tap
+review. All three ride alongside the documentation-accuracy and
+durability test hardening already queued behind 3.2.2. Everything here
+is additive (new optional parameters, two off-by-default config
+sections, and one new MCP tool, no on-disk schema bump), so the batch
+lands as a minor bump rather than a patch.
 
 ### Added
 
@@ -70,6 +72,29 @@ patch.
   no log, no auto-mutation. This closes the loop the curation telemetry
   (silent-misses, cold-endorsements) previously only *surfaced* as
   recommendations a human had to read and act on.
+
+- **Opt-in write-reflex capture (`[proposals] auto_propose` + the new
+  `memory_proposals` tool).** Closes the documented writing-reflex gap —
+  the model under-writes durable content during head-down work (the gap
+  `attribution.py` exists to measure). When enabled, the `audit-turn`
+  Stop hook scans each turn's USER message for durable-looking
+  statements the model didn't save (explicit "remember…" requests,
+  first-person preferences/setup facts; questions, task-requests, and
+  transient run-state are rejected) and queues them as **inert**
+  proposals at `<root>/.write_proposals.jsonl`. The new `memory_proposals`
+  tool (24th MCP tool) is the review surface — `list` them, then `accept`
+  one (a normal memory write, source=inferred — `scopes` required, the
+  queue doesn't guess them) or `dismiss` it; `memory_scope_overview`
+  reports `proposals_pending` so the queue is discoverable at session
+  start. Nothing is ever written without an explicit accept, so the
+  "writes are confirmed, never silent" contract holds even though
+  capture is automatic. Extraction is the symmetric *capture* half of
+  the self-improving loop (consolidation being the *curate* half): a
+  cheap, no-LLM, conservative heuristic that runs without blocking the
+  turn-end hook, deduped against the queue and capped at `max_pending`
+  (default 20). The queue + review surface are deliberately
+  generation-agnostic, so an LLM-backed pass (`consolidate
+  --from-transcript`) can populate the same queue later.
 
 ### Fixed
 

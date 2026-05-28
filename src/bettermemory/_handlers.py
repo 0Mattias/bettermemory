@@ -70,6 +70,7 @@ DESC_MEMORY_HEALTH = _handlers_pkg.DESC_MEMORY_HEALTH
 DESC_MEMORY_LINKS_TAIL = _handlers_pkg.DESC_MEMORY_LINKS_TAIL
 DESC_MEMORY_LIST = _handlers_pkg.DESC_MEMORY_LIST
 DESC_MEMORY_LIST_TOMBSTONES = _handlers_pkg.DESC_MEMORY_LIST_TOMBSTONES
+DESC_MEMORY_PROPOSALS = _handlers_pkg.DESC_MEMORY_PROPOSALS
 DESC_MEMORY_RECORD_USE = _handlers_pkg.DESC_MEMORY_RECORD_USE
 DESC_MEMORY_REMOVE = _handlers_pkg.DESC_MEMORY_REMOVE
 DESC_MEMORY_RENAME_SCOPE = _handlers_pkg.DESC_MEMORY_RENAME_SCOPE
@@ -379,6 +380,23 @@ class ToolHandlers:
             confidence=confidence,
             source=source,
             use_body=use_body,
+            ctx=ctx,
+        )
+
+    async def memory_proposals(
+        self,
+        action: str = "list",
+        proposal_id: str | None = None,
+        scopes: list[str] | None = None,
+        category: str | None = None,
+        ctx: Context | None = None,
+    ) -> dict[str, Any]:
+        return await _handlers_pkg.memory_proposals(
+            self,
+            action=action,
+            proposal_id=proposal_id,
+            scopes=scopes,
+            category=category,
             ctx=ctx,
         )
 

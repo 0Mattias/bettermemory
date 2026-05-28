@@ -811,3 +811,48 @@ def test_run_audit_no_consolidate_when_telemetry_off(tmp_path: Path) -> None:
     )
     assert len(store.load_all()) == 2  # not mutated
     assert not (mem_dir / ".events.jsonl").exists()  # telemetry off → no log
+
+
+# ---------------------------------------------------------------------------
+# Write-reflex closure — proposal capture fired from the Stop hook
+# ---------------------------------------------------------------------------
+
+
+def test_run_audit_proposes_writes_when_opted_in(tmp_path: Path) -> None:
+    """With [proposals] auto_propose on, run_audit captures a durable
+    statement from the user message into the (inert) proposal queue."""
+    from bettermemory.config import Config, ProposalsConfig, StorageConfig
+    from bettermemory.hook import run_audit
+    from bettermemory.proposals import ProposalQueue
+
+    mem_dir = tmp_path / "mem"
+    cfg = Config(
+        storage=StorageConfig(directory=str(mem_dir)),
+        proposals=ProposalsConfig(auto_propose=True),
+    )
+    run_audit(
+        user_message="I prefer hands-on tutorials with runnable code, not screenshots.",
+        assistant_response="sure",
+        session_id="sess-prop",
+        config=cfg,
+    )
+    pending = ProposalQueue(mem_dir).load()
+    assert len(pending) == 1
+    assert "runnable code" in pending[0].body
+
+
+def test_run_audit_no_proposals_when_disabled(tmp_path: Path) -> None:
+    """Default config (auto_propose off) captures nothing."""
+    from bettermemory.config import Config, StorageConfig
+    from bettermemory.hook import run_audit
+    from bettermemory.proposals import ProposalQueue
+
+    mem_dir = tmp_path / "mem"
+    cfg = Config(storage=StorageConfig(directory=str(mem_dir)))
+    run_audit(
+        user_message="I prefer hands-on tutorials with runnable code, not screenshots.",
+        assistant_response="sure",
+        session_id="sess-noprop",
+        config=cfg,
+    )
+    assert ProposalQueue(mem_dir).load() == []

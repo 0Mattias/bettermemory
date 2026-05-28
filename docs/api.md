@@ -1,12 +1,12 @@
 # API surface (3.x)
 
-The contractual list of MCP tools bettermemory exposes. Signatures, defaults, and return shapes are stable within the 3.x line per the rules in [`CONTRIBUTING.md`](../CONTRIBUTING.md). The 23 tools group naturally:
+The contractual list of MCP tools bettermemory exposes. Signatures, defaults, and return shapes are stable within the 3.x line per the rules in [`CONTRIBUTING.md`](../CONTRIBUTING.md). The 24 tools group naturally:
 
 - **Retrieval** — `memory_search` (now with `since_prior_session` filter), `memory_show`, `memory_list`, `memory_scope_overview`
 - **Writing** — `memory_write` (plus `memory_write_confirm` / `memory_write_cancel` for the staged-write flow), `memory_update`
 - **Lifecycle** — `memory_remove`, `memory_restore`, `memory_list_tombstones`
 - **Verification** — `memory_verify`
-- **Curation** — `memory_record_use`, `memory_health`, `memory_audit_turn`, `memory_acknowledge_miss`, `memory_rename_scope`
+- **Curation** — `memory_record_use`, `memory_health`, `memory_audit_turn`, `memory_acknowledge_miss`, `memory_rename_scope`, `memory_proposals`
 - **Session-local** — `memory_scope_disable`, `memory_scope_enable`
 - **Episodes** (sibling tier for journal-shaped run-state) — `episode_write`, `episode_handoff`, `episode_search`, `episode_promote`
 
@@ -49,7 +49,7 @@ Cheap session-start hint. Counts per scope without bodies or IDs.
 
 - `auto_scope: bool = True`. Same semantics as `memory_search.auto_scope`.
 
-Returns `{current_repo, current_cwd, auto_scope, scopes: {scope: count}, total, disabled_scopes, curation_pending, curation_pending_new_since_last_session, recently_removed_in_worktree}`. The `curation_pending` rollup is integer counts (`stale`, `never_verified`, `drifted`, `cold`, `dead`, `silent_misses`, `unique_silent_miss_memories`, `cold_endorsement_memories`) derived from the same logic as `memory_health` but without row materialisation. `silent_misses` is the event count; `unique_silent_miss_memories` is the cardinality of the set of top-hit memory_ids on those events — the gap between the two distinguishes "9 events against 1 mis-tagged memory" from "9 events across 9 memories." Misses whose top-hit memory has been tombstoned are dropped from both (no longer actionable). `cold_endorsement_memories` counts distinct memories (NOT turns) with `retrieval_count >= N` AND zero explicit applies — one memory hit 50 times by the ranker contributes 1, not 50.
+Returns `{current_repo, current_cwd, auto_scope, scopes: {scope: count}, total, disabled_scopes, curation_pending, curation_pending_new_since_last_session, recently_removed_in_worktree, proposals_pending}`. `proposals_pending` is the count of pending write-reflex proposals (0 unless the opt-in `[proposals] auto_propose` is on); see `memory_proposals`. The `curation_pending` rollup is integer counts (`stale`, `never_verified`, `drifted`, `cold`, `dead`, `silent_misses`, `unique_silent_miss_memories`, `cold_endorsement_memories`) derived from the same logic as `memory_health` but without row materialisation. `silent_misses` is the event count; `unique_silent_miss_memories` is the cardinality of the set of top-hit memory_ids on those events — the gap between the two distinguishes "9 events against 1 mis-tagged memory" from "9 events across 9 memories." Misses whose top-hit memory has been tombstoned are dropped from both (no longer actionable). `cold_endorsement_memories` counts distinct memories (NOT turns) with `retrieval_count >= N` AND zero explicit applies — one memory hit 50 times by the ranker contributes 1, not 50.
 
 - `curation_pending_new_since_last_session: dict[str, int] | None`. Same shape as `curation_pending`, filtered to events emitted and memories *created* since the prior-session boundary. An older record aging into `stale` between sessions stays visible only in the absolute `curation_pending`. Branch on this dict when deciding whether to *prompt* the user about curation — non-zero values here mean new rot has accumulated since you were last around. `null` on the very first session (no prior boundary to delta against); fall back to `curation_pending` in that case. This is also the signal that disambiguates an empty `memory_search(since_prior_session=True)` between "nothing new" (key present, all zeros or non-null) and "no baseline" (`null`).
 - `recently_removed_in_worktree: int`. Count of tombstones whose `removed` timestamp lands in the last 7 days. Under `auto_scope=True`, restricted to tombstones whose `origin.worktree_root` matches the caller's; tombstones with no recorded origin are excluded under that branch. Under `auto_scope=False`, every tombstone in the window counts. Non-zero is a cue that the model previously trimmed material in this area — useful before re-suggesting something that may have already been removed.
@@ -182,6 +182,17 @@ Always emits `turn_audited` so audit cadence stays visible. Emits `search_miss` 
 - `include_tombstones: bool = True`.
 
 Returns `{active: [ids], tombstoned: [ids]}` for records actually touched.
+
+### `memory_proposals(action?, proposal_id?, scopes?, category?)`
+
+Review the write-reflex proposal queue — durable statements the Stop hook captured from the user's messages that were never written as memories (the capture half of the self-improving loop; opt-in via `[proposals] auto_propose`). Proposals are inert until accepted, so nothing is ever written without an explicit accept.
+
+- `action: str = "list"`. One of `"list"`, `"accept"`, `"dismiss"`.
+- `proposal_id: str | None = None`. Required for `accept` / `dismiss`; the `id` from a `list` row.
+- `scopes: list[str] | None = None`. Required for `accept` — a memory needs at least one scope and the queue does not guess them.
+- `category: str | None = None`. Optional override for `accept`; defaults to the proposal's `suggested_category` (`fact` / `user-inference` / `ambient`).
+
+`list` returns `{status: "ok", action: "list", count, proposals: [{id, body, source_excerpt, suggested_category, created}]}`. `accept` writes the proposal as a normal memory (source=`inferred`), removes it from the queue, and returns `{status: "accepted", id, proposal_id, scopes, category}`. `dismiss` drops it and returns `{status: "dismissed", proposal_id}`. A missing id returns `{status: "not_found", ...}`. Surfaced for discovery via `memory_scope_overview`'s `proposals_pending` count.
 
 ## Session-local
 

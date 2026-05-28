@@ -910,11 +910,11 @@ class TestComputeToolUsage:
         without a missing-key guard. Untelemetered tools surface too."""
         report = compute_tool_usage([])
         tool_names = {row.tool for row in report.rows}
-        # The full 23 — explicit-mapped 22 (memory_* + episode_write +
-        # episode_handoff + episode_search + episode_promote +
-        # memory_acknowledge_miss) plus the one in
+        # The full 24 — explicit-mapped 23 (memory_* + memory_proposals +
+        # episode_write + episode_handoff + episode_search +
+        # episode_promote + memory_acknowledge_miss) plus the one in
         # TOOLS_WITHOUT_TELEMETRY (memory_health).
-        assert len(report.rows) == 23
+        assert len(report.rows) == 24
         assert "memory_search" in tool_names
         assert "memory_health" in tool_names
         assert "episode_write" in tool_names
@@ -1027,7 +1027,7 @@ class TestComputeToolUsage:
 # either the runtime registrations or the eval-side enumeration trips
 # one assertion instead of leaving the prose silently out of sync.
 # Prose authors verify against this constant.
-_EXPECTED_TOOL_COUNT = 23
+_EXPECTED_TOOL_COUNT = 24
 
 
 async def test_tool_count_matches_registered_count(tmp_path: Path) -> None:

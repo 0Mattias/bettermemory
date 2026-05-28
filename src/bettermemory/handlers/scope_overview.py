@@ -15,6 +15,7 @@ from ..events import iter_all_events
 from ..health import curation_counts, find_prior_session_boundary
 from ..models import utcnow
 from ..origin import Origin, should_include_for_caller
+from ..proposals import ProposalQueue
 from ._shared import Context, _advance_turn
 
 if TYPE_CHECKING:
@@ -29,7 +30,10 @@ DESC_MEMORY_SCOPE_OVERVIEW = (
     "Returns `{current_repo, current_cwd, auto_scope, scopes: "
     "{scope: count}, total, disabled_scopes, curation_pending, "
     "curation_pending_new_since_last_session, "
-    "recently_removed_in_worktree}`. "
+    "recently_removed_in_worktree, proposals_pending}`. "
+    "`proposals_pending` is the count of write-reflex proposals the "
+    "Stop hook has captured awaiting review via `memory_proposals` "
+    "(0 unless the opt-in [proposals] auto_propose is on). "
     "`curation_pending` is an integer-count rollup the model "
     "should branch on:\n"
     "  {stale, never_verified, drifted, cold, dead, "
@@ -228,6 +232,13 @@ async def memory_scope_overview(
         window_days=7,
     )
 
+    # Count of pending write-reflex proposals (opt-in [proposals]
+    # auto_propose). Surfaced here so the session-start hint also tells the
+    # model when the Stop hook has captured durable statements awaiting
+    # review via `memory_proposals`. Zero (and cheap) when the feature is
+    # off and the queue file doesn't exist.
+    proposals_pending = len(ProposalQueue(deps.store.root).load())
+
     deps.recorder.record(
         "scope_overview",
         auto_scope=auto_scope,
@@ -238,6 +249,7 @@ async def memory_scope_overview(
         curation_pending_new_since_last_session=curation_delta,
         prior_session_boundary=isoformat_optional(prior_boundary),
         recently_removed_in_worktree=recent_removed,
+        proposals_pending=proposals_pending,
     )
     return {
         "current_repo": repo_filter,
@@ -249,6 +261,7 @@ async def memory_scope_overview(
         "curation_pending": curation,
         "curation_pending_new_since_last_session": curation_delta,
         "recently_removed_in_worktree": recent_removed,
+        "proposals_pending": proposals_pending,
     }
 
 

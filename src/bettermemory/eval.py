@@ -1153,6 +1153,7 @@ _TOOL_EVENT_KIND_TO_TOOL: dict[str, str] = {
     "scope_enable": "memory_scope_enable",
     "turn_audited": "memory_audit_turn",
     "miss_ack": "memory_acknowledge_miss",
+    "memory_proposals": "memory_proposals",
     "episode_write": "episode_write",
     "episode_handoff": "episode_handoff",
     "episode_search": "episode_search",
@@ -1181,8 +1182,17 @@ TOOLS_WITHOUT_TELEMETRY: tuple[str, ...] = ("memory_health",)
 # ``_TOOL_EVENT_KIND_TO_TOOL`` or this set, and that the two are
 # mutually exclusive. Adding a new event kind without updating one of
 # them is the bug class this guards against.
+#
+# ``proposals_enqueued`` is the Stop hook's write-reflex capture event —
+# a side-effect of turn-end, not a tool call (the model never invokes it;
+# accepting/dismissing the resulting proposals goes through the
+# ``memory_proposals`` tool, which IS mapped above). The hook's
+# ``auto_consolidate`` event is recorded via a module constant, not a
+# string literal, so the AST parity scan never sees it — it is
+# deliberately omitted here rather than tripping the "stale entry" half
+# of the parity assertion.
 _KNOWN_SIDE_EFFECT_KINDS: frozenset[str] = frozenset(
-    {"search_miss", "pending_expired", "silent_miss_cutoff"}
+    {"search_miss", "pending_expired", "silent_miss_cutoff", "proposals_enqueued"}
 )
 
 
