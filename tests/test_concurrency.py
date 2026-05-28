@@ -2136,17 +2136,60 @@ def test_restore_threaded_one_winner(tmp_path: Path) -> None:
         fresh.load_tombstone(memory.id)
 
 
-def _w7_concurrent_restore_worker(args: tuple[str, str]) -> dict[str, str]:
+def _w7_concurrent_restore_worker(
+    args: tuple[str, str, str, str],
+) -> dict[str, str]:
     """Worker for the cross-process W7 variant.
 
-    Each worker process attempts `Store.restore(memory_id)`. One worker
-    wins; the rest must lose with `NotTombstonedError` or
-    `MemoryNotFoundError`. No bare OSError may leak — that's the W7
-    bug. Returns a dict describing the outcome so the parent can
-    assert on the distribution.
+    Each worker process:
+      1. Signals "ready" by touching its own ready-marker.
+      2. Waits for the parent to release via a shared go-marker —
+         this rendezvous guarantees every worker is parked inside
+         `Store.restore` contention BEFORE any of them can win.
+         Without the barrier the first-spawned worker often finishes
+         the whole restore before later workers complete spawn
+         startup, routing those late workers through the pre-W7
+         fast-path checks ("is active; nothing to restore" /
+         "no tombstone with id ...") that don't engage the W7
+         under-lock recheck — masking the regression we pin here.
+      3. Calls `Store.restore(memory_id)`.
+
+    Exactly one worker wins; the rest must lose with
+    `NotTombstonedError` or `MemoryNotFoundError`, each carrying the
+    "raced with" hint from the W7 under-lock recheck. No bare OSError
+    may leak — that's the W7 bug. Returns a dict describing the
+    outcome so the parent can assert on the distribution.
     """
-    root, memory_id = args
+    root, memory_id, ready_marker, go_marker = args
+
+    # Pre-construct Store BEFORE the barrier so its filesystem-walk
+    # cost (slug-dir listing, etc.) doesn't extend each worker's
+    # post-release wake-up gap. We want the post-release path from
+    # `go.exists()` to `Store.restore` lock-contention to be as
+    # narrow as possible — otherwise a worker that polls the go
+    # marker a few microseconds later than the winner ends up doing
+    # its `Store(...)` init while the winner is already finishing
+    # `restore()`, and that worker then sees the active file at the
+    # pre-lock check and reports the pre-W7 "is active; nothing to
+    # restore" message instead of routing through the under-lock
+    # recheck.
     s = Store(Path(root))
+
+    # Signal readiness and busy-wait for the parent's go-signal.
+    # Tight spin (no sleep) on the go-marker: every microsecond of
+    # post-release jitter compresses the contention window — workers
+    # that wake even ~1ms late routinely miss lock contention on
+    # `restore`. We poll a stat() in a tight loop and trade ~1ms of
+    # CPU per worker for deterministic contention. The hard deadline
+    # below caps that to 30s if go never arrives (e.g. parent
+    # crashed before touching the marker).
+    Path(ready_marker).touch()
+    deadline = time.monotonic() + 30
+    go_path = Path(go_marker)
+    while not go_path.exists():
+        if time.monotonic() > deadline:
+            return {"outcome": "barrier-timeout"}
+
     try:
         s.restore(memory_id)
         return {"outcome": "won"}
@@ -2180,12 +2223,62 @@ def test_multi_process_concurrent_restore_no_oserror_leak(
     memory = setup.write(content="raced restore across processes", scopes=["tools"])
     setup.tombstone(memory.id, reason="W7 multi-process setup")
 
+    # File-system barrier: every worker signals "ready" by touching
+    # `ready_marker_<w>`; the parent waits for all N to appear then
+    # releases via `go_marker`. Mirrors the rendezvous in the W2/W8
+    # multi-process tests above. Without this, spawn-startup jitter
+    # (≈200ms on macOS) lets the first-spawned worker often win and
+    # release the lock before the rest reach the contention point —
+    # routing those losers through the pre-W7 fast-path messages
+    # ("is active; nothing to restore" / "no tombstone with id ...")
+    # that don't engage the under-lock recheck. With the barrier all
+    # six workers race the file lock from a synchronised start, so
+    # every loser is forced through the W7 under-lock path and carries
+    # the "raced with" hint — enabling the strict assertion below to
+    # serve as a true W7 regression guard (parity with the threaded
+    # variant at `test_restore_threaded_one_winner`).
+    barrier_dir = tmp_path / "_w7_barriers"
+    barrier_dir.mkdir()
+    go_marker = barrier_dir / "go"
+    ready_markers = [barrier_dir / f"ready_{w}" for w in range(n_workers)]
+
     ctx = mp.get_context("spawn")
-    with ctx.Pool(n_workers) as pool:
-        results = pool.map(
+    pool = ctx.Pool(n_workers)
+    try:
+        async_result = pool.map_async(
             _w7_concurrent_restore_worker,
-            [(str(tmp_path), memory.id) for _ in range(n_workers)],
+            [
+                (
+                    str(tmp_path),
+                    memory.id,
+                    str(ready_markers[w]),
+                    str(go_marker),
+                )
+                for w in range(n_workers)
+            ],
         )
+
+        # Wait for all workers to signal readiness.
+        deadline = time.monotonic() + 30
+        while time.monotonic() < deadline:
+            if all(m.exists() for m in ready_markers):
+                break
+            time.sleep(0.01)
+        else:  # noqa: PLW0120 — explicit timeout for the readiness rendezvous
+            pool.terminate()
+            pool.join()
+            pytest.fail(
+                "not all workers signalled ready within 30s; "
+                f"ready: {[m.name for m in ready_markers if m.exists()]}"
+            )
+
+        # All workers parked at the barrier. Release them to race
+        # `Store.restore` from a synchronised start.
+        go_marker.touch()
+        results = async_result.get(timeout=60)
+    finally:
+        pool.close()
+        pool.join()
 
     outcomes = [r["outcome"] for r in results]
     leaks = [r for r in results if r["outcome"] == "leaked-oserror"]
@@ -2206,28 +2299,17 @@ def test_multi_process_concurrent_restore_no_oserror_leak(
         f"Expected {n_workers - 1} structured race-losses, got {len(losers)}. "
         f"Outcomes: {outcomes}"
     )
-    # Per-loser message structure. Spawn-mode losers can land in two
-    # places: the unlocked pre-lock checks in `Store.restore` (whose
-    # messages predate W7 and don't carry the hint), or the under-lock
-    # W7 rechecks (whose messages carry the "raced with" hint added in
-    # commit e41c5ca). Both are legitimate structured race-loss outcomes,
-    # but only the under-lock path engages W7 — so the strict "raced
-    # with" assertion the threaded variant uses (line 2047) is too tight
-    # for multi-process where the winner often finishes before the other
-    # workers complete spawn startup. We assert the closed set: each
-    # loser's message matches one of the known shapes; anything else
-    # (e.g., a bare OSError stringified into the message, or a KeyError
-    # repr) means the race-loss path regressed to an unstructured form.
-    known_loser_shapes = (
-        "raced with",  # under-lock W7 form (post-e41c5ca; pins W7 directly)
-        "is active; nothing to restore",  # pre-lock active fast path
-        "no tombstone with id",  # pre-lock tombstone-gone fast path
-    )
+    # With the barrier above, every loser is forced through the W7
+    # under-lock recheck — so the strict "raced with" assertion the
+    # threaded variant uses (`test_restore_threaded_one_winner`) now
+    # holds here too. Any loser missing the hint means the race-loss
+    # path regressed to an unstructured form (or the under-lock
+    # recheck's structured-failure message no longer carries the
+    # "raced with" hint added in commit e41c5ca).
     for r in losers:
-        assert any(shape in r["msg"] for shape in known_loser_shapes), (
-            f"Loser's message {r['msg']!r} matches no known structured "
-            f"race-loss shape ({known_loser_shapes!r}). W7 regression: "
-            f"the race-loss path produced an unstructured failure."
+        assert "raced with" in r["msg"], (
+            f"Loser's message {r['msg']!r} missing the 'raced with' hint — "
+            f"W7 regression: the race-loss shape is no longer structured."
         )
 
     # Disk invariant: exactly one active file for the id, no tombstone.
