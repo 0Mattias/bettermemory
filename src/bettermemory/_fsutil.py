@@ -19,30 +19,27 @@ exists, the data backing it never reached disk.
   it is durable. POSIX-only; on Windows you can't `open()` a directory
   for fsync and the OS handles rename durability differently anyway,
   so we no-op there.
-* `atomic_write_bytes(path, data, *, mode=None)` — the full
-  tmp+fsync+rename+fsync_dir discipline packaged as a one-call helper
-  for small files. Caller shape it serves: a plain-bytes payload
-  (config TOML, JSON config blob, `.gitignore`, JSON export) where
-  the file is small enough to hold in memory, there is no
-  privacy-0o600 requirement, and no reader is racing the writer
-  through the rename-to-chmod window. The bespoke atomic writers
-  elsewhere in the codebase deliberately keep their hand-rolled
-  implementations rather than lift onto this helper. Three need
-  `fchmod` (0o600) BEFORE the rename so the file is never
-  world-readable on disk even briefly: `_atomic_write_post`
-  (frontmatter Post writer) and `episodes._write_path` carry
-  privacy-critical memory/episode bodies, and
-  `events._compress_rotating` carries session ids and raw query
-  text in its gzip archive. The fourth,
-  `semantic.flush_persistent_cache`, writes a recomputable embedding
-  cache blob (`np.savez_compressed`) where last-writer-wins is
-  acceptable and the payload isn't plain bytes. Lifting the
-  fchmod-before-rename writers onto this helper would require a
-  future API extension (`atomic_write_bytes(..., mode_before_rename=0o600)`
-  or similar); Q29 deferred all four bespoke writers and instead
-  migrated `config.py`'s default-config writer and `cli/export.py`'s
-  `-o` output writer onto this helper, since both fit the plain-bytes
-  caller shape.
+* `atomic_write_bytes(path, data, *, mode=None, mode_before_rename=None)`
+  — the full tmp+fsync+rename+fsync_dir discipline packaged as a
+  one-call helper for small files held in memory as plain bytes. Two
+  mutually-exclusive permission modes: `mode` chmods AFTER the rename
+  (non-private payloads — config TOML, JSON config blob, `.gitignore`,
+  JSON export), `mode_before_rename` fchmods the tmp fd BEFORE the
+  rename (privacy-critical 0o600 payloads — no world-readable window
+  at the visible name). The privacy-critical frontmatter writers route
+  through the `mode_before_rename` form: `_atomic_write_post` (the
+  store's Post writer) and `episodes._write_path` both serialise a
+  `frontmatter.Post` to bytes and delegate here (Q29), so the
+  durable-private-write discipline has one definition instead of three
+  hand-rolled copies. Two writers stay bespoke because they aren't
+  plain-bytes-in-memory callers: `events._compress_rotating` streams
+  gzip in 64 KB chunks straight to the archive (buffering the whole
+  compressed output in memory just to reach this helper would defeat
+  the streaming), and `semantic.flush_persistent_cache` writes via
+  `np.savez_compressed` to a file object under `flock_excl` (numpy's
+  container format, not a bytes blob). Both already perform their own
+  before-rename chmod/fchmod. The plain-`mode` callers are `config.py`'s
+  default-config writer and `cli/export.py`'s `-o` output writer.
 
 Both fsync helpers swallow `OSError` and return. fsync legitimately
 fails on some pseudo-filesystems (`/proc`, certain tmpfs/overlayfs

@@ -429,6 +429,7 @@ def test_write_is_atomic_and_durable(
     fsync_dir_calls: list[Path] = []
 
     import bettermemory.episodes as episodes_mod
+    from bettermemory import _fsutil
 
     def spy_fsync_file(fd: int) -> None:
         fsync_file_calls.append(fd)
@@ -436,8 +437,14 @@ def test_write_is_atomic_and_durable(
     def spy_fsync_dir(p: Path) -> None:
         fsync_dir_calls.append(p)
 
-    monkeypatch.setattr(episodes_mod, "fsync_file", spy_fsync_file)
+    # `_write_path` now delegates the file write to `atomic_write_bytes`,
+    # so the per-write `fsync_file` and the session_dir `fsync_dir` fire
+    # from `_fsutil`'s bindings; the root/episodes_dir dirent fsyncs still
+    # fire from `episodes`. Patch both modules into the same spies so the
+    # full ordered ceremony stays observable.
+    monkeypatch.setattr(_fsutil, "fsync_file", spy_fsync_file)
     monkeypatch.setattr(episodes_mod, "fsync_dir", spy_fsync_dir)
+    monkeypatch.setattr(_fsutil, "fsync_dir", spy_fsync_dir)
 
     ep = episode_store.write(session_id="sess_aaaa1111", body="durable")
 
@@ -771,13 +778,18 @@ def test_episode_write_fsyncs_episodes_dir_on_first_create(
     fsync — the dirent already exists.
     """
     import bettermemory.episodes as episodes_mod
+    from bettermemory import _fsutil
 
     fsync_dir_calls: list[Path] = []
 
     def spy_fsync_dir(p: Path) -> None:
         fsync_dir_calls.append(p)
 
+    # session_dir's fsync_dir now fires from the shared helper
+    # (`atomic_write_bytes`); root and episodes_dir still fire from
+    # `episodes`. Patch both bindings so the spy sees the whole sequence.
     monkeypatch.setattr(episodes_mod, "fsync_dir", spy_fsync_dir)
+    monkeypatch.setattr(_fsutil, "fsync_dir", spy_fsync_dir)
 
     # First write: episodes_dir doesn't exist yet, session_dir doesn't
     # exist yet. We expect fsync_dir on:
