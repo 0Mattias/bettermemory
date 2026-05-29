@@ -414,41 +414,42 @@ def commits_since_touching_paths(
     except OSError:
         return None
 
-    # Pathspecs are repo-root-relative, but `_git` runs with `cwd` =
-    # the caller's working directory, which may be a SUBDIRECTORY of the
-    # repo (an MCP server / agent launched from or chdir'd into `src/`,
-    # `packages/foo/`, …). Git resolves a plain pathspec relative to the
-    # invocation cwd, so a root-relative `src/foo.py` would match nothing
-    # from a subdir and rev-list would return 0 — silently reporting a
-    # genuinely-drifted verified path as clean. Prefix each with git's
-    # `:/` (`:(top)`) magic, which anchors the path at the top of the
-    # working tree regardless of cwd.
+    # Build repo-root-relative, FORWARD-SLASH pathspecs and run rev-list FROM
+    # the repo root (`toplevel`), not the caller's `cwd`. The caller's cwd may
+    # be a SUBDIRECTORY of the repo (an MCP server / agent launched from or
+    # chdir'd into `src/`, `packages/foo/`, …); git resolves a plain pathspec
+    # relative to the invocation cwd, so a root-relative `src/foo.py` would
+    # match nothing from a subdir and rev-list would return 0 — silently
+    # reporting a genuinely-drifted verified path as clean. Anchoring rev-list
+    # at `toplevel` makes the repo-root-relative pathspecs correct regardless
+    # of cwd, with none of git's pathspec-magic. `as_posix()` keeps the
+    # pathspecs forward-slashed (str(Path) yields backslashes on Windows, which
+    # git pathspecs reject). A relative input is resolved against the repo root
+    # (its documented meaning); anything that escapes the repo — including a
+    # Windows drive-relative path like `\foo` that joins onto a different root
+    # — is dropped so the caller falls back to the unfiltered count rather than
+    # under-reporting.
     pathspecs: list[str] = []
     for raw in paths:
         if not isinstance(raw, str) or not raw:
             continue
         try:
-            resolved = Path(raw).expanduser()
-            if not resolved.is_absolute():
-                # Treat a relative path as already-relative-to-repo-root.
-                pathspecs.append(":/" + str(resolved))
-                continue
-            resolved = resolved.resolve()
+            candidate = Path(raw).expanduser()
+            if not candidate.is_absolute():
+                candidate = toplevel / candidate
+            candidate = candidate.resolve()
+            rel = candidate.relative_to(toplevel)
         except (OSError, ValueError):
-            continue
-        try:
-            rel = resolved.relative_to(toplevel)
-        except ValueError:
-            # Path escapes the repo — drop it. Git can't filter on
+            # Unresolvable, or escapes the repo — git can't filter on
             # something outside its working tree.
             continue
-        pathspecs.append(":/" + str(rel))
+        pathspecs.append(rel.as_posix())
 
     if not pathspecs:
         return None
 
     raw_count = _git(
-        cwd,
+        toplevel,
         "rev-list",
         "--count",
         f"--since={iso}",
