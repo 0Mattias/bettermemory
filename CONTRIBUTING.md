@@ -28,20 +28,21 @@ pytest -m "not no_extras"         # skip the embeddings-required slot
 
 ruff check .
 ruff format --check .
-mypy
+mypy                              # strict, primary type gate
+pyright                           # secondary type gate (scoped to src/)
 
 # Bench (not part of the test suite):
 python bench/storage.py --sizes 1000,10000,50000
 ```
 
-CI runs `uv sync --extra dev --extra ui` followed by `ruff check . && ruff format --check . && mypy && pytest -q` on Python 3.11, 3.12, 3.13, and 3.14 (Ubuntu) plus 3.14 macOS and Windows slots, with an 80% coverage floor enforced via `--cov-fail-under`. The `[ui]` extra is installed alongside `[dev]` so mypy can resolve the `fastapi` / `uvicorn` imports in `src/bettermemory/web.py` (strict mode flags missing types on imported decorators) and so `tests/test_web.py` runs as actual coverage. Anything that passes locally with that exact sync command should pass CI; anything that fails CI is blocking on merge.
+CI runs `uv sync --extra dev --extra ui` followed by `ruff check . && ruff format --check . && mypy && pytest -q` on Python 3.11, 3.12, 3.13, and 3.14 (Ubuntu) plus 3.14 macOS and Windows slots, with an 80% coverage floor enforced via `--cov-fail-under`. A separate job runs `pyright` (the secondary type gate, scoped to `src/`) on 3.14. The `[ui]` extra is installed alongside `[dev]` so mypy and pyright can resolve the `fastapi` / `uvicorn` imports in `src/bettermemory/web.py` (strict mode flags missing types on imported decorators) and so `tests/test_web.py` runs as actual coverage. Anything that passes locally with that exact sync command should pass CI; anything that fails CI is blocking on merge.
 
 ## Pull request conventions
 
 - One logical change per PR. Easier to review, easier to revert.
 - Commit messages follow the form Claude Code is configured to emit (Conventional Commits: `feat:`, `fix:`, `docs:`, `test:`, `ci:`, `perf:`, `refactor:`). The body explains *why*, not just *what*. Several existing commits are good examples of the level of detail the project aims for.
 - Update `CHANGELOG.md` under the `## Unreleased` heading with one of: `Added`, `Changed`, `Deprecated`, `Removed`, `Fixed`, or `Security`. Keep the entry to a couple of paragraphs at most, but include the *why*. Readers come to the changelog for decisions, not just diffs.
-- New tools, new configuration knobs, or anything else that expands the surface need a corresponding entry in [`docs/api.md`](docs/api.md), under the existing section taxonomy (Retrieval, Writing, Lifecycle, Verification, Curation, Session-local). Do not ship a tool whose contract is not pinned in api.md.
+- New tools, new configuration knobs, or anything else that expands the surface need a corresponding entry in [`docs/api.md`](docs/api.md), under the existing section taxonomy (Retrieval, Writing, Lifecycle, Verification, Curation, Session-local, Episodes). Do not ship a tool whose contract is not pinned in api.md.
 - Tests are required for new behavior. The [`tests/`](tests/) directory has good examples of the hand-written plus property-based mix the project aims for.
 - The Claude Code plugin scaffold at the repo root (`.claude-plugin/marketplace.json` and `plugin/`) carries its own version number that has to stay in sync with `pyproject.toml`. Bumping `pyproject.toml` without bumping `plugin/.claude-plugin/plugin.json` and `.claude-plugin/marketplace.json` lights up the version-sync tests in [`tests/test_plugin.py`](tests/test_plugin.py); fix the manifest before pushing.
 
@@ -51,7 +52,7 @@ The project uses semver with the conventions below. The headline: **within a maj
 
 The 2.0 bump itself was a scope-only bump — nine 1.6-plan features shipped in one release. SCHEMA_VERSION stayed at 1, every new wire field was opt-in or absence-as-signal, and no 1.x surface was renamed or removed. The 3.0 bump was the same shape: a soft API break trimming defensive `bettermemory.server` re-exports after verifying zero in-tree consumers, packaged with the post-2.7.3 audit-loop. SCHEMA_VERSION stayed at 1 across both transitions; treat the rules below as continuous across the 1→2 and 2→3 boundaries — they describe the project's stance on stability, not a one-off cleanup.
 
-### Surface (the 23 MCP tools)
+### Surface (the 24 MCP tools)
 
 Stable within the current major (3.x):
 

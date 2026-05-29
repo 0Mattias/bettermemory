@@ -123,6 +123,8 @@ The MCP wire protocol is the same across hosts. Only the config file shape and l
 }
 ```
 
+The `bettermemory` server key is the default; override it with `--name` only if you have a strong reason (Claude Code prefixes its tool names with this key). When you run `bettermemory init`, the `command` is written as the *absolute* path that `find_binary()` resolves on your PATH — not the bare `bettermemory` shown here — so a later reinstall into a different venv is detectable (that's what `bettermemory doctor`'s `mcp_client_configs` check compares against). The bare-name form above also works if the binary stays on PATH; the plugin's `.mcp.json` instead uses `"command": "uvx"` with `"args": ["bettermemory"]`.
+
 If you find a client whose snippet shape isn't this, please file an issue.
 
 | Client          | Path | Init auto-patch |

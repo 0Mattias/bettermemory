@@ -150,6 +150,8 @@ Optimistic-concurrency CAS (W8, since 3.2.1). The handler snapshots the record v
 - `note: str | None = None`.
 - `claim_excerpts: list[str | None] | None = None`. Parallel to `memory_ids` — one entry per id (max 500 chars), or `None` for "no specific claim". Recorded in the event log so an audit can trace any response back to the specific claim, not just the memory id. Empty strings are rejected (pass `None` instead).
 
+Returns `{recorded: [<memory_id>...], outcome}` — `recorded` echoes the ids whose pending tokens were settled by this call — plus `claim_excerpts` when they were supplied.
+
 Auto-commit: every `memory_search` hit and `memory_show` response carries an opaque `use_token`. If `memory_record_use` isn't called within ~2 turns, the server auto-commits as `outcome="applied"` on the next `memory_*` call (logged with `auto=true, attribution="auto"`). Explicit calls win — the server purges the pending token before recording and writes `attribution="model"`.
 
 Hook attribution: the Stop hook (`bettermemory audit-turn`) also looks at the assistant's reply text against recently-retrieved memory bodies. When a candidate sentence from a body appears verbatim (case- and whitespace-normalised) in the reply, the hook emits its own `applied` event with `attribution="hook"`, `auto=false`, and the matched phrase as the `claim_excerpt`. The in-process auto-commit then reads the event log and purges any token whose memory_id was already hook-attributed, so each retrieval generates exactly one `applied` event (hook, model, or auto — not multiple). Older events without an `attribution` field fall back to `"model"` when `auto=false` and `"auto"` when `auto=true`, so back-compat with pre-attribution logs is implicit.
@@ -206,15 +208,18 @@ Resets when the server process restarts. Disabled scopes are filtered from `memo
 
 Episodes are NOT memories. They live in a sibling subtree (`<root>/episodes/<session_id>/<ulid>.md`), are excluded from `memory_search` / `memory_health` / `memory_list`, and have no durability gate. Use them for loop-iteration takeaways, "what we tried", and any content `memory_write` would (correctly) reject as transient. A 30-day TTL on session directories runs on each `episode_write` so the directory stays bounded.
 
-### `episode_write(body, takeaway?, scopes?)`
+The optional `swarm_id` on `episode_write` / `episode_search` is the multi-agent fan-in primitive (since 3.3.0): a coordinator fans out parallel sub-agents, each sub-agent tags its episodes with the coordinator's session id, and the coordinator gathers every sub-agent's takeaways with one `episode_search(swarm_id=…)`. It is a cross-cutting cohort label, orthogonal to the single-chain predecessor link `episode_handoff` resolves.
+
+### `episode_write(body, takeaway?, scopes?, swarm_id?)`
 
 Append a new episode for the current session.
 
 - `body: str`. Required, non-empty. Free-form markdown.
 - `takeaway: str | None`. One-sentence summary. Surfaced preferentially at `episode_handoff`; falls back to the first body line when absent.
 - `scopes: list[str] | None`. Empty list is valid — episodes are keyed by `session_id`, scopes are tags for filtering.
+- `swarm_id: str | None = None`. Optional cohort id for multi-agent swarm fan-in. When a coordinator fans out parallel sub-agents, each sub-agent passes the coordinator's session id here so the coordinator can later gather every sub-agent's takeaways via `episode_search(swarm_id=…)`. The episode still lives under this writer's own session directory; `swarm_id` is a cross-cutting label, distinct from `episode_handoff`'s single-chain predecessor link. Validated (charset + length) by the `Episode` model; an invalid value raises a `ValueError` that surfaces like the body / takeaway / scope caps.
 
-Returns `{status: "committed", id, session_id, created, scopes, takeaway, pruned_sessions: [<sid>...]}`. `session_id` is auto-captured from the recorder; `origin` (cwd / repo / branch / worktree_root) is captured the same way as `memory_write`. `pruned_sessions` lists any session directories that hit the TTL on this write.
+Returns `{status: "committed", id, session_id, created, scopes, takeaway, swarm_id, pruned_sessions: [<sid>...]}`. `session_id` is auto-captured from the recorder; `origin` (cwd / repo / branch / worktree_root) is captured the same way as `memory_write`. `pruned_sessions` lists any session directories that hit the TTL on this write.
 
 Size caps: `body` enforces `max_content_bytes` (default 1 MB, same cap `memory_write` / `memory_update` enforce); `takeaway` enforces `max_takeaway_bytes` (default 4 KB). The takeaway cap is separate because takeaways serialize into the YAML frontmatter region (64 KB ceiling) — an over-cap takeaway would silently corrupt the frontmatter, the loader would raise on every subsequent read, and the episode would vanish from `episode_search` / `episode_handoff` / `episode_promote` despite the write returning `status="committed"`.
 
@@ -232,16 +237,17 @@ Auto-resolution applies two implicit filters when `prior_session_id` is omitted:
 
 Returns `{prior_session_id: str | None, episodes: [{id, created, takeaway, body, scopes}, ...]}`. `prior_session_id is None` AND `episodes == []` is the "no baseline" case; `prior_session_id != None` AND `episodes == []` is "baseline exists but no journal" — branch on both.
 
-### `episode_search(scopes?, parent_session_id?, since?, max_results?)`
+### `episode_search(scopes?, parent_session_id?, swarm_id?, since?, max_results?)`
 
 Cross-session lookup. Unlike `memory_search`, NOT ranked — episodes are chronological and the filter set is the discovery surface.
 
 - `scopes: list[str] | None`. Intersection filter (a hit's scopes must include at least one).
-- `parent_session_id: str | None`. Restrict to one session directory.
+- `parent_session_id: str | None`. Restrict to one session directory. Composes with `swarm_id` to narrow a fan-in to one sub-agent's session.
+- `swarm_id: str | None = None`. Fan-in filter — return only episodes tagged with this cohort id, gathered across all session directories. This is the N:1 swarm read: pass the coordinator's session id (the same value each sub-agent passed to `episode_write`) to gather every sub-agent's takeaways in one call. Distinct from `episode_handoff`'s 1:1 single-chain predecessor lookup. When set, it takes precedence over the bare `parent_session_id`-only / no-filter walk.
 - `since: str | None`. ISO-8601 timestamp; only episodes created at or after.
 - `max_results: int | None`. Default `20`, cap `200`. The cap surfaces the **most-recent N** matches (the slice keeps oldest-first ordering inside that window — "what did I conclude across the last few sessions?" reads the tail, not the head).
 
-Returns a list of `{id, session_id, created, takeaway, body, scopes}` dicts oldest-first within the most-recent-`max_results` window. `session_id` is included because `episode_search` spans sessions (unlike `episode_handoff`, which scopes to one), so the caller can correlate a takeaway back to its originating session directory.
+Returns a list of `{id, session_id, created, takeaway, body, scopes, swarm_id}` dicts oldest-first within the most-recent-`max_results` window. `session_id` is included because `episode_search` spans sessions (unlike `episode_handoff`, which scopes to one), so the caller can correlate a takeaway back to its originating session directory; `swarm_id` (may be `null`) is the cohort tag. Session-tag floor episodes (the crash-recovery anchors `episode_handoff` writes) are filtered out of this surface.
 
 ### `episode_promote(episode_id, scopes, category?, confidence?, source?, use_body?)`
 

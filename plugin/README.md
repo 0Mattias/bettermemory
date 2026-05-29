@@ -2,10 +2,11 @@
 
 The Claude Code plugin wrapper for [bettermemory](https://github.com/0Mattias/bettermemory) — **memory you can verify**. Every retrieved fact carries a staleness verdict (calendar age + filesystem path drift + git commit drift) so the model can spot-check before relying on it; every use leaves a claim-level audit trail. Memories live on disk as plain markdown + YAML.
 
-The plugin bundles two things:
+The plugin bundles three things:
 
 1. **MCP server registration** ([`.mcp.json`](.mcp.json)) — spawns `uvx bettermemory` as a stdio MCP server. All 24 tools (20 `memory_*` + 4 `episode_*`) become available on plugin enable.
 2. **Memory-discipline skill** ([`skills/bettermemory/SKILL.md`](skills/bettermemory/SKILL.md)) — lands the opt-in retrieval policy, transparency requirement, and writing discipline at the system-prompt level. The MCP server's own `instructions` block carries a short summary; the skill is the long-form companion (Claude Code truncates the `instructions` block at ~1.8 KB).
+3. **Stop hook** ([`hooks/hooks.json`](hooks/hooks.json)) — runs `uvx bettermemory audit-turn --quiet` at each turn end to detect silent retrieval misses (turns where stored memory would have helped but `memory_search` was never called) and write `turn_audited` / `search_miss` events to the on-disk event log. The CLI always exits 0 and the binding ends in `|| true`, so a transient `uvx` failure never surfaces as a hook-error banner.
 
 ## Install
 
@@ -40,7 +41,7 @@ In a fresh session, ask *"Walk me through pandas from zero to hero"* — Claude 
 uvx bettermemory doctor
 ```
 
-Checks binary on PATH, config loadable, storage writable, memories parse cleanly, event log writable, and any client config referencing a stale path. Each failed check has a one-line fix hint.
+Checks binary on PATH, config loadable, storage writable, memories parse cleanly, event log writable, whether the Stop hook is firing (`turn_audited` cadence), and any client config referencing a stale path. Each failed check has a one-line fix hint, and the process exits 0/1/2 for ok/warn/fail.
 
 ## Uninstall
 

@@ -57,8 +57,11 @@ uv lock
 # 5. Run the suite locally. The version-sync tests are the cheapest
 #    check that all version surfaces agree (pyproject.toml is the source
 #    of truth for `bettermemory.__version__`, which the plugin manifests
-#    and uv.lock's self-entry must match).
-pytest tests/test_plugin.py tests/test_version.py -q
+#    and uv.lock's self-entry must match). test_changelog.py is included
+#    because it pins the `## <X.Y.Z> - <date>` heading from step 3 — a
+#    forgotten heading otherwise passes here and only trips in the full
+#    release-workflow suite.
+pytest tests/test_plugin.py tests/test_version.py tests/test_changelog.py -q
 
 # 6. Commit, tag, push.
 git commit -am "release: <X.Y.Z>"
