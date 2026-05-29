@@ -251,3 +251,35 @@ async def test_broken_link_to_tombstoned_memory_still_surfaces(server: Any) -> N
     # doesn't know the target moved.
     assert len(shown["links"]) == 1
     assert shown["links"][0]["target_id"] == a_id
+
+
+async def test_oversized_link_notes_rejected_not_silently_lost(
+    server: Any, memory_dir: Path
+) -> None:
+    """Regression: link notes are unbounded per-entry, so 64 large notes can
+    push the serialized frontmatter past the 64 KB YAML ceiling. Before the
+    write-side frontmatter guard, memory_update reported success while
+    producing a file that fails to parse on the next read — silently dropping
+    the record from search/list/show/health. The update must now be REJECTED
+    and the record left intact, not written-then-vanished.
+    """
+    a_id = await _seed(server, "link target")
+    b_id = await _seed(server, "the memory we must not lose")
+
+    # 64 links (the model count cap) each with a ~1.1 KB note -> ~70 KB
+    # frontmatter, over the 64 KB ceiling.
+    links = [
+        {"type": "extends", "target_id": a_id, "note": f"{'x' * 1100}-{i}"}
+        for i in range(64)
+    ]
+    with pytest.raises(Exception, match="exceeds|cap"):
+        await _call(server, "memory_update", id=b_id, links=links)
+
+    # The record must still be intact and retrievable — not silently dropped.
+    shown = await _call(server, "memory_show", id=b_id)
+    assert shown["id"] == b_id
+    assert len(shown.get("links", [])) < 64  # the oversized update did not land
+
+    # And the store can still load every memory (nothing vanished on disk).
+    store = Store(memory_dir)
+    assert len(store.load_all()) == 2

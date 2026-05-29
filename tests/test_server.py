@@ -1970,6 +1970,50 @@ async def test_episode_model_scopes_at_cap_accepted() -> None:
     assert len(ep.scopes) == 64
 
 
+async def test_memory_verify_caps_verified_lists_at_handler_boundary(
+    server: Any,
+) -> None:
+    """Regression: `Store.mark_verified` writes via `model_copy(update=...)`,
+    which Pydantic runs WITHOUT field validators — so the model-layer 64-entry
+    cap on verified_* is bypassed on the verify path (the repro stored 500
+    short paths). And per-entry length is uncapped, so long entries can
+    overflow the 64 KB frontmatter ceiling and silently drop the record. The
+    memory_verify handler must enforce both a count cap and a per-item length
+    cap itself, mirroring how `scopes` is guarded at the write handler. The
+    memory must survive the rejections and still verify with a sane list.
+    """
+    res = await _call(
+        server,
+        "memory_write",
+        content="a durable fact about the deployment pipeline",
+        scopes=["tools"],
+    )
+    mid = res["id"]
+
+    # Over the 64-entry count cap (model validator bypassed on this path).
+    with pytest.raises(Exception, match="capped at|entries"):
+        await _call(
+            server,
+            "memory_verify",
+            id=mid,
+            verified_paths=[f"/proj/file{i}.py" for i in range(65)],
+        )
+
+    # A single pathological over-length entry (would bloat frontmatter).
+    with pytest.raises(Exception, match="chars|cap"):
+        await _call(
+            server,
+            "memory_verify",
+            id=mid,
+            verified_commits=["c" * 2000],
+        )
+
+    # The record survived both rejections and still verifies with a sane list.
+    ok = await _call(server, "memory_verify", id=mid, verified_paths=["/proj/real.py"])
+    assert ok["verified"] == mid
+    assert ok["verified_paths"] == ["/proj/real.py"]
+
+
 async def test_episode_write_is_invisible_to_memory_iterators(server: Any) -> None:
     """Episodes live in a sibling subtree — memory_list /
     memory_search must not surface them."""
@@ -3920,7 +3964,9 @@ async def test_update_stale_snapshot_returns_structured_stale_response(
     assert res["status"] == "stale"
     assert res["memory_id"] == written["id"]
     # ISO-formatted timestamp, must round-trip back to the same instant.
-    assert res["current_updated"] == current.isoformat()
+    # Normalized to the canonical `Z` suffix (the same serializer every other
+    # handler timestamp uses), not the raw `+00:00` offset form.
+    assert res["current_updated"] == current.isoformat().replace("+00:00", "Z")
     assert "Re-fetch with memory_show" in res["hint"]
 
 
@@ -3972,7 +4018,9 @@ async def test_verify_stale_snapshot_returns_structured_stale_response(
 
     assert res["status"] == "stale"
     assert res["memory_id"] == written["id"]
-    assert res["current_updated"] == current.isoformat()
+    # Normalized to the canonical `Z` suffix (the same serializer every other
+    # handler timestamp uses), not the raw `+00:00` offset form.
+    assert res["current_updated"] == current.isoformat().replace("+00:00", "Z")
     assert "Re-fetch with memory_show" in res["hint"]
 
 
@@ -5829,6 +5877,37 @@ async def test_memory_proposals_accept_writes_memory_and_removes(
     assert ProposalQueue(memory_dir).load() == []
     bodies = [m.body for m in Store(memory_dir).load_all()]
     assert any("terse explanations" in b for b in bodies)
+
+
+async def test_memory_proposals_accept_rejects_oversized_body(
+    server: Any, memory_dir: Path
+) -> None:
+    """Regression: the accept path wrote directly via store.write, bypassing
+    the max_content_bytes guard every other write path enforces. An oversized
+    body (>1 MiB) was written, then failed the 1 MiB bounded read on the next
+    load — the accept reported success while the record silently vanished from
+    every read surface. Accept must now reject it, leaving the proposal in the
+    queue (per the retry contract) and the store intact.
+    """
+    from bettermemory.proposals import ProposalQueue
+    from bettermemory.store import Store
+
+    big_body = "I prefer " + ("verbose-context " * 130_000)  # > 1 MiB
+    _seed_proposal(memory_dir, pid="big", body=big_body, cat="user-inference")
+
+    with pytest.raises(Exception, match="max_content_bytes"):
+        await _call(
+            server,
+            "memory_proposals",
+            action="accept",
+            proposal_id="big",
+            scopes=["learning-style"],
+        )
+
+    # Nothing written-then-vanished: the store loads cleanly, and the proposal
+    # is still queued for the caller to fix or dismiss.
+    assert Store(memory_dir).load_all() == []
+    assert [p.id for p in ProposalQueue(memory_dir).load()] == ["big"]
 
 
 async def test_memory_proposals_accept_requires_scopes(

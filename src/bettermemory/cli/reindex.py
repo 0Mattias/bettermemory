@@ -147,7 +147,7 @@ def _reindex_embeddings(config: Config, store: Store) -> dict[str, Any]:
     state. Stays close to the call site so the embedding work doesn't
     leak into the FTS5-index code path.
     """
-    from ..semantic import cached_embed, flush_persistent_cache
+    from ..semantic import _note_model_dimension, cached_embed, flush_persistent_cache
     from ..semantic_setup import (
         _configure_persistent_embeddings,
         _resolve_semantic_provider_and_model,
@@ -167,7 +167,19 @@ def _reindex_embeddings(config: Config, store: Store) -> dict[str, Any]:
         return {"status": "load_failed", "provider": provider, "model": model_name}
 
     embedded = 0
+    primed = False
     for _path, memory in store.iter_active():
+        if not primed:
+            # Prime the live model dimension from one fresh encode BEFORE the
+            # cached_embed hits. On an all-cache-hit run (every body unchanged
+            # — the common case for `reindex --embeddings`) cached_embed never
+            # encodes, so _MODEL_DIM would stay None and the stale-dimension
+            # purge would never fire. A checkpoint that changed its output
+            # dimension under the same model_name would then leave the old
+            # wrong-dimension vectors in place while we report success.
+            # Priming mirrors what the search paths do before their loops.
+            _note_model_dimension(len(model.encode("dimension probe")))
+            primed = True
         cached_embed(
             model,
             memory.id,

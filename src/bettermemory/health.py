@@ -2006,7 +2006,15 @@ def _build_recent_silent_misses(
     indeterminate) so they don't push genuine recent events out of
     the cap.
     """
-    surviving: list[RecentSilentMiss] = []
+    # Carry the parsed datetime alongside each row so we can sort on it
+    # rather than on the rendered ISO string. `isoformat_utc` omits the
+    # fractional-seconds component when microsecond == 0 ("…:09Z") but keeps
+    # 6 digits otherwise ("…:09.500000Z"); a lexicographic string sort then
+    # mis-orders two events in the SAME whole second when one has
+    # microsecond 0 and the other doesn't (".'" < "Z"), and at the cap
+    # boundary can evict the genuinely-newer event in favour of an older one.
+    _floor = datetime.min.replace(tzinfo=timezone.utc)
+    surviving: list[tuple[datetime, RecentSilentMiss]] = []
     for ts, top_hit_id, event_id, query_preview in miss_events:
         if cutoff is not None and (ts is None or ts < cutoff):
             continue
@@ -2015,21 +2023,20 @@ def _build_recent_silent_misses(
         if event_id is not None and event_id in acknowledged_event_ids:
             continue
         surviving.append(
-            RecentSilentMiss(
-                event_id=event_id,
-                top_hit_id=top_hit_id,
-                query_preview=query_preview,
-                ts=_iso(ts) if ts is not None else None,
+            (
+                ts if ts is not None else _floor,
+                RecentSilentMiss(
+                    event_id=event_id,
+                    top_hit_id=top_hit_id,
+                    query_preview=query_preview,
+                    ts=_iso(ts) if ts is not None else None,
+                ),
             )
         )
-    # Newest first. `datetime.min` (tz-aware) is the sort floor for
-    # events whose ts didn't parse — they trail the in-order entries
-    # rather than crashing the sort on `None < datetime`.
-    surviving.sort(
-        key=lambda m: m.ts if isinstance(m.ts, str) else "",
-        reverse=True,
-    )
-    return surviving[:cap]
+    # Newest first by the underlying datetime; None-ts events sort to the
+    # tail via the tz-aware floor (chronologically indeterminate).
+    surviving.sort(key=lambda pair: pair[0], reverse=True)
+    return [row for _ts, row in surviving[:cap]]
 
 
 def _edit_distance_within(a: str, b: str, max_dist: int) -> bool:

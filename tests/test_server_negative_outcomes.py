@@ -115,6 +115,55 @@ async def test_applied_event_supersedes_earlier_ignored(
     assert "recent_negative_outcomes" not in hits[0]
 
 
+async def test_auto_applied_use_does_not_clear_contradiction(
+    server_with_rec: tuple[Any, Recorder],
+) -> None:
+    """Regression: the auto-`record_use` fallback emits outcome='applied' with
+    auto=True purely because a re-surfaced use-token aged past its ~2-turn TTL
+    — no model/user judgment. It must NOT supersede an earlier `contradicted`,
+    or a memory the model explicitly flagged as WRONG silently loses its
+    rejection warning the next time it's retrieved. Only a genuine (non-auto)
+    applied event supersedes.
+    """
+    server, rec = server_with_rec
+    mid = await _seed(server, "python list comprehension")
+
+    # The model explicitly records the memory as contradicted (wrong).
+    await _call(
+        server,
+        "memory_record_use",
+        memory_ids=[mid],
+        outcome="contradicted",
+        note="user said this is wrong",
+    )
+    # The server's auto-commit fallback later fires with NO judgment — the
+    # exact event the in-process _advance_turn writes when a re-surfaced
+    # token lapses.
+    rec.record("use", ids=[mid], outcome="applied", auto=True, attribution="auto")
+
+    hits = _unwrap(await _call(server, "memory_search", query="python"))
+    annotations = hits[0].get("recent_negative_outcomes")
+    assert annotations is not None, (
+        "an auto-applied use event must NOT clear a contradiction — the "
+        "rejection warning has to survive an unattended auto-commit"
+    )
+    assert any(a["outcome"] == "contradicted" for a in annotations)
+
+
+async def test_genuine_applied_still_supersedes_contradiction(
+    server_with_rec: tuple[Any, Recorder],
+) -> None:
+    """Complement: a real (non-auto) memory_record_use(applied) DOES still
+    supersede a prior contradiction — the legitimate validation path must
+    not regress when the auto guard is added."""
+    server, _ = server_with_rec
+    mid = await _seed(server, "python list comprehension")
+    await _call(server, "memory_record_use", memory_ids=[mid], outcome="contradicted")
+    await _call(server, "memory_record_use", memory_ids=[mid], outcome="applied")
+    hits = _unwrap(await _call(server, "memory_search", query="python"))
+    assert "recent_negative_outcomes" not in hits[0]
+
+
 async def test_ignored_after_applied_does_surface(
     server_with_rec: tuple[Any, Recorder],
 ) -> None:

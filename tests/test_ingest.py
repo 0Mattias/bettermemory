@@ -212,6 +212,28 @@ class TestComputeIngestPlan:
         [row] = plan.rows
         assert row.category == Category.AMBIENT
 
+    def test_intra_batch_dedup_skips_second_identical_file(
+        self, source_root: Path, store: Store
+    ) -> None:
+        """Two near-identical source files in ONE run: the first writes, the
+        second is caught as a duplicate of the in-flight write. The interactive
+        memory_write path reloads the store between writes; ingest classifies
+        against one frozen snapshot, so without folding planned writes back in,
+        both would write — silent duplicate memories."""
+        body = "the deployment pipeline runs argo rollouts every tuesday afternoon"
+        _write_auto_memory(
+            source_root, "dup-1", body=body, description="deploy cadence"
+        )
+        _write_auto_memory(
+            source_root, "dup-2", body=body, description="deploy cadence"
+        )
+        plan = compute_ingest_plan(
+            source_root,
+            existing_memories=store.load_all(),
+            existing_tombstones=store.load_tombstones(),
+        )
+        assert sorted(r.action for r in plan.rows) == ["skip_duplicate", "write"]
+
     def test_unknown_type_falls_back_to_fact(
         self, source_root: Path, store: Store
     ) -> None:

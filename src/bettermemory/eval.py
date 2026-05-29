@@ -2,10 +2,13 @@
 
 Three rates the existing event log makes computable today:
 
-- ``memory_helped_rate`` — fraction of retrieval occurrences (search-hit
-  positions + memory_show calls) that produced an attested
-  ``memory_record_use(applied)`` event carrying a non-empty
-  ``claim_excerpt``. Two attestation tiers feed in: model-explicit
+- ``memory_helped_rate`` — fraction of retrieval occurrences that
+  produced an attested ``memory_record_use(applied)`` event carrying a
+  non-empty ``claim_excerpt``. The denominator is per-event retrieval
+  occurrences across ``memory_search`` / ``memory_list`` / ``memory_show``
+  in the window, counted by memory id — a memory surfaced N times counts
+  N (there is no per-turn dedup; the event schema carries no turn id).
+  Two attestation tiers feed the numerator: model-explicit
   (the model called ``memory_record_use`` with excerpts) and
   hook-attributed (the Stop hook substring-matched a body sentence
   against the assistant reply and emitted an excerpt automatically).
@@ -125,12 +128,17 @@ class RateCI:
     rate: float | None
     lower: float | None
     upper: float | None
-    # True when `numerator > denominator` — a torn read scenario where
-    # the event log was read mid-rotation and ordering anomalies leaked
-    # through. The Wilson helper clamps `k = n` in this case so the
-    # interval stays well-defined, but the audit consumer needs the flag
-    # so it knows "your numbers may be wrong" rather than silently
-    # trusting a 1.0 rate.
+    # True when `numerator > denominator`. Two benign causes, NOT only a
+    # corrupt log: (1) a torn read — the event log was read mid-rotation and
+    # ordering anomalies leaked through; (2) a WINDOWING artifact — under a
+    # `--since` window, memory_helped_rate's numerator (`use` events) and
+    # denominator (retrieval events) are independent event streams, so a
+    # use event can fall inside the window while its retrieval ages out,
+    # legitimately pushing numerator past denominator with no corruption.
+    # The Wilson helper clamps `k = n` so the interval stays well-defined;
+    # the flag tells the consumer the rate was clamped to 1.0 and shouldn't
+    # be read as a precise measurement — it does NOT by itself mean the data
+    # is corrupt.
     torn_read: bool = False
 
     @classmethod
@@ -620,8 +628,10 @@ def render_text(report: EvalReport) -> str:
     ):
         lines.append("")
         lines.append(
-            "WARNING: torn-read detected (numerator > denominator) — "
-            "log rotation may have raced; numbers may be wrong."
+            "NOTE: numerator > denominator (rate clamped to 1.0). Usually a "
+            "windowing artifact under --since (a use event is in-window while "
+            "its retrieval aged out), or — less often — a log read mid-rotation. "
+            "Re-run without --since to rule out the window edge."
         )
     return "\n".join(lines) + "\n"
 
@@ -726,10 +736,14 @@ def _format_rate(label: str, rate: RateCI) -> str:
         # undefined. Renderer surfaces the count so the consumer can
         # see *why* it's undefined.
         return f"{label:<20s} n/a    (k={rate.numerator}, n={rate.denominator})"
-    half = (rate.upper - rate.lower) / 2.0
+    # Render the actual asymmetric Wilson bounds, not `rate ± half`. The
+    # Wilson interval is asymmetric and the point estimate k/n is NOT its
+    # center, so `± half` reconstructed neither bound and printed impossible
+    # probabilities at small n (e.g. 1/1 -> "1.00 ± 0.40", implying an upper
+    # of 1.40). Brackets match the machine-readable ci95_lower/ci95_upper.
     bar = _bar(rate.rate)
     return (
-        f"{label:<20s} {rate.rate:0.2f} ± {half:0.2f}   "
+        f"{label:<20s} {rate.rate:0.2f} [{rate.lower:0.2f}, {rate.upper:0.2f}]   "
         f"{bar}   (k={rate.numerator}, n={rate.denominator})"
     )
 

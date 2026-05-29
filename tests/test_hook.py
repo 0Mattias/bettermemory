@@ -624,6 +624,87 @@ def test_hook_attributes_use_when_body_appears_in_reply(
     assert "grafana.internal/d/api-latency" in ev["claim_excerpts"][0]
 
 
+def test_hook_attributes_across_session_id_spaces(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Regression: the Stop hook and the in-process MCP server write events
+    under DIFFERENT session-id spaces — the server's `sess_<hex>` recorder
+    id vs Claude Code's transcript id. The attribution lookup used to filter
+    retrievals by the transcript id, so it never matched the server-written
+    `search`/`show` events: `pending` was always empty and the hook NEVER
+    attributed a use in production. Only the single-id-space test fixtures
+    (which reused one id for both roles) passed. The fix bridges retrieval
+    lookup to the in-process server session via `_latest_in_process_session`.
+
+    Here the search event is seeded under a server-style id and the hook is
+    invoked with a DIFFERENT transcript-style id — the attribution must
+    still fire (it returned zero use events before the fix).
+    """
+    mem_dir = tmp_path / "mem"
+    mem_dir.mkdir()
+    monkeypatch.setenv("BETTERMEMORY_DIR", str(mem_dir))
+
+    store = Store(mem_dir)
+    written = store.write(
+        content=(
+            "The metrics dashboard runs at grafana.internal/d/api-latency "
+            "for the oncall watch — pages on p99 over 800ms."
+        ),
+        scopes=["infrastructure"],
+    )
+    # Server recorder id space (sess_<hex>) — what the in-process server
+    # actually stamps on search/show events. Deliberately distinct from the
+    # transcript id passed to the hook below.
+    _seed_search_event(
+        mem_dir, session_id="sess_deadbeefcafef00d", returned=[written.id]
+    )
+
+    transcript = tmp_path / "t.jsonl"
+    _write_transcript(
+        transcript,
+        {"type": "user", "message": {"content": "where is the latency dashboard?"}},
+        {
+            "type": "assistant",
+            "message": {
+                "content": [
+                    {
+                        "type": "text",
+                        "text": (
+                            "The metrics dashboard runs at "
+                            "grafana.internal/d/api-latency for the oncall "
+                            "watch — pages on p99 over 800ms. I'll add a panel."
+                        ),
+                    }
+                ]
+            },
+        },
+    )
+
+    # A Claude-transcript-style UUID — NOT the search event's session id.
+    code = hook_main(
+        [
+            "--transcript-path",
+            str(transcript),
+            "--session-id",
+            "9f8e7d6c-1234-4abc-9def-0123456789ab",
+            "--quiet",
+        ]
+    )
+    assert code == 0
+
+    events = list(iter_events(mem_dir))
+    use_events = [e for e in events if e["kind"] == "use"]
+    assert len(use_events) == 1, (
+        f"expected one cross-id-space hook attribution; got: {use_events}. "
+        "Before the fix this was empty — retrievals were filtered by the "
+        "transcript id, never matching the server's sess_<hex> events."
+    )
+    ev = use_events[0]
+    assert ev["attribution"] == "hook"
+    assert ev["outcome"] == "applied"
+    assert ev["ids"] == [written.id]
+
+
 def test_hook_skips_attribution_when_already_used(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:

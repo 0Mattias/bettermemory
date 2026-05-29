@@ -48,13 +48,19 @@ $EDITOR .claude-plugin/marketplace.json      # `.metadata.version`
 #    CHANGELOG.md into a new `## <X.Y.Z> - <date>` heading.
 $EDITOR CHANGELOG.md
 
-# 4. Run the suite locally. The version-sync tests are the cheapest
-#    check that all three version files agree (pyproject.toml is the
-#    source of truth for `bettermemory.__version__`, which the plugin
-#    manifests must match).
+# 4. Refresh uv.lock so its editable self-entry tracks the new version.
+#    `uv lock` rewrites only what changed. test_version.py guards this,
+#    so a forgotten bump fails the suite here rather than landing as a
+#    separate "sync uv.lock" follow-up commit later.
+uv lock
+
+# 5. Run the suite locally. The version-sync tests are the cheapest
+#    check that all version surfaces agree (pyproject.toml is the source
+#    of truth for `bettermemory.__version__`, which the plugin manifests
+#    and uv.lock's self-entry must match).
 pytest tests/test_plugin.py tests/test_version.py -q
 
-# 5. Commit, tag, push.
+# 6. Commit, tag, push.
 git commit -am "release: <X.Y.Z>"
 git tag -a v<X.Y.Z> -m "v<X.Y.Z>"
 git push origin main

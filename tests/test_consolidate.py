@@ -515,6 +515,79 @@ def test_consolidate_preserves_earlier_crowned_keeper_in_3way_cluster(
     )
 
 
+def test_consolidate_does_not_tombstone_against_already_tombstoned_keeper(
+    store: Store,
+) -> None:
+    """Mirror twin of the keepers_so_far regression above.
+
+    Bridge cluster Z–X–Y where X is the DUPLICATE of the higher-similarity
+    pair and the KEEPER of the lower-similarity pair. With recency order
+    Z > X > Y the candidates sort:
+
+        1. (keeper=Z, duplicate=X, sim≈0.91)
+        2. (keeper=X, duplicate=Y, sim≈0.83)
+        3. (keeper=Z, duplicate=Y, sim=0.75)
+
+    Pair 1 tombstones X. Before the fix, pair 2 then crowns the
+    already-tombstoned X as Y's keeper and tombstones Y "near-duplicate
+    of X" — so Y's tombstone reason cites a DEAD memory and Y's content is
+    collapsed into a keeper that no longer exists in the active set. The
+    `keeper_id in tombstoned_ids` guard skips pair 2; pair 3 then tombstones
+    Y citing the still-live root Z. The invariant: no surviving tombstone's
+    reason may cite a tombstoned id (a dangling 'where did this go?' hop).
+
+    This is the symmetric case the original `keepers_so_far` guard did NOT
+    cover (it caught earlier-keeper-becomes-later-duplicate; this is
+    earlier-duplicate-whose-keeper-is-later-tombstoned). It fires unattended
+    in `run_auto_consolidate` (the Stop hook), so the loss is silent.
+    """
+    import time
+
+    # Order matters: Y oldest, X middle, Z newest (newest = pair keeper).
+    y = store.write(
+        content="alpha beta gamma delta epsilon foxtrot golf hotel india kilo lima",
+        scopes=["tools"],
+    )
+    time.sleep(0.01)
+    x = store.write(
+        content="alpha beta gamma delta epsilon foxtrot golf hotel india juliet kilo",
+        scopes=["tools"],
+    )
+    time.sleep(0.01)
+    z = store.write(
+        content="alpha beta gamma delta epsilon foxtrot golf hotel india juliet",
+        scopes=["tools"],
+    )
+
+    report = consolidate(store, apply=True)
+    tombstoned = {
+        act.memory_id for act in report.actions_taken if act.kind == "tombstoned"
+    }
+    # X (the bridge duplicate of the highest-similarity pair) is removed,
+    # and Z (the root keeper) survives.
+    assert x.id in tombstoned, "X should be tombstoned as the near-duplicate of Z"
+    assert z.id not in tombstoned, "Z (the root keeper) must survive"
+
+    tombstones = store.load_tombstones()
+    tombstone_ids = {t.id for t in tombstones}
+    # The core invariant: NO surviving tombstone may cite a memory that is
+    # itself tombstoned. Before the fix, Y's reason cited the dead X.
+    for t in tombstones:
+        reason = t.removed_reason or ""
+        dangling = [tid for tid in tombstone_ids if tid != t.id and tid in reason]
+        assert not dangling, (
+            f"tombstone {t.id} cites tombstoned id(s) {dangling} — the "
+            f"keeper-already-tombstoned guard regressed. reason: {reason!r}"
+        )
+    # Y, if tombstoned, must cite the live root Z — never the dead bridge X.
+    if y.id in tombstoned:
+        y_tomb = next(t for t in tombstones if t.id == y.id)
+        assert z.id in (y_tomb.removed_reason or ""), (
+            f"Y's tombstone should cite the live root Z, got: {y_tomb.removed_reason!r}"
+        )
+        assert x.id not in (y_tomb.removed_reason or "")
+
+
 # ---------------------------------------------------------------------------
 # Rendering
 # ---------------------------------------------------------------------------

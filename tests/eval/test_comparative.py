@@ -150,3 +150,86 @@ def test_render_json_roundtrips_and_carries_numbers():
         assert row["ran"] is False
         assert row["capabilities"]["can_compute_trio"] is False
         assert row["unavailable_reason"]
+
+
+def test_main_json_flag_emits_machine_readable(capsys):
+    """The CLI entry point (main + --json/--k argparse) was entirely
+    uncovered. Drive it directly via the argv parameter."""
+    from .comparative import main
+
+    rc = main(["--json", "--k", "3"])
+    assert rc == 0
+    data = json.loads(capsys.readouterr().out)
+    assert data["k"] == 3
+    assert len(data["results"]) == 4
+
+
+def test_main_default_text_output(capsys):
+    """The default (text) render branch of main()."""
+    from .comparative import main
+
+    rc = main([])
+    assert rc == 0
+    out = capsys.readouterr().out
+    assert "Capability matrix" in out
+    assert "(k=5)" in out
+
+
+def test_workload_rejects_duplicate_fact_key():
+    """The uniqueness guard in Workload._validate was uncovered (the only
+    validation test triggers the dangling-gold_key branch instead). Use a
+    probe whose gold_key matches the duplicated key so the dup-key check
+    fires before the dangling-key check."""
+    from .workload import Workload, WorkloadFact, WorkloadProbe
+
+    with pytest.raises(ValueError):
+        Workload(
+            name="dup",
+            facts=[
+                WorkloadFact(key="a", scopes=["projects:x"], body="alpha beta"),
+                WorkloadFact(key="a", scopes=["projects:y"], body="gamma delta"),
+            ],
+            probes=[WorkloadProbe("alpha beta", "a", agent_searched=False)],
+        )
+
+
+def test_gold_id_returns_none_for_distractor():
+    """gold_id's documented None-for-distractor branch was never asserted —
+    every caller only passes gold probes."""
+    wl = default_workload()
+    distractor = next(p for p in wl.probes if p.gold_key is None)
+    assert wl.gold_id(distractor) is None
+
+
+def test_render_text_omits_lanes_for_ran_result_without_eval_report():
+    """render_text's `for r in report.ran` block conditionally formats the
+    eval lanes (`if r.eval_report is not None`) and the recall label width at
+    k != 5 — both untested because the only runnable adapter always supplies
+    a full report at k=5. Exercise the False branch + k!=5 directly so a
+    future runnable competitor that computes only recall doesn't hit
+    unverified formatting."""
+    from .adapters import Capabilities, RunResult
+    from .comparative import ComparativeReport, render_text
+    from .workload import BASE_NOW
+
+    recall_only = RunResult(
+        name="recall-only",
+        capabilities=Capabilities(
+            logs_retrieval=True, logs_endorsement=False, has_audit_hook=False
+        ),
+        ran=True,
+        k=10,
+        gold_total=5,
+        recalled=4,
+        recall_at_k=0.8,
+        eval_report=None,
+    )
+    report = ComparativeReport(
+        workload_name="w", k=10, generated_at=BASE_NOW, results=[recall_only]
+    )
+    out = render_text(report)  # must not raise
+    assert "recall@" in out
+    # The eval-lane block is omitted (no eval_report). Scope the negative
+    # check to the INDENTED metric line so it doesn't match the capability-
+    # matrix header prose, which also contains the substring "silent_miss_rate".
+    assert "  silent_miss_rate" not in out

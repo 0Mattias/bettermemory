@@ -55,7 +55,14 @@ from pathlib import Path
 from typing import Any, Literal
 
 from . import _frontmatter as fm
-from .models import Category, Confidence, Memory, Source, TombstonedMemory
+from .models import (
+    Category,
+    Confidence,
+    Memory,
+    Source,
+    TombstonedMemory,
+    generate_ulid,
+)
 from .search import HIGH_SIMILARITY, find_similar, find_similar_tombstones
 from .store import Store
 
@@ -411,6 +418,14 @@ def compute_ingest_plan(
         raise NotADirectoryError(f"source root {source_root} is not a directory.")
 
     rows: list[IngestRow] = []
+    # Write rows committed earlier in THIS batch, folded back into the dedup
+    # set so a second near-identical source file in the same run is caught as
+    # a duplicate. The interactive memory_write path reloads the store between
+    # writes; ingest classifies every file against one frozen snapshot, so
+    # without this two identical files in one directory would both write.
+    # `force` bypasses the active-store dedup in _classify_one anyway, so we
+    # skip the bookkeeping there.
+    planned: list[Memory] = []
     # Deterministic order for stable rendering + reproducible tests.
     for path in sorted(source_root.glob("*.md")):
         # `Path.is_file()` follows symlinks — so a `.md` symlink pointing
@@ -438,16 +453,31 @@ def compute_ingest_plan(
             continue
         if path.name in _INDEX_FILENAMES:
             continue
-        rows.append(
-            _classify_one(
-                path,
-                existing=existing_memories,
-                tombstoned=existing_tombstones,
-                extra_scopes=extras,
-                high_threshold=high_threshold,
-                force=force,
-            )
+        row = _classify_one(
+            path,
+            existing=existing_memories + planned,
+            tombstoned=existing_tombstones,
+            extra_scopes=extras,
+            high_threshold=high_threshold,
+            force=force,
         )
+        rows.append(row)
+        if row.action == "write" and not force:
+            # Scopes are irrelevant to the body-Jaccard dedup; use the always-
+            # valid provenance scope so a programmatic caller's odd extra_scope
+            # can't make this synthetic Memory fail construction.
+            planned.append(
+                Memory(
+                    id=generate_ulid(),
+                    created=now,
+                    updated=now,
+                    scopes=[DEFAULT_PROVENANCE_SCOPE],
+                    confidence=Confidence.MEDIUM,
+                    source=Source.INFERRED,
+                    body=row.body,
+                    category=row.category,
+                )
+            )
 
     return IngestPlan(generated_at=now, source_root=source_root, rows=rows)
 

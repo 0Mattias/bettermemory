@@ -131,6 +131,18 @@ def _cli_ingest(
         discover_default_source_root,
         render_ingest_text,
     )
+    from ..models import validate_scope
+
+    # Validate --scope up front (mirrors export.py / tombstones.py) so a
+    # malformed scope fails fast and IDENTICALLY for --dry-run and commit.
+    # Otherwise the scope is appended unchecked and only rejected per-row at
+    # apply time, so a green dry-run ("would write N") was followed by an
+    # all-skip_invalid commit — the dry-run lied about what would happen.
+    for s in extra_scopes:
+        try:
+            validate_scope(s)
+        except ValueError as exc:
+            parser.error(str(exc))
 
     if source:
         source_root: _Path | None = _Path(source).expanduser()

@@ -13,7 +13,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any
 
-from ._shared import Context, _advance_turn
+from ._shared import Context, _advance_turn, _validate_content_size
 from ..models import Category, Source
 from ..proposals import ProposalQueue
 
@@ -117,6 +117,12 @@ async def memory_proposals(
                 f"invalid category {cat_value!r}: must be one of "
                 f"{[c.value for c in Category]}"
             ) from exc
+        # Run the same content-size guard every other write path enforces
+        # (memory_write / memory_update / episode_write). Without it an
+        # oversized proposal body (>max_content_bytes) is written, then
+        # fails the 1 MiB bounded read on the next load — the accept reports
+        # success while the record silently vanishes from every read surface.
+        _validate_content_size(match.body, deps.config.behavior.max_content_bytes)
         memory = deps.store.write(
             content=match.body,
             scopes=list(scopes),

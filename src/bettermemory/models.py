@@ -25,12 +25,12 @@ from .origin import Origin
 #
 # Forward-compatibility rule: a reader that encounters a schema_version
 # strictly greater than its own SCHEMA_VERSION raises ValueError on load.
-# `Store.load_all` and friends catch ValueError and skip the file with a
-# logged warning, so a user who downgrades bettermemory after writing some
-# memories with a newer minor sees those memories disappear from the
-# retrieval surface (rather than the reader silently misinterpreting them
-# under the wrong field semantics). `bettermemory doctor`'s
-# `memory_parse_health` check surfaces the count gap explicitly.
+# `Store.load_all` and friends catch ValueError and skip the file (silently —
+# the skip path emits no log line), so a user who downgrades bettermemory
+# after writing some memories with a newer minor sees those memories disappear
+# from the retrieval surface (rather than the reader silently misinterpreting
+# them under the wrong field semantics). `bettermemory doctor`'s
+# `memory_parse_health` check is what surfaces the count gap explicitly.
 #
 # Backward-compatibility rule: minor bumps within a major version
 # (1 → 1+, ...) are additive-only — new optional fields, never renamed

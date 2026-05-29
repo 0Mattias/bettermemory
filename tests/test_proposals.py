@@ -244,6 +244,24 @@ def test_append_within_cap_enforces_room_and_dedup(tmp_path: Path) -> None:
     assert [p.id for p in q.load()] == ["e1", "n2"]
 
 
+def test_append_within_cap_dedups_within_the_batch(tmp_path: Path) -> None:
+    """Two candidates in ONE batch sharing a source_excerpt (a user repeating
+    the same durable sentence twice in one exchange) collapse to a single
+    queued proposal. The prior version only deduped against the existing
+    queue, so a verbatim repeat double-queued — contradicting the method's
+    'can't double-queue the same sentence' docstring."""
+    q = ProposalQueue(tmp_path)
+    appended = q.append_within_cap(
+        [
+            _proposal("i always run the linter before committing", pid="r1"),
+            _proposal("i always run the linter before committing", pid="r2"),
+        ],
+        max_pending=20,
+    )
+    assert [p.id for p in appended] == ["r1"]
+    assert [p.id for p in q.load()] == ["r1"]
+
+
 def test_append_within_cap_returns_empty_when_full(tmp_path: Path) -> None:
     """A full queue admits nothing and leaves the file untouched."""
     q = ProposalQueue(tmp_path)

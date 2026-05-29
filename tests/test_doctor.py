@@ -223,20 +223,44 @@ def test_memory_parse_health_clean(tmp_path: Path) -> None:
 
 def test_memory_parse_health_warns_on_corrupt_file(tmp_path: Path) -> None:
     """A .md file that looks like a memory but has malformed frontmatter
-    is skipped by Store.load_all with a logged warning. Doctor should
-    surface the count discrepancy."""
+    is skipped by Store.load_all (silently — the skip path emits no log).
+    Doctor should surface the count discrepancy."""
     bad = tmp_path / "01ZZ_corrupt.md"
     bad.write_text("---\nbad: : :\n---\nbody\n", encoding="utf-8")
     diag = _check_memory_parse_health(tmp_path)
     # Either the file parsed (yaml is permissive enough) or it didn't.
     # If it didn't, status is "warn" and details show the gap.
     if diag.status == "warn":
-        assert diag.details["failed"] >= 1
+        assert diag.details["skipped"] >= 1
     else:
         # If it parsed, that's also fine — the test was overly defensive
         # about what malformed YAML actually trips. Skip rather than
         # fail the suite.
         pytest.skip("YAML parser was permissive enough to read the file")
+
+
+def test_memory_parse_health_ignores_symlinks(tmp_path: Path) -> None:
+    """A .md symlink is rejected by Store._iter_active_paths as a security
+    boundary BEFORE parsing, so doctor must NOT count it as a parse failure
+    (a false 'check frontmatter' steer pointing at a file never read)."""
+    from bettermemory.store import Store
+
+    store = Store(tmp_path)
+    store.write(content="a real memory body about widgets", scopes=["tools"])
+    real_file = next(p for p in tmp_path.glob("*.md"))
+    (tmp_path / "link-to-mem.md").symlink_to(real_file)
+
+    diag = _check_memory_parse_health(tmp_path)
+    assert diag.status == "ok", f"symlink miscounted as a parse failure: {diag.message}"
+
+
+def test_memory_parse_health_does_not_create_missing_dir(tmp_path: Path) -> None:
+    """The read-only probe must not materialize a non-existent storage dir
+    (Store.__post_init__ would mkdir it + a .tombstones/). Early-return."""
+    ghost = tmp_path / "ghost"
+    diag = _check_memory_parse_health(ghost)
+    assert diag.status == "ok"
+    assert not ghost.exists()
 
 
 # ---------------------------------------------------------------------------

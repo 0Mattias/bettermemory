@@ -186,3 +186,27 @@ def test_pyproject_matches_plugin_and_marketplace_manifests() -> None:
         f"marketplace.json metadata.version {market_v!r} != "
         f"pyproject.toml {pyproject_v!r} — bump both at release."
     )
+
+
+def test_uv_lock_self_version_matches_pyproject() -> None:
+    """uv.lock carries an editable self-entry for bettermemory whose
+    `version` is bumped in every release commit — but unlike the other
+    version surfaces it had no automated guard, and the 3.3.1 release forgot
+    it (landing a separate `chore: sync uv.lock to 3.3.1` follow-up commit).
+    Pin it so a stale lock fails the version-sync run rather than a later
+    cleanup. Match on the package name (robust to uv's source-dict shape)."""
+    with (_REPO_ROOT / "uv.lock").open("rb") as fh:
+        lock = tomllib.load(fh)
+    selves = [
+        pkg for pkg in lock.get("package", []) if pkg.get("name") == "bettermemory"
+    ]
+    assert len(selves) == 1, (
+        f"expected exactly one bettermemory package entry in uv.lock, "
+        f"found {len(selves)}"
+    )
+    lock_v = selves[0].get("version")
+    pyproject_v = _pyproject_version()
+    assert lock_v == pyproject_v, (
+        f"uv.lock bettermemory version {lock_v!r} != pyproject.toml "
+        f"{pyproject_v!r} — run `uv lock` and commit the result at release."
+    )

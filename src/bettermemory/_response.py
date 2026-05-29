@@ -29,6 +29,7 @@ from .models import (
 from .origin import (
     Origin,
     commit_author_timestamps,
+    commits_since_touching_paths,
     repos_match,
     should_include_for_caller,
 )
@@ -387,6 +388,15 @@ class ResponseBuilder:
         origin_repo_by_id: dict[str, str | None] = {
             m.id: (m.origin.repo if m.origin else None) for m in memories
         }
+        # verified_paths per id: when present, the count is narrowed to
+        # commits that touched the attested paths, matching what
+        # memory_show does. Without this, the loud search surface ignored
+        # verified_paths and nagged spot_check_recommended on a memory the
+        # user deliberately attested as stable — defeating the feature on
+        # its highest-traffic surface and disagreeing with memory_show.
+        verified_paths_by_id: dict[str, list[str]] = {
+            m.id: list(m.verified_paths) for m in memories
+        }
         for hit_dict, hit in zip(out, hits):
             if hit.last_verified_at is None:
                 continue
@@ -405,6 +415,19 @@ class ResponseBuilder:
             # rollup's semantics.
             idx = bisect.bisect_right(timestamps_sorted, since)
             count = len(timestamps_sorted) - idx
+            # If the memory carries verified_paths, narrow to commits that
+            # touched those paths (mirrors memory_show / the expand_top
+            # block), so an attestation of stable paths suppresses drift
+            # noise here too. Bounded to the few hits with verified_paths;
+            # falls back to the unfiltered count when the path filter can't
+            # run (git unreachable, all paths outside the repo).
+            vpaths = verified_paths_by_id.get(hit.id) or []
+            if vpaths:
+                filtered = commits_since_touching_paths(
+                    Path(caller_origin.cwd), since, vpaths
+                )
+                if filtered is not None:
+                    count = filtered
             hit_dict["commit_drift_count"] = count
             # Recompute the verdict now that we have the commit-drift
             # contribution. `hit_to_dict` initialised it without that
@@ -707,6 +730,7 @@ class ResponseBuilder:
                     {
                         "ts": ts,
                         "outcome": event.get("outcome"),
+                        "auto": bool(event.get("auto")),
                         "session": event.get("session") or event.get("session_id"),
                         "note": event.get("note"),
                         "claim_excerpt": _claim_at_index(event, i),
@@ -719,17 +743,20 @@ class ResponseBuilder:
                 continue
             timeline.sort(key=lambda e: e["ts"])
 
-            # Walk timeline chronologically. An applied event after a
-            # negative supersedes it: the user validated the memory
-            # after rejecting it earlier, so the rejection no longer
-            # tells us anything actionable. Clear the active buckets
-            # on each applied event so only post-applied negatives
-            # surface.
+            # Walk timeline chronologically. A GENUINE applied event after a
+            # negative supersedes it: the user/model validated the memory
+            # after rejecting it earlier, so the rejection no longer tells us
+            # anything actionable. But the auto-`record_use` fallback emits
+            # outcome="applied" with no model/user judgment — it fires merely
+            # because a re-surfaced use-token aged past its ~2-turn TTL. An
+            # auto-apply must NOT clear a contradiction, or a memory the model
+            # explicitly flagged as wrong would lose its warning the next time
+            # it's retrieved. Only a non-auto applied event supersedes.
             ignored_active: list[dict[str, Any]] = []
             contradicted_active: list[dict[str, Any]] = []
             for entry in timeline:
                 outcome = entry["outcome"]
-                if outcome == "applied":
+                if outcome == "applied" and not entry.get("auto"):
                     ignored_active.clear()
                     contradicted_active.clear()
                 elif outcome == "ignored":

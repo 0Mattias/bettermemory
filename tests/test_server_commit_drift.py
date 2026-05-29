@@ -358,6 +358,51 @@ async def test_memory_search_hits_carry_commit_drift_count_when_drifted(
 
 
 @pytest.mark.skipif(not _GIT_AVAILABLE, reason="git not on PATH")
+async def test_memory_search_commit_drift_count_honors_verified_paths(
+    server_with_fake_origin, tmp_path: Path
+) -> None:
+    """Regression: the per-hit commit_drift_count ignored verified_paths, so a
+    memory the user attested as stable for a specific path still read as
+    drifted / spot_check_recommended on the loud search surface — defeating
+    the feature there and disagreeing with memory_show. With the fix, a hit
+    whose verified_paths were untouched by the post-verify commits reads
+    commit_drift_count=0 / fresh, narrowed exactly like memory_show. (Compare
+    the test above: identical setup minus verified_paths gives count == 2.)
+    """
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    _init_repo(repo)
+    # A real tracked file the memory will be verified against.
+    stable = repo / "stable.py"
+    stable.write_text("x = 1\n")
+    subprocess.run(
+        ["git", "add", "stable.py"], cwd=repo, check=True, capture_output=True
+    )
+    _commit_at(repo, "add stable.py", when=datetime(2025, 1, 1, tzinfo=timezone.utc))
+
+    origin = Origin(cwd=str(repo), repo=_REMOTE, branch="main")
+    server = server_with_fake_origin(origin)
+
+    written = await _call(
+        server, "memory_write", content="durable thing about widgets", scopes=["tools"]
+    )
+    await _call(server, "memory_verify", id=written["id"], verified_paths=[str(stable)])
+    # Post-verify commits that do NOT touch stable.py (empty commits).
+    _commit_at(repo, "post-1", when=datetime(2099, 1, 1, tzinfo=timezone.utc))
+    _commit_at(repo, "post-2", when=datetime(2099, 2, 1, tzinfo=timezone.utc))
+
+    raw = await _call(
+        server, "memory_search", query="widgets durable", expand_top=False
+    )
+    hits = _unwrap(raw)
+    target = next(h for h in hits if h["id"] == written["id"])
+    # Narrowed to the verified path (untouched by the post-verify commits) -> 0,
+    # not the unfiltered 2 — and the verdict is fresh, matching memory_show.
+    assert target["commit_drift_count"] == 0
+    assert target["staleness_verdict"] == "fresh"
+
+
+@pytest.mark.skipif(not _GIT_AVAILABLE, reason="git not on PATH")
 async def test_memory_search_hits_carry_zero_commit_drift_count_when_clean(
     server_with_fake_origin, tmp_path: Path
 ) -> None:

@@ -150,6 +150,66 @@ def test_patch_merges_into_existing_mcp_servers(tmp_path: Path) -> None:
     assert body["mcpServers"][DEFAULT_SERVER_NAME] == _canonical_entry("/x/bm")
 
 
+def test_patch_preserves_user_keys_on_bettermemory_entry(tmp_path: Path) -> None:
+    """Regression: re-running init MERGES the canonical keys into an existing
+    bettermemory entry instead of replacing it wholesale. A user-set `env`
+    (notably BETTERMEMORY_DIR, which relocates the whole store), `disabled`,
+    or `timeout` must survive the upgrade — clobbering them silently detaches
+    the user's store ('my memory is suddenly empty/gone from this client').
+    """
+    target = tmp_path / "config.json"
+    target.write_text(
+        json.dumps(
+            {
+                "mcpServers": {
+                    DEFAULT_SERVER_NAME: {
+                        "type": "stdio",
+                        "command": "/old/bm",
+                        "args": [],
+                        "env": {"BETTERMEMORY_DIR": "/custom/store", "BM_LOG": "debug"},
+                        "disabled": True,
+                        "timeout": 60,
+                    },
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+    result = patch_client_config(target, binary="/new/bm")
+    assert result["action"] == "updated"
+    entry = json.loads(target.read_text(encoding="utf-8"))["mcpServers"][
+        DEFAULT_SERVER_NAME
+    ]
+    # Canonical key updated...
+    assert entry["command"] == "/new/bm"
+    # ...but the user's customizations are preserved, not clobbered.
+    assert entry["env"] == {"BETTERMEMORY_DIR": "/custom/store", "BM_LOG": "debug"}
+    assert entry["disabled"] is True
+    assert entry["timeout"] == 60
+
+
+def test_patch_noop_when_custom_env_and_binary_unchanged(tmp_path: Path) -> None:
+    """A custom env with the SAME binary must NOT trigger a spurious rewrite.
+    The old code rewrote on every re-run because the existing dict never
+    equalled the bare 4-key canonical entry it compared against."""
+    target = tmp_path / "config.json"
+    initial = {
+        "mcpServers": {
+            DEFAULT_SERVER_NAME: {
+                "type": "stdio",
+                "command": "/x/bm",
+                "args": [],
+                "env": {"BETTERMEMORY_DIR": "/custom"},
+            }
+        }
+    }
+    target.write_text(json.dumps(initial), encoding="utf-8")
+    mtime_before = target.stat().st_mtime_ns
+    result = patch_client_config(target, binary="/x/bm")
+    assert result["action"] == "noop"
+    assert target.stat().st_mtime_ns == mtime_before
+
+
 def test_patch_preserves_non_mcp_keys(tmp_path: Path) -> None:
     target = tmp_path / "config.json"
     target.write_text(

@@ -441,17 +441,31 @@ def _emit_hook_attributions(
     text and emit `applied` events for matches.
 
     `pending` is the set of memory_ids retrieved (via `search` or
-    `show`) in this session within the lookback window, MINUS ids
-    that already have any `use` event in the same window — those
-    have either been explicitly recorded by the model or
-    auto-committed already, and re-attributing would double-count.
-    The matcher's heuristics (≥6-token, ≥30-char, stopword-
-    filtered candidate sentences) cap false positives; the
+    `show`) within the lookback window, MINUS ids that already have any
+    `use` event in the same window — those have either been explicitly
+    recorded by the model or auto-committed already, and re-attributing
+    would double-count. The matcher's heuristics (≥6-token, ≥30-char,
+    stopword-filtered candidate sentences) cap false positives; the
     "no-already-used" filter caps double-counting.
+
+    Session-id bridge (load-bearing): `session_id` is the Claude Code
+    transcript id, but the in-process MCP server wrote its `search`/`show`/
+    `use` events under a DIFFERENT id space (`sess_<hex>`). Filtering
+    retrievals by the transcript id — as this did before — never matched
+    them, so `pending` was always empty and the hook NEVER attributed in
+    production (only the single-id-space test fixtures passed). Bridge to
+    the live in-process session the same way `_disabled_scopes_from_events`
+    does. Retrievals are matched on that server session; the use-dedup set
+    spans BOTH ids, because model/auto `use` events live under the server
+    session while prior-turn hook attributions were recorded under the
+    transcript id (this hook's own Recorder uses `session_id`).
     """
+    server_session = _latest_in_process_session(recent_events)
+    retrieval_session = server_session or session_id
     pending = _pending_retrievals(
         recent_events,
-        session_id=session_id,
+        retrieval_session_id=retrieval_session,
+        used_session_ids={retrieval_session, session_id},
         lookback_seconds=_ATTRIBUTION_LOOKBACK_SECONDS,
     )
     if not pending:
@@ -484,11 +498,12 @@ def _emit_hook_attributions(
 def _pending_retrievals(
     events: list[dict[str, Any]],
     *,
-    session_id: str,
+    retrieval_session_id: str,
+    used_session_ids: set[str],
     lookback_seconds: int,
 ) -> set[str]:
-    """Memory_ids retrieved in this session within the lookback window
-    that have NOT yet been recorded via `record_use`.
+    """Memory_ids retrieved within the lookback window that have NOT yet
+    been recorded via `record_use`.
 
     A retrieval is the `search` event's `returned` list or the `show`
     event's `id`. A `use` event for the same id within the window
@@ -496,23 +511,31 @@ def _pending_retrievals(
     set. This approximates the in-process SessionState's
     `pending_use_tokens` from the event log alone, which is what the
     hook has access to.
+
+    The session filter is SPLIT by event kind to bridge the two id
+    spaces (see `_emit_hook_attributions`): `search`/`show` retrievals
+    are matched on `retrieval_session_id` (the in-process server
+    session that actually wrote them), while `use` dedup events are
+    matched on `used_session_ids` (the server session AND the transcript
+    id, since prior-turn hook attributions live under the latter).
     """
     cutoff_ts = utcnow().timestamp() - lookback_seconds
     retrieved: set[str] = set()
     used: set[str] = set()
     for event in events:
-        # Canonical-first session lookup with legacy fallback — same
-        # discipline 70e41a4 established for llm.py.
-        if (event.get("session") or event.get("session_id")) != session_id:
-            continue
         ts_str = event.get("ts")
         if not isinstance(ts_str, str):
             continue
         ts = _parse_iso_ts(ts_str)
         if ts is None or ts.timestamp() < cutoff_ts:
             continue
+        # Canonical-first session lookup with legacy fallback — same
+        # discipline 70e41a4 established for llm.py.
+        session = event.get("session") or event.get("session_id")
         kind = event.get("kind")
         if kind == "search":
+            if session != retrieval_session_id:
+                continue
             # Legacy fallback: pre-2.6.3 search archives wrote
             # `memory_ids`, test fixtures used `hit_ids`. Read canonical,
             # fall back to either.
@@ -527,10 +550,14 @@ def _pending_retrievals(
                     if isinstance(mid, str):
                         retrieved.add(mid)
         elif kind == "show":
+            if session != retrieval_session_id:
+                continue
             mid = event.get("id")
             if isinstance(mid, str):
                 retrieved.add(mid)
         elif kind == "use":
+            if session not in used_session_ids:
+                continue
             # Legacy fallback for `memory_ids` — same class as above.
             ids = event.get("ids") or event.get("memory_ids") or []
             if isinstance(ids, list):

@@ -281,6 +281,51 @@ def test_find_similar_semantic_skips_empty_bodies() -> None:
     assert hits == []
 
 
+def test_hybrid_semantic_hit_does_not_fabricate_match_terms() -> None:
+    """Regression: in hybrid mode with a semantic model, a memory surfaced
+    purely by cosine similarity (zero literal query-token overlap) used to be
+    stamped with the FULL query as `match_terms`, which drove the relevance
+    label to a fabricated 'high'. The MemoryHit contract is that match_terms
+    are the query tokens that ACTUALLY hit the body/scopes, and relevance
+    reflects that coverage. A paraphrase-only hit must carry match_terms=[]
+    and a non-'high' relevance, while still surfacing by score.
+    """
+    from bettermemory.search import search
+
+    # Stub model maps every text -> [1,0,0], so cosine == 1.0 for any pair:
+    # the semantic ranker surfaces both memories regardless of token overlap.
+    fake = _FakeModel()
+    para = _memory("postgres vacuum autovacuum tuning cadence")  # zero overlap
+    lit = _memory("kubernetes deployment rollout playbook")  # shares 2 tokens
+    hits = search(
+        [para, lit],
+        "kubernetes helm rollout",
+        mode="hybrid",
+        semantic_model=fake,
+        max_results=5,
+    )
+    by_id = {h.id: h for h in hits}
+
+    # Paraphrase-only hit: surfaces by similarity, but honest about matching
+    # nothing literal — no fabricated terms, not a 'high' relevance.
+    assert para.id in by_id
+    para_hit = by_id[para.id]
+    assert para_hit.match_terms == [], (
+        f"semantic-only hit must not fabricate match_terms; got "
+        f"{para_hit.match_terms!r}"
+    )
+    assert para_hit.relevance != "high", (
+        f"a zero-overlap paraphrase hit must not read 'high'; got "
+        f"{para_hit.relevance!r}"
+    )
+
+    # Literal-overlap hit: only the tokens actually present are reported.
+    lit_hit = by_id[lit.id]
+    assert "kubernetes" in lit_hit.match_terms
+    assert "rollout" in lit_hit.match_terms
+    assert "helm" not in lit_hit.match_terms  # 'helm' is in neither body
+
+
 def test_stale_dimension_cache_entries_are_purged() -> None:
     """Regression for the 2.6.4 audit. A persistent embedding cache
     written under one model checkpoint and hydrated under another with

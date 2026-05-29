@@ -298,11 +298,12 @@ class Store:
         # Schema-version gate. Memories without `schema_version` are
         # implicitly version 1 (the format predates the field). Anything
         # *higher* than what this reader supports is refused — the caller
-        # (`load_all`, etc.) catches ValueError and skips the file with a
-        # logged warning, so a user who downgrades bettermemory after
-        # writing memories under a newer minor sees them drop out of the
-        # retrieval surface rather than risk the reader misinterpreting
-        # fields whose semantics changed.
+        # (`load_all`, etc.) catches ValueError and skips the file silently
+        # (the skip path emits no log; `bettermemory doctor` surfaces the
+        # count gap), so a user who downgrades bettermemory after writing
+        # memories under a newer minor sees them drop out of the retrieval
+        # surface rather than risk the reader misinterpreting fields whose
+        # semantics changed.
         on_disk_version = meta.get("schema_version", 1)
         try:
             on_disk_int = int(on_disk_version)

@@ -2716,6 +2716,31 @@ def test_recent_silent_misses_surfaced_on_health_report() -> None:
     assert report.recent_silent_misses[1].event_id == "EVID_A"
 
 
+def test_recent_silent_misses_ordering_is_microsecond_correct() -> None:
+    """Regression: recent_silent_misses sorted on the rendered ISO STRING,
+    but isoformat_utc omits the fractional-seconds part when microsecond==0
+    ("…:09Z") and keeps it otherwise ("…:09.500000Z"). For two events in the
+    SAME whole second a lexicographic sort mis-orders them ('.' < 'Z'), so the
+    genuinely-newer sub-second event was demoted below (and at the cap, evicted
+    in favour of) an older round-second one. Sorting on the datetime fixes it.
+    """
+    from datetime import datetime, timezone
+
+    m = _memory(created=_utc(2026, 1, 1))
+    older_round = datetime(2026, 4, 10, 12, 0, 9, tzinfo=timezone.utc)  # …:09Z
+    newer_sub = datetime(2026, 4, 10, 12, 0, 9, 500000, tzinfo=timezone.utc)  # …:09.5Z
+    events = [
+        _search_miss_with_event_id(m.id, "ROUND", ts=older_round, query_preview="a"),
+        _search_miss_with_event_id(m.id, "SUB", ts=newer_sub, query_preview="b"),
+    ]
+    report = compute_health([m], events, now=_utc(2026, 5, 1))
+    assert len(report.recent_silent_misses) == 2
+    # The sub-second event is 0.5s newer and must lead, despite sorting AFTER
+    # the round-second event lexicographically.
+    assert report.recent_silent_misses[0].event_id == "SUB"
+    assert report.recent_silent_misses[1].event_id == "ROUND"
+
+
 def test_recent_silent_misses_filters_acked_and_tombstoned() -> None:
     """The inline list matches the rollup's filter set — acked /
     tombstoned events don't leak into the triage surface even though

@@ -13,6 +13,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any
 
+from .._response import isoformat
 from ..models import Category, Confidence, _PROPOSABLE_CATEGORIES, validate_scope
 from ..store import ConcurrentUpdateError, MemoryNotFoundError, TombstonedError
 from ._shared import (
@@ -240,18 +241,26 @@ async def memory_update(
             "update",
             status="stale",
             id=exc.memory_id,
-            current_updated=exc.current_updated.isoformat(),
+            current_updated=isoformat(exc.current_updated),
         )
         return {
             "status": "stale",
             "memory_id": exc.memory_id,
-            "current_updated": exc.current_updated.isoformat(),
+            "current_updated": isoformat(exc.current_updated),
             "hint": (
                 "Memory was updated concurrently. Re-fetch with "
                 "memory_show and retry your edit on top of the "
                 "current snapshot."
             ),
         }
+    except OSError as exc:
+        # A genuine disk-level failure in the atomic write path (ENOSPC on
+        # the tmp write/rename, EIO, EACCES). Surface as a structured
+        # ValueError so the MCP tool boundary returns a clean "failed to
+        # update memory <id>: …" rather than leaking a bare OSError — matches
+        # what handlers/remove.py and handlers/restore.py do, and what
+        # Store.update's docstring promises the handler boundary does.
+        raise ValueError(f"failed to update memory {id}: {exc}") from exc
     fields_changed = [
         name
         for name, value in (

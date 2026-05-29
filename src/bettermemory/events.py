@@ -15,10 +15,14 @@ tooling reads from:
 Don't truncate or modify the file in place; treat it as an audit log. If you
 need to reset the store, rotate or delete the whole file rather than editing.
 
-Privacy note: search queries are recorded verbatim. The log lives in the same
-directory as the memories themselves, which already contain user data — we're
-not crossing a new trust boundary. Disable via `[telemetry] enabled = false`
-in `config.toml` if this is unwanted.
+Privacy note: search queries are NOT recorded verbatim by default (since
+2.6.8). `query` / `probe_query` are redacted to `{hash, preview, len}` with a
+defense-in-depth strip of known secret shapes (Anthropic / OpenAI / GitHub /
+AWS tokens) before the line is written. The log is created 0o600 and lives in
+the same per-user directory as the memories themselves, which already contain
+user data — so it crosses no new trust boundary. Set `[telemetry]
+log_queries_verbatim = true` in `config.toml` to restore the legacy verbatim
+shape, or `[telemetry] enabled = false` to disable the log entirely.
 """
 
 from __future__ import annotations
@@ -29,6 +33,7 @@ import json
 import logging
 import os
 import re
+import zlib
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
@@ -474,25 +479,59 @@ class Recorder:
 # ---------------------------------------------------------------------------
 
 
+def _iter_json_lines(f: Any) -> Iterator[dict[str, Any]]:
+    """Yield parsed JSON objects from a BINARY line stream, degrading
+    per-record instead of aborting the whole stream on corruption.
+
+    Three real corruption modes the previous text-mode `for line in f` +
+    `except json.JSONDecodeError` did NOT survive — they all crashed the
+    reader, taking down memory_health / scope_overview / eval / doctor,
+    which read through here:
+
+    - an invalid-UTF-8 byte: in text mode the decode happens in the line
+      iterator, BEFORE json.loads, so JSONDecodeError never fired —
+      UnicodeDecodeError (a ValueError, not OSError) escaped. We read bytes
+      and decode each line with `errors="replace"`, so a bad byte becomes
+      U+FFFD and the line simply fails json.loads and is skipped.
+    - a truncated gzip archive: `readline` raises EOFError (not an OSError).
+    - a CRC-corrupt gzip archive: `readline` raises zlib.error (not OSError).
+
+    Reading line-by-line under a try lets a truncated/corrupt archive still
+    yield its readable prefix rather than contributing nothing.
+    """
+    while True:
+        try:
+            raw = f.readline()
+        except (OSError, EOFError, zlib.error):
+            return
+        if not raw:
+            return
+        line = raw.decode("utf-8", errors="replace").strip()
+        if not line:
+            continue
+        try:
+            yield json.loads(line)
+        except json.JSONDecodeError:
+            continue
+
+
 def iter_events(root: Path) -> Iterator[dict[str, Any]]:
     """Yield all events from the *active* log only.
 
     Skips malformed lines defensively (single-process writers make corruption
-    unlikely, but the read side stays robust against external editing). Does
-    not read rotated archives — call `iter_all_events` for that.
+    unlikely, but the read side stays robust against external editing — a
+    stray non-UTF-8 byte or hand-edit must not crash the reader). Does not
+    read rotated archives — call `iter_all_events` for that.
     """
     path = root / EVENT_LOG_FILENAME
     if not path.exists():
         return
-    with path.open("r", encoding="utf-8") as f:
-        for line in f:
-            line = line.strip()
-            if not line:
-                continue
-            try:
-                yield json.loads(line)
-            except json.JSONDecodeError:
-                continue
+    try:
+        f = path.open("rb")
+    except OSError:
+        return
+    with f:
+        yield from _iter_json_lines(f)
 
 
 _TRAILING_COUNTER_RE = re.compile(r"-(\d+)$")
@@ -592,16 +631,14 @@ def iter_all_events(root: Path) -> Iterator[dict[str, Any]]:
     archives.sort(key=_archive_sort_key)
     for archive in archives:
         try:
-            with gzip.open(archive, "rt", encoding="utf-8") as f:
-                for line in f:
-                    line = line.strip()
-                    if not line:
-                        continue
-                    try:
-                        yield json.loads(line)
-                    except json.JSONDecodeError:
-                        continue
-        except OSError:  # pragma: no cover
+            with gzip.open(archive, "rb") as f:
+                yield from _iter_json_lines(f)
+        except (OSError, EOFError, zlib.error):
+            # A truncated/CRC-corrupt/non-gzip archive (external copy
+            # interrupted mid-sync, bit rot on a never-rewritten append-only
+            # log). Skip this archive and keep reading the rest + the active
+            # log — one bad file must not blank the whole telemetry surface.
+            log.warning("events: skipping unreadable archive %s", archive.name)
             continue
 
     # Crash-recovery yield: orphan .rotating files whose archive never
@@ -613,17 +650,11 @@ def iter_all_events(root: Path) -> Iterator[dict[str, Any]]:
         if stem in archive_stems:
             continue
         try:
-            with rotating.open("r", encoding="utf-8") as f:
-                for line in f:
-                    line = line.strip()
-                    if not line:
-                        continue
-                    try:
-                        yield json.loads(line)
-                    except json.JSONDecodeError:
-                        continue
+            rf = rotating.open("rb")
         except OSError:  # pragma: no cover
             continue
+        with rf:
+            yield from _iter_json_lines(rf)
 
     yield from iter_events(root)
 

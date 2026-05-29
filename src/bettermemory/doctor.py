@@ -307,6 +307,17 @@ def _check_memory_parse_health(directory: Path) -> Diagnosis:
     we run it here under a count-mode harness so doctor can report
     "everything parses" or "N files failed to parse".
     """
+    # Don't construct a Store against a non-existent path: Store.__post_init__
+    # would mkdir it (+ a .tombstones/ subdir), a write side effect from a
+    # read-only probe. Mirrors the sibling checks' `if not directory.exists()`
+    # guard. (The live caller already gates on directory.exists(); this keeps
+    # the helper safe in isolation / if that gate is ever reordered.)
+    if not directory.exists():
+        return Diagnosis(
+            name="memory_parse_health",
+            status="ok",
+            message="Storage dir does not exist yet — nothing to parse.",
+        )
     try:
         store = Store(directory)
         memories = store.load_all()
@@ -318,10 +329,13 @@ def _check_memory_parse_health(directory: Path) -> Diagnosis:
             fix_hint=f"Inspect {directory} for corrupt files.",
         )
 
+    # Exclude symlinks: `Store._iter_active_paths` rejects them as a security
+    # boundary BEFORE parsing, so counting them as "failed to parse" would be
+    # a false positive pointing the user at frontmatter that was never read.
     md_files = [
         p
         for p in directory.glob("*.md")
-        if p.name != "README.md" and not p.name.startswith(".")
+        if p.name != "README.md" and not p.name.startswith(".") and not p.is_symlink()
     ]
     parsed = len(memories)
     on_disk = len(md_files)
@@ -332,19 +346,26 @@ def _check_memory_parse_health(directory: Path) -> Diagnosis:
             message=f"All {parsed} active memories parse cleanly.",
             details={"parsed": parsed, "files_on_disk": on_disk},
         )
-    failed = on_disk - parsed
+    # The count delta can't distinguish malformed frontmatter from an
+    # intentionally-skipped file (a schema_version newer than this install,
+    # e.g. after a `sync pull` from a machine on a newer bettermemory). Don't
+    # assert "did not parse" or point only at frontmatter — and don't claim a
+    # "logged warning" the skip path doesn't actually emit.
+    skipped = on_disk - parsed
     return Diagnosis(
         name="memory_parse_health",
         status="warn",
         message=(
-            f"{failed} of {on_disk} memory files in {directory} did not "
-            f"parse (server skips them with a logged warning)."
+            f"{skipped} of {on_disk} memory files in {directory} were skipped "
+            f"by the loader (malformed frontmatter, or a schema_version newer "
+            f"than this install)."
         ),
         fix_hint=(
-            "Run `bettermemory` directly to see the warnings, or check "
-            "frontmatter of files that don't appear in `bettermemory health`."
+            "Check the frontmatter of files missing from `bettermemory "
+            "health`; if you recently downgraded bettermemory, upgrade back "
+            "to read memories written under the newer version."
         ),
-        details={"parsed": parsed, "files_on_disk": on_disk, "failed": failed},
+        details={"parsed": parsed, "files_on_disk": on_disk, "skipped": skipped},
     )
 
 
@@ -566,6 +587,14 @@ def _check_mcp_client_configs() -> Diagnosis:
     the old binary path, which no longer exists.
     """
     resolved_binary = find_binary()
+    # Whether find_binary() pinned a real on-disk absolute path. When it
+    # couldn't (PATH miss -> bare "bettermemory" fallback), we have no
+    # canonical reference to judge staleness against, so a config holding a
+    # correct absolute console-script path must NOT be flagged as "stale" —
+    # the companion binary_on_path check already tells the user PATH is broken.
+    resolved_is_real = (
+        Path(resolved_binary).is_absolute() and Path(resolved_binary).exists()
+    )
     findings: list[dict[str, Any]] = []
     has_mismatch = False
 
@@ -637,7 +666,10 @@ def _check_mcp_client_configs() -> Diagnosis:
                 )
                 if Path(command).is_absolute() and not exists_on_disk:
                     has_mismatch = True
-                elif not matches:
+                elif not matches and resolved_is_real:
+                    # Only call it a stale path when we have a real canonical
+                    # binary to compare against; otherwise this is a PATH
+                    # problem (binary_on_path covers it), not a stale config.
                     has_mismatch = True
 
     if not findings:

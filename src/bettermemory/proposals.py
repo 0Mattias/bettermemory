@@ -222,8 +222,22 @@ class ProposalQueue:
             room = max_pending - len(current)
             if room <= 0:
                 return []
+            # Dedup against the queue AND within this batch: a user repeating
+            # the same durable sentence twice in one exchange yields two
+            # candidates with identical source_excerpt, and updating `seen` as
+            # each is admitted keeps the second from also being queued (the
+            # prior `[:room]`-sliced comprehension only deduped against the
+            # existing queue, contradicting the "can't double-queue the same
+            # sentence" guarantee in this method's docstring).
             seen = {p.source_excerpt for p in current}
-            fresh = [c for c in candidates if c.source_excerpt not in seen][:room]
+            fresh: list[Proposal] = []
+            for c in candidates:
+                if c.source_excerpt in seen:
+                    continue
+                seen.add(c.source_excerpt)
+                fresh.append(c)
+                if len(fresh) >= room:
+                    break
             if not fresh:
                 return []
             self._write_all_locked(current + fresh)

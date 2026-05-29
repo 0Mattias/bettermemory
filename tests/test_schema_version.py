@@ -132,8 +132,8 @@ def test_future_version_raises_on_load_one(store: Store, tmp_path: Path) -> None
 
 
 def test_future_version_skipped_by_load_all(store: Store, tmp_path: Path) -> None:
-    """load_all is defensive: a forward-version file is skipped (with a
-    logged warning, but no crash) so the rest of the store still works."""
+    """load_all is defensive: a forward-version file is skipped (silently —
+    no log, no crash) so the rest of the store still works."""
     legacy = tmp_path / "2025-01-01-legacy.md"
     legacy.write_text(_LEGACY_BODY, encoding="utf-8")
     future = tmp_path / "2099-01-01-future.md"

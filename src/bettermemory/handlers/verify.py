@@ -11,6 +11,19 @@ from ._shared import Context, _NOTE_MAX_LEN, _advance_turn
 if TYPE_CHECKING:
     from .._handlers import ToolHandlers
 
+# Handler-boundary caps on the verified_* attestation lists. The model
+# field validator (`Memory._cap_verified_list`) also caps the count at 64,
+# but `Store.mark_verified` writes via `model_copy(update=...)`, which
+# Pydantic runs WITHOUT field validators — so the model cap is bypassed on
+# the verify path. Enforce here (mirroring how `scopes` is guarded both in
+# the model and at the write handler) so a hostile/runaway caller can't push
+# an unbounded or pathological attestation list. The per-item length bound is
+# generous (a path/commit/version is realistically well under it); the
+# `_frontmatter.dumps` aggregate cap is the ultimate backstop against
+# frontmatter overflow, but a clear per-field error here is friendlier.
+_MAX_VERIFIED_ENTRIES = 64
+_MAX_VERIFIED_ITEM_LEN = 1024
+
 
 DESC_MEMORY_VERIFY = (
     "Bump `last_verified_at` to now after spot-checking that a "
@@ -78,6 +91,19 @@ async def memory_verify(
             continue
         if not isinstance(value, list) or not all(isinstance(s, str) for s in value):
             raise ValueError(f"{label} must be a list of strings if provided")
+        if len(value) > _MAX_VERIFIED_ENTRIES:
+            raise ValueError(
+                f"{label} capped at {_MAX_VERIFIED_ENTRIES} entries "
+                f"(got {len(value)}); a memory cites a handful of paths, "
+                "not a manifest"
+            )
+        for item in value:
+            if len(item) > _MAX_VERIFIED_ITEM_LEN:
+                raise ValueError(
+                    f"{label} entry is {len(item)} chars — cap is "
+                    f"{_MAX_VERIFIED_ITEM_LEN}. Attestations are short "
+                    "path/commit/version strings, not prose."
+                )
     # W8: load the current snapshot to capture `last_verified_at` for
     # the optimistic-concurrency CAS in `Store.mark_verified`. The
     # snapshot fingerprint is what the under-lock recheck compares
@@ -119,18 +145,25 @@ async def memory_verify(
             "verify",
             status="stale",
             id=exc.memory_id,
-            current_updated=exc.current_updated.isoformat(),
+            current_updated=isoformat(exc.current_updated),
         )
         return {
             "status": "stale",
             "memory_id": exc.memory_id,
-            "current_updated": exc.current_updated.isoformat(),
+            "current_updated": isoformat(exc.current_updated),
             "hint": (
                 "Memory was verified concurrently. Re-fetch with "
                 "memory_show, reassess your attestation against the "
                 "current verified_* lists, and retry."
             ),
         }
+    except OSError as exc:
+        # Genuine disk-level failure in the atomic write path (ENOSPC, EIO,
+        # EACCES). Surface as a structured ValueError so the MCP boundary
+        # returns a clean "failed to verify memory <id>: …" rather than a bare
+        # OSError — mirrors remove.py/restore.py and Store.mark_verified's
+        # documented handler-boundary contract.
+        raise ValueError(f"failed to verify memory {id}: {exc}") from exc
     deps.recorder.record(
         "verify",
         id=memory.id,

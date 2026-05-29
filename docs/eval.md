@@ -17,7 +17,7 @@ bettermemory's closed-loop telemetry (`memory_record_use`, `memory_audit_turn`, 
 
 Numerator: `record_use` events where `outcome="applied"` AND `auto=false` AND `claim_excerpts` is non-empty.
 
-Denominator: all distinct `(turn_id, memory_id)` retrieval pairs in the window.
+Denominator: per-event retrieval occurrences across `memory_search` / `memory_list` / `memory_show` in the window, counted by memory id — a memory surfaced N times counts N (there is no per-turn dedup; the event schema carries no `turn_id`). This is the `Retrieval occurrences` figure in the report output.
 
 A high rate means most retrievals shaped a sentence the model wrote, and there's evidence on the record for which sentence. A low rate means the ranker is firing on noise the model is silently ignoring.
 
@@ -97,9 +97,9 @@ Retrieval occurrences                 198
 Applied use events (auto+explicit)    142
 Turns audited                         412
 
-memory_helped_rate   0.61 ± 0.07   ▇▇▇▇▇▇▁▁▁▁   (k=121, n=198)
-endorsement_rate     0.74 ± 0.06   ▇▇▇▇▇▇▇▁▁▁   (k=105, n=142)
-silent_miss_rate     0.09 ± 0.03   ▇▁▁▁▁▁▁▁▁▁   (k=37, n=412)
+memory_helped_rate   0.61 [0.54, 0.68]   ▇▇▇▇▇▇▁▁▁▁   (k=121, n=198)
+endorsement_rate     0.74 [0.66, 0.80]   ▇▇▇▇▇▇▇▁▁▁   (k=105, n=142)
+silent_miss_rate     0.09 [0.07, 0.12]   ▇▁▁▁▁▁▁▁▁▁   (k=37, n=412)
 
 Cold-endorsement memories (retrievals ≥ 5, 0 explicit applied): 2
   01HXYZ123ABC  tools             "Use ripgrep instead of grep…"  (12 retrievals)

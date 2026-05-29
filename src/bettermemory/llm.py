@@ -811,6 +811,7 @@ def _validate_merge(
         )
         return None
     cleaned_dupes: list[str] = []
+    seen_dupes: set[str] = set()
     for dup in duplicate_ids:
         if not isinstance(dup, str) or dup not in valid_ids:
             log.warning("merge: duplicate_id %r not in cluster", dup)
@@ -818,6 +819,15 @@ def _validate_merge(
         if dup == keeper_id:
             log.warning("merge: duplicate %r same as keeper", dup)
             return None
+        # Collapse a repeated duplicate_id (validity checks above already
+        # ran, so a repeated keeper/hallucinated id is still rejected, not
+        # silently swallowed). Without this, the applier tombstones the id
+        # twice and the second call raises TombstonedError, aborting the
+        # whole accepted merge with a misleading "raced with concurrent
+        # tombstone" reason — though no concurrent writer exists.
+        if dup in seen_dupes:
+            continue
+        seen_dupes.add(dup)
         cleaned_dupes.append(dup)
     if not isinstance(new_body, str) or not new_body.strip():
         log.warning("merge: new_body empty for keeper %r", keeper_id)

@@ -193,7 +193,17 @@ def find_binary() -> str:
         return str(Path(binary).resolve())
 
     candidate = Path(sys.argv[0])
-    if candidate.is_absolute() and candidate.exists():
+    # Require the argv0 basename to actually be the bettermemory binary —
+    # mirrors the guard in doctor._check_binary_on_path. Under
+    # `python -m bettermemory …`, argv[0] is the package's `__main__.py`,
+    # whose path matches no MCP client's console-script entry; returning it
+    # would make doctor flag every correct config as a "stale binary path".
+    # Fall through to the bare-string fallback in that case instead.
+    if (
+        candidate.is_absolute()
+        and candidate.exists()
+        and "bettermemory" in candidate.name
+    ):
         return str(candidate.resolve())
 
     return "bettermemory"
@@ -298,12 +308,23 @@ def patch_client_config(
             f"expected `{{...}}`."
         )
 
-    new_entry: dict[str, Any] = {
-        "type": "stdio",
-        "command": binary,
-        "args": [],
-        "env": {},
-    }
+    # MERGE the canonical keys into any existing entry rather than replacing
+    # it wholesale. A user may have added keys to their bettermemory entry —
+    # notably `env` (BETTERMEMORY_DIR relocates the whole store), but also
+    # `disabled`, `timeout`, or transport overrides. Re-running init after an
+    # upgrade (exactly when the docstring says migration runs) must NOT silently
+    # drop them; clobbering `env.BETTERMEMORY_DIR` makes the server boot against
+    # the default dir and the user's store looks empty/gone from that client.
+    # We own only type/command/args; everything else the user set is preserved,
+    # and `env` defaults to {} only when absent.
+    existing_entry = mcp_servers.get(name)
+    new_entry: dict[str, Any] = (
+        dict(existing_entry) if isinstance(existing_entry, dict) else {}
+    )
+    new_entry["type"] = "stdio"
+    new_entry["command"] = binary
+    new_entry["args"] = []
+    new_entry.setdefault("env", {})
 
     # Legacy-name migration: only when writing under the new default
     # name. A user who explicitly passes `--name memory` (or some other

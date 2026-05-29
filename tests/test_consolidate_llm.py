@@ -587,6 +587,48 @@ def test_consolidate_with_from_transcript_runs_propose_new(tmp_path: Path) -> No
     assert "[user] My Postgres is on port 5433" in new_memory.body
 
 
+def test_propose_new_writes_durable_body_despite_transient_provenance(
+    tmp_path: Path,
+) -> None:
+    """Regression: the durability (transient-marker) gate must scan the
+    LLM-authored body, NOT body_with_provenance. The prompt asks the model to
+    set source_excerpt to the literal transcript turn, which routinely carries
+    transient phrasing ('Today I…', 'we just…'). Scanning the combined text
+    bounced almost every genuine --from-transcript proposal on a marker in the
+    audit citation rather than in the durable claim. A clean durable body must
+    still write even when its provenance quote contains a transient phrase.
+    """
+    store = _make_store_with_existing(tmp_path)
+    transcript = tmp_path / "session.md"
+    transcript.write_text(
+        "[user] Today I decided we should use PostgreSQL on port 5433.\n"
+        "[assistant] Saved.",
+        encoding="utf-8",
+    )
+    proposal = ProposeNewProposal(
+        scope="infrastructure",
+        category="fact",
+        # Durable claim — NO transient markers.
+        body="The project's PostgreSQL instance listens on port 5433.",
+        # Provenance quote — contains the transient phrase 'Today I'.
+        source_excerpt="Today I decided we should use PostgreSQL on port 5433.",
+        rationale="user-stated infrastructure fact",
+    )
+    provider = FakeProvider(proposals=[proposal])
+
+    applied = consolidate_llm(
+        store, provider, apply=True, accept=True, from_transcript=str(transcript)
+    )
+    # The durable body wrote despite the transient phrase in its provenance.
+    assert any(a.kind == "llm_propose_new" for a in applied.actions_taken)
+    assert not applied.failures, f"propose_new failed unexpectedly: {applied.failures}"
+    memories_after = store.load_all()
+    assert len(memories_after) == 2
+    new_memory = next(m for m in memories_after if "port 5433" in m.body)
+    # The provenance line (incl. the transient quote) is still stored for audit.
+    assert "Today I decided" in new_memory.body
+
+
 def test_consolidate_without_from_transcript_does_not_call_propose_new(
     tmp_path: Path,
 ) -> None:

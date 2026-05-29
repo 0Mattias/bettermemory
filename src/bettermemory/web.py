@@ -288,7 +288,7 @@ def _render_memory_list(
     parts: list[str] = []
     parts.append('<form method="get" action="/memories">')
     parts.append(
-        f'<input type="text" name="q" placeholder="Search bodies + scopes…" '
+        f'<input type="text" name="q" placeholder="Search summaries…" '
         f'value="{html.escape(query)}" style="margin-bottom:0.5rem"/>'
     )
     parts.append(

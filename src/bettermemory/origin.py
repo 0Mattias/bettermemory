@@ -328,7 +328,7 @@ def _git_worktree_root(cwd: Path) -> str | None:
 
 
 def commits_since(cwd: Path | None, since: datetime) -> int | None:
-    """Count commits in `cwd`'s repo authored after `since`.
+    """Count commits in `cwd`'s repo authored at-or-after `since`.
 
     Returns the integer count when the directory is a git repo we can
     read, None on any failure (cwd is None, git not on PATH, not a repo,
@@ -341,9 +341,15 @@ def commits_since(cwd: Path | None, since: datetime) -> int | None:
     before being handed to git so the comparison matches the timestamp
     semantics elsewhere in the store. A naive `since` is treated as UTC.
 
-    Counted in author-date space (git's default for `--since`). The
-    distinction from commit-date rarely matters for an advisory signal
-    and matches what a human reading `git log --since` would expect.
+    Counted in author-date space (git's default for `--since`). Boundary
+    semantics are git's: `--since` is INCLUSIVE (a commit authored at
+    exactly `since` IS counted) and git ignores sub-second precision, so a
+    commit and a verify landing in the same whole second count as "since".
+    This can diverge by one from the `commit_author_timestamps` + bisect
+    path (which is exclusive and microsecond-precise) only at that
+    same-second boundary — immaterial for an advisory signal. The
+    author-vs-commit-date distinction likewise rarely matters here and
+    matches what a human reading `git log --since` would expect.
 
     For batch use against many `since` values from the same repo, prefer
     `commit_author_timestamps` + bisect — one git call instead of N.
@@ -408,6 +414,15 @@ def commits_since_touching_paths(
     except OSError:
         return None
 
+    # Pathspecs are repo-root-relative, but `_git` runs with `cwd` =
+    # the caller's working directory, which may be a SUBDIRECTORY of the
+    # repo (an MCP server / agent launched from or chdir'd into `src/`,
+    # `packages/foo/`, …). Git resolves a plain pathspec relative to the
+    # invocation cwd, so a root-relative `src/foo.py` would match nothing
+    # from a subdir and rev-list would return 0 — silently reporting a
+    # genuinely-drifted verified path as clean. Prefix each with git's
+    # `:/` (`:(top)`) magic, which anchors the path at the top of the
+    # working tree regardless of cwd.
     pathspecs: list[str] = []
     for raw in paths:
         if not isinstance(raw, str) or not raw:
@@ -416,7 +431,7 @@ def commits_since_touching_paths(
             resolved = Path(raw).expanduser()
             if not resolved.is_absolute():
                 # Treat a relative path as already-relative-to-repo-root.
-                pathspecs.append(str(resolved))
+                pathspecs.append(":/" + str(resolved))
                 continue
             resolved = resolved.resolve()
         except (OSError, ValueError):
@@ -427,7 +442,7 @@ def commits_since_touching_paths(
             # Path escapes the repo — drop it. Git can't filter on
             # something outside its working tree.
             continue
-        pathspecs.append(str(rel))
+        pathspecs.append(":/" + str(rel))
 
     if not pathspecs:
         return None

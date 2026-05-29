@@ -213,14 +213,11 @@ async def _walk_through_one_session(storage_dir: Path) -> None:
             print()
 
             # ---- Step 6: fetch the fact's full body -----------------
-            # API surface note (H13): the MCP tool name is `memory_show`.
-            # If you're driving the store *without* going through MCP
-            # (i.e. `from bettermemory.store import Store` and calling
-            # methods directly), the read-one method is currently named
-            # `Store.load_one(id)`, NOT `Store.show(id)`. A `show` alias
-            # is on the Round 2 roadmap so the Python API matches the
-            # tool name surfaced here. Until then: use `load_one` from
-            # Python; use `memory_show` from MCP.
+            # API surface note: the MCP tool is `memory_show`. If you're
+            # driving the store *without* going through MCP (i.e. `from
+            # bettermemory.store import Store` and calling methods directly),
+            # the read-one method is `Store.load_one(id)`; `Store.show(id)` is
+            # a public alias for it, so either name works.
             print(f"# 6. memory_show: fetch the full body for {fact_id}")
             show_result = await session.call_tool(
                 "memory_show",

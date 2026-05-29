@@ -191,6 +191,22 @@ def dumps(post: Post) -> str:
         default_flow_style=False,
         allow_unicode=True,
     ).strip()
+    # Write-side mirror of the `loads` read cap. Without this, a write whose
+    # serialized frontmatter exceeds `_MAX_YAML_BYTES` (e.g. many/long
+    # `links` notes or `verified_paths`/`verified_commits` entries) succeeds
+    # on disk but then fails to PARSE on every subsequent read — the store's
+    # malformed-file skip silently drops the record from search/list/show/
+    # health while the write reported committed. Catching it here, at the one
+    # chokepoint every persist routes through, turns that silent permanent
+    # data loss into a clean ValueError (surfaced as a structured tool error)
+    # for ALL frontmatter fields, present and future — not field-by-field.
+    yaml_bytes = len(yaml_text.encode("utf-8"))
+    if yaml_bytes > _MAX_YAML_BYTES:
+        raise ValueError(
+            f"frontmatter YAML exceeds {_MAX_YAML_BYTES}-byte cap "
+            f"({yaml_bytes} bytes); refusing to write — a file this large "
+            "would be rejected on read, silently dropping the record"
+        )
     body = post.content.rstrip()
     return f"{_DELIM}\n{yaml_text}\n{_DELIM}\n\n{body}"
 

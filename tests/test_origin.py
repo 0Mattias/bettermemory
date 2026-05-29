@@ -466,6 +466,44 @@ def test_commits_since_touching_paths_drops_paths_outside_repo(
     assert out is None
 
 
+@pytest.mark.skipif(not _GIT_AVAILABLE, reason="git not on PATH")
+def test_commits_since_touching_paths_counts_from_repo_subdirectory(
+    tmp_path: Path,
+) -> None:
+    """Regression: pathspecs must anchor at the repo root regardless of the
+    caller's cwd. The MCP server / agent is frequently launched from or
+    chdir'd into a SUBDIRECTORY of the repo; git resolves a plain
+    root-relative pathspec (``src/foo.py``) relative to the invocation cwd,
+    so from a subdir it matched nothing and rev-list returned 0 — silently
+    reporting a genuinely-drifted verified path as clean (the unsafe
+    direction). The ``:/`` (``:(top)``) magic prefix anchors at the top of
+    the working tree. Before the fix the subdir cases below returned 0.
+    """
+    _init_repo(tmp_path)
+    _commit_file(
+        tmp_path,
+        "src/tracked.txt",
+        content="initial",
+        when=datetime(2026, 1, 1, tzinfo=timezone.utc),
+    )
+    _commit_file(
+        tmp_path,
+        "src/tracked.txt",
+        content="updated",
+        when=datetime(2026, 3, 1, tzinfo=timezone.utc),
+    )
+    subdir = tmp_path / "src"
+    nested_abs = str(subdir / "tracked.txt")
+    since = datetime(2026, 1, 15, tzinfo=timezone.utc)
+
+    # Baseline from the repo root: one post-`since` commit touched the path.
+    assert commits_since_touching_paths(tmp_path, since, [nested_abs]) == 1
+    # From a SUBDIRECTORY with an absolute verified path — the bug returned 0.
+    assert commits_since_touching_paths(subdir, since, [nested_abs]) == 1
+    # The relative-input form (treated as repo-root-relative) is subdir-safe too.
+    assert commits_since_touching_paths(subdir, since, ["src/tracked.txt"]) == 1
+
+
 # ---------------------------------------------------------------------------
 # Worktree isolation — `worktree_root` capture and the secondary filter
 # ---------------------------------------------------------------------------

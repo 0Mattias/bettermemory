@@ -286,3 +286,28 @@ def test_loads_accepts_normal_sized_frontmatter() -> None:
     p = loads(metadata_yaml)
     assert p.metadata["id"] == "01HXYZ123ABC"
     assert len(p.metadata["verified_paths"]) == 50
+
+
+def test_dumps_rejects_oversized_frontmatter() -> None:
+    """Write-side mirror of `loads`' 64 KB cap.
+
+    Without this guard a write whose serialized frontmatter exceeds the
+    ceiling (many/long `links` notes, `verified_paths`, …) succeeds on
+    disk but then fails to PARSE on every subsequent read — the store's
+    malformed-file skip silently drops the record from search/list/show/
+    health while the write reported committed. The guard turns that silent
+    permanent data loss into a clean ValueError at the one serialization
+    chokepoint, field-agnostically.
+    """
+    from bettermemory._frontmatter import _MAX_YAML_BYTES
+
+    huge = Post(
+        content="body text",
+        metadata={"id": "01HXYZ123ABC", "blob": "x" * (_MAX_YAML_BYTES + 1)},
+    )
+    with pytest.raises(ValueError, match="exceeds"):
+        dumps(huge)
+
+    # Symmetry: anything `dumps` accepts, `loads` round-trips.
+    ok = Post(content="body text", metadata={"id": "01HXYZ123ABC", "note": "y" * 2000})
+    assert loads(dumps(ok)).metadata["note"] == "y" * 2000

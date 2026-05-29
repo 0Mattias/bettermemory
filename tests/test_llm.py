@@ -143,6 +143,40 @@ def test_parse_rejects_keeper_in_duplicate_ids() -> None:
     assert proposals == []
 
 
+def test_parse_collapses_repeated_duplicate_id() -> None:
+    """A repeated NON-keeper duplicate_id is collapsed to one entry, not
+    passed through twice. Before the dedup, the applier tombstoned the id a
+    second time -> TombstonedError -> the whole human-accepted merge rolled
+    back and was recorded with a misleading 'raced with concurrent tombstone'
+    reason, though no concurrent writer existed. Validity checks still run
+    first, so a repeated keeper/hallucinated id is rejected, not collapsed.
+    """
+    a = _make_memory("memory A")
+    b = _make_memory("memory B")
+    c = _make_memory("memory C")
+    cluster = _make_cluster([a, b, c])
+    raw = json.dumps(
+        {
+            "proposals": [
+                {
+                    "type": "merge",
+                    "keeper_id": a.id,
+                    "duplicate_ids": [b.id, b.id, c.id],
+                    "new_body": "merged body",
+                    "rationale": "repeated duplicate id",
+                }
+            ]
+        }
+    )
+    proposals = parse_and_validate(raw, cluster)
+    assert len(proposals) == 1
+    merge = proposals[0]
+    assert isinstance(merge, MergeProposal)
+    assert merge.keeper_id == a.id
+    # b collapsed to a single occurrence; order preserved.
+    assert merge.duplicate_ids == (b.id, c.id)
+
+
 def test_parse_rejects_resolve_with_same_winner_and_loser() -> None:
     a = _make_memory("memory A")
     b = _make_memory("memory B")

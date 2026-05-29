@@ -68,6 +68,59 @@ def test_iter_events_skips_malformed_lines(tmp_path: Path) -> None:
     assert [e["kind"] for e in events] == ["write", "show"]
 
 
+def test_iter_events_skips_invalid_utf8_in_active_log(tmp_path: Path) -> None:
+    """A stray non-UTF-8 byte (external edit, partial write) must not crash
+    the reader. Regression: the previous text-mode `for line in f` raised
+    UnicodeDecodeError from the line iterator — BEFORE json.loads — so the
+    JSONDecodeError guard never fired, and the exception (a ValueError, not
+    OSError) propagated up and took down memory_health / scope_overview /
+    eval / doctor, which all read through here.
+    """
+    rec = Recorder(root=tmp_path, session_id="sess_test")
+    rec.record("write", id="01HXYZ", scopes=["tools"])
+    with (tmp_path / EVENT_LOG_FILENAME).open("ab") as f:
+        f.write(b"\xff\xfe not valid utf-8 or json\n")
+    rec.record("show", id="01HXYZ")
+
+    events = list(iter_events(tmp_path))  # must not raise
+    assert [e["kind"] for e in events] == ["write", "show"]
+
+
+def test_iter_all_events_survives_corrupt_archives_and_bytes(tmp_path: Path) -> None:
+    """A truncated/CRC-corrupt gzip archive or an invalid-UTF-8 byte must not
+    crash iter_all_events. It is the sole reader for memory_health,
+    scope_overview, eval, and doctor, so one bad file used to blank the whole
+    telemetry surface. Regression: EOFError (truncated gz), zlib.error
+    (CRC-corrupt gz), and UnicodeDecodeError (bad byte) are NONE of them
+    OSError, so the old `except OSError` / `except JSONDecodeError` guards
+    missed all three. A valid sibling archive + the active log must still read.
+    """
+    # A valid archive that MUST survive its corrupt siblings.
+    (tmp_path / ".events-20260102.jsonl.gz").write_bytes(
+        gzip.compress(b'{"kind": "search", "session": "s", "ts": "t"}\n')
+    )
+    # Truncated gzip -> EOFError on read.
+    full = gzip.compress(b'{"kind": "x"}\n{"kind": "y"}\n')
+    (tmp_path / ".events-20260101.jsonl.gz").write_bytes(full[: len(full) // 2])
+    # CRC-corrupt gzip -> zlib.error: flip a byte well past the 10-byte header.
+    corrupt = bytearray(gzip.compress(b'{"kind": "z"}\n' * 6))
+    corrupt[len(corrupt) // 2] ^= 0xFF
+    (tmp_path / ".events-20260103.jsonl.gz").write_bytes(bytes(corrupt))
+    # Invalid-UTF-8 byte in the active log, between two valid events.
+    rec = Recorder(root=tmp_path, session_id="sess_test")
+    rec.record("write", id="01HXYZ", scopes=["tools"])
+    with (tmp_path / EVENT_LOG_FILENAME).open("ab") as f:
+        f.write(b"\xff\xfe not valid json\n")
+    rec.record("show", id="01HXYZ")
+
+    events = list(iter_all_events(tmp_path))  # must not raise
+    kinds = [e.get("kind") for e in events]
+    # Valid archive + both active-log events come through despite the corrupt
+    # siblings; the reader degrades per-source instead of aborting.
+    assert "search" in kinds
+    assert "write" in kinds and "show" in kinds
+
+
 def test_iter_events_empty_when_no_log(tmp_path: Path) -> None:
     assert list(iter_events(tmp_path)) == []
 

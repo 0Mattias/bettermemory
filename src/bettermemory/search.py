@@ -591,11 +591,19 @@ def _score_semantic(
     """Cosine-similarity scoring over sentence-transformers embeddings.
 
     Reuses the per-memory cache from `bettermemory.semantic` so a search
-    that runs alongside dedup shares vectors. `matched_terms_fallback`
-    fills the `matched` slot for hits that came purely from semantic
-    similarity — usually the stopword-stripped query tokens so the
-    `match_terms` field on the resulting MemoryHit stays consistent
-    with the keyword/BM25 paths.
+    that runs alongside dedup shares vectors.
+
+    `matched_terms_fallback` is the stopword-stripped query token list. We
+    do NOT blindly stamp it onto a semantic hit: that would report query
+    words that appear nowhere in the memory as "matched" and drive the
+    coverage-based relevance label to a fabricated "high" for a pure
+    paraphrase hit, violating the MemoryHit contract (match_terms = the
+    query tokens that actually hit the body or scopes; relevance = the
+    fraction that matched). Instead we intersect the fallback with the
+    memory's literal body/scope tokens — the exact overlap `score_memory`
+    computes — and report that, possibly empty. A paraphrase-only hit then
+    honestly carries `match_terms=[]` / low relevance while still surfacing
+    by score.
 
     Threshold: hits with cosine < 0.3 are dropped. Below that, the
     similarity is noise — the model is matching style/structure rather
@@ -638,7 +646,20 @@ def _score_semantic(
         # stale paraphrase doesn't beat a fresh near-paraphrase.
         freshness = max(memory.created, memory.updated)
         score = sim * _recency_factor(freshness, now, half_life_days)
-        out.append((memory, score, list(matched_terms_fallback)))
+        # Report only the query tokens that LITERALLY hit this memory's
+        # body or scopes (same overlap `score_memory` computes), not the
+        # whole query — so a paraphrase-only hit carries honest match_terms
+        # and an honest (low) relevance label rather than a fabricated one.
+        body_token_set = set(_expand_kebab(tokenize(memory.body)))
+        scope_token_set: set[str] = set()
+        for scope in memory.scopes:
+            scope_token_set.update(_scope_tokens(scope))
+        literal_matched = [
+            tok
+            for tok in matched_terms_fallback
+            if tok in body_token_set or tok in scope_token_set
+        ]
+        out.append((memory, score, literal_matched))
     flush_persistent_cache()
     return out
 

@@ -652,12 +652,26 @@ def consolidate(
     # we tombstoned B in that second pair we'd be deleting the canonical
     # member of the first pair, leaving A's "keeper of B" tombstone
     # reason dangling. Preserve the earlier-crowned keeper.
+    #
+    # The mirror hazard also exists: in a bridge cluster Z–X–Y where
+    # sim(Z,X) and sim(X,Y) clear the threshold but sim(Z,Y) doesn't, the
+    # candidates sort [keeper=Z dup=X, keeper=X dup=Y]. The first pair
+    # tombstones X; the second would then crown the *already-tombstoned* X
+    # as Y's keeper and tombstone Y "near-duplicate of X" — collapsing Y's
+    # content into a memory that no longer exists in the active set and
+    # leaving Y's tombstone reason citing a dead memory. So we also skip
+    # any pair whose keeper was itself tombstoned earlier: Y was only
+    # known-similar to a removed memory (its similarity to the surviving
+    # root Z was below threshold), so leaving it active is the safe call —
+    # it stays a candidate in the report for a later pass / human review.
     tombstoned_ids: set[str] = set()
     keepers_so_far: set[str] = set()
     for candidate in dedup_candidates:
         if candidate.duplicate_id in tombstoned_ids:
             continue
         if candidate.duplicate_id in keepers_so_far:
+            continue
+        if candidate.keeper_id in tombstoned_ids:
             continue
         if candidate.duplicate_id == candidate.keeper_id:
             # Defensive: shouldn't happen, but a malformed pair
@@ -1542,7 +1556,16 @@ def _apply_llm_proposal(
 
         from .durability import find_transient_markers
 
-        transient = find_transient_markers(body_with_provenance)
+        # Gate the durability check on the LLM-authored claim, NOT on
+        # `body_with_provenance`. The provenance line is a verbatim
+        # transcript quote (the prompt asks for "the literal turn the body
+        # distils"), and real conversational turns overwhelmingly carry
+        # transient phrasing ("today i", "we just", "currently", …). Scanning
+        # the combined text would bounce almost every genuine --from-transcript
+        # proposal on a marker in the audit citation rather than in the durable
+        # claim. The byte-size cap above still counts the provenance (it is
+        # persisted); only the transient gate is scoped to proposal.body.
+        transient = find_transient_markers(proposal.body)
         if transient:
             markers = ", ".join(h.marker for h in transient)
             raise RuntimeError(
