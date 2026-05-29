@@ -7,6 +7,74 @@ breaking changes, minor for additive features, patch for fixes. The
 [compatibility contract](CONTRIBUTING.md#versioning-and-the-compatibility-contract)
 spells out exactly what's stable.
 
+## 3.3.3 - 2026-05-28
+
+A head-to-toe audit (24-unit subagent fan-out, every finding
+adversarially re-verified) of the codebase plus the new
+comparative-evaluation harness, draining 36 confirmed defects in one
+pass. No breaking changes; several fixes correct silently-wrong
+behavior, so a few observable signals shift — all toward honesty.
+
+### Added
+
+- **Comparative-evaluation harness** (`tests/eval/`, runnable via
+  `python -m tests.eval.comparative`). A fixed synthetic workload run
+  through the real `search` / `probe_for_miss` / `compute_eval` code,
+  rendered as a capability matrix plus bettermemory's measured recall and
+  silent-miss lanes. Live-agent rates (`memory_helped_rate` /
+  `endorsement_rate`) report `n/a` offline rather than a misleading
+  `0.0`, and competitor adapters never fabricate numbers.
+
+### Fixed
+
+- **Silent data loss via frontmatter overflow.** Oversized `links` notes
+  or `verified_paths` / `verified_commits` / `verified_versions` could
+  push a record's serialized frontmatter past the 64 KB YAML cap; the
+  write reported success but the file then failed to parse on every read,
+  dropping the memory from search/list/show/health. A write-side size
+  guard now lives in `_frontmatter.dumps` (mirroring the read cap), and
+  the `memory_verify` handler caps the attestation lists' count and
+  per-item length (the model field validator is bypassed on the verify
+  path's `model_copy`). `memory_proposals(accept)` now runs the same
+  `max_content_bytes` guard every other write path enforces.
+- **commit-drift no longer undercounts to zero from a repo
+  subdirectory.** Git pathspecs are anchored at the repo root, so a
+  verified path whose file genuinely moved is no longer reported
+  `clean` / `fresh` when memory_show / memory_search runs from a subdir.
+- **Stop-hook claim-excerpt attribution fires in production.** It was
+  matching retrievals against the wrong session-id space (the Claude
+  transcript id vs the in-process server's `sess_<hex>`), so it never
+  attributed and `memory_helped_rate` could never rise from the hook
+  tier; the lookup now bridges to the in-process session.
+- **`consolidate` dedup no longer collapses a memory into an
+  already-tombstoned keeper** in a transitive-similarity cluster — a
+  dangling-reference data loss that ran unattended in the Stop hook.
+- **memory_search per-hit commit-drift honors `verified_paths`,** so a
+  memory attested as stable for a path no longer shows spurious
+  spot-check noise on the search surface (now matches memory_show).
+- **An auto-applied `record_use` no longer clears a `contradicted`
+  flag** in `recent_negative_outcomes` — a memory the model flagged as
+  wrong keeps its warning across the unattended auto-commit.
+- **The event-log reader survives corruption.** A truncated or
+  CRC-corrupt gzip archive, or a stray non-UTF-8 byte, no longer crashes
+  `memory_health` / `memory_scope_overview` / eval / doctor — each
+  degrades per-record instead of taking down the whole telemetry surface.
+- **`bettermemory init` re-run preserves user customizations** on its
+  own MCP entry (`env` incl. `BETTERMEMORY_DIR`, `disabled`, `timeout`)
+  instead of clobbering them with the canonical shape.
+- **Honest retrieval signals.** The hybrid semantic ranker reports only
+  the query tokens that literally matched (no fabricated `match_terms` /
+  `high` relevance on paraphrase-only hits); the LLM merge validator
+  deduplicates repeated `duplicate_ids` (no false "concurrent tombstone"
+  abort); `consolidate --from-transcript` gates transient markers on the
+  durable body, not the verbatim provenance quote.
+- Plus: `health` recent-silent-miss ordering, `ingest` intra-batch dedup
+  and up-front `--scope` validation, `reindex --embeddings`
+  stale-dimension purge, `doctor` symlink / stale-binary false positives,
+  and a uv.lock version-sync guard. Documentation reconciled with
+  behavior across `docs/eval.md`, `SECURITY.md` (the CSRF token gate),
+  the event-log privacy note, and several stale code comments.
+
 ## 3.3.2 - 2026-05-28
 
 Closes deferred queue item C3, plus a round of audit hardening on the
