@@ -143,7 +143,7 @@ Storage resolution: `$BETTERMEMORY_DIR` if set, else `./.claude-memory/` if it e
 
 ## Tools
 
-24 MCP tools, grouped:
+**24 MCP tools — 18 registered by default.** The six curation / power-user tools (`memory_health`, `memory_acknowledge_miss`, `memory_rename_scope`, `memory_restore`, `memory_list_tombstones`, `memory_proposals`) register only with `full_tool_surface = true` under `[behavior]` — except `memory_proposals`, which also surfaces whenever `[proposals]` is enabled. All six stay reachable via the `bettermemory` CLI; trimming them keeps the per-turn tool-description context lean for the common case. Grouped:
 
 - **Retrieval** — `memory_search` (incl. `since_prior_session` filter), `memory_show`, `memory_list`, `memory_scope_overview`
 - **Writing** — `memory_write` (plus `memory_write_confirm` / `memory_write_cancel` for the staged-write flow), `memory_update`

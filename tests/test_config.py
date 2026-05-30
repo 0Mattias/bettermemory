@@ -78,7 +78,8 @@ def test_default_config_round_trips_through_load_config(tmp_path: Path) -> None:
     """Writing DEFAULT_CONFIG and loading it yields the same defaults as
     constructing `Config()` from scratch. Closes the loop on the
     first-run experience: a user who never edits the config file gets
-    exactly the dataclass defaults."""
+    exactly the dataclass defaults — with one deliberate, pinned exception
+    (full_tool_surface; asserted at the end)."""
     config_path = tmp_path / "config.toml"
     config_path.write_text(DEFAULT_CONFIG, encoding="utf-8")
 
@@ -148,6 +149,16 @@ def test_default_config_round_trips_through_load_config(tmp_path: Path) -> None:
     assert loaded.scopes.allowed == fresh.scopes.allowed
     assert loaded.telemetry.enabled == fresh.telemetry.enabled
     assert loaded.telemetry.max_bytes == fresh.telemetry.max_bytes
+
+    # The one DELIBERATE exception to "round-trips to dataclass defaults":
+    # full_tool_surface. The dataclass default is True (the full capability
+    # set, for programmatic embedders), but the shipped server — load_config
+    # with no user-set key — applies the lean deployment policy (False). The
+    # objects are frozen-by-convention value types and the loader is the
+    # policy layer. Pinned so the divergence stays intentional rather than
+    # drifting silently. See BehaviorConfig.full_tool_surface and load_config.
+    assert fresh.behavior.full_tool_surface is True
+    assert loaded.behavior.full_tool_surface is False
 
 
 # ---------------------------------------------------------------------------

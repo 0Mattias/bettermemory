@@ -190,6 +190,15 @@ max_scopes_per_write = 64
 curation_hint_threshold = 5
 curation_hint_enabled = true
 
+# Tool-surface breadth. Lean by default: the six curation / power-user tools
+# (memory_health, memory_acknowledge_miss, memory_rename_scope,
+# memory_restore, memory_list_tombstones, memory_proposals) are NOT
+# registered on the MCP server, keeping the per-turn tool-description context
+# lean for the common case. They stay reachable via the `bettermemory` CLI.
+# Set true for the full surface — the curate-loop skill needs it.
+# (memory_proposals also surfaces when [proposals] auto_propose is on.)
+full_tool_surface = false
+
 [scopes]
 # If non-empty, writes with scopes outside this list fail. Empty = anything.
 allowed = []
@@ -364,6 +373,28 @@ class BehaviorConfig:
     # the in-conversation surfacing loop the audit identified.
     curation_hint_threshold: int = 5
     curation_hint_enabled: bool = True
+    # Tool-surface breadth. When False, the curation / power-user MCP tools —
+    # memory_health, memory_acknowledge_miss, memory_rename_scope,
+    # memory_restore, memory_list_tombstones, memory_proposals — are NOT
+    # registered, trimming six tools (and their long descriptions) out of the
+    # context every client pays on every turn. They stay reachable via the
+    # `bettermemory` CLI, and memory_proposals also auto-registers whenever
+    # [proposals] auto_propose is on.
+    #
+    # Deliberate default asymmetry (see `load_config` and the round-trip test
+    # in tests/test_config.py): this dataclass default is True, so an
+    # explicitly-constructed Config — tests, programmatic embedders importing
+    # bettermemory — gets the full capability set. The SHIPPED default that
+    # `load_config()` applies when the user has no config.toml is False (lean).
+    # Leanness is a deployment policy for the typical MCP client, not a
+    # property of the config object; the loader is the policy layer (and these
+    # objects are frozen, so policy can't be applied post-construction). The
+    # curate-loop skill drives memory_health / memory_acknowledge_miss /
+    # memory_restore as MCP tools, so it needs full_tool_surface = true. The
+    # cut was measured in the dogfood event log: 43% of sessions never called
+    # any memory tool, and these six had 0-8 organic calls each across 190
+    # sessions.
+    full_tool_surface: bool = True
 
 
 @dataclass
@@ -708,6 +739,13 @@ def load_config(path: Path | None = None) -> Config:
             max_scopes_per_write=int(behavior_raw.get("max_scopes_per_write", 64)),
             curation_hint_threshold=int(behavior_raw.get("curation_hint_threshold", 5)),
             curation_hint_enabled=bool(behavior_raw.get("curation_hint_enabled", True)),
+            # Shipped default is LEAN: when the user hasn't set this key, the
+            # server hides the curation/power-user tools. This intentionally
+            # diverges from the BehaviorConfig dataclass default (True) — the
+            # loader is the deployment-policy layer. See that field's comment
+            # and the round-trip test's documented exception. Set
+            # `full_tool_surface = true` under [behavior] for the full surface.
+            full_tool_surface=bool(behavior_raw.get("full_tool_surface", False)),
         ),
         scopes=ScopesConfig(
             allowed=list(scopes_raw.get("allowed", [])),

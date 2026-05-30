@@ -1,6 +1,6 @@
 # API surface (3.x)
 
-The contractual list of MCP tools bettermemory exposes. Signatures, defaults, and return shapes are stable within the 3.x line per the rules in [`CONTRIBUTING.md`](../CONTRIBUTING.md). The 24 tools group naturally:
+The contractual list of MCP tools bettermemory exposes. Signatures, defaults, and return shapes are stable within the 3.x line per the rules in [`CONTRIBUTING.md`](../CONTRIBUTING.md). There are 24 tools, but only **18 register by default**: the six curation / power-user tools (`memory_health`, `memory_acknowledge_miss`, `memory_rename_scope`, `memory_restore`, `memory_list_tombstones`, `memory_proposals`) register only when `full_tool_surface = true` under `[behavior]` (`memory_proposals` also surfaces when `[proposals]` is enabled), and all six remain available via the `bettermemory` CLI. The 24 group naturally:
 
 - **Retrieval** — `memory_search` (now with `since_prior_session` filter), `memory_show`, `memory_list`, `memory_scope_overview`
 - **Writing** — `memory_write` (plus `memory_write_confirm` / `memory_write_cancel` for the staged-write flow), `memory_update`
