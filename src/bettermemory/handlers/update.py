@@ -223,7 +223,14 @@ async def memory_update(
 
     merged = existing.model_copy(update=update_fields)
     try:
-        updated = deps.store.update(merged)
+        # Metadata-only edits (content is None) must not clobber a verify
+        # that landed concurrently: `merged` carries this handler's pre-read
+        # snapshot of last_verified_at / verified_*, but a parallel
+        # memory_verify bumps last_verified_at WITHOUT bumping `updated`, so
+        # Store.update's `updated` CAS would pass and the stale snapshot would
+        # win. preserve_verification keeps the freshest on-disk verification.
+        # Content edits already reset those fields above, so they don't.
+        updated = deps.store.update(merged, preserve_verification=content is None)
     except ConcurrentUpdateError as exc:
         # W2: another agent landed an update between this handler's
         # `load_one` snapshot above and the under-lock CAS in

@@ -13,8 +13,8 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any
 
-from ._shared import Context, _advance_turn, _validate_content_size
-from ..models import Category, Source
+from ._shared import Context, _advance_turn, _validate_write_payload
+from ..models import Confidence, Source
 from ..proposals import ProposalQueue
 
 if TYPE_CHECKING:
@@ -110,42 +110,44 @@ async def memory_proposals(
                 "proposal_id": proposal_id,
             }
         cat_value = category or match.suggested_category
-        try:
-            cat = Category(cat_value)
-        except ValueError as exc:
-            raise ValueError(
-                f"invalid category {cat_value!r}: must be one of "
-                f"{[c.value for c in Category]}"
-            ) from exc
-        # Run the same content-size guard every other write path enforces
-        # (memory_write / memory_update / episode_write). Without it an
-        # oversized proposal body (>max_content_bytes) is written, then
-        # fails the 1 MiB bounded read on the next load — the accept reports
-        # success while the record silently vanishes from every read surface.
-        _validate_content_size(match.body, deps.config.behavior.max_content_bytes)
-        memory = deps.store.write(
+        # Accept must enforce the SAME write policy as memory_write — not
+        # just the content-size cap but the scope-count cap AND the
+        # allowed-scopes whitelist. Previously this path validated only
+        # content size, so an accepted proposal could write a scope outside
+        # the configured whitelist or past max_scopes_per_write (fail-open).
+        # Route through the shared validator so the policy surface cannot
+        # drift between write entry points; it also gives a clean error for
+        # a bad category or scope instead of a bare exception.
+        payload = _validate_write_payload(
             content=match.body,
             scopes=list(scopes),
-            category=cat,
-            source=Source.INFERRED,
-            origin=_h.capture_origin(),
+            confidence=Confidence.MEDIUM.value,
+            source=Source.INFERRED.value,
+            category=cat_value,
+            allowed_scopes=deps.config.scopes.allowed,
+            max_content_bytes=deps.config.behavior.max_content_bytes,
+            max_scopes_per_write=deps.config.behavior.max_scopes_per_write,
         )
+        memory = deps.store.write(**payload, origin=_h.capture_origin())
         queue.remove(proposal_id)
+        cat_written = (
+            memory.category.value if memory.category is not None else cat_value
+        )
         deps.recorder.record(
             "memory_proposals",
             action="accept",
             proposal_id=proposal_id,
             id=memory.id,
-            scopes=list(scopes),
-            category=cat.value,
+            scopes=memory.scopes,
+            category=cat_written,
         )
         return {
             "status": "accepted",
             "action": "accept",
             "proposal_id": proposal_id,
             "id": memory.id,
-            "scopes": list(scopes),
-            "category": cat.value,
+            "scopes": memory.scopes,
+            "category": cat_written,
         }
 
     raise ValueError(

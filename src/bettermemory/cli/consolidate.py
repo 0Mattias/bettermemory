@@ -68,8 +68,11 @@ def add_subparser(
         default=None,
         help=(
             "Cosine threshold for the semantic dedup pass (default 0.85). "
-            "When the embeddings extra is not installed the pass falls "
-            "back to Jaccard at 0.75 — this flag is ignored in that case."
+            "When the embeddings extra is not installed the pass falls back "
+            "to Jaccard (default 0.75). If you pass this flag without "
+            "embeddings it IS still applied — as the Jaccard cutoff, which "
+            "is a different scale from cosine, so raising it makes dedup "
+            "stricter (fewer near-duplicates tombstoned)."
         ),
     )
     parser.add_argument(

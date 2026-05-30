@@ -232,8 +232,13 @@ def _render_overview(report: Any) -> str:
     """Dashboard summary built from a HealthReport."""
     n = report.total_active_memories
     debt = report.verification_debt
-    never_verified = len(debt.never_verified) if debt else 0
-    stale_verifications = len(debt.stale) if debt else 0
+    # Read the uncapped totals, not len() of the capped row lists.
+    # compute_health slices never_verified / stale at _VERIFICATION_DEBT_CAP
+    # (20) to bound the JSON; the dashboard headline must reflect the real
+    # backlog, so on a store with >20 of either the count would otherwise
+    # freeze at 20 and the warn cue would saturate.
+    never_verified = debt.never_verified_total if debt else 0
+    stale_verifications = debt.stale_total if debt else 0
     parts: list[str] = []
     parts.append('<div class="bucket-summary">')
     for label, value, cls in (

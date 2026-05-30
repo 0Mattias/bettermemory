@@ -41,7 +41,7 @@ In a fresh session, ask *"Walk me through pandas from zero to hero"* — Claude 
 uvx bettermemory doctor
 ```
 
-Checks binary on PATH, config loadable, storage writable, memories parse cleanly, event log writable, whether the Stop hook is firing (`turn_audited` cadence), and any client config referencing a stale path. Each failed check has a one-line fix hint, and the process exits 0/1/2 for ok/warn/fail.
+Runs ten checks — Python version, binary on PATH, config loadable, storage writable, memories parse cleanly, event log writable, whether the Stop hook is firing (`turn_audited` cadence), the optional embeddings extra, any client config referencing a stale path, and the installed package metadata. Each failed check has a one-line fix hint, and the process exits 0/1/2 for ok/warn/fail.
 
 ## Uninstall
 

@@ -36,6 +36,7 @@ from .models import (
     utcnow,
 )
 from .origin import Origin
+from .time_utils import ensure_utc
 
 
 EPISODES_DIR = "episodes"
@@ -388,10 +389,22 @@ class EpisodeStore:
         # loads as the expected type rather than tripping the validator.
         swarm_raw = meta.get("swarm_id")
         swarm_id = str(swarm_raw) if swarm_raw is not None else None
+        # Normalise `created` to tz-aware UTC at load. Frontmatter without an
+        # offset (a hand-edited or legacy file) parses as a naive datetime;
+        # an unguarded naive value raises TypeError when the `created` sort
+        # (list_by_session / list_by_swarm) or the `since` filter
+        # (episode_search) compares it against an aware sibling — failing the
+        # WHOLE episode read instead of skipping one row. health.py already
+        # guards comparisons this way. A missing/null `created` raises
+        # ValueError, which the read surface already treats as a skip-this-row
+        # signal (same as the schema_version guard above).
+        created = ensure_utc(meta["created"])
+        if created is None:
+            raise ValueError(f"{path}: 'created' is missing or null")
         return Episode(
             id=str(meta["id"]),
             session_id=str(meta["session_id"]),
-            created=meta["created"],
+            created=created,
             body=post.content,
             scopes=list(meta.get("scopes", [])),
             takeaway=meta.get("takeaway"),

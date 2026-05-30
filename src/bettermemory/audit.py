@@ -314,6 +314,7 @@ def probe_for_miss(
     *,
     recent_events: Iterable[dict[str, Any]],
     session_id: str,
+    retrieval_session_id: str | None = None,
     now: datetime | None = None,
     lookback_seconds: int = DEFAULT_LOOKBACK_SECONDS,
     caller_origin: Origin | None = None,
@@ -352,6 +353,16 @@ def probe_for_miss(
     probe deliberately does NOT request `expand_top` or `path_drift` —
     those signals matter for *consuming* a hit, not for deciding
     whether a search should have happened.
+
+    `retrieval_session_id` is the session id used ONLY for the "did the
+    model already retrieve this turn?" shield (`_count_recent_retrievals`).
+    It defaults to `session_id`. Out-of-process callers (the Stop hook)
+    must pass the bridged *server* session here, because their `session_id`
+    is Claude Code's transcript id — a different id space from the server's
+    `sess_<hex>` — so it never matches the search/show/list events the
+    server emitted, leaving the shield dead and every searched-then-
+    continued turn mis-flagged as a miss. In-process callers omit it; their
+    `session_id` already is the server session.
 
     Returns a `MissReport`. The handler is responsible for emitting a
     `search_miss` event when `report.is_miss` — this function is
@@ -446,7 +457,11 @@ def probe_for_miss(
 
     recent_retrieval_count = _count_recent_retrievals(
         recent_events,
-        session_id=session_id,
+        # Match the *server* session that emitted the retrieval events, not
+        # necessarily the caller's `session_id` (see `retrieval_session_id`
+        # in the docstring). In-process callers leave it None and fall back
+        # to `session_id`, which already is the server session.
+        session_id=retrieval_session_id or session_id,
         now=now,
         lookback_seconds=lookback_seconds,
     )

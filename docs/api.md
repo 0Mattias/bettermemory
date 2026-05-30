@@ -106,7 +106,7 @@ Optimistic-concurrency CAS (W2, since 3.2.0). The handler snapshots the on-disk 
 - `target_id`: a valid ULID — the other memory.
 - `note`: optional free-form string.
 
-Self-links are rejected. `memory_show` surfaces forward `links` on the source and `reverse_links` on the target. Forward-compat: an unknown link type on disk loads as `[]` rather than failing the whole record.
+Self-links are rejected. `memory_show` surfaces forward `links` on the source and `reverse_links` on the target. Forward-compat: a link entry with an unknown type or invalid `target_id` is silently dropped — that entry only; the record's other valid links still load, rather than the whole list failing.
 
 ## Lifecycle
 
@@ -162,7 +162,7 @@ Hook attribution: the Stop hook (`bettermemory audit-turn`) also looks at the as
 - `heavily_used_top_k: int = 10`.
 - `min_applied: int | None = None`. Falls through to `behavior.heavily_used_min_applied` (config default `3`).
 
-Returns the aggregate rollup: `generated_at` (ISO timestamp of when the report was computed — caller-side time-pinning so a stored report's recency is unambiguous), `window_days` (the analysis window actually used; echoes the `window_days` argument with its config-fallback default of 30 applied), `total_active_memories`, `total_events`, `distinct_sessions`, `dead_weight`, `cold_memories`, `heavily_used` (with per-row `applied=N (auto=X exp=Y)` split), `contradicted` (each row carries a `resolution_timeline`), `marker_stats`, `scope_distribution`, `scope_health`, `rare_scopes`, `orphan_use_events`, `verification_debt`, `commit_drift_debt` (null when the server isn't in a repo whose memories live in this store), `silent_misses`, `cold_endorsement_memories`, and `recommendations`.
+Returns the aggregate rollup: `generated_at` (ISO timestamp of when the report was computed — caller-side time-pinning so a stored report's recency is unambiguous), `window_days` (the analysis window actually used; echoes the `window_days` argument with its config-fallback default of 30 applied), `total_active_memories`, `total_events`, `distinct_sessions`, `dead_weight`, `cold_memories`, `heavily_used` (with per-row `applied=N (auto=X exp=Y)` split), `contradicted` (each row carries a `resolution_timeline`), `marker_stats`, `scope_distribution`, `scope_health`, `rare_scopes`, `orphan_use_events`, `verification_debt`, `commit_drift_debt` (null when the server isn't in a repo whose memories live in this store), `silent_misses`, `recent_silent_misses` (the bounded newest-first list of recent miss candidates, each `{event_id, top_hit_id, …}` — feed an `event_id` to `memory_acknowledge_miss`), `cold_endorsement_memories`, and `recommendations`.
 
 `cold_endorsement_memories` is the per-memory count (NOT per-turn) of distinct memories with `retrieval_count >= N` AND zero explicit applies — the "weakly endorsed" pattern where the ranker keeps surfacing a memory but the model never deliberately calls `memory_record_use(applied)` on it. A single memory the ranker hits 50 times contributes 1, not 50.
 
@@ -178,12 +178,19 @@ Silent-miss telemetry. Fires from a client-side end-of-turn hook with the user's
 
 Always emits `turn_audited` so audit cadence stays visible. Emits `search_miss` additionally when a high-relevance probe hit exists AND no retrieval happened in the window. The threshold rule is versioned (`THRESHOLD_RULE_V1 = "v1_top1_high"`) and recorded on every event so a calibration pass can replay historical logs.
 
+### `memory_acknowledge_miss(event_id, reason)`
+
+- `event_id: str`. Required. The per-event ULID stamped on a `search_miss` event — surfaced in `memory_health`'s `recent_silent_misses` list.
+- `reason: str`. Required, ≥ 8 characters. Free-form why this flagged miss is a false positive (the model already had the context open, the hit was off-topic, etc.).
+
+Emits an `acknowledge_miss` event so the miss drops out of the actionable silent-miss counters (`memory_scope_overview` / `memory_health`). Idempotent: re-acking the same `event_id` returns the same result without writing a duplicate event.
+
 ### `memory_rename_scope(old_scope, new_scope, include_tombstones?)`
 
 - `old_scope: str` and `new_scope: str`. Required.
 - `include_tombstones: bool = True`.
 
-Returns `{active: [ids], tombstoned: [ids]}` for records actually touched.
+Returns `{old_scope, new_scope, active: [ids], tombstoned: [ids]}` — the normalized scopes echoed back, plus the ids of the records actually touched.
 
 ### `memory_proposals(action?, proposal_id?, scopes?, category?)`
 

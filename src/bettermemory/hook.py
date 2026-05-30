@@ -240,11 +240,22 @@ def run_audit(
     # "this is unrelated to project X") would still produce silent-miss
     # flags here, since the hook can't read the server's in-memory state.
     excluded_scopes = _disabled_scopes_from_events(recent)
+    # The probe's retrieval shield ("did the model already search this
+    # turn?") must match the server's session id, not this hook's
+    # `session_id` (which is Claude Code's transcript id — a different id
+    # space from the server's `sess_<hex>`). Bridge to the live in-process
+    # server session the same way `_disabled_scopes_from_events` and
+    # `_emit_hook_attributions` do; the probe falls back to `session_id`
+    # when no in-process session is on record. Without this, the shield was
+    # structurally dead in the Stop hook and every searched-then-continued
+    # turn could still emit a `search_miss`.
+    server_session = _latest_in_process_session(recent)
     report = probe_for_miss(
         memories,
         user_message,
         recent_events=recent,
         session_id=session_id,
+        retrieval_session_id=server_session,
         now=utcnow(),
         lookback_seconds=60,
         caller_origin=caller_origin,

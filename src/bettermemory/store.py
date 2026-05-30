@@ -437,7 +437,13 @@ class Store:
             _index_upsert_quietly(self.root, memory, filename=path.name)
         return memory
 
-    def update(self, memory: Memory, *, force: bool = False) -> Memory:
+    def update(
+        self,
+        memory: Memory,
+        *,
+        force: bool = False,
+        preserve_verification: bool = False,
+    ) -> Memory:
         """Overwrite an existing memory in place; bump `updated`.
 
         Optimistic concurrency (W2): the caller's `memory.updated` is the
@@ -454,6 +460,14 @@ class Store:
         want to overwrite without the CAS — e.g. migration tooling that has
         already reconciled concurrent edits out-of-band. Not exposed through
         the MCP handler boundary; reach for it from in-process code only.
+
+        `preserve_verification=True` keeps the on-disk `last_verified_at` and
+        `verified_*` lists instead of the caller's snapshot copy. The
+        metadata-update handler passes it so a metadata-only edit cannot
+        clobber a `mark_verified` that landed concurrently: verify bumps
+        `last_verified_at` but NOT `updated`, so the `updated` CAS alone
+        wouldn't catch it. Content edits leave it False — they reset
+        verification on purpose (the attested body no longer exists).
 
         Raises:
             MemoryNotFoundError: no active record with that id, or the file
@@ -509,10 +523,33 @@ class Store:
             # the comparison is between two aware datetimes in the same
             # tz; equality compares to the microsecond, which is the
             # resolution `utcnow()` writes.
-            if not force:
-                current = self._load_path(existing_path)
-                if current.updated != memory.updated:
-                    raise ConcurrentUpdateError(memory.id, current.updated)
+            # Load the current on-disk record when needed: for the CAS
+            # (not force) and/or to preserve verification fields below.
+            current = (
+                self._load_path(existing_path)
+                if (not force or preserve_verification)
+                else None
+            )
+            if not force and current is not None and current.updated != memory.updated:
+                raise ConcurrentUpdateError(memory.id, current.updated)
+            if preserve_verification and current is not None:
+                # Cross-axis race: `mark_verified` bumps `last_verified_at`
+                # (and the verified_* lists) but NOT `updated`, so a verify
+                # that lands between the caller's snapshot read and this lock
+                # passes the `updated` CAS above — yet the caller's
+                # `new_memory` still carries the STALE pre-verify
+                # verification and would silently clobber the attestation.
+                # Metadata-only updates pass preserve_verification=True to
+                # keep the freshest on-disk verification instead of the
+                # caller's snapshot.
+                new_memory = new_memory.model_copy(
+                    update={
+                        "last_verified_at": current.last_verified_at,
+                        "verified_paths": list(current.verified_paths),
+                        "verified_commits": list(current.verified_commits),
+                        "verified_versions": list(current.verified_versions),
+                    }
+                )
             self._write_path(existing_path, new_memory)
             # perf: index upsert under lock is intentional — see audit H1.
             _index_upsert_quietly(self.root, new_memory, filename=existing_path.name)

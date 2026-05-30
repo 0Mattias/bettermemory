@@ -1124,6 +1124,37 @@ def test_run_audit_baseline_flags_miss(tmp_path: Path) -> None:
     assert result["verdict"] == "miss"
 
 
+def test_run_audit_recent_retrieval_under_server_session_suppresses_miss(
+    tmp_path: Path,
+) -> None:
+    """Regression (whole-tree sweep, HIGH): the Stop hook's retrieval
+    shield must bridge to the *server* session id. A `search` the server
+    emitted under its `sess_<hex>` id within the lookback window proves the
+    model retrieved this turn, so the same high-relevance hit that is a
+    miss in the baseline must NOT be flagged. Before the fix, run_audit
+    compared retrievals against Claude's transcript session id — a
+    different id space from the server's `sess_<hex>` — so the shield was
+    structurally dead and this returned "miss". The only difference from
+    the baseline test is the seeded retrieval, so a non-miss verdict
+    isolates the shield."""
+    mem_dir = tmp_path / "mem"
+    mem_dir.mkdir()
+    Store(mem_dir).write(content=_MISS_BODY, scopes=["infrastructure"])
+
+    # The server emits a retrieval event under its own session id, exactly
+    # as memory_search does. The hook reads it back cross-process.
+    Recorder(root=mem_dir, session_id="sess_server").record("search")
+
+    result = run_audit(
+        user_message=_MISS_QUERY,
+        assistant_response=None,
+        # Claude Code's transcript id — deliberately NOT the server session.
+        session_id="claude-retrieved",
+        config=_miss_config(mem_dir),  # type: ignore[arg-type]
+    )
+    assert result["verdict"] == "ok"
+
+
 def test_run_audit_disabled_scope_suppresses_stop_hook_miss(tmp_path: Path) -> None:
     """C3 core: a scope the user disabled in-session (recorded as a
     `scope_disable` event) is excluded from the hook's probe, so the
@@ -1179,13 +1210,18 @@ def test_run_audit_disable_resets_after_server_restart(tmp_path: Path) -> None:
     mem_dir.mkdir()
     Store(mem_dir).write(content=_MISS_BODY, scopes=["infrastructure"])
 
-    # Old server disabled the scope, then restarted; the new server's
-    # first in-process activity lands under a fresh session id and does
-    # NOT shield the hook's own session, so the miss must reappear.
+    # Old server disabled the scope, then restarted; the new server's first
+    # in-process activity lands under a fresh session id, which re-anchors
+    # the disabled-scope reconstruction (the prior session's disable no
+    # longer applies), so the miss must reappear. The anchor is a
+    # non-retrieval `write` event on purpose: a `search`/`show`/`list` here
+    # would (correctly) trip the retrieval shield and mask the reset behind
+    # an unrelated mechanism — the shield itself is covered by
+    # test_run_audit_recent_retrieval_under_server_session_suppresses_miss.
     Recorder(root=mem_dir, session_id="sess_old").record(
         "scope_disable", scope="infrastructure"
     )
-    Recorder(root=mem_dir, session_id="sess_new").record("search", returned=[])
+    Recorder(root=mem_dir, session_id="sess_new").record("write")
 
     result = run_audit(
         user_message=_MISS_QUERY,

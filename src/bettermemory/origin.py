@@ -341,15 +341,19 @@ def commits_since(cwd: Path | None, since: datetime) -> int | None:
     before being handed to git so the comparison matches the timestamp
     semantics elsewhere in the store. A naive `since` is treated as UTC.
 
-    Counted in author-date space (git's default for `--since`). Boundary
-    semantics are git's: `--since` is INCLUSIVE (a commit authored at
-    exactly `since` IS counted) and git ignores sub-second precision, so a
-    commit and a verify landing in the same whole second count as "since".
-    This can diverge by one from the `commit_author_timestamps` + bisect
-    path (which is exclusive and microsecond-precise) only at that
-    same-second boundary — immaterial for an advisory signal. The
-    author-vs-commit-date distinction likewise rarely matters here and
-    matches what a human reading `git log --since` would expect.
+    Counted in COMMITTER-date space: `git rev-list --since` filters on
+    committer date, NOT author date (a common misreading — corrected here
+    after the whole-tree sweep found the old docstring claimed author-date).
+    This DIVERGES from the `commit_author_timestamps` + bisect path that
+    memory_search and the health rollup use (those count author-date), so
+    after a rebase — which preserves author date but rewrites committer
+    date, and `sync` rebases on every pull — the SAME memory can read
+    drifted via memory_show (this function) yet clean via memory_search.
+    Unifying both signals onto author-date is a tracked follow-up: it must
+    move the paths-filtered `commits_since_touching_paths` variant in
+    lockstep and ship rebase-fixture tests, so it is deferred rather than
+    rushed into a half-fix. Boundary semantics are git's: `--since` is
+    INCLUSIVE and ignores sub-second precision.
 
     For batch use against many `since` values from the same repo, prefer
     `commit_author_timestamps` + bisect — one git call instead of N.

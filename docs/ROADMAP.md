@@ -31,7 +31,7 @@ Published roadmap is part of the distribution strategy: people deciding between 
 
 ## ~~Next~~ Shipped (2.5.0) — `bettermemory eval`
 
-✅ **`bettermemory eval` CLI**. Reads `.events.jsonl` plus the active store, reports `memory_helped_rate`, `endorsement_rate`, `silent_miss_rate` with Wilson 95% confidence intervals. Lists cold-endorsement memories and silent-miss candidates. JSON output for CI. Methodology in [`docs/eval.md`](eval.md); pure compute in `src/bettermemory/eval.py`; 52 tests in `tests/test_eval.py`.
+✅ **`bettermemory eval` CLI**. Reads `.events.jsonl` plus the active store, reports `memory_helped_rate`, `endorsement_rate`, `silent_miss_rate` with Wilson 95% confidence intervals. Lists cold-endorsement memories and silent-miss candidates. JSON output for CI. Methodology in [`docs/eval.md`](eval.md); pure compute in `src/bettermemory/eval.py`; 93 tests in `tests/test_eval.py`.
 
 **Comparative harness shipped in 3.3.3; numbers still pending.** The harness landed at `tests/eval/` (see the comparative-publication section above) — bettermemory runs locally, the competitors ride as capability-matrix stubs. The metric and the harness are owned territory — *every other comparison article in this market is about retrieval recall.* Owning *"did memory shape the reply?"* is the lane-claim. The `[embeddings]` and `[embeddings-fast]` extras (1.0.0 and 2.5.0) closed the install-friction gap; what remains is wiring live competitor runs + the write-up.
 

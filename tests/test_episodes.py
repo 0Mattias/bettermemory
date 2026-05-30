@@ -91,6 +91,42 @@ def test_swarm_id_omitted_from_frontmatter_when_absent(
     assert episode_store.list_by_session("sess_aaaa1111")[0].swarm_id is None
 
 
+def test_naive_created_episode_does_not_crash_reads(
+    episode_store: EpisodeStore,
+) -> None:
+    """Whole-tree sweep (MEDIUM): a hand-edited or legacy episode whose
+    frontmatter `created` has no UTC offset parses as a NAIVE datetime.
+    Before the fix that naive value reached the `created` sort
+    (list_by_session / list_by_swarm) and the `since` filter
+    (episode_search) and raised an uncaught TypeError comparing naive vs
+    aware — failing the WHOLE episode read instead of skipping one row.
+    Load-time ensure_utc now normalises it so reads sort it alongside aware
+    siblings."""
+    episode_store.write(session_id="sess_aaaa1111", body="aware one")
+    episode_store.write(session_id="sess_aaaa1111", body="naive one")
+
+    # Rewrite the second file's `created` to a bare (offset-less) value, as a
+    # hand-edit or a legacy/external writer would leave it. Reusing a real
+    # episode keeps the id/scopes valid so it still loads rather than being
+    # skipped for an unrelated reason.
+    target = next(
+        p
+        for p in episode_store._iter_session_paths("sess_aaaa1111")
+        if "naive one" in p.read_text(encoding="utf-8")
+    )
+    rewritten = [
+        "created: 2024-01-01 12:00:00" if line.startswith("created:") else line
+        for line in target.read_text(encoding="utf-8").splitlines()
+    ]
+    target.write_text("\n".join(rewritten) + "\n", encoding="utf-8")
+
+    # The sort must not raise mixing naive + aware; both episodes return.
+    eps = episode_store.list_by_session("sess_aaaa1111")
+    assert {e.body.strip() for e in eps} == {"aware one", "naive one"}
+    naive_ep = next(e for e in eps if e.body.strip() == "naive one")
+    assert naive_ep.created.tzinfo is not None  # normalised to aware UTC
+
+
 def test_list_by_swarm_fans_in_across_sessions(
     episode_store: EpisodeStore,
 ) -> None:

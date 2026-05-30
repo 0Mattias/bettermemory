@@ -5910,6 +5910,50 @@ async def test_memory_proposals_accept_rejects_oversized_body(
     assert [p.id for p in ProposalQueue(memory_dir).load()] == ["big"]
 
 
+async def test_memory_proposals_accept_enforces_allowed_scopes(
+    memory_dir: Path,
+) -> None:
+    """Whole-tree sweep (MEDIUM, fail-open): when `[scopes] allowed` is set,
+    accepting a proposal into a non-allowed scope must be refused — just like
+    memory_write / memory_update / memory_rename_scope. Previously accept wrote
+    straight via store.write, bypassing both the whitelist and the
+    max_scopes_per_write cap, so the proposal queue was an end-run around the
+    policy. On refusal the proposal stays queued (the retry contract)."""
+    from bettermemory.config import ScopesConfig
+    from bettermemory.proposals import ProposalQueue
+
+    cfg = Config(
+        storage=StorageConfig(directory=str(memory_dir)),
+        scopes=ScopesConfig(allowed=["tools", "infrastructure"]),
+    )
+    server = build_server(config=cfg, store=Store(memory_dir), state=SessionState())
+    _seed_proposal(memory_dir, pid="p1", body="user prefers terse explanations")
+
+    with pytest.raises(Exception, match="not in allowed list"):
+        await _call(
+            server,
+            "memory_proposals",
+            action="accept",
+            proposal_id="p1",
+            scopes=["career"],
+        )
+    # Refused: proposal still queued, nothing written.
+    assert [p.id for p in ProposalQueue(memory_dir).load()] == ["p1"]
+    assert Store(memory_dir).load_all() == []
+
+    # An allowed scope goes through.
+    res = await _call(
+        server,
+        "memory_proposals",
+        action="accept",
+        proposal_id="p1",
+        scopes=["tools"],
+    )
+    assert res["status"] == "accepted"
+    assert res["scopes"] == ["tools"]
+    assert ProposalQueue(memory_dir).load() == []
+
+
 async def test_memory_proposals_accept_requires_scopes(
     server: Any, memory_dir: Path
 ) -> None:

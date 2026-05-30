@@ -1086,6 +1086,65 @@ def test_update_cas_detects_stale_snapshot(
     assert "edit from A" not in final.body
 
 
+def test_metadata_update_preserves_concurrent_verification(tmp_path: Path) -> None:
+    """Whole-tree sweep (MEDIUM): a metadata-only update must not clobber a
+    `mark_verified` that landed after the handler's snapshot read. verify
+    bumps `last_verified_at` (+ the verified_* lists) but NOT `updated`, so
+    the `updated` CAS alone passes and, without preserve_verification, the
+    caller's stale snapshot (last_verified_at=None) would silently erase the
+    attestation. With preserve_verification=True the freshest on-disk
+    verification survives while the metadata edit still applies."""
+    store = Store(tmp_path)
+    original = store.write(
+        content="durable claim about the backup system",
+        scopes=["infrastructure"],
+    )
+    assert original.last_verified_at is None
+
+    # Caller A reads a snapshot to build a scope-only (metadata) edit.
+    snapshot = store.load_one(original.id)
+
+    # A verify lands concurrently: bumps last_verified_at + verified_paths,
+    # leaves `updated` untouched (the orthogonal axis).
+    verified = store.mark_verified(original.id, verified_paths=["/etc/restic/policy"])
+    assert verified.last_verified_at is not None
+    assert verified.updated == snapshot.updated
+
+    # A's metadata-only update on the now-stale snapshot. preserve_verification
+    # is how the memory_update handler invokes this for a content-less edit.
+    metadata_edit = snapshot.model_copy(update={"scopes": ["infrastructure", "tools"]})
+    result = store.update(metadata_edit, preserve_verification=True)
+
+    assert result.scopes == ["infrastructure", "tools"]  # the edit applied
+    assert result.last_verified_at == verified.last_verified_at  # verify preserved
+    assert list(result.verified_paths) == ["/etc/restic/policy"]
+    reloaded = store.load_one(original.id)
+    assert reloaded.last_verified_at == verified.last_verified_at  # durable on disk
+    assert list(reloaded.verified_paths) == ["/etc/restic/policy"]
+
+
+def test_content_update_still_resets_verification(tmp_path: Path) -> None:
+    """Companion contract: a CONTENT edit (preserve_verification=False) still
+    resets verification — the body the attestation described no longer
+    exists, so keeping last_verified_at would be a lie."""
+    store = Store(tmp_path)
+    original = store.write(content="old body about X", scopes=["tools"])
+    store.mark_verified(original.id, verified_paths=["/some/path"])
+    snapshot = store.load_one(original.id)
+    assert snapshot.last_verified_at is not None
+
+    content_edit = snapshot.model_copy(
+        update={
+            "body": "new body about Y\n",
+            "last_verified_at": None,
+            "verified_paths": [],
+        }
+    )
+    result = store.update(content_edit, preserve_verification=False)
+    assert result.last_verified_at is None
+    assert list(result.verified_paths) == []
+
+
 def test_update_cas_detects_stale_snapshot_via_patched_reload(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
