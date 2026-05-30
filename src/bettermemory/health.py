@@ -41,7 +41,12 @@ from typing import Any, Callable, Iterable
 
 from .events import iter_all_events
 from .models import Category, Memory, first_summary_line
-from .origin import Origin, commit_author_timestamps, repos_match
+from .origin import (
+    Origin,
+    commit_author_timestamps,
+    commits_since_touching_paths,
+    repos_match,
+)
 from .time_utils import (
     ensure_utc,
     isoformat_utc_optional,
@@ -1204,11 +1209,15 @@ def compute_health(
     tombstoned_ids = tombstoned_ids or set()
 
     by_id: dict[str, MemoryStats] = {}
-    # Parallel mapping of memory id -> origin.repo, kept separately so we
-    # don't have to add a field to MemoryStats just for the commit-drift
-    # rollup. Captured during the same pass that builds `by_id` because
-    # `memories` is an Iterable and we don't want to assume re-iterability.
+    # Parallel mappings of memory id -> origin.repo and id -> verified_paths,
+    # kept separately so we don't have to add fields to MemoryStats just for
+    # the commit-drift rollup. Captured during the same pass that builds
+    # `by_id` because `memories` is an Iterable and we don't want to assume
+    # re-iterability. `verified_paths_by_id` lets the rollup narrow drift to
+    # commits that touched attested paths, matching memory_show /
+    # memory_search (see _compute_commit_drift_debt).
     origin_repo_by_id: dict[str, str | None] = {}
+    verified_paths_by_id: dict[str, list[str]] = {}
     for m in memories:
         by_id[m.id] = MemoryStats(
             id=m.id,
@@ -1220,6 +1229,7 @@ def compute_health(
             category=m.category,
         )
         origin_repo_by_id[m.id] = m.origin.repo if m.origin else None
+        verified_paths_by_id[m.id] = list(m.verified_paths)
 
     accumulator = _StatsAccumulator(by_id=by_id, tombstoned_ids=tombstoned_ids)
     for ev in events:
@@ -1387,6 +1397,7 @@ def compute_health(
     commit_drift_debt = _compute_commit_drift_debt(
         by_id=by_id,
         origin_repo_by_id=origin_repo_by_id,
+        verified_paths_by_id=verified_paths_by_id,
         caller_origin=caller_origin,
     )
 
@@ -1599,6 +1610,7 @@ def _compute_commit_drift_debt(
     *,
     by_id: dict[str, MemoryStats],
     origin_repo_by_id: dict[str, str | None],
+    verified_paths_by_id: dict[str, list[str]],
     caller_origin: Origin | None,
 ) -> CommitDriftDebt | None:
     """Build the optional commit-drift rollup, or None when not applicable.
@@ -1659,6 +1671,21 @@ def _compute_commit_drift_debt(
         # at the same instant as a commit doesn't count as drift.
         idx = bisect.bisect_right(timestamps_sorted, since)
         count = len(timestamps_sorted) - idx
+        # If the memory carries verified_paths, narrow to commits that
+        # actually touched those paths — mirrors memory_show and the
+        # memory_search top-hit surface (_response.py). Without this the
+        # rollup nagged on memories the user deliberately attested as
+        # stable and disagreed with the per-hit verdict. Falls back to the
+        # unfiltered count when the filter can't run (git unreachable, all
+        # paths outside the repo). Guarded on count > 0 so a caught-up
+        # memory never pays the extra git call.
+        vpaths = verified_paths_by_id.get(stats.id) or []
+        if vpaths and count > 0:
+            filtered = commits_since_touching_paths(
+                Path(caller_origin.cwd), since, vpaths
+            )
+            if filtered is not None:
+                count = filtered
         if count > 0:
             rows.append(
                 CommitDriftRow(
@@ -2355,7 +2382,19 @@ def curation_counts(
                 if verified_at is None:
                     continue
                 idx = bisect.bisect_right(timestamps_sorted, verified_at)
-                if len(timestamps_sorted) - idx > 0:
+                count = len(timestamps_sorted) - idx
+                # Narrow to commits touching attested paths, matching
+                # memory_show / memory_search / commit_drift_debt — a
+                # memory whose verified_paths weren't touched isn't drifted.
+                # Guarded on count > 0 so a caught-up memory pays no git call.
+                vpaths = list(m.verified_paths)
+                if vpaths and count > 0:
+                    filtered = commits_since_touching_paths(
+                        Path(caller_origin.cwd), verified_at, vpaths
+                    )
+                    if filtered is not None:
+                        count = filtered
+                if count > 0:
                     drifted += 1
 
     return {
