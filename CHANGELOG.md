@@ -7,6 +7,75 @@ breaking changes, minor for additive features, patch for fixes. The
 [compatibility contract](CONTRIBUTING.md#versioning-and-the-compatibility-contract)
 spells out exactly what's stable.
 
+## 3.3.4 - 2026-05-30
+
+The first **whole-tree** coverage audit — applying the diff-only-blind-spot
+lesson the audit-loop's v5 `full_sweep_sha` gate was built for, but that had
+never actually been run against bettermemory's own source. Every one of the
+80 source files was read as whole files (not diffs) by a read-only review
+fan-out, and each finding was adversarially verified against ground truth:
+44 confirmed real (1 high, 7 medium, the rest low), 13 by-design residuals,
+5 false positives. This release drains the high + medium tier plus the
+confirmed documentation drift; the low-severity tail is queued for the loop.
+
+### Fixed
+
+- **(high) Stop-hook silent-miss telemetry was structurally inflated.**
+  `run_audit` passed Claude Code's *transcript* session id into the probe's
+  "did the model already retrieve this turn?" shield, but the server stamps
+  its `search` / `show` / `list` events with its own `sess_<hex>` id — a
+  different id space — so the shield never matched and was dead in the
+  production Stop-hook path. Every turn where the model *did* search yet a
+  high-relevance hit existed could still emit `search_miss`, inflating the
+  silent-miss counters the curation surfaces triage. `probe_for_miss` now
+  takes a `retrieval_session_id`, and the hook bridges to the live
+  in-process server session (the same bridge `_emit_hook_attributions`
+  already used); emitted events keep the transcript id.
+- **(medium) Metadata-only `memory_update` could clobber a concurrent
+  `memory_verify`.** `Store.update` CASes on `updated`, but verify bumps
+  `last_verified_at` without touching `updated`, so a verify landing between
+  a handler's snapshot read and its write passed the CAS and was silently
+  overwritten by the stale snapshot. `Store.update` gained
+  `preserve_verification`, which the metadata path uses to keep the freshest
+  on-disk verification; content edits still reset it.
+- **(medium) `memory_proposals` accept bypassed the scope whitelist and cap
+  (fail-open).** Accepting a proposal wrote straight through `store.write`,
+  enforcing only the content-size guard — not the `[scopes] allowed`
+  whitelist or `max_scopes_per_write` that `memory_write` / `memory_update`
+  / `memory_rename_scope` enforce. It now routes through the shared
+  `_validate_write_payload`.
+- **(medium) A naive-datetime episode crashed the whole episode read
+  surface.** An episode whose frontmatter `created` had no UTC offset
+  (hand-edited / legacy) raised an uncaught `TypeError` in the `created`
+  sort and the `episode_search` `since` filter, failing every read instead
+  of skipping the one row. `EpisodeStore._load_path` now normalises
+  `created` to aware UTC at load.
+- **(medium) The web dashboard understated verification debt.** The overview
+  read `len()` of the capped never-verified / stale row lists (capped at 20)
+  instead of the uncapped `*_total` fields, so the headline froze at 20 on
+  larger stores.
+- **(medium) `consolidate --semantic-threshold` help was wrong.** It claimed
+  the flag is ignored without the embeddings extra, but the value is applied
+  as the Jaccard cutoff — a different scale. Corrected.
+- **(docs) API-reference drift.** Added the missing
+  `memory_acknowledge_miss` subsection and `recent_silent_misses` in the
+  `memory_health` return; corrected the `memory_rename_scope` return shape
+  (`old_scope` / `new_scope` were omitted) and the unknown-link-type
+  behavior (a bad entry is dropped, valid links still load); fixed the
+  doctor-check count (ten, not seven) and a stale eval test count.
+
+### Known / deferred
+
+- `origin.commits_since` counts **committer**-date while `memory_search` and
+  the health rollup count **author**-date, so a rebase can make one memory
+  read drifted via `memory_show` yet clean via `memory_search`. The lying
+  "author-date" docstring is corrected here; unifying both signals onto
+  author-date — which must move the paths-filtered variant in lockstep and
+  ship rebase-fixture tests — is deferred rather than rushed into a
+  half-fix. The low-severity robustness tail (scattered naive-datetime read
+  paths, a tombstone `.lock` sidecar leak, CLI argument-error ergonomics, a
+  missing LLM request timeout) is queued for the audit loop to drain.
+
 ## 3.3.3 - 2026-05-28
 
 A head-to-toe audit (24-unit subagent fan-out, every finding
