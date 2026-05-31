@@ -74,7 +74,7 @@ def _commit_at(path: Path, message: str, *, when: datetime) -> None:
 
 
 @pytest.fixture
-def server_with_fake_origin(memory_dir: Path):
+def server_with_fake_origin(memory_dir: Path, monkeypatch: pytest.MonkeyPatch):
     """Build a server whose `capture_origin` returns whatever the test
     chooses. Mirrors the pattern in `test_server_origin.py` so the test
     can simulate "caller is in repo X" without altering the process cwd.
@@ -83,6 +83,14 @@ def server_with_fake_origin(memory_dir: Path):
     repo — `commits_since` and friends actually shell out against it, so
     the integration covers the real subprocess code path even though the
     capture step is mocked.
+
+    Patching goes through `monkeypatch` (not bare `setattr`) so the mock is
+    RESTORED at teardown. A bare setattr leaks the patched `capture_origin`
+    into later tests in the same session — e.g.
+    `test_server_v12_features.py::test_memory_show_verdict_fresh_after_verify`,
+    which relies on the real capture_origin — flipping their staleness
+    verdict. That cross-file flake passes in isolation but fails in a
+    multi-file run (and did so identically on main before this fix).
     """
     state = SessionState()
     cfg = Config(storage=StorageConfig(directory=str(memory_dir)))
@@ -105,8 +113,8 @@ def server_with_fake_origin(memory_dir: Path):
         def fake_capture(cwd: Path | None = None) -> Origin:
             return origin
 
-        setattr(handlers_module, "capture_origin", fake_capture)
-        setattr(server_module, "capture_origin", fake_capture)
+        monkeypatch.setattr(handlers_module, "capture_origin", fake_capture)
+        monkeypatch.setattr(server_module, "capture_origin", fake_capture)
         return server
 
     return make
@@ -612,3 +620,80 @@ async def test_memory_health_commit_drift_debt_null_when_caller_not_in_repo(
 
     report = await _call(server, "memory_health")
     assert report["commit_drift_debt"] is None
+
+
+@pytest.mark.skipif(not _GIT_AVAILABLE, reason="git not on PATH")
+async def test_memory_health_commit_drift_debt_honors_verified_paths(
+    server_with_fake_origin, tmp_path: Path
+) -> None:
+    """Regression: the `commit_drift_debt` rollup ignored verified_paths, so
+    a memory the user attested as stable for a specific path still counted
+    as drifted on the loud `memory_health` surface — nagging on a stable
+    memory and disagreeing with memory_show / memory_search. With the fix, a
+    memory whose verified_paths were untouched by the post-verify commits
+    drops out of the rollup (total_drifted=0), narrowed exactly like the
+    per-hit surfaces. (Compare `..._lists_drifted_rows`: identical setup
+    minus verified_paths gives total_drifted=2.)
+    """
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    _init_repo(repo)
+    stable = repo / "stable.py"
+    stable.write_text("x = 1\n")
+    subprocess.run(
+        ["git", "add", "stable.py"], cwd=repo, check=True, capture_output=True
+    )
+    _commit_at(repo, "add stable.py", when=datetime(2025, 1, 1, tzinfo=timezone.utc))
+
+    origin = Origin(cwd=str(repo), repo=_REMOTE, branch="main")
+    server = server_with_fake_origin(origin)
+
+    written = await _call(
+        server, "memory_write", content="alpha widget", scopes=["tools"]
+    )
+    await _call(server, "memory_verify", id=written["id"], verified_paths=[str(stable)])
+    # Post-verify commits that do NOT touch stable.py (empty commits).
+    _commit_at(repo, "post-1", when=datetime(2099, 1, 1, tzinfo=timezone.utc))
+    _commit_at(repo, "post-2", when=datetime(2099, 2, 1, tzinfo=timezone.utc))
+
+    report = await _call(server, "memory_health")
+    cd = report["commit_drift_debt"]
+    assert cd is not None
+    # Narrowed to the verified path (untouched) -> not the unfiltered 2.
+    assert cd["total_drifted"] == 0
+    assert cd["rows"] == []
+
+
+@pytest.mark.skipif(not _GIT_AVAILABLE, reason="git not on PATH")
+async def test_scope_overview_curation_drifted_honors_verified_paths(
+    server_with_fake_origin, tmp_path: Path
+) -> None:
+    """Regression: `curation_counts` (which drives `memory_scope_overview`'s
+    `curation_pending.drifted`) was the only commit-drift surface that never
+    applied the verified_paths filter — so the session-start hint reported
+    drift on memories attested as stable, the loudest false-positive of all.
+    With the fix, a memory whose verified_paths were untouched by post-verify
+    commits is not counted as drifted in the session-start rollup.
+    """
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    _init_repo(repo)
+    stable = repo / "stable.py"
+    stable.write_text("x = 1\n")
+    subprocess.run(
+        ["git", "add", "stable.py"], cwd=repo, check=True, capture_output=True
+    )
+    _commit_at(repo, "add stable.py", when=datetime(2025, 1, 1, tzinfo=timezone.utc))
+
+    origin = Origin(cwd=str(repo), repo=_REMOTE, branch="main")
+    server = server_with_fake_origin(origin)
+
+    written = await _call(
+        server, "memory_write", content="alpha widget", scopes=["tools"]
+    )
+    await _call(server, "memory_verify", id=written["id"], verified_paths=[str(stable)])
+    _commit_at(repo, "post-1", when=datetime(2099, 1, 1, tzinfo=timezone.utc))
+    _commit_at(repo, "post-2", when=datetime(2099, 2, 1, tzinfo=timezone.utc))
+
+    res = await _call(server, "memory_scope_overview")
+    assert res["curation_pending"]["drifted"] == 0

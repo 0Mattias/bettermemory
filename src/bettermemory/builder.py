@@ -241,8 +241,11 @@ def _register_tools(
     )
 
     # Order matches `server.py`'s module docstring's tool list so a reader
-    # can scan top-to-bottom and see all 24 tools at once (20 memory_*
-    # + 4 episode_*).
+    # can scan top-to-bottom. The DEFAULT surface is lean: the curation /
+    # power-user tools at the bottom are gated behind `[behavior]
+    # full_tool_surface` so the typical client doesn't pay their (long)
+    # descriptions in context on every turn. See BehaviorConfig.
+    # full_tool_surface for the rationale and the dogfood measurement.
     mcp.tool(name="memory_search", description=DESC_MEMORY_SEARCH)(
         handlers.memory_search
     )
@@ -266,12 +269,6 @@ def _register_tools(
     mcp.tool(name="memory_remove", description=DESC_MEMORY_REMOVE)(
         handlers.memory_remove
     )
-    mcp.tool(name="memory_restore", description=DESC_MEMORY_RESTORE)(
-        handlers.memory_restore
-    )
-    mcp.tool(name="memory_list_tombstones", description=DESC_MEMORY_LIST_TOMBSTONES)(
-        handlers.memory_list_tombstones
-    )
 
     mcp.tool(name="memory_verify", description=DESC_MEMORY_VERIFY)(
         handlers.memory_verify
@@ -280,17 +277,8 @@ def _register_tools(
     mcp.tool(name="memory_record_use", description=DESC_MEMORY_RECORD_USE)(
         handlers.memory_record_use
     )
-    mcp.tool(name="memory_health", description=DESC_MEMORY_HEALTH)(
-        handlers.memory_health
-    )
     mcp.tool(name="memory_audit_turn", description=DESC_MEMORY_AUDIT_TURN)(
         handlers.memory_audit_turn
-    )
-    mcp.tool(name="memory_acknowledge_miss", description=DESC_MEMORY_ACKNOWLEDGE_MISS)(
-        handlers.memory_acknowledge_miss
-    )
-    mcp.tool(name="memory_rename_scope", description=DESC_MEMORY_RENAME_SCOPE)(
-        handlers.memory_rename_scope
     )
 
     mcp.tool(name="memory_scope_disable", description=DESC_MEMORY_SCOPE_DISABLE)(
@@ -300,15 +288,10 @@ def _register_tools(
         handlers.memory_scope_enable
     )
 
-    # Write-reflex closure — review the proposal queue the Stop hook fills
-    # (opt-in [proposals] auto_propose). The capture half of the
-    # self-improving loop; accepting a proposal is a normal memory write.
-    mcp.tool(name="memory_proposals", description=DESC_MEMORY_PROPOSALS)(
-        handlers.memory_proposals
-    )
-
     # Episode-tier tools — sibling to memory, journal-shaped writes for
-    # run-state and iteration takeaways the durability gate rejects.
+    # run-state and iteration takeaways the durability gate rejects. Always
+    # registered: /loop, audit-loop and curate-loop drive episode_handoff /
+    # episode_write directly, and the server instructions reference them.
     mcp.tool(name="episode_write", description=DESC_EPISODE_WRITE)(
         handlers.episode_write
     )
@@ -321,6 +304,36 @@ def _register_tools(
     mcp.tool(name="episode_promote", description=DESC_EPISODE_PROMOTE)(
         handlers.episode_promote
     )
+
+    # `memory_proposals` is the UI for the opt-in [proposals] write-reflex
+    # queue, so it surfaces whenever that feature is on — even under the lean
+    # surface — and otherwise only under the full surface.
+    if config.behavior.full_tool_surface or config.proposals.auto_propose:
+        mcp.tool(name="memory_proposals", description=DESC_MEMORY_PROPOSALS)(
+            handlers.memory_proposals
+        )
+
+    # Curation / power-user tools — gated out of the lean default surface.
+    # Each had 0-8 organic calls across 190 dogfood sessions and is reachable
+    # via the `bettermemory` CLI. The curate-loop skill drives memory_health /
+    # memory_acknowledge_miss / memory_restore as MCP tools, so it requires
+    # `full_tool_surface = true`.
+    if config.behavior.full_tool_surface:
+        mcp.tool(name="memory_restore", description=DESC_MEMORY_RESTORE)(
+            handlers.memory_restore
+        )
+        mcp.tool(
+            name="memory_list_tombstones", description=DESC_MEMORY_LIST_TOMBSTONES
+        )(handlers.memory_list_tombstones)
+        mcp.tool(name="memory_health", description=DESC_MEMORY_HEALTH)(
+            handlers.memory_health
+        )
+        mcp.tool(
+            name="memory_acknowledge_miss", description=DESC_MEMORY_ACKNOWLEDGE_MISS
+        )(handlers.memory_acknowledge_miss)
+        mcp.tool(name="memory_rename_scope", description=DESC_MEMORY_RENAME_SCOPE)(
+            handlers.memory_rename_scope
+        )
 
 
 __all__ = ["build_server", "_register_tools"]

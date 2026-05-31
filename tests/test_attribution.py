@@ -122,3 +122,52 @@ def test_match_dataclass_is_hashable_immutable() -> None:
     """AttributionMatch is frozen — useful for set membership in dedup."""
     m = AttributionMatch(memory_id="x", claim_excerpt="y")
     assert hash(m) == hash(AttributionMatch(memory_id="x", claim_excerpt="y"))
+
+
+# --- Containment tier: paraphrase recall without sacrificing precision -------
+#
+# The verbatim substring tier alone logged ZERO hook attributions across the
+# author's entire event history, because models paraphrase a memory rather than
+# quoting it. The containment tier matches when a high fraction of a candidate
+# sentence's distinct content tokens appear in the reply (reworded/reordered),
+# guarded by an absolute matched-token floor so coincidental topical overlap
+# still doesn't attribute.
+
+
+def test_containment_paraphrase_matches() -> None:
+    """Reply reuses the memory's distinctive vocabulary but rewords and
+    reorders it — no long verbatim span survives, yet it's the same claim."""
+    body = "The retry backoff doubles after each failed webhook delivery attempt."
+    reply = (
+        "Each failed webhook delivery attempt doubles the retry backoff, "
+        "so a flapping endpoint quickly hits the ceiling."
+    )
+    matches = attribute_uses({"mem1": body}, reply)
+    assert len(matches) == 1
+    assert matches[0].memory_id == "mem1"
+
+
+def test_containment_reordered_tokens_match() -> None:
+    """Pure reorder, no contiguous verbatim span — containment still links it."""
+    body = "Schema migrations run inside a single advisory-locked transaction."
+    reply = (
+        "We wrap the run in a single transaction that takes an advisory lock "
+        "before applying schema migrations."
+    )
+    assert len(attribute_uses({"mem1": body}, reply)) == 1
+
+
+def test_containment_deep_reword_does_not_match() -> None:
+    """Precision guard: a deep reword that shares only a token or two with the
+    memory must NOT attribute — below the matched-token floor."""
+    body = "The authentication middleware rejects expired tokens."
+    reply = "Tokens that have expired get bounced by the auth layer."
+    assert attribute_uses({"mem1": body}, reply) == []
+
+
+def test_containment_topical_coincidence_does_not_match() -> None:
+    """A reply on the same general topic sharing one incidental token ('pool')
+    is coincidence, not the memory shaping the reply."""
+    body = "The connection pool caps at thirty idle sockets before recycling."
+    reply = "Database connections are managed by a pool of background workers."
+    assert attribute_uses({"mem1": body}, reply) == []

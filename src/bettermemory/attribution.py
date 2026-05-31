@@ -151,6 +151,25 @@ _STOPWORDS = frozenset(
 _MIN_TOKEN_COUNT = 6
 _MIN_CHAR_COUNT = 30
 _MAX_EXCERPT_CHARS = 500
+
+# Containment tier (see `attribute_uses`). When a candidate sentence does not
+# appear verbatim in the reply, it still matches if a high fraction of its
+# distinct content (non-stopword) tokens do — the model paraphrased rather than
+# quoted. Calibrated against realistic (memory, reply) pairs: genuine
+# reflections land at >=0.8 containment, coincidental topical overlap at <=0.4.
+# 0.60 sits in the empty gap between, well above the ~8% median overlap of
+# unrelated pairs.
+_MIN_CONTAINMENT = 0.60
+
+# ...and at least this many distinct content tokens must overlap regardless of
+# the ratio. Absolute floor so a short candidate can't clear the fraction on
+# two or three coincidental words — this is the guard that rejects a deeply
+# reworded paraphrase (high ratio over a tiny shared set).
+_MIN_CONTAINMENT_TOKENS = 4
+
+# Tokenizer for the containment tier: alphanumeric/underscore runs, matching
+# the path/identifier shape memory bodies carry (src/foo.py -> src, foo, py).
+_TOKEN_RE = re.compile(r"[a-z0-9_]+")
 # Sentences with >= this fraction stopwords are filtered out. 0.80
 # allows a token-dense technical sentence ("the auth middleware lives
 # in src/auth/middleware.py" — 8 tokens, 2 stopwords = 25% stopword)
@@ -225,6 +244,17 @@ def _normalize(text: str) -> str:
     return re.sub(r"\s+", " ", text.lower()).strip()
 
 
+def _content_token_set(text: str) -> frozenset[str]:
+    """Distinct non-stopword tokens of `text`, lowercased.
+
+    The unit of the containment tier: order- and duplication-insensitive, so a
+    reply that reorders or rewords around the memory's distinctive vocabulary
+    still overlaps it. Stopwords are dropped so common filler doesn't inflate
+    the overlap.
+    """
+    return frozenset(t for t in _TOKEN_RE.findall(text.lower()) if t not in _STOPWORDS)
+
+
 def attribute_uses(
     memories: dict[str, str],
     assistant_text: str,
@@ -246,15 +276,49 @@ def attribute_uses(
     haystack = _normalize(assistant_text)
     if not haystack:
         return []
+    reply_tokens = _content_token_set(assistant_text)
     out: list[AttributionMatch] = []
     for memory_id, body in memories.items():
         if not body:
             continue
         for sentence in _candidate_sentences(body):
-            needle = _normalize(sentence)
-            if needle and needle in haystack:
+            if _sentence_matches(sentence, haystack, reply_tokens):
                 out.append(
                     AttributionMatch(memory_id=memory_id, claim_excerpt=sentence)
                 )
                 break  # one match per memory; rest stay potential noise
     return out
+
+
+def _sentence_matches(
+    sentence: str, haystack: str, reply_tokens: frozenset[str]
+) -> bool:
+    """Is `sentence` reflected in the reply? Two tiers, precision-first.
+
+    1. Verbatim — the normalized sentence appears as a substring of the
+       (normalized) reply. The strongest signal; the original behaviour.
+    2. Containment — at least ``_MIN_CONTAINMENT`` of the sentence's distinct
+       content tokens appear in the reply, with at least
+       ``_MIN_CONTAINMENT_TOKENS`` overlapping. Catches paraphrases that keep
+       the memory's distinctive vocabulary but reword or reorder it, which the
+       verbatim tier misses entirely (and which is how models actually use a
+       memory — they paraphrase, they don't quote).
+
+    The matched-token floor is the load-bearing precision guard: a deeply
+    reworded paraphrase shares only a token or two with the memory, so it
+    clears neither the floor nor (usually) the ratio.
+    """
+    needle = _normalize(sentence)
+    if not needle:
+        return False
+    # Tier 1: verbatim substring.
+    if needle in haystack:
+        return True
+    # Tier 2: distinctive-token containment. The matched-token floor doubles
+    # as the precision guard and the divide-by-zero guard — a candidate with
+    # fewer than `_MIN_CONTAINMENT_TOKENS` content tokens can never clear it.
+    sentence_tokens = _content_token_set(sentence)
+    matched = sentence_tokens & reply_tokens
+    if len(matched) < _MIN_CONTAINMENT_TOKENS:
+        return False
+    return len(matched) / len(sentence_tokens) >= _MIN_CONTAINMENT

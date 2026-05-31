@@ -4,7 +4,7 @@ The Claude Code plugin wrapper for [bettermemory](https://github.com/0Mattias/be
 
 The plugin bundles three things:
 
-1. **MCP server registration** ([`.mcp.json`](.mcp.json)) — spawns `uvx bettermemory` as a stdio MCP server. All 24 tools (20 `memory_*` + 4 `episode_*`) become available on plugin enable.
+1. **MCP server registration** ([`.mcp.json`](.mcp.json)) — spawns `uvx bettermemory` as a stdio MCP server. 18 tools become available on plugin enable by default; the six curation/power-user tools (`memory_health`, `memory_acknowledge_miss`, `memory_rename_scope`, `memory_restore`, `memory_list_tombstones`, `memory_proposals`) register only with `full_tool_surface = true` under `[behavior]` (`memory_proposals` also under `[proposals]`), and stay reachable via the `bettermemory` CLI. 24 in total (20 `memory_*` + 4 `episode_*`).
 2. **Memory-discipline skill** ([`skills/bettermemory/SKILL.md`](skills/bettermemory/SKILL.md)) — lands the opt-in retrieval policy, transparency requirement, and writing discipline at the system-prompt level. The MCP server's own `instructions` block carries a short summary; the skill is the long-form companion (Claude Code truncates the `instructions` block at ~1.8 KB).
 3. **Stop hook** ([`hooks/hooks.json`](hooks/hooks.json)) — runs `uvx bettermemory audit-turn --quiet` at each turn end to detect silent retrieval misses (turns where stored memory would have helped but `memory_search` was never called) and write `turn_audited` / `search_miss` events to the on-disk event log. The CLI always exits 0 and the binding ends in `|| true`, so a transient `uvx` failure never surfaces as a hook-error banner.
 
@@ -25,7 +25,7 @@ If you prefer a pre-installed `bettermemory` binary, edit `.mcp.json` after inst
 What memory tools do you have?
 ```
 
-You should see the 24 tools listed with the `mcp__bettermemory__` prefix (20 `memory_*` + 4 `episode_*`). Then:
+You should see the tools listed with the `mcp__bettermemory__` prefix — 18 by default, or all 24 (20 `memory_*` + 4 `episode_*`) when `full_tool_surface = true` under `[behavior]`. Then:
 
 ```text
 Remember that I prefer hands-on tutorials with runnable code, not screenshots.
