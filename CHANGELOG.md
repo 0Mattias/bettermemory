@@ -7,6 +7,59 @@ breaking changes, minor for additive features, patch for fixes. The
 [compatibility contract](CONTRIBUTING.md#versioning-and-the-compatibility-contract)
 spells out exactly what's stable.
 
+## 3.4.0 - 2026-05-31
+
+Three fixes from a diagnostic pass over the dogfood event log (2,205 events,
+41 memories). Two of them close gaps where a headline feature was silently
+not firing in practice; the third trims the per-turn context cost the project
+exists to minimise. The verification-surface fixes are the load-bearing ones —
+a trust signal that cries wolf, and an audit trail that never captured its
+positive label, are both worse than not having the feature.
+
+### Changed
+
+- **Lean default tool surface.** The server previously registered all 24 MCP
+  tools unconditionally — ~9,500 tokens of descriptions in every turn's
+  context. Dogfood telemetry (190 sessions) showed 43% of sessions never call
+  any memory tool, and six curation/power-user tools saw 0–8 organic calls
+  each. Those six — `memory_health`, `memory_acknowledge_miss`,
+  `memory_rename_scope`, `memory_restore`, `memory_list_tombstones`,
+  `memory_proposals` — now gate behind a new `[behavior] full_tool_surface`
+  flag, so the **shipped default is 18 tools** (`memory_proposals` also
+  auto-registers when `[proposals]` is enabled). All six stay reachable via the
+  `bettermemory` CLI. **Upgrade note:** machines running the curate-loop /
+  audit-loop skills drive `memory_health` / `memory_acknowledge_miss` /
+  `memory_restore` as MCP tools and must set `full_tool_surface = true`. The
+  episode tier and the two-phase write / scope-toggle tools stay in the default
+  surface; gating those is deferred. New coverage in `tests/test_tool_surface.py`.
+
+### Fixed
+
+- **Commit-drift rollups ignored `verified_paths`.** `memory_scope_overview`'s
+  `curation_pending.drifted` and `memory_health`'s `commit_drift_debt` counted
+  every commit after `last_verified_at`, unlike `memory_show` and
+  `memory_search`, which already narrow to commits that touched the paths the
+  user attested. The rollup was the loudest surface and the only one missing
+  the filter, so it flagged `spot_check` on memories deliberately marked stable
+  and disagreed with the per-hit verdict — exactly the cry-wolf failure that
+  trains the model to ignore the signal. In the dogfood store all 12 "drifted"
+  memories were false positives (warm, applied, still-correct). `health.py`'s
+  two drift loops now apply the same path filter via a `verified_paths_by_id`
+  side-map, guarded so a caught-up memory pays no extra git call. Regression
+  tests on both surfaces. (Residual: memories with no `verified_paths` still
+  drift on every commit — a principled verdict-policy fix is queued.)
+- **The Stop-hook claim-excerpt backfill never fired.** `attribute_uses` linked
+  a memory to a reply only on a ≥30-char *verbatim* substring. Models paraphrase
+  rather than quote, so the hook logged zero `attribution="hook"` events across
+  the entire event history — and `memory_helped_rate`, the claim-level
+  audit-trail metric, read a structural 0 as a result. Adds a precision-first
+  token-containment tier: a candidate sentence also matches when ≥60% of its
+  distinct content (non-stopword) tokens appear in the reply, with an absolute
+  floor of 4 matched tokens. Calibrated so genuine reflections (≥0.8 overlap)
+  match while coincidental topical overlap (≤0.4) does not; verbatim stays
+  tier 1, so prior behaviour is preserved. Four regression tests pin both the
+  new recall and the retained precision.
+
 ## 3.3.4 - 2026-05-30
 
 The first **whole-tree** coverage audit — applying the diff-only-blind-spot
