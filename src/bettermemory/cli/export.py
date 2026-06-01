@@ -62,12 +62,24 @@ def add_subparser(
     return parser
 
 
-def run(args: argparse.Namespace) -> None:
-    """Dispatch handler for ``bettermemory export``."""
+def run(
+    args: argparse.Namespace,
+    *,
+    sub_parser: argparse.ArgumentParser,
+) -> None:
+    """Dispatch handler for ``bettermemory export``.
+
+    ``sub_parser`` is forwarded into ``_cli_export`` so a malformed
+    ``--scope`` surfaces through ``parser.error(...)`` (a clean
+    ``bettermemory export: error: …`` + exit 2) instead of an uncaught
+    ``ValueError`` traceback — mirroring how ``eval`` / ``episodes``
+    thread their subparser through.
+    """
     _cli_export(
         output=args.output,
         include_tombstones=not args.no_tombstones,
         scopes=args.scope or None,
+        parser=sub_parser,
     )
 
 
@@ -76,6 +88,7 @@ def _cli_export(
     output: str | None,
     include_tombstones: bool,
     scopes: list[str] | None,
+    parser: argparse.ArgumentParser | None = None,
 ) -> None:
     """`bettermemory export` — dump active (and optionally tombstoned)
     memories to a self-describing JSON document.
@@ -115,7 +128,18 @@ def _cli_export(
     store = Store(directory)
 
     if scopes:
-        scopes = [validate_scope(s) for s in scopes]
+        # `validate_scope` raises ValueError on a malformed --scope
+        # (uppercase, spaces, illegal chars). Route it through
+        # `parser.error(...)` for a clean `bettermemory export: error: …`
+        # + exit 2 instead of an uncaught traceback. The `parser is None`
+        # fallback (direct `_cli_export` callers / tests) keeps the raw
+        # ValueError so programmatic callers still see the exception.
+        try:
+            scopes = [validate_scope(s) for s in scopes]
+        except ValueError as exc:
+            if parser is not None:
+                parser.error(str(exc))
+            raise
     scope_set = set(scopes) if scopes else None
 
     active = store.load_all()

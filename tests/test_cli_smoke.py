@@ -375,6 +375,80 @@ def test_episodes_prune_dry_run_on_empty_store(
     assert "ttl_days" in payload
 
 
+def _seed_backdated_episode(storage: Path, *, days_old: int = 40) -> Path:
+    """Write one episode under `storage` and backdate its file mtime past
+    a 30-day TTL so a normal prune would consider it stale. Returns the
+    session_dir path so callers can assert it survives / is removed."""
+    import os as _os
+    import time as _time
+
+    from bettermemory.episodes import EpisodeStore
+
+    store = EpisodeStore(storage)
+    store.write(session_id="sess_smoke01", body="ancient takeaway")
+    session_dir = store.episodes_dir / "sess_smoke01"
+    past = _time.time() - (days_old * 24 * 60 * 60)
+    for f in session_dir.iterdir():
+        if f.is_file():
+            _os.utime(f, (past, past))
+    return session_dir
+
+
+def test_episodes_prune_dry_run_ttl_zero_matches_real_prune(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """Regression: `EpisodeStore.prune_old_sessions` early-returns [] for
+    ttl_days <= 0 (a non-positive TTL is a no-op). The CLI dry-run must
+    use the SAME predicate — otherwise it lists every session as "would
+    delete" while a real prune deletes nothing, i.e. the dry-run lies.
+    Even with a 40-day-old session present, ttl_days=0 dry-run must report
+    an empty would_delete set, and a real ttl=0 prune must delete nothing."""
+    session_dir = _seed_backdated_episode(tmp_path, days_old=40)
+    assert session_dir.exists()
+
+    _run_main(
+        ["episodes", "prune", "--dry-run", "--ttl-days", "0", "--json"],
+        monkeypatch=monkeypatch,
+        storage=tmp_path,
+    )
+    dry_payload = json.loads(capsys.readouterr().out)
+    assert dry_payload["would_delete"] == []
+    assert dry_payload["ttl_days"] == 0
+    assert session_dir.exists()
+
+    _run_main(
+        ["episodes", "prune", "--ttl-days", "0", "--json"],
+        monkeypatch=monkeypatch,
+        storage=tmp_path,
+    )
+    real_payload = json.loads(capsys.readouterr().out)
+    assert real_payload["deleted"] == []
+    assert session_dir.exists()
+
+
+def test_episodes_prune_dry_run_ttl_zero_text_mode(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """Same ttl<=0 guard, text mode: must print the "No episode sessions
+    older than 0 days." line rather than a "Would delete …" list."""
+    session_dir = _seed_backdated_episode(tmp_path, days_old=40)
+    assert session_dir.exists()
+
+    _run_main(
+        ["episodes", "prune", "--dry-run", "--ttl-days", "0"],
+        monkeypatch=monkeypatch,
+        storage=tmp_path,
+    )
+    out = capsys.readouterr().out
+    assert "No episode sessions older than 0 days." in out
+    assert "Would delete" not in out
+    assert session_dir.exists()
+
+
 def test_export_subcommand_emits_json(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,

@@ -213,9 +213,14 @@ def detect_path_drift(
     couldn't be confirmed", not as "definitely deleted". The semantic
     difference doesn't matter for the staleness signal.
 
-    Order in `checked` and `missing` is deterministic: paths appear in
-    the order they were first encountered in the body, which makes the
-    report stable for snapshot tests.
+    Order in `checked` and `missing` is deterministic: backtick-wrapped
+    paths come first (in body order), then bare paths from the
+    backtick-masked body (in body order). It is NOT a single
+    "first-encountered" pass — a bare path that appears textually before
+    a backtick-wrapped one still sorts after it, because extraction runs
+    the backtick pass to completion before the bare pass (see
+    `_extract_candidates`). The ordering is still fully deterministic,
+    which is what keeps the report stable for snapshot tests.
 
     `verified_paths` is an optional set of paths the caller has
     previously attested via `memory_verify`. When a candidate from the

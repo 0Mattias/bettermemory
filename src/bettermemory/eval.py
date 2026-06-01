@@ -301,6 +301,15 @@ def parse_since(spec: str | None) -> timedelta | None:
     Accepts ``Ns`` / ``Nm`` / ``Nh`` / ``Nd`` (positive integer). The
     literal strings ``"all"`` and empty/None return ``None`` (no time
     filter). Anything else raises ``ValueError`` with a hint.
+
+    An out-of-range value raises ``ValueError`` too: the regex's ``\\d+``
+    accepts an arbitrarily long digit run (e.g.
+    ``999999999999999999999d``), and the resulting ``timedelta``
+    constructor overflows with ``OverflowError``. We catch that and
+    re-raise as ``ValueError`` so every caller — including the CLI
+    handler that surfaces ``ValueError`` via ``parser.error`` — sees one
+    clean exception type instead of an uncaught ``OverflowError``
+    traceback.
     """
     if spec is None or spec == "" or spec == "all":
         return None
@@ -314,7 +323,13 @@ def parse_since(spec: str | None) -> timedelta | None:
     if value <= 0:
         raise ValueError(f"--since: value must be positive, got {value!r}")
     unit = match.group("unit")
-    return timedelta(seconds=value * _SINCE_UNIT_TO_SECONDS[unit])
+    try:
+        return timedelta(seconds=value * _SINCE_UNIT_TO_SECONDS[unit])
+    except OverflowError as exc:
+        raise ValueError(
+            f"--since: value out of range: {spec!r}. "
+            "Pick a smaller window (or 'all' for no time filter)."
+        ) from exc
 
 
 def compute_eval(

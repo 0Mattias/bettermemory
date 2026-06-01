@@ -169,6 +169,22 @@ def _reindex_embeddings(config: Config, store: Store) -> dict[str, Any]:
     embedded = 0
     primed = False
     for _path, memory in store.iter_active():
+        # Embed the STRIPPED body, exactly as every reader does. The
+        # persistent cache is keyed on `(memory.id, memory.updated)` —
+        # NOT on the body text — so warming from the raw `memory.body`
+        # would write an entry under the readers' own key but computed on
+        # different text (any leading/trailing whitespace shifts the
+        # vector). A subsequent search / dedup that strips first and looks
+        # up the same key would read back this wrong-text vector. The read
+        # sites this must match all do `memory.body.strip()` and skip
+        # empty results: `search.py` (the paraphrase and similar-memory
+        # loops) and `consolidate.py` (`_find_dedup_semantic`).
+        body = memory.body.strip()
+        if not body:
+            # Readers `continue` past empty-after-strip bodies and never
+            # cache them; do the same so we don't seed an entry the read
+            # path would never create.
+            continue
         if not primed:
             # Prime the live model dimension from one fresh encode BEFORE the
             # cached_embed hits. On an all-cache-hit run (every body unchanged
@@ -184,7 +200,7 @@ def _reindex_embeddings(config: Config, store: Store) -> dict[str, Any]:
             model,
             memory.id,
             memory.updated.isoformat(),
-            memory.body,
+            body,
         )
         embedded += 1
     flush_persistent_cache()

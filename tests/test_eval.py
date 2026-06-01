@@ -144,6 +144,18 @@ class TestParseSince:
         with pytest.raises(ValueError, match="--since"):
             parse_since("30w")
 
+    def test_out_of_range_raises_valueerror_not_overflow(self) -> None:
+        # The regex's `\d+` accepts an arbitrarily long digit run, so a
+        # huge value overflows the `timedelta` constructor (raising
+        # OverflowError internally). parse_since must surface that as a
+        # ValueError so the single clean-error path — and the CLI's
+        # parser.error handler — covers it; an uncaught OverflowError
+        # would escape as a traceback.
+        with pytest.raises(ValueError, match="--since"):
+            parse_since("999999999999999999999d")
+        with pytest.raises(ValueError, match="--since"):
+            parse_since("9" * 400 + "d")
+
 
 # ---------------------------------------------------------------------------
 # Wilson interval
@@ -861,6 +873,32 @@ class TestCLI:
                 os.environ.pop("BETTERMEMORY_DIR", None)
             else:
                 os.environ["BETTERMEMORY_DIR"] = env_save
+
+    def test_eval_rejects_out_of_range_since_cleanly(
+        self, tmp_path: Path, capsys: Any
+    ) -> None:
+        # An out-of-range --since (the regex accepts an arbitrarily long
+        # digit run) must exit via parser.error (SystemExit, code 2) with
+        # a clean message — NOT escape as an OverflowError traceback.
+        from bettermemory.server import main as server_main
+
+        env_save = os.environ.get("BETTERMEMORY_DIR")
+        os.environ["BETTERMEMORY_DIR"] = str(tmp_path / "memdir")
+        argv_save = sys.argv[:]
+        sys.argv = ["bettermemory", "eval", "--since", "999999999999999999999d"]
+        try:
+            with pytest.raises(SystemExit) as excinfo:
+                server_main()
+        finally:
+            sys.argv = argv_save
+            if env_save is None:
+                os.environ.pop("BETTERMEMORY_DIR", None)
+            else:
+                os.environ["BETTERMEMORY_DIR"] = env_save
+        assert excinfo.value.code == 2
+        err = capsys.readouterr().err
+        assert "--since" in err
+        assert "Traceback (most recent call last)" not in err
 
     def test_eval_against_recorded_events(self, tmp_path: Path) -> None:
         """End-to-end: record real events via Recorder, write a memory

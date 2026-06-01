@@ -9,11 +9,14 @@ breaking changes are detectable.
 
 from __future__ import annotations
 
+import argparse
 import json
 from pathlib import Path
 
 import pytest
 
+from bettermemory.cli.export import add_subparser as export_add_subparser
+from bettermemory.cli.export import run as export_run
 from bettermemory.config import BehaviorConfig, Config, StorageConfig
 from bettermemory.server import _cli_export
 from bettermemory.store import Store
@@ -168,6 +171,30 @@ def test_export_invalid_scope_raises(
 ) -> None:
     with pytest.raises(ValueError):
         _cli_export(output=None, include_tombstones=True, scopes=["NOT VALID"])
+
+
+def test_export_invalid_scope_via_cli_exits_clean_not_traceback(
+    populated_store: tuple[Path, Store],
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """Driven through `run()` with a real argparse subparser, a malformed
+    --scope must exit 2 with a clean `bettermemory export: error: …`
+    message on stderr — NOT an uncaught ValueError traceback. The
+    `populated_store` fixture has already pinned `load_config` to tmp_path
+    so the run reaches the scope-validation step against a real store."""
+    parser = argparse.ArgumentParser(prog="bettermemory")
+    sub = parser.add_subparsers(dest="cmd")
+    export_parser = export_add_subparser(sub)
+    args = parser.parse_args(["export", "--scope", "NOT VALID"])
+
+    with pytest.raises(SystemExit) as excinfo:
+        export_run(args, sub_parser=export_parser)
+
+    assert excinfo.value.code == 2
+    err = capsys.readouterr().err
+    assert "error:" in err
+    # No raw traceback should have leaked to the user.
+    assert "Traceback (most recent call last)" not in err
 
 
 # ---------------------------------------------------------------------------

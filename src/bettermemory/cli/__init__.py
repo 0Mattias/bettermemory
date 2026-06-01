@@ -136,7 +136,7 @@ def main() -> None:
         migrate.run(args, root_parser=parser, sub_parser=subparsers["migrate"])
         return
     if cmd == "export":
-        export.run(args)
+        export.run(args, sub_parser=subparsers["export"])
         return
     if cmd == "tombstones":
         tombstones.run(args, root_parser=parser, sub_parser=subparsers["tombstones"])

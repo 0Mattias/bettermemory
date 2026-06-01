@@ -169,7 +169,11 @@ def _cli_eval(
 
     try:
         since = parse_since(since_spec)
-    except ValueError as exc:
+    except (ValueError, OverflowError) as exc:
+        # `parse_since` already maps an out-of-range value's OverflowError
+        # to ValueError; the OverflowError arm here is defence-in-depth so
+        # a future change to the parser can't leak a raw traceback past
+        # this clean-error path.
         parser.error(str(exc))
         return  # pragma: no cover — parser.error raises SystemExit
 

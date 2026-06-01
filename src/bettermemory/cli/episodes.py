@@ -163,9 +163,15 @@ def _cli_episodes_prune(*, ttl_days: int, dry_run: bool, json_out: bool) -> None
         from ..models import utcnow
         from ..episodes import _newest_mtime_in_dir
 
-        cutoff = (utcnow() - timedelta(days=ttl_days)).timestamp()
         candidates: list[str] = []
-        if ep_store.episodes_dir.exists():
+        # Mirror `EpisodeStore.prune_old_sessions`' guard exactly: it
+        # early-returns `[]` for `ttl_days <= 0` (a non-positive TTL is a
+        # no-op, never "delete everything"). Without this guard the
+        # dry-run would list every session as "would delete" while a real
+        # prune deletes nothing — i.e. the dry-run would lie. Skip the
+        # disk walk entirely so the two predicates agree at the boundary.
+        if ttl_days > 0 and ep_store.episodes_dir.exists():
+            cutoff = (utcnow() - timedelta(days=ttl_days)).timestamp()
             for session_dir in ep_store.episodes_dir.iterdir():
                 if not session_dir.is_dir() or session_dir.is_symlink():
                     continue
