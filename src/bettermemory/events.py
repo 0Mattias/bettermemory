@@ -327,7 +327,12 @@ class Recorder:
             log.warning("event log stat failed: %s", exc)
             return
 
-        if size < self.max_bytes:
+        # A non-positive `max_bytes` means "never rotate": without this guard
+        # `size < max_bytes` is always false for max_bytes <= 0, so every
+        # append would gzip-rotate the active log (a rotation storm). The
+        # loader clamps a 0/negative *configured* value to the default, but an
+        # explicitly-constructed Recorder can still pass <= 0, so guard here.
+        if self.max_bytes <= 0 or size < self.max_bytes:
             return
 
         ts = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")

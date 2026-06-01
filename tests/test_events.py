@@ -216,6 +216,34 @@ def test_rotation_archives_when_max_bytes_exceeded(tmp_path: Path) -> None:
     assert all(e["kind"] == "write" for e in archived_lines)
 
 
+def test_non_positive_max_bytes_never_rotates(tmp_path: Path) -> None:
+    # A non-positive max_bytes must mean "never rotate". Without the guard in
+    # _rotate_if_needed, `size < max_bytes` is always false for max_bytes <= 0,
+    # so every append would gzip-rotate the active log (a rotation storm). The
+    # loader clamps a *configured* value, but an explicitly-constructed Recorder
+    # can still pass <= 0 (e.g. a programmatic embedder), so the guard lives in
+    # _rotate_if_needed as well. Import the archive-name constants locally —
+    # they are not part of this file's module-level import block.
+    from bettermemory.events import (
+        ARCHIVE_PREFIX,
+        ARCHIVE_SUFFIX,
+        ROTATING_SUFFIX,
+    )
+
+    for bad_cap in (0, -1, -10_000):
+        root = tmp_path / f"cap_{bad_cap}"
+        rec = Recorder(root=root, session_id="sess_test", max_bytes=bad_cap)
+        for i in range(30):
+            rec.record("write", n=i, note="filler text " * 20)
+        # No gzip archives and no in-flight `.rotating` holding files.
+        assert list(root.glob(f"{ARCHIVE_PREFIX}*{ARCHIVE_SUFFIX}")) == []
+        assert list(root.glob(f"*{ROTATING_SUFFIX}")) == []
+        # Every event stayed in the single active log — none lost to rotation.
+        events = list(iter_events(root))
+        assert len(events) == 30
+        assert sorted(e["n"] for e in events) == list(range(30))
+
+
 @pytest.mark.skipif(
     sys.platform == "win32",
     reason="fcntl.F_GETFL / O_ACCMODE are POSIX-only; the fsync-ordering "

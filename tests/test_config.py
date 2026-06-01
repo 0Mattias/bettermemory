@@ -339,6 +339,99 @@ def test_load_config_reads_telemetry(tmp_path: Path) -> None:
     assert cfg.telemetry.max_bytes == 5_000_000
 
 
+def test_load_config_quoted_false_bool_keeps_privacy_opt_out(tmp_path: Path) -> None:
+    """A QUOTED bool ("false") is the string "false", and `bool("false")`
+    is True — a naive coercion would silently flip the privacy opt-out ON
+    (queries logged verbatim) when the user wrote "false" for privacy. The
+    string-aware coercion must keep these False, and must treat the sibling
+    bool keys the same way (case-insensitive)."""
+    config_path = tmp_path / "config.toml"
+
+    config_path.write_text(
+        '[telemetry]\nlog_queries_verbatim = "false"\n',
+        encoding="utf-8",
+    )
+    cfg = load_config(config_path)
+    assert cfg.telemetry.log_queries_verbatim is False
+
+    # Every bool key across every section honours quoted false-spellings.
+    config_path.write_text(
+        "[behavior]\n"
+        'require_write_confirmation = "false"\n'
+        'semantic_dedup = "no"\n'
+        'curation_hint_enabled = "off"\n'
+        'full_tool_surface = "0"\n'
+        "[consolidate]\n"
+        'auto_apply = "FALSE"\n'
+        "[proposals]\n"
+        'auto_propose = "false"\n'
+        "[telemetry]\n"
+        'enabled = "False"\n',
+        encoding="utf-8",
+    )
+    cfg = load_config(config_path)
+    assert cfg.behavior.require_write_confirmation is False
+    assert cfg.behavior.semantic_dedup is False
+    assert cfg.behavior.curation_hint_enabled is False
+    assert cfg.behavior.full_tool_surface is False
+    assert cfg.consolidate.auto_apply is False
+    assert cfg.proposals.auto_propose is False
+    assert cfg.telemetry.enabled is False
+
+    # Quoted truthy spellings still coerce to True (case-insensitive).
+    config_path.write_text(
+        '[telemetry]\nlog_queries_verbatim = "TRUE"\nenabled = "on"\n',
+        encoding="utf-8",
+    )
+    cfg = load_config(config_path)
+    assert cfg.telemetry.log_queries_verbatim is True
+    assert cfg.telemetry.enabled is True
+
+
+def test_load_config_unrecognized_bool_string_falls_back_to_default(
+    tmp_path: Path,
+) -> None:
+    """An unrecognized string falls back to the FIELD DEFAULT, not to
+    truthiness. log_queries_verbatim defaults False; curation_hint_enabled
+    defaults True — a garbage value must land on each respective default
+    rather than `bool(non_empty_str) == True`."""
+    config_path = tmp_path / "config.toml"
+    config_path.write_text(
+        "[telemetry]\n"
+        'log_queries_verbatim = "maybe"\n'
+        "[behavior]\n"
+        'curation_hint_enabled = "sometimes"\n',
+        encoding="utf-8",
+    )
+    cfg = load_config(config_path)
+    assert cfg.telemetry.log_queries_verbatim is False
+    assert cfg.behavior.curation_hint_enabled is True
+
+
+def test_load_config_telemetry_non_positive_max_bytes_clamps_to_default(
+    tmp_path: Path,
+) -> None:
+    """A 0/negative max_bytes would make the rotation guard never hold and
+    gzip-rotate on every append (rotation storm). The loader clamps any
+    non-positive (or non-int) configured value back to the 10 MB default;
+    a positive value is preserved unchanged."""
+    config_path = tmp_path / "config.toml"
+    for bad in (0, -1, -10_000):
+        config_path.write_text(f"[telemetry]\nmax_bytes = {bad}\n", encoding="utf-8")
+        cfg = load_config(config_path)
+        assert cfg.telemetry.max_bytes == 10_000_000
+
+    config_path.write_text(
+        '[telemetry]\nmax_bytes = "not a number"\n', encoding="utf-8"
+    )
+    cfg = load_config(config_path)
+    assert cfg.telemetry.max_bytes == 10_000_000
+
+    config_path.write_text("[telemetry]\nmax_bytes = 4096\n", encoding="utf-8")
+    cfg = load_config(config_path)
+    assert cfg.telemetry.max_bytes == 4096
+
+
 def test_load_config_missing_sections_use_defaults(tmp_path: Path) -> None:
     """A config file with only one section still loads — the rest fall back
     to dataclass defaults. Important for partial overrides ("I only care

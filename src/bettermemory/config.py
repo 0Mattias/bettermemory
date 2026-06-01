@@ -567,6 +567,69 @@ def _warn_on_system_dir(source: str, resolved: Path) -> None:
 # ---------------------------------------------------------------------------
 
 
+# Strings that a string-typed TOML value can take to mean True / False.
+# TOML's own `bool` type round-trips fine, but a value the user *quoted*
+# (`x = "false"`) arrives as the str "false", and `bool("false")` is True
+# — so a naive `bool(raw.get(...))` silently flips a quoted privacy opt-out
+# ON. These sets map the common textual spellings; anything else falls back
+# to the caller-supplied default rather than to truthiness.
+_TRUE_STRINGS = frozenset({"true", "1", "yes", "on"})
+_FALSE_STRINGS = frozenset({"false", "0", "no", "off", ""})
+
+
+def _coerce_bool(value: object, default: bool) -> bool:
+    """Coerce a TOML-sourced value to bool without the str trap.
+
+    - A real ``bool`` passes through unchanged.
+    - A ``str`` is matched case-insensitively after trimming against the
+      true/false spellings above ("true"/"1"/"yes"/"on" -> True;
+      "false"/"0"/"no"/"off"/"" -> False). An UNRECOGNISED string falls
+      back to ``default`` — never to ``bool(non_empty_str) == True``,
+      which is the bug this helper exists to prevent (a quoted
+      ``log_queries_verbatim = "false"`` must stay False).
+    - Anything else (int, None, list, ...) falls back to ``default``.
+    """
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, str):
+        token = value.strip().lower()
+        if token in _TRUE_STRINGS:
+            return True
+        if token in _FALSE_STRINGS:
+            return False
+        return default
+    return default
+
+
+def _coerce_positive_int(value: object, default: int) -> int:
+    """Coerce to ``int`` and clamp a non-positive result to ``default``.
+
+    A 0 or negative byte cap would otherwise reach the rotation guard in
+    ``events._rotate_if_needed`` and make ``size < max_bytes`` never hold,
+    triggering a gzip rotation on every append (a rotation storm). Treat
+    ``<= 0`` as "use the default" at load time; ``events`` separately
+    treats ``<= 0`` as "never rotate" for an explicitly-constructed
+    Recorder. A non-int / unparseable value also falls back to ``default``.
+    """
+    # Narrow before calling int() so mypy strict (no int(object) overload) and
+    # warn_return_any stay happy. bool is an int subclass — accept it directly.
+    coerced: int
+    if isinstance(value, bool):
+        coerced = int(value)
+    elif isinstance(value, int):
+        coerced = value
+    elif isinstance(value, str):
+        try:
+            coerced = int(value)
+        except ValueError:
+            return default
+    else:
+        return default
+    if coerced <= 0:
+        return default
+    return coerced
+
+
 def default_config_path() -> Path:
     return Path(platformdirs.user_config_dir("bettermemory")) / CONFIG_FILENAME
 
@@ -700,15 +763,15 @@ def load_config(path: Path | None = None) -> Config:
     return Config(
         storage=StorageConfig(directory=storage_raw.get("directory")),
         behavior=BehaviorConfig(
-            require_write_confirmation=bool(
-                behavior_raw.get("require_write_confirmation", False)
+            require_write_confirmation=_coerce_bool(
+                behavior_raw.get("require_write_confirmation"), False
             ),
             default_max_results=int(behavior_raw.get("default_max_results", 5)),
             search_mode=str(behavior_raw.get("search_mode", "hybrid")),
             recency_boost_half_life_days=float(
                 behavior_raw.get("recency_boost_half_life_days", 30.0)
             ),
-            semantic_dedup=bool(behavior_raw.get("semantic_dedup", False)),
+            semantic_dedup=_coerce_bool(behavior_raw.get("semantic_dedup"), False),
             semantic_provider=str(behavior_raw.get("semantic_provider", "auto")),
             semantic_model_name=str(
                 behavior_raw.get("semantic_model_name", "all-MiniLM-L6-v2")
@@ -738,25 +801,34 @@ def load_config(path: Path | None = None) -> Config:
             max_takeaway_bytes=int(behavior_raw.get("max_takeaway_bytes", 4_096)),
             max_scopes_per_write=int(behavior_raw.get("max_scopes_per_write", 64)),
             curation_hint_threshold=int(behavior_raw.get("curation_hint_threshold", 5)),
-            curation_hint_enabled=bool(behavior_raw.get("curation_hint_enabled", True)),
+            curation_hint_enabled=_coerce_bool(
+                behavior_raw.get("curation_hint_enabled"), True
+            ),
             # Shipped default is LEAN: when the user hasn't set this key, the
             # server hides the curation/power-user tools. This intentionally
             # diverges from the BehaviorConfig dataclass default (True) — the
             # loader is the deployment-policy layer. See that field's comment
             # and the round-trip test's documented exception. Set
             # `full_tool_surface = true` under [behavior] for the full surface.
-            full_tool_surface=bool(behavior_raw.get("full_tool_surface", False)),
+            full_tool_surface=_coerce_bool(
+                behavior_raw.get("full_tool_surface"), False
+            ),
         ),
         scopes=ScopesConfig(
             allowed=list(scopes_raw.get("allowed", [])),
         ),
         telemetry=TelemetryConfig(
-            enabled=bool(telemetry_raw.get("enabled", True)),
-            max_bytes=int(telemetry_raw.get("max_bytes", 10_000_000)),
-            log_queries_verbatim=bool(telemetry_raw.get("log_queries_verbatim", False)),
+            enabled=_coerce_bool(telemetry_raw.get("enabled"), True),
+            # Clamp a 0/negative configured cap to the default — a non-positive
+            # value reaching events._rotate_if_needed makes the size guard never
+            # hold and gzip-rotates on every append (rotation storm).
+            max_bytes=_coerce_positive_int(telemetry_raw.get("max_bytes"), 10_000_000),
+            log_queries_verbatim=_coerce_bool(
+                telemetry_raw.get("log_queries_verbatim"), False
+            ),
         ),
         consolidate=ConsolidateConfig(
-            auto_apply=bool(consolidate_raw.get("auto_apply", False)),
+            auto_apply=_coerce_bool(consolidate_raw.get("auto_apply"), False),
             auto_apply_interval_hours=float(
                 consolidate_raw.get("auto_apply_interval_hours", 24.0)
             ),
@@ -765,7 +837,7 @@ def load_config(path: Path | None = None) -> Config:
             ),
         ),
         proposals=ProposalsConfig(
-            auto_propose=bool(proposals_raw.get("auto_propose", False)),
+            auto_propose=_coerce_bool(proposals_raw.get("auto_propose"), False),
             max_pending=int(proposals_raw.get("max_pending", 20)),
         ),
         config_path=config_path,
