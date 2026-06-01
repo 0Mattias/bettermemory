@@ -85,7 +85,13 @@ TRANSIENT_PHRASE_MARKERS: tuple[str, ...] = (
 # digests, hex-encoded keys). Lowercase only — git short SHAs are
 # conventionally lowercase, and locking on case avoids false positives on
 # uppercase identifiers like ULIDs (which use 0-9A-Z but not a-f).
-_SHA_RE = re.compile(r"\b[0-9a-f]{7,40}\b")
+#
+# The leading lookahead requires at least one a-f letter inside the run, so
+# a purely-decimal token (a Unix epoch like 1700000000, a phone number, a
+# large numeric id, an error code) can't masquerade as a SHA. Digits are a
+# subset of the hex class, so without this guard those durable numbers would
+# fail closed against exactly the content the gate is meant to admit.
+_SHA_RE = re.compile(r"\b(?=[0-9a-f]*[a-f])[0-9a-f]{7,40}\b")
 
 
 # Pre-compile phrase regexes with word boundaries. Word boundaries stop

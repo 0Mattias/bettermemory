@@ -47,6 +47,29 @@ def test_six_char_hex_does_not_trigger_sha_marker() -> None:
     assert find_transient_markers(body) == []
 
 
+@pytest.mark.parametrize(
+    "number",
+    [
+        "1700000000",  # Unix epoch (10 digits).
+        "1234567",  # smallest 7-digit run.
+        "8005551212",  # phone-number-shaped id.
+        "4042",  # too short anyway, but decimal.
+        "9999999999",  # large numeric id.
+    ],
+)
+def test_all_decimal_number_does_not_trigger_sha_marker(number: str) -> None:
+    """A purely-decimal 7+ digit token is not a commit hash. Digits are a
+    subset of the hex class, so the matched run must contain at least one
+    a-f letter — otherwise durable numbers (epochs, phone numbers, ids,
+    error codes) fail closed against the very content the gate admits."""
+    body = f"The recorded value {number} is the canonical reference."
+    hits = find_transient_markers(body)
+    assert all(not h.marker.startswith("sha:") for h in hits), (
+        f"all-decimal {number!r} must not be flagged as a SHA, "
+        f"got {[h.marker for h in hits]}"
+    )
+
+
 def test_uppercase_hex_does_not_trigger_sha_marker() -> None:
     """ULIDs (and other uppercase hex IDs) shouldn't be misread as SHAs."""
     body = "Memory id 01HXYZABCDEF identifies the entry."
