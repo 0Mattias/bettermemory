@@ -244,7 +244,7 @@ Auto-resolution applies two implicit filters when `prior_session_id` is omitted:
 
 Returns `{prior_session_id: str | None, episodes: [{id, created, takeaway, body, scopes}, ...]}`. `prior_session_id is None` AND `episodes == []` is the "no baseline" case; `prior_session_id != None` AND `episodes == []` is "baseline exists but no journal" — branch on both.
 
-### `episode_search(scopes?, parent_session_id?, swarm_id?, since?, max_results?)`
+### `episode_search(scopes?, parent_session_id?, swarm_id?, since?, max_results?, auto_scope?)`
 
 Cross-session lookup. Unlike `memory_search`, NOT ranked — episodes are chronological and the filter set is the discovery surface.
 
@@ -253,6 +253,7 @@ Cross-session lookup. Unlike `memory_search`, NOT ranked — episodes are chrono
 - `swarm_id: str | None = None`. Fan-in filter — return only episodes tagged with this cohort id, gathered across all session directories. This is the N:1 swarm read: pass the coordinator's session id (the same value each sub-agent passed to `episode_write`) to gather every sub-agent's takeaways in one call. Distinct from `episode_handoff`'s 1:1 single-chain predecessor lookup. When set, it takes precedence over the bare `parent_session_id`-only / no-filter walk.
 - `since: str | None`. ISO-8601 timestamp; only episodes created at or after.
 - `max_results: int | None`. Default `20`, cap `200`. The cap surfaces the **most-recent N** matches (the slice keeps oldest-first ordering inside that window — "what did I conclude across the last few sessions?" reads the tail, not the head).
+- `auto_scope: bool = True`. Worktree isolation for the **bare discovery walk** (no `swarm_id` / `parent_session_id`): drops episodes whose `origin.worktree_root` doesn't match the caller's, mirroring `memory_search.auto_scope` and the isolation `episode_handoff` enforces. An explicit `swarm_id` or `parent_session_id` is a deliberate cross-tree read and is **never** worktree-filtered (the swarm fan-in gathers sub-agents that each ran in their own worktree). Legacy / no-origin episodes and callers outside any git checkout pass through. Set `False` to sweep the bare walk across every worktree sharing the memory root.
 
 Returns a list of `{id, session_id, created, takeaway, body, scopes, swarm_id}` dicts oldest-first within the most-recent-`max_results` window. `session_id` is included because `episode_search` spans sessions (unlike `episode_handoff`, which scopes to one), so the caller can correlate a takeaway back to its originating session directory; `swarm_id` (may be `null`) is the cohort tag. Session-tag floor episodes (the crash-recovery anchors `episode_handoff` writes) are filtered out of this surface.
 
