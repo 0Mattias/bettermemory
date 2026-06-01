@@ -976,6 +976,83 @@ async def test_hook_attributed_event_suppresses_auto_commit(
     assert res["id"] not in state.pending_use_tokens
 
 
+async def test_production_cross_id_space_hook_event_suppresses_auto_commit(
+    server_with_state: tuple[Any, SessionState, Path],
+) -> None:
+    """Regression for the PRODUCTION id-space gap: the in-process server
+    session (`recorder.session_id`, a `sess_<hex>`) and the Stop hook's
+    session (the Claude Code transcript id) are DIFFERENT id spaces. The
+    real `hook.run_audit` builds its Recorder with
+    `session_id=<transcript_id>`, so the `applied, attribution="hook"`
+    event it writes is stamped `session=<transcript_id>` — never equal
+    to `state.session_id`.
+
+    The covering test above (`test_hook_attributed_event_suppresses_
+    auto_commit`) records the hook event under `state.session_id`, the
+    SAME id-space, so it never exercised this gap: the old
+    `_already_recorded_pending_ids` filter (`session != recorder.session_id`)
+    matched it by accident. Under the production shape that filter
+    skipped the hook event entirely, the pending token survived, and
+    `_advance_turn` fired a SECOND `applied, attribution="auto"` event
+    ~2 turns later — a permanent double-count in the append-only log
+    that inflates `memory_helped_rate` and the explicit-vs-auto split.
+
+    This test stamps the hook event with a transcript id that is
+    explicitly NOT `state.session_id`, then asserts EXACTLY ONE applied
+    event total after the auto-commit window passes.
+    """
+    srv, state, memory_dir = server_with_state
+    res = await _call(
+        srv, "memory_write", content="A retrievable fact.", scopes=["tools"]
+    )
+    await _call(srv, "memory_search", query="retrievable fact")
+    assert res["id"] in state.pending_use_tokens
+
+    # The Stop hook's transcript id — a DIFFERENT id space from the
+    # server's `sess_<hex>`. This is the crux of the production bug.
+    transcript_session_id = "claude-code-transcript-abc123"
+    assert transcript_session_id != state.session_id, (
+        "test precondition: the hook session must differ from the server "
+        "session to reproduce the cross-id-space production shape"
+    )
+
+    from bettermemory.events import Recorder
+
+    # Mirror `hook.run_audit`: the hook's Recorder carries the transcript
+    # id, and every event it writes is tagged `triggered_from="stop_hook"`.
+    Recorder(root=memory_dir, session_id=transcript_session_id).record(
+        "use",
+        ids=[res["id"]],
+        outcome="applied",
+        auto=False,
+        attribution="hook",
+        claim_excerpts=["A retrievable fact"],
+        triggered_from="stop_hook",
+    )
+
+    # Advance enough turns for any rogue auto-commit to fire.
+    await _call(srv, "memory_list")
+    await _call(srv, "memory_list")
+    await _call(srv, "memory_list")
+
+    events = list(iter_events(memory_dir))
+    use_events_for_id = [
+        e
+        for e in events
+        if e.get("kind") == "use" and res["id"] in (e.get("ids") or [])
+    ]
+    applied = [e for e in use_events_for_id if e.get("outcome") == "applied"]
+    assert len(applied) == 1, (
+        "expected exactly one applied event (the hook's) — a second "
+        "auto-applied event means the cross-id-space dedup bridge is "
+        f"missing; got: {applied}"
+    )
+    assert applied[0]["attribution"] == "hook"
+    # The dedup must have purged the pending token despite the hook
+    # event living under the transcript id, not the server session.
+    assert res["id"] not in state.pending_use_tokens
+
+
 async def test_stale_use_event_does_not_falsely_purge_fresh_token(
     server_with_state: tuple[Any, SessionState, Path],
 ) -> None:

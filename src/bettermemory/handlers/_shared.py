@@ -320,9 +320,43 @@ def _event_ts_epoch(raw: Any) -> float | None:
     return parsed.timestamp() if parsed is not None else None
 
 
+def _stop_hook_session_ids(events: list[dict[str, Any]]) -> set[str]:
+    """Session ids stamped on Stop-hook events in the log.
+
+    The Stop hook runs out-of-process and builds its Recorder with
+    `session_id=<Claude Code transcript id>` — a different id space
+    from the server's `sess_<hex>`. It tags every event it writes with
+    `triggered_from="stop_hook"` (see `hook.run_audit`), so the
+    transcript id(s) it used are recoverable from the log. This is the
+    mirror image of `hook._latest_in_process_session`, which recovers
+    the *server* session by skipping stop-hook events; here we collect
+    the stop-hook sessions so the in-process dedup
+    (`_already_recorded_pending_ids`) can match the hook's
+    `attribution="hook"` use events across the id-space boundary.
+
+    Returns the full set rather than just the latest because more than
+    one transcript id can appear in the active log (server restart,
+    transcript rotation). The per-id `event.ts >= token.issued_at`
+    guard in the caller keeps a stale session's old `use` events from
+    falsely purging a freshly-minted token, so an over-broad session
+    set is safe — the timestamp guard, not the session match, is the
+    correctness boundary.
+    """
+    out: set[str] = set()
+    for event in events:
+        if event.get("triggered_from") != "stop_hook":
+            continue
+        session = event.get("session") or event.get("session_id")
+        if isinstance(session, str):
+            out.add(session)
+    return out
+
+
 def _already_recorded_pending_ids(
     state: SessionState,
     recorder: Recorder,
+    *,
+    extra_session_ids: set[str] | None = None,
 ) -> set[str]:
     """Return the subset of pending-token memory_ids that already have
     a `use` event in the log emitted AFTER the token was issued.
@@ -341,11 +375,35 @@ def _already_recorded_pending_ids(
     3. Any future attribution tier added to the log without a matching
        in-memory hook.
 
+    Session-id bridge (load-bearing): the dedup must accept a `use`
+    event whose `session` is EITHER the in-process server session
+    (`recorder.session_id`, the `sess_<hex>` the auto-fallback runs
+    under) OR the Stop hook's transcript id. The production Stop hook
+    builds its Recorder with `session_id=<Claude Code transcript id>`
+    (see `hook.run_audit`), so the `applied, attribution="hook"` event
+    it writes is stamped `session=<transcript_id>` — a DIFFERENT id
+    space from the server's. A bare `== recorder.session_id` filter
+    never matched it, so the pending token wasn't purged and
+    `_advance_turn` fired a SECOND `applied, attribution="auto"` event
+    for the same retrieval, permanently double-counting in the
+    append-only log. This mirrors the bridge the hook already applies
+    on its own retrieval side (`_emit_hook_attributions` dedups against
+    `used_session_ids={retrieval_session, session_id}`); the dedup side
+    was the missing half. The transcript id is recovered from the log
+    the way `hook._latest_in_process_session` recovers the server
+    session — via the `triggered_from="stop_hook"` tag the hook stamps
+    on every event (see `_stop_hook_session_ids`). `extra_session_ids`
+    lets a caller thread additional ids explicitly (e.g. a known
+    transcript id); it is unioned with the derived set.
+
     The `event.ts >= token.issued_at` filter is load-bearing: without
     it, a stale `use` event for the same id (from an earlier retrieval
     in the same session, or replay-after-rotation) would falsely purge
     a freshly-issued token. The pre-2.6.8 hook-only scan had the same
-    bug — it just happened only on the hook path.
+    bug — it just happened only on the hook path. The filter is also
+    what keeps the session bridge safe: a stop-hook session id from a
+    prior server lifetime can join the allowed set, but a `use` event
+    older than any live token's mint time is still excluded per-id.
 
     Reads the active event log BACKWARD (most-recent first) and early-
     exits once events fall behind the oldest pending token's
@@ -371,6 +429,14 @@ def _already_recorded_pending_ids(
     # so the list is bounded too — and the early-exit below typically
     # bails after a handful of recent events.
     events = list(iter_events(recorder.root))
+    # The set of session ids whose `use` events count as ours: the
+    # in-process server session plus the Stop hook's transcript id(s)
+    # recovered from the log, plus any explicitly threaded by the
+    # caller. See the docstring's session-id bridge note.
+    allowed_sessions = {recorder.session_id}
+    allowed_sessions |= _stop_hook_session_ids(events)
+    if extra_session_ids:
+        allowed_sessions |= extra_session_ids
     for event in reversed(events):
         ev_ts = _event_ts_epoch(event.get("ts"))
         if ev_ts is not None and ev_ts < oldest_pending_issued_at:
@@ -386,7 +452,7 @@ def _already_recorded_pending_ids(
         # producer passed it explicitly (`turn_audited` / `search_miss`).
         # The `or` keeps the read robust regardless — canonical-first,
         # the discipline 70e41a4 established for llm.py.
-        if (event.get("session") or event.get("session_id")) != recorder.session_id:
+        if (event.get("session") or event.get("session_id")) not in allowed_sessions:
             continue
         if ev_ts is None:
             continue
