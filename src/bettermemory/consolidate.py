@@ -49,7 +49,7 @@ from pathlib import Path
 from typing import Any
 
 from ._fsutil import atomic_write_bytes, bounded_tail_read
-from .events import Recorder, iter_events
+from .events import Recorder, iter_all_events
 from .health import _edit_distance_within
 from .models import Category, Memory, snippet_for
 from .search import _content_token_set
@@ -617,7 +617,17 @@ def consolidate(
         now = datetime.now(timezone.utc)
 
     memories = store.load_all()
-    events = list(iter_events(store.root))
+    # Read the FULL history (active log + rotated .gz archives), not just
+    # the active log. The demotion pass mirrors `memory_health`'s
+    # `dead_weight` rule, which counts `use(applied)` endorsements from
+    # `iter_all_events` (health.py:42,2488). After routine log rotation
+    # (telemetry.max_bytes, default 10MB) every applied event in an archive
+    # is invisible to `iter_events`; reading only the active log would see
+    # applied_count==0 for a genuinely-endorsed memory and demote a
+    # load-bearing fact->ambient on the unattended Stop-hook path. The
+    # cold-scope pass reads the same `applied` signal, so it shares the
+    # source. (The similarity-based dedup pass doesn't touch events.)
+    events = list(iter_all_events(store.root))
 
     dedup_candidates, dedup_method = find_dedup_candidates(
         memories,
@@ -1269,7 +1279,11 @@ def consolidate_llm(
 
     today = today or _llm.today_iso()
     memories = store.load_all()
-    events = list(iter_events(store.root))
+    # Full history (active + rotated archives) so the contradiction-cluster
+    # seeding sees `record_use(outcome="contradicted")` events that have
+    # aged into a .gz archive, matching the non-LLM `consolidate` pass and
+    # health.py's canonical `iter_all_events` source.
+    events = list(iter_all_events(store.root))
     by_id = {m.id: m for m in memories}
 
     # Seed near-duplicate clusters from the existing pass.

@@ -277,6 +277,88 @@ def test_demotion_reads_returned_field_on_real_recorder_events(tmp_path: Path) -
     assert candidates[0].retrieved_count == 1
 
 
+def test_consolidate_does_not_demote_fact_endorsed_in_rotated_archive(
+    store: Store, memory_dir: Path
+) -> None:
+    """Regression: `consolidate()` must read the FULL event history
+    (active log + rotated `.gz` archives) for the demotion pass, exactly
+    as `memory_health` computes `dead_weight` from `iter_all_events`.
+
+    The bug: `consolidate()` read `iter_events` (active log only). After a
+    routine log rotation (telemetry.max_bytes), the `use(applied)`
+    endorsement of a load-bearing FACT lives in a `.gz` archive and is
+    invisible to the active-log-only read. The demotion pass then sees
+    applied_count==0 and — for a memory retrieved since rotation and older
+    than the window — demotes it fact->ambient on the UNATTENDED
+    `run_auto_consolidate(apply=True)` Stop-hook path, with no human review.
+
+    Setup mirrors the real split: the sole `applied` event sits in a
+    rotated archive; a post-rotation `search` event sits in the active
+    log. The FACT is older than the demote window. After the fix the
+    memory must NOT be a demotion candidate — and `compute_health` (the
+    canonical rule this pass mirrors) keeps it out of `dead_weight` for
+    the identical inputs."""
+    import gzip
+    import json as _json
+
+    from bettermemory.events import EVENT_LOG_FILENAME, iter_all_events
+    from bettermemory.health import compute_health
+
+    m = store.write(content="a load-bearing fact worth keeping", scopes=["tools"])
+    assert (store.load_one(m.id).category or Category.FACT) != Category.AMBIENT
+
+    # The sole `applied` endorsement lives ONLY in a rotated .gz archive —
+    # exactly where a real rotation (telemetry.max_bytes) would have parked
+    # it. Hand-craft the archive the same way test_events.py does so the
+    # split is deterministic (a Recorder-driven rotation can't guarantee
+    # which side of the boundary a given event lands on).
+    applied_event = {
+        "ts": "2026-01-01T00:00:00Z",
+        "session": "pre-rotation",
+        "kind": "use",
+        "ids": [m.id],
+        "outcome": "applied",
+    }
+    archive = memory_dir / ".events-20260101T000000Z.jsonl.gz"
+    with gzip.open(archive, "wb") as gz:
+        gz.write((_json.dumps(applied_event) + "\n").encode("utf-8"))
+
+    # A post-rotation retrieval in the ACTIVE log: this is what makes the
+    # memory look retrieved-since-rotation, the precondition that triggered
+    # the spurious demotion. Round-trip through a real Recorder so the
+    # active-log shape is production-faithful (`returned` field).
+    rec = Recorder(root=memory_dir, session_id="post-rotation", enabled=True)
+    rec.record("search", query="anything", returned=[m.id])
+    # Sanity: the active log holds only the search; the applied lives in the
+    # archive. iter_all_events stitches both back together chronologically.
+    assert (memory_dir / EVENT_LOG_FILENAME).exists()
+    all_events = list(iter_all_events(memory_dir))
+    kinds = sorted(str(e.get("kind")) for e in all_events)
+    assert kinds == ["search", "use"], kinds
+
+    # Age the memory past the 30d demote window (shift `now`, same trick as
+    # test_consolidate_apply_demotes_dead_weight — no created backdating).
+    future_now = m.created + timedelta(days=60)
+
+    # The fix: consolidate() reads iter_all_events, so the archived applied
+    # event is counted and the memory is NOT a demotion candidate.
+    report = consolidate(store, apply=False, window_days=30, now=future_now)
+    demotion_ids = {d.memory_id for d in report.demotion_candidates}
+    assert m.id not in demotion_ids, (
+        "consolidate() demoted a FACT whose sole applied endorsement lives "
+        "in a rotated .gz archive — it must read iter_all_events (full "
+        "history) like health.py's dead_weight rule, not iter_events "
+        "(active log only)."
+    )
+
+    # Cross-check the canonical rule: compute_health, fed the same full
+    # history, keeps the memory out of dead_weight for the same reason.
+    health = compute_health(
+        store.load_all(), all_events, window_days=30, now=future_now
+    )
+    assert m.id not in {s.id for s in health.dead_weight}
+
+
 # ---------------------------------------------------------------------------
 # Cold-scope pass
 # ---------------------------------------------------------------------------
