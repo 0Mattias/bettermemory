@@ -1423,3 +1423,102 @@ def test_write_floor_atomic_no_tmp_stragglers(episode_store: EpisodeStore) -> No
         p for p in session_dir.iterdir() if p.suffix == ".tmp" or ".tmp" in p.name
     ]
     assert stragglers == [], f"unexpected tmp artifacts: {stragglers}"
+
+
+@pytest.mark.parametrize("branch", ["empty_dir", "past_cutoff"])
+def test_prune_unlinks_sidecar_after_flock_release_not_inside(
+    episode_store: EpisodeStore,
+    monkeypatch: pytest.MonkeyPatch,
+    branch: str,
+) -> None:
+    """Cross-platform sidecar-unlink pin (regression for the in-lock
+    unlink being DEAD on Windows; same root-cause class the 3.4.2
+    store.py fix 40e71e4 addressed).
+
+    `prune_old_sessions` used to call `_unlink_session_lockfile` while
+    still INSIDE the `with flock_excl(...)` block, on both the empty-dir
+    and past-cutoff branches. On Windows `msvcrt.locking` keeps the
+    lockfile handle open for the whole `with` duration, so unlinking the
+    still-open `.session-<id>.lock` raised `OSError` and was swallowed —
+    the unlink never landed (it was masked only by the post-loop orphan
+    sweep). `store.prune_tombstones` avoids this by deferring ALL sidecar
+    unlinks to AFTER lock release; this test pins that `episodes.py` does
+    the same.
+
+    Deterministic, platform-independent pin: wrap the module's
+    `flock_excl` to track nesting depth, and record the depth observed at
+    the moment `_unlink_session_lockfile` is invoked. The OLD code calls
+    it at depth 1 (still inside the flock); the FIXED code calls it at
+    depth 0 (handle released). Also assert the sidecar is actually gone
+    post-prune on both branches.
+    """
+    import os as _os
+    import bettermemory.episodes as episodes_mod
+    from bettermemory._fsutil import flock_excl as real_flock_excl
+
+    if branch == "empty_dir":
+        # Empty session_dir + its sidecar lockfile (write once, delete
+        # the file so `write`'s flock-created lockfile survives).
+        ep = episode_store.write(session_id="sess_defer", body="trash")
+        sess_dir = episode_store.episodes_dir / "sess_defer"
+        (sess_dir / f"{ep.id}.md").unlink()
+        assert list(sess_dir.iterdir()) == []  # truly empty
+    else:
+        # Past-cutoff session: backdate its file past the TTL so the
+        # past-cutoff branch (newest_mtime < cutoff) fires.
+        episode_store.write(session_id="sess_defer", body="ancient")
+        sess_dir = episode_store.episodes_dir / "sess_defer"
+        past = time.time() - (40 * 24 * 60 * 60)
+        for f in sess_dir.iterdir():
+            _os.utime(f, (past, past))
+
+    lock_path = episode_store.episodes_dir / ".session-sess_defer.lock"
+    assert lock_path.exists()
+
+    # Track flock nesting depth across the module's `flock_excl` binding.
+    flock_depth = {"value": 0}
+
+    from contextlib import contextmanager
+    from typing import Iterator as _Iterator
+
+    @contextmanager
+    def tracking_flock(path: Path) -> _Iterator[None]:
+        with real_flock_excl(path):
+            flock_depth["value"] += 1
+            try:
+                yield
+            finally:
+                flock_depth["value"] -= 1
+
+    monkeypatch.setattr(episodes_mod, "flock_excl", tracking_flock)
+
+    # Record the flock depth at the moment the sidecar unlink runs.
+    real_unlink = episodes_mod._unlink_session_lockfile
+    observed_depths: list[int] = []
+
+    def recording_unlink(
+        episodes_dir: Path, lock_file: Path, session_dir: Path
+    ) -> None:
+        observed_depths.append(flock_depth["value"])
+        real_unlink(episodes_dir, lock_file, session_dir)
+
+    monkeypatch.setattr(episodes_mod, "_unlink_session_lockfile", recording_unlink)
+
+    pruned = episode_store.prune_old_sessions(ttl_days=30)
+
+    assert "sess_defer" in pruned
+    assert not sess_dir.exists()
+    # The unlink must have run exactly once for this session, and the
+    # flock must already have been RELEASED (depth 0) when it ran.
+    assert observed_depths == [0], (
+        f"_unlink_session_lockfile ran while the per-session flock was "
+        f"still held (depth {observed_depths}) — on Windows that in-lock "
+        f"unlink raises against the open msvcrt handle and the sidecar "
+        f"leaks. It must be deferred to AFTER flock release on both the "
+        f"empty-dir and past-cutoff branches (mirrors store.prune_tombstones)."
+    )
+    # End state on both platforms: the sidecar is gone.
+    assert not lock_path.exists(), (
+        "sidecar lockfile must be unlinked post-prune (deferred past "
+        "flock release so the unlink lands on Windows too)."
+    )

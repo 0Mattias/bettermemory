@@ -473,12 +473,35 @@ class EpisodeStore:
         delete. Without this, a multi-MCP setup (two Claude Code
         sessions on the same store) could `shutil.rmtree` a session
         dir mid-write and silently lose B's just-rename'd episode.
+
+        Sidecar-lockfile cleanup is deferred to AFTER each flock block
+        releases (collected in `pruned_lock_files`, swept post-loop):
+        an in-lock unlink is dead code on Windows because `msvcrt.
+        locking` keeps the lockfile handle open for the `with` block's
+        duration, so the unlink would raise and leak the sidecar — the
+        exact class the 3.4.2 store.py fix (40e71e4) addressed. This
+        mirrors `store.prune_tombstones`, which also defers all sidecar
+        unlinks past lock release.
         """
         if ttl_days <= 0 or not self.episodes_dir.exists():
             return []
         cutoff = (now or utcnow()) - timedelta(days=ttl_days)
         cutoff_epoch = cutoff.timestamp()
         pruned: list[str] = []
+        # Sidecar `.session-<id>.lock` paths to unlink AFTER their
+        # `flock_excl(...)` block has exited and the OS lock handle is
+        # closed. The unlink CANNOT happen inside the `with` block: on
+        # Windows `msvcrt.locking` keeps the lockfile handle open for the
+        # whole `with` duration (the fd is closed only in `_flock_windows`'s
+        # outer `finally`, after the `yield` returns), so `lock_file.unlink`
+        # against that still-open handle raises `OSError` — silently
+        # swallowed, leaving the sidecar to leak. This is the exact root-
+        # cause class the 3.4.2 store.py fix (40e71e4) addressed for
+        # tombstone sidecars; `store.prune_tombstones` defers ALL sidecar
+        # unlinks to after lock release for the same reason and we mirror it
+        # here. (POSIX would tolerate an in-lock unlink because the held fd
+        # keeps the inode alive, but the deferred sweep is correct on both.)
+        pruned_lock_files: list[tuple[Path, Path]] = []
         for session_dir in self.episodes_dir.iterdir():
             if not session_dir.is_dir() or session_dir.is_symlink():
                 continue
@@ -529,22 +552,23 @@ class EpisodeStore:
                         # the metadata flush completes before the lock
                         # releases and any peer can re-observe the dir.
                         fsync_dir(self.episodes_dir)
-                        # Unlink the sidecar lockfile too — see the
-                        # extended note on the past-cutoff branch
-                        # below for the full rationale. Same argument
-                        # applies here: an empty session_dir past
-                        # TTL has no live writer, so the inode-
-                        # identity race the lock-persists discipline
-                        # protects against is closed by construction.
-                        _unlink_session_lockfile(
-                            self.episodes_dir, lock_file, session_dir
-                        )
+                    # Defer the sidecar-lockfile unlink to AFTER this
+                    # `with` block closes the OS lock handle — an in-lock
+                    # unlink is dead code on Windows (`msvcrt.locking`
+                    # holds the handle open, so the unlink raises and is
+                    # swallowed). See the `pruned_lock_files` comment at
+                    # the top of this method and the past-cutoff branch
+                    # below for the full lifecycle rationale (no live
+                    # writer can exist on a session_dir we just rmdir'd).
+                    pruned_lock_files.append((lock_file, session_dir))
                     pruned.append(session_name)
                 except FileNotFoundError:
                     # Peer pruner won the race between our unlocked
                     # walk and our flock acquisition. Treat as success
                     # — the observable outcome (session_dir gone) is
-                    # what the caller wanted.
+                    # what the caller wanted. The orphan sweep at the
+                    # end of this method reclaims any sidecar the peer
+                    # left behind, so we don't need to enqueue one here.
                     pruned.append(session_name)
                 except OSError:
                     # Either ENOTEMPTY (a writer slipped a file in
@@ -567,26 +591,34 @@ class EpisodeStore:
                 # the lockfile mid-acquisition by a peer prune.
                 #
                 # Lockfile lifecycle on this branch (audit-3 carryover
-                # A3-13 / E1): the sidecar lockfile IS unlinked here
-                # while we still hold the flock. Pre-E1 we deliberately
-                # left it in place to preserve flock-inode identity for
-                # any peer trying to acquire on the same path
-                # concurrently — but for a session whose newest-mtime
-                # is past TTL by 30+ days, no live writer can exist
-                # (every legitimate write refreshes the session_dir's
-                # mtime past cutoff via `_write_path` + rename). The
-                # only concurrent acquirers possible are peer prunes,
-                # and two peer prunes converging on the same dead
-                # session both reach the same observable outcome
-                # (session gone) — even if they end up on different
-                # inodes of the lockfile, neither does any session_dir
-                # work after the rmtree-then-recheck, and BOTH unlink
-                # the inode they hold before releasing, so no orphan
-                # accumulates from the race. Before E1 each fresh
-                # /loop tick (new process => new session_id) left a
-                # 0-byte lockfile that survived TTL prunes, and
-                # `iterdir()` over `episodes_dir` slowed handoff
-                # latency materially at N≈10⁵.
+                # A3-13 / E1): the sidecar lockfile is enqueued for
+                # unlink AFTER this `with` block closes the OS lock
+                # handle — NOT inside the flock. The in-lock unlink it
+                # used to do was dead code on Windows: `msvcrt.locking`
+                # keeps the lockfile handle open for the whole `with`
+                # duration, so `lock_file.unlink` against the still-open
+                # handle raised `OSError` and was silently swallowed,
+                # leaking the sidecar (the precise root-cause class the
+                # 3.4.2 store.py fix 40e71e4 addressed for tombstone
+                # sidecars). The leak was masked only by the post-loop
+                # orphan sweep below; deferring the unlink to after lock
+                # release makes it actually run on BOTH platforms and
+                # keeps us consistent with `store.prune_tombstones`,
+                # which defers ALL sidecar unlinks the same way.
+                #
+                # Unlinking is safe (rather than leaving the lockfile in
+                # place for flock-inode identity) because for a session
+                # whose newest-mtime is past TTL by 30+ days, no live
+                # writer can exist — every legitimate write refreshes the
+                # session_dir's mtime past cutoff via `_write_path` +
+                # rename. The only concurrent acquirers possible are peer
+                # prunes, and two peer prunes converging on the same dead
+                # session both reach the same observable outcome (session
+                # gone, lockfile gone). Before E1 each fresh /loop tick
+                # (new process => new session_id) left a 0-byte lockfile
+                # that survived TTL prunes, and `iterdir()` over
+                # `episodes_dir` slowed handoff latency materially at
+                # N≈10⁵.
                 lock_anchor = self.episodes_dir / f".session-{session_name}"
                 lock_file = lock_anchor.with_suffix(lock_anchor.suffix + ".lock")
                 try:
@@ -623,35 +655,48 @@ class EpisodeStore:
                             # inside the flock so the metadata flush
                             # completes before the lock releases.
                             fsync_dir(self.episodes_dir)
-                        # session_dir is gone (we just rmtree'd it,
-                        # OR a peer prune wiped it during the unlocked-
-                        # stat → flock-acquire window and we observed
-                        # `fresh_mtime is None`). Either way, unlink
-                        # the sidecar lockfile while we still hold the
-                        # flock so the orphan can't linger past TTL.
-                        # See the long lifecycle comment above for why
-                        # this is safe on past-TTL sessions.
-                        _unlink_session_lockfile(
-                            self.episodes_dir, lock_file, session_dir
-                        )
+                    # session_dir is gone (we just rmtree'd it, OR a peer
+                    # prune wiped it during the unlocked-stat → flock-
+                    # acquire window and we observed `fresh_mtime is
+                    # None`). Either way, enqueue the sidecar lockfile
+                    # for unlink now that the `with` block has closed the
+                    # OS lock handle — see the lifecycle comment above
+                    # for why the unlink must be deferred past lock
+                    # release (dead code on Windows otherwise) and why
+                    # it's safe on a past-TTL session.
+                    pruned_lock_files.append((lock_file, session_dir))
                     pruned.append(session_name)
                 except FileNotFoundError:
                     # Another prune in a peer process already rmtree'd
                     # this session between our unlocked stat and our
                     # flock acquisition. Treat as success — the
                     # observable outcome (session_dir gone) is what
-                    # the caller wanted.
+                    # the caller wanted. The orphan sweep at the end of
+                    # this method reclaims any sidecar the peer left
+                    # behind, so we don't enqueue one here.
                     pruned.append(session_name)
                 except OSError:
                     continue
-        # After per-session prunes finish, sweep any orphan lockfiles
-        # whose corresponding session_dir is already gone. Two sources
+        # Now that every per-session `flock_excl` block has exited and
+        # the OS lock handle is closed, unlink the sidecar lockfiles we
+        # enqueued for the sessions we pruned. This is the step the
+        # in-lock unlink used to attempt but couldn't complete on
+        # Windows (the held `msvcrt.locking` handle made the unlink
+        # raise); running it here, post-release, deletes the sidecar on
+        # both POSIX and Windows. Mirrors `store.prune_tombstones`'s
+        # post-`_locked` sidecar sweep. `_unlink_session_lockfile` keeps
+        # its `session_dir.exists()` guard so a sidecar whose session
+        # somehow came back is left alone.
+        for lock_file, session_dir in pruned_lock_files:
+            _unlink_session_lockfile(self.episodes_dir, lock_file, session_dir)
+        # Then sweep any orphan lockfiles whose corresponding session_dir
+        # is already gone but that we did NOT enqueue above. Two sources
         # of orphans: (a) lockfiles written by pre-E1 versions of
         # bettermemory that ran TTL prunes on the same store, (b) an
-        # unlikely peer-prune race that left a fresh inode at the
-        # path between our unlink and lock-release. Cheap — one
-        # `iterdir()` + per-file `is_file()` + a `stat()` on the
-        # corresponding session_dir.
+        # unlikely peer-prune race that left a fresh inode at the path
+        # between our unlink and lock-release. Cheap — one `iterdir()` +
+        # per-file `is_file()` + a `stat()` on the corresponding
+        # session_dir.
         self._cleanup_orphan_lockfiles()
         return pruned
 
@@ -729,17 +774,25 @@ def _unlink_session_lockfile(
 ) -> None:
     """Unlink a per-session sidecar lockfile and fsync the parent dir.
 
-    Called from the past-cutoff and empty-dir branches of
-    `prune_old_sessions` while the prune still holds the flock. Defense-
-    in-depth: verifies `session_dir` is gone before unlinking, so a
-    refactor that calls this on a live session is a no-op rather than a
-    silent correctness regression. The fsync persists the dirent
+    Called from `prune_old_sessions`'s post-loop sweep — AFTER the
+    per-session `flock_excl(...)` block has exited and the OS lock
+    handle is closed. The unlink must NOT run inside the flock: on
+    Windows `msvcrt.locking` keeps the lockfile handle open for the
+    whole `with` duration, so unlinking the still-open file raises
+    `OSError` and the sidecar leaks (the root-cause class the 3.4.2
+    store.py fix 40e71e4 addressed). Deferring to post-release makes
+    the unlink land on both POSIX and Windows, matching
+    `store.prune_tombstones`'s post-`_locked` sidecar sweep.
+
+    Defense-in-depth: verifies `session_dir` is gone before unlinking,
+    so a refactor that calls this on a live session is a no-op rather
+    than a silent correctness regression. The fsync persists the dirent
     removal so a crash can't resurrect an orphan lockfile that pre-
     E1's design intentionally left behind.
 
     See the lifecycle comment in `prune_old_sessions` past-cutoff
-    branch for why unlinking here is safe (no live writers possible on
-    a past-TTL session).
+    branch for why unlinking is safe (no live writers possible on a
+    past-TTL session).
     """
     if session_dir.exists():
         # Defensive guard — should never fire from the prune branches
