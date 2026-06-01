@@ -892,3 +892,79 @@ async def test_commit_drift_count_agrees_across_surfaces_same_second_boundary(
     assert search_count == 0
     assert health_count == 0
     assert show_count == search_count == health_count
+
+
+@pytest.mark.skipif(not _GIT_AVAILABLE, reason="git not on PATH")
+async def test_memory_search_verified_paths_does_not_resurrect_same_second_commit(
+    server_with_fake_origin, memory_dir: Path, tmp_path: Path
+) -> None:
+    """The verified-paths narrowing must NEVER turn a clean author-bisect
+    count (0) back into drift. `attach_commit_drift_counts` narrows via
+    `commits_since_touching_paths`, which filters on COMMITTER date
+    INCLUSIVELY at whole-second granularity — so a commit that TOUCHES a
+    verified path in the same UTC second as `last_verified_at` would be
+    counted by the narrowing even though the strictly-greater author-date
+    bisect (the authoritative unfiltered count) excludes it. The `count > 0`
+    guard (mirroring memory_show / the health rollup — the four narrowing
+    sites must gate identically) skips the narrowing when the bisect already
+    said clean. Pre-guard this hit read commit_drift_count=1; with the guard
+    it reads 0 / fresh, in lockstep with memory_show.
+    """
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    _init_repo(repo)
+    stable = repo / "stable.py"
+    stable.write_text("x = 1\n")
+    subprocess.run(
+        ["git", "add", "stable.py"], cwd=repo, check=True, capture_output=True
+    )
+    _commit_at(repo, "add stable.py", when=datetime(2020, 1, 1, tzinfo=timezone.utc))
+
+    origin = Origin(cwd=str(repo), repo=_REMOTE, branch="main")
+    server = server_with_fake_origin(origin)
+
+    written = await _call(
+        server, "memory_write", content="durable thing about widgets", scopes=["tools"]
+    )
+    await _call(server, "memory_verify", id=written["id"], verified_paths=[str(stable)])
+
+    # A commit that TOUCHES the verified path, placed at the whole-second
+    # FLOOR of last_verified_at (<= the verify instant). The author-date
+    # bisect excludes it (unfiltered count 0); the committer-date INCLUSIVE
+    # path-narrowing would otherwise count it and resurrect phantom drift.
+    stored = Store(memory_dir).load_one(written["id"])
+    assert stored.last_verified_at is not None
+    floor_second = stored.last_verified_at.replace(microsecond=0)
+    stable.write_text("x = 2\n")
+    subprocess.run(
+        ["git", "add", "stable.py"], cwd=repo, check=True, capture_output=True
+    )
+    iso = floor_second.strftime("%Y-%m-%dT%H:%M:%S+00:00")
+    env = os.environ.copy()
+    env.update(
+        {
+            "GIT_AUTHOR_DATE": iso,
+            "GIT_COMMITTER_DATE": iso,
+            "GIT_AUTHOR_NAME": "Test",
+            "GIT_AUTHOR_EMAIL": "test@example.com",
+            "GIT_COMMITTER_NAME": "Test",
+            "GIT_COMMITTER_EMAIL": "test@example.com",
+        }
+    )
+    subprocess.run(
+        ["git", "commit", "-m", "touch stable.py same-second-as-verify"],
+        cwd=repo,
+        check=True,
+        capture_output=True,
+        env=env,
+    )
+
+    raw = await _call(
+        server, "memory_search", query="widgets durable", expand_top=False
+    )
+    hits = _unwrap(raw)
+    target = next(h for h in hits if h["id"] == written["id"])
+    # The narrowing must not resurrect the same-second commit the bisect
+    # already excluded — stays 0 / fresh, in lockstep with memory_show.
+    assert target["commit_drift_count"] == 0
+    assert target["staleness_verdict"] == "fresh"

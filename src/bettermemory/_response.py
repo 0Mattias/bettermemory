@@ -422,8 +422,21 @@ class ResponseBuilder:
             # noise here too. Bounded to the few hits with verified_paths;
             # falls back to the unfiltered count when the path filter can't
             # run (git unreachable, all paths outside the repo).
+            #
+            # The `count > 0` guard is load-bearing and mirrors
+            # `verify.compute_commit_drift` + `health._compute_commit_drift_debt`
+            # (the four verified-paths-narrowing sites must gate identically).
+            # Beyond skipping a needless `git rev-list` when there's no drift
+            # to narrow, it keeps the author-date `bisect_right` count
+            # authoritative: `commits_since_touching_paths` filters on
+            # COMMITTER date INCLUSIVELY at whole-second granularity, so
+            # without the guard a same-second commit touching a verified path
+            # could turn a clean (count == 0) author-bisect result into a
+            # positive count — resurrecting the exact show/search divergence
+            # the commit-drift unification removed. Narrowing may only REDUCE
+            # the count, never resurrect drift the bisect said was clean.
             vpaths = verified_paths_by_id.get(hit.id) or []
-            if vpaths:
+            if vpaths and count > 0:
                 filtered = commits_since_touching_paths(
                     Path(caller_origin.cwd), since, vpaths
                 )
