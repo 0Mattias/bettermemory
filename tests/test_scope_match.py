@@ -173,6 +173,65 @@ def test_path_inside_identifier_does_not_match() -> None:
     assert out.has_mismatch is False
 
 
+def test_path_root_does_not_over_match_sibling_prefix() -> None:
+    """`projects:foo`'s root `/.../foo` must not over-match a sibling
+    tree `/.../foobar/...` whose last segment merely shares the prefix.
+
+    Regression: the project-root pass guarded only the *leading*
+    boundary (`body[idx-1].isalnum()`) and not the trailing one, so a
+    root `/Users/me/projects/foo` matched as a substring inside
+    `/Users/me/projects/foobar/x.py` and attributed a `projects:foobar`
+    path to `projects:foo`. The trailing boundary now enforces an exact
+    segment match. `project_scopes` is empty so only the path-root pass
+    can fire."""
+    out = detect_scope_mismatch(
+        body="The script at /Users/me/projects/foobar/x.py is unrelated.",
+        declared_scopes=["tools"],
+        project_scopes=set(),
+        project_roots={"projects:foo": "/Users/me/projects/foo"},
+    )
+    assert out.has_mismatch is False
+
+
+def test_path_root_rejects_slug_sibling_suffixes() -> None:
+    """Trailing `-`, `_`, and `.` continue a path segment too, so
+    `/.../foo` must not match `/.../foo-bar`, `/.../foo_bar`, or
+    `/.../foo.bak`."""
+    for suffix in ("-bar", "_bar", ".bak"):
+        out = detect_scope_mismatch(
+            body=f"See /Users/me/projects/foo{suffix}/x.py for details.",
+            declared_scopes=["tools"],
+            project_scopes=set(),
+            project_roots={"projects:foo": "/Users/me/projects/foo"},
+        )
+        assert out.has_mismatch is False, suffix
+
+
+def test_path_root_exact_segment_still_matches() -> None:
+    """The trailing-boundary guard must not break legitimate hits: a
+    root followed by a segment boundary (`/`) or end-of-string is a
+    real match."""
+    # Followed by `/`.
+    out_sub = detect_scope_mismatch(
+        body="The script at /Users/me/projects/foo/x.py is the entry point.",
+        declared_scopes=["tools"],
+        project_scopes=set(),
+        project_roots={"projects:foo": "/Users/me/projects/foo"},
+    )
+    assert out_sub.has_mismatch is True
+    assert "projects:foo" in out_sub.suggested_scopes
+
+    # Root at end-of-string (nothing after it).
+    out_end = detect_scope_mismatch(
+        body="It all lives under /Users/me/projects/foo",
+        declared_scopes=["tools"],
+        project_scopes=set(),
+        project_roots={"projects:foo": "/Users/me/projects/foo"},
+    )
+    assert out_end.has_mismatch is True
+    assert "projects:foo" in out_end.suggested_scopes
+
+
 # ---------------------------------------------------------------------------
 # collect_project_scopes / collect_project_roots
 # ---------------------------------------------------------------------------

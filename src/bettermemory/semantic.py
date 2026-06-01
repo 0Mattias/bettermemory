@@ -499,6 +499,32 @@ def flush_persistent_cache() -> None:
         return
 
     if not _EMBEDDING_CACHE:
+        # Empty-but-dirty: every entry was purged after the dirty flag
+        # was set (e.g. `_note_model_dimension` dropped a whole batch of
+        # stale-dimension entries). The dirty state still has to be
+        # *resolved* — returning early without clearing `_DIRTY` strands
+        # the flag, so a later genuine write (which sets `_DIRTY=True`
+        # again) sees an already-set flag and may be skipped, losing
+        # that write. Persist the empty state: drop the now-stale
+        # on-disk file (so a restart can't re-hydrate the very entries
+        # the purge removed) and clear the flag. Best-effort and under
+        # the same exclusive lock the write path uses, so concurrent
+        # flushers serialise; an unlink failure is a cleanup miss, not a
+        # correctness risk — the recomputable cache survives either way.
+        from ._fsutil import flock_excl, fsync_dir
+
+        try:
+            with flock_excl(_PERSISTENT_PATH):
+                _PERSISTENT_PATH.unlink(missing_ok=True)
+                with contextlib.suppress(OSError):
+                    fsync_dir(_PERSISTENT_PATH.parent)
+        except Exception as exc:  # noqa: BLE001 — never break the dedup path
+            log.warning(
+                "failed to clear stale embedding cache at %s: %s",
+                _PERSISTENT_PATH,
+                exc,
+            )
+        _DIRTY = False
         return
     ids = []
     keys = []

@@ -167,16 +167,31 @@ def detect_scope_mismatch(
             # (the durability module already does that for path drift;
             # duplicating it here would be over-engineering for a
             # quieter signal). False positives are tempered by the
-            # leading-character check: a path embedded in unrelated
-            # prose is unlikely to be preceded by `(`, ` `, or
-            # start-of-string.
+            # boundary checks on either side: a path embedded in
+            # unrelated prose is unlikely to be preceded by `(`, ` `, or
+            # start-of-string, and a root like `projects:foo`'s
+            # `/.../foo` must not over-match a sibling tree
+            # `/.../foobar/...` whose last segment merely shares the
+            # prefix.
             idx = body.find(root)
             if idx < 0:
                 continue
             if idx > 0 and body[idx - 1].isalnum():
-                # Trailing characters of an identifier — false positive.
+                # Leading characters of a larger identifier — false positive.
                 continue
-            evidence = _trim_evidence(body, idx, idx + len(root))
+            end = idx + len(root)
+            if end < len(body) and (body[end].isalnum() or body[end] in "-_."):
+                # The matched root is the prefix of a longer path
+                # segment (`/.../foo` inside `/.../foobar`,
+                # `/.../foo-bar`, `/.../foo_bar`, `/.../foo.bak`), so
+                # the body is talking about a *different* project that
+                # merely shares the leading characters. A real hit is
+                # followed by a segment boundary (`/`), whitespace,
+                # closing punctuation, or end-of-string. Mirror the
+                # leading guard's exact-segment intent on the trailing
+                # side.
+                continue
+            evidence = _trim_evidence(body, idx, end)
             matches.append(
                 ScopeMismatchEntry(
                     kind="project_root",

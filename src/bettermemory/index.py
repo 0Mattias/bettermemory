@@ -95,7 +95,17 @@ log = logging.getLogger("bettermemory.index")
 # instead of walking the whole store with `load_all`), and adds
 # the `memory_links` table so `_links_payload`'s reverse-link
 # scan stops being O(N) per `memory_show`.
-SCHEMA_VERSION = 2
+#
+# Version 3: widens the `memory_links` primary key to include `note`.
+# Under v2 the key was `(source_id, type, target_id)`, so two on-disk
+# links sharing a `(type, target_id)` but carrying different notes
+# collapsed to one row via `INSERT OR IGNORE` — the in-memory reverse
+# index silently lost a note the canonical file keeps (the link list
+# on disk is a plain list with no dedup). Files are canonical; the
+# index must mirror them, so `note` joins the key and both rows
+# survive. A pure schema change to a derived cache — the bump forces
+# a one-time rebuild via `_ensure_schema`'s older-version path.
+SCHEMA_VERSION = 3
 
 INDEX_FILENAME = ".index.sqlite"
 
@@ -159,7 +169,7 @@ CREATE TABLE IF NOT EXISTS memory_links (
     type TEXT NOT NULL,
     target_id TEXT NOT NULL,
     note TEXT,
-    PRIMARY KEY (source_id, type, target_id)
+    PRIMARY KEY (source_id, type, target_id, note)
 );
 
 CREATE INDEX IF NOT EXISTS memory_links_by_target ON memory_links(target_id);
@@ -672,7 +682,15 @@ def _sync_links(conn: sqlite3.Connection, memory: Memory) -> None:
     links use REPLACE semantics at the model layer (`memory_update`
     overwrites the full list), so the index mirror is the same: drop
     every row where this memory is the source, then insert the new
-    list."""
+    list.
+
+    `note` is part of the `memory_links` primary key (schema v3), so
+    two on-disk links sharing a `(type, target_id)` but differing in
+    their note both survive — the canonical link list on disk is a
+    plain list with no dedup, and the reverse index has to mirror it.
+    `INSERT OR IGNORE` therefore only collapses an exact-duplicate
+    link line (same source, type, target, and note), which is a
+    redundant row on disk too, never a distinct note."""
     conn.execute("DELETE FROM memory_links WHERE source_id = ?", (memory.id,))
     if not memory.links:
         return

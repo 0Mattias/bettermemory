@@ -16,6 +16,14 @@ from pathlib import Path
 import pytest
 
 from bettermemory import index
+from bettermemory.models import (
+    Confidence,
+    LinkType,
+    Memory,
+    MemoryLink,
+    Source,
+    generate_ulid,
+)
 from bettermemory.store import Store
 
 
@@ -357,6 +365,79 @@ def test_links_for_returns_empty_when_no_index(tmp_path: Path) -> None:
     out, inbound = index.links_for(root, "01HXYZ000000000000000000ZZ")
     assert out == []
     assert inbound == []
+
+
+def test_duplicate_typed_link_notes_round_trip(memory_dir: Path) -> None:
+    """Two on-disk links sharing `(type, target_id)` but carrying
+    different notes must BOTH survive in the reverse-link index.
+
+    Regression: `_sync_links` did `INSERT OR IGNORE` into a
+    `memory_links` table keyed on `(source_id, type, target_id)`, so the
+    second note collided and was silently dropped — the in-memory
+    reverse index lost a note the canonical file keeps. The on-disk
+    `links` list is a plain list with no dedup validator, so a memory
+    can legitimately hold two `extends` edges to the same target with
+    distinct notes; the schema-v3 key includes `note`, so both rows
+    persist and `links_for` mirrors disk.
+
+    Driven through `index.upsert` directly (not `store.update`, which
+    dedups links by `target_id` at the model layer) because the
+    divergence the audit describes is exactly the index-vs-disk one: a
+    link list that reaches the index from a hand-edited file.
+    """
+    target = generate_ulid()
+    now = datetime(2026, 1, 1, tzinfo=timezone.utc)
+    src = Memory(
+        id=generate_ulid(),
+        created=now,
+        updated=now,
+        scopes=["tools"],
+        confidence=Confidence.MEDIUM,
+        source=Source.EXPLICIT,
+        body="body\n",
+        links=[
+            MemoryLink(type=LinkType.EXTENDS, target_id=target, note="first note"),
+            MemoryLink(type=LinkType.EXTENDS, target_id=target, note="second note"),
+        ],
+    )
+    index.upsert(memory_dir, src, filename="src.md")
+
+    outbound, _inbound = index.links_for(memory_dir, src.id)
+    notes = sorted(note or "" for (_type, _tid, note) in outbound)
+    assert notes == ["first note", "second note"]
+    # Both edges share the same type and target — only the note differs.
+    assert all(t == "extends" and tid == target for (t, tid, _n) in outbound)
+
+    # The duplicate is preserved from the target's inbound side too.
+    _out_t, inbound_t = index.links_for(memory_dir, target)
+    in_notes = sorted(note or "" for (_type, _sid, note) in inbound_t)
+    assert in_notes == ["first note", "second note"]
+
+
+def test_rebuild_preserves_duplicate_typed_link_notes(memory_dir: Path) -> None:
+    """The full-rebuild path mirrors disk the same way the incremental
+    upsert does — both notes of a duplicate-typed link survive a
+    `rebuild` from the on-disk truth."""
+    target = generate_ulid()
+    now = datetime(2026, 1, 1, tzinfo=timezone.utc)
+    src = Memory(
+        id=generate_ulid(),
+        created=now,
+        updated=now,
+        scopes=["tools"],
+        confidence=Confidence.MEDIUM,
+        source=Source.EXPLICIT,
+        body="body\n",
+        links=[
+            MemoryLink(type=LinkType.EXTENDS, target_id=target, note="alpha"),
+            MemoryLink(type=LinkType.EXTENDS, target_id=target, note="beta"),
+        ],
+    )
+    index.rebuild(memory_dir, [(Path("src.md"), src)])
+
+    outbound, _inbound = index.links_for(memory_dir, src.id)
+    notes = sorted(note or "" for (_type, _tid, note) in outbound)
+    assert notes == ["alpha", "beta"]
 
 
 def test_links_cleanup_on_tombstone(store: Store, memory_dir: Path) -> None:

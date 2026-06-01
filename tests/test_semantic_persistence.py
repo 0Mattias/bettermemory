@@ -258,3 +258,56 @@ def test_flush_chmods_before_rename(
     assert call_order.index("fchmod") < call_order.index("replace"), (
         f"fchmod must run before rename, got call order {call_order!r}"
     )
+
+
+def test_flush_empty_but_dirty_cache_clears_flag(tmp_path: Path) -> None:
+    """An empty-but-dirty cache must still resolve the dirty flag on
+    flush.
+
+    Regression: `_note_model_dimension` can purge every entry and set
+    `_DIRTY=True`, leaving the cache empty-but-dirty. The old flush
+    short-circuited on `if not _EMBEDDING_CACHE: return` *without*
+    clearing `_DIRTY`, stranding the flag — a later genuine write that
+    re-set `_DIRTY=True` then saw an already-set flag, and its data was
+    never persisted. After this flush `_DIRTY` must be False, the
+    now-stale on-disk file must be gone (so a restart can't re-hydrate
+    the very entries the purge dropped), and a subsequent real write
+    must persist.
+    """
+    pytest.importorskip("numpy")
+    from bettermemory import semantic
+
+    configure_persistent_cache(tmp_path, "test-model")
+    path = semantic._PERSISTENT_PATH
+    assert path is not None
+
+    # Seed one entry (the fake model yields a fixed-length vector) and
+    # persist it so there's a stale file on disk to clear later.
+    cached_embed(_FakeModel(), "01" + "A" * 24, "k1", "hello world")
+    flush_persistent_cache()
+    assert path.exists()
+    assert semantic._DIRTY is False
+
+    # Purge every entry via a dimension that can't match the fake
+    # model's output length. This drops the only entry and sets
+    # _DIRTY=True, leaving the cache empty-but-dirty.
+    semantic._note_model_dimension(999)
+    assert semantic._EMBEDDING_CACHE == {}
+    assert semantic._DIRTY is True
+
+    # The flush must resolve the dirty state even with nothing to write.
+    flush_persistent_cache()
+    assert semantic._DIRTY is False, (
+        "empty-but-dirty flush left _DIRTY set — a later real write "
+        "would be skipped and lost"
+    )
+    # The stale file is removed so a restart can't re-hydrate the very
+    # entries the purge dropped.
+    assert not path.exists()
+
+    # A later genuine write is now recognised as dirty and persists.
+    cached_embed(_FakeModel(), "01" + "B" * 24, "k2", "fresh body")
+    assert semantic._DIRTY is True
+    flush_persistent_cache()
+    assert semantic._DIRTY is False
+    assert path.exists()
