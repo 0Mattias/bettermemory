@@ -164,10 +164,23 @@ def _links_payload(deps: "ToolHandlers", memory: Any) -> dict[str, Any]:
     memory; forward links carry the `target_id`.
 
     Fallback: if the index file doesn't exist (fresh install, just
-    deleted), `links_for` returns empty lists and we walk the
-    active set once. That matches the same fallback shape
-    `_load_search_candidates` uses — search keeps working through
-    a torn-down index, just slower.
+    deleted) OR exists but reports zero indexed rows, `links_for`
+    returns empty lists and we walk the active set once. That matches
+    the same fallback shape `_load_search_candidates` uses — search
+    keeps working through a torn-down index, just slower.
+
+    The present-but-empty case is the post-upgrade window: a
+    `SCHEMA_VERSION` bump makes `_ensure_schema` drop+recreate the
+    index tables EMPTY on the first index op after the upgrade (the
+    index FILE still exists, `indexed_count` resets to 0) and the
+    rows refill lazily per-write or via `bettermemory reindex`. An
+    `exists()`-only guard would let `links_for` return `[]` and emit
+    NO reverse_links for affected memories through that window, even
+    though the linking data is intact on disk. Routing the
+    zero-row case to `load_all` too keeps reverse_links correct
+    while the index repopulates (`index.status(...)` reports
+    `indexed_count == 0` whenever the index is absent, empty, or
+    corrupt — every state where the index can't answer).
     """
     from .. import index as _index
 
@@ -194,10 +207,15 @@ def _links_payload(deps: "ToolHandlers", memory: Any) -> dict[str, Any]:
             if note is not None:
                 entry["note"] = note
             reverse.append(entry)
-    elif not _index.index_path(deps.store.root).exists():
-        # No index — fall back to the old shape so a freshly-
-        # initialised store still gets reverse links. After the
-        # next write the index will repopulate.
+    elif _index.status(deps.store.root).get("indexed_count", 0) == 0:
+        # No usable index — fall back to the old shape so a freshly-
+        # initialised store (file absent) AND a post-upgrade store
+        # (file present but tables dropped empty by the SCHEMA_VERSION
+        # rebuild) still get reverse links. `status()` reports
+        # `indexed_count == 0` for the absent, empty, and corrupt
+        # cases alike; any of them means the index can't answer, so
+        # walk the active set. After the next write / reindex the
+        # index repopulates and this branch stops firing.
         for other in deps.store.load_all():
             if other.id == memory.id:
                 continue

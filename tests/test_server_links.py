@@ -101,6 +101,89 @@ async def test_reverse_links_surface_on_target(server: Any) -> None:
     assert rev["source_id"] == b_id
 
 
+def _force_post_schema_bump_empty_index(memory_dir: Path) -> None:
+    """Drive the index into the documented post-`SCHEMA_VERSION`-bump
+    state: file PRESENT but tables dropped EMPTY (`indexed_count == 0`).
+
+    We don't edit index.py. Instead we reproduce exactly what an
+    upgrading user hits: stamp an older `schema_version` into the
+    on-disk `meta` table, then trigger one index op. `_ensure_schema`
+    sees on-disk < code `SCHEMA_VERSION` and drops + recreates the
+    data tables empty (resetting `indexed_count` to 0) while leaving
+    the index FILE in place — the rows then refill lazily per-write
+    or via `bettermemory reindex`. `index.status(...)` performs that
+    first op, so on return the index is present-but-empty.
+    """
+    import sqlite3
+
+    from bettermemory import index as _index
+
+    path = _index.index_path(Path(memory_dir).expanduser().resolve())
+    assert path.exists(), "index file should exist before the simulated bump"
+    conn = sqlite3.connect(str(path))
+    try:
+        conn.execute(
+            "UPDATE meta SET value = ? WHERE key = 'schema_version'",
+            (str(_index.SCHEMA_VERSION - 1),),
+        )
+        conn.commit()
+    finally:
+        conn.close()
+    # One index op triggers _ensure_schema's older-version drop+recreate.
+    root = Path(memory_dir).expanduser().resolve()
+    status = _index.status(root)
+    assert path.exists(), "index FILE must still exist post-rebuild"
+    assert status.get("indexed_count", 0) == 0, (
+        "index should report empty after the simulated schema-bump rebuild"
+    )
+
+
+async def test_reverse_links_survive_post_schema_bump_empty_index(
+    server: Any, memory_dir: Path
+) -> None:
+    """Regression: a `SCHEMA_VERSION` bump drops+recreates the index
+    tables EMPTY on the first index op after an upgrade — the index
+    FILE stays present but `indexed_count` resets to 0 until the rows
+    refill (lazily per-write, or via `bettermemory reindex`). During
+    that window `links_for` returns `[]`, and an `exists()`-only
+    fallback in `_links_payload` would emit NO reverse_links even
+    though the linking memory is intact on disk.
+
+    The widened fallback also routes the present-but-empty index
+    (`index.status(...).indexed_count == 0`) to the `load_all`
+    reverse-link scan, so reverse_links stay correct through the
+    rebuild window. This test FAILS against the old
+    `not index_path(...).exists()` guard (file present → no fallback →
+    no reverse_links) and PASSES with the empty-index check.
+    """
+    a_id = await _seed(server, "old version of the fact")
+    b_id = await _seed(server, "new version of the fact")
+    await _call(
+        server,
+        "memory_update",
+        id=b_id,
+        links=[{"type": "supersedes", "target_id": a_id}],
+    )
+
+    # Sanity: the index serves reverse_links before the bump.
+    shown_before = await _call(server, "memory_show", id=a_id)
+    assert shown_before.get("reverse_links")
+
+    # Reproduce the post-upgrade present-but-empty index state.
+    _force_post_schema_bump_empty_index(memory_dir)
+
+    # The reverse link must still surface — via the load_all fallback,
+    # since the present-but-empty index can't answer.
+    shown = await _call(server, "memory_show", id=a_id)
+    assert "reverse_links" in shown, (
+        "reverse_links dropped during the post-schema-bump empty-index window"
+    )
+    assert len(shown["reverse_links"]) == 1
+    rev = shown["reverse_links"][0]
+    assert rev["type"] == "supersedes"
+    assert rev["source_id"] == b_id
+
+
 async def test_links_omitted_when_empty(server: Any) -> None:
     """A memory with no links must not carry the `links` field in the
     response — same absence-as-signal contract as `path_drift` and
