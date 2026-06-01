@@ -165,6 +165,17 @@ def migrate_origin_in_directory(
         with _locked(path):
             try:
                 post = frontmatter.load(path)
+            except FileNotFoundError:
+                # The file vanished between the directory scan and our
+                # locked read — almost always a concurrent
+                # `Store.tombstone`, which writes the tombstone copy and
+                # then `unlink`s the active file. That's a *valid*
+                # mid-run removal, not corruption: don't pollute
+                # `report.malformed` (which the CLI surfaces as "fix
+                # these files"). Skip it silently — the memory still
+                # lives in `.tombstones/`.
+                log.debug("skipping %s: tombstoned/removed mid-migration", path)
+                continue
             except Exception as exc:  # noqa: BLE001 — defensive read.
                 log.warning("skipping malformed file %s: %s", path, exc)
                 report.malformed.append(path)

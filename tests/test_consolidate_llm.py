@@ -642,3 +642,100 @@ def test_consolidate_without_from_transcript_does_not_call_propose_new(
     # transcript-facts cluster was built, so no second LLM call.
     assert provider.call_count == 1
     assert not any(isinstance(p, ProposeNewProposal) for p in report.proposals)
+
+
+# ---------------------------------------------------------------------------
+# Remote-provider request timeout (core-robustness)
+# ---------------------------------------------------------------------------
+#
+# AnthropicProvider/OpenAIProvider issue a blocking SDK create() call. Without
+# a request timeout a hung provider would block the consolidate pass (and any
+# server thread driving it) indefinitely — the Ollama path already bounds its
+# HTTP call. These tests inject a fake SDK module (mirroring the providers'
+# lazy-import design) and capture the kwargs the create() call receives, so a
+# regression that drops the `timeout=` argument fails the suite. No real
+# network or SDK is touched.
+
+
+def _one_member_cluster() -> Cluster:
+    import datetime as _dt
+
+    from bettermemory.llm import ClusterMember
+    from bettermemory.models import Memory, generate_ulid
+
+    now = _dt.datetime.now(_dt.timezone.utc)
+    mem = Memory(
+        id=generate_ulid(),
+        created=now,
+        updated=now,
+        scopes=["tools"],
+        confidence=Confidence.MEDIUM,
+        source=Source.EXPLICIT,
+        body="a body the fake provider never actually reads\n",
+    )
+    return Cluster(
+        cluster_id="c",
+        cluster_kind="near_duplicates",
+        members=(ClusterMember(memory=mem),),
+    )
+
+
+def test_anthropic_provider_passes_request_timeout(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import sys
+    from types import SimpleNamespace
+
+    from bettermemory.llm import DEFAULT_TIMEOUT, AnthropicProvider
+
+    captured: dict[str, object] = {}
+
+    class _FakeMessages:
+        def create(self, **kwargs: object) -> object:
+            captured.update(kwargs)
+            block = SimpleNamespace(type="text", text='{"proposals": []}')
+            return SimpleNamespace(content=[block], stop_reason="end_turn")
+
+    class _FakeAnthropic:
+        def __init__(self, *, api_key: str) -> None:
+            self.messages = _FakeMessages()
+
+    monkeypatch.setitem(
+        sys.modules, "anthropic", SimpleNamespace(Anthropic=_FakeAnthropic)
+    )
+
+    AnthropicProvider(api_key="sk-test").propose(
+        _one_member_cluster(), today="2026-05-20"
+    )
+    assert captured.get("timeout") == DEFAULT_TIMEOUT
+
+
+def test_openai_provider_passes_request_timeout(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import sys
+    from types import SimpleNamespace
+
+    from bettermemory.llm import DEFAULT_TIMEOUT, OpenAIProvider
+
+    captured: dict[str, object] = {}
+
+    class _FakeCompletions:
+        def create(self, **kwargs: object) -> object:
+            captured.update(kwargs)
+            message = SimpleNamespace(content='{"proposals": []}')
+            choice = SimpleNamespace(message=message, finish_reason="stop")
+            return SimpleNamespace(choices=[choice])
+
+    class _FakeChat:
+        def __init__(self) -> None:
+            self.completions = _FakeCompletions()
+
+    class _FakeOpenAI:
+        def __init__(self, *, api_key: str) -> None:
+            self.chat = _FakeChat()
+
+    monkeypatch.setitem(sys.modules, "openai", SimpleNamespace(OpenAI=_FakeOpenAI))
+
+    OpenAIProvider(api_key="sk-test").propose(_one_member_cluster(), today="2026-05-20")
+    assert captured.get("timeout") == DEFAULT_TIMEOUT

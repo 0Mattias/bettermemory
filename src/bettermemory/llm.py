@@ -88,6 +88,18 @@ DEFAULT_OLLAMA_URL = "http://localhost:11434"
 DEFAULT_OLLAMA_MODEL = "llama3.2:3b"
 DEFAULT_OLLAMA_TIMEOUT_SECONDS = 60.0
 
+# Per-request timeout (seconds) for the remote provider SDK calls
+# (Anthropic, OpenAI). Without a timeout a hung provider blocks the
+# consolidate pass — and any server thread driving it — indefinitely;
+# the Ollama path already bounds its HTTP call via
+# `DEFAULT_OLLAMA_TIMEOUT_SECONDS`, so this gives the remote providers
+# the same protection. Both SDKs accept a per-request `timeout=` on the
+# create call and translate it into their underlying HTTP client's
+# read/connect deadline. Kept equal to the Ollama default so the
+# consolidate pass has one consistent "a provider call may take at most
+# this long" contract regardless of backend.
+DEFAULT_TIMEOUT = DEFAULT_OLLAMA_TIMEOUT_SECONDS
+
 # Output-token cap shared across providers. 2048 is well above any
 # legitimate JSON proposal payload for the cluster sizes we feed in,
 # and prevents an unbounded local Ollama (or a misconfigured remote
@@ -456,6 +468,10 @@ class AnthropicProvider:
             max_tokens=DEFAULT_MAX_OUTPUT_TOKENS,
             temperature=0.0,
             messages=[{"role": "user", "content": prompt}],
+            # Bound the call so a hung provider can't block forever; the
+            # SDK maps this onto its HTTP client's deadline. Mirrors the
+            # Ollama path's `timeout=self.timeout_seconds`.
+            timeout=DEFAULT_TIMEOUT,
         )
         # `stop_reason == "max_tokens"` means the model hit the cap
         # mid-response; the JSON body is truncated and `parse_and_
@@ -511,6 +527,10 @@ class OpenAIProvider:
             temperature=0.0,
             messages=[{"role": "user", "content": prompt}],
             response_format={"type": "json_object"},
+            # Bound the call so a hung provider can't block forever; the
+            # SDK maps this onto its HTTP client's deadline. Mirrors the
+            # Ollama path's `timeout=self.timeout_seconds`.
+            timeout=DEFAULT_TIMEOUT,
         )
         # `finish_reason == "length"` is the OpenAI signal that the
         # model hit `max_tokens` mid-response. Raise distinctly so
@@ -1301,6 +1321,7 @@ __all__ = [
     "DEFAULT_OLLAMA_URL",
     "DEFAULT_OLLAMA_MODEL",
     "DEFAULT_OLLAMA_TIMEOUT_SECONDS",
+    "DEFAULT_TIMEOUT",
     "MAX_TRANSCRIPT_CHARS",
     "MAX_SOURCE_EXCERPT_CHARS",
     "MemoryFenceInjectionError",

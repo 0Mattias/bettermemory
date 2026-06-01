@@ -966,6 +966,20 @@ def test_make_provider_anthropic_constructs_without_key() -> None:
     assert provider.name == "anthropic"
 
 
+def test_default_timeout_constant_is_exported_and_positive() -> None:
+    """core-robustness: the remote-provider request timeout is a
+    module-level constant the provider create() calls pass through, and
+    it's part of the public surface (__all__). A hung provider must not
+    be able to block the consolidate pass forever; the wiring is pinned
+    by the provider tests in test_consolidate_llm.py, and this pins the
+    constant itself so it can't silently disappear."""
+    from bettermemory import llm as _llm
+
+    assert isinstance(_llm.DEFAULT_TIMEOUT, (int, float))
+    assert _llm.DEFAULT_TIMEOUT > 0
+    assert "DEFAULT_TIMEOUT" in _llm.__all__
+
+
 def test_today_iso_returns_string_date() -> None:
     """The helper must return an ISO-8601 date string for the prompt
     to substitute deterministically."""

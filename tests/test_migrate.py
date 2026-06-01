@@ -328,6 +328,57 @@ def test_migration_skips_malformed_files(tmp_path: Path) -> None:
     assert "origin" in _read_metadata(good)
 
 
+def test_mid_run_tombstone_not_reported_malformed(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Regression (core-robustness): a memory tombstoned mid-run — a
+    concurrent ``Store.tombstone`` writes the tombstone copy then
+    ``unlink``s the active file — makes ``frontmatter.load(path)`` raise
+    ``FileNotFoundError`` under the migrator's lock. The broad except
+    used to catch that and label the (validly removed) memory
+    ``malformed``, which the CLI surfaces as 'fix these files'. The
+    narrowed ``except FileNotFoundError`` must skip it silently instead.
+
+    We simulate the race by patching ``frontmatter.load`` to unlink the
+    target file on first access (the same observable effect as a
+    concurrent tombstone landing between the directory scan and the
+    locked read), then raise ``FileNotFoundError`` like the real load
+    would on the now-missing path."""
+    memory_dir = tmp_path / ".claude-memory"
+    memory_dir.mkdir()
+    vanishing = _write_legacy(
+        memory_dir, name="vanishing", body="will be tombstoned", id_=_LEGACY_IDS[0]
+    )
+    survivor = _write_legacy(
+        memory_dir, name="survivor", body="stays put", id_=_LEGACY_IDS[1]
+    )
+
+    # `frontmatter` is the same module object `migrate.py` loads through
+    # (`from . import _frontmatter as frontmatter`), so patching its
+    # `load` here intercepts the migrator's read.
+    real_load = frontmatter.load
+
+    def vanishing_load(path: Path) -> object:
+        if Path(path) == vanishing:
+            # Model the concurrent tombstone: the active file is gone by
+            # the time the migrator's locked read opens it.
+            vanishing.unlink(missing_ok=True)
+            raise FileNotFoundError(path)
+        return real_load(path)
+
+    monkeypatch.setattr("bettermemory.migrate.frontmatter.load", vanishing_load)
+
+    inferred = Origin(repo="git@github.com:example/foo.git")
+    report = migrate_origin_in_directory(memory_dir, inferred=inferred)
+
+    # The vanished/tombstoned memory must NOT be reported as malformed.
+    assert vanishing not in report.malformed
+    assert report.malformed == []
+    # The surviving memory is still migrated normally.
+    assert report.updated == 1
+    assert "origin" in _read_metadata(survivor)
+
+
 def test_migration_skips_tombstone_directory(tmp_path: Path) -> None:
     """Tombstones live in `.tombstones/` and represent removal events.
     Backfilling origin into a tombstone would change the audit log
