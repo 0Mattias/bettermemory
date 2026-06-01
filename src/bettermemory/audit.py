@@ -79,7 +79,7 @@ from typing import Any, Iterable, Literal, cast
 from .models import Memory, MemoryHit, generate_ulid
 from .origin import Origin, repos_match
 from .search import SearchMode, _strip_stopwords, search as run_search, tokenize
-from .time_utils import isoformat_utc, parse_event_ts
+from .time_utils import ensure_utc, isoformat_utc, parse_event_ts
 
 
 # Events that count as "the model retrieved memory in this turn."
@@ -368,7 +368,17 @@ def probe_for_miss(
     `search_miss` event when `report.is_miss` — this function is
     side-effect-free so it can be reused from offline tooling.
     """
-    now = now or datetime.now(timezone.utc)
+    # Coerce at the single seam: an INJECTED naive `now` (e.g. a test or
+    # offline caller that builds `datetime(...)` without tzinfo) would
+    # otherwise flow uncoerced into `_count_recent_retrievals` (where
+    # `cutoff = now - timedelta(...)` stays naive) and `run_search`,
+    # then raise `TypeError: can't compare offset-naive and offset-aware
+    # datetimes` the moment any retrieval event's tz-aware `ts` (always
+    # tz-aware — it comes from `parse_event_ts`) is compared against the
+    # naive cutoff. `ensure_utc(None)` returns None so the `or` fallback
+    # still fires for the unset case; both downstream call sites read this
+    # now-coerced local `now`.
+    now = ensure_utc(now) or datetime.now(timezone.utc)
 
     if not memories or not user_message.strip():
         return MissReport(

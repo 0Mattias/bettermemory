@@ -331,3 +331,91 @@ async def test_expand_top_survives_oserror_reading_body(
     assert hits, "search aborted on a transient OSError reading the top-hit body"
     assert hits[0]["relevance"] == "high"
     assert "body" not in hits[0]
+
+
+async def test_depends_on_targeted_load_survives_oserror(
+    server: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A transient OSError while targeted-loading a `depends_on` target
+    must NOT abort the whole search (FIX 3).
+
+    `attach_depends_on_resolved` runs BEFORE `expand_top` and, when a
+    hit's `depends_on` target isn't in the query's FTS prefilter
+    candidate set, loads it directly via `store.load_one`. That loop
+    only caught `(MemoryNotFoundError, TombstonedError)` — NOT OSError —
+    so a flaky read (EIO, vanished file on a network mount) of the
+    target's backing file raised straight out of `memory_search`,
+    aborting an otherwise-successful search. The fix widens the catch
+    to include OSError, silently dropping the unreadable target from the
+    auto-pull (same as a missing/tombstoned one).
+
+    Setup is load-bearing and differs from
+    `test_expand_top_survives_oserror_reading_body`: that test has NO
+    `depends_on` link, so the targeted-load path never invokes
+    `load_one`. Here B `depends_on` A, and A's body deliberately does
+    NOT match the query — so A is absent from B's prefilter candidate
+    set and the targeted-load branch fires `load_one(A)`, which we
+    patch to raise. `expand_top` is left off so the only `load_one`
+    call under test is the depends-on one.
+
+    Forces the FTS index pre-filter (`BETTERMEMORY_INDEX_THRESHOLD=1`).
+    That's REQUIRED, not incidental: on the default (load_all) path the
+    candidate set is the whole store, so A is always present in the
+    side-map and the targeted-load branch never fires `load_one`. The
+    index pre-filter narrows candidates to query-relevant rows (just B),
+    so A is genuinely absent and the `store.load_one(A)` fallback — the
+    line under test — actually runs.
+    """
+    # Route the search through the index candidate pre-filter so the
+    # candidate pool excludes A (non-matching body) and the targeted
+    # load fires. The index loads candidates via `_load_path`, not
+    # `load_one`, so the patched `load_one` below only intercepts the
+    # depends-on targeted load.
+    monkeypatch.setenv("BETTERMEMORY_INDEX_THRESHOLD", "1")
+    # A: the dependency target. Distinct vocabulary so a query for
+    # "python" never surfaces it via FTS — it can only be reached
+    # through B's depends_on edge (the targeted-load path).
+    a = _unwrap(
+        await _call(
+            server,
+            "memory_write",
+            content="kubernetes networking internals and the cluster overlay",
+            scopes=["tools"],
+        )
+    )
+    # B: the hit. Matches the query and depends_on A.
+    b = _unwrap(
+        await _call(
+            server,
+            "memory_write",
+            content="python list comprehension notes",
+            scopes=["tools"],
+        )
+    )
+    # Wire the depends_on edge B -> A via memory_update (REPLACE
+    # semantics on `links`). Done BEFORE the monkeypatch so the update's
+    # own load isn't broken by the patched load_one.
+    await _call(
+        server,
+        "memory_update",
+        id=b["id"],
+        links=[{"type": "depends_on", "target_id": a["id"]}],
+    )
+
+    def _raise_oserror(self: Store, memory_id: str) -> Any:
+        raise OSError("transient read failure on the depends-on target")
+
+    monkeypatch.setattr(Store, "load_one", _raise_oserror)
+
+    # Query hits B; the targeted-load of A (not in the candidate set)
+    # raises OSError. On the unfixed code that propagates and aborts the
+    # search; on the fixed code A is silently dropped from the auto-pull.
+    hits = _unwrap(await _call(server, "memory_search", query="python"))
+    assert hits, (
+        "search aborted on a transient OSError targeted-loading a depends_on target"
+    )
+    by_id = {h["id"]: h for h in hits}
+    assert b["id"] in by_id, "the matching hit B must still be returned"
+    # A was unreadable, so the auto-pull resolves nothing — the field is
+    # absent (same absence-as-signal as a missing/tombstoned target).
+    assert not by_id[b["id"]].get("depends_on_resolved")

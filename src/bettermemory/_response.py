@@ -35,6 +35,7 @@ from .origin import (
 )
 from .time_utils import isoformat_utc as _isoformat_utc
 from .time_utils import isoformat_utc_optional as _isoformat_utc_optional
+from .time_utils import parse_event_ts
 from .verify import (
     _VERDICT_FRESH,
     _VERDICT_RAISE_STATUSES,
@@ -578,12 +579,24 @@ class ResponseBuilder:
             for tid in missing_target_ids:
                 try:
                     target = store.load_one(tid)
-                except (MemoryNotFoundError, TombstonedError):
+                except (MemoryNotFoundError, TombstonedError, OSError):
                     # Same silent-skip semantics as the existing
                     # prefilter-miss branch below: a deleted or
                     # tombstoned target is best-effort dropped from
                     # auto-pull. The link still exists on disk for
                     # explicit `memory_show` investigation.
+                    #
+                    # OSError is in the set because `store.load_one` →
+                    # `frontmatter.load(path)` reads the target's backing
+                    # file and does not guard OSError itself; a transient
+                    # read failure (EIO, a flaky network mount) on a
+                    # depends-on target would otherwise propagate out of
+                    # `attach_depends_on_resolved` and abort an
+                    # otherwise-successful `memory_search`. Dropping the
+                    # unreadable target from the auto-pull mirrors the
+                    # missing/tombstoned skip and matches the OSError guard
+                    # already on the `expand_top` body load in
+                    # `handlers/search.py`.
                     continue
                 # Apply the caller's scope/origin filter at load time
                 # — must mirror the per-target check below so a
@@ -717,7 +730,16 @@ class ResponseBuilder:
             ts_str = event.get("ts")
             if not isinstance(ts_str, str):
                 continue
-            ts = _parse_iso_ts(ts_str)
+            # Canonical parse: tz-aware UTC, or None on malformed input.
+            # An offset-less event ts (e.g. a hand-written or legacy
+            # "2026-05-31T12:00:00") would otherwise come back naive, and
+            # then (a) `ts.timestamp()` below would read the wall-clock in
+            # the host's LOCAL zone — silently mis-windowing the event by
+            # the local UTC offset — and (b) the `timeline.sort(...)` further
+            # down would mix naive and tz-aware datetimes and raise
+            # `TypeError`. `parse_event_ts` stamps UTC on offset-less input
+            # so both the window math and the sort stay correct everywhere.
+            ts = parse_event_ts(ts_str)
             if ts is None or ts.timestamp() < cutoff:
                 continue
             # Legacy fallback for `memory_ids` — same class as the
@@ -786,16 +808,6 @@ class ResponseBuilder:
 
             if entries:
                 hit_dict["recent_negative_outcomes"] = entries
-
-
-def _parse_iso_ts(value: str) -> datetime | None:
-    """Parse an ISO timestamp tolerant of the `Z` suffix used in event
-    logs. Returns None on malformed input rather than raising — a single
-    bad event shouldn't break the whole annotation pass."""
-    try:
-        return datetime.fromisoformat(value.replace("Z", "+00:00"))
-    except (ValueError, AttributeError):
-        return None
 
 
 def _claim_at_index(event: dict[str, Any], index: int) -> str | None:

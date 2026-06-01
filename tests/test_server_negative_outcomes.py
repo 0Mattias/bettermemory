@@ -11,13 +11,16 @@ the rejection, so surfacing the rejection would be misleading.
 from __future__ import annotations
 
 import json
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
 import pytest
 
+from bettermemory._response import ResponseBuilder
 from bettermemory.config import Config, StorageConfig
-from bettermemory.events import Recorder
+from bettermemory.events import EVENT_LOG_FILENAME, Recorder
+from bettermemory.models import Confidence, MemoryHit
 from bettermemory.server import build_server
 from bettermemory.session import SessionState
 from bettermemory.store import Store
@@ -319,3 +322,151 @@ async def test_most_recent_ts_is_latest_event_timestamp(
     # The most_recent_ts must be a parsable, ISO-formatted string.
     most_recent = annotations[0]["most_recent_ts"]
     assert most_recent.endswith("Z") or "+" in most_recent
+
+
+def _append_raw_event(memory_dir: Path, event: dict[str, Any]) -> None:
+    """Append one raw JSON event line to the active event log.
+
+    Bypasses the `Recorder` (which only ever stamps a canonical UTC
+    `…Z` ts) so a test can pin a specific on-disk `ts` shape — here, an
+    offset-less timestamp the way a hand-edited or legacy event carries
+    it. `iter_events` reads exactly this file and tolerates extra lines.
+    """
+    path = memory_dir / EVENT_LOG_FILENAME
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("a", encoding="utf-8") as f:
+        f.write(json.dumps(event) + "\n")
+
+
+async def test_offsetless_negative_outcome_ts_does_not_crash_search(
+    server_with_rec: tuple[Any, Recorder],
+) -> None:
+    """Regression for the `_parse_iso_ts` naive-datetime bug (FIX 2).
+
+    `attach_recent_negative_outcomes` parsed each `use` event's `ts`
+    with a bespoke `_parse_iso_ts` that only handled the canonical
+    `…Z` shape — an OFFSET-LESS ts (e.g. a hand-written or legacy
+    `"2026-05-31T12:00:00"`) came back NAIVE. When the same memory has
+    BOTH an offset-less and a canonical-`…Z` negative event, the per-id
+    timeline then mixed naive and tz-aware datetimes, and
+    `timeline.sort(key=lambda e: e["ts"])` raised
+    `TypeError: can't compare offset-naive and offset-aware datetimes`,
+    aborting an otherwise-successful `memory_search`.
+
+    Swapping to the canonical `parse_event_ts` stamps UTC on the
+    offset-less value, so the whole timeline is tz-aware and the sort
+    is well-typed. This seeds exactly that mixed pair and asserts the
+    search returns the hit with both events counted.
+    """
+    server, _ = server_with_rec
+    mid = await _seed(server, "python list comprehension notes")
+
+    memory_dir = Path(server_with_rec[1].root)
+    now = datetime.now(timezone.utc)
+    # Canonical `…Z` ts (tz-aware once parsed) — the shape the recorder
+    # always writes.
+    canonical_ts = (now.replace(microsecond=0)).isoformat().replace("+00:00", "Z")
+    # Offset-less ts (naive under the old parser) — a few minutes older,
+    # still well inside the 30-day window. This is the value that used to
+    # poison the sort.
+    offsetless_ts = now.replace(microsecond=0, tzinfo=None).isoformat()
+    assert "Z" not in offsetless_ts and "+" not in offsetless_ts
+
+    for ts in (canonical_ts, offsetless_ts):
+        _append_raw_event(
+            memory_dir,
+            {
+                "ts": ts,
+                "session": "sess_legacy",
+                "kind": "use",
+                "ids": [mid],
+                "outcome": "ignored",
+            },
+        )
+
+    # On the unfixed code this raises TypeError inside the timeline sort.
+    hits = _unwrap(await _call(server, "memory_search", query="python"))
+    assert hits, "search should still return the hit, not abort on the sort"
+    by_id = {h["id"]: h for h in hits}
+    annotations = by_id[mid].get("recent_negative_outcomes")
+    assert annotations is not None, (
+        "both negative events should surface — the offset-less ts must "
+        "not crash the annotation pass"
+    )
+    ignored = [a for a in annotations if a["outcome"] == "ignored"]
+    assert len(ignored) == 1
+    # Both events landed in the same window and were counted.
+    assert ignored[0]["count_in_window"] == 2
+
+
+def test_offsetless_negative_outcome_ts_windowed_as_utc(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Regression for the windowing half of FIX 2.
+
+    Beyond crashing the sort, the old naive parse made an offset-less
+    event's `ts.timestamp()` read in the HOST's local zone — silently
+    shifting the event by the local UTC offset and pushing it out of (or
+    into) the 30-day window depending on where the box happens to live.
+    `parse_event_ts` stamps the offset-less value as UTC so the window
+    math is correct everywhere.
+
+    Driven directly against `ResponseBuilder.attach_recent_negative_outcomes`
+    so `now` is injectable and the assertion is deterministic. Mirrors the
+    hook-side pin in `test_hook.py`: force `Asia/Kolkata` (UTC+05:30, no
+    DST), pin `now`, and place a lone offset-less event 2h INSIDE the UTC
+    cutoff. Under the buggy local parse that same wall-clock reads 5h30m
+    earlier in absolute UTC — i.e. *before* the cutoff — so it would be
+    dropped from the window and the annotation would vanish. Under the fix
+    it's UTC and stays in-window. A single event means the sort can't
+    crash, isolating the windowing behaviour.
+    """
+    import sys
+    import time
+
+    if sys.platform == "win32":
+        pytest.skip("time.tzset() / TZ override is POSIX-only")
+
+    monkeypatch.setenv("TZ", "Asia/Kolkata")  # UTC+05:30, no DST
+    time.tzset()
+    try:
+        now = datetime(2026, 5, 31, 12, 0, 0, tzinfo=timezone.utc)
+        # 30-day window → cutoff = 2026-05-01T12:00:00Z. Offset-less event
+        # at naive 2026-05-01T14:00:00 is 2h AFTER the cutoff in UTC, but
+        # under the +05:30 local parse it resolves to 2026-05-01T08:30:00Z
+        # — 3h30m BEFORE the cutoff, i.e. dropped.
+        offsetless_ts = "2026-05-01T14:00:00"
+        hit = MemoryHit(
+            id="mem_offsetless",
+            scopes=["tools"],
+            confidence=Confidence.MEDIUM,
+            snippet="…",
+            score=1.0,
+            relevance="high",
+            created=now,
+            updated=now,
+        )
+        events = [
+            {
+                "ts": offsetless_ts,
+                "session": "sess_legacy",
+                "kind": "use",
+                "ids": ["mem_offsetless"],
+                "outcome": "ignored",
+            }
+        ]
+        out: list[dict[str, Any]] = [{"id": "mem_offsetless"}]
+        builder = ResponseBuilder(stale_after_days=30)
+        builder.attach_recent_negative_outcomes(
+            out, [hit], events, now=now, window_days=30
+        )
+        annotations = out[0].get("recent_negative_outcomes")
+        assert annotations is not None, (
+            "an offset-less event 2h inside the UTC cutoff must be windowed "
+            "as UTC and surface; under the local-time parse it falls 3h30m "
+            "before the cutoff and is silently dropped"
+        )
+        assert annotations[0]["outcome"] == "ignored"
+    finally:
+        monkeypatch.delenv("TZ", raising=False)
+        time.tzset()

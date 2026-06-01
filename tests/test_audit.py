@@ -29,6 +29,7 @@ from bettermemory.audit import (
     _caller_in_top_hit_project,
     _RETRIEVAL_EVENT_KINDS,
     _VALID_TRIGGERED_FROM,
+    MissReport,
     probe_for_miss,
 )
 from bettermemory.config import Config, StorageConfig
@@ -263,6 +264,58 @@ def test_high_relevance_hit_with_recent_search_in_window_is_ok() -> None:
     )
     assert report.verdict == "ok"
     assert report.recent_retrieval_count == 1
+
+
+def test_injected_naive_now_is_coerced_against_tz_aware_event_ts() -> None:
+    """An INJECTED naive `now` must not raise when the lookback walk
+    compares it against a retrieval event's tz-aware `ts`.
+
+    Regression for the miss-probe seam: `probe_for_miss` only coerced
+    the *unset* (`None`) case (`now = now or datetime.now(...)`), so a
+    caller passing a naive `datetime(...)` (no tzinfo) flowed uncoerced
+    into `_count_recent_retrievals`, where `cutoff = now - timedelta(...)`
+    stayed naive while the event `ts` parsed by `parse_event_ts` is
+    always tz-aware. The `ts < cutoff` comparison then raised
+    `TypeError: can't compare offset-naive and offset-aware datetimes`
+    as soon as ANY retrieval event in the window was walked.
+
+    The existing matrix builds `now` via `_utc(...)` (tz-aware), so the
+    naive path was unexercised. This pins it: a naive `now` PLUS a
+    matching `search` event (so the comparison at the seam actually
+    runs) returns a normal `MissReport` instead of raising. The event is
+    placed inside the lookback window, so the shield fires and the
+    verdict is `ok` — proving the comparison executed and read correctly.
+    """
+    m = _memory("backup strategy uses triangular restic replication")
+    # Naive — no tzinfo. This is the value that used to slip through.
+    naive_now = datetime(2026, 5, 1, 12, 0, 0)
+    assert naive_now.tzinfo is None
+    # A matching `search` event 30s "before" now (built tz-aware by the
+    # helper, the same shape the recorder writes) so the lookback walk
+    # reaches the `ts < cutoff` comparison the bug crashed on.
+    events = [
+        _search_event(
+            session="sess_x",
+            ts=_utc(2026, 5, 1) - timedelta(seconds=30),
+            returned=[m.id],
+        ),
+    ]
+    report = probe_for_miss(
+        [m],
+        "backup strategy",
+        recent_events=events,
+        session_id="sess_x",
+        now=naive_now,
+        lookback_seconds=60,
+    )
+    # Did not raise: the seam coerced the naive `now` to tz-aware UTC.
+    assert isinstance(report, MissReport)
+    # The in-window search shielded the miss — proves the comparison both
+    # ran and read the event as recent (correct UTC windowing).
+    assert report.verdict == "ok"
+    assert report.recent_retrieval_count == 1
+    # And `checked_at` is the now-coerced, tz-aware value.
+    assert report.checked_at.tzinfo is not None
 
 
 def test_recent_search_in_different_session_does_not_protect() -> None:
