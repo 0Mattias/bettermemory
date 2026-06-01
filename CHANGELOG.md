@@ -7,6 +7,31 @@ breaking changes, minor for additive features, patch for fixes. The
 [compatibility contract](CONTRIBUTING.md#versioning-and-the-compatibility-contract)
 spells out exactly what's stable.
 
+## 3.4.2 - 2026-06-01
+
+A Windows-only follow-up to 3.4.1. 3.4.1's reverse-link, datetime, and
+robustness fixes were all sound, but its tombstone-prune lock-sidecar cleanup
+leaked the sidecar on Windows — caught by the CI matrix before publish, so
+3.4.1 never shipped to PyPI. 3.4.2 is 3.4.1's full set of fixes plus the
+Windows correction; upgrade directly from 3.4.0.
+
+### Fixed
+
+- **store (Windows)** — `prune_tombstones` unlinked each tombstone's `.lock`
+  sidecar from inside the `with _locked(path):` block. On POSIX the held
+  descriptor keeps the inode alive so the in-lock unlink succeeds, but on
+  Windows `msvcrt.locking` holds the file handle open for the duration of the
+  block and the OS refuses to delete a file with an open handle, so the unlink
+  raised, was swallowed by the best-effort `except OSError`, and the sidecar
+  leaked one orphan per pruned tombstone. The sidecars are now swept after the
+  lock is released, mirroring `episodes._cleanup_orphan_lockfiles`.
+
+### Note
+
+- 3.4.1 was tagged but never published to PyPI (the Windows CI leg failed the
+  pre-publish gate). Its changelog entry is retained below for history; 3.4.2
+  supersedes it and is the first release in this line to ship.
+
 ## 3.4.1 - 2026-05-31
 
 A parallel audit-loop backlog drain — 13 confirmed bug, robustness, and
