@@ -10,7 +10,7 @@ from __future__ import annotations
 import errno
 import logging as _logging
 from dataclasses import dataclass
-from datetime import datetime, timedelta
+from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 from typing import Iterator
 
@@ -1315,6 +1315,22 @@ class Store:
                     # mid-rotation race) will be retried on the next prune
                     # call. Don't kill the loop.
                     continue
+                # Hard-delete the `.lock` sidecar `_locked` (flock_excl)
+                # created next to this tombstone. `flock_excl` deliberately
+                # never unlinks the lockfile on release (per-inode identity;
+                # see `_fsutil.flock_excl`), so without this the 0-byte
+                # `<name>.lock` would accumulate one orphan per pruned
+                # tombstone, unbounded. We're still inside `with _locked(path)`
+                # here, but the fd holding the flock keeps the inode alive
+                # until block exit, so unlinking the name now is safe — the
+                # symmetric fix to `episodes._unlink_session_lockfile`.
+                try:
+                    path.with_suffix(path.suffix + ".lock").unlink(missing_ok=True)
+                except OSError:
+                    # Best-effort: a sidecar we can't unlink (perms, race)
+                    # is swept on a later prune. The tombstone itself is
+                    # already gone, so don't fail the prune over it.
+                    pass
                 pruned.append((tombstone.removed, tombstone.id))
 
         pruned.sort(key=lambda item: item[0])
@@ -1597,29 +1613,39 @@ def _atomic_write_post(path: Path, post: frontmatter.Post) -> None:
 def _as_dt(value: object) -> datetime:
     """Coerce a frontmatter value to an aware datetime.
 
-    Both branches normalise to UTC-aware. The `datetime` branch covers
+    Three branches normalise to UTC-aware. The `datetime` branch covers
     PyYAML's native timestamp parsing (unquoted ISO strings round-trip
     as `datetime` objects, which may be naive when no offset was
-    written); the `str` branch covers any value YAML preserved as a
-    quoted string. Without coercion in the `str` branch a hand-edited
-    file with `last_verified_at: "2025-01-01T10:00:00"` (quoted, no
-    offset) loaded as a naive datetime, then crashed downstream on the
-    first comparison against an aware `now` — surfaced by the audit on
-    `health.compute_health`'s verification-debt partition.
+    written); the bare-`date` branch covers a YAML *date-only* scalar
+    (`created: 2025-01-01`), which PyYAML parses as a `datetime.date`
+    (NOT a `datetime`, NOT a `str`); the `str` branch covers any value
+    YAML preserved as a quoted string. Without coercion in the `str`
+    branch a hand-edited file with `last_verified_at: "2025-01-01T10:00:00"`
+    (quoted, no offset) loaded as a naive datetime, then crashed
+    downstream on the first comparison against an aware `now` — surfaced
+    by the audit on `health.compute_health`'s verification-debt partition.
+
+    The bare-`date` branch closes a silent-data-loss path: before it
+    existed, a date-only `created`/`updated` fell through to the
+    `ValueError` below, which `_load_path`'s caller (`load_all`,
+    `load_one`) catches and SKIPS — the whole memory vanished from
+    every read surface with no warning. `datetime` IS a subclass of
+    `date`, so the `datetime` check above must come first; this branch
+    only fires for a *pure* date (midnight UTC is the natural lift).
     """
     if isinstance(value, datetime):
         if value.tzinfo is None:
-            from datetime import timezone
-
             return value.replace(tzinfo=timezone.utc)
         return value
+    # `datetime` is a subclass of `date`, so this must come AFTER the
+    # `datetime` check — it catches only a bare YAML date scalar.
+    if isinstance(value, date):
+        return datetime(value.year, value.month, value.day, tzinfo=timezone.utc)
     if isinstance(value, str):
         # Allow trailing 'Z'.
         s = value.replace("Z", "+00:00")
         dt = datetime.fromisoformat(s)
         if dt.tzinfo is None:
-            from datetime import timezone
-
             dt = dt.replace(tzinfo=timezone.utc)
         return dt
     raise ValueError(f"cannot parse datetime from {value!r}")

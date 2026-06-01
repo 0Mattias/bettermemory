@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import os
 import time
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 import pytest
@@ -764,3 +764,117 @@ def test_tombstone_already_tombstoned_alongside_corrupt_entry(store: Store) -> N
 
     with pytest.raises(TombstonedError, match="already tombstoned"):
         store.tombstone(memory.id, reason="second attempt")
+
+
+# ---------------------------------------------------------------------------
+# Bare-date frontmatter coercion (_as_dt) — silent-data-loss regression
+#
+# A hand-edited or hand-migrated frontmatter with a DATE-ONLY `created`
+# (`created: 2025-01-01`, unquoted, no time component) is parsed by PyYAML
+# as a `datetime.date` — which is neither a `datetime` nor a `str`. Before
+# the fix, `_as_dt` fell through to `raise ValueError`, which `_load_path`'s
+# caller (`load_all` / `load_one`) catches and SKIPS — the whole memory
+# vanished from every read surface with no warning. The fix adds a
+# `datetime.date` branch coercing to midnight UTC.
+# ---------------------------------------------------------------------------
+
+
+def test_bare_date_created_loads_not_skipped(memory_dir: Path) -> None:
+    """A memory whose `created`/`updated` are bare YAML dates (no time)
+    must LOAD, not be silently dropped. PyYAML turns `created: 2025-01-01`
+    into a `datetime.date`; `_as_dt` must coerce it rather than raise (which
+    upstream would swallow as a skip = silent data loss)."""
+    bare = memory_dir / "2025-01-01-bare-date.md"
+    bare.write_text(
+        "---\n"
+        f"id: {generate_ulid()}\n"
+        # Unquoted, date-only — PyYAML parses these as datetime.date,
+        # NOT datetime and NOT str. This is the path that used to drop
+        # the memory.
+        "created: 2025-01-01\n"
+        "updated: 2025-01-02\n"
+        "scopes:\n  - tools\n"
+        "confidence: medium\n"
+        "source: explicit-statement\n"
+        "---\n"
+        "bare date body\n"
+    )
+    store = Store(memory_dir)
+    loaded = store.load_all()
+    assert len(loaded) == 1, (
+        "memory with a bare-date `created` was silently skipped — _as_dt "
+        "raised ValueError on the datetime.date and load_all swallowed it"
+    )
+    mem = loaded[0]
+    # Coerced to tz-aware UTC midnight on both axes.
+    assert mem.created == datetime(2025, 1, 1, tzinfo=timezone.utc)
+    assert mem.updated == datetime(2025, 1, 2, tzinfo=timezone.utc)
+    assert mem.created.tzinfo is not None
+    # Comparable against an aware now without TypeError.
+    _ = mem.created < datetime.now(timezone.utc)
+
+
+def test_bare_date_memory_is_loadable_by_id(memory_dir: Path) -> None:
+    """The bare-date memory must also resolve through `load_one` (the
+    single-id read path uses the same `_as_dt` coercion in `_load_path`),
+    not just the bulk `load_all`."""
+    mid = generate_ulid()
+    bare = memory_dir / "2025-03-14-bare-date-byid.md"
+    bare.write_text(
+        "---\n"
+        f"id: {mid}\n"
+        "created: 2025-03-14\n"
+        "updated: 2025-03-14\n"
+        "scopes:\n  - tools\n"
+        "confidence: medium\n"
+        "source: explicit-statement\n"
+        "---\n"
+        "body\n"
+    )
+    store = Store(memory_dir)
+    loaded = store.load_one(mid)
+    assert loaded.id == mid
+    assert loaded.created == datetime(2025, 3, 14, tzinfo=timezone.utc)
+
+
+# ---------------------------------------------------------------------------
+# prune_tombstones sidecar cleanup — unbounded `.lock` leak regression
+#
+# `Store._locked` is `_fsutil.flock_excl`, which creates a sibling
+# `<path>.lock` sidecar and DELIBERATELY never unlinks it on release
+# (per-inode flock identity). `prune_tombstones` acquires that lock on the
+# tombstone path, then hard-deletes the tombstone `.md` — but used to leave
+# the `<name>.tombstone.md.lock` sidecar behind, accumulating one orphan
+# per pruned tombstone forever. The fix unlinks the sidecar after the
+# tombstone, mirroring `episodes._unlink_session_lockfile`.
+# ---------------------------------------------------------------------------
+
+
+def test_prune_tombstones_removes_lock_sidecar(store: Store) -> None:
+    """Pruning a tombstone must also remove the `.lock` sidecar that the
+    per-file flock created next to it, or the lockfile leaks unbounded."""
+    memory = store.write(content="to be pruned", scopes=["tools"])
+    tombstone_path = store.tombstone(memory.id, reason="cleanup")
+    sidecar = tombstone_path.with_suffix(tombstone_path.suffix + ".lock")
+
+    # The flock acquisition during `tombstone()`'s prune-side lock (and any
+    # subsequent `_locked` on the tombstone) materialises the sidecar.
+    # Force it into existence deterministically by acquiring the lock once,
+    # so the test pins cleanup rather than lock-creation timing.
+    from bettermemory.store import _locked
+
+    with _locked(tombstone_path):
+        pass
+    assert sidecar.exists(), (
+        "precondition: the per-file flock should have created a .lock "
+        "sidecar next to the tombstone"
+    )
+
+    # Cutoff in the future (negative window) so the tombstone is pruned.
+    pruned = store.prune_tombstones(timedelta(seconds=-1))
+    assert memory.id in pruned
+    assert not tombstone_path.exists(), "tombstone .md should be deleted"
+    assert not sidecar.exists(), (
+        "prune_tombstones left the .lock sidecar behind — flock_excl never "
+        "unlinks it on release, so it leaks one orphan per pruned tombstone"
+    )
