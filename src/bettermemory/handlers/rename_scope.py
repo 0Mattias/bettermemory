@@ -46,9 +46,27 @@ async def memory_rename_scope(
             f"new_scope {clean_new!r} is not in the allowed list: "
             f"{sorted(deps.config.scopes.allowed)}"
         )
-    result = deps.store.rename_scope(
-        clean_old, clean_new, include_tombstones=include_tombstones
-    )
+    try:
+        result = deps.store.rename_scope(
+            clean_old, clean_new, include_tombstones=include_tombstones
+        )
+    except OSError as exc:
+        # Store.rename_scope swallows per-file (ValueError, KeyError,
+        # FileNotFoundError) — concurrent tombstone/restore races and
+        # malformed files are skipped. A genuine disk-level failure
+        # (EIO mid-write, ENOSPC during the atomic rename, EACCES on
+        # the unlink, …) from `_write_path`/`_atomic_write_post` still
+        # propagates out. Surface as ValueError so the MCP tool
+        # boundary returns a clean structured error rather than leaking
+        # the bare OSError — mirror of the OSError arms in
+        # handlers/remove.py and handlers/restore.py. The bulk rename
+        # is applied file-by-file, so a mid-loop failure may leave the
+        # split-scope state partially applied; the operation is
+        # idempotent, so a re-run safely finishes the remaining files.
+        raise ValueError(
+            f"failed to rename scope {clean_old!r} -> {clean_new!r}: {exc} "
+            "(rename may be partially applied; safe to re-run)"
+        ) from exc
     deps.recorder.record(
         "rename_scope",
         old=clean_old,

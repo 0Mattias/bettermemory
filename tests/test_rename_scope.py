@@ -272,3 +272,84 @@ async def test_tool_records_event(server: Any, memory_dir: Path) -> None:
     assert rename_events[0]["old"] == "old"
     assert rename_events[0]["new"] == "new"
     assert rename_events[0]["active_count"] == 1
+
+
+# ---------------------------------------------------------------------------
+# OSError regression — memory_rename_scope handler must catch a genuine
+# disk-level OSError from `store.rename_scope` and re-raise as a structured
+# ValueError, mirroring the OSError arms in remove/restore/update/verify.
+# ---------------------------------------------------------------------------
+#
+# Store.rename_scope swallows per-file (ValueError, KeyError,
+# FileNotFoundError) — race-losses and malformed files are skipped. A bare
+# OSError from a genuine disk failure (EIO mid-write, ENOSPC during the
+# atomic rename, EACCES on the unlink, …) inside `_write_path` still
+# propagates out, through the previously guard-less handler, and would
+# escape the MCP tool boundary as an unstructured error. The fix wraps the
+# call in `except OSError -> raise ValueError(... ) from exc` so the
+# boundary returns the same clean structured-error shape as every sibling
+# lifecycle mutator.
+
+
+async def test_tool_converts_oserror_to_value_error(
+    memory_dir: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Regression at the handler boundary. Mock `Store.rename_scope` to
+    raise an OSError that simulates a genuine disk failure (e.g. ENOSPC
+    during the atomic rename of a touched memory). The handler must
+    convert it to a ValueError — NOT leak the bare OSError past the MCP
+    `call_tool` boundary.
+
+    Parallel to ``test_remove_handler_converts_oserror_to_value_error``
+    in tests/test_server_tombstones.py: we exercise the handler via the
+    MCP `call_tool` boundary (which wraps the handler exception in
+    `ToolError`) and assert two invariants:
+
+      1. The error reaches the caller — i.e. no swallowing.
+      2. Walking the `__cause__` chain, the handler's own exception is a
+         `ValueError` whose cause is the original `OSError`. If the
+         handler regresses (no `except OSError`), the direct cause of the
+         wrapped ToolError would be an `OSError` with no intermediate
+         `ValueError` — the assertion fails.
+    """
+    cfg = Config(storage=StorageConfig(directory=str(memory_dir)))
+    store = Store(memory_dir)
+    server = build_server(config=cfg, store=store, state=SessionState())
+    await _call(server, "memory_write", content="x", scopes=["old"])
+
+    def raising_rename_scope(*args: Any, **kwargs: Any) -> Any:
+        # Simulate a genuine disk-level failure (not a per-file race —
+        # those are swallowed inside Store.rename_scope).
+        raise OSError(28, "No space left on device")
+
+    monkeypatch.setattr(store, "rename_scope", raising_rename_scope)
+
+    with pytest.raises(Exception) as excinfo:
+        await _call(
+            server,
+            "memory_rename_scope",
+            old_scope="old",
+            new_scope="new",
+        )
+    # Walk the cause chain: handler-emitted ValueError(failed to rename
+    # scope ...) → cause = OSError(ENOSPC).
+    chain: list[BaseException] = []
+    cur: BaseException | None = excinfo.value
+    while cur is not None and cur not in chain:
+        chain.append(cur)
+        cur = cur.__cause__ or cur.__context__
+    handler_value_errors = [
+        e
+        for e in chain
+        if isinstance(e, ValueError) and "failed to rename scope" in str(e)
+    ]
+    assert handler_value_errors, (
+        f"regression: handler did not wrap OSError into ValueError. "
+        f"Cause chain: {[type(e).__name__ + ': ' + str(e) for e in chain]}"
+    )
+    underlying = [e for e in chain if isinstance(e, OSError) and e.errno == 28]
+    assert underlying, (
+        f"Original OSError must be preserved via `from exc` cause chain "
+        f"for diagnostics. Cause chain: "
+        f"{[type(e).__name__ + ': ' + str(e) for e in chain]}"
+    )
