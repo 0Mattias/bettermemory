@@ -121,6 +121,42 @@ def test_memory_detail_renders(client: Any, store: Store) -> None:
     assert "Mark verified now" in r.text
 
 
+def test_memory_detail_flags_stale_verification(client: Any, store: Store) -> None:
+    """A memory verified longer ago than `verification_stale_days`
+    must render a `stale (verified Nd ago)` warn cue on the detail
+    page — the curation surface must not collapse verified-but-stale
+    into a bare "verified", which is the exact memory the staleness
+    model exists to flag. A freshly verified memory must NOT show the
+    cue, so the threshold actually gates the warning rather than it
+    firing on every verified row.
+
+    The default `verification_stale_days` is 30; we stamp
+    `last_verified_at` ~400 days back (well over threshold) by writing
+    then updating with a backdated copy — the same pattern
+    `test_links_render_on_detail` uses to seed a field the public write
+    path doesn't expose directly."""
+    from datetime import datetime, timedelta, timezone
+
+    m = store.write(content="durable claim verified long ago", scopes=["tools"])
+    stale_when = datetime.now(timezone.utc) - timedelta(days=400)
+    store.update(m.model_copy(update={"last_verified_at": stale_when}))
+
+    r = client.get(f"/memories/{m.id}")
+    assert r.status_code == 200
+    # The warn cue appears with the integer day age (>= the threshold).
+    assert "stale (verified" in r.text
+    assert "d ago)" in r.text
+    # And it carries the warn class, mirroring the tag warn vocabulary.
+    assert 'class="tag warn">stale' in r.text
+
+    # A freshly verified memory must NOT trip the cue.
+    fresh = store.write(content="durable claim verified just now", scopes=["tools"])
+    store.mark_verified(fresh.id)
+    r2 = client.get(f"/memories/{fresh.id}")
+    assert r2.status_code == 200
+    assert "stale (verified" not in r2.text
+
+
 def test_memory_detail_404_when_missing(client: Any) -> None:
     """A request for a non-existent (well-formed) memory id returns
     404 — not a 500 or a silent empty render."""

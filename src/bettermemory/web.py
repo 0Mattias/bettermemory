@@ -30,6 +30,7 @@ from __future__ import annotations
 import html
 import logging
 import secrets
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -38,6 +39,7 @@ from .health import report_for_directory
 from .models import validate_scope
 from .origin import capture as capture_origin
 from .store import MemoryNotFoundError, Store, TombstonedError
+from .verify import compute_verification_status
 
 if TYPE_CHECKING:
     from fastapi import FastAPI
@@ -333,8 +335,20 @@ def _render_memory_list(
     return "".join(parts)
 
 
-def _render_memory_detail(memory: Any) -> str:
-    """Full body + metadata + verify form."""
+def _render_memory_detail(memory: Any, *, stale_after_days: int) -> str:
+    """Full body + metadata + verify form.
+
+    `stale_after_days` is the verification freshness window (the
+    `behavior.verification_stale_days` config knob). When the memory
+    has been verified but the verification is older than the window,
+    a `stale (verified Nd ago)` warn tag is appended next to the raw
+    timestamp — the curation surface must not collapse verified-but-stale
+    into a bare "verified", since that's the exact memory the staleness
+    model exists to flag. The comparison routes through the same
+    `compute_verification_status` helper `_response` / `health` use, so
+    the web verdict can't drift from the rest of the system and the
+    naive/aware-datetime normalisation is handled in one place.
+    """
     scope_tags = " ".join(
         f'<span class="tag">{html.escape(sc)}</span>' for sc in memory.scopes
     )
@@ -343,6 +357,18 @@ def _render_memory_detail(memory: Any) -> str:
         if memory.last_verified_at is not None
         else "never"
     )
+    stale_tag = ""
+    if memory.last_verified_at is not None:
+        status = compute_verification_status(
+            memory.last_verified_at,
+            now=datetime.now(timezone.utc),
+            stale_after_days=stale_after_days,
+        )
+        if status.status == "stale":
+            stale_tag = (
+                f' <span class="tag warn">stale '
+                f"(verified {int(status.age_days or 0)}d ago)</span>"
+            )
     body_html = html.escape(memory.body)
 
     links_section = ""
@@ -370,6 +396,7 @@ def _render_memory_detail(memory: Any) -> str:
         f'<div class="muted">id={html.escape(memory.id)} · created '
         f"{html.escape(memory.created.isoformat())} · updated "
         f"{html.escape(memory.updated.isoformat())} · verified {verified_str}"
+        f"{stale_tag}"
         f"</div>"
         f"<h2>Body</h2>"
         f"<pre>{body_html}</pre>"
@@ -595,7 +622,10 @@ def build_app(config: Config, store: Store | None = None) -> "FastAPI":
             raise HTTPException(status_code=404, detail=str(exc)) from exc
         return _layout_resp(
             memory.body.splitlines()[0][:60] if memory.body else memory_id,
-            _render_memory_detail(memory),
+            _render_memory_detail(
+                memory,
+                stale_after_days=config.behavior.verification_stale_days,
+            ),
         )
 
     @app.post("/memories/{memory_id}/verify")
