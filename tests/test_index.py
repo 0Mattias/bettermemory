@@ -380,10 +380,13 @@ def test_duplicate_typed_link_notes_round_trip(memory_dir: Path) -> None:
     distinct notes; the schema-v3 key includes `note`, so both rows
     persist and `links_for` mirrors disk.
 
-    Driven through `index.upsert` directly (not `store.update`, which
-    dedups links by `target_id` at the model layer) because the
-    divergence the audit describes is exactly the index-vs-disk one: a
-    link list that reaches the index from a hand-edited file.
+    Driven through `index.upsert` directly (not `store.update`) because
+    the divergence the audit describes is exactly the index-vs-disk one:
+    a link list that reaches the index from a hand-edited file. The
+    model layer does NOT dedup links — `Memory._check_links` only
+    rejects self-links and caps the list at 64 — so the index mirror is
+    solely responsible for collapsing exact duplicates while keeping
+    distinct-note rows.
     """
     target = generate_ulid()
     now = datetime(2026, 1, 1, tzinfo=timezone.utc)
@@ -412,6 +415,76 @@ def test_duplicate_typed_link_notes_round_trip(memory_dir: Path) -> None:
     _out_t, inbound_t = index.links_for(memory_dir, target)
     in_notes = sorted(note or "" for (_type, _sid, note) in inbound_t)
     assert in_notes == ["first note", "second note"]
+
+
+def test_exact_duplicate_no_note_links_collapse(memory_dir: Path) -> None:
+    """Two IDENTICAL no-note links of the same type collapse to exactly
+    one row, while two same-`(type, target_id)` links with DISTINCT
+    notes still yield two rows.
+
+    Regression for the schema-v3 widening (PK gained `note`): SQLite
+    treats NULL as DISTINCT in a primary key, and `MemoryLink.note`
+    defaults to None — the common case — so under a bare `INSERT OR
+    IGNORE` two exact-duplicate note=NULL links each satisfied the PK
+    and produced two identical reverse-link rows (v2 collapsed them to
+    one). The model layer does not dedup (`_check_links` only rejects
+    self-links and caps at 64), so `_sync_links` must pre-dedup over the
+    full key tuple. This pins both halves of the invariant: NULL-note
+    exact duplicates collapse (matching v2), distinct notes survive.
+    """
+    target = generate_ulid()
+    target_two = generate_ulid()
+    now = datetime(2026, 1, 1, tzinfo=timezone.utc)
+    src = Memory(
+        id=generate_ulid(),
+        created=now,
+        updated=now,
+        scopes=["tools"],
+        confidence=Confidence.MEDIUM,
+        source=Source.EXPLICIT,
+        body="body\n",
+        links=[
+            # Two exact-duplicate no-note links (note defaults to None) —
+            # must collapse to one row.
+            MemoryLink(type=LinkType.EXTENDS, target_id=target),
+            MemoryLink(type=LinkType.EXTENDS, target_id=target),
+            # Two same-(type, target) links with distinct notes — must
+            # both survive.
+            MemoryLink(type=LinkType.EXTENDS, target_id=target_two, note="x"),
+            MemoryLink(type=LinkType.EXTENDS, target_id=target_two, note="y"),
+        ],
+    )
+    index.upsert(memory_dir, src, filename="src.md")
+
+    outbound, _inbound = index.links_for(memory_dir, src.id)
+    # Three rows total: one collapsed no-note edge + two distinct-note edges.
+    assert len(outbound) == 3, f"expected 3 link rows, got {outbound!r}"
+
+    # The no-note duplicate collapsed to exactly one row.
+    no_note_to_target = [
+        (t, tid, n)
+        for (t, tid, n) in outbound
+        if tid == target and t == "extends" and n is None
+    ]
+    assert len(no_note_to_target) == 1, (
+        f"exact-duplicate note=NULL links did not collapse: {no_note_to_target!r}"
+    )
+
+    # The distinct-note pair both survived.
+    distinct_notes = sorted(
+        n for (t, tid, n) in outbound if tid == target_two and n is not None
+    )
+    assert distinct_notes == ["x", "y"], (
+        f"distinct-note links were not both preserved: {distinct_notes!r}"
+    )
+
+    # The collapse is visible from the target's inbound (reverse_links) side
+    # too — exactly one inbound row, not two.
+    _out_t, inbound_t = index.links_for(memory_dir, target)
+    assert len(inbound_t) == 1, (
+        f"expected exactly one reverse_links entry for the collapsed "
+        f"no-note duplicate, got {inbound_t!r}"
+    )
 
 
 def test_rebuild_preserves_duplicate_typed_link_notes(memory_dir: Path) -> None:

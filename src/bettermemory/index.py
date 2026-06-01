@@ -687,20 +687,34 @@ def _sync_links(conn: sqlite3.Connection, memory: Memory) -> None:
     `note` is part of the `memory_links` primary key (schema v3), so
     two on-disk links sharing a `(type, target_id)` but differing in
     their note both survive — the canonical link list on disk is a
-    plain list with no dedup, and the reverse index has to mirror it.
-    `INSERT OR IGNORE` therefore only collapses an exact-duplicate
-    link line (same source, type, target, and note), which is a
-    redundant row on disk too, never a distinct note."""
+    plain list with no dedup (the model only rejects self-links and
+    caps the list length), and the reverse index has to mirror it.
+
+    `INSERT OR IGNORE` cannot be relied on to collapse exact-duplicate
+    link lines on its own: SQLite treats NULL as DISTINCT in a primary
+    key, and `MemoryLink.note` defaults to None — the common case — so
+    two identical note=NULL links would each satisfy the PK and produce
+    two identical rows. We therefore pre-dedup over the full key tuple
+    `(source_id, type, target_id, note)` with a seen-set before insert:
+    exact-duplicate lines (a redundant row on disk too, never a distinct
+    note) collapse to one row regardless of whether `note` is NULL,
+    while links that share `(type, target_id)` but differ in `note`
+    are kept distinct."""
     conn.execute("DELETE FROM memory_links WHERE source_id = ?", (memory.id,))
     if not memory.links:
         return
+    seen: set[tuple[str, str, str, str | None]] = set()
+    rows: list[tuple[str, str, str, str | None]] = []
+    for link in memory.links:
+        key = (memory.id, link.type.value, link.target_id, link.note)
+        if key in seen:
+            continue
+        seen.add(key)
+        rows.append(key)
     conn.executemany(
         "INSERT OR IGNORE INTO memory_links("
         "source_id, type, target_id, note) VALUES (?, ?, ?, ?)",
-        [
-            (memory.id, link.type.value, link.target_id, link.note)
-            for link in memory.links
-        ],
+        rows,
     )
 
 
