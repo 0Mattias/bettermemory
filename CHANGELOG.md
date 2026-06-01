@@ -7,6 +7,125 @@ breaking changes, minor for additive features, patch for fixes. The
 [compatibility contract](CONTRIBUTING.md#versioning-and-the-compatibility-contract)
 spells out exactly what's stable.
 
+## 3.5.0 - 2026-06-01
+
+A correctness + robustness release from a whole-codebase audit sweep of the
+post-3.4.2 tree: 17 fixes across the store, episodic, telemetry, verification,
+consolidation, web, and CLI surfaces — including two that could lose or hide
+data. The minor bump reflects one behavioral change: `episode_search` now
+scopes its bare discovery walk to the caller's git worktree by default (new
+`auto_scope` parameter). Explicit `swarm_id` / `parent_session_id` reads are
+unaffected.
+
+### Fixed
+
+- **`memory_show` — a corrupt or version-newer index no longer crashes the
+  read.** `_links_payload` called `index.links_for_with_status` with no
+  exception guard, so a torn/truncated `.index.sqlite`
+  (`sqlite3.DatabaseError`) or an on-disk `schema_version` newer than the
+  reader (`IndexVersionError`) propagated out of the bare-registered
+  `memory_show` tool and failed *every* id until `reindex` — even though the
+  canonical `.md` files were intact and `memory_search` already degrades
+  gracefully via the tolerant `index.status()`. `memory_show` now catches both
+  and falls back to the `load_all` reverse-link scan.
+
+- **`memory_update` — an over-cap links list silently lost the whole record.**
+  `model_copy(update=...)` skips field validators, so a `memory_update` with
+  more than 64 links committed as `status="committed"` but then vanished from
+  every read surface: load-time re-validation hit the 64-link cap and the
+  record was skipped. The cap is now enforced on the update path, matching the
+  existing `scopes` / `verified_*` guards against the same bypass.
+
+- **`episode_search` — the most-recent-N window sorts by datetime, not the ISO
+  string.** `datetime.isoformat()` omits fractional seconds at microsecond 0,
+  so a whole-second / bare-date episode mis-sorted as the newest of its second
+  and could drop a genuinely-newer episode from the cap (and surface a
+  non-chronological order).
+
+- **`episode_handoff` — an invalid explicit `prior_session_id` degrades to an
+  empty result** instead of raising a raw `ValueError` on the iteration-entry
+  hot path, matching the auto-resolution branch and `episode_search`.
+
+- **Telemetry double-count of hook-attributed retrievals.** A Stop-hook
+  `applied` event (written under the Claude Code transcript id) was not
+  deduplicated against the in-process auto-commit (keyed on the server
+  `sess_<hex>` id), so every hook-attributed retrieval was counted twice —
+  inflating `memory_helped_rate`, the dead-weight / cold-endorsement split, and
+  the explicit-vs-auto ratio. The dedup now bridges both id spaces.
+
+- **`cold_endorsement` vs `dead_weight` overlap.** A never-applied memory past
+  the retrieval floor was counted in *both* buckets (and routed to
+  `acknowledge-debt` when it belonged on the removal path). The
+  cold-endorsement bucket is now gated on "at least one apply happened" across
+  all three surfaces (`compute_health`, `curation_counts`, `eval`).
+
+- **Episode prune — the lock-sidecar unlink moved past `flock` release.**
+  `prune_old_sessions` unlinked the `.session-<id>.lock` sidecar inside the
+  `flock` block — the same Windows open-handle class as the 3.4.2 store fix,
+  dead on Windows and masked only by the post-loop orphan sweep. It is now
+  deferred to after the lock releases.
+
+- **Commit-drift verdict unified across surfaces.** `memory_show` counted drift
+  via `git rev-list --since` (committer date, inclusive whole-second) while
+  `memory_search` and `memory_health` bisect over author timestamps
+  (strictly-greater, microsecond). The same memory could read drifted on one
+  surface and clean on another — after a rebase, *and* with zero rebases when
+  `last_verified_at` landed in a commit's UTC second. All four sites now share
+  the author-date + `bisect_right` path with an identical `count > 0`
+  verified-paths narrowing guard, resolving a long-parked divergence.
+
+- **`consolidate` demotion reads the full event history.** The demotion /
+  cold-scope passes read only the active event log, so after log rotation a
+  genuinely endorsed fact whose `applied` events had aged into a `.gz` archive
+  was auto-demoted `fact → ambient` (including on the unattended
+  auto-consolidate path). They now read the rotated archives too, matching
+  `memory_health`'s canonical rule.
+
+- **Durability gate — decimal numbers are no longer flagged as commit SHAs.**
+  The transient-marker regex matched any 7–40 character run of `[0-9a-f]`,
+  including pure decimals, so a durable fact mentioning an epoch / phone number
+  / numeric id was wrongly rejected as transient. A SHA match now requires at
+  least one `a–f` hex letter.
+
+- **Web UI — the memory detail page flags stale verification.** A memory
+  verified long outside the staleness window rendered identically to one
+  verified today; the detail page now shows a stale cue, matching the rest of
+  the curation surface.
+
+- **`_frontmatter` dump — alias expansion is bounded before materializing.**
+  `dumps()` disabled YAML aliases, so crafted nested-alias frontmatter (via
+  `sync pull` or a hand-edit) expanded to hundreds of MB on a re-dump before
+  the size cap (checked post-hoc) could reject it — a CPU/memory DoS under the
+  per-file lock. Expansion is now bounded up front.
+
+- **`migrate origin` — one failing write no longer aborts the directory.** The
+  per-file write was outside the try/except the read already had, so a single
+  `ENOSPC` / `EACCES` aborted the loop and over-counted `updated`. Failures are
+  recorded and skipped; the count reflects what actually persisted.
+
+- **CLI — `tombstones list --scope <bad>` gives a clean error.** It raised a
+  raw traceback leaking internal paths; it now exits 2 with an argparse-style
+  message, like the sibling `export` command.
+
+- **`memory_rename_scope` — disk errors surface as a structured error.** A
+  genuine `OSError` mid-rename leaked raw through the MCP boundary (unlike the
+  `remove` / `restore` / `update` / `verify` handlers); it is now wrapped in a
+  clean `ValueError`.
+
+### Changed
+
+- **`episode_search` scopes to the caller's git worktree by default.** The bare
+  discovery walk (no `swarm_id` / `parent_session_id`) now drops episodes from
+  a different worktree of the same repository sharing one memory root —
+  mirroring `memory_search`'s auto-scope and the isolation `episode_handoff`
+  enforces. Explicit `swarm_id` (the N:1 swarm fan-in) and `parent_session_id`
+  lookups are deliberate cross-tree reads and are never worktree-filtered.
+
+### Added
+
+- **`episode_search(auto_scope=...)`** (default `True`) — set `False` to sweep
+  the bare discovery walk across every worktree sharing the memory root.
+
 ## 3.4.2 - 2026-06-01
 
 A Windows-only follow-up to 3.4.1. 3.4.1's reverse-link, datetime, and
