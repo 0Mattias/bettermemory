@@ -1291,6 +1291,12 @@ class Store:
         """
         cutoff = (now or utcnow()) - older_than
         pruned: list[tuple[datetime, str]] = []
+        # Sidecar `.lock` files to sweep AFTER their `_locked(path)` block
+        # has exited. `flock_excl` deliberately never unlinks the lockfile
+        # on release (per-inode identity; see `_fsutil.flock_excl`), so
+        # without a sweep the 0-byte `<name>.lock` accumulates one orphan
+        # per pruned tombstone, unbounded.
+        sidecars: list[Path] = []
         for path in self._iter_tombstone_paths():
             # Acquire the per-tombstone lock for read + delete. Without
             # it, a concurrent `restore(id)` (which holds the same
@@ -1315,23 +1321,26 @@ class Store:
                     # mid-rotation race) will be retried on the next prune
                     # call. Don't kill the loop.
                     continue
-                # Hard-delete the `.lock` sidecar `_locked` (flock_excl)
-                # created next to this tombstone. `flock_excl` deliberately
-                # never unlinks the lockfile on release (per-inode identity;
-                # see `_fsutil.flock_excl`), so without this the 0-byte
-                # `<name>.lock` would accumulate one orphan per pruned
-                # tombstone, unbounded. We're still inside `with _locked(path)`
-                # here, but the fd holding the flock keeps the inode alive
-                # until block exit, so unlinking the name now is safe — the
-                # symmetric fix to `episodes._unlink_session_lockfile`.
-                try:
-                    path.with_suffix(path.suffix + ".lock").unlink(missing_ok=True)
-                except OSError:
-                    # Best-effort: a sidecar we can't unlink (perms, race)
-                    # is swept on a later prune. The tombstone itself is
-                    # already gone, so don't fail the prune over it.
-                    pass
+                sidecars.append(path.with_suffix(path.suffix + ".lock"))
                 pruned.append((tombstone.removed, tombstone.id))
+
+        # Unlink the sidecar lockfiles AFTER their `_locked` block closed
+        # the handle. POSIX could unlink while still inside the block (the
+        # held fd keeps the inode alive), but Windows refuses to delete a
+        # file with an open handle (`msvcrt.locking` keeps it open for the
+        # duration of the `with`), so an in-lock unlink raised and the
+        # sidecar leaked — caught by the Windows CI leg, invisible on macOS.
+        # Sweeping here, post-release, deletes the name on both platforms.
+        # Mirrors `episodes._cleanup_orphan_lockfiles`, which runs the same
+        # sweep after its prune loop for the same reason.
+        for sidecar in sidecars:
+            try:
+                sidecar.unlink(missing_ok=True)
+            except OSError:
+                # Best-effort: a sidecar we still can't unlink (perms, a
+                # racing holder) is swept on a later prune. The tombstone
+                # itself is already gone, so don't fail the prune over it.
+                pass
 
         pruned.sort(key=lambda item: item[0])
         return [memory_id for _, memory_id in pruned]
