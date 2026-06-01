@@ -350,6 +350,7 @@ class ToolHandlers:
         swarm_id: str | None = None,
         since: str | None = None,
         max_results: int | None = None,
+        auto_scope: bool = True,
         ctx: Context | None = None,
     ) -> list[dict[str, Any]]:
         return await _handlers_pkg.episode_search(
@@ -359,6 +360,7 @@ class ToolHandlers:
             swarm_id=swarm_id,
             since=since,
             max_results=max_results,
+            auto_scope=auto_scope,
             ctx=ctx,
         )
 

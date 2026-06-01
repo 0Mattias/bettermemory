@@ -50,6 +50,14 @@ DESC_EPISODE_SEARCH = (
     "scopes to one), so the caller can correlate a takeaway back to "
     "its originating session directory; `swarm_id` (may be null) is "
     "the cohort tag for multi-agent fan-in.\n\n"
+    "WORKTREE ISOLATION: by default (`auto_scope=True`) results are "
+    "scoped to the caller's git worktree — episodes written from a "
+    "different worktree of the same repository (sharing one memory "
+    "root) are dropped, mirroring memory_search's auto-scope and the "
+    "isolation episode_handoff enforces. Legacy episodes with no "
+    "captured worktree, and callers running outside any git checkout, "
+    "pass through. Set `auto_scope=False` for a deliberate "
+    "cross-worktree journal sweep.\n\n"
     "MULTI-AGENT SWARM FAN-IN: when you fan out parallel sub-agents "
     "and pass each the coordinator's session id as `swarm_id` on "
     "`episode_write`, call `episode_search(swarm_id=<coordinator id>)` "
@@ -68,6 +76,9 @@ DESC_EPISODE_SEARCH = (
     "swarm read surface.\n"
     "- `since` (optional ISO-8601): if set, only episodes created "
     "at-or-after this instant.\n"
+    "- `auto_scope` (default True): scope results to the caller's git "
+    "worktree (see WORKTREE ISOLATION above). Set False to sweep "
+    "every worktree sharing the memory root.\n"
     "- `max_results` (default 20, cap 200): cap on the returned "
     "list size; surfaces the most-recent N."
 )
@@ -80,9 +91,16 @@ async def episode_search(
     swarm_id: str | None = None,
     since: str | None = None,
     max_results: int | None = None,
+    auto_scope: bool = True,
     ctx: Context | None = None,
 ) -> list[dict[str, Any]]:
     """Handler body for the `episode_search` MCP tool."""
+    # Route capture_origin through the parent ``_handlers`` module so the
+    # test suite's monkey-patch propagates here too — the same shim
+    # discipline `memory_search` / `episode_handoff` use.
+    from .. import _handlers as _h
+    from ..origin import worktrees_match
+
     state = deps.sessions.for_request(ctx)
     _advance_turn(state, deps.recorder)
 
@@ -102,6 +120,26 @@ async def episode_search(
     # are the third leg, so we mirror the same `excluded & scopes`
     # short-circuit pattern from list_active.py:46 / search.py:226.
     excluded_scopes: set[str] = set(state.disabled_scopes)
+
+    # Worktree isolation, opt-in by default (mirrors `memory_search`'s
+    # `auto_scope`). episode_search spans every session directory under
+    # the shared memory root (BETTERMEMORY_DIR), so two worktrees of the
+    # same repository that share a root would otherwise leak each other's
+    # journal bodies through this surface — the asymmetric cross-worktree
+    # read `episode_handoff` already guards against on the iteration-entry
+    # path (`_worktrees_equal_strict`). Capture the caller's worktree once
+    # and, by default, drop episodes whose `origin.worktree_root` doesn't
+    # match it. We use the permissive `worktrees_match` (either side None
+    # → True) rather than the handoff's strict rule because this is a
+    # discovery surface: legacy / pre-origin episodes (no worktree_root)
+    # and callers outside any git checkout must still pass through, the
+    # same trade `should_include_for_caller` makes for `memory_search`.
+    # `auto_scope=False` is the explicit escape hatch for an intentional
+    # cross-worktree journal sweep.
+    caller_worktree: str | None = None
+    if auto_scope:
+        current_origin = _h.capture_origin()
+        caller_worktree = current_origin.worktree_root if current_origin else None
 
     # Build the candidate episode pool. Three shapes, in precedence
     # order:
@@ -139,7 +177,7 @@ async def episode_search(
                 # 500 the caller.
                 continue
 
-    out: list[dict[str, Any]] = []
+    matched: list[Episode] = []
     for ep in candidates:
         # Skip session-tag floor episodes (E2 crash-recovery anchors).
         # They carry empty takeaways and a placeholder body; surfacing
@@ -160,26 +198,47 @@ async def episode_search(
             continue
         if excluded_scopes and (set(ep.scopes) & excluded_scopes):
             continue
-        out.append(
-            {
-                "id": ep.id,
-                "session_id": ep.session_id,
-                "created": ep.created.isoformat().replace("+00:00", "Z"),
-                "takeaway": ep.takeaway,
-                "body": ep.body.strip(),
-                "scopes": ep.scopes,
-                "swarm_id": ep.swarm_id,
-            }
-        )
+        # Worktree isolation (auto_scope default). Drop episodes from a
+        # different worktree of the same repository; legacy / None-origin
+        # episodes pass through (permissive `worktrees_match`). When
+        # auto_scope=False, `caller_worktree` stays None and the match is
+        # a no-op, so the full cross-worktree sweep is restored.
+        if auto_scope:
+            ep_worktree = ep.origin.worktree_root if ep.origin else None
+            if not worktrees_match(ep_worktree, caller_worktree):
+                continue
+        matched.append(ep)
 
-    out.sort(key=lambda e: e["created"])
+    # Sort by the `created` DATETIME, not the rendered ISO string. The
+    # string form is lossy for the sort: `datetime.isoformat()` omits the
+    # fractional-seconds component when microsecond == 0 (a bare-date or
+    # whole-second `created` lifts to e.g. `…T00:00:00Z`), and lexically
+    # `"."` < `"Z"`, so a whole-second timestamp would sort AFTER a
+    # same-second fractional one — mis-windowing the most-recent-N cap and
+    # breaking the docstring's "oldest-first within most-recent-N" order.
+    # Keying on the datetime mirrors what `list_by_session` /
+    # `list_by_swarm` already do at the storage layer.
+    matched.sort(key=lambda ep: ep.created)
     # Cap to the most-recent N (matches `episode_handoff`'s
     # `all_eps[-max_episodes:]` pattern and caller intuition for ad-hoc
     # journal lookup — "what did I conclude across the last few
     # sessions?" reads the tail, not the head). The slice keeps the
     # ascending order inside the recent-N window so output stays
     # oldest-first within the surfaced subset.
-    out = out[-max_results:]
+    matched = matched[-max_results:]
+
+    out: list[dict[str, Any]] = [
+        {
+            "id": ep.id,
+            "session_id": ep.session_id,
+            "created": ep.created.isoformat().replace("+00:00", "Z"),
+            "takeaway": ep.takeaway,
+            "body": ep.body.strip(),
+            "scopes": ep.scopes,
+            "swarm_id": ep.swarm_id,
+        }
+        for ep in matched
+    ]
 
     deps.recorder.record(
         "episode_search",
@@ -188,6 +247,7 @@ async def episode_search(
         swarm_id=swarm_id,
         since=since,
         max_results=max_results,
+        auto_scope=auto_scope,
         returned=len(out),
     )
     return out
