@@ -30,6 +30,7 @@ from bettermemory.hook import (
     _extract_last_exchange,
     _flatten_assistant_content,
     _latest_in_process_session,
+    _pending_retrievals,
     _read_payload,
     main as hook_main,
     run_audit,
@@ -560,6 +561,203 @@ def _seed_search_event(mem_dir: Path, *, session_id: str, returned: list[str]) -
         auto_scope=True,
         repo_filter=None,
     )
+
+
+def _seed_list_event(mem_dir: Path, *, session_id: str, returned: list[str]) -> None:
+    """Write a synthetic `list` event (as the `_list_active` handler does)
+    so the hook treats the listed memory_ids as retrieved this turn. The
+    handler records the listed ids under the same `returned` field name a
+    `search` uses, so attribution can read one shape across both kinds."""
+    from bettermemory.events import Recorder
+
+    Recorder(root=mem_dir, session_id=session_id).record(
+        "list",
+        returned=returned,
+        scope=None,
+    )
+
+
+def test_pending_retrievals_treats_naive_ts_as_utc(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Regression for the naive-timestamp parse (fix g).
+
+    The bespoke `_parse_iso_ts` returned a NAIVE datetime when an event's
+    `ts` lacked a UTC offset, and the caller's `ts.timestamp()` then
+    interpreted that wall-clock in the runner's LOCAL zone — silently
+    shifting the event by the local UTC offset and pushing recent
+    retrievals out of the lookback window in any non-UTC zone.
+    `parse_event_ts` stamps naive values as UTC so the lookback math is
+    correct everywhere.
+
+    Pinned deterministically: force a +05:30 local zone and a fixed
+    `utcnow`, then seed a `search` event whose naive `ts` is 60s before
+    `now` in UTC — well inside the 600s window. Under the buggy local
+    parse the same wall-clock reads as 05:30 in the future of UTC, i.e.
+    ~5.5h "old" once compared against the UTC cutoff, so the id would be
+    dropped. Under the fix it stays retrieved.
+    """
+    import sys
+    import time
+    from datetime import datetime, timezone
+
+    if sys.platform == "win32":
+        pytest.skip("time.tzset() / TZ override is POSIX-only")
+
+    monkeypatch.setenv("TZ", "Asia/Kolkata")  # UTC+05:30, no DST
+    time.tzset()
+    try:
+        now = datetime(2026, 5, 31, 12, 0, 0, tzinfo=timezone.utc)
+        monkeypatch.setattr("bettermemory.hook.utcnow", lambda: now)
+
+        # Naive ISO string (no offset) for an instant 60s before `now`.
+        naive_ts = "2026-05-31T11:59:00"
+        event = {
+            "ts": naive_ts,
+            "session": "sess_server",
+            "kind": "search",
+            "returned": ["mem_naive"],
+        }
+        pending = _pending_retrievals(
+            [event],
+            retrieval_session_id="sess_server",
+            used_session_ids={"sess_server"},
+            lookback_seconds=600,
+        )
+        assert pending == {"mem_naive"}, (
+            "a naive event ts 60s old must be treated as UTC and stay "
+            "inside the lookback window; got it dropped (local-time parse "
+            "regression)"
+        )
+    finally:
+        monkeypatch.delenv("TZ", raising=False)
+        time.tzset()
+
+
+def test_pending_retrievals_includes_list_event_ids(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Unit-level pin for fix h: a `list` (memory_list) event's `returned`
+    ids join the pending-retrieval set on the same branch as `search`,
+    matched on the retrieval session id. `list_active` is accepted as an
+    alias for the same kind."""
+    from datetime import timezone
+
+    from bettermemory.models import utcnow
+
+    now = utcnow().astimezone(timezone.utc)
+    monkeypatch.setattr("bettermemory.hook.utcnow", lambda: now)
+    ts = now.isoformat().replace("+00:00", "Z")
+
+    for kind in ("list", "list_active"):
+        event = {
+            "ts": ts,
+            "session": "sess_server",
+            "kind": kind,
+            "returned": ["mem_listed"],
+        }
+        pending = _pending_retrievals(
+            [event],
+            retrieval_session_id="sess_server",
+            used_session_ids={"sess_server"},
+            lookback_seconds=600,
+        )
+        assert pending == {"mem_listed"}, f"{kind} event ids should be pending"
+
+    # And a `use` event for the same id still dedups it back out, just
+    # like the search path.
+    used_event = {
+        "ts": ts,
+        "session": "sess_server",
+        "kind": "use",
+        "ids": ["mem_listed"],
+    }
+    list_event = {
+        "ts": ts,
+        "session": "sess_server",
+        "kind": "list",
+        "returned": ["mem_listed"],
+    }
+    pending = _pending_retrievals(
+        [list_event, used_event],
+        retrieval_session_id="sess_server",
+        used_session_ids={"sess_server"},
+        lookback_seconds=600,
+    )
+    assert pending == set(), "a recorded use must dedup a listed id out"
+
+
+def test_hook_attributes_use_when_listed_body_appears_in_reply(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Regression for list-retrieval attribution (fix h).
+
+    A `memory_list` surfaces memory ids exactly like a `search` hit, and
+    `_list_active` records them under a `list` event so the hook can
+    attribute them. Before the fix, `_pending_retrievals` dispatched on
+    `search`/`show`/`use` only, so a memory seen ONLY via a listing was
+    never eligible for hook attribution — undercounting
+    memory_helped_rate. This mirrors the search-based attribution test
+    but seeds a `list` event instead, and asserts the `use` event fires.
+    """
+    mem_dir = tmp_path / "mem"
+    mem_dir.mkdir()
+    monkeypatch.setenv("BETTERMEMORY_DIR", str(mem_dir))
+
+    store = Store(mem_dir)
+    written = store.write(
+        content=(
+            "The metrics dashboard runs at grafana.internal/d/api-latency "
+            "for the oncall watch — pages on p99 over 800ms."
+        ),
+        scopes=["infrastructure"],
+    )
+    # Seed a `list` event (NOT a search) under the server session.
+    _seed_list_event(mem_dir, session_id="sess-listattr", returned=[written.id])
+
+    transcript = tmp_path / "t.jsonl"
+    _write_transcript(
+        transcript,
+        {"type": "user", "message": {"content": "where is the latency dashboard?"}},
+        {
+            "type": "assistant",
+            "message": {
+                "content": [
+                    {
+                        "type": "text",
+                        "text": (
+                            "The metrics dashboard runs at "
+                            "grafana.internal/d/api-latency for the oncall "
+                            "watch — pages on p99 over 800ms. I'll add a panel."
+                        ),
+                    }
+                ]
+            },
+        },
+    )
+
+    code = hook_main(
+        [
+            "--transcript-path",
+            str(transcript),
+            "--session-id",
+            "sess-listattr",
+            "--quiet",
+        ]
+    )
+    assert code == 0
+
+    events = list(iter_events(mem_dir))
+    use_events = [e for e in events if e["kind"] == "use"]
+    assert len(use_events) == 1, (
+        f"expected one hook attribution from a list-retrieval; got: {use_events}. "
+        "Before the fix _pending_retrievals ignored `list` events, so listed "
+        "ids were never eligible for attribution."
+    )
+    ev = use_events[0]
+    assert ev["attribution"] == "hook"
+    assert ev["outcome"] == "applied"
+    assert ev["ids"] == [written.id]
 
 
 def test_hook_attributes_use_when_body_appears_in_reply(

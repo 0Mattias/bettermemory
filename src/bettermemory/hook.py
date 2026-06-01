@@ -78,7 +78,6 @@ from __future__ import annotations
 
 import json
 import sys
-from datetime import datetime
 from pathlib import Path
 from typing import Any
 
@@ -91,6 +90,7 @@ from .events import iter_events
 from .models import utcnow
 from .origin import capture as capture_origin
 from .store import MemoryNotFoundError, Store, TombstonedError
+from .time_utils import parse_event_ts
 
 
 # Wall-clock window the hook attributes against. A retrieval older
@@ -451,8 +451,9 @@ def _emit_hook_attributions(
     """Substring-match recently-retrieved memories against the reply
     text and emit `applied` events for matches.
 
-    `pending` is the set of memory_ids retrieved (via `search` or
-    `show`) within the lookback window, MINUS ids that already have any
+    `pending` is the set of memory_ids retrieved (via `search`, `show`,
+    or `list`/`list_active`) within the lookback window, MINUS ids that
+    already have any
     `use` event in the same window — those have either been explicitly
     recorded by the model or auto-committed already, and re-attributing
     would double-count. The matcher's heuristics (≥6-token, ≥30-char,
@@ -516,35 +517,41 @@ def _pending_retrievals(
     """Memory_ids retrieved within the lookback window that have NOT yet
     been recorded via `record_use`.
 
-    A retrieval is the `search` event's `returned` list or the `show`
-    event's `id`. A `use` event for the same id within the window
-    counts as already-recorded and removes the id from the pending
-    set. This approximates the in-process SessionState's
-    `pending_use_tokens` from the event log alone, which is what the
-    hook has access to.
+    A retrieval is the `search`/`list`/`list_active` event's `returned`
+    list or the `show` event's `id` — a `memory_list` surfaces ids the
+    same way a search does, so listed ids are eligible for attribution
+    too. A `use` event for the same id within the window counts as
+    already-recorded and removes the id from the pending set. This
+    approximates the in-process SessionState's `pending_use_tokens` from
+    the event log alone, which is what the hook has access to.
 
     The session filter is SPLIT by event kind to bridge the two id
-    spaces (see `_emit_hook_attributions`): `search`/`show` retrievals
-    are matched on `retrieval_session_id` (the in-process server
-    session that actually wrote them), while `use` dedup events are
-    matched on `used_session_ids` (the server session AND the transcript
-    id, since prior-turn hook attributions live under the latter).
+    spaces (see `_emit_hook_attributions`): `search`/`show`/`list`
+    retrievals are matched on `retrieval_session_id` (the in-process
+    server session that actually wrote them), while `use` dedup events
+    are matched on `used_session_ids` (the server session AND the
+    transcript id, since prior-turn hook attributions live under the
+    latter).
     """
     cutoff_ts = utcnow().timestamp() - lookback_seconds
     retrieved: set[str] = set()
     used: set[str] = set()
     for event in events:
-        ts_str = event.get("ts")
-        if not isinstance(ts_str, str):
-            continue
-        ts = _parse_iso_ts(ts_str)
+        ts = parse_event_ts(event.get("ts"))
         if ts is None or ts.timestamp() < cutoff_ts:
             continue
         # Canonical-first session lookup with legacy fallback — same
         # discipline 70e41a4 established for llm.py.
         session = event.get("session") or event.get("session_id")
         kind = event.get("kind")
-        if kind == "search":
+        if kind in ("search", "list", "list_active"):
+            # `list`/`list_active` (memory_list) surfaces memory ids exactly
+            # like a `search` hit — the `_list_active` handler records the
+            # ids under the same `returned` field name precisely so the
+            # attribution pass and the probe's shield read one shape. Treat
+            # them on the same branch so memories seen only via a listing are
+            # eligible for hook attribution; the probe shield in audit.py
+            # already groups these kinds the same way.
             if session != retrieval_session_id:
                 continue
             # Legacy fallback: pre-2.6.3 search archives wrote
@@ -576,17 +583,6 @@ def _pending_retrievals(
                     if isinstance(mid, str):
                         used.add(mid)
     return retrieved - used
-
-
-def _parse_iso_ts(value: str) -> datetime | None:
-    """Tolerant ISO-8601 parse — accepts the `Z` suffix used in event
-    logs. Returns None on malformed input rather than raising so a
-    single bad event doesn't break the whole attribution pass.
-    """
-    try:
-        return datetime.fromisoformat(value.replace("Z", "+00:00"))
-    except (ValueError, AttributeError):
-        return None
 
 
 def main(argv: list[str] | None = None) -> int:
