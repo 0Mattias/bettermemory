@@ -184,6 +184,60 @@ async def test_reverse_links_survive_post_schema_bump_empty_index(
     assert rev["source_id"] == b_id
 
 
+async def test_no_inbound_show_opens_index_once(
+    server: Any, memory_dir: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Perf regression guard: a `memory_show` of a memory with NO
+    inbound links, against a HEALTHY POPULATED index, must open the
+    index connection EXACTLY ONCE.
+
+    Most memories are not link targets, so the no-inbound branch is the
+    common `memory_show` path. The reverse-link fallback once read the
+    inbound links via `links_for` (one open) and then — on this same
+    common branch — called `index.status(...)` to check `indexed_count`
+    (a SECOND full open: `_connect` + PRAGMAs + `_ensure_schema`'s
+    `executescript`). Folding the count into the single `links_for`
+    open (`links_for_with_status`) removes that second connection.
+
+    We count every `index._connect` call during the show. The store's
+    seed writes happen BEFORE the counter is installed, so the only
+    opens measured are the read-path ones. This asserts 1; it FAILS at
+    2 on the pre-fix code (links_for + status).
+    """
+    from bettermemory import index as _index
+
+    # A memory that is not a link target: it has zero inbound links,
+    # and the index is healthy + populated (indexed_count >= 1). This
+    # is the populated-but-no-inbound branch of `_links_payload`.
+    a_id = await _seed(server, "standalone memory, never a link target")
+
+    # Sanity: the index really is populated (so a zero count can only
+    # mean the regression, never a genuinely empty index). This
+    # `status()` open happens BEFORE the counter is installed below.
+    root = Path(memory_dir).expanduser().resolve()
+    assert _index.status(root).get("indexed_count", 0) >= 1
+
+    real_connect = _index._connect
+    opens = {"count": 0}
+
+    def counting_connect(path: Path) -> Any:
+        opens["count"] += 1
+        return real_connect(path)
+
+    monkeypatch.setattr(_index, "_connect", counting_connect)
+
+    shown = await _call(server, "memory_show", id=a_id)
+
+    # Sanity: healthy index, no inbound links -> no reverse_links, no
+    # load_all fallback (which would itself add no index opens, but the
+    # absence confirms we're on the populated-no-inbound branch).
+    assert "reverse_links" not in shown
+    assert opens["count"] == 1, (
+        f"no-inbound memory_show opened the index {opens['count']} times; "
+        "expected exactly 1 (a second open is the status() regression)"
+    )
+
+
 async def test_links_omitted_when_empty(server: Any) -> None:
     """A memory with no links must not carry the `links` field in the
     response — same absence-as-signal contract as `path_drift` and

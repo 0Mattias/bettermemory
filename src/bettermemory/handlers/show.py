@@ -164,8 +164,9 @@ def _links_payload(deps: "ToolHandlers", memory: Any) -> dict[str, Any]:
     memory; forward links carry the `target_id`.
 
     Fallback: if the index file doesn't exist (fresh install, just
-    deleted) OR exists but reports zero indexed rows, `links_for`
-    returns empty lists and we walk the active set once. That matches
+    deleted) OR exists but reports zero indexed rows,
+    `links_for_with_status` returns empty lists with
+    `indexed_count == 0` and we walk the active set once. That matches
     the same fallback shape `_load_search_candidates` uses — search
     keeps working through a torn-down index, just slower.
 
@@ -174,13 +175,21 @@ def _links_payload(deps: "ToolHandlers", memory: Any) -> dict[str, Any]:
     index tables EMPTY on the first index op after the upgrade (the
     index FILE still exists, `indexed_count` resets to 0) and the
     rows refill lazily per-write or via `bettermemory reindex`. An
-    `exists()`-only guard would let `links_for` return `[]` and emit
+    `exists()`-only guard would let the lookup return `[]` and emit
     NO reverse_links for affected memories through that window, even
     though the linking data is intact on disk. Routing the
     zero-row case to `load_all` too keeps reverse_links correct
-    while the index repopulates (`index.status(...)` reports
-    `indexed_count == 0` whenever the index is absent, empty, or
-    corrupt — every state where the index can't answer).
+    while the index repopulates.
+
+    `links_for_with_status` returns the inbound links AND
+    `indexed_count` from a SINGLE index open — the empty-index signal
+    rides the connection the inbound query already holds. That keeps
+    the common populated-but-no-inbound `memory_show` (most memories
+    are not link targets) to ONE index open: a non-zero count proves
+    the index is usable, so we return empty reverse_links with no
+    second connection. Only a zero count (index absent, empty, or
+    corrupt — every state where the index can't answer) triggers the
+    `load_all` scan.
     """
     from .. import index as _index
 
@@ -194,7 +203,9 @@ def _links_payload(deps: "ToolHandlers", memory: Any) -> dict[str, Any]:
             }
             for link in memory.links
         ]
-    outbound, inbound = _index.links_for(deps.store.root, memory.id)
+    outbound, inbound, indexed_count = _index.links_for_with_status(
+        deps.store.root, memory.id
+    )
     reverse: list[dict[str, Any]] = []
     if inbound:
         for ltype, source_id, note in inbound:
@@ -207,15 +218,18 @@ def _links_payload(deps: "ToolHandlers", memory: Any) -> dict[str, Any]:
             if note is not None:
                 entry["note"] = note
             reverse.append(entry)
-    elif _index.status(deps.store.root).get("indexed_count", 0) == 0:
+    elif indexed_count == 0:
         # No usable index — fall back to the old shape so a freshly-
         # initialised store (file absent) AND a post-upgrade store
         # (file present but tables dropped empty by the SCHEMA_VERSION
-        # rebuild) still get reverse links. `status()` reports
-        # `indexed_count == 0` for the absent, empty, and corrupt
-        # cases alike; any of them means the index can't answer, so
-        # walk the active set. After the next write / reindex the
-        # index repopulates and this branch stops firing.
+        # rebuild) still get reverse links. `links_for_with_status`
+        # reports `indexed_count == 0` for the absent, empty, and
+        # corrupt cases alike — read on the SAME connection it already
+        # opened for the inbound query, so the common populated-but-no-
+        # inbound case stays a single index open (no second `status()`
+        # connection). Any zero count means the index can't answer, so
+        # walk the active set. After the next write / reindex the index
+        # repopulates and this branch stops firing.
         for other in deps.store.load_all():
             if other.id == memory.id:
                 continue

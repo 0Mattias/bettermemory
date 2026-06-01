@@ -546,6 +546,61 @@ def links_for(
         conn.close()
 
 
+def links_for_with_status(
+    root: Path, memory_id: str
+) -> tuple[list[tuple[str, str, str | None]], list[tuple[str, str, str | None]], int]:
+    """Like `links_for`, but also returns `meta.indexed_count` read on
+    the SAME connection. Returns `(outbound, inbound, indexed_count)`.
+
+    The handler (`_links_payload`) needs two facts to build
+    `reverse_links` correctly: this id's inbound links, AND whether the
+    index is populated at all. The naive shape — `links_for(...)` then
+    a separate `status(...)` — opens the index file twice (two
+    `_connect` + `_ensure_schema` round-trips on the same DB), and the
+    second open fires on the COMMON case: any `memory_show` of a memory
+    with no inbound links, even against a perfectly healthy populated
+    index. Folding `indexed_count` into the single open `links_for`
+    already holds removes that second connection on the hot path.
+
+    `indexed_count` is 0 when the index is absent, empty (the
+    post-`SCHEMA_VERSION`-bump rebuild window), or otherwise can't
+    answer — every state where the handler should fall back to
+    `load_all`. When the file is absent we short-circuit before opening
+    anything and report 0, mirroring `status()`'s absent-file branch.
+
+    A populated-but-no-inbound id (the common case) returns
+    `([], [], n>0)`: empty inbound, but a non-zero count tells the
+    handler the index IS usable, so it returns empty reverse_links
+    with NO fallback scan."""
+    path = index_path(root)
+    if not path.exists():
+        return [], [], 0
+    conn = _connect(path)
+    try:
+        _ensure_schema(conn)
+        outbound = conn.execute(
+            "SELECT type, target_id, note FROM memory_links "
+            "WHERE source_id = ? ORDER BY type, target_id",
+            (memory_id,),
+        ).fetchall()
+        inbound = conn.execute(
+            "SELECT type, source_id, note FROM memory_links "
+            "WHERE target_id = ? ORDER BY type, source_id",
+            (memory_id,),
+        ).fetchall()
+        count_row = conn.execute(
+            "SELECT value FROM meta WHERE key = 'indexed_count'"
+        ).fetchone()
+        indexed_count = int(count_row[0]) if count_row else 0
+        return (
+            [(row["type"], row["target_id"], row["note"]) for row in outbound],
+            [(row["type"], row["source_id"], row["note"]) for row in inbound],
+            indexed_count,
+        )
+    finally:
+        conn.close()
+
+
 def status(root: Path) -> dict[str, Any]:
     """Diagnostic snapshot of the index file. Used by
     `bettermemory doctor` to surface index health and by the reindex
@@ -736,6 +791,7 @@ __all__ = [
     "filenames_for_ids",
     "index_path",
     "links_for",
+    "links_for_with_status",
     "query",
     "rebuild",
     "remove",
