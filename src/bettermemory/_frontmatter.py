@@ -57,6 +57,26 @@ _MAX_YAML_BYTES = 64 * 1024
 # inputs hit a clean ValueError instead of an OOM.
 _MAX_FILE_BYTES = 1024 * 1024
 
+# Pre-flight bounds for the `dumps` alias-expansion guard. `_NoAliasDumper`
+# (below) refuses to emit YAML anchors/aliases, so every shared reference in
+# a metadata structure expands into a full literal copy on dump. A crafted
+# ~300-byte frontmatter with nested aliases (the classic "billion laughs"
+# shape, e.g. from a hostile `sync pull` that wrote `.md` into the memory
+# dir, or a hand-edit) therefore expands to hundreds of MB — and the
+# `_MAX_YAML_BYTES` cap in `dumps` is checked only AFTER `yaml.dump` has
+# already materialized that whole string, so it's a post-hoc backstop, not a
+# guard. These bounds let `dumps` walk the structure FIRST and reject a
+# pathological one cheaply, before any expansion happens. The node budget is
+# tied to the byte cap: a 64 KB YAML region holds at most ~8 K nodes even at
+# maximal scalar density, so 64 K expanded nodes is a comfortable ceiling
+# above anything that fits the byte cap (the largest legitimate frontmatter
+# the project produces is ~270 nodes) while a real alias bomb — millions of
+# expanded nodes — trips the budget in microseconds. The depth cap stops a
+# deep-nesting bomb (and unbounded recursion); real frontmatter nests 3
+# levels at most (dict → list of link dicts), so 64 is wildly generous.
+_MAX_DUMP_NODES = 64 * 1024
+_MAX_DUMP_DEPTH = 64
+
 
 @dataclass
 class Post:
@@ -162,6 +182,67 @@ def load(path: Path | str) -> Post:
         raise ValueError(f"{path}: {exc}") from exc
 
 
+def _guard_dump_expansion(metadata: dict[str, Any]) -> None:
+    """Reject metadata whose alias-free expansion would be pathological.
+
+    `_NoAliasDumper` expands every shared reference into a literal copy, so a
+    nested-alias bomb materializes to hundreds of MB inside `yaml.dump` before
+    the `_MAX_YAML_BYTES` cap can fire. This walk counts nodes *with*
+    expansion — shared children are re-counted on every path that reaches
+    them, exactly as the dumper re-emits them — and aborts the moment the
+    running count crosses :data:`_MAX_DUMP_NODES`. The early abort is what
+    makes it bounded: a structure that would expand to millions of nodes is
+    rejected after visiting only ~64 K, in microseconds, before `yaml.dump`
+    allocates anything. A by-identity ``visited`` set would defeat the point —
+    it would count each shared node once and so *miss* the bomb, which is
+    precisely the structure built from shared references.
+
+    Also bounds nesting depth (:data:`_MAX_DUMP_DEPTH`) to stop a deep-nesting
+    bomb and the unbounded Python recursion it would otherwise drive.
+
+    Raises ``ValueError`` on a pathological structure; returns ``None`` for
+    anything a real memory could hold (largest legitimate frontmatter is
+    ~270 nodes, ~3 levels deep — orders of magnitude under both bounds).
+    """
+    count = 0
+
+    def walk(obj: Any, depth: int) -> None:
+        nonlocal count
+        if depth > _MAX_DUMP_DEPTH:
+            raise ValueError(
+                f"frontmatter metadata nests deeper than {_MAX_DUMP_DEPTH} "
+                "levels; refusing to serialize (alias/nesting bomb?)"
+            )
+        count += 1
+        if count > _MAX_DUMP_NODES:
+            raise ValueError(
+                f"frontmatter metadata expands past {_MAX_DUMP_NODES} nodes; "
+                "refusing to serialize — shared references expand to literal "
+                "copies on dump, so this would materialize a multi-MB blob "
+                "(alias bomb?)"
+            )
+        if isinstance(obj, dict):
+            for key, value in obj.items():
+                # A YAML mapping key is itself an emitted node; count it so a
+                # mapping packed with shared-reference values can't slip the
+                # budget on the key side.
+                count += 1
+                if count > _MAX_DUMP_NODES:
+                    raise ValueError(
+                        f"frontmatter metadata expands past {_MAX_DUMP_NODES} "
+                        "nodes; refusing to serialize — shared references "
+                        "expand to literal copies on dump, so this would "
+                        "materialize a multi-MB blob (alias bomb?)"
+                    )
+                walk(key, depth + 1)
+                walk(value, depth + 1)
+        elif isinstance(obj, (list, tuple)):
+            for item in obj:
+                walk(item, depth + 1)
+
+    walk(metadata, 0)
+
+
 class _NoAliasDumper(yaml.SafeDumper):
     """SafeDumper variant that never emits YAML anchors/aliases.
 
@@ -185,6 +266,14 @@ def dumps(post: Post) -> str:
     byte-for-byte (modulo the alias-suppression policy above, which only
     affects metadata dicts where two fields share the same object).
     """
+    # Pre-flight: reject an alias/nesting bomb BEFORE `yaml.dump` materializes
+    # its (alias-free) expansion. The `_MAX_YAML_BYTES` check below is a
+    # post-hoc backstop — it only fires after the whole expanded string is
+    # already in memory — so on its own it neither bounds peak memory nor the
+    # CPU spent expanding. This bounded walk is the actual guard. (Untrusted
+    # metadata reaches here via every re-dump of loaded raw frontmatter:
+    # store.tombstone / restore / rename_scope, migrate.migrate_origin_in_…)
+    _guard_dump_expansion(post.metadata)
     yaml_text = yaml.dump(
         post.metadata,
         Dumper=_NoAliasDumper,

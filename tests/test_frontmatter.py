@@ -311,3 +311,72 @@ def test_dumps_rejects_oversized_frontmatter() -> None:
     # Symmetry: anything `dumps` accepts, `loads` round-trips.
     ok = Post(content="body text", metadata={"id": "01HXYZ123ABC", "note": "y" * 2000})
     assert loads(dumps(ok)).metadata["note"] == "y" * 2000
+
+
+def test_dumps_rejects_nested_alias_bomb_without_expanding() -> None:
+    """Regression: `_NoAliasDumper` refuses to emit YAML anchors/aliases, so
+    every shared reference in a metadata structure expands into a full
+    literal copy on dump. A small nested-alias structure — the classic
+    "billion laughs" shape, reachable via a hostile `sync pull` writing
+    `.md` into the memory dir, a hand-edit, or any re-dump of loaded raw
+    metadata (`store.tombstone`/`restore`/`rename_scope`,
+    `migrate.migrate_origin_in_directory`) — therefore expands on dump to
+    hundreds of MB and burns seconds-to-minutes of CPU.
+
+    The `_MAX_YAML_BYTES` cap is checked only AFTER `yaml.dump` has already
+    materialized the expanded string, so on its own it bounds neither peak
+    memory nor the expansion CPU. `dumps` must reject the bomb on a bounded
+    pre-flight walk — quickly, before any expansion — rather than
+    materializing it first.
+    """
+    import time
+
+    # Tiny in-memory representation of a nested-alias bomb: each level is a
+    # 9-wide list of references to the level below (exactly what
+    # `yaml.load` produces for `&a [.. ]` / `*a` aliasing, and what an
+    # attacker hand-writes). Fully expanded this is 9**9 ≈ 387M leaves —
+    # the unbounded blow-up the dumper would materialize.
+    cur: object = ["lol"] * 9
+    for _ in range(9):
+        cur = [cur] * 9
+    bomb = Post(content="body", metadata={"id": "01HXYZ123ABC", "bomb": cur})
+
+    start = time.monotonic()
+    with pytest.raises(ValueError, match="(?i)alias bomb|expands past|nests deeper"):
+        dumps(bomb)
+    # Bounded: the early abort rejects after visiting a fixed node budget, so
+    # this must finish near-instantly regardless of the (astronomical)
+    # expanded size. A pre-fix `dumps` would spend many seconds here.
+    assert time.monotonic() - start < 1.0
+
+
+def test_dumps_rejects_deeply_nested_metadata() -> None:
+    """The depth bound stops a pure deep-nesting bomb (and the unbounded
+    Python recursion / self-referential cycle it would otherwise drive)
+    before `yaml.dump` runs. Real frontmatter nests ~3 levels; a 200-deep
+    chain is unambiguously pathological."""
+    cur: object = "leaf"
+    for _ in range(200):
+        cur = [cur]
+    with pytest.raises(ValueError, match="(?i)nests deeper"):
+        dumps(Post(content="body", metadata={"id": "x", "deep": cur}))
+
+
+def test_dumps_accepts_largest_legitimate_frontmatter() -> None:
+    """Sanity floor for the alias-expansion guard: the densest frontmatter a
+    real memory produces (50 `verified_paths`, 50 `verified_commits`, 30
+    `links` dicts — ~270 expanded nodes, 3 levels deep) is orders of
+    magnitude under both the node and depth bounds, so the guard never
+    catches a real write. Locks the headroom so a future tightening notices
+    if it starts rejecting real memories."""
+    metadata = {
+        "schema_version": 1,
+        "id": "01HXYZ123ABC",
+        "scopes": ["tools", "learning-style", "projects:bettermemory"],
+        "verified_paths": [f"/path/to/file{i}.py" for i in range(50)],
+        "verified_commits": [f"abc{i:04d}def" for i in range(50)],
+        "links": [{"type": "extends", "target": f"01HXYZ{i:04d}"} for i in range(30)],
+    }
+    out = dumps(Post(content="body text", metadata=metadata))
+    # And it must still round-trip through `loads`.
+    assert loads(out).metadata["id"] == "01HXYZ123ABC"
