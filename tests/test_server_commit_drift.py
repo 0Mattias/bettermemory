@@ -73,6 +73,42 @@ def _commit_at(path: Path, message: str, *, when: datetime) -> None:
     )
 
 
+def _commit_split(
+    path: Path,
+    message: str,
+    *,
+    author_when: datetime,
+    committer_when: datetime,
+) -> None:
+    """Commit with DIFFERENT author and committer dates — the on-disk shape
+    a rebase leaves behind (rebase preserves author date, rewrites committer
+    date). Used to pin the commit-drift unification: the author-timestamp
+    path memory_show/search/health share must ignore the rewritten committer
+    date, where the old `git rev-list --since` (committer-date) path counted
+    it as phantom drift.
+    """
+    author_iso = author_when.astimezone(timezone.utc).strftime(
+        "%Y-%m-%dT%H:%M:%S+00:00"
+    )
+    committer_iso = committer_when.astimezone(timezone.utc).strftime(
+        "%Y-%m-%dT%H:%M:%S+00:00"
+    )
+    env = os.environ.copy()
+    env["GIT_AUTHOR_DATE"] = author_iso
+    env["GIT_COMMITTER_DATE"] = committer_iso
+    env["GIT_AUTHOR_NAME"] = "Test"
+    env["GIT_AUTHOR_EMAIL"] = "test@example.com"
+    env["GIT_COMMITTER_NAME"] = "Test"
+    env["GIT_COMMITTER_EMAIL"] = "test@example.com"
+    subprocess.run(
+        ["git", "commit", "--allow-empty", "-m", message],
+        cwd=path,
+        check=True,
+        capture_output=True,
+        env=env,
+    )
+
+
 @pytest.fixture
 def server_with_fake_origin(memory_dir: Path, monkeypatch: pytest.MonkeyPatch):
     """Build a server whose `capture_origin` returns whatever the test
@@ -697,3 +733,162 @@ async def test_scope_overview_curation_drifted_honors_verified_paths(
 
     res = await _call(server, "memory_scope_overview")
     assert res["curation_pending"]["drifted"] == 0
+
+
+# ---------------------------------------------------------------------------
+# Cross-surface agreement on the commit-drift count
+# ---------------------------------------------------------------------------
+#
+# memory_show, memory_search and memory_health each compute commit drift
+# from the caller's checkout. They must agree on the count for the SAME
+# memory, or the product's headline staleness guarantee tells the model
+# three different things depending on which tool it reaches for. Two
+# independent ways they could disagree are pinned here:
+#
+#   1. date source — memory_show used to count via `git rev-list --since`
+#      (COMMITTER date), while search/health bisect over `%aI` AUTHOR
+#      timestamps. A rebase preserves author date but rewrites committer
+#      date (and `sync` rebases on every pull), so the same memory read
+#      drifted on memory_show yet clean on memory_search.
+#   2. boundary — `git rev-list --since` is INCLUSIVE and whole-second;
+#      the bisect path is strictly-greater at microsecond precision. A
+#      commit landing in the same UTC second as `last_verified_at` (but
+#      microseconds before it) counted as drift on memory_show alone,
+#      with ZERO rebases involved.
+#
+# Both are closed by routing memory_show's `compute_commit_drift` onto the
+# same `commit_author_timestamps` + `bisect_right` path the other two use.
+
+
+async def _drift_counts_for(
+    server: Any, memory_id: str
+) -> tuple[int | None, int | None, int | None]:
+    """Return `(show_count, search_count, health_count)` for `memory_id`.
+
+    Each element is the commit-drift count that surface reports, or None
+    when that surface omits the signal entirely (which is itself a form of
+    agreement to assert on). `health_count` reads the row out of
+    `commit_drift_debt`: a row exists only for a drifted memory, so a
+    caught-up memory (no row) reports 0, mirroring how the per-hit
+    search count and `memory_show.commit_drift` report 0 on `clean`.
+    """
+    shown = await _call(server, "memory_show", id=memory_id)
+    show_count: int | None = (
+        shown["commit_drift"]["commits_since_verify"]
+        if shown.get("commit_drift") is not None
+        else None
+    )
+
+    raw = await _call(
+        server, "memory_search", query="widgets durable", expand_top=False
+    )
+    hits = _unwrap(raw)
+    search_count: int | None = None
+    for hit in hits:
+        if hit["id"] == memory_id:
+            search_count = hit.get("commit_drift_count")
+            break
+
+    report = await _call(server, "memory_health")
+    cd = report["commit_drift_debt"]
+    health_count: int | None = None
+    if cd is not None:
+        row = next((r for r in cd["rows"] if r["id"] == memory_id), None)
+        # A drifted memory has a row; a caught-up one doesn't (count 0),
+        # matching the 0 the other two surfaces report on `clean`.
+        health_count = row["commits_since_verify"] if row is not None else 0
+    return show_count, search_count, health_count
+
+
+@pytest.mark.skipif(not _GIT_AVAILABLE, reason="git not on PATH")
+async def test_commit_drift_count_agrees_across_surfaces_after_rebase(
+    server_with_fake_origin, memory_dir: Path, tmp_path: Path
+) -> None:
+    """Rebase axis: a commit AUTHORED before the verify but COMMITTED after
+    it (what a rebase leaves on disk) must not count as drift on any
+    surface — the work predates the verification. The old memory_show path
+    counted committer date and reported phantom drift; with the unification
+    all three surfaces read the author date and agree on 0.
+    """
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    _init_repo(repo)
+    _commit_at(repo, "anchor", when=datetime(2025, 1, 1, tzinfo=timezone.utc))
+
+    origin = Origin(cwd=str(repo), repo=_REMOTE, branch="main")
+    server = server_with_fake_origin(origin)
+
+    written = await _call(
+        server, "memory_write", content="durable thing about widgets", scopes=["tools"]
+    )
+    # Verify stamps "now" (real wall-clock), which is after the 2025 author
+    # dates below and before the rewritten-into-the-future committer date.
+    await _call(server, "memory_verify", id=written["id"])
+
+    # The rebase shape: authored in early 2025 (before the verify), committer
+    # date rewritten far into the future (after the verify). Author-date
+    # counting must treat this as NOT drift; committer-date counting (the old
+    # memory_show path) would have flagged it.
+    _commit_split(
+        repo,
+        "rebased commit",
+        author_when=datetime(2025, 1, 2, tzinfo=timezone.utc),
+        committer_when=datetime(2099, 1, 1, tzinfo=timezone.utc),
+    )
+
+    show_count, search_count, health_count = await _drift_counts_for(
+        server, written["id"]
+    )
+    # All three agree, and agree on the CORRECT author-date answer: the
+    # commit's work predates the verify, so it isn't drift.
+    assert show_count == 0
+    assert search_count == 0
+    assert health_count == 0
+    assert show_count == search_count == health_count
+
+
+@pytest.mark.skipif(not _GIT_AVAILABLE, reason="git not on PATH")
+async def test_commit_drift_count_agrees_across_surfaces_same_second_boundary(
+    server_with_fake_origin, memory_dir: Path, tmp_path: Path
+) -> None:
+    """Boundary axis (zero rebases): a commit whose author timestamp lands in
+    the SAME UTC second as `last_verified_at`, but strictly before it at
+    sub-second precision, must not count as drift. The old memory_show path
+    (`git rev-list --since`, inclusive + whole-second) counted it; the
+    strictly-greater microsecond bisect the other surfaces use does not.
+    After the unification all three report 0.
+    """
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    _init_repo(repo)
+    _commit_at(repo, "anchor", when=datetime(2020, 1, 1, tzinfo=timezone.utc))
+
+    origin = Origin(cwd=str(repo), repo=_REMOTE, branch="main")
+    server = server_with_fake_origin(origin)
+
+    written = await _call(
+        server, "memory_write", content="durable thing about widgets", scopes=["tools"]
+    )
+    await _call(server, "memory_verify", id=written["id"])
+
+    # Read the verify timestamp back off disk (microseconds preserved) and
+    # place a commit at the WHOLE-SECOND FLOOR of it. That commit is <=
+    # last_verified_at, so the strictly-greater bisect path excludes it (0
+    # drift), while `git rev-list --since` truncates last_verified_at to the
+    # same whole second and counts the commit INCLUSIVELY (the old
+    # memory_show divergence this fix removes).
+    stored = Store(memory_dir).load_one(written["id"])
+    verified_at = stored.last_verified_at
+    assert verified_at is not None
+    floor_second = verified_at.replace(microsecond=0)
+    _commit_at(repo, "same-second-as-verify", when=floor_second)
+
+    show_count, search_count, health_count = await _drift_counts_for(
+        server, written["id"]
+    )
+    # A commit at-or-before the verify instant is not drift on the
+    # strictly-greater boundary — all three surfaces report 0 in lockstep.
+    assert show_count == 0
+    assert search_count == 0
+    assert health_count == 0
+    assert show_count == search_count == health_count

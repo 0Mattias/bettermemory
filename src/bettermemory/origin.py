@@ -335,25 +335,26 @@ def commits_since(cwd: Path | None, since: datetime) -> int | None:
     no commits, git timed out, output not parseable as an int). Zero is
     a real value — the repo is fine, nothing has landed since.
 
-    Used by the commit-drift staleness signal in `verify.py`: a cwd-aware
-    advisory that surfaces "the project moved while this memory's
-    `last_verified_at` did not." `since` is normalised to UTC ISO-8601
-    before being handed to git so the comparison matches the timestamp
-    semantics elsewhere in the store. A naive `since` is treated as UTC.
+    `since` is normalised to UTC ISO-8601 before being handed to git so
+    the comparison matches the timestamp semantics elsewhere in the store.
+    A naive `since` is treated as UTC.
 
     Counted in COMMITTER-date space: `git rev-list --since` filters on
-    committer date, NOT author date (a common misreading — corrected here
-    after the whole-tree sweep found the old docstring claimed author-date).
-    This DIVERGES from the `commit_author_timestamps` + bisect path that
-    memory_search and the health rollup use (those count author-date), so
-    after a rebase — which preserves author date but rewrites committer
-    date, and `sync` rebases on every pull — the SAME memory can read
-    drifted via memory_show (this function) yet clean via memory_search.
-    Unifying both signals onto author-date is a tracked follow-up: it must
-    move the paths-filtered `commits_since_touching_paths` variant in
-    lockstep and ship rebase-fixture tests, so it is deferred rather than
-    rushed into a half-fix. Boundary semantics are git's: `--since` is
-    INCLUSIVE and ignores sub-second precision.
+    committer date, NOT author date. Boundary semantics are git's:
+    `--since` is INCLUSIVE and ignores sub-second precision.
+
+    NOTE — no longer on the commit-drift hot path. `compute_commit_drift`
+    in `verify.py` (the memory_show signal) used to call this, which made
+    memory_show diverge from memory_search / the health rollup on TWO axes:
+    committer-vs-author date (a rebase rewrites committer date but preserves
+    author date — `sync` rebases on every pull) AND inclusive-whole-second
+    vs strictly-greater-microsecond boundary (a commit in the same UTC
+    second as `last_verified_at` counted on memory_show but not on the
+    bisect path). memory_show now shares the `commit_author_timestamps`
+    + `bisect_right` path, so all three surfaces agree. This function is
+    retained as a standalone single-`since` author/committer-agnostic count
+    (still unit-tested) and for any caller that explicitly wants committer-
+    date inclusive semantics; the commit-drift surfaces deliberately do not.
 
     For batch use against many `since` values from the same repo, prefer
     `commit_author_timestamps` + bisect — one git call instead of N.

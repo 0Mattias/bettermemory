@@ -67,6 +67,7 @@ Excluded by design:
 
 from __future__ import annotations
 
+import bisect
 import re
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -75,7 +76,7 @@ from typing import Any
 
 from .origin import (
     Origin,
-    commits_since,
+    commit_author_timestamps,
     commits_since_touching_paths,
     repos_match,
 )
@@ -760,21 +761,32 @@ def compute_commit_drift(
       `caller_origin.repo` both set);
     - the caller's repo matches the memory's `origin.repo` via
       `repos_match` (host/owner/name normalisation, not raw URL);
-    - `commits_since` returned a parseable integer (git was reachable).
+    - `commit_author_timestamps` returned a list (git was reachable).
 
     Otherwise None — emit nothing rather than a noisy "unknown" branch
     every consumer would have to filter. This mirrors `path_drift`'s
     pattern: advisory signals stay invisible when they have nothing
     to advise.
 
+    The count uses author timestamps + ``bisect_right`` — the same date
+    source and strictly-greater boundary that memory_search and
+    memory_health use — so all three surfaces agree on the same memory.
+    The prior implementation counted via ``git rev-list --since`` (committer
+    date, inclusive whole-second), which disagreed with the other two
+    after a rebase (committer date rewritten, author date preserved) and
+    even with zero rebases when `last_verified_at` landed in the same UTC
+    second as a commit.
+
     `verified_paths`, when non-empty, narrows the count to commits
     that touched at least one of those paths since
     `last_verified_at`. The path-filtered count subsumes the
     unfiltered one: a memory verified for ``[/etc/foo]`` reports
     drift only when commits touched ``/etc/foo``, not when other
-    parts of the repo moved. Falls back to the unfiltered count
-    when the path-filtered query fails (git error, no paths
-    resolved inside the repo, etc.) so we never under-count drift.
+    parts of the repo moved. The narrowing only runs when the
+    unfiltered count is already positive (mirroring the health
+    rollup), and falls back to the unfiltered count when the
+    path-filtered query fails (git error, no paths resolved inside
+    the repo, etc.) so we never under-count drift.
     """
     if last_verified_at is None:
         return None
@@ -785,15 +797,44 @@ def compute_commit_drift(
     if not repos_match(memory_origin_repo, caller_origin.repo):
         return None
     cwd_path = Path(caller_origin.cwd)
-    count: int | None = None
-    if verified_paths:
-        count = commits_since_touching_paths(
+    # Count via author timestamps + bisect_right — the SAME date source and
+    # boundary rule memory_search (`_response.attach_commit_drift_counts`)
+    # and memory_health (`_compute_commit_drift_debt`) use. Two prior
+    # divergences from those surfaces are both closed here:
+    #   1. date source — the old `commits_since` shelled out `git rev-list
+    #      --since`, which filters on COMMITTER date; a rebase rewrites
+    #      committer date while preserving author date, so the same memory
+    #      could read drifted via memory_show yet clean via memory_search.
+    #   2. boundary — `git rev-list --since` is INCLUSIVE and whole-second,
+    #      so a commit landing in the same UTC second as `last_verified_at`
+    #      counted as drift on memory_show but not on the bisect_right
+    #      (strictly-greater, microsecond) path the other two use.
+    # `commit_author_timestamps` returns timezone-aware datetimes; sort
+    # ascending so `bisect_right` yields the first index strictly after the
+    # verify instant. Equal-instant commits fall before the cut (no drift),
+    # matching the health rollup and per-hit search count exactly.
+    timestamps = commit_author_timestamps(cwd_path)
+    if timestamps is None:
+        return None
+    if last_verified_at.tzinfo is None:
+        last_verified_at = last_verified_at.replace(tzinfo=timezone.utc)
+    timestamps_sorted = sorted(timestamps)
+    idx = bisect.bisect_right(timestamps_sorted, last_verified_at)
+    count = len(timestamps_sorted) - idx
+    # Narrow to commits that touched an attested path — only when there's
+    # drift to narrow AND paths to narrow by. Guarding on `count > 0`
+    # mirrors `_compute_commit_drift_debt` / the curation rollup so a
+    # caught-up memory never pays the extra `git rev-list` call, and the
+    # path-filtered fallback (committer-date, inclusive) is applied on the
+    # exact same condition across all three surfaces — keeping them in
+    # lockstep on the verified-paths branch too. Falls back to the
+    # unfiltered count when the path filter can't run.
+    if verified_paths and count > 0:
+        filtered = commits_since_touching_paths(
             cwd_path, last_verified_at, list(verified_paths)
         )
-    if count is None:
-        count = commits_since(cwd_path, last_verified_at)
-    if count is None:
-        return None
+        if filtered is not None:
+            count = filtered
     if count == 0:
         return CommitDriftStatus(
             status="clean",

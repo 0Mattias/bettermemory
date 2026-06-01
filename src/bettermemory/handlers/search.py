@@ -379,6 +379,18 @@ async def memory_search(
                 expanded_commit_drift_status = commit_drift.status
                 expanded_commits_since_verify = commit_drift.commits_since_verify
                 commit_drift_count_for_verdict = commit_drift.commits_since_verify
+                # Overwrite the cheap per-hit `commit_drift_count` that
+                # `attach_commit_drift_counts` stamped from the pre-expansion
+                # bisect, so a single response never carries two
+                # inconsistent counts on its top hit. Both paths now share
+                # the author-timestamp + bisect_right source, so they agree
+                # on the unfiltered count; this keeps them aligned on the
+                # verified-paths-narrowed value too (compute_commit_drift
+                # applies the path filter, which the per-hit pass also does
+                # — but pinning the field to the block that also drives
+                # `commit_drift`/`staleness_verdict` here makes the
+                # top-hit triple provably consistent).
+                out[0]["commit_drift_count"] = commit_drift.commits_since_verify
             # Re-derive the top hit's verdict from the just-computed
             # body-level signals — the verdict that landed via
             # `hit_to_dict` was based on `path_drift_missing` from
