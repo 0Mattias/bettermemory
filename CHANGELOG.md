@@ -7,6 +7,87 @@ breaking changes, minor for additive features, patch for fixes. The
 [compatibility contract](CONTRIBUTING.md#versioning-and-the-compatibility-contract)
 spells out exactly what's stable.
 
+## 3.4.1 - 2026-05-31
+
+A parallel audit-loop backlog drain — 13 confirmed bug, robustness, and
+efficiency fixes across the store, hook, config, attribution, request-handlers,
+CLI, datetime/IO, and the search index. Each landed with its own regression
+test.
+
+### Fixed
+
+- **hook** — `_pending_retrievals` used a bespoke ISO parser that returned a
+  naive datetime (compared in local time, off by the UTC offset); replaced with
+  `parse_event_ts` (tz-aware UTC). And the retrieval-kind dispatch only
+  recognised `search`/`show`, so memories surfaced via `memory_list` were never
+  eligible for Stop-hook attribution — `list`/`list_active` are now included.
+- **store** — `prune_tombstones` deleted the tombstone file but leaked its
+  `.lock` sidecar (one per pruned tombstone, unbounded); the sidecar is now
+  unlinked best-effort. And `_as_dt` raised on a YAML bare-date scalar
+  (`created: 2025-01-01` parses to a `datetime.date`), which upstream load
+  swallowed as a skip — silently dropping the whole memory; it is now coerced to
+  UTC midnight.
+- **config / events** — boolean config keys were coerced with a naive
+  `bool(...)`, so a quoted TOML value like `log_queries_verbatim = "false"` read
+  as `True` — silently inverting a privacy opt-out; a string-aware coercion now
+  handles it. And a non-positive `telemetry.max_bytes` made the rotation guard
+  never hold, gzip-rotating the event log on every append; it is now clamped at
+  load and guarded in the rotation check.
+- **attribution** — claim-excerpt matching compared text without Unicode
+  normalization, so a memory body using precomposed accents (U+00E9) never
+  matched a reply using the decomposed form (U+0065 U+0301), silently
+  undercounting `memory_helped_rate` on non-ASCII text; `_normalize` now
+  NFC-folds and token extraction runs on the folded text.
+- **request-handler robustness** — `memory_search` top-hit body expansion
+  aborted the whole search on a transient `OSError` (now skips the inline body);
+  `acknowledge_miss` reason had no maximum length (now bounded); proposal
+  `accept` was non-atomic across three locks so a concurrent double-accept could
+  duplicate (now claim-before-write idempotent); `episode_promote` advanced the
+  record-use turn counter twice (now once).
+- **core robustness** — remote LLM providers (Anthropic, OpenAI) issued requests
+  with no timeout, so a hung provider could block indefinitely (now a default
+  timeout); and the origin-backfill migrator mislabeled a file tombstoned
+  mid-run as malformed (now skipped quietly).
+- **search index** — the reverse-link index collapsed two links that shared a
+  target but carried distinct typed notes, losing a note that exists on disk;
+  the `memory_links` schema was widened (`SCHEMA_VERSION` 2 → 3) so
+  distinct-note links are preserved while exact-duplicate links still collapse
+  to a single row. `memory_show` serves correct `reverse_links` during the
+  one-time post-upgrade index rebuild (see Upgrade notes), reading the inbound
+  links and the index-populated signal in a single index open on the common
+  no-inbound-link path.
+- **scope / semantic** — scope-root matching guarded the leading but not the
+  trailing boundary, so `projects:foo` could over-match `projects:foobar` (the
+  trailing boundary is now enforced); and an empty-but-dirty semantic cache
+  short-circuited its flush, stranding the dirty flag so a later write could be
+  lost (it now flushes and clears).
+- **CLI ergonomics** — `export --scope` and `eval --since` surfaced raw
+  `ValueError`/`OverflowError` tracebacks on bad input (now clean CLI errors);
+  `episodes prune --dry-run` diverged from the real prune for `ttl_days <= 0`
+  (now matches); `reindex --embeddings` warmed the cache from the unstripped
+  body while readers key on the stripped form (now strips); plus a corrected
+  `detect_path_drift` docstring.
+- **datetime / IO robustness** — the silent-miss probe (`audit.probe_for_miss`)
+  passed an injected `now` through without UTC-coercion, raising `TypeError`
+  against tz-aware event timestamps (now coerced via `ensure_utc`); the
+  negative-outcomes enrichment parsed timestamps with a local helper that
+  returned a naive datetime on offset-less input (now uses `parse_event_ts`);
+  the `depends_on` targeted-load in `memory_search` caught only
+  `MemoryNotFoundError`/`TombstonedError`, so a transient `OSError` reading a
+  link target aborted an otherwise-successful search (now degrades gracefully);
+  and `EpisodeStore` applies the same date-aware coercion to a hand-edited or
+  legacy episode `created` field that previously crashed the whole episode read
+  surface (including `episode_handoff`).
+
+### Upgrade notes
+
+- **Index schema → v3.** The reverse-link fix (item above) widened the on-disk
+  search index schema (v2 → v3). The first time a bettermemory server starts on
+  3.4.1 it rebuilds the local index once, automatically — no action required;
+  `memory_show` serves correct `reverse_links` throughout the rebuild. If you
+  run multiple bettermemory server processes against one store, restart them
+  after upgrading so none keeps a v2 reader open against the rebuilt v3 index.
+
 ## 3.4.0 - 2026-05-31
 
 Three fixes from a diagnostic pass over the dogfood event log (2,205 events,
