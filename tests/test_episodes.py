@@ -11,6 +11,7 @@ from __future__ import annotations
 import stat
 import sys
 import time
+from datetime import datetime, timezone
 from pathlib import Path
 
 import pytest
@@ -125,6 +126,93 @@ def test_naive_created_episode_does_not_crash_reads(
     assert {e.body.strip() for e in eps} == {"aware one", "naive one"}
     naive_ep = next(e for e in eps if e.body.strip() == "naive one")
     assert naive_ep.created.tzinfo is not None  # normalised to aware UTC
+
+
+def test_bare_date_created_episode_does_not_crash_reads(
+    episode_store: EpisodeStore,
+) -> None:
+    """A bare YAML date `created: 2026-05-31` (no time component) parses
+    as a `datetime.date` — NOT a datetime, NOT a str. The earlier
+    hardening pass coerced `created` with bare `ensure_utc`, which is
+    typed `datetime | None -> datetime | None` and touches `.tzinfo`,
+    so this shape raised AttributeError. That is NOT in the
+    (ValueError, KeyError, OSError) catch in `list_by_session`, so a
+    SINGLE such file crashed the whole episode read surface
+    (episode_search, episode_promote, list_by_swarm, and
+    episode_handoff on the /loop hot path). Load-time date-aware
+    coercion (mirroring `store._as_dt`) now lifts a bare date to UTC
+    midnight, so the read sorts it alongside well-formed siblings
+    instead of crashing.
+
+    Distinct from `test_naive_created_episode_does_not_crash_reads`,
+    which exercises a naive *datetime* shape that the datetime branch
+    already handled — this one pins the `datetime.date` branch."""
+    episode_store.write(session_id="sess_aaaa1111", body="well-formed sibling")
+    episode_store.write(session_id="sess_aaaa1111", body="bare date one")
+
+    target = next(
+        p
+        for p in episode_store._iter_session_paths("sess_aaaa1111")
+        if "bare date one" in p.read_text(encoding="utf-8")
+    )
+    # Unquoted, date-only — the vendored YAML loader parses this as a
+    # `datetime.date`, the shape that used to crash the read.
+    rewritten = [
+        "created: 2026-05-31" if line.startswith("created:") else line
+        for line in target.read_text(encoding="utf-8").splitlines()
+    ]
+    target.write_text("\n".join(rewritten) + "\n", encoding="utf-8")
+
+    # Must not raise; the well-formed sibling is always returned, and the
+    # bare-date row is coerced (UTC midnight) rather than crashing the read.
+    eps = episode_store.list_by_session("sess_aaaa1111")
+    bodies = {e.body.strip() for e in eps}
+    assert "well-formed sibling" in bodies
+    bare_ep = next(e for e in eps if e.body.strip() == "bare date one")
+    assert bare_ep.created == datetime(2026, 5, 31, tzinfo=timezone.utc)
+    assert bare_ep.created.tzinfo is not None
+
+
+def test_quoted_str_created_episode_does_not_crash_reads(
+    episode_store: EpisodeStore,
+) -> None:
+    """A quoted `created: "2026-05-31T12:00:00"` stays a `str` through
+    the vendored YAML loader (quoting suppresses native timestamp
+    parsing). The earlier hardening pass coerced `created` with bare
+    `ensure_utc`, which touches `.tzinfo`, so a str raised
+    AttributeError — NOT caught by the (ValueError, KeyError, OSError)
+    skip in `list_by_session`, crashing the whole episode read surface
+    (including episode_handoff on the /loop hot path) on a single such
+    file. Load-time coercion now routes a str through `parse_event_ts`,
+    the canonical ISO parser, so the read sorts it alongside
+    well-formed siblings.
+
+    Distinct from `test_naive_created_episode_does_not_crash_reads`
+    (naive *datetime* shape) — this one pins the `str` branch."""
+    episode_store.write(session_id="sess_aaaa1111", body="well-formed sibling")
+    episode_store.write(session_id="sess_aaaa1111", body="quoted str one")
+
+    target = next(
+        p
+        for p in episode_store._iter_session_paths("sess_aaaa1111")
+        if "quoted str one" in p.read_text(encoding="utf-8")
+    )
+    # Quoted forces the loader to keep it as a string (no offset) — the
+    # shape that used to crash the read.
+    rewritten = [
+        'created: "2026-05-31T12:00:00"' if line.startswith("created:") else line
+        for line in target.read_text(encoding="utf-8").splitlines()
+    ]
+    target.write_text("\n".join(rewritten) + "\n", encoding="utf-8")
+
+    # Must not raise; the well-formed sibling is always returned, and the
+    # quoted-str row is parsed (and stamped UTC) rather than crashing.
+    eps = episode_store.list_by_session("sess_aaaa1111")
+    bodies = {e.body.strip() for e in eps}
+    assert "well-formed sibling" in bodies
+    quoted_ep = next(e for e in eps if e.body.strip() == "quoted str one")
+    assert quoted_ep.created == datetime(2026, 5, 31, 12, 0, tzinfo=timezone.utc)
+    assert quoted_ep.created.tzinfo is not None
 
 
 def test_list_by_swarm_fans_in_across_sessions(

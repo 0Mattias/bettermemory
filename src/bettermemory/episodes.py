@@ -23,7 +23,7 @@ from __future__ import annotations
 
 import shutil
 from dataclasses import dataclass
-from datetime import datetime, timedelta
+from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 from typing import Iterator
 
@@ -36,7 +36,7 @@ from .models import (
     utcnow,
 )
 from .origin import Origin
-from .time_utils import ensure_utc
+from .time_utils import ensure_utc, parse_event_ts
 
 
 EPISODES_DIR = "episodes"
@@ -389,18 +389,53 @@ class EpisodeStore:
         # loads as the expected type rather than tripping the validator.
         swarm_raw = meta.get("swarm_id")
         swarm_id = str(swarm_raw) if swarm_raw is not None else None
-        # Normalise `created` to tz-aware UTC at load. Frontmatter without an
-        # offset (a hand-edited or legacy file) parses as a naive datetime;
-        # an unguarded naive value raises TypeError when the `created` sort
-        # (list_by_session / list_by_swarm) or the `since` filter
-        # (episode_search) compares it against an aware sibling — failing the
-        # WHOLE episode read instead of skipping one row. health.py already
-        # guards comparisons this way. A missing/null `created` raises
-        # ValueError, which the read surface already treats as a skip-this-row
-        # signal (same as the schema_version guard above).
-        created = ensure_utc(meta["created"])
-        if created is None:
-            raise ValueError(f"{path}: 'created' is missing or null")
+        # Normalise `created` to tz-aware UTC at load, date-aware, mirroring
+        # `store._as_dt`. The vendored YAML loader produces THREE distinct
+        # shapes for a `created` value and an unguarded one fails the WHOLE
+        # episode read (list_by_session / list_by_swarm and the `since`
+        # filter in episode_search) instead of skipping one row:
+        #   * a native datetime (unquoted ISO, may be naive when no offset
+        #     was written) — ensure_utc stamps a naive value as UTC, passes
+        #     an aware one through. `datetime` IS a subclass of `date`, so
+        #     this branch MUST come first;
+        #   * a bare YAML date scalar `created: 2026-05-31` parses as a
+        #     `datetime.date` (NOT a datetime, NOT a str) — lift to UTC
+        #     midnight, the natural choice;
+        #   * a quoted string `created: "2026-05-31T12:00:00"` stays a `str`
+        #     — parse via parse_event_ts, the canonical ISO parser.
+        # An earlier hardening pass used bare `ensure_utc(meta["created"])`
+        # here; ensure_utc is typed (datetime | None) -> datetime | None and
+        # touches `.tzinfo`, so the date and str shapes raised AttributeError
+        # — NOT in the (ValueError, KeyError, OSError) catch in
+        # list_by_session — and a single hand-edited/legacy episode file
+        # crashed the whole read surface (episode_search, episode_promote,
+        # list_by_swarm, episode_handoff on the /loop hot path). A
+        # missing/null/unparseable `created` raises ValueError, which the
+        # read surface already treats as a skip-this-row signal (same as the
+        # schema_version guard above).
+        created_raw = meta.get("created")
+        created: datetime
+        if isinstance(created_raw, datetime):
+            normalised = ensure_utc(created_raw)
+            assert normalised is not None  # ensure_utc(datetime) is never None
+            created = normalised
+        elif isinstance(created_raw, date):
+            # Bare YAML date — `datetime` already handled above, so this is
+            # a pure date. UTC midnight is the natural lift.
+            created = datetime(
+                created_raw.year,
+                created_raw.month,
+                created_raw.day,
+                tzinfo=timezone.utc,
+            )
+        elif isinstance(created_raw, str):
+            parsed = parse_event_ts(created_raw)
+            if parsed is None:
+                raise ValueError(f"{path}: 'created' is not a parseable timestamp")
+            created = parsed
+        else:
+            # None (missing/null) or any other unexpected type — skip the row.
+            raise ValueError(f"{path}: 'created' is missing, null, or unparseable")
         return Episode(
             id=str(meta["id"]),
             session_id=str(meta["session_id"]),
