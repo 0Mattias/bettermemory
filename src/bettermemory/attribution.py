@@ -47,6 +47,7 @@ characters to match the `memory_record_use` contract.
 from __future__ import annotations
 
 import re
+import unicodedata
 from dataclasses import dataclass
 
 
@@ -234,14 +235,21 @@ def _candidate_sentences(body: str) -> list[str]:
 
 
 def _normalize(text: str) -> str:
-    """Lowercase + collapse whitespace for fuzzy substring comparison.
+    """NFC-normalize + lowercase + collapse whitespace for fuzzy comparison.
+
+    NFC normalization runs first so the same accented character compares
+    equal regardless of how it was encoded — a memory body written with
+    a precomposed "é" (U+00E9) matches a reply that spelled it as a base
+    "e" plus a combining acute (U+0065 U+0301), and vice-versa. Without
+    this, any non-ASCII memory text whose accent form differs from the
+    reply silently fails every tier of the matcher.
 
     Whitespace collapse means a sentence that was hard-wrapped in the
     memory body still matches the same sentence reflowed in the
     assistant reply. Lowercasing prevents an isolated capitalization
     difference from breaking the match.
     """
-    return re.sub(r"\s+", " ", text.lower()).strip()
+    return re.sub(r"\s+", " ", unicodedata.normalize("NFC", text).lower()).strip()
 
 
 def _content_token_set(text: str) -> frozenset[str]:
@@ -251,8 +259,18 @@ def _content_token_set(text: str) -> frozenset[str]:
     reply that reorders or rewords around the memory's distinctive vocabulary
     still overlaps it. Stopwords are dropped so common filler doesn't inflate
     the overlap.
+
+    Tokenization runs on the NFC-normalized text (via ``_normalize``), not the
+    raw lowercase. This matters because ``_TOKEN_RE`` only keeps ASCII
+    ``[a-z0-9_]`` runs: a precomposed "café" (U+00E9) drops the accent and
+    yields the truncated token "caf", while a decomposed "café" (base "e" plus
+    a combining mark) yields "cafe". Without normalizing first, the two accent
+    forms produce different token sets and never overlap — so the containment
+    tier would miss the paraphrase even when ``_normalize`` is fixed elsewhere.
     """
-    return frozenset(t for t in _TOKEN_RE.findall(text.lower()) if t not in _STOPWORDS)
+    return frozenset(
+        t for t in _TOKEN_RE.findall(_normalize(text)) if t not in _STOPWORDS
+    )
 
 
 def attribute_uses(

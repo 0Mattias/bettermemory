@@ -10,7 +10,101 @@ test_hook covers the end-to-end happy path.
 
 from __future__ import annotations
 
-from bettermemory.attribution import AttributionMatch, attribute_uses
+import unicodedata
+
+from bettermemory.attribution import (
+    AttributionMatch,
+    _normalize,
+    attribute_uses,
+)
+
+
+# --- Unicode-form fixtures, built programmatically -----------------------------
+#
+# These accent forms are constructed from a base ASCII letter plus the combining
+# acute accent U+0301 (decomposed) and folded to a single precomposed codepoint
+# via NFC. They are NOT pasted as raw accented literals on purpose: an editor (or
+# a macOS/iCloud filesystem) can silently re-normalize a decomposed literal in
+# the source back to its precomposed form, which would erase the very byte
+# distinction these tests depend on. Building from chr(0x301) keeps both forms
+# byte-distinct on disk no matter what touches the file.
+
+_COMBINING_ACUTE = chr(0x301)
+
+# "café": decomposed = "caf" + "e" + combining-acute; precomposed folds to U+00E9.
+_CAFE_DECOMPOSED = "caf" + "e" + _COMBINING_ACUTE
+_CAFE_PRECOMPOSED = unicodedata.normalize("NFC", _CAFE_DECOMPOSED)
+# "exposé": same shape on the trailing vowel.
+_EXPOSE_DECOMPOSED = "expos" + "e" + _COMBINING_ACUTE
+_EXPOSE_PRECOMPOSED = unicodedata.normalize("NFC", _EXPOSE_DECOMPOSED)
+
+
+def test_accent_fixture_forms_are_byte_distinct() -> None:
+    """Guard: the two encodings really differ on disk, and NFC collapses them.
+
+    If this ever fails, the editor folded the decomposed source literal into its
+    precomposed form (the exact trap that produced a zero-discrimination test in
+    a prior attempt). The behavioral tests below would then silently stop testing
+    the bug, so assert the distinction explicitly up front.
+    """
+    assert _CAFE_DECOMPOSED != _CAFE_PRECOMPOSED
+    assert _EXPOSE_DECOMPOSED != _EXPOSE_PRECOMPOSED
+    # The decomposed form carries the standalone combining mark.
+    assert _COMBINING_ACUTE in _CAFE_DECOMPOSED
+    assert _COMBINING_ACUTE not in _CAFE_PRECOMPOSED
+    # Both forms canonicalize to the same precomposed codepoints.
+    assert unicodedata.normalize("NFC", _CAFE_DECOMPOSED) == _CAFE_PRECOMPOSED
+    assert _normalize(_CAFE_DECOMPOSED) == _normalize(_CAFE_PRECOMPOSED)
+    assert _normalize(_EXPOSE_DECOMPOSED) == _normalize(_EXPOSE_PRECOMPOSED)
+
+
+def test_verbatim_tier_matches_across_accent_forms() -> None:
+    """Verbatim tier: a body written with precomposed accents matches a reply
+    that quotes the same sentence with decomposed accents.
+
+    Fails on unpatched code — the normalized needle and haystack differ byte-for
+    -byte at the accented characters, so the substring check misses. Passes once
+    ``_normalize`` runs NFC first.
+    """
+    body = (
+        f"the {_CAFE_PRECOMPOSED} menu and the {_EXPOSE_PRECOMPOSED} report "
+        "were finalised here."
+    )
+    reply = (
+        "earlier note — "
+        f"the {_CAFE_DECOMPOSED} menu and the {_EXPOSE_DECOMPOSED} report "
+        "were finalised here, all good."
+    )
+    matches = attribute_uses({"mem1": body}, reply)
+    assert len(matches) == 1
+    assert matches[0].memory_id == "mem1"
+
+
+def test_containment_tier_matches_across_accent_forms() -> None:
+    """Containment tier: a reordered paraphrase (no surviving verbatim span)
+    that reuses two accented + two ASCII content tokens.
+
+    On unpatched code the accent forms tokenize differently — precomposed
+    "café"/"exposé" become the truncated "caf"/"expos" while the decomposed
+    forms become "cafe"/"expose" — so only the two ASCII tokens overlap. That is
+    2 matched tokens at ratio 2/6, below BOTH the matched-token floor (4) and the
+    0.60 ratio, so the tier rejects it. With NFC normalization all four content
+    tokens overlap (4/6 = 0.67), clearing both gates.
+    """
+    body = (
+        f"the {_CAFE_PRECOMPOSED} {_EXPOSE_PRECOMPOSED} from the menu report "
+        "were here today."
+    )
+    reply = (
+        "the report and the menu were produced from "
+        f"{_EXPOSE_DECOMPOSED} {_CAFE_DECOMPOSED} downstream steps."
+    )
+    # Guard: this fixture must exercise the containment tier, not verbatim — no
+    # candidate sentence appears as a contiguous span of the reply.
+    assert _normalize(body.rstrip(".")) not in _normalize(reply)
+    matches = attribute_uses({"mem1": body}, reply)
+    assert len(matches) == 1
+    assert matches[0].memory_id == "mem1"
 
 
 def test_empty_inputs_return_empty() -> None:
