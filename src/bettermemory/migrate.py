@@ -219,9 +219,11 @@ def migrate_origin_in_directory(
                 continue
 
             post.metadata["origin"] = dict(chosen)
-            report.updated += 1
 
             if dry_run:
+                # Dry-run reports a "would update" count; nothing is
+                # persisted, so there's no write that can fail.
+                report.updated += 1
                 continue
 
             # Use the shared `_atomic_write_post` helper: tmp+fsync+rename
@@ -230,7 +232,28 @@ def migrate_origin_in_directory(
             # so post-migration files inherited the umask (typically
             # 0o644) and ended up world-readable — undoing the privacy
             # guarantee the store set on the original write.
-            _atomic_write_post(path, post)
+            #
+            # Mirror the read-side handling one block up: the write can
+            # raise OSError (ENOSPC/EACCES/EIO mid-write or on the rename)
+            # or ValueError (the dumps 64 KB YAML cap once `origin` is
+            # appended). Without this guard a single failing file aborts
+            # the whole loop with a traceback and every subsequent memory
+            # goes unprocessed. Record the failure, leave the file
+            # untouched (the atomic write is all-or-nothing), and continue
+            # so the rest of the directory still migrates. The migration
+            # is idempotent, so a later re-run picks up anything that
+            # failed transiently.
+            try:
+                _atomic_write_post(path, post)
+            except (OSError, ValueError) as exc:
+                log.warning("skipping file that failed to write %s: %s", path, exc)
+                report.malformed.append(path)
+                continue
+
+            # Count only what actually persisted — incrementing before the
+            # write would inflate `report.updated` to include files the
+            # write never landed.
+            report.updated += 1
 
     return report
 

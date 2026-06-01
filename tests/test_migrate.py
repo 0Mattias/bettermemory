@@ -328,6 +328,62 @@ def test_migration_skips_malformed_files(tmp_path: Path) -> None:
     assert "origin" in _read_metadata(good)
 
 
+def test_migration_continues_when_a_write_fails(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Regression (write-guard): a per-file write failure must not abort
+    the whole migration loop, and must not inflate ``report.updated``.
+
+    ``_atomic_write_post`` can raise ``OSError`` (ENOSPC/EACCES/EIO
+    mid-write or on the rename) or ``ValueError`` (the dumps 64 KB YAML
+    cap). Previously the write was outside any try/except and
+    ``report.updated`` was incremented *before* it, so a single failing
+    file (a) aborted the loop with a traceback, leaving every subsequent
+    memory unprocessed, and (b) counted the never-persisted file as
+    updated. The write must now be guarded mirroring the read path: the
+    failed file is recorded in ``malformed``, the loop continues, and
+    ``updated`` counts only files that actually persisted.
+
+    We patch ``_atomic_write_post`` to raise ``OSError`` for exactly one
+    of three files; the other two must still migrate and the count must
+    be 2, not 3."""
+    memory_dir = tmp_path / ".claude-memory"
+    memory_dir.mkdir()
+    first = _write_legacy(memory_dir, name="aaa-first", body="x", id_=_LEGACY_IDS[0])
+    failing = _write_legacy(memory_dir, name="bbb-fails", body="y", id_=_LEGACY_IDS[1])
+    last = _write_legacy(memory_dir, name="ccc-last", body="z", id_=_LEGACY_IDS[2])
+
+    real_write = __import__(
+        "bettermemory.store", fromlist=["_atomic_write_post"]
+    )._atomic_write_post
+
+    def flaky_write(path: Path, post: object) -> None:
+        if Path(path) == failing:
+            raise OSError("simulated ENOSPC")
+        return real_write(path, post)
+
+    # `migrate.py` imports the symbol directly
+    # (`from .store import ... _atomic_write_post`), so patch it on the
+    # `migrate` module namespace where the loop resolves it.
+    monkeypatch.setattr("bettermemory.migrate._atomic_write_post", flaky_write)
+
+    inferred = Origin(repo="git@github.com:example/foo.git")
+    report = migrate_origin_in_directory(memory_dir, inferred=inferred)
+
+    # The loop didn't abort: all three files were scanned.
+    assert report.scanned == 3
+    # The failing file is recorded and NOT counted as updated.
+    assert failing in report.malformed
+    # Only the two files that actually persisted are counted.
+    assert report.updated == 2
+    # The two good files really did get origin written...
+    assert "origin" in _read_metadata(first)
+    assert "origin" in _read_metadata(last)
+    # ...and the failing file was left untouched (atomic write is
+    # all-or-nothing — no partial/origin-stamped persistence).
+    assert "origin" not in _read_metadata(failing)
+
+
 def test_mid_run_tombstone_not_reported_malformed(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
