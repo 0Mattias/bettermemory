@@ -46,6 +46,16 @@ if TYPE_CHECKING:
 # carry signal.
 _MIN_REASON_LENGTH = 8
 
+# Maximum length on the free-form `reason` field. The min floor keeps
+# drive-by `ack("ok")` spam out of the audit trail; this ceiling keeps a
+# runaway model (or a hostile client) from inflating the JSONL event log
+# with a multi-megabyte reason. 500 chars mirrors `_NOTE_MAX_LEN` — the
+# matching cap on the other free-text event-log fields (`memory_verify`
+# / `memory_record_use` notes) — and covers any reasonable one-liner
+# rationale; pasting a whole transcript belongs in a memory body, not an
+# ack reason.
+_MAX_REASON_LENGTH = 500
+
 
 DESC_MEMORY_ACKNOWLEDGE_MISS = (
     "Acknowledge ONE `search_miss` event as a false positive. "
@@ -70,7 +80,8 @@ DESC_MEMORY_ACKNOWLEDGE_MISS = (
     "in the event log. Legacy events written before this field "
     'existed return `{"status": "not_found", ...}` — use the '
     "bulk cutoff for those.\n"
-    f"- `reason` (required, >= {_MIN_REASON_LENGTH} chars): free-form "
+    f"- `reason` (required, {_MIN_REASON_LENGTH}–{_MAX_REASON_LENGTH} "
+    "chars): free-form "
     'explanation captured for audit purposes (e.g. "stopword query, '
     'no real intent", "top hit irrelevant to actual user turn"). '
     "The text persists in the event log and downstream miss-probe "
@@ -112,6 +123,12 @@ async def memory_acknowledge_miss(
         raise ValueError(
             f"reason must be at least {_MIN_REASON_LENGTH} characters "
             f"after stripping whitespace (got {len(stripped_reason)})"
+        )
+    if len(stripped_reason) > _MAX_REASON_LENGTH:
+        raise ValueError(
+            f"reason is {len(stripped_reason)} chars — cap is "
+            f"{_MAX_REASON_LENGTH}. Write a one-line rationale; the ack "
+            "reason lands in the event log, not a memory body."
         )
     target_event_id = event_id.strip()
 

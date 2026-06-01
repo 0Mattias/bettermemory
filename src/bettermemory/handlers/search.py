@@ -353,6 +353,14 @@ async def memory_search(
             # Race: memory was tombstoned between search and show.
             # Drop the body silently, the snippet still got returned.
             pass
+        except OSError:
+            # Transient IO error reading the top hit's body (e.g. the
+            # backing file vanished mid-flight, a flaky network mount, or
+            # a transient EIO). The body expansion is a best-effort
+            # enrichment — skip the inline body but still return the
+            # ranked hits the caller already has, rather than aborting the
+            # whole search on one unreadable body.
+            pass
         else:
             out[0]["body"] = memory.body
             drift = detect_path_drift(memory.body, verified_paths=memory.verified_paths)

@@ -5997,3 +5997,106 @@ async def test_scope_overview_reports_proposals_pending(
     )
     res1 = await _call(server, "memory_scope_overview")
     assert res1["proposals_pending"] == 1
+
+
+async def test_memory_proposals_accept_claims_before_write(memory_dir: Path) -> None:
+    """accept must CLAIM the proposal (remove it from the queue under the
+    per-file flock) BEFORE writing the durable memory — that ordering is
+    what makes a concurrent double-accept idempotent: the racer that loses
+    the claim finds the queue empty and skips the write instead of landing
+    a second store entry. Pinned deterministically by spying on
+    ``store.write``: at the instant the durable write runs, the accepted
+    proposal is already gone from the queue. The pre-fix order (write,
+    then remove, across separate locks) left the proposal in the queue
+    during the write, so a second accept could load and write it again.
+    """
+    from bettermemory.proposals import ProposalQueue
+
+    store = Store(memory_dir)
+    server = build_server(
+        config=Config(storage=StorageConfig(directory=str(memory_dir))),
+        store=store,
+        state=SessionState(),
+    )
+
+    _seed_proposal(memory_dir, pid="claim1", body="a durable fact worth keeping around")
+
+    queued_at_write_time: list[list[str]] = []
+    real_write = store.write
+
+    def _spy_write(**kwargs: Any) -> Any:
+        # Snapshot the queue as the durable write happens. With the fix the
+        # proposal has already been claimed, so its id is absent here.
+        queued_at_write_time.append([p.id for p in ProposalQueue(memory_dir).load()])
+        return real_write(**kwargs)
+
+    store.write = _spy_write  # type: ignore[method-assign]
+
+    res = await _call(
+        server,
+        "memory_proposals",
+        action="accept",
+        proposal_id="claim1",
+        scopes=["projects:c"],
+    )
+    assert res["status"] == "accepted"
+    # store.write ran exactly once and, at that instant, the proposal had
+    # already been removed from the queue (claim-before-write ordering).
+    assert queued_at_write_time == [[]]
+    # Post-condition: queue drained, exactly one memory written.
+    assert ProposalQueue(memory_dir).load() == []
+    assert len(store.load_all()) == 1
+
+
+async def test_episode_promote_advances_turn_exactly_once(
+    memory_dir: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """episode_promote routes through memory_write, which advances the
+    session turn counter at its own entry. The promote handler must NOT
+    advance it a second time — a double advance prematurely ages the
+    ~2-turn record_use / pending-write TTL windows that key off the turn
+    counter. Count SessionState.advance_turn across one promote and assert
+    exactly one bump (pre-fix the promote handler called _advance_turn
+    itself AND again via the nested memory_write -> two bumps).
+    """
+    from bettermemory.episodes import EpisodeStore
+    from bettermemory.session import SessionState as _SessionState
+
+    store = Store(memory_dir)
+    server = build_server(
+        config=Config(storage=StorageConfig(directory=str(memory_dir))),
+        store=store,
+        state=SessionState(),
+    )
+
+    # Seed the source episode straight through the store so the
+    # episode_write *handler* (which advances the turn on its own) can't
+    # pollute the count — we measure only the promote path.
+    ep = EpisodeStore(memory_dir).write(
+        session_id="sess-promote",
+        body="did the thing in detail",
+        takeaway="the distilled durable fact worth keeping across sessions",
+        scopes=["projects:foo"],
+    )
+
+    calls = {"n": 0}
+    real_advance = _SessionState.advance_turn
+
+    def _counting_advance(self: _SessionState) -> int:
+        calls["n"] += 1
+        return real_advance(self)
+
+    monkeypatch.setattr(_SessionState, "advance_turn", _counting_advance)
+
+    res = await _call(
+        server,
+        "episode_promote",
+        episode_id=ep.id,
+        scopes=["projects:foo"],
+    )
+
+    # The promote committed (the takeaway is a clean durable fact)...
+    assert res["status"] == "committed"
+    assert res["promoted_from_episode_id"] == ep.id
+    # ...and the turn counter advanced exactly once, not twice.
+    assert calls["n"] == 1

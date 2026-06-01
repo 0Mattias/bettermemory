@@ -345,3 +345,52 @@ async def test_acknowledge_miss_rejects_whitespace_only_reason(
             event_id=event_id,
             reason="          ",
         )
+
+
+async def test_acknowledge_miss_rejects_overlong_reason(
+    server_with_events: tuple[Any, Path, SessionState],
+) -> None:
+    """A clearly-oversized reason is rejected (mirrors the MIN floor) so a
+    runaway model or hostile client can't inflate the JSONL event log
+    with a multi-megabyte ack reason. The rejection fires before any
+    `miss_ack` is emitted — same audit-integrity contract as the
+    short-reason check.
+
+    The behavioral core (a 100k-char reason must be refused AND leave no
+    miss_ack) is the load-bearing assertion: it fails against the pre-fix
+    handler, which had no max bound and wrote the giant reason straight to
+    the event log. The boundary block behind the `_MAX_REASON_LENGTH`
+    import pins the exact cap (cap+1 rejected, cap accepted)."""
+    server, memory_dir, _ = server_with_events
+    await _emit_search_miss(server)
+    miss_events = [e for e in _events(memory_dir) if e["kind"] == "search_miss"]
+    event_id = miss_events[0]["event_id"]
+
+    with pytest.raises(Exception):  # FastMCP wraps the ValueError
+        await _call(
+            server,
+            "memory_acknowledge_miss",
+            event_id=event_id,
+            reason="x" * 100_000,
+        )
+    acks = [e for e in _events(memory_dir) if e["kind"] == "miss_ack"]
+    assert acks == [], "an over-cap reason must not emit a miss_ack"
+
+    from bettermemory.handlers.acknowledge_miss import _MAX_REASON_LENGTH
+
+    with pytest.raises(Exception):
+        await _call(
+            server,
+            "memory_acknowledge_miss",
+            event_id=event_id,
+            reason="x" * (_MAX_REASON_LENGTH + 1),
+        )
+    assert [e for e in _events(memory_dir) if e["kind"] == "miss_ack"] == []
+
+    res = await _call(
+        server,
+        "memory_acknowledge_miss",
+        event_id=event_id,
+        reason="y" * _MAX_REASON_LENGTH,
+    )
+    assert res["status"] == "acknowledged"

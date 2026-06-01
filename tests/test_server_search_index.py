@@ -287,3 +287,47 @@ async def test_search_falls_back_to_load_all_when_all_filenames_drift(
         "the load_all fallback should have caught this"
     )
     assert any("python" in h["match_terms"] for h in hits)
+
+
+async def test_expand_top_survives_oserror_reading_body(
+    server: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A transient OSError while loading the top hit's body for
+    `expand_top` must NOT abort the whole search: the inline body is
+    dropped but the ranked hits the caller already has are still
+    returned. Before the fix only MemoryNotFoundError / TombstonedError
+    were caught, so a flaky read of one body (vanished file, EIO on a
+    network mount) raised straight out of memory_search.
+
+    `Store.load_one` is reached only on the expand_top body-load path —
+    the small-store candidate pool comes from `load_all`, which uses
+    `_load_path`, not `load_one` — so patching `load_one` to raise
+    isolates exactly the enrichment step under test.
+    """
+    await _call(
+        server,
+        "memory_write",
+        content="alpha beta gamma the quick brown fox jumps over",
+        scopes=["tools"],
+    )
+
+    def _raise_oserror(self: Store, memory_id: str) -> Any:
+        raise OSError("transient read failure on the backing file")
+
+    monkeypatch.setattr(Store, "load_one", _raise_oserror)
+
+    # Full-coverage query so the top hit's relevance is "high" and the
+    # expand_top branch actually fires.
+    hits = _unwrap(
+        await _call(
+            server,
+            "memory_search",
+            query="alpha beta gamma quick brown fox jumps over",
+            expand_top=True,
+        )
+    )
+    # The search did not raise; the top hit still came back, just without
+    # the inline body the failed expansion would have added.
+    assert hits, "search aborted on a transient OSError reading the top-hit body"
+    assert hits[0]["relevance"] == "high"
+    assert "body" not in hits[0]

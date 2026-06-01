@@ -99,9 +99,7 @@ async def memory_proposals(
                 "scopes is required to accept a proposal — a memory needs at "
                 "least one scope, and the proposal queue does not guess them"
             )
-        # Resolve the proposal BEFORE writing so a bad id fails cleanly,
-        # and remove it only AFTER the write commits — a write that raises
-        # (invalid scope/category) leaves the proposal in the queue to retry.
+        # Resolve the proposal BEFORE writing so a bad id fails cleanly.
         match = next((p for p in queue.load() if p.id == proposal_id), None)
         if match is None:
             return {
@@ -117,7 +115,12 @@ async def memory_proposals(
         # the configured whitelist or past max_scopes_per_write (fail-open).
         # Route through the shared validator so the policy surface cannot
         # drift between write entry points; it also gives a clean error for
-        # a bad category or scope instead of a bare exception.
+        # a bad category or scope instead of a bare exception. Validate
+        # BEFORE the atomic claim below so a bad scope/category raises with
+        # the proposal still in the queue (the caller can fix the inputs
+        # and retry) — the only failure that loses the queue entry is an
+        # unexpected store-level error after a successful claim, which is
+        # not a caller-correctable retry case.
         payload = _validate_write_payload(
             content=match.body,
             scopes=list(scopes),
@@ -128,8 +131,26 @@ async def memory_proposals(
             max_content_bytes=deps.config.behavior.max_content_bytes,
             max_scopes_per_write=deps.config.behavior.max_scopes_per_write,
         )
+        # Atomically CLAIM the proposal by removing it under the queue's
+        # per-file flock BEFORE writing the durable memory. This is the
+        # idempotency / no-duplicate guard: `remove` re-checks the proposal
+        # still exists under the lock and returns it only to the single
+        # caller that wins the race. A concurrent second accept of the same
+        # id then sees `None` here and returns `not_found` WITHOUT issuing a
+        # second `store.write` — so a double-accept can no longer duplicate
+        # the memory. (The prior order — write, then remove across separate
+        # locks — let both racers load the same proposal, both write, and
+        # both remove, landing two store entries.)
+        claimed = queue.remove(proposal_id)
+        if claimed is None:
+            # Lost the race: another accept already claimed and wrote this
+            # proposal. Do not write a duplicate.
+            return {
+                "status": "not_found",
+                "action": "accept",
+                "proposal_id": proposal_id,
+            }
         memory = deps.store.write(**payload, origin=_h.capture_origin())
-        queue.remove(proposal_id)
         cat_written = (
             memory.category.value if memory.category is not None else cat_value
         )

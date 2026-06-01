@@ -33,7 +33,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Any
 
 from .._fsutil import flock_excl, fsync_dir
-from ._shared import Context, _advance_turn
+from ._shared import Context
 
 if TYPE_CHECKING:
     from .._handlers import ToolHandlers
@@ -152,8 +152,16 @@ async def episode_promote(
     ctx: Context | None = None,
 ) -> dict[str, Any]:
     """Handler body for the `episode_promote` MCP tool."""
+    # NOTE: do NOT call `_advance_turn` here. This handler routes through
+    # `memory_write` (below), which advances the turn counter and drains
+    # expired pending-write / use-token TTLs at its own entry. Advancing
+    # here too would double-count the turn on the promote path and
+    # prematurely age the ~2-turn record_use / pending windows — the exact
+    # "call it once and only once" contract `_advance_turn` documents. The
+    # episode lookup / floor check / body selection below don't read any
+    # turn-dependent state, so deferring the single advance to the nested
+    # `memory_write` call is correct.
     state = deps.sessions.for_request(ctx)
-    _advance_turn(state, deps.recorder)
 
     # Find the episode across all known sessions. Episodes don't have
     # an O(1) id→path mapping (the ULID is the filename, but the
