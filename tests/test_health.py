@@ -426,11 +426,22 @@ def test_curation_counts_since_filters_cold_endorsement_to_post_boundary() -> No
     `since` must not surface in the delta even if its post-`since`
     retrievals push it over the floor."""
     old = _memory(created=_utc(2026, 1, 1))
-    # 10 retrievals all after `since` would normally flag the row;
-    # the row itself predates `since` so the delta must exclude it.
-    search_events = [
-        _event("search", ts=_utc(2026, 4, 20), returned=[old.id]) for _ in range(10)
-    ]
+    # 10 retrievals all after `since`, each closed by an auto-applied
+    # use event — a genuine cold-endorsement shape (applies happened,
+    # every one auto, zero explicit). Would normally flag the row; the
+    # row itself predates `since` so the delta must exclude it. The
+    # auto-applied events matter: without an apply the memory is
+    # dead_weight, not cold-endorsement (see
+    # test_zero_apply_memory_is_dead_weight_not_cold_endorsement), and
+    # this test is about the `since` filter, not the apply-gate.
+    search_events: list[dict[str, Any]] = []
+    for _ in range(10):
+        search_events.append(_event("search", ts=_utc(2026, 4, 20), returned=[old.id]))
+        search_events.append(
+            _event(
+                "use", ts=_utc(2026, 4, 20), ids=[old.id], outcome="applied", auto=True
+            )
+        )
     absolute = curation_counts(
         [old],
         search_events,
@@ -2228,6 +2239,46 @@ def test_curation_counts_cold_endorsement_matches_health_bucket() -> None:
     )
     counts = curation_counts([m], events, window_days=30, now=_utc(2026, 5, 1))
     assert counts["cold_endorsement_memories"] == report.cold_endorsement_memories.total
+
+
+def test_zero_apply_memory_is_dead_weight_not_cold_endorsement() -> None:
+    """A memory created before the window, retrieved over the floor, but
+    NEVER applied (auto or explicit) is dead_weight — NOT cold-endorsement.
+
+    cold_endorsement is the COMPLEMENT of dead_weight: "applies happened,
+    but every one was the auto fallback." A pure dead-weight row
+    (applied_count == 0) must land ONLY in dead_weight. Before the
+    `applied_count == 0` gate it satisfied `explicit_applied_count == 0`
+    and double-counted into both buckets, inflating the cold-endorsement
+    rollup and mis-routing a never-applied memory to acknowledge-debt
+    instead of removal. Pinned across compute_health AND curation_counts
+    so the two surfaces stay in numerical agreement."""
+    m = _memory(created=_utc(2026, 1, 1))
+    # 5 retrievals (>= floor), ZERO use events — never applied at all.
+    events = [_event("search", ts=_utc(2026, 4, 1), returned=[m.id]) for _ in range(5)]
+    report = compute_health(
+        [m],
+        events,
+        window_days=30,
+        cold_endorsement_min_retrievals=5,
+        now=_utc(2026, 5, 1),
+    )
+    # In dead_weight (retrieved, never applied) ...
+    assert [s.id for s in report.dead_weight] == [m.id]
+    # ... and ABSENT from cold_endorsement (no apply ever happened).
+    assert report.cold_endorsement_memories.total == 0
+    assert report.cold_endorsement_memories.rows == []
+
+    # The fast helper agrees: dead counted, cold_endorsement not.
+    counts = curation_counts(
+        [m],
+        events,
+        window_days=30,
+        cold_endorsement_min_retrievals=5,
+        now=_utc(2026, 5, 1),
+    )
+    assert counts["dead"] == 1
+    assert counts["cold_endorsement_memories"] == 0
 
 
 def test_cold_endorsement_to_dict_shape() -> None:

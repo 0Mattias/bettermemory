@@ -519,15 +519,25 @@ def compute_eval(
                 elif len(silent_miss_buffer) > silent_miss_limit:
                     silent_miss_buffer = silent_miss_buffer[-silent_miss_limit:]
 
-    # Cold-endorsement rows: retrieval_count >= floor AND
-    # explicit_applied_count == 0. Ambient memories are excluded — same
-    # rationale as health's cold_endorsement_memories bucket (their
-    # value is implicit; an explicit use event is structurally rare).
+    # Cold-endorsement rows: retrieval_count >= floor AND at least one
+    # apply happened AND explicit_applied_count == 0. Ambient memories
+    # are excluded — same rationale as health's cold_endorsement_memories
+    # bucket (their value is implicit; an explicit use event is
+    # structurally rare).
+    #
+    # The "at least one apply" gate (auto + explicit > 0) keeps the
+    # bucket as the COMPLEMENT of dead_weight, matching health's
+    # `_is_weakly_endorsed`: cold-endorsement means "applies happened,
+    # but every one was the auto fallback." A memory retrieved over the
+    # floor with zero applies is dead_weight, not cold-endorsement, and
+    # must not surface here.
     floor = max(1, int(endorsement_min_retrievals))
     cold_rows: list[ColdEndorsementMemoriesRow] = []
     cold_total = 0
     for mid, rcount in retrieval_count.items():
         if rcount < floor:
+            continue
+        if auto_applied_count.get(mid, 0) + explicit_applied_count.get(mid, 0) == 0:
             continue
         if explicit_applied_count.get(mid, 0) > 0:
             continue

@@ -561,6 +561,29 @@ class TestColdEndorsementMemories:
         )
         assert report.cold_endorsement_memories_total == 0
 
+    def test_row_excluded_when_no_apply_happened_at_all(self) -> None:
+        """A memory retrieved over the floor with ZERO applies (neither
+        auto nor explicit) is dead_weight, NOT cold-endorsement.
+
+        cold-endorsement is the COMPLEMENT of dead_weight — "applies
+        happened, but every one was the auto fallback." Before the
+        `auto + explicit > 0` gate, a never-applied memory satisfied the
+        `explicit_applied_count == 0` test and surfaced here, mis-routing
+        a removal candidate onto the acknowledge-debt path and inflating
+        the rollup. Mirrors health's `_is_weakly_endorsed` /
+        `curation_counts` `applied_count == 0` gate so the two surfaces
+        agree."""
+        mem = _mem()
+        # 5 retrievals, NO use events — never applied at all.
+        events = [_ev("search", returned=[mem.id]) for _ in range(5)]
+        report = compute_eval(
+            memories=[mem],
+            events=events,
+            endorsement_min_retrievals=5,
+        )
+        assert report.cold_endorsement_memories_total == 0
+        assert report.cold_endorsement_memories_rows == []
+
     def test_ambient_memory_excluded(self) -> None:
         mem = _mem(category=Category.AMBIENT)
         report = compute_eval(

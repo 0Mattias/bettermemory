@@ -322,13 +322,24 @@ _COLD_ENDORSEMENT_CAP = 20
 def _is_weakly_endorsed(stats: MemoryStats, ratio_threshold: float) -> bool:
     """Predicate for the cold_endorsement_memories bucket.
 
-    Returns True when the memory looks weakly endorsed under either
-    of two checks:
+    Gated on "at least one apply happened" first: `applied_count == 0`
+    returns False. The bucket is the COMPLEMENT of dead_weight (see the
+    `ColdEndorsementMemories` docstring) — "applies happened, but every
+    one was the auto fallback." A memory that was retrieved but never
+    applied at all (auto included) belongs in dead_weight, not here;
+    without this gate a pure dead-weight row (retrieval over the floor,
+    zero applies) would satisfy `explicit_applied_count == 0` and land
+    in BOTH buckets, double-counting it and mis-routing the
+    never-applied memory to the acknowledge-debt path instead of removal.
+
+    Past the gate, returns True when the memory looks weakly endorsed
+    under either of two checks:
 
     - **Binary** (always on): `explicit_applied_count == 0`. The
-      memory has been retrieved enough times to cross the floor but
-      the model never deliberately called `memory_record_use(applied)`
-      — every applied event came from the server's auto-fallback.
+      memory has been retrieved enough times to cross the floor and
+      at least one applied event fired, but the model never
+      deliberately called `memory_record_use(applied)` — every applied
+      event came from the server's auto-fallback.
 
     - **Ratio** (off by default, on when `ratio_threshold > 0`):
       `explicit_applied_count / (auto + explicit) < ratio_threshold`.
@@ -340,6 +351,8 @@ def _is_weakly_endorsed(stats: MemoryStats, ratio_threshold: float) -> bool:
     semantics exactly: the predicate reduces to the equality check
     because the ratio branch needs `ratio_threshold > 0` to fire.
     """
+    if stats.applied_count == 0:
+        return False
     if stats.explicit_applied_count == 0:
         return True
     if ratio_threshold <= 0.0:
@@ -2358,9 +2371,18 @@ def curation_counts(
             explicit = explicit_applied_counts.get(m.id, 0)
             total_applied = applied_counts.get(m.id, 0)
             ratio_threshold = max(0.0, float(cold_endorsement_ratio_threshold))
-            if explicit == 0:
+            # Gate on "at least one apply happened" — mirrors the
+            # `applied_count == 0` guard in `_is_weakly_endorsed`. A
+            # memory retrieved over the floor with zero applies is
+            # dead_weight, not cold-endorsement (the bucket is the
+            # complement of dead_weight: applies happened, but every
+            # one was auto). Without this, a pure dead-weight row would
+            # double-count here and in `dead`.
+            if total_applied == 0:
+                pass
+            elif explicit == 0:
                 cold_endorsement_memories += 1
-            elif ratio_threshold > 0.0 and total_applied > 0:
+            elif ratio_threshold > 0.0:
                 ratio = explicit / total_applied
                 if ratio < ratio_threshold:
                     cold_endorsement_memories += 1
