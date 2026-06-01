@@ -83,13 +83,17 @@ def run(
 ) -> None:
     """Dispatch handler for ``bettermemory tombstones``.
 
-    ``root_parser`` is forwarded into ``_cli_tombstones_prune`` so the
-    original ``--older-than is required`` error message keeps the root
-    prog prefix; ``sub_parser`` is used for ``.print_help()`` when a
-    bare ``bettermemory tombstones`` is invoked.
+    ``root_parser`` is forwarded into ``_cli_tombstones_list`` and
+    ``_cli_tombstones_prune`` so validation failures (a malformed
+    ``--scope``, the missing ``--older-than`` default) surface through
+    ``parser.error(...)`` with the root prog prefix; ``sub_parser`` is
+    used for ``.print_help()`` when a bare ``bettermemory tombstones``
+    is invoked.
     """
     if args.tombstones_cmd == "list":
-        _cli_tombstones_list(json_out=args.json, scopes=args.scope or None)
+        _cli_tombstones_list(
+            json_out=args.json, scopes=args.scope or None, parser=root_parser
+        )
         return
     if args.tombstones_cmd == "prune":
         _cli_tombstones_prune(
@@ -102,14 +106,31 @@ def run(
     sub_parser.print_help()
 
 
-def _cli_tombstones_list(*, json_out: bool, scopes: list[str] | None) -> None:
+def _cli_tombstones_list(
+    *,
+    json_out: bool,
+    scopes: list[str] | None,
+    parser: Any = None,
+) -> None:
     """`bettermemory tombstones list` — print removed memories."""
     import json as _json
 
     ctx = cli_context()
     store = ctx.store
     if scopes:
-        scopes = [validate_scope(s) for s in scopes]
+        # `validate_scope` raises ValueError on a malformed --scope
+        # (uppercase, spaces, illegal chars). Route it through
+        # `parser.error(...)` for a clean `bettermemory: error: …` + exit
+        # 2 instead of an uncaught traceback that leaks internal paths —
+        # mirroring `_cli_export`. The `parser is None` fallback (direct
+        # callers / tests) re-raises so programmatic callers still see the
+        # exception.
+        try:
+            scopes = [validate_scope(s) for s in scopes]
+        except ValueError as exc:
+            if parser is not None:
+                parser.error(str(exc))
+            raise
     summaries = store.list_tombstones(scopes=scopes)
 
     if json_out:

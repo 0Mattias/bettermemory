@@ -331,6 +331,31 @@ def test_tombstones_list_json_subcommand_runs_on_empty_store(
     assert payload == []
 
 
+def test_tombstones_list_invalid_scope_exits_clean_not_traceback(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """`tombstones list --scope BADSCOPE` must exit 2 with a clean
+    `bettermemory: error: invalid scope …` message on stderr — NOT an
+    uncaught `ValueError` traceback that leaks internal file paths.
+    Parallel to `test_export_invalid_scope_via_cli_exits_clean_not_traceback`
+    in test_export.py; pins that `tombstones list` threads its parser
+    through to `parser.error(...)` like the sibling `export` command."""
+    with pytest.raises(SystemExit) as excinfo:
+        _run_main(
+            ["tombstones", "list", "--scope", "BADSCOPE"],
+            monkeypatch=monkeypatch,
+            storage=tmp_path,
+        )
+    assert excinfo.value.code == 2
+    err = capsys.readouterr().err
+    assert "error:" in err
+    assert "invalid scope" in err
+    # No raw traceback should have leaked to the user.
+    assert "Traceback (most recent call last)" not in err
+
+
 def test_episodes_list_subcommand_runs_on_empty_store(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
