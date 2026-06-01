@@ -195,6 +195,18 @@ async def memory_update(
                     f"links[{i}].target_id cannot equal the memory's own id "
                     f"(self-links are incoherent)"
                 )
+        # Mirror Memory._check_links's 64-entry cap. `model_copy(update=...)`
+        # below SKIPS field validators, so without this check an over-cap
+        # links list writes to disk as status="committed" but then SILENTLY
+        # VANISHES from every read surface: _load_path re-validates through the
+        # Memory(...) ctor, hits the cap ValueError, and load_all/load_one
+        # catch-and-skip the now-unparseable record. Same model_copy-skips-
+        # validators bypass already guarded for scopes (_validate_scope_count
+        # above) and verified_* (_MAX_VERIFIED_ENTRIES in handlers/verify.py).
+        if len(parsed_links) > 64:
+            raise ValueError(
+                f"links list capped at 64 entries (got {len(parsed_links)})"
+            )
         new_links = parsed_links
 
     # When `content` changes, the prior verification was for prose

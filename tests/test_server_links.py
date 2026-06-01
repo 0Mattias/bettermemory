@@ -420,3 +420,49 @@ async def test_oversized_link_notes_rejected_not_silently_lost(
     # And the store can still load every memory (nothing vanished on disk).
     store = Store(memory_dir)
     assert len(store.load_all()) == 2
+
+
+async def test_links_over_count_cap_rejected_not_silently_lost(
+    server: Any, memory_dir: Path
+) -> None:
+    """Regression: memory_update never checked len(links), but the merge uses
+    model_copy(update=...) which SKIPS Memory._check_links's 64-entry cap. A
+    65-link update therefore reported status="committed" while writing a file
+    that re-validation through the Memory(...) ctor rejects — load_all/load_one
+    catch-and-skip it, so the record SILENTLY VANISHES from every read surface.
+    The update must be REJECTED (mirroring the scopes-cap guard on update) and
+    the record left intact, not written-then-vanished.
+    """
+    a_id = await _seed(server, "link target")
+    b_id = await _seed(server, "the memory we must not lose")
+
+    # 65 links: one over the model's 64-entry cap. Notes are tiny here, so the
+    # serialized frontmatter stays well under the 64 KB YAML ceiling — this
+    # isolates the COUNT cap from the byte-ceiling guard exercised above.
+    links = [{"type": "extends", "target_id": a_id} for _ in range(65)]
+    with pytest.raises(Exception, match="links list capped at 64 entries"):
+        await _call(server, "memory_update", id=b_id, links=links)
+
+    # The record must still be intact and retrievable — not silently dropped.
+    shown = await _call(server, "memory_show", id=b_id)
+    assert shown["id"] == b_id
+    assert len(shown.get("links", [])) == 0  # the over-cap update did not land
+
+    # And the store can still load every memory (nothing vanished on disk).
+    store = Store(memory_dir)
+    assert len(store.load_all()) == 2
+
+
+async def test_links_at_count_cap_accepted(server: Any, memory_dir: Path) -> None:
+    """Exactly 64 links is accepted — the cap is inclusive, matching
+    Memory._check_links (`len(v) > 64`). Guards against an off-by-one that
+    would reject the boundary the model itself permits."""
+    a_id = await _seed(server, "link target")
+    b_id = await _seed(server, "the source")
+
+    links = [{"type": "extends", "target_id": a_id} for _ in range(64)]
+    res = await _call(server, "memory_update", id=b_id, links=links)
+    assert res["status"] == "committed"
+
+    shown = await _call(server, "memory_show", id=b_id)
+    assert len(shown["links"]) == 64
