@@ -50,14 +50,18 @@ DESC_EPISODE_SEARCH = (
     "scopes to one), so the caller can correlate a takeaway back to "
     "its originating session directory; `swarm_id` (may be null) is "
     "the cohort tag for multi-agent fan-in.\n\n"
-    "WORKTREE ISOLATION: by default (`auto_scope=True`) results are "
-    "scoped to the caller's git worktree — episodes written from a "
-    "different worktree of the same repository (sharing one memory "
-    "root) are dropped, mirroring memory_search's auto-scope and the "
-    "isolation episode_handoff enforces. Legacy episodes with no "
-    "captured worktree, and callers running outside any git checkout, "
-    "pass through. Set `auto_scope=False` for a deliberate "
-    "cross-worktree journal sweep.\n\n"
+    "WORKTREE ISOLATION: by default (`auto_scope=True`) the bare "
+    "discovery walk (no `swarm_id` / `parent_session_id`) is scoped to "
+    "the caller's git worktree — episodes written from a different "
+    "worktree of the same repository (sharing one memory root) are "
+    "dropped, mirroring memory_search's auto-scope and the isolation "
+    "episode_handoff enforces. An EXPLICIT `swarm_id` or "
+    "`parent_session_id` is exempt and never worktree-filtered: naming "
+    "a cohort or session is deliberate cross-worktree intent (the swarm "
+    "fan-in gathers sub-agents that each ran in their own worktree). "
+    "Legacy episodes with no captured worktree, and callers outside any "
+    "git checkout, pass through. Set `auto_scope=False` to also sweep "
+    "the bare walk across worktrees.\n\n"
     "MULTI-AGENT SWARM FAN-IN: when you fan out parallel sub-agents "
     "and pass each the coordinator's session id as `swarm_id` on "
     "`episode_write`, call `episode_search(swarm_id=<coordinator id>)` "
@@ -76,9 +80,10 @@ DESC_EPISODE_SEARCH = (
     "swarm read surface.\n"
     "- `since` (optional ISO-8601): if set, only episodes created "
     "at-or-after this instant.\n"
-    "- `auto_scope` (default True): scope results to the caller's git "
-    "worktree (see WORKTREE ISOLATION above). Set False to sweep "
-    "every worktree sharing the memory root.\n"
+    "- `auto_scope` (default True): scope the bare discovery walk to "
+    "the caller's git worktree (see WORKTREE ISOLATION; explicit "
+    "swarm_id / parent_session_id reads are never filtered). Set False "
+    "to sweep the bare walk across every worktree sharing the root.\n"
     "- `max_results` (default 20, cap 200): cap on the returned "
     "list size; surfaces the most-recent N."
 )
@@ -122,22 +127,39 @@ async def episode_search(
     excluded_scopes: set[str] = set(state.disabled_scopes)
 
     # Worktree isolation, opt-in by default (mirrors `memory_search`'s
-    # `auto_scope`). episode_search spans every session directory under
-    # the shared memory root (BETTERMEMORY_DIR), so two worktrees of the
-    # same repository that share a root would otherwise leak each other's
-    # journal bodies through this surface — the asymmetric cross-worktree
-    # read `episode_handoff` already guards against on the iteration-entry
-    # path (`_worktrees_equal_strict`). Capture the caller's worktree once
-    # and, by default, drop episodes whose `origin.worktree_root` doesn't
-    # match it. We use the permissive `worktrees_match` (either side None
-    # → True) rather than the handoff's strict rule because this is a
+    # `auto_scope`), applied ONLY to the bare discovery walk — the branch
+    # below where the caller named NEITHER `swarm_id` NOR
+    # `parent_session_id`. episode_search spans every session directory
+    # under the shared memory root (BETTERMEMORY_DIR), so an unscoped sweep
+    # across two worktrees of the same repository that share a root would
+    # otherwise leak each other's journal bodies — the asymmetric
+    # cross-worktree read `episode_handoff` guards against on the
+    # iteration-entry path (`_worktrees_equal_strict`).
+    #
+    # An EXPLICIT `swarm_id` or `parent_session_id` is exempt: naming a
+    # cohort or a specific session IS the scoping intent, and the
+    # cross-worktree read is deliberate, not a leak — mirroring how
+    # `episode_handoff` respects an explicit `prior_session_id` verbatim
+    # ("explicit consent that they own the cross-tree concern"). The swarm
+    # fan-in is the load-bearing case: a coordinator gathers sub-agents
+    # that each ran in their OWN worktree, so filtering by the
+    # coordinator's worktree would drop every sub-agent episode and
+    # silently defeat `list_by_swarm`. So the filter guards only the
+    # no-selector walk, the one path where an unintended cross-worktree
+    # leak is the genuine concern.
+    #
+    # We use the permissive `worktrees_match` (either side None → True)
+    # rather than the handoff's strict rule because the bare walk is a
     # discovery surface: legacy / pre-origin episodes (no worktree_root)
     # and callers outside any git checkout must still pass through, the
     # same trade `should_include_for_caller` makes for `memory_search`.
     # `auto_scope=False` is the explicit escape hatch for an intentional
-    # cross-worktree journal sweep.
+    # cross-worktree sweep of the bare walk.
+    apply_worktree_filter = (
+        auto_scope and swarm_id is None and parent_session_id is None
+    )
     caller_worktree: str | None = None
-    if auto_scope:
+    if apply_worktree_filter:
         current_origin = _h.capture_origin()
         caller_worktree = current_origin.worktree_root if current_origin else None
 
@@ -198,12 +220,14 @@ async def episode_search(
             continue
         if excluded_scopes and (set(ep.scopes) & excluded_scopes):
             continue
-        # Worktree isolation (auto_scope default). Drop episodes from a
+        # Worktree isolation — ONLY on the bare discovery walk (see the
+        # `apply_worktree_filter` rationale above). Drop episodes from a
         # different worktree of the same repository; legacy / None-origin
-        # episodes pass through (permissive `worktrees_match`). When
-        # auto_scope=False, `caller_worktree` stays None and the match is
-        # a no-op, so the full cross-worktree sweep is restored.
-        if auto_scope:
+        # episodes pass through (permissive `worktrees_match`). An explicit
+        # swarm_id / parent_session_id leaves apply_worktree_filter False so
+        # the swarm fan-in and single-session lookups read across worktrees
+        # as documented; auto_scope=False disables it for the bare walk too.
+        if apply_worktree_filter:
             ep_worktree = ep.origin.worktree_root if ep.origin else None
             if not worktrees_match(ep_worktree, caller_worktree):
                 continue

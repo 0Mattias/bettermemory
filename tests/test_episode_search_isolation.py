@@ -323,3 +323,116 @@ async def test_episode_search_auto_scope_no_worktree_caller_sees_all(
     )
     res = _unwrap(await _call(server_none, "episode_search"))
     assert {e["takeaway"] for e in res} == {"from A"}
+
+
+# ---------------------------------------------------------------------------
+# (c) EXPLICIT-SELECTION CARVE-OUT — `swarm_id` / `parent_session_id` name a
+#     cohort or a specific session and are deliberate cross-worktree reads;
+#     the worktree filter must NOT apply to them. (Regression: the first cut
+#     of the auto_scope filter applied it UNIFORMLY, so a coordinator's swarm
+#     fan-in across sub-agent worktrees silently returned [] — defeating the
+#     N:1 fan-in primitive `list_by_swarm` exists for.)
+# ---------------------------------------------------------------------------
+
+
+async def test_episode_search_swarm_fan_in_crosses_worktrees(
+    memory_dir: Path,
+    monkeypatch: Any,
+) -> None:
+    """A coordinator's `episode_search(swarm_id=...)` must gather EVERY
+    sub-agent's episode even though each sub-agent ran in its OWN worktree
+    (the canonical parallel-isolation pattern). An explicit swarm_id is
+    deliberate cross-worktree intent, so the default auto_scope filter must
+    NOT drop the cohort. Pre-fix the uniform filter compared each sub-agent's
+    worktree against the coordinator's and returned []."""
+    import bettermemory._handlers as handlers_module
+    import bettermemory.server as server_module
+
+    cfg = Config(storage=StorageConfig(directory=str(memory_dir)))
+    repo = "git@github.com:example/repo.git"
+    origin_a = Origin(
+        cwd="/wt/agent1", repo=repo, branch="a", worktree_root="/wt/agent1"
+    )
+    origin_b = Origin(
+        cwd="/wt/agent2", repo=repo, branch="b", worktree_root="/wt/agent2"
+    )
+    origin_coord = Origin(
+        cwd="/wt/coord", repo=repo, branch="c", worktree_root="/wt/coord"
+    )
+
+    # Two sub-agents, each in its OWN worktree, tag episodes with the
+    # coordinator's cohort id.
+    monkeypatch.setattr(handlers_module, "capture_origin", _make_capture(origin_a))
+    monkeypatch.setattr(server_module, "capture_origin", _make_capture(origin_a))
+    server_a = build_server(config=cfg, store=Store(memory_dir), state=SessionState())
+    await _call(
+        server_a,
+        "episode_write",
+        body="A body",
+        takeaway="from agent1",
+        swarm_id="coord",
+    )
+
+    monkeypatch.setattr(handlers_module, "capture_origin", _make_capture(origin_b))
+    monkeypatch.setattr(server_module, "capture_origin", _make_capture(origin_b))
+    server_b = build_server(config=cfg, store=Store(memory_dir), state=SessionState())
+    await _call(
+        server_b,
+        "episode_write",
+        body="B body",
+        takeaway="from agent2",
+        swarm_id="coord",
+    )
+
+    # Coordinator, in its OWN (third) worktree, default auto_scope. Must see
+    # BOTH sub-agents — the explicit swarm_id is exempt from worktree scoping.
+    monkeypatch.setattr(handlers_module, "capture_origin", _make_capture(origin_coord))
+    monkeypatch.setattr(server_module, "capture_origin", _make_capture(origin_coord))
+    server_coord = build_server(
+        config=cfg, store=Store(memory_dir), state=SessionState()
+    )
+    res = _unwrap(await _call(server_coord, "episode_search", swarm_id="coord"))
+    takeaways = {e["takeaway"] for e in res}
+    assert takeaways == {"from agent1", "from agent2"}, (
+        f"swarm fan-in must cross worktrees (explicit swarm_id is deliberate "
+        f"cross-tree intent); got {takeaways}"
+    )
+
+
+async def test_episode_search_explicit_parent_session_crosses_worktrees(
+    memory_dir: Path,
+    monkeypatch: Any,
+) -> None:
+    """Naming an explicit `parent_session_id` is the caller's deliberate
+    selection of one session, so it must read across worktrees — mirroring
+    how `episode_handoff` respects an explicit `prior_session_id`. The
+    default auto_scope filter must NOT drop a named session that lives in
+    another worktree."""
+    import bettermemory._handlers as handlers_module
+    import bettermemory.server as server_module
+
+    cfg = Config(storage=StorageConfig(directory=str(memory_dir)))
+    repo = "git@github.com:example/repo.git"
+    origin_a = Origin(
+        cwd="/wt/repo-a", repo=repo, branch="a", worktree_root="/wt/repo-a"
+    )
+    origin_b = Origin(
+        cwd="/wt/repo-b", repo=repo, branch="b", worktree_root="/wt/repo-b"
+    )
+
+    # Agent A writes in worktree A; capture its session id from the write.
+    monkeypatch.setattr(handlers_module, "capture_origin", _make_capture(origin_a))
+    monkeypatch.setattr(server_module, "capture_origin", _make_capture(origin_a))
+    server_a = build_server(config=cfg, store=Store(memory_dir), state=SessionState())
+    write_res = await _call(server_a, "episode_write", body="A body", takeaway="from A")
+    sid_a = write_res["session_id"]
+
+    # Caller in worktree B explicitly names A's session. Must get A's episode
+    # back under default auto_scope (explicit selection = cross-tree consent).
+    monkeypatch.setattr(handlers_module, "capture_origin", _make_capture(origin_b))
+    monkeypatch.setattr(server_module, "capture_origin", _make_capture(origin_b))
+    server_b = build_server(config=cfg, store=Store(memory_dir), state=SessionState())
+    res = _unwrap(await _call(server_b, "episode_search", parent_session_id=sid_a))
+    assert {e["takeaway"] for e in res} == {"from A"}, (
+        "explicit parent_session_id must read across worktrees, not be auto-scoped out"
+    )
