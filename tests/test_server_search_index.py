@@ -154,6 +154,91 @@ async def test_search_falls_back_when_index_corrupt(
     assert hits
 
 
+@pytest.mark.parametrize("corruption", ["garbage", "version_newer"])
+async def test_show_falls_back_when_index_corrupt(
+    server: Any,
+    memory_dir: Path,
+    corruption: str,
+) -> None:
+    """memory_show must NOT hard-crash when the FTS5 index is unusable.
+
+    Parallels `test_search_falls_back_when_index_corrupt`: a torn /
+    version-newer `.index.sqlite` is an anticipated operational state
+    (the Store S4 divergence warning calls it out) and the index is a
+    regenerable best-effort cache — the canonical `.md` bodies are
+    intact, so the canonical single-id read path must degrade
+    gracefully instead of raising a protocol error for EVERY id until
+    reindex.
+
+    `_links_payload` calls `index.links_for_with_status`, whose
+    `_ensure_schema` raises `sqlite3.DatabaseError` on a
+    truncated/garbage file and `index.IndexVersionError` when the
+    on-disk `schema_version` is newer than this reader. Both are now
+    caught and routed to the same zero-row reverse-scan fallback that
+    serves the absent/empty-index case — which reads the `.md` files,
+    so the B->A `supersedes` reverse link STILL surfaces on A even
+    though the index can't answer.
+
+    Both corruption modes are covered via parametrize:
+    - `garbage`: overwrite the file with non-SQLite bytes
+      (mid-write crash / partial restore) -> `sqlite3.DatabaseError`.
+    - `version_newer`: stamp a `schema_version` higher than the code
+      supports (a downgrade / forward-incompatible index) ->
+      `index.IndexVersionError`.
+    """
+    import sqlite3
+
+    from bettermemory import index as _index
+
+    # B supersedes A; the reverse link lives in B's .md frontmatter.
+    a = _unwrap(
+        await _call(server, "memory_write", content="old fact", scopes=["tools"])
+    )
+    b = _unwrap(
+        await _call(server, "memory_write", content="new fact", scopes=["tools"])
+    )
+    await _call(
+        server,
+        "memory_update",
+        id=b["id"],
+        links=[{"type": "supersedes", "target_id": a["id"]}],
+    )
+
+    # Sanity: the healthy index serves the reverse link before we
+    # corrupt it, so the post-corruption assertion proves the fallback
+    # (not a coincidentally-empty link set).
+    shown_before = _unwrap(await _call(server, "memory_show", id=a["id"]))
+    assert shown_before.get("reverse_links")
+
+    index_file = _index.index_path(memory_dir)
+    if corruption == "garbage":
+        # Truncated / torn SQLite file -> sqlite3.DatabaseError out of
+        # links_for_with_status.
+        index_file.write_bytes(b"not a sqlite database")
+    else:
+        # On-disk schema newer than this reader -> IndexVersionError out
+        # of _ensure_schema. Stamp directly into the existing meta row.
+        with sqlite3.connect(str(index_file)) as conn:
+            conn.execute(
+                "UPDATE meta SET value = ? WHERE key = 'schema_version'",
+                (str(_index.SCHEMA_VERSION + 1),),
+            )
+            conn.commit()
+
+    # memory_show must not raise, and the reverse-scan fallback must
+    # still recover the reverse link from the intact .md files.
+    shown = _unwrap(await _call(server, "memory_show", id=a["id"]))
+    assert shown["id"] == a["id"]
+    assert "reverse_links" in shown, (
+        "reverse_links dropped when the index was corrupt; the "
+        "reverse-scan fallback should have recovered it from the .md files"
+    )
+    assert len(shown["reverse_links"]) == 1
+    rev = shown["reverse_links"][0]
+    assert rev["type"] == "supersedes"
+    assert rev["source_id"] == b["id"]
+
+
 async def test_index_threshold_env_var_resets_per_call(
     server: Any, monkeypatch: pytest.MonkeyPatch
 ) -> None:

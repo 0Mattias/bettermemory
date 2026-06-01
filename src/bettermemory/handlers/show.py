@@ -8,6 +8,7 @@ flow has something to commit on the next turn.
 
 from __future__ import annotations
 
+import sqlite3
 from typing import TYPE_CHECKING, Any
 
 from .._response import isoformat, isoformat_optional
@@ -187,9 +188,20 @@ def _links_payload(deps: "ToolHandlers", memory: Any) -> dict[str, Any]:
     the common populated-but-no-inbound `memory_show` (most memories
     are not link targets) to ONE index open: a non-zero count proves
     the index is usable, so we return empty reverse_links with no
-    second connection. Only a zero count (index absent, empty, or
-    corrupt — every state where the index can't answer) triggers the
-    `load_all` scan.
+    second connection. A zero count (index absent or empty) triggers
+    the `load_all` scan.
+
+    A torn / truncated `.index.sqlite` raises `sqlite3.DatabaseError`
+    and an on-disk schema_version newer than this reader raises
+    `index.IndexVersionError` — both surface out of
+    `links_for_with_status` (it opens + `_ensure_schema`s the file),
+    NOT as `indexed_count == 0`. We catch both and route to the same
+    zero-row `load_all` fallback: the index is a regenerable
+    best-effort cache and the canonical `.md` bodies are intact, so the
+    show must degrade gracefully rather than hard-crash for every id
+    until reindex — mirroring the corruption tolerance
+    `_load_search_candidates` already gets from the tolerant
+    `index.status()`.
     """
     from .. import index as _index
 
@@ -203,9 +215,24 @@ def _links_payload(deps: "ToolHandlers", memory: Any) -> dict[str, Any]:
             }
             for link in memory.links
         ]
-    outbound, inbound, indexed_count = _index.links_for_with_status(
-        deps.store.root, memory.id
-    )
+    try:
+        outbound, inbound, indexed_count = _index.links_for_with_status(
+            deps.store.root, memory.id
+        )
+    except (sqlite3.DatabaseError, _index.IndexVersionError):
+        # A torn/truncated index raises DatabaseError; an on-disk
+        # schema_version newer than this reader raises
+        # IndexVersionError (both fire inside `_ensure_schema`, which
+        # `links_for_with_status` runs after opening the file). The
+        # index is a regenerable cache and the canonical .md bodies are
+        # intact, so treat it as an unusable index (no inbound, zero
+        # rows) and route to the reverse-scan fallback below rather
+        # than hard-crashing memory_show for every id until reindex.
+        # Same tolerance `_load_search_candidates` gets from the
+        # corruption-swallowing `index.status()`. `outbound` is unused
+        # downstream (only `inbound` + `indexed_count` drive the
+        # fallback), so it's dropped here.
+        inbound, indexed_count = [], 0
     reverse: list[dict[str, Any]] = []
     if inbound:
         for ltype, source_id, note in inbound:
