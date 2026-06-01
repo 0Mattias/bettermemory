@@ -369,7 +369,22 @@ async def episode_handoff(
     # tick was a search-only session); the former is a crash signal.
     prior_crashed_pre_takeaway = False
     if resolved_session_id is not None:
-        all_eps = deps.episode_store.list_by_session(resolved_session_id)
+        # An explicit `prior_session_id` flows in verbatim (the
+        # auto-resolution branch above only ever assigns a session_id
+        # that already round-tripped through `list_by_session`). A
+        # caller-supplied id — e.g. a child agent passed a mistyped or
+        # path-shaped parent id — can fail `_session_dir`'s
+        # `[A-Za-z0-9_-]` validator with a ValueError. On the /loop
+        # iteration-entry hot path that should degrade to the graceful
+        # `episodes: []` shape, not surface a raw ValueError, matching
+        # how the auto-resolution walk (above) and `episode_search`
+        # handle an invalid session_id. The validator fails closed, so
+        # this is not a traversal — just a loud-vs-quiet failure-mode
+        # choice, and quiet is what every other episode read does.
+        try:
+            all_eps = deps.episode_store.list_by_session(resolved_session_id)
+        except ValueError:
+            all_eps = []
         # Track whether the session is floor-only BEFORE filtering, so
         # the scope-disable cascade can't mask a crash signal (a
         # floor's scopes are always [] so the scope filter never
