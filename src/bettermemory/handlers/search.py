@@ -1,6 +1,6 @@
 """memory_search MCP tool — handler implementation + DESC.
 
-The handler is the busiest of the 23 tools: it issues use-tokens,
+The handler is the busiest of the 24 tools: it issues use-tokens,
 attaches per-hit drift signals, optionally expands the top hit, and
 records its own event with a generous payload shape so the eval CLI
 can rebuild what the model saw.

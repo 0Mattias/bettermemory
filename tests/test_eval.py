@@ -1082,7 +1082,7 @@ class TestComputeToolUsage:
 # ---------------------------------------------------------------------------
 
 
-# The canonical tool count surfaced in prose ("23 MCP tools" — 19
+# The canonical tool count surfaced in prose ("24 MCP tools" — 20
 # `memory_*` + 4 `episode_*` — in README / api.md / marketplace / plugin
 # README). Pinned here as the single source of truth so a regression in
 # either the runtime registrations or the eval-side enumeration trips
@@ -1112,7 +1112,7 @@ async def test_tool_count_matches_registered_count(tmp_path: Path) -> None:
       row that never moves.
 
     This test pins the set-equality, and pins the count to
-    ``_EXPECTED_TOOL_COUNT`` so prose claims of "23 MCP tools" have
+    ``_EXPECTED_TOOL_COUNT`` so prose claims of "24 MCP tools" have
     something to track against.
     """
     from bettermemory.config import Config, StorageConfig
@@ -1137,7 +1137,7 @@ async def test_tool_count_matches_registered_count(tmp_path: Path) -> None:
     assert len(registered) == _EXPECTED_TOOL_COUNT, (
         f"Runtime tool count is {len(registered)} but _EXPECTED_TOOL_COUNT "
         f"is {_EXPECTED_TOOL_COUNT}. Either a tool was added/removed and "
-        "the constant + prose ('23 MCP tools' in README / api.md / "
+        "the constant + prose ('24 MCP tools' in README / api.md / "
         "marketplace / plugin README) needs to track it, or the "
         "registration list grew without the docs catching up."
     )
