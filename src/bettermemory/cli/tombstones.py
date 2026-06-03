@@ -18,8 +18,8 @@ def add_subparser(
     parser = sub.add_parser(
         "tombstones",
         help=(
-            "Inspect and prune the tombstone (removed-memory) audit log. "
-            "Subcommands: list, prune."
+            "Inspect, restore, and prune the tombstone (removed-memory) "
+            "audit log. Subcommands: list, restore, prune."
         ),
     )
     tombstones_sub = parser.add_subparsers(dest="tombstones_cmd")
@@ -41,6 +41,26 @@ def add_subparser(
             "Filter to tombstones tagged with at least one of the given "
             "scopes. Repeat to widen the filter."
         ),
+    )
+
+    trestore_parser = tombstones_sub.add_parser(
+        "restore",
+        help=(
+            "Bring a tombstoned memory back to the active set by id. Strips "
+            "removal frontmatter and preserves original timestamps. The CLI "
+            "counterpart of the memory_restore tool, for the lean default "
+            "surface where that tool isn't registered."
+        ),
+    )
+    trestore_parser.add_argument(
+        "id",
+        metavar="ID",
+        help="Id of the tombstoned memory to restore.",
+    )
+    trestore_parser.add_argument(
+        "--json",
+        action="store_true",
+        help="Emit JSON instead of human-readable text.",
     )
 
     tprune_parser = tombstones_sub.add_parser(
@@ -83,16 +103,21 @@ def run(
 ) -> None:
     """Dispatch handler for ``bettermemory tombstones``.
 
-    ``root_parser`` is forwarded into ``_cli_tombstones_list`` and
-    ``_cli_tombstones_prune`` so validation failures (a malformed
-    ``--scope``, the missing ``--older-than`` default) surface through
-    ``parser.error(...)`` with the root prog prefix; ``sub_parser`` is
-    used for ``.print_help()`` when a bare ``bettermemory tombstones``
-    is invoked.
+    ``root_parser`` is forwarded into ``_cli_tombstones_list`` /
+    ``_cli_tombstones_restore`` / ``_cli_tombstones_prune`` so validation
+    failures (a malformed ``--scope``, an unknown restore id, the missing
+    ``--older-than`` default) surface through ``parser.error(...)`` with the
+    root prog prefix; ``sub_parser`` is used for ``.print_help()`` when a bare
+    ``bettermemory tombstones`` is invoked.
     """
     if args.tombstones_cmd == "list":
         _cli_tombstones_list(
             json_out=args.json, scopes=args.scope or None, parser=root_parser
+        )
+        return
+    if args.tombstones_cmd == "restore":
+        _cli_tombstones_restore(
+            memory_id=args.id, json_out=args.json, parser=root_parser
         )
         return
     if args.tombstones_cmd == "prune":
@@ -166,6 +191,49 @@ def _cli_tombstones_list(
             f"session={sess}] {','.join(s.scopes)}: {s.summary}\n"
             f"    reason: {s.removed_reason}\n"
         )
+
+
+def _cli_tombstones_restore(
+    *,
+    memory_id: str,
+    json_out: bool,
+    parser: Any,
+) -> None:
+    """`bettermemory tombstones restore <id>` — un-tombstone a memory.
+
+    The CLI counterpart of the `memory_restore` MCP tool, so a user on the
+    lean default surface (`full_tool_surface = false`, where `memory_restore`
+    isn't registered) can still recover a removed memory. Wraps
+    `store.restore`, routing its KeyError-family failures (invalid/unknown id,
+    or an id that's already active) and the malformed-frontmatter / disk-error
+    cases through `parser.error` for a clean `bettermemory: error: …` + exit 2
+    instead of an uncaught traceback — mirroring `_cli_tombstones_list`. The
+    `parser is None` fallback (direct callers / tests) re-raises so
+    programmatic callers still see the exception.
+    """
+    import json as _json
+
+    from ..store import MemoryNotFoundError, NotTombstonedError
+
+    ctx = cli_context()
+    store = ctx.store
+    try:
+        memory = store.restore(memory_id)
+    except (MemoryNotFoundError, NotTombstonedError, ValueError, OSError) as exc:
+        if parser is not None:
+            parser.error(str(exc))
+        raise
+
+    if json_out:
+        sys.stdout.write(
+            _json.dumps(
+                {"id": memory.id, "scopes": memory.scopes},
+                indent=2,
+            )
+            + "\n"
+        )
+        return
+    sys.stdout.write(f"Restored {memory.id} [{','.join(memory.scopes)}]\n")
 
 
 def _cli_tombstones_prune(

@@ -159,7 +159,7 @@ Storage resolves to `$BETTERMEMORY_DIR` if set, else `./.claude-memory/` if it e
 
 ## Tools
 
-**24 MCP tools — 18 registered by default.** Six curation / power-user tools (`memory_health`, `memory_acknowledge_miss`, `memory_rename_scope`, `memory_restore`, `memory_list_tombstones`, `memory_proposals`) register only under `[behavior] full_tool_surface = true` — except `memory_proposals`, which also surfaces when `[proposals]` is enabled. All six stay reachable via the CLI; trimming them keeps the per-turn tool-description context lean for the common case.
+**24 MCP tools — 18 registered by default.** Six curation / power-user tools (`memory_health`, `memory_acknowledge_miss`, `memory_rename_scope`, `memory_restore`, `memory_list_tombstones`, `memory_proposals`) register only under `[behavior] full_tool_surface = true` — except `memory_proposals`, which also surfaces when `[proposals]` is enabled. Five have a direct `bettermemory` CLI counterpart on the lean default — `health`, `tombstones list` / `tombstones restore`, `rename-scope`, and `proposals` — so trimming them keeps the per-turn tool-description context lean without giving up the capability. `memory_acknowledge_miss` is the exception: its per-event ack stays MCP-only, with the CLI offering the blunter bulk `consolidate --acknowledge-misses-before` cutoff instead.
 
 - **Retrieval** — `memory_search` (incl. `since_prior_session`), `memory_show`, `memory_list`, `memory_scope_overview`
 - **Writing** — `memory_write` (+ `memory_write_confirm` / `memory_write_cancel` for the staged flow), `memory_update`
@@ -179,6 +179,9 @@ The `bettermemory` script *is* the MCP server with no arguments (stdio). It also
 bettermemory init --client claude-code   # register with a client (idempotent)
 bettermemory doctor                      # diagnose install state
 bettermemory health                      # curation rollup (text or --json)
+bettermemory tombstones list|restore ID|prune    # inspect / restore / hard-delete removed memories
+bettermemory rename-scope OLD NEW        # bulk-rename a scope tag across the store
+bettermemory proposals list|accept ID --scope S|dismiss ID   # review the write-reflex queue
 bettermemory consolidate                 # dedup + demote + cold-scope + typo passes (dry-run)
 bettermemory consolidate --llm           # + an LLM pass: merges, contradictions, date rewrites, demotions
 bettermemory consolidate --llm --from-transcript PATH   # propose new memories from a transcript
@@ -191,7 +194,7 @@ bettermemory episodes list | prune       # inspect the journal tier
 bettermemory export                      # backup
 ```
 
-Run `bettermemory --help` for the full surface, or see the [API docs](docs/api.md) for the flags on each.
+Run `bettermemory <command> --help` for the flags on each; the [API docs](docs/api.md) cover the MCP tool surface.
 
 ## Coexistence with Claude Code's built-in memory
 

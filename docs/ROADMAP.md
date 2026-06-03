@@ -6,7 +6,7 @@ A published roadmap is part of the pitch: people choosing between memory layers 
 
 The core is built and battle-hardened. The differentiated surface is live; the recent releases have been correctness sweeps, not feature pushes.
 
-- **24 MCP tools, 18 registered by default** (the lean surface since 3.3.4 — six curation/power-user tools gate behind `[behavior] full_tool_surface`, all reachable via the CLI), plus 4 `episode_*` tools for the journal / run-state tier.
+- **24 MCP tools, 18 registered by default** (the lean surface since 3.4.0 — six curation/power-user tools gate behind `[behavior] full_tool_surface`, five with a direct CLI counterpart and `memory_acknowledge_miss` MCP-only); four of the always-on defaults are the `episode_*` journal / run-state tier.
 - **Staleness verdict on every retrieval** — calendar age + filesystem path drift + git commit drift folded into one `staleness_verdict`, with the inline `path_drift = {checked, missing, verified}` list.
 - **Claim-level audit trail** — `memory_record_use(claim_excerpts=…)` plus Stop-hook substring attribution (`attribution ∈ {model, hook, auto}`, exactly one event per retrieval) and the `memory_audit_turn` silent-miss probe.
 - **Hybrid retrieval** (RRF over keyword + BM25, plus semantic via the `[embeddings]` or `[embeddings-fast]` extra) as the zero-dep default.
@@ -24,7 +24,7 @@ The CHANGELOG has the release-by-release detail; the arc, by theme:
 - **The eval & audit surface (2.5.0 → 2.7.0, harness in 3.3.3).** The metric trio with confidence intervals, the per-tool call-count rollup (`--tool-usage`), counterfactual silent-miss replay (`--threshold-sweep`), and the comparative harness at `tests/eval/` (bettermemory runs locally; competitors ride as honest capability-matrix stubs).
 - **Dreaming defense via local consolidation (2.5.0, `--from-transcript` 2.6.0).** Where Anthropic's Dreaming consolidates invisibly, `--llm` renders every proposal as a diff with rationale and refuses to commit without explicit accept.
 - **Compounding memory (3.1.0 → 3.3.0).** The `episode_*` tier, swarm fan-in for multi-agent run-state, opt-in self-improving consolidation, and the write-reflex proposal queue — all off by default, all auditable.
-- **The lean default surface (3.3.4).** Dropped the default tool count from 24 to 18 on dogfood evidence (`eval --tool-usage`), trimming the per-turn tool-description context the project exists to minimise.
+- **The lean default surface (3.4.0).** Dropped the default tool count from 24 to 18 on dogfood evidence (`eval --tool-usage`), trimming the per-turn tool-description context the project exists to minimise.
 - **Battle-hardening (3.2.x → 3.5.0).** Concurrent-access store hardening, two whole-tree correctness audits, and a run of Windows / cross-platform fixes — including correctness gaps where a headline feature was silently not firing in practice.
 
 ## Planned

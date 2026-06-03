@@ -1,0 +1,220 @@
+"""`bettermemory proposals` — review the write-reflex proposal queue."""
+
+from __future__ import annotations
+
+import argparse
+import sys
+from typing import Any
+
+from ..models import first_summary_line
+from ..proposals import ProposalQueue
+from ._common import cli_context
+
+
+def add_subparser(
+    sub: "argparse._SubParsersAction[argparse.ArgumentParser]",
+) -> argparse.ArgumentParser:
+    """Register the ``proposals`` subparser (with list/accept/dismiss)."""
+    parser = sub.add_parser(
+        "proposals",
+        help=(
+            "Review the write-reflex proposal queue — durable statements the "
+            "Stop hook captured but never saved (opt-in [proposals] "
+            "auto_propose). The CLI counterpart of the memory_proposals tool. "
+            "Subcommands: list, accept, dismiss."
+        ),
+    )
+    proposals_sub = parser.add_subparsers(dest="proposals_cmd")
+
+    plist_parser = proposals_sub.add_parser("list", help="Print every queued proposal.")
+    plist_parser.add_argument(
+        "--json",
+        action="store_true",
+        help="Emit JSON instead of human-readable text.",
+    )
+
+    paccept_parser = proposals_sub.add_parser(
+        "accept",
+        help=(
+            "Write a queued proposal as a real memory and remove it from the "
+            "queue. Requires --scope (a memory needs at least one scope)."
+        ),
+    )
+    paccept_parser.add_argument(
+        "id", metavar="ID", help="Id of the proposal to accept."
+    )
+    paccept_parser.add_argument(
+        "--scope",
+        action="append",
+        default=[],
+        metavar="SCOPE",
+        help="Scope to tag the new memory with. Repeat for multiple; required.",
+    )
+    paccept_parser.add_argument(
+        "--category",
+        default=None,
+        help=(
+            "Override the proposal's suggested category "
+            "(fact / user-inference / ambient)."
+        ),
+    )
+    paccept_parser.add_argument(
+        "--json",
+        action="store_true",
+        help="Emit JSON instead of human-readable text.",
+    )
+
+    pdismiss_parser = proposals_sub.add_parser(
+        "dismiss",
+        help="Drop a proposal from the queue without writing it.",
+    )
+    pdismiss_parser.add_argument(
+        "id", metavar="ID", help="Id of the proposal to dismiss."
+    )
+    pdismiss_parser.add_argument(
+        "--json",
+        action="store_true",
+        help="Emit JSON instead of human-readable text.",
+    )
+    return parser
+
+
+def run(
+    args: argparse.Namespace,
+    *,
+    root_parser: argparse.ArgumentParser,
+    sub_parser: argparse.ArgumentParser,
+) -> None:
+    """Dispatch handler for ``bettermemory proposals``.
+
+    ``root_parser`` is forwarded into the accept handler so a missing
+    ``--scope`` or a bad scope/category surfaces through ``parser.error(...)``
+    with the root prog prefix; ``sub_parser`` is used for ``.print_help()``
+    when a bare ``bettermemory proposals`` is invoked.
+    """
+    if args.proposals_cmd == "list":
+        _cli_proposals_list(json_out=args.json)
+        return
+    if args.proposals_cmd == "accept":
+        _cli_proposals_accept(
+            proposal_id=args.id,
+            scopes=args.scope or None,
+            category=args.category,
+            json_out=args.json,
+            parser=root_parser,
+        )
+        return
+    if args.proposals_cmd == "dismiss":
+        _cli_proposals_dismiss(proposal_id=args.id, json_out=args.json)
+        return
+    sub_parser.print_help()
+
+
+def _cli_proposals_list(*, json_out: bool) -> None:
+    """`bettermemory proposals list` — print the queue."""
+    import json as _json
+
+    ctx = cli_context()
+    proposals = ProposalQueue(ctx.store.root).load()
+
+    if json_out:
+        sys.stdout.write(_json.dumps([p.to_dict() for p in proposals], indent=2) + "\n")
+        return
+    if not proposals:
+        sys.stdout.write("No proposals queued.\n")
+        return
+    sys.stdout.write(f"Proposals ({len(proposals)}):\n")
+    for p in proposals:
+        sys.stdout.write(
+            f"  {p.id} [{p.suggested_category}, created={p.created}]\n"
+            f"    {first_summary_line(p.body)}\n"
+        )
+
+
+def _cli_proposals_accept(
+    *,
+    proposal_id: str,
+    scopes: list[str] | None,
+    category: str | None,
+    json_out: bool,
+    parser: Any,
+) -> None:
+    """`bettermemory proposals accept ID --scope …` — write a proposal as memory.
+
+    Shares the `accept_proposal` core with the memory_proposals MCP tool, so
+    the write-policy + atomic-claim contract is identical across both entry
+    points. A missing --scope or a bad scope/category surfaces through
+    `parser.error` (clean exit 2); the `parser is None` fallback re-raises so
+    programmatic callers still see the exception.
+    """
+    import json as _json
+
+    from ..handlers.proposals import accept_proposal
+
+    if not scopes:
+        if parser is not None:
+            parser.error(
+                "--scope is required to accept a proposal (a memory needs at "
+                "least one scope)"
+            )
+        raise ValueError("scopes is required to accept a proposal")
+
+    ctx = cli_context()
+    try:
+        result = accept_proposal(
+            store=ctx.store,
+            config=ctx.config,
+            proposal_id=proposal_id,
+            scopes=scopes,
+            category=category,
+        )
+    except ValueError as exc:
+        # Bad scope/category — the proposal is still queued; the caller can
+        # fix the inputs and retry.
+        if parser is not None:
+            parser.error(str(exc))
+        raise
+    except OSError as exc:
+        # A disk-level failure in the durable write, landing AFTER the proposal
+        # was atomically claimed (removed) from the queue. Surface a clean
+        # `bettermemory: error: …` + exit 2 instead of a path-leaking traceback,
+        # matching the sibling `tombstones restore` / `rename-scope` commands;
+        # flag that the queue entry is already gone. The claim-before-write
+        # order is the double-accept guard and must stay, so this loss window
+        # is inherent — make it visible rather than silent.
+        if parser is not None:
+            parser.error(
+                f"failed to write accepted proposal {proposal_id}: {exc} "
+                "(the proposal was already removed from the queue)"
+            )
+        raise
+
+    if json_out:
+        sys.stdout.write(_json.dumps(result, indent=2) + "\n")
+        return
+    if result["status"] == "not_found":
+        sys.stdout.write(f"No proposal with id {proposal_id}.\n")
+        return
+    sys.stdout.write(
+        f"Accepted {proposal_id} -> memory {result['id']} "
+        f"[{','.join(result['scopes'])}] ({result['category']}).\n"
+    )
+
+
+def _cli_proposals_dismiss(*, proposal_id: str, json_out: bool) -> None:
+    """`bettermemory proposals dismiss ID` — drop a proposal unwritten."""
+    import json as _json
+
+    ctx = cli_context()
+    removed = ProposalQueue(ctx.store.root).remove(proposal_id)
+
+    if json_out:
+        status = "dismissed" if removed is not None else "not_found"
+        sys.stdout.write(
+            _json.dumps({"status": status, "proposal_id": proposal_id}, indent=2) + "\n"
+        )
+        return
+    if removed is None:
+        sys.stdout.write(f"No proposal with id {proposal_id}.\n")
+        return
+    sys.stdout.write(f"Dismissed {proposal_id}.\n")

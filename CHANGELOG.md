@@ -7,6 +7,43 @@ breaking changes, minor for additive features, patch for fixes. The
 [compatibility contract](CONTRIBUTING.md#versioning-and-the-compatibility-contract)
 spells out exactly what's stable.
 
+## Unreleased
+
+### Added
+
+- **CLI parity for the gated curation tools.** Five of the six tools held back
+  from the lean default surface (`[behavior] full_tool_surface = false`) now
+  have a direct `bettermemory` CLI counterpart, closing most of the gap between
+  that promise (made in the README and the 3.4.0 notes) and the shipped surface:
+  - `bettermemory tombstones restore <id>` — un-tombstone a memory (the CLI
+    counterpart of `memory_restore`). Pairs with the existing `tombstones
+    list`; previously a removed memory could be *listed* from the CLI but not
+    *restored* without enabling the full tool surface.
+  - `bettermemory rename-scope <old> <new>` — bulk-rename a scope tag across
+    active memories and tombstones (the CLI counterpart of
+    `memory_rename_scope`), with `--no-tombstones` and `--json`.
+  - `bettermemory proposals list | accept <id> --scope … | dismiss <id>` —
+    review the write-reflex proposal queue from the CLI (the counterpart of
+    `memory_proposals`). `accept` shares the MCP tool's exact
+    validate → atomic-claim → write core
+    (`handlers.proposals.accept_proposal`), so the write-policy and
+    no-double-accept guarantees can't drift between the two entry points.
+
+  The sixth, `memory_acknowledge_miss`, keeps its per-event ack MCP-only; the
+  CLI's bulk `consolidate --acknowledge-misses-before` cutoff is the closest
+  existing counterpart, not a 1:1 replacement.
+
+### Fixed
+
+- **(docs) README / ROADMAP / api.md drift against the code.** A whole-diff
+  audit of the 3.5.0 docs overhaul, plus a closing self-audit, corrected the
+  blanket "all six gated tools reachable via the CLI" overclaim (now spelled out
+  per tool — five have direct CLI counterparts; `memory_acknowledge_miss`'s
+  per-event ack is MCP-only, with only a bulk CLI cutoff); the ROADMAP
+  attributing the lean default surface to 3.3.4 instead of 3.4.0 (two places);
+  and the ROADMAP double-counting the four `episode_*` tools as "plus 4" on top
+  of the 24 when they are already inside the 24 (and inside the default 18).
+
 ## 3.5.0 - 2026-06-01
 
 A correctness + robustness release from a whole-codebase audit sweep of the

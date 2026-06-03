@@ -33,7 +33,9 @@ from . import (
     ingest,
     init as init_cmd,
     migrate,
+    proposals,
     reindex,
+    rename_scope,
     serve,
     sync,
     tombstones,
@@ -101,6 +103,8 @@ def _build_parser() -> tuple[
         "consolidate": consolidate.add_subparser(sub),
         "ingest": ingest.add_subparser(sub),
         "eval": eval_cmd.add_subparser(sub),
+        "proposals": proposals.add_subparser(sub),
+        "rename-scope": rename_scope.add_subparser(sub),
     }
     return parser, subparsers
 
@@ -164,6 +168,12 @@ def main() -> None:
         return
     if cmd == "eval":
         eval_cmd.run(args, sub_parser=subparsers["eval"])
+        return
+    if cmd == "proposals":
+        proposals.run(args, root_parser=parser, sub_parser=subparsers["proposals"])
+        return
+    if cmd == "rename-scope":
+        rename_scope.run(args, root_parser=parser)
         return
 
     # argparse already rejects unknown subcommands; this is belt-and-

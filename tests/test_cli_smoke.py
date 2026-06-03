@@ -28,7 +28,10 @@ from pathlib import Path
 
 import pytest
 
+from bettermemory.config import load_config
+from bettermemory.proposals import Proposal, ProposalQueue
 from bettermemory.server import main as cli_main
+from bettermemory.store import Store
 
 
 def _run_main(
@@ -60,7 +63,16 @@ def test_help_lists_all_subcommands(
         _run_main(["-h"], monkeypatch=monkeypatch, storage=tmp_path)
     assert exc.value.code == 0
     out = capsys.readouterr().out
-    for sub in ("health", "doctor", "init", "migrate", "export", "tombstones"):
+    for sub in (
+        "health",
+        "doctor",
+        "init",
+        "migrate",
+        "export",
+        "tombstones",
+        "proposals",
+        "rename-scope",
+    ):
         assert sub in out, f"subcommand {sub!r} missing from --help output"
     assert "bettermemory" in out
     # Pin the load-bearing positioning phrase from the argparse
@@ -82,6 +94,230 @@ def test_version_flag_exits_zero_and_prints_program_name(
     assert exc.value.code == 0
     out = capsys.readouterr().out.strip()
     assert out.startswith("bettermemory ")
+
+
+# ---------------------------------------------------------------------------
+# Curation subcommands that mutate the store: `tombstones restore`,
+# `rename-scope`, `proposals` (list/accept/dismiss). These are the CLI
+# escape hatches for the six tools gated out of the lean default surface —
+# the README/CHANGELOG "every gated tool stays reachable via the CLI"
+# contract. Seed via a Store resolved the SAME way the CLI resolves it.
+# ---------------------------------------------------------------------------
+
+
+_FAKE_ULID = "01JABCDEFGHJKMNPQRSTVWXYZ0"
+
+
+def _seeded_store(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Store:
+    """A Store rooted at the SAME resolved directory the CLI will use.
+
+    Cross-checking a directly-constructed ``Store(tmp_path)`` against a CLI
+    invocation is unsafe on macOS, where ``resolved_directory`` realpaths
+    ``BETTERMEMORY_DIR`` (``/var/...`` -> ``/private/var/...``) so the two
+    would point at different absolute paths and never see each other's
+    writes. Set the env var, then resolve the store the CLI's way.
+    """
+    monkeypatch.setenv("BETTERMEMORY_DIR", str(tmp_path))
+    return Store(load_config().resolved_directory())
+
+
+def test_tombstones_restore_brings_back_a_removed_memory(
+    capsys: pytest.CaptureFixture[str],
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """`tombstones restore <id>` un-tombstones a memory — the CLI path for
+    memory_restore, which isn't registered on the lean default surface."""
+    store = _seeded_store(tmp_path, monkeypatch)
+    memory = store.write(content="restore me", scopes=["tools"])
+    store.tombstone(memory.id, reason="oops", session_id="sess_t")
+    assert memory.id not in {m.id for m in store.load_all()}
+
+    _run_main(
+        ["tombstones", "restore", memory.id], monkeypatch=monkeypatch, storage=tmp_path
+    )
+    out = capsys.readouterr().out
+    assert "Restored" in out
+    assert memory.id in out
+    assert memory.id in {m.id for m in store.load_all()}
+
+
+def test_tombstones_restore_unknown_id_errors_cleanly(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """An unknown id surfaces as `parser.error` (exit 2), not a traceback."""
+    _seeded_store(tmp_path, monkeypatch)
+    with pytest.raises(SystemExit) as exc:
+        _run_main(
+            ["tombstones", "restore", _FAKE_ULID],
+            monkeypatch=monkeypatch,
+            storage=tmp_path,
+        )
+    assert exc.value.code == 2
+
+
+def test_rename_scope_renames_across_memories(
+    capsys: pytest.CaptureFixture[str],
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """`rename-scope OLD NEW` rewrites the scope on every carrier — the CLI
+    path for memory_rename_scope."""
+    store = _seeded_store(tmp_path, monkeypatch)
+    memory = store.write(content="x", scopes=["infra"])
+
+    _run_main(
+        ["rename-scope", "infra", "infrastructure"],
+        monkeypatch=monkeypatch,
+        storage=tmp_path,
+    )
+    out = capsys.readouterr().out
+    assert "Renamed scope" in out
+    reloaded = {m.id: m for m in store.load_all()}
+    assert "infrastructure" in reloaded[memory.id].scopes
+    assert "infra" not in reloaded[memory.id].scopes
+
+
+def test_rename_scope_rejects_identical_old_and_new(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """OLD == NEW is a no-op masquerading as work; reject it cleanly."""
+    with pytest.raises(SystemExit) as exc:
+        _run_main(
+            ["rename-scope", "tools", "tools"],
+            monkeypatch=monkeypatch,
+            storage=tmp_path,
+        )
+    assert exc.value.code == 2
+
+
+def test_proposals_list_then_dismiss(
+    capsys: pytest.CaptureFixture[str],
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """`proposals list` shows the queue; `proposals dismiss <id>` drops one
+    without writing it — the CLI path for memory_proposals."""
+    store = _seeded_store(tmp_path, monkeypatch)
+    ProposalQueue(store.root).append(
+        [
+            Proposal(
+                id=_FAKE_ULID,
+                body="I prefer terse code-driven answers",
+                source_excerpt="I prefer terse code-driven answers",
+                suggested_category="user-inference",
+                created="2026-01-01T00:00:00+00:00",
+            )
+        ]
+    )
+
+    _run_main(["proposals", "list"], monkeypatch=monkeypatch, storage=tmp_path)
+    out = capsys.readouterr().out
+    assert "Proposals (1)" in out
+    assert _FAKE_ULID in out
+
+    _run_main(
+        ["proposals", "dismiss", _FAKE_ULID], monkeypatch=monkeypatch, storage=tmp_path
+    )
+    assert "Dismissed" in capsys.readouterr().out
+    assert ProposalQueue(store.root).load() == []
+
+
+def test_proposals_accept_writes_memory_and_clears_queue(
+    capsys: pytest.CaptureFixture[str],
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """`proposals accept <id> --scope X` writes the proposal as a real memory
+    and removes it from the queue — sharing the handler's accept core."""
+    store = _seeded_store(tmp_path, monkeypatch)
+    ProposalQueue(store.root).append(
+        [
+            Proposal(
+                id=_FAKE_ULID,
+                body="We deploy to fly.io for production",
+                source_excerpt="We deploy to fly.io for production",
+                suggested_category="fact",
+                created="2026-01-01T00:00:00+00:00",
+            )
+        ]
+    )
+
+    _run_main(
+        ["proposals", "accept", _FAKE_ULID, "--scope", "infrastructure"],
+        monkeypatch=monkeypatch,
+        storage=tmp_path,
+    )
+    assert "Accepted" in capsys.readouterr().out
+    assert ProposalQueue(store.root).load() == []
+    actives = store.load_all()
+    assert any("fly.io" in m.body and "infrastructure" in m.scopes for m in actives)
+
+
+def test_proposals_accept_requires_scope(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """Accept without --scope is rejected (exit 2) and leaves the proposal
+    queued so the caller can retry with a scope."""
+    store = _seeded_store(tmp_path, monkeypatch)
+    ProposalQueue(store.root).append(
+        [
+            Proposal(
+                id=_FAKE_ULID,
+                body="We deploy to fly.io for production",
+                source_excerpt="We deploy to fly.io for production",
+                suggested_category="fact",
+                created="2026-01-01T00:00:00+00:00",
+            )
+        ]
+    )
+
+    with pytest.raises(SystemExit) as exc:
+        _run_main(
+            ["proposals", "accept", _FAKE_ULID],
+            monkeypatch=monkeypatch,
+            storage=tmp_path,
+        )
+    assert exc.value.code == 2
+    assert len(ProposalQueue(store.root).load()) == 1
+
+
+def test_proposals_accept_disk_error_exits_cleanly(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """A disk-level failure in the durable write surfaces as a clean
+    `parser.error` (exit 2), not a path-leaking traceback — matching the
+    sibling `tombstones restore` / `rename-scope` commands rather than
+    regressing below them."""
+    store = _seeded_store(tmp_path, monkeypatch)
+    ProposalQueue(store.root).append(
+        [
+            Proposal(
+                id=_FAKE_ULID,
+                body="We deploy to fly.io for production",
+                source_excerpt="We deploy to fly.io for production",
+                suggested_category="fact",
+                created="2026-01-01T00:00:00+00:00",
+            )
+        ]
+    )
+
+    def _boom(*_args: object, **_kwargs: object) -> None:
+        raise OSError("ENOSPC: no space left on device")
+
+    monkeypatch.setattr("bettermemory.store.Store.write", _boom)
+
+    with pytest.raises(SystemExit) as exc:
+        _run_main(
+            ["proposals", "accept", _FAKE_ULID, "--scope", "infrastructure"],
+            monkeypatch=monkeypatch,
+            storage=tmp_path,
+        )
+    assert exc.value.code == 2
 
 
 def test_health_subcommand_runs_against_empty_store(

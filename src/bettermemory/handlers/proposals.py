@@ -19,6 +19,8 @@ from ..proposals import ProposalQueue
 
 if TYPE_CHECKING:
     from .._handlers import ToolHandlers
+    from ..config import Config
+    from ..store import Store
 
 
 DESC_MEMORY_PROPOSALS = (
@@ -46,6 +48,76 @@ DESC_MEMORY_PROPOSALS = (
 )
 
 
+def accept_proposal(
+    *,
+    store: "Store",
+    config: "Config",
+    proposal_id: str,
+    scopes: list[str],
+    category: str | None = None,
+) -> dict[str, Any]:
+    """Validate, atomically claim, and write one proposal as a durable memory.
+
+    The shared core behind BOTH the ``memory_proposals(action="accept")`` MCP
+    tool and the ``bettermemory proposals accept`` CLI, so the subtle
+    write-policy + atomic-claim contract lives in exactly one place instead of
+    drifting across two entry points. Steps:
+
+    1. Resolve the proposal by id (clean ``not_found`` when the id is unknown).
+    2. Validate the write payload through the SAME ``_validate_write_payload``
+       every write entry point uses — content size, scope-count cap, AND the
+       allowed-scopes whitelist — so an accepted proposal can't slip a scope
+       past the policy other writes enforce. Validation runs BEFORE the claim
+       so a bad scope/category raises with the proposal still in the queue
+       (the caller fixes the inputs and retries); the only failure that loses
+       the entry is an unexpected store error after a successful claim.
+    3. Atomically CLAIM the proposal — ``ProposalQueue.remove`` re-checks it
+       still exists under the queue's per-file flock and hands it to the single
+       racer that wins, so a concurrent double-accept can't write twice.
+    4. Write the durable memory through the normal store path.
+
+    Returns a result dict (``status`` in ``{"accepted", "not_found"}``) WITHOUT
+    recording an event — the MCP handler layers its ``recorder.record`` on top;
+    the CLI prints the result. Raises ``ValueError`` on a bad payload (it
+    bubbles to the caller and the proposal stays queued).
+    """
+    from .. import _handlers as _h
+
+    queue = ProposalQueue(store.root)
+    # Resolve the proposal BEFORE writing so a bad id fails cleanly.
+    match = next((p for p in queue.load() if p.id == proposal_id), None)
+    if match is None:
+        return {"status": "not_found", "action": "accept", "proposal_id": proposal_id}
+    cat_value = category or match.suggested_category
+    payload = _validate_write_payload(
+        content=match.body,
+        scopes=list(scopes),
+        confidence=Confidence.MEDIUM.value,
+        source=Source.INFERRED.value,
+        category=cat_value,
+        allowed_scopes=config.scopes.allowed,
+        max_content_bytes=config.behavior.max_content_bytes,
+        max_scopes_per_write=config.behavior.max_scopes_per_write,
+    )
+    # Atomically CLAIM under the queue lock before the durable write — the
+    # idempotency guard against a concurrent double-accept.
+    claimed = queue.remove(proposal_id)
+    if claimed is None:
+        # Lost the race: another accept already claimed and wrote this
+        # proposal. Do not write a duplicate.
+        return {"status": "not_found", "action": "accept", "proposal_id": proposal_id}
+    memory = store.write(**payload, origin=_h.capture_origin())
+    cat_written = memory.category.value if memory.category is not None else cat_value
+    return {
+        "status": "accepted",
+        "action": "accept",
+        "proposal_id": proposal_id,
+        "id": memory.id,
+        "scopes": memory.scopes,
+        "category": cat_written,
+    }
+
+
 async def memory_proposals(
     deps: "ToolHandlers",
     action: str = "list",
@@ -55,8 +127,6 @@ async def memory_proposals(
     ctx: Context | None = None,
 ) -> dict[str, Any]:
     """Handler body for the `memory_proposals` MCP tool."""
-    from .. import _handlers as _h
-
     state = deps.sessions.for_request(ctx)
     _advance_turn(state, deps.recorder)
 
@@ -99,81 +169,34 @@ async def memory_proposals(
                 "scopes is required to accept a proposal — a memory needs at "
                 "least one scope, and the proposal queue does not guess them"
             )
-        # Resolve the proposal BEFORE writing so a bad id fails cleanly.
-        match = next((p for p in queue.load() if p.id == proposal_id), None)
-        if match is None:
-            return {
-                "status": "not_found",
-                "action": "accept",
-                "proposal_id": proposal_id,
-            }
-        cat_value = category or match.suggested_category
-        # Accept must enforce the SAME write policy as memory_write — not
-        # just the content-size cap but the scope-count cap AND the
-        # allowed-scopes whitelist. Previously this path validated only
-        # content size, so an accepted proposal could write a scope outside
-        # the configured whitelist or past max_scopes_per_write (fail-open).
-        # Route through the shared validator so the policy surface cannot
-        # drift between write entry points; it also gives a clean error for
-        # a bad category or scope instead of a bare exception. Validate
-        # BEFORE the atomic claim below so a bad scope/category raises with
-        # the proposal still in the queue (the caller can fix the inputs
-        # and retry) — the only failure that loses the queue entry is an
-        # unexpected store-level error after a successful claim, which is
-        # not a caller-correctable retry case.
-        payload = _validate_write_payload(
-            content=match.body,
-            scopes=list(scopes),
-            confidence=Confidence.MEDIUM.value,
-            source=Source.INFERRED.value,
-            category=cat_value,
-            allowed_scopes=deps.config.scopes.allowed,
-            max_content_bytes=deps.config.behavior.max_content_bytes,
-            max_scopes_per_write=deps.config.behavior.max_scopes_per_write,
-        )
-        # Atomically CLAIM the proposal by removing it under the queue's
-        # per-file flock BEFORE writing the durable memory. This is the
-        # idempotency / no-duplicate guard: `remove` re-checks the proposal
-        # still exists under the lock and returns it only to the single
-        # caller that wins the race. A concurrent second accept of the same
-        # id then sees `None` here and returns `not_found` WITHOUT issuing a
-        # second `store.write` — so a double-accept can no longer duplicate
-        # the memory. (The prior order — write, then remove across separate
-        # locks — let both racers load the same proposal, both write, and
-        # both remove, landing two store entries.)
-        claimed = queue.remove(proposal_id)
-        if claimed is None:
-            # Lost the race: another accept already claimed and wrote this
-            # proposal. Do not write a duplicate.
-            return {
-                "status": "not_found",
-                "action": "accept",
-                "proposal_id": proposal_id,
-            }
-        memory = deps.store.write(**payload, origin=_h.capture_origin())
-        cat_written = (
-            memory.category.value if memory.category is not None else cat_value
-        )
-        deps.recorder.record(
-            "memory_proposals",
-            action="accept",
+        # The validate -> atomic-claim -> write contract lives in
+        # `accept_proposal` so this MCP tool and the `bettermemory proposals
+        # accept` CLI share ONE implementation (no policy drift between
+        # entry points). A bad scope/category raises ValueError from there
+        # with the proposal still queued; the recorder event is layered on
+        # only when the write actually lands, preserving the prior semantics
+        # (no event on either not_found path).
+        result = accept_proposal(
+            store=deps.store,
+            config=deps.config,
             proposal_id=proposal_id,
-            id=memory.id,
-            scopes=memory.scopes,
-            category=cat_written,
+            scopes=scopes,
+            category=category,
         )
-        return {
-            "status": "accepted",
-            "action": "accept",
-            "proposal_id": proposal_id,
-            "id": memory.id,
-            "scopes": memory.scopes,
-            "category": cat_written,
-        }
+        if result["status"] == "accepted":
+            deps.recorder.record(
+                "memory_proposals",
+                action="accept",
+                proposal_id=proposal_id,
+                id=result["id"],
+                scopes=result["scopes"],
+                category=result["category"],
+            )
+        return result
 
     raise ValueError(
         f"unknown action {action!r}: expected 'list', 'accept', or 'dismiss'"
     )
 
 
-__all__ = ["DESC_MEMORY_PROPOSALS", "memory_proposals"]
+__all__ = ["DESC_MEMORY_PROPOSALS", "accept_proposal", "memory_proposals"]
