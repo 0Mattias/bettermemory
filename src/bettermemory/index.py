@@ -330,6 +330,56 @@ class IndexVersionError(RuntimeError):
     """Raised when the on-disk index schema is newer than this code."""
 
 
+def _unlink_index_files(path: Path) -> None:
+    """Remove the index file and its -wal/-shm siblings.
+
+    Used by `rebuild` to recover from a corrupt or version-skewed
+    index: the canonical .md files are the source of truth, so the
+    derived index can always be dropped and recreated. Missing
+    siblings are ignored (a recovery may run before some exist)."""
+    for sibling in (
+        path,
+        path.with_suffix(path.suffix + "-wal"),
+        path.with_suffix(path.suffix + "-shm"),
+    ):
+        with contextlib.suppress(FileNotFoundError):
+            sibling.unlink()
+
+
+def _open_for_rebuild(path: Path) -> sqlite3.Connection:
+    """Open a connection with the schema ensured, recovering from a
+    corrupt or version-skewed index by dropping and recreating it.
+
+    `rebuild` is the documented repair primitive, so it must tolerate
+    ANY prior on-disk state rather than crash on it. Two unusable
+    states are exactly the ones whose recovery instruction is "run
+    `bettermemory reindex`":
+      - a torn / zero-byte .db -> `sqlite3.DatabaseError`, surfaced
+        lazily during `_connect`'s PRAGMA setup (sqlite3.connect only
+        validates the header on first use);
+      - an on-disk `schema_version` newer than this code ->
+        `IndexVersionError` from `_ensure_schema`.
+    Either way, drop the index file (+ siblings) and rebuild from a
+    clean slate. The canonical .md files are untouched, so nothing is
+    lost. (Before this, the recovery primitive crashed on exactly the
+    inputs it exists to repair.)"""
+    try:
+        conn = _connect(path)
+    except sqlite3.DatabaseError:
+        # `_connect` closes its own connection before re-raising, so
+        # there is nothing to clean up here — just nuke and reopen.
+        _unlink_index_files(path)
+        conn = _connect(path)
+    try:
+        _ensure_schema(conn)
+    except (sqlite3.DatabaseError, IndexVersionError):
+        conn.close()
+        _unlink_index_files(path)
+        conn = _connect(path)
+        _ensure_schema(conn)
+    return conn
+
+
 # ---------------------------------------------------------------------------
 # Public surface
 # ---------------------------------------------------------------------------
@@ -347,14 +397,20 @@ def rebuild(root: Path, items: Iterable[tuple[Path, Memory]]) -> int:
     against partial failures: the rebuild runs in a single
     transaction, so a mid-build crash leaves the prior index intact.
 
+    Recovery primitive: tolerates ANY prior on-disk index state. A
+    corrupt/torn .db or a schema_version newer than this code is
+    dropped and recreated from scratch (see `_open_for_rebuild`) rather
+    than crashing — the .md files are canonical, so `bettermemory
+    reindex` can always repair the derived index. A *valid* prior index
+    is still preserved through the transactional build above.
+
     Each entry pairs the on-disk path with its parsed Memory so the
     `filename` column can mirror the real file (collision-suffixed
     names included). Callers typically pass `Store.iter_active()`.
     """
     path = index_path(root)
-    conn = _connect(path)
+    conn = _open_for_rebuild(path)
     try:
-        _ensure_schema(conn)
         with conn:
             conn.execute("DELETE FROM memories")
             count = 0

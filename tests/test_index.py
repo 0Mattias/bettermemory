@@ -206,10 +206,11 @@ def test_store_tombstone_removes_from_index(store: Store, memory_dir: Path) -> N
 # ---------------------------------------------------------------------------
 
 
-def test_unknown_schema_version_raises(tmp_path: Path) -> None:
-    """A future version's index file should refuse to load with the
-    current reader rather than risk misinterpreting rows under
-    different semantics."""
+def test_unknown_schema_version_refuses_on_read(tmp_path: Path) -> None:
+    """A future version's index file should refuse to load on the READ
+    path with the current reader rather than risk misinterpreting rows
+    under different semantics. (`rebuild` is the repair path and instead
+    RECOVERS — see test_rebuild_recovers_from_newer_schema_version.)"""
     root = tmp_path / "memories"
     root.mkdir()
     # Manually create an index with a bumped schema version.
@@ -224,10 +225,68 @@ def test_unknown_schema_version_raises(tmp_path: Path) -> None:
     conn.close()
 
     with pytest.raises(index.IndexVersionError):
-        # status() catches the IndexVersionError internally and reports
-        # it, but rebuild + query both surface it because they
-        # `_ensure_schema` directly.
-        index.rebuild(root, [])
+        # query() `_ensure_schema`s directly and surfaces the version
+        # mismatch; status() catches it and reports corrupt=True; rebuild()
+        # recovers by dropping + recreating (the two tests below).
+        index.query(root, "anything")
+
+
+def test_rebuild_recovers_from_corrupt_index_file(
+    store: Store, memory_dir: Path
+) -> None:
+    """rebuild() is the documented recovery primitive for a corrupt
+    index, so it must succeed against a torn/garbage .db rather than
+    crash on it. Pre-fix, `_connect`'s lazy header validation raised
+    sqlite3.DatabaseError ("file is not a database") and rebuild
+    propagated it as an unhandled traceback — the one command meant to
+    repair the index was guaranteed to fail on exactly that input."""
+    store.write(content="alpha indexer note", scopes=["tools"])
+    store.write(content="beta indexer note", scopes=["tools"])
+    # Overwrite the index with garbage — "file is not a database".
+    index_file = index.index_path(memory_dir)
+    index_file.write_bytes(b"not a sqlite database at all " * 16)
+    assert index.status(memory_dir).get("corrupt") is True
+
+    count = index.rebuild(memory_dir, store.iter_active())
+
+    assert count == 2
+    s = index.status(memory_dir)
+    assert s["exists"] is True
+    assert "corrupt" not in s
+    assert s["indexed_count"] == 2
+    assert s["schema_version"] == index.SCHEMA_VERSION
+    # The repaired index actually answers queries.
+    assert index.query(memory_dir, "alpha")
+
+
+def test_rebuild_recovers_from_newer_schema_version(
+    store: Store, memory_dir: Path
+) -> None:
+    """An on-disk schema_version newer than this code makes
+    `_ensure_schema` raise IndexVersionError — whose own message tells
+    the user to run `bettermemory reindex`. rebuild() must therefore
+    recover by dropping + recreating, not crash with the very error it
+    instructs the user to resolve with this command."""
+    store.write(content="alpha indexer note", scopes=["tools"])
+    # Poison the on-disk schema version to a future value.
+    index_file = index.index_path(memory_dir)
+    conn = sqlite3.connect(str(index_file))
+    try:
+        conn.execute(
+            "UPDATE meta SET value = ? WHERE key = 'schema_version'",
+            (str(index.SCHEMA_VERSION + 1),),
+        )
+        conn.commit()
+    finally:
+        conn.close()
+    assert index.status(memory_dir).get("corrupt") is True
+
+    count = index.rebuild(memory_dir, store.iter_active())
+
+    assert count == 1
+    s = index.status(memory_dir)
+    assert "corrupt" not in s
+    assert s["schema_version"] == index.SCHEMA_VERSION
 
 
 def test_status_handles_corrupt_file_gracefully(tmp_path: Path) -> None:
