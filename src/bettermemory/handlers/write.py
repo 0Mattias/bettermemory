@@ -667,7 +667,15 @@ def _commit_write(
     committed response. Surfaces the ambient long-body warning as a
     non-blocking advisory when applicable."""
     category_enum: Category = payload["category"]
-    memory = deps.store.write(**payload)
+    try:
+        memory = deps.store.write(**payload)
+    except OSError as exc:
+        # Disk-level failure (ENOSPC/EIO/EACCES) in the durable write.
+        # Translate to ValueError so the MCP boundary returns a clean
+        # structured error rather than leaking the bare OSError's absolute
+        # path to the client — matching the sibling lifecycle handlers
+        # (remove/restore/verify/rename_scope/proposals).
+        raise ValueError(f"failed to write memory: {exc}") from exc
     warnings: list[str] = []
     if (
         category_enum == Category.AMBIENT
@@ -725,7 +733,18 @@ async def memory_write_confirm(
             f"no pending write with id {pending_id!r} (it may have "
             "been already committed or never existed)"
         )
-    memory = deps.store.write(**pending.payload)
+    try:
+        memory = deps.store.write(**pending.payload)
+    except OSError as exc:
+        # Disk-level failure after `take_pending` already consumed the
+        # staged write (popped at the top of this handler). Translate to a
+        # clean ValueError at the MCP boundary instead of leaking the bare
+        # OSError path; note the pending id is already consumed so the
+        # caller must re-stage with memory_write rather than re-confirm.
+        raise ValueError(
+            f"failed to write memory: {exc} (pending {pending_id!r} was "
+            "already consumed — re-stage with memory_write)"
+        ) from exc
     # If this pending write originated from `episode_promote`, delete
     # the source episode now — the durable memory is the authoritative
     # artifact and leaving the journal entry behind would survive past

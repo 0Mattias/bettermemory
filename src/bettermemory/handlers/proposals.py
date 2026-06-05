@@ -176,13 +176,29 @@ async def memory_proposals(
         # with the proposal still queued; the recorder event is layered on
         # only when the write actually lands, preserving the prior semantics
         # (no event on either not_found path).
-        result = accept_proposal(
-            store=deps.store,
-            config=deps.config,
-            proposal_id=proposal_id,
-            scopes=scopes,
-            category=category,
-        )
+        try:
+            result = accept_proposal(
+                store=deps.store,
+                config=deps.config,
+                proposal_id=proposal_id,
+                scopes=scopes,
+                category=category,
+            )
+        except OSError as exc:
+            # A disk-level failure (ENOSPC/EIO/EACCES) in the durable
+            # write, landing AFTER the proposal was atomically claimed
+            # (removed) from the queue. Translate to ValueError so the
+            # MCP tool boundary returns a clean structured error instead
+            # of letting the bare OSError leak its absolute store path to
+            # the client — matching the sibling lifecycle handlers
+            # (remove/restore/verify/rename_scope) and the CLI twin
+            # `bettermemory proposals accept`. The claim-before-write order
+            # is the double-accept guard and must stay, so flag that the
+            # queue entry is already gone (loss window made visible).
+            raise ValueError(
+                f"failed to write accepted proposal {proposal_id}: {exc} "
+                "(the proposal was already removed from the queue)"
+            ) from exc
         if result["status"] == "accepted":
             deps.recorder.record(
                 "memory_proposals",

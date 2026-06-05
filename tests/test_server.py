@@ -6100,3 +6100,124 @@ async def test_episode_promote_advances_turn_exactly_once(
     assert res["promoted_from_episode_id"] == ep.id
     # ...and the turn counter advanced exactly once, not twice.
     assert calls["n"] == 1
+
+
+# ---------------------------------------------------------------------------
+# OSError-leak hardening at the MCP boundary
+# ---------------------------------------------------------------------------
+#
+# Every store.write call site reachable from a tool MUST translate a
+# disk-level OSError (ENOSPC/EIO/EACCES) into a structured ValueError —
+# never leak the bare OSError, which carries the absolute store path —
+# past `call_tool`. Mirrors test_remove_handler_converts_oserror_to_value_error
+# (test_server_tombstones.py) and the rename_scope OSError regression.
+# Caught by the post-3.6.0 whole-tree sweep: write.py (memory_write /
+# memory_write_confirm) and the memory_proposals accept path were the
+# unguarded store.write siblings.
+
+
+def _oserror_wrapped_as_value_error(excinfo: Any, marker: str) -> bool:
+    """Walk the raised exception's cause/context chain; confirm a
+    handler-emitted ValueError (containing `marker`) wraps the original
+    OSError(ENOSPC=28). A regression (no `except OSError`) leaves the
+    OSError as the direct cause with no intervening ValueError."""
+    chain: list[BaseException] = []
+    cur: BaseException | None = excinfo.value
+    while cur is not None and cur not in chain:
+        chain.append(cur)
+        cur = cur.__cause__ or cur.__context__
+    has_value_error = any(
+        isinstance(e, ValueError) and marker in str(e) for e in chain
+    )
+    has_oserror = any(isinstance(e, OSError) and e.errno == 28 for e in chain)
+    return has_value_error and has_oserror
+
+
+def _raising_write(*args: Any, **kwargs: Any) -> Any:
+    raise OSError(28, "No space left on device")
+
+
+async def test_memory_write_handler_converts_oserror_to_value_error(
+    memory_dir: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """memory_write -> _commit_write -> store.write. A disk-level OSError
+    must surface as a structured ValueError, not leak the bare OSError's
+    absolute path past the MCP boundary."""
+    cfg = Config(storage=StorageConfig(directory=str(memory_dir)))
+    store = Store(memory_dir)
+    server = build_server(config=cfg, store=store, state=SessionState())
+    monkeypatch.setattr(store, "write", _raising_write)
+
+    with pytest.raises(Exception) as excinfo:
+        await _call(server, "memory_write", content="x", scopes=["tools"])
+    assert _oserror_wrapped_as_value_error(excinfo, "failed to write memory"), (
+        f"regression: bare OSError leaked past memory_write. Got: {excinfo.value!r}"
+    )
+
+
+async def test_memory_write_confirm_handler_converts_oserror_to_value_error(
+    memory_dir: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """memory_write_confirm -> store.write, AFTER take_pending already
+    consumed the staged write. The disk-level OSError must surface as a
+    structured ValueError (flagging the pending id is consumed), not a
+    bare path-leaking OSError. Staging does not call store.write, so the
+    monkeypatch is installed after staging and only bites on confirm."""
+    cfg = Config(storage=StorageConfig(directory=str(memory_dir)))
+    store = Store(memory_dir)
+    server = build_server(config=cfg, store=store, state=SessionState())
+    pending = await _call(
+        server,
+        "memory_write",
+        content="a durable fact about the user",
+        scopes=["tools"],
+        category="user-inference",
+    )
+    pid = pending["pending_id"]
+    monkeypatch.setattr(store, "write", _raising_write)
+
+    with pytest.raises(Exception) as excinfo:
+        await _call(server, "memory_write_confirm", pending_id=pid)
+    assert _oserror_wrapped_as_value_error(excinfo, "failed to write memory"), (
+        f"regression: bare OSError leaked past memory_write_confirm. "
+        f"Got: {excinfo.value!r}"
+    )
+
+
+async def test_memory_proposals_accept_handler_converts_oserror_to_value_error(
+    memory_dir: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """memory_proposals(action="accept") -> accept_proposal claims the
+    proposal from the queue, THEN store.write. A disk-level OSError after
+    the claim must surface as a structured ValueError noting the entry is
+    already gone — not leak the bare OSError path. (full_tool_surface is
+    True by dataclass default, so memory_proposals is registered.)"""
+    from bettermemory.proposals import Proposal, ProposalQueue
+
+    cfg = Config(storage=StorageConfig(directory=str(memory_dir)))
+    store = Store(memory_dir)
+    server = build_server(config=cfg, store=store, state=SessionState())
+    ProposalQueue(store.root).append(
+        [
+            Proposal(
+                id="01PROPOSALOSERR",
+                body="a durable fact worth keeping in memory",
+                source_excerpt="a durable fact worth keeping in memory",
+                suggested_category="fact",
+                created="2026-01-01T12:00:00+00:00",
+            )
+        ]
+    )
+    monkeypatch.setattr(store, "write", _raising_write)
+
+    with pytest.raises(Exception) as excinfo:
+        await _call(
+            server,
+            "memory_proposals",
+            action="accept",
+            proposal_id="01PROPOSALOSERR",
+            scopes=["tools"],
+        )
+    assert _oserror_wrapped_as_value_error(
+        excinfo, "failed to write accepted proposal"
+    ), f"regression: bare OSError leaked past memory_proposals accept. Got: {excinfo.value!r}"
