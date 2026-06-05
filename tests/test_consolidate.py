@@ -876,19 +876,28 @@ def _seed_search_events(recorder: Recorder, memory_id: str, count: int) -> None:
         recorder.record("search", query="q", returned=[memory_id])
 
 
-def test_acknowledge_debt_writes_explicit_use_event_for_unendorsed_memory(
+def test_acknowledge_debt_skips_pure_dead_weight_memory(
     store: Store,
     capsys: pytest.CaptureFixture[str],
 ) -> None:
-    """A memory with retrieval_count >= floor and zero explicit applied
-    events is written one `use(applied, auto=False)` event. The event
-    shape is what `compute_health` reads on the next pass to clear the
-    debt — same field set the model's deliberate `memory_record_use`
-    would emit, with `attribution="cli_acknowledge_debt"` so the source
-    of the endorsement is recoverable in the log."""
+    """A memory retrieved >= floor with ZERO applied events of ANY kind
+    (no auto, no explicit) is pure DEAD WEIGHT — not cold-endorsement.
+    The canonical `health._is_weakly_endorsed` gates on
+    `applied_count > 0` (returns False at applied_count == 0), so
+    dead-weight rows route to the removal/demotion bucket, NOT here.
+
+    Acknowledge-debt must NOT fabricate a `use(applied)` endorsement for
+    them: doing so bumps applied_count to 1 and permanently shields a
+    never-applied memory from dead-weight removal (`dead_weight` requires
+    applied_count == 0). This is the CLI-path mirror of test_health.py's
+    `test_zero_apply_memory_is_dead_weight_not_cold_endorsement`; the
+    inline CLI filter previously omitted the `applied_count > 0` gate
+    and wrongly endorsed these (pre-3.6.1 fail-open regression caught by
+    the post-3.6.0 whole-tree sweep)."""
     m = store.write(content="durable note about indexer behavior", scopes=["tools"])
     recorder = Recorder(root=store.root, session_id="seed")
     _seed_search_events(recorder, m.id, count=6)
+    # No applied events at all -> applied_count == 0 -> dead weight, not debt.
 
     _cli_consolidate_acknowledge_debt(
         store=store,
@@ -897,17 +906,49 @@ def test_acknowledge_debt_writes_explicit_use_event_for_unendorsed_memory(
         json_out=False,
     )
 
-    use_events = [e for e in iter_all_events(store.root) if e.get("kind") == "use"]
-    assert len(use_events) == 1
-    ev = use_events[0]
-    assert ev["outcome"] == "applied"
-    assert ev["auto"] is False
-    assert ev["ids"] == [m.id]
-    assert ev["attribution"] == "cli_acknowledge_debt"
+    cli_acks = [
+        e
+        for e in iter_all_events(store.root)
+        if e.get("kind") == "use" and e.get("attribution") == "cli_acknowledge_debt"
+    ]
+    assert cli_acks == []
+    assert "no cold-endorsement memories" in capsys.readouterr().out
 
-    out = capsys.readouterr().out
-    assert "1 explicit" in out
-    assert m.id in out
+
+def test_acknowledge_debt_refuses_when_telemetry_disabled(
+    store: Store,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """With telemetry disabled the Recorder is a hard no-op, so writing
+    the explicit use(applied) endorsements would silently vanish while
+    the CLI reported "wrote N events" and exited 0. Mirror the sibling
+    `--acknowledge-misses-before` guard: refuse with exit 1 up front.
+    Pins the pre-3.6.1 silent-no-op regression."""
+    from bettermemory.config import TelemetryConfig
+
+    m = store.write(content="cold endorsement body", scopes=["tools"])
+    recorder = Recorder(root=store.root, session_id="seed")
+    _seed_search_events(recorder, m.id, count=6)
+    # A genuine cold-endorsement memory (one auto-apply, zero explicit)
+    # so the ONLY reason to bail is the telemetry guard, not an empty set.
+    recorder.record("use", ids=[m.id], outcome="applied", auto=True, attribution="auto")
+
+    config_no_telem = Config(telemetry=TelemetryConfig(enabled=False))
+    with pytest.raises(SystemExit) as exc:
+        _cli_consolidate_acknowledge_debt(
+            store=store,
+            config=config_no_telem,
+            session_id="ack-cli",
+            json_out=False,
+        )
+    assert exc.value.code == 1
+    assert "telemetry is disabled" in capsys.readouterr().err
+    cli_acks = [
+        e
+        for e in iter_all_events(store.root)
+        if e.get("kind") == "use" and e.get("attribution") == "cli_acknowledge_debt"
+    ]
+    assert cli_acks == []
 
 
 def test_acknowledge_debt_skips_already_endorsed_memory(
@@ -1046,6 +1087,12 @@ def test_acknowledge_debt_json_output_carries_acknowledged_ids(
     recorder = Recorder(root=store.root, session_id="seed")
     _seed_search_events(recorder, m1.id, count=6)
     _seed_search_events(recorder, m2.id, count=6)
+    # Genuine cold-endorsement: each has >=1 auto-apply (applied_count > 0)
+    # but zero explicit applies — the auto-fallback is doing all the work.
+    # Pure-dead-weight (zero applies) is a DIFFERENT bucket (removal) and is
+    # skipped here; see test_acknowledge_debt_skips_pure_dead_weight_memory.
+    recorder.record("use", ids=[m1.id], outcome="applied", auto=True, attribution="auto")
+    recorder.record("use", ids=[m2.id], outcome="applied", auto=True, attribution="auto")
 
     _cli_consolidate_acknowledge_debt(
         store=store,

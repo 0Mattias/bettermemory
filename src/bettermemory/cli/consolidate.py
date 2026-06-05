@@ -354,9 +354,16 @@ def _cli_consolidate_acknowledge_debt(
     Filter is re-derived inline because
     :class:`~bettermemory.health.ColdEndorsementMemories` caps its
     ``rows`` list at ``_COLD_ENDORSEMENT_CAP`` for inline display and
-    we need every debt id, not just the top N. The three predicates
+    we need every debt id, not just the top N. The four predicates
     match :func:`bettermemory.health.compute_health` exactly — if
-    that canonical filter changes, this one must too.
+    that canonical filter changes, this one must too. In particular
+    the ``applied_count > 0`` gate (``health._is_weakly_endorsed``
+    returns ``False`` at ``applied_count == 0``) is load-bearing: a
+    pure dead-weight memory (retrieved over the floor but NEVER applied
+    — zero auto AND zero explicit) belongs in the dead-weight removal
+    bucket, NOT here. Omitting that gate would fabricate a
+    ``use(applied)`` endorsement for it, bumping ``applied_count`` to 1
+    and permanently shielding a never-applied memory from removal.
     """
     import json as _json
 
@@ -364,11 +371,34 @@ def _cli_consolidate_acknowledge_debt(
     from ..health import _COLD_ENDORSEMENT_MIN_RETRIEVALS
     from ..models import Category
 
+    # Refuse to run with telemetry disabled — the Recorder's ``enabled``
+    # flag turns ``record()`` into a hard no-op, so the explicit
+    # use(applied) endorsements would silently disappear while the CLI
+    # still printed "wrote N events" and exited 0. The endorsement IS a
+    # telemetry event; with telemetry off there is nothing to write.
+    # Mirrors the identical guard in ``_cli_consolidate_acknowledge_misses``.
+    if not config.telemetry.enabled:
+        sys.stderr.write(
+            "acknowledge-debt: telemetry is disabled in the active "
+            "config, so the explicit use(applied) endorsement events "
+            "would be silently dropped. Enable telemetry "
+            "(config.telemetry.enabled = true) before running this "
+            "command.\n"
+        )
+        raise SystemExit(1)
+
     memories = store.load_all()
     events = list(iter_all_events(store.root))
 
     retrieval_counts: dict[str, int] = {m.id: 0 for m in memories}
     explicit_applied: dict[str, int] = {m.id: 0 for m in memories}
+    # Total applied events of ANY kind (auto OR explicit). The
+    # ``applied_count > 0`` gate below needs this — counting only
+    # explicit applies (the prior behavior) cannot distinguish a
+    # cold-endorsement memory (>=1 apply, all auto) from pure dead
+    # weight (zero applies of any kind), and the latter must NOT be
+    # endorsed here. Mirrors ``health._is_weakly_endorsed``.
+    applied_total: dict[str, int] = {m.id: 0 for m in memories}
     for ev in events:
         kind = ev.get("kind")
         if kind == "search":
@@ -378,10 +408,11 @@ def _cli_consolidate_acknowledge_debt(
                 if mid in retrieval_counts:
                     retrieval_counts[mid] += 1
         elif kind == "use" and ev.get("outcome") == "applied":
-            if ev.get("auto") is True:
-                continue
+            is_auto = ev.get("auto") is True
             for mid in ev.get("ids") or ev.get("memory_ids") or []:
-                if mid in explicit_applied:
+                if mid in applied_total:
+                    applied_total[mid] += 1
+                if not is_auto and mid in explicit_applied:
                     explicit_applied[mid] += 1
 
     floor = _COLD_ENDORSEMENT_MIN_RETRIEVALS
@@ -390,6 +421,7 @@ def _cli_consolidate_acknowledge_debt(
         for m in memories
         if m.category != Category.AMBIENT
         and retrieval_counts.get(m.id, 0) >= floor
+        and applied_total.get(m.id, 0) > 0
         and explicit_applied.get(m.id, 0) == 0
     ]
 
@@ -406,7 +438,7 @@ def _cli_consolidate_acknowledge_debt(
             sys.stdout.write(
                 f"acknowledge-debt: no cold-endorsement memories "
                 f"(floor: retrieval_count >= {floor} AND "
-                f"explicit_applied_count == 0).\n"
+                f"applied_count > 0 AND explicit_applied_count == 0).\n"
             )
         return
 
