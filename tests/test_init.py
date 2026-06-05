@@ -633,3 +633,42 @@ def test_cli_init_legacy_migration_surfaces_in_human_output(
     out = capsys.readouterr().out
     assert "legacy" in out.lower()
     assert LEGACY_SERVER_NAME in out
+
+
+def test_init_via_cli_exits_clean_on_unwritable_config_path(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """`bettermemory init --client <c> --config-path <p>` must exit 2 with
+    a clean `bettermemory init: error: …` message — NOT a raw
+    PermissionError/NotADirectoryError traceback / exit 1 — when the
+    --config-path parent is unwritable or a non-directory. Same
+    missing-OSError-arm class the 3.6.0 self-audit fixed for
+    proposals/tombstones-restore/rename-scope; init was the missed sibling
+    (caught by the post-3.6.0 whole-tree sweep). A plain nonexistent path
+    is auto-mkdir'd and does NOT trigger this."""
+    import argparse
+
+    from bettermemory.cli.init import add_subparser as init_add_subparser
+    from bettermemory.cli.init import run as init_run
+
+    # A regular FILE as an ancestor makes mkdir(parents=True) raise
+    # NotADirectoryError — deterministic, no chmod (root-flaky in CI).
+    blocker = tmp_path / "not_a_dir"
+    blocker.write_text("x", encoding="utf-8")
+    bad_config = blocker / "sub" / "cfg.json"
+
+    parser = argparse.ArgumentParser(prog="bettermemory")
+    sub = parser.add_subparsers(dest="cmd")
+    init_add_subparser(sub)
+    args = parser.parse_args(
+        ["init", "--client", "claude-code", "--config-path", str(bad_config)]
+    )
+
+    with pytest.raises(SystemExit) as excinfo:
+        init_run(args)
+
+    assert excinfo.value.code == 2
+    err = capsys.readouterr().err
+    assert "error:" in err
+    assert "Traceback (most recent call last)" not in err

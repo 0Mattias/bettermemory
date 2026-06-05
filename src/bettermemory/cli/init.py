@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import sys
 
 
 def add_subparser(
@@ -86,11 +87,23 @@ def run(args: argparse.Namespace) -> None:
 
     from ..init import cli_init
 
-    cli_init(
-        client=args.client,
-        print_only=args.print_only,
-        json_out=args.json,
-        name=args.name,
-        with_addendum=args.with_addendum,
-        config_path=_Path(args.config_path) if args.config_path else None,
-    )
+    try:
+        cli_init(
+            client=args.client,
+            print_only=args.print_only,
+            json_out=args.json,
+            name=args.name,
+            with_addendum=args.with_addendum,
+            config_path=_Path(args.config_path) if args.config_path else None,
+        )
+    except OSError as exc:
+        # The config-patch write (patch_client_config -> mkdir /
+        # atomic_write_bytes) can fail on an unwritable or non-directory
+        # --config-path parent (PermissionError / NotADirectoryError /
+        # ENOSPC). Render a clean error + exit 2 instead of a raw
+        # traceback, mirroring the ImportError -> exit-2 pattern in
+        # `bettermemory ui`. (A plain nonexistent path does NOT reach here
+        # — mkdir(parents=True) creates the tree; only a genuinely
+        # unwritable or non-directory ancestor raises.)
+        sys.stderr.write(f"bettermemory init: error: {exc}\n")
+        raise SystemExit(2) from exc
