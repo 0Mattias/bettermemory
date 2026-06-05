@@ -197,6 +197,64 @@ def test_export_invalid_scope_via_cli_exits_clean_not_traceback(
     assert "Traceback (most recent call last)" not in err
 
 
+def test_export_to_file_bad_parent_via_cli_exits_clean_not_traceback(
+    populated_store: tuple[Path, Store],
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """Driven through `run()` with a real subparser, `export -o` into a
+    missing / non-directory parent must exit 2 with a clean error — NOT a
+    raw FileNotFoundError traceback / exit 1. Same missing-OSError-arm
+    class the 3.6.0 self-audit fixed for proposals / tombstones-restore /
+    rename-scope; export was the missed sibling (caught by the post-3.6.0
+    sweep). The direct `_cli_export` (parser=None) contract still raises
+    raw — see test_export_to_file_missing_parent_dir_raises."""
+    out_path = tmp_path / "nonexistent_subdir" / "backup.json"
+    parser = argparse.ArgumentParser(prog="bettermemory")
+    sub = parser.add_subparsers(dest="cmd")
+    export_parser = export_add_subparser(sub)
+    args = parser.parse_args(["export", "-o", str(out_path)])
+
+    with pytest.raises(SystemExit) as excinfo:
+        export_run(args, sub_parser=export_parser)
+
+    assert excinfo.value.code == 2
+    err = capsys.readouterr().err
+    assert "error:" in err
+    assert "Traceback (most recent call last)" not in err
+
+
+def test_export_to_file_write_oserror_via_cli_exits_clean_not_traceback(
+    populated_store: tuple[Path, Store],
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A genuine filesystem failure during the atomic write (read-only
+    parent, ENOSPC, EACCES) — the parent IS a directory so the pre-check
+    passes — also routes through `parser.error` -> exit 2 rather than a
+    raw OSError traceback. Simulated by forcing atomic_write_bytes to raise."""
+    import bettermemory.cli.export as export_mod
+
+    out_path = tmp_path / "backup.json"  # parent (tmp_path) is a real dir
+
+    def boom(*args: object, **kwargs: object) -> None:
+        raise OSError(13, "Permission denied")
+
+    monkeypatch.setattr(export_mod, "atomic_write_bytes", boom)
+
+    parser = argparse.ArgumentParser(prog="bettermemory")
+    sub = parser.add_subparsers(dest="cmd")
+    export_parser = export_add_subparser(sub)
+    args = parser.parse_args(["export", "-o", str(out_path)])
+
+    with pytest.raises(SystemExit) as excinfo:
+        export_run(args, sub_parser=export_parser)
+
+    assert excinfo.value.code == 2
+    assert "error:" in capsys.readouterr().err
+
+
 # ---------------------------------------------------------------------------
 # --output PATH
 # ---------------------------------------------------------------------------

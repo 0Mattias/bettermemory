@@ -189,16 +189,33 @@ def _cli_export(
         # one clean error pointing at the parent the user actually typed.
         parent = out_path.parent
         if not parent.is_dir():
-            raise FileNotFoundError(
+            msg = (
                 f"--output parent directory does not exist or is not a "
                 f"directory: {parent}"
             )
+            # Route through `parser.error` for a clean
+            # `bettermemory export: error: …` + exit 2 instead of a raw
+            # traceback / exit 1, mirroring the --scope ValueError arm
+            # above and the sibling rename-scope / tombstones-restore
+            # commands. `parser is None` (programmatic / test callers)
+            # keeps the raw exception so they still see the exception type.
+            if parser is not None:
+                parser.error(msg)
+            raise FileNotFoundError(msg)
         # Atomic + durable write via `_fsutil.atomic_write_bytes`: a plain
         # `out_path.write_text(...)` here would leave a truncated JSON on
         # power loss / process kill mid-write, defeating the point of a
         # backup. The helper writes to a tmp sibling, fsyncs, atomic-
-        # renames into place, and fsyncs the parent directory.
-        atomic_write_bytes(out_path, (text + "\n").encode("utf-8"))
+        # renames into place, and fsyncs the parent directory. A genuine
+        # filesystem failure here (read-only parent, ENOSPC, EACCES)
+        # routes through `parser.error` for the same clean exit 2, rather
+        # than leaking a raw OSError traceback.
+        try:
+            atomic_write_bytes(out_path, (text + "\n").encode("utf-8"))
+        except OSError as exc:
+            if parser is not None:
+                parser.error(str(exc))
+            raise
         summary = f"Exported {len(active)} active memories"
         if include_tombstones:
             summary += f" + {tombstoned_count} tombstones"
