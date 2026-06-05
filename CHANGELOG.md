@@ -7,6 +7,47 @@ breaking changes, minor for additive features, patch for fixes. The
 [compatibility contract](CONTRIBUTING.md#versioning-and-the-compatibility-contract)
 spells out exactly what's stable.
 
+## 3.6.1 - 2026-06-05
+
+### Fixed
+
+- **`consolidate --acknowledge-debt` no longer shields dead-weight memories
+  from removal.** Its inline cold-endorsement filter omitted the
+  `applied_count > 0` gate the canonical `health` rollup enforces, so a pure
+  dead-weight memory (retrieved over the floor but *never* applied — zero auto
+  *and* zero explicit) was wrongly swept into the endorsement pass and handed a
+  fabricated `use(applied)` event. That bumped its applied-count to 1 and
+  permanently excluded it from the dead-weight removal/demotion bucket (which
+  requires `applied_count == 0`). The CLI filter now matches the canonical
+  predicate exactly.
+- **`consolidate --acknowledge-debt` refuses when telemetry is disabled**
+  instead of printing "wrote N events" and exiting 0 while the disabled
+  recorder silently dropped every write. Mirrors the existing
+  `--acknowledge-misses-before` guard.
+- **`bettermemory reindex` can now repair a corrupt or version-skewed index.**
+  `index.rebuild()` — the documented recovery primitive — previously crashed on
+  exactly the inputs it exists to fix: a torn `.index.sqlite`
+  (`sqlite3.DatabaseError`) or an on-disk schema version newer than the running
+  code (`IndexVersionError`). It now drops the index file and its `-wal`/`-shm`
+  siblings and rebuilds from the canonical Markdown files. The read path still
+  refuses a newer-version index.
+- **No more bare `OSError` (carrying the absolute store path) leaking past the
+  MCP boundary on a disk-full / EIO / EACCES write.** `memory_proposals(accept)`,
+  `memory_write`, and `memory_write_confirm` now translate a disk-level
+  `OSError` into a clean structured error, matching the other lifecycle tools.
+  The proposals-accept error also flags that the queued entry may have been
+  consumed, so a retry is safe to reason about.
+- **`bettermemory export -o` and `bettermemory init --config-path` exit cleanly
+  (code 2) on a bad or unwritable target path** instead of dumping a raw
+  `FileNotFoundError` / `PermissionError` traceback — completing the gated-tool
+  CLI error-handling parity started in 3.6.0.
+
+### Internal
+
+- Post-3.6.0 whole-codebase audit sweep (12 domains / ~36k LOC) with adversarial
+  verification of every fix, plus a second pass that caught and drained three
+  regressions in the fixes themselves. +11 regression tests (2017 → 2028).
+
 ## 3.6.0 - 2026-06-04
 
 ### Added
