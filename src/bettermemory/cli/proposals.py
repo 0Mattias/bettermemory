@@ -175,17 +175,17 @@ def _cli_proposals_accept(
             parser.error(str(exc))
         raise
     except OSError as exc:
-        # A disk-level failure in the durable write, landing AFTER the proposal
-        # was atomically claimed (removed) from the queue. Surface a clean
-        # `bettermemory: error: …` + exit 2 instead of a path-leaking traceback,
-        # matching the sibling `tombstones restore` / `rename-scope` commands;
-        # flag that the queue entry is already gone. The claim-before-write
-        # order is the double-accept guard and must stay, so this loss window
-        # is inherent — make it visible rather than silent.
+        # A disk-level failure. Surface a clean `bettermemory: error: …` +
+        # exit 2 instead of a path-leaking traceback, matching the sibling
+        # `tombstones restore` / `rename-scope` commands. The OSError can
+        # come from EITHER the atomic queue claim (queue.remove rewrites the
+        # queue file) OR the durable store.write after it, so do NOT assert
+        # the entry is definitively gone — tell the user to re-check first.
         if parser is not None:
             parser.error(
-                f"failed to write accepted proposal {proposal_id}: {exc} "
-                "(the proposal was already removed from the queue)"
+                f"failed to accept proposal {proposal_id}: {exc} "
+                "(it may have been removed from the queue — re-check with "
+                "`bettermemory proposals list` before retrying)"
             )
         raise
 

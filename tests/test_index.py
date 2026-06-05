@@ -925,3 +925,94 @@ def test_corrupt_index_emits_divergence_warning(
         f"warning, got {warnings!r}"
     )
     assert "bettermemory reindex" in warnings[0].getMessage()
+
+
+def test_rebuild_recovery_closes_connection_on_compound_failure(
+    store: Store, memory_dir: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Compound failure: a version-skewed index makes the first
+    _ensure_schema raise IndexVersionError (-> recovery unlinks + reopens),
+    then the POST-unlink _ensure_schema ALSO fails (a disk error). The
+    reopened connection must still be closed — no leaked sqlite handle
+    (the `ResourceWarning: unclosed database` contract _connect's docstring
+    pins). Detect closure directly: a closed sqlite3 connection raises
+    ProgrammingError on execute. Regression introduced + fixed in the
+    post-3.6.0 sweep (_open_for_rebuild)."""
+    store.write(content="alpha indexer note", scopes=["tools"])
+    index_file = index.index_path(memory_dir)
+    # Poison the on-disk schema version so the FIRST _ensure_schema raises.
+    poison = sqlite3.connect(str(index_file))
+    try:
+        poison.execute(
+            "UPDATE meta SET value = ? WHERE key = 'schema_version'",
+            (str(index.SCHEMA_VERSION + 1),),
+        )
+        poison.commit()
+    finally:
+        poison.close()
+
+    opened: list[sqlite3.Connection] = []
+    real_connect = index._connect
+
+    def tracking_connect(path: Path) -> sqlite3.Connection:
+        conn = real_connect(path)
+        opened.append(conn)
+        return conn
+
+    monkeypatch.setattr(index, "_connect", tracking_connect)
+
+    real_ensure = index._ensure_schema
+    calls = {"n": 0}
+
+    def flaky_ensure(conn: sqlite3.Connection) -> None:
+        calls["n"] += 1
+        if calls["n"] == 1:
+            real_ensure(conn)  # raises IndexVersionError on the skewed index
+        else:
+            raise sqlite3.OperationalError("simulated disk I/O error")
+
+    monkeypatch.setattr(index, "_ensure_schema", flaky_ensure)
+
+    with pytest.raises(sqlite3.OperationalError):
+        index.rebuild(memory_dir, store.iter_active())
+
+    assert opened, "expected the recovery path to open at least one connection"
+    for conn in opened:
+        # A closed connection raises ProgrammingError; a leaked open one
+        # would succeed here.
+        with pytest.raises(sqlite3.ProgrammingError):
+            conn.execute("SELECT 1")
+
+
+def test_rebuild_unlink_failure_leaves_main_db_intact(
+    store: Store, memory_dir: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """If removing a -wal/-shm sibling fails mid-recovery (Windows lock /
+    EACCES), recovery must NOT leave the main .db deleted with an orphaned
+    WAL — a worse state than before for a repair primitive.
+    _unlink_index_files removes siblings BEFORE the main .db, so a
+    single-point failure on -wal leaves the .db intact and the error
+    surfaces cleanly (retryable). Regression introduced + fixed in the
+    post-3.6.0 sweep."""
+    store.write(content="alpha indexer note", scopes=["tools"])
+    index_file = index.index_path(memory_dir)
+    wal = index_file.with_suffix(index_file.suffix + "-wal")
+    wal.write_bytes(b"stale wal bytes")  # a -wal to trip on
+    # Corrupt the .db so recovery (unlink) is triggered via _connect.
+    index_file.write_bytes(b"not a sqlite database at all " * 4)
+
+    real_unlink = Path.unlink
+
+    def flaky_unlink(self: Path, *a: object, **k: object) -> None:
+        if self.name.endswith("-wal"):
+            raise PermissionError(13, "file is locked")
+        return real_unlink(self, *a, **k)  # type: ignore[arg-type]
+
+    monkeypatch.setattr(Path, "unlink", flaky_unlink)
+
+    with pytest.raises(PermissionError):
+        index.rebuild(memory_dir, store.iter_active())
+
+    # -wal is unlinked first and fails, so the main .db is never removed:
+    # consistent, retryable state — not a .db-gone / WAL-orphaned mess.
+    assert index_file.exists()

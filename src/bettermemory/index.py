@@ -336,11 +336,21 @@ def _unlink_index_files(path: Path) -> None:
     Used by `rebuild` to recover from a corrupt or version-skewed
     index: the canonical .md files are the source of truth, so the
     derived index can always be dropped and recreated. Missing
-    siblings are ignored (a recovery may run before some exist)."""
+    siblings are ignored (a recovery may run before some exist).
+
+    The -wal/-shm siblings are removed BEFORE the main .db so that any
+    single-point unlink failure leaves a CONSISTENT state — never a
+    stale WAL outliving the database it journals (a worse state than
+    before, for a primitive whose whole job is repair). On POSIX the
+    partial case is implausible (unlink permission is governed by the
+    parent dir), but a Windows file lock or a mixed-permission EACCES on
+    one sibling could otherwise delete the .db and orphan the WAL. A
+    genuine non-FileNotFoundError failure still propagates (the operator
+    must fix permissions); it just can no longer half-delete the index."""
     for sibling in (
-        path,
         path.with_suffix(path.suffix + "-wal"),
         path.with_suffix(path.suffix + "-shm"),
+        path,
     ):
         with contextlib.suppress(FileNotFoundError):
             sibling.unlink()
@@ -370,13 +380,23 @@ def _open_for_rebuild(path: Path) -> sqlite3.Connection:
         # there is nothing to clean up here — just nuke and reopen.
         _unlink_index_files(path)
         conn = _connect(path)
+    # From here `conn` is open; any failure must close it before
+    # propagating, or it leaks as a `ResourceWarning: unclosed database`
+    # on GC (the contract `_connect`'s docstring and the corrupt-index
+    # tests pin). The compound path — recovery reopen followed by a disk
+    # error in the post-unlink `_ensure_schema` — is the one that would
+    # otherwise leak.
     try:
-        _ensure_schema(conn)
-    except (sqlite3.DatabaseError, IndexVersionError):
+        try:
+            _ensure_schema(conn)
+        except (sqlite3.DatabaseError, IndexVersionError):
+            conn.close()
+            _unlink_index_files(path)
+            conn = _connect(path)
+            _ensure_schema(conn)
+    except BaseException:
         conn.close()
-        _unlink_index_files(path)
-        conn = _connect(path)
-        _ensure_schema(conn)
+        raise
     return conn
 
 

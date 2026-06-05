@@ -6216,8 +6216,6 @@ async def test_memory_proposals_accept_handler_converts_oserror_to_value_error(
             proposal_id="01PROPOSALOSERR",
             scopes=["tools"],
         )
-    assert _oserror_wrapped_as_value_error(
-        excinfo, "failed to write accepted proposal"
-    ), (
+    assert _oserror_wrapped_as_value_error(excinfo, "failed to accept proposal"), (
         f"regression: bare OSError leaked past memory_proposals accept. Got: {excinfo.value!r}"
     )

@@ -185,19 +185,20 @@ async def memory_proposals(
                 category=category,
             )
         except OSError as exc:
-            # A disk-level failure (ENOSPC/EIO/EACCES) in the durable
-            # write, landing AFTER the proposal was atomically claimed
-            # (removed) from the queue. Translate to ValueError so the
-            # MCP tool boundary returns a clean structured error instead
-            # of letting the bare OSError leak its absolute store path to
-            # the client — matching the sibling lifecycle handlers
-            # (remove/restore/verify/rename_scope) and the CLI twin
-            # `bettermemory proposals accept`. The claim-before-write order
-            # is the double-accept guard and must stay, so flag that the
-            # queue entry is already gone (loss window made visible).
+            # A disk-level failure (ENOSPC/EIO/EACCES). Translate to
+            # ValueError so the MCP tool boundary returns a clean
+            # structured error instead of letting the bare OSError leak
+            # its absolute store path to the client — matching the sibling
+            # lifecycle handlers (remove/restore/verify/rename_scope) and
+            # the CLI twin `bettermemory proposals accept`. The OSError can
+            # surface from EITHER the atomic queue claim (queue.remove,
+            # which rewrites the queue file) OR the durable store.write
+            # after it — so do NOT assert the entry is definitively gone;
+            # tell the caller to re-check before retrying.
             raise ValueError(
-                f"failed to write accepted proposal {proposal_id}: {exc} "
-                "(the proposal was already removed from the queue)"
+                f"failed to accept proposal {proposal_id}: {exc} "
+                "(it may have been removed from the queue — re-check with "
+                'memory_proposals(action="list") before retrying)'
             ) from exc
         if result["status"] == "accepted":
             deps.recorder.record(
