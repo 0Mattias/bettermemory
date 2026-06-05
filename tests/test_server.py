@@ -6126,9 +6126,7 @@ def _oserror_wrapped_as_value_error(excinfo: Any, marker: str) -> bool:
     while cur is not None and cur not in chain:
         chain.append(cur)
         cur = cur.__cause__ or cur.__context__
-    has_value_error = any(
-        isinstance(e, ValueError) and marker in str(e) for e in chain
-    )
+    has_value_error = any(isinstance(e, ValueError) and marker in str(e) for e in chain)
     has_oserror = any(isinstance(e, OSError) and e.errno == 28 for e in chain)
     return has_value_error and has_oserror
 
@@ -6220,4 +6218,6 @@ async def test_memory_proposals_accept_handler_converts_oserror_to_value_error(
         )
     assert _oserror_wrapped_as_value_error(
         excinfo, "failed to write accepted proposal"
-    ), f"regression: bare OSError leaked past memory_proposals accept. Got: {excinfo.value!r}"
+    ), (
+        f"regression: bare OSError leaked past memory_proposals accept. Got: {excinfo.value!r}"
+    )

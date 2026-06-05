@@ -1091,8 +1091,12 @@ def test_acknowledge_debt_json_output_carries_acknowledged_ids(
     # but zero explicit applies — the auto-fallback is doing all the work.
     # Pure-dead-weight (zero applies) is a DIFFERENT bucket (removal) and is
     # skipped here; see test_acknowledge_debt_skips_pure_dead_weight_memory.
-    recorder.record("use", ids=[m1.id], outcome="applied", auto=True, attribution="auto")
-    recorder.record("use", ids=[m2.id], outcome="applied", auto=True, attribution="auto")
+    recorder.record(
+        "use", ids=[m1.id], outcome="applied", auto=True, attribution="auto"
+    )
+    recorder.record(
+        "use", ids=[m2.id], outcome="applied", auto=True, attribution="auto"
+    )
 
     _cli_consolidate_acknowledge_debt(
         store=store,
