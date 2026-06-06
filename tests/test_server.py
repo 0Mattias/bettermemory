@@ -5767,7 +5767,9 @@ async def test_policy_lives_once_not_triplicated_in_descriptions(
     surface triplicated in the first place."""
     descs = await _lean_descriptions(tmp_path)
     # Exact policy phrasings (not generic words like "opt-in" that recur in
-    # legitimate feature reference). Each may live in <= 1 description.
+    # legitimate feature reference). Each must live in EXACTLY ONE default-on
+    # description. These are verbatim, case-sensitive substrings, so the list
+    # is wording-locked: it must be updated in lockstep with the DESC_* strings.
     policy_phrases = [
         "Using your stored preference",  # transparency / announce-on-search
         "do NOT call",  # opt-in retrieval restraint
@@ -5775,15 +5777,23 @@ async def test_policy_lives_once_not_triplicated_in_descriptions(
         "PROACTIVELY",  # proactive-write reflex
         "aggressive writing is safe",
     ]
-    multi = {
+    # `!= 1` (not `> 1`) is load-bearing: >1 catches re-triplication across
+    # descriptions (the regression this was written for), but 0 catches a
+    # reword that silently drops a phrase from its home — without which the
+    # guard would pass vacuously and stop tracking that rule. Three of these
+    # phrases ("do NOT call", "non-negotiable", "aggressive writing is safe")
+    # have no survival floor elsewhere in the suite, so this == 1 IS their floor.
+    wrong = {
         p: names
         for p in policy_phrases
-        if len(names := [n for n, d in descs.items() if p in d]) > 1
+        if len(names := [n for n, d in descs.items() if p in d]) != 1
     }
-    assert not multi, (
-        "policy phrases duplicated across multiple tool descriptions — these "
-        "should live once in the `instructions` block, with <=1 inline cue: "
-        f"{multi}"
+    assert not wrong, (
+        "each policy phrase must appear in exactly one default-on tool "
+        "description (canonical policy lives in the `instructions` block, with "
+        "one inline point-of-call cue). >1 = re-triplicated across "
+        "descriptions; 0 = a reword dropped the phrase and silently un-pinned "
+        f"it — update the wording-locked list in lockstep: {wrong}"
     )
 
 
