@@ -7,6 +7,27 @@ breaking changes, minor for additive features, patch for fixes. The
 [compatibility contract](CONTRIBUTING.md#versioning-and-the-compatibility-contract)
 spells out exactly what's stable.
 
+## 3.6.2 - 2026-06-06
+
+### Internal
+
+- **Closed the tool-description context valve.** The lean default-on tool
+  descriptions — resident in context on *every* turn, including the ~90% that
+  never touch memory — had grown to ~27.9 KB by restating the opt-in /
+  announce-on-search / proactive-write policy verbatim across three places: the
+  server `instructions` block, the `DESC_*` strings, and
+  `SYSTEM_PROMPT_ADDENDUM`. The instructions-block budget test had quietly made
+  descriptions the sanctioned overflow sink ("push detail down into the tool
+  descriptions, which are not truncated") with no counter-guard, so for a
+  project whose whole purpose is minimising per-turn context the valve was
+  leaking. Policy now lives once (the `instructions` block); `memory_search` and
+  `memory_write` keep genuine parameter reference plus at most one inline
+  point-of-call cue. Three regression guards close it permanently: a sum-ceiling
+  ratchet that fails toward collapsing policy rather than raising the cap, a
+  de-triplication invariant (each policy phrase in ≤1 default-on description),
+  and a dissent guard pinning the surviving point-of-call cues that the offline
+  eval can't yet protect.
+
 ## 3.6.1 - 2026-06-05
 
 ### Fixed
