@@ -5685,6 +5685,132 @@ def test_instructions_block_carries_load_bearing_phrases(server: Any) -> None:
 
 
 # ---------------------------------------------------------------------------
+# Tool-description surface budget — the counter-valve to the instructions block
+# ---------------------------------------------------------------------------
+#
+# `test_instructions_block_fits_under_truncation_budget` (above) caps the
+# server `instructions` block at ~1.7KB and, by its own docstring, directs
+# authors to "push the detail down into individual tool descriptions, which
+# are NOT subject to the same truncation." That made tool descriptions the
+# sanctioned overflow sink — with no counter-guard. The lean default-on
+# surface had grown to ~27.9KB of descriptions resident on EVERY turn (~16x
+# the 1.7KB policy home), with the opt-in / announce-on-search / proactive-
+# write policy restated verbatim in the descriptions on top of the
+# instructions block AND `SYSTEM_PROMPT_ADDENDUM`. For a project whose entire
+# purpose is minimising per-turn context, that valve was leaking. These guards
+# close it: a sum ceiling so the surface cannot silently re-bloat, and a
+# de-duplication invariant so policy lives once (the instructions block) with
+# at most ONE inline point-of-call cue per behaviour in a description.
+
+
+async def _lean_descriptions(tmp_path: Path) -> dict[str, str]:
+    """The SHIPPING-DEFAULT (lean, full_tool_surface=False) tool descriptions,
+    keyed by tool name. The lean surface is what a typical client pays in
+    context every turn, so it — not the 24-tool power-user surface — is what
+    these budget guards police."""
+    from bettermemory.builder import build_server
+    from bettermemory.config import (
+        BehaviorConfig,
+        Config,
+        ProposalsConfig,
+        StorageConfig,
+    )
+    from bettermemory.session import SessionState
+    from bettermemory.store import Store
+
+    cfg = Config(
+        storage=StorageConfig(directory=str(tmp_path)),
+        behavior=BehaviorConfig(full_tool_surface=False),
+        proposals=ProposalsConfig(),
+    )
+    mcp = build_server(config=cfg, store=Store(tmp_path), state=SessionState())
+    return {t.name: (t.description or "") for t in await mcp.list_tools()}
+
+
+async def test_default_on_descriptions_fit_budget(tmp_path: Path) -> None:
+    """Counter-valve to the instructions-block budget. The lean default-on
+    tool descriptions are resident in context on every turn — including the
+    90%+ of turns that never touch memory — so their total size is a per-turn
+    tax the project exists to minimise.
+
+    This is a RATCHET. When it trips, the first move is to collapse duplicated
+    POLICY prose into its canonical home (the `instructions` block), NOT to
+    raise the ceiling. Genuine field-discoverability reference (see
+    test_prompts.py's "pin each field in its DESC" philosophy) may grow a
+    description legitimately; when it does, offset it by trimming policy
+    redundancy elsewhere, or raise the ceiling deliberately with that
+    justification in the commit. Never raise it to re-admit triplicated
+    policy."""
+    descs = await _lean_descriptions(tmp_path)
+    total = sum(len(d) for d in descs.values())
+    # Ceiling sits below the pre-collapse 27,930 so the de-triplication win
+    # cannot silently regress; headroom is deliberately tight, mirroring the
+    # instructions-block guard.
+    assert total <= 27_800, (
+        f"lean default-on tool descriptions total {total} chars "
+        f"(~{total // 4} tokens), over the 27,800 ceiling. These are paid in "
+        f"context EVERY turn. Collapse duplicated policy into the "
+        f"`instructions` block (the canonical home) rather than raising this."
+    )
+
+
+async def test_policy_lives_once_not_triplicated_in_descriptions(
+    tmp_path: Path,
+) -> None:
+    """The load-bearing retrieval/write policy is canonical in the server
+    `instructions` block (pinned by
+    test_instructions_block_carries_load_bearing_phrases). A description may
+    carry AT MOST ONE inline point-of-call cue for a given rule — the H8
+    author hoisted these to the point of call deliberately, and that one copy
+    may be behaviourally load-bearing by proximity. What this guard forbids is
+    the rule reappearing across MULTIPLE descriptions, which is how the
+    surface triplicated in the first place."""
+    descs = await _lean_descriptions(tmp_path)
+    # Exact policy phrasings (not generic words like "opt-in" that recur in
+    # legitimate feature reference). Each may live in <= 1 description.
+    policy_phrases = [
+        "Using your stored preference",  # transparency / announce-on-search
+        "do NOT call",  # opt-in retrieval restraint
+        "non-negotiable",
+        "PROACTIVELY",  # proactive-write reflex
+        "aggressive writing is safe",
+    ]
+    multi = {
+        p: names
+        for p in policy_phrases
+        if len(names := [n for n, d in descs.items() if p in d]) > 1
+    }
+    assert not multi, (
+        "policy phrases duplicated across multiple tool descriptions — these "
+        "should live once in the `instructions` block, with <=1 inline cue: "
+        f"{multi}"
+    )
+
+
+async def test_point_of_call_cues_survive_in_descriptions(
+    tmp_path: Path,
+) -> None:
+    """Dissent guard for the description-collapse. Collapsing policy toward the
+    instructions block must NOT strip the single inline cue at the point of
+    call: the announce-on-search rule in memory_search and the proactive-write
+    reflex in memory_write may earn their compliance by sitting next to the
+    tool the model is about to invoke. A future "just make it shorter" pass
+    that removed them would be invisible to the offline eval (there is no
+    live-agent driver yet), so it is pinned here instead."""
+    descs = await _lean_descriptions(tmp_path)
+    assert "Using your stored preference" in descs.get("memory_search", ""), (
+        "memory_search lost its inline announce-on-search cue; the "
+        "transparency behaviour may be earned by proximity-to-call. Keep one "
+        "inline copy even though the full policy lives in the instructions "
+        "block."
+    )
+    assert "PROACTIVELY" in descs.get("memory_write", ""), (
+        "memory_write lost its inline proactive-write cue; keep one inline "
+        "copy at the point of call."
+    )
+
+
+# ---------------------------------------------------------------------------
 # Backward-scan early-exit in _already_recorded_pending_ids
 # ---------------------------------------------------------------------------
 

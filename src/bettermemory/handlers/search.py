@@ -33,14 +33,12 @@ if TYPE_CHECKING:
 
 
 DESC_MEMORY_SEARCH = (
-    "Before you call this: (1) Don't call unless the user references "
-    "shared context you don't have, or a request is ambiguous in a way "
-    "stored preferences could resolve. (2) If a hit shapes your reply, "
-    "announce it ('Using your stored preference for…') — non-negotiable.\n\n"
-    "Search stored memories. Default: do NOT call. Reach for it "
-    "only when the user references shared context you don't have "
-    '("my project", "the script we wrote") or a request is '
-    "ambiguous in a way stored preferences could resolve.\n\n"
+    "Search stored memories. Default: do NOT call — reach for it only "
+    "when the user references shared context you lack "
+    '("my project", "the script we wrote") or a request is ambiguous '
+    "in a way stored preferences could resolve. When a hit shapes your "
+    'reply, announce it ("Using your stored preference for…") — '
+    "non-negotiable. (Full policy: the server `instructions` block.)\n\n"
     "Returns ranked hits with snippets. Per-hit fields the model "
     "should branch on:\n"
     "- `relevance` (high/medium/low) — use this, not the raw score; "
@@ -97,8 +95,6 @@ DESC_MEMORY_SEARCH = (
     "`semantic` (needs embeddings extra), or `hybrid` (RRF of the "
     "first three). `hybrid` for paraphrase recall; `keyword` for "
     "literal-token queries.\n\n"
-    "When a hit shapes your reply, briefly say so ('Using your "
-    "stored preference for…') — the transparency requirement. "
     "Outcome is recorded automatically via the use_token within ~2 "
     "turns; only call memory_record_use to override "
     "(ignored / contradicted / corrected)."
