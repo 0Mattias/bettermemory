@@ -7,6 +7,28 @@ breaking changes, minor for additive features, patch for fixes. The
 [compatibility contract](CONTRIBUTING.md#versioning-and-the-compatibility-contract)
 spells out exactly what's stable.
 
+## 3.6.3 - 2026-06-06
+
+### Internal
+
+- **Audit-sweep follow-up to the 3.6.2 context-valve collapse.** Two findings
+  surfaced by an adversarially-verified diff-audit of the 3.6.2 commit, both
+  narrow:
+  - `DESC_MEMORY_WRITE`'s point-of-call trigger cue had drifted from "a project
+    decision *the user* concurred with" to "...*you* concurred with" during the
+    de-triplication. Every canonical policy home (the `instructions` block,
+    `prompts.py`, `docs/system_prompt.md`) kept the USER subject; only the inline
+    description drifted. "you concurred" reads as license for the model's own
+    agreement to mint a user-attributed `fact` — exactly the misattribution the
+    user-inference/veto design exists to prevent — so the inline cue is restored
+    to match canonical policy.
+  - `test_policy_lives_once_not_triplicated_in_descriptions` used `len(...) > 1`,
+    which only catches re-triplication of the *current* wording. Three of the
+    five tracked policy phrases had no survival floor elsewhere, so a harmless
+    reword would drop the substring to zero matches and the guard would pass
+    vacuously — silently un-tracking that rule. Tightened to `!= 1` so a reword
+    fails loudly; this now floors those three phrases.
+
 ## 3.6.2 - 2026-06-06
 
 ### Internal
