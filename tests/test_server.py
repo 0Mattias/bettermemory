@@ -5743,12 +5743,19 @@ async def test_default_on_descriptions_fit_budget(tmp_path: Path) -> None:
     policy."""
     descs = await _lean_descriptions(tmp_path)
     total = sum(len(d) for d in descs.values())
-    # Ceiling sits below the pre-collapse 27,930 so the de-triplication win
-    # cannot silently regress; headroom is deliberately tight, mirroring the
-    # instructions-block guard.
-    assert total <= 27_800, (
+    # The sweep is complete: 27,930 (pre-collapse) -> 27,681 (3.6.2 did the two
+    # policy-heaviest, memory_search/memory_write) -> 26,976 (the remaining 16
+    # default-on descriptions audited; residual policy-dup and cross-description
+    # restatements collapsed, all field reference preserved). The ceiling
+    # ratchets DOWN to lock that in; headroom is deliberately tight, mirroring
+    # the instructions-block guard. When it trips, collapse duplicated POLICY
+    # into the canonical `instructions` block, NOT raise the ceiling. A
+    # legitimate new field-pin (test_handler_descs_enumerate_*) may justify a
+    # deliberate raise — with that rationale in the commit, never to re-admit
+    # triplicated policy.
+    assert total <= 27_100, (
         f"lean default-on tool descriptions total {total} chars "
-        f"(~{total // 4} tokens), over the 27,800 ceiling. These are paid in "
+        f"(~{total // 4} tokens), over the 27,100 ceiling. These are paid in "
         f"context EVERY turn. Collapse duplicated policy into the "
         f"`instructions` block (the canonical home) rather than raising this."
     )
