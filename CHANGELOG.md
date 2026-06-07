@@ -7,6 +7,27 @@ breaking changes, minor for additive features, patch for fixes. The
 [compatibility contract](CONTRIBUTING.md#versioning-and-the-compatibility-contract)
 spells out exactly what's stable.
 
+## 3.6.4 - 2026-06-06
+
+### Internal
+
+- **Completed the tool-description context-valve sweep.** 3.6.2 closed the valve
+  for the two policy-heaviest default-on tool descriptions (`memory_search`,
+  `memory_write`) — "first 2 of 18." This finishes it: the remaining 16
+  default-on descriptions were audited (one finder per description, every
+  proposed cut adversarially verified to preserve information and discoverability)
+  and their residual redundancy collapsed, with **all** field/parameter reference
+  and test-pinned substrings preserved. `memory_write`'s trigger→category
+  enumeration (a second verbatim copy of the instructions-block policy) became a
+  redirect; `memory_verify`'s optimistic-concurrency paragraph now cross-references
+  `memory_update` instead of duplicating it; `memory_scope_overview` shed two
+  illustrative restatements; `episode_search`/`episode_promote` were tightened.
+  Net: the lean default-on descriptions resident on **every** turn dropped from
+  27,681 to 26,976 chars (~6,920 → ~6,744 tokens). The ratchet ceiling guarding
+  this (`test_default_on_descriptions_fit_budget`) drops 27,800 → 27,100 to lock
+  the win in; policy lives once (the `instructions` block), descriptions keep
+  genuine field reference plus at most one inline point-of-call cue.
+
 ## 3.6.3 - 2026-06-06
 
 ### Internal
