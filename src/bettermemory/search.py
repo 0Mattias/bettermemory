@@ -995,12 +995,25 @@ def find_similar(
         except Exception as exc:  # noqa: BLE001 — degrade to Jaccard dedup.
             # A loaded model raising at encode() time must not crash the
             # write-dedup gate (memory_write calls find_similar BEFORE it
-            # commits). Fall through to the lexical Jaccard path below —
-            # which applies its own default thresholds — so the write still
-            # completes with lexical dedup instead of erroring out.
+            # commits). Degrade to lexical Jaccard dedup so the write still
+            # completes — but with the Jaccard-NATURAL thresholds, NOT the
+            # ones the caller passed. Thresholds supplied alongside a
+            # semantic_model are COSINE-calibrated (the write-dedup gate
+            # passes semantic_high/medium_threshold = 0.85/0.65); forwarding
+            # those to the Jaccard scorer — whose natural high/medium are
+            # HIGH_SIMILARITY/MEDIUM_SIMILARITY (0.75/0.40) — would silently
+            # neuter the gate, since Jaccard rarely reaches 0.85, letting a
+            # near-duplicate the gate should BLOCK commit as a parallel
+            # duplicate. Dedup at the lexical scorer's own calibration.
             log.warning(
                 "semantic dedup failed at encode time (%s); falling back to Jaccard",
                 exc,
+            )
+            return _find_similar_jaccard(
+                new_body,
+                existing,
+                high_threshold=HIGH_SIMILARITY,
+                medium_threshold=MEDIUM_SIMILARITY,
             )
 
     return _find_similar_jaccard(
@@ -1302,13 +1315,21 @@ def find_similar_tombstones(
                 ),
             )
         except Exception as exc:  # noqa: BLE001 — degrade to Jaccard dedup.
-            # Same fail-soft as find_similar: a runtime encode() failure
-            # must not crash the tombstone-aware dedup pass. Fall through to
-            # the lexical Jaccard path below.
+            # Same fail-soft as find_similar, with the same threshold care:
+            # the caller's cosine thresholds (0.85/0.65) must NOT be applied
+            # to the Jaccard scorer (natural 0.75/0.40), or a near-duplicate
+            # tombstone would stop surfacing the previously_removed warning.
+            # Use the Jaccard-natural defaults.
             log.warning(
                 "semantic tombstone dedup failed at encode time (%s); "
                 "falling back to Jaccard",
                 exc,
+            )
+            return _find_similar_tombstones_jaccard(
+                new_body,
+                tombstoned,
+                high_threshold=HIGH_SIMILARITY,
+                medium_threshold=MEDIUM_SIMILARITY,
             )
 
     return _find_similar_tombstones_jaccard(

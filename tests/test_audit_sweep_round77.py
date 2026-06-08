@@ -176,6 +176,61 @@ def test_find_similar_tombstones_falls_back_to_jaccard_when_model_raises() -> No
     assert hits
 
 
+def test_find_similar_fallback_uses_jaccard_thresholds_not_cosine() -> None:
+    """Diff-audit catch: when encode() fails, the Jaccard fallback must use
+    the Jaccard-natural thresholds (0.75/0.40), NOT the cosine thresholds
+    (0.85/0.65) the write-dedup gate passes. Otherwise a near-duplicate
+    (Jaccard ~0.80) the gate should BLOCK slips through as merely 'medium'
+    and a silent parallel duplicate is committed."""
+    from bettermemory.search import find_similar
+
+    existing = [
+        _memory("The user prefers code-driven tutorials over conceptual explanations")
+    ]
+    hits = find_similar(
+        "User prefers code-driven tutorials rather than conceptual explanations",
+        existing,
+        semantic_model=_RaisingSemanticModel(),
+        high_threshold=0.85,  # cosine defaults — exactly what the write-dedup gate passes
+        medium_threshold=0.65,
+    )
+    assert hits, "near-duplicate should still be flagged via the Jaccard fallback"
+    assert hits[0].relevance == "high", (
+        f"expected 'high' (Jaccard 0.75 natural threshold), got "
+        f"{hits[0].relevance!r} — fallback wrongly applied the cosine 0.85 threshold"
+    )
+
+
+def test_find_similar_tombstones_fallback_uses_jaccard_thresholds() -> None:
+    """The tombstone-aware path has the same threshold contract."""
+    from bettermemory.models import TombstonedMemory
+    from bettermemory.search import find_similar_tombstones
+
+    now = datetime.now(timezone.utc)
+    tomb = TombstonedMemory(
+        id=generate_ulid(),
+        created=now,
+        updated=now,
+        scopes=["tools"],
+        confidence=Confidence.MEDIUM,
+        source=Source.EXPLICIT,
+        body="The user prefers code-driven tutorials over conceptual explanations",
+        removed=now,
+        removed_reason="superseded",
+    )
+    hits = find_similar_tombstones(
+        "User prefers code-driven tutorials rather than conceptual explanations",
+        [tomb],
+        semantic_model=_RaisingSemanticModel(),
+        high_threshold=0.85,
+        medium_threshold=0.65,
+    )
+    assert hits
+    assert hits[0].relevance == "high-removed", (
+        f"expected 'high-removed', got {hits[0].relevance!r}"
+    )
+
+
 # --------------------------------------------------------------------------
 # Finding 3 (🟡) — scope-blind FTS candidate prefilter under-returns
 # --------------------------------------------------------------------------
