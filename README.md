@@ -6,11 +6,29 @@
 [![Python](https://img.shields.io/badge/python-3.11%E2%80%933.14-blue.svg)](https://www.python.org/downloads/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
-### Memory you can verify.
+**Memory you can verify** — local-first, MCP-native memory for AI coding agents where every fact comes back with a verdict on whether it's *still true*.
 
-Local-first, MCP-native memory for AI coding agents — where every retrieved fact comes back with a verdict on whether it's **still true**.
+Most memory tools store a fact and hand it back months later as if nothing changed — but files move, preferences change, and a commit two days ago can quietly invalidate a config note. bettermemory attaches a **staleness verdict** to every retrieval (calendar age **+** moved file paths **+** commits since the fact was last confirmed), so your agent spot-checks *before* it trusts. Plain markdown on disk. No cloud, no database, no account. MIT.
 
-Most memory layers store a fact and hand it back months later as if nothing changed. But files move. Preferences get revised. A commit two days ago quietly invalidated that config note. bettermemory attaches a **staleness verdict** to every retrieval — calendar age **+** moved file paths **+** commits since the fact was last confirmed — so the model spot-checks *before* it trusts. Plain markdown on disk. MIT. No cloud, no database, no account.
+## Quick start
+
+**Claude Code** — one marketplace, one install:
+
+```text
+/plugin marketplace add 0Mattias/bettermemory
+/plugin install bettermemory@bettermemory
+```
+
+**Any other MCP client** — Claude Desktop, Cursor, Continue, Cline:
+
+```sh
+uv tool install bettermemory        # or: pipx install / pip install
+bettermemory init --client claude-desktop
+```
+
+That's it — the server registers itself in the right config file and runs over stdio. No database to provision, no API key, no account. Per-client setup → [`docs/clients.md`](docs/clients.md); deeper install notes → [`docs/installation.md`](docs/installation.md).
+
+## Why it's different
 
 ```jsonc
 // The model asks: "where does the auth middleware live again?"
@@ -33,24 +51,6 @@ Most memory layers store a fact and hand it back months later as if nothing chan
 3. **Surfaces the retrievals the model never reaches for** — the search-result equivalent of a dead-letter queue, so over-surfaced or stale memories become visible instead of silently dragging on every turn.
 
 Retrieval is opt-in; writes about *you* always stage for your confirmation. Works with Claude Code, Claude Desktop, Cursor, Continue, Cline, and any MCP client.
-
-## Install
-
-**Claude Code** — one marketplace, one install:
-
-```text
-/plugin marketplace add 0Mattias/bettermemory
-/plugin install bettermemory@bettermemory
-```
-
-**Any other MCP client** (Claude Desktop, Cursor, Continue, Cline):
-
-```sh
-uv tool install bettermemory          # or: pipx install / pip install
-bettermemory init --client claude-desktop
-```
-
-That's it — the server registers itself in the right config file. Full per-client setup in [`docs/clients.md`](docs/clients.md); deeper install notes in [`docs/installation.md`](docs/installation.md).
 
 ## What it looks like in practice
 

@@ -7,6 +7,77 @@ breaking changes, minor for additive features, patch for fixes. The
 [compatibility contract](CONTRIBUTING.md#versioning-and-the-compatibility-contract)
 spells out exactly what's stable.
 
+## 3.6.5 - 2026-06-08
+
+The first whole-codebase shippability sweep run *at the shipped tree* (prior
+audit rounds had only diff-audited, so files no recent change touched had
+never been read end to end) surfaced ten correctness/security gaps in stable
+code. Every fix carries a fail-before/pass-after regression test; the
+embedding-dedup fix below was itself caught and corrected by an adversarial
+review of the sweep commit.
+
+### Fixed
+
+- **Read-path DoS (`_frontmatter`).** A memory file with deeply-nested YAML
+  frontmatter raised `RecursionError` during parse — which is not a
+  `yaml.YAMLError`, so it escaped both the parser's catch and the store's
+  malformed-file skip. One ~1 KB crafted file (a hand-edit, or a hostile
+  `sync pull` writing into the memory directory) then propagated out of
+  `load_all` / `load_one` / `load_tombstones` / `rename_scope` and DoS'd reads
+  of the *whole* store. It is now translated to `ValueError`, so the existing
+  skip drops just the bad file and the rest of the store stays readable —
+  restoring the module's "one corrupt file shouldn't blind the store" contract
+  on the read side (the write side already guarded nesting depth).
+- **Embedding `encode()` fail-open (`search`).** A loaded embedding model that
+  raised at `encode()` time (a device / OOM / tokenizer fault — distinct from
+  the already-handled "model failed to load" case) crashed the live
+  `memory_write` dedup gate and default-mode `memory_search` instead of
+  degrading to lexical scoring. All four semantic dispatch points (hybrid +
+  semantic search, active + tombstone dedup) now fall back to keyword / Jaccard
+  with a warning. The dedup fallback uses the Jaccard-natural thresholds (not
+  the cosine thresholds the write-dedup gate supplies), so a near-duplicate the
+  gate should block is still caught rather than committed as a silent parallel
+  duplicate.
+- **Scoped search under-return (`search`).** On a store large enough to use the
+  FTS5 candidate pre-filter (>500 memories), a scoped query whose in-scope
+  matches all ranked outside the global top-50 returned empty, because the
+  pre-filter queried the index scope-blind. It now threads the scope filter
+  into the index query.
+- **`migrate` trust-boundary gaps.** `bettermemory migrate` no longer rewrites
+  a memory whose `schema_version` is newer than this reader supports (matching
+  the store's forward-compatibility gate), and no longer follows a symlinked
+  `.md` (matching the store iterators' symlink rejection) — both close
+  `sync pull` exposure.
+- **`reindex` exit code.** A write failure during `bettermemory reindex`
+  (read-only directory, full disk, SQLite I/O error) now exits 2 with a clean
+  `error:` message like the other write-capable CLI commands, instead of
+  dumping a traceback and exiting 1.
+
+### Changed
+
+- **Config validation (`config`).** `[scopes] allowed` now rejects a bare
+  string scalar — a forgotten-brackets `allowed = "myproject"` previously
+  char-exploded into a per-character allowlist that rejected every real write —
+  and the numeric config fields report a clear, located error on a non-numeric
+  value instead of an opaque `int()` / `float()` traceback escaping
+  `load_config` (which crashed `serve` startup).
+
+### Internal
+
+- **Event-log append cost (`events`).** Orphan-rotation recovery, which scans
+  the (shared) store directory, no longer runs on every event append — it is
+  deferred to the rotation path, where it is actually needed. On a large store
+  this removes an O(directory-size) scan from every tool call that records an
+  event.
+
+### Documentation
+
+- **README top rewritten for fast comprehension and install.** A one-line value
+  proposition, a tighter opening pitch, and a prominent **Quick start** section
+  pulled ahead of the deep-dive, so a first-time reader grasps what the project
+  is and how to install it before the differentiators. ROADMAP refreshed to the
+  current release and test count.
+
 ## 3.6.4 - 2026-06-06
 
 ### Internal

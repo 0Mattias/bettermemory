@@ -2,7 +2,7 @@
 
 A published roadmap is part of the pitch: people choosing between memory layers want to know where a project is going, not just where it's been. This lists the planned work in rough priority order. Plans change — **the [CHANGELOG](../CHANGELOG.md) is the source of truth for what shipped.**
 
-## Where we are — v3.5.0 (June 2026)
+## Where we are — v3.6.5 (June 2026)
 
 The core is built and battle-hardened. The differentiated surface is live; the recent releases have been correctness sweeps, not feature pushes.
 
@@ -14,7 +14,7 @@ The core is built and battle-hardened. The differentiated surface is live; the r
 - **The eval surface** — `bettermemory eval` reports `memory_helped_rate` / `endorsement_rate` / `silent_miss_rate` with Wilson 95% CIs; `--tool-usage` and `--threshold-sweep` back the calibration decisions. The comparative harness lives at `tests/eval/`.
 - **Compounding across agents and time** — the `episode_*` journal tier, swarm fan-in (`episode_write` / `episode_search(swarm_id=…)`), opt-in auto-consolidation, and write-reflex proposals (`memory_proposals` + `[proposals]`).
 - **Scale & ops** — FTS5 inverted index above ~500 memories, git-based cross-host `sync`, a FastAPI curation UI, and a `doctor` that catches the common install failures.
-- **Hardened** — whole-tree correctness audits (3.3.4, 3.5.0), concurrent multi-agent store access (3.2.0), and cross-platform (incl. Windows) fixes, each landed with a regression test. ~1,940 tests, 80% coverage floor, Python 3.11–3.14, MIT.
+- **Hardened** — whole-codebase correctness audits (3.3.4, 3.5.0, 3.6.5), concurrent multi-agent store access (3.2.0), and cross-platform (incl. Windows) fixes, each landed with a regression test. ~2,050 tests, 80% coverage floor, Python 3.11–3.14, MIT.
 
 ## Recently shipped
 
@@ -25,7 +25,7 @@ The CHANGELOG has the release-by-release detail; the arc, by theme:
 - **Dreaming defense via local consolidation (2.5.0, `--from-transcript` 2.6.0).** Where Anthropic's Dreaming consolidates invisibly, `--llm` renders every proposal as a diff with rationale and refuses to commit without explicit accept.
 - **Compounding memory (3.1.0 → 3.3.0).** The `episode_*` tier, swarm fan-in for multi-agent run-state, opt-in self-improving consolidation, and the write-reflex proposal queue — all off by default, all auditable.
 - **The lean default surface (3.4.0).** Dropped the default tool count from 24 to 18 on dogfood evidence (`eval --tool-usage`), trimming the per-turn tool-description context the project exists to minimise.
-- **Battle-hardening (3.2.x → 3.5.0).** Concurrent-access store hardening, two whole-tree correctness audits, and a run of Windows / cross-platform fixes — including correctness gaps where a headline feature was silently not firing in practice.
+- **Battle-hardening (3.2.x → 3.6.5).** Concurrent-access store hardening, whole-codebase correctness audits, and a run of Windows / cross-platform fixes — including correctness gaps where a headline feature was silently not firing in practice. The 3.6.5 sweep was the first run *at the shipped tree* (every source file read end to end, not just the recent diff), catching a whole-store read-path DoS and an embedding fail-open that diff-only audits had never looked at.
 
 ## Planned
 
