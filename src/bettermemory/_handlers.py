@@ -155,9 +155,22 @@ class ToolHandlers:
         except ValueError:
             return self._INDEX_THRESHOLD_DEFAULT
 
-    def _load_search_candidates(self, query: str) -> list[Any]:
+    def _load_search_candidates(
+        self, query: str, scopes: list[str] | None = None
+    ) -> list[Any]:
         """Either load all active memories or pre-filter via the FTS5
         index, depending on store size and index health.
+
+        When `scopes` is given it is threaded into the FTS pre-filter so
+        the bounded candidate slice is drawn from IN-SCOPE matches. Without
+        it the index returns the 50 globally-highest-BM25 rows and the
+        authoritative scope filter (`search.run_search`) narrows them — so
+        on a large indexed store a scoped query whose in-scope matches all
+        rank #51+ globally would come back empty even though matching
+        memories exist. The index's `scopes_text LIKE '% scope %'` filter
+        is the same exact, space-padded set-membership the authoritative
+        `memory_scope_set & scope_filter` applies, so threading it never
+        drops a candidate the authoritative pass would have kept.
 
         The current heuristic: walk the index status once. If the
         on-disk index exists, has `indexed_count >= threshold`, and the
@@ -185,7 +198,9 @@ class ToolHandlers:
         # default max_results of 5 — the downstream ranker reorders
         # within the candidate pool, so we want enough variety for
         # recency / scope-boost / coverage to find the best 5.
-        candidate_pairs = _index.query(self.store.root, query, max_results=50)
+        candidate_pairs = _index.query(
+            self.store.root, query, scopes=scopes, max_results=50
+        )
         if not candidate_pairs:
             # Stale index or query that genuinely matches nothing —
             # fall back to load_all so we don't silently miss recent

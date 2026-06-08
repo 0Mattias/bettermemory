@@ -26,6 +26,7 @@ from pathlib import Path
 from typing import Iterator
 
 from . import _frontmatter as frontmatter
+from .models import SCHEMA_VERSION
 from .origin import Origin, capture
 from .store import TOMBSTONE_DIR, _atomic_write_post, _locked
 
@@ -194,6 +195,26 @@ def migrate_origin_in_directory(
                 report.malformed.append(path)
                 continue
 
+            # Forward-compat gate — mirror `store._load_path` (schema_version
+            # > SCHEMA_VERSION is refused). Both store load paths REFUSE to
+            # load a future-schema file, deliberately, so its fields (whose
+            # semantics a major bump may redefine) are never misinterpreted.
+            # The migrator must honour the same gate: stamping a
+            # current-semantics `origin` block into a file the reader won't
+            # accept writes a v-current interpretation into a record the rest
+            # of the system treats as unsupported. Leave it untouched (skip,
+            # not malformed) — exactly as `load_all` leaves it out of the
+            # active surface.
+            raw_version = post.metadata.get("schema_version", 1)
+            try:
+                on_disk_version = int(raw_version)
+            except (TypeError, ValueError):
+                # Non-integer schema_version — `store._load_path` rejects this
+                # too. Don't touch a file the reader won't load.
+                continue
+            if on_disk_version > SCHEMA_VERSION:
+                continue
+
             if "origin" in post.metadata and post.metadata["origin"]:
                 report.already_had_origin += 1
                 continue
@@ -266,6 +287,15 @@ def _iter_active_memory_files(memory_dir: Path) -> Iterator[Path]:
     if not memory_dir.exists():
         return
     for entry in memory_dir.iterdir():
+        # Reject symlinks BEFORE `is_file()` (which follows them and would
+        # return True for a symlink -> regular file). Memories are regular
+        # files in this directory; a symlink `.md` is never one we wrote,
+        # and following it would let the locked read-modify-write below
+        # read — and rewrite through — an arbitrary target a hostile
+        # `sync pull` planted in the memory dir. Mirrors the store
+        # iterators' `not entry.is_symlink()` rejection (store.py).
+        if entry.is_symlink():
+            continue
         if not entry.is_file():
             continue
         if entry.suffix != ".md":

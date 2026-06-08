@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import sqlite3
 import sys
 from typing import Any
 
@@ -49,12 +50,29 @@ def add_subparser(
     return parser
 
 
-def run(args: argparse.Namespace) -> None:
-    """Dispatch handler for ``bettermemory reindex``."""
-    _cli_reindex(json_out=args.json, embeddings=args.embeddings)
+def run(
+    args: argparse.Namespace,
+    *,
+    sub_parser: argparse.ArgumentParser,
+) -> None:
+    """Dispatch handler for ``bettermemory reindex``.
+
+    ``sub_parser`` is forwarded into ``_cli_reindex`` so a write failure in
+    the rebuild (read-only memory dir, full disk, a SQLite I/O error)
+    surfaces through ``parser.error(...)`` — a clean ``bettermemory
+    reindex: error: …`` + exit 2 — instead of an uncaught traceback +
+    exit 1, mirroring how ``export`` / ``rename-scope`` / ``proposals``
+    thread their subparser through.
+    """
+    _cli_reindex(json_out=args.json, embeddings=args.embeddings, parser=sub_parser)
 
 
-def _cli_reindex(*, json_out: bool, embeddings: bool = False) -> None:
+def _cli_reindex(
+    *,
+    json_out: bool,
+    embeddings: bool = False,
+    parser: argparse.ArgumentParser | None = None,
+) -> None:
     """`bettermemory reindex` — drop and rebuild the FTS5 index from
     the on-disk memories.
 
@@ -83,12 +101,27 @@ def _cli_reindex(*, json_out: bool, embeddings: bool = False) -> None:
     store = ctx.store
 
     before = _index.status(directory)
-    count = _index.rebuild(directory, store.iter_active())
-    after = _index.status(directory)
-
     embeddings_report: dict[str, Any] | None = None
-    if embeddings:
-        embeddings_report = _reindex_embeddings(config, store)
+    try:
+        count = _index.rebuild(directory, store.iter_active())
+        after = _index.status(directory)
+        if embeddings:
+            embeddings_report = _reindex_embeddings(config, store)
+    except (OSError, sqlite3.Error) as exc:
+        # A genuine write failure during rebuild — read-only memory dir,
+        # ENOSPC, EACCES on the `.index.db` path, or a SQLite I/O error
+        # mid-transaction — raises OSError / sqlite3.Error (the latter is
+        # NOT an OSError, so it would otherwise escape). Route it through
+        # `parser.error(...)` for a clean `bettermemory reindex: error: …`
+        # + exit 2, matching the sibling write commands (export /
+        # rename-scope / proposals) instead of dumping a traceback and
+        # exiting 1. `_index.rebuild` is transactional, so the prior index
+        # is left intact. The `parser is None` fallback (direct
+        # `_cli_reindex` callers / tests) re-raises so programmatic callers
+        # still see the exception.
+        if parser is not None:
+            parser.error(str(exc))
+        raise
 
     if json_out:
         payload: dict[str, Any] = {

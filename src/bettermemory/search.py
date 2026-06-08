@@ -29,6 +29,7 @@ is unchanged — it uses Jaccard or cosine over the existing
 
 from __future__ import annotations
 
+import logging
 import math
 import re
 from datetime import datetime, timezone
@@ -37,6 +38,8 @@ from typing import Any, Callable, Literal
 from .models import Memory, MemoryHit, SimilarHit, TombstonedMemory, snippet_for
 from .origin import should_include_for_caller
 from .verify import detect_path_drift
+
+log = logging.getLogger("bettermemory.search")
 
 # Search modes exposed via `search(mode=...)`. Default is `hybrid` since
 # 2.6.8 — the keyword scorer lacks IDF weighting and underperforms on
@@ -856,14 +859,28 @@ def search(
         # narrowing doesn't survive the assert-via-raise idiom across the
         # block boundary. Re-assert for the type checker.
         assert semantic_model is not None
-        scored = _score_semantic(
-            candidates,
-            query,
-            semantic_model,
-            now=now,
-            half_life_days=half_life_days,
-            matched_terms_fallback=list(dict.fromkeys(query_tokens)),
-        )
+        try:
+            scored = _score_semantic(
+                candidates,
+                query,
+                semantic_model,
+                now=now,
+                half_life_days=half_life_days,
+                matched_terms_fallback=list(dict.fromkeys(query_tokens)),
+            )
+        except Exception as exc:  # noqa: BLE001 — degrade to keyword on encode failure.
+            # A LOADED model can still raise at encode() time (device fault,
+            # OOM on a large body, a tokenizer edge case). Explicit semantic
+            # mode must not crash the search on that — fall back to the
+            # keyword ranking so the caller still gets results.
+            log.warning(
+                "semantic search failed at encode time (%s); "
+                "falling back to keyword ranking",
+                exc,
+            )
+            scored = _score_keyword(
+                candidates, query_tokens, now=now, half_life_days=half_life_days
+            )
         scored.sort(key=lambda x: (x[1], x[0].created, x[0].id), reverse=True)
     else:  # mode == "hybrid"
         rankings: list[list[tuple[Memory, float, list[str]]]] = [
@@ -875,16 +892,27 @@ def search(
             ),
         ]
         if semantic_model is not None:
-            rankings.append(
-                _score_semantic(
-                    candidates,
-                    query,
-                    semantic_model,
-                    now=now,
-                    half_life_days=half_life_days,
-                    matched_terms_fallback=list(dict.fromkeys(query_tokens)),
+            try:
+                rankings.append(
+                    _score_semantic(
+                        candidates,
+                        query,
+                        semantic_model,
+                        now=now,
+                        half_life_days=half_life_days,
+                        matched_terms_fallback=list(dict.fromkeys(query_tokens)),
+                    )
                 )
-            )
+            except Exception as exc:  # noqa: BLE001 — degrade to lexical fusion.
+                # The "hybrid gracefully degrades" guarantee must cover a
+                # runtime encode() failure of a loaded model, not just the
+                # model-is-None case: fuse the keyword+bm25 rankings already
+                # computed instead of crashing the search.
+                log.warning(
+                    "semantic ranking failed at encode time (%s); "
+                    "fusing keyword+bm25 only",
+                    exc,
+                )
         scored = _hybrid_fuse(rankings, rrf_k=rrf_k)
 
     return [
@@ -954,15 +982,26 @@ def find_similar(
     tokens, in Jaccard mode).
     """
     if semantic_model is not None:
-        return _find_similar_semantic(
-            new_body,
-            existing,
-            semantic_model,
-            high_threshold=(high_threshold if high_threshold is not None else 0.85),
-            medium_threshold=(
-                medium_threshold if medium_threshold is not None else 0.65
-            ),
-        )
+        try:
+            return _find_similar_semantic(
+                new_body,
+                existing,
+                semantic_model,
+                high_threshold=(high_threshold if high_threshold is not None else 0.85),
+                medium_threshold=(
+                    medium_threshold if medium_threshold is not None else 0.65
+                ),
+            )
+        except Exception as exc:  # noqa: BLE001 — degrade to Jaccard dedup.
+            # A loaded model raising at encode() time must not crash the
+            # write-dedup gate (memory_write calls find_similar BEFORE it
+            # commits). Fall through to the lexical Jaccard path below —
+            # which applies its own default thresholds — so the write still
+            # completes with lexical dedup instead of erroring out.
+            log.warning(
+                "semantic dedup failed at encode time (%s); falling back to Jaccard",
+                exc,
+            )
 
     return _find_similar_jaccard(
         new_body,
@@ -1252,15 +1291,25 @@ def find_similar_tombstones(
         return []
 
     if semantic_model is not None:
-        return _find_similar_tombstones_semantic(
-            new_body,
-            tombstoned,
-            semantic_model,
-            high_threshold=(high_threshold if high_threshold is not None else 0.85),
-            medium_threshold=(
-                medium_threshold if medium_threshold is not None else 0.65
-            ),
-        )
+        try:
+            return _find_similar_tombstones_semantic(
+                new_body,
+                tombstoned,
+                semantic_model,
+                high_threshold=(high_threshold if high_threshold is not None else 0.85),
+                medium_threshold=(
+                    medium_threshold if medium_threshold is not None else 0.65
+                ),
+            )
+        except Exception as exc:  # noqa: BLE001 — degrade to Jaccard dedup.
+            # Same fail-soft as find_similar: a runtime encode() failure
+            # must not crash the tombstone-aware dedup pass. Fall through to
+            # the lexical Jaccard path below.
+            log.warning(
+                "semantic tombstone dedup failed at encode time (%s); "
+                "falling back to Jaccard",
+                exc,
+            )
 
     return _find_similar_tombstones_jaccard(
         new_body,

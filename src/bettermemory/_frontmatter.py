@@ -143,6 +143,26 @@ def loads(text: str) -> Post:
         metadata = yaml.load(yaml_text, Loader=yaml.SafeLoader) or {}
     except yaml.YAMLError as exc:
         raise ValueError(f"malformed YAML: {exc}") from exc
+    except RecursionError as exc:
+        # A deeply-nested YAML document — the classic nesting bomb, e.g.
+        # `id: [[[[ ... 600 levels ... ]]]]` or block-style `- - - -` —
+        # drives the pure-Python `yaml.SafeLoader` past Python's recursion
+        # limit. `RecursionError` subclasses `RuntimeError`, NOT
+        # `yaml.YAMLError`, so the catch above misses it and it would
+        # escape `loads`. The store's malformed-file skip path only
+        # catches `(ValueError, KeyError, OSError)`, so an uncaught
+        # RecursionError propagates out of every read surface
+        # (`load_all` / `load_one` / `load_tombstones` / `rename_scope` /
+        # `_find_path_for_id`) — one crafted ~1 KB file (a hand-edit, or a
+        # hostile `sync pull` writing into the memory dir) would DoS reads
+        # of the WHOLE store. That is the exact fail-open this module's
+        # "one corrupt file shouldn't blind the rest of the store"
+        # contract exists to prevent. The bomb is also under the 64 KB
+        # `_MAX_YAML_BYTES` cap (~1 KB of brackets already overflows the
+        # stack), so that guard doesn't fire. Translate to ValueError so
+        # the skip path engages — the read-side mirror of the write-side
+        # `_guard_dump_expansion` depth guard (`_MAX_DUMP_DEPTH`).
+        raise ValueError(f"malformed YAML: nesting too deep ({exc})") from exc
     if not isinstance(metadata, dict):
         # Frontmatter must be a mapping; anything else is malformed.
         raise ValueError("frontmatter metadata must be a YAML mapping")

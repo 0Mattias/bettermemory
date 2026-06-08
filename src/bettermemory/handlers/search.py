@@ -231,7 +231,7 @@ async def memory_search(
             # session" workflow.
             memories = [m for m in deps.store.load_all() if m.updated > prior_boundary]
     else:
-        memories = deps._load_search_candidates(query)
+        memories = deps._load_search_candidates(query, scopes=scopes)
 
     hits = run_search(
         memories,

@@ -313,10 +313,6 @@ class Recorder:
         crashed rotations and either complete them (no matching `.gz`)
         or unlink them (matching `.gz` exists — the gz is canonical).
         """
-        # Recovery first — bring any prior crashed rotation to a clean
-        # state before we start a new one. Cheap when nothing's orphaned.
-        self._recover_orphan_rotations()
-
         try:
             size = self.path.stat().st_size
         except FileNotFoundError:
@@ -334,6 +330,18 @@ class Recorder:
         # explicitly-constructed Recorder can still pass <= 0, so guard here.
         if self.max_bytes <= 0 or size < self.max_bytes:
             return
+
+        # Recovery runs ONLY now, when a rotation is actually due — not at the
+        # top of every append. `_recover_orphan_rotations()` does a full
+        # `iterdir()` of the recorder root, which is the SHARED store
+        # directory (memory `.md` files + episodes + archives), so running it
+        # per-append turned every event write into an O(directory-size) scan
+        # on a large store. Orphan `.rotating` files only arise from a crashed
+        # rotation, are still read correctly until reclaimed, and the only
+        # producer of a new orphan is a rotation — so sweeping here, right
+        # before we start one, recovers any prior crash without taxing the
+        # common no-rotation append path.
+        self._recover_orphan_rotations()
 
         ts = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
         archive = self.root / f"{ARCHIVE_PREFIX}{ts}{ARCHIVE_SUFFIX}"

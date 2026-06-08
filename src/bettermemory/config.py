@@ -630,6 +630,95 @@ def _coerce_positive_int(value: object, default: int) -> int:
     return coerced
 
 
+def _malformed_config_msg(
+    label: str, value: object, config_path: Path | None, expected: str
+) -> str:
+    """Clear, located error for a mistyped config value — names the
+    section/key, the offending value, and the file, so a bad TOML entry
+    fails with ``malformed config in <path>: [section] key = '…' must be
+    <expected>`` instead of an opaque stdlib ``int()``/``float()``
+    traceback escaping ``load_config`` (which crashes ``bettermemory
+    serve`` startup with no hint at the culprit key)."""
+    where = f" in {config_path}" if config_path is not None else ""
+    return f"malformed config{where}: {label} = {value!r} must be {expected}"
+
+
+def _coerce_int(
+    value: object, default: int, *, label: str, config_path: Path | None
+) -> int:
+    """Coerce a TOML value to ``int``, raising a located ValueError on a
+    non-numeric value rather than letting a bare ``int(...)`` escape
+    ``load_config``. Valid-input behaviour is identical to the prior bare
+    ``int(...)``: a real int (or bool, an int subclass) passes through; a
+    numeric string parses; a float truncates. ``None`` (key absent) yields
+    ``default``."""
+    if value is None:
+        return default
+    if isinstance(value, bool):
+        return int(value)
+    if isinstance(value, int):
+        return value
+    if isinstance(value, float):
+        return int(value)
+    if isinstance(value, str):
+        try:
+            return int(value.strip())
+        except ValueError as exc:
+            raise ValueError(
+                _malformed_config_msg(label, value, config_path, "an integer")
+            ) from exc
+    raise ValueError(_malformed_config_msg(label, value, config_path, "an integer"))
+
+
+def _coerce_float(
+    value: object, default: float, *, label: str, config_path: Path | None
+) -> float:
+    """Coerce a TOML value to ``float``, raising a located ValueError on a
+    non-numeric value (cf. ``_coerce_int``). Valid-input behaviour matches
+    the prior bare ``float(...)``."""
+    if value is None:
+        return default
+    if isinstance(value, bool):
+        return float(value)
+    if isinstance(value, (int, float)):
+        return float(value)
+    if isinstance(value, str):
+        try:
+            return float(value.strip())
+        except ValueError as exc:
+            raise ValueError(
+                _malformed_config_msg(label, value, config_path, "a number")
+            ) from exc
+    raise ValueError(_malformed_config_msg(label, value, config_path, "a number"))
+
+
+def _coerce_str_list(
+    value: object, *, label: str, config_path: Path | None
+) -> list[str]:
+    """Coerce a TOML list-of-strings, REJECTING a bare string scalar.
+
+    ``list("myproject")`` silently char-explodes to ``['m', 'y', ...]`` —
+    a forgotten-brackets ``allowed = "myproject"`` would then build a
+    per-character allowlist that rejects every real write while accepting
+    single-character scopes. Reject a non-list (and any non-string entry)
+    with a clear, located error instead of the silent explosion."""
+    if value is None:
+        return []
+    if not isinstance(value, (list, tuple)):
+        raise ValueError(
+            _malformed_config_msg(label, value, config_path, "a list of strings")
+            + " — did you forget the [ ] brackets?"
+        )
+    out: list[str] = []
+    for item in value:
+        if not isinstance(item, str):
+            raise ValueError(
+                _malformed_config_msg(label, item, config_path, "a string (in a list)")
+            )
+        out.append(item)
+    return out
+
+
 def default_config_path() -> Path:
     return Path(platformdirs.user_config_dir("bettermemory")) / CONFIG_FILENAME
 
@@ -766,10 +855,18 @@ def load_config(path: Path | None = None) -> Config:
             require_write_confirmation=_coerce_bool(
                 behavior_raw.get("require_write_confirmation"), False
             ),
-            default_max_results=int(behavior_raw.get("default_max_results", 5)),
+            default_max_results=_coerce_int(
+                behavior_raw.get("default_max_results"),
+                5,
+                label="[behavior] default_max_results",
+                config_path=config_path,
+            ),
             search_mode=str(behavior_raw.get("search_mode", "hybrid")),
-            recency_boost_half_life_days=float(
-                behavior_raw.get("recency_boost_half_life_days", 30.0)
+            recency_boost_half_life_days=_coerce_float(
+                behavior_raw.get("recency_boost_half_life_days"),
+                30.0,
+                label="[behavior] recency_boost_half_life_days",
+                config_path=config_path,
             ),
             semantic_dedup=_coerce_bool(behavior_raw.get("semantic_dedup"), False),
             semantic_provider=str(behavior_raw.get("semantic_provider", "auto")),
@@ -779,28 +876,66 @@ def load_config(path: Path | None = None) -> Config:
             semantic_model_fastembed=str(
                 behavior_raw.get("semantic_model_fastembed", "BAAI/bge-small-en-v1.5")
             ),
-            semantic_high_threshold=float(
-                behavior_raw.get("semantic_high_threshold", 0.85)
+            semantic_high_threshold=_coerce_float(
+                behavior_raw.get("semantic_high_threshold"),
+                0.85,
+                label="[behavior] semantic_high_threshold",
+                config_path=config_path,
             ),
-            semantic_medium_threshold=float(
-                behavior_raw.get("semantic_medium_threshold", 0.65)
+            semantic_medium_threshold=_coerce_float(
+                behavior_raw.get("semantic_medium_threshold"),
+                0.65,
+                label="[behavior] semantic_medium_threshold",
+                config_path=config_path,
             ),
-            heavily_used_min_applied=int(
-                behavior_raw.get("heavily_used_min_applied", 3)
+            heavily_used_min_applied=_coerce_int(
+                behavior_raw.get("heavily_used_min_applied"),
+                3,
+                label="[behavior] heavily_used_min_applied",
+                config_path=config_path,
             ),
-            cold_endorsement_ratio_threshold=float(
-                behavior_raw.get("cold_endorsement_ratio_threshold", 0.0)
+            cold_endorsement_ratio_threshold=_coerce_float(
+                behavior_raw.get("cold_endorsement_ratio_threshold"),
+                0.0,
+                label="[behavior] cold_endorsement_ratio_threshold",
+                config_path=config_path,
             ),
-            tombstone_retention_days=int(
-                behavior_raw.get("tombstone_retention_days", 0)
+            tombstone_retention_days=_coerce_int(
+                behavior_raw.get("tombstone_retention_days"),
+                0,
+                label="[behavior] tombstone_retention_days",
+                config_path=config_path,
             ),
-            verification_stale_days=int(
-                behavior_raw.get("verification_stale_days", 30)
+            verification_stale_days=_coerce_int(
+                behavior_raw.get("verification_stale_days"),
+                30,
+                label="[behavior] verification_stale_days",
+                config_path=config_path,
             ),
-            max_content_bytes=int(behavior_raw.get("max_content_bytes", 1_000_000)),
-            max_takeaway_bytes=int(behavior_raw.get("max_takeaway_bytes", 4_096)),
-            max_scopes_per_write=int(behavior_raw.get("max_scopes_per_write", 64)),
-            curation_hint_threshold=int(behavior_raw.get("curation_hint_threshold", 5)),
+            max_content_bytes=_coerce_int(
+                behavior_raw.get("max_content_bytes"),
+                1_000_000,
+                label="[behavior] max_content_bytes",
+                config_path=config_path,
+            ),
+            max_takeaway_bytes=_coerce_int(
+                behavior_raw.get("max_takeaway_bytes"),
+                4_096,
+                label="[behavior] max_takeaway_bytes",
+                config_path=config_path,
+            ),
+            max_scopes_per_write=_coerce_int(
+                behavior_raw.get("max_scopes_per_write"),
+                64,
+                label="[behavior] max_scopes_per_write",
+                config_path=config_path,
+            ),
+            curation_hint_threshold=_coerce_int(
+                behavior_raw.get("curation_hint_threshold"),
+                5,
+                label="[behavior] curation_hint_threshold",
+                config_path=config_path,
+            ),
             curation_hint_enabled=_coerce_bool(
                 behavior_raw.get("curation_hint_enabled"), True
             ),
@@ -815,7 +950,11 @@ def load_config(path: Path | None = None) -> Config:
             ),
         ),
         scopes=ScopesConfig(
-            allowed=list(scopes_raw.get("allowed", [])),
+            allowed=_coerce_str_list(
+                scopes_raw.get("allowed"),
+                label="[scopes] allowed",
+                config_path=config_path,
+            ),
         ),
         telemetry=TelemetryConfig(
             enabled=_coerce_bool(telemetry_raw.get("enabled"), True),
@@ -829,16 +968,27 @@ def load_config(path: Path | None = None) -> Config:
         ),
         consolidate=ConsolidateConfig(
             auto_apply=_coerce_bool(consolidate_raw.get("auto_apply"), False),
-            auto_apply_interval_hours=float(
-                consolidate_raw.get("auto_apply_interval_hours", 24.0)
+            auto_apply_interval_hours=_coerce_float(
+                consolidate_raw.get("auto_apply_interval_hours"),
+                24.0,
+                label="[consolidate] auto_apply_interval_hours",
+                config_path=config_path,
             ),
-            auto_apply_max_memories=int(
-                consolidate_raw.get("auto_apply_max_memories", 500)
+            auto_apply_max_memories=_coerce_int(
+                consolidate_raw.get("auto_apply_max_memories"),
+                500,
+                label="[consolidate] auto_apply_max_memories",
+                config_path=config_path,
             ),
         ),
         proposals=ProposalsConfig(
             auto_propose=_coerce_bool(proposals_raw.get("auto_propose"), False),
-            max_pending=int(proposals_raw.get("max_pending", 20)),
+            max_pending=_coerce_int(
+                proposals_raw.get("max_pending"),
+                20,
+                label="[proposals] max_pending",
+                config_path=config_path,
+            ),
         ),
         config_path=config_path,
     )

@@ -155,7 +155,7 @@ def main() -> None:
         sync.run(args, sub_parser=subparsers["sync"])
         return
     if cmd == "reindex":
-        reindex.run(args)
+        reindex.run(args, sub_parser=subparsers["reindex"])
         return
     if cmd == "audit-turn":
         audit_turn_cmd.run(args)
