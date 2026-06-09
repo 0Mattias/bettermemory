@@ -43,6 +43,7 @@ from ._handlers import (
     DESC_EPISODE_WRITE,
     DESC_MEMORY_ACKNOWLEDGE_MISS,
     DESC_MEMORY_AUDIT_TURN,
+    DESC_MEMORY_CURATE,
     DESC_MEMORY_HEALTH,
     DESC_MEMORY_LIST,
     DESC_MEMORY_LIST_TOMBSTONES,
@@ -327,6 +328,9 @@ def _register_tools(
         )(handlers.memory_list_tombstones)
         mcp.tool(name="memory_health", description=DESC_MEMORY_HEALTH)(
             handlers.memory_health
+        )
+        mcp.tool(name="memory_curate", description=DESC_MEMORY_CURATE)(
+            handlers.memory_curate
         )
         mcp.tool(
             name="memory_acknowledge_miss", description=DESC_MEMORY_ACKNOWLEDGE_MISS

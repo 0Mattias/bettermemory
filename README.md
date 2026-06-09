@@ -159,13 +159,13 @@ Storage resolves to `$BETTERMEMORY_DIR` if set, else `./.claude-memory/` if it e
 
 ## Tools
 
-**24 MCP tools — 18 registered by default.** Six curation / power-user tools (`memory_health`, `memory_acknowledge_miss`, `memory_rename_scope`, `memory_restore`, `memory_list_tombstones`, `memory_proposals`) register only under `[behavior] full_tool_surface = true` — except `memory_proposals`, which also surfaces when `[proposals]` is enabled. Five have a direct `bettermemory` CLI counterpart on the lean default — `health`, `tombstones list` / `tombstones restore`, `rename-scope`, and `proposals` — so trimming them keeps the per-turn tool-description context lean without giving up the capability. `memory_acknowledge_miss` is the exception: its per-event ack stays MCP-only, with the CLI offering the blunter bulk `consolidate --acknowledge-misses-before` cutoff instead.
+**25 MCP tools — 18 registered by default.** Seven curation / power-user tools (`memory_health`, `memory_curate`, `memory_acknowledge_miss`, `memory_rename_scope`, `memory_restore`, `memory_list_tombstones`, `memory_proposals`) register only under `[behavior] full_tool_surface = true` — except `memory_proposals`, which also surfaces when `[proposals]` is enabled. Six have a direct `bettermemory` CLI counterpart on the lean default — `health`, `tombstones list` / `tombstones restore`, `rename-scope`, `proposals`, and `consolidate` (which `memory_curate` wraps as a dry-run-by-default tool) — so trimming them keeps the per-turn tool-description context lean without giving up the capability. `memory_acknowledge_miss` is the exception: its per-event ack stays MCP-only, with the CLI offering the blunter bulk `consolidate --acknowledge-misses-before` cutoff instead.
 
 - **Retrieval** — `memory_search` (incl. `since_prior_session`), `memory_show`, `memory_list`, `memory_scope_overview`
 - **Writing** — `memory_write` (+ `memory_write_confirm` / `memory_write_cancel` for the staged flow), `memory_update`
 - **Lifecycle** — `memory_remove`, `memory_restore`, `memory_list_tombstones`
 - **Verification** — `memory_verify`
-- **Curation** — `memory_record_use`, `memory_health`, `memory_audit_turn`, `memory_acknowledge_miss`, `memory_rename_scope`, `memory_proposals`
+- **Curation** — `memory_record_use`, `memory_health`, `memory_curate`, `memory_audit_turn`, `memory_acknowledge_miss`, `memory_rename_scope`, `memory_proposals`
 - **Session-local** — `memory_scope_disable`, `memory_scope_enable`
 - **Episodes** (journal / run-state tier) — `episode_write`, `episode_handoff`, `episode_search`, `episode_promote`
 

@@ -1192,6 +1192,7 @@ _TOOL_EVENT_KIND_TO_TOOL: dict[str, str] = {
     "scope_enable": "memory_scope_enable",
     "turn_audited": "memory_audit_turn",
     "miss_ack": "memory_acknowledge_miss",
+    "curate": "memory_curate",
     "memory_proposals": "memory_proposals",
     "episode_write": "episode_write",
     "episode_handoff": "episode_handoff",

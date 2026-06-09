@@ -1,6 +1,6 @@
 # API surface (3.x)
 
-The contractual list of MCP tools bettermemory exposes. Signatures, defaults, and return shapes are stable within the 3.x line per the rules in [`CONTRIBUTING.md`](../CONTRIBUTING.md). There are 24 tools, but only **18 register by default**: the six curation / power-user tools (`memory_health`, `memory_acknowledge_miss`, `memory_rename_scope`, `memory_restore`, `memory_list_tombstones`, `memory_proposals`) register only when `full_tool_surface = true` under `[behavior]` (`memory_proposals` also surfaces when `[proposals]` is enabled); five have a direct `bettermemory` CLI counterpart (`health`, `tombstones list` / `tombstones restore`, `rename-scope`, `proposals`), while `memory_acknowledge_miss`'s per-event ack stays MCP-only (the CLI offers the bulk `consolidate --acknowledge-misses-before` cutoff instead). The 24 group naturally:
+The contractual list of MCP tools bettermemory exposes. Signatures, defaults, and return shapes are stable within the 3.x line per the rules in [`CONTRIBUTING.md`](../CONTRIBUTING.md). There are 25 tools, but only **18 register by default**: the seven curation / power-user tools (`memory_health`, `memory_curate`, `memory_acknowledge_miss`, `memory_rename_scope`, `memory_restore`, `memory_list_tombstones`, `memory_proposals`) register only when `full_tool_surface = true` under `[behavior]` (`memory_proposals` also surfaces when `[proposals]` is enabled); six have a direct `bettermemory` CLI counterpart (`health`, `tombstones list` / `tombstones restore`, `rename-scope`, `proposals`, and `consolidate` which `memory_curate` wraps), while `memory_acknowledge_miss`'s per-event ack stays MCP-only (the CLI offers the bulk `consolidate --acknowledge-misses-before` cutoff instead). The 25 group naturally:
 
 - **Retrieval** — `memory_search` (now with `since_prior_session` filter), `memory_show`, `memory_list`, `memory_scope_overview`
 - **Writing** — `memory_write` (plus `memory_write_confirm` / `memory_write_cancel` for the staged-write flow), `memory_update`
@@ -171,6 +171,15 @@ Returns the aggregate rollup: `generated_at` (ISO timestamp of when the report w
 The `silent_misses` rollup carries `{audited_total, miss_total, unique_miss_memories}`. `miss_total` is the event count (one per `search_miss` event); `unique_miss_memories` is the cardinality of the set of top-hit memory_ids on those events — distinguishes "9 events against 1 mis-tagged memory" from "9 events across 9 memories." Misses whose top-hit memory has been tombstoned are dropped from both `miss_total` and `unique_miss_memories` (the miss is no longer actionable once the memory is gone). The rollup also honors a `silent_miss_cutoff` event when present — written by `bettermemory consolidate --acknowledge-misses-before <ISO_TS>` to invalidate pre-fix `turn_audited` / `search_miss` events after a change that obsoletes them. CLI-only; no MCP surface.
 
 `dead_weight` and `cold_memories` measure different failure modes: dead weight is *"retrieved but didn't help"*, cold is *"the ranker isn't surfacing this at all"*. Use them to act on the right axis.
+
+### `memory_curate(dry_run?, window_days?)`
+
+Execute the curation `memory_health` only describes — its `recommendations` point at the `bettermemory consolidate` CLI, which an in-session model can't run. Wraps the same `consolidate()` engine the Stop-hook `run_auto_consolidate` path uses, behind a dry-run-by-default safety contract.
+
+- `dry_run: bool = True`. When `True` (the default) the call is a side-effect-free **preview**: it returns the full report with the store untouched and records no event. Re-call with `dry_run=False` to commit.
+- `window_days: int = 30`. Dead-weight age cutoff; must be ≥ 1.
+
+Returns the consolidate report dict plus `dry_run`: `dedup_candidates`, `demotion_candidates`, `cold_scope_suggestions`, `scope_typo_pairs`, `actions_taken`, `failures`, `dedup_method`, `applied`. On `dry_run=False` the two reversible actions are applied — near-duplicate memories are tombstoned (undo via `memory_restore`) and dead-weight facts (created before the window, retrieved at least once, never applied) are demoted to the `ambient` category (undo via `memory_update`); `actions_taken` lists each with a `.kind` of `"tombstoned"` or `"demoted_to_ambient"`. Cold-scope and scope-typo findings are **suggest-only** regardless of `dry_run` — act on them via `memory_rename_scope`. Dedup uses Jaccard overlap (no embedding model is loaded). Nothing is hard-deleted; an apply records one `curate` event for the tool-usage rollup.
 
 ### `memory_audit_turn(user_message, assistant_response?, lookback_seconds?)`
 

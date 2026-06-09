@@ -6,7 +6,7 @@ A published roadmap is part of the pitch: people choosing between memory layers 
 
 The core is built and battle-hardened. The differentiated surface is live; the recent releases have been correctness sweeps, not feature pushes.
 
-- **24 MCP tools, 18 registered by default** (the lean surface since 3.4.0 — six curation/power-user tools gate behind `[behavior] full_tool_surface`, five with a direct CLI counterpart and `memory_acknowledge_miss` MCP-only); four of the always-on defaults are the `episode_*` journal / run-state tier.
+- **25 MCP tools, 18 registered by default** (the lean surface since 3.4.0 — seven curation/power-user tools gate behind `[behavior] full_tool_surface`, six with a direct CLI counterpart — including `memory_curate`, which wraps `consolidate` — and `memory_acknowledge_miss` MCP-only); four of the always-on defaults are the `episode_*` journal / run-state tier.
 - **Staleness verdict on every retrieval** — calendar age + filesystem path drift + git commit drift folded into one `staleness_verdict`, with the inline `path_drift = {checked, missing, verified}` list.
 - **Claim-level audit trail** — `memory_record_use(claim_excerpts=…)` plus Stop-hook substring attribution (`attribution ∈ {model, hook, auto}`, exactly one event per retrieval) and the `memory_audit_turn` silent-miss probe.
 - **Hybrid retrieval** (RRF over keyword + BM25, plus semantic via the `[embeddings]` or `[embeddings-fast]` extra) as the zero-dep default.

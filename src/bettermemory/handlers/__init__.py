@@ -24,6 +24,7 @@ from __future__ import annotations
 
 from .acknowledge_miss import DESC_MEMORY_ACKNOWLEDGE_MISS, memory_acknowledge_miss
 from .audit_turn import DESC_MEMORY_AUDIT_TURN, memory_audit_turn
+from .curate import DESC_MEMORY_CURATE, memory_curate
 from .episode_handoff import DESC_EPISODE_HANDOFF, episode_handoff
 from .episode_promote import DESC_EPISODE_PROMOTE, episode_promote
 from .episode_search import DESC_EPISODE_SEARCH, episode_search
@@ -63,6 +64,7 @@ __all__ = [
     "DESC_EPISODE_WRITE",
     "DESC_MEMORY_ACKNOWLEDGE_MISS",
     "DESC_MEMORY_AUDIT_TURN",
+    "DESC_MEMORY_CURATE",
     "DESC_MEMORY_HEALTH",
     "DESC_MEMORY_LINKS_TAIL",
     "DESC_MEMORY_LIST",
@@ -88,6 +90,7 @@ __all__ = [
     "episode_write",
     "memory_acknowledge_miss",
     "memory_audit_turn",
+    "memory_curate",
     "memory_health",
     "memory_list",
     "memory_list_tombstones",

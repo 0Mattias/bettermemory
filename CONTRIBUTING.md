@@ -52,7 +52,7 @@ The project uses semver with the conventions below. The headline: **within a maj
 
 The 2.0 bump itself was a scope-only bump — nine 1.6-plan features shipped in one release. SCHEMA_VERSION stayed at 1, every new wire field was opt-in or absence-as-signal, and no 1.x surface was renamed or removed. The 3.0 bump was the same shape: a soft API break trimming defensive `bettermemory.server` re-exports after verifying zero in-tree consumers, packaged with the post-2.7.3 audit-loop. SCHEMA_VERSION stayed at 1 across both transitions; treat the rules below as continuous across the 1→2 and 2→3 boundaries — they describe the project's stance on stability, not a one-off cleanup.
 
-### Surface (the 24 MCP tools)
+### Surface (the 25 MCP tools)
 
 Stable within the current major (3.x):
 

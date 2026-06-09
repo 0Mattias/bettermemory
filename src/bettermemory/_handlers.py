@@ -66,6 +66,7 @@ DESC_EPISODE_SEARCH = _handlers_pkg.DESC_EPISODE_SEARCH
 DESC_EPISODE_WRITE = _handlers_pkg.DESC_EPISODE_WRITE
 DESC_MEMORY_ACKNOWLEDGE_MISS = _handlers_pkg.DESC_MEMORY_ACKNOWLEDGE_MISS
 DESC_MEMORY_AUDIT_TURN = _handlers_pkg.DESC_MEMORY_AUDIT_TURN
+DESC_MEMORY_CURATE = _handlers_pkg.DESC_MEMORY_CURATE
 DESC_MEMORY_HEALTH = _handlers_pkg.DESC_MEMORY_HEALTH
 DESC_MEMORY_LINKS_TAIL = _handlers_pkg.DESC_MEMORY_LINKS_TAIL
 DESC_MEMORY_LIST = _handlers_pkg.DESC_MEMORY_LIST
@@ -480,6 +481,16 @@ class ToolHandlers:
             ctx=ctx,
         )
 
+    async def memory_curate(
+        self,
+        dry_run: bool = True,
+        window_days: int = 30,
+        ctx: Context | None = None,
+    ) -> dict[str, Any]:
+        return await _handlers_pkg.memory_curate(
+            self, dry_run=dry_run, window_days=window_days, ctx=ctx
+        )
+
     async def memory_record_use(
         self,
         memory_ids: list[str],
@@ -603,6 +614,7 @@ __all__ = [
     "Context",
     "DESC_MEMORY_ACKNOWLEDGE_MISS",
     "DESC_MEMORY_AUDIT_TURN",
+    "DESC_MEMORY_CURATE",
     "DESC_MEMORY_HEALTH",
     "DESC_MEMORY_LINKS_TAIL",
     "DESC_MEMORY_LIST",

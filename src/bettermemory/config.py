@@ -190,11 +190,12 @@ max_scopes_per_write = 64
 curation_hint_threshold = 5
 curation_hint_enabled = true
 
-# Tool-surface breadth. Lean by default: the six curation / power-user tools
-# (memory_health, memory_acknowledge_miss, memory_rename_scope,
-# memory_restore, memory_list_tombstones, memory_proposals) are NOT
-# registered on the MCP server, keeping the per-turn tool-description context
-# lean for the common case. They stay reachable via the `bettermemory` CLI.
+# Tool-surface breadth. Lean by default: the seven curation / power-user
+# tools (memory_health, memory_curate, memory_acknowledge_miss,
+# memory_rename_scope, memory_restore, memory_list_tombstones,
+# memory_proposals) are NOT registered on the MCP server, keeping the
+# per-turn tool-description context lean for the common case. They stay
+# reachable via the `bettermemory` CLI (memory_curate wraps `consolidate`).
 # Set true for the full surface — the curate-loop skill needs it.
 # (memory_proposals also surfaces when [proposals] auto_propose is on.)
 full_tool_surface = false

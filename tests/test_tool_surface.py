@@ -1,7 +1,8 @@
 """The lean default tool surface and the `full_tool_surface` gate.
 
-The shipped MCP server hides six curation / power-user tools by default
-(measured dead-or-rare in the dogfood event log). They register only under
+The shipped MCP server hides seven curation / power-user tools by default
+(measured dead-or-rare in the dogfood event log, plus memory_curate which
+executes the consolidate engine). They register only under
 `full_tool_surface`, except `memory_proposals`, which also surfaces whenever
 the opt-in `[proposals]` feature is on (it is that feature's UI). See
 `builder._register_tools` and `BehaviorConfig.full_tool_surface`.
@@ -23,9 +24,10 @@ from bettermemory.session import SessionState
 from bettermemory.store import Store
 
 
-# The six tools gated out of the lean default surface.
+# The seven tools gated out of the lean default surface.
 _GATED = {
     "memory_health",
+    "memory_curate",
     "memory_acknowledge_miss",
     "memory_rename_scope",
     "memory_restore",
@@ -50,7 +52,7 @@ _ALWAYS = {
 }
 
 _LEAN_COUNT = 18
-_FULL_COUNT = 24
+_FULL_COUNT = 25
 
 
 async def _registered(
@@ -77,7 +79,7 @@ async def test_lean_surface_omits_curation_tools(tmp_path: Path) -> None:
 
 
 async def test_full_surface_registers_everything(tmp_path: Path) -> None:
-    """full_tool_surface=True: every gated tool is back; total is 24."""
+    """full_tool_surface=True: every gated tool is back; total is 25."""
     names = await _registered(tmp_path, BehaviorConfig(full_tool_surface=True))
     assert _GATED <= names
     assert len(names) == _FULL_COUNT

@@ -971,11 +971,11 @@ class TestComputeToolUsage:
         without a missing-key guard. Untelemetered tools surface too."""
         report = compute_tool_usage([])
         tool_names = {row.tool for row in report.rows}
-        # The full 24 — explicit-mapped 23 (memory_* + memory_proposals +
-        # episode_write + episode_handoff + episode_search +
-        # episode_promote + memory_acknowledge_miss) plus the one in
-        # TOOLS_WITHOUT_TELEMETRY (memory_health).
-        assert len(report.rows) == 24
+        # The full 25 — explicit-mapped 24 (memory_* + memory_curate +
+        # memory_proposals + episode_write + episode_handoff +
+        # episode_search + episode_promote + memory_acknowledge_miss) plus
+        # the one in TOOLS_WITHOUT_TELEMETRY (memory_health).
+        assert len(report.rows) == 25
         assert "memory_search" in tool_names
         assert "memory_health" in tool_names
         assert "episode_write" in tool_names
@@ -1082,13 +1082,13 @@ class TestComputeToolUsage:
 # ---------------------------------------------------------------------------
 
 
-# The canonical tool count surfaced in prose ("24 MCP tools" — 20
+# The canonical tool count surfaced in prose ("25 MCP tools" — 21
 # `memory_*` + 4 `episode_*` — in README / api.md / marketplace / plugin
 # README). Pinned here as the single source of truth so a regression in
 # either the runtime registrations or the eval-side enumeration trips
 # one assertion instead of leaving the prose silently out of sync.
 # Prose authors verify against this constant.
-_EXPECTED_TOOL_COUNT = 24
+_EXPECTED_TOOL_COUNT = 25
 
 
 async def test_tool_count_matches_registered_count(tmp_path: Path) -> None:
@@ -1112,7 +1112,7 @@ async def test_tool_count_matches_registered_count(tmp_path: Path) -> None:
       row that never moves.
 
     This test pins the set-equality, and pins the count to
-    ``_EXPECTED_TOOL_COUNT`` so prose claims of "24 MCP tools" have
+    ``_EXPECTED_TOOL_COUNT`` so prose claims of "25 MCP tools" have
     something to track against.
     """
     from bettermemory.config import Config, StorageConfig
@@ -1137,7 +1137,7 @@ async def test_tool_count_matches_registered_count(tmp_path: Path) -> None:
     assert len(registered) == _EXPECTED_TOOL_COUNT, (
         f"Runtime tool count is {len(registered)} but _EXPECTED_TOOL_COUNT "
         f"is {_EXPECTED_TOOL_COUNT}. Either a tool was added/removed and "
-        "the constant + prose ('24 MCP tools' in README / api.md / "
+        "the constant + prose ('25 MCP tools' in README / api.md / "
         "marketplace / plugin README) needs to track it, or the "
         "registration list grew without the docs catching up."
     )
