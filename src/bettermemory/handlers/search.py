@@ -370,6 +370,21 @@ async def memory_search(
             store=deps.store,
         )
 
+        # Per-hit `superseded_by` / `contradicts`: activate the
+        # supersedes/contradicts MemoryLink edges as trust signals. Like
+        # depends_on_resolved this is post-rank and additive (it never
+        # reorders or drops a hit), with the same scope/origin re-filter
+        # so a link can't leak a hidden-scope memory. Inbound edges come
+        # from the links index; no-op when no index exists.
+        deps.responses.attach_link_annotations(
+            out,
+            hits,
+            memories,
+            store=deps.store,
+            caller_origin=current_origin if auto_scope else None,
+            excluded_scopes=set(state.disabled_scopes),
+        )
+
     # Optional auto-expansion of the top hit. Conservative: only fires
     # when the top hit clearly wins ("high" relevance) so the model
     # doesn't get hosed with full bodies it didn't really need.

@@ -90,7 +90,7 @@ def test_endorsement_unset_is_neutral() -> None:
 
 
 def test_explicit_applied_counts_excludes_auto_and_filters_ids() -> None:
-    events = [
+    events: list[dict[str, Any]] = [
         {"kind": "use", "outcome": "applied", "auto": False, "ids": ["m1", "m1"]},
         {"kind": "use", "outcome": "applied", "auto": True, "ids": ["m1"]},  # auto
         {

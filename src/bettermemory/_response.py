@@ -683,6 +683,114 @@ class ResponseBuilder:
             if resolved:
                 hit_dict["depends_on_resolved"] = resolved
 
+    def attach_link_annotations(  # type: ignore[no-untyped-def]
+        self,
+        out: list[dict[str, Any]],
+        hits: list[MemoryHit],
+        memories,
+        *,
+        store: Any,
+        caller_origin: Origin | None = None,
+        excluded_scopes: set[str] | None = None,
+        max_per_hit: int = 3,
+        max_total: int = 10,
+    ) -> None:
+        """Mutate `out` in-place, surfacing supersedes / contradicts edges as
+        trust signals on each hit.
+
+        `MemoryLink` has carried `supersedes` and `contradicts` since 2.x,
+        but retrieval never acted on them — setting the link changed nothing
+        the searcher saw. This activates them, purely additively (it never
+        reorders or drops a hit — annotation only):
+
+        - `superseded_by`: ACTIVE memories that supersede this hit (inbound
+          `supersedes` edges). Per the LinkType contract the consumer should
+          prefer the superseding memory; surfacing it lets the model do so.
+        - `contradicts`: memories in unresolved contradiction with this hit,
+          either direction (the relation is symmetric per the LinkType
+          docstring — both surface, reconcile, typically via memory_verify).
+
+        Each entry: `{id, scopes, summary, link_note}`. A key is omitted
+        (absent, not null) when empty — the same absence-as-signal contract
+        as `depends_on_resolved`. Bounded by `max_per_hit` / `max_total`.
+
+        Inbound edges come from the links index (`index.links_for`); when no
+        index exists the annotation is a best-effort no-op, like the rest of
+        the index-backed surface. Resolution reuses the `depends_on`
+        discipline: a side-map over the loaded candidates, a targeted
+        `store.load_one` for targets outside the FTS prefilter, tombstoned /
+        missing skipped silently, and the caller's scope/origin filter
+        re-applied so a link can't leak a hidden-scope memory.
+        """
+        from .index import links_for
+        from .models import first_summary_line
+        from .store import MemoryNotFoundError, TombstonedError
+
+        memory_by_id = {m.id: m for m in memories}
+        excluded = excluded_scopes or set()
+
+        def _resolve(other_id: str, note: str | None) -> dict[str, Any] | None:
+            target = memory_by_id.get(other_id)
+            if target is None:
+                try:
+                    target = store.load_one(other_id)
+                except (MemoryNotFoundError, TombstonedError, OSError):
+                    return None
+                memory_by_id[other_id] = target
+            if excluded and (set(target.scopes) & excluded):
+                return None
+            if caller_origin is not None and not should_include_for_caller(
+                target.origin,
+                caller_origin.repo,
+                caller_worktree_root=caller_origin.worktree_root,
+            ):
+                return None
+            return {
+                "id": target.id,
+                "scopes": list(target.scopes),
+                "summary": first_summary_line(target.body),
+                "link_note": note,
+            }
+
+        total = 0
+        for hit_dict, hit in zip(out, hits):
+            if total >= max_total:
+                break
+            try:
+                outbound, inbound = links_for(store.root, hit.id)
+            except Exception:  # noqa: BLE001 — a corrupt/locked index is a
+                # best-effort no-op; never abort a search over an annotation.
+                continue
+            if not outbound and not inbound:
+                continue
+
+            superseded_by = [
+                (oid, note) for (t, oid, note) in inbound if t == "supersedes"
+            ]
+            # Contradiction is symmetric: collect both directions, dedup by
+            # the other memory's id (a bidirectional pair links twice).
+            contradicts: list[tuple[str, str | None]] = []
+            seen_c: set[str] = set()
+            for t, oid, note in list(outbound) + list(inbound):
+                if t == "contradicts" and oid != hit.id and oid not in seen_c:
+                    seen_c.add(oid)
+                    contradicts.append((oid, note))
+
+            for key, pairs in (
+                ("superseded_by", superseded_by),
+                ("contradicts", contradicts),
+            ):
+                resolved: list[dict[str, Any]] = []
+                for oid, note in pairs:
+                    if len(resolved) >= max_per_hit or total >= max_total:
+                        break
+                    entry = _resolve(oid, note)
+                    if entry is not None:
+                        resolved.append(entry)
+                        total += 1
+                if resolved:
+                    hit_dict[key] = resolved
+
     def attach_recent_negative_outcomes(
         self,
         out: list[dict[str, Any]],
