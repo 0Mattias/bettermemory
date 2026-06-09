@@ -314,6 +314,7 @@ def test_handlers_verify_direct_import() -> None:
         ("verified_paths", None),
         ("verified_commits", None),
         ("verified_versions", None),
+        ("verified_absent_paths", None),
         ("ctx", None),
     ]
 

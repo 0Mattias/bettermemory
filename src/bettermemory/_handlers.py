@@ -519,6 +519,7 @@ class ToolHandlers:
         verified_paths: list[str] | None = None,
         verified_commits: list[str] | None = None,
         verified_versions: list[str] | None = None,
+        verified_absent_paths: list[str] | None = None,
         ctx: Context | None = None,
     ) -> dict[str, Any]:
         return await _handlers_pkg.memory_verify(
@@ -528,6 +529,7 @@ class ToolHandlers:
             verified_paths=verified_paths,
             verified_commits=verified_commits,
             verified_versions=verified_versions,
+            verified_absent_paths=verified_absent_paths,
             ctx=ctx,
         )
 

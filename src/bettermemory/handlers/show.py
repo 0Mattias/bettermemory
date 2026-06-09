@@ -70,7 +70,11 @@ async def memory_show(
     # mattered. `verified_paths` is threaded in so a path the user
     # has previously attested gets surfaced in `path_drift.verified`
     # even when no other claims drift.
-    drift = detect_path_drift(memory.body, verified_paths=memory.verified_paths)
+    drift = detect_path_drift(
+        memory.body,
+        verified_paths=memory.verified_paths,
+        absent_paths=memory.verified_absent_paths,
+    )
     # Verification staleness is structurally always present — emitted
     # even for "fresh" memories — because consistent shape means the
     # consumer can branch on `verification.status` without an
@@ -136,13 +140,16 @@ async def memory_show(
         "body": memory.body,
         "origin": deps.responses.origin_to_dict(memory.origin),
         "path_drift": (
-            drift.to_dict() if (drift.has_drift or drift.verified) else None
+            drift.to_dict()
+            if (drift.has_drift or drift.verified or drift.expected_absent)
+            else None
         ),
         "commit_drift": (commit_drift.to_dict() if commit_drift is not None else None),
         "use_token": token_map[memory.id],
         "verified_paths": list(memory.verified_paths),
         "verified_commits": list(memory.verified_commits),
         "verified_versions": list(memory.verified_versions),
+        "verified_absent_paths": list(memory.verified_absent_paths),
         **_links_payload(deps, memory),
     }
 

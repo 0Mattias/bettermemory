@@ -315,6 +315,12 @@ class Memory(BaseModel):
     since `last_verified_at` didn't touch any of `verified_paths`, the
     commit-drift signal can stay clean. Empty by default; legacy
     memories load as empty lists.
+
+    `verified_absent_paths` is the mirror attestation: body-cited paths
+    the caller confirmed are *intentionally* absent on this machine
+    (remote-host paths, platform-conditional locations, paths cited as
+    NOT the real one). Path-drift excludes them from `missing` into an
+    `expected_absent` bucket instead of raising a phantom drift signal.
     """
 
     id: str
@@ -330,6 +336,7 @@ class Memory(BaseModel):
     verified_paths: list[str] = Field(default_factory=list)
     verified_commits: list[str] = Field(default_factory=list)
     verified_versions: list[str] = Field(default_factory=list)
+    verified_absent_paths: list[str] = Field(default_factory=list)
     links: list[MemoryLink] = Field(default_factory=list)
 
     @field_validator("scopes")
@@ -344,7 +351,12 @@ class Memory(BaseModel):
             raise ValueError(f"invalid ULID: {v!r}")
         return v
 
-    @field_validator("verified_paths", "verified_commits", "verified_versions")
+    @field_validator(
+        "verified_paths",
+        "verified_commits",
+        "verified_versions",
+        "verified_absent_paths",
+    )
     @classmethod
     def _cap_verified_list(cls, v: list[str]) -> list[str]:
         # Defensive cap — a runaway frontmatter list shouldn't grow without
@@ -433,6 +445,7 @@ class MemoryHit(BaseModel):
     path_drift_checked_paths: list[str] = []
     path_drift_missing_paths: list[str] = []
     path_drift_verified_paths: list[str] = []
+    path_drift_expected_absent_paths: list[str] = []
     category: Category | None = None
 
 
@@ -477,6 +490,7 @@ class TombstonedMemory(BaseModel):
     verified_paths: list[str] = Field(default_factory=list)
     verified_commits: list[str] = Field(default_factory=list)
     verified_versions: list[str] = Field(default_factory=list)
+    verified_absent_paths: list[str] = Field(default_factory=list)
 
     # Removal metadata. `removed` and `removed_reason` are required —
     # a tombstone without them is malformed and won't load.
@@ -496,7 +510,12 @@ class TombstonedMemory(BaseModel):
             raise ValueError(f"invalid ULID: {v!r}")
         return v
 
-    @field_validator("verified_paths", "verified_commits", "verified_versions")
+    @field_validator(
+        "verified_paths",
+        "verified_commits",
+        "verified_versions",
+        "verified_absent_paths",
+    )
     @classmethod
     def _cap_verified_list(cls, v: list[str]) -> list[str]:
         if len(v) > 64:

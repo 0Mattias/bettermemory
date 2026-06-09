@@ -47,10 +47,12 @@ DESC_MEMORY_VERIFY = (
     "- `note` (optional, ≤500 chars): what was checked, for the "
     "event log.\n"
     "- `verified_paths` / `verified_commits` / `verified_versions` "
-    "(optional lists of strings): structured attestations. The "
-    "server uses these to short-circuit later drift signals — "
-    "a future retrieval whose path_drift would have flagged a "
-    "path still in `verified_paths` downgrades the verdict.\n\n"
+    "(optional lists of strings): structured attestations the "
+    "server uses to short-circuit later drift signals.\n"
+    "- `verified_absent_paths` (optional): attest paths "
+    "INTENTIONALLY absent here (remote host, other platform, "
+    "not-the-location) — reported under `expected_absent`, not "
+    "`missing`. Never for real drift.\n\n"
     "After memory_update on a memory you later spot-check, verify "
     "again — memory_update clears `last_verified_at` because the "
     "prior verification was for prose that no longer exists.\n\n"
@@ -66,6 +68,7 @@ async def memory_verify(
     verified_paths: list[str] | None = None,
     verified_commits: list[str] | None = None,
     verified_versions: list[str] | None = None,
+    verified_absent_paths: list[str] | None = None,
     ctx: Context | None = None,
 ) -> dict[str, Any]:
     state = deps.sessions.for_request(ctx)
@@ -82,6 +85,7 @@ async def memory_verify(
         ("verified_paths", verified_paths),
         ("verified_commits", verified_commits),
         ("verified_versions", verified_versions),
+        ("verified_absent_paths", verified_absent_paths),
     ):
         if value is None:
             continue
@@ -119,6 +123,7 @@ async def memory_verify(
             verified_paths=verified_paths,
             verified_commits=verified_commits,
             verified_versions=verified_versions,
+            verified_absent_paths=verified_absent_paths,
             expected_last_verified_at=snapshot.last_verified_at,
             check_expected=True,
         )
@@ -168,6 +173,7 @@ async def memory_verify(
         verified_paths=list(memory.verified_paths),
         verified_commits=list(memory.verified_commits),
         verified_versions=list(memory.verified_versions),
+        verified_absent_paths=list(memory.verified_absent_paths),
     )
     return {
         "verified": memory.id,
@@ -176,6 +182,7 @@ async def memory_verify(
         "verified_paths": list(memory.verified_paths),
         "verified_commits": list(memory.verified_commits),
         "verified_versions": list(memory.verified_versions),
+        "verified_absent_paths": list(memory.verified_absent_paths),
     }
 
 

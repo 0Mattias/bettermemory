@@ -878,3 +878,54 @@ def test_prune_tombstones_removes_lock_sidecar(store: Store) -> None:
         "prune_tombstones left the .lock sidecar behind — flock_excl never "
         "unlinks it on release, so it leaks one orphan per pruned tombstone"
     )
+
+
+# ---------------------------------------------------------------------------
+# verified_absent_paths — the absent-attestation mirror axis (3.8.x)
+# ---------------------------------------------------------------------------
+
+
+def test_mark_verified_persists_absent_paths(memory_dir: Path) -> None:
+    s1 = Store(memory_dir)
+    memory = s1.write(
+        content="stacks live in /data/compose on the zimaboard\n",
+        scopes=["tools"],
+    )
+    s1.mark_verified(memory.id, verified_absent_paths=["/data/compose"])
+
+    s2 = Store(memory_dir)
+    reloaded = s2.load_one(memory.id)
+    assert reloaded.verified_absent_paths == ["/data/compose"]
+
+
+def test_mark_verified_none_preserves_absent_paths(store: Store) -> None:
+    memory = store.write(content="x at /data/compose\n", scopes=["tools"])
+    store.mark_verified(memory.id, verified_absent_paths=["/data/compose"])
+    again = store.mark_verified(memory.id)
+    assert again.verified_absent_paths == ["/data/compose"]
+
+
+def test_mark_verified_empty_list_clears_absent_paths(store: Store) -> None:
+    memory = store.write(content="x at /data/compose\n", scopes=["tools"])
+    store.mark_verified(memory.id, verified_absent_paths=["/data/compose"])
+    cleared = store.mark_verified(memory.id, verified_absent_paths=[])
+    assert cleared.verified_absent_paths == []
+
+
+def test_absent_paths_survive_tombstone_and_restore(store: Store) -> None:
+    memory = store.write(content="x at /data/compose\n", scopes=["tools"])
+    store.mark_verified(memory.id, verified_absent_paths=["/data/compose"])
+    store.tombstone(memory.id, "test removal")
+    restored = store.restore(memory.id)
+    assert restored.verified_absent_paths == ["/data/compose"]
+
+
+def test_update_preserve_verification_keeps_absent_paths(store: Store) -> None:
+    """Scope-only updates run the preserve_verification branch — the
+    absent attestation must ride along with the other verified_* lists."""
+    memory = store.write(content="x at /data/compose\n", scopes=["tools"])
+    store.mark_verified(memory.id, verified_absent_paths=["/data/compose"])
+    snapshot = store.load_one(memory.id)
+    edited = snapshot.model_copy(update={"scopes": ["tools", "infrastructure"]})
+    updated = store.update(edited, preserve_verification=True)
+    assert updated.verified_absent_paths == ["/data/compose"]

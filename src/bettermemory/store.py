@@ -387,6 +387,7 @@ class Store:
                 verified_paths=_load_str_list(meta.get("verified_paths")),
                 verified_commits=_load_str_list(meta.get("verified_commits")),
                 verified_versions=_load_str_list(meta.get("verified_versions")),
+                verified_absent_paths=_load_str_list(meta.get("verified_absent_paths")),
                 links=links,
             )
         except KeyError as exc:
@@ -548,6 +549,7 @@ class Store:
                         "verified_paths": list(current.verified_paths),
                         "verified_commits": list(current.verified_commits),
                         "verified_versions": list(current.verified_versions),
+                        "verified_absent_paths": list(current.verified_absent_paths),
                     }
                 )
             self._write_path(existing_path, new_memory)
@@ -562,6 +564,7 @@ class Store:
         verified_paths: list[str] | None = None,
         verified_commits: list[str] | None = None,
         verified_versions: list[str] | None = None,
+        verified_absent_paths: list[str] | None = None,
         expected_last_verified_at: datetime | None = None,
         check_expected: bool = False,
     ) -> Memory:
@@ -575,12 +578,15 @@ class Store:
         Calling this on a memory that's already verified-now is a no-op
         from the caller's perspective — the timestamp just slides forward.
 
-        `verified_paths` / `verified_commits` / `verified_versions` carry
-        the structured claims the caller attested. Passing None preserves
-        whatever was previously stored (so a no-arg `mark_verified` keeps
-        the prior attestation list); passing an explicit `[]` clears it.
-        Passing a populated list replaces the prior list — verification
-        is per-event, not append-only, and the event log is the audit
+        `verified_paths` / `verified_commits` / `verified_versions` /
+        `verified_absent_paths` carry the structured claims the caller
+        attested (`verified_absent_paths` being the mirror axis: paths
+        confirmed *intentionally* absent on this machine, excluded from
+        path-drift's `missing`). Passing None preserves whatever was
+        previously stored (so a no-arg `mark_verified` keeps the prior
+        attestation list); passing an explicit `[]` clears it. Passing a
+        populated list replaces the prior list — verification is
+        per-event, not append-only, and the event log is the audit
         trail for the history.
 
         Optimistic concurrency (W8): when `check_expected=True`, the
@@ -694,6 +700,8 @@ class Store:
                 update["verified_commits"] = list(verified_commits)
             if verified_versions is not None:
                 update["verified_versions"] = list(verified_versions)
+            if verified_absent_paths is not None:
+                update["verified_absent_paths"] = list(verified_absent_paths)
             new_memory = existing.model_copy(update=update)
             self._write_path(existing_path, new_memory)
             # perf: index upsert under lock is intentional — see audit H1.
@@ -962,6 +970,7 @@ class Store:
                 verified_paths=_load_str_list(meta.get("verified_paths")),
                 verified_commits=_load_str_list(meta.get("verified_commits")),
                 verified_versions=_load_str_list(meta.get("verified_versions")),
+                verified_absent_paths=_load_str_list(meta.get("verified_absent_paths")),
                 removed=_as_dt(meta["removed"]),
                 removed_reason=str(meta["removed_reason"]),
                 removed_session=(
@@ -1431,6 +1440,8 @@ class Store:
             meta["verified_commits"] = list(memory.verified_commits)
         if memory.verified_versions:
             meta["verified_versions"] = list(memory.verified_versions)
+        if memory.verified_absent_paths:
+            meta["verified_absent_paths"] = list(memory.verified_absent_paths)
         # `links` is omitted when empty — same noise-floor rationale as
         # `verified_paths`. Each link is serialized as a plain dict
         # (`type` is the enum value, not the Python name) so a hand-

@@ -100,6 +100,10 @@ directly. The remaining un-drifted claims (`path_drift.verified`
 + the rest of the body) you can attest with memory_verify(id,
 verified_paths=[…], verified_commits=[…], verified_versions=[…])
 — the server uses these to short-circuit later drift signals.
+A `missing` path that is ABSENT ON PURPOSE (remote host, other
+platform, cited as not-the-location) is not drift: attest it with
+memory_verify(id, verified_absent_paths=[…]) and it moves to
+`path_drift.expected_absent` instead of flagging forever.
 memory_update resets `last_verified_at`, so verify again after
 fixing drifted prose to close the loop.
 

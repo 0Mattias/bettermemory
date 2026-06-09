@@ -389,6 +389,12 @@ def _render_memory_detail(memory: Any, *, stale_after_days: int) -> str:
             f"<li><code>{html.escape(p)}</code></li>" for p in memory.verified_paths
         )
         verified_paths_section = f"<h2>Verified paths</h2><ul>{items}</ul>"
+    if memory.verified_absent_paths:
+        items = "".join(
+            f"<li><code>{html.escape(p)}</code></li>"
+            for p in memory.verified_absent_paths
+        )
+        verified_paths_section += f"<h2>Expected-absent paths</h2><ul>{items}</ul>"
 
     return (
         f'<div class="card">'

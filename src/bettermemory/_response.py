@@ -130,12 +130,23 @@ class ResponseBuilder:
             "path_drift_missing": hit.path_drift_missing,
             "staleness_verdict": verdict,
         }
-        if hit.path_drift_missing_paths or hit.path_drift_verified_paths:
+        if (
+            hit.path_drift_missing_paths
+            or hit.path_drift_verified_paths
+            or hit.path_drift_expected_absent_paths
+        ):
             out["path_drift"] = {
                 "checked": list(hit.path_drift_checked_paths),
                 "missing": list(hit.path_drift_missing_paths),
                 "verified": list(hit.path_drift_verified_paths),
             }
+            # Additive: emitted only when the memory carries an
+            # absent-attestation that actually fired, so consumers
+            # pinned to the three-key shape never see a surprise key.
+            if hit.path_drift_expected_absent_paths:
+                out["path_drift"]["expected_absent"] = list(
+                    hit.path_drift_expected_absent_paths
+                )
         return out
 
     def summary_to_dict(
@@ -228,7 +239,11 @@ class ResponseBuilder:
         verification = compute_verification_status(
             memory.last_verified_at, now=now, stale_after_days=self._stale_after_days
         )
-        drift = detect_path_drift(memory.body, verified_paths=memory.verified_paths)
+        drift = detect_path_drift(
+            memory.body,
+            verified_paths=memory.verified_paths,
+            absent_paths=memory.verified_absent_paths,
+        )
         verdict = compute_staleness_verdict(
             verification=verification,
             path_drift_missing=len(drift.missing),

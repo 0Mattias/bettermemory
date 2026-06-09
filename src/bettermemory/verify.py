@@ -42,7 +42,12 @@ to miss a real path than chase ghosts:
 
 - Backtick-wrapped paths: ```/etc/foo``` or ```~/Downloads```.
   Highest precision because the author chose to set the path off as code.
-- Bare absolute Unix paths: ``/etc/foo``, ``~/Downloads/x.txt``.
+- Bare absolute Unix paths: ``/etc/foo``, ``~/Downloads/x.txt`` — including
+  title-cased spaced directory segments that resume with a slash
+  (``~/Library/Application Support/Claude/config.json``); a bare match
+  that instead stops right before `` Capitalized…`` is treated as an
+  ambiguous truncation and silently dropped when it fails the disk
+  check, never flagged missing (see ``_extract_candidates``).
 - Bare Windows paths: ``C:\\Users\\me``, ``D:/data``.
 
 Excluded by design:
@@ -51,6 +56,10 @@ Excluded by design:
   which is meaningless.
 - URLs (``https://...``, ``git://...``, ``ssh://...``) — they have ``/``
   but aren't filesystem paths.
+- URL routes cross-referenced against the body: when the body cites a
+  domain-attached route (``pypi.org/pypi/bettermemory/json``), absolute
+  candidates sharing its first segment (``/pypi/bettermemory/json``) are
+  routes, not filesystem citations — suppressed (``_DOMAIN_ROUTE_RE``).
 - SSH remotes (``user@host:path``) — colon-prefixed paths would otherwise
   parse as bare paths; filtered via an ``@`` check on the leading run.
 - Paths shorter than 3 characters (``/x``) — the false-positive rate at
@@ -114,10 +123,39 @@ _BACKTICK_RE = re.compile(r"`([^`\n]+)`")
 # through path-friendly characters. The boundary character is consumed by
 # the non-capturing group so the captured group is only the path itself —
 # `match.start(1)` gives the path's true offset.
+#
+# The continuation group handles title-cased spaced directory segments —
+# `~/Library/Application Support/...`, `C:\Program Files\...` — where the
+# path resumes with a slash right after the spaced word(s). Without it the
+# match stops at the space, and the TRUNCATED prefix (`~/Library/Application`)
+# validates, fails the disk check, and manufactures a phantom
+# `path_drift_missing` on every memory citing such a path bare. Each spaced
+# word must start uppercase and be ≥2 chars (excludes `I/O` and ordinary
+# prose, which continues lowercase), and the segment must be followed by a
+# slash — `path Word/more` is strongly path-shaped, `path Word more` is
+# prose. Terminal spaced components (`.../Visual Studio Code.app` with no
+# trailing slash) still can't be captured safely; those fall to the
+# ambiguous-truncation drop in `detect_path_drift` instead.
 _BARE_RE = re.compile(
     r"(?:^|[\s(\[{<\"',;])"
-    r"((?:~/|/|[a-zA-Z]:[\\/])[\w./\-_~\\]+)"
+    r"((?:~/|/|[a-zA-Z]:[\\/])[\w./\-_~\\]+"
+    r"(?:(?: [A-Z][\w.\-]+)+[\\/][\w./\-_~\\]+)*)"
 )
+
+# Domain-attached route: a hostname-shaped token (two-plus dot-separated
+# labels) immediately followed by a `/path`. The captured first path
+# segment marks every same-rooted absolute candidate in the body as a URL
+# route rather than a filesystem path: a body that writes
+# `pypi.org/pypi/bettermemory/<ver>/json` in one sentence and the bare
+# index route `/pypi/bettermemory/json` in another is citing an endpoint
+# both times — stat'ing the latter against the local disk produced a
+# permanent phantom `path_drift_missing`. Suppression is deliberately
+# narrow: only `/`-rooted candidates (never `~/` or drive paths — domains
+# don't precede those) and only on first-segment equality. The cost of a
+# false match is one skipped drift check on a same-named top-level dir
+# cited alongside a URL sharing its first segment — conservative in the
+# direction this module prefers (miss a real path over chasing ghosts).
+_DOMAIN_ROUTE_RE = re.compile(r"\b[\w-]+(?:\.[\w-]+)+/([\w.\-]+)")
 
 # Trailing punctuation that's almost never part of a real path. We strip
 # these from the right edge of a candidate before validating. `~` is in
@@ -182,11 +220,23 @@ class PathDriftReport:
     the user spot-checked and which still exists." Empty when the
     caller passed no `verified_paths` or none of them appeared in the
     body's candidate set.
+
+    `expected_absent` is the subset of `checked` that does NOT exist on
+    disk but was attested via `memory_verify(verified_absent_paths=[...])`
+    as *intentionally* absent here — a path on a remote host, a
+    platform-conditional location (`~/.config/...` cited for Linux while
+    running on macOS), or a path the body cites precisely because it is
+    NOT the real location. These are excluded from `missing` (no drift
+    signal — absence is the attested, expected state) but surfaced in
+    their own bucket so the report stays honest about what it skipped.
+    An attested-absent path that EXISTS again is treated as a normal
+    healthy candidate — presence never raises a flag.
     """
 
     checked: tuple[str, ...]
     missing: tuple[str, ...]
     verified: tuple[str, ...] = ()
+    expected_absent: tuple[str, ...] = ()
 
     @property
     def has_drift(self) -> bool:
@@ -197,6 +247,7 @@ class PathDriftReport:
             "checked": list(self.checked),
             "missing": list(self.missing),
             "verified": list(self.verified),
+            "expected_absent": list(self.expected_absent),
         }
 
 
@@ -204,6 +255,7 @@ def detect_path_drift(
     body: str,
     *,
     verified_paths: tuple[str, ...] | list[str] = (),
+    absent_paths: tuple[str, ...] | list[str] = (),
 ) -> PathDriftReport:
     """Extract path-shaped tokens from `body` and check them on disk.
 
@@ -229,6 +281,12 @@ def detect_path_drift(
     (in addition to the usual `checked` slot). A verified path that's
     since disappeared still lands in `missing` — verification doesn't
     paper over deletion.
+
+    `absent_paths` is the mirror attestation (`memory_verify(
+    verified_absent_paths=[...])`): paths the caller confirmed are
+    *intentionally* not present on this machine. A candidate in that
+    set that fails the disk check lands in `report.expected_absent`
+    instead of `missing` — no drift signal, but the skip stays visible.
     """
     candidates = _extract_candidates(body)
     if not candidates:
@@ -243,24 +301,34 @@ def detect_path_drift(
     # asymmetry between the two normalisation paths. We keep the
     # validator's `None` rejection in the same step so `verified_paths`
     # can't introduce shapes the extractor would itself have dropped.
-    verified_set: set[str] = set()
-    for raw in verified_paths:
-        if not raw:
-            continue
-        candidate = _normalize_candidate(raw)
-        if candidate is None:
-            continue
-        verified_set.add(_normalize_for_compare(candidate))
-    verified_set.discard("")
+    # `absent_paths` goes through the identical pipeline for the same
+    # reason — the two attestation lists must match body candidates by
+    # the same rules or the asymmetry bug returns on the absent axis.
+    verified_set = _normalize_attestations(verified_paths)
+    absent_set = _normalize_attestations(absent_paths)
 
     checked: list[str] = []
     missing: list[str] = []
     verified: list[str] = []
-    for path in candidates:
-        checked.append(path)
+    expected_absent: list[str] = []
+    for path, drop_if_missing in candidates:
         exists = _path_exists(path)
+        if not exists and drop_if_missing:
+            # Ambiguous truncation: the bare scan stopped at ` Capitalized…`
+            # right after this candidate, so the real citation may continue
+            # past the space (a terminal spaced component like
+            # `.../Visual Studio Code.app`). A missing-flag here would be
+            # manufactured by our own truncation, not by drift — drop the
+            # candidate entirely rather than report a claim we can't trust.
+            # An existing candidate is kept: existence proves the prefix is
+            # a real path regardless of what the prose does next.
+            continue
+        checked.append(path)
         if not exists:
-            missing.append(path)
+            if _normalize_for_compare(path) in absent_set:
+                expected_absent.append(path)
+            else:
+                missing.append(path)
             continue
         if _normalize_for_compare(path) in verified_set:
             verified.append(path)
@@ -268,7 +336,25 @@ def detect_path_drift(
         checked=tuple(checked),
         missing=tuple(missing),
         verified=tuple(verified),
+        expected_absent=tuple(expected_absent),
     )
+
+
+def _normalize_attestations(paths: tuple[str, ...] | list[str]) -> set[str]:
+    """Trim/validate/`~`-expand an attestation list into a comparison set —
+    the shared pipeline for `verified_paths` and `absent_paths` (see the
+    call-site comment in `detect_path_drift` for why both lists must run
+    through the exact same normalisation as the body candidates)."""
+    out: set[str] = set()
+    for raw in paths:
+        if not raw:
+            continue
+        candidate = _normalize_candidate(raw)
+        if candidate is None:
+            continue
+        out.add(_normalize_for_compare(candidate))
+    out.discard("")
+    return out
 
 
 def _normalize_for_compare(raw: str) -> str:
@@ -296,43 +382,67 @@ def _normalize_for_compare(raw: str) -> str:
 # ---------------------------------------------------------------------------
 
 
-def _extract_candidates(body: str) -> list[str]:
+def _extract_candidates(body: str) -> list[tuple[str, bool]]:
     """Pull validated, deduplicated path candidates from `body`.
+
+    Returns `(path, drop_if_missing)` pairs. `drop_if_missing` is True
+    only for bare-scan candidates whose match stopped immediately before
+    ``" Capitalized…"`` — the signature of a truncated spaced component
+    the continuation rule in `_BARE_RE` can't safely capture (terminal
+    spaced segments like ``.../Visual Studio Code.app``). The caller
+    drops such a candidate when it fails the disk check instead of
+    flagging it missing; see `detect_path_drift`. Backtick candidates
+    are never ambiguous — the author delimited the path precisely.
 
     Capped at `_MAX_PATHS_PER_BODY`. Backtick-wrapped matches come first;
     when the same path appears both backtick-wrapped and bare, only the
     backtick form is kept (the bare scan operates on a body with backtick
     contents masked out).
+
+    Candidates whose first segment matches a domain-attached route
+    elsewhere in the body are suppressed entirely — see
+    `_DOMAIN_ROUTE_RE`. Computed over the ORIGINAL body (not the masked
+    one): a URL cited inside backticks is still evidence that a
+    same-rooted absolute token is a route.
     """
     if not body:
         return []
 
-    candidates: list[str] = []
+    route_segments = {m.group(1) for m in _DOMAIN_ROUTE_RE.finditer(body)}
+
+    def _is_route(candidate: str) -> bool:
+        if not candidate.startswith("/") or not route_segments:
+            return False
+        return candidate.split("/", 2)[1] in route_segments
+
+    candidates: list[tuple[str, bool]] = []
     seen: set[str] = set()
 
     masked = body
     for match in _BACKTICK_RE.finditer(body):
         raw = match.group(1).strip()
         normalized = _normalize_candidate(raw)
-        if normalized and normalized not in seen:
+        if normalized and normalized not in seen and not _is_route(normalized):
             seen.add(normalized)
-            candidates.append(normalized)
+            candidates.append((normalized, False))
             if len(candidates) >= _MAX_PATHS_PER_BODY:
                 return candidates
         # Mask the backtick span (including the delimiters) so the bare
         # scan doesn't see it again. Replace with spaces of the same
-        # length to preserve offsets — not strictly required since we
-        # don't use offsets after this, but it keeps debug-printing the
-        # masked body honest.
+        # length to preserve offsets — the ambiguous-truncation lookahead
+        # below indexes into the masked body, so offset preservation is
+        # load-bearing now, not just debug-friendly.
         span = match.span()
         masked = masked[: span[0]] + " " * (span[1] - span[0]) + masked[span[1] :]
 
     for match in _BARE_RE.finditer(masked):
         raw = match.group(1)
         normalized = _normalize_candidate(raw)
-        if normalized and normalized not in seen:
+        if normalized and normalized not in seen and not _is_route(normalized):
             seen.add(normalized)
-            candidates.append(normalized)
+            tail = masked[match.end(1) : match.end(1) + 2]
+            ambiguous = len(tail) == 2 and tail[0] == " " and tail[1].isupper()
+            candidates.append((normalized, ambiguous))
             if len(candidates) >= _MAX_PATHS_PER_BODY:
                 break
 
@@ -408,7 +518,23 @@ def _normalize_candidate(raw: str) -> str | None:
         parts = s.split()
         first = parts[0]
         slashless = sum(1 for p in parts if "/" not in p and "\\" not in p)
-        if first.count("/") + first.count("\\") <= 1 or slashless >= 2:
+        boundaries = first.count("/") + first.count("\\")
+        # A Windows drive prefix is a directory boundary too: the first
+        # chunk of `C:\Program Files\nodejs` is `C:\Program` — one literal
+        # slash, but it crosses the drive root, so it's exactly as
+        # boundary-crossing as `/Users/My`. Without this credit every
+        # drive-letter path with an internal space (`C:\Program Files\…`,
+        # the single most common spaced path on Windows) failed the
+        # multi-slash rule and was silently dropped — a false negative
+        # against the documented "rare but legal" internal-space intent.
+        if (
+            len(first) >= 3
+            and first[0].isalpha()
+            and first[1] == ":"
+            and first[2] in "/\\"
+        ):
+            boundaries += 1
+        if boundaries <= 1 or slashless >= 2:
             return None
 
     if s.startswith("~/"):

@@ -414,8 +414,12 @@ async def memory_search(
             pass
         else:
             out[0]["body"] = memory.body
-            drift = detect_path_drift(memory.body, verified_paths=memory.verified_paths)
-            if drift.has_drift or drift.verified:
+            drift = detect_path_drift(
+                memory.body,
+                verified_paths=memory.verified_paths,
+                absent_paths=memory.verified_absent_paths,
+            )
+            if drift.has_drift or drift.verified or drift.expected_absent:
                 out[0]["path_drift"] = drift.to_dict()
             expanded_drift_missing = len(drift.missing)
             commit_drift = compute_commit_drift(

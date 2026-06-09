@@ -594,13 +594,34 @@ def test_oserror_during_exists_treated_as_missing() -> None:
 def test_report_to_dict_round_trips() -> None:
     r = PathDriftReport(checked=("/a", "/b"), missing=("/b",))
     d = r.to_dict()
-    assert d == {"checked": ["/a", "/b"], "missing": ["/b"], "verified": []}
+    assert d == {
+        "checked": ["/a", "/b"],
+        "missing": ["/b"],
+        "verified": [],
+        "expected_absent": [],
+    }
 
 
 def test_report_to_dict_includes_verified_paths() -> None:
     r = PathDriftReport(checked=("/a", "/b"), missing=("/b",), verified=("/a",))
     d = r.to_dict()
-    assert d == {"checked": ["/a", "/b"], "missing": ["/b"], "verified": ["/a"]}
+    assert d == {
+        "checked": ["/a", "/b"],
+        "missing": ["/b"],
+        "verified": ["/a"],
+        "expected_absent": [],
+    }
+
+
+def test_report_to_dict_includes_expected_absent() -> None:
+    r = PathDriftReport(checked=("/a", "/b"), missing=(), expected_absent=("/b",))
+    d = r.to_dict()
+    assert d == {
+        "checked": ["/a", "/b"],
+        "missing": [],
+        "verified": [],
+        "expected_absent": ["/b"],
+    }
 
 
 def test_has_drift_only_when_missing_nonempty() -> None:
@@ -1082,3 +1103,144 @@ def test_commit_drift_status_is_immutable_dataclass(tmp_path: Path) -> None:
     except _dc.FrozenInstanceError:
         return
     raise AssertionError("CommitDriftStatus should be frozen")
+
+
+# ---------------------------------------------------------------------------
+# Spaced-path extraction, URL-route suppression, absent attestations
+# (the 3.8.x false-signal fixes — each test pins one live incident class)
+# ---------------------------------------------------------------------------
+
+
+def test_bare_spaced_segment_path_extracted_whole(tmp_path: Path) -> None:
+    """Class A incident: bare `~/Library/Application Support/...` used to
+    truncate at the space, and the prefix (`~/Library/Application`)
+    false-flagged as missing on every retrieval."""
+    spaced = tmp_path / "Application Support" / "Claude"
+    spaced.mkdir(parents=True)
+    target = spaced / "claude_desktop_config.json"
+    target.write_text("{}")
+    body = f"the desktop config {target} contains only UI preferences"
+    report = detect_path_drift(body)
+    assert str(target) in report.checked
+    assert report.missing == ()
+
+
+def test_bare_multiword_spaced_segment_with_continuation(tmp_path: Path) -> None:
+    """Two consecutive spaced words resume with a slash — the
+    `.../Visual Studio Code.app/Contents` shape."""
+    app = tmp_path / "Visual Studio Code.app" / "Contents"
+    app.mkdir(parents=True)
+    body = f"binaries live under {app} on this machine"
+    report = detect_path_drift(body)
+    assert str(app) in report.checked
+    assert report.missing == ()
+
+
+def test_bare_truncation_before_capitalized_word_dropped(tmp_path: Path) -> None:
+    """A bare match that stops right before ` Capitalized…` and fails the
+    disk check is an ambiguous truncation (terminal spaced component) —
+    dropped entirely, never flagged missing."""
+    body = f"installed at {tmp_path}/Visual Studio Code.app on this machine"
+    # `{tmp_path}/Visual Studio Code.app` does NOT exist; the truncated
+    # candidate `{tmp_path}/Visual` doesn't either. The ` Studio` tail
+    # marks the extraction ambiguous -> no candidate, no phantom flag.
+    report = detect_path_drift(body)
+    assert report.missing == ()
+    assert all("Visual" not in c for c in report.checked)
+
+
+def test_bare_missing_path_before_lowercase_prose_still_flags(tmp_path: Path) -> None:
+    """The ambiguity drop must not swallow real drift: ordinary prose
+    continues lowercase after a path citation."""
+    gone = tmp_path / "definitely-gone.conf"
+    body = f"the config at {gone} was moved last week"
+    report = detect_path_drift(body)
+    assert str(gone) in report.missing
+
+
+def test_bare_existing_path_before_capitalized_word_kept(tmp_path: Path) -> None:
+    """Existence proves the prefix is a real path regardless of what the
+    prose does next — only MISSING ambiguous candidates are dropped."""
+    body = f"see {tmp_path} Files are kept there"
+    report = detect_path_drift(body)
+    assert str(tmp_path) in report.checked
+    assert report.missing == ()
+
+
+def test_windows_drive_spaced_path_in_backticks_extracted() -> None:
+    """`C:\\Program Files\\…` failed the internal-space multi-slash rule
+    because the drive prefix wasn't credited as a boundary — the single
+    most common spaced path on Windows was silently dropped."""
+    body = r"installed under `C:\Program Files\bettermemory-test-noexist` there"
+    report = detect_path_drift(body)
+    assert "C:\\Program Files\\bettermemory-test-noexist" in report.checked
+
+
+def test_url_route_suppressed_by_domain_cross_reference() -> None:
+    """Class B incident: a body citing `pypi.org/pypi/bettermemory/<ver>/json`
+    in one sentence and the bare index route `/pypi/bettermemory/json` in
+    another permanently false-flagged the route as a missing file."""
+    body = (
+        "hit `pypi.org/pypi/bettermemory/<ver>/json` (200 = live) — the "
+        "top-level `/pypi/bettermemory/json` index lags ~1min"
+    )
+    report = detect_path_drift(body)
+    assert report.checked == ()
+    assert report.missing == ()
+
+
+def test_route_suppression_requires_first_segment_match(tmp_path: Path) -> None:
+    """A domain citation elsewhere in the body must not suppress unrelated
+    filesystem candidates."""
+    real = tmp_path / "config.toml"
+    real.write_text("x")
+    body = f"docs at example.com/docs/setup — config lives in {real}"
+    report = detect_path_drift(body)
+    assert str(real) in report.checked
+    assert report.missing == ()
+
+
+def test_absent_attestation_moves_missing_to_expected_absent(tmp_path: Path) -> None:
+    """Classes C+D: remote-host / platform-conditional / cited-as-NOT-here
+    paths are attestable via `verified_absent_paths` — excluded from
+    `missing`, surfaced under `expected_absent`."""
+    gone = tmp_path / "remote-only"
+    body = f"the stacks live in {gone} on the zimaboard, not on this Mac"
+    flagged = detect_path_drift(body)
+    assert str(gone) in flagged.missing
+    attested = detect_path_drift(body, absent_paths=[str(gone)])
+    assert attested.missing == ()
+    assert str(gone) in attested.expected_absent
+    assert str(gone) in attested.checked
+    assert attested.has_drift is False
+
+
+def test_absent_attestation_with_tilde_expansion(tmp_path: Path, monkeypatch) -> None:
+    """Attestation and body candidate match through the same `~`-expansion
+    pipeline as `verified_paths`."""
+    monkeypatch.setenv("HOME", str(tmp_path))
+    body = "the project is NOT in ~/Projects anymore"
+    attested = detect_path_drift(body, absent_paths=["~/Projects"])
+    assert attested.missing == ()
+    assert attested.expected_absent == ("~/Projects",)
+
+
+def test_absent_attestation_does_not_mask_other_drift(tmp_path: Path) -> None:
+    other = tmp_path / "other-gone.conf"
+    attested_path = tmp_path / "expected-gone"
+    body = f"configs were at {other} and remote {attested_path} respectively"
+    report = detect_path_drift(body, absent_paths=[str(attested_path)])
+    assert str(other) in report.missing
+    assert str(attested_path) in report.expected_absent
+
+
+def test_absent_attested_path_that_exists_is_normal_candidate(tmp_path: Path) -> None:
+    """Presence never raises a flag: an attested-absent path that has
+    (re)appeared is just a healthy candidate."""
+    back = tmp_path / "reappeared"
+    back.mkdir()
+    body = f"data lives in {back} again"
+    report = detect_path_drift(body, absent_paths=[str(back)])
+    assert str(back) in report.checked
+    assert report.missing == ()
+    assert report.expected_absent == ()
