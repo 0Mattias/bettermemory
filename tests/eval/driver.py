@@ -31,6 +31,7 @@ depends entirely on whether the agent is a real model (LiveAgent) or a script.
 
 from __future__ import annotations
 
+import json
 import os
 from dataclasses import dataclass, field
 from datetime import datetime
@@ -95,12 +96,27 @@ def run_driver(
     audit events (the silent-miss lane). All flow through `compute_eval`, so a
     driver that supplies citations gets a non-`None` trio."""
     memories = workload.memories()
+    body_by_id = {m.id: m.body for m in memories}
     ts = now.isoformat()
     events: list[dict[str, Any]] = []
 
     for probe in workload.probes:
         hits = search(memories, probe.query, max_results=k, now=now)
         turn = agent.decide(probe, hits)
+
+        # Honesty guard — the Citation contract, enforced for EVERY agent (not
+        # just the live one): an excerpt must be a real substring of the cited
+        # memory's BODY, never merely of the truncated snippet the live agent
+        # was shown. `snippet_for` truncates bodies >200 chars and appends a
+        # synthetic "..."; a model echoing that ellipsis would otherwise inflate
+        # the helped-rate numerator with a phrase the memory never contained
+        # (and a genuine phrase past the snippet boundary would be wrongly
+        # dropped). Validate against the body here, where the driver holds it.
+        citations = tuple(
+            c
+            for c in turn.citations
+            if c.excerpt and c.excerpt in body_by_id.get(c.memory_id, "")
+        )
 
         if turn.searched:
             events.append(
@@ -111,7 +127,7 @@ def run_driver(
                     "returned": [h.id for h in hits],
                 }
             )
-        for cite in turn.citations:
+        for cite in citations:
             events.append(
                 {
                     "kind": "use",
@@ -217,6 +233,51 @@ def default_scripted_agent(workload: Workload) -> ScriptedAgent:
     )
 
 
+def _parse_live_decision(text: str, hit_ids: set[str]) -> AgentTurn:
+    """Parse a live model's JSON reply into an `AgentTurn`.
+
+    Pure (no I/O) so the honesty-critical logic is unit-testable without an API
+    key — only the surrounding model call stays `# pragma: no cover`. Two
+    invariants:
+
+    - `searched` is the MODEL's own decision (the ``"searched"`` field), NEVER
+      derived from whether the ranker returned hits. Deriving it from
+      ``bool(hits)`` would make the silent-miss lane a tautology of retrieval
+      (any probe with a hit ⇒ "searched" ⇒ never a miss), turning a published
+      "measurement" into a restatement of the ranker output. When the model
+      omits a usable boolean, fall back to "did it cite anything" — still tied
+      to the model's own output, never to the hit list.
+    - A citation must reference a memory the agent actually saw
+      (``id in hit_ids``) — you can't cite what you never retrieved. The
+      excerpt-is-a-real-body-substring invariant is enforced centrally in
+      `run_driver` (which holds the bodies), so this stays snippet-agnostic.
+    """
+    try:
+        parsed = json.loads(text)
+    except (json.JSONDecodeError, TypeError):
+        return AgentTurn(searched=False)
+    if not isinstance(parsed, dict):
+        return AgentTurn(searched=False)
+
+    citations: list[Citation] = []
+    raw = parsed.get("citations")
+    if isinstance(raw, list):
+        for c in raw:
+            if not isinstance(c, dict):
+                continue
+            mid = c.get("id")
+            excerpt = (c.get("excerpt") or "").strip()
+            if isinstance(mid, str) and mid in hit_ids and excerpt:
+                citations.append(Citation(memory_id=mid, excerpt=excerpt))
+
+    searched_raw = parsed.get("searched")
+    searched = searched_raw if isinstance(searched_raw, bool) else bool(citations)
+    # A citation implies the agent consulted memory.
+    if citations:
+        searched = True
+    return AgentTurn(searched=searched, citations=tuple(citations))
+
+
 class LiveAgent:
     """The real-model path — the publishable measurement.
 
@@ -249,19 +310,22 @@ class LiveAgent:
     def decide(
         self, probe: WorkloadProbe, hits: list[MemoryHit]
     ) -> AgentTurn:  # pragma: no cover - live boundary, not run in CI
-        import json
-
         import anthropic  # pyright: ignore[reportMissingImports]
 
         client = anthropic.Anthropic()
         catalog = "\n".join(f"- id={h.id}: {h.snippet}" for h in hits)
         prompt = (
-            "You are a coding agent answering the user. You retrieved these "
-            f"memories:\n{catalog or '(none)'}\n\nUser message: {probe.query}\n\n"
-            'Reply ONLY with JSON: {"citations": [{"id": <memory id you '
-            'actually relied on>, "excerpt": <the load-bearing phrase, a '
-            "verbatim substring of that memory>}]}. Empty list if none shaped "
-            "your reply."
+            "You are a coding agent answering a user message. Your memory store "
+            f"surfaced these memories as possibly relevant:\n{catalog or '(none)'}"
+            f"\n\nUser message: {probe.query}\n\nDecide for yourself: (1) did you "
+            "actually need to consult stored memory to answer this — is any "
+            "surfaced memory genuinely relevant, or is the query self-contained? "
+            "and (2) which memories did your reply actually rely on? Reply ONLY "
+            'with JSON: {"searched": <true if you consulted memory, false if the '
+            'query needed none>, "citations": [{"id": <id of a memory you relied '
+            'on>, "excerpt": <the load-bearing phrase, a verbatim substring of '
+            'that memory>}]}. Use "searched": false with an empty citations list '
+            "when no surfaced memory was relevant."
         )
         msg = client.messages.create(
             model=self._model,
@@ -271,17 +335,7 @@ class LiveAgent:
         text = "".join(
             b.text for b in msg.content if getattr(b, "type", None) == "text"
         )
-        citations: list[Citation] = []
-        try:
-            parsed = json.loads(text)
-            snippet_by_id = {h.id: h.snippet for h in hits}
-            for c in parsed.get("citations", []):
-                mid, excerpt = c.get("id"), (c.get("excerpt") or "").strip()
-                # Honesty guard: only count a citation whose excerpt really
-                # appears in a retrieved memory — a hallucinated phrase or an
-                # id the agent never saw is dropped, never scored.
-                if mid in snippet_by_id and excerpt and excerpt in snippet_by_id[mid]:
-                    citations.append(Citation(memory_id=mid, excerpt=excerpt))
-        except (json.JSONDecodeError, AttributeError, TypeError):
-            pass  # malformed model output → no citation this turn (best-effort)
-        return AgentTurn(searched=bool(hits), citations=tuple(citations))
+        # `searched` comes from the model's reply, NOT bool(hits) — see
+        # _parse_live_decision. Deriving it from the ranker would make the live
+        # silent_miss_rate a tautology of retrieval.
+        return _parse_live_decision(text, {h.id for h in hits})

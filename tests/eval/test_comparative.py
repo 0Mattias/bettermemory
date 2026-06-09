@@ -339,3 +339,145 @@ def test_cli_driver_live_reports_unavailable_without_key(capsys, monkeypatch):
     rc = main(["--driver", "live"])
     assert rc == 0
     assert "unavailable" in capsys.readouterr().out.lower()
+
+
+# ---------------------------------------------------------------------------
+# LiveAgent honesty — the live path is the publishable one, so its decision
+# logic is extracted into a pure `_parse_live_decision` and unit-tested here
+# (the model call itself stays the # pragma: no cover live boundary).
+# ---------------------------------------------------------------------------
+
+
+def test_parse_live_decision_searched_is_model_choice_not_bool_hits():
+    """`searched` must be the model's own decision, never derived from whether
+    the ranker returned hits. A model that says searched=false WHILE hits exist
+    yields searched=False — otherwise the silent-miss lane is a tautology of
+    retrieval (any hit ⇒ searched ⇒ never a miss)."""
+    from .driver import _parse_live_decision
+
+    turn = _parse_live_decision('{"searched": false, "citations": []}', {"A", "B"})
+    assert turn.searched is False  # hits present, but the model did not search
+    assert turn.citations == ()
+
+    # And the converse: no hits, but the model says it searched.
+    assert _parse_live_decision('{"searched": true, "citations": []}', set()).searched
+
+
+def test_parse_live_decision_citation_implies_searched():
+    """A citation means the agent consulted memory, so searched is coerced True
+    even when the model contradicts itself with searched=false."""
+    from .driver import _parse_live_decision
+
+    turn = _parse_live_decision(
+        '{"searched": false, "citations": [{"id": "A", "excerpt": "foo"}]}', {"A"}
+    )
+    assert turn.searched is True
+    assert [c.memory_id for c in turn.citations] == ["A"]
+
+
+def test_parse_live_decision_drops_citation_for_unseen_id():
+    """Honest by construction: a citation referencing an id the agent never
+    retrieved is dropped — you can't cite what you never saw. The model's
+    search decision still stands."""
+    from .driver import _parse_live_decision
+
+    turn = _parse_live_decision(
+        '{"searched": true, "citations": [{"id": "Z", "excerpt": "foo"}]}', {"A"}
+    )
+    assert turn.citations == ()
+    assert turn.searched is True
+
+
+def test_parse_live_decision_missing_searched_falls_back_to_cited_not_hits():
+    """When the model omits `searched`, fall back to whether it cited — tied to
+    the model's output, never to bool(hits)."""
+    from .driver import _parse_live_decision
+
+    # No `searched`, no citation, but hits exist -> False (NOT bool(hits)).
+    assert _parse_live_decision('{"citations": []}', {"A", "B"}).searched is False
+    # No `searched`, one valid citation -> True.
+    assert (
+        _parse_live_decision(
+            '{"citations": [{"id": "A", "excerpt": "foo"}]}', {"A"}
+        ).searched
+        is True
+    )
+
+
+def test_parse_live_decision_malformed_is_clean_noop():
+    """Best-effort: non-JSON or a non-object payload yields searched=False with
+    no citations rather than raising."""
+    from .driver import AgentTurn, _parse_live_decision
+
+    assert _parse_live_decision("not json at all", {"A"}) == AgentTurn(searched=False)
+    assert _parse_live_decision("[1, 2, 3]", {"A"}).searched is False
+    assert _parse_live_decision('"a bare string"', {"A"}).citations == ()
+
+
+def test_run_driver_silent_miss_follows_search_decision_not_hits():
+    """End-to-end F1: the silent-miss lane is driven by the agent's search
+    DECISION, decoupled from whether hits exist. An agent that never searches
+    misses every gold probe (a high-relevance memory existed and it didn't
+    look); one that always searches never misses — both see the same hits."""
+    from .driver import AgentTurn, ScriptedAgent, run_driver
+
+    wl = default_workload()
+    never = ScriptedAgent(script={})  # every probe defaults to searched=False
+    assert run_driver(wl, never).silent_miss_rate.numerator == len(wl.gold_probes) == 7
+
+    always = ScriptedAgent(
+        script={p.query: AgentTurn(searched=True) for p in wl.probes}
+    )
+    assert run_driver(wl, always).silent_miss_rate.numerator == 0
+
+
+def test_run_driver_drops_citation_whose_excerpt_is_not_in_body():
+    """F2: the citation honesty guard validates against the cited memory's BODY,
+    not the truncated snippet. `snippet_for` truncates bodies >200 chars and
+    appends a synthetic '...'; a model echoing that ellipsis would pass a
+    snippet check but the phrase is absent from the body. run_driver must drop
+    it so the published memory_helped numerator isn't inflated."""
+    from bettermemory.models import snippet_for
+
+    from .driver import AgentTurn, Citation, ScriptedAgent, run_driver
+    from .workload import Workload, WorkloadFact, WorkloadProbe
+
+    long_body = (
+        "Production cutover is fully manual: a release captain must obtain a "
+        "signed approval from the on-call lead, then run the promotion script "
+        "by hand during the Tuesday window, never through the automated pipeline."
+    )
+    assert len(long_body) > 200
+    snippet = snippet_for(long_body)
+    # The synthetic-ellipsis tail is in the snippet but NOT the body.
+    ellipsis_tail = snippet[-12:]
+    assert ellipsis_tail in snippet and ellipsis_tail not in long_body
+
+    query = "production cutover release captain signed approval"
+    wl = Workload(
+        name="long-body",
+        facts=[WorkloadFact(key="cut", scopes=["projects:x"], body=long_body)],
+        probes=[WorkloadProbe(query, "cut", agent_searched=True)],
+    )
+    mem_id = wl.gold_id(wl.probes[0])
+    assert mem_id is not None
+
+    # Cites the snippet ellipsis (absent from the body) -> must be dropped.
+    bogus = ScriptedAgent(
+        script={
+            query: AgentTurn(
+                searched=True, citations=(Citation(mem_id, ellipsis_tail),)
+            )
+        }
+    )
+    assert run_driver(wl, bogus).memory_helped_rate.numerator == 0
+
+    # Control: a real body substring IS counted.
+    real = ScriptedAgent(
+        script={
+            query: AgentTurn(
+                searched=True, citations=(Citation(mem_id, "release captain"),)
+            )
+        }
+    )
+    assert run_driver(wl, real).memory_helped_rate.numerator == 1
