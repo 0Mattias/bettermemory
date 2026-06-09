@@ -118,7 +118,15 @@ def run_driver(
             if c.excerpt and c.excerpt in body_by_id.get(c.memory_id, "")
         )
 
-        if turn.searched:
+        # The agent searched iff it SAID so, OR a citation survived the body
+        # guard above (a genuine citation proves it consulted memory). Applying
+        # the citation-implies-searched coherence HERE — on validated citations,
+        # not the raw ones — means a body-invalid excerpt that gets dropped can
+        # never flip an explicit `searched=false`, so the silent-miss lane and
+        # the helped-rate numerator stay consistent.
+        searched = turn.searched or bool(citations)
+
+        if searched:
             events.append(
                 {
                     "kind": "search",
@@ -143,12 +151,11 @@ def run_driver(
             )
 
         # Audit lane: the silent-miss verdict keys off whether a retrieval
-        # happened THIS turn (the agent's decision), exactly as the offline
-        # adapter keys off `probe.agent_searched`.
+        # happened THIS turn (the agent's decision, coherence-checked against a
+        # surviving citation above), exactly as the offline adapter keys off
+        # `probe.agent_searched`.
         recent: list[dict[str, Any]] = (
-            [{"kind": "search", "session": session_id, "ts": ts}]
-            if turn.searched
-            else []
+            [{"kind": "search", "session": session_id, "ts": ts}] if searched else []
         )
         report = probe_for_miss(
             memories, probe.query, recent_events=recent, session_id=session_id, now=now
@@ -237,20 +244,24 @@ def _parse_live_decision(text: str, hit_ids: set[str]) -> AgentTurn:
     """Parse a live model's JSON reply into an `AgentTurn`.
 
     Pure (no I/O) so the honesty-critical logic is unit-testable without an API
-    key — only the surrounding model call stays `# pragma: no cover`. Two
-    invariants:
+    key — only the surrounding model call stays `# pragma: no cover`. Contract:
 
-    - `searched` is the MODEL's own decision (the ``"searched"`` field), NEVER
-      derived from whether the ranker returned hits. Deriving it from
-      ``bool(hits)`` would make the silent-miss lane a tautology of retrieval
-      (any probe with a hit ⇒ "searched" ⇒ never a miss), turning a published
-      "measurement" into a restatement of the ranker output. When the model
-      omits a usable boolean, fall back to "did it cite anything" — still tied
-      to the model's own output, never to the hit list.
+    - `searched` is the MODEL's own explicit decision (the ``"searched"``
+      boolean), NEVER derived from whether the ranker returned hits. Deriving it
+      from ``bool(hits)`` would make the silent-miss lane a tautology of
+      retrieval (any probe with a hit ⇒ "searched" ⇒ never a miss), turning a
+      published "measurement" into a restatement of the ranker output. When the
+      model omits a usable boolean, default to False — `run_driver` upgrades it
+      to True iff a citation SURVIVES body validation (see below), so a citation
+      can only imply "searched" once it's proven genuine, not before.
     - A citation must reference a memory the agent actually saw
       (``id in hit_ids``) — you can't cite what you never retrieved. The
       excerpt-is-a-real-body-substring invariant is enforced centrally in
       `run_driver` (which holds the bodies), so this stays snippet-agnostic.
+    - Best-effort: any malformed shape (non-JSON, non-object, non-list
+      citations, non-dict entries, a non-string ``excerpt``) degrades to a
+      dropped field, never an exception — the live measurement must not crash
+      mid-run on one odd model reply.
     """
     try:
         parsed = json.loads(text)
@@ -266,15 +277,20 @@ def _parse_live_decision(text: str, hit_ids: set[str]) -> AgentTurn:
             if not isinstance(c, dict):
                 continue
             mid = c.get("id")
-            excerpt = (c.get("excerpt") or "").strip()
+            # `excerpt` may be any JSON type — coerce safely. A non-string
+            # (number/bool/array/object) is treated as absent, not `.strip()`ed
+            # (which would raise AttributeError and abort the whole run).
+            raw_excerpt = c.get("excerpt")
+            excerpt = raw_excerpt.strip() if isinstance(raw_excerpt, str) else ""
             if isinstance(mid, str) and mid in hit_ids and excerpt:
                 citations.append(Citation(memory_id=mid, excerpt=excerpt))
 
+    # Faithfully report the model's stated decision; default False when it omits
+    # the field. The "a genuine citation implies searched" coherence is applied
+    # in run_driver AFTER body validation, so a body-invalid citation can't flip
+    # an explicit abstention while being dropped from the count.
     searched_raw = parsed.get("searched")
-    searched = searched_raw if isinstance(searched_raw, bool) else bool(citations)
-    # A citation implies the agent consulted memory.
-    if citations:
-        searched = True
+    searched = searched_raw if isinstance(searched_raw, bool) else False
     return AgentTurn(searched=searched, citations=tuple(citations))
 
 

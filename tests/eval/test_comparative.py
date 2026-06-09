@@ -363,15 +363,18 @@ def test_parse_live_decision_searched_is_model_choice_not_bool_hits():
     assert _parse_live_decision('{"searched": true, "citations": []}', set()).searched
 
 
-def test_parse_live_decision_citation_implies_searched():
-    """A citation means the agent consulted memory, so searched is coerced True
-    even when the model contradicts itself with searched=false."""
+def test_parse_live_decision_reports_model_searched_verbatim():
+    """The parse FAITHFULLY reports the model's explicit `searched`; it does NOT
+    coerce it from the presence of a citation. The "a genuine citation implies
+    searched" coherence is applied later, in run_driver, AFTER body validation —
+    so a body-invalid citation can't flip an explicit abstention here (the
+    cross-layer contradiction the self-audit caught)."""
     from .driver import _parse_live_decision
 
     turn = _parse_live_decision(
         '{"searched": false, "citations": [{"id": "A", "excerpt": "foo"}]}', {"A"}
     )
-    assert turn.searched is True
+    assert turn.searched is False  # model said false; parse does not override
     assert [c.memory_id for c in turn.citations] == ["A"]
 
 
@@ -388,30 +391,44 @@ def test_parse_live_decision_drops_citation_for_unseen_id():
     assert turn.searched is True
 
 
-def test_parse_live_decision_missing_searched_falls_back_to_cited_not_hits():
-    """When the model omits `searched`, fall back to whether it cited — tied to
-    the model's output, never to bool(hits)."""
+def test_parse_live_decision_missing_searched_defaults_false_never_hits():
+    """When the model omits `searched`, the parse defaults to False — never
+    bool(hits), and never bool(citations) (the citation upgrade is run_driver's
+    job, applied only to body-validated citations). Hits in scope must not make
+    searched True."""
     from .driver import _parse_live_decision
 
     # No `searched`, no citation, but hits exist -> False (NOT bool(hits)).
     assert _parse_live_decision('{"citations": []}', {"A", "B"}).searched is False
-    # No `searched`, one valid citation -> True.
-    assert (
-        _parse_live_decision(
-            '{"citations": [{"id": "A", "excerpt": "foo"}]}', {"A"}
-        ).searched
-        is True
+    # No `searched`, a candidate citation present -> still False at parse level
+    # (run_driver upgrades iff the excerpt survives the body guard).
+    parsed = _parse_live_decision(
+        '{"citations": [{"id": "A", "excerpt": "foo"}]}', {"A"}
     )
+    assert parsed.searched is False
+    assert [c.memory_id for c in parsed.citations] == ["A"]
 
 
 def test_parse_live_decision_malformed_is_clean_noop():
-    """Best-effort: non-JSON or a non-object payload yields searched=False with
-    no citations rather than raising."""
+    """Best-effort: a malformed payload degrades to a dropped field, never an
+    exception — the live run must not crash mid-measurement on one odd reply."""
     from .driver import AgentTurn, _parse_live_decision
 
     assert _parse_live_decision("not json at all", {"A"}) == AgentTurn(searched=False)
     assert _parse_live_decision("[1, 2, 3]", {"A"}).searched is False
     assert _parse_live_decision('"a bare string"', {"A"}).citations == ()
+    # A non-string `excerpt` (number / bool / array / object) must be treated as
+    # absent, not `.strip()`ed into an AttributeError that aborts the run.
+    for bad in ("42", "true", "[1, 2]", '{"x": 1}'):
+        turn = _parse_live_decision(
+            f'{{"searched": true, "citations": [{{"id": "A", "excerpt": {bad}}}]}}',
+            {"A"},
+        )
+        assert turn.searched is True  # model's decision survives
+        assert turn.citations == ()  # the type-wrong excerpt is dropped, no crash
+    # A non-list `citations` and non-dict entries are also tolerated.
+    assert _parse_live_decision('{"citations": "nope"}', {"A"}).citations == ()
+    assert _parse_live_decision('{"citations": [1, "x"]}', {"A"}).citations == ()
 
 
 def test_run_driver_silent_miss_follows_search_decision_not_hits():
@@ -481,3 +498,44 @@ def test_run_driver_drops_citation_whose_excerpt_is_not_in_body():
         }
     )
     assert run_driver(wl, real).memory_helped_rate.numerator == 1
+
+
+def test_run_driver_searched_coherence_uses_validated_citations():
+    """Cross-layer consistency (the self-audit's Bug B): a citation forces
+    `searched`=True only if it SURVIVES the body guard. On a gold+not-searched
+    probe, a body-VALID citation upgrades the turn to searched (no miss); a
+    body-INVALID citation (dropped by the guard) must NOT flip the abstention —
+    it stays a miss, consistent with the citation being excluded from the
+    helped numerator. The two layers must never contradict each other."""
+    from .driver import AgentTurn, Citation, ScriptedAgent, run_driver
+
+    wl = default_workload()
+    probe = wl.probes[0]  # the pytest gold + not-searched probe
+    assert probe.gold_key is not None and not probe.agent_searched
+    mem_id = wl.gold_id(probe)
+    assert mem_id is not None
+
+    # Everything else searched, so any miss isolates to this one probe.
+    def agent_with(probe_turn: AgentTurn) -> ScriptedAgent:
+        script = {p.query: AgentTurn(searched=True) for p in wl.probes}
+        script[probe.query] = probe_turn
+        return ScriptedAgent(script=script)
+
+    # Abstained, but a BODY-VALID citation -> searched, no miss, helped +1.
+    valid = agent_with(
+        AgentTurn(searched=False, citations=(Citation(mem_id, "pytest over unittest"),))
+    )
+    ev_valid = run_driver(wl, valid)
+    assert ev_valid.silent_miss_rate.numerator == 0
+    assert ev_valid.memory_helped_rate.numerator == 1
+
+    # Abstained, only a BODY-INVALID citation -> dropped; the abstention stands,
+    # so it remains a miss and nothing counts toward helped.
+    invalid = agent_with(
+        AgentTurn(
+            searched=False, citations=(Citation(mem_id, "phrase absent from body"),)
+        )
+    )
+    ev_invalid = run_driver(wl, invalid)
+    assert ev_invalid.silent_miss_rate.numerator == 1
+    assert ev_invalid.memory_helped_rate.numerator == 0
