@@ -1,6 +1,6 @@
 """memory_search MCP tool — handler implementation + DESC.
 
-The handler is the busiest of the 24 tools: it issues use-tokens,
+The handler is the busiest of the 25 tools: it issues use-tokens,
 attaches per-hit drift signals, optionally expands the top hit, and
 records its own event with a generous payload shape so the eval CLI
 can rebuild what the model saw.
@@ -99,6 +99,28 @@ DESC_MEMORY_SEARCH = (
     "turns; only call memory_record_use to override "
     "(ignored / contradicted / corrected)."
 )
+
+
+def _explicit_applied_counts(
+    events: list[dict[str, Any]], candidate_ids: set[str]
+) -> dict[str, int]:
+    """Tally explicit `memory_record_use(applied)` events per candidate id.
+
+    Only DELIBERATE applies count: events with `auto is True` (the ~2-turn
+    auto-fallback) are excluded, mirroring the auto/explicit split health.py
+    and eval.py already use — auto-applies would otherwise inflate every
+    retrieved memory and defeat the point. Restricted to `candidate_ids` so
+    the tally is bounded by the result set, not the whole store."""
+    counts: dict[str, int] = {}
+    for ev in events:
+        if ev.get("kind") != "use" or ev.get("outcome") != "applied":
+            continue
+        if ev.get("auto") is True:
+            continue
+        for mid in ev.get("ids") or ev.get("memory_ids") or []:
+            if mid in candidate_ids:
+                counts[mid] = counts.get(mid, 0) + 1
+    return counts
 
 
 async def memory_search(
@@ -233,9 +255,26 @@ async def memory_search(
     else:
         memories = deps._load_search_candidates(query, scopes=scopes)
 
+    # Usage-aware ranking (opt-in via [behavior] endorsement_boost). Tally how
+    # many times the model has EXPLICITLY applied each candidate and hand the
+    # counts to the ranker, which applies a bounded endorsement nudge. The
+    # event list is reused below for `recent_negative_outcomes`, so an enabled
+    # boost adds no extra I/O on a hit-producing search. Stays None (ranker
+    # neutral) when the flag is off — the shipped default is unchanged.
+    recent_events: list[dict[str, Any]] | None = None
+    applied_by_id: dict[str, int] | None = None
+    if deps.config.behavior.endorsement_boost and memories:
+        from ..events import iter_events
+
+        recent_events = list(iter_events(deps.store.root))
+        applied_by_id = _explicit_applied_counts(
+            recent_events, {m.id for m in memories}
+        )
+
     hits = run_search(
         memories,
         query,
+        applied_by_id=applied_by_id,
         scopes=scopes,
         excluded_scopes=set(state.disabled_scopes),
         repo_filter=repo_filter,
@@ -285,9 +324,10 @@ async def memory_search(
     # lazily here rather than at handler construction time keeps
     # the cost off searches that produce no hits.
     if out:
-        from ..events import iter_events
+        if recent_events is None:
+            from ..events import iter_events
 
-        recent_events = list(iter_events(deps.store.root))
+            recent_events = list(iter_events(deps.store.root))
         deps.responses.attach_recent_negative_outcomes(
             out, hits, recent_events, now=now
         )

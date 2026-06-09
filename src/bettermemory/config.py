@@ -67,6 +67,16 @@ recency_boost_half_life_days = 30
 # The MCP `mode` parameter on memory_search overrides this per-call.
 search_mode = "hybrid"
 
+# Usage-aware ranking. When true, a bounded "endorsement" factor (the same
+# shape as the recency boost — capped at +10%, so it only breaks near-ties,
+# never overrides relevance) nudges memories the model has DELIBERATELY
+# applied (an explicit memory_record_use(applied), not the ~2-turn auto-
+# fallback) up the results — so a fact that keeps proving load-bearing wins
+# a tie over a never-endorsed peer. Off by default: it reorders results and
+# costs one event-log read per search. Counts are recent (active-log window),
+# so the signal tracks current usefulness rather than lifetime popularity.
+endorsement_boost = false
+
 # When true, memory_write dedup uses cosine similarity on sentence
 # embeddings instead of Jaccard on token sets — catches paraphrases
 # like "the database" / "Postgres" that lexical overlap misses.
@@ -289,6 +299,12 @@ class BehaviorConfig:
     # and degrades gracefully to keyword+BM25 when no embedding extra
     # is installed.
     search_mode: str = "hybrid"
+    # Usage-aware ranking. When true, a bounded endorsement factor (mirrors
+    # the recency boost, capped at +10%) nudges memories the model has
+    # EXPLICITLY applied up the results, so a load-bearing fact wins a
+    # near-tie. Opt-in (default off): it reorders results and costs one
+    # event-log read per search; see DEFAULT_CONFIG for prose.
+    endorsement_boost: bool = False
     # Semantic dedup is opt-in — see DEFAULT_CONFIG for prose.
     semantic_dedup: bool = False
     # Provider selection — "auto" (default), "torch", or "fastembed".
@@ -868,6 +884,9 @@ def load_config(path: Path | None = None) -> Config:
                 30.0,
                 label="[behavior] recency_boost_half_life_days",
                 config_path=config_path,
+            ),
+            endorsement_boost=_coerce_bool(
+                behavior_raw.get("endorsement_boost"), False
             ),
             semantic_dedup=_coerce_bool(behavior_raw.get("semantic_dedup"), False),
             semantic_provider=str(behavior_raw.get("semantic_provider", "auto")),

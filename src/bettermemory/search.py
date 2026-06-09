@@ -209,6 +209,22 @@ def _recency_factor(created: datetime, now: datetime, half_life_days: float) -> 
     return 1.0 + 0.1 * math.exp(-age_days / max(half_life_days, 0.001))
 
 
+def _endorsement_factor(applied_count: int) -> float:
+    """1 + 0.1 * (1 - exp(-applied_count / 3)). Mild usage bump, bounded to
+    [1.0, 1.1) — exactly the ceiling `_recency_factor` uses.
+
+    A memory the model has DELIBERATELY applied (an explicit
+    `memory_record_use(applied)`, not the auto-fallback) climbs slightly, so
+    a load-bearing fact wins a near-tie over a never-endorsed peer. The cap
+    is the whole point: like recency, it can only break near-ties, never
+    override the relevance signal — which keeps it from a rich-get-richer
+    runaway. `applied_count == 0` returns exactly 1.0 (neutral), so the
+    factor is a no-op unless real endorsement counts are supplied."""
+    if applied_count <= 0:
+        return 1.0
+    return 1.0 + 0.1 * (1.0 - math.exp(-applied_count / 3.0))
+
+
 # ---------------------------------------------------------------------------
 # BM25 scorer (Okapi variant)
 # ---------------------------------------------------------------------------
@@ -541,16 +557,23 @@ def _score_keyword(
     *,
     now: datetime,
     half_life_days: float,
+    applied_by_id: dict[str, int] | None = None,
 ) -> list[tuple[Memory, float, list[str]]]:
     """Run the original keyword scorer across all candidates. Returns
     `(memory, score, matched)` tuples for every candidate with `score > 0`.
-    Order preserved from the input — sorting happens at the caller."""
+    Order preserved from the input — sorting happens at the caller.
+
+    `applied_by_id` (optional) maps memory id → explicit-applied count; when
+    given, a bounded `_endorsement_factor` nudges endorsed memories. None
+    (the default) leaves scores untouched."""
     out: list[tuple[Memory, float, list[str]]] = []
     for memory in candidates:
         score, matched = score_memory(
             memory, query_tokens, now=now, half_life_days=half_life_days
         )
         if score > 0:
+            if applied_by_id:
+                score *= _endorsement_factor(applied_by_id.get(memory.id, 0))
             out.append((memory, score, matched))
     return out
 
@@ -561,9 +584,11 @@ def _score_bm25(
     *,
     now: datetime,
     half_life_days: float,
+    applied_by_id: dict[str, int] | None = None,
 ) -> list[tuple[Memory, float, list[str]]]:
     """Run the BM25 scorer across all candidates. Returns
-    `(memory, score, matched)` tuples for candidates with `score > 0`."""
+    `(memory, score, matched)` tuples for candidates with `score > 0`.
+    `applied_by_id`: see `_score_keyword`."""
     idf_map, avgdl = compute_idf(candidates)
     if avgdl <= 0:
         return []
@@ -578,6 +603,8 @@ def _score_bm25(
             half_life_days=half_life_days,
         )
         if score > 0:
+            if applied_by_id:
+                score *= _endorsement_factor(applied_by_id.get(memory.id, 0))
             out.append((memory, score, matched))
     return out
 
@@ -590,6 +617,7 @@ def _score_semantic(
     now: datetime,
     half_life_days: float,
     matched_terms_fallback: list[str],
+    applied_by_id: dict[str, int] | None = None,
 ) -> list[tuple[Memory, float, list[str]]]:
     """Cosine-similarity scoring over sentence-transformers embeddings.
 
@@ -649,6 +677,8 @@ def _score_semantic(
         # stale paraphrase doesn't beat a fresh near-paraphrase.
         freshness = max(memory.created, memory.updated)
         score = sim * _recency_factor(freshness, now, half_life_days)
+        if applied_by_id:
+            score *= _endorsement_factor(applied_by_id.get(memory.id, 0))
         # Report only the query tokens that LITERALLY hit this memory's
         # body or scopes (same overlap `score_memory` computes), not the
         # whole query — so a paraphrase-only hit carries honest match_terms
@@ -734,6 +764,7 @@ def search(
     mode: SearchMode = "hybrid",
     semantic_model: Any | None = None,
     rrf_k: int = _RRF_K_DEFAULT,
+    applied_by_id: dict[str, int] | None = None,
     allow_empty_query: bool = False,
 ) -> list[MemoryHit]:
     """Rank `memories` against `query` and return up to `max_results` hits.
@@ -768,6 +799,11 @@ def search(
     - `rrf_k`: smoothing constant for hybrid fusion. Larger spreads
       weight further down the list; smaller makes top ranks dominate.
       60 is the canonical default and almost always correct.
+    - `applied_by_id`: optional map of memory id → explicit-applied count.
+      When given, a bounded `_endorsement_factor` (≤ +10%, same ceiling as
+      recency) nudges endorsed memories up — a near-tie breaker, never a
+      relevance override. `None` (the default) leaves scores untouched, so
+      every existing caller and the package default are byte-stable.
     - `allow_empty_query`: when True, an empty or stopword-only query
       no longer short-circuits to `[]`. Instead the function runs the
       `_filter_candidates` pass (scope / repo / worktree / excluded)
@@ -840,7 +876,11 @@ def search(
 
     if mode == "keyword":
         scored = _score_keyword(
-            candidates, query_tokens, now=now, half_life_days=half_life_days
+            candidates,
+            query_tokens,
+            now=now,
+            half_life_days=half_life_days,
+            applied_by_id=applied_by_id,
         )
         # Sort by score, then created (newer wins on tie), then id as the
         # final discriminator. Without `id` the tiebreaker is undefined for
@@ -851,7 +891,11 @@ def search(
         scored.sort(key=lambda x: (x[1], x[0].created, x[0].id), reverse=True)
     elif mode == "bm25":
         scored = _score_bm25(
-            candidates, query_tokens, now=now, half_life_days=half_life_days
+            candidates,
+            query_tokens,
+            now=now,
+            half_life_days=half_life_days,
+            applied_by_id=applied_by_id,
         )
         scored.sort(key=lambda x: (x[1], x[0].created, x[0].id), reverse=True)
     elif mode == "semantic":
@@ -867,6 +911,7 @@ def search(
                 now=now,
                 half_life_days=half_life_days,
                 matched_terms_fallback=list(dict.fromkeys(query_tokens)),
+                applied_by_id=applied_by_id,
             )
         except Exception as exc:  # noqa: BLE001 — degrade to keyword on encode failure.
             # A LOADED model can still raise at encode() time (device fault,
@@ -879,16 +924,28 @@ def search(
                 exc,
             )
             scored = _score_keyword(
-                candidates, query_tokens, now=now, half_life_days=half_life_days
+                candidates,
+                query_tokens,
+                now=now,
+                half_life_days=half_life_days,
+                applied_by_id=applied_by_id,
             )
         scored.sort(key=lambda x: (x[1], x[0].created, x[0].id), reverse=True)
     else:  # mode == "hybrid"
         rankings: list[list[tuple[Memory, float, list[str]]]] = [
             _score_keyword(
-                candidates, query_tokens, now=now, half_life_days=half_life_days
+                candidates,
+                query_tokens,
+                now=now,
+                half_life_days=half_life_days,
+                applied_by_id=applied_by_id,
             ),
             _score_bm25(
-                candidates, query_tokens, now=now, half_life_days=half_life_days
+                candidates,
+                query_tokens,
+                now=now,
+                half_life_days=half_life_days,
+                applied_by_id=applied_by_id,
             ),
         ]
         if semantic_model is not None:
@@ -901,6 +958,7 @@ def search(
                         now=now,
                         half_life_days=half_life_days,
                         matched_terms_fallback=list(dict.fromkeys(query_tokens)),
+                        applied_by_id=applied_by_id,
                     )
                 )
             except Exception as exc:  # noqa: BLE001 — degrade to lexical fusion.
