@@ -2,7 +2,7 @@
 
 A published roadmap is part of the pitch: people choosing between memory layers want to know where a project is going, not just where it's been. This lists the planned work in rough priority order. Plans change — **the [CHANGELOG](../CHANGELOG.md) is the source of truth for what shipped.**
 
-## Where we are — v3.7.0 (June 2026)
+## Where we are — v3.7.1 (June 2026)
 
 The core is built and battle-hardened. The differentiated surface is live. After a run of correctness sweeps, 3.7.0 rotated back to feature work — execute-the-curation, onboarding, retrieval-quality levers, and the eval driver that unblocks the comparative.
 
@@ -14,12 +14,13 @@ The core is built and battle-hardened. The differentiated surface is live. After
 - **The eval surface** — `bettermemory eval` reports `memory_helped_rate` / `endorsement_rate` / `silent_miss_rate` with Wilson 95% CIs; `--tool-usage` and `--threshold-sweep` back the calibration decisions. The comparative harness lives at `tests/eval/`.
 - **Compounding across agents and time** — the `episode_*` journal tier, swarm fan-in (`episode_write` / `episode_search(swarm_id=…)`), opt-in auto-consolidation, and write-reflex proposals (`memory_proposals` + `[proposals]`).
 - **Scale & ops** — FTS5 inverted index above ~500 memories, git-based cross-host `sync`, a FastAPI curation UI, and a `doctor` that catches the common install failures.
-- **Hardened** — whole-codebase correctness audits (3.3.4, 3.5.0, 3.6.5), concurrent multi-agent store access (3.2.0), and cross-platform (incl. Windows) fixes, each landed with a regression test. ~2,080 tests, 80% coverage floor, Python 3.11–3.14, MIT.
+- **Hardened** — whole-codebase correctness audits (3.3.4, 3.5.0, 3.6.5), concurrent multi-agent store access (3.2.0), and cross-platform (incl. Windows) fixes, each landed with a regression test. ~2,090 tests, 80% coverage floor, Python 3.11–3.14, MIT.
 
 ## Recently shipped
 
 The CHANGELOG has the release-by-release detail; the arc, by theme:
 
+- **Post-release diff-audit (3.7.1).** A reactive adversarial sweep of the 3.7.0 feature commits caught three real issues and fixed them: a default-on per-hit SQLite open in the new `supersedes`/`contradicts` search activation (batched into one connection via `index.links_for_many`), and two honesty defects in the live-agent eval driver — `searched` was derived from `bool(hits)` (a ranker tautology that collapsed the live `silent_miss_rate`) and citation excerpts were validated against the truncated snippet instead of the body. Each landed with a regression test, and the fixes were themselves diff-audited.
 - **Rotating onto value (3.7.0).** After the 3.6.x correctness sweeps hit diminishing returns, a feature release: `memory_curate` (execute the cleanup `memory_health` only diagnosed, dry-run by default), `bettermemory try` (a 60s offline staleness-verdict demo), opt-in usage-aware ranking (`endorsement_boost`), the long-dormant `supersedes`/`contradicts` links activated as retrieval trust signals, and the live-agent eval driver that closes the comparative's open piece. Plus a subtraction pass that removed accreted duplication (adversarially verified, so deliberate defense-in-depth stayed put).
 - **Recall parity without a database (2.5.0).** The `[embeddings-fast]` extra wraps fastembed + ONNX Runtime (~50 MB) as a drop-in for the `[embeddings]` torch path (~500 MB), closing the "FTS5-only loses recall benchmarks" objection without compromising the no-database default.
 - **The eval & audit surface (2.5.0 → 2.7.0, harness in 3.3.3).** The metric trio with confidence intervals, the per-tool call-count rollup (`--tool-usage`), counterfactual silent-miss replay (`--threshold-sweep`), and the comparative harness at `tests/eval/` (bettermemory runs locally; competitors ride as honest capability-matrix stubs).

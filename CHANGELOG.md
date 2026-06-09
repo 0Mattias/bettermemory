@@ -7,6 +7,40 @@ breaking changes, minor for additive features, patch for fixes. The
 [compatibility contract](CONTRIBUTING.md#versioning-and-the-compatibility-contract)
 spells out exactly what's stable.
 
+## 3.7.1 - 2026-06-09
+
+A patch release. An adversarial diff-audit of the 3.7.0 changes (the
+reactive sweep over the just-shipped feature commits) surfaced three real
+issues — one user-facing performance regression and two honesty defects in
+the new eval driver — fixed here. No breaking changes, no new public
+surface; the 25-tool count is unchanged.
+
+### Fixed
+
+- **Search no longer opens the link index once per hit.** The 3.7.0
+  `supersedes`/`contradicts` activation (`attach_link_annotations`) is
+  default-on on every hit-producing search, but it called `links_for` per
+  hit — each a full SQLite open (connect + PRAGMAs + sibling chmod-stat +
+  schema-ensure). A 50-hit search did up to 50 sequential index opens. A new
+  `index.links_for_many` resolves all hits in a single connection (two
+  `IN (...)` queries); per-id results and ordering are identical, only the
+  latency changes.
+- **Live-agent eval driver: `searched` is now a real model decision.**
+  `LiveAgent` derived `searched` from `bool(hits)` — the ranker's own
+  output — so any probe with a hit scored as "the agent searched", collapsing
+  the live `silent_miss_rate` toward 0 regardless of model behaviour, under a
+  "publishable measurement" banner. It now reads the model's explicit
+  decision (the parse is extracted into a unit-tested pure function; only the
+  model call stays the live boundary).
+- **Live-agent eval driver: citation excerpts are validated against the
+  body.** The honesty guard checked the truncated *snippet* (which carries a
+  synthetic `...`), so a model echoing the ellipsis could inflate
+  `memory_helped_rate` with a phrase the memory never contained. Validation
+  now runs against the full body, centralized in `run_driver` so it holds for
+  every agent; a type-wrong excerpt is dropped rather than crashing the run,
+  and the "a citation implies searched" coherence applies only to citations
+  that survive that body check.
+
 ## 3.7.0 - 2026-06-09
 
 A feature release that rotates the project off the post-3.6.x bug-audit
