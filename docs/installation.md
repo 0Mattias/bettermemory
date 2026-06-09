@@ -60,7 +60,15 @@ The server key under `mcpServers` becomes the tool-name prefix (`mcp__bettermemo
 
 ## 3. Verify
 
-In a Claude Code session:
+See the whole point in 60 seconds, offline — no client needed:
+
+```sh
+bettermemory try
+```
+
+It writes a memory citing a file, deletes the file, and shows the next search flagging it stale (`staleness_verdict: spot_check_recommended`, `path_drift.missing` populated) — in an isolated temp store that never touches your real one.
+
+Then, in a Claude Code session:
 
 > What memory tools do you have?
 

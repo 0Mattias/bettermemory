@@ -7,6 +7,73 @@ breaking changes, minor for additive features, patch for fixes. The
 [compatibility contract](CONTRIBUTING.md#versioning-and-the-compatibility-contract)
 spells out exactly what's stable.
 
+## 3.7.0 - 2026-06-09
+
+A feature release that rotates the project off the post-3.6.x bug-audit
+treadmill (whose whole-codebase sweep yield had gone asymptotic) and onto
+value: one new MCP tool, one onboarding command, two retrieval-quality
+levers, and the eval driver that unblocks the comparative publication. The
+25-tool count (21 `memory_*` + 4 `episode_*`) reflects the new
+`memory_curate`. No breaking changes.
+
+### Added
+
+- **`memory_curate` MCP tool** — execute the curation `memory_health` only
+  describes. Its recommendations pointed at a `bettermemory consolidate` CLI
+  an in-session model can't run; the consolidate engine had no MCP handler.
+  The tool wraps that same hardened engine (the one the Stop-hook
+  `run_auto_consolidate` path uses) behind a `dry_run=True`-by-default
+  contract: a side-effect-free preview, then on `dry_run=False` only the two
+  reversible actions — tombstone near-duplicates (undo via `memory_restore`)
+  and demote dead-weight facts to `ambient` (undo via `memory_update`).
+  Gated behind `full_tool_surface`, so zero default-surface context cost.
+- **`bettermemory try`** — a 60-second, zero-network demo of the staleness
+  verdict. In an isolated temp store it writes a memory citing a file,
+  attests it, deletes the file, then shows the next search flagging it
+  (`staleness_verdict: spot_check_recommended`, `path_drift.missing`
+  populated). The headline differentiator is otherwise invisible on a fresh
+  store; this makes it visible on demand. Exits non-zero if it can't
+  reproduce the drift (a self-test of the verify→drift→verdict path).
+- **Usage-aware ranking** (`[behavior] endorsement_boost`, opt-in, default
+  off) — a bounded endorsement factor (mirrors the recency boost, capped at
+  +10%) nudges memories the model has *explicitly* applied up the results, so
+  a load-bearing fact wins a near-tie. Capped so it can never override
+  relevance; explicit applies only (the auto-fallback is excluded). Off by
+  default: it reorders results and costs one event-log read per search, so
+  the shipped default is byte-stable.
+- **`supersedes` / `contradicts` link activation** — these `MemoryLink` edge
+  types existed since 2.x but retrieval ignored them. Search hits now carry
+  `superseded_by` (active memories that supersede this hit — prefer them) and
+  `contradicts` (memories in unresolved contradiction, either direction),
+  purely additively (annotation only — never reorders or drops a hit), with
+  the same caps / targeted-load / scope-refilter discipline as
+  `depends_on_resolved`.
+- **Live-agent eval driver** (`tests/eval/driver.py`,
+  `python -m tests.eval.comparative --driver scripted|live`) — the machinery
+  that was the open piece before the comparative publication. An `Agent`
+  protocol + `run_driver` turn a real agent's cite-decisions into the full
+  `memory_helped_rate` / `endorsement_rate` / `silent_miss_rate` trio. A
+  deterministic `ScriptedAgent` proves the compute path in CI (authored
+  citations — a demonstration, not a measurement; `LiveAgent`, gated behind
+  `ANTHROPIC_API_KEY`, produces the publishable numbers). The offline
+  adapter's honest `n/a` is unchanged.
+
+### Internal
+
+- Subtracted accreted duplication (post-3.6.5 inverse-of-the-audit-loop
+  pass): a shared `_resolve_dedup_thresholds` across both write-dedup gates,
+  a shared `_parse_silent_miss_event` across the two silent-miss readers in
+  `health.py` (making their required numerical agreement structural), and a
+  redundant local `import re` in `sync.py`. An adversarial verification pass
+  correctly *kept* 5 of 14 removal candidates that were deliberate
+  defense-in-depth.
+
+### Fixed
+
+- **`.gitignore`** now ignores the `.venv` *symlink* form, not just the
+  `.venv/` directory — the dev-machine symlink could otherwise be committed
+  as a machine-specific absolute path.
+
 ## 3.6.5 - 2026-06-08
 
 The first whole-codebase shippability sweep run *at the shipped tree* (prior

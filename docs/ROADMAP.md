@@ -2,9 +2,9 @@
 
 A published roadmap is part of the pitch: people choosing between memory layers want to know where a project is going, not just where it's been. This lists the planned work in rough priority order. Plans change — **the [CHANGELOG](../CHANGELOG.md) is the source of truth for what shipped.**
 
-## Where we are — v3.6.5 (June 2026)
+## Where we are — v3.7.0 (June 2026)
 
-The core is built and battle-hardened. The differentiated surface is live; the recent releases have been correctness sweeps, not feature pushes.
+The core is built and battle-hardened. The differentiated surface is live. After a run of correctness sweeps, 3.7.0 rotated back to feature work — execute-the-curation, onboarding, retrieval-quality levers, and the eval driver that unblocks the comparative.
 
 - **25 MCP tools, 18 registered by default** (the lean surface since 3.4.0 — seven curation/power-user tools gate behind `[behavior] full_tool_surface`, six with a direct CLI counterpart — including `memory_curate`, which wraps `consolidate` — and `memory_acknowledge_miss` MCP-only); four of the always-on defaults are the `episode_*` journal / run-state tier.
 - **Staleness verdict on every retrieval** — calendar age + filesystem path drift + git commit drift folded into one `staleness_verdict`, with the inline `path_drift = {checked, missing, verified}` list.
@@ -14,12 +14,13 @@ The core is built and battle-hardened. The differentiated surface is live; the r
 - **The eval surface** — `bettermemory eval` reports `memory_helped_rate` / `endorsement_rate` / `silent_miss_rate` with Wilson 95% CIs; `--tool-usage` and `--threshold-sweep` back the calibration decisions. The comparative harness lives at `tests/eval/`.
 - **Compounding across agents and time** — the `episode_*` journal tier, swarm fan-in (`episode_write` / `episode_search(swarm_id=…)`), opt-in auto-consolidation, and write-reflex proposals (`memory_proposals` + `[proposals]`).
 - **Scale & ops** — FTS5 inverted index above ~500 memories, git-based cross-host `sync`, a FastAPI curation UI, and a `doctor` that catches the common install failures.
-- **Hardened** — whole-codebase correctness audits (3.3.4, 3.5.0, 3.6.5), concurrent multi-agent store access (3.2.0), and cross-platform (incl. Windows) fixes, each landed with a regression test. ~2,050 tests, 80% coverage floor, Python 3.11–3.14, MIT.
+- **Hardened** — whole-codebase correctness audits (3.3.4, 3.5.0, 3.6.5), concurrent multi-agent store access (3.2.0), and cross-platform (incl. Windows) fixes, each landed with a regression test. ~2,080 tests, 80% coverage floor, Python 3.11–3.14, MIT.
 
 ## Recently shipped
 
 The CHANGELOG has the release-by-release detail; the arc, by theme:
 
+- **Rotating onto value (3.7.0).** After the 3.6.x correctness sweeps hit diminishing returns, a feature release: `memory_curate` (execute the cleanup `memory_health` only diagnosed, dry-run by default), `bettermemory try` (a 60s offline staleness-verdict demo), opt-in usage-aware ranking (`endorsement_boost`), the long-dormant `supersedes`/`contradicts` links activated as retrieval trust signals, and the live-agent eval driver that closes the comparative's open piece. Plus a subtraction pass that removed accreted duplication (adversarially verified, so deliberate defense-in-depth stayed put).
 - **Recall parity without a database (2.5.0).** The `[embeddings-fast]` extra wraps fastembed + ONNX Runtime (~50 MB) as a drop-in for the `[embeddings]` torch path (~500 MB), closing the "FTS5-only loses recall benchmarks" objection without compromising the no-database default.
 - **The eval & audit surface (2.5.0 → 2.7.0, harness in 3.3.3).** The metric trio with confidence intervals, the per-tool call-count rollup (`--tool-usage`), counterfactual silent-miss replay (`--threshold-sweep`), and the comparative harness at `tests/eval/` (bettermemory runs locally; competitors ride as honest capability-matrix stubs).
 - **Dreaming defense via local consolidation (2.5.0, `--from-transcript` 2.6.0).** Where Anthropic's Dreaming consolidates invisibly, `--llm` renders every proposal as a diff with rationale and refuses to commit without explicit accept.

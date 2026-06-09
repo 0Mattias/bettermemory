@@ -76,6 +76,7 @@ Retrieval is opt-in; writes about *you* always stage for your confirmation. Work
 - **Claim-level audit trail.** `memory_record_use(claim_excerpts=[…])` logs the load-bearing sentence each retrieved memory shaped. A Stop hook catches retrievals the model forgot to log via a precision-tuned substring match; anything neither path covers falls back to an `auto` attribution. Three tiers, one event per retrieval, no double-counting.
 - **Cold-endorsement visibility.** `memory_health` surfaces memories the ranker keeps serving but the model never *deliberately* uses — a dead-letter queue for retrieval. No other memory system exposes this.
 - **Silent-miss probe.** `memory_audit_turn` re-runs the ranker over the just-finished turn and flags high-relevance hits the model *should* have retrieved but didn't — closing the loop on contract slippage that is otherwise invisible.
+- **In-session curation.** `memory_curate` *executes* the cleanup `memory_health` only diagnoses — tombstone near-duplicates, demote dead-weight facts to `ambient` — wrapping the same hardened engine the Stop-hook auto-consolidation uses. Dry-run by default; every action is reversible (`memory_restore` / `memory_update`).
 - **Confirmation tier for claims about you.** `category="user-inference"` *always* stages pending, regardless of config. Misattributed preferences stick for months, so you always hold the veto on claims about yourself.
 - **Write-time groundedness gate.** Opt-in `memory_write(groundedness_check=True, …)` flags sentences in a proposed memory that don't anchor to the conversation that produced them — catching extraction hallucinations at write time.
 - **Negative-results suppression.** A hit recently `ignored` or `contradicted` and not since `applied` carries `recent_negative_outcomes`, so the model doesn't re-suggest junk you already rejected.
@@ -84,8 +85,8 @@ Retrieval is opt-in; writes about *you* always stage for your confirmation. Work
 
 - **Opt-in retrieval.** `memory_search` is a deliberate tool call. The default per turn is *not* to search — false positives cost more than false negatives.
 - **Proactive writing, structurally safe.** A durability check, content/tombstone dedup, scope-mismatch check, and the pending tier let the model write aggressively without polluting the store.
-- **Hybrid retrieval.** Four selectable rankers: `hybrid` (default — RRF over keyword + BM25, plus semantic when the embeddings extra is installed), `bm25`, `keyword`, or `semantic`. Degrades gracefully with zero extra deps.
-- **Typed inter-memory links.** `supersedes` / `contradicts` / `extends` / `depends_on`, surfaced bidirectionally and auto-resolved on retrieval.
+- **Hybrid retrieval.** Four selectable rankers: `hybrid` (default — RRF over keyword + BM25, plus semantic when the embeddings extra is installed), `bm25`, `keyword`, or `semantic`. Degrades gracefully with zero extra deps. Opt-in `[behavior] endorsement_boost` adds usage-aware ranking — a bounded tie-breaker (capped at +10%, never overrides relevance) that nudges memories you've *deliberately* applied up the results.
+- **Typed inter-memory links, live at retrieval.** `supersedes` / `contradicts` / `extends` / `depends_on`, surfaced bidirectionally. On a search hit they're trust signals, not just stored metadata: `superseded_by` names the active memories that replace this hit (prefer them), `contradicts` names facts in tension with it, and `depends_on` targets are auto-resolved inline.
 - **Tombstones, not deletes.** Removed memories keep their `removed_reason`; tombstone-aware dedup catches paraphrases months later. Reversible via `memory_restore`.
 - **Auto-scoped by repo and worktree.** Memories carry the repo URL and worktree root; search filters by both. Sibling worktrees stay isolated; cross-project queries are explicit.
 - **Cross-machine sync, no cloud.** `bettermemory sync` is a thin git wrapper — your laptop and workstation share one store over your own remote, no SaaS account.
@@ -222,7 +223,7 @@ uv pip install -e ".[embeddings-fast]"  # fastembed + ONNX Runtime (~50MB; same 
 
 ## Config
 
-`config.toml` is created on first run under `platformdirs` (`~/Library/Application Support/bettermemory/` on macOS, `~/.config/bettermemory/` on Linux, `%LOCALAPPDATA%\bettermemory\` on Windows). Defaults are sensible — most users never edit it. The knobs that matter: `behavior.search_mode` (`hybrid` default), `behavior.semantic_provider` (`auto`/`torch`/`fastembed`), `behavior.require_write_confirmation` (off by default for solo setups; `user-inference` always stages regardless), `behavior.verification_stale_days` (30), and `telemetry.enabled` (flip to `false` to disable the event log).
+`config.toml` is created on first run under `platformdirs` (`~/Library/Application Support/bettermemory/` on macOS, `~/.config/bettermemory/` on Linux, `%LOCALAPPDATA%\bettermemory\` on Windows). Defaults are sensible — most users never edit it. The knobs that matter: `behavior.search_mode` (`hybrid` default), `behavior.semantic_provider` (`auto`/`torch`/`fastembed`), `behavior.endorsement_boost` (off by default — flip on for usage-aware ranking), `behavior.require_write_confirmation` (off by default for solo setups; `user-inference` always stages regardless), `behavior.verification_stale_days` (30), and `telemetry.enabled` (flip to `false` to disable the event log).
 
 ## Limitations
 
