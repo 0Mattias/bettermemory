@@ -233,3 +233,109 @@ def test_render_text_omits_lanes_for_ran_result_without_eval_report():
     # check to the INDENTED metric line so it doesn't match the capability-
     # matrix header prose, which also contains the substring "silent_miss_rate".
     assert "  silent_miss_rate" not in out
+
+
+# ---------------------------------------------------------------------------
+# Live-agent driver — the machinery that computes the full trio. The scripted
+# agent is a deterministic recorded transcript (authored citations) that proves
+# the compute path end-to-end; the real measurement needs the LiveAgent.
+# ---------------------------------------------------------------------------
+
+
+def test_scripted_driver_computes_the_full_trio():
+    """The headline: with a driver supplying citation events, ALL THREE rates
+    compute (not None) — the gap that left helped/endorsement n/a offline is
+    closed. Numbers are deterministic from the authored script."""
+    from .driver import default_scripted_agent, run_driver
+
+    wl = default_workload()
+    ev = run_driver(wl, default_scripted_agent(wl))
+
+    # The trio is computable — the whole point of the driver.
+    assert ev.memory_helped_rate.rate is not None
+    assert ev.endorsement_rate.rate is not None
+    assert ev.silent_miss_rate.rate is not None
+
+    # Endorsement: exactly one explicit citation, all explicit -> 1.0.
+    assert ev.endorsement_rate.numerator == 1
+    assert ev.endorsement_rate.denominator == 1
+    assert ev.endorsement_rate.rate == pytest.approx(1.0)
+
+    # Silent-miss lane is unchanged by the driver (still 5/10).
+    assert ev.silent_miss_rate.numerator == 5
+    assert ev.silent_miss_rate.denominator == 10
+    assert ev.silent_miss_rate.rate == pytest.approx(0.5)
+
+
+def test_scripted_driver_helped_rate_is_below_recall():
+    """helped_rate must NOT just relabel recall: the script retrieves two gold
+    memories but cites only one, so the uncited-but-retrieved memory sits in
+    the denominator and the rate is strictly below 1.0."""
+    from .driver import default_scripted_agent, run_driver
+
+    wl = default_workload()
+    ev = run_driver(wl, default_scripted_agent(wl))
+    assert ev.memory_helped_rate.numerator == 1
+    assert ev.memory_helped_rate.denominator >= 2
+    assert ev.memory_helped_rate.rate is not None
+    assert ev.memory_helped_rate.rate < 1.0
+
+
+def test_scripted_agent_excerpts_are_real_substrings():
+    """default_scripted_agent's construction guard enforces that every cited
+    excerpt actually appears in the cited memory's body (the honest
+    claim-excerpt shape). Building it must not raise."""
+    from .driver import default_scripted_agent
+
+    wl = default_workload()
+    agent = default_scripted_agent(wl)
+    # One probe carries a citation; its excerpt resolved to a real memory.
+    turns = [t for t in agent.script.values() if t.citations]
+    assert turns and all(c.excerpt for t in turns for c in t.citations)
+
+
+def test_offline_adapter_still_reports_na_with_driver_present():
+    """Adding the driver must NOT change the offline adapter's honest n/a —
+    the BetterMemoryAdapter lane stays a measurement-free zero-denominator."""
+    from .adapters import BetterMemoryAdapter
+
+    ev = BetterMemoryAdapter().run(default_workload(), k=5).eval_report
+    assert ev is not None
+    assert ev.memory_helped_rate.rate is None
+    assert ev.endorsement_rate.rate is None
+
+
+def test_live_agent_unavailable_without_key(monkeypatch):
+    """LiveAgent is gated: no ANTHROPIC_API_KEY -> SystemUnavailable, so CI
+    takes the scripted path and the live run is an explicit opt-in."""
+    from .driver import LiveAgent
+
+    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+    with pytest.raises(SystemUnavailable) as exc:
+        LiveAgent()
+    assert "ANTHROPIC_API_KEY" in exc.value.reason
+
+
+def test_cli_driver_scripted_emits_full_trio(capsys, monkeypatch):
+    """`--driver scripted --json` runs the driver and emits all three rates as
+    real numbers (not n/a)."""
+    from .comparative import main
+
+    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+    rc = main(["--driver", "scripted", "--json"])
+    assert rc == 0
+    data = json.loads(capsys.readouterr().out)
+    assert data["memory_helped_rate"]["rate"] is not None
+    assert data["endorsement_rate"]["rate"] is not None
+    assert data["silent_miss_rate"]["rate"] is not None
+
+
+def test_cli_driver_live_reports_unavailable_without_key(capsys, monkeypatch):
+    """`--driver live` without a key exits cleanly with an explanation rather
+    than crashing — the same honest-unavailable contract as competitor rows."""
+    from .comparative import main
+
+    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+    rc = main(["--driver", "live"])
+    assert rc == 0
+    assert "unavailable" in capsys.readouterr().out.lower()

@@ -21,7 +21,7 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Any, Sequence
 
-from bettermemory.eval import RateCI
+from bettermemory.eval import EvalReport, RateCI
 
 from .adapters import RunResult, SystemAdapter, SystemUnavailable, default_adapters
 from .workload import Workload, default_workload
@@ -159,6 +159,25 @@ def render_json(report: ComparativeReport) -> str:
     return json.dumps(report.to_dict(), indent=2)
 
 
+def render_driver_text(report: EvalReport, *, scripted: bool) -> str:
+    """Render the live-agent driver's full trio. The scripted header is
+    load-bearing: it states the numbers are an authored demonstration, not a
+    measurement, so a copy-paste of this output can't be mistaken for one."""
+    tag = (
+        "(SCRIPTED — authored citations prove the compute path, NOT a measurement)"
+        if scripted
+        else "(LIVE model — publishable measurement)"
+    )
+    lines = [
+        f"live-agent driver — full metric trio {tag}",
+        "=" * 70,
+        f"  memory_helped_rate   {_fmt_rate(report.memory_helped_rate)}",
+        f"  endorsement_rate     {_fmt_rate(report.endorsement_rate)}",
+        f"  silent_miss_rate     {_fmt_rate(report.silent_miss_rate)}",
+    ]
+    return "\n".join(lines)
+
+
 def main(argv: Sequence[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
         prog="tests.eval.comparative",
@@ -170,7 +189,35 @@ def main(argv: Sequence[str] | None = None) -> int:
     parser.add_argument(
         "--k", type=int, default=5, help="retrieval cutoff for recall@k (default 5)"
     )
+    parser.add_argument(
+        "--driver",
+        choices=["scripted", "live"],
+        default=None,
+        help=(
+            "run the live-agent driver to compute the full trio instead of the "
+            "comparative matrix. 'scripted' is a deterministic demo (authored "
+            "citations); 'live' uses a real model (needs ANTHROPIC_API_KEY)."
+        ),
+    )
     args = parser.parse_args(argv)
+
+    if args.driver is not None:
+        from .driver import LiveAgent, default_scripted_agent, run_driver
+
+        workload = default_workload()
+        scripted = args.driver == "scripted"
+        try:
+            agent: Any = default_scripted_agent(workload) if scripted else LiveAgent()
+        except SystemUnavailable as exc:
+            print(f"live driver unavailable: {exc.reason}")
+            return 0
+        eval_report = run_driver(workload, agent, k=args.k)
+        print(
+            json.dumps(eval_report.to_dict(), indent=2)
+            if args.json
+            else render_driver_text(eval_report, scripted=scripted)
+        )
+        return 0
 
     report = run_comparative(default_adapters(), default_workload(), k=args.k)
     print(render_json(report) if args.json else render_text(report))
