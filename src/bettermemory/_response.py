@@ -722,7 +722,7 @@ class ResponseBuilder:
         missing skipped silently, and the caller's scope/origin filter
         re-applied so a link can't leak a hidden-scope memory.
         """
-        from .index import links_for
+        from .index import links_for_many
         from .models import first_summary_line
         from .store import MemoryNotFoundError, TombstonedError
 
@@ -752,15 +752,21 @@ class ResponseBuilder:
                 "link_note": note,
             }
 
+        # One index open for ALL hits, not one per hit. attach_link_annotations
+        # is default-on on the busiest tool; the per-hit `links_for` opened the
+        # index file up to `max_results` (50) times per search. links_for_many
+        # folds that into a single connection + two `IN (...)` queries.
+        try:
+            links_map = links_for_many(store.root, [h.id for h in hits])
+        except Exception:  # noqa: BLE001 — a corrupt/locked index is a
+            # best-effort no-op; never abort a search over an annotation.
+            links_map = {}
+
         total = 0
         for hit_dict, hit in zip(out, hits):
             if total >= max_total:
                 break
-            try:
-                outbound, inbound = links_for(store.root, hit.id)
-            except Exception:  # noqa: BLE001 — a corrupt/locked index is a
-                # best-effort no-op; never abort a search over an annotation.
-                continue
+            outbound, inbound = links_map.get(hit.id, ([], []))
             if not outbound and not inbound:
                 continue
 

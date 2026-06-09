@@ -140,3 +140,82 @@ async def test_superseded_by_skips_tombstoned_superseder(server: Any) -> None:
 
     hit_a = _hit(await _search(server, "config settings toml"), a["id"])
     assert "superseded_by" not in hit_a
+
+
+# ---------------------------------------------------------------------------
+# links_for_many — bulk link resolution. attach_link_annotations is default-on
+# on every hit-producing search; the per-hit links_for opened the index file
+# once per hit (up to 50). links_for_many folds that into one connection.
+# ---------------------------------------------------------------------------
+
+
+async def test_links_for_many_matches_per_id_links_for(
+    server: Any, memory_dir: Path
+) -> None:
+    """Bulk `links_for_many` returns, for each id, exactly what the per-id
+    `links_for` returns — same tuple shapes and ordering."""
+    from bettermemory.index import links_for, links_for_many
+
+    a = await _call(
+        server, "memory_write", content="alpha base note one", scopes=["tools"]
+    )
+    b = await _call(
+        server, "memory_write", content="beta superseding note two", scopes=["tools"]
+    )
+    c = await _call(
+        server, "memory_write", content="gamma clashing note three", scopes=["tools"]
+    )
+    await _call(
+        server,
+        "memory_update",
+        id=b["id"],
+        links=[{"type": "supersedes", "target_id": a["id"]}],
+    )
+    await _call(
+        server,
+        "memory_update",
+        id=c["id"],
+        links=[{"type": "contradicts", "target_id": a["id"], "note": "clash"}],
+    )
+
+    ids = [a["id"], b["id"], c["id"]]
+    bulk = links_for_many(memory_dir, ids)
+    assert set(bulk) == set(ids)
+    for mid in ids:
+        assert bulk[mid] == links_for(memory_dir, mid)
+
+
+async def test_links_for_many_opens_index_once(
+    server: Any, memory_dir: Path, monkeypatch: Any
+) -> None:
+    """ONE index connection for N ids, not one open per id — the regression the
+    bulk helper exists to fix."""
+    import bettermemory.index as index_mod
+
+    ids = [
+        (await _call(server, "memory_write", content=body, scopes=["tools"]))["id"]
+        for body in ("one alpha", "two beta", "three gamma")
+    ]
+
+    calls = {"n": 0}
+    real_connect = index_mod._connect
+
+    def counting_connect(path: Path) -> Any:
+        calls["n"] += 1
+        return real_connect(path)
+
+    monkeypatch.setattr(index_mod, "_connect", counting_connect)
+    index_mod.links_for_many(memory_dir, ids)
+    assert calls["n"] == 1
+
+
+async def test_links_for_many_absent_index_returns_empty_per_id(tmp_path: Path) -> None:
+    """No index file -> every requested id maps to ([], []), the best-effort
+    no-op contract `links_for` already honors (and never creates the file)."""
+    from bettermemory.index import index_path, links_for_many
+
+    empty_root = tmp_path / "no-index"
+    empty_root.mkdir()
+    result = links_for_many(empty_root, ["01ABC", "01DEF"])
+    assert result == {"01ABC": ([], []), "01DEF": ([], [])}
+    assert not index_path(empty_root).exists()

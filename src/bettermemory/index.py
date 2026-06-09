@@ -622,6 +622,62 @@ def links_for(
         conn.close()
 
 
+def links_for_many(
+    root: Path, memory_ids: Iterable[str]
+) -> dict[
+    str, tuple[list[tuple[str, str, str | None]], list[tuple[str, str, str | None]]]
+]:
+    """Bulk `links_for`: resolve outbound + inbound links for many ids over a
+    SINGLE index connection.
+
+    `attach_link_annotations` (the supersedes/contradicts search activation)
+    runs on every hit-producing search and is NOT config-gated, so a naive
+    per-hit `links_for` opens the index file once per hit (up to `max_results`,
+    50): connect + PRAGMAs + a chmod-stat of the .db/-wal/-shm siblings + a full
+    schema-ensure, times N. This folds all of it into one open and two
+    ``IN (...)`` queries — mirroring how the other ``attach_*`` helpers resolve
+    everything from a single already-paid load instead of churning the index.
+
+    Returns ``{id: (outbound, inbound)}`` for every requested id; an id with no
+    links maps to ``([], [])``. Tuple shapes and per-id ordering match
+    `links_for` exactly (outbound ``(type, target_id, note)``, inbound
+    ``(type, source_id, note)``). An absent / empty index file maps every id to
+    ``([], [])`` — the same best-effort no-op `links_for` returns."""
+    ids = list(dict.fromkeys(memory_ids))
+    out: dict[
+        str,
+        tuple[list[tuple[str, str, str | None]], list[tuple[str, str, str | None]]],
+    ] = {mid: ([], []) for mid in ids}
+    if not ids:
+        return out
+    path = index_path(root)
+    if not path.exists():
+        return out
+    placeholders = ",".join("?" * len(ids))
+    conn = _connect(path)
+    try:
+        _ensure_schema(conn)
+        for row in conn.execute(
+            "SELECT source_id, type, target_id, note FROM memory_links "
+            f"WHERE source_id IN ({placeholders}) ORDER BY source_id, type, target_id",
+            ids,
+        ).fetchall():
+            out[row["source_id"]][0].append(
+                (row["type"], row["target_id"], row["note"])
+            )
+        for row in conn.execute(
+            "SELECT target_id, type, source_id, note FROM memory_links "
+            f"WHERE target_id IN ({placeholders}) ORDER BY target_id, type, source_id",
+            ids,
+        ).fetchall():
+            out[row["target_id"]][1].append(
+                (row["type"], row["source_id"], row["note"])
+            )
+    finally:
+        conn.close()
+    return out
+
+
 def links_for_with_status(
     root: Path, memory_id: str
 ) -> tuple[list[tuple[str, str, str | None]], list[tuple[str, str, str | None]], int]:
