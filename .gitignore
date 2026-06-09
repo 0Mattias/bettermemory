@@ -5,8 +5,10 @@ __pycache__/
 dist/
 build/
 
-# Virtualenvs
-.venv/
+# Virtualenvs (.venv is often an absolute symlink -> venv on this repo's
+# dev machines; match it without a trailing slash so the symlink form is
+# ignored too and can never be committed as a machine-specific path)
+.venv
 venv/
 
 # Test / coverage artifacts
