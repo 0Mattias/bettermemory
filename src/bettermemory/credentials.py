@@ -88,15 +88,20 @@ _PREFIXED_DETECTORS: tuple[tuple[str, re.Pattern[str]], ...] = (
     ),
     # GitHub fine-grained PAT.
     ("github-token", re.compile(r"\bgithub_pat_[0-9A-Za-z_]{22,}\b")),
-    # Slack tokens: xoxb- / xoxp- / xoxa- / xoxr- / xoxs- + body.
-    ("slack-token", re.compile(r"\bxox[baprs]-[0-9A-Za-z-]{10,}\b")),
+    # Slack tokens: xoxb- / xoxp- / xoxa- / xoxr- / xoxs- plus the
+    # browser-client (xoxc-) and rotation/export (xoxe-) families.
+    ("slack-token", re.compile(r"\bxox[abceprs]-[0-9A-Za-z-]{10,}\b")),
+    # Slack app-level token.
+    ("slack-token", re.compile(r"\bxapp-[0-9A-Za-z-]{10,}\b")),
     # Google API key: AIza + 35.
     ("google-api-key", re.compile(r"\bAIza[0-9A-Za-z_-]{35}\b")),
     # PEM private-key header — the unambiguous block opener. One match is
     # enough to flag "you pasted a private key"; we don't scan the body.
     (
         "private-key-pem",
-        re.compile(r"-----BEGIN (?:RSA |EC |DSA |OPENSSH |PGP )?PRIVATE KEY-----"),
+        re.compile(
+            r"-----BEGIN (?:RSA |EC |DSA |OPENSSH |PGP |ENCRYPTED )?PRIVATE KEY-----"
+        ),
     ),
     # JSON Web Token: header.payload.signature, header base64url-starts eyJ.
     (
@@ -160,6 +165,13 @@ def _looks_like_secret(value: str) -> bool:
     prose and lets the write through.
     """
     v = value.strip().strip("\"'")
+    # Sentence-final punctuation is part of the prose, not the token: the
+    # greedy value group captures "hunter2Abc9XyZ12Q." from "my password is
+    # hunter2Abc9XyZ12Q. Rotate it quarterly." — without this strip the
+    # trailing dot made the dotted-ref guard below read the secret as a
+    # module reference and wave it through. (The redaction span still comes
+    # from the regex group, so the extra period gets redacted — harmless.)
+    v = v.rstrip(".,;:!?")
     if len(v) < 12 or len(v) > 200:
         return False
     # Env-var / template reference, not a literal secret: $VAR, ${VAR},

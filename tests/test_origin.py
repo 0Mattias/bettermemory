@@ -585,25 +585,37 @@ def test_worktrees_match_equal_paths() -> None:
     assert worktrees_match("/a/b/c", "/a/b/c")
 
 
-def test_worktrees_match_different_paths() -> None:
-    assert not worktrees_match("/repo/main", "/repo/feature-x")
+def test_worktrees_match_different_paths(tmp_path: Path) -> None:
+    """Two distinct LIVE checkouts stay isolated. The fixtures must exist
+    on disk — a nonexistent memory worktree now triggers the deliberate
+    dead-worktree degrade (see `worktrees_match`)."""
+    a = tmp_path / "main"
+    b = tmp_path / "feature-x"
+    a.mkdir()
+    b.mkdir()
+    assert not worktrees_match(str(a), str(b))
 
 
-def test_should_include_filters_cross_worktree_same_repo() -> None:
-    """The integration: same repo, different worktree → exclude.
+def test_should_include_filters_cross_worktree_same_repo(tmp_path: Path) -> None:
+    """The integration: same repo, different LIVE worktree → exclude.
     Without the worktree layer this returned True (auditable as
     repo-only matching), letting feature-branch memories leak into
-    the bug-fix worktree."""
+    the bug-fix worktree. Fixtures exist on disk so the dead-worktree
+    degrade doesn't apply."""
+    feature = tmp_path / "repo-feature"
+    bugfix = tmp_path / "repo-bugfix"
+    feature.mkdir()
+    bugfix.mkdir()
     memory_origin = Origin(
-        cwd="/Users/me/repo-feature/src/foo.py",
+        cwd=str(feature / "src" / "foo.py"),
         repo="git@github.com:example/repo.git",
         branch="feature-x",
-        worktree_root="/Users/me/repo-feature",
+        worktree_root=str(feature),
     )
     assert not should_include_for_caller(
         memory_origin,
         "git@github.com:example/repo.git",
-        caller_worktree_root="/Users/me/repo-bugfix",
+        caller_worktree_root=str(bugfix),
     )
 
 
@@ -667,3 +679,74 @@ def test_should_include_cross_repo_still_filters_first() -> None:
         "git@github.com:example/repo.git",
         caller_worktree_root="/Users/me/repo-feature",
     )
+
+
+# ---------------------------------------------------------------------------
+# Linked-worktree relaxations in worktrees_match (2026-06-09 hunt, HIGH)
+# ---------------------------------------------------------------------------
+
+
+def _make_linked_worktree(tmp_path: Path) -> tuple[Path, Path]:
+    """Fabricate the on-disk shape of a primary checkout plus one linked
+    worktree without shelling out to git: the linked worktree's root
+    carries a `.git` FILE pointing at `<primary>/.git/worktrees/<name>`."""
+    primary = tmp_path / "primary"
+    (primary / ".git" / "worktrees" / "wt1").mkdir(parents=True)
+    wt = tmp_path / "wt1"
+    wt.mkdir()
+    (wt / ".git").write_text(f"gitdir: {primary}/.git/worktrees/wt1\n")
+    return primary, wt
+
+
+def test_caller_in_linked_worktree_sees_primary_memories(tmp_path: Path) -> None:
+    from bettermemory.origin import _primary_root_of, worktrees_match
+
+    primary, wt = _make_linked_worktree(tmp_path)
+    _primary_root_of.cache_clear()
+    assert worktrees_match(str(primary), str(wt)) is True
+
+
+def test_live_sibling_worktrees_stay_isolated(tmp_path: Path) -> None:
+    from bettermemory.origin import _primary_root_of, worktrees_match
+
+    primary, wt = _make_linked_worktree(tmp_path)
+    sibling = tmp_path / "wt2"
+    (primary / ".git" / "worktrees" / "wt2").mkdir()
+    sibling.mkdir()
+    (sibling / ".git").write_text(f"gitdir: {primary}/.git/worktrees/wt2\n")
+    _primary_root_of.cache_clear()
+    # memory written in LIVE sibling wt2, caller in wt1: still isolated.
+    assert worktrees_match(str(sibling), str(wt)) is False
+
+
+def test_primary_caller_does_not_see_live_worktree_memories(
+    tmp_path: Path,
+) -> None:
+    from bettermemory.origin import _primary_root_of, worktrees_match
+
+    primary, wt = _make_linked_worktree(tmp_path)
+    _primary_root_of.cache_clear()
+    # memory written in LIVE linked worktree, caller in primary: isolated
+    # (the original worktree-leakage design, preserved).
+    assert worktrees_match(str(wt), str(primary)) is False
+
+
+def test_dead_worktree_memory_degrades_to_repo_match(tmp_path: Path) -> None:
+    from bettermemory.origin import _primary_root_of, worktrees_match
+
+    _primary_root_of.cache_clear()
+    gone = tmp_path / "deleted-ephemeral-worktree"
+    caller = tmp_path / "anywhere"
+    caller.mkdir()
+    assert worktrees_match(str(gone), str(caller)) is True
+
+
+def test_distinct_existing_checkouts_still_isolated(tmp_path: Path) -> None:
+    from bettermemory.origin import _primary_root_of, worktrees_match
+
+    _primary_root_of.cache_clear()
+    a = tmp_path / "clone-a"
+    b = tmp_path / "clone-b"
+    (a / ".git").mkdir(parents=True)
+    (b / ".git").mkdir(parents=True)
+    assert worktrees_match(str(a), str(b)) is False

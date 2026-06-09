@@ -256,3 +256,40 @@ def test_redact_all_merges_overlapping_spans() -> None:
     out = _redact_all(body)
     assert _AWS not in out
     assert out.count("[redacted:") == 1
+
+
+# Regression: extractor false-signal hunt (2026-06-09 multi-agent audit)
+
+
+def test_sentence_final_period_does_not_mask_secret() -> None:
+    """HIGH finding: the greedy value group captures the sentence period,
+    and the dotted-ref guard then read the secret as a module reference."""
+    body = "My Grafana admin password is hunter2Abc9XyZ12Q. Rotate it quarterly."
+    kinds = [m.kind for m in find_credential_markers(body)]
+    assert "generic-secret-assignment" in kinds
+
+
+def test_dotted_module_ref_at_sentence_end_still_passes() -> None:
+    body = "The client_secret = config.SECRET_KEY_V2. See settings module."
+    assert find_credential_markers(body) == []
+
+
+def test_encrypted_pkcs8_pem_header_fires() -> None:
+    body = "-----BEGIN ENCRYPTED PRIVATE KEY-----\nMIIFHDBOBgkqhkiG9w0BBQ0w"
+    kinds = [m.kind for m in find_credential_markers(body)]
+    assert "private-key-pem" in kinds
+
+
+def test_slack_app_and_client_token_families_fire() -> None:
+    # Fixtures are assembled at runtime so the raw source file never
+    # contains a contiguous secret-shaped token — GitHub's secret-scanning
+    # push protection scans blobs and rejects pushes carrying full
+    # Slack-token shapes, fake or not.
+    for prefix, body in (
+        ("xapp-", "1-A0XXXXXXX-1234567890123-abcdefabcdefabcdef"),
+        ("xoxc-", "1234567890-abcdefghijklmnop"),
+        ("xoxe-", "1-abcdefghijklmnopqrstuvwx"),
+    ):
+        token = prefix + body
+        kinds = [m.kind for m in find_credential_markers(f"token is {token} ok")]
+        assert "slack-token" in kinds, prefix

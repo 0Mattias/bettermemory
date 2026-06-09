@@ -38,6 +38,7 @@ import logging
 import re
 import subprocess
 from datetime import datetime, timezone
+from functools import lru_cache
 from pathlib import Path
 from urllib.parse import urlparse
 
@@ -166,12 +167,79 @@ def worktrees_match(memory_worktree: str | None, caller_worktree: str | None) ->
     field; a caller running outside any git checkout has no worktree
     to compare against; in either case we have no boundary to
     enforce, and the auto-scope filter falls back to repo-only
-    matching. Both sides set → string equality on the resolved
-    paths captured by `_git_worktree_root`.
+    matching.
+
+    Both sides set and unequal → two relaxations before excluding,
+    closing the "linked-worktree blackout" without reopening the
+    worktree-leakage hole the strict check exists to plug:
+
+    1. **Caller in a linked worktree of the memory's checkout.** Agent
+       harnesses routinely spawn sessions in ephemeral `git worktree`
+       checkouts (this project's own audit-loop fan-out does). Strict
+       equality made EVERY memory written in the primary checkout —
+       the repo's shared knowledge — invisible to those sessions. A
+       linked worktree's root carries a `.git` FILE pointing at
+       `<primary>/.git/worktrees/<name>`, so the caller's primary is
+       derivable from the filesystem alone; when it equals the
+       memory's recorded worktree, the memory surfaces. Asymmetric by
+       design: notes written in a LIVE sibling worktree still stay
+       isolated from the primary and from other siblings (their
+       recorded root is the sibling path, which is neither the
+       caller's root nor anyone's primary).
+
+    2. **Dead-worktree degrade.** A memory written from a
+       since-deleted worktree (ephemeral agent checkout, removed
+       clone) would otherwise be invisible from EVERY worktree
+       forever. When the recorded root no longer exists on disk,
+       degrade to repo-level matching — there is no live workspace
+       left to isolate from.
     """
     if memory_worktree is None or caller_worktree is None:
         return True
-    return memory_worktree == caller_worktree
+    if memory_worktree == caller_worktree:
+        return True
+    if _primary_root_of(caller_worktree) == memory_worktree:
+        return True
+    try:
+        if not Path(memory_worktree).exists():
+            return True
+    except OSError:
+        return True
+    return False
+
+
+@lru_cache(maxsize=64)
+def _primary_root_of(worktree: str) -> str | None:
+    """Primary checkout root for a LINKED worktree; None for a primary
+    checkout, a bare path, or anything unreadable.
+
+    A linked worktree's root contains a `.git` FILE (the primary's has a
+    `.git` DIRECTORY) whose single line reads
+    ``gitdir: <primary>/.git/worktrees/<name>`` — pure filesystem
+    introspection, no subprocess. Cached per path for the process
+    lifetime: worktree topology doesn't change under a running server,
+    and the cache keeps the per-candidate filter cost at dict-lookup
+    level during a search sweep.
+    """
+    gitfile = Path(worktree) / ".git"
+    try:
+        if not gitfile.is_file():
+            return None
+        content = gitfile.read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return None
+    m = re.search(r"^gitdir:\s*(.+)$", content, re.MULTILINE)
+    if m is None:
+        return None
+    gitdir = m.group(1).strip()
+    for marker in ("/.git/worktrees/", "\\.git\\worktrees\\"):
+        idx = gitdir.find(marker)
+        if idx != -1:
+            try:
+                return str(Path(gitdir[:idx]).resolve())
+            except OSError:
+                return gitdir[:idx]
+    return None
 
 
 def should_include_for_caller(

@@ -1244,3 +1244,192 @@ def test_absent_attested_path_that_exists_is_normal_candidate(tmp_path: Path) ->
     assert str(back) in report.checked
     assert report.missing == ()
     assert report.expected_absent == ()
+
+
+# ---------------------------------------------------------------------------
+# Extractor false-signal hunt fixes (2026-06-09 multi-agent audit)
+# ---------------------------------------------------------------------------
+
+
+def test_backticked_line_suffix_stripped_existing(tmp_path: Path) -> None:
+    """`path/file.py:407` cites a code location; the file is the claim."""
+    f = tmp_path / "mod.py"
+    f.write_text("x")
+    for suffix in (":407", ":445-461", ":12:5"):
+        report = detect_path_drift(f"the filter lives in `{f}{suffix}`.")
+        assert str(f) in report.checked, suffix
+        assert report.missing == (), suffix
+
+
+def test_backticked_line_suffix_stripped_still_flags_missing(
+    tmp_path: Path,
+) -> None:
+    gone = tmp_path / "gone.py"
+    report = detect_path_drift(f"the old hook was `{gone}:42`.")
+    assert str(gone) in report.missing
+
+
+def test_bare_at_sign_path_extracted_whole(tmp_path: Path) -> None:
+    """Homebrew kegs (`python@3.12`), systemd templates (`foo@1.service`)
+    carry `@` — the bare scan used to truncate at it."""
+    keg = tmp_path / "python@3.12" / "bin"
+    keg.mkdir(parents=True)
+    report = detect_path_drift(f"interpreter pinned at {keg} for the project")
+    assert str(keg) in report.checked
+    assert report.missing == ()
+
+
+def test_balanced_paren_directory_name_kept(tmp_path: Path) -> None:
+    arch = tmp_path / "bettermemory (archived)"
+    arch.mkdir()
+    report = detect_path_drift(f"old tree moved to `{arch}` for reference.")
+    assert str(arch) in report.checked
+    assert report.missing == ()
+
+
+def test_unbalanced_trailing_paren_still_stripped(tmp_path: Path) -> None:
+    gone = tmp_path / "gone-paren"
+    report = detect_path_drift(f"(check `{gone})`)")
+    assert str(gone) in report.missing
+
+
+def test_tilde_and_absolute_spellings_dedup_to_one_claim() -> None:
+    home = str(Path.home())
+    body = f"old launcher at ~/.bm-test-dd.sh (absolute: {home}/.bm-test-dd.sh)"
+    report = detect_path_drift(body)
+    assert len(report.missing) == 1
+
+
+def test_windows_spaced_path_with_continuation_extracted() -> None:
+    body = r"runtime at `C:\Program Files\bm-noexist\node.exe` per IT policy"
+    report = detect_path_drift(body)
+    assert "C:\\Program Files\\bm-noexist\\node.exe" in report.checked
+
+
+def test_three_word_terminal_spaced_dir_in_backticks(tmp_path: Path) -> None:
+    d = tmp_path / "My Cool Project"
+    d.mkdir()
+    report = detect_path_drift(f"notes in `{d}`.")
+    assert str(d) in report.checked
+    assert report.missing == ()
+
+
+def test_home_anchored_spaced_dir_accepted() -> None:
+    """`~/Calibre Library/...` — the home anchor crosses the home root, so
+    its single-slash first chunk passes the boundary rule like `C:\\…`."""
+    report = detect_path_drift("calibre db at `~/Calibre Library/metadata.db` x")
+    target = "~/Calibre Library/metadata.db"
+    assert target in report.checked or target in report.missing
+
+
+def test_paren_continuation_after_bare_path_not_flagged(tmp_path: Path) -> None:
+    """`report (2).pdf` duplicate-download names: the ` (`-continuation is
+    an ambiguous truncation, not drift."""
+    f = tmp_path / "report (2).pdf"
+    f.write_text("x")
+    report = detect_path_drift(
+        f"invoice saved as {tmp_path}/report (2).pdf after download."
+    )
+    assert report.missing == ()
+
+
+def test_sentence_final_bare_path_still_flags(tmp_path: Path) -> None:
+    """A trimmed sentence period is a prose delimiter — the next sentence's
+    capital must not mark the citation ambiguous."""
+    gone = tmp_path / "old.conf"
+    report = detect_path_drift(f"Old config was at {gone}. The new one works fine.")
+    assert str(gone) in report.missing
+
+
+def test_single_argument_backticked_command_excluded() -> None:
+    report = detect_path_drift("cron runs `/opt/homebrew/bin/brew upgrade` nightly.")
+    assert report.checked == ()
+
+
+def test_env_assignment_boundary_extracts_path(tmp_path: Path) -> None:
+    gone = tmp_path / "store.db"
+    report = detect_path_drift(f"launchd sets BM_DB={gone} at login")
+    assert str(gone) in report.missing
+
+
+def test_flag_equals_boundary_extracts_path(tmp_path: Path) -> None:
+    gone = tmp_path / "store2.db"
+    report = detect_path_drift(f"start with --db={gone} for the test store")
+    assert str(gone) in report.missing
+
+
+def test_wellknown_route_filenames_skipped() -> None:
+    body = "nginx overrides /robots.txt and serves /openapi.json from the app"
+    report = detect_path_drift(body)
+    assert report.checked == ()
+
+
+def test_dollar_home_prefix_canonicalized_to_tilde() -> None:
+    report = detect_path_drift(
+        "config read from $HOME/bm-missing-xyz/c.toml at startup"
+    )
+    assert "~/bm-missing-xyz/c.toml" in report.missing
+
+
+def test_glob_pattern_citation_not_statted(tmp_path: Path) -> None:
+    (tmp_path / "logs").mkdir()
+    report = detect_path_drift(f"logs rotate under `{tmp_path}/logs/*.log` nightly")
+    assert report.checked == ()
+
+
+def test_template_placeholder_paths_rejected() -> None:
+    body = "settings at `~/.config/<app>/settings.toml`, `/opt/stacks/{service}/data`"
+    report = detect_path_drift(body)
+    assert report.checked == ()
+
+
+def test_shell_escaped_spaces_unescaped(tmp_path: Path) -> None:
+    f = tmp_path / "My Drive" / "notes.txt"
+    f.parent.mkdir()
+    f.write_text("x")
+    backtick = detect_path_drift(f"vault at `{tmp_path}/My\\ Drive/notes.txt` synced")
+    assert str(f) in backtick.checked and backtick.missing == ()
+    bare = detect_path_drift(
+        f"vault lives at {tmp_path}/My\\ Drive/notes.txt synced via Drive"
+    )
+    assert str(f) in bare.checked and bare.missing == ()
+
+
+def test_markdown_table_pipe_is_bare_boundary(tmp_path: Path) -> None:
+    gone = tmp_path / "table.conf"
+    report = detect_path_drift(f"| nginx |{gone}| row")
+    assert str(gone) in report.missing
+
+
+def test_acronym_pair_glue_falls_back_to_existing_prefix() -> None:
+    """`/etc/hosts TCP/IP keepalive` — the continuation rule glues the
+    acronym pair on; the disk arbitrates back to the real path."""
+    report = detect_path_drift("tuned /etc/hosts TCP/IP keepalive overrides today")
+    assert "/etc/hosts" in report.checked
+    assert report.missing == ()
+
+
+def test_attested_ambiguous_candidate_still_flags_when_deleted(
+    tmp_path: Path,
+) -> None:
+    """verified-then-deleted is a real drift signal — attestation resolves
+    extraction ambiguity, so the ambiguous-truncation drop must not eat it."""
+    gone = tmp_path / "run.sh"
+    body = f"backup script at {gone} Runs nightly via launchd."
+    unattested = detect_path_drift(body)
+    assert unattested.missing == ()  # ambiguous, dropped
+    attested = detect_path_drift(body, verified_paths=[str(gone)])
+    assert str(gone) in attested.missing
+
+
+def test_later_clean_occurrence_downgrades_ambiguity(tmp_path: Path) -> None:
+    """Sentence order must not decide whether real drift is reported."""
+    gone = tmp_path / "run2.sh"
+    body = f"backup at {gone} Runs nightly. Cron invokes {gone} at 02:00 daily."
+    report = detect_path_drift(body)
+    assert str(gone) in report.missing
+
+
+def test_smb_share_spec_rejected() -> None:
+    report = detect_path_drift("photos live on //nas/photos (SMB share).")
+    assert report.checked == ()

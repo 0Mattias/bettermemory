@@ -188,23 +188,29 @@ async def test_episode_search_auto_scope_drops_other_worktree(
     written from a different worktree of the same repository that shares
     the memory root — the asymmetric cross-worktree leak `episode_handoff`
     already guards against. A legacy / None-origin episode passes through
-    (do not hide pre-field writes)."""
+    (do not hide pre-field writes). The worktree dirs must EXIST on disk:
+    a nonexistent recorded worktree now triggers the deliberate
+    dead-worktree degrade in `worktrees_match` and would surface B."""
     import bettermemory._handlers as handlers_module
     import bettermemory.server as server_module
 
     cfg = Config(storage=StorageConfig(directory=str(memory_dir)))
 
+    wt_a = memory_dir.parent / "wt-repo-a"
+    wt_b = memory_dir.parent / "wt-repo-b"
+    wt_a.mkdir(exist_ok=True)
+    wt_b.mkdir(exist_ok=True)
     origin_a = Origin(
-        cwd="/wt/repo-a",
+        cwd=str(wt_a),
         repo="git@github.com:example/repo.git",
         branch="feature-a",
-        worktree_root="/wt/repo-a",
+        worktree_root=str(wt_a),
     )
     origin_b = Origin(
-        cwd="/wt/repo-b",
+        cwd=str(wt_b),
         repo="git@github.com:example/repo.git",
         branch="feature-b",
-        worktree_root="/wt/repo-b",
+        worktree_root=str(wt_b),
     )
 
     # Worktree A writes an episode (origin captured from A).

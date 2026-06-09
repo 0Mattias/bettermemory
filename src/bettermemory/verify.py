@@ -137,9 +137,43 @@ _BACKTICK_RE = re.compile(r"`([^`\n]+)`")
 # trailing slash) still can't be captured safely; those fall to the
 # ambiguous-truncation drop in `detect_path_drift` instead.
 _BARE_RE = re.compile(
-    r"(?:^|[\s(\[{<\"',;])"
-    r"((?:~/|/|[a-zA-Z]:[\\/])[\w./\-_~\\]+"
-    r"(?:(?: [A-Z][\w.\-]+)+[\\/][\w./\-_~\\]+)*)"
+    # Boundary: `=` admits VAR=/path and --flag=/path assignments; `|`
+    # admits markdown table cells; the typographic quotes admit rich-text
+    # paste. None of these characters appear inside real paths.
+    r"(?:^|[=|\s(\[{<\"',;“”‘’])"
+    # Prefixes: `$HOME/` / `${HOME}/` are canonicalized to `~/` by
+    # `_normalize_candidate` so both spellings make the same claim.
+    # Body class: `@` covers homebrew versioned kegs (python@3.12),
+    # systemd template units (foo@1.service) and npm scoped packages;
+    # `+` covers /usr/include/c++; `%` covers escaped URLs-on-disk.
+    r"((?:~/|\$HOME/|\$\{HOME\}/|/|[a-zA-Z]:[\\/])[\w./\-_~\\@+%]+"
+    r"(?:(?: [A-Z][\w.\-]+)+[\\/][\w./\-_~\\@+%]+)*)"
+)
+
+# Code-citation line suffix: `path/file.py:407`, `:407-461`, `:12:5`.
+# The line number is not a filesystem claim; the file is. Requires a
+# slash before the final colon-free segment so Windows drive prefixes
+# (`C:\...`) and prose like `foo:123` never match.
+_LINE_SUFFIX_RE = re.compile(r"^(.+[\\/][^\\/:]+):\d+(?:[-:]\d+)?$")
+
+# Single-segment absolute candidates whose terminal segment is one of
+# these well-known web filenames are URL routes, not filesystem claims
+# (`nginx overrides /robots.txt`). The extensionless single-segment
+# filter below can't catch them (the dot reads as a file extension), so
+# they are allowlisted — same deliberately-narrow shape as
+# `_PLACEHOLDER_PATHS`.
+_WELLKNOWN_ROUTE_SEGMENTS: frozenset[str] = frozenset(
+    {
+        "robots.txt",
+        "favicon.ico",
+        "sitemap.xml",
+        "openapi.json",
+        "index.html",
+        "manifest.json",
+        "humans.txt",
+        "security.txt",
+        "ads.txt",
+    }
 )
 
 # Domain-attached route: a hostname-shaped token (two-plus dot-separated
@@ -311,26 +345,54 @@ def detect_path_drift(
     missing: list[str] = []
     verified: list[str] = []
     expected_absent: list[str] = []
-    for path, drop_if_missing in candidates:
+    for path, drop_if_missing, bare_spaced in candidates:
         exists = _path_exists(path)
-        if not exists and drop_if_missing:
-            # Ambiguous truncation: the bare scan stopped at ` Capitalized…`
-            # right after this candidate, so the real citation may continue
-            # past the space (a terminal spaced component like
-            # `.../Visual Studio Code.app`). A missing-flag here would be
-            # manufactured by our own truncation, not by drift — drop the
-            # candidate entirely rather than report a claim we can't trust.
-            # An existing candidate is kept: existence proves the prefix is
-            # a real path regardless of what the prose does next.
+        norm = _normalize_for_compare(path)
+        # An attestation pins the citation: a path the caller explicitly
+        # named in `verified_paths` / `verified_absent_paths` is proven to
+        # be the complete, intended claim, which resolves any extraction
+        # ambiguity — the drops below never apply to attested candidates
+        # (otherwise a verified-then-deleted path would produce NO drift
+        # signal, breaking the documented contract).
+        attested = norm in verified_set or norm in absent_set
+        if not exists and not attested:
+            if bare_spaced:
+                # Existence-arbitrated fallback for spaced bare-scan
+                # candidates: the continuation rule can glue a prose
+                # acronym pair (`TCP/IP`, `CI/CD`) onto a real path
+                # (`/etc/hosts TCP/IP keepalive`). If the prefix up to
+                # the first space exists, the spaced run was prose —
+                # check the prefix instead, so the real path still gets
+                # its drift check. If neither form exists, the extraction
+                # is too ambiguous to trust; drop rather than flag a
+                # claim we may have manufactured. (Backticked spaced
+                # paths never take this branch — the author delimited
+                # those precisely, so a miss there is real drift.)
+                prefix = path.split(" ", 1)[0]
+                if _path_exists(prefix) and prefix not in checked:
+                    checked.append(prefix)
+                    if _normalize_for_compare(prefix) in verified_set:
+                        verified.append(prefix)
+                continue
+            if drop_if_missing:
+                # Ambiguous truncation: the bare scan stopped at
+                # ` Capitalized…` (or ` (2).pdf`-style continuations)
+                # right after this candidate, so the real citation may
+                # continue past the space. A missing-flag here would be
+                # manufactured by our own truncation, not by drift.
+                # An existing candidate is kept: existence proves the
+                # prefix is a real path regardless of the prose after it.
+                continue
+        if path in checked:
             continue
         checked.append(path)
         if not exists:
-            if _normalize_for_compare(path) in absent_set:
+            if norm in absent_set:
                 expected_absent.append(path)
             else:
                 missing.append(path)
             continue
-        if _normalize_for_compare(path) in verified_set:
+        if norm in verified_set:
             verified.append(path)
     return PathDriftReport(
         checked=tuple(checked),
@@ -382,22 +444,36 @@ def _normalize_for_compare(raw: str) -> str:
 # ---------------------------------------------------------------------------
 
 
-def _extract_candidates(body: str) -> list[tuple[str, bool]]:
+def _extract_candidates(body: str) -> list[tuple[str, bool, bool]]:
     """Pull validated, deduplicated path candidates from `body`.
 
-    Returns `(path, drop_if_missing)` pairs. `drop_if_missing` is True
-    only for bare-scan candidates whose match stopped immediately before
-    ``" Capitalized…"`` — the signature of a truncated spaced component
-    the continuation rule in `_BARE_RE` can't safely capture (terminal
-    spaced segments like ``.../Visual Studio Code.app``). The caller
-    drops such a candidate when it fails the disk check instead of
-    flagging it missing; see `detect_path_drift`. Backtick candidates
-    are never ambiguous — the author delimited the path precisely.
+    Returns `(path, drop_if_missing, bare_spaced)` triples:
+
+    - `drop_if_missing` is True only for bare-scan candidates whose match
+      stopped immediately before a space followed by a non-lowercase
+      character — the signature of a truncated spaced component the
+      continuation rule in `_BARE_RE` can't safely capture (terminal
+      spaced segments like ``.../Visual Studio Code.app``, duplicate
+      downloads like ``report (2).pdf``) — AND whose raw match needed no
+      trailing trim: a trimmed sentence period is itself a prose
+      delimiter, so ``.../old.conf. The new …`` is a complete citation,
+      not a truncation. The caller drops such a candidate when it fails
+      the disk check instead of flagging it missing; see
+      `detect_path_drift`. Backtick candidates are never ambiguous —
+      the author delimited the path precisely.
+    - `bare_spaced` marks bare-scan candidates carrying an internal
+      space — eligible for the existence-arbitrated prefix fallback in
+      `detect_path_drift` (the continuation rule can glue prose acronym
+      pairs like ``TCP/IP`` onto a real path; the disk is the arbiter).
 
     Capped at `_MAX_PATHS_PER_BODY`. Backtick-wrapped matches come first;
     when the same path appears both backtick-wrapped and bare, only the
     backtick form is kept (the bare scan operates on a body with backtick
-    contents masked out).
+    contents masked out). Dedup keys on the `~`-expanded comparison form
+    so ``~/x`` and ``/Users/me/x`` register as one claim (one missing
+    entry, one cap slot). A later clean occurrence of a path first seen
+    as ambiguous DOWNGRADES the stored ambiguity — never the reverse —
+    so sentence order alone cannot decide whether real drift is reported.
 
     Candidates whose first segment matches a domain-attached route
     elsewhere in the body are suppressed entirely — see
@@ -415,18 +491,20 @@ def _extract_candidates(body: str) -> list[tuple[str, bool]]:
             return False
         return candidate.split("/", 2)[1] in route_segments
 
-    candidates: list[tuple[str, bool]] = []
-    seen: set[str] = set()
+    candidates: list[tuple[str, bool, bool]] = []
+    index_of: dict[str, int] = {}
 
     masked = body
     for match in _BACKTICK_RE.finditer(body):
         raw = match.group(1).strip()
         normalized = _normalize_candidate(raw)
-        if normalized and normalized not in seen and not _is_route(normalized):
-            seen.add(normalized)
-            candidates.append((normalized, False))
-            if len(candidates) >= _MAX_PATHS_PER_BODY:
-                return candidates
+        if normalized and not _is_route(normalized):
+            key = _normalize_for_compare(normalized)
+            if key not in index_of:
+                index_of[key] = len(candidates)
+                candidates.append((normalized, False, False))
+                if len(candidates) >= _MAX_PATHS_PER_BODY:
+                    return candidates
         # Mask the backtick span (including the delimiters) so the bare
         # scan doesn't see it again. Replace with spaces of the same
         # length to preserve offsets — the ambiguous-truncation lookahead
@@ -438,13 +516,26 @@ def _extract_candidates(body: str) -> list[tuple[str, bool]]:
     for match in _BARE_RE.finditer(masked):
         raw = match.group(1)
         normalized = _normalize_candidate(raw)
-        if normalized and normalized not in seen and not _is_route(normalized):
-            seen.add(normalized)
-            tail = masked[match.end(1) : match.end(1) + 2]
-            ambiguous = len(tail) == 2 and tail[0] == " " and tail[1].isupper()
-            candidates.append((normalized, ambiguous))
-            if len(candidates) >= _MAX_PATHS_PER_BODY:
-                break
+        if not normalized or _is_route(normalized):
+            continue
+        tail = masked[match.end(1) : match.end(1) + 2]
+        ambiguous = (
+            normalized == raw
+            and len(tail) == 2
+            and tail[0] == " "
+            and not tail[1].islower()
+        )
+        key = _normalize_for_compare(normalized)
+        if key in index_of:
+            i = index_of[key]
+            prev_path, prev_ambiguous, prev_spaced = candidates[i]
+            if prev_ambiguous and not ambiguous:
+                candidates[i] = (prev_path, False, prev_spaced)
+            continue
+        index_of[key] = len(candidates)
+        candidates.append((normalized, ambiguous, " " in normalized))
+        if len(candidates) >= _MAX_PATHS_PER_BODY:
+            break
 
     return candidates
 
@@ -462,9 +553,30 @@ def _normalize_candidate(raw: str) -> str | None:
 
     # Trim leading whitespace just in case (backtick groups can carry it).
     s = raw.strip()
+    # Shell-escaped spaces (`~/Google\ Drive/notes.txt`) — the form a
+    # terminal paste produces — denote a literal space in the path.
+    # Unescape before anything else so the spaced-path machinery below
+    # sees the real spelling.
+    s = s.replace("\\ ", " ")
+    # `$HOME/...` is the env-var spelling of `~/...`; canonicalize so both
+    # forms funnel into the same home-relative branch (placeholder checks,
+    # `~`-expansion at stat and compare time). Only HOME — a general
+    # expandvars would expand arbitrary machine-local vars and break the
+    # cross-machine attestation-matching property of
+    # `_normalize_for_compare`.
+    if s.startswith("$HOME/"):
+        s = "~" + s[len("$HOME") :]
+    elif s.startswith("${HOME}/"):
+        s = "~" + s[len("${HOME}") :]
     # Trim trailing punctuation. Repeated rstrip handles "/etc/foo.,"
-    # cleanly without a regex pass.
+    # cleanly without a regex pass. A closing `)` is stripped only while
+    # UNBALANCED — directory names legitimately end in a parenthesized
+    # suffix (`bettermemory (archived)`, `Program Files (x86)`), where the
+    # balanced `)` is part of the name, not prose punctuation (the
+    # standard linkifier balance heuristic).
     while s and s[-1] in _TRAILING_PUNCT:
+        if s[-1] == ")" and s.count("(") >= s.count(")"):
+            break
         s = s[:-1]
     # Trim trailing slashes for dedup purposes (so /tmp/ and /tmp register
     # as the same candidate). We DO want to check the path with the slash
@@ -483,7 +595,36 @@ def _normalize_candidate(raw: str) -> str | None:
     # just because the part after `:` starts with `/`. The bare regex
     # already rules out a leading `@` via the boundary, but a candidate
     # extracted from backticks could still contain one — be explicit.
-    if "@" in s and ":" in s and s.index("@") < s.index(":"):
+    # The `@` must sit before the first slash: in a remote the user@host
+    # run leads, while an `@` inside a real path (homebrew kegs like
+    # `/opt/homebrew/opt/python@3.12`, systemd templates) always follows
+    # directory boundaries.
+    first_slash = s.find("/")
+    at = s.find("@")
+    colon = s.find(":")
+    if (
+        at != -1
+        and colon != -1
+        and at < colon
+        and (first_slash == -1 or at < first_slash)
+    ):
+        return None
+
+    # Code-citation line suffix (`file.py:407`, `:407-461`, `:12:5`) —
+    # the line number is not a filesystem claim; the file is. Strip it so
+    # the disk check targets the cited file: a moved file still flags
+    # drift, an existing one stops false-flagging.
+    line_suffix = _LINE_SUFFIX_RE.match(s)
+    if line_suffix:
+        s = line_suffix.group(1)
+
+    # Glob patterns (`/var/log/app/*.log`) and template placeholders
+    # (`~/.config/<app>/settings.toml`, `/opt/stacks/{service}/data`) are
+    # shape claims, not literal filesystem citations — stat'ing them
+    # literally manufactures a permanent missing-flag. Same stance as the
+    # placeholder-path skip; these characters essentially never appear in
+    # real on-disk paths.
+    if any(ch in s for ch in "*?<>{}"):
         return None
 
     # CLI / slash-command shape: a real path with internal whitespace has
@@ -495,38 +636,31 @@ def _normalize_candidate(raw: str) -> str | None:
     # 1. Slash commands have a single-slash command name as their first
     #    chunk (`/plugin install foo` → first chunk `/plugin`, one `/`;
     #    `/plugin install owner/repo` → also one — even when an argument
-    #    contains `/`, the leading command name does not).
+    #    contains `/`, the leading command name does not). Anchors count
+    #    as boundaries too: the drive prefix in `C:\Program Files\…` and
+    #    the home anchor in `~/Calibre Library/…` each cross a root, so
+    #    their single-slash first chunks are as boundary-crossing as
+    #    `/Users/My`.
     #
-    # 2. Shell invocations starting at an absolute binary path (`/usr/bin/env
-    #    python -m bettermemory`) defeat the first-chunk rule because
-    #    `/usr/bin/env` has multiple slashes — but they always have 2+
-    #    adjacent slashless tokens after the binary (`python`, `-m`,
-    #    `bettermemory`). A path with internal whitespace can have one
-    #    slashless component (`/Users/My Stuff` → `Stuff` has no slash)
-    #    but rarely two adjacent — every directory boundary is a `/`.
-    #
-    # Combining the two rules catches both shapes without over-rejecting
-    # the rare-but-legal "path with internal whitespace". Counts `\` as
-    # well as `/` so Windows paths with internal spaces (`C:\Users\Me My
-    # Stuff\file`) still pass.
+    # 2. Shell invocations starting at an absolute binary path
+    #    (`/usr/bin/env python -m bettermemory`, `/opt/homebrew/bin/brew
+    #    upgrade`) defeat the first-chunk rule because the binary path
+    #    has multiple slashes — but their arguments are argument-shaped:
+    #    lowercase words or dash-flags (`python`, `-m`, `upgrade`,
+    #    `apply`). Legitimate internal-space path components are
+    #    title-cased (`Application Support`, `Program Files`, `My Stuff`)
+    #    or carry digits/punctuation (`(x86)`), so one argument-shaped
+    #    slashless token marks the candidate as a command, not a path.
     #
     # Without this filter, backtick-wrapped Claude Code slash commands
-    # quoted in prose ended up in `path_drift_missing` because no such
-    # file existed on disk — noisy false positives on any memory
-    # describing the install path.
+    # and single-argument shell invocations quoted in prose ended up in
+    # `path_drift_missing` because no such file existed on disk — noisy
+    # false positives on any memory describing an install path or a cron
+    # entry.
     if " " in s or "\t" in s:
         parts = s.split()
         first = parts[0]
-        slashless = sum(1 for p in parts if "/" not in p and "\\" not in p)
         boundaries = first.count("/") + first.count("\\")
-        # A Windows drive prefix is a directory boundary too: the first
-        # chunk of `C:\Program Files\nodejs` is `C:\Program` — one literal
-        # slash, but it crosses the drive root, so it's exactly as
-        # boundary-crossing as `/Users/My`. Without this credit every
-        # drive-letter path with an internal space (`C:\Program Files\…`,
-        # the single most common spaced path on Windows) failed the
-        # multi-slash rule and was silently dropped — a false negative
-        # against the documented "rare but legal" internal-space intent.
         if (
             len(first) >= 3
             and first[0].isalpha()
@@ -534,13 +668,25 @@ def _normalize_candidate(raw: str) -> str | None:
             and first[2] in "/\\"
         ):
             boundaries += 1
-        if boundaries <= 1 or slashless >= 2:
+        if first.startswith("~/"):
+            boundaries += 1
+        arglike = any(
+            ("/" not in p and "\\" not in p)
+            and (p.startswith("-") or (p.isalpha() and p[:1].islower()))
+            for p in parts[1:]
+        )
+        if boundaries <= 1 or arglike:
             return None
 
     if s.startswith("~/"):
         if len(s) <= 2:
             return None
         return None if _is_placeholder_path(s) else s
+    if s.startswith("//"):
+        # `//host/share` is SMB/CIFS mount-source notation (mount_smbfs,
+        # fstab smbfs/cifs entries, smbclient) — a network-share spec,
+        # never a local filesystem claim. Mirrors the `://` URL exclusion.
+        return None
     if s.startswith("/"):
         # `/x` is too short to be a meaningful claim; `/` alone is the root.
         if len(s) < 3:
@@ -578,12 +724,18 @@ def _is_single_segment_routelike(s: str) -> bool:
     root (`/`, already filtered upstream by the length check) are not
     matched. Windows paths never enter this branch — they're handled
     via the drive-letter check after the `/` branch.
+
+    Exception to the dot rule: well-known web filenames
+    (`/robots.txt`, `/openapi.json`, …) are routes despite carrying an
+    extension — see `_WELLKNOWN_ROUTE_SEGMENTS`.
     """
     if s.count("/") != 1:
         return False
     segment = s[1:]
     if not segment:
         return False
+    if segment.lower() in _WELLKNOWN_ROUTE_SEGMENTS:
+        return True
     return "." not in segment
 
 
