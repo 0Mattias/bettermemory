@@ -39,6 +39,7 @@ from . import (
     serve,
     sync,
     tombstones,
+    try_cmd,
     ui,
 )
 
@@ -105,6 +106,7 @@ def _build_parser() -> tuple[
         "eval": eval_cmd.add_subparser(sub),
         "proposals": proposals.add_subparser(sub),
         "rename-scope": rename_scope.add_subparser(sub),
+        "try": try_cmd.add_subparser(sub),
     }
     return parser, subparsers
 
@@ -174,6 +176,9 @@ def main() -> None:
         return
     if cmd == "rename-scope":
         rename_scope.run(args, root_parser=parser)
+        return
+    if cmd == "try":
+        try_cmd.run(args)
         return
 
     # argparse already rejects unknown subcommands; this is belt-and-

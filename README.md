@@ -28,6 +28,12 @@ bettermemory init --client claude-desktop
 
 That's it — the server registers itself in the right config file and runs over stdio. No database to provision, no API key, no account. Per-client setup → [`docs/clients.md`](docs/clients.md); deeper install notes → [`docs/installation.md`](docs/installation.md).
 
+See the whole point in 60 seconds, offline:
+
+```sh
+bettermemory try        # writes a memory, moves a file it cites, shows the next search flag it stale
+```
+
 ## Why it's different
 
 ```jsonc
@@ -176,6 +182,7 @@ Full signatures, defaults, and return shapes in [`docs/api.md`](docs/api.md).
 The `bettermemory` script *is* the MCP server with no arguments (stdio). It also exposes offline tooling:
 
 ```sh
+bettermemory try                         # 60s offline demo: watch a memory go stale when a file it cites moves
 bettermemory init --client claude-code   # register with a client (idempotent)
 bettermemory doctor                      # diagnose install state
 bettermemory health                      # curation rollup (text or --json)

@@ -367,6 +367,43 @@ def test_doctor_subcommand_runs_against_empty_store(
     assert "storage_directory" in out
 
 
+def test_try_subcommand_reproduces_path_drift_offline(
+    capsys: pytest.CaptureFixture[str],
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """`bettermemory try` runs the verify→drift→verdict demo in an
+    isolated temp store and exits 0 when it reproduces the staleness
+    signal (it doubles as a self-test of that whole path). The demo must
+    NOT touch the BETTERMEMORY_DIR store — it builds its own tempdir."""
+    with pytest.raises(SystemExit) as exc:
+        _run_main(["try"], monkeypatch=monkeypatch, storage=tmp_path)
+    assert exc.value.code == 0
+    out = capsys.readouterr().out
+    assert "spot_check_recommended" in out
+    assert "path_drift.missing" in out
+    # The demo store is isolated — the BETTERMEMORY_DIR storage stays empty.
+    assert not list(tmp_path.glob("*.md"))
+
+
+def test_try_json_emits_the_raw_hit(
+    capsys: pytest.CaptureFixture[str],
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """`bettermemory try --json` emits the exact MCP-shaped hit dict, with
+    the path-drift-driven verdict and a populated path_drift.missing."""
+    import json
+
+    with pytest.raises(SystemExit) as exc:
+        _run_main(["try", "--json"], monkeypatch=monkeypatch, storage=tmp_path)
+    assert exc.value.code == 0
+    row = json.loads(capsys.readouterr().out)
+    assert row["staleness_verdict"] == "spot_check_recommended"
+    assert row["verification"]["status"] == "fresh"
+    assert row["path_drift"]["missing"]
+
+
 def test_doctor_json_emits_structured_checks(
     capsys: pytest.CaptureFixture[str],
     monkeypatch: pytest.MonkeyPatch,
