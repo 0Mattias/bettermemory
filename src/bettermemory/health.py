@@ -819,6 +819,52 @@ class _AccumulatorRollups:
     resolution_events_by_id: dict[str, list[dict[str, Any]]]
 
 
+def _parse_silent_miss_event(
+    ev: dict[str, Any],
+) -> tuple[datetime | None, str | None, str | None, str | None]:
+    """Extract the (ts, top_hit_id, event_id, query_preview) tuple from a
+    ``search_miss`` event, defensive against malformed shapes.
+
+    Both ``_StatsAccumulator._handle_search_miss`` and ``curation_counts``
+    build this exact tuple and MUST stay numerically in lockstep (pinned
+    by ``test_curation_counts_matches_compute_health_buckets``). Sharing
+    one parser makes that agreement structural rather than hand-mirrored.
+
+    Malformed events (missing / non-list ``top_hits``, non-dict first
+    entry, non-string ``id``) degrade ``top_hit_id`` to None — the event
+    still counts toward the miss total, it just can't contribute to the
+    unique-memory dedup or be tombstone-filtered. ``event_id`` is the
+    per-event ULID (T4); legacy events without it read as None. The
+    recorder redacts ``probe_query`` into a ``{hash, preview, len}`` dict
+    (events.py ``_redact_event_fields``), so prefer the redacted preview,
+    falling back to a raw string for tests / verbatim-mode events.
+    """
+    top_hit_id: str | None = None
+    top_hits = ev.get("top_hits")
+    if isinstance(top_hits, list) and top_hits:
+        first = top_hits[0]
+        if isinstance(first, dict):
+            candidate = first.get("id")
+            if isinstance(candidate, str):
+                top_hit_id = candidate
+    event_id_raw = ev.get("event_id")
+    event_id = event_id_raw if isinstance(event_id_raw, str) else None
+    query_preview: str | None = None
+    probe_query = ev.get("probe_query")
+    if isinstance(probe_query, dict):
+        preview_raw = probe_query.get("preview")
+        if isinstance(preview_raw, str):
+            query_preview = preview_raw
+    elif isinstance(probe_query, str):
+        query_preview = probe_query[:32]
+    return (
+        ensure_utc(parse_event_ts(ev.get("ts"))),
+        top_hit_id,
+        event_id,
+        query_preview,
+    )
+
+
 class _StatsAccumulator:
     """Walk an event stream once and accumulate every per-event-kind
     counter ``compute_health`` needs.
@@ -1036,52 +1082,11 @@ class _StatsAccumulator:
         # `silent_miss_cutoff` hatch can target one kind cleanly
         # without rewriting the events log.
         #
-        # Also capture the top-hit memory_id (first entry in `top_hits`)
-        # so the rollup can dedup by memory and drop misses whose target
-        # has since been tombstoned. Defensive against malformed events:
-        # a missing / non-list `top_hits`, a non-dict first entry, or a
-        # non-string `id` all degrade to `None` — the event still counts
-        # toward `miss_total` (the legacy count semantic), it just
-        # cannot contribute to `unique_miss_memories` and cannot be
-        # filtered by tombstone status.
-        #
-        # `event_id` is the per-event ULID stamped on every search_miss
-        # since T4. Legacy events written before that field existed read
-        # as None and cannot be referenced by `memory_acknowledge_miss`
-        # — the bulk `silent_miss_cutoff` remains the only escape hatch
-        # for those.
-        top_hit_id: str | None = None
-        top_hits = ev.get("top_hits")
-        if isinstance(top_hits, list) and top_hits:
-            first = top_hits[0]
-            if isinstance(first, dict):
-                candidate = first.get("id")
-                if isinstance(candidate, str):
-                    top_hit_id = candidate
-        event_id_raw = ev.get("event_id")
-        event_id = event_id_raw if isinstance(event_id_raw, str) else None
-        # The recorder redacts `probe_query` into a `{hash, preview,
-        # len}` dict (events.py `_redact_event_fields`), so a bare
-        # string preview no longer lands in the event. Prefer the
-        # redacted preview when present; fall through to the raw
-        # string for tests / verbatim-mode events. None when neither
-        # shape is available.
-        query_preview: str | None = None
-        probe_query = ev.get("probe_query")
-        if isinstance(probe_query, dict):
-            preview_raw = probe_query.get("preview")
-            if isinstance(preview_raw, str):
-                query_preview = preview_raw
-        elif isinstance(probe_query, str):
-            query_preview = probe_query[:32]
-        self._silent_miss_events.append(
-            (
-                _ensure_utc(parse_event_ts(ev.get("ts"))),
-                top_hit_id,
-                event_id,
-                query_preview,
-            )
-        )
+        # The (ts, top_hit_id, event_id, query_preview) tuple is built by
+        # the shared `_parse_silent_miss_event` so this accumulator and
+        # `curation_counts` cannot drift apart (their agreement is pinned
+        # by test_curation_counts_matches_compute_health_buckets).
+        self._silent_miss_events.append(_parse_silent_miss_event(ev))
 
     def _handle_miss_ack(self, ev: dict[str, Any]) -> None:
         # Per-event escape hatch for silent_miss false positives — T4.
@@ -2294,39 +2299,9 @@ def curation_counts(
                     if not is_auto and mid in explicit_applied_counts:
                         explicit_applied_counts[mid] += 1
         elif kind == "search_miss":
-            # Capture the top-hit id, the per-event ULID (T4), and the
-            # redacted preview alongside the timestamp. Same defensive
-            # handling as `_StatsAccumulator._handle_search_miss`:
-            # malformed events (missing / non-list / non-dict / non-string
-            # id) degrade to None — the event still counts toward
-            # `silent_misses` but can't contribute to
-            # `unique_silent_miss_memories` and can't be tombstone-filtered.
-            top_hit_id: str | None = None
-            top_hits = ev.get("top_hits")
-            if isinstance(top_hits, list) and top_hits:
-                first = top_hits[0]
-                if isinstance(first, dict):
-                    candidate = first.get("id")
-                    if isinstance(candidate, str):
-                        top_hit_id = candidate
-            event_id_raw = ev.get("event_id")
-            event_id_val = event_id_raw if isinstance(event_id_raw, str) else None
-            query_preview: str | None = None
-            probe_query = ev.get("probe_query")
-            if isinstance(probe_query, dict):
-                preview_raw = probe_query.get("preview")
-                if isinstance(preview_raw, str):
-                    query_preview = preview_raw
-            elif isinstance(probe_query, str):
-                query_preview = probe_query[:32]
-            silent_miss_events_list.append(
-                (
-                    _ensure_utc(_parse_event_ts(ev.get("ts"))),
-                    top_hit_id,
-                    event_id_val,
-                    query_preview,
-                )
-            )
+            # Shared parser with `_StatsAccumulator._handle_search_miss`
+            # so the two silent-miss readers stay numerically in lockstep.
+            silent_miss_events_list.append(_parse_silent_miss_event(ev))
 
     silent_miss_stats = _silent_miss_stats(
         audited_ts=[],  # curation_counts only surfaces the numerator

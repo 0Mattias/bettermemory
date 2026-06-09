@@ -244,8 +244,6 @@ def _redact_text(text: str) -> str:
     an `@` separator are present, so unrelated `@` characters in error
     text (e.g. branch refs like `@{u}`) are untouched.
     """
-    import re
-
     return re.sub(
         r"([a-zA-Z][a-zA-Z0-9+.-]*://)([^@\s/]+)@",
         r"\1<redacted>@",

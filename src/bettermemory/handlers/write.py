@@ -345,6 +345,26 @@ class GroundednessGate(WriteGate):
         )
 
 
+def _resolve_dedup_thresholds(
+    deps: "ToolHandlers",
+) -> tuple[Any, float | None, float | None]:
+    """Shared setup for both dedup gates: the semantic model plus the
+    high/medium overlap thresholds (None unless semantic dedup is on).
+
+    `DedupActiveGate` and `DedupTombstoneGate` run back-to-back in the
+    same write chain and need the identical triple; keeping it in one
+    place stops the two gates from silently drifting apart.
+    """
+    semantic_model = deps._semantic_model_factory(deps.config)
+    if deps.config.behavior.semantic_dedup:
+        high_threshold: float | None = deps.config.behavior.semantic_high_threshold
+        medium_threshold: float | None = deps.config.behavior.semantic_medium_threshold
+    else:
+        high_threshold = None
+        medium_threshold = None
+    return semantic_model, high_threshold, medium_threshold
+
+
 class DedupActiveGate(WriteGate):
     """Content dedup against the active set. High overlap → reject as
     duplicate (the right move is memory_update on the matched id);
@@ -356,16 +376,8 @@ class DedupActiveGate(WriteGate):
     def evaluate(self, deps: "ToolHandlers", gc: GateContext) -> GateResult:
         if gc.force:
             return Continue()
-        semantic_model = deps._semantic_model_factory(deps.config)
-        high_threshold = (
-            deps.config.behavior.semantic_high_threshold
-            if deps.config.behavior.semantic_dedup
-            else None
-        )
-        medium_threshold = (
-            deps.config.behavior.semantic_medium_threshold
-            if deps.config.behavior.semantic_dedup
-            else None
+        semantic_model, high_threshold, medium_threshold = _resolve_dedup_thresholds(
+            deps
         )
         similar = find_similar(
             gc.payload["content"],
@@ -410,16 +422,8 @@ class DedupTombstoneGate(WriteGate):
     def evaluate(self, deps: "ToolHandlers", gc: GateContext) -> GateResult:
         if gc.force:
             return Continue()
-        semantic_model = deps._semantic_model_factory(deps.config)
-        high_threshold = (
-            deps.config.behavior.semantic_high_threshold
-            if deps.config.behavior.semantic_dedup
-            else None
-        )
-        medium_threshold = (
-            deps.config.behavior.semantic_medium_threshold
-            if deps.config.behavior.semantic_dedup
-            else None
+        semantic_model, high_threshold, medium_threshold = _resolve_dedup_thresholds(
+            deps
         )
         tombstone_similar = find_similar_tombstones(
             gc.payload["content"],
