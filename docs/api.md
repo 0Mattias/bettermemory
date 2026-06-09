@@ -58,7 +58,7 @@ Returns `{current_repo, current_cwd, auto_scope, scopes: {scope: count}, total, 
 
 ## Writing
 
-### `memory_write(content, scopes, confidence?, source?, force?, acknowledge_transient?, acknowledge_scope_mismatch?, acknowledge_ungrounded?, category?, groundedness_check?, source_transcript?)`
+### `memory_write(content, scopes, confidence?, source?, force?, acknowledge_transient?, acknowledge_scope_mismatch?, acknowledge_ungrounded?, acknowledge_credential?, category?, groundedness_check?, source_transcript?)`
 
 Signature reflects the handler in `src/bettermemory/_handlers.py`. In MCP every argument is keyword-only at the wire, so positional order is only consequential for Python callers reading this as a spec.
 
@@ -70,6 +70,7 @@ Signature reflects the handler in `src/bettermemory/_handlers.py`. In MCP every 
 - `acknowledge_transient: bool = False`. Bypass the durability marker check. Logged as an override.
 - `acknowledge_scope_mismatch: bool = False`. Bypass the scope-mismatch warning when a cross-project reference is intentional.
 - `acknowledge_ungrounded: bool = False`. Override the groundedness gate when grounding sources (file reads, tool results) aren't represented in the transcript.
+- `acknowledge_credential: bool = False`. Bypass the credential-shaped-token check (the store is plain-text and syncs across hosts via git, so a secret in a body leaks). Use only for a documented public/example value. Logged as an override — the detector `kind` only, never the value.
 - `category: str = "fact"`. One of `"fact"`, `"user-inference"`, `"ambient"`. `"fact"` commits immediately. `"user-inference"` structurally goes pending and returns `{status: "pending", pending_id, pending_reason: "user-inference"}` regardless of config — claims about the user always get the conversational veto. `"ambient"` commits like `"fact"` but is excluded from the dead-weight curation rule (long bodies over 500 words attach a non-blocking `ambient_body_long` warning).
 - `groundedness_check: bool = False`. Opt-in. When True and `source_transcript` is provided, the server walks the proposed body sentence-by-sentence and flags any whose content tokens overlap the transcript by less than 30%.
 - `source_transcript: str | None = None`. The conversation turns that motivated this write. Required for the gate to fire.
@@ -78,6 +79,7 @@ Result statuses:
 
 - `"committed"` — write succeeded; payload includes the new id and `related` medium-overlap matches.
 - `"transient_warning"` — durability gate fired; `markers` listed.
+- `"credential_warning"` — the body contains a secret-shaped token (vendor-prefixed API key, private-key PEM, JWT, or a guarded `password=…`-style assignment). `markers: [{kind, snippet}, ...]` returned with the secret span redacted from each snippet; nothing is persisted. Describe the secret instead of embedding it, or pass `acknowledge_credential=True`. Runs first, ahead of the durability gate.
 - `"duplicate"` — content dedup fired; `matches` listed. The right response is `memory_update` on the matched id.
 - `"previously_removed"` — tombstone dedup fired; `removed_matches` listed with their original `removed_reason`. Either drop the write or `memory_restore` the tombstone.
 - `"scope_mismatch"` — body cites a known `projects:<name>` scope's name (or a path under another project's tree) AND that scope isn't declared. `suggested_scopes` and `matches` returned.
@@ -90,9 +92,11 @@ A `committed` or pending-confirm response may carry an inline `curation_hint` bl
 
 - `pending_id: str`. Returned by a `memory_write` whose result was `"pending"`. Pending entries expire after one hour.
 
-### `memory_update(id, content?, scopes?, confidence?, category?, links?)`
+### `memory_update(id, content?, scopes?, confidence?, category?, links?, acknowledge_credential?)`
 
 At least one of `content`, `scopes`, `confidence`, `category`, `links` must be provided. `scopes` and `links` have REPLACE semantics (pass the full new list; `[]` clears).
+
+The same credential check that gates `memory_write` runs here whenever `content` is provided — a body edit that introduces a secret-shaped token returns `{status: "credential_warning", markers: [...]}` (value redacted) and persists nothing, so the gate can't be bypassed by editing a memory instead of creating one. `acknowledge_credential=True` overrides; logged by `kind` only. Scope/confidence/category/links-only edits don't touch the body, so the check doesn't run.
 
 `category` accepts `"fact"` and `"ambient"`; `"user-inference"` is rejected because that category gates the pending-confirm WRITE flow and there's no equivalent gate on update.
 

@@ -4540,7 +4540,9 @@ def test_write_gates_match_expected_types_in_order() -> None:
     rather than set equality because gate precedence is load-bearing.
 
     The comment at ``handlers/write.py:474-481`` documents the
-    invariant: transient/scope-mismatch/groundedness gates fire
+    invariant: ``CredentialGate`` fires FIRST so a secret is refused
+    before any later gate records body-derived data alongside it in
+    the event log; transient/scope-mismatch/groundedness gates fire
     BEFORE dedup so (a) a hallucinated write can't masquerade as a
     duplicate of a real one, (b) a transient-parent write isn't
     routed to ``memory_update``, (c) a scope-mismatched write doesn't
@@ -4557,6 +4559,7 @@ def test_write_gates_match_expected_types_in_order() -> None:
     transient-before-dedup, scope-before-dedup, dedup-before-pending,
     and pending-last."""
     from bettermemory.handlers.write import (
+        CredentialGate,
         DedupActiveGate,
         DedupTombstoneGate,
         GroundednessGate,
@@ -4567,6 +4570,7 @@ def test_write_gates_match_expected_types_in_order() -> None:
     )
 
     expected: tuple[type, ...] = (
+        CredentialGate,
         TransientGate,
         ScopeMismatchGate,
         GroundednessGate,
@@ -5753,9 +5757,16 @@ async def test_default_on_descriptions_fit_budget(tmp_path: Path) -> None:
     # legitimate new field-pin (test_handler_descs_enumerate_*) may justify a
     # deliberate raise — with that rationale in the commit, never to re-admit
     # triplicated policy.
-    assert total <= 27_100, (
+    #   3.8.0: +~70 raising 27,100 -> 27,250. The credential gate added a new
+    #   default-on write status (`credential_warning`) and its override
+    #   (`acknowledge_credential`) to DESC_MEMORY_WRITE — a genuine field-pin,
+    #   symmetric to the existing `transient_warning`/`acknowledge_transient`
+    #   line, NOT re-admitted policy. The bullet was kept to one tight line
+    #   (trigger shapes + override); the full detail lives in api.md and the
+    #   runtime hint, so the per-turn tax is the minimum the new field needs.
+    assert total <= 27_250, (
         f"lean default-on tool descriptions total {total} chars "
-        f"(~{total // 4} tokens), over the 27,100 ceiling. These are paid in "
+        f"(~{total // 4} tokens), over the 27,250 ceiling. These are paid in "
         f"context EVERY turn. Collapse duplicated policy into the "
         f"`instructions` block (the canonical home) rather than raising this."
     )

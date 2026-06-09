@@ -19,6 +19,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+from .credentials import CredentialMatch
 from .durability import TransientMatch
 from .models import (
     MemoryHit,
@@ -330,6 +331,15 @@ class ResponseBuilder:
     def transient_to_dict(self, hit: TransientMatch) -> dict[str, Any]:
         """Serialize a transient-marker match for the tool response."""
         return {"marker": hit.marker, "snippet": hit.snippet}
+
+    def credential_to_dict(self, hit: CredentialMatch) -> dict[str, Any]:
+        """Serialize a credential-marker match for the tool response.
+
+        `snippet` is already redacted by the detector — every matched secret
+        span is replaced with a ``[redacted:kind]`` marker — so this row is
+        safe to return to the model and to write to the event log.
+        """
+        return {"kind": hit.kind, "snippet": hit.snippet}
 
     def origin_to_dict(self, origin: Origin | None) -> dict[str, Any] | None:
         """Serialize an Origin for tool responses, or None if absent.

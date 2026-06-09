@@ -297,6 +297,7 @@ def test_handlers_update_direct_import() -> None:
         ("confidence", None),
         ("category", None),
         ("links", None),
+        ("acknowledge_credential", False),
         ("ctx", None),
     ]
 
@@ -351,6 +352,7 @@ def test_handlers_write_direct_import() -> None:
         ("acknowledge_transient", False),
         ("acknowledge_scope_mismatch", False),
         ("acknowledge_ungrounded", False),
+        ("acknowledge_credential", False),
         ("category", "fact"),
         ("groundedness_check", False),
         ("source_transcript", None),

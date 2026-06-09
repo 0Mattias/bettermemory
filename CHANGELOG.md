@@ -7,6 +7,32 @@ breaking changes, minor for additive features, patch for fixes. The
 [compatibility contract](CONTRIBUTING.md#versioning-and-the-compatibility-contract)
 spells out exactly what's stable.
 
+## 3.8.0 - 2026-06-09
+
+A feature release. Adds a write-time credential check so a secret pasted
+into a memory body is refused before it reaches the plain-text store. No
+breaking changes.
+
+### Added
+
+- **Credential check at write time.** `memory_write` now runs a
+  credential-shaped-token detector (`src/bettermemory/credentials.py`) as
+  the first write gate, ahead of the durability check. A body that embeds a
+  secret-shaped token — a vendor-prefixed API key (AWS `AKIA…`,
+  OpenAI/Anthropic `sk-…`, GitHub `ghp_…`/`github_pat_…`, Slack `xox…`,
+  Google `AIza…`, Stripe `sk_live_…`), a private-key PEM header, a JWT, or a
+  guarded `password=…`/`api_key=…` assignment with a high-entropy value —
+  returns `{status: "credential_warning", markers: [...]}` and persists
+  nothing. The store is plain-text markdown that `sync` pushes across hosts
+  via git, so a captured secret would otherwise rot there unencrypted and in
+  the `.events.jsonl` audit trail. **The matched value is redacted from both
+  the warning and the event log** (only the detector `kind` is recorded), so
+  the gate never re-leaks what it refused. The detector is precision-first —
+  prose that merely mentions "api_key" or "password" never fires — and the
+  rare legitimate case (a documented public/example credential) passes with
+  `acknowledge_credential=True`, logged as an override by kind. Symmetric in
+  shape to the durability gate; default-on, no config knob.
+
 ## 3.7.1 - 2026-06-09
 
 A patch release. An adversarial diff-audit of the 3.7.0 changes (the

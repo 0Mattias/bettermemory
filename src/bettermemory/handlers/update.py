@@ -14,6 +14,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Any
 
 from .._response import isoformat
+from ..credentials import find_credential_markers
 from ..models import Category, Confidence, _PROPOSABLE_CATEGORIES, validate_scope
 from ..store import ConcurrentUpdateError, MemoryNotFoundError, TombstonedError
 from ._shared import (
@@ -86,6 +87,7 @@ async def memory_update(
     confidence: str | None = None,
     category: str | None = None,
     links: list[dict[str, Any]] | None = None,
+    acknowledge_credential: bool = False,
     ctx: Context | None = None,
 ) -> dict[str, Any]:
     state = deps.sessions.for_request(ctx)
@@ -170,6 +172,36 @@ async def memory_update(
     new_body = existing.body
     if content is not None:
         new_body = content.strip() + "\n"
+        # Credential gate — mirror CredentialGate on the write path so a
+        # secret can't be smuggled into the store by EDITING a memory rather
+        # than creating one. Only fires on a body edit (content provided);
+        # scope/confidence/category/links edits leave the body untouched.
+        # The value is redacted from both the response and the event log
+        # (kind only), exactly as on the write path.
+        credential_hits = find_credential_markers(new_body)
+        if credential_hits and not acknowledge_credential:
+            deps.recorder.record(
+                "update",
+                id=id,
+                status="credential_warning",
+                credential_kinds=[h.kind for h in credential_hits],
+            )
+            return {
+                "status": "credential_warning",
+                "markers": [
+                    deps.responses.credential_to_dict(h) for h in credential_hits
+                ],
+                "hint": (
+                    "The updated body contains a secret-shaped token (API "
+                    "key, private-key PEM, JWT, or a `password=…`-style "
+                    "assignment). This store is plain-text and `sync` pushes "
+                    "it across hosts via git — describe the secret without "
+                    "embedding it, or pass acknowledge_credential=True if the "
+                    "value is a documented public/example credential. The "
+                    "value is redacted from this warning and the event log "
+                    "regardless."
+                ),
+            }
 
     # `links` is REPLACE semantics — the caller passes the full new
     # list. Same shape as the `scopes` parameter: simpler than

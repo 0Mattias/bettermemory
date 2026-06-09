@@ -6,7 +6,7 @@
   },
   "metadata": {
     "description": "Memory you can verify — MCP-native memory with per-hit staleness verdicts and claim-level audit trails. Local-first, no cloud.",
-    "version": "3.7.1"
+    "version": "3.8.0"
   },
   "plugins": [
     {

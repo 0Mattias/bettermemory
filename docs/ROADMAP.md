@@ -2,9 +2,9 @@
 
 A published roadmap is part of the pitch: people choosing between memory layers want to know where a project is going, not just where it's been. This lists the planned work in rough priority order. Plans change — **the [CHANGELOG](../CHANGELOG.md) is the source of truth for what shipped.**
 
-## Where we are — v3.7.1 (June 2026)
+## Where we are — v3.8.0 (June 2026)
 
-The core is built and battle-hardened. The differentiated surface is live. After a run of correctness sweeps, 3.7.0 rotated back to feature work — execute-the-curation, onboarding, retrieval-quality levers, and the eval driver that unblocks the comparative.
+The core is built and battle-hardened. The differentiated surface is live. After a run of correctness sweeps, 3.7.0 rotated back to feature work — execute-the-curation, onboarding, retrieval-quality levers, and the eval driver that unblocks the comparative — and 3.8.0 added the write-time credential check that keeps secrets out of the plain-text store.
 
 - **25 MCP tools, 18 registered by default** (the lean surface since 3.4.0 — seven curation/power-user tools gate behind `[behavior] full_tool_surface`, six with a direct CLI counterpart — including `memory_curate`, which wraps `consolidate` — and `memory_acknowledge_miss` MCP-only); four of the always-on defaults are the `episode_*` journal / run-state tier.
 - **Staleness verdict on every retrieval** — calendar age + filesystem path drift + git commit drift folded into one `staleness_verdict`, with the inline `path_drift = {checked, missing, verified}` list.
@@ -20,6 +20,7 @@ The core is built and battle-hardened. The differentiated surface is live. After
 
 The CHANGELOG has the release-by-release detail; the arc, by theme:
 
+- **Secrets stay out of the store (3.8.0).** A write-time credential check refuses a `memory_write` whose body embeds a secret-shaped token — vendor-prefixed API keys (AWS / OpenAI-Anthropic / GitHub / Slack / Google / Stripe), a private-key PEM block, a JWT, or a guarded `password=…` assignment. The store is plain-text markdown that `sync` pushes across hosts via git, so a pasted key would otherwise rot there unencrypted and in the audit log; the matched value is redacted from both the warning and `.events.jsonl`. Precision-first (it never fires on prose that merely *mentions* "api_key"), default-on, with `acknowledge_credential=True` for a documented public/example value — structurally the same gate shape as the durability check.
 - **Post-release diff-audit (3.7.1).** A reactive adversarial sweep of the 3.7.0 feature commits caught three real issues and fixed them: a default-on per-hit SQLite open in the new `supersedes`/`contradicts` search activation (batched into one connection via `index.links_for_many`), and two honesty defects in the live-agent eval driver — `searched` was derived from `bool(hits)` (a ranker tautology that collapsed the live `silent_miss_rate`) and citation excerpts were validated against the truncated snippet instead of the body. Each landed with a regression test, and the fixes were themselves diff-audited.
 - **Rotating onto value (3.7.0).** After the 3.6.x correctness sweeps hit diminishing returns, a feature release: `memory_curate` (execute the cleanup `memory_health` only diagnosed, dry-run by default), `bettermemory try` (a 60s offline staleness-verdict demo), opt-in usage-aware ranking (`endorsement_boost`), the long-dormant `supersedes`/`contradicts` links activated as retrieval trust signals, and the live-agent eval driver that closes the comparative's open piece. Plus a subtraction pass that removed accreted duplication (adversarially verified, so deliberate defense-in-depth stayed put).
 - **Recall parity without a database (2.5.0).** The `[embeddings-fast]` extra wraps fastembed + ONNX Runtime (~50 MB) as a drop-in for the `[embeddings]` torch path (~500 MB), closing the "FTS5-only loses recall benchmarks" objection without compromising the no-database default.
@@ -32,7 +33,7 @@ The CHANGELOG has the release-by-release detail; the arc, by theme:
 ## Planned
 
 - **Publish the comparative numbers.** The harness exists and the live-agent *driver* has landed (`tests/eval/driver.py`: an `Agent` protocol + `run_driver` that turns real cite-decisions into the full trio, with a deterministic `ScriptedAgent` proving the compute path in CI and a key-gated `LiveAgent` for the real run). What remains is running the `LiveAgent`, wiring live competitor runs (Mem0 / claude-mem / Anthropic's reference server, and agentmemory as a new adapter), and the write-up. *Why it matters:* every other comparison article in this market measures retrieval recall. Owning *"did memory shape the reply?"* is the lane-claim, and a published comparative is its grounding artifact. The goal is "competitive, not first" — OMEGA and agentmemory sit at ~95% on LongMemEval off targeted retrieval-engineering that isn't this project's wedge.
-- **Encryption-at-rest option.** Today the threat model is OS-level disk encryption. A `[encrypted]` extra with `age`-backed per-file envelope encryption would add defense in depth (and pairs naturally with a future credential-shaped-string linter at write time). Likely won't ship in 2026.
+- **Encryption-at-rest option.** Today the threat model is OS-level disk encryption. A `[encrypted]` extra with `age`-backed per-file envelope encryption would add defense in depth — the natural complement to the write-time credential check (3.8.0), which keeps an *accidental* secret out but doesn't encrypt the deliberate store. Likely won't ship in 2026.
 - **Status-only `bettermemory ui --tunnel`.** A one-shot Cloudflare or Tailscale Funnel for read-only browsing from another device. No mutations over the tunnel.
 
 ## Deliberately out of scope

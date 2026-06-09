@@ -127,6 +127,10 @@ Structural guardrails do the policing — aggressive writing is safe:
 - Durability check rejects transient state ("currently", "today I",
   "we just", commit-SHA-like tokens). Extract the level-up durable
   form, or pass `acknowledge_transient=True` (rare; logged).
+- Credential check rejects secret-shaped tokens (API keys, PEM
+  private keys, JWTs, `password=…`): describe the secret, don't
+  embed it, or pass `acknowledge_credential=True` (logged, kind
+  only).
 - Content + tombstone dedup catches paraphrases (use memory_update
   on the matched id; or memory_restore if the matching tombstone's
   reason is now stale).

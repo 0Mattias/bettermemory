@@ -298,6 +298,7 @@ class ToolHandlers:
         acknowledge_transient: bool = False,
         acknowledge_scope_mismatch: bool = False,
         acknowledge_ungrounded: bool = False,
+        acknowledge_credential: bool = False,
         category: str = "fact",
         groundedness_check: bool = False,
         source_transcript: str | None = None,
@@ -313,6 +314,7 @@ class ToolHandlers:
             acknowledge_transient=acknowledge_transient,
             acknowledge_scope_mismatch=acknowledge_scope_mismatch,
             acknowledge_ungrounded=acknowledge_ungrounded,
+            acknowledge_credential=acknowledge_credential,
             category=category,
             groundedness_check=groundedness_check,
             source_transcript=source_transcript,
@@ -426,6 +428,7 @@ class ToolHandlers:
         confidence: str | None = None,
         category: str | None = None,
         links: list[dict[str, Any]] | None = None,
+        acknowledge_credential: bool = False,
         ctx: Context | None = None,
     ) -> dict[str, Any]:
         return await _handlers_pkg.memory_update(
@@ -436,6 +439,7 @@ class ToolHandlers:
             confidence=confidence,
             category=category,
             links=links,
+            acknowledge_credential=acknowledge_credential,
             ctx=ctx,
         )
 

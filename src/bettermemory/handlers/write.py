@@ -40,6 +40,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
+from ..credentials import find_credential_markers
 from ..durability import find_transient_markers
 from ..models import Category, SimilarHit
 from ..scope_match import (
@@ -104,6 +105,10 @@ DESC_MEMORY_WRITE = (
     "('currently', 'today I', 'we just', commit-SHA-like tokens, "
     "etc.). Extract the level-up durable form (the decision, the "
     "why) or pass `acknowledge_transient=True` (rare).\n"
+    "- `credential_warning` — the body embeds a secret-shaped "
+    "token (API key, private-key PEM, JWT, `password=…`). Describe "
+    "the secret instead of storing it, or pass "
+    "`acknowledge_credential=True`.\n"
     "- `duplicate` — content dedup fired. Prefer memory_update on "
     "the matched id; pass `force=True` only when the new memory "
     "is meaningfully different.\n"
@@ -167,15 +172,19 @@ class GateContext:
     acknowledge_transient: bool
     acknowledge_scope_mismatch: bool
     acknowledge_ungrounded: bool
+    acknowledge_credential: bool
     groundedness_check: bool
     source_transcript: str | None
     # Outputs the gates accumulate as they pass — read by later gates
     # or the final commit step.
+    credential_hits: list[Any] = None  # type: ignore[assignment]
     transient_hits: list[Any] = None  # type: ignore[assignment]
     related: list[SimilarHit] = None  # type: ignore[assignment]
     removed_related: list[SimilarHit] = None  # type: ignore[assignment]
 
     def __post_init__(self) -> None:
+        if self.credential_hits is None:
+            self.credential_hits = []
         if self.transient_hits is None:
             self.transient_hits = []
         if self.related is None:
@@ -218,6 +227,49 @@ class WriteGate:
 
     def evaluate(self, deps: "ToolHandlers", gc: GateContext) -> GateResult:
         raise NotImplementedError
+
+
+class CredentialGate(WriteGate):
+    """Secret-shaped-token check — reject bodies that embed a credential
+    unless `acknowledge_credential`.
+
+    Runs FIRST, before every other gate: the store is plain-text markdown
+    that syncs across hosts, so persisting a live secret leaks it to disk,
+    the audit log, and every clone — the highest-severity write to refuse,
+    and refusing early means no later gate's event ever records body-derived
+    data alongside the secret. The warning and the event log carry only the
+    detector `kind` and a redacted snippet, never the value.
+    """
+
+    def evaluate(self, deps: "ToolHandlers", gc: GateContext) -> GateResult:
+        gc.credential_hits = find_credential_markers(gc.payload["content"])
+        if not gc.credential_hits or gc.acknowledge_credential:
+            return Continue()
+        return Reject(
+            response={
+                "status": "credential_warning",
+                "markers": [
+                    deps.responses.credential_to_dict(h) for h in gc.credential_hits
+                ],
+                "hint": (
+                    "The body contains a secret-shaped token (API key, "
+                    "private-key PEM, JWT, or a `password=…`-style "
+                    "assignment). This store is plain-text and `sync` "
+                    "pushes it across hosts via git — describe the secret "
+                    "without embedding it (e.g. 'the deploy uses an AWS key, "
+                    "stored in 1Password'), or pass "
+                    "acknowledge_credential=True if the value is a "
+                    "documented public/example credential. The value is "
+                    "redacted from this warning and the event log regardless."
+                ),
+            },
+            event_kwargs={
+                "status": "credential_warning",
+                "scopes": gc.payload["scopes"],
+                "forced": False,
+                "credential_kinds": [h.kind for h in gc.credential_hits],
+            },
+        )
 
 
 class TransientGate(WriteGate):
@@ -479,15 +531,17 @@ class PendingGate(WriteGate):
         return Continue()
 
 
-# Order matters: transient before dedup so the writer isn't routed to
-# memory_update on a transient parent; scope-mismatch before dedup so
-# the writer doesn't get a duplicate hit on a memory tagged for a
-# different scope; groundedness before dedup because a hallucinated
-# write being a "duplicate" of a real one is misleading; dedup before
-# pending so the user-inference confirmation flow doesn't ask about
-# a write we'd already reject. PendingGate is last because everything
-# else either rejects or accepts.
+# Order matters: credential before everything so a secret is refused
+# before any other gate records body-derived data in the event log;
+# transient before dedup so the writer isn't routed to memory_update on a
+# transient parent; scope-mismatch before dedup so the writer doesn't get a
+# duplicate hit on a memory tagged for a different scope; groundedness
+# before dedup because a hallucinated write being a "duplicate" of a real
+# one is misleading; dedup before pending so the user-inference
+# confirmation flow doesn't ask about a write we'd already reject.
+# PendingGate is last because everything else either rejects or accepts.
 _WRITE_GATES: tuple[WriteGate, ...] = (
+    CredentialGate(),
     TransientGate(),
     ScopeMismatchGate(),
     GroundednessGate(),
@@ -512,6 +566,7 @@ async def memory_write(
     acknowledge_transient: bool = False,
     acknowledge_scope_mismatch: bool = False,
     acknowledge_ungrounded: bool = False,
+    acknowledge_credential: bool = False,
     category: str = "fact",
     groundedness_check: bool = False,
     source_transcript: str | None = None,
@@ -546,6 +601,7 @@ async def memory_write(
         acknowledge_transient=acknowledge_transient,
         acknowledge_scope_mismatch=acknowledge_scope_mismatch,
         acknowledge_ungrounded=acknowledge_ungrounded,
+        acknowledge_credential=acknowledge_credential,
         groundedness_check=groundedness_check,
         source_transcript=source_transcript,
     )
@@ -569,6 +625,14 @@ async def memory_write(
         if gc.transient_hits and acknowledge_transient
         else []
     )
+    # Parallel to `acknowledged`: which credential detectors were overridden
+    # by `acknowledge_credential`, recorded (kind only) so a high override
+    # rate flags a too-loose detector. Never the value.
+    credentials_acknowledged = (
+        [h.kind for h in gc.credential_hits]
+        if gc.credential_hits and acknowledge_credential
+        else []
+    )
 
     if pending_decision is not None:
         return _stage_pending(
@@ -580,6 +644,7 @@ async def memory_write(
             removed_related=gc.removed_related,
             forced=force,
             acknowledged=acknowledged,
+            credentials_acknowledged=credentials_acknowledged,
         )
 
     response = _commit_write(
@@ -589,6 +654,7 @@ async def memory_write(
         removed_related=gc.removed_related,
         forced=force,
         acknowledged=acknowledged,
+        credentials_acknowledged=credentials_acknowledged,
     )
     _maybe_attach_curation_hint(response, deps, state)
     return response
@@ -604,6 +670,7 @@ def _stage_pending(
     removed_related: list[SimilarHit],
     forced: bool,
     acknowledged: list[str],
+    credentials_acknowledged: list[str],
 ) -> dict[str, Any]:
     """Stage the write through the SessionState, record the pending
     event, and return the pending response shape."""
@@ -650,6 +717,7 @@ def _stage_pending(
         related=[h.id for h in related],
         removed_related=[h.id for h in removed_related],
         markers_acknowledged=acknowledged,
+        credentials_acknowledged=credentials_acknowledged,
     )
     return response
 
@@ -662,6 +730,7 @@ def _commit_write(
     removed_related: list[SimilarHit],
     forced: bool,
     acknowledged: list[str],
+    credentials_acknowledged: list[str],
 ) -> dict[str, Any]:
     """Persist the memory, record the commit event, return the
     committed response. Surfaces the ambient long-body warning as a
@@ -694,6 +763,7 @@ def _commit_write(
         related=[h.id for h in related],
         removed_related=[h.id for h in removed_related],
         markers_acknowledged=acknowledged,
+        credentials_acknowledged=credentials_acknowledged,
         warnings=warnings,
     )
     return deps.responses.committed(
