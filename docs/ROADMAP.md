@@ -2,7 +2,7 @@
 
 A published roadmap is part of the pitch: people choosing between memory layers want to know where a project is going, not just where it's been. This lists the planned work in rough priority order. Plans change — **the [CHANGELOG](../CHANGELOG.md) is the source of truth for what shipped.**
 
-## Where we are — v3.8.0 (June 2026)
+## Where we are — v3.9.0 (June 2026)
 
 The core is built and battle-hardened. The differentiated surface is live. After a run of correctness sweeps, 3.7.0 rotated back to feature work — execute-the-curation, onboarding, retrieval-quality levers, and the eval driver that unblocks the comparative — and 3.8.0 added the write-time credential check that keeps secrets out of the plain-text store.
 

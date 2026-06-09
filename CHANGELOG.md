@@ -7,6 +7,86 @@ breaking changes, minor for additive features, patch for fixes. The
 [compatibility contract](CONTRIBUTING.md#versioning-and-the-compatibility-contract)
 spells out exactly what's stable.
 
+## 3.9.0 - 2026-06-09
+
+A feature release centered on killing path-drift false signals — the
+phantom `path_drift_missing` flags that made healthy memories read as
+stale forever. Driven by live false flags found in the dogfood store and
+a 4-round multi-agent hunt (224 agents, 10 heuristic surfaces, every
+finding adversarially re-verified with a runnable repro). No breaking
+changes; one wire-shape addition.
+
+### Added
+
+- **`verified_absent_paths` attestation on `memory_verify`.** The mirror
+  axis to `verified_paths`: body-cited paths you confirm are
+  *intentionally* absent on this machine — a remote host's path, a
+  platform-conditional location (`~/.config/...` cited for Linux while
+  running on macOS), a path the body cites precisely because it is NOT
+  the real one. Path-drift reports them under a new
+  `path_drift.expected_absent` bucket instead of `missing`, so the
+  staleness verdict stops nagging about absences that are the expected
+  state. Persisted in frontmatter, preserved through scope-only updates,
+  tombstone/restore, and no-arg verifies; surfaced on `memory_show`,
+  expanded search hits, and the web UI detail view. Extraction
+  heuristics can't read that context — the attestation layer is where
+  human/agent judgment lands.
+
+### Fixed
+
+- **Path extractor: spaced directory segments.** Bare
+  `~/Library/Application Support/...` citations used to truncate at the
+  space, and the truncated prefix false-flagged missing on every
+  retrieval. The bare scan now continues through title-cased spaced
+  segments that resume with a slash; terminal spaced components it
+  can't capture safely are dropped when missing rather than flagged
+  (the flag would be manufactured by our own truncation). Drive and
+  home anchors now count as directory boundaries, so
+  `C:\Program Files\...` and `~/Calibre Library/...` are extracted;
+  shell-escaped spaces (`My\ Drive`) are unescaped.
+- **Path extractor: URL routes.** A body citing a domain-attached route
+  (`pypi.org/pypi/bettermemory/<ver>/json`) no longer gets same-rooted
+  absolute candidates (`/pypi/bettermemory/json`) stat'd as local
+  files; well-known web filenames (`/robots.txt`, `/openapi.json`, …)
+  are recognized as routes despite their extensions.
+- **Path extractor: the rest of the confirmed hunt findings.**
+  Code-citation line suffixes (`file.py:407`, `:445-461`, `:12:5`)
+  check the underlying file; `@`/`+`/`%` survive in bare paths
+  (homebrew kegs, systemd templates); `VAR=/path` and `--flag=/path`
+  assignments, markdown table cells, and smart-quoted paths are
+  extracted; `$HOME/` canonicalizes to `~/`; balanced trailing `)` is
+  kept (`project (archived)`); glob, template-placeholder
+  (`<app>`/`{service}`), and `//host/share` SMB citations are excluded
+  as shape claims; single-argument commands (`/opt/homebrew/bin/brew
+  upgrade`) no longer flag; sentence-final citations flag correctly
+  while `report (2).pdf`-style continuations don't; attested paths
+  always flag when deleted (verified-then-deleted is real drift);
+  citation order no longer decides whether drift is reported; `~/x`
+  and `/Users/me/x` spellings dedup to one claim; acronym glue
+  (`/etc/hosts TCP/IP`) falls back to the real path.
+- **Credential gate (HIGH): sentence-final periods masked real
+  secrets.** `my password is <secret>.` was read as a dotted module
+  reference and waved through; trailing prose punctuation is now
+  stripped before the guards. Coverage also extended: encrypted-PKCS#8
+  PEM headers and Slack `xapp-`/`xoxc-`/`xoxe-` token families.
+- **Auto-scope (HIGH): linked-worktree blackout.** Sessions running in
+  a `git worktree` checkout (spawned agent worktrees, PR-review trees)
+  could not see ANY memory written in the primary checkout — the
+  repo's shared knowledge — because the worktree filter required exact
+  root equality. A caller in a linked worktree now matches memories
+  from its primary (derived from the worktree's `.git` file, no
+  subprocess), and memories recorded in since-deleted worktrees degrade
+  to repo-level matching instead of being invisible forever. Live
+  sibling worktrees stay isolated — the original leakage fix is
+  preserved.
+
+### Notes
+
+- The hunt that drove this release hit its round cap still finding
+  fresh issues; the 146 remaining verified findings are parked with
+  full detail in `docs/audit/extractor-hunt-2026-06-09.{md,json}` as a
+  pre-verified queue for future audit passes.
+
 ## 3.8.0 - 2026-06-09
 
 A feature release. Adds a write-time credential check so a secret pasted
