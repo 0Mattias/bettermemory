@@ -177,9 +177,17 @@ def _is_masked_token(match: re.Match[str]) -> bool:
 # a secret at all — never the regex.
 #
 # Anchor anatomy (precision lives in `_looks_like_secret`, never here):
-# - `(?<![A-Za-z0-9])(?:[A-Za-z0-9]+[_-])*` admits env-var / identifier
-#   prefixes (POSTGRES_PASSWORD=, aws_secret_access_key=) — the .env /
-#   docker-compose paste is this rule's primary target.
+# - `(?<![A-Za-z0-9])(?:[A-Za-z0-9]{1,30}[_-]){0,5}` admits env-var /
+#   identifier prefixes (POSTGRES_PASSWORD=, aws_secret_access_key=) — the
+#   .env / docker-compose paste is this rule's primary target. The
+#   repetition is BOUNDED as ReDoS defense: the unbounded spelling
+#   `(?:[A-Za-z0-9]+[_-])*` backtracks quadratically across the alternation
+#   boundary on any dense `_`/`-`-separated run — 4x cost per size doubling,
+#   tens of seconds by ~200KB, with NO keyword required — a synchronous
+#   event-loop hang reachable under the 1MB body cap. The bound is lossless
+#   for recall: `_`/`-` are not alnum, so the lookbehind lets a match start
+#   right after ANY separator — a prefix with more segments (or a longer
+#   single segment) than the bound simply anchors closer to the keyword.
 # - Compound keywords accept a literal space (memory bodies are prose:
 #   "my Mailgun api key is …"); `secret` extends to SECRET_KEY /
 #   secret_access_key. Trailing compounds (SECRET_KEY_BASE=) still miss —
@@ -192,7 +200,7 @@ def _is_masked_token(match: re.Match[str]) -> bool:
 #   (curl lines), whose separator sits BEFORE the keyword.
 _GENERIC_KEYWORD_RE = re.compile(
     r"(?:"
-    r"(?<![A-Za-z0-9])(?:[A-Za-z0-9]+[_-])*"
+    r"(?<![A-Za-z0-9])(?:[A-Za-z0-9]{1,30}[_-]){0,5}"
     r"(?:password|passwd|secret(?:[_-]?(?:access[_-]?)?key)?|api[ _-]?key|"
     r"access[ _-]?token|auth[ _-]?token|client[ _-]?secret|private[ _-]?key|"
     r"bearer(?:[_-]token)?)\b[\"'*`]*"
@@ -387,11 +395,12 @@ def _looks_like_secret(value: str) -> bool:
     # All-identical run (xxxxxxxx, ********) — a mask, not a secret.
     if len(set(v)) < 8:
         return False
-    # Hyphenated all-lowercase values are technical descriptors or kebab
-    # identifiers ("sha256-hashed", "base64-encoded"), not secrets — the
-    # same rationale as the sk- detector's lookaheads: a real high-entropy
+    # Separator-bearing all-lowercase values are technical descriptors or
+    # kebab/snake identifiers ("sha256-hashed", "base64-encoded",
+    # "expire_after_30d", "bcrypt_hash_v2"), not secrets — the same
+    # rationale as the sk- detector's lookaheads: a real high-entropy
     # secret reliably carries an uppercase letter.
-    if "-" in v and not any(c.isupper() for c in v):
+    if ("-" in v or "_" in v) and not any(c.isupper() for c in v):
         return False
     # A literal secret mixes character classes; a bare dictionary word or a
     # plain number does not.

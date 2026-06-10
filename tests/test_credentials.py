@@ -20,6 +20,8 @@ runtime value identical while leaving nothing for a content scanner to match.
 
 from __future__ import annotations
 
+import time
+
 import pytest
 
 from bettermemory.credentials import find_credential_markers
@@ -328,6 +330,8 @@ def test_env_prefixed_and_compound_keywords_fire() -> None:
         f"SECRET_KEY={_shaped('x8f2nQv9', 'Lp4Rt7Zw1Kj6')}",
         f"secret_key = {_shaped('x8f2nQv9', 'Lp4Rt7Zw1Kj6Bm3')}",
         f"aws_secret_access_key = {_shaped('wJalrXUtnFEMI', 'K7MDENGbPxRfiCY')}",
+        f"MYAPP_DB_PASSWORD: {_shaped('tr0ub4dor', '3Xy9QmW2')}",
+        f"DJANGO_SECRET_KEY={_shaped('x8f2nQv9', 'Lp4Rt7Zw1Kj6')}",
     ):
         kinds = [m.kind for m in find_credential_markers(body)]
         assert "generic-secret-assignment" in kinds, body
@@ -569,3 +573,60 @@ def test_genuine_secret_after_rotation_connective_still_fires() -> None:
     ):
         kinds = [m.kind for m in find_credential_markers(body)]
         assert "generic-secret-assignment" in kinds, body
+
+
+# ---------------------------------------------------------------------------
+# Regression: round-88 self-audit drain (env-prefix ReDoS + snake_case guard)
+# ---------------------------------------------------------------------------
+
+
+def test_separator_dense_run_scans_in_linear_time() -> None:
+    """ReDoS regression: the unbounded env-prefix clause
+    `(?:[A-Za-z0-9]+[_-])*` backtracked quadratically on dense `_`-separated
+    runs with NO keyword present — ~100KB cost tens of seconds (4x per size
+    doubling, multi-minute under the 1MB body cap), synchronously inside the
+    async write/update handlers. The bounded clause scans this body in
+    milliseconds; the 1.0s ceiling is ~50x the measured time, CI-jitter-safe
+    while still failing instantly if unbounded repetition ever returns."""
+    body = "ab_" * 34_000  # ~100KB underscore-joined short-word run
+    started = time.perf_counter()
+    hits = find_credential_markers(body)
+    elapsed = time.perf_counter() - started
+    assert hits == []
+    assert elapsed < 1.0, f"{elapsed:.2f}s — quadratic prefix backtracking is back"
+
+
+def test_env_prefix_beyond_bound_still_fires() -> None:
+    """The {1,30}/{0,5} bound is lossless for recall: `_`/`-` are not alnum,
+    so the lookbehind admits a match starting after ANY separator — a prefix
+    with more than 5 segments, or a single segment over 30 chars, simply
+    anchors closer to the keyword and still fires."""
+    secret = _shaped("tr0ub4dor", "3Xy9QmW2")
+    for body in (
+        f"MY_APP_PROD_EU_WEST_DB_PASSWORD={secret}",
+        f"{'A' * 40}_PASSWORD={secret}",
+    ):
+        kinds = [m.kind for m in find_credential_markers(body)]
+        assert "generic-secret-assignment" in kinds, body
+
+
+def test_snake_case_identifier_value_does_not_fire() -> None:
+    """All-lowercase snake_case identifiers with digits after connectives
+    are config-behavior prose, not secrets — the kebab-case descriptor
+    guard's rationale applies identically to underscores (the hyphen
+    spelling of each of these was already silent)."""
+    for body in (
+        "auth_token is set to expire_after_30d",
+        "password == bcrypt_hash_v2",
+        "secret is now rotate_every_90d",
+    ):
+        assert find_credential_markers(body) == [], body
+
+
+def test_mixed_case_snake_secret_still_fires() -> None:
+    """The descriptor guard keys on all-lowercase: a genuine high-entropy
+    secret that happens to contain underscores carries uppercase and must
+    keep firing."""
+    secret = _shaped("hG7_qLm9_", "PzR4vXn2")
+    kinds = [m.kind for m in find_credential_markers(f"db password is now {secret}")]
+    assert "generic-secret-assignment" in kinds
