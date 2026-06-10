@@ -18,7 +18,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Any, cast
 
 from ..models import utcnow, validate_scope
-from ..search import SearchMode, search as run_search
+from ..search import SearchMode, _filter_candidates, search as run_search
 from ..store import MemoryNotFoundError, TombstonedError
 from ..verify import (
     compute_commit_drift,
@@ -30,6 +30,13 @@ from ._shared import Context, _advance_turn, _attach_use_tokens
 
 if TYPE_CHECKING:
     from .._handlers import ToolHandlers
+
+
+# Mirror of the candidate cap `_handlers._load_search_candidates` passes
+# to `index.query` (its hardcoded `max_results=50`). A candidate slice of
+# exactly this size means the FTS prefilter was saturated — see the
+# cap-starvation guard below.
+_PREFILTER_CAP = 50
 
 
 DESC_MEMORY_SEARCH = (
@@ -254,6 +261,36 @@ async def memory_search(
             memories = [m for m in deps.store.load_all() if m.updated > prior_boundary]
     else:
         memories = deps._load_search_candidates(query, scopes=scopes)
+        # Cap-starvation guard. The FTS prefilter threads only `scopes`
+        # into SQL — the repo/worktree auto-scope filter and session-
+        # disabled scopes apply post-cap inside run_search's
+        # `_filter_candidates` pass. On a cap-saturated slice (exactly
+        # `_PREFILTER_CAP` rows) those post-cap filters can strip every
+        # candidate even though in-filter matches exist past the cap —
+        # the failure mode the `_load_search_candidates` docstring
+        # names: on a >50-memory store, in-repo matches ranked #51+
+        # globally would return zero hits. Detect it with a dry-run of
+        # the same authoritative filter; when fewer than `max_results`
+        # candidates survive, reload the full corpus — the same cost as
+        # the existing stale-index fallback, paid only on starved
+        # searches. (Threading repo/worktree into SQL would need origin
+        # columns in the index, i.e. a SCHEMA_VERSION bump — this guard
+        # restores correctness without one.)
+        post_cap_filter_active = (
+            repo_filter is not None
+            or worktree_filter is not None
+            or bool(state.disabled_scopes)
+        )
+        if post_cap_filter_active and len(memories) == _PREFILTER_CAP:
+            survivors = _filter_candidates(
+                memories,
+                scopes=scopes,
+                excluded_scopes=set(state.disabled_scopes),
+                repo_filter=repo_filter,
+                worktree_filter=worktree_filter,
+            )
+            if len(survivors) < max_results:
+                memories = deps.store.load_all()
 
     # Usage-aware ranking (opt-in via [behavior] endorsement_boost). Tally how
     # many times the model has EXPLICITLY applied each candidate and hand the
