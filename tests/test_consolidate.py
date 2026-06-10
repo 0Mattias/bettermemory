@@ -267,6 +267,86 @@ def test_semantic_dedup_skips_opposite_polarity_pair() -> None:
     assert len(candidates) == 1
 
 
+def test_polarity_guard_surfaces_skipped_pair_on_report(store: Store) -> None:
+    """Regression (round-88): the polarity guard dropped above-threshold
+    pairs with a bare `continue` — no log, counter, or report field —
+    so a genuine duplicate pair caught by an incidental negator ("X
+    instead of Y" vs "X, not Y", Jaccard ~0.83, identical meaning)
+    accumulated invisibly forever; the dry-run report (the human-review
+    surface) never showed it. The pair must land in `polarity_skipped`,
+    stay out of `dedup_candidates`, and render suggest-only."""
+    a = store.write(
+        content="Use ripgrep instead of grep for repo-wide searches.",
+        scopes=["tools"],
+    )
+    b = store.write(
+        content="Use ripgrep, not grep, for repo-wide searches.",
+        scopes=["tools"],
+    )
+
+    report = consolidate(store, apply=False)
+    assert report.dedup_candidates == []
+    assert len(report.polarity_skipped) == 1
+    pair = report.polarity_skipped[0]
+    assert {pair.memory_id_a, pair.memory_id_b} == {a.id, b.id}
+    assert pair.similarity >= 0.75
+    assert pair.method == "jaccard"
+
+    # Suggest-only on the text surface...
+    text = render_text(report)
+    assert "Polarity-skipped pairs (1)" in text
+    assert "review manually" in text
+    # ...carried by the JSON surface...
+    payload = json.loads(render_json(report))
+    assert len(payload["polarity_skipped"]) == 1
+    assert payload["polarity_skipped"][0]["method"] == "jaccard"
+    # ...and absent entirely when nothing was skipped (exception
+    # bucket, same convention as Failures).
+    assert "Polarity-skipped" not in render_text(ConsolidateReport())
+
+
+def test_polarity_skipped_pair_is_never_applied(store: Store) -> None:
+    """The new observability must not change what gets tombstoned: the
+    apply path iterates `dedup_candidates` only, so a polarity-skipped
+    pair survives `apply=True` untouched."""
+    a = store.write(
+        content="Use ripgrep instead of grep for repo-wide searches.",
+        scopes=["tools"],
+    )
+    b = store.write(
+        content="Use ripgrep, not grep, for repo-wide searches.",
+        scopes=["tools"],
+    )
+
+    report = consolidate(store, apply=True)
+    assert len(report.polarity_skipped) == 1
+    assert report.actions_taken == []
+    assert {m.id for m in store.load_all()} == {a.id, b.id}
+
+
+def test_semantic_polarity_skip_lands_on_report(store: Store) -> None:
+    """Same observability on the semantic path: the guard fires after
+    the threshold check, so the surfaced pair carries the similarity
+    that would otherwise have made it a candidate."""
+    a = store.write(
+        content="Do not use sudo for npm installs on this machine.",
+        scopes=["tools"],
+    )
+    b = store.write(
+        content="Use sudo for npm installs on this machine.",
+        scopes=["tools"],
+    )
+
+    report = consolidate(store, semantic_model=_FixedVectorModel())
+    assert report.dedup_method == "semantic"
+    assert report.dedup_candidates == []
+    assert len(report.polarity_skipped) == 1
+    pair = report.polarity_skipped[0]
+    assert {pair.memory_id_a, pair.memory_id_b} == {a.id, b.id}
+    assert pair.method == "semantic"
+    assert pair.similarity == pytest.approx(1.0)
+
+
 def test_dedup_shared_compound_does_not_inflate_jaccard() -> None:
     """Regression: symmetric kebab expansion in the shared token set
     multiplied a compound BOTH bodies share — expanding `docker-compose`
@@ -291,6 +371,117 @@ def test_dedup_shared_compound_does_not_inflate_jaccard() -> None:
     spaced = _memory("python frontmatter library is unmaintained, vendored locally")
     candidates, _ = find_dedup_candidates([kebab, spaced])
     assert len(candidates) == 1
+
+
+# Mirrors the provenance stamp `_apply_llm_proposal` appends to every
+# `--llm --from-transcript` propose_new body: two distinct facts
+# distilled from the same transcript turn share it VERBATIM, so its
+# tokens dominate both Jaccard sets unless the dedup pass strips it.
+_PROVENANCE_STAMP = (
+    "\n\n_(consolidate --llm --from-transcript: My dotfiles live in "
+    "~/dotfiles and I manage them with GNU stow; my shell is zsh with "
+    "the starship prompt.)_"
+)
+
+
+def test_dedup_strips_shared_provenance_stamp_before_similarity() -> None:
+    """Regression (round-88 RED): the provenance-stamp dedup exemption
+    existed only at write time. Two DISTINCT facts distilled from the
+    same transcript turn share the stamp verbatim; its tokens dominate
+    the Jaccard sets (~0.93 stamped vs ~0.11 unstamped), crossing both
+    the manual 0.75 default AND the unattended 0.90 threshold — so
+    `consolidate --apply` (and the Stop hook's auto pass) tombstoned
+    one genuine fact. Similarity must judge the claim, not the stamp —
+    the same scoping the write gate applies."""
+    a = _memory(
+        "User manages dotfiles in ~/dotfiles with GNU stow." + _PROVENANCE_STAMP
+    )
+    b = _memory("User's shell is zsh with the starship prompt." + _PROVENANCE_STAMP)
+    for threshold in (None, 0.90):
+        candidates, method = find_dedup_candidates([a, b], threshold=threshold)
+        assert method == "jaccard"
+        assert candidates == [], (
+            f"two distinct stamped facts surfaced as dedup candidates at "
+            f"threshold={threshold} — stamp tokens leaked into similarity"
+        )
+
+
+def test_dedup_still_flags_genuine_duplicates_sharing_stamp() -> None:
+    """Counterpart: stripping the stamp must not weaken true-duplicate
+    detection. A genuinely duplicated claim pair (Jaccard ~0.857 once
+    the stamp is stripped) sharing the same stamp still flags at the
+    manual 0.75 default."""
+    now = datetime.now(timezone.utc)
+    a = _memory(
+        "Prefers ripgrep over grep for repo-wide searches." + _PROVENANCE_STAMP,
+        updated=now - timedelta(days=2),
+    )
+    b = _memory(
+        "Prefers ripgrep over plain grep for repo-wide searches." + _PROVENANCE_STAMP,
+        updated=now,
+    )
+    candidates, _ = find_dedup_candidates([a, b])
+    assert len(candidates) == 1
+    assert candidates[0].keeper_id == b.id
+    assert candidates[0].duplicate_id == a.id
+    assert candidates[0].similarity >= 0.75
+
+
+class _StampAwareModel:
+    """Stub embedding model that records every text it encodes and
+    returns vectors keyed on content: anything still carrying the
+    provenance stamp (or the dotfiles claim) encodes to [1, 0]; the
+    zsh claim encodes to the orthogonal [0, 1]. If the dedup pass
+    embeds raw stamped bodies — or reuses a stale full-body cache
+    entry — the two DISTINCT facts collapse to cosine 1.0."""
+
+    def __init__(self) -> None:
+        self.seen: list[str] = []
+
+    def encode(self, text: str, normalize_embeddings: bool = True) -> list[float]:
+        self.seen.append(text)
+        if "consolidate --llm" in text or "stow" in text:
+            return [1.0, 0.0]
+        return [0.0, 1.0]
+
+
+def test_semantic_dedup_embeds_provenance_stripped_bodies() -> None:
+    """The stamp strip applies to BOTH dedup paths: the semantic pass
+    must embed the claim, not the stamped body."""
+    model = _StampAwareModel()
+    a = _memory(
+        "User manages dotfiles in ~/dotfiles with GNU stow." + _PROVENANCE_STAMP
+    )
+    b = _memory("User's shell is zsh with the starship prompt." + _PROVENANCE_STAMP)
+    candidates, method = find_dedup_candidates([a, b], semantic_model=model)
+    assert method == "semantic"
+    assert model.seen, "stub model was never asked to encode"
+    assert all("consolidate --llm" not in text for text in model.seen), (
+        "the semantic dedup pass embedded a stamped body"
+    )
+    assert candidates == []
+
+
+def test_semantic_dedup_skips_stale_stamped_cache_entries() -> None:
+    """`cached_embed` keys on (memory_id, updated_key) and never hashes
+    the text, and the write path's `find_similar` embeds FULL stamped
+    bodies under the unsalted key. Without the `#unstamped` key salt
+    the dedup pass would hit those stale stamped vectors and the two
+    distinct facts would collapse to cosine 1.0 again."""
+    from bettermemory.semantic import cached_embed
+
+    model = _StampAwareModel()
+    a = _memory(
+        "User manages dotfiles in ~/dotfiles with GNU stow." + _PROVENANCE_STAMP
+    )
+    b = _memory("User's shell is zsh with the starship prompt." + _PROVENANCE_STAMP)
+    # Simulate the write path having already cached the stamped bodies.
+    for m in (a, b):
+        cached_embed(model, m.id, m.updated.isoformat(), m.body)
+    candidates, _ = find_dedup_candidates([a, b], semantic_model=model)
+    assert candidates == [], (
+        "dedup reused a stale stamped-body embedding from the cache"
+    )
 
 
 def test_dedup_pairs_sorted_by_similarity_desc() -> None:
@@ -912,6 +1103,44 @@ def test_scope_typo_pair_not_found_for_distant_scopes() -> None:
     assert pairs == []
 
 
+def test_scope_typo_sibling_and_short_tail_singletons_not_flagged() -> None:
+    """Regression (round-88): consolidate's raw whole-string
+    Levenshtein-≤2 rule flagged aoc2024 → aoc2023 (deliberate successor
+    scopes) and projects:api → projects:app (short distinct sibling
+    tags) with copy-paste-ready `memory_rename_scope` commands — both
+    singleton-sided, so the singleton gate couldn't save them — while
+    health's rare-scopes detector correctly rejected both. The shared
+    `_scope_typo_neighbor` rule (sibling-suffix exemption, length-scaled
+    threshold) now backs both surfaces, so they can't diverge."""
+    aoc = [
+        _memory("solved day 25", scopes=["aoc2023"]),
+        _memory("starting this year's puzzles", scopes=["aoc2024"]),
+    ]
+    assert find_scope_typo_pairs(aoc) == []
+
+    short_tags = [
+        _memory("api project body", scopes=["projects:api"]),
+        _memory("app project body", scopes=["projects:app"]),
+    ]
+    assert find_scope_typo_pairs(short_tags) == []
+
+
+def test_scope_typo_genuine_singleton_typo_still_flagged() -> None:
+    """Counterpart: parity must not weaken genuine-typo detection. A
+    transposition typo of an established scope (singleton side, long
+    tail, distance 2) still flags with the rename suggestion — health's
+    neighbor rule and consolidate's singleton gate agree on it."""
+    memories = [
+        _memory(f"body {i}", scopes=["projects:bettermemory"]) for i in range(3)
+    ] + [_memory("typo'd body", scopes=["projects:bettermemoyr"])]
+    pairs = find_scope_typo_pairs(memories)
+    assert len(pairs) == 1
+    assert pairs[0].keeper == "projects:bettermemory"
+    assert pairs[0].typo == "projects:bettermemoyr"
+    assert pairs[0].typo_count == 1
+    assert "memory_rename_scope" in pairs[0].suggestion
+
+
 # ---------------------------------------------------------------------------
 # Orchestrator — end-to-end
 # ---------------------------------------------------------------------------
@@ -1016,6 +1245,96 @@ def test_consolidate_apply_demotes_dead_weight(store: Store, memory_dir: Path) -
     assert any(a.kind == "demoted_to_ambient" for a in report.actions_taken)
     after = store.load_one(m.id)
     assert after.category == Category.AMBIENT
+
+
+def test_consolidate_scope_merge_preserves_concurrent_verification(
+    store: Store, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Regression (round-88): the dedup scope-merge is a scopes-only
+    metadata edit, but called `store.update` without
+    preserve_verification=True. `mark_verified` bumps `last_verified_at`
+    WITHOUT bumping `updated` (verification is the orthogonal axis —
+    store.py), so the W2 CAS structurally cannot catch a verify landing
+    between consolidate's `load_all` snapshot and the merge write: the
+    stale snapshot's empty verification fields silently clobbered the
+    fresh attestation — which also feeds `_pick_keeper`'s Tier-0
+    attested-beats-unattested rule and dead-weight classification on
+    later passes."""
+    older = store.write(
+        content="Run pnpm install then pnpm dev; node 20 required.",
+        scopes=["projects:alpha"],
+    )
+    newer = store.write(
+        content="Run pnpm install then pnpm dev; node 20 required.",
+        scopes=["projects:beta"],
+    )
+    newer = store.update(newer)  # unambiguous keeper signal
+
+    real_load_all = Store.load_all
+    fired = {"done": False}
+
+    def racing_load_all(self: Store) -> list[Memory]:
+        memories = real_load_all(self)
+        if not fired["done"]:
+            fired["done"] = True
+            # The attestation lands AFTER consolidate snapshots the
+            # store but BEFORE the scope-merge update — the interleave
+            # the `updated` CAS cannot see.
+            self.mark_verified(newer.id, verified_paths=["package.json"])
+        return memories
+
+    monkeypatch.setattr(Store, "load_all", racing_load_all)
+    report = consolidate(store, apply=True)
+
+    tombstoned = {
+        act.memory_id for act in report.actions_taken if act.kind == "tombstoned"
+    }
+    assert older.id in tombstoned
+    keeper = store.load_one(newer.id)
+    assert keeper.scopes == ["projects:alpha", "projects:beta"]
+    assert keeper.verified_paths == ["package.json"], (
+        "scope merge clobbered the attestation that landed after the "
+        "consolidate snapshot"
+    )
+    assert keeper.last_verified_at is not None
+
+
+def test_consolidate_demotion_retag_preserves_concurrent_verification(
+    store: Store, memory_dir: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Same metadata-only convention at the demotion retag: a verify
+    landing between the apply pass's fresh `load_all` re-snapshot and
+    the category-only update must survive the retag (the `updated` CAS
+    can't see it — verify doesn't bump `updated`)."""
+    m = store.write(content="durable body content here", scopes=["tools"])
+    rec = Recorder(root=memory_dir, session_id="test-session", enabled=True)
+    rec.record("search", hit_ids=[m.id])
+
+    real_load_all = Store.load_all
+    calls = {"count": 0}
+
+    def racing_load_all(self: Store) -> list[Memory]:
+        memories = real_load_all(self)
+        calls["count"] += 1
+        if calls["count"] == 2:
+            # Call #1 is the candidate-finding snapshot; call #2 is the
+            # apply pass's re-snapshot right before the retag loop. The
+            # verify lands between that re-snapshot and the update.
+            self.mark_verified(m.id, verified_paths=["src/build.py"])
+        return memories
+
+    monkeypatch.setattr(Store, "load_all", racing_load_all)
+    future_now = datetime.now(timezone.utc) + timedelta(days=60)
+    report = consolidate(store, apply=True, window_days=30, now=future_now)
+
+    assert any(a.kind == "demoted_to_ambient" for a in report.actions_taken)
+    after = store.load_one(m.id)
+    assert after.category == Category.AMBIENT
+    assert after.verified_paths == ["src/build.py"], (
+        "demotion retag clobbered the attestation that landed after the "
+        "apply pass's re-snapshot"
+    )
+    assert after.last_verified_at is not None
 
 
 def test_consolidate_dedup_duplicate_seen_once_in_multi_pair(

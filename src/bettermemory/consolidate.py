@@ -5,11 +5,17 @@ applies, with `--apply`) four kinds of curation:
 
 1. **Near-duplicate dedup.** Pairwise similarity over the active set —
    semantic when the embeddings extra is installed, Jaccard otherwise.
-   Pairs whose bodies differ in negation polarity ("Use X" vs "Do not
-   use X" — token sets collapse once stopwords drop, and embedding
-   models score negated pairs above threshold too) are skipped on
-   BOTH paths — that's a contradiction to arbitrate, not a duplicate
-   to merge. An attested member (non-empty `verified_paths` or a set
+   Bodies are compared with any `--llm --from-transcript` provenance
+   stamp stripped (`_PROVENANCE_RE`) — the stamp is system boilerplate
+   shared by every fact distilled from the same transcript turn, not
+   claim content. Pairs whose bodies differ in negation polarity
+   ("Use X" vs "Do not use X" — token sets collapse once stopwords
+   drop, and embedding models score negated pairs above threshold too)
+   are skipped on BOTH paths — that's a contradiction to arbitrate,
+   not a duplicate to merge. Skipped pairs above the threshold surface
+   on the report as `polarity_skipped` (suggest-only, never applied)
+   so a genuine duplicate caught by an incidental negator doesn't
+   vanish silently. An attested member (non-empty `verified_paths` or a set
    `last_verified_at`) beats an unattested one; otherwise the pair's
    newer-`updated` member wins. The loser is proposed for tombstoning
    with reason ``"consolidate: near-duplicate of <keeper_id>,
@@ -48,12 +54,14 @@ applies, with `--apply`) four kinds of curation:
    dead scopes from healthy ones). Suggest-only — auto-archiving a
    whole scope is too blunt to apply without human review.
 
-4. **Scope-typo pairs.** Levenshtein-≤2 neighbors among the scope
-   distribution that look like typos. Only pairs whose lesser side
-   holds a single memory are flagged — the same singleton gate as the
-   rare-scopes detector in `health.py` (an established multi-memory
-   scope is not plausibly a typo); consolidate proposes the canonical
-   target (whichever scope has more memories) and shows a rename
+4. **Scope-typo pairs.** Scope pairs that plausibly look like typos,
+   per the SAME neighbor rule as the rare-scopes detector in
+   `health.py` (`_scope_typo_neighbor`: namespace-aware tails,
+   sibling-suffix exemption, length-scaled distance). Only pairs whose
+   lesser side holds a single memory are flagged — the same singleton
+   gate as that detector (an established multi-memory scope is not
+   plausibly a typo); consolidate proposes the canonical target
+   (whichever scope has more memories) and shows a rename
    command. Suggest-only — scope renames are reversible but
    touch every memory in a scope, so a human should review.
 
@@ -79,10 +87,10 @@ from ._fsutil import atomic_write_bytes, bounded_tail_read
 from .events import Recorder, iter_all_events
 from .health import (
     _ENDORSEMENT_GRACE_DAYS,
-    _edit_distance_within,
     _freshest_touch_ts,
     _has_unresolved_contradiction,
     _is_dead_weight,
+    _scope_typo_neighbor,
 )
 from .models import Category, Memory, snippet_for
 from .search import _pairwise_content_jaccard, _raw_content_token_set
@@ -154,6 +162,37 @@ class DedupCandidate:
             "keeper_summary": self.keeper_summary,
             "duplicate_id": self.duplicate_id,
             "duplicate_summary": self.duplicate_summary,
+            "similarity": round(self.similarity, 4),
+            "method": self.method,
+        }
+
+
+@dataclass
+class PolaritySkippedPair:
+    """A pair whose similarity cleared the dedup threshold but whose
+    bodies differ in negation polarity. The polarity guard keeps such
+    pairs out of `dedup_candidates` — a high-similarity negated pair is
+    usually a contradiction to arbitrate, not a duplicate to merge —
+    but the guard also catches genuine duplicates whose phrasings
+    differ by an incidental negator ("X instead of Y" vs "X, not Y"),
+    so the skip is surfaced here for human review instead of vanishing.
+    Suggest-only: the apply path iterates `dedup_candidates` exclusively
+    and never tombstones a member of this list. No keeper/duplicate
+    roles — no merge decision was made."""
+
+    memory_id_a: str
+    summary_a: str
+    memory_id_b: str
+    summary_b: str
+    similarity: float
+    method: str  # "semantic" or "jaccard"
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "memory_id_a": self.memory_id_a,
+            "summary_a": self.summary_a,
+            "memory_id_b": self.memory_id_b,
+            "summary_b": self.summary_b,
             "similarity": round(self.similarity, 4),
             "method": self.method,
         }
@@ -273,12 +312,18 @@ class ConsolidateReport:
     actions_taken: list[ConsolidateAction] = field(default_factory=list)
     failures: list[ConsolidateFailure] = field(default_factory=list)
     dedup_method: str = "jaccard"  # "semantic" if the model was available
+    # Pairs the polarity guard kept out of `dedup_candidates` (above
+    # threshold, opposite negation polarity). Suggest-only — the apply
+    # path never reads this list. Declared last so positional
+    # construction of the older fields stays valid.
+    polarity_skipped: list[PolaritySkippedPair] = field(default_factory=list)
 
     def to_dict(self) -> dict[str, Any]:
         return {
             "applied": self.applied,
             "dedup_method": self.dedup_method,
             "dedup_candidates": [c.to_dict() for c in self.dedup_candidates],
+            "polarity_skipped": [p.to_dict() for p in self.polarity_skipped],
             "demotion_candidates": [d.to_dict() for d in self.demotion_candidates],
             "cold_scope_suggestions": [
                 s.to_dict() for s in self.cold_scope_suggestions
@@ -343,16 +388,35 @@ def find_dedup_candidates(
     to several others appears multiple times. Caller's responsibility
     to deduplicate the duplicate-side ids if a single tombstoning pass
     is wanted (`consolidate()` does this).
+
+    Polarity-skipped pairs are dropped by this wrapper (its return
+    shape predates them); callers that want the skip list — the
+    `consolidate()` report — go through `_find_dedup_with_skips`.
     """
+    candidates, _polarity_skipped, method = _find_dedup_with_skips(
+        memories, semantic_model=semantic_model, threshold=threshold
+    )
+    return candidates, method
+
+
+def _find_dedup_with_skips(
+    memories: list[Memory],
+    *,
+    semantic_model: Any | None = None,
+    threshold: float | None = None,
+) -> tuple[list[DedupCandidate], list[PolaritySkippedPair], str]:
+    """`find_dedup_candidates` plus the pairs the polarity guard kept
+    out of the candidate list (see `PolaritySkippedPair`). Both lists
+    are sorted descending by similarity."""
     if len(memories) < 2:
-        return [], "semantic" if semantic_model is not None else "jaccard"
+        return [], [], "semantic" if semantic_model is not None else "jaccard"
 
     if semantic_model is not None:
         method = "semantic"
         eff_threshold = (
             threshold if threshold is not None else _DEFAULT_SEMANTIC_THRESHOLD
         )
-        candidates = _find_dedup_semantic(
+        candidates, polarity_skipped = _find_dedup_semantic(
             memories, semantic_model, threshold=eff_threshold
         )
     else:
@@ -360,10 +424,13 @@ def find_dedup_candidates(
         eff_threshold = (
             threshold if threshold is not None else _DEFAULT_JACCARD_THRESHOLD
         )
-        candidates = _find_dedup_jaccard(memories, threshold=eff_threshold)
+        candidates, polarity_skipped = _find_dedup_jaccard(
+            memories, threshold=eff_threshold
+        )
 
     candidates.sort(key=lambda c: c.similarity, reverse=True)
-    return candidates, method
+    polarity_skipped.sort(key=lambda p: p.similarity, reverse=True)
+    return candidates, polarity_skipped, method
 
 
 # Negation tokens that flip a body's polarity. Both dedup paths are
@@ -422,18 +489,63 @@ def _has_negation(body: str) -> bool:
     )
 
 
+# Provenance stamp appended by `--llm --from-transcript` propose_new
+# writes (built in `_apply_llm_proposal`). The stamp is
+# system-manufactured boilerplate shared BY CONSTRUCTION between every
+# fact distilled from the same transcript turn: two semantically
+# DISTINCT facts citing one turn measure ~0.93 Jaccard stamped vs ~0.11
+# unstamped — above both the 0.75 manual `--apply` default and the 0.90
+# unattended `run_auto_consolidate` threshold — so similarity over the
+# stamped body tombstones a genuine fact. The write-time gates already
+# judge the unstamped claim (see the scoping rationale where the stamp
+# is built); both dedup paths strip it the same way before comparing.
+# Similarity/polarity input only: `_pick_keeper`, the report summaries,
+# and the persisted body keep the stamp. Greedy `.*` + DOTALL reach the
+# final `)_` even when the excerpt contains parentheses or newlines.
+_PROVENANCE_RE = re.compile(
+    r"\n\n_\(consolidate --llm --from-transcript: .*\)_\s*$", re.S
+)
+
+
+def _strip_provenance(body: str) -> str:
+    """Body with any trailing `--from-transcript` provenance stamp
+    removed — the comparison view of a memory for the dedup passes.
+    Unstamped bodies come back unchanged."""
+    return _PROVENANCE_RE.sub("", body)
+
+
+def _polarity_skip(
+    a: Memory, b: Memory, similarity: float, method: str
+) -> PolaritySkippedPair:
+    """Build the report entry for a pair the polarity guard skipped.
+    Shared by both dedup paths so the surfaced shape can't drift."""
+    return PolaritySkippedPair(
+        memory_id_a=a.id,
+        summary_a=snippet_for(a.body, max_chars=100),
+        memory_id_b=b.id,
+        summary_b=snippet_for(b.body, max_chars=100),
+        similarity=similarity,
+        method=method,
+    )
+
+
 def _find_dedup_jaccard(
     memories: list[Memory], *, threshold: float
-) -> list[DedupCandidate]:
-    # Pre-compute RAW token sets (and polarity) once per memory. Kebab
+) -> tuple[list[DedupCandidate], list[PolaritySkippedPair]]:
+    # Pre-compute RAW token sets (and polarity) once per memory, over
+    # the provenance-stripped body — the stamp is shared boilerplate,
+    # not claim content, and polarity likewise judges the claim, not
+    # the quoted transcript turn (see `_PROVENANCE_RE`). Kebab
     # expansion happens per PAIR inside `_pairwise_content_jaccard` —
     # a compound the pair shares must stay one token (symmetric
     # expansion of a shared compound strictly inflates Jaccard; see
     # the helper's docstring), so it can't be precomputed per memory.
-    token_sets = [
-        (m, _raw_content_token_set(m.body), _has_negation(m.body)) for m in memories
-    ]
+    token_sets: list[tuple[Memory, set[str], bool]] = []
+    for m in memories:
+        body = _strip_provenance(m.body)
+        token_sets.append((m, _raw_content_token_set(body), _has_negation(body)))
     out: list[DedupCandidate] = []
+    skipped: list[PolaritySkippedPair] = []
     for i in range(len(token_sets)):
         m_i, t_i, neg_i = token_sets[i]
         if not t_i:
@@ -442,14 +554,20 @@ def _find_dedup_jaccard(
             m_j, t_j, neg_j = token_sets[j]
             if not t_j:
                 continue
+            sim = _pairwise_content_jaccard(t_i, t_j)
+            if sim < threshold:
+                continue
             if neg_i != neg_j:
                 # Opposite polarity: stopword stripping made the
                 # negation invisible to the token sets, so a high
                 # similarity here labels a contradiction as a
-                # duplicate. Skip — the contradiction flow decides.
-                continue
-            sim = _pairwise_content_jaccard(t_i, t_j)
-            if sim < threshold:
+                # duplicate. Skip the candidate — the contradiction
+                # flow decides — but surface the pair: the guard also
+                # catches genuine duplicates that differ only by an
+                # incidental negator, and a bare `continue` hid them
+                # from the human-review report forever. Threshold
+                # filtering above keeps this list small.
+                skipped.append(_polarity_skip(m_i, m_j, sim, "jaccard"))
                 continue
             keeper, duplicate = _pick_keeper(m_i, m_j)
             out.append(
@@ -462,40 +580,46 @@ def _find_dedup_jaccard(
                     method="jaccard",
                 )
             )
-    return out
+    return out, skipped
 
 
 def _find_dedup_semantic(
     memories: list[Memory], model: Any, *, threshold: float
-) -> list[DedupCandidate]:
+) -> tuple[list[DedupCandidate], list[PolaritySkippedPair]]:
     """Pairwise cosine over cached embeddings. Reuses the persistent
     cache from `bettermemory.semantic` — a consolidate run after
     normal use will hit the cache for most memories.
     """
     # Materialize embeddings (and polarity) once per memory; the cache
     # makes repeats cheap but we still pay the dict lookup, so a local
-    # list is faster.
+    # list is faster. Embeddings (and polarity) judge the
+    # provenance-stripped body, mirroring the Jaccard path.
     embedded: list[tuple[Memory, Any, bool]] = []
     for memory in memories:
-        body = memory.body.strip()
+        raw_body = memory.body.strip()
+        body = _strip_provenance(memory.body).strip()
         if not body:
             continue
-        vec = cached_embed(model, memory.id, memory.updated.isoformat(), body)
-        embedded.append((memory, vec, _has_negation(memory.body)))
+        # `cached_embed` keys on (memory_id, updated_key) and never
+        # hashes the text, so a stamped memory whose FULL body was
+        # already embedded (the write path's `find_similar` does this)
+        # would serve that stale stamped vector for our stripped input.
+        # Salt the freshness key when stripping changed the body so the
+        # unstamped variant earns its own cache slot; unstamped bodies
+        # (the overwhelming majority) keep byte-identical keys and full
+        # cache reuse.
+        updated_key = memory.updated.isoformat()
+        if body != raw_body:
+            updated_key += "#unstamped"
+        vec = cached_embed(model, memory.id, updated_key, body)
+        embedded.append((memory, vec, _has_negation(body)))
 
     out: list[DedupCandidate] = []
+    skipped: list[PolaritySkippedPair] = []
     for i in range(len(embedded)):
         m_i, v_i, neg_i = embedded[i]
         for j in range(i + 1, len(embedded)):
             m_j, v_j, neg_j = embedded[j]
-            if neg_i != neg_j:
-                # Opposite polarity: embedding models score "Use X" /
-                # "Do not use X" well above the cosine threshold, so a
-                # high similarity here labels a contradiction as a
-                # duplicate and `consolidate --apply` would tombstone
-                # one side unreviewed. Skip — same guard as the
-                # Jaccard loop; the contradiction flow decides.
-                continue
             try:
                 sim = cosine_similarity_normalized(v_i, v_j)
             except ValueError:
@@ -506,6 +630,17 @@ def _find_dedup_semantic(
                 # Skip the pair rather than crash the consolidate pass.
                 continue
             if sim < threshold:
+                continue
+            if neg_i != neg_j:
+                # Opposite polarity: embedding models score "Use X" /
+                # "Do not use X" well above the cosine threshold, so a
+                # high similarity here labels a contradiction as a
+                # duplicate and `consolidate --apply` would tombstone
+                # one side unreviewed. Skip the candidate — same guard
+                # as the Jaccard loop; the contradiction flow decides —
+                # but surface the pair on the report rather than
+                # dropping it silently (see the Jaccard loop's note).
+                skipped.append(_polarity_skip(m_i, m_j, sim, "semantic"))
                 continue
             keeper, duplicate = _pick_keeper(m_i, m_j)
             out.append(
@@ -518,7 +653,7 @@ def _find_dedup_semantic(
                     method="semantic",
                 )
             )
-    return out
+    return out, skipped
 
 
 def find_demotion_candidates(
@@ -768,7 +903,20 @@ def find_scope_typo_pairs(
     *,
     max_distance: int = _DEFAULT_TYPO_DISTANCE,
 ) -> list[ScopeTypoPair]:
-    """Pairs of scopes within Levenshtein `max_distance` of each other.
+    """Pairs of scopes that plausibly look like typos of each other.
+
+    Neighbor detection is health.py's `_scope_typo_neighbor` — the SAME
+    rule backing the rare-scopes detector, so the two surfaces cannot
+    diverge: namespace-aware tail comparison, the sibling-suffix
+    exemption (aoc2023/aoc2024, blog-v2/blog-v3 are deliberate
+    successors), and a length-scaled distance threshold. health.py's
+    recorded rationale is that a raw whole-string Levenshtein threshold
+    (this function's pre-parity rule) was "both too loose and too
+    tight": a shared `projects:` prefix lent distance slack to short
+    distinct tails (projects:app / projects:api) while namespace
+    omission was never seen. `max_distance` is vestigial — accepted for
+    signature stability, but the shared neighbor rule owns its own
+    thresholds.
 
     The `keeper` is whichever scope has more memories — more memories
     means more authority / longer history. The `typo` is the lesser
@@ -779,9 +927,10 @@ def find_scope_typo_pairs(
     recorded rationale is that flagging non-singletons produced enough
     false positives that the bucket stopped being actionable. A typo
     scope by definition accumulates ~one memory before being noticed;
-    a 15-memory edit-distance neighbor (projects:app / projects:api)
-    is a legitimately distinct sibling, and the printed rename command
-    would merge two projects' memories.
+    a 15-memory neighbor is an established scope, and the printed
+    rename command would merge two projects' memories. (The singleton
+    gate alone can't protect singleton SIBLINGS — a fresh aoc2024 next
+    to aoc2023 — which is what the shared distance rule handles.)
     """
     counts = Counter(scope for m in memories for scope in m.scopes)
     scopes = sorted(counts.keys())
@@ -790,12 +939,17 @@ def find_scope_typo_pairs(
     for i in range(len(scopes)):
         for j in range(i + 1, len(scopes)):
             a, b = scopes[i], scopes[j]
-            if not _edit_distance_within(a, b, max_distance):
+            if not _scope_typo_neighbor(a, b):
+                # Symmetric in its arguments (equality / common-prefix
+                # stripping / min-length threshold), so one call per
+                # unordered pair is enough.
                 continue
-            # Distance is at most max_distance — compute exact value
-            # for the suggestion. Cheap rerun on the small candidate
-            # pair beats lifting the value out of the early-exit
-            # checker.
+            # Exact whole-string distance for the suggestion text. May
+            # exceed the old ≤2 gate for namespace-equality hits
+            # ("bettermemory" vs "projects:bettermemory") —
+            # informative, not a filter. Cheap rerun on the small
+            # candidate pair beats lifting the value out of the
+            # neighbor checker.
             distance = _exact_levenshtein(a, b)
             count_a = counts[a]
             count_b = counts[b]
@@ -834,7 +988,7 @@ def find_scope_typo_pairs(
 
 def _exact_levenshtein(a: str, b: str) -> int:
     """Two-row Wagner-Fischer for the exact distance. Used only on the
-    small candidate pair after `_edit_distance_within` narrowed the
+    small candidate pair after `_scope_typo_neighbor` narrowed the
     field, so the cost is bounded."""
     if len(a) > len(b):
         a, b = b, a
@@ -896,7 +1050,7 @@ def consolidate(
     # source. (The similarity-based dedup pass doesn't touch events.)
     events = list(iter_all_events(store.root))
 
-    dedup_candidates, dedup_method = find_dedup_candidates(
+    dedup_candidates, polarity_skipped, dedup_method = _find_dedup_with_skips(
         memories,
         semantic_model=semantic_model,
         threshold=semantic_threshold,
@@ -916,6 +1070,7 @@ def consolidate(
         scope_typo_pairs=typo_pairs,
         applied=apply,
         dedup_method=dedup_method,
+        polarity_skipped=polarity_skipped,
     )
 
     if not apply:
@@ -975,8 +1130,19 @@ def consolidate(
                 missing_scopes = set(dup_mem.scopes) - set(keeper_mem.scopes)
                 if missing_scopes:
                     merged_scopes = sorted(set(keeper_mem.scopes) | missing_scopes)
+                    # Scopes-only edit → metadata-only convention
+                    # (store.py): `mark_verified` bumps
+                    # `last_verified_at` WITHOUT bumping `updated`, so
+                    # the W2 CAS cannot catch a verify racing this
+                    # pass; without preserve_verification the stale
+                    # snapshot's verification fields would silently
+                    # clobber the fresh attestation — which then feeds
+                    # `_pick_keeper`'s Tier-0 attested-beats-unattested
+                    # rule and dead-weight classification on later
+                    # passes.
                     updated_keeper = store.update(
-                        keeper_mem.model_copy(update={"scopes": merged_scopes})
+                        keeper_mem.model_copy(update={"scopes": merged_scopes}),
+                        preserve_verification=True,
                     )
                     dedup_by_id[candidate.keeper_id] = updated_keeper
             reason = (
@@ -1022,7 +1188,13 @@ def consolidate(
             continue
         try:
             new_memory = memory.model_copy(update={"category": Category.AMBIENT})
-            store.update(new_memory)
+            # Category-only edit → metadata-only convention (store.py):
+            # preserve a verify that landed between the `load_all`
+            # snapshot above and this write — the `updated` CAS can't
+            # see it (verify doesn't bump `updated`), and clobbering
+            # the attestation would also strip the demoted memory of
+            # its `_pick_keeper` Tier-0 standing.
+            store.update(new_memory, preserve_verification=True)
             report.actions_taken.append(
                 ConsolidateAction(
                     kind="demoted_to_ambient",
@@ -1236,6 +1408,20 @@ def render_text(report: ConsolidateReport) -> str:
     else:
         lines.append("  (none)")
     lines.append("")
+
+    if report.polarity_skipped:
+        # Exception bucket, not a routine pass output — rendered only
+        # when it fired (same convention as Failures below). Suggest-
+        # only: the apply path never touches these pairs.
+        lines.append(
+            f"Polarity-skipped pairs ({len(report.polarity_skipped)}) — "
+            "similar but opposite polarity; review manually, not auto-merged"
+        )
+        for ps in report.polarity_skipped:
+            lines.append(f"  {ps.similarity:.3f}  {ps.memory_id_a} <> {ps.memory_id_b}")
+            lines.append(f"    a: {ps.summary_a}")
+            lines.append(f"    b: {ps.summary_b}")
+        lines.append("")
 
     lines.append(f"Demotion candidates ({len(report.demotion_candidates)})")
     if report.demotion_candidates:

@@ -21,7 +21,12 @@ from typing import Any
 
 import pytest
 
-from bettermemory.consolidate import build_transcript_cluster, consolidate_llm
+from bettermemory.consolidate import (
+    build_transcript_cluster,
+    consolidate_llm,
+    run_auto_consolidate,
+)
+from bettermemory.events import Recorder
 from bettermemory.llm import (
     Cluster,
     DemoteTierProposal,
@@ -743,6 +748,60 @@ def test_propose_new_shared_excerpt_distinct_facts_both_commit(tmp_path: Path) -
     assert not applied.failures
     # 1 pre-existing + 2 new.
     assert len(store.load_all()) == 3
+
+
+def test_stamped_propose_new_facts_survive_auto_consolidate(tmp_path: Path) -> None:
+    """Regression (round-88 RED), end-to-end: the write gate already
+    judged the unstamped claims (the two distinct facts above commit at
+    ~0.11 unstamped similarity), but the consolidate dedup pass
+    tokenized the PERSISTED stamped bodies — the shared
+    `--from-transcript` stamp pushed two distinct facts to ~0.93
+    Jaccard, above even the unattended 0.90 threshold, and the Stop
+    hook's `run_auto_consolidate` (apply=True, no human) tombstoned one
+    of them. Both must survive the auto pass now that the dedup paths
+    strip the stamp the same way the write gate does."""
+    store = _make_store_with_existing(tmp_path)
+    transcript = tmp_path / "session.md"
+    excerpt = (
+        "My dotfiles live in ~/dotfiles and I manage them with GNU stow; "
+        "my shell is zsh with the starship prompt."
+    )
+    transcript.write_text(f"[user] {excerpt}\n[assistant] Saved.", encoding="utf-8")
+    proposals: list[Proposal] = [
+        ProposeNewProposal(
+            scope="personal-context",
+            category="fact",
+            body="User manages dotfiles in ~/dotfiles with GNU stow.",
+            source_excerpt=excerpt,
+            rationale="dotfiles location fact",
+        ),
+        ProposeNewProposal(
+            scope="personal-context",
+            category="fact",
+            body="User's shell is zsh with the starship prompt.",
+            source_excerpt=excerpt,
+            rationale="shell setup fact",
+        ),
+    ]
+    provider = FakeProvider(proposals=proposals)
+    applied = consolidate_llm(
+        store, provider, apply=True, accept=True, from_transcript=str(transcript)
+    )
+    assert sum(1 for a in applied.actions_taken if a.kind == "llm_propose_new") == 2
+    assert len(store.load_all()) == 3  # 1 pre-existing + 2 stamped facts
+
+    result = run_auto_consolidate(
+        store,
+        recorder=Recorder(root=tmp_path, session_id="sess_auto"),
+        session_id="sess_auto",
+        interval_hours=24.0,
+        max_memories=500,
+    )
+    assert result is not None and result["status"] == "ran"
+    assert result["tombstoned"] == 0, (
+        "the unattended pass tombstoned a genuine fact off the shared provenance stamp"
+    )
+    assert len(store.load_all()) == 3  # nothing merged away
 
 
 def test_propose_new_true_near_duplicate_still_bounces(tmp_path: Path) -> None:
