@@ -53,6 +53,12 @@ PROPOSALS_FILENAME = ".write_proposals.jsonl"
 _MIN_CHARS = 30
 _MIN_TOKENS = 6
 
+# Explicit capture requests are exempt from the full floor — "Remember
+# that I use zsh." is a self-contained instruction whose marker text alone
+# eats half the char budget. A small token guard still rejects degenerate
+# fragments ("Remember that.").
+_MIN_TOKENS_EXPLICIT = 4
+
 # Default cap on proposals produced from a single exchange — capture
 # wants the strongest one or two, not a transcript dump. The queue-level
 # `max_pending` cap (config) bounds the total across turns.
@@ -61,48 +67,113 @@ _MAX_PER_EXCHANGE = 3
 # Sentence splitter: terminal punctuation followed by whitespace, or a
 # newline run. Trailing-space requirement preserves "v1.6" / "3.11" /
 # "src/foo.py" (the dot is followed by a digit/letter, not space).
-_SENTENCE_SPLIT_RE = re.compile(r"(?<=[.!?])\s+|\n+")
+# Fixed-width negative lookbehinds keep "e.g." / "i.e." mid-sentence from
+# fragmenting the sentence (a truncated body is a noisy proposal — the
+# module's named expensive failure).
+_SENTENCE_SPLIT_RE = re.compile(r"(?<!\be\.g\.)(?<!\bi\.e\.)(?<=[.!?])\s+|\n+")
+
+# Hard-wrap repair: join a SINGLE newline into a space only when the prior
+# char isn't terminal punctuation / a colon / another newline (so blank-line
+# runs and punctuation-terminated lines keep their boundary) and the next
+# line doesn't open with a list/quote marker (so bulleted lists stay split
+# for _LIST_PREFIX_RE + the ^-anchored command reject to see). Without this,
+# a hard-wrapped sentence is split mid-clause and the truncated dangling
+# fragment gets proposed verbatim as the memory body.
+_HARD_WRAP_RE = re.compile(r"(?<![.!?:\n])\n(?=\S)(?![-*+•>])(?!\d{1,3}[.)]\s)")
+
+# Leading markdown list/quote markers ("- ", "* ", "1. ", "> ", possibly
+# stacked). Stripped from each candidate before any gate runs, so the
+# ^-anchored question/command reject sees the real sentence start and
+# proposal bodies don't carry the bullet prefix.
+_LIST_PREFIX_RE = re.compile(r"^(?:[-*+•]\s+|\d{1,3}[.)]\s+|>\s+)+")
 
 # Explicit "remember this" intent. High precision — when the user says
 # any of these, they are asking to be remembered, so we propose even if
 # the sentence also looks like a question/command ("can you remember
-# that…"). Lowercased substring match.
+# that…"). Matched word-boundary-anchored against the lowercased sentence
+# (see _EXPLICIT_MARKER_RE) so "remember i" can't prefix-match "remember
+# if"/"remember it". Deliberately absent: bare per-turn connectives like
+# "note that" / "make sure to" / "for the future" — ubiquitous instruction
+# and roadmap prose with no remember-intent, which violated the
+# high-precision premise above.
 _EXPLICIT_MARKERS: tuple[str, ...] = (
     "remember that",
     "remember to",
     "remember i",
     "remember we",
-    "note that",
+    "remember this",
+    "remember:",
     "keep in mind",
     "for future reference",
-    "for the future",
     "don't forget",
     "do not forget",
     "from now on",
     "going forward",
-    "make sure to",
-    "make sure you",
     "always remember",
+)
+
+# \b-anchor each marker edge that is a word character (a trailing ":" is
+# its own boundary). Markers are lowercase; callers match against the
+# lowercased sentence.
+_EXPLICIT_MARKER_RE = re.compile(
+    "|".join(
+        ("\\b" if m[0].isalnum() else "")
+        + re.escape(m)
+        + ("\\b" if m[-1].isalnum() else "")
+        for m in _EXPLICIT_MARKERS
+    )
+)
+
+# Retrieval interrogatives ("Do you remember if/that …?") ask what is
+# already stored and assert nothing durable — rejected BEFORE the explicit
+# marker override is honored, since the marker's "asking to be remembered"
+# premise is false for them. "Can you remember that…" (capture intent,
+# test-pinned) opens with "can you" and is untouched.
+_RETRIEVAL_QUESTION_RE = re.compile(
+    r"^(?:do|does|did)\s+you\s+(?:still\s+)?remember\b", re.IGNORECASE
 )
 
 # First-person preference / setup declarations — the canonical
 # memory-worthy content a user states about themselves or their project.
-# Word-boundary anchored so "my" doesn't fire inside "myself".
+# Word-boundary anchored on BOTH sides so "my" doesn't fire inside
+# "myself" and past-tense narration ("I wanted", "We used") doesn't fire
+# the present-tense branch. "i (want|need)" excludes delegations to the
+# assistant ("I want you to refactor…" is a task request — contract (c)).
+# The bare possessives are anchored to sentence start AND a nearby stative
+# verb: mid-sentence "my"/"our" is how imperatives ("Fix the bug in my
+# parser…") and pasted third-party text leak in as user-inference facts.
 _PREFERENCE_RE = re.compile(
-    r"\b(i (prefer|like|love|hate|avoid|always|never|usually|want|need|use)"
-    r"|i'?m using|i'?ve been using"
-    r"|we (use|prefer|avoid|always|never)|we'?re using"
-    r"|my |our )",
+    r"\b(i (?:prefer|like|love|hate|avoid|always|never|usually|use)\b"
+    r"|i (?:want|need)\b(?!\s+you\b)"
+    r"|i(?:'?m| am) using|i(?:'?ve| have) been using"
+    r"|we (?:use|prefer|avoid|always|never)\b"
+    r"|we(?:'?re| are) using|we(?:'?ve| have) been using"
+    r"|^(?:my|our)\s+(?:\w+\s+){0,4}?(?:is|are|was|were|prefers?|uses?|runs?|lives)\b)",
     re.IGNORECASE,
 )
 
 # Sentences that open like a question or a task-request to the assistant
 # are not durable facts. Rejected UNLESS an explicit marker fires (an
-# explicit "remember…" request overrides).
+# explicit "remember…" request overrides). The wh-words carry a trailing
+# \b (so "However,"/"Whenever" don't match bare "how"/"when"); the
+# auxiliary alternatives keep the house trailing-space convention,
+# including the negated contractions ("Shouldn't I use…").
 _QUESTION_OR_COMMAND_RE = re.compile(
     r"^(can you|could you|would you|will you|please|let'?s|"
-    r"what|whats|what's|how|why|when|where|which|who|"
-    r"is |are |do |does |did |should |can |could )",
+    r"(?:what|whats|what'?s|how|why|when|where|which|who)\b|"
+    r"is |are |do |does |did |should |can |could |"
+    r"isn'?t |aren'?t |don'?t |doesn'?t |didn'?t |"
+    r"shouldn'?t |couldn'?t |wouldn'?t |can'?t |won'?t )",
+    re.IGNORECASE,
+)
+
+# Hypothetical/conditional protases ("If I use X…", "Suppose I always…")
+# describe a scenario, not a durable preference or fact. Sentence-initial
+# only — mid-sentence conditionals ("I always run black if the file is
+# Python.") still propose — and overridable by an explicit marker,
+# consistent with the existing "explicit wins" rule.
+_HYPOTHETICAL_RE = re.compile(
+    r"^(if|suppose|supposing|imagine|assuming|assume|what if|hypothetically|in case)\b",
     re.IGNORECASE,
 )
 
@@ -269,16 +340,31 @@ class ProposalQueue:
         atomic_write_bytes(self.path, body.encode("utf-8"), mode_before_rename=0o600)
 
 
-def _iter_candidate_sentences(text: str) -> list[str]:
-    """Split `text` into trimmed sentences clearing the length floor."""
-    out: list[str] = []
+def _iter_candidate_sentences(text: str) -> list[tuple[str, bool]]:
+    """Split `text` into trimmed ``(sentence, is_explicit)`` pairs clearing
+    the length floor.
+
+    `is_explicit` is computed here (after list-prefix stripping, before the
+    floor) because explicit capture requests are exempt from the full floor
+    — the floor is the one gate the documented "explicit marker wins"
+    override would otherwise never reach.
+    """
+    text = _HARD_WRAP_RE.sub(" ", text)
+    out: list[tuple[str, bool]] = []
     for raw in _SENTENCE_SPLIT_RE.split(text):
-        s = raw.strip()
-        if len(s) < _MIN_CHARS:
+        s = _LIST_PREFIX_RE.sub("", raw.strip()).strip()
+        if not s:
             continue
-        if len(s.split()) < _MIN_TOKENS:
-            continue
-        out.append(s)
+        is_explicit = bool(_EXPLICIT_MARKER_RE.search(s.lower()))
+        if is_explicit:
+            if len(s.split()) < _MIN_TOKENS_EXPLICIT:
+                continue
+        else:
+            if len(s) < _MIN_CHARS:
+                continue
+            if len(s.split()) < _MIN_TOKENS:
+                continue
+        out.append((s, is_explicit))
     return out
 
 
@@ -287,6 +373,7 @@ def extract_proposals(
     *,
     now: datetime | None = None,
     max_proposals: int = _MAX_PER_EXCHANGE,
+    exclude_excerpts: frozenset[str] = frozenset(),
 ) -> list[Proposal]:
     """Conservative, no-LLM extraction of durable-looking statements from
     a turn's USER message.
@@ -294,12 +381,20 @@ def extract_proposals(
     Precision over recall by design — a noisy proposal trains the model
     to ignore the review surface, and the review gate already makes a
     *missed* capture cheaper than a *bad* one. A sentence is proposed
-    only when it (a) clears the length floor, (b) carries an explicit
-    "remember this" marker OR a first-person preference/setup pattern,
-    (c) is not a question or a task-request to the assistant (unless an
-    explicit marker overrides), and (d) trips no transient-state marker
-    (`durability.find_transient_markers`) — run-local state is the
-    episode tier's job, not a durable memory.
+    only when it (a) clears the length floor (a reduced degenerate guard
+    for explicit-marker sentences), (b) carries an explicit "remember
+    this" marker OR a first-person preference/setup pattern, (c) is not a
+    question, a hypothetical, or a task-request to the assistant (unless
+    an explicit marker overrides — retrieval questions like "Do you
+    remember if…?" are rejected outright), and (d) trips no
+    transient-state marker (`durability.find_transient_markers`) —
+    run-local state is the episode tier's job, not a durable memory.
+
+    `exclude_excerpts`: sentences already queued (matched verbatim) are
+    skipped BEFORE they count against `max_proposals`, so a recurring
+    preamble can't occupy every slot and mask new durable statements later
+    in the message. Authoritative dedup still happens under the queue lock
+    (`ProposalQueue.append_within_cap`); this is only a budget hint.
 
     Only the user's own words are mined: they are the highest-value,
     most-durable, most-extractable source (preferences and facts the user
@@ -309,18 +404,25 @@ def extract_proposals(
         return []
     when = (now or utcnow()).isoformat().replace("+00:00", "Z")
     out: list[Proposal] = []
-    for sentence in _iter_candidate_sentences(user_text):
-        low = sentence.lower()
-        is_explicit = any(marker in low for marker in _EXPLICIT_MARKERS)
+    for sentence, is_explicit in _iter_candidate_sentences(user_text):
+        if sentence in exclude_excerpts:
+            continue
+        # A retrieval interrogative asks what's stored, asserts nothing —
+        # rejected even when "remember that/i…" makes it look explicit.
+        if _RETRIEVAL_QUESTION_RE.match(sentence):
+            continue
         is_preference = bool(_PREFERENCE_RE.search(sentence))
         if not (is_explicit or is_preference):
             continue
-        # Questions / task-requests aren't durable facts — but an explicit
-        # "remember…" request is exactly a capture instruction, so it wins.
+        # Questions / task-requests / hypotheticals aren't durable facts —
+        # but an explicit "remember…" request is exactly a capture
+        # instruction, so it wins. rstrip("!") counts "?!" as a question.
         if not is_explicit:
-            if sentence.rstrip().endswith("?"):
+            if sentence.rstrip().rstrip("!").endswith("?"):
                 continue
             if _QUESTION_OR_COMMAND_RE.match(sentence):
+                continue
+            if _HYPOTHETICAL_RE.match(sentence):
                 continue
         # Transient run-state belongs in episodes, never durable memory.
         if find_transient_markers(sentence):
@@ -365,12 +467,19 @@ def propose_from_exchange(
     at review time (the model dismisses it); the cheap, always-on path is
     the one that matters for actually closing the capture gap.
     """
-    candidates = extract_proposals(user_text, now=now)
+    queue = ProposalQueue(root)
+    # Already-queued sentences must not count against the per-exchange
+    # extraction budget — a recurring preamble would otherwise occupy every
+    # slot each turn and permanently mask new durable statements later in
+    # the message. This pre-lock read is only a budget hint (O(max_pending));
+    # append_within_cap still dedups authoritatively under the flock.
+    exclude = frozenset(p.source_excerpt for p in queue.load())
+    candidates = extract_proposals(user_text, now=now, exclude_excerpts=exclude)
     if not candidates:
         return []
     # Cap + dedup + write happen together under the queue lock (see
     # append_within_cap) so concurrent Stop hooks can't overshoot max_pending.
-    return ProposalQueue(root).append_within_cap(candidates, max_pending=max_pending)
+    return queue.append_within_cap(candidates, max_pending=max_pending)
 
 
 __all__ = [

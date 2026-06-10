@@ -111,6 +111,256 @@ def test_extract_caps_at_max_proposals() -> None:
     assert len(props) == 2
 
 
+def test_extract_rejects_mid_sentence_possessive_task_requests() -> None:
+    # Bare "my "/"our " used to fire anywhere in the sentence, turning
+    # imperative task requests into user-inference proposals.
+    assert (
+        extract_proposals(
+            "Fix the bug in my parser when the input has trailing whitespace.",
+            now=_NOW,
+        )
+        == []
+    )
+    assert (
+        extract_proposals(
+            "Refactor our error handling so the workers retry with backoff.",
+            now=_NOW,
+        )
+        == []
+    )
+
+
+def test_extract_rejects_possessive_opener_without_stative_verb() -> None:
+    # Pasted third-party bug-report prose: sentence-initial "My" but an
+    # event verb, not a stative setup claim about the user.
+    assert (
+        extract_proposals(
+            "My app crashes whenever I rotate the screen on Android 14.",
+            now=_NOW,
+        )
+        == []
+    )
+
+
+def test_extract_rejects_first_person_delegations() -> None:
+    # "I want/need YOU to …" is a task request to the assistant
+    # (contract (c)), not a preference about the user.
+    assert (
+        extract_proposals(
+            "I want you to refactor this function to use early returns.", now=_NOW
+        )
+        == []
+    )
+    assert (
+        extract_proposals(
+            "I need you to look at the failing CI job on the main branch.", now=_NOW
+        )
+        == []
+    )
+
+
+def test_extract_rejects_bulleted_task_requests() -> None:
+    # Markdown bullet prefixes used to defeat the ^-anchored
+    # question/command reject, queuing task lists verbatim (with "- ").
+    text = (
+        "A few things for this PR:\n"
+        "- Can you wire up my new config flag to the CLI parser\n"
+        "- Could you also silence the deprecation warning in our test suite"
+    )
+    assert extract_proposals(text, now=_NOW) == []
+
+
+def test_extract_catches_preference_after_sentence_adverb() -> None:
+    # "However,"/"Whenever" used to prefix-match the unbounded wh-words in
+    # the question reject, silently dropping canonical preferences.
+    for text in (
+        "However, I prefer tabs over spaces for indentation in Makefiles.",
+        "Whenever possible, I prefer small focused PRs over big-bang merges.",
+    ):
+        props = extract_proposals(text, now=_NOW)
+        assert len(props) == 1
+        assert props[0].suggested_category == "user-inference"
+
+
+def test_extract_rejects_retrieval_questions() -> None:
+    # "Do/Did you remember …?" asks what is already stored — the explicit
+    # marker override must not launder it into a fact proposal (and
+    # "remember i" must not prefix-match "remember if").
+    assert (
+        extract_proposals(
+            "Do you remember if we already migrated the staging database to "
+            "postgres 16?",
+            now=_NOW,
+        )
+        == []
+    )
+    assert (
+        extract_proposals(
+            "Did you remember that we deploy from the release branch every Friday?",
+            now=_NOW,
+        )
+        == []
+    )
+
+
+def test_extract_rejects_per_turn_instruction_connectives() -> None:
+    # "Make sure to/you" and "Note that" are ubiquitous per-turn
+    # instructions, not remember-intent — dropped from the marker list.
+    for text in (
+        "Make sure to run the full test suite before you commit anything here.",
+        "Note that the handler gets called twice when the websocket reconnects.",
+        "Please make sure you handle the empty-list case in that refactor.",
+    ):
+        assert extract_proposals(text, now=_NOW) == []
+
+
+def test_extract_catches_short_explicit_capture_request() -> None:
+    # The full length floor must not defeat an explicit capture
+    # instruction; a degenerate fragment is still rejected.
+    props = extract_proposals("Remember that I use zsh.", now=_NOW)
+    assert len(props) == 1
+    assert props[0].suggested_category == "fact"
+    assert extract_proposals("Remember that.", now=_NOW) == []
+
+
+def test_extract_catches_please_remember_colon() -> None:
+    # The explicit "remember:" marker overrides the ^please command reject
+    # — politeness must not invert the outcome.
+    props = extract_proposals(
+        "Please remember: I use poetry for dependency management, never pip directly.",
+        now=_NOW,
+    )
+    assert len(props) == 1
+    assert props[0].suggested_category == "fact"
+
+
+def test_extract_catches_remember_this() -> None:
+    props = extract_proposals(
+        "Remember this: the staging database lives on port 5433 inside the VPN.",
+        now=_NOW,
+    )
+    assert len(props) == 1
+    assert props[0].suggested_category == "fact"
+
+
+def test_extract_joins_hard_wrapped_sentences() -> None:
+    # A single mid-sentence newline (hard wrap) must not truncate the
+    # proposed body at the wrap point.
+    props = extract_proposals(
+        "I prefer using rebase-and-merge for all feature branches because it\n"
+        "keeps the history linear and makes bisect actually usable.",
+        now=_NOW,
+    )
+    assert len(props) == 1
+    assert "bisect actually usable" in props[0].body
+
+
+def test_extract_keeps_eg_sentence_intact() -> None:
+    # "e.g." mid-sentence must not split (and thereby drop) the preference.
+    props = extract_proposals(
+        "I prefer conventional commits, e.g. feat: and fix: prefixes, in every repo.",
+        now=_NOW,
+    )
+    assert len(props) == 1
+    assert "every repo" in props[0].body
+
+
+def test_extract_still_splits_blank_line_statements() -> None:
+    # Guard against over-unwrapping: a blank line is a real boundary.
+    props = extract_proposals(
+        "I prefer dark mode in every editor for late-night work.\n\n"
+        "We use postgres for the primary datastore in every service.",
+        now=_NOW,
+    )
+    assert len(props) == 2
+
+
+def test_extract_rejects_for_the_future_roadmap_prose() -> None:
+    # The bare "for the future" marker fired on deferral/roadmap remarks
+    # and laundered them past the let's/please command reject.
+    for text in (
+        "Let's leave sharding for the future and ship the single-node version.",
+        "The dashboard rewrite is planned for the future once the API stabilizes.",
+    ):
+        assert extract_proposals(text, now=_NOW) == []
+
+
+def test_extract_rejects_past_tense_narration() -> None:
+    # Past-tense forms must not fire the present-tense preference branch.
+    for text in (
+        "I wanted to ask whether we should pin the Docker base image in CI.",
+        "We used a workaround for the missing index until upstream fixed it.",
+        "I liked the old dashboard layout better before the redesign shipped.",
+        "I needed a workaround for the broken locale detection in the parser.",
+    ):
+        assert extract_proposals(text, now=_NOW) == []
+
+
+def test_extract_catches_uncontracted_progressive_setup() -> None:
+    # "I am using" / "We are using" (uncontracted copulas) are the same
+    # canonical setup facts as "I'm using" / "We're using".
+    for text in (
+        "I am using Colima instead of Docker Desktop for container workloads.",
+        "We are using Terraform Cloud for all infrastructure state management.",
+    ):
+        props = extract_proposals(text, now=_NOW)
+        assert len(props) == 1
+        assert props[0].suggested_category == "user-inference"
+
+
+def test_extract_still_rejects_we_need_task_framing() -> None:
+    # The we-branch deliberately does NOT get want/need — "We need to fix
+    # …" is task framing, not a setup fact.
+    assert (
+        extract_proposals(
+            "We need to fix the flaky test before cutting the release.", now=_NOW
+        )
+        == []
+    )
+
+
+def test_extract_rejects_sentence_initial_conditionals() -> None:
+    # A hypothetical protasis describes a scenario, not a durable fact.
+    for text in (
+        "If I use the staging database for this test, we need to reseed it afterwards.",
+        "If we use Redis for the cache, the memory footprint roughly doubles.",
+        "Suppose I always run the migration first, then the seeding step "
+        "would not fail.",
+    ):
+        assert extract_proposals(text, now=_NOW) == []
+
+
+def test_extract_catches_mid_sentence_conditional() -> None:
+    # The hypothetical reject is sentence-initial only — a trailing
+    # condition on a real preference still proposes.
+    props = extract_proposals("I always run black if the file is Python.", now=_NOW)
+    assert len(props) == 1
+    assert props[0].suggested_category == "user-inference"
+
+
+def test_extract_rejects_negated_contraction_questions() -> None:
+    # Negated-contraction openers (and "?!" terminals) are questions even
+    # without a plain trailing "?".
+    for text in (
+        "Shouldn't I use the staging key for this deploy",
+        "Wouldn't it be simpler if I use sqlite for the integration tests",
+        "Couldn't we avoid the extra roundtrip by caching the token",
+        "Didn't I tell you I prefer rebase merges over merge commits?!",
+    ):
+        assert extract_proposals(text, now=_NOW) == []
+
+
+def test_extract_dont_forget_still_proposes() -> None:
+    # "Don't forget …" carries the explicit marker, which overrides the
+    # new don'?t question/command alternative.
+    props = extract_proposals(
+        "Don't forget that we deploy to fly.io for production releases.",
+        now=_NOW,
+    )
+    assert len(props) == 1
+    assert props[0].suggested_category == "fact"
+
+
 # ---------------------------------------------------------------------------
 # ProposalQueue — persistence
 # ---------------------------------------------------------------------------
@@ -206,6 +456,32 @@ def test_propose_from_exchange_dedups_against_queue(tmp_path: Path) -> None:
     again = propose_from_exchange(tmp_path, user_text=text, now=_NOW)
     assert again == []
     assert len(ProposalQueue(tmp_path).load()) == 1
+
+
+def test_propose_from_exchange_queued_preamble_does_not_mask_new(
+    tmp_path: Path,
+) -> None:
+    """Already-queued sentences must not occupy the per-exchange extraction
+    slots: a recurring 3-sentence preamble used to exhaust max_proposals
+    every turn, so a novel durable statement later in the message was never
+    even extracted (then queue dedup dropped the 3 repeats → net nothing)."""
+    preamble = (
+        "I prefer concise answers with runnable code over long prose. "
+        "I always run mypy and ruff before committing anything here. "
+        "We use postgres for the primary datastore in every service."
+    )
+    first = propose_from_exchange(tmp_path, user_text=preamble, now=_NOW)
+    assert len(first) == 3
+    fresh = propose_from_exchange(
+        tmp_path,
+        user_text=preamble
+        + " Also, I never want force-pushes on shared branches in this org.",
+        now=_NOW,
+    )
+    assert [p.body for p in fresh] == [
+        "Also, I never want force-pushes on shared branches in this org."
+    ]
+    assert len(ProposalQueue(tmp_path).load()) == 4
 
 
 def test_propose_from_exchange_respects_max_pending(tmp_path: Path) -> None:
