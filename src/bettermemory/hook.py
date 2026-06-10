@@ -47,10 +47,16 @@ tool call flips the anchor. The bias is conservative (over-suppress)
 and self-correcting.
 
 Residual divergence (two cases, opposite directions):
-- Concurrent sessions: under multiple Claude sessions sharing one
-  memory dir, the "most recent in-process session" anchor can attribute
-  one server's disabled scopes to another's audit — biases toward
-  *suppressing* a miss.
+- Concurrent sessions: the anchor prefers the latest in-process event
+  stamped with THIS hook's `worktree_root`, so a concurrent session in
+  a DIFFERENT worktree no longer hijacks it — that hijack flipped the
+  verdict in both directions (the foreign session's search *shielding*
+  this window's real miss, and the foreign session's unrelated events
+  *unshielding* a turn that searched correctly — anti-conservative
+  over-flagging). What remains: concurrent sessions in the SAME
+  worktree, and logs with no stamped match for this worktree (legacy
+  events, server outside a git checkout), where the anchor falls back
+  to latest-any and both directions are still possible.
 - Active-log bound: the reconstruction reads the *active* event log only
   (same bound as the retrieval shield). If a `scope_disable` rotates out
   of `.events.jsonl` while its session is still live, the disable is
@@ -110,6 +116,24 @@ _ATTRIBUTION_LOOKBACK_SECONDS = 600
 # at byte granularity (not character) so multibyte UTF-8 can't bypass it.
 _TRANSCRIPT_TAIL_READ_BYTES = 1_048_576
 
+# `type="user"` transcript rows the human never typed. Claude Code records
+# background task notifications, slash-command bookkeeping, harness stdout
+# wrappers, and system reminders as user rows whose content opens with one
+# of these envelope tags (task-notification rows carry NO metadata flag, so
+# a content-prefix check is the only available discriminator). Skill and
+# command expansions additionally carry `isMeta: true` at the row level —
+# `_extract_last_exchange` checks that flag separately. On either signal
+# the reverse walk skips the row and keeps walking: the human's message is
+# typically a few rows earlier in the tail.
+_SYNTHETIC_USER_PREFIXES = (
+    "<task-notification>",
+    "<command-name>",
+    "<command-message>",
+    "<local-command-stdout>",
+    "<local-command-caveat>",
+    "<system-reminder>",
+)
+
 # Cap the Stop-hook stdin payload. Claude Code emits a small JSON object
 # (`session_id`, `transcript_path`, `cwd`, `hook_event_name`) — well under
 # 1 KB in practice. 64 KB leaves five orders of magnitude of headroom for
@@ -152,6 +176,19 @@ def _extract_last_exchange(
     [<content blocks>]}}` where the content blocks each have a
     `type` field ("text" / "thinking" / "tool_use" / …). We
     concatenate text-block bodies for the response surface.
+
+    Synthetic user rows (observed June 2026): transcripts also record
+    payloads the human never typed as `type="user"` rows — background
+    `<task-notification>` bodies, `<command-name>`/`<local-command-*>`
+    bookkeeping, `<system-reminder>` injections, slash-command/skill
+    expansions (those carry `isMeta: true`), and occasional empty
+    strings. Accepting them verbatim made the audit probe (and the
+    proposals extractor, whose contract is "only the user's own words
+    are mined") run on harness text whenever such a row landed after
+    the human's message. The walk skips those rows and keeps going —
+    the human's message is usually a few rows earlier. If nothing
+    human-looking is in the tail, `user` stays None and the hook
+    no-ops, the same fail-quiet contract as before.
     """
     user: str | None = None
     assistant: str | None = None
@@ -184,11 +221,27 @@ def _extract_last_exchange(
         if assistant is None and row_type == "assistant":
             assistant = _flatten_assistant_content(message.get("content"))
         elif user is None and row_type == "user":
+            # Harness-injected rows: skill/command expansions are stamped
+            # `isMeta: true` at the row level. Keep walking — the human's
+            # message sits below the expansion.
+            if row.get("isMeta"):
+                continue
             content = message.get("content")
+            candidate: str | None = None
             if isinstance(content, str):
-                user = content
+                candidate = content
             elif isinstance(content, list):
-                user = _flatten_assistant_content(content)
+                candidate = _flatten_assistant_content(content)
+            if candidate is None or not candidate.strip():
+                # Empty/whitespace-only user rows occur in real
+                # transcripts; capturing one used to silently drop the
+                # whole audit at main()'s `if not user`. Keep walking.
+                continue
+            if candidate.lstrip().startswith(_SYNTHETIC_USER_PREFIXES):
+                # Envelope-tagged synthetic payload (see the constant's
+                # comment) — not the user's words. Keep walking.
+                continue
+            user = candidate
         if user is not None and assistant is not None:
             break
     return user, assistant
@@ -239,7 +292,9 @@ def run_audit(
     # this, a scope the user disabled via `memory_scope_disable` (e.g.
     # "this is unrelated to project X") would still produce silent-miss
     # flags here, since the hook can't read the server's in-memory state.
-    excluded_scopes = _disabled_scopes_from_events(recent)
+    excluded_scopes = _disabled_scopes_from_events(
+        recent, worktree_root=caller_origin.worktree_root
+    )
     # The probe's retrieval shield ("did the model already search this
     # turn?") must match the server's session id, not this hook's
     # `session_id` (which is Claude Code's transcript id — a different id
@@ -248,8 +303,12 @@ def run_audit(
     # `_emit_hook_attributions` do; the probe falls back to `session_id`
     # when no in-process session is on record. Without this, the shield was
     # structurally dead in the Stop hook and every searched-then-continued
-    # turn could still emit a `search_miss`.
-    server_session = _latest_in_process_session(recent)
+    # turn could still emit a `search_miss`. Anchored to this hook's
+    # worktree so a concurrent window's server can't hijack the bridge
+    # (see `_latest_in_process_session`).
+    server_session = _latest_in_process_session(
+        recent, worktree_root=caller_origin.worktree_root
+    )
     report = probe_for_miss(
         memories,
         user_message,
@@ -319,6 +378,7 @@ def run_audit(
             recent_events=recent,
             session_id=session_id,
             assistant_response=assistant_response,
+            worktree_root=caller_origin.worktree_root,
         )
 
     # Opt-in self-improving loop. Run the structurally-safe consolidation
@@ -377,7 +437,11 @@ def run_audit(
     return report.to_dict()
 
 
-def _disabled_scopes_from_events(events: list[dict[str, Any]]) -> set[str]:
+def _disabled_scopes_from_events(
+    events: list[dict[str, Any]],
+    *,
+    worktree_root: str | None = None,
+) -> set[str]:
     """Reconstruct the session-disabled scope set from the event log.
 
     `memory_scope_disable` / `memory_scope_enable` append `scope_disable`
@@ -388,9 +452,12 @@ def _disabled_scopes_from_events(events: list[dict[str, Any]]) -> set[str]:
 
     The replay is anchored to the *current in-process server session* —
     the session id of the most recent event that did NOT originate from a
-    Stop hook (see `_latest_in_process_session`). Anchoring this way is
-    what preserves reset-on-restart semantics: a restarted server mints a
-    fresh session id and has emitted no scope toggles under it yet, so the
+    Stop hook (see `_latest_in_process_session`; `worktree_root` is this
+    hook's worktree, threaded through so a concurrent session in another
+    worktree can't hijack the anchor and leak its scope toggles into this
+    window's probe exclusions). Anchoring this way is what preserves
+    reset-on-restart semantics: a restarted server mints a fresh session
+    id and has emitted no scope toggles under it yet, so the
     reconstructed set is empty until the user disables a scope again —
     mirroring the in-memory state the server itself reset on startup.
 
@@ -398,7 +465,7 @@ def _disabled_scopes_from_events(events: list[dict[str, Any]]) -> set[str]:
     `scope_enable` removes, walked in chronological (append) order. Empty
     when no in-process session is found or it toggled no scopes.
     """
-    server_session = _latest_in_process_session(events)
+    server_session = _latest_in_process_session(events, worktree_root=worktree_root)
     if server_session is None:
         return set()
     disabled: set[str] = set()
@@ -420,7 +487,11 @@ def _disabled_scopes_from_events(events: list[dict[str, Any]]) -> set[str]:
     return disabled
 
 
-def _latest_in_process_session(events: list[dict[str, Any]]) -> str | None:
+def _latest_in_process_session(
+    events: list[dict[str, Any]],
+    *,
+    worktree_root: str | None = None,
+) -> str | None:
     """Session id of the most recent non-Stop-hook event, or None.
 
     In-process MCP tool calls and the Stop hook write to the same event
@@ -430,14 +501,34 @@ def _latest_in_process_session(events: list[dict[str, Any]]) -> str | None:
     such event identifies the live server session whose disabled-scope
     toggles the hook should honour. `events` is in chronological (append)
     order, so the latest match is found by walking in reverse.
+
+    `worktree_root` makes the anchor concurrency-safe: the store and
+    event log are shared across ALL projects and processes, so with two
+    concurrent Claude Code windows the latest event frequently belongs
+    to the OTHER window's server — which used to hijack the anchor and
+    flip the audit verdict both ways (the foreign session's search
+    shielding this window's miss; the foreign session's unrelated events
+    unshielding a turn that searched correctly). The server-side
+    Recorder already stamps `worktree_root` on every in-process event,
+    so when the hook's own worktree is known we prefer the latest event
+    whose stamp matches it. When no stamped match exists (legacy logs
+    written before the stamp shipped, a server running outside any git
+    checkout, or the restart gap before this worktree's server writes
+    its first event) we fall back to the latest-any behaviour, which
+    preserves the documented reset-on-restart semantics.
     """
+    fallback: str | None = None
     for event in reversed(events):
         if event.get("triggered_from") == "stop_hook":
             continue
         session = event.get("session") or event.get("session_id")
-        if isinstance(session, str):
+        if not isinstance(session, str):
+            continue
+        if worktree_root is None or event.get("worktree_root") == worktree_root:
             return session
-    return None
+        if fallback is None:
+            fallback = session
+    return fallback
 
 
 def _emit_hook_attributions(
@@ -447,6 +538,7 @@ def _emit_hook_attributions(
     recent_events: list[dict[str, Any]],
     session_id: str,
     assistant_response: str,
+    worktree_root: str | None = None,
 ) -> None:
     """Substring-match recently-retrieved memories against the reply
     text and emit `applied` events for matches.
@@ -471,8 +563,12 @@ def _emit_hook_attributions(
     spans BOTH ids, because model/auto `use` events live under the server
     session while prior-turn hook attributions were recorded under the
     transcript id (this hook's own Recorder uses `session_id`).
+    `worktree_root` is this hook's worktree, threaded into the anchor so
+    a concurrent window's server can't claim the attribution session.
     """
-    server_session = _latest_in_process_session(recent_events)
+    server_session = _latest_in_process_session(
+        recent_events, worktree_root=worktree_root
+    )
     retrieval_session = server_session or session_id
     pending = _pending_retrievals(
         recent_events,

@@ -157,6 +157,116 @@ def test_extract_last_exchange_tolerates_malformed_lines(tmp_path: Path) -> None
     assert assistant == "reply"
 
 
+def test_extract_last_exchange_skips_task_notification_row(tmp_path: Path) -> None:
+    """Regression: background-task completions inject a `type="user"` row
+    whose content is a `<task-notification>` envelope AFTER the human's
+    message. The reverse walk used to capture that synthetic payload as
+    the user message, so the probe audited notification text and real
+    silent misses on agentic turns were structurally suppressed. The
+    walk must skip it and keep going to the human row."""
+    transcript = tmp_path / "t.jsonl"
+    _write_transcript(
+        transcript,
+        {
+            "type": "user",
+            "message": {"content": "how do we deploy myapp to staging again?"},
+        },
+        {
+            "type": "user",
+            "message": {
+                "content": (
+                    "<task-notification>task wf_1 finished"
+                    "<status>completed</status></task-notification>"
+                )
+            },
+        },
+        {
+            "type": "assistant",
+            "message": {"content": [{"type": "text", "text": "deployed"}]},
+        },
+    )
+    user, assistant = _extract_last_exchange(transcript)
+    assert user == "how do we deploy myapp to staging again?"
+    assert assistant == "deployed"
+
+
+def test_extract_last_exchange_skips_meta_and_wrapper_rows(tmp_path: Path) -> None:
+    """Regression: slash-command turns record the command bookkeeping
+    (`<command-name>` wrapper rows) and the full skill expansion (an
+    `isMeta: true` row) as `type="user"` rows ABOVE the assistant reply.
+    The walk used to return the expansion's documentation prose as "the
+    user's own words" — violating the proposals extractor's stated
+    precondition and shadowing whatever the human actually typed. Both
+    shapes must be skipped so the genuine row wins."""
+    transcript = tmp_path / "t.jsonl"
+    _write_transcript(
+        transcript,
+        {"type": "user", "message": {"content": "/plugin-marketplace docs"}},
+        {
+            "type": "user",
+            "isMeta": True,
+            "message": {
+                "content": (
+                    "Useful for enterprise administrators to add "
+                    'organization-specific context. User: "Format my code '
+                    'after Claude writes it".'
+                )
+            },
+        },
+        {
+            "type": "user",
+            "message": {"content": "<command-name>/plugin-marketplace</command-name>"},
+        },
+        {
+            "type": "assistant",
+            "message": {"content": [{"type": "text", "text": "docs shown"}]},
+        },
+    )
+    user, assistant = _extract_last_exchange(transcript)
+    assert user == "/plugin-marketplace docs"
+    assert assistant == "docs shown"
+
+
+def test_extract_last_exchange_skips_empty_user_rows(tmp_path: Path) -> None:
+    """An empty-string user row (observed in real transcripts) used to be
+    captured verbatim, and main()'s `if not user` then silently dropped
+    the whole audit. The walk must keep going to the human row instead."""
+    transcript = tmp_path / "t.jsonl"
+    _write_transcript(
+        transcript,
+        {"type": "user", "message": {"content": "real question"}},
+        {"type": "user", "message": {"content": ""}},
+        {
+            "type": "assistant",
+            "message": {"content": [{"type": "text", "text": "answer"}]},
+        },
+    )
+    user, _ = _extract_last_exchange(transcript)
+    assert user == "real question"
+
+
+def test_extract_last_exchange_none_when_only_synthetic_rows(tmp_path: Path) -> None:
+    """Fail-quiet contract preserved: when NOTHING human-looking is in the
+    tail, the user surface stays None (the hook then no-ops exactly as it
+    does for a missing user message) — skipping must not invent one."""
+    transcript = tmp_path / "t.jsonl"
+    _write_transcript(
+        transcript,
+        {
+            "type": "user",
+            "message": {"content": "<system-reminder>reminder</system-reminder>"},
+        },
+        {
+            "type": "user",
+            "isMeta": True,
+            "message": {"content": "expanded skill markdown"},
+        },
+    )
+    user, assistant = _extract_last_exchange(transcript)
+    assert user is None
+    assert assistant is None
+
+
 def test_flatten_assistant_content_returns_none_on_no_text() -> None:
     """An assistant turn with only thinking + tool_use returns None
     for the assistant surface — the audit can still proceed on user
@@ -1254,6 +1364,36 @@ def test_latest_in_process_session_none_when_only_stop_hook() -> None:
     assert _latest_in_process_session(events) is None
 
 
+def test_latest_in_process_session_prefers_matching_worktree_stamp() -> None:
+    """Regression (concurrent-session hijack): the event log is shared
+    across ALL processes, so the latest event frequently belongs to a
+    second Claude Code window's server. When the hook knows its own
+    worktree, the anchor must prefer the latest event STAMPED with it,
+    not whichever process wrote last."""
+    events = [
+        {"session": "sess_A", "kind": "search", "worktree_root": "/wt/this"},
+        # Second window's server starting up — wrote last, different worktree.
+        {
+            "session": "sess_B",
+            "kind": "scope_overview",
+            "worktree_root": "/wt/other",
+        },
+    ]
+    assert _latest_in_process_session(events, worktree_root="/wt/this") == "sess_A"
+
+
+def test_latest_in_process_session_falls_back_to_latest_any() -> None:
+    """No stamped match for this worktree (legacy unstamped logs, or the
+    restart gap before this worktree's server writes its first event) →
+    fall back to the latest-any behaviour, preserving reset-on-restart
+    semantics for pre-stamp logs."""
+    events = [
+        {"session": "sess_old", "kind": "search"},  # legacy, no stamp
+        {"session": "sess_new", "kind": "write"},  # legacy, no stamp
+    ]
+    assert _latest_in_process_session(events, worktree_root="/wt/this") == "sess_new"
+
+
 def test_disabled_scopes_reconstructs_net_set() -> None:
     """Replay disable/enable for the current server session: a scope
     disabled then re-enabled drops out; one left disabled stays."""
@@ -1351,6 +1491,89 @@ def test_run_audit_recent_retrieval_under_server_session_suppresses_miss(
         config=_miss_config(mem_dir),  # type: ignore[arg-type]
     )
     assert result["verdict"] == "ok"
+
+
+def test_run_audit_foreign_worktree_event_does_not_unshield(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Concurrent-session hijack, over-flagging direction: THIS worktree's
+    server searched 10s ago, then a second Claude Code window's server
+    (different worktree) wrote any event. The anchor used to flip to the
+    foreign session, making the in-window search invisible to the shield
+    — a spurious `search_miss` for a turn that searched correctly. With
+    the worktree-stamped anchor the verdict must stay "ok"."""
+    from bettermemory.origin import Origin
+
+    mem_dir = tmp_path / "mem"
+    mem_dir.mkdir()
+    Store(mem_dir).write(content=_MISS_BODY, scopes=["infrastructure"])
+
+    wt_this = str(tmp_path / "wt-this")
+    wt_other = str(tmp_path / "wt-other")
+    monkeypatch.setattr(
+        "bettermemory.hook.capture_origin",
+        lambda *a, **k: Origin(worktree_root=wt_this),
+    )
+
+    # This window's server searched (stamped with this worktree)…
+    Recorder(root=mem_dir, session_id="sess_A", worktree_root=wt_this).record("search")
+    # …then the other window's server wrote the LATEST event.
+    Recorder(root=mem_dir, session_id="sess_B", worktree_root=wt_other).record(
+        "scope_overview"
+    )
+
+    result = run_audit(
+        user_message=_MISS_QUERY,
+        assistant_response=None,
+        session_id="claude-concurrent-a",
+        config=_miss_config(mem_dir),  # type: ignore[arg-type]
+    )
+    assert result["verdict"] == "ok", (
+        "the foreign session's later event hijacked the anchor and made "
+        "this worktree's own search invisible to the retrieval shield"
+    )
+
+
+def test_run_audit_foreign_worktree_search_does_not_shield(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Concurrent-session hijack, mirrored (suppression) direction: only
+    the OTHER window's server searched (an unrelated query, different
+    worktree); this worktree's server has session-start activity but no
+    search. The foreign search used to win the anchor and shield this
+    window's genuine miss. With the worktree-stamped anchor the miss
+    must fire."""
+    from bettermemory.origin import Origin
+
+    mem_dir = tmp_path / "mem"
+    mem_dir.mkdir()
+    Store(mem_dir).write(content=_MISS_BODY, scopes=["infrastructure"])
+
+    wt_this = str(tmp_path / "wt-this")
+    wt_other = str(tmp_path / "wt-other")
+    monkeypatch.setattr(
+        "bettermemory.hook.capture_origin",
+        lambda *a, **k: Origin(worktree_root=wt_this),
+    )
+
+    # This window's server is alive (session-start overview) but never
+    # searched this turn…
+    Recorder(root=mem_dir, session_id="sess_A", worktree_root=wt_this).record(
+        "scope_overview"
+    )
+    # …while the other window's server searched for its own topic.
+    Recorder(root=mem_dir, session_id="sess_B", worktree_root=wt_other).record("search")
+
+    result = run_audit(
+        user_message=_MISS_QUERY,
+        assistant_response=None,
+        session_id="claude-concurrent-b",
+        config=_miss_config(mem_dir),  # type: ignore[arg-type]
+    )
+    assert result["verdict"] == "miss", (
+        "the foreign session's search shielded this worktree's genuine "
+        "miss via the hijacked anchor"
+    )
 
 
 def test_run_audit_disabled_scope_suppresses_stop_hook_miss(tmp_path: Path) -> None:

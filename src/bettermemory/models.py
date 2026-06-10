@@ -847,7 +847,13 @@ def _truncate_at_word(text: str, max_chars: int) -> str:
     we accept the hard cut — backing off too far makes the snippet empty.
     """
     truncated = text[:max_chars]
-    space_idx = truncated.rfind(" ")
+    # Whitespace boundary, not just ASCII space: `snippet_for` does NOT
+    # normalize newlines (a markdown list of paths/URLs keeps its line
+    # structure), so a body with one token per line has no space near the
+    # window edge — the newline IS the word boundary there. Backing off
+    # only to `rfind(" ")` hard-cut those bodies mid-path, leaving the
+    # snippet ending in a plausible-but-wrong path.
+    space_idx = max(truncated.rfind(" "), truncated.rfind("\n"), truncated.rfind("\t"))
     if space_idx >= max_chars - 40:
         truncated = truncated[:space_idx]
     return truncated.rstrip(" ,;:.-") + "..."
