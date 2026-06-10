@@ -353,6 +353,22 @@ def test_extract_rejects_negated_contraction_questions() -> None:
         assert extract_proposals(text, now=_NOW) == []
 
 
+def test_extract_mid_sentence_negation_preference_untouched() -> None:
+    # Precision pin for the negated-contraction rejects: they are
+    # ^-anchored QUESTION OPENERS, so a genuine negative preference whose
+    # "don't" sits mid-sentence proposes exactly as it did before the
+    # alternatives were added.
+    props = extract_proposals(
+        "I prefer podman and I don't use Docker anymore.", now=_NOW
+    )
+    assert len(props) == 1
+    assert props[0].suggested_category == "user-inference"
+    # The bare negated declaration never matched the preference branch
+    # (precision-over-recall: _PREFERENCE_RE has no negation alternatives)
+    # — pinned so the reject extension can't be blamed for the miss.
+    assert extract_proposals("I don't use Docker anymore.", now=_NOW) == []
+
+
 def test_extract_dont_forget_still_proposes() -> None:
     # "Don't forget …" carries the explicit marker, which overrides the
     # new don'?t question/command alternative.
