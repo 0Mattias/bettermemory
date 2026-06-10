@@ -1466,7 +1466,7 @@ async def test_audit_turn_lookback_seconds_is_clamped(
 
 
 async def test_audit_turn_semantic_mode_without_extra_records_no_signal(
-    memory_dir: Path,
+    memory_dir: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """Regression: with `search_mode = "semantic"` configured and no
     embeddings model resolvable, memory_audit_turn used to propagate
@@ -1474,8 +1474,19 @@ async def test_audit_turn_semantic_mode_without_extra_records_no_signal(
     error on every call — and no `turn_audited` was ever recorded. The
     handler now resolves the model via the same factory production
     search uses; when it comes back None the probe records an explicit
-    `no_signal` with a reason instead of crashing."""
+    `no_signal` with a reason instead of crashing.
+
+    The no-model premise is FORCED, not assumed from the environment:
+    since the factory started resolving for `search_mode = "semantic"`
+    itself, an extras-installed environment (the embeddings CI lanes)
+    would hand the probe a real model and this test would silently flip
+    to testing the happy path. `get_model -> None` pins the premise
+    everywhere (the factory re-imports it from `bettermemory.semantic`
+    per call, so patching the module attribute is sufficient)."""
+    from bettermemory import semantic as semantic_mod
     from bettermemory.config import BehaviorConfig
+
+    monkeypatch.setattr(semantic_mod, "get_model", lambda *a, **kw: None)
 
     cfg = Config(
         storage=StorageConfig(directory=str(memory_dir)),
