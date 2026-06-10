@@ -12,7 +12,7 @@ from __future__ import annotations
 from datetime import datetime, timedelta, timezone
 
 from bettermemory.models import Confidence, Memory, Source, generate_ulid
-from bettermemory.search import compute_idf, score_memory_bm25
+from bettermemory.search import compute_idf, score_memory_bm25, search
 
 
 def _memory(
@@ -190,6 +190,75 @@ def test_bm25_matched_terms_deduplicated() -> None:
     )
     assert score > 0
     assert matched == ["python"]
+
+
+def test_bm25_repeated_query_token_counts_once() -> None:
+    """Stopword stripping turns reduplicated phrases ('end to end') into a
+    repeated query token; the scoring loop must not re-add the saturated
+    TF contribution per duplicate — that defeats TF saturation from the
+    query side. Score must be identical with and without the duplicate."""
+    now = datetime.now(timezone.utc)
+    m = _memory("The front-end build uses Vite")
+    idf_map, avgdl = compute_idf([m])
+
+    dup, dup_matched = score_memory_bm25(
+        m, ["end", "end", "testing"], idf_map=idf_map, avgdl=avgdl, now=now
+    )
+    dedup, dedup_matched = score_memory_bm25(
+        m, ["end", "testing"], idf_map=idf_map, avgdl=avgdl, now=now
+    )
+    assert dup == dedup
+    assert dup_matched == dedup_matched
+
+
+def test_compute_idf_counts_scope_tokens_into_df() -> None:
+    """Scope tokens enter the per-doc document-frequency set, so a
+    namespace token carried by every project-scoped memory ('projects')
+    gets df≈N and a near-zero IDF — the `2.0 * idf` scope bonus then
+    self-deflates instead of being priced off body rarity (where the
+    token never appears and IDF would default high). avgdl stays
+    body-only."""
+    bodies = [
+        "oat milk lattes from the corner shop",
+        "restic snapshots run nightly",
+        "kuma monitors ping every minute",
+        "diun watches container image tags",
+        "tailscale subnet router on the NAS",
+    ]
+    memories = [_memory(b, scopes=["projects:homelab"]) for b in bodies]
+    idf_map, _ = compute_idf(memories)
+    # Present at all (previously absent: 'projects' is in no body)...
+    assert "projects" in idf_map
+    # ...but ubiquitous => far less discriminating than a one-doc term.
+    assert idf_map["projects"] < idf_map["restic"]
+
+
+def test_bm25_scope_namespace_token_does_not_outrank_body_match() -> None:
+    """Ranking-inversion regression from the audit: for 'side projects',
+    three unrelated project-scoped memories outscored (via the
+    'projects' scope-prefix bonus, priced at body-derived IDF) the one
+    memory matching BOTH query terms in its body — which ranked dead
+    last. With scope tokens in the df map the genuine hit wins."""
+    now = datetime.now(timezone.utc)
+    noise_rows = [
+        ("Prefers oat milk lattes from the corner shop", "projects:homelab"),
+        ("Restic snapshots run nightly at three", "projects:homelab"),
+        ("Uses ruff and mypy in CI", "projects:bettermemory"),
+        ("Kuma monitors ping every minute", "projects:homelab"),
+        ("Diun watches container image tags", "projects:homelab"),
+        ("Tailscale subnet router runs on the NAS", "projects:homelab"),
+    ]
+    noise = [
+        _memory(body, scopes=[scope], created=now - timedelta(days=2))
+        for body, scope in noise_rows
+    ]
+    genuine = _memory(
+        "Tracks side projects in a Notion board with a weekly review",
+        scopes=["personal-context"],
+        created=now - timedelta(days=2),
+    )
+    hits = search(noise + [genuine], "side projects", mode="bm25", now=now)
+    assert hits and hits[0].id == genuine.id
 
 
 def test_bm25_unknown_term_in_query_zero_contribution_but_others_still_score() -> None:

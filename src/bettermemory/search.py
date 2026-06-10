@@ -32,6 +32,7 @@ from __future__ import annotations
 import logging
 import math
 import re
+import unicodedata
 from datetime import datetime, timezone
 from typing import Any, Callable, Literal
 
@@ -50,7 +51,8 @@ SearchMode = Literal["keyword", "bm25", "semantic", "hybrid"]
 
 
 # Strip punctuation, keep word characters (incl. unicode letters) and dashes
-# inside tokens. Lowercase before tokenizing.
+# inside tokens. Lowercase (and diacritic-fold — see `_fold_diacritics`)
+# before tokenizing.
 #
 # `\w` (with `re.UNICODE`, which is the default in Python 3) is the right
 # character class here: it covers ASCII alphanumerics plus the rest of
@@ -60,13 +62,46 @@ SearchMode = Literal["keyword", "bm25", "semantic", "hybrid"]
 # every non-ASCII run after `.lower()` reduced the casing, which made
 # non-English memories effectively unsearchable.
 #
-# `\w` also matches `_`, which we want to keep as token-internal anyway
-# (it's how snake_case identifiers stay one token); the `[\w\-]` body just
-# extends that with the literal hyphen so kebab-case stays whole too.
-_TOKEN_RE = re.compile(r"\w[\w\-]*", re.UNICODE)
+# `\w` also matches `_`, but `tokenize` canonicalizes `_` to `-` before this
+# regex runs so snake_case and kebab-case spell the same token; the `[\w\-]`
+# body keeps the hyphen token-internal so kebab-case stays whole.
+#
+# Two shape constraints beyond the original `\w[\w\-]*`:
+# - the first alternative keeps dotted numeric literals whole ('16.3',
+#   '3.12.1'), so a version pin survives as one token instead of
+#   fragmenting into bare digits that match any enumeration digit;
+# - a token must END on a word character, so suspended hyphenation
+#   ("pre- and post-deploy") yields the matchable 'pre', not the dead
+#   query token 'pre-'.
+_TOKEN_RE = re.compile(r"\d+(?:\.\d+)+|\w(?:[\w\-]*\w)?", re.UNICODE)
 
 # Used by `_expand_kebab` to peel off sub-tokens from a kebab/snake compound.
 _KEBAB_SPLIT_RE = re.compile(r"[-_]+")
+
+# Possessive/contraction suffixes ("what's", "don't", "I'm" — straight or
+# curly apostrophe) are stripped before tokenization. Without this the
+# orphan fragment ('s', 't', 'm', ...) survives stopword stripping, deflates
+# the relevance-coverage denominator, and gets reported in `match_terms`
+# whenever a body happens to contain any possessive. The pattern is anchored
+# to the apostrophe, so legitimate standalone tokens ("re", "d") and
+# non-contraction apostrophes ("o'clock", trailing "users'") are untouched.
+_CONTRACTION_RE = re.compile(r"(?<=\w)['’](?:s|t|d|m|ll|re|ve)\b")
+
+# Fixed alias allowlist for the handful of symbol-bearing tech names that
+# `_TOKEN_RE` would otherwise collapse to a bare letter ('C++' -> 'c',
+# indistinguishable from a list-enumeration 'c.'). Applied symmetrically —
+# `tokenize` serves query and indexed text alike — with word-ish boundaries
+# so arithmetic, markdown headers, and substrings like 'asp.net' don't
+# fire. Deliberately a tiny hard-coded list rather than widening _TOKEN_RE
+# to accept '+'/'#', which would change tokens for every body. 'c++' maps
+# to 'cpp ' (trailing space) so 'C++20' tokenizes as ['cpp', '20'] and a
+# bare 'C++' query still hits it.
+_SYMBOL_ALIASES: tuple[tuple[re.Pattern[str], str], ...] = (
+    (re.compile(r"(?<!\w)c\+\+"), "cpp "),
+    (re.compile(r"(?<!\w)c#(?!\w)"), "csharp"),
+    (re.compile(r"(?<!\w)f#(?!\w)"), "fsharp"),
+    (re.compile(r"(?<!\w)\.net(?!\w)"), "dotnet"),
+)
 
 
 # Short English stopword list. Stripped from the *query* only — bodies stay
@@ -74,12 +109,18 @@ _KEBAB_SPLIT_RE = re.compile(r"[-_]+")
 # accuracy; it's stopping queries like "how to bake sourdough bread" from
 # matching every memory on shared filler tokens ("how", "to"). We keep the
 # list short and conservative — domain words ("get", "set", "run") stay in
-# because they often *are* what the user is searching for.
+# because they often *are* what the user is searching for. 'about' and the
+# indefinite pronouns ('anything', 'something', 'everything') are pure
+# grammatical filler within word classes the list already covers; without
+# them, natural retrieval phrasings ("anything stored about X") deflate the
+# relevance-coverage denominator and label exact-topic hits 'low'.
 _STOPWORDS = frozenset(
     {
         "a",
+        "about",
         "an",
         "and",
+        "anything",
         "are",
         "as",
         "at",
@@ -89,6 +130,7 @@ _STOPWORDS = frozenset(
         "can",
         "do",
         "does",
+        "everything",
         "for",
         "from",
         "had",
@@ -110,6 +152,7 @@ _STOPWORDS = frozenset(
         "on",
         "or",
         "so",
+        "something",
         "than",
         "that",
         "the",
@@ -141,13 +184,47 @@ _STOPWORDS = frozenset(
 )
 
 
+def _fold_diacritics(text: str) -> str:
+    """NFD-decompose and drop combining marks, so 'Zürich' and 'zurich'
+    share one token form.
+
+    This mirrors the accent-insensitive matching of the FTS5 ``unicode61``
+    tokenizer in index.py (whose ``remove_diacritics`` defaults on),
+    closing the prefilter/ranker disagreement where the index returned a
+    candidate that every Python ranker then scored 0. The NFD pass also
+    normalises combining-mark *input*: a body pasted from macOS in
+    decomposed form ('Tjörn' as 'o' + U+0308) previously SPLIT at the mark
+    — ``\\w`` excludes category Mn — yielding ['tjo', 'rn']; now both the
+    precomposed and decomposed spellings fold to 'tjorn'."""
+    return "".join(
+        ch for ch in unicodedata.normalize("NFD", text) if not unicodedata.combining(ch)
+    )
+
+
 def tokenize(text: str) -> list[str]:
-    """Pure regex tokenization. Whitespace and punctuation split; hyphens and
-    underscores stay token-internal (so `python-frontmatter` is one token).
+    """Regex tokenization behind a small symmetric normalisation pipeline.
+
+    Whitespace and punctuation split; hyphens stay token-internal (so
+    `python-frontmatter` is one token). Every normalisation applies to
+    query and indexed text alike (tokenize serves both sides):
+
+    - lowercase, then fold diacritics (see `_fold_diacritics`);
+    - strip possessive/contraction suffixes ("what's" -> "what");
+    - alias symbol-bearing tech names ("C++" -> "cpp", see
+      `_SYMBOL_ALIASES`);
+    - canonicalize '_' to '-' so `docker_compose` and `docker-compose`
+      spell the same token;
+    - keep dotted numerics whole ('16.3') and end tokens on a word
+      character ('pre-' -> 'pre'), per `_TOKEN_RE`.
+
     Pair with `_expand_kebab` on indexed text if you also want to match by
     component.
     """
-    return _TOKEN_RE.findall(text.lower())
+    text = _fold_diacritics(text.lower())
+    text = _CONTRACTION_RE.sub("", text)
+    for pattern, replacement in _SYMBOL_ALIASES:
+        text = pattern.sub(replacement, text)
+    return _TOKEN_RE.findall(text.replace("_", "-"))
 
 
 def _expand_kebab(tokens: list[str]) -> list[str]:
@@ -161,6 +238,11 @@ def _expand_kebab(tokens: list[str]) -> list[str]:
     But a query for `python-frontmatter` is a specific intent — we don't
     want it dragging in every body that happens to mention plain `python`.
     Index side widens; query side stays narrow.
+
+    Dotted numeric tokens get the same index-side treatment: '16.3' also
+    emits '16' and '3', so a query for 'postgres 16' still hits a body
+    that says 'Postgres 16.3' — while the query token '16.3' can no
+    longer be satisfied by a stray enumeration digit.
     """
     out: list[str] = []
     for t in tokens:
@@ -169,7 +251,23 @@ def _expand_kebab(tokens: list[str]) -> list[str]:
             for sub in _KEBAB_SPLIT_RE.split(t):
                 if sub:
                     out.append(sub)
+        elif "." in t:
+            # Only dotted numerics ('16.3') survive _TOKEN_RE with a '.'.
+            for sub in t.split("."):
+                if sub:
+                    out.append(sub)
     return out
+
+
+def _kebab_parts(tok: str) -> list[str]:
+    """Components of a hyphen/underscore-joined token, or [] when the token
+    isn't joined. Used by the conjunctive fallback in the scorers: a joined
+    query token with no direct hit ('claude-code' against a body spelling
+    it 'Claude Code') counts as matched iff ALL its components hit."""
+    if "-" not in tok and "_" not in tok:
+        return []
+    parts = [p for p in _KEBAB_SPLIT_RE.split(tok) if p]
+    return parts if len(parts) >= 2 else []
 
 
 def _strip_stopwords(tokens: list[str]) -> list[str]:
@@ -258,7 +356,17 @@ def compute_idf(memories: list[Memory]) -> tuple[dict[str, float], float]:
     than pushing scores down).
 
     `avgdl`: average kebab-expanded stopword-stripped doc length across
-    the corpus. Length normalisation in BM25 reads from this.
+    the corpus. Length normalisation in BM25 reads from this. Scope
+    tokens do NOT count toward `avgdl` — it is a body-length statistic.
+
+    Document frequency counts each memory's scope tokens alongside its
+    body tokens (each term once per memory), so the `2.0 * idf` scope
+    bonus in `score_memory_bm25` self-deflates for ubiquitous namespace
+    tokens: 'projects' sits on every project-scoped memory, so its df
+    approaches N and its Okapi IDF approaches 0, while a discriminating
+    scope token ('homelab') keeps a high IDF. Body-only IDF priced that
+    bonus off body rarity alone, letting the bare namespace prefix
+    outrank genuine full-coverage body matches.
 
     Tokenisation here matches `_content_token_set` (the dedup path) on
     the body side — kebab expansion symmetric, stopwords stripped. The
@@ -275,8 +383,12 @@ def compute_idf(memories: list[Memory]) -> tuple[dict[str, float], float]:
         toks = _strip_stopwords(_expand_kebab(tokenize(memory.body)))
         total_len += len(toks)
         # Count each term once per doc — that's document-frequency, not
-        # term-frequency. set() collapses repeats.
-        for term in set(toks):
+        # term-frequency. set() collapses repeats; scope tokens join the
+        # per-doc set (see docstring) while avgdl stays body-only.
+        doc_terms = set(toks)
+        for scope in memory.scopes:
+            doc_terms.update(_scope_tokens(scope))
+        for term in doc_terms:
             df[term] = df.get(term, 0) + 1
 
     avgdl = total_len / n if n else 0.0
@@ -332,27 +444,52 @@ def score_memory_bm25(
 
     score = 0.0
     matched: list[str] = []
-    seen: set[str] = set()
     length_norm = 1 - b + b * (dl / avgdl) if avgdl > 0 else 1.0
-    for tok in query_tokens:
+    # De-duplicate query tokens (insertion-ordered) before accumulating:
+    # `matched` always used set semantics, but the raw loop re-added the
+    # full saturated-TF contribution (and the scope bonus) per duplicate,
+    # so a reduplicated phrase query ("end to end") silently doubled the
+    # repeated word's weight. Byte-identical for non-duplicated queries.
+    for tok in dict.fromkeys(query_tokens):
         contrib = 0.0
 
         tf = body_count.get(tok, 0)
+        body_idf = idf_map.get(tok, 0.0)
+        scope_hit = tok in scope_set
+        # Floor IDF at 1.0 for scope-only hits so a brand-new scope
+        # term (absent from every body AND scope in the idf corpus)
+        # still contributes; the 2x factor keeps it aligned with the
+        # keyword scorer. compute_idf counts scope tokens into df, so
+        # known scope terms price off real corpus statistics instead
+        # of this floor.
+        scope_idf = idf_map.get(tok, 1.0)
+        if tf == 0 and not scope_hit:
+            # Conjunctive fallback for a joined query token with no
+            # direct hit — see `_kebab_parts`. ALL components must hit
+            # (preserving the 'python-frontmatter' must-not-match-plain-
+            # 'python' precision guard); tf is the min component count
+            # (the joined phrase can occur at most that often) and IDF
+            # is the min across components — the weakest component
+            # bounds how discriminating the joined phrase can be.
+            parts = _kebab_parts(tok)
+            if parts:
+                component_hits = [body_count.get(p, 0) for p in parts]
+                if min(component_hits) > 0:
+                    tf = min(component_hits)
+                    body_idf = min(idf_map.get(p, 0.0) for p in parts)
+                if all(p in scope_set for p in parts):
+                    scope_hit = True
+                    scope_idf = min(idf_map.get(p, 1.0) for p in parts)
+
         if tf > 0:
-            idf = idf_map.get(tok, 0.0)
             denom = tf + k1 * length_norm
-            contrib += idf * tf * (k1 + 1) / denom if denom > 0 else 0.0
+            contrib += body_idf * tf * (k1 + 1) / denom if denom > 0 else 0.0
 
-        if tok in scope_set:
-            # Floor IDF at 1.0 for scope-only hits so a brand-new scope
-            # term (no body in the corpus yet) still contributes; the
-            # 2x factor keeps it aligned with the keyword scorer.
-            idf = idf_map.get(tok, 1.0)
-            contrib += 2.0 * idf
+        if scope_hit:
+            contrib += 2.0 * scope_idf
 
-        if contrib > 0 and tok not in seen:
+        if contrib > 0:
             matched.append(tok)
-            seen.add(tok)
         score += contrib
 
     if score <= 0:
@@ -390,20 +527,43 @@ def score_memory(
 
     raw = 0.0
     matched: list[str] = []
-    seen: set[str] = set()
-    for tok in query_tokens:
+    # De-duplicate query tokens (insertion-ordered) before accumulating:
+    # coverage and `matched` always used set semantics, but the raw loop
+    # re-added the full contribution per duplicate, so a reduplicated
+    # phrase query ("end to end") silently doubled the repeated word's
+    # weight. Byte-identical for non-duplicated queries.
+    for tok in dict.fromkeys(query_tokens):
         body_hits = body_count.get(tok, 0)
         scope_hit = 1 if tok in scope_set else 0
-        contrib = body_hits + 2 * scope_hit  # scopes weighted 2x.
-        if contrib > 0 and tok not in seen:
+        if body_hits == 0 and scope_hit == 0:
+            # Conjunctive fallback for a joined query token with no
+            # direct hit: 'claude-code' should match a body that spells
+            # it 'Claude Code'. ALL components must hit (preserving the
+            # 'python-frontmatter' must-not-match-plain-'python'
+            # precision guard); the contribution is the min component
+            # count — the joined phrase can occur at most that often.
+            parts = _kebab_parts(tok)
+            if parts:
+                component_hits = [body_count.get(p, 0) for p in parts]
+                if min(component_hits) > 0:
+                    body_hits = min(component_hits)
+                if all(p in scope_set for p in parts):
+                    scope_hit = 1
+        # Per-term body TF saturates at 2 (scopes stay weighted 2x). The
+        # coverage multiplier below spans only 2x, so an unbounded TF sum
+        # would overrun it: a single-term spam body capped at 2 tops out
+        # at 2 * (0.5 + 0.5/n) <= 1.5, strictly below any full-coverage
+        # match (raw >= n, multiplier 1.0) for every query length n >= 2.
+        contrib = min(body_hits, 2) + 2 * scope_hit
+        if contrib > 0:
             matched.append(tok)
-            seen.add(tok)
         raw += contrib
 
     if raw == 0.0:
         return 0.0, []
 
-    # Mild boost for matching multiple distinct query terms — keeps "foo bar"
+    # Mild boost for matching multiple distinct query terms — together with
+    # the per-term TF cap above, this is what actually keeps "foo bar"
     # ranked above "foo foo foo" when the latter is just keyword spam.
     coverage = len(matched) / len(set(query_tokens))
     base = raw * (0.5 + 0.5 * coverage)

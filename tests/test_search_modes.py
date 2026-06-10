@@ -9,7 +9,7 @@ returns deterministic vectors based on token overlap.
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 import pytest
 
@@ -191,6 +191,35 @@ def test_mode_hybrid_consensus_top_beats_single_ranker_top() -> None:
     top_ids = [h.id for h in hits[:3]]
     assert rare.id not in top_ids
     assert distinguished.id in top_ids
+
+
+def test_mode_hybrid_body_match_beats_scope_namespace_noise() -> None:
+    """Hybrid leg of the scope-namespace regression (see
+    test_bm25_scope_namespace_token_does_not_outrank_body_match): before
+    scope tokens entered compute_idf's df map, the default hybrid mode
+    put an unrelated project-scoped memory at rank 1 for 'side projects'
+    because the BM25 ranker overpriced the ubiquitous 'projects' scope
+    bonus. Both fused lexical rankers must agree on the genuine hit."""
+    now = datetime.now(timezone.utc)
+    noise_rows = [
+        ("Prefers oat milk lattes from the corner shop", "projects:homelab"),
+        ("Restic snapshots run nightly at three", "projects:homelab"),
+        ("Uses ruff and mypy in CI", "projects:bettermemory"),
+        ("Kuma monitors ping every minute", "projects:homelab"),
+        ("Diun watches container image tags", "projects:homelab"),
+        ("Tailscale subnet router runs on the NAS", "projects:homelab"),
+    ]
+    noise = [
+        _memory(body, scopes=[scope], created=now - timedelta(days=2))
+        for body, scope in noise_rows
+    ]
+    genuine = _memory(
+        "Tracks side projects in a Notion board with a weekly review",
+        scopes=["personal-context"],
+        created=now - timedelta(days=2),
+    )
+    hits = search(noise + [genuine], "side projects", mode="hybrid", now=now)
+    assert hits and hits[0].id == genuine.id
 
 
 def test_mode_invalid_returns_typed_error() -> None:
