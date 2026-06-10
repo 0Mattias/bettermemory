@@ -34,9 +34,11 @@ too many false positives.
 
 from __future__ import annotations
 
+import os
 import re
 from collections import Counter
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Iterable
 
 from .models import Memory
@@ -47,6 +49,32 @@ from .models import Memory
 # match for the response. The first hits are the most actionable; the
 # tail just inflates the JSON.
 _MAX_MATCHES = 5
+
+# Project names that double as everyday English/dev nouns. Once a
+# `projects:docs` scope exists, every body that says "inline docs" would
+# bounce — far noisier than the 1-2 char names the length guard below
+# already rejects. Same static-guard stance: skip the bare-token pass
+# for these names and rely on the project-root pass, which stays
+# precise for such repos (their filesystem root is still distinctive).
+_NOISY_NAME_STOPLIST = frozenset(
+    {
+        "blog",
+        "build",
+        "config",
+        "configs",
+        "data",
+        "doc",
+        "docs",
+        "note",
+        "notes",
+        "script",
+        "scripts",
+        "site",
+        "src",
+        "test",
+        "tests",
+    }
+)
 
 
 @dataclass(frozen=True)
@@ -122,9 +150,20 @@ def detect_scope_mismatch(
     # Pass 1: project-name token matches.
     #
     # For each `projects:<name>` scope, look for `<name>` as a
-    # whole-word token in the body. We compile a per-scope regex and
-    # cache; the loop is bounded by the number of project scopes,
-    # which is small in practice (low tens).
+    # whole-token match in the body. The boundary semantics mirror the
+    # project-root pass's trailing guard: alphanumerics plus `-`, `_`,
+    # and a segment-continuing `.` extend a token (so `foo` must not
+    # match inside `foo-bar` or `payments-api`'s `api` — those are
+    # *different* projects that merely share characters), while `/`,
+    # whitespace, and closing punctuation (including a sentence-final
+    # `.`) are legitimate boundaries. Hyphens in the scope name match
+    # any of `-`, `_`, `.` in the body: the scope grammar
+    # (`models.py`'s `validate_scope`) only permits hyphens, so a repo
+    # named `data_pipeline` can only ever be tagged
+    # `projects:data-pipeline` and the body's natural spelling would
+    # never match the literal tag. The loop is bounded by the number
+    # of project scopes, which is small in practice (low tens).
+    declared_root_spans = _declared_root_spans(body, declared, project_roots)
     for scope in sorted(project_scopes):
         if scope in declared:
             continue
@@ -132,8 +171,29 @@ def detect_scope_mismatch(
         if not name or len(name) < 3:
             # Two-character project names are too noisy to match safely.
             continue
-        pattern = re.compile(rf"\b{re.escape(name)}\b", re.IGNORECASE)
-        m = pattern.search(body)
+        if name.lower() in _NOISY_NAME_STOPLIST:
+            # Common-noun repo names fire on ordinary prose ("prefers
+            # terse inline docs"); the project-root pass still covers
+            # paths under such a repo's tree.
+            continue
+        token = "[-_.]".join(re.escape(seg) for seg in name.split("-"))
+        pattern = re.compile(
+            rf"(?<![A-Za-z0-9_.-]){token}(?![A-Za-z0-9_-]|\.(?=\S))",
+            re.IGNORECASE,
+        )
+        m: re.Match[str] | None = None
+        for candidate in pattern.finditer(body):
+            if any(
+                lo <= candidate.start() and candidate.end() <= hi
+                for lo, hi in declared_root_spans
+            ):
+                # The token sits inside a cited path that a declared
+                # scope's root covers (nested project trees: the parent
+                # name is a segment of every child path). The declared
+                # tag already explains the reference.
+                continue
+            m = candidate
+            break
         if m is None:
             continue
         evidence = _trim_evidence(body, m.start(), m.end())
@@ -156,40 +216,49 @@ def detect_scope_mismatch(
     # (typical until enough memories have been written under
     # `projects:*` scopes for the inference to converge).
     if len(matches) < _MAX_MATCHES and project_roots:
+        declared_roots = {project_roots[s] for s in declared if project_roots.get(s)}
         for scope, root in sorted(project_roots.items()):
             if scope in declared or scope in suggested:
                 continue
             if not root:
                 continue
+            if root in declared_roots:
+                # The candidate's inferred root is string-identical to a
+                # declared scope's root — monorepo sub-projects sharing
+                # one checkout, or a foreign scope whose memories were
+                # written from the declared project's cwd. The declared
+                # tag already explains any path under that root; the
+                # colliding scope carries zero discriminating signal.
+                continue
             # Substring match — if the body contains the project root as
-            # a literal substring, that's the cue. Cheaper than a path
-            # extractor that has to handle backticks vs. bare paths
-            # (the durability module already does that for path drift;
-            # duplicating it here would be over-engineering for a
-            # quieter signal). False positives are tempered by the
-            # boundary checks on either side: a path embedded in
-            # unrelated prose is unlikely to be preceded by `(`, ` `, or
-            # start-of-string, and a root like `projects:foo`'s
+            # a literal substring (absolute, or tilde-contracted when the
+            # root lives under the home directory — the most common
+            # prose spelling for home paths), that's the cue. Cheaper
+            # than a path extractor that has to handle backticks vs.
+            # bare paths (the durability module already does that for
+            # path drift; duplicating it here would be over-engineering
+            # for a quieter signal). False positives are tempered by the
+            # boundary checks on either side (see
+            # `_find_root_occurrence`): a root like `projects:foo`'s
             # `/.../foo` must not over-match a sibling tree
-            # `/.../foobar/...` whose last segment merely shares the
-            # prefix.
-            idx = body.find(root)
-            if idx < 0:
+            # `/.../foobar/...` or `/.../foo-bar/...` whose last segment
+            # merely shares the prefix.
+            contracted = False
+            hit = _find_root_occurrence(body, root)
+            if hit is None and (alias := _home_alias(root)) is not None:
+                hit = _find_root_occurrence(body, alias)
+                contracted = True
+            if hit is None:
                 continue
-            if idx > 0 and body[idx - 1].isalnum():
-                # Leading characters of a larger identifier — false positive.
-                continue
-            end = idx + len(root)
-            if end < len(body) and (body[end].isalnum() or body[end] in "-_."):
-                # The matched root is the prefix of a longer path
-                # segment (`/.../foo` inside `/.../foobar`,
-                # `/.../foo-bar`, `/.../foo_bar`, `/.../foo.bak`), so
-                # the body is talking about a *different* project that
-                # merely shares the leading characters. A real hit is
-                # followed by a segment boundary (`/`), whitespace,
-                # closing punctuation, or end-of-string. Mirror the
-                # leading guard's exact-segment intent on the trailing
-                # side.
+            idx, end = hit
+            if _declared_root_covers(
+                body, idx, root, declared_roots, contracted=contracted
+            ):
+                # A declared scope's root extends the candidate root at
+                # this very match (nested project trees): the cited path
+                # is most specifically covered by a project the write
+                # already carries, so demanding the parent/ancestor
+                # scope adds nothing.
                 continue
             evidence = _trim_evidence(body, idx, end)
             matches.append(
@@ -240,10 +309,143 @@ def collect_project_roots(memories: Iterable[Memory]) -> dict[str, str]:
                 continue
             by_scope.setdefault(scope, Counter())[cwd] += 1
     out: dict[str, str] = {}
+    home = str(Path.home())
     for scope, counter in by_scope.items():
         # `most_common(1)` returns [(value, count)]; pick the value.
-        out[scope] = counter.most_common(1)[0][0]
+        root = counter.most_common(1)[0][0]
+        if root == home or root == "/":
+            # Degenerate root: a dotfiles-style project worked from
+            # `$HOME` (or a stray session at the filesystem root) would
+            # prefix-match essentially every path the user ever cites,
+            # bouncing unrelated writes store-wide. Dropping it trades a
+            # quiet false negative for that cascade — the same
+            # "quieter signal" bias the root pass already documents.
+            continue
+        out[scope] = root
     return out
+
+
+def _home_alias(path: str) -> str | None:
+    """Tilde-contracted spelling of `path`, or None when it isn't
+    under the home directory.
+
+    Bodies overwhelmingly cite home paths in `~` form, while
+    `origin.cwd` (the substrate for `collect_project_roots`) is always
+    absolute — both spellings have to be searchable.
+    """
+    home = str(Path.home())
+    if path.startswith(home + os.sep):
+        return "~" + path[len(home) :]
+    return None
+
+
+def _boundary_after(body: str, end: int) -> bool:
+    """True when position `end` is a legitimate trailing boundary for a
+    root match ending there.
+
+    A matched root that continues with an alphanumeric, `-`, or `_` is
+    the prefix of a longer path segment (`/.../foo` inside
+    `/.../foobar`, `/.../foo-bar`, `/.../foo_bar`) — the body is
+    talking about a *different* project that merely shares the leading
+    characters. A `.` continues a segment only when followed by a
+    non-whitespace character (`/.../foo.bak`); a `.` followed by
+    whitespace or end-of-string is sentence punctuation, which — like a
+    segment boundary (`/`), whitespace, or closing punctuation — marks
+    a real hit.
+    """
+    if end >= len(body):
+        return True
+    ch = body[end]
+    if ch.isalnum() or ch in "-_":
+        return False
+    if ch == "." and end + 1 < len(body) and not body[end + 1].isspace():
+        return False
+    return True
+
+
+def _find_root_occurrence(body: str, needle: str) -> tuple[int, int] | None:
+    """First occurrence of `needle` in `body` that passes both boundary
+    guards, as a `(start, end)` span; None when every occurrence fails.
+
+    Iterates occurrences rather than giving up after the first so a
+    guard-rejected early occurrence (`/.../foo.bak`) cannot mask a
+    clean later one (`/.../foo/x.py`).
+    """
+    search_from = 0
+    while True:
+        idx = body.find(needle, search_from)
+        if idx < 0:
+            return None
+        end = idx + len(needle)
+        if idx > 0 and body[idx - 1].isalnum():
+            # Leading characters of a larger identifier — false positive.
+            search_from = idx + 1
+            continue
+        if not _boundary_after(body, end):
+            search_from = idx + 1
+            continue
+        return idx, end
+
+
+def _declared_root_spans(
+    body: str, declared: set[str], project_roots: dict[str, str]
+) -> list[tuple[int, int]]:
+    """Spans of every occurrence of a declared scope's root in `body`
+    (absolute and tilde-contracted spellings).
+
+    Used to suppress project-name token hits that sit inside a path the
+    write's own tags already cover — with nested project trees the
+    parent project's name is a segment of every child path, so without
+    this a correctly-tagged child write would always be gated to add
+    the parent scope.
+    """
+    spans: list[tuple[int, int]] = []
+    for scope in declared:
+        root = project_roots.get(scope)
+        if not root:
+            continue
+        needles = [root]
+        alias = _home_alias(root)
+        if alias is not None:
+            needles.append(alias)
+        for needle in needles:
+            start = 0
+            while True:
+                idx = body.find(needle, start)
+                if idx < 0:
+                    break
+                spans.append((idx, idx + len(needle)))
+                start = idx + 1
+    return spans
+
+
+def _declared_root_covers(
+    body: str,
+    idx: int,
+    root: str,
+    declared_roots: set[str],
+    *,
+    contracted: bool,
+) -> bool:
+    """True when a declared scope's root extends the candidate `root`
+    at the same match index `idx` — i.e. the cited path is most
+    specifically covered by a project the write already declares.
+
+    `contracted` says the candidate matched via its tilde-contracted
+    spelling, in which case the declared root is contracted the same
+    way before comparing. The control case stays intact: a path under
+    the parent but *outside* the declared child's root fails the
+    `startswith` check and still flags the parent.
+    """
+    for dr in sorted(declared_roots):
+        if len(dr) <= len(root) or not dr.startswith(root):
+            continue
+        spelled = _home_alias(dr) if contracted else dr
+        if spelled is None:
+            continue
+        if body.startswith(spelled, idx) and _boundary_after(body, idx + len(spelled)):
+            return True
+    return False
 
 
 def _trim_evidence(body: str, start: int, end: int, *, padding: int = 24) -> str:
