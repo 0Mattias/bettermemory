@@ -57,9 +57,12 @@ Residual divergence (two cases, opposite directions):
   worktree, and logs with no stamped match for this worktree (legacy
   events, server outside a git checkout), where the anchor falls back
   to latest-any and both directions are still possible.
-- Active-log bound: the reconstruction reads the *active* event log only
-  (same bound as the retrieval shield). If a `scope_disable` rotates out
-  of `.events.jsonl` while its session is still live, the disable is
+- Rotation bound: the event read is window-aware (`iter_events_window`
+  prepends the newest rotated segment when the active log doesn't cover
+  the attribution window), so a single mid-window rotation no longer
+  hides this turn's `search` / `scope_disable` events. The residual
+  loss needs TWO rotations inside one window — a `scope_disable` that
+  rotates beyond the newest segment while its session is still live is
   lost and the shielded miss RE-FIRES — biases toward *over-flagging*.
 Both are narrow and match the single-active-server deployment.
 
@@ -92,7 +95,7 @@ from .attribution import attribute_uses
 from .audit import probe_for_miss, search_miss_fields, turn_audited_fields
 from .config import Config, load_config
 from .events import Recorder
-from .events import iter_events
+from .events import iter_events_window
 from .models import utcnow
 from .origin import capture as capture_origin
 from .store import MemoryNotFoundError, Store, TombstonedError
@@ -281,7 +284,16 @@ def run_audit(
     root = cfg.resolved_directory()
     store = Store(root)
     memories = store.load_all()
-    recent = list(iter_events(root))
+    # Window-aware read: rotation archives the ENTIRE active log at a
+    # moment independent of turn boundaries, so a turn that straddles a
+    # rotation would lose its own `search` / `scope_disable` events
+    # from a plain active-log read and re-fire as a false miss.
+    # `iter_events_window` prepends the newest rotated segment whenever
+    # the active log doesn't cover the attribution window, so every
+    # consumer of `recent` below (the retrieval shield, the disabled-
+    # scope replay, the pending-retrieval attribution) sees the full
+    # window across a single rotation.
+    recent = list(iter_events_window(root, _ATTRIBUTION_LOOKBACK_SECONDS))
     # Capture once; reused for the probe's auto-scope and stamped on the
     # hook's events so episode_handoff can worktree-match this turn's
     # session (queue #28). The hook runs as a fresh process in the
@@ -309,6 +321,17 @@ def run_audit(
     server_session = _latest_in_process_session(
         recent, worktree_root=caller_origin.worktree_root
     )
+    # Endorsement nudge: mirror the production search handler's opt-in
+    # tally (`handlers/search.py::_explicit_applied_counts`) so the
+    # probe ranks with the same usage signal the model's retrieval
+    # would have seen. Lazy import, gated on the flag — default-config
+    # users pay nothing. `recent` is already in hand, so the tally
+    # costs no extra I/O.
+    applied_by_id: dict[str, int] | None = None
+    if cfg.behavior.endorsement_boost and memories:
+        from .handlers.search import _explicit_applied_counts
+
+        applied_by_id = _explicit_applied_counts(recent, {m.id for m in memories})
     report = probe_for_miss(
         memories,
         user_message,
@@ -316,10 +339,30 @@ def run_audit(
         session_id=session_id,
         retrieval_session_id=server_session,
         now=utcnow(),
-        lookback_seconds=60,
+        # The probe's "did the model already retrieve this turn?" shield
+        # must use the same wall-clock definition of "this turn" as the
+        # attribution pass below — the Stop hook fires at turn END, so a
+        # tool-heavy turn easily outlives a short window. Pre-fix this
+        # hardcoded 60s while attribution used 600s: any turn longer
+        # than a minute aged its own search event out of the shield and
+        # emitted a false `search_miss`. 600s is also the ceiling the
+        # MCP handler clamps `lookback_seconds` to; the wider window's
+        # bias is conservative (over-suppress), matching the project's
+        # stance on miss-signal noise.
+        lookback_seconds=_ATTRIBUTION_LOOKBACK_SECONDS,
         caller_origin=caller_origin,
         excluded_scopes=excluded_scopes,
         mode=cfg.behavior.search_mode or "hybrid",
+        # Never load an embedding model here: the hook runs as a fresh
+        # process on every Stop event, so a semantic-model load (1-10s)
+        # per turn end would violate the must-never-block contract. For
+        # `search_mode = "semantic"` the probe records an explicit
+        # `no_signal` (`no_signal_reason="semantic_model_unavailable"`)
+        # instead of crashing before `turn_audited` lands; `hybrid`
+        # degrades to keyword+BM25 fusion as documented.
+        semantic_model=None,
+        half_life_days=cfg.behavior.recency_boost_half_life_days,
+        applied_by_id=applied_by_id,
     )
     # Emit the audit event so cadence is visible even when there's
     # nothing to flag — matches the MCP handler's discipline. Honour

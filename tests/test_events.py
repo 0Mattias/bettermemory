@@ -5,6 +5,7 @@ from __future__ import annotations
 import gzip
 import json
 import sys
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from unittest.mock import patch
 
@@ -17,6 +18,7 @@ from bettermemory.events import (
     _SECRET_PATTERNS,
     iter_all_events,
     iter_events,
+    iter_events_window,
 )
 
 
@@ -784,6 +786,188 @@ def test_rotation_recovers_orphan_rotating_into_archive(tmp_path: Path) -> None:
     assert ids.count("RECOVER1") == 1
     assert ids.count("RECOVER2") == 1
     assert "NEW0" in ids
+
+
+# ---------------------------------------------------------------------------
+# iter_events_window: window-aware read that survives one mid-window rotation.
+# Rotation archives the ENTIRE active log at a size boundary independent of
+# turn boundaries; a windowed consumer (the silent-miss probe's retrieval
+# shield) reading the active log alone silently loses every event that
+# rotated out mid-window. The window reader prepends the newest rotated
+# segment when the active log doesn't cover the window — and ONLY then.
+# ---------------------------------------------------------------------------
+
+
+def _window_ts(now: datetime, *, seconds_ago: int) -> str:
+    return (now - timedelta(seconds=seconds_ago)).isoformat().replace("+00:00", "Z")
+
+
+def _window_now() -> datetime:
+    return datetime(2026, 6, 1, 12, 0, 0, tzinfo=timezone.utc)
+
+
+def _write_window_active(tmp_path: Path, rows: list[dict[str, object]]) -> None:
+    (tmp_path / EVENT_LOG_FILENAME).write_text(
+        "".join(json.dumps(r) + "\n" for r in rows), encoding="utf-8"
+    )
+
+
+def _write_window_archive(
+    tmp_path: Path, name: str, rows: list[dict[str, object]]
+) -> Path:
+    archive = tmp_path / name
+    archive.write_bytes(
+        gzip.compress("".join(json.dumps(r) + "\n" for r in rows).encode("utf-8"))
+    )
+    return archive
+
+
+def test_iter_events_window_includes_archive_when_active_is_young(
+    tmp_path: Path,
+) -> None:
+    """Mid-window rotation: the active log's oldest event is younger than
+    the window start, so events from just before the rotation live only
+    in the archive — the window reader must surface them, archive first
+    (chronological, matching iter_all_events)."""
+    now = _window_now()
+    _write_window_archive(
+        tmp_path,
+        ".events-20260601T115500Z.jsonl.gz",
+        [{"ts": _window_ts(now, seconds_ago=300), "kind": "search", "id": "ARCH"}],
+    )
+    _write_window_active(
+        tmp_path,
+        [{"ts": _window_ts(now, seconds_ago=5), "kind": "write", "id": "ACT"}],
+    )
+    ids = [e["id"] for e in iter_events_window(tmp_path, 600, now=now)]
+    assert ids == ["ARCH", "ACT"]
+
+
+def test_iter_events_window_skips_archive_when_active_covers_window(
+    tmp_path: Path,
+) -> None:
+    """No double-read: when the active log's oldest event predates the
+    window start, the active log alone covers the window — the archive
+    must NOT be opened (its events would be stale duplicates from the
+    consumer's perspective, and the read would pay gzip cost on every
+    call forever after the first rotation)."""
+    now = _window_now()
+    _write_window_archive(
+        tmp_path,
+        ".events-20260601T110000Z.jsonl.gz",
+        [{"ts": _window_ts(now, seconds_ago=3000), "kind": "search", "id": "ARCH"}],
+    )
+    _write_window_active(
+        tmp_path,
+        [
+            {"ts": _window_ts(now, seconds_ago=700), "kind": "write", "id": "OLD"},
+            {"ts": _window_ts(now, seconds_ago=5), "kind": "write", "id": "NEW"},
+        ],
+    )
+    ids = [e["id"] for e in iter_events_window(tmp_path, 600, now=now)]
+    assert ids == ["OLD", "NEW"]
+
+
+def test_iter_events_window_missing_or_empty_active_includes_archive(
+    tmp_path: Path,
+) -> None:
+    """A just-rotated (missing or empty) active log can't cover any
+    window — the newest archive is the only source for the window's
+    events."""
+    now = _window_now()
+    _write_window_archive(
+        tmp_path,
+        ".events-20260601T115900Z.jsonl.gz",
+        [{"ts": _window_ts(now, seconds_ago=30), "kind": "search", "id": "ARCH"}],
+    )
+    # Missing active log.
+    ids = [e["id"] for e in iter_events_window(tmp_path, 600, now=now)]
+    assert ids == ["ARCH"]
+    # Empty active log (rotation renamed it away; no append yet).
+    (tmp_path / EVENT_LOG_FILENAME).write_text("", encoding="utf-8")
+    ids = [e["id"] for e in iter_events_window(tmp_path, 600, now=now)]
+    assert ids == ["ARCH"]
+
+
+def test_iter_events_window_reads_only_the_newest_archive(tmp_path: Path) -> None:
+    """One segment is the documented bound: only the NEWEST archive is
+    prepended. Older archives are beyond a single rotation's reach and
+    reading them would turn the windowed read back into the full-history
+    `iter_all_events` cost."""
+    import os
+
+    now = _window_now()
+    older = _write_window_archive(
+        tmp_path,
+        ".events-20260601T110000Z.jsonl.gz",
+        [{"ts": _window_ts(now, seconds_ago=3000), "kind": "search", "id": "OLDARCH"}],
+    )
+    newer = _write_window_archive(
+        tmp_path,
+        ".events-20260601T115500Z.jsonl.gz",
+        [{"ts": _window_ts(now, seconds_ago=300), "kind": "search", "id": "NEWARCH"}],
+    )
+    # Pin mtimes so `_archive_sort_key`'s primary key is deterministic
+    # regardless of how fast the two writes landed.
+    os.utime(older, (1_000_000, 1_000_000))
+    os.utime(newer, (2_000_000, 2_000_000))
+    _write_window_active(
+        tmp_path,
+        [{"ts": _window_ts(now, seconds_ago=5), "kind": "write", "id": "ACT"}],
+    )
+    ids = [e["id"] for e in iter_events_window(tmp_path, 600, now=now)]
+    assert ids == ["NEWARCH", "ACT"]
+
+
+def test_iter_events_window_reads_orphan_rotating_segment(tmp_path: Path) -> None:
+    """A rotation that crashed before compression leaves the events' only
+    copy in the `.rotating` holding file — the window reader must treat
+    it as the newest segment. When a matching archive DOES exist the
+    archive is canonical and the holding file is skipped (no
+    double-count), mirroring iter_all_events."""
+    now = _window_now()
+    rotating = tmp_path / ".events-20260601T115500Z.jsonl.rotating"
+    rotating.write_text(
+        json.dumps(
+            {"ts": _window_ts(now, seconds_ago=300), "kind": "search", "id": "ROT"}
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    _write_window_active(
+        tmp_path,
+        [{"ts": _window_ts(now, seconds_ago=5), "kind": "write", "id": "ACT"}],
+    )
+    ids = [e["id"] for e in iter_events_window(tmp_path, 600, now=now)]
+    assert ids == ["ROT", "ACT"]
+
+    # Matching archive lands (recovery completed): the archive is
+    # canonical; the same events must not be yielded twice.
+    _write_window_archive(
+        tmp_path,
+        ".events-20260601T115500Z.jsonl.gz",
+        [{"ts": _window_ts(now, seconds_ago=300), "kind": "search", "id": "ROT"}],
+    )
+    ids = [e["id"] for e in iter_events_window(tmp_path, 600, now=now)]
+    assert ids == ["ROT", "ACT"]
+
+
+def test_iter_events_window_sees_events_across_a_real_rotation(
+    tmp_path: Path,
+) -> None:
+    """End-to-end through the real rotation machinery: record a search,
+    trip a rotation (max_bytes=1 rotates the non-empty active log before
+    the next append), and confirm the windowed read still returns both
+    events exactly once — the active-log-only read loses the first."""
+    Recorder(root=tmp_path, session_id="sess_rot").record("search", id="BEFORE")
+    Recorder(root=tmp_path, session_id="sess_rot", max_bytes=1).record(
+        "write", id="AFTER"
+    )
+    assert list(tmp_path.glob(".events-*.jsonl.gz")), "rotation did not fire"
+    # The plain active-log read demonstrates the gap the window read closes.
+    assert [e["id"] for e in iter_events(tmp_path)] == ["AFTER"]
+    ids = [e["id"] for e in iter_events_window(tmp_path, 600)]
+    assert ids == ["BEFORE", "AFTER"]
 
 
 def test_two_recorders_one_dir_no_corruption(tmp_path: Path) -> None:

@@ -19,7 +19,7 @@ from ..audit import (
     search_miss_fields,
     turn_audited_fields,
 )
-from ..events import iter_events
+from ..events import iter_events_window
 from ..models import utcnow
 from ._shared import Context, _advance_turn
 
@@ -113,14 +113,16 @@ async def memory_audit_turn(
     state = deps.sessions.for_request(ctx)
     _advance_turn(state, deps.recorder)
 
-    # Active-log iter is sufficient for a 60s lookback: rotation
-    # thresholds are far larger than that window in normal use, so a
-    # search event from this session within the window is still in
-    # `.events.jsonl`. If a future deployment cranks the rotation to
-    # something pathological, the right fix is to widen the iter
-    # here, not to silently undercount misses.
+    # Window-aware event read. Rotation triggers on SIZE (`max_bytes`),
+    # not time, at a moment independent of turn boundaries — so "the
+    # rotation threshold is far larger than the window" (the comment
+    # this replaces) conflated bytes with seconds: a turn straddling a
+    # rotation lost its own search event from a plain active-log read
+    # and emitted a false miss. `iter_events_window` prepends the
+    # newest rotated segment when the active log doesn't cover the
+    # clamped lookback window.
     memories = deps.store.load_all()
-    recent = list(iter_events(deps.store.root))
+    recent = list(iter_events_window(deps.store.root, window))
 
     current_origin = _h.capture_origin()
     # Probe uses the same search mode the model would have used —
@@ -129,6 +131,24 @@ async def memory_audit_turn(
     # have shown." Falls through to `"hybrid"` (the package
     # default since 2.6.8) when the config doesn't carry an override.
     probe_mode = deps.config.behavior.search_mode or "hybrid"
+    # Resolve the semantic model exactly as the production search
+    # handler does (`handlers/search.py`): the factory caches per
+    # process, so the in-process audit can afford the same scorer the
+    # model's retrieval would have used. When `semantic` mode has no
+    # model available the probe returns an explicit `no_signal`
+    # (`no_signal_reason="semantic_model_unavailable"`) rather than
+    # erroring the tool call.
+    semantic_model: Any | None = None
+    if probe_mode in ("semantic", "hybrid"):
+        semantic_model = deps._semantic_model_factory(deps.config)
+    # Endorsement nudge: same opt-in tally the search handler feeds the
+    # ranker, computed from the already-loaded event list (no extra
+    # I/O). Stays None when the flag is off — ranker neutral.
+    applied_by_id: dict[str, int] | None = None
+    if deps.config.behavior.endorsement_boost and memories:
+        from .search import _explicit_applied_counts
+
+        applied_by_id = _explicit_applied_counts(recent, {m.id for m in memories})
     report = probe_for_miss(
         memories,
         user_message,
@@ -139,6 +159,9 @@ async def memory_audit_turn(
         caller_origin=current_origin,
         excluded_scopes=set(state.disabled_scopes),
         mode=probe_mode,
+        semantic_model=semantic_model,
+        half_life_days=deps.config.behavior.recency_boost_half_life_days,
+        applied_by_id=applied_by_id,
     )
 
     # `turn_audited` records that the audit ran at all — distinct

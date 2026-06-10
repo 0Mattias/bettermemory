@@ -1447,7 +1447,7 @@ _MISS_BODY = "backup strategy uses triangular restic replication"
 _MISS_QUERY = "backup strategy"
 
 
-def _write_miss_memory(mem_dir: Path) -> None:
+def _write_miss_memory(mem_dir: Path) -> str:
     """Seed the high-relevance memory, backdated past the created-time
     filter in `probe_for_miss` (a memory born inside the lookback window
     cannot be retrieval-miss evidence, so a same-breath write-then-audit
@@ -1456,7 +1456,7 @@ def _write_miss_memory(mem_dir: Path) -> None:
     suppressions in particular must come from scope logic, not from the
     filter emptying the store. Mirrors `_backdate_created` in
     test_audit.py; an hour comfortably predates the clamped maximum
-    lookback (600s)."""
+    lookback (600s). Returns the memory id."""
     store = Store(mem_dir)
     written = store.write(content=_MISS_BODY, scopes=["infrastructure"])
     backdated = datetime.now(timezone.utc) - timedelta(hours=1)
@@ -1466,7 +1466,7 @@ def _write_miss_memory(mem_dir: Path) -> None:
                 path,
                 mem.model_copy(update={"created": backdated, "updated": backdated}),
             )
-            return
+            return written.id
     raise AssertionError(f"memory {written.id!r} not found in store")
 
 
@@ -1705,3 +1705,156 @@ def test_run_audit_stale_disable_shields_during_restart_gap(tmp_path: Path) -> N
         config=_miss_config(mem_dir),  # type: ignore[arg-type]
     )
     assert result["verdict"] == "no_signal"
+
+
+def test_run_audit_shields_search_older_than_sixty_seconds(tmp_path: Path) -> None:
+    """Regression: the hook hardcoded `lookback_seconds=60` at the probe
+    call while using the 600s `_ATTRIBUTION_LOOKBACK_SECONDS` window for
+    everything else — two definitions of "this turn" in one function.
+    The Stop hook fires at turn END, so on any tool-heavy turn longer
+    than a minute the server's `search` event aged out of the shield
+    window and a searched-then-continued turn emitted a false
+    `search_miss`. A server search ~120s old (well past 60s, well
+    inside the attribution window) must still shield."""
+    from bettermemory.models import utcnow
+
+    mem_dir = tmp_path / "mem"
+    mem_dir.mkdir()
+    _write_miss_memory(mem_dir)
+
+    # Backdate the server's search event 120s — the recorder always
+    # stamps "now", so write the line directly in the recorder's shape.
+    ts = (utcnow() - timedelta(seconds=120)).isoformat().replace("+00:00", "Z")
+    (mem_dir / ".events.jsonl").write_text(
+        json.dumps(
+            {"ts": ts, "session": "sess_server", "kind": "search", "returned": []}
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    result = run_audit(
+        user_message=_MISS_QUERY,
+        assistant_response=None,
+        session_id="claude-slow-turn",
+        config=_miss_config(mem_dir),  # type: ignore[arg-type]
+    )
+    assert result["verdict"] == "ok", (
+        "a server search 120s old must shield a tool-heavy turn; 'miss' "
+        "means the probe lookback regressed below the attribution window"
+    )
+
+
+def test_run_audit_shield_survives_event_log_rotation(tmp_path: Path) -> None:
+    """End-to-end pin for the rotation false-miss: rotation archives the
+    ENTIRE active log when it crosses max_bytes, at a moment independent
+    of turn boundaries. Pre-fix the hook read the active log only, so a
+    turn straddling a rotation lost its own `search` event and re-fired
+    as a miss. Force a rotation AFTER the server's search; the
+    window-aware read must still see it and return "ok"."""
+    mem_dir = tmp_path / "mem"
+    mem_dir.mkdir()
+    _write_miss_memory(mem_dir)
+
+    # The server searches this turn...
+    Recorder(root=mem_dir, session_id="sess_server").record("search")
+    # ...then a mid-turn write trips rotation (max_bytes=1: any non-empty
+    # active log rotates before the append), archiving the search event.
+    # The new event is deliberately a non-retrieval `write` so the shield
+    # can only be fed by the ARCHIVED search.
+    Recorder(root=mem_dir, session_id="sess_server", max_bytes=1).record("write")
+    assert list(mem_dir.glob(".events-*.jsonl.gz")), "rotation did not fire"
+
+    result = run_audit(
+        user_message=_MISS_QUERY,
+        assistant_response=None,
+        session_id="claude-rotated",
+        config=_miss_config(mem_dir),  # type: ignore[arg-type]
+    )
+    assert result["verdict"] == "ok", (
+        "the archived search must still shield the turn; 'miss' means the "
+        "hook is reading the active log only again"
+    )
+
+
+def test_run_audit_semantic_mode_records_no_signal_instead_of_aborting(
+    tmp_path: Path,
+) -> None:
+    """Regression: with `search_mode = "semantic"` configured, the probe
+    raised ValueError on every non-trivial turn and the Stop hook's
+    broad except swallowed it BEFORE `recorder.record` — semantic-mode
+    users got zero `turn_audited` events ever. The hook never loads an
+    embedding model (fresh process per Stop event must not block the
+    turn end), so the sanctioned path is an explicit no_signal with a
+    reason — and the audit cadence event still lands."""
+    from bettermemory.config import BehaviorConfig, Config, StorageConfig
+
+    mem_dir = tmp_path / "mem"
+    mem_dir.mkdir()
+    _write_miss_memory(mem_dir)
+
+    cfg = Config(
+        storage=StorageConfig(directory=str(mem_dir)),
+        behavior=BehaviorConfig(search_mode="semantic"),
+    )
+    result = run_audit(
+        user_message=_MISS_QUERY,
+        assistant_response=None,
+        session_id="claude-semantic",
+        config=cfg,
+    )
+    # Pre-fix this raised before any event was recorded.
+    assert result["verdict"] == "no_signal"
+    assert result["no_signal_reason"] == "semantic_model_unavailable"
+    audited = [e for e in iter_events(mem_dir) if e["kind"] == "turn_audited"]
+    assert len(audited) == 1
+    assert audited[0]["verdict"] == "no_signal"
+    assert audited[0]["probe_mode"] == "semantic"
+
+
+def test_run_audit_threads_ranker_config_into_probe(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """The Stop hook must hand the probe the configured ranker knobs —
+    `recency_boost_half_life_days` and (when `endorsement_boost` is on)
+    the explicit-applied tally — and must NEVER thread a semantic model
+    (a per-Stop-event model load would violate the never-block
+    contract). Pre-fix the probe ranked with hardwired defaults for
+    every config."""
+    from bettermemory.audit import probe_for_miss as real_probe
+    from bettermemory.config import BehaviorConfig, Config, StorageConfig
+
+    mem_dir = tmp_path / "mem"
+    mem_dir.mkdir()
+    memory_id = _write_miss_memory(mem_dir)
+    # An explicit (non-auto) applied use — the only kind the endorsement
+    # tally counts.
+    Recorder(root=mem_dir, session_id="sess_server").record(
+        "use", ids=[memory_id], outcome="applied", auto=False
+    )
+
+    captured: dict[str, object] = {}
+
+    def spy(*args: object, **kwargs: object) -> object:
+        captured.update(kwargs)
+        return real_probe(*args, **kwargs)  # type: ignore[arg-type]
+
+    monkeypatch.setattr("bettermemory.hook.probe_for_miss", spy)
+    cfg = Config(
+        storage=StorageConfig(directory=str(mem_dir)),
+        behavior=BehaviorConfig(
+            recency_boost_half_life_days=7.0, endorsement_boost=True
+        ),
+    )
+    run_audit(
+        user_message=_MISS_QUERY,
+        assistant_response=None,
+        session_id="claude-cfg",
+        config=cfg,
+    )
+    assert captured["half_life_days"] == 7.0
+    assert captured["applied_by_id"] == {memory_id: 1}
+    assert captured["semantic_model"] is None
+    # And the probe window is the shared attribution window, not the
+    # old hardcoded 60.
+    assert captured["lookback_seconds"] == 600

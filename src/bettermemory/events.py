@@ -35,11 +35,12 @@ import os
 import re
 import zlib
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Iterator
 
 from ._fsutil import flock_excl, fsync_dir, fsync_file
+from .time_utils import parse_event_ts
 
 log = logging.getLogger("bettermemory.events")
 
@@ -576,7 +577,14 @@ def _archive_sort_key(path: Path) -> tuple[int, int]:
         mtime = path.stat().st_mtime_ns
     except OSError:
         mtime = 0
-    inner = path.name[len(ARCHIVE_PREFIX) : -len(ARCHIVE_SUFFIX)]
+    # Tolerate `.rotating` holding files alongside `.gz` archives: both
+    # share the `{ts}[-{session}[-N]]` stem structure, differing only in
+    # suffix. `iter_events_window` ranks an orphan holding file (a
+    # rotation that crashed before compression) against the archives to
+    # find the newest rotated segment, so the key function must strip
+    # whichever suffix the candidate carries.
+    suffix = ROTATING_SUFFIX if path.name.endswith(ROTATING_SUFFIX) else ARCHIVE_SUFFIX
+    inner = path.name[len(ARCHIVE_PREFIX) : -len(suffix)]
     ts_split = inner.split("-", 1)
     if len(ts_split) == 1:
         # Bare `.events-{ts}.jsonl.gz` — first-write-of-second.
@@ -672,10 +680,118 @@ def iter_all_events(root: Path) -> Iterator[dict[str, Any]]:
     yield from iter_events(root)
 
 
+def _newest_rotated_segment(root: Path) -> Path | None:
+    """Most recent rotated segment, or None when nothing has rotated.
+
+    Candidates are the `.jsonl.gz` archives plus orphan `.rotating`
+    holding files (a rotation that crashed after the active-log rename
+    but before compression — the events' only copy). A `.rotating` file
+    WITH a matching archive is a stale duplicate (the archive is
+    canonical) and is excluded, mirroring `iter_all_events`. Ranking
+    uses `_archive_sort_key` — (mtime, in-second write counter) — the
+    same order `iter_all_events` replays archives in.
+    """
+    try:
+        entries = list(root.iterdir())
+    except OSError:  # pragma: no cover — unreadable root, nothing to read.
+        return None
+    archives = [
+        p
+        for p in entries
+        if p.is_file()
+        and p.name.startswith(ARCHIVE_PREFIX)
+        and p.name.endswith(ARCHIVE_SUFFIX)
+    ]
+    archive_stems = {p.name[: -len(ARCHIVE_SUFFIX)] for p in archives}
+    candidates = archives + [
+        p
+        for p in entries
+        if p.is_file()
+        and p.name.startswith(ARCHIVE_PREFIX)
+        and p.name.endswith(ROTATING_SUFFIX)
+        and p.name[: -len(ROTATING_SUFFIX)] not in archive_stems
+    ]
+    if not candidates:
+        return None
+    return max(candidates, key=_archive_sort_key)
+
+
+def _iter_segment(path: Path) -> Iterator[dict[str, Any]]:
+    """Yield events from one rotated segment (`.jsonl.gz` or `.rotating`).
+
+    Same per-source degradation contract as `iter_all_events`: a
+    truncated / CRC-corrupt / unreadable segment contributes nothing
+    rather than crashing the reader.
+    """
+    if path.name.endswith(ARCHIVE_SUFFIX):
+        try:
+            with gzip.open(path, "rb") as gz:
+                yield from _iter_json_lines(gz)
+        except (OSError, EOFError, zlib.error):
+            log.warning("events: skipping unreadable archive %s", path.name)
+        return
+    try:
+        rf = path.open("rb")
+    except OSError:  # pragma: no cover — segment vanished mid-read.
+        return
+    with rf:
+        yield from _iter_json_lines(rf)
+
+
+def iter_events_window(
+    root: Path,
+    window_seconds: int,
+    *,
+    now: datetime | None = None,
+) -> Iterator[dict[str, Any]]:
+    """Yield recent events: the active log, rotation-proofed for a window.
+
+    Rotation (`_rotate_if_needed`) archives the ENTIRE active log the
+    moment it crosses `max_bytes` — a boundary independent of turn
+    boundaries — so a consumer that reads `iter_events` for a "last N
+    seconds" window silently loses every event that rotated out
+    mid-window (the silent-miss probe's retrieval shield was the
+    motivating victim: a turn straddling a rotation lost its own
+    `search` event and re-fired as a false miss).
+
+    This reader closes that gap without paying `iter_all_events`'s
+    full-history cost: when the active log's oldest event is younger
+    than ``now - window_seconds`` (or the log is empty/missing), the
+    newest rotated segment — latest archive by `_archive_sort_key`, or
+    an orphan `.rotating` holding file with no matching archive — is
+    prepended. When the active log already covers the whole window, no
+    archive is touched, so the common no-recent-rotation path costs
+    exactly one extra timestamp parse over `iter_events`.
+
+    One segment is deliberately the bound: a single rotation event can
+    split a window across at most two files (the freshly-cut archive +
+    the new active log). Two rotations *within one window* would need
+    deeper history — that requires writing `window_seconds`' worth of
+    events past `max_bytes` twice over, a rotation cadence pathological
+    enough that the right fix is the rotation config, not a deeper read.
+    Events are yielded oldest-segment-first, matching `iter_all_events`'
+    chronological contract.
+    """
+    cutoff = (now or datetime.now(timezone.utc)) - timedelta(seconds=window_seconds)
+    active = list(iter_events(root))
+    oldest_ts: datetime | None = None
+    for ev in active:
+        ts = parse_event_ts(ev.get("ts"))
+        if ts is not None:
+            oldest_ts = ts
+            break
+    if oldest_ts is None or oldest_ts > cutoff:
+        segment = _newest_rotated_segment(root)
+        if segment is not None:
+            yield from _iter_segment(segment)
+    yield from active
+
+
 __all__ = [
     "Recorder",
     "iter_events",
     "iter_all_events",
+    "iter_events_window",
     "EVENT_LOG_FILENAME",
     "DEFAULT_MAX_BYTES",
 ]

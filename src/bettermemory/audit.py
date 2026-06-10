@@ -243,6 +243,17 @@ class MissReport:
 
     `threshold_rule` records which decision rule was applied. Versioned
     so a future calibration pass can replay old reports under a new rule.
+
+    `no_signal_reason` (optional, additive) explains *why* a
+    ``no_signal`` verdict carries no signal when the cause isn't
+    obvious from the other fields. Currently the only producer is the
+    semantic-mode-without-a-model branch
+    (``"semantic_model_unavailable"``): probing with a different
+    scorer would violate the probe-matches-the-ranker rule, so the
+    probe declines honestly instead of measuring the wrong thing.
+    ``None`` everywhere else, including the legacy no-signal branches
+    (empty store / empty query / no hits), so existing consumers see
+    an unchanged shape there.
     """
 
     verdict: Verdict
@@ -261,6 +272,7 @@ class MissReport:
     # `no_signal` report tells you the ranker actually ran and saw
     # nothing, distinct from "we never asked it."
     probe_query: str | None = None
+    no_signal_reason: str | None = None
 
     @property
     def is_miss(self) -> bool:
@@ -276,6 +288,7 @@ class MissReport:
             "threshold_rule": self.threshold_rule,
             "top_hits": [h.to_dict() for h in self.top_hits],
             "probe_query": self.probe_query,
+            "no_signal_reason": self.no_signal_reason,
         }
 
 
@@ -370,6 +383,9 @@ def probe_for_miss(
     caller_origin: Origin | None = None,
     excluded_scopes: set[str] | None = None,
     mode: str = "hybrid",
+    semantic_model: Any | None = None,
+    half_life_days: float = 30.0,
+    applied_by_id: dict[str, int] | None = None,
 ) -> MissReport:
     """Decide whether the just-completed turn was a silent retrieval miss.
 
@@ -403,6 +419,20 @@ def probe_for_miss(
     probe deliberately does NOT request `expand_top` or `path_drift` —
     those signals matter for *consuming* a hit, not for deciding
     whether a search should have happened.
+
+    `semantic_model`, `half_life_days`, and `applied_by_id` are
+    forwarded verbatim to `search` so the probe ranks with the same
+    scorer configuration production retrieval uses — the same
+    probe-matches-the-ranker rule the `mode` parameter exists for.
+    Production callers thread `config.behavior.recency_boost_half_life_days`
+    and (when `endorsement_boost` is on) the explicit-applied tally the
+    search handler computes; offline callers can leave the defaults,
+    which match the package-default ranker. `mode="semantic"` with no
+    `semantic_model` returns a `no_signal` report with
+    `no_signal_reason="semantic_model_unavailable"` instead of raising:
+    silently probing with a different scorer would measure the wrong
+    thing, and crashing would cost the audit cadence entirely (the Stop
+    hook cannot afford a per-turn model load, so it always passes None).
 
     `retrieval_session_id` is the session id used ONLY for the "did the
     model already retrieve this turn?" shield (`_count_recent_retrievals`).
@@ -502,6 +532,25 @@ def probe_for_miss(
             f"unknown audit probe mode {mode!r}; "
             "must be one of: keyword, bm25, semantic, hybrid"
         )
+    # Semantic mode with no model is an honest no_signal, not a crash
+    # and not a silent degrade to a different scorer (the module
+    # docstring's probe-matches-the-ranker rule forbids wrong-scorer
+    # probes). Pre-fix this fell through to `run_search`, whose
+    # ValueError aborted the entire audit — the Stop hook swallowed it
+    # before `turn_audited` was recorded, so semantic-mode users got
+    # zero audit telemetry ever.
+    if mode == "semantic" and semantic_model is None:
+        return MissReport(
+            verdict="no_signal",
+            checked_at=now,
+            session_id=session_id,
+            lookback_seconds=lookback_seconds,
+            recent_retrieval_count=0,
+            threshold_rule=THRESHOLD_RULE_V1,
+            top_hits=(),
+            probe_query=user_message,
+            no_signal_reason="semantic_model_unavailable",
+        )
     hits: list[MemoryHit] = run_search(
         memories,
         user_message,
@@ -510,7 +559,10 @@ def probe_for_miss(
         worktree_filter=worktree_filter,
         max_results=_TOP_HITS_RETAINED,
         now=now,
+        half_life_days=half_life_days,
         mode=cast(SearchMode, mode),
+        semantic_model=semantic_model,
+        applied_by_id=applied_by_id,
     )
     if not hits:
         return MissReport(

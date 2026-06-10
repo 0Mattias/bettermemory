@@ -956,6 +956,186 @@ def test_probe_mode_default_is_hybrid() -> None:
     assert sig.parameters["mode"].default == "hybrid"
 
 
+class _ProbeStubSemanticModel:
+    """Deterministic sentence-transformers stand-in for the probe tests.
+
+    Same contract and shape as `_StubSemanticModel` in
+    test_search_modes.py — embeds over a tiny fixed vocabulary so cosine
+    similarity mirrors token overlap. Local copy because the audit tests
+    only need the dispatch smoke, not the ranking-quality cases."""
+
+    def __init__(self, vocab: list[str]) -> None:
+        self._vocab = vocab
+
+    def encode(self, text: str, *, normalize_embeddings: bool = False) -> list[float]:
+        from bettermemory.search import tokenize
+
+        toks = set(tokenize(text))
+        vec = [1.0 if term in toks else 0.0 for term in self._vocab]
+        if normalize_embeddings:
+            norm = sum(x * x for x in vec) ** 0.5
+            if norm > 0:
+                vec = [x / norm for x in vec]
+        return vec
+
+
+def test_probe_semantic_mode_without_model_returns_no_signal_with_reason() -> None:
+    """Regression: `mode="semantic"` with no `semantic_model` used to fall
+    through to `run_search`, whose ValueError aborted the entire audit —
+    the Stop hook swallowed it before `turn_audited` was recorded, so
+    semantic-mode users got zero audit telemetry ever. The probe now
+    declines honestly: an explicit `no_signal` with
+    `no_signal_reason="semantic_model_unavailable"`, never a silent
+    degrade to a different scorer (the module documents against
+    wrong-scorer probes)."""
+    m = _memory("backup strategy uses triangular restic replication")
+    report = probe_for_miss(
+        [m],
+        "backup strategy",
+        recent_events=[],
+        session_id="sess_x",
+        now=_utc(2026, 5, 1),
+        mode="semantic",
+    )
+    assert report.verdict == "no_signal"
+    assert report.no_signal_reason == "semantic_model_unavailable"
+    assert report.top_hits == ()
+    # probe_query is preserved so triage can see what the audit declined
+    # to probe; the reason field disambiguates from the no-hits branch.
+    assert report.probe_query == "backup strategy"
+    # The new field is additive on the wire shape; the legacy no-signal
+    # branches keep it None.
+    assert report.to_dict()["no_signal_reason"] == "semantic_model_unavailable"
+    empty_store = probe_for_miss(
+        [],
+        "backup strategy",
+        recent_events=[],
+        session_id="sess_x",
+        now=_utc(2026, 5, 1),
+    )
+    assert empty_store.no_signal_reason is None
+
+
+def test_probe_semantic_mode_with_model_runs_ranker() -> None:
+    """With a model threaded through, semantic mode probes normally — the
+    same body/query pair the keyword matrix uses scores a high-relevance
+    hit and, with no retrieval in the window, flags a miss. Pre-fix this
+    raised ValueError out of `run_search` regardless of the caller."""
+    m = _memory("backup strategy uses triangular restic replication")
+    model = _ProbeStubSemanticModel(
+        ["backup", "strategy", "uses", "triangular", "restic", "replication"]
+    )
+    report = probe_for_miss(
+        [m],
+        "backup strategy",
+        recent_events=[],
+        session_id="sess_x",
+        now=_utc(2026, 5, 1),
+        mode="semantic",
+        semantic_model=model,
+    )
+    assert report.verdict == "miss"
+    assert report.top_hits[0].id == m.id
+    assert report.no_signal_reason is None
+
+
+def test_probe_half_life_days_matches_run_search_ranking() -> None:
+    """Probe-matches-the-ranker for the recency knob: a non-default
+    `half_life_days` must reorder the probe's hits exactly as it
+    reorders `run_search` — pre-fix the probe hardwired the 30.0
+    default, so any user with a configured
+    `recency_boost_half_life_days` had the probe ranking with a
+    different scorer than production retrieval.
+
+    Fixture: the OLD memory's keyword base score (12: six hits per
+    query token) beats the NEW memory's (11) by ~9.1%, inside the
+    recency boost's 10% ceiling. Under the default 30-day half-life
+    the 1-day-old memory's ~+9.7% boost flips the order; under a
+    0.5-day half-life its boost decays to ~+1.4% and the old memory's
+    base score wins. The flip is the proof the parameter is
+    load-bearing; the parity assertion is the proof the probe and the
+    ranker read the same value."""
+    from bettermemory.search import search as run_search
+
+    now = _utc(2026, 5, 1)
+    old_strong = _memory(
+        " ".join(["backup"] * 6 + ["strategy"] * 6),
+        created=now - timedelta(days=300),
+    )
+    new_close = _memory(
+        " ".join(["backup"] * 6 + ["strategy"] * 5),
+        created=now - timedelta(days=1),
+    )
+    memories = [old_strong, new_close]
+
+    default_report = probe_for_miss(
+        memories,
+        "backup strategy",
+        recent_events=[],
+        session_id="sess_x",
+        now=now,
+        mode="keyword",
+    )
+    assert default_report.top_hits[0].id == new_close.id
+
+    short_report = probe_for_miss(
+        memories,
+        "backup strategy",
+        recent_events=[],
+        session_id="sess_x",
+        now=now,
+        mode="keyword",
+        half_life_days=0.5,
+    )
+    assert short_report.top_hits[0].id == old_strong.id
+
+    # Parity: the probe's ordering under the non-default half-life is
+    # identical to run_search's under the same value.
+    hits = run_search(
+        memories,
+        "backup strategy",
+        max_results=3,
+        now=now,
+        mode="keyword",
+        half_life_days=0.5,
+    )
+    assert [h.id for h in hits] == [h.id for h in short_report.top_hits]
+
+
+def test_probe_forwards_ranker_config_to_run_search(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Wiring pin for the three threaded ranker knobs: `half_life_days`,
+    `applied_by_id`, and `semantic_model` must reach `run_search`
+    verbatim — the probe-matches-the-ranker rule is only as good as
+    the forwarding."""
+    from bettermemory import audit as audit_mod
+    from bettermemory.search import search as real_run_search
+
+    m = _memory("backup strategy uses triangular restic replication")
+    captured: dict[str, Any] = {}
+
+    def spy(*args: Any, **kwargs: Any) -> Any:
+        captured.update(kwargs)
+        return real_run_search(*args, **kwargs)
+
+    monkeypatch.setattr(audit_mod, "run_search", spy)
+    sentinel_counts = {m.id: 2}
+    probe_for_miss(
+        [m],
+        "backup strategy",
+        recent_events=[],
+        session_id="sess_x",
+        now=_utc(2026, 5, 1),
+        mode="keyword",
+        half_life_days=7.0,
+        applied_by_id=sentinel_counts,
+    )
+    assert captured["half_life_days"] == 7.0
+    assert captured["applied_by_id"] is sentinel_counts
+    assert captured["semantic_model"] is None
+
+
 def test_partial_coverage_query_does_not_clear_threshold() -> None:
     """v1 threshold rule requires `relevance == "high"` on the top hit.
     `_relevance_label` reads coverage as `matched_unique / query_unique`:
@@ -1280,6 +1460,96 @@ async def test_audit_turn_lookback_seconds_is_clamped(
     )
     audited = [e for e in _events(memory_dir) if e["kind"] == "turn_audited"]
     assert audited[-1]["lookback_seconds"] == 1
+
+
+async def test_audit_turn_semantic_mode_without_extra_records_no_signal(
+    memory_dir: Path,
+) -> None:
+    """Regression: with `search_mode = "semantic"` configured and no
+    embeddings model resolvable, memory_audit_turn used to propagate
+    `ValueError("mode=semantic requires semantic_model ...")` as a tool
+    error on every call — and no `turn_audited` was ever recorded. The
+    handler now resolves the model via the same factory production
+    search uses; when it comes back None the probe records an explicit
+    `no_signal` with a reason instead of crashing."""
+    from bettermemory.config import BehaviorConfig
+
+    cfg = Config(
+        storage=StorageConfig(directory=str(memory_dir)),
+        behavior=BehaviorConfig(search_mode="semantic"),
+    )
+    state = SessionState()
+    rec = Recorder(root=memory_dir, session_id=state.session_id, enabled=True)
+    server = build_server(
+        config=cfg, store=Store(memory_dir), state=state, recorder=rec
+    )
+    Store(memory_dir).write(
+        content="backup strategy uses triangular restic replication",
+        scopes=["infrastructure"],
+    )
+
+    report = await _call(server, "memory_audit_turn", user_message="backup strategy")
+    assert report["verdict"] == "no_signal"
+    assert report["no_signal_reason"] == "semantic_model_unavailable"
+
+    audited = [e for e in _events(memory_dir) if e["kind"] == "turn_audited"]
+    assert len(audited) == 1
+    assert audited[0]["verdict"] == "no_signal"
+    assert audited[0]["probe_mode"] == "semantic"
+
+
+async def test_audit_turn_threads_ranker_config_into_probe(
+    memory_dir: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The in-process handler must hand the probe the same ranker
+    configuration production search uses: the configured
+    `recency_boost_half_life_days`, the endorsement tally (when
+    `endorsement_boost` is on), and the factory-resolved semantic
+    model for hybrid/semantic probe modes. Pre-fix the probe call
+    passed none of these, so any non-default config probed with a
+    different scorer than the model's retrieval."""
+    from bettermemory import builder as builder_mod
+    from bettermemory.audit import probe_for_miss as real_probe
+    from bettermemory.config import BehaviorConfig
+
+    captured: dict[str, Any] = {}
+
+    def spy(*args: Any, **kwargs: Any) -> Any:
+        captured.update(kwargs)
+        return real_probe(*args, **kwargs)
+
+    monkeypatch.setattr("bettermemory.handlers.audit_turn.probe_for_miss", spy)
+    # The factory is consulted for hybrid (the configured mode below);
+    # a sentinel that satisfies the model contract proves the resolved
+    # object is threaded, not re-resolved or dropped.
+    model_sentinel = _ProbeStubSemanticModel(["backup", "strategy"])
+    monkeypatch.setattr(
+        builder_mod, "_semantic_model_or_none", lambda _cfg: model_sentinel
+    )
+
+    cfg = Config(
+        storage=StorageConfig(directory=str(memory_dir)),
+        behavior=BehaviorConfig(
+            recency_boost_half_life_days=7.0, endorsement_boost=True
+        ),
+    )
+    state = SessionState()
+    rec = Recorder(root=memory_dir, session_id=state.session_id, enabled=True)
+    server = build_server(
+        config=cfg, store=Store(memory_dir), state=state, recorder=rec
+    )
+    written = Store(memory_dir).write(
+        content="backup strategy uses triangular restic replication",
+        scopes=["infrastructure"],
+    )
+    # An explicit (non-auto) applied use — the only kind the
+    # endorsement tally counts.
+    rec.record("use", ids=[written.id], outcome="applied", auto=False)
+
+    await _call(server, "memory_audit_turn", user_message="backup strategy")
+    assert captured["half_life_days"] == 7.0
+    assert captured["applied_by_id"] == {written.id: 1}
+    assert captured["semantic_model"] is model_sentinel
 
 
 # ---------------------------------------------------------------------------
