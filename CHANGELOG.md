@@ -7,6 +7,98 @@ breaking changes, minor for additive features, patch for fixes. The
 [compatibility contract](CONTRIBUTING.md#versioning-and-the-compatibility-contract)
 spells out exactly what's stable.
 
+## 3.10.0 - 2026-06-10
+
+The heuristic-correctness release: the parked 146-finding extractor-hunt
+backlog drained end to end, then the drain itself adversarially
+re-audited and every confirmed finding fixed. ~150 defects closed across
+the durability / credential / groundedness / proposals / scope-match /
+origin / audit / consolidate / search heuristics, each with a regression
+test (~2,100 → 2,540 tests). No breaking changes; additive wire fields
+only.
+
+### Fixed
+
+- **Credential gate**: catastrophic-backtracking (ReDoS) in the new
+  env-prefix clause — a dense snake_case/kebab paste could hang the
+  write path for tens of seconds; the prefix repetition is now bounded
+  (lossless for recall) and pinned by a perf regression test. Plus:
+  connective separators (`is set to` / `was rotated to`), quoted/JSON
+  keys, env-prefixed keywords, connection-URI passwords, `Bearer`
+  tokens, `:=`/`=>` separators, a datetime-shape guard, the 200→1024
+  value cap, and snake_case/kebab identifier false positives.
+- **Durability gate**: ~20 transient-marker fixes — fronted/medial
+  "today", "as of <date>", future-scheduling ("next week", "tonight"),
+  in-progress vocabulary, git-state phrases ("unpushed",
+  "uncommitted changes" with copula anchoring), UUID/hex false
+  positives on the commit-SHA marker, proper-noun guards ("the New
+  York office", kanban "In Progress" columns), habitual "temporarily".
+- **Groundedness gate**: contraction fragments are no longer universal
+  anchors; a zero-anchor floor catches short hallucinated claims (with
+  alias/prefix tolerance — "Neovim" grounds on "nvim"); mid-line
+  speaker labels no longer donate freebie anchors; dotted
+  abbreviations, ISO-date forms, sentence-split edge cases.
+- **Proposals extractor**: smart-apostrophe (U+2018/U+2019)
+  normalization; negated-contraction question rejects; markdown-bullet
+  and past-tense/conditional guards; deictic "remember this" requests
+  no longer mint contentless proposals; explicit capture requests
+  dropped by the transient gate now emit an observable WARNING.
+- **Search & ranking**: per-term body TF saturation (keyword spam can
+  no longer outrank full-coverage matches; single-term queries keep
+  discrimination), body-vs-scope idf split, FTS5 MATCH expressions now
+  built from the ranker's own tokenization (symbol aliases like
+  `C++`/`C#`/`.NET` and joined tokens no longer miss index
+  candidates), dotted-version and NFC/NFD normalization, possessive
+  fragments, suspended hyphenation, diacritic folding, and an
+  index-level saturation signal so auto-scope filtering on large
+  stores can't silently starve to zero hits.
+- **Audit / Stop hook**: the retrieval shield, attribution window, and
+  endorsement tally now share one 600s substrate across all three
+  producers; a separate 60s creation shield (a memory written this
+  turn isn't a miss, but ten-minute-old memories are visible again);
+  event-log rotation no longer hides the turn's own search; the shield
+  counts same-worktree retrievals regardless of session; semantic-mode
+  configs record an explicit `no_signal` instead of silently crashing
+  the probe; probes rank with the configured half-life/endorsement
+  knobs (probe-matches-the-ranker).
+- **Consolidate / health**: one shared dead-weight predicate
+  (freshest-touch window, 2-day endorsement grace,
+  unresolved-contradiction parking) behind `memory_health`,
+  `memory_scope_overview`, and the demotion pass; the
+  from-transcript provenance stamp is stripped before dedup
+  similarity in both paths (two distinct facts from one transcript
+  can no longer dedup-tombstone each other); scope-merge and demotion
+  retags preserve verification attestations; scope-typo detection
+  unified with health's length-scaled rule; `--from-transcript` no
+  longer mines harness-injected synthetic rows.
+- **Origin matching**: remote-name-agnostic capture; Azure DevOps /
+  Bitbucket `/scm/` / SSH-over-443 / scp-form / `git+ssh` /
+  `insteadOf` / push-mirror normalization (with a bridge for origins
+  captured under the old idiom); vendor route-prefix stripping gated
+  to known hosts so GitLab subgroups can't merge distinct repos;
+  worktree_root captured for remoteless repos; `ingest` stamps origin
+  from session evidence with a collision-safe cwd cross-check.
+
+### Added
+
+- `turn_audited` events and `MissReport` carry `no_signal_reason`;
+  `memory_health` carries `no_signal_total` and `bettermemory eval`
+  carries `turns_no_signal` — `no_signal` audits are excluded from the
+  silent-miss-rate denominator so a probe stuck at "declined" can't
+  read as a healthy 0% miss rate.
+- `memory_curate` / `consolidate` reports carry `polarity_skipped` —
+  near-duplicate pairs the negation guard refused to auto-tombstone,
+  surfaced suggest-only as possible contradictions.
+
+### Docs
+
+- `docs/api.md`, README, tool descriptions, and `config.toml` prose
+  updated to the real semantic-mode contract (an installed embeddings
+  extra alone does not enable semantic participation — the config-level
+  opt-in does) and the shared dead-weight rule.
+- `docs/audit/extractor-hunt-2026-06-09.md` rewritten to drained
+  status; the JSON remains the archival artifact.
+
 ## 3.9.0 - 2026-06-09
 
 A feature release centered on killing path-drift false signals — the
