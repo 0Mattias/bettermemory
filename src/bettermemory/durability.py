@@ -30,6 +30,7 @@ expand the list. Tune against real traffic, not vibes.
 from __future__ import annotations
 
 import re
+import unicodedata
 from dataclasses import dataclass
 from itertools import chain
 
@@ -289,7 +290,14 @@ def _at_sentence_start(text: str, pos: int) -> bool:
     i = pos - 1
     while i >= 0 and text[i] in " \t":
         i -= 1
-    return i < 0 or text[i] in _SENTENCE_BOUNDARY_CHARS
+    if i < 0 or text[i] in _SENTENCE_BOUNDARY_CHARS:
+        return True
+    # Em/en dashes (Pd: — – ―) and emoji/symbol bullets (So: 🚀 ✅ ▪ ◦)
+    # open a sentence the same way the ASCII hyphen/asterisk bullets in
+    # the frozenset do. Sm (math symbols, e.g. →) is deliberately
+    # excluded — narrow scope: an arrow points INTO a continuation of
+    # the same clause, not at a fresh sentence.
+    return unicodedata.category(text[i]) in ("Pd", "So")
 
 
 def _is_titlecase_name(text: str, match: re.Match[str]) -> bool:

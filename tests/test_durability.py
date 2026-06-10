@@ -398,6 +398,36 @@ def test_time_word_adverb_still_fires(body: str, marker: str) -> None:
 
 
 @pytest.mark.parametrize(
+    ("body", "marker"),
+    [
+        ("Deploy plan — Tomorrow we cut over DNS.", "tomorrow"),  # em-dash.
+        ("Notes – Yesterday the build broke on CI.", "yesterday"),  # en-dash.
+        ("🚀 Tomorrow we ship the migration.", "tomorrow"),  # emoji bullet.
+    ],
+)
+def test_time_word_after_dash_or_emoji_bullet_fires(body: str, marker: str) -> None:
+    """Em/en dashes and emoji bullets open a sentence like the ASCII
+    bullets do — a capitalized time word after them is the adverb, not
+    a mid-sentence proper noun."""
+    hits = find_transient_markers(body)
+    assert any(h.marker == marker for h in hits)
+
+
+@pytest.mark.parametrize(
+    "body",
+    [
+        "Theme list — Tomorrow Night Bright is installed.",
+        "🎨 Tomorrow Night Bright is the theme.",
+    ],
+)
+def test_title_case_name_after_dash_or_emoji_still_skips(body: str) -> None:
+    """The title-case follower check still protects real names at the
+    widened sentence openers."""
+    hits = find_transient_markers(body)
+    assert all(h.marker != "tomorrow" for h in hits)
+
+
+@pytest.mark.parametrize(
     "body",
     [
         "The new schema replaces the old layout.",

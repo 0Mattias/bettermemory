@@ -291,6 +291,16 @@ def test_dotted_degree_abbreviation_grounds() -> None:
     assert check_groundedness(body, transcript) == []
 
 
+def test_dotted_abbreviation_grounds_against_lowercase_spelling() -> None:
+    """The dotted-abbreviation fold re-hyphenates through the camel
+    split ('Ph.D.' -> 'PhD' -> 'ph-d'), whose parts ph/d never match a
+    casual all-lowercase 'phd' — the dehyphenated join anchors it, so
+    the verdict doesn't flip on the transcript's casing convention."""
+    transcript = "User: i got my phd at kth. Assistant: noted."
+    body = "Holds a Ph.D."
+    assert check_groundedness(body, transcript) == []
+
+
 def test_period_inside_quote_still_splits() -> None:
     """Terminal punctuation wrapped in a closing quote is still a
     sentence boundary — a hallucinated follower can't merge into a

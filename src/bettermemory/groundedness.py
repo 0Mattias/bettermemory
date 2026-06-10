@@ -283,12 +283,18 @@ def _sentence_content_tokens(sentence: str) -> set[str]:
 def _is_anchored(token: str, transcript_tokens: set[str]) -> bool:
     """A sentence token is anchored when it appears in the transcript's
     expanded token set directly, or — for kebab/snake compounds — when
-    any of its parts does."""
+    any of its parts does, or when the dehyphenated join does. The join
+    covers dotted-abbreviation folds whose camel split re-hyphenated
+    them ("Ph.D." -> "PhD" -> "ph-d"): the parts ph/d never match a
+    casual all-lowercase "phd" in the transcript, but the join does, so
+    the verdict can't flip on the transcript's casing convention."""
     if token in transcript_tokens:
         return True
     if "-" in token or "_" in token:
-        return any(
-            sub in transcript_tokens for sub in _KEBAB_SPLIT_RE.split(token) if sub
+        parts = [sub for sub in _KEBAB_SPLIT_RE.split(token) if sub]
+        return (
+            any(sub in transcript_tokens for sub in parts)
+            or "".join(parts) in transcript_tokens
         )
     return False
 

@@ -163,8 +163,9 @@ Avoid the catch-all "general" scope. Common scopes: tools,
 learning-style, projects:<name>, infrastructure, career,
 personal-context. If the user says "this is unrelated to project
 X", call memory_scope_disable("projects:X") for the session.
-memory_health.rare_scopes flags typo singletons; fix with
-memory_rename_scope(old, new).
+memory_health.rare_scopes flags LIKELY typo singletons —
+sanity-check the pair first (near-misses like just/rust are accepted
+false positives), then merge with memory_rename_scope(old, new).
 
 ## Episodes: the sibling tier for run-state
 
