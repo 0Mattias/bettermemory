@@ -92,11 +92,97 @@ def test_capture_in_repo_with_origin_remote(tmp_path: Path) -> None:
 def test_capture_in_repo_without_remote(tmp_path: Path) -> None:
     _init_repo(tmp_path)
     origin = capture(cwd=tmp_path)
-    # `git config --get remote.origin.url` exits non-zero with no remote.
+    # `git remote get-url origin` exits non-zero with no remote, and the
+    # `git remote` enumeration fallback lists nothing — there's no repo
+    # identity to record.
     assert origin.repo is None
-    # We don't bother fetching branch when there's no repo origin — the
-    # auto-scope filter doesn't need it without a repo URL to compare.
-    assert origin.branch is None
+    # But it IS a git checkout: the worktree discriminator (and branch)
+    # must survive so the worktree filter still applies to local-only
+    # repos instead of the whole origin collapsing to null.
+    assert origin.worktree_root == str(tmp_path.resolve())
+    assert origin.branch == "main"
+
+
+@pytest.mark.skipif(not _GIT_AVAILABLE, reason="git not on PATH")
+def test_capture_in_repo_with_upstream_only_remote(tmp_path: Path) -> None:
+    """A checkout whose only remote is 'upstream' (triangular fork
+    workflows, `git clone -o`, clone.defaultRemoteName) must still capture
+    the repo identity. Before the `git remote` enumeration fallback,
+    repo AND worktree_root came back null, so its writes went global and
+    a caller searching from it matched every project's memories — the
+    false-positive direction the module docstring names the most
+    embarrassing failure mode."""
+    _init_repo(tmp_path)
+    subprocess.run(
+        ["git", "remote", "add", "upstream", "git@github.com:example/repo.git"],
+        cwd=tmp_path,
+        check=True,
+        capture_output=True,
+    )
+    origin = capture(cwd=tmp_path)
+    assert origin.repo == "git@github.com:example/repo.git"
+    assert origin.worktree_root == str(tmp_path.resolve())
+    assert origin.branch == "main"
+
+
+@pytest.mark.skipif(not _GIT_AVAILABLE, reason="git not on PATH")
+def test_capture_in_repo_with_custom_named_remote(tmp_path: Path) -> None:
+    """Same as the upstream-only case for an arbitrary remote name."""
+    _init_repo(tmp_path)
+    subprocess.run(
+        ["git", "remote", "add", "github", "https://github.com/example/repo.git"],
+        cwd=tmp_path,
+        check=True,
+        capture_output=True,
+    )
+    origin = capture(cwd=tmp_path)
+    assert origin.repo == "https://github.com/example/repo.git"
+    assert origin.worktree_root == str(tmp_path.resolve())
+
+
+@pytest.mark.skipif(not _GIT_AVAILABLE, reason="git not on PATH")
+def test_capture_push_mirror_keeps_canonical_fetch_url(tmp_path: Path) -> None:
+    """`git remote set-url --add origin <mirror>` (the canonical
+    two-remote mirroring recipe) makes remote.origin.url multi-valued;
+    `git config --get` returns the LAST value (the mirror) while fetch
+    uses the FIRST. capture() must record the canonical fetch URL, or the
+    day a mirror is added every previously written memory for the repo
+    goes invisible."""
+    _init_repo(tmp_path, remote="git@github.com:owner/repo.git")
+    subprocess.run(
+        [
+            "git",
+            "remote",
+            "set-url",
+            "--add",
+            "origin",
+            "git@gitlab.com:owner/repo-mirror.git",
+        ],
+        cwd=tmp_path,
+        check=True,
+        capture_output=True,
+    )
+    origin = capture(cwd=tmp_path)
+    assert origin.repo == "git@github.com:owner/repo.git"
+
+
+@pytest.mark.skipif(not _GIT_AVAILABLE, reason="git not on PATH")
+def test_capture_expands_insteadof_alias(tmp_path: Path) -> None:
+    """url.<base>.insteadOf shorthands must be captured EXPANDED — the URL
+    git actually fetches from — not as the raw alias, which _parse_remote
+    can't parse and which never matches the canonical spelling from
+    another clone."""
+    _init_repo(tmp_path, remote="gh:example/repo")
+    subprocess.run(
+        ["git", "config", "url.git@github.com:.insteadOf", "gh:"],
+        cwd=tmp_path,
+        check=True,
+        capture_output=True,
+    )
+    origin = capture(cwd=tmp_path)
+    assert origin.repo == "git@github.com:example/repo"
+    assert repos_match(origin.repo, "git@github.com:example/repo.git")
+    assert repos_match(origin.repo, "https://github.com/example/repo")
 
 
 # ---------------------------------------------------------------------------
@@ -169,12 +255,179 @@ def test_repos_match_both_null() -> None:
 def test_repos_match_unparseable_falls_back_to_string_equality() -> None:
     """Opaque URLs that aren't SSH or HTTPS forms compare by raw string —
     we'd rather fail closed (different) than collide two unrelated repos."""
-    # "fileserver:project.git" looks SSH-like to the regex (it'll match)
-    # so use truly opaque garbage that the SSH regex rejects.
+    # Scp-ish colon-path shapes ("fileserver:project.git") DO parse since
+    # the userless/single-segment relaxation, so use truly opaque garbage
+    # with no colon at all — the SSH regex rejects it and there's no
+    # scheme, so _parse_remote returns None on both sides.
     weird_a = "weird-protocol-a"
     weird_b = "weird-protocol-b"
     assert not repos_match(weird_a, weird_b)
     assert repos_match(weird_a, weird_a)
+
+
+# ---------------------------------------------------------------------------
+# repos_match() — remote-shape normalization (2026-06-09 extractor hunt)
+# ---------------------------------------------------------------------------
+
+
+def test_repos_match_azure_devops_ssh_vs_https() -> None:
+    """Azure DevOps clone URLs are protocol-asymmetric (SSH carries a
+    'v3/' prefix, HTTPS a '_git' segment); both official forms must
+    canonicalize to one ('dev.azure.com', org, 'project/repo') triple."""
+    assert repos_match(
+        "git@ssh.dev.azure.com:v3/contoso/WebApp/WebApp",
+        "https://contoso@dev.azure.com/contoso/WebApp/_git/WebApp",
+    )
+
+
+def test_repos_match_azure_devops_legacy_vs_modern() -> None:
+    """Old {org}.visualstudio.com clone URLs linger in long-lived
+    checkouts; they're the same repositories as the dev.azure.com forms."""
+    assert repos_match(
+        "https://contoso.visualstudio.com/WebApp/_git/WebApp",
+        "https://dev.azure.com/contoso/WebApp/_git/WebApp",
+    )
+    # DefaultCollection-era URLs and the legacy SSH host too.
+    assert repos_match(
+        "https://contoso.visualstudio.com/DefaultCollection/WebApp/_git/WebApp",
+        "git@vs-ssh.visualstudio.com:v3/contoso/WebApp/WebApp",
+    )
+
+
+def test_repos_match_azure_devops_different_projects_dont_match() -> None:
+    """Same org, different project — the canonicalization must not widen
+    matching beyond the single repository."""
+    assert not repos_match(
+        "git@ssh.dev.azure.com:v3/contoso/ProjA/repo",
+        "https://dev.azure.com/contoso/ProjB/_git/repo",
+    )
+
+
+def test_repos_match_bitbucket_server_scm_prefix() -> None:
+    """Bitbucket Server/DC: '/scm/' in the HTTPS clone URL is a fixed
+    routing prefix, not an owner — the SSH form omits it."""
+    assert repos_match(
+        "ssh://git@bitbucket.example.com:7999/proj/repo.git",
+        "https://bitbucket.example.com/scm/proj/repo.git",
+    )
+
+
+def test_repos_match_bitbucket_scm_different_projects_dont_match() -> None:
+    assert not repos_match(
+        "https://bitbucket.example.com/scm/proj-a/repo.git",
+        "https://bitbucket.example.com/scm/proj-b/repo.git",
+    )
+
+
+def test_repos_match_single_char_owner_not_treated_as_route_prefix() -> None:
+    """github.com/a/repo has a REAL single-char owner 'a' — the
+    route-prefix strip only fires when the remainder still contains '/'."""
+    assert repos_match(
+        "https://github.com/a/repo.git",
+        "git@github.com:a/repo.git",
+    )
+    assert not repos_match(
+        "https://github.com/a/repo.git",
+        "https://github.com/b/repo.git",
+    )
+
+
+def test_repos_match_gerrit_authenticated_vs_anonymous_https() -> None:
+    """Gerrit prepends '/a/' to authenticated HTTP clone URLs; the
+    anonymous URL of the SAME project omits it. Two HTTPS clones differing
+    only by whether credentials were configured must match."""
+    assert repos_match(
+        "https://gerrit.corp.com/a/tools/build",
+        "https://gerrit.corp.com/tools/build",
+    )
+
+
+def test_repos_match_ssh_over_443_alias_hosts() -> None:
+    """ssh.github.com / altssh.gitlab.com are first-party fallback
+    hostnames for the same service (documented port-22-blocked-network
+    workarounds), normalized via the fixed alias table."""
+    assert repos_match(
+        "ssh://git@ssh.github.com:443/example/repo.git",
+        "git@github.com:example/repo.git",
+    )
+    assert repos_match(
+        "ssh://git@altssh.gitlab.com:443/example/repo.git",
+        "git@gitlab.com:example/repo.git",
+    )
+
+
+def test_repos_match_git_plus_ssh_schemes() -> None:
+    """git+ssh:// and ssh+git:// are genuine git SSH-transport aliases —
+    they must match every other spelling of the same repo."""
+    from bettermemory.origin import _parse_remote
+
+    for alias in (
+        "git+ssh://git@github.com/example/repo.git",
+        "ssh+git://git@github.com/example/repo.git",
+    ):
+        assert _parse_remote(alias) == ("github.com", "example", "repo")
+        assert repos_match(alias, "git@github.com:example/repo.git")
+        assert repos_match(alias, "https://github.com/example/repo")
+        assert repos_match(alias, "ssh://git@github.com/example/repo.git")
+
+
+def test_repos_match_single_segment_paths_normalize() -> None:
+    """gitolite / Gerrit-SSH / cgit-root remotes have no owner segment;
+    .git-suffix and transport normalization still apply. The empty-owner
+    sentinel keeps this collision-free — single-segment only ever matches
+    single-segment on the same host."""
+    assert repos_match(
+        "git@git.example.com:dotfiles.git",
+        "git@git.example.com:dotfiles",
+    )
+    assert repos_match(
+        "https://git.zx2c4.com/wireguard-tools",
+        "https://git.zx2c4.com/wireguard-tools.git",
+    )
+    assert repos_match(
+        "ssh://mattias@gerrit.example.com:29418/infra-tools",
+        "https://gerrit.example.com/infra-tools",
+    )
+    # Different single-segment repos on the same host stay distinct.
+    assert not repos_match(
+        "git@git.example.com:dotfiles",
+        "git@git.example.com:scripts",
+    )
+
+
+def test_repos_match_userless_scp_forms() -> None:
+    """git documents the scp-like user part as optional ('[user@]host:path')
+    — the standard ssh-config Host-alias multi-account setup emits exactly
+    this form."""
+    assert repos_match(
+        "gitbox:team/project.git",
+        "gitbox:team/project",
+    )
+    assert repos_match(
+        "gitbox:team/project.git",
+        "git@gitbox:team/project.git",
+    )
+    assert repos_match(
+        "server.example.com:repos/project.git",
+        "ssh://deploy@server.example.com/repos/project.git",
+    )
+    assert not repos_match(
+        "gitbox:team/project.git",
+        "gitbox:other/project.git",
+    )
+
+
+def test_repos_match_local_paths_stay_unparseable() -> None:
+    """Windows drive paths (single-char 'host') and slash-before-colon
+    local paths must NOT parse as scp remotes — they keep the raw-equality
+    fallback so the userless relaxation can't swallow non-remote strings."""
+    from bettermemory.origin import _parse_remote
+
+    assert _parse_remote("C:/Users/foo/repo") is None
+    assert _parse_remote("./local/path:odd") is None
+    # Raw equality: the .git variant of a drive path is NOT normalized.
+    assert not repos_match("C:/Users/foo/repo", "C:/Users/foo/repo.git")
+    assert repos_match("C:/Users/foo/repo", "C:/Users/foo/repo")
 
 
 # ---------------------------------------------------------------------------
