@@ -16,8 +16,15 @@ typically has none.
 Calibration:
 
 - Sentences with fewer than `MIN_CONTENT_TOKENS` content tokens are
-  skipped (too short to evaluate; "OK." has no semantic anchor to
-  check).
+  exempt from the ratio test (too short for a fraction to mean much;
+  "OK." has no semantic anchor to check). But a sub-minimum sentence
+  with at least two content tokens and ZERO anchors is still flagged:
+  "Lives in Berlin." is a fully verifiable claim, and sharing nothing
+  with the transcript is the unambiguous hallucination signal. A
+  single anchor is enough to pass — the conservative stance for
+  legitimately tiny claims stays. One-token fragments and trailing-
+  colon fragments (section headers like "Action items:") stay
+  skipped entirely.
 - A sentence is grounded when at least `GROUNDEDNESS_THRESHOLD` of its
   stopword-stripped content tokens are anchored in the transcript. The
   ratio is computed over the sentence's *original* tokens — each
@@ -32,10 +39,18 @@ Calibration:
   sentence, so Jaccard would underestimate grounding for legitimate
   body text. We're measuring "is the sentence anchored?", not
   "do these texts cover the same ground?".
-- Line-leading speaker labels ("User:", "Assistant:") are stripped
-  from the transcript before tokenizing — they're formatting metadata,
-  not conversation vocabulary, and left in place they donate freebie
-  anchors to short fabricated claims about the user.
+- Speaker labels ("User:", "Assistant:") are stripped from the
+  transcript before tokenizing — line-leading or mid-line, since
+  transcripts joined with spaces instead of newlines carry the same
+  labels. They're formatting metadata, not conversation vocabulary,
+  and left in place they donate freebie anchors to short fabricated
+  claims about the user.
+- Joined auxiliary/pronoun contractions ("doesnt", "dont", "thats" —
+  the post-apostrophe-collapse spellings) are treated as stopwords on
+  both sides. Each expands to pure stopwords (does + not, that + is),
+  and as tokens they're near-universal in conversational transcripts,
+  so they'd otherwise act as freebie anchors for any negated or
+  possessive fabricated claim.
 
 This is a heuristic, not a proof. False negatives (grounded sentences
 flagged as ungrounded) happen with creative paraphrasing; false
@@ -54,11 +69,20 @@ from dataclasses import dataclass
 from .search import _KEBAB_SPLIT_RE, _expand_kebab, _strip_stopwords, tokenize
 
 
-# Minimum number of content tokens a sentence needs before we evaluate
-# its groundedness. Sentences shorter than this are skipped — there's
-# nothing useful to check, and a short "OK." or "yes." should never be
-# flagged as ungrounded.
+# Minimum number of content tokens a sentence needs before we apply
+# the ratio test. Below this a fraction is too coarse to be meaningful
+# (1/2 vs 2/2 is the only resolution), so sub-minimum sentences only
+# fire on the zero-anchor rule below — a short "OK." or "yes." should
+# never be flagged as ungrounded.
 MIN_CONTENT_TOKENS = 3
+
+# Sub-minimum sentences with at least this many content tokens are
+# still checked for the zero-anchor case: "Lives in Berlin." (two
+# content tokens) is a fully verifiable claim, and ZERO overlap with
+# the transcript is the unambiguous hallucination signal. One anchor
+# passes — legitimately tiny grounded claims stay unflagged. One-token
+# fragments stay exempt: "OK." / "Done." carry no checkable claim.
+_ZERO_ANCHOR_MIN_TOKENS = 2
 
 # Sentence-level overlap ratio required for "grounded". Below this, we
 # flag the sentence as ungrounded. 0.30 is calibrated so that a sentence
@@ -94,10 +118,15 @@ _SENTENCE_SPLIT_RE = re.compile(
     r"|\r?\n(?=[^\S\n]*(?:[-*•]|\d+[.)])[^\S\n])"
 )
 
-# Line-leading speaker labels in the transcript ("User:", "Assistant:")
-# are transcript formatting metadata, not conversation vocabulary —
+# Speaker labels in the transcript ("User:", "Assistant:") are
+# transcript formatting metadata, not conversation vocabulary —
 # stripped from the transcript side only before tokenizing.
-_SPEAKER_LABEL_RE = re.compile(r"(?im)^\s*(?:user|assistant|system|human)\s*:")
+# Word-boundary-anchored rather than line-anchored: transcripts whose
+# turns are joined with spaces carry the same labels mid-line, and the
+# verdict must not flip on the join character. Only these four speaker
+# words directly before a colon are eaten — ordinary "heading: detail"
+# prose colons are untouched.
+_SPEAKER_LABEL_RE = re.compile(r"(?i)\b(?:user|assistant|system|human)\s*:")
 
 # Runs of 1-2-letter dotted abbreviations: "i.e." -> "ie", "Ph.D." ->
 # "PhD", "U.S." -> "US". Letters only, so version numbers ("1.0.2") and
@@ -109,6 +138,58 @@ _DOTTED_ABBREV_RE = re.compile(r"\b(?:[A-Za-z]{1,2}\.){2,}")
 # any unrelated contraction in the transcript. Collapsed so the
 # contraction stays one token on both sides.
 _APOSTROPHE_RE = re.compile(r"(\w)['’](\w)")
+
+# Joined auxiliary/pronoun contractions — the spellings produced by
+# the apostrophe collapse above (and their already-apostrophe-free
+# variants as commonly typed). Stripped as stopwords on both sides:
+# each expands to pure stopwords ("doesnt" = does + not, "thats" =
+# that + is), carries no claim content, and is near-universal in
+# conversational transcripts — left in, "doesnt" alone grounds any
+# fabricated negated claim against any transcript that happens to
+# contain a "doesn't". Collision-prone collapses are deliberately
+# excluded: "we'll"/"he'll"/"she'll"/"I'll"/"I'd"/"we'd" collapse to
+# the real words well / hell / shell / ill / id / wed, which may be
+# genuine content tokens.
+_CONTRACTION_STOPWORDS = frozenset(
+    {
+        "aint",
+        "arent",
+        "cant",
+        "couldnt",
+        "didnt",
+        "doesnt",
+        "dont",
+        "hadnt",
+        "hasnt",
+        "havent",
+        "hes",
+        "im",
+        "isnt",
+        "ive",
+        "lets",
+        "mustnt",
+        "neednt",
+        "shant",
+        "shes",
+        "shouldnt",
+        "thats",
+        "theres",
+        "theyd",
+        "theyll",
+        "theyre",
+        "theyve",
+        "wasnt",
+        "werent",
+        "weve",
+        "whats",
+        "wont",
+        "wouldnt",
+        "youd",
+        "youll",
+        "youre",
+        "youve",
+    }
+)
 
 # camelCase boundaries get a hyphen inserted so the existing kebab
 # expansion covers identifier-spelled facts ("formatOnSave" ->
@@ -167,21 +248,36 @@ def _normalize_token_text(text: str) -> str:
     return _CAMEL_BOUNDARY_RE.sub("-", text)
 
 
+def _strip_contractions(tokens: list[str]) -> list[str]:
+    """Drop joined auxiliary/pronoun contractions — the module-local
+    extension of search.py's stopword philosophy (each entry expands
+    to pure stopwords)."""
+    return [t for t in tokens if t not in _CONTRACTION_STOPWORDS]
+
+
 def _content_tokens(text: str) -> set[str]:
     """Transcript-side tokens to compare against. Same pipeline as the
     dedup path — stopword-stripped, kebab-expanded, lowercased — plus
-    the shared spelling normalization. Returns a set so repeated
-    tokens within one side don't inflate overlap counts.
+    the shared spelling normalization and contraction stripping.
+    Returns a set so repeated tokens within one side don't inflate
+    overlap counts.
     """
-    return set(_strip_stopwords(_expand_kebab(tokenize(_normalize_token_text(text)))))
+    return set(
+        _strip_contractions(
+            _strip_stopwords(_expand_kebab(tokenize(_normalize_token_text(text))))
+        )
+    )
 
 
 def _sentence_content_tokens(sentence: str) -> set[str]:
-    """Sentence-side tokens: same normalization, NO kebab expansion.
-    The overlap ratio counts each conceptual token once — expansion
-    stays on the transcript side (see _is_anchored), mirroring
-    search.py's own index-widens / query-stays-narrow asymmetry."""
-    return set(_strip_stopwords(tokenize(_normalize_token_text(sentence))))
+    """Sentence-side tokens: same normalization and contraction
+    stripping, NO kebab expansion. The overlap ratio counts each
+    conceptual token once — expansion stays on the transcript side
+    (see _is_anchored), mirroring search.py's own index-widens /
+    query-stays-narrow asymmetry."""
+    return set(
+        _strip_contractions(_strip_stopwords(tokenize(_normalize_token_text(sentence))))
+    )
 
 
 def _is_anchored(token: str, transcript_tokens: set[str]) -> bool:
@@ -210,10 +306,14 @@ def check_groundedness(
 
     Returns an empty list when every sentence is sufficiently grounded
     OR when the body has no sentences with enough content tokens to
-    evaluate. An empty transcript triggers a "nothing is grounded"
-    fast path: every checkable sentence comes back as ungrounded
-    (overlap_ratio=0.0), so the caller sees a clear signal that they
-    passed an empty transcript.
+    evaluate. Sentences below `min_content_tokens` are exempt from the
+    ratio test but still flag when they carry at least
+    `_ZERO_ANCHOR_MIN_TOKENS` content tokens and share ZERO anchors
+    with the transcript — "Lives in Berlin." is a verifiable claim,
+    not an "OK.". With an empty transcript nothing is grounded: every
+    checkable sentence comes back as ungrounded (overlap_ratio=0.0),
+    so the caller sees a clear signal that they passed an empty
+    transcript.
     """
     if not body.strip():
         return []
@@ -224,13 +324,25 @@ def check_groundedness(
     ungrounded: list[UngroundedClaim] = []
     for sentence in sentences:
         sentence_tokens = _sentence_content_tokens(sentence)
-        if len(sentence_tokens) < min_content_tokens:
-            continue
-        if not transcript_tokens:
-            ungrounded.append(UngroundedClaim(sentence=sentence, overlap_ratio=0.0))
+        n_tokens = len(sentence_tokens)
+        if n_tokens == 0:
             continue
         matched = sum(1 for t in sentence_tokens if _is_anchored(t, transcript_tokens))
-        ratio = matched / len(sentence_tokens)
+        if n_tokens < min_content_tokens:
+            # Too short for the ratio test, but not too short to be a
+            # verifiable claim: two-plus content tokens with ZERO
+            # anchors is the unambiguous hallucination shape. One
+            # anchor passes (conservative stance for tiny grounded
+            # claims); trailing-colon fragments are section headers
+            # ("Action items:"), not claims, and stay exempt.
+            if (
+                n_tokens >= _ZERO_ANCHOR_MIN_TOKENS
+                and matched == 0
+                and not sentence.endswith(":")
+            ):
+                ungrounded.append(UngroundedClaim(sentence=sentence, overlap_ratio=0.0))
+            continue
+        ratio = matched / n_tokens
         if ratio < threshold:
             ungrounded.append(UngroundedClaim(sentence=sentence, overlap_ratio=ratio))
     return ungrounded

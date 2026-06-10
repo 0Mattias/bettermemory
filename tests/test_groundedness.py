@@ -142,6 +142,56 @@ def test_speaker_labels_are_not_anchors() -> None:
     assert ungrounded[0].overlap_ratio == 0.0
 
 
+def test_midline_speaker_labels_are_not_anchors() -> None:
+    """Speaker labels in space-separated-turn transcripts (turns
+    joined on one line, no newlines) are still formatting metadata.
+    The verdict must not flip on how the turns happen to be joined —
+    a mid-line 'User:' must not donate the token 'user'."""
+    spaced = (
+        "Assistant: how should I format replies? "
+        "User: I prefer terse code-driven explanations. "
+        "Assistant: Got it, terse it is."
+    )
+    body = "The user works at Google."
+    ungrounded = check_groundedness(body, spaced)
+    assert len(ungrounded) == 1
+    assert ungrounded[0].overlap_ratio == 0.0
+
+
+def test_prose_colons_survive_label_stripping() -> None:
+    """Only the four speaker words directly before a colon are
+    stripped — ordinary 'heading: detail' prose keeps its vocabulary
+    and keeps anchoring grounded claims."""
+    transcript = "Deploy checklist: run migrations, then restart the worker pool."
+    body = "Deploy checklist includes migrations and a worker restart."
+    assert check_groundedness(body, transcript) == []
+
+
+def test_two_token_hallucinated_claim_flagged() -> None:
+    """'Lives in Berlin.' (audit's verbatim repro) sits below
+    MIN_CONTENT_TOKENS but is a fully verifiable claim. With ZERO
+    anchors in the transcript it must flag, not be silently
+    skipped."""
+    transcript = (
+        "User: I prefer terse code-driven explanations.\n"
+        "Assistant: Got it, terse it is."
+    )
+    ungrounded = check_groundedness("Lives in Berlin.", transcript)
+    assert len(ungrounded) == 1
+    assert ungrounded[0].overlap_ratio == 0.0
+
+
+def test_two_token_grounded_claim_still_passes() -> None:
+    """The conservative stance for legitimately tiny claims holds:
+    a short claim with at least one real anchor stays unflagged,
+    and one-content-token fragments stay skipped entirely — 'OK.'
+    still never fires the gate."""
+    transcript = "User: let's use Postgres for the job queue."
+    assert check_groundedness("Uses Postgres.", transcript) == []
+    # One content token: no semantic anchor to evaluate, still skipped.
+    assert check_groundedness("Postgres.", "completely unrelated transcript") == []
+
+
 def test_bullet_list_items_evaluated_independently() -> None:
     """Single-newline markdown bullets are separate fragments. A
     hallucinated bullet can't hide behind grounded siblings by
@@ -186,16 +236,24 @@ def test_iso_date_stamp_does_not_sink_grounded_fact() -> None:
 def test_contraction_fragments_are_not_anchors() -> None:
     """Apostrophe shrapnel ('doesn', 't') must not cross-match an
     unrelated contraction in the transcript and ground a fully
-    hallucinated claim."""
+    hallucinated claim — and the *collapsed* auxiliary ('doesnt')
+    must not survive as a freebie anchor either. The bodies are the
+    audit's verbatim repros: neither 'trust' nor 'Kubernetes' appears
+    anywhere in the transcript, so the claim must flag."""
     transcript = (
         "User: the build doesn't fail anymore after the cache fix. Assistant: great."
     )
-    body = "Doesn't trust Kubernetes at all."
+    body = "Doesn't trust Kubernetes."
     ungrounded = check_groundedness(body, transcript)
     assert len(ungrounded) == 1
     assert "Kubernetes" in ungrounded[0].sentence
-    # And a different contraction can't anchor via the shared 't'.
-    assert len(check_groundedness("Can't stand Postgres databases.", transcript)) == 1
+    assert ungrounded[0].overlap_ratio == 0.0
+    # And a different contraction can't anchor via the shared 't'
+    # (audit's second verbatim pairing: 'can' is a stopword, so the
+    # old fragment 't' from the transcript's "don't" was the sole
+    # anchor at 1/3 = 0.333).
+    other = check_groundedness("Can't stand Postgres.", "User: I don't have time today")
+    assert len(other) == 1
 
 
 def test_contraction_matching_grounded_body_passes() -> None:
