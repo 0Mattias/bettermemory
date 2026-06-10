@@ -42,7 +42,7 @@ from functools import lru_cache
 from pathlib import Path
 from urllib.parse import urlparse
 
-from pydantic import BaseModel
+from pydantic import BaseModel, PrivateAttr
 
 log = logging.getLogger("bettermemory.origin")
 
@@ -78,6 +78,20 @@ class Origin(BaseModel):
     repo: str | None = None  # raw remote URL or null
     branch: str | None = None  # current branch or null (detached HEAD → null)
     worktree_root: str | None = None  # `git rev-parse --show-toplevel` or null
+
+    # Other official spellings of the remote `repo` was read from — every
+    # raw `git config --get-all remote.<name>.url` value other than the
+    # captured URL itself. Populated by `capture()` on the CALLER-side
+    # Origin only; a PRIVATE attribute, so it is never serialized into
+    # memory frontmatter or event payloads (the on-disk format and event
+    # schemas are unchanged). Exists because releases through v3.9.0
+    # captured `repo` via `git config --get remote.origin.url` (last URL
+    # of a multi-valued remote, raw insteadOf alias) while the current
+    # idiom (`git remote get-url origin`) returns the first URL with
+    # aliases expanded — stored origins from old captures need the
+    # alternate spellings to keep matching. See `_CALLER_REPO_ALTERNATES`
+    # for how `repos_match` consumes them.
+    _repo_url_alternates: tuple[str, ...] = PrivateAttr(default=())
 
 
 # ---------------------------------------------------------------------------
@@ -122,23 +136,81 @@ def capture(cwd: Path | None = None) -> Origin:
     cwd_str = str(resolved)
 
     worktree_root = _git_worktree_root(resolved)
-    repo_url = _git_remote_url(resolved) if worktree_root else None
+    repo_url: str | None = None
+    repo_url_alternates: tuple[str, ...] = ()
+    if worktree_root:
+        repo_url, repo_url_alternates = _git_remote_url_and_alternates(resolved)
     branch = _git_branch(resolved) if worktree_root else None
 
-    return Origin(
+    origin = Origin(
         cwd=cwd_str,
         repo=repo_url,
         branch=branch,
         worktree_root=worktree_root,
     )
+    if repo_url is not None:
+        # Register the remote's other official spellings (raw multi-URL
+        # values, unexpanded insteadOf aliases) so `repos_match` can keep
+        # recognizing stored origins captured under the pre-3.10
+        # `git config --get` idiom — see `_CALLER_REPO_ALTERNATES`. Also
+        # carried on the returned Origin (private, never persisted) for
+        # callers that hold the object.
+        _register_caller_alternates(repo_url, repo_url_alternates)
+        origin._repo_url_alternates = repo_url_alternates
+    return origin
 
 
 # ---------------------------------------------------------------------------
 # Repo equality — what "same project" means for the auto-scope filter
 # ---------------------------------------------------------------------------
 
+# Process-local registry of the alternate official spellings of remotes
+# `capture()` has recorded, keyed by the URL it returned. Why this exists:
+# releases v1.4.1–v3.9.0 captured `origin.repo` via `git config --get
+# remote.origin.url`, which returns the LAST value of a multi-valued key
+# and the RAW (unexpanded) spelling of an insteadOf alias; the current
+# capture idiom (`git remote get-url origin`) returns the FIRST value
+# with aliases expanded. Stores written under the old idiom therefore
+# hold spellings the new capture never produces, and `(host, owner,
+# name)` parsing can't reconcile them: a push-mirror URL is a genuinely
+# different triple, and a raw alias like `gh:owner/repo` parses with the
+# alias as the host. Without a bridge, every such stored memory silently
+# fails `repos_match` against its own project forever (migrate only
+# backfills origin-LESS memories). The registry carries every official
+# spelling of the caller's OWN remote — verbatim from the caller's git
+# config — so `repos_match` can recognize an old-idiom stored spelling
+# without reverting the forward capture semantics. The never-widen
+# invariant holds: only spellings git itself reports for the caller's
+# remote are merged, never a guess. Keyed by the captured URL because
+# that exact string is what the surface filters thread through as
+# `current_repo` (`caller_origin.repo`); process-local and never
+# persisted, so the on-disk format is untouched. Bounded FIFO so a
+# long-lived server hopping across many repos can't grow it unboundedly.
+_CALLER_REPO_ALTERNATES: dict[str, tuple[str, ...]] = {}
+_CALLER_REPO_ALTERNATES_CAP = 32
 
-def repos_match(memory_repo: str | None, current_repo: str | None) -> bool:
+
+def _register_caller_alternates(repo_url: str, alternates: tuple[str, ...]) -> None:
+    """Record (or refresh) the alternate spellings captured for `repo_url`.
+
+    Registering an empty tuple is meaningful — it clears a stale entry
+    after the remote's extra URLs were removed from git config.
+    """
+    if (
+        repo_url not in _CALLER_REPO_ALTERNATES
+        and len(_CALLER_REPO_ALTERNATES) >= _CALLER_REPO_ALTERNATES_CAP
+    ):
+        # FIFO eviction — dicts preserve insertion order.
+        _CALLER_REPO_ALTERNATES.pop(next(iter(_CALLER_REPO_ALTERNATES)))
+    _CALLER_REPO_ALTERNATES[repo_url] = alternates
+
+
+def repos_match(
+    memory_repo: str | None,
+    current_repo: str | None,
+    *,
+    caller_alternates: tuple[str, ...] | None = None,
+) -> bool:
     """True if a memory whose origin.repo is `memory_repo` belongs to a
     caller whose current repo is `current_repo`.
 
@@ -150,9 +222,32 @@ def repos_match(memory_repo: str | None, current_repo: str | None) -> bool:
     A null `memory_repo` is "global" — matches any current_repo. A null
     `current_repo` (caller is not in a repo) also matches any
     `memory_repo` since we have no project boundary to enforce.
+
+    `caller_alternates` are additional official spellings of the
+    CALLER's remote. When omitted, the spellings `capture()` registered
+    for `current_repo` in this process are consulted (see
+    `_CALLER_REPO_ALTERNATES`). A memory matching ANY spelling of the
+    caller's own remote belongs to the caller's project — this keeps
+    stores written under the pre-3.10 capture idiom (last URL of a
+    multi-valued remote, raw insteadOf alias) from silently going dark
+    under auto-scope after the switch to `git remote get-url`.
+    Deliberately asymmetric: alternates apply to the caller side only,
+    because the caller's git config is where the evidence comes from.
     """
     if memory_repo is None or current_repo is None:
         return True
+    if _spellings_match(memory_repo, current_repo):
+        return True
+    if caller_alternates is None:
+        caller_alternates = _CALLER_REPO_ALTERNATES.get(current_repo, ())
+    return any(
+        alternate != current_repo and _spellings_match(memory_repo, alternate)
+        for alternate in caller_alternates
+    )
+
+
+def _spellings_match(memory_repo: str, current_repo: str) -> bool:
+    """Single-spelling comparison — the pre-alternates `repos_match` core."""
     parsed_a = _parse_remote(memory_repo)
     parsed_b = _parse_remote(current_repo)
     if parsed_a is None or parsed_b is None:
@@ -254,6 +349,7 @@ def should_include_for_caller(
     caller_repo: str | None,
     *,
     caller_worktree_root: str | None = None,
+    caller_repo_alternates: tuple[str, ...] | None = None,
 ) -> bool:
     """True if a memory with this origin should surface for a caller in `caller_repo`.
 
@@ -272,6 +368,13 @@ def should_include_for_caller(
     outside any repo) is treated as global and matches every caller;
     likewise a null `caller_repo` (running outside any repo) matches
     every memory.
+
+    `caller_repo_alternates` passes through to `repos_match`'s
+    `caller_alternates` — extra official spellings of the caller's own
+    remote that also count as a repo match. When omitted, `repos_match`
+    falls back to the spellings `capture()` registered for
+    `caller_repo` in this process, so string-threading call sites get
+    the old-capture-idiom bridge without any plumbing changes.
 
     `caller_worktree_root` opts into the secondary worktree filter: when
     both the memory and the caller carry a populated `worktree_root` and
@@ -294,7 +397,9 @@ def should_include_for_caller(
     memories, which would be both wrong and very noisy.
     """
     memory_repo = memory_origin.repo if memory_origin else None
-    if not repos_match(memory_repo, caller_repo):
+    if not repos_match(
+        memory_repo, caller_repo, caller_alternates=caller_repo_alternates
+    ):
         return False
     memory_worktree = memory_origin.worktree_root if memory_origin else None
     return worktrees_match(memory_worktree, caller_worktree_root)
@@ -369,7 +474,7 @@ def _git(cwd: Path, *args: str, timeout: float = 1.0) -> str | None:
     return out or None
 
 
-def _git_remote_url(cwd: Path) -> str | None:
+def _git_remote_url_and_alternates(cwd: Path) -> tuple[str | None, tuple[str, ...]]:
     # `git remote get-url origin`, NOT `git config --get remote.origin.url`:
     # `config --get` on a multi-valued key returns the LAST value, so the
     # canonical push-mirror recipe (`git remote set-url --add origin
@@ -379,22 +484,47 @@ def _git_remote_url(cwd: Path) -> str | None:
     # `url.<base>.insteadOf` aliases to the URL git actually fetches from
     # (same idiom sync.py uses). It exits non-zero when the remote doesn't
     # exist, so `_git` maps that to None.
+    #
+    # The alternates are every RAW configured URL for the SAME remote
+    # (`git config --get-all remote.<name>.url`) other than the captured
+    # one. That covers exactly the two spellings the pre-3.10 capture
+    # idiom (`config --get`) produced and `get-url` doesn't: the last URL
+    # of a multi-valued remote, and the unexpanded insteadOf alias.
+    # They're official spellings of this remote per the caller's own git
+    # config — never persisted, only registered process-locally so
+    # `repos_match` keeps old-idiom stored origins visible. Failure to
+    # read them degrades to no alternates (the forward capture is
+    # unaffected).
+    name = "origin"
     url = _git(cwd, "remote", "get-url", "origin")
-    if url is not None:
-        return url
-    # No remote named 'origin' (`git clone -o <name>`, the
-    # clone.defaultRemoteName config, `git remote rename`, upstream-only
-    # fork workflows). Fall back to the first remote `git remote` lists so
-    # the checkout keeps a repo identity instead of writing global
-    # memories. A repo with no remotes at all yields empty output, which
-    # `_git` already maps to None.
-    remotes = _git(cwd, "remote")
-    if remotes is None:
-        return None
-    first = remotes.splitlines()[0].strip()
-    if not first:
-        return None
-    return _git(cwd, "remote", "get-url", first)
+    if url is None:
+        # No remote named 'origin' (`git clone -o <name>`, the
+        # clone.defaultRemoteName config, `git remote rename`, upstream-only
+        # fork workflows). Fall back to the first remote `git remote` lists so
+        # the checkout keeps a repo identity instead of writing global
+        # memories. A repo with no remotes at all yields empty output, which
+        # `_git` already maps to None.
+        remotes = _git(cwd, "remote")
+        if remotes is None:
+            return None, ()
+        first = remotes.splitlines()[0].strip()
+        if not first:
+            return None, ()
+        name = first
+        url = _git(cwd, "remote", "get-url", name)
+        if url is None:
+            return None, ()
+    raw = _git(cwd, "config", "--get-all", f"remote.{name}.url")
+    if raw is None:
+        return url, ()
+    seen: set[str] = {url}
+    alternates: list[str] = []
+    for line in raw.splitlines():
+        candidate = line.strip()
+        if candidate and candidate not in seen:
+            seen.add(candidate)
+            alternates.append(candidate)
+    return url, tuple(alternates)
 
 
 def _git_branch(cwd: Path) -> str | None:
@@ -616,7 +746,8 @@ def commit_author_timestamps(cwd: Path | None) -> list[datetime] | None:
 # plus single-segment (ownerless) paths — gitolite, Gerrit SSH, cgit-style
 # HTTPS at the domain root. A small set of FIXED vendor shapes is then
 # canonicalized: Azure DevOps's protocol-asymmetric clone URLs, Bitbucket
-# Server's '/scm/' and Gerrit's authenticated '/a/' routing prefixes, and
+# Server's '/scm/' and Gerrit's authenticated '/a/' routing prefixes (each
+# stripped only on hosts whose name carries the vendor's), and
 # the first-party SSH-over-443 alias hosts. Arbitrary mount prefixes
 # (GitLab installed under a relative URL root, smart-HTTP behind Apache's
 # '/git/') are DELIBERATELY not stripped: an arbitrary prefix is
@@ -646,11 +777,21 @@ _HOST_ALIASES = {
 
 # Fixed vendor HTTP(S) routing prefixes that precede the real owner/name:
 # 'scm' (Bitbucket Server/Data Center clone URLs) and 'a' (Gerrit's
-# authenticated-HTTP prefix). Stripped only when the remainder still
-# contains '/', so a real single-char owner (github.com/a/repo) keeps
-# parsing as owner='a'. Frozen by design — see the comment block above for
-# why arbitrary mount prefixes stay unhandled.
-_VENDOR_ROUTE_PREFIXES = frozenset({"scm", "a"})
+# authenticated-HTTP prefix), each paired with a host substring that must
+# appear in the URL's hostname for the strip to fire. Stripping on EVERY
+# host violated the never-widen invariant on nested-namespace hosts:
+# GitLab subgroups make 'https://gitlab.com/scm/team/proj' a real
+# top-level group named 'scm', and the unconditional strip merged it
+# with the unrelated 'https://gitlab.com/team/proj' (while the same
+# repo's unstripped SSH form failed to match its own HTTPS form).
+# Bitbucket Server / Gerrit instances whose hostname doesn't carry the
+# vendor name fall back to the tolerated false-negative direction —
+# their http(s) form mismatches their ssh form — exactly like arbitrary
+# mount prefixes. The strip is also gated on the remainder still
+# containing '/', so a real single-char owner (github.com/a/repo) keeps
+# parsing as owner='a'. Frozen by design — see the comment block above
+# for why arbitrary mount prefixes stay unhandled.
+_VENDOR_ROUTE_PREFIXES: dict[str, str] = {"scm": "bitbucket", "a": "gerrit"}
 
 
 def _parse_remote(url: str) -> tuple[str, str, str] | None:
@@ -696,12 +837,15 @@ def _parse_remote(url: str) -> tuple[str, str, str] | None:
             owner, name = "", owner
         elif (
             parsed.scheme in ("http", "https")
-            and owner.lower() in _VENDOR_ROUTE_PREFIXES
             and "/" in name
+            and (hint := _VENDOR_ROUTE_PREFIXES.get(owner.lower())) is not None
+            and hint in host.lower()
         ):
             # Fixed vendor routing prefix, not an owner — re-split the
             # remainder. The contains-'/' guard keeps github.com/a/repo
-            # parsing as owner='a'.
+            # parsing as owner='a'; the host gate keeps a real top-level
+            # group named 'scm'/'a' on a nested-namespace host (GitLab
+            # subgroups) from merging with the repo at the stripped path.
             owner, name = name.split("/", 1)
         return _canonicalize(host, owner, name)
 

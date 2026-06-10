@@ -185,6 +185,91 @@ def test_capture_expands_insteadof_alias(tmp_path: Path) -> None:
     assert repos_match(origin.repo, "https://github.com/example/repo")
 
 
+@pytest.mark.skipif(not _GIT_AVAILABLE, reason="git not on PATH")
+def test_old_idiom_multi_url_stored_origin_matches_new_capture(
+    tmp_path: Path,
+) -> None:
+    """Releases through v3.9.0 captured origin.repo via `git config --get
+    remote.origin.url`, which returns the LAST value of a multi-valued
+    remote (the push mirror). The current idiom (`git remote get-url`)
+    returns the FIRST. A store stamped under the old idiom must keep
+    matching the new capture, or the repo's existing memories silently
+    vanish from auto-scope: capture() collects the remote's other
+    official spellings and repos_match recognizes the old stored one."""
+    _init_repo(tmp_path, remote="git@github.com:legacyowner/multiurl.git")
+    subprocess.run(
+        [
+            "git",
+            "remote",
+            "set-url",
+            "--add",
+            "origin",
+            "git@gitlab.com:legacyowner/multiurl-mirror.git",
+        ],
+        cwd=tmp_path,
+        check=True,
+        capture_output=True,
+    )
+    origin = capture(cwd=tmp_path)
+    # Forward semantics unchanged (the round-84 fix): FIRST URL wins.
+    assert origin.repo == "git@github.com:legacyowner/multiurl.git"
+    # The alternates ride on the caller-side Origin, never the dump —
+    # the on-disk/event payload shape is unchanged.
+    assert origin._repo_url_alternates == (
+        "git@gitlab.com:legacyowner/multiurl-mirror.git",
+    )
+    assert "_repo_url_alternates" not in origin.model_dump()
+    # Old idiom stored the LAST configured URL; it must match the caller.
+    old_stored = "git@gitlab.com:legacyowner/multiurl-mirror.git"
+    assert repos_match(old_stored, origin.repo)
+    assert should_include_for_caller(Origin(repo=old_stored), origin.repo)
+    # Never-widen: an unrelated repo on the mirror host still mismatches.
+    assert not repos_match("git@gitlab.com:legacyowner/unrelated.git", origin.repo)
+
+
+@pytest.mark.skipif(not _GIT_AVAILABLE, reason="git not on PATH")
+def test_old_idiom_insteadof_alias_stored_origin_matches_new_capture(
+    tmp_path: Path,
+) -> None:
+    """The other old/new capture divergence: `config --get` returned the
+    RAW insteadOf alias ('gh:owner/repo'), which parses with the alias
+    as the host — so raw-equality never engages against the expanded
+    capture. The capture-side alternates bridge it."""
+    _init_repo(tmp_path, remote="gh:legacyowner/aliasrepo")
+    subprocess.run(
+        ["git", "config", "url.git@github.com:.insteadOf", "gh:"],
+        cwd=tmp_path,
+        check=True,
+        capture_output=True,
+    )
+    origin = capture(cwd=tmp_path)
+    # Forward semantics unchanged: captured EXPANDED.
+    assert origin.repo == "git@github.com:legacyowner/aliasrepo"
+    assert repos_match("gh:legacyowner/aliasrepo", origin.repo)
+    assert should_include_for_caller(
+        Origin(repo="gh:legacyowner/aliasrepo"), origin.repo
+    )
+    # Never-widen: a different repo spelled through the same alias
+    # scheme still mismatches.
+    assert not repos_match("gh:legacyowner/other", origin.repo)
+
+
+def test_repos_match_caller_alternates_parameter() -> None:
+    """Explicit `caller_alternates` merges extra spellings of the
+    CALLER's own remote without consulting the process registry; a
+    non-matching memory spelling stays excluded."""
+    assert repos_match(
+        "gh:paramowner/repo",
+        "git@github.com:paramowner/repo",
+        caller_alternates=("gh:paramowner/repo",),
+    )
+    assert not repos_match(
+        "gh:paramowner/other",
+        "git@github.com:paramowner/repo",
+        caller_alternates=("gh:paramowner/repo",),
+    )
+
+
 # ---------------------------------------------------------------------------
 # repos_match()
 # ---------------------------------------------------------------------------
@@ -339,6 +424,31 @@ def test_repos_match_gerrit_authenticated_vs_anonymous_https() -> None:
     assert repos_match(
         "https://gerrit.corp.com/a/tools/build",
         "https://gerrit.corp.com/tools/build",
+    )
+
+
+def test_repos_match_nested_namespace_prefix_not_stripped_on_generic_hosts() -> None:
+    """A top-level group literally named 'scm' or 'a' on a
+    nested-namespace host (GitLab subgroups, self-managed hybrids) is a
+    REAL namespace, not a vendor routing prefix — the strip fires only
+    when the hostname carries the vendor's name ('bitbucket'/'gerrit').
+    Unconditionally stripping merged distinct repositories, violating
+    the module's never-widen invariant; vendor instances behind neutral
+    hostnames degrade to the tolerated false-negative direction
+    instead."""
+    assert not repos_match(
+        "https://gitlab.com/scm/team/proj.git",
+        "https://gitlab.com/team/proj.git",
+    )
+    assert not repos_match(
+        "https://gitlab.com/a/team/proj",
+        "https://gitlab.com/team/proj",
+    )
+    # And the same repo's SSH form (never prefix-stripped) matches its
+    # own HTTPS form again on non-vendor hosts.
+    assert repos_match(
+        "git@gitlab.com:scm/team/proj.git",
+        "https://gitlab.com/scm/team/proj.git",
     )
 
 

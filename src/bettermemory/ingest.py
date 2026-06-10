@@ -49,6 +49,7 @@ so tests can drive each layer in isolation.
 
 from __future__ import annotations
 
+import json
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
@@ -503,28 +504,44 @@ def apply_ingest_plan(
     `skip_invalid` with the exception text as `reason` so the user
     can see which file failed without losing the rest of the batch.
 
-    Origin capture — only when it's HONEST evidence. The auto-memory
-    layout is keyed to the writing session's cwd by construction
-    (``~/.claude/projects/<sanitized-cwd>/memory/``), so when the
-    plan's source root IS the auto-memory directory for `cwd` (the
-    process cwd when None — same default `discover_default_source_root`
-    uses on the CLI path), the source files were captured while working
-    in this cwd and ``capture(cwd)`` is truthful provenance. Any other
-    ``--from`` root (another project's auto-memory, a copied directory)
-    keeps ``origin=None`` — the conservative "global" default — because
-    nothing proves the content belongs to this checkout. Before this,
-    every ingested memory landed ``origin=None`` and could never
-    satisfy the audit's positive-evidence suppression gate
+    Origin capture — only when it's HONEST evidence. When the plan's
+    source root IS the auto-memory directory for `cwd` (the process cwd
+    when None — same default `discover_default_source_root` uses on the
+    CLI path), the source files were *probably* captured while working
+    in this cwd, and ``capture(cwd)`` is truthful provenance. Probably,
+    not certainly: the layout's sanitization is MANY-TO-ONE (``/``,
+    ``.``, ``:`` all fold to ``-``), so sibling paths like ``web-app``,
+    ``web.app`` and ``web/app`` share one auto-memory directory, and the
+    path equality alone can be satisfied from the wrong project. The
+    session ``.jsonl`` records that live alongside the ``memory/`` dir
+    carry each writing session's REAL cwd, so we cross-check: any
+    observed session cwd that doesn't resolve to the ingest cwd means
+    the directory holds (or may hold) a colliding foreign project's
+    content, and the stamp is skipped — conservative ``origin=None`` on
+    ambiguity. No ``.jsonl`` evidence at all leaves the stamp path
+    intact. Any other ``--from`` root (another project's auto-memory, a
+    copied directory) keeps ``origin=None`` — the conservative "global"
+    default — because nothing proves the content belongs to this
+    checkout. Before origin stamping existed, every ingested memory
+    landed ``origin=None`` and could never satisfy the audit's
+    positive-evidence suppression gate
     (`audit._caller_in_top_hit_project`), producing recurring false
     `search_miss` findings for in-project continuations.
+
+    ``branch`` is always nulled on the stamped origin: the source files
+    come from many historical sessions, and stamping them with the
+    branch the *ingest* happens to run on would be misinformation —
+    the same documented stance `migrate.py` takes for its origin
+    backfill.
     """
     origin: Origin | None = None
     default_root = discover_default_source_root(cwd)
     if (
         default_root is not None
         and default_root.resolve() == plan.source_root.resolve()
+        and _session_evidence_matches_cwd(plan.source_root, cwd)
     ):
-        origin = capture(cwd)
+        origin = capture(cwd).model_copy(update={"branch": None})
     for row in plan.rows:
         if row.action != "write":
             continue
@@ -560,6 +577,83 @@ def apply_ingest_plan(
             row.action = "skip_invalid"
             row.reason = f"write failed: {exc}"
     return plan
+
+
+# Bounds for the session-record cross-check. Session `.jsonl` files can be
+# large (full message transcripts); the cwd field appears on records from
+# the first lines of a session, so a bounded prefix read per file is
+# enough to collect the evidence without ever streaming whole transcripts.
+_SESSION_SCAN_MAX_FILES = 20
+_SESSION_SCAN_MAX_BYTES = 262_144
+_SESSION_SCAN_MAX_LINES = 200
+
+
+def _session_evidence_matches_cwd(source_root: Path, cwd: Path | None) -> bool:
+    """True when the session records alongside the auto-memory dir don't
+    contradict the claim that `cwd` is where the source files were written.
+
+    The auto-memory directory's parent (``~/.claude/projects/<sanitized>/``)
+    holds the session ``.jsonl`` transcripts whose records carry the
+    session's real ``cwd`` — ground truth the sanitized directory name
+    has lost. Decision rule, conservative on ambiguity:
+
+    * every observed session cwd resolves to the ingest cwd → True
+      (the stamp is honest evidence);
+    * ANY observed session cwd resolves elsewhere → False (a colliding
+      foreign project shares this directory — skip the stamp);
+    * no ``.jsonl`` evidence at all → True (nothing contradicts the
+      sanitized-path match; the pre-existing stamp path stays intact).
+    """
+    try:
+        resolved_cwd = (cwd or Path.cwd()).resolve()
+    except OSError:
+        return False
+    observed = _session_cwds(source_root.parent)
+    if not observed:
+        return True
+    for raw in observed:
+        try:
+            if Path(raw).resolve() != resolved_cwd:
+                return False
+        except OSError:
+            # Unresolvable claimed cwd — can't prove it's this project.
+            return False
+    return True
+
+
+def _session_cwds(project_dir: Path) -> set[str]:
+    """Distinct ``cwd`` values from session ``.jsonl`` records in
+    `project_dir`, read with hard per-file and file-count bounds.
+
+    Best-effort: unreadable files/lines are skipped individually, and a
+    truncated trailing line from the byte-bounded read simply fails
+    ``json.loads`` and is ignored. Returns an empty set when there is no
+    evidence at all (no ``.jsonl`` files, or none with a ``cwd`` field).
+    """
+    out: set[str] = set()
+    try:
+        files = sorted(p for p in project_dir.glob("*.jsonl") if p.is_file())
+    except OSError:
+        return out
+    for path in files[:_SESSION_SCAN_MAX_FILES]:
+        try:
+            with path.open("r", encoding="utf-8", errors="replace") as fh:
+                chunk = fh.read(_SESSION_SCAN_MAX_BYTES)
+        except OSError:
+            continue
+        for line in chunk.splitlines()[:_SESSION_SCAN_MAX_LINES]:
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                record = json.loads(line)
+            except ValueError:
+                continue
+            if isinstance(record, dict):
+                raw = record.get("cwd")
+                if isinstance(raw, str) and raw:
+                    out.add(raw)
+    return out
 
 
 # ---------------------------------------------------------------------------

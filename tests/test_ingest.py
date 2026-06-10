@@ -772,15 +772,19 @@ class TestApplyIngestPlan:
 
 class TestApplyIngestPlanOrigin:
     """Write-time origin lands ONLY when the plan's source root is the
-    auto-memory directory keyed to the ingesting cwd.
+    auto-memory directory keyed to the ingesting cwd AND the session
+    `.jsonl` records alongside it don't contradict that claim.
 
-    That layout is per-project-cwd by construction
-    (`~/.claude/projects/<sanitized-cwd>/memory/`), so `capture(cwd)`
-    is honest provenance there. Any other `--from` root keeps the
-    conservative `origin=None` ("global") default. Before this fix,
-    every ingested memory landed `origin=None` and could never satisfy
-    the audit's positive-evidence suppression gate — recurring false
-    `search_miss` findings for in-project continuations."""
+    The layout (`~/.claude/projects/<sanitized-cwd>/memory/`) is keyed
+    to the writing session's cwd, but the sanitization is MANY-TO-ONE
+    (`web-app` / `web.app` / `web/app` collide), so path equality alone
+    can be satisfied from a colliding foreign project — the session
+    transcripts' real `cwd` values are the cross-check. Any other
+    `--from` root keeps the conservative `origin=None` ("global")
+    default. Before origin stamping existed, every ingested memory
+    landed `origin=None` and could never satisfy the audit's
+    positive-evidence suppression gate — recurring false `search_miss`
+    findings for in-project continuations."""
 
     @pytest.mark.skipif(not _GIT_AVAILABLE, reason="git not on PATH")
     def test_matching_auto_memory_root_captures_origin(
@@ -814,6 +818,11 @@ class TestApplyIngestPlanOrigin:
         assert written.origin.cwd == str(cwd.resolve())
         assert written.origin.repo == "git@github.com:example/repo.git"
         assert written.origin.worktree_root == str(cwd.resolve())
+        # Branch is deliberately nulled: the source files come from many
+        # historical sessions, and stamping them with the branch the
+        # ingest happens to run on would be misinformation — the same
+        # documented stance migrate.py takes for its origin backfill.
+        assert written.origin.branch is None
 
     def test_matching_root_without_repo_still_captures_cwd(
         self, tmp_path: Path, store: Store, monkeypatch: Any
@@ -874,6 +883,83 @@ class TestApplyIngestPlanOrigin:
         assert row.written_id is not None
         [written] = [m for m in store.load_all() if m.id == row.written_id]
         assert written.origin is None
+
+    def test_colliding_sanitized_dir_keeps_origin_none(
+        self, tmp_path: Path, store: Store, monkeypatch: Any
+    ) -> None:
+        """The sanitized layout is many-to-one (`web-app` and `web.app`
+        fold to the same directory), so the default-root path equality
+        can be satisfied from the WRONG project. The session `.jsonl`
+        records alongside `memory/` carry each writing session's real
+        cwd; when any of them resolves elsewhere, the stamp is skipped
+        and the conservative `origin=None` default stands — one
+        matching record doesn't rescue it (ambiguity is disqualifying)."""
+        fake_home = tmp_path / "home"
+        fake_home.mkdir()
+        monkeypatch.setattr(Path, "home", lambda: fake_home)
+
+        projects = tmp_path / "projects"
+        foreign = projects / "web.app"
+        foreign.mkdir(parents=True)
+        cwd = projects / "web-app"
+        cwd.mkdir()
+
+        auto_dir = _auto_memory_dir_for(cwd, fake_home)
+        # The collision is the premise — pin it.
+        assert auto_dir == _auto_memory_dir_for(foreign, fake_home)
+        _write_auto_memory(auto_dir, "foreign-note", description="hello", body="world")
+        # Session evidence: this shared directory's transcripts include
+        # one written from the foreign sibling.
+        (auto_dir.parent / "session-a.jsonl").write_text(
+            json.dumps({"cwd": str(foreign)}) + "\n"
+        )
+        (auto_dir.parent / "session-b.jsonl").write_text(
+            json.dumps({"cwd": str(cwd)}) + "\n"
+        )
+
+        plan = compute_ingest_plan(
+            auto_dir,
+            existing_memories=store.load_all(),
+            existing_tombstones=store.load_tombstones(),
+        )
+        apply_ingest_plan(plan, store, cwd=cwd)
+
+        [row] = plan.rows
+        assert row.written_id is not None
+        [written] = [m for m in store.load_all() if m.id == row.written_id]
+        assert written.origin is None
+
+    def test_matching_session_evidence_still_stamps_origin(
+        self, tmp_path: Path, store: Store, monkeypatch: Any
+    ) -> None:
+        """Session records whose cwd resolves to the ingest cwd are
+        confirming evidence — the stamp proceeds. (The no-`.jsonl`-at-all
+        case is covered by the capture tests above, which create none.)"""
+        fake_home = tmp_path / "home"
+        fake_home.mkdir()
+        monkeypatch.setattr(Path, "home", lambda: fake_home)
+
+        cwd = tmp_path / "checkout"
+        cwd.mkdir()
+
+        auto_dir = _auto_memory_dir_for(cwd, fake_home)
+        _write_auto_memory(auto_dir, "own-note", description="hello", body="world")
+        (auto_dir.parent / "session-a.jsonl").write_text(
+            json.dumps({"cwd": str(cwd)}) + "\n"
+        )
+
+        plan = compute_ingest_plan(
+            auto_dir,
+            existing_memories=store.load_all(),
+            existing_tombstones=store.load_tombstones(),
+        )
+        apply_ingest_plan(plan, store, cwd=cwd)
+
+        [row] = plan.rows
+        assert row.written_id is not None
+        [written] = [m for m in store.load_all() if m.id == row.written_id]
+        assert written.origin is not None
+        assert written.origin.cwd == str(cwd.resolve())
 
 
 # ---------------------------------------------------------------------------
