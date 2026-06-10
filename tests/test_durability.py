@@ -77,6 +77,125 @@ def test_uppercase_hex_does_not_trigger_sha_marker() -> None:
     assert all(not h.marker.startswith("sha:") for h in hits)
 
 
+def test_lowercase_uuid_does_not_trigger_sha_marker() -> None:
+    """Hyphens are word boundaries, so the >=7-char hex segments of a
+    lowercase UUID would match _SHA_RE on their own — but a UUID is a
+    permanent identifier (KMS key, tenant id), not branch state."""
+    body = (
+        "The prod KMS key for the backups bucket is "
+        "1a2b3c4d-5e6f-4a7b-8c9d-0e1f2a3b4c5d (eu-north-1)."
+    )
+    assert find_transient_markers(body) == []
+
+
+def test_32_hex_machine_id_does_not_trigger_sha_marker() -> None:
+    """A maximal exactly-32-hex run is MD5 / machine-id / gist-id length —
+    a durable artifact identifier, never a git ref."""
+    machine_id = "0123456789abcdef" * 2  # 32 hex chars.
+    body = f"The machine-id {machine_id} identifies the host."
+    assert find_transient_markers(body) == []
+
+
+@pytest.mark.parametrize(
+    "body",
+    [
+        "The API changed as of 2.7.0; see the migration notes.",
+        "As of Python 3.12 the tokenizer is faster.",
+    ],
+)
+def test_version_pinned_as_of_does_not_fire(body: str) -> None:
+    """Bare 'as of' is deliberately not a marker — version-pinned forms
+    are durable. Only the dated/time-of-writing variants fire."""
+    assert find_transient_markers(body) == []
+
+
+@pytest.mark.parametrize(
+    "body",
+    [
+        "User works out of the New York office; meetings default to ET.",
+        "User has a print subscription to The New Yorker.",
+        "Check the New Relic dashboard for latency budgets.",
+    ],
+)
+def test_the_new_proper_noun_does_not_fire(body: str) -> None:
+    """'the New <X>' with a capital N is a proper noun, not a new-thing
+    reference — the marker requires lowercase 'new'."""
+    hits = find_transient_markers(body)
+    assert all(h.marker != "the new" for h in hits)
+
+
+def test_pushed_alone_does_not_fire_unpushed() -> None:
+    """The word boundary keeps 'unpushed' from matching inside 'pushed'."""
+    body = "The pushed commits are reviewed in batches."
+    assert find_transient_markers(body) == []
+
+
+@pytest.mark.parametrize(
+    "body",
+    [
+        "Access tokens are refreshed at the moment of expiry, not on a timer.",
+        "The lease is re-checked at the moment when it renews.",
+    ],
+)
+def test_at_the_moment_event_trigger_does_not_fire(body: str) -> None:
+    """'at the moment of/when <event>' describes durable event-driven
+    behavior, never the now-sense — those heads are suppressed."""
+    hits = find_transient_markers(body)
+    assert all(h.marker != "at the moment" for h in hits)
+
+
+@pytest.mark.parametrize(
+    "body",
+    [
+        "The cache evicts the least-recently-used entry first.",
+        "The Recently Viewed panel lists the last ten memories.",
+    ],
+)
+def test_recently_fixed_terms_do_not_fire(body: str) -> None:
+    """Bare 'recently' is deliberately not a marker — only the narrow
+    aux+recently / recently+action-verb bigrams fire."""
+    assert find_transient_markers(body) == []
+
+
+def test_time_word_domain_name_does_not_fire() -> None:
+    """'tomorrow.io'-class vendor domains are durable infra facts; the
+    (?!\\.\\w) lookahead keeps them silent at zero recall cost."""
+    body = (
+        "Weather data in the dashboard comes from the tomorrow.io API; "
+        "the key lives in 1Password."
+    )
+    hits = find_transient_markers(body)
+    assert all(h.marker != "tomorrow" for h in hits)
+
+
+@pytest.mark.parametrize(
+    ("body", "marker"),
+    [
+        ("User's editor color scheme is Tomorrow Night Bright.", "tomorrow"),
+        ("User subscribes to This Week in Rust for ecosystem news.", "this week"),
+    ],
+)
+def test_time_word_title_case_name_does_not_fire(body: str, marker: str) -> None:
+    """Proper nouns built on time words ('Tomorrow Night', 'This Week in
+    Rust') are durable facts where the name IS the content."""
+    hits = find_transient_markers(body)
+    assert all(h.marker != marker for h in hits)
+
+
+@pytest.mark.parametrize(
+    "body",
+    [
+        "Today's metrics dashboard splits by region.",
+        "Today’s standup notes live in the wiki.",  # curly apostrophe.
+    ],
+)
+def test_today_possessive_does_not_fire(body: str) -> None:
+    """The possessive ('today's date') is the dominant durable use of the
+    word and is excluded from the bare-'today' marker."""
+    hits = find_transient_markers(body)
+    assert all(h.marker != "today" for h in hits)
+
+
 # ---------------------------------------------------------------------------
 # Positive cases — every marker phrase fires
 # ---------------------------------------------------------------------------
@@ -121,6 +240,177 @@ def test_forty_one_char_hex_does_not_fire() -> None:
     assert all(not h.marker.startswith("sha:") for h in hits)
 
 
+@pytest.mark.parametrize(
+    ("body", "sha_marker"),
+    [
+        (
+            "The deployed build is v3.7.1-5-g874b0b0, two commits past the tag.",
+            "sha:874b0b0",
+        ),
+        ("The image is tagged 2.4.0-12-ge9a3f1c in the registry.", "sha:e9a3f1c"),
+    ],
+)
+def test_git_describe_sha_fires(body: str, sha_marker: str) -> None:
+    """git-describe output embeds the hash behind a literal 'g', which
+    removes the \\b — the dedicated pattern still buckets it under sha:."""
+    hits = find_transient_markers(body)
+    assert any(h.marker == sha_marker for h in hits), (
+        f"expected {sha_marker!r}, got {[h.marker for h in hits]}"
+    )
+
+
+@pytest.mark.parametrize(
+    "body",
+    [
+        "Today, I migrated the repo to uv; lockfile not regenerated yet.",
+        "Today, we cut over DNS to the secondary host.",
+    ],
+)
+def test_fronted_comma_today_fires(body: str) -> None:
+    """'Today, I ...' — the grammatically standard fronted-comma form —
+    carries the same time-of-writing transience as 'Today I ...'."""
+    hits = find_transient_markers(body)
+    assert any(h.marker == "today" for h in hits)
+
+
+@pytest.mark.parametrize(
+    "body",
+    [
+        "Merged the auth refactor to main today.",
+        "Earlier today the staging deploy broke on the cert renewal.",
+        "The user said today that the search latency feels fine.",
+    ],
+)
+def test_bare_today_fires_in_any_position(body: str) -> None:
+    """Trailing/medial 'today' is the natural assistant phrasing when
+    summarizing completed work — covered by the bare-'today' marker."""
+    hits = find_transient_markers(body)
+    assert any(h.marker == "today" for h in hits)
+
+
+def test_as_of_iso_date_fires() -> None:
+    """A dated state snapshot is the canonical transient body; bucketed
+    under one 'as of <date>' marker like the SHA loop."""
+    body = "As of 2026-06-09 the staging cluster is on k8s 1.29."
+    hits = find_transient_markers(body)
+    assert any(h.marker == "as of <date>" for h in hits)
+
+
+def test_scheduled_for_next_week_fires() -> None:
+    body = "The Postgres 16 migration is scheduled for next week."
+    hits = find_transient_markers(body)
+    assert any(h.marker == "next week" for h in hits)
+
+
+def test_plural_now_use_fires() -> None:
+    """Plural subjects conjugate to 'use'/'rely' — same staleness as the
+    third-person-singular 'now uses'."""
+    body = "We now use uv instead of pip for all dependency management."
+    hits = find_transient_markers(body)
+    assert any(h.marker == "now use" for h in hits)
+
+
+def test_unpushed_noun_phrase_fires() -> None:
+    """Bare 'unpushed' catches the noun-phrase word order, not just the
+    copula form 'is unpushed'."""
+    body = "Branch audit-fixes has three unpushed commits with the gate work."
+    hits = find_transient_markers(body)
+    assert any(h.marker == "unpushed" for h in hits)
+
+
+def test_in_progress_fires() -> None:
+    body = "The migration from REST to gRPC is in progress; auth is not cut over."
+    hits = find_transient_markers(body)
+    assert any(h.marker == "in progress" for h in hits)
+
+
+@pytest.mark.parametrize(
+    ("body", "marker"),
+    [
+        (
+            "The bettermemory checkout has uncommitted changes to server.py.",
+            "uncommitted changes",
+        ),
+        (
+            "There are untracked files under scripts/ that never got added.",
+            "untracked files",
+        ),
+        ("The fix is stashed, not committed.", "is stashed"),
+    ],
+)
+def test_working_tree_state_fires(body: str, marker: str) -> None:
+    """Working-tree state mutates on the next git command — strictly more
+    volatile than the push-distance vocabulary already covered."""
+    hits = find_transient_markers(body)
+    assert any(h.marker == marker for h in hits)
+
+
+@pytest.mark.parametrize(
+    "body",
+    [
+        "We use Postgres at the moment.",
+        "At the moment, the team prefers pnpm.",
+        "At the moment the plan is to ship v2.",  # ambiguous head keeps firing.
+    ],
+)
+def test_at_the_moment_now_sense_still_fires(body: str) -> None:
+    """Guards the of/when/that lookahead against widening silently."""
+    hits = find_transient_markers(body)
+    assert any(h.marker == "at the moment" for h in hits)
+
+
+@pytest.mark.parametrize(
+    ("body", "marker"),
+    [
+        ("The team recently switched from yarn to pnpm.", "recently switched"),
+        ("The default branch was recently renamed to main.", "was recently"),
+    ],
+)
+def test_recent_action_bigrams_fire(body: str, marker: str) -> None:
+    hits = find_transient_markers(body)
+    assert any(h.marker == marker for h in hits)
+
+
+def test_temporarily_fires() -> None:
+    """The body self-declares its transience — the strongest signal."""
+    body = (
+        "The staging environment is temporarily pointed at the prod read "
+        "replica until the migration completes."
+    )
+    hits = find_transient_markers(body)
+    assert any(h.marker == "temporarily" for h in hits)
+
+
+@pytest.mark.parametrize(
+    ("body", "marker"),
+    [
+        ("Deploy tomorrow.", "tomorrow"),  # sentence-final period.
+        ("Tomorrow we ship the migration.", "tomorrow"),  # sentence-initial.
+        ("Tomorrow I ship the migration.", "tomorrow"),  # pronoun-I follower.
+        ("this week we are focusing on auth", "this week"),
+    ],
+)
+def test_time_word_adverb_still_fires(body: str, marker: str) -> None:
+    """Guards the domain-name lookahead and title-case skip against
+    eating genuine time adverbs."""
+    hits = find_transient_markers(body)
+    assert any(h.marker == marker for h in hits)
+
+
+@pytest.mark.parametrize(
+    "body",
+    [
+        "The new schema replaces the old layout.",
+        "Use the new auth flow for service tokens.",
+    ],
+)
+def test_the_new_lowercase_still_fires(body: str) -> None:
+    """Sentence-initial 'The new' and mid-sentence 'the new' both keep
+    firing — only capital-N proper nouns are exempt."""
+    hits = find_transient_markers(body)
+    assert any(h.marker == "the new" for h in hits)
+
+
 # ---------------------------------------------------------------------------
 # Deduplication and bucketing
 # ---------------------------------------------------------------------------
@@ -141,7 +431,7 @@ def test_multiple_distinct_markers_each_reported() -> None:
     body = "Today I refactored the auth flow. Currently the tests pass."
     hits = find_transient_markers(body)
     markers = {h.marker for h in hits}
-    assert "today i" in markers
+    assert "today" in markers
     assert "currently" in markers
 
 

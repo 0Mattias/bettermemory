@@ -97,7 +97,7 @@ async def test_multiple_markers_all_reported(
     assert res["status"] == "transient_warning"
     markers = {m["marker"] for m in res["markers"]}
     # At least three distinct markers should fire.
-    assert "today i" in markers
+    assert "today" in markers
     assert "we just" in markers
     assert any(m.startswith("sha:") for m in markers)
 
@@ -156,7 +156,7 @@ async def test_acknowledge_transient_records_overridden_markers(
     assert write_events
     e = write_events[-1]
     assert e["status"] == "committed"
-    assert "today i" in e.get("markers_acknowledged", [])
+    assert "today" in e.get("markers_acknowledged", [])
 
 
 async def test_clean_body_records_empty_acknowledged_list(
