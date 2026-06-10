@@ -10,6 +10,8 @@ from __future__ import annotations
 
 import json
 import os
+import shutil
+import subprocess
 import sys
 from pathlib import Path
 from typing import Any
@@ -74,6 +76,39 @@ def store_dir(tmp_path: Path) -> Path:
 @pytest.fixture
 def store(store_dir: Path) -> Store:
     return Store(store_dir)
+
+
+_GIT_AVAILABLE = shutil.which("git") is not None
+
+
+def _init_git_repo(path: Path, *, remote: str | None = None) -> None:
+    """Minimal git repo for origin-capture tests — mirrors the
+    `_init_repo` helper in `tests/test_origin.py`."""
+    subprocess.run(
+        ["git", "init", "--initial-branch=main"],
+        cwd=path,
+        check=True,
+        capture_output=True,
+    )
+    if remote is not None:
+        subprocess.run(
+            ["git", "remote", "add", "origin", remote],
+            cwd=path,
+            check=True,
+            capture_output=True,
+        )
+
+
+def _auto_memory_dir_for(cwd: Path, home: Path) -> Path:
+    """The auto-memory path Claude Code would use for `cwd` under `home`.
+
+    Mirrors the production sanitiser in `discover_default_source_root`
+    (`/`, `.` → `-` after stripping the leading `/`; `:` stripped for
+    Windows drive letters — same Windows-aware normalisation as the
+    `TestDiscoverDefaultSourceRoot` cases)."""
+    resolved = cwd.resolve().as_posix().lstrip("/")
+    sanitised = "-" + resolved.replace("/", "-").replace(".", "-").replace(":", "")
+    return home / ".claude" / "projects" / sanitised / "memory"
 
 
 # ---------------------------------------------------------------------------
@@ -728,6 +763,117 @@ class TestApplyIngestPlan:
         active = {m.id: m for m in store.load_all()}
         assert row.written_id in active
         assert active[row.written_id].category == Category.USER_INFERENCE
+
+
+# ---------------------------------------------------------------------------
+# apply_ingest_plan — origin capture (honest-evidence gate)
+# ---------------------------------------------------------------------------
+
+
+class TestApplyIngestPlanOrigin:
+    """Write-time origin lands ONLY when the plan's source root is the
+    auto-memory directory keyed to the ingesting cwd.
+
+    That layout is per-project-cwd by construction
+    (`~/.claude/projects/<sanitized-cwd>/memory/`), so `capture(cwd)`
+    is honest provenance there. Any other `--from` root keeps the
+    conservative `origin=None` ("global") default. Before this fix,
+    every ingested memory landed `origin=None` and could never satisfy
+    the audit's positive-evidence suppression gate — recurring false
+    `search_miss` findings for in-project continuations."""
+
+    @pytest.mark.skipif(not _GIT_AVAILABLE, reason="git not on PATH")
+    def test_matching_auto_memory_root_captures_origin(
+        self, tmp_path: Path, store: Store, monkeypatch: Any
+    ) -> None:
+        """Source root == the auto-memory dir for `cwd`, and `cwd` is a
+        git checkout with a remote: the written memory carries the full
+        origin block (cwd, repo, worktree_root)."""
+        fake_home = tmp_path / "home"
+        fake_home.mkdir()
+        monkeypatch.setattr(Path, "home", lambda: fake_home)
+
+        cwd = tmp_path / "checkout"
+        cwd.mkdir()
+        _init_git_repo(cwd, remote="git@github.com:example/repo.git")
+
+        auto_dir = _auto_memory_dir_for(cwd, fake_home)
+        _write_auto_memory(auto_dir, "origin-test", description="hello", body="world")
+
+        plan = compute_ingest_plan(
+            auto_dir,
+            existing_memories=store.load_all(),
+            existing_tombstones=store.load_tombstones(),
+        )
+        apply_ingest_plan(plan, store, cwd=cwd)
+
+        [row] = plan.rows
+        assert row.written_id is not None
+        [written] = [m for m in store.load_all() if m.id == row.written_id]
+        assert written.origin is not None
+        assert written.origin.cwd == str(cwd.resolve())
+        assert written.origin.repo == "git@github.com:example/repo.git"
+        assert written.origin.worktree_root == str(cwd.resolve())
+
+    def test_matching_root_without_repo_still_captures_cwd(
+        self, tmp_path: Path, store: Store, monkeypatch: Any
+    ) -> None:
+        """A matching auto-memory root under a NON-repo cwd still gets
+        `origin.cwd` (honest: the dir is keyed to this cwd) with
+        repo/worktree_root null — same degrade `capture` itself uses
+        outside a checkout."""
+        fake_home = tmp_path / "home"
+        fake_home.mkdir()
+        monkeypatch.setattr(Path, "home", lambda: fake_home)
+
+        cwd = tmp_path / "plain-dir"
+        cwd.mkdir()
+
+        auto_dir = _auto_memory_dir_for(cwd, fake_home)
+        _write_auto_memory(auto_dir, "no-repo", description="hello", body="world")
+
+        plan = compute_ingest_plan(
+            auto_dir,
+            existing_memories=store.load_all(),
+            existing_tombstones=store.load_tombstones(),
+        )
+        apply_ingest_plan(plan, store, cwd=cwd)
+
+        [row] = plan.rows
+        assert row.written_id is not None
+        [written] = [m for m in store.load_all() if m.id == row.written_id]
+        assert written.origin is not None
+        assert written.origin.cwd == str(cwd.resolve())
+        assert written.origin.repo is None
+        assert written.origin.worktree_root is None
+
+    def test_non_matching_source_root_keeps_origin_none(
+        self, tmp_path: Path, store: Store, monkeypatch: Any
+    ) -> None:
+        """An explicit `--from` pointing anywhere other than the cwd's
+        own auto-memory dir keeps `origin=None` — no evidence the
+        content belongs to this checkout, so the conservative "global"
+        default stands."""
+        fake_home = tmp_path / "home"
+        fake_home.mkdir()
+        monkeypatch.setattr(Path, "home", lambda: fake_home)
+
+        cwd = tmp_path / "checkout"
+        cwd.mkdir()
+        source = tmp_path / "copied-from-elsewhere"
+        _write_auto_memory(source, "no-origin", description="hello", body="world")
+
+        plan = compute_ingest_plan(
+            source,
+            existing_memories=store.load_all(),
+            existing_tombstones=store.load_tombstones(),
+        )
+        apply_ingest_plan(plan, store, cwd=cwd)
+
+        [row] = plan.rows
+        assert row.written_id is not None
+        [written] = [m for m in store.load_all() if m.id == row.written_id]
+        assert written.origin is None
 
 
 # ---------------------------------------------------------------------------

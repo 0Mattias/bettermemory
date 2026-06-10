@@ -63,6 +63,7 @@ from .models import (
     TombstonedMemory,
     generate_ulid,
 )
+from .origin import Origin, capture
 from .search import HIGH_SIMILARITY, find_similar, find_similar_tombstones
 from .store import Store
 
@@ -492,6 +493,7 @@ def apply_ingest_plan(
     store: Store,
     *,
     recorder: Any | None = None,
+    cwd: Path | None = None,
 ) -> IngestPlan:
     """Execute every ``action="write"`` row in the plan.
 
@@ -500,7 +502,29 @@ def apply_ingest_plan(
     a single write don't abort the run — the row's action flips to
     `skip_invalid` with the exception text as `reason` so the user
     can see which file failed without losing the rest of the batch.
+
+    Origin capture — only when it's HONEST evidence. The auto-memory
+    layout is keyed to the writing session's cwd by construction
+    (``~/.claude/projects/<sanitized-cwd>/memory/``), so when the
+    plan's source root IS the auto-memory directory for `cwd` (the
+    process cwd when None — same default `discover_default_source_root`
+    uses on the CLI path), the source files were captured while working
+    in this cwd and ``capture(cwd)`` is truthful provenance. Any other
+    ``--from`` root (another project's auto-memory, a copied directory)
+    keeps ``origin=None`` — the conservative "global" default — because
+    nothing proves the content belongs to this checkout. Before this,
+    every ingested memory landed ``origin=None`` and could never
+    satisfy the audit's positive-evidence suppression gate
+    (`audit._caller_in_top_hit_project`), producing recurring false
+    `search_miss` findings for in-project continuations.
     """
+    origin: Origin | None = None
+    default_root = discover_default_source_root(cwd)
+    if (
+        default_root is not None
+        and default_root.resolve() == plan.source_root.resolve()
+    ):
+        origin = capture(cwd)
     for row in plan.rows:
         if row.action != "write":
             continue
@@ -510,6 +534,7 @@ def apply_ingest_plan(
                 scopes=row.scopes,
                 confidence=Confidence.MEDIUM,
                 source=Source.EXPLICIT,
+                origin=origin,
                 category=row.category,
             )
             row.written_id = memory.id
