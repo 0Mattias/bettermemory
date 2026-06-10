@@ -125,3 +125,165 @@ def test_sentence_split_on_semicolon_and_paragraph() -> None:
     ungrounded = check_groundedness(body, transcript)
     # The baking-sourdough clause should fire as ungrounded.
     assert any("sourdough" in c.sentence for c in ungrounded)
+
+
+def test_speaker_labels_are_not_anchors() -> None:
+    """Line-leading 'User:' / 'Assistant:' labels are transcript
+    formatting metadata, not conversation vocabulary. They must not
+    donate the token 'user' to a short fabricated claim about the
+    user — the exact thin-air-extraction shape the gate exists for."""
+    transcript = (
+        "User: I prefer terse code-driven explanations.\n"
+        "Assistant: Got it, terse it is."
+    )
+    body = "The user works at Google."
+    ungrounded = check_groundedness(body, transcript)
+    assert len(ungrounded) == 1
+    assert ungrounded[0].overlap_ratio == 0.0
+
+
+def test_bullet_list_items_evaluated_independently() -> None:
+    """Single-newline markdown bullets are separate fragments. A
+    hallucinated bullet can't hide behind grounded siblings by
+    pooling the whole list into one token set."""
+    transcript = (
+        "User: I prefer terse replies and code-first examples. "
+        "Assistant: Noted - terse replies, code-first examples."
+    )
+    body = (
+        "Preferences:\n"
+        "- terse replies\n"
+        "- code-first examples\n"
+        "- lives in Tokyo with three cats"
+    )
+    ungrounded = check_groundedness(body, transcript)
+    assert len(ungrounded) == 1
+    assert "Tokyo" in ungrounded[0].sentence
+
+
+def test_ie_restatement_clause_not_isolated() -> None:
+    """'i.e.' / 'e.g.' are not sentence boundaries. The restatement
+    clause after 'i.e.' is by construction a vocabulary-shifted
+    rewording — isolated, it can never anchor; pooled with its
+    sentence, the grounded whole passes."""
+    transcript = (
+        "User: don't run the test suite against production - "
+        "use the staging database, it's read-only anyway."
+    )
+    body = "Use the staging DB (read-only) for tests, i.e. never point tests at prod."
+    assert check_groundedness(body, transcript) == []
+
+
+def test_iso_date_stamp_does_not_sink_grounded_fact() -> None:
+    """An ISO date stamp counts as ONE unmatched token, not four —
+    kebab expansion must not inflate the denominator and flag a body
+    whose substantive tokens all anchor."""
+    transcript = "User: lets switch to ruff, I prefer it to flake8. Assistant: done."
+    body = "Prefers ruff over flake8 (decided 2026-06-09)."
+    assert check_groundedness(body, transcript) == []
+
+
+def test_contraction_fragments_are_not_anchors() -> None:
+    """Apostrophe shrapnel ('doesn', 't') must not cross-match an
+    unrelated contraction in the transcript and ground a fully
+    hallucinated claim."""
+    transcript = (
+        "User: the build doesn't fail anymore after the cache fix. Assistant: great."
+    )
+    body = "Doesn't trust Kubernetes at all."
+    ungrounded = check_groundedness(body, transcript)
+    assert len(ungrounded) == 1
+    assert "Kubernetes" in ungrounded[0].sentence
+    # And a different contraction can't anchor via the shared 't'.
+    assert len(check_groundedness("Can't stand Postgres databases.", transcript)) == 1
+
+
+def test_contraction_matching_grounded_body_passes() -> None:
+    """A grounded body that reuses the transcript's own contraction
+    still passes — 'doesn't' matches 'doesn't' as one token."""
+    transcript = (
+        "User: the build doesn't fail anymore after the cache fix. Assistant: great."
+    )
+    body = "The build doesn't fail anymore."
+    assert check_groundedness(body, transcript) == []
+
+
+def test_camelcase_matches_prose_and_kebab_parity() -> None:
+    """camelCase identifiers split at case boundaries so the kebab
+    expansion covers them — the verdict must not flip on the
+    identifier's casing convention."""
+    transcript = (
+        "User: please turn on format on save and set the tab size to 2 "
+        "in my editor config. Assistant: done, updated your settings."
+    )
+    camel = "Wants formatOnSave enabled and tabSize 2."
+    kebab = "Wants format-on-save enabled and tab-size 2."
+    assert check_groundedness(camel, transcript) == []
+    assert check_groundedness(kebab, transcript) == []
+
+
+def test_dotted_degree_abbreviation_grounds() -> None:
+    """'Ph.D.' neither splits the sentence mid-claim nor shatters into
+    'ph' + 'd' junk tokens — the dotted spelling grounds against the
+    transcript's undotted spelling."""
+    transcript = (
+        "User: I have a PhD in computational physics from KTH. Assistant: noted."
+    )
+    body = "The user holds a Ph.D. in computational physics."
+    assert check_groundedness(body, transcript) == []
+
+
+def test_period_inside_quote_still_splits() -> None:
+    """Terminal punctuation wrapped in a closing quote is still a
+    sentence boundary — a hallucinated follower can't merge into a
+    grounded quoted sentence and pass on its overlap."""
+    transcript = (
+        "User: one rule, deploy only on Fridays, never midweek. "
+        "Assistant: understood, I will only deploy on Fridays."
+    )
+    body = (
+        'User insists "deploy only on Fridays." Their staging cluster runs on Hetzner.'
+    )
+    ungrounded = check_groundedness(body, transcript)
+    assert len(ungrounded) == 1
+    assert "Hetzner" in ungrounded[0].sentence
+
+
+def test_numbered_list_header_not_flagged() -> None:
+    """A numbered list splits at each item start — the next item's
+    index can't glue onto a bare section header and push it over the
+    MIN_CONTENT_TOKENS floor. A fully grounded checklist passes."""
+    transcript = (
+        "User: after each release, refresh the changelog and ping the team in Slack."
+    )
+    body = "Action items:\n1. Refresh the changelog\n2. Ping the team in Slack"
+    assert check_groundedness(body, transcript) == []
+
+
+def test_crlf_and_padded_blank_line_paragraph_breaks() -> None:
+    """Paragraph breaks tolerate CRLF line endings and blank lines
+    with trailing whitespace — the newline encoding must not flip
+    the verdict on a fabricated paragraph."""
+    transcript = (
+        "User: let's use Postgres for the job queue. Assistant: agreed, Postgres it is."
+    )
+    for sep in ("\r\n\r\n", "\n \n"):
+        body = f"Uses Postgres for the job queue{sep}Lives in Tokyo and owns three cats"
+        ungrounded = check_groundedness(body, transcript)
+        assert len(ungrounded) == 1
+        assert "Tokyo" in ungrounded[0].sentence
+        assert ungrounded[0].overlap_ratio == 0.0
+
+
+def test_shared_compound_counted_once() -> None:
+    """One genuinely shared kebab compound is one matched token, not
+    three — hyphenated and unhyphenated anchors weigh identically, so
+    an embellished claim flags the same either way."""
+    transcript = "User: deps are pyyaml, python-frontmatter, and jinja2."
+    hyphenated = "Uses python-frontmatter in the blog pipeline."
+    plain = "Uses frontmatter in the blog pipeline."
+    flagged_hyphen = check_groundedness(hyphenated, transcript)
+    flagged_plain = check_groundedness(plain, transcript)
+    assert len(flagged_hyphen) == 1
+    assert len(flagged_plain) == 1
+    assert flagged_hyphen[0].overlap_ratio == flagged_plain[0].overlap_ratio

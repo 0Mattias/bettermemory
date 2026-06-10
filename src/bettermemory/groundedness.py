@@ -18,14 +18,24 @@ Calibration:
 - Sentences with fewer than `MIN_CONTENT_TOKENS` content tokens are
   skipped (too short to evaluate; "OK." has no semantic anchor to
   check).
-- Sentences whose stopword-stripped, kebab-expanded token set overlaps
-  the transcript's token set by at least `GROUNDEDNESS_THRESHOLD` of
-  their own tokens are considered grounded. The asymmetry (sentence
-  / |sentence|, not sentence ∩ transcript / sentence ∪ transcript) is
+- A sentence is grounded when at least `GROUNDEDNESS_THRESHOLD` of its
+  stopword-stripped content tokens are anchored in the transcript. The
+  ratio is computed over the sentence's *original* tokens — each
+  conceptual token counts once. A token is anchored when it, or (for
+  kebab/snake compounds) any of its parts, appears in the transcript's
+  kebab-expanded token set. Expansion stays on the transcript side
+  only: one shared compound can't multi-count as several matched
+  tokens, and one unmatched compound (an ISO date stamp, say) can't
+  multi-count against the sentence. The asymmetry (matched /
+  |sentence|, not sentence ∩ transcript / sentence ∪ transcript) is
   deliberate: the transcript is typically much larger than any single
   sentence, so Jaccard would underestimate grounding for legitimate
   body text. We're measuring "is the sentence anchored?", not
   "do these texts cover the same ground?".
+- Line-leading speaker labels ("User:", "Assistant:") are stripped
+  from the transcript before tokenizing — they're formatting metadata,
+  not conversation vocabulary, and left in place they donate freebie
+  anchors to short fabricated claims about the user.
 
 This is a heuristic, not a proof. False negatives (grounded sentences
 flagged as ungrounded) happen with creative paraphrasing; false
@@ -41,7 +51,7 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass
 
-from .search import _expand_kebab, _strip_stopwords, tokenize
+from .search import _KEBAB_SPLIT_RE, _expand_kebab, _strip_stopwords, tokenize
 
 
 # Minimum number of content tokens a sentence needs before we evaluate
@@ -58,18 +68,61 @@ MIN_CONTENT_TOKENS = 3
 GROUNDEDNESS_THRESHOLD = 0.30
 
 
-# Sentence splitter: period, exclamation, question, semicolon, double
-# newline. We deliberately keep this simple — heavy NLP isn't worth the
-# false sense of precision. A sentence that ends with an abbreviation
-# ("e.g.") may split on the dot, but the resulting fragments still get
-# checked independently and a real claim will still match the transcript.
-_SENTENCE_SPLIT_RE = re.compile(r"[.!?;]\s+|\n\n+")
+# Sentence splitter, three boundary shapes — still deliberately simple,
+# heavy NLP isn't worth the false sense of precision:
+#
+# 1. Terminal punctuation (period / exclamation / question / semicolon),
+#    optionally wrapped in closing quotes, brackets, or markdown emphasis
+#    ('."', '.”', '.**', '.)'), followed by whitespace. Without the
+#    closing-character allowance, a period inside a quote merges two
+#    sentences and a hallucinated follower hides behind a grounded quote.
+# 2. Paragraph breaks — tolerant of CRLF line endings and blank lines
+#    that carry trailing horizontal whitespace, so the encoding of the
+#    newline can't flip a verdict.
+# 3. Newlines that start a bullet or numbered list item, so each item is
+#    evaluated independently (a hallucinated bullet can't hide behind
+#    grounded siblings, and a list index can't glue onto the previous
+#    fragment). Wrapped prose lines (newline, no list marker) stay
+#    pooled with their sentence.
+#
+# Dotted abbreviation runs ("i.e.", "e.g.", "Ph.D.", "U.S.") are
+# collapsed before splitting (see _DOTTED_ABBREV_RE) so their internal
+# dots neither split a sentence mid-claim nor shatter into junk tokens.
+_SENTENCE_SPLIT_RE = re.compile(
+    r"[.!?;][\"'”’)\]*_`]*\s+"
+    r"|(?:\r?\n[^\S\n]*){2,}"
+    r"|\r?\n(?=[^\S\n]*(?:[-*•]|\d+[.)])[^\S\n])"
+)
+
+# Line-leading speaker labels in the transcript ("User:", "Assistant:")
+# are transcript formatting metadata, not conversation vocabulary —
+# stripped from the transcript side only before tokenizing.
+_SPEAKER_LABEL_RE = re.compile(r"(?im)^\s*(?:user|assistant|system|human)\s*:")
+
+# Runs of 1-2-letter dotted abbreviations: "i.e." -> "ie", "Ph.D." ->
+# "PhD", "U.S." -> "US". Letters only, so version numbers ("1.0.2") and
+# plain sentence-final periods are untouched.
+_DOTTED_ABBREV_RE = re.compile(r"\b(?:[A-Za-z]{1,2}\.){2,}")
+
+# Intra-word apostrophes (ASCII and typographic U+2019): "doesn't"
+# otherwise tokenizes as 'doesn' + 't', and those fragments cross-match
+# any unrelated contraction in the transcript. Collapsed so the
+# contraction stays one token on both sides.
+_APOSTROPHE_RE = re.compile(r"(\w)['’](\w)")
+
+# camelCase boundaries get a hyphen inserted so the existing kebab
+# expansion covers identifier-spelled facts ("formatOnSave" ->
+# "format-On-Save" -> format / on / save) the same way it already
+# covers their kebab spellings. Applied to both sides, so identical
+# spellings still match each other directly.
+_CAMEL_BOUNDARY_RE = re.compile(r"(?<=[a-z0-9])(?=[A-Z])")
 
 
 @dataclass(frozen=True)
 class UngroundedClaim:
     """One sentence from the proposed body that didn't anchor to the
-    transcript. `sentence` is the verbatim text (trimmed but not
+    transcript. `sentence` is the verbatim text (trimmed, with dotted
+    abbreviations collapsed — "Ph.D." reads "PhD" — but not
     paraphrased) so the caller can see exactly what triggered.
     `overlap_ratio` is the fraction of the sentence's content tokens
     that appear in the transcript — 0.0 means none, the threshold
@@ -85,21 +138,63 @@ class UngroundedClaim:
         }
 
 
+def _collapse_dotted_abbrevs(text: str) -> str:
+    """'i.e.' -> 'ie', 'Ph.D.' -> 'PhD', 'U.S.' -> 'US'. Removing the
+    dots changes nothing semantic but stops the dots from splitting a
+    sentence mid-claim and the letters from shattering into junk
+    tokens that never match the undotted spelling."""
+    return _DOTTED_ABBREV_RE.sub(lambda m: m.group().replace(".", ""), text)
+
+
 def _split_sentences(body: str) -> list[str]:
-    """Split a body into sentences. Naive — period / exclamation /
-    question / semicolon / paragraph break — but stable: a sentence
-    that genuinely shares no tokens with the transcript will still
-    not share any after splitting differently."""
-    parts = _SENTENCE_SPLIT_RE.split(body)
+    """Split a body into sentences. Naive — terminal punctuation
+    (tolerating closing quotes/emphasis), paragraph break, list-item
+    start — but stable: a sentence that genuinely shares no tokens
+    with the transcript will still not share any after splitting
+    differently. Dotted abbreviations are collapsed first so 'i.e.'
+    doesn't isolate its restatement clause as a fragment."""
+    parts = _SENTENCE_SPLIT_RE.split(_collapse_dotted_abbrevs(body))
     return [p.strip() for p in parts if p.strip()]
 
 
+def _normalize_token_text(text: str) -> str:
+    """Shared spelling normalization applied to both sides before
+    tokenizing: collapse dotted abbreviations and intra-word
+    apostrophes, hyphenate camelCase boundaries (must run before
+    tokenize() lowercases and destroys the case information)."""
+    text = _collapse_dotted_abbrevs(text)
+    text = _APOSTROPHE_RE.sub(r"\1\2", text)
+    return _CAMEL_BOUNDARY_RE.sub("-", text)
+
+
 def _content_tokens(text: str) -> set[str]:
-    """Tokens to compare against. Same pipeline as the dedup path —
-    stopword-stripped, kebab-expanded, lowercased. Returns a set so
-    repeated tokens within one side don't inflate overlap counts.
+    """Transcript-side tokens to compare against. Same pipeline as the
+    dedup path — stopword-stripped, kebab-expanded, lowercased — plus
+    the shared spelling normalization. Returns a set so repeated
+    tokens within one side don't inflate overlap counts.
     """
-    return set(_strip_stopwords(_expand_kebab(tokenize(text))))
+    return set(_strip_stopwords(_expand_kebab(tokenize(_normalize_token_text(text)))))
+
+
+def _sentence_content_tokens(sentence: str) -> set[str]:
+    """Sentence-side tokens: same normalization, NO kebab expansion.
+    The overlap ratio counts each conceptual token once — expansion
+    stays on the transcript side (see _is_anchored), mirroring
+    search.py's own index-widens / query-stays-narrow asymmetry."""
+    return set(_strip_stopwords(tokenize(_normalize_token_text(sentence))))
+
+
+def _is_anchored(token: str, transcript_tokens: set[str]) -> bool:
+    """A sentence token is anchored when it appears in the transcript's
+    expanded token set directly, or — for kebab/snake compounds — when
+    any of its parts does."""
+    if token in transcript_tokens:
+        return True
+    if "-" in token or "_" in token:
+        return any(
+            sub in transcript_tokens for sub in _KEBAB_SPLIT_RE.split(token) if sub
+        )
+    return False
 
 
 def check_groundedness(
@@ -123,19 +218,19 @@ def check_groundedness(
     if not body.strip():
         return []
 
-    transcript_tokens = _content_tokens(transcript)
+    transcript_tokens = _content_tokens(_SPEAKER_LABEL_RE.sub(" ", transcript))
     sentences = _split_sentences(body)
 
     ungrounded: list[UngroundedClaim] = []
     for sentence in sentences:
-        sentence_tokens = _content_tokens(sentence)
+        sentence_tokens = _sentence_content_tokens(sentence)
         if len(sentence_tokens) < min_content_tokens:
             continue
         if not transcript_tokens:
             ungrounded.append(UngroundedClaim(sentence=sentence, overlap_ratio=0.0))
             continue
-        overlap = sentence_tokens & transcript_tokens
-        ratio = len(overlap) / len(sentence_tokens)
+        matched = sum(1 for t in sentence_tokens if _is_anchored(t, transcript_tokens))
+        ratio = matched / len(sentence_tokens)
         if ratio < threshold:
             ungrounded.append(UngroundedClaim(sentence=sentence, overlap_ratio=ratio))
     return ungrounded
