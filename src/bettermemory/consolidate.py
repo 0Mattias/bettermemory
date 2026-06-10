@@ -5,10 +5,11 @@ applies, with `--apply`) four kinds of curation:
 
 1. **Near-duplicate dedup.** Pairwise similarity over the active set —
    semantic when the embeddings extra is installed, Jaccard otherwise.
-   Jaccard pairs whose bodies differ in negation polarity ("Use X" vs
-   "Do not use X" tokenize identically once stopwords drop) are
-   skipped — that's a contradiction to arbitrate, not a duplicate to
-   merge. An attested member (non-empty `verified_paths` or a set
+   Pairs whose bodies differ in negation polarity ("Use X" vs "Do not
+   use X" — token sets collapse once stopwords drop, and embedding
+   models score negated pairs above threshold too) are skipped on
+   BOTH paths — that's a contradiction to arbitrate, not a duplicate
+   to merge. An attested member (non-empty `verified_paths` or a set
    `last_verified_at`) beats an unattested one; otherwise the pair's
    newer-`updated` member wins. The loser is proposed for tombstoning
    with reason ``"consolidate: near-duplicate of <keeper_id>,
@@ -18,10 +19,13 @@ applies, with `--apply`) four kinds of curation:
    duplicate can't silently vanish from one project's auto-scoped
    retrieval.
 
-2. **Demote never-applied to ambient.** Mirrors `memory_health`'s
-   `dead_weight` rule: memories whose latest maintenance touch
-   (created / updated / last-verified) predates the window, with
-   retrieval count greater than zero and applied count of zero. ONLY
+2. **Demote never-applied to ambient.** Shares `memory_health`'s
+   `dead_weight` rule (one predicate — `health._is_dead_weight` —
+   keeps this pass, the `dead_weight` bucket, and
+   `memory_scope_overview`'s `dead` count in lockstep): memories whose
+   latest maintenance touch (created / updated / last-verified)
+   predates the window, with retrieval count greater than zero and
+   applied count of zero. ONLY
    the `fact` and (default) None categories get retagged to `ambient`
    so they stop appearing in the dead-weight bucket on future health
    passes; their content stays available for retrieval. Ambient
@@ -73,9 +77,15 @@ from typing import Any
 
 from ._fsutil import atomic_write_bytes, bounded_tail_read
 from .events import Recorder, iter_all_events
-from .health import _edit_distance_within
+from .health import (
+    _ENDORSEMENT_GRACE_DAYS,
+    _edit_distance_within,
+    _freshest_touch_ts,
+    _has_unresolved_contradiction,
+    _is_dead_weight,
+)
 from .models import Category, Memory, snippet_for
-from .search import _content_token_set
+from .search import _pairwise_content_jaccard, _raw_content_token_set
 from .semantic import cached_embed, cosine_similarity_normalized
 from .store import Store
 from .time_utils import isoformat_utc, parse_event_ts
@@ -89,16 +99,6 @@ _DEFAULT_WINDOW_DAYS = 30
 _DEFAULT_COLD_SCOPE_DAYS = 180
 _DEFAULT_TYPO_DISTANCE = 2
 
-# Demotion endorsement grace: the auto-applied endorsement structurally
-# lags every retrieval by >= 2 memory-tool turns (session.py's use-token
-# TTL), and dies with the server session — a retrieval in a session's
-# final turns produces no `use(applied)` event at all until a later
-# session re-retrieves. A memory's earliest timestamped retrieval must
-# be at least this old before applied == 0 may count against it;
-# otherwise the retrieval that proves the ranker works would be counted
-# as evidence against the memory at the very Stop hook that fired it.
-_ENDORSEMENT_GRACE_DAYS = 2
-
 # Hard cap on bytes read from a transcript file. The downstream prompt
 # builder already caps the text it ships to the LLM at
 # `llm.MAX_TRANSCRIPT_CHARS` (12k chars + truncation marker); this
@@ -107,6 +107,28 @@ _ENDORSEMENT_GRACE_DAYS = 2
 # larger than the longest sensible Claude Code session JSONL while
 # still bounded.
 _TRANSCRIPT_READ_CAP_BYTES = 1_048_576
+
+# `type="user"` transcript rows the human never typed. Claude Code
+# records background task notifications, slash-command bookkeeping,
+# harness stdout wrappers, and system reminders as user rows whose
+# content opens with one of these envelope tags; skill/command
+# expansions additionally carry `isMeta: true` at the row level.
+# Without the filter, `_load_transcript` flattens that harness text
+# into "[user]" lines and the transcript_facts cluster hands it to the
+# LLM as conversation — `consolidate --llm --from-transcript` then
+# proposes "facts" distilled from documentation prose and command
+# bookkeeping. Duplicated from `hook._SYNTHETIC_USER_PREFIXES` (the
+# canonical list — keep the two in sync) with a cross-reference rather
+# than a shared helper: hook.py is the Stop-hook entry point and this
+# offline pass shouldn't couple its import graph to it.
+_SYNTHETIC_USER_PREFIXES = (
+    "<task-notification>",
+    "<command-name>",
+    "<command-message>",
+    "<local-command-stdout>",
+    "<local-command-caveat>",
+    "<system-reminder>",
+)
 
 
 # ---------------------------------------------------------------------------
@@ -344,16 +366,19 @@ def find_dedup_candidates(
     return candidates, method
 
 
-# Negation tokens that flip a body's polarity. `_content_token_set`
-# strips these as stopwords, so "Do not use sudo" and "Use sudo" reduce
-# to IDENTICAL token sets (Jaccard 1.0) — above even the unattended
-# 0.90 threshold, with zero headroom for the threshold to save it. A
-# negated pair is a semantic contradiction requiring judgment, which
-# `run_auto_consolidate`'s safety contract explicitly forswears; the
-# pair belongs to the contradiction flow (`record_use
-# outcome=contradicted` / `consolidate --llm`), not dedup. Word-order
-# reversals ("A proxies to B" vs "B proxies to A") would need a
-# positional/bigram signal — out of scope for this guard.
+# Negation tokens that flip a body's polarity. Both dedup paths are
+# blind to negation: the Jaccard tokenizer strips these as stopwords,
+# so "Do not use sudo" and "Use sudo" reduce to IDENTICAL token sets
+# (Jaccard 1.0) — above even the unattended 0.90 threshold, with zero
+# headroom for the threshold to save it — and sentence-embedding
+# models routinely score a negated pair above the 0.85 cosine
+# threshold too. A negated pair is a semantic contradiction requiring
+# judgment, which `run_auto_consolidate`'s safety contract explicitly
+# forswears; the pair belongs to the contradiction flow (`record_use
+# outcome=contradicted` / `consolidate --llm`), not dedup — regardless
+# of which similarity method surfaced it. Word-order reversals ("A
+# proxies to B" vs "B proxies to A") would need a positional/bigram
+# signal — out of scope for this guard.
 _NEGATION_MARKERS = frozenset(
     {
         "no",
@@ -387,9 +412,9 @@ def _has_negation(body: str) -> bool:
     """True when the body carries a grammatical-negation token.
 
     Tokenizes WITHOUT stopword stripping (the whole point — the shared
-    `_content_token_set` drops the negators) and normalizes apostrophes
-    away so contracted forms ("don't", "won't") match their stripped
-    spellings in `_NEGATION_MARKERS`.
+    dedup tokenizer `search._raw_content_token_set` drops the negators)
+    and normalizes apostrophes away so contracted forms ("don't",
+    "won't") match their stripped spellings in `_NEGATION_MARKERS`.
     """
     normalized = body.lower().replace("’", "").replace("'", "")
     return any(
@@ -400,9 +425,13 @@ def _has_negation(body: str) -> bool:
 def _find_dedup_jaccard(
     memories: list[Memory], *, threshold: float
 ) -> list[DedupCandidate]:
-    # Pre-compute token sets (and polarity) once per memory.
+    # Pre-compute RAW token sets (and polarity) once per memory. Kebab
+    # expansion happens per PAIR inside `_pairwise_content_jaccard` —
+    # a compound the pair shares must stay one token (symmetric
+    # expansion of a shared compound strictly inflates Jaccard; see
+    # the helper's docstring), so it can't be precomputed per memory.
     token_sets = [
-        (m, _content_token_set(m.body), _has_negation(m.body)) for m in memories
+        (m, _raw_content_token_set(m.body), _has_negation(m.body)) for m in memories
     ]
     out: list[DedupCandidate] = []
     for i in range(len(token_sets)):
@@ -419,11 +448,7 @@ def _find_dedup_jaccard(
                 # similarity here labels a contradiction as a
                 # duplicate. Skip — the contradiction flow decides.
                 continue
-            intersection = t_i & t_j
-            if not intersection:
-                continue
-            union = t_i | t_j
-            sim = len(intersection) / len(union)
+            sim = _pairwise_content_jaccard(t_i, t_j)
             if sim < threshold:
                 continue
             keeper, duplicate = _pick_keeper(m_i, m_j)
@@ -447,21 +472,30 @@ def _find_dedup_semantic(
     cache from `bettermemory.semantic` — a consolidate run after
     normal use will hit the cache for most memories.
     """
-    # Materialize embeddings once per memory; the cache makes repeats
-    # cheap but we still pay the dict lookup, so a local list is faster.
-    embedded: list[tuple[Memory, Any]] = []
+    # Materialize embeddings (and polarity) once per memory; the cache
+    # makes repeats cheap but we still pay the dict lookup, so a local
+    # list is faster.
+    embedded: list[tuple[Memory, Any, bool]] = []
     for memory in memories:
         body = memory.body.strip()
         if not body:
             continue
         vec = cached_embed(model, memory.id, memory.updated.isoformat(), body)
-        embedded.append((memory, vec))
+        embedded.append((memory, vec, _has_negation(memory.body)))
 
     out: list[DedupCandidate] = []
     for i in range(len(embedded)):
-        m_i, v_i = embedded[i]
+        m_i, v_i, neg_i = embedded[i]
         for j in range(i + 1, len(embedded)):
-            m_j, v_j = embedded[j]
+            m_j, v_j, neg_j = embedded[j]
+            if neg_i != neg_j:
+                # Opposite polarity: embedding models score "Use X" /
+                # "Do not use X" well above the cosine threshold, so a
+                # high similarity here labels a contradiction as a
+                # duplicate and `consolidate --apply` would tombstone
+                # one side unreviewed. Skip — same guard as the
+                # Jaccard loop; the contradiction flow decides.
+                continue
             try:
                 sim = cosine_similarity_normalized(v_i, v_j)
             except ValueError:
@@ -498,16 +532,17 @@ def find_demotion_candidates(
     last touched (created / updated / verified) before the window with
     retrieval count greater than zero and applied count of zero.
 
-    Four structural exemptions, all conservative (they only ever skip):
+    The rule itself is `health._is_dead_weight` — one shared predicate,
+    so this action pass, `compute_health`'s dead_weight bucket, and
+    `curation_counts`' `dead` count cannot diverge (the reported signal
+    used to count memories the demotion pass refused to drain). The
+    predicate carries the conservative gates:
 
     - Already-ambient memories (structurally exempt — the use signal
       is implicit).
-    - Non-fact categories: only ``fact`` and (legacy) None are
-      demotion-eligible, per the module docstring's enumeration.
-      ``user-inference`` carries a user-confirmation ceremony an
-      automated pass cannot re-supply, and `memory_update` cannot
-      restore the tag — the retag would be one-way. Future categories
-      are protected by default.
+    - Freshest-touch window: a rewrite (`updated`) or attestation
+      (`last_verified_at`) inside the window is active maintenance,
+      not rot.
     - Unresolved contradictions: a memory whose newest
       `use(contradicted)` event postdates both `updated` and
       `last_verified_at` is parked in health's contradicted bucket
@@ -522,6 +557,15 @@ def find_demotion_candidates(
       `_ENDORSEMENT_GRACE_DAYS` before applied == 0 may count against
       the memory (missing/unparseable ts counts as old — legacy logs
       stay eligible).
+
+    On top of the predicate, this ACTION pass keeps its own category
+    whitelist: only ``fact`` and (legacy) None are demotion-eligible,
+    per the module docstring's enumeration. ``user-inference`` carries
+    a user-confirmation ceremony an automated pass cannot re-supply,
+    and `memory_update` cannot restore the tag — the retag would be
+    one-way. Future categories are protected by default. (The health
+    REPORT still surfaces such rows as dead weight; only the
+    unattended retag is category-restricted.)
 
     Returns a list sorted oldest-first so the longest-stale rot is
     surfaced before fresher candidates.
@@ -578,41 +622,30 @@ def find_demotion_candidates(
     for memory in memories:
         # Whitelist, not skip-list: only `fact` and (legacy) None are
         # demotion-eligible. Ambient is already demoted; user-inference
-        # (and any future category) keeps its protected tier.
+        # (and any future category) keeps its protected tier. This is
+        # the action-side gate layered ON TOP of the shared predicate.
         if memory.category is not None and memory.category != Category.FACT:
             continue
-        # Grace window keyed on the latest maintenance touch, not just
-        # `created` — a rewrite (`updated`) or attestation
-        # (`last_verified_at`) is active maintenance, not rot.
-        freshest_ts = max(
-            memory.created.timestamp(),
-            memory.updated.timestamp(),
-            (memory.last_verified_at.timestamp() if memory.last_verified_at else 0.0),
-        )
-        if freshest_ts >= cutoff:
-            continue
         retrieved_count = retrieved.get(memory.id, 0)
-        if retrieved_count == 0:
-            continue
-        if applied.get(memory.id, 0) > 0:
-            continue
-        contradicted_at = last_contradicted.get(memory.id)
-        if contradicted_at is not None:
-            resolved_at = memory.updated
-            if memory.last_verified_at is not None and (
-                memory.last_verified_at > resolved_at
-            ):
-                resolved_at = memory.last_verified_at
-            if contradicted_at > resolved_at:
-                # Unresolved contradiction — parked for explicit
-                # resolution via memory_update/memory_verify, not
-                # dead weight.
-                continue
         first_seen = earliest_retrieval.get(memory.id)
-        if first_seen is not None and first_seen.timestamp() >= grace_cutoff:
-            # Every retrieval is younger than the endorsement grace —
-            # the auto-applied commit window can't have elapsed yet, so
-            # applied == 0 carries no signal.
+        if not _is_dead_weight(
+            category=memory.category,
+            freshest_ts=_freshest_touch_ts(
+                memory.created, memory.updated, memory.last_verified_at
+            ),
+            retrieval_count=retrieved_count,
+            applied_count=applied.get(memory.id, 0),
+            has_unresolved_contradiction=_has_unresolved_contradiction(
+                last_contradicted.get(memory.id),
+                memory.updated,
+                memory.last_verified_at,
+            ),
+            earliest_retrieval_ts=(
+                first_seen.timestamp() if first_seen is not None else None
+            ),
+            cutoff_ts=cutoff,
+            grace_cutoff_ts=grace_cutoff,
+        ):
             continue
         age_seconds = now.timestamp() - memory.created.timestamp()
         age_days = int(age_seconds // 86400)
@@ -1400,7 +1433,14 @@ def _load_transcript(path: Path) -> str:
 
     - ``.jsonl`` → Claude Code per-session log. Parse line-by-line;
       keep `{"type": "user", ...}` and `{"type": "assistant", ...}`
-      entries and concatenate their text content blocks.
+      entries and concatenate their text content blocks. Synthetic
+      user rows are dropped: rows stamped `isMeta: true` (skill /
+      command expansions) and rows whose text opens with one of the
+      `_SYNTHETIC_USER_PREFIXES` envelope tags (task notifications,
+      command bookkeeping, system reminders) are harness text the
+      human never typed — flattening them as "[user]" lines fed the
+      transcript_facts cluster documentation prose to distill "facts"
+      from. Mirrors `hook._extract_last_exchange`'s row filtering.
     - anything else → read verbatim. Plain-text and Markdown
       transcripts pass through unchanged.
 
@@ -1448,6 +1488,11 @@ def _load_transcript(path: Path) -> str:
         message = row.get("message")
         if role not in ("user", "assistant") or not isinstance(message, dict):
             continue
+        if role == "user" and row.get("isMeta"):
+            # Skill/command expansions are stamped `isMeta: true` at
+            # the row level — harness-injected, not the human's words.
+            # Same row-level check as hook._extract_last_exchange.
+            continue
         content = message.get("content")
         text: str | None = None
         if isinstance(content, str):
@@ -1464,6 +1509,12 @@ def _load_transcript(path: Path) -> str:
             if parts:
                 text = "\n".join(parts)
         if not text:
+            continue
+        if role == "user" and text.lstrip().startswith(_SYNTHETIC_USER_PREFIXES):
+            # Envelope-tagged synthetic payload (see the constant's
+            # comment) — harness bookkeeping, not conversation.
+            # Assistant rows are kept unfiltered, matching hook.py
+            # (only user rows carry synthetic envelopes).
             continue
         out.append(f"[{role}] {text}")
     return "\n\n".join(out)

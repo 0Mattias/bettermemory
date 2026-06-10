@@ -632,10 +632,11 @@ def test_kebab_underscore_treated_like_hyphen() -> None:
 # ---------------------------------------------------------------------------
 # find_similar — content dedup at write time
 #
-# Symmetric Jaccard on stopword-stripped, kebab-expanded token sets. >= 0.75
-# is "high" (block the write); >= 0.40 is "medium" (surface as related);
-# below is ignored. Recency is irrelevant — two memories aren't more or less
-# duplicate based on age.
+# Symmetric Jaccard on stopword-stripped token sets with pairwise-aware kebab
+# expansion (a compound expands into its parts only when the other side lacks
+# it — see _pairwise_content_jaccard). >= 0.75 is "high" (block the write);
+# >= 0.40 is "medium" (surface as related); below is ignored. Recency is
+# irrelevant — two memories aren't more or less duplicate based on age.
 # ---------------------------------------------------------------------------
 
 
@@ -705,13 +706,31 @@ def test_find_similar_orders_by_similarity_desc() -> None:
 def test_find_similar_kebab_expansion_is_symmetric() -> None:
     """A body using kebab notation should match a body that spells it out
     (and vice versa). The asymmetry in `score_memory` is for the search
-    direction; for dedup we want both sides expanded so equivalent phrasings
-    collapse together.
+    direction; for dedup the compound expands whenever the other side
+    lacks it, so equivalent phrasings collapse together regardless of
+    which side used the kebab form.
     """
     kebab = _memory("python-frontmatter library is unmaintained, vendored locally")
     spaced_candidate = "python frontmatter library is unmaintained, vendored locally"
     hits = find_similar(spaced_candidate, [kebab])
     assert hits and hits[0].relevance in {"high", "medium"}
+
+
+def test_find_similar_shared_compound_does_not_inflate_jaccard() -> None:
+    """Regression: symmetric kebab expansion multiplied a compound BOTH
+    sides share — expanding `docker-compose` on both sides added the same
+    two part-tokens to intersection and union, which strictly increases
+    Jaccard whenever J < 1. Two DISTINCT per-environment facts went from
+    raw 0.714 to 0.778, crossing the 0.75 write-blocking line purely
+    from expansion. With pairwise-aware expansion the shared compound
+    stays one token: the pair surfaces as `medium` (related), not
+    `high` (write-blocking)."""
+    prod = _memory("docker-compose stack restarts grafana automatically prod")
+    dev_candidate = "docker-compose stack restarts grafana automatically dev"
+    hits = find_similar(dev_candidate, [prod])
+    assert hits, "the pair is genuinely related — it must still surface"
+    assert hits[0].relevance == "medium"
+    assert hits[0].similarity < 0.75
 
 
 def test_find_similar_flags_nfc_duplicate_of_nfd_body() -> None:

@@ -12,9 +12,13 @@ The metrics are designed around the failure modes the rest of this
 project is trying to detect:
 
 - **dead_weight**: memories that have been retrieved but never `applied`
-  (or never retrieved at all, despite existing for a while). Either the
+  (zero-retrieval rows land in `cold_memories` instead). Either the
   search ranking isn't surfacing them, or they're noise. Either way,
-  prune candidates.
+  prune candidates. The rule is the shared `_is_dead_weight` predicate
+  — freshest-touch window, unresolved-contradiction parking, and the
+  endorsement grace all exempt — which `curation_counts` and
+  `consolidate.find_demotion_candidates` read too, so the reported
+  signal and the unattended demotion action cannot diverge.
 - **heavily_used**: memories with high applied-count. These are working;
   don't touch them.
 - **contradicted**: memories with a `contradicted` use event newer than
@@ -53,6 +57,109 @@ from .time_utils import (
     isoformat_utc_optional,
     parse_event_ts,
 )
+
+
+# ---------------------------------------------------------------------------
+# Shared dead-weight predicate
+# ---------------------------------------------------------------------------
+#
+# One rule, three consumers: `compute_health`'s dead_weight bucket, the
+# `curation_counts` "dead" rollup behind `memory_scope_overview`, and
+# `consolidate.find_demotion_candidates` (the unattended fact->ambient
+# retag). The demotion pass grew three conservative gates — the
+# freshest-touch window, unresolved-contradiction parking, the
+# endorsement grace — while the reporting rollups still keyed on
+# `created` alone, so scope_overview kept reporting dead > 0 that the
+# demotion pass (correctly) refused to drain. `_is_dead_weight` below
+# is the single source of truth; the action side layers its fact/None
+# category whitelist ON TOP (the report still surfaces e.g.
+# user-inference dead rows — only the automated retag is
+# category-restricted).
+
+# Endorsement grace: the auto-applied endorsement structurally lags
+# every retrieval by >= 2 memory-tool turns (session.py's use-token
+# TTL), and dies with the server session — a retrieval in a session's
+# final turns produces no `use(applied)` event at all until a later
+# session re-retrieves. A memory's earliest timestamped retrieval must
+# be at least this old before applied == 0 may count against it;
+# otherwise the retrieval that proves the ranker works would be counted
+# as evidence against the memory at the very Stop hook that fired it.
+_ENDORSEMENT_GRACE_DAYS = 2
+
+
+def _freshest_touch_ts(
+    created: datetime, updated: datetime, last_verified_at: datetime | None
+) -> float:
+    """Epoch timestamp of the latest maintenance touch. A rewrite
+    (`updated`) or an attestation (`last_verified_at`) is active
+    maintenance, not rot, so the dead-weight window keys on the most
+    recent of the three rather than `created` alone."""
+    ts = max(created.timestamp(), updated.timestamp())
+    if last_verified_at is not None:
+        ts = max(ts, last_verified_at.timestamp())
+    return ts
+
+
+def _has_unresolved_contradiction(
+    last_contradicted_at: datetime | None,
+    updated: datetime,
+    last_verified_at: datetime | None,
+) -> bool:
+    """True when the newest `use(contradicted)` event postdates both
+    resolution paths (memory_update bumps `updated`; memory_verify
+    bumps `last_verified_at`). The single implementation behind
+    `MemoryStats.has_unresolved_contradiction`, `curation_counts`, and
+    `consolidate.find_demotion_candidates` — see the property's
+    docstring for the full resolution semantics."""
+    if last_contradicted_at is None:
+        return False
+    last_resolved_at = updated
+    if last_verified_at is not None and last_verified_at > last_resolved_at:
+        last_resolved_at = last_verified_at
+    return last_contradicted_at > last_resolved_at
+
+
+def _is_dead_weight(
+    *,
+    category: Category | None,
+    freshest_ts: float,
+    retrieval_count: int,
+    applied_count: int,
+    has_unresolved_contradiction: bool,
+    earliest_retrieval_ts: float | None,
+    cutoff_ts: float,
+    grace_cutoff_ts: float,
+) -> bool:
+    """The one dead-weight rule. All gates are conservative — each can
+    only EXCLUDE a memory from the bucket:
+
+    - ambient excluded (use signal structurally absent — implicit value);
+    - latest maintenance touch (`_freshest_touch_ts`) before the window;
+    - retrieved at least once (zero retrievals is `cold`, a different
+      bucket asking a different curation question);
+    - applied zero times;
+    - no unresolved contradiction (parked for explicit resolution via
+      memory_update/memory_verify, not lacking value);
+    - earliest timestamped retrieval older than the endorsement grace
+      (`earliest_retrieval_ts=None` — no timestamped retrieval —
+      counts as old, so legacy logs stay eligible).
+    """
+    if category == Category.AMBIENT:
+        return False
+    if freshest_ts >= cutoff_ts:
+        return False
+    if retrieval_count == 0:
+        return False
+    if applied_count > 0:
+        return False
+    if has_unresolved_contradiction:
+        return False
+    if earliest_retrieval_ts is not None and earliest_retrieval_ts >= grace_cutoff_ts:
+        # Every retrieval is younger than the endorsement grace — the
+        # auto-applied commit window can't have elapsed yet, so
+        # applied == 0 carries no signal.
+        return False
+    return True
 
 
 # ---------------------------------------------------------------------------
@@ -144,15 +251,9 @@ class MemoryStats:
         slides the timestamp forward past the contradiction and the
         flag clears.
         """
-        if self.last_contradicted_at is None:
-            return False
-        last_resolved_at = self.updated
-        if (
-            self.last_verified_at is not None
-            and self.last_verified_at > last_resolved_at
-        ):
-            last_resolved_at = self.last_verified_at
-        return self.last_contradicted_at > last_resolved_at
+        return _has_unresolved_contradiction(
+            self.last_contradicted_at, self.updated, self.last_verified_at
+        )
 
     @property
     def endorsement_ratio(self) -> float | None:
@@ -818,6 +919,10 @@ class _AccumulatorRollups:
     # timestamp.
     acknowledged_miss_event_ids: set[str]
     resolution_events_by_id: dict[str, list[dict[str, Any]]]
+    # Earliest timestamped retrieval per memory id — the endorsement-
+    # grace input to the shared `_is_dead_weight` predicate. Ids with
+    # no timestamped retrieval are simply absent (read as "old").
+    earliest_retrieval_by_id: dict[str, datetime]
 
 
 def _parse_silent_miss_event(
@@ -952,6 +1057,12 @@ class _StatsAccumulator:
         self._resolution_events_by_id: dict[str, list[dict[str, Any]]] = {
             mid: [] for mid in by_id
         }
+        # Earliest timestamped retrieval per memory id — feeds the
+        # endorsement-grace gate of the shared `_is_dead_weight`
+        # predicate. Search events without a parseable ts simply don't
+        # contribute (the predicate treats an absent earliest retrieval
+        # as old, keeping legacy logs dead-weight-eligible).
+        self._earliest_retrieval_by_id: dict[str, datetime] = {}
 
     # ---- dispatch -------------------------------------------------------
 
@@ -982,12 +1093,17 @@ class _StatsAccumulator:
         # event consumers use (consolidate / hook / _handlers /
         # _response) — keeps the health rollups consistent if an
         # event carries the older `memory_ids` / `hit_ids` spelling.
+        ts = _ensure_utc(parse_event_ts(ev.get("ts")))
         for mid in (
             ev.get("returned") or ev.get("memory_ids") or ev.get("hit_ids") or []
         ):
             stats = self._by_id.get(mid)
             if stats:
                 stats.retrieval_count += 1
+                if ts is not None:
+                    prev = self._earliest_retrieval_by_id.get(mid)
+                    if prev is None or ts < prev:
+                        self._earliest_retrieval_by_id[mid] = ts
 
     def _handle_show(self, ev: dict[str, Any]) -> None:
         stats = self._by_id.get(ev.get("id", ""))
@@ -1150,6 +1266,7 @@ class _StatsAccumulator:
             latest_miss_cutoff=self._latest_miss_cutoff,
             acknowledged_miss_event_ids=self._acknowledged_miss_event_ids,
             resolution_events_by_id=self._resolution_events_by_id,
+            earliest_retrieval_by_id=self._earliest_retrieval_by_id,
         )
 
     # Class-level dispatch table. Defined after the methods so the
@@ -1191,9 +1308,13 @@ def compute_health(
     should pass that directly.
 
     `window_days` controls the dead-weight cutoff: a memory is dead-weight
-    if it was created more than `window_days` ago AND has no `applied`
-    events. The window keeps recently-written memories from being flagged
-    before they've had a chance to be retrieved.
+    when its latest maintenance touch (created / updated / last-verified)
+    is more than `window_days` old, it has been retrieved but never
+    `applied`, carries no unresolved contradiction, and its earliest
+    retrieval has aged past the endorsement grace — the shared
+    `_is_dead_weight` predicate. The window keeps recently-written (or
+    recently-maintained) memories from being flagged before they've had
+    a chance to accumulate use signal.
 
     `heavily_used_min_applied` is the floor on `applied_count` for inclusion
     in `heavily_used`. Default 3: a single acknowledgement is acknowledgement,
@@ -1290,19 +1411,34 @@ def compute_health(
     # the scopes are wrong, or the content is duplicate-noise. Either way,
     # a curation pass should look.
     #
+    # The rule is the shared `_is_dead_weight` predicate (see its
+    # docstring for the full gate list) so this bucket, the
+    # `curation_counts` "dead" rollup, and the consolidate demotion
+    # pass cannot diverge — the rollup used to key on `created` alone
+    # and reported dead rows the demotion pass refused to drain.
+    #
     # Memories with `retrieval_count == 0` move into `cold_memories`
     # below. Ambient-category memories are excluded from both buckets:
     # their value is implicit (they shape responses without being cited),
     # so the use signal is structurally absent and a count of zero
     # there is not an indictment.
-    dead_weight = [
-        s
-        for s in by_id.values()
-        if s.category != Category.AMBIENT
-        and s.created < cutoff
-        and s.retrieval_count > 0
-        and s.applied_count == 0
-    ]
+    grace_cutoff = now - timedelta(days=_ENDORSEMENT_GRACE_DAYS)
+    dead_weight: list[MemoryStats] = []
+    for s in by_id.values():
+        first_seen = rollups.earliest_retrieval_by_id.get(s.id)
+        if _is_dead_weight(
+            category=s.category,
+            freshest_ts=_freshest_touch_ts(s.created, s.updated, s.last_verified_at),
+            retrieval_count=s.retrieval_count,
+            applied_count=s.applied_count,
+            has_unresolved_contradiction=s.has_unresolved_contradiction,
+            earliest_retrieval_ts=(
+                first_seen.timestamp() if first_seen is not None else None
+            ),
+            cutoff_ts=cutoff.timestamp(),
+            grace_cutoff_ts=grace_cutoff.timestamp(),
+        ):
+            dead_weight.append(s)
     dead_weight.sort(key=lambda s: s.created)
 
     # Cold memories: never retrieved at all in the window. Either nobody is
@@ -2325,6 +2461,12 @@ def curation_counts(
     # over-count freshly-emitted misses against an ack the user
     # already recorded.
     acknowledged_event_ids: set[str] = set()
+    # Earliest timestamped retrieval and newest contradicted ts per id —
+    # the endorsement-grace and unresolved-contradiction inputs to the
+    # shared `_is_dead_weight` predicate, mirroring what
+    # `_StatsAccumulator` tracks for `compute_health`.
+    earliest_retrieval: dict[str, datetime] = {}
+    last_contradicted: dict[str, datetime] = {}
     for ev in events:
         kind = ev.get("kind")
         # `silent_miss_cutoff` is a global marker — once written it
@@ -2360,11 +2502,16 @@ def curation_counts(
                 continue
         if kind == "search":
             # Legacy-name fallback — see the note in `compute_health`.
+            search_ts = _ensure_utc(_parse_event_ts(ev.get("ts")))
             for mid in (
                 ev.get("returned") or ev.get("memory_ids") or ev.get("hit_ids") or []
             ):
                 if mid in retrieval_counts:
                     retrieval_counts[mid] += 1
+                    if search_ts is not None:
+                        prev = earliest_retrieval.get(mid)
+                        if prev is None or search_ts < prev:
+                            earliest_retrieval[mid] = search_ts
         elif kind == "use" and ev.get("outcome") == "applied":
             is_auto = ev.get("auto") is True
             for mid in ev.get("ids") or ev.get("memory_ids") or []:
@@ -2372,6 +2519,14 @@ def curation_counts(
                     applied_counts[mid] += 1
                     if not is_auto and mid in explicit_applied_counts:
                         explicit_applied_counts[mid] += 1
+        elif kind == "use" and ev.get("outcome") == "contradicted":
+            use_ts = _ensure_utc(_parse_event_ts(ev.get("ts")))
+            if use_ts is not None:
+                for mid in ev.get("ids") or ev.get("memory_ids") or []:
+                    if mid in retrieval_counts:
+                        prev = last_contradicted.get(mid)
+                        if prev is None or use_ts > prev:
+                            last_contradicted[mid] = use_ts
         elif kind == "search_miss":
             # Shared parser with `_StatsAccumulator._handle_search_miss`
             # so the two silent-miss readers stay numerically in lockstep.
@@ -2393,6 +2548,7 @@ def curation_counts(
     dead = 0
     cold_endorsement_memories = 0
     endorsement_floor = max(1, int(cold_endorsement_min_retrievals))
+    grace_cutoff = now - timedelta(days=_ENDORSEMENT_GRACE_DAYS)
     for m in mem_list:
         is_ambient = m.category == Category.AMBIENT
         if m.last_verified_at is None:
@@ -2400,12 +2556,30 @@ def curation_counts(
         elif m.last_verified_at < verification_cutoff:
             stale += 1
         if not is_ambient and m.created < cutoff:
-            r = retrieval_counts.get(m.id, 0)
-            a = applied_counts.get(m.id, 0)
-            if r == 0:
+            if retrieval_counts.get(m.id, 0) == 0:
                 cold += 1
-            elif a == 0:
-                dead += 1
+        # `dead` reads the shared `_is_dead_weight` predicate so the
+        # count agrees with `compute_health`'s dead_weight bucket (the
+        # numerical contract) — including the freshest-touch,
+        # contradiction, and endorsement-grace gates the demotion pass
+        # applies. Disjoint from `cold` by construction: dead requires
+        # at least one retrieval.
+        first_seen = earliest_retrieval.get(m.id)
+        if _is_dead_weight(
+            category=m.category,
+            freshest_ts=_freshest_touch_ts(m.created, m.updated, m.last_verified_at),
+            retrieval_count=retrieval_counts.get(m.id, 0),
+            applied_count=applied_counts.get(m.id, 0),
+            has_unresolved_contradiction=_has_unresolved_contradiction(
+                last_contradicted.get(m.id), m.updated, m.last_verified_at
+            ),
+            earliest_retrieval_ts=(
+                first_seen.timestamp() if first_seen is not None else None
+            ),
+            cutoff_ts=cutoff.timestamp(),
+            grace_cutoff_ts=grace_cutoff.timestamp(),
+        ):
+            dead += 1
         # Cold-endorsement-memories count: heavily retrieved (over the
         # floor) AND weakly endorsed under the same predicate
         # compute_health uses. Default ratio_threshold=0.0 reduces to

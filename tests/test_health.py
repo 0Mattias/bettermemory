@@ -252,7 +252,10 @@ def test_curation_counts_zero_on_empty_store() -> None:
 
 def test_curation_counts_matches_compute_health_buckets() -> None:
     """Numerical contract: counts agree with bucket sizes from
-    compute_health over the same inputs."""
+    compute_health over the same inputs — including the dead-weight
+    gates both paths read from the shared `_is_dead_weight` predicate
+    (freshest-touch window, unresolved contradiction, endorsement
+    grace), exercised by the three `gated_*` rows below."""
     cold = _memory(created=_utc(2026, 1, 1))
     dead = _memory(created=_utc(2026, 1, 1))
     fresh_verified = _memory(
@@ -264,10 +267,37 @@ def test_curation_counts_matches_compute_health_buckets() -> None:
         created=_utc(2026, 1, 1),
         last_verified_at=_utc(2026, 1, 5),  # stale at threshold 30
     )
+    # Would-be dead rows that each trip one predicate gate instead:
+    gated_maintained = _memory(
+        created=_utc(2026, 1, 1),
+        updated=_utc(2026, 4, 28),  # rewritten inside the window
+    )
+    gated_contradicted = _memory(created=_utc(2026, 1, 1))
+    gated_graced = _memory(created=_utc(2026, 1, 1))
     events = [
         _event("search", ts=_utc(2026, 4, 1), returned=[dead.id]),
+        _event("search", ts=_utc(2026, 4, 1), returned=[gated_maintained.id]),
+        _event("search", ts=_utc(2026, 4, 1), returned=[gated_contradicted.id]),
+        _event(
+            "use",
+            ts=_utc(2026, 4, 20),
+            ids=[gated_contradicted.id],
+            outcome="contradicted",
+        ),
+        # Only retrieval is one day before `now` — inside the
+        # endorsement grace.
+        _event("search", ts=_utc(2026, 4, 30), returned=[gated_graced.id]),
     ]
-    mems = [cold, dead, fresh_verified, never, stale_v]
+    mems = [
+        cold,
+        dead,
+        fresh_verified,
+        never,
+        stale_v,
+        gated_maintained,
+        gated_contradicted,
+        gated_graced,
+    ]
     report = compute_health(
         mems,
         events,
@@ -286,6 +316,49 @@ def test_curation_counts_matches_compute_health_buckets() -> None:
     assert counts["cold"] == len(report.cold_memories)
     assert counts["never_verified"] == report.verification_debt.never_verified_total
     assert counts["stale"] == report.verification_debt.stale_total
+    # The gated rows must not be counted dead on either path.
+    assert [s.id for s in report.dead_weight] == [dead.id]
+    assert counts["dead"] == 1
+
+
+def test_dead_weight_parity_across_health_counts_and_demotion() -> None:
+    """Regression (round 85): `find_demotion_candidates` gained the
+    freshest-touch, unresolved-contradiction, and endorsement-grace
+    gates in round 84 while `compute_health`'s dead_weight and
+    `curation_counts`' dead still keyed on `created` alone — a fixture
+    tripping all three gates reported dead_weight=3 / dead=3 against
+    demotion candidates=0, so scope_overview kept advertising dead rot
+    the unattended pass refused to drain. All three consumers now read
+    the shared `_is_dead_weight` predicate: each gated memory appears
+    in NONE of them, the control appears in ALL of them."""
+    from bettermemory.consolidate import find_demotion_candidates
+
+    now = _utc(2026, 6, 1)
+    old = now - timedelta(days=90)
+    maintained = _memory(created=old, updated=now - timedelta(days=1))
+    contradicted = _memory(created=old)
+    graced = _memory(created=old)
+    control = _memory(created=old)
+    events = [
+        _event("search", ts=now - timedelta(days=20), returned=[maintained.id]),
+        _event("search", ts=now - timedelta(days=20), returned=[contradicted.id]),
+        _event(
+            "use",
+            ts=now - timedelta(days=5),
+            ids=[contradicted.id],
+            outcome="contradicted",
+        ),
+        # Only retrieval is six hours old — inside the endorsement grace.
+        _event("search", ts=now - timedelta(hours=6), returned=[graced.id]),
+        _event("search", ts=now - timedelta(days=20), returned=[control.id]),
+    ]
+    mems = [maintained, contradicted, graced, control]
+    report = compute_health(mems, events, window_days=30, now=now)
+    counts = curation_counts(mems, events, window_days=30, now=now)
+    demotions = find_demotion_candidates(mems, events, window_days=30, now=now)
+    assert [s.id for s in report.dead_weight] == [control.id]
+    assert counts["dead"] == 1
+    assert [d.memory_id for d in demotions] == [control.id]
 
 
 def test_curation_counts_excludes_ambient_from_dead_and_cold() -> None:

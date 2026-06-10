@@ -228,6 +228,71 @@ def test_dedup_skips_opposite_polarity_pair() -> None:
     assert len(candidates) == 1
 
 
+class _FixedVectorModel:
+    """Stub embedding model: every body encodes to the same normalized
+    vector, so every pair scores cosine 1.0 — above any threshold. The
+    polarity guard is then the only thing between an opposite-polarity
+    pair and a tombstone proposal."""
+
+    def encode(self, text: str, normalize_embeddings: bool = True) -> list[float]:
+        return [1.0, 0.0]
+
+
+def test_semantic_dedup_skips_opposite_polarity_pair() -> None:
+    """Regression: round 84 added the polarity guard to the Jaccard loop
+    only — `_find_dedup_semantic` went straight from the cosine threshold
+    to `_pick_keeper`, and `consolidate --apply` tombstones every
+    candidate without review, so an embedding model scoring 'Use X' /
+    'Do not use X' above 0.85 (routine for sentence embeddings) got one
+    side auto-tombstoned. The guard is method-independent: a negated
+    pair is a contradiction to arbitrate, whichever scorer surfaced it."""
+    a = _memory("Do not use sudo for npm installs on this machine.")
+    b = _memory("Use sudo for npm installs on this machine.")
+    candidates, method = find_dedup_candidates(
+        [a, b], semantic_model=_FixedVectorModel()
+    )
+    assert method == "semantic"
+    assert candidates == [], (
+        "opposite-polarity pair surfaced as a semantic dedup candidate "
+        "despite the polarity guard"
+    )
+
+    # Same-polarity pair still dedups at cosine 1.0 — the guard compares
+    # polarity, it doesn't exempt negated bodies wholesale.
+    c = _memory("Do not use sudo for npm installs on this machine.")
+    candidates, method = find_dedup_candidates(
+        [a, c], semantic_model=_FixedVectorModel()
+    )
+    assert method == "semantic"
+    assert len(candidates) == 1
+
+
+def test_dedup_shared_compound_does_not_inflate_jaccard() -> None:
+    """Regression: symmetric kebab expansion in the shared token set
+    multiplied a compound BOTH bodies share — expanding `docker-compose`
+    on both sides added the same two part-tokens to intersection and
+    union, lifting raw Jaccard 0.714 to 0.778 and proposing one of two
+    DISTINCT per-environment facts for tombstoning at the 0.75
+    manual-apply default. Pairwise-aware expansion leaves the shared
+    compound as one token; the pair stays below threshold."""
+    a = _memory("docker-compose stack restarts grafana automatically prod")
+    b = _memory("docker-compose stack restarts grafana automatically dev")
+    candidates, method = find_dedup_candidates([a, b])
+    assert method == "jaccard"
+    assert candidates == [], (
+        "distinct per-environment facts crossed the dedup threshold "
+        "purely from shared-compound kebab expansion"
+    )
+
+    # Cross-notation matching is preserved: a kebab body and its
+    # spaced-out restatement still dedup (the compound is expanded
+    # when the OTHER side lacks it).
+    kebab = _memory("python-frontmatter library is unmaintained, vendored locally")
+    spaced = _memory("python frontmatter library is unmaintained, vendored locally")
+    candidates, _ = find_dedup_candidates([kebab, spaced])
+    assert len(candidates) == 1
+
+
 def test_dedup_pairs_sorted_by_similarity_desc() -> None:
     """Stronger matches come first so the caller can act on the most
     confident dedup proposals before drilling into ambiguous ones."""

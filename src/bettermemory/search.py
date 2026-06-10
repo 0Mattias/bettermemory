@@ -23,8 +23,9 @@ Four selectable rankers, dispatched by `search(mode=...)`:
 `compute_idf` and `reciprocal_rank_fusion` are exported alongside
 their per-mode scorers so callers can wire the rankers directly
 without going through `search()`. The dedup path (`find_similar`)
-is unchanged — it uses Jaccard or cosine over the existing
-`_content_token_set` tokenizer.
+uses Jaccard over `_raw_content_token_set` token sets with
+pairwise-aware kebab expansion (`_pairwise_content_jaccard`), or
+cosine when a model is supplied.
 """
 
 from __future__ import annotations
@@ -1150,7 +1151,7 @@ def search(
 
 
 # Thresholds for find_similar. Calibrated against jaccard on stopword-stripped
-# kebab-expanded token sets:
+# token sets with pairwise-aware kebab expansion:
 # - >= HIGH: block the write unless force=True. Two memories with this much
 #   token overlap are very likely about the same fact; the right move is
 #   memory_update on the existing entry.
@@ -1163,16 +1164,60 @@ MEDIUM_SIMILARITY = 0.40
 
 
 def _content_token_set(text: str) -> set[str]:
-    """Tokens used for similarity comparison: stopwords stripped, kebab/snake
-    components included on both sides.
+    """Stopword-stripped token set with UNCONDITIONAL symmetric kebab/snake
+    expansion. Retained as the reference for `compute_idf` (the BM25 corpus
+    stats build the same shape inline); the Jaccard dedup scorers no longer
+    call it.
 
-    Symmetric kebab expansion is the right move here (unlike search, where it
-    is asymmetric). Two memories where one says `python-frontmatter` and the
-    other says plain `python` are about overlapping topics; the dedup signal
-    should fire. Inflating set size on the kebab side is the cost — accepted
-    because the union grows in proportion and Jaccard stays well-behaved.
+    The dedup paths moved to `_raw_content_token_set` +
+    `_pairwise_content_jaccard`: this function's old docstring claimed the
+    union "grows in proportion and Jaccard stays well-behaved", which is
+    mathematically false for a compound BOTH sides share — expanding it adds
+    the same k part-tokens to intersection and union, and (i+k)/(u+k) > i/u
+    whenever i < u, so expansion strictly inflates Jaccard for any
+    non-identical pair. Two distinct per-environment facts sharing one
+    compound identifier ("docker-compose ... prod" vs "docker-compose ...
+    dev") crossed the 0.75 manual-apply threshold purely from that inflation.
     """
     return set(_strip_stopwords(_expand_kebab(tokenize(text))))
+
+
+def _raw_content_token_set(text: str) -> set[str]:
+    """Stopword-stripped tokens WITHOUT kebab expansion — the per-memory
+    half of the pairwise dedup tokenisation. Compounds stay whole here;
+    `_pairwise_content_jaccard` expands them per PAIR, only when the other
+    side lacks the compound."""
+    return set(_strip_stopwords(tokenize(text)))
+
+
+def _pairwise_content_jaccard(raw_a: set[str], raw_b: set[str]) -> float:
+    """Jaccard similarity with pairwise-aware kebab expansion.
+
+    A kebab/snake compound is expanded into its parts (`_kebab_parts`,
+    stopword parts stripped to match the old expand-then-strip order)
+    only when the OTHER side's raw set lacks the compound. That keeps the
+    cross-notation match (`python-frontmatter` vs `python frontmatter`
+    still intersect on the parts) while a compound BOTH sides share
+    contributes exactly one token to intersection and union — symmetric
+    expansion of a shared compound added the same k part-tokens to both,
+    which strictly inflates Jaccard whenever J < 1 (see
+    `_content_token_set`) and pushed distinct per-environment facts over
+    the dedup thresholds.
+    """
+    if not raw_a or not raw_b:
+        return 0.0
+    a = set(raw_a)
+    for tok in raw_a:
+        if tok not in raw_b:
+            a.update(p for p in _kebab_parts(tok) if p not in _STOPWORDS)
+    b = set(raw_b)
+    for tok in raw_b:
+        if tok not in raw_a:
+            b.update(p for p in _kebab_parts(tok) if p not in _STOPWORDS)
+    intersection = a & b
+    if not intersection:
+        return 0.0
+    return len(intersection) / len(a | b)
 
 
 def find_similar(
@@ -1185,9 +1230,10 @@ def find_similar(
 ) -> list[SimilarHit]:
     """Find memories whose content overlaps `new_body` enough to flag.
 
-    Default mode: Jaccard similarity on stopword-stripped, kebab-expanded
-    token sets — symmetric and recency-free, unlike `score_memory`. Fast,
-    deterministic, no extra deps.
+    Default mode: Jaccard similarity on stopword-stripped token sets with
+    pairwise-aware kebab expansion (`_pairwise_content_jaccard`) — symmetric
+    and recency-free, unlike `score_memory`. Fast, deterministic, no extra
+    deps.
 
     Semantic mode (when `semantic_model` is non-None): cosine similarity
     on sentence-transformers embeddings. Catches paraphrases that share
@@ -1291,23 +1337,24 @@ def _score_similar_jaccard(
     """Jaccard-similarity dedup over `existing`, building hits via
     `build_hit`. See module commentary at the section header for the
     role this plays — extracted from the pre-Round-2 quartet of
-    near-duplicate functions."""
-    new_tokens = _content_token_set(new_body)
+    near-duplicate functions.
+
+    Token sets are RAW (no kebab expansion); `_pairwise_content_jaccard`
+    expands compounds per pair so a compound both sides share can't
+    inflate the score."""
+    new_tokens = _raw_content_token_set(new_body)
     if not new_tokens:
         return []
 
     hits: list[SimilarHit] = []
     for memory in existing:
-        existing_tokens = _content_token_set(memory.body)
+        existing_tokens = _raw_content_token_set(memory.body)
         if not existing_tokens:
             continue
 
-        intersection = new_tokens & existing_tokens
-        if not intersection:
+        similarity = _pairwise_content_jaccard(new_tokens, existing_tokens)
+        if similarity <= 0.0:
             continue
-
-        union = new_tokens | existing_tokens
-        similarity = len(intersection) / len(union)
 
         if similarity >= high_threshold:
             relevance = high_label

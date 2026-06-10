@@ -14,8 +14,10 @@ territory.
 
 from __future__ import annotations
 
+import json
 from dataclasses import dataclass, field
 from pathlib import Path
+from typing import Any
 
 import pytest
 
@@ -503,6 +505,72 @@ def test_build_transcript_cluster_loads_jsonl_session(tmp_path: Path) -> None:
     assert cluster is not None
     assert "[user] My Postgres is on 5433." in cluster.transcript
     assert "[assistant] Saved." in cluster.transcript
+
+
+def test_build_transcript_cluster_skips_synthetic_user_rows(tmp_path: Path) -> None:
+    """Regression: `_load_transcript` flattened EVERY `type="user"` JSONL
+    row into `[user]` text — `isMeta: true` skill/command expansions,
+    `<system-reminder>` injections, `<command-name>` bookkeeping — so the
+    transcript_facts cluster handed harness documentation prose to the
+    LLM as conversation and `consolidate --llm --from-transcript`
+    proposed "facts" distilled from it. Mirrors the round-84 hook.py fix
+    (`hook._SYNTHETIC_USER_PREFIXES` plus the row-level `isMeta` check):
+    only the human's own row and assistant rows survive."""
+    store = _make_store_with_existing(tmp_path)
+    rows: list[dict[str, Any]] = [
+        # Skill expansion: no envelope tag, row-level isMeta flag only.
+        {
+            "type": "user",
+            "isMeta": True,
+            "message": {"content": "# Skill instructions\nAlways prefer prose."},
+        },
+        # All six envelope tags hook.py treats as synthetic. One carries
+        # leading whitespace to exercise the lstrip() before the check.
+        {
+            "type": "user",
+            "message": {"content": "<task-notification>build finished"},
+        },
+        {"type": "user", "message": {"content": "<command-name>/audit-loop"}},
+        {"type": "user", "message": {"content": "<command-message>tick</…>"}},
+        {"type": "user", "message": {"content": "<local-command-stdout>ok"}},
+        {"type": "user", "message": {"content": "<local-command-caveat>n/a"}},
+        {
+            "type": "user",
+            "message": {"content": "\n  <system-reminder>Use MCP tools only."},
+        },
+        # The real exchange — the only rows allowed through.
+        {"type": "user", "message": {"content": "My Postgres is on 5433."}},
+        {
+            "type": "assistant",
+            "message": {"content": [{"type": "text", "text": "Saved."}]},
+        },
+    ]
+    transcript = tmp_path / "session.jsonl"
+    transcript.write_text(
+        "\n".join(json.dumps(r) for r in rows) + "\n", encoding="utf-8"
+    )
+    cluster = build_transcript_cluster(
+        transcript_path=transcript,
+        memories=store.load_all(),
+        events=[],
+    )
+    assert cluster is not None
+    assert "[user] My Postgres is on 5433." in cluster.transcript
+    assert "[assistant] Saved." in cluster.transcript
+    # Exactly one user line — every synthetic row was dropped.
+    assert cluster.transcript.count("[user]") == 1
+    for marker in (
+        "Skill instructions",
+        "<task-notification>",
+        "<command-name>",
+        "<command-message>",
+        "<local-command-stdout>",
+        "<local-command-caveat>",
+        "<system-reminder>",
+    ):
+        assert marker not in cluster.transcript, (
+            f"synthetic row {marker!r} leaked into the cluster transcript"
+        )
 
 
 def test_build_transcript_cluster_returns_none_for_empty_file(
