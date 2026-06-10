@@ -5,28 +5,50 @@ applies, with `--apply`) four kinds of curation:
 
 1. **Near-duplicate dedup.** Pairwise similarity over the active set —
    semantic when the embeddings extra is installed, Jaccard otherwise.
-   The pair's newer-`updated` member wins; the older one is proposed
-   for tombstoning with reason ``"consolidate: near-duplicate of
-   <keeper_id>, similarity=0.NN"``. Ties on `updated` go to the
-   memory with more `verified_paths` attestation.
+   Jaccard pairs whose bodies differ in negation polarity ("Use X" vs
+   "Do not use X" tokenize identically once stopwords drop) are
+   skipped — that's a contradiction to arbitrate, not a duplicate to
+   merge. An attested member (non-empty `verified_paths` or a set
+   `last_verified_at`) beats an unattested one; otherwise the pair's
+   newer-`updated` member wins. The loser is proposed for tombstoning
+   with reason ``"consolidate: near-duplicate of <keeper_id>,
+   similarity=0.NN"``. Ties on `updated` go to the memory with more
+   `verified_paths` attestation. When applying, the keeper first
+   inherits the union of both scope lists, so a scope-disjoint
+   duplicate can't silently vanish from one project's auto-scoped
+   retrieval.
 
 2. **Demote never-applied to ambient.** Mirrors `memory_health`'s
-   `dead_weight` rule: memories created before the window with
-   retrieval count greater than zero and applied count of zero. The
-   `fact` and (default) None categories get retagged to `ambient` so
-   they stop appearing in the dead-weight bucket on future health
+   `dead_weight` rule: memories whose latest maintenance touch
+   (created / updated / last-verified) predates the window, with
+   retrieval count greater than zero and applied count of zero. ONLY
+   the `fact` and (default) None categories get retagged to `ambient`
+   so they stop appearing in the dead-weight bucket on future health
    passes; their content stays available for retrieval. Ambient
-   memories already get this treatment, so they're skipped.
+   memories already get this treatment, so they're skipped, and
+   `user-inference` (plus any future category) keeps its
+   confirmation-protected tier — `memory_update` cannot restore that
+   tag, so an automated retag would be one-way. Memories carrying an
+   unresolved contradiction flag are skipped (they're parked for
+   explicit resolution, not lacking value), as are memories whose
+   earliest retrieval is too recent for the auto-applied endorsement
+   window to have elapsed.
 
-3. **Cold scope suggestions.** Scopes whose most-recently-created
-   memory is older than `cold_scope_days` AND which carry no
-   `applied` events in their lifetime get a "consider archiving"
-   suggestion. Suggest-only — auto-archiving a whole scope is too
-   blunt to apply without human review.
+3. **Cold scope suggestions.** Scopes whose newest activity (created /
+   updated / last-verified) is older than `cold_scope_days` AND which
+   carry no `applied` events within that window get a "consider
+   archiving" suggestion. All-ambient scopes are exempt (ambient
+   value is implicit by design — zero applied events there is not an
+   indictment), and the pass goes silent when the event log carries
+   no applied events at all (absence of telemetry cannot distinguish
+   dead scopes from healthy ones). Suggest-only — auto-archiving a
+   whole scope is too blunt to apply without human review.
 
 4. **Scope-typo pairs.** Levenshtein-≤2 neighbors among the scope
-   distribution that look like typos. The rare-scopes detector in
-   `health.py` finds candidates; consolidate proposes the canonical
+   distribution that look like typos. Only pairs whose lesser side
+   holds a single memory are flagged — the same singleton gate as the
+   rare-scopes detector in `health.py` (an established multi-memory
+   scope is not plausibly a typo); consolidate proposes the canonical
    target (whichever scope has more memories) and shows a rename
    command. Suggest-only — scope renames are reversible but
    touch every memory in a scope, so a human should review.
@@ -41,6 +63,7 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 from collections import Counter, defaultdict
 from collections.abc import Iterable
 from dataclasses import dataclass, field
@@ -65,6 +88,16 @@ _DEFAULT_JACCARD_THRESHOLD = 0.75
 _DEFAULT_WINDOW_DAYS = 30
 _DEFAULT_COLD_SCOPE_DAYS = 180
 _DEFAULT_TYPO_DISTANCE = 2
+
+# Demotion endorsement grace: the auto-applied endorsement structurally
+# lags every retrieval by >= 2 memory-tool turns (session.py's use-token
+# TTL), and dies with the server session — a retrieval in a session's
+# final turns produces no `use(applied)` event at all until a later
+# session re-retrieves. A memory's earliest timestamped retrieval must
+# be at least this old before applied == 0 may count against it;
+# otherwise the retrieval that proves the ranker works would be counted
+# as evidence against the memory at the very Stop hook that fired it.
+_ENDORSEMENT_GRACE_DAYS = 2
 
 # Hard cap on bytes read from a transcript file. The downstream prompt
 # builder already caps the text it ships to the LLM at
@@ -128,8 +161,12 @@ class DemotionCandidate:
 
 @dataclass
 class ColdScopeSuggestion:
-    """A scope whose newest memory has aged out, with no applied events
-    on any memory in the scope. Suggest-only."""
+    """A scope whose newest activity has aged out, with no in-window
+    applied events on any memory in the scope. Suggest-only.
+
+    `most_recent_created_days_ago` keeps its historical name for
+    JSON-schema stability but now carries days since the newest
+    activity (max of created / updated / last-verified)."""
 
     scope: str
     memory_count: int
@@ -238,12 +275,25 @@ class ConsolidateReport:
 def _pick_keeper(a: Memory, b: Memory) -> tuple[Memory, Memory]:
     """Decide which memory wins a dedup pair.
 
+    Tier 0: when exactly one member carries verification attestation
+    (non-empty `verified_paths` or a set `last_verified_at`), it wins
+    outright. Safe because content edits deliberately reset
+    verification (`Store.update`), so an attested body is by
+    construction the spot-checked one. Without this tier the
+    "attestation is authority" rule below is unreachable on real
+    microsecond-distinct timestamps, and a metadata-only retag (e.g.
+    this module's own demotion pass) would bump `updated` and crown
+    an unattested ambient husk over the verified fact.
     Tier 1: more-recently-updated wins. Refining a memory implies
     that's the canonical version. Tier 2 (tie on `updated`): more
     `verified_paths` wins — attestation is authority. Tier 3 (tie on
     both): higher ULID wins — newer creation under
     microsecond-tied writes. Returns `(keeper, duplicate)`.
     """
+    a_attested = bool(a.verified_paths) or a.last_verified_at is not None
+    b_attested = bool(b.verified_paths) or b.last_verified_at is not None
+    if a_attested != b_attested:
+        return (a, b) if a_attested else (b, a)
     if a.updated != b.updated:
         return (a, b) if a.updated > b.updated else (b, a)
     a_verified = len(a.verified_paths or [])
@@ -294,19 +344,80 @@ def find_dedup_candidates(
     return candidates, method
 
 
+# Negation tokens that flip a body's polarity. `_content_token_set`
+# strips these as stopwords, so "Do not use sudo" and "Use sudo" reduce
+# to IDENTICAL token sets (Jaccard 1.0) — above even the unattended
+# 0.90 threshold, with zero headroom for the threshold to save it. A
+# negated pair is a semantic contradiction requiring judgment, which
+# `run_auto_consolidate`'s safety contract explicitly forswears; the
+# pair belongs to the contradiction flow (`record_use
+# outcome=contradicted` / `consolidate --llm`), not dedup. Word-order
+# reversals ("A proxies to B" vs "B proxies to A") would need a
+# positional/bigram signal — out of scope for this guard.
+_NEGATION_MARKERS = frozenset(
+    {
+        "no",
+        "not",
+        "never",
+        "none",
+        "neither",
+        "nor",
+        "without",
+        "cannot",
+        # Apostrophe-stripped contractions ("don't" -> "dont").
+        "dont",
+        "doesnt",
+        "didnt",
+        "wont",
+        "cant",
+        "isnt",
+        "arent",
+        "wasnt",
+        "werent",
+        "shouldnt",
+        "wouldnt",
+        "couldnt",
+    }
+)
+
+_NEGATION_TOKEN_RE = re.compile(r"[a-z0-9]+")
+
+
+def _has_negation(body: str) -> bool:
+    """True when the body carries a grammatical-negation token.
+
+    Tokenizes WITHOUT stopword stripping (the whole point — the shared
+    `_content_token_set` drops the negators) and normalizes apostrophes
+    away so contracted forms ("don't", "won't") match their stripped
+    spellings in `_NEGATION_MARKERS`.
+    """
+    normalized = body.lower().replace("’", "").replace("'", "")
+    return any(
+        token in _NEGATION_MARKERS for token in _NEGATION_TOKEN_RE.findall(normalized)
+    )
+
+
 def _find_dedup_jaccard(
     memories: list[Memory], *, threshold: float
 ) -> list[DedupCandidate]:
-    # Pre-compute token sets once per memory.
-    token_sets = [(m, _content_token_set(m.body)) for m in memories]
+    # Pre-compute token sets (and polarity) once per memory.
+    token_sets = [
+        (m, _content_token_set(m.body), _has_negation(m.body)) for m in memories
+    ]
     out: list[DedupCandidate] = []
     for i in range(len(token_sets)):
-        m_i, t_i = token_sets[i]
+        m_i, t_i, neg_i = token_sets[i]
         if not t_i:
             continue
         for j in range(i + 1, len(token_sets)):
-            m_j, t_j = token_sets[j]
+            m_j, t_j, neg_j = token_sets[j]
             if not t_j:
+                continue
+            if neg_i != neg_j:
+                # Opposite polarity: stopword stripping made the
+                # negation invisible to the token sets, so a high
+                # similarity here labels a contradiction as a
+                # duplicate. Skip — the contradiction flow decides.
                 continue
             intersection = t_i & t_j
             if not intersection:
@@ -384,9 +495,33 @@ def find_demotion_candidates(
     now: datetime | None = None,
 ) -> list[DemotionCandidate]:
     """Memories that match the `dead_weight` rule from `memory_health`:
-    created before the window with retrieval count greater than zero
-    and applied count of zero. Already-ambient memories are skipped
-    (they're structurally exempt).
+    last touched (created / updated / verified) before the window with
+    retrieval count greater than zero and applied count of zero.
+
+    Four structural exemptions, all conservative (they only ever skip):
+
+    - Already-ambient memories (structurally exempt — the use signal
+      is implicit).
+    - Non-fact categories: only ``fact`` and (legacy) None are
+      demotion-eligible, per the module docstring's enumeration.
+      ``user-inference`` carries a user-confirmation ceremony an
+      automated pass cannot re-supply, and `memory_update` cannot
+      restore the tag — the retag would be one-way. Future categories
+      are protected by default.
+    - Unresolved contradictions: a memory whose newest
+      `use(contradicted)` event postdates both `updated` and
+      `last_verified_at` is parked in health's contradicted bucket
+      awaiting explicit resolution (mirrors
+      `health.MemoryStats.has_unresolved_contradiction`). Demoting it
+      would launder the flag — the retag bumps `updated` — while the
+      known-wrong content stays active as ambient.
+    - Endorsement grace: the auto-applied endorsement lags every
+      retrieval by >= 2 memory-tool turns, so applied == 0 is
+      structurally guaranteed right after a retrieval. The earliest
+      timestamped retrieval must be older than
+      `_ENDORSEMENT_GRACE_DAYS` before applied == 0 may count against
+      the memory (missing/unparseable ts counts as old — legacy logs
+      stay eligible).
 
     Returns a list sorted oldest-first so the longest-stale rot is
     surfaced before fresher candidates.
@@ -397,6 +532,8 @@ def find_demotion_candidates(
 
     retrieved: dict[str, int] = defaultdict(int)
     applied: dict[str, int] = defaultdict(int)
+    earliest_retrieval: dict[str, datetime] = {}
+    last_contradicted: dict[str, datetime] = {}
     for event in events:
         if event.get("kind") == "search":
             # The recorder writes the result-id list as `returned`
@@ -408,6 +545,7 @@ def find_demotion_candidates(
             # logs. Order mirrors the canonical-first / legacy-second
             # discipline applied at health.py:699, health.py:1423,
             # eval.py:361, hook.py:365-367 — all sibling read sites.
+            event_ts = parse_event_ts(event.get("ts"))
             for mid in (
                 event.get("returned")
                 or event.get("memory_ids")
@@ -415,6 +553,10 @@ def find_demotion_candidates(
                 or []
             ):
                 retrieved[mid] += 1
+                if event_ts is not None:
+                    prev = earliest_retrieval.get(mid)
+                    if prev is None or event_ts < prev:
+                        earliest_retrieval[mid] = event_ts
         elif event.get("kind") == "use":
             # Same legacy fallback as the `returned` branch above —
             # pre-2.6.3 `use` events wrote `memory_ids` as the
@@ -423,17 +565,54 @@ def find_demotion_candidates(
             if event.get("outcome") == "applied":
                 for mid in ids:
                     applied[mid] += 1
+            elif event.get("outcome") == "contradicted":
+                event_ts = parse_event_ts(event.get("ts"))
+                if event_ts is not None:
+                    for mid in ids:
+                        prev = last_contradicted.get(mid)
+                        if prev is None or event_ts > prev:
+                            last_contradicted[mid] = event_ts
 
+    grace_cutoff = now.timestamp() - _ENDORSEMENT_GRACE_DAYS * 86400
     out: list[DemotionCandidate] = []
     for memory in memories:
-        if memory.category == Category.AMBIENT:
+        # Whitelist, not skip-list: only `fact` and (legacy) None are
+        # demotion-eligible. Ambient is already demoted; user-inference
+        # (and any future category) keeps its protected tier.
+        if memory.category is not None and memory.category != Category.FACT:
             continue
-        if memory.created.timestamp() >= cutoff:
+        # Grace window keyed on the latest maintenance touch, not just
+        # `created` — a rewrite (`updated`) or attestation
+        # (`last_verified_at`) is active maintenance, not rot.
+        freshest_ts = max(
+            memory.created.timestamp(),
+            memory.updated.timestamp(),
+            (memory.last_verified_at.timestamp() if memory.last_verified_at else 0.0),
+        )
+        if freshest_ts >= cutoff:
             continue
         retrieved_count = retrieved.get(memory.id, 0)
         if retrieved_count == 0:
             continue
         if applied.get(memory.id, 0) > 0:
+            continue
+        contradicted_at = last_contradicted.get(memory.id)
+        if contradicted_at is not None:
+            resolved_at = memory.updated
+            if memory.last_verified_at is not None and (
+                memory.last_verified_at > resolved_at
+            ):
+                resolved_at = memory.last_verified_at
+            if contradicted_at > resolved_at:
+                # Unresolved contradiction — parked for explicit
+                # resolution via memory_update/memory_verify, not
+                # dead weight.
+                continue
+        first_seen = earliest_retrieval.get(memory.id)
+        if first_seen is not None and first_seen.timestamp() >= grace_cutoff:
+            # Every retrieval is younger than the endorsement grace —
+            # the auto-applied commit window can't have elapsed yet, so
+            # applied == 0 carries no signal.
             continue
         age_seconds = now.timestamp() - memory.created.timestamp()
         age_days = int(age_seconds // 86400)
@@ -458,39 +637,81 @@ def find_cold_scopes(
     cold_scope_days: int = _DEFAULT_COLD_SCOPE_DAYS,
     now: datetime | None = None,
 ) -> list[ColdScopeSuggestion]:
-    """Scopes whose newest memory is older than `cold_scope_days` AND
-    where no memory in the scope ever appears as an applied id.
+    """Scopes whose newest activity (created / updated / last-verified)
+    is older than `cold_scope_days` AND where no memory in the scope
+    appears as an applied id within that same window.
 
-    A scope passing both filters has fired no value in the audit log,
-    in any window. Suggestion only — the user decides whether to
-    archive the scope or just leave it on disk.
+    A scope passing both filters has fired no value in the audit log
+    recently AND received no maintenance. Applied events older than the
+    window no longer prove current value — a finished-but-once-useful
+    project scope (the canonical archivable shape) would otherwise be
+    permanently exempt; events with a missing/unparseable ts keep the
+    exemption (conservative default). Two structural guards:
+
+    - When the event log contains no `use(applied)` event at all
+      (telemetry disabled, or a scope lifetime predating telemetry),
+      the pass returns [] — pure absence of telemetry cannot
+      distinguish dead scopes from healthy ones, and the conservative
+      default is silence, not a flag.
+    - All-ambient scopes are skipped: ambient value is implicit
+      (uncited by design), so a lifetime of zero applied events is not
+      evidence of deadness. Mirrors the demotion pass's exemption and
+      health.py's dead_weight/cold exclusion.
+
+    Suggestion only — the user decides whether to archive the scope or
+    just leave it on disk.
     """
     if now is None:
         now = datetime.now(timezone.utc)
     cutoff_ts = now.timestamp() - cold_scope_days * 86400
 
-    # Per-scope: list of memories, max created timestamp
+    # Per-scope: list of memories, max activity timestamp
     by_scope: dict[str, list[Memory]] = defaultdict(list)
     for memory in memories:
         for scope in memory.scopes:
             by_scope[scope].append(memory)
 
-    # Per-scope: did any of its memories ever get applied?
+    # Per-scope: did any of its memories get applied within the window?
+    # `any_applied` tracks whether the log holds ANY applied event (in
+    # or out of window) — zero means the applied signal is unavailable,
+    # not that every scope is dead.
+    any_applied = False
     applied_ids: set[str] = set()
     for event in events:
         if event.get("kind") == "use" and event.get("outcome") == "applied":
+            any_applied = True
+            event_ts = parse_event_ts(event.get("ts"))
+            if event_ts is not None and event_ts.timestamp() < cutoff_ts:
+                # Aged out of the cold window: a years-old endorsement
+                # doesn't prove the scope is firing value NOW. Missing
+                # ts keeps the exemption (conservative).
+                continue
             # Legacy fallback for `memory_ids` — see 70e41a4.
             for mid in event.get("ids") or event.get("memory_ids") or []:
                 applied_ids.add(mid)
 
+    if not any_applied:
+        return []
+
     out: list[ColdScopeSuggestion] = []
     for scope, scope_memories in by_scope.items():
-        max_created = max(m.created.timestamp() for m in scope_memories)
-        if max_created >= cutoff_ts:
+        if all(m.category == Category.AMBIENT for m in scope_memories):
+            # All-ambient scope: the applied signal is structurally
+            # absent for ambient by design — not an indictment.
+            continue
+        max_activity = max(
+            max(
+                m.created.timestamp(),
+                m.updated.timestamp(),
+                (m.last_verified_at.timestamp() if m.last_verified_at else 0.0),
+            )
+            for m in scope_memories
+        )
+        if max_activity >= cutoff_ts:
             continue
         if any(m.id in applied_ids for m in scope_memories):
             continue
-        days_ago = int((now.timestamp() - max_created) // 86400)
+        days_ago = int((now.timestamp() - max_activity) // 86400)
         out.append(
             ColdScopeSuggestion(
                 scope=scope,
@@ -498,10 +719,10 @@ def find_cold_scopes(
                 most_recent_created_days_ago=days_ago,
                 suggestion=(
                     f"Scope {scope!r} has {len(scope_memories)} memories, "
-                    f"newest created {days_ago} days ago, no applied events "
-                    "in the audit log. Consider archiving the scope or "
-                    "reviewing whether the trigger for these memories is "
-                    "still real."
+                    f"newest activity {days_ago} days ago, no applied events "
+                    f"in the last {cold_scope_days} days. Consider archiving "
+                    "the scope or reviewing whether the trigger for these "
+                    "memories is still real."
                 ),
             )
         )
@@ -519,6 +740,15 @@ def find_scope_typo_pairs(
     The `keeper` is whichever scope has more memories — more memories
     means more authority / longer history. The `typo` is the lesser
     side. Ties go to the lexically-earlier name for determinism.
+
+    Only pairs whose typo side holds exactly one memory are emitted —
+    the same singleton gate as health.py's rare-scopes detector, whose
+    recorded rationale is that flagging non-singletons produced enough
+    false positives that the bucket stopped being actionable. A typo
+    scope by definition accumulates ~one memory before being noticed;
+    a 15-memory edit-distance neighbor (projects:app / projects:api)
+    is a legitimately distinct sibling, and the printed rename command
+    would merge two projects' memories.
     """
     counts = Counter(scope for m in memories for scope in m.scopes)
     scopes = sorted(counts.keys())
@@ -542,6 +772,10 @@ def find_scope_typo_pairs(
             else:
                 keeper, typo = b, a
                 kc, tc = count_b, count_a
+            if tc != 1:
+                # Rarity gate: both sides are established scopes —
+                # not plausibly a typo. See docstring.
+                continue
             pair_key = (keeper, typo)
             if pair_key in seen_pairs:
                 continue
@@ -676,6 +910,10 @@ def consolidate(
     # it stays a candidate in the report for a later pass / human review.
     tombstoned_ids: set[str] = set()
     keepers_so_far: set[str] = set()
+    # Snapshot id-map for the scope merge below. Refreshed in place
+    # after every keeper update so a keeper appearing in multiple pairs
+    # carries the current `updated` for the W2 CAS check.
+    dedup_by_id = {m.id: m for m in memories}
     for candidate in dedup_candidates:
         if candidate.duplicate_id in tombstoned_ids:
             continue
@@ -689,6 +927,25 @@ def consolidate(
             continue
         keepers_so_far.add(candidate.keeper_id)
         try:
+            # Merge the duplicate's scopes into the keeper BEFORE
+            # tombstoning. Similarity is scope-blind, so two identical
+            # boilerplate bodies in disjoint project scopes dedup at
+            # 1.0 — without the merge, the surviving keeper is
+            # invisible to the other project's auto-scoped retrieval
+            # and the fact silently vanishes there. Merge-first means
+            # a failure leaves both memories active (conservative);
+            # the inverse order would lose the scope on a merge
+            # failure after the tombstone.
+            keeper_mem = dedup_by_id.get(candidate.keeper_id)
+            dup_mem = dedup_by_id.get(candidate.duplicate_id)
+            if keeper_mem is not None and dup_mem is not None:
+                missing_scopes = set(dup_mem.scopes) - set(keeper_mem.scopes)
+                if missing_scopes:
+                    merged_scopes = sorted(set(keeper_mem.scopes) | missing_scopes)
+                    updated_keeper = store.update(
+                        keeper_mem.model_copy(update={"scopes": merged_scopes})
+                    )
+                    dedup_by_id[candidate.keeper_id] = updated_keeper
             reason = (
                 f"consolidate: near-duplicate of {candidate.keeper_id}, "
                 f"similarity={candidate.similarity:.2f} ({candidate.method})"
@@ -1590,12 +1847,20 @@ def _apply_llm_proposal(
 
         from .search import find_similar, find_similar_tombstones
 
+        # Like the transient gate above, the similarity gates judge the
+        # LLM-authored claim (proposal.body), NOT body_with_provenance.
+        # The provenance stamp is system-manufactured boilerplate shared
+        # by construction between every proposal citing the same turn:
+        # two distinct facts distilled from one user turn carry an
+        # identical excerpt whose tokens dominate the Jaccard sets
+        # (measured 0.882 stamped vs 0.10 unstamped), so scanning the
+        # stamped text bounces the second genuine fact as a
+        # "near-duplicate". The max_content_bytes check above stays on
+        # body_with_provenance because that is what persists.
         active = store.load_all()
         high_active = [
             h
-            for h in find_similar(
-                body_with_provenance, active, semantic_model=semantic_model
-            )
+            for h in find_similar(proposal.body, active, semantic_model=semantic_model)
             if h.relevance == "high"
         ]
         if high_active:
@@ -1609,7 +1874,7 @@ def _apply_llm_proposal(
         high_removed = [
             h
             for h in find_similar_tombstones(
-                body_with_provenance,
+                proposal.body,
                 store.load_tombstones(),
                 semantic_model=semantic_model,
             )

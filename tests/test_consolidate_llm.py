@@ -629,6 +629,87 @@ def test_propose_new_writes_durable_body_despite_transient_provenance(
     assert "Today I decided" in new_memory.body
 
 
+def test_propose_new_shared_excerpt_distinct_facts_both_commit(tmp_path: Path) -> None:
+    """Regression: the similarity gates must judge the LLM-authored
+    claim (proposal.body), NOT body_with_provenance — same scoping
+    rationale as the transient-marker gate above. The provenance stamp
+    is system-manufactured boilerplate shared by construction between
+    every proposal citing the same turn: two distinct facts distilled
+    from one user sentence carry an identical excerpt whose tokens
+    dominate the Jaccard sets (0.882 stamped vs 0.10 unstamped), so
+    gating on the stamped text bounced the second genuine fact as a
+    'near-duplicate'. Both must commit."""
+    store = _make_store_with_existing(tmp_path)
+    transcript = tmp_path / "session.md"
+    excerpt = (
+        "My dotfiles live in ~/dotfiles and I manage them with GNU stow; "
+        "my shell is zsh with the starship prompt."
+    )
+    transcript.write_text(f"[user] {excerpt}\n[assistant] Saved.", encoding="utf-8")
+    proposals: list[Proposal] = [
+        ProposeNewProposal(
+            scope="personal-context",
+            category="fact",
+            body="User manages dotfiles in ~/dotfiles with GNU stow.",
+            source_excerpt=excerpt,
+            rationale="dotfiles location fact",
+        ),
+        ProposeNewProposal(
+            scope="personal-context",
+            category="fact",
+            body="User's shell is zsh with the starship prompt.",
+            source_excerpt=excerpt,
+            rationale="shell setup fact",
+        ),
+    ]
+    provider = FakeProvider(proposals=proposals)
+
+    applied = consolidate_llm(
+        store, provider, apply=True, accept=True, from_transcript=str(transcript)
+    )
+    new_actions = [a for a in applied.actions_taken if a.kind == "llm_propose_new"]
+    assert len(new_actions) == 2, (
+        f"both distinct facts from the shared turn must commit; "
+        f"failures: {[(f.cluster_id, f.reason) for f in applied.failures]}"
+    )
+    assert not applied.failures
+    # 1 pre-existing + 2 new.
+    assert len(store.load_all()) == 3
+
+
+def test_propose_new_true_near_duplicate_still_bounces(tmp_path: Path) -> None:
+    """Counterpart to the shared-excerpt regression: gating on
+    proposal.body must NOT weaken true-duplicate detection. A proposal
+    whose claim restates an existing memory still bounces with the
+    high-overlap rejection."""
+    store = _make_store_with_existing(tmp_path)
+    transcript = tmp_path / "session.md"
+    transcript.write_text(
+        "[user] The metrics dashboard runs at grafana.internal/d/api-latency.\n"
+        "[assistant] Noted.",
+        encoding="utf-8",
+    )
+    proposal = ProposeNewProposal(
+        scope="infrastructure",
+        category="fact",
+        # Restates the memory _make_store_with_existing already wrote.
+        body="The metrics dashboard runs at grafana.internal/d/api-latency.",
+        source_excerpt=(
+            "The metrics dashboard runs at grafana.internal/d/api-latency."
+        ),
+        rationale="infrastructure fact",
+    )
+    provider = FakeProvider(proposals=[proposal])
+
+    applied = consolidate_llm(
+        store, provider, apply=True, accept=True, from_transcript=str(transcript)
+    )
+    assert not any(a.kind == "llm_propose_new" for a in applied.actions_taken)
+    assert applied.failures
+    assert "high-overlaps existing memory" in applied.failures[0].reason
+    assert len(store.load_all()) == 1  # nothing new written
+
+
 def test_consolidate_without_from_transcript_does_not_call_propose_new(
     tmp_path: Path,
 ) -> None:

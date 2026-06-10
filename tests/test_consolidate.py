@@ -65,6 +65,7 @@ def _memory(
     updated: datetime | None = None,
     category: Category | None = None,
     verified_paths: list[str] | None = None,
+    last_verified_at: datetime | None = None,
 ) -> Memory:
     now = created or datetime.now(timezone.utc)
     return Memory(
@@ -77,6 +78,7 @@ def _memory(
         body=body,
         category=category,
         verified_paths=verified_paths or [],
+        last_verified_at=last_verified_at,
     )
 
 
@@ -104,6 +106,48 @@ def test_pick_keeper_more_verified_paths_breaks_updated_tie() -> None:
     b = _memory("body", updated=now, verified_paths=["/path/a", "/path/b"])
     keeper, _ = _pick_keeper(a, b)
     assert keeper.id == b.id
+
+
+def test_pick_keeper_attestation_beats_recency() -> None:
+    """Tier 0: an attested member (non-empty verified_paths or
+    last_verified_at set) wins outright, even against a more recently
+    updated unattested one. Regression: metadata-only retags (including
+    consolidate's own demotion pass) bump `updated`, so without this
+    tier an unattested ambient husk retagged yesterday would beat — and
+    tombstone — the verified fact. Content edits deliberately reset
+    verification, so the attested body is by construction the
+    spot-checked one."""
+    now = datetime.now(timezone.utc)
+    fact = _memory(
+        "caddy reverse-proxies grafana on the nas",
+        created=now - timedelta(days=60),
+        updated=now - timedelta(days=60),
+        category=Category.FACT,
+        verified_paths=["/opt/stacks/proxy/Caddyfile"],
+    )
+    husk = _memory(
+        "caddy reverse-proxies grafana on the nas",
+        created=now - timedelta(days=60),
+        updated=now - timedelta(days=1),
+        category=Category.AMBIENT,
+    )
+    keeper, dup = _pick_keeper(fact, husk)
+    assert keeper.id == fact.id
+    assert dup.id == husk.id
+    # Symmetric: argument order must not matter.
+    keeper, dup = _pick_keeper(husk, fact)
+    assert keeper.id == fact.id
+
+    # last_verified_at alone (no verified_paths) also counts as
+    # attestation — memory_verify sets it without bumping `updated`.
+    verified = _memory(
+        "caddy reverse-proxies grafana on the nas",
+        created=now - timedelta(days=60),
+        updated=now - timedelta(days=60),
+        last_verified_at=now - timedelta(days=1),
+    )
+    keeper, _ = _pick_keeper(husk, verified)
+    assert keeper.id == verified.id
 
 
 def test_pick_keeper_ulid_breaks_all_ties() -> None:
@@ -158,6 +202,30 @@ def test_dedup_ignores_pairs_below_threshold() -> None:
     b = _memory("kubernetes networking notes")
     candidates, _ = find_dedup_candidates([a, b])
     assert candidates == []
+
+
+def test_dedup_skips_opposite_polarity_pair() -> None:
+    """Regression: 'do', 'no', and 'not' are stopwords, so 'Do not use
+    sudo ...' and 'Use sudo ...' reduce to IDENTICAL token sets and
+    score Jaccard 1.0 — above even the unattended 0.90 threshold, with
+    zero headroom. That pair is a semantic contradiction the
+    contradiction flow must arbitrate, not a duplicate to merge; the
+    polarity guard must keep it out of the candidate list at both the
+    manual (0.75) and the unattended (0.90) thresholds."""
+    a = _memory("Do not use sudo for npm installs on this machine.")
+    b = _memory("Use sudo for npm installs on this machine.")
+    for threshold in (None, 0.90):
+        candidates, _ = find_dedup_candidates([a, b], threshold=threshold)
+        assert candidates == [], (
+            f"opposite-polarity pair surfaced as a dedup candidate "
+            f"at threshold={threshold}"
+        )
+
+    # Same-polarity negated bodies still dedup — the guard compares
+    # polarity, it doesn't exempt negated bodies wholesale.
+    c = _memory("Do not use sudo for npm installs on this machine.")
+    candidates, _ = find_dedup_candidates([a, c])
+    assert len(candidates) == 1
 
 
 def test_dedup_pairs_sorted_by_similarity_desc() -> None:
@@ -240,6 +308,138 @@ def test_demotion_skips_fresh_memories() -> None:
     assert candidates == []
 
 
+def test_demotion_skips_minutes_old_first_retrieval() -> None:
+    """Regression: the auto-applied endorsement structurally lags every
+    retrieval by >= 2 memory-tool turns, so applied == 0 minutes after
+    the first-ever retrieval carries no signal — the retrieval that
+    proves the ranker works must not count as evidence against the
+    memory at the very Stop hook that fired it. The earliest
+    timestamped retrieval has to age past the endorsement grace before
+    the memory is demotion-eligible."""
+    now = datetime.now(timezone.utc)
+    old = now - timedelta(days=31)
+    m = _memory(
+        "Grafana admin UI runs on port 3001 on the NAS.", created=old, updated=old
+    )
+    events = [
+        {
+            "kind": "search",
+            "returned": [m.id],
+            "ts": (now - timedelta(minutes=2)).isoformat(),
+        }
+    ]
+    candidates = find_demotion_candidates([m], events, window_days=30, now=now)
+    assert candidates == []
+
+
+def test_demotion_skips_user_inference_memories() -> None:
+    """Regression: the module docstring enumerates `fact` and (legacy)
+    None as the demotion-eligible categories, but the pass used to skip
+    only AMBIENT — user-inference sailed through to the unattended
+    fact->ambient retag. The retag is one-way (memory_update's
+    _PROPOSABLE_CATEGORIES gate cannot restore 'user-inference'), so
+    the confirmation-protected tier must be whitelisted out."""
+    now = datetime.now(timezone.utc)
+    old = now - timedelta(days=90)
+    m = _memory(
+        "User prefers code-driven tutorials over video walkthroughs.",
+        scopes=["learning-style"],
+        created=old,
+        updated=old,
+        category=Category.USER_INFERENCE,
+    )
+    events = [{"kind": "search", "hit_ids": [m.id]}]
+    candidates = find_demotion_candidates([m], events, window_days=30, now=now)
+    assert candidates == []
+
+
+def test_demotion_skips_recently_updated_or_verified_memories() -> None:
+    """Regression: the grace window used to key only on `created`, so a
+    90-day-old fact rewritten via memory_update or attested via
+    memory_verify yesterday was still demoted unattended. The window
+    keys on the latest maintenance touch — active maintenance is not
+    rot."""
+    now = datetime.now(timezone.utc)
+    old = now - timedelta(days=90)
+    rewritten = _memory(
+        "fact body rewritten yesterday",
+        created=old,
+        updated=now - timedelta(days=1),
+    )
+    verified = _memory(
+        "fact body attested yesterday",
+        created=old,
+        updated=old,
+        last_verified_at=now - timedelta(days=1),
+    )
+    events = [
+        {"kind": "search", "hit_ids": [rewritten.id]},
+        {"kind": "search", "hit_ids": [verified.id]},
+    ]
+    candidates = find_demotion_candidates(
+        [rewritten, verified], events, window_days=30, now=now
+    )
+    assert candidates == []
+
+
+def test_demotion_skips_unresolved_contradiction() -> None:
+    """Regression: a contradicted memory is by construction retrieved-
+    but-not-applied, so it satisfied the dead-weight triple — and the
+    retag's `updated` bump then laundered health's unresolved-
+    contradiction flag with zero resolution. A memory whose newest
+    contradicted event postdates updated/last_verified_at is parked for
+    explicit resolution, not dead weight."""
+    now = datetime.now(timezone.utc)
+    old = now - timedelta(days=60)
+    m = _memory(
+        "Staging API base URL is https://staging.api.acme.dev", created=old, updated=old
+    )
+    events = [
+        {
+            "kind": "search",
+            "returned": [m.id],
+            "ts": (now - timedelta(days=10)).isoformat(),
+        },
+        {
+            "kind": "use",
+            "ids": [m.id],
+            "outcome": "contradicted",
+            "ts": (now - timedelta(days=5)).isoformat(),
+        },
+    ]
+    candidates = find_demotion_candidates([m], events, window_days=30, now=now)
+    assert candidates == []
+
+
+def test_demotion_resolved_contradiction_is_still_a_candidate() -> None:
+    """Mirror of the unresolved-contradiction skip: a contradiction
+    OLDER than a later memory_update/memory_verify touch counts as
+    resolved (same rule as health.MemoryStats.has_unresolved_
+    contradiction), so the memory stays demotion-eligible."""
+    now = datetime.now(timezone.utc)
+    m = _memory(
+        "Staging API base URL is https://staging2.api.acme.dev",
+        created=now - timedelta(days=90),
+        updated=now - timedelta(days=50),  # resolution touch
+    )
+    events = [
+        {
+            "kind": "search",
+            "returned": [m.id],
+            "ts": (now - timedelta(days=50)).isoformat(),
+        },
+        {
+            "kind": "use",
+            "ids": [m.id],
+            "outcome": "contradicted",
+            "ts": (now - timedelta(days=60)).isoformat(),  # pre-resolution
+        },
+    ]
+    candidates = find_demotion_candidates([m], events, window_days=30, now=now)
+    assert len(candidates) == 1
+    assert candidates[0].memory_id == m.id
+
+
 def test_demotion_skips_never_retrieved() -> None:
     """A memory that's never been retrieved isn't dead weight — it's
     cold. Different bucket; different action; different curation
@@ -271,7 +471,12 @@ def test_demotion_reads_returned_field_on_real_recorder_events(tmp_path: Path) -
     from bettermemory.events import iter_events
 
     events = list(iter_events(tmp_path))
-    candidates = find_demotion_candidates([m], events, window_days=30, now=now)
+    # The Recorder stamps the event with the real current ts; evaluate
+    # from 3 days later so the retrieval has aged past the endorsement
+    # grace (a minutes-old first retrieval is now skipped — see
+    # test_demotion_skips_minutes_old_first_retrieval).
+    eval_now = now + timedelta(days=3)
+    candidates = find_demotion_candidates([m], events, window_days=30, now=eval_now)
     assert len(candidates) == 1
     assert candidates[0].memory_id == m.id
     assert candidates[0].retrieved_count == 1
@@ -366,11 +571,22 @@ def test_consolidate_does_not_demote_fact_endorsed_in_rotated_archive(
 
 def test_cold_scope_surfaces_when_newest_is_old_and_no_applies() -> None:
     """The simplest case: one scope, all its memories are old, no use
-    events ever applied them."""
+    events ever applied them. An applied event for an UNRELATED memory
+    proves the applied signal exists (telemetry is on) — without any
+    applied event anywhere the pass stays silent, see
+    test_cold_scope_silent_when_no_applied_events_anywhere."""
     now = datetime.now(timezone.utc)
     old = now - timedelta(days=200)
     m = _memory("body", scopes=["projects:archived"], created=old, updated=old)
-    suggestions = find_cold_scopes([m], [], cold_scope_days=180, now=now)
+    events = [
+        {
+            "kind": "use",
+            "ids": ["unrelated-memory-id"],
+            "outcome": "applied",
+            "ts": now.isoformat(),
+        }
+    ]
+    suggestions = find_cold_scopes([m], events, cold_scope_days=180, now=now)
     assert len(suggestions) == 1
     assert suggestions[0].scope == "projects:archived"
     assert suggestions[0].memory_count == 1
@@ -404,7 +620,188 @@ def test_cold_scope_skipped_when_recent_memory_in_scope() -> None:
         created=now - timedelta(days=5),
         updated=now - timedelta(days=5),
     )
-    suggestions = find_cold_scopes([old, fresh], [], cold_scope_days=180, now=now)
+    # Seed an unrelated applied event so the global telemetry gate
+    # passes and the freshness exemption is what's actually pinned.
+    events = [
+        {
+            "kind": "use",
+            "ids": ["unrelated-memory-id"],
+            "outcome": "applied",
+            "ts": now.isoformat(),
+        }
+    ]
+    suggestions = find_cold_scopes([old, fresh], events, cold_scope_days=180, now=now)
+    assert suggestions == []
+
+
+def test_cold_scope_silent_when_no_applied_events_anywhere() -> None:
+    """Regression: with telemetry disabled (or a log predating
+    telemetry) the event log carries zero applied events, making 'no
+    applied events' vacuously true for EVERY stable scope older than
+    the window. Pure absence of telemetry cannot distinguish dead
+    scopes from healthy ones — the conservative default is silence."""
+    now = datetime.now(timezone.utc)
+    old = now - timedelta(days=400)
+    m1 = _memory(
+        "Prefers code-driven tutorials over prose.",
+        scopes=["learning-style"],
+        created=old,
+        updated=old,
+    )
+    m2 = _memory(
+        "Time zone Europe/Stockholm.",
+        scopes=["personal-context"],
+        created=old,
+        updated=old,
+    )
+    # A search event but no applied event anywhere — the applied signal
+    # is structurally unavailable.
+    events = [{"kind": "search", "returned": [m1.id], "ts": now.isoformat()}]
+    suggestions = find_cold_scopes([m1, m2], events, cold_scope_days=180, now=now)
+    assert suggestions == []
+
+
+def test_cold_scope_skipped_when_memory_recently_updated() -> None:
+    """Regression: scope freshness used to key on `created` alone, so a
+    scope whose memory was rewritten 2 days ago (memory_update bumps
+    `updated`, not `created`) was still flagged at 200 days stale.
+    Freshness is the max across created/updated/last_verified_at —
+    a rewrite this week is direct evidence the scope is maintained."""
+    now = datetime.now(timezone.utc)
+    m = _memory(
+        "Homelab NAS runs Debian 13 (upgraded from 12 in June).",
+        scopes=["infrastructure"],
+        created=now - timedelta(days=200),
+        updated=now - timedelta(days=2),
+    )
+    events = [
+        {
+            "kind": "use",
+            "ids": ["unrelated-memory-id"],
+            "outcome": "applied",
+            "ts": now.isoformat(),
+        }
+    ]
+    suggestions = find_cold_scopes([m], events, cold_scope_days=180, now=now)
+    assert suggestions == []
+
+
+def test_cold_scope_skips_all_ambient_scope() -> None:
+    """Regression: ambient memories are exempt from applied-signal
+    expectations everywhere else (models.py design note, health.py's
+    dead_weight/cold exclusion, the demotion pass in this module), but
+    the cold-scope pass used to flag all-ambient scopes for lacking the
+    signal that is structurally absent for ambient by design."""
+    now = datetime.now(timezone.utc)
+    old = now - timedelta(days=400)
+    m1 = _memory(
+        "User name and timezone identity note.",
+        scopes=["personal-context"],
+        created=old,
+        updated=old,
+        category=Category.AMBIENT,
+    )
+    m2 = _memory(
+        "macOS + zsh + Tailscale environment.",
+        scopes=["personal-context"],
+        created=old,
+        updated=old,
+        category=Category.AMBIENT,
+    )
+    events = [
+        {
+            "kind": "use",
+            "ids": ["unrelated-memory-id"],
+            "outcome": "applied",
+            "ts": now.isoformat(),
+        }
+    ]
+    suggestions = find_cold_scopes([m1, m2], events, cold_scope_days=180, now=now)
+    assert suggestions == []
+
+
+def test_cold_scope_mixed_scope_with_never_applied_fact_still_flagged() -> None:
+    """Mirror of the all-ambient exemption: a mixed scope keeps current
+    behavior — its non-ambient member legitimately carries the applied
+    expectation, so the scope is still suggested."""
+    now = datetime.now(timezone.utc)
+    old = now - timedelta(days=400)
+    ambient = _memory(
+        "ambient identity note",
+        scopes=["projects:old-mixed"],
+        created=old,
+        updated=old,
+        category=Category.AMBIENT,
+    )
+    fact = _memory(
+        "never-applied fact body",
+        scopes=["projects:old-mixed"],
+        created=old,
+        updated=old,
+        category=Category.FACT,
+    )
+    events = [
+        {
+            "kind": "use",
+            "ids": ["unrelated-memory-id"],
+            "outcome": "applied",
+            "ts": now.isoformat(),
+        }
+    ]
+    suggestions = find_cold_scopes(
+        [ambient, fact], events, cold_scope_days=180, now=now
+    )
+    assert len(suggestions) == 1
+    assert suggestions[0].scope == "projects:old-mixed"
+
+
+def test_cold_scope_applied_event_older_than_window_does_not_exempt() -> None:
+    """Regression: a single applied event EVER used to grant permanent
+    immunity, structurally blinding the pass to its canonical target —
+    a finished project scope that WAS useful while alive. A timestamped
+    applied event older than cold_scope_days no longer proves current
+    value, so the scope is flagged."""
+    now = datetime.now(timezone.utc)
+    m = _memory(
+        "thesis pipeline runbook",
+        scopes=["projects:thesis-pipeline"],
+        created=now - timedelta(days=900),
+        updated=now - timedelta(days=900),
+    )
+    events = [
+        {
+            "kind": "use",
+            "ids": [m.id],
+            "outcome": "applied",
+            "ts": (now - timedelta(days=600)).isoformat(),
+        }
+    ]
+    suggestions = find_cold_scopes([m], events, cold_scope_days=180, now=now)
+    assert len(suggestions) == 1
+    assert suggestions[0].scope == "projects:thesis-pipeline"
+
+
+def test_cold_scope_applied_event_inside_window_exempts() -> None:
+    """Counterpart to the aged-out test: an applied event INSIDE the
+    cold window is live value — no suggestion. (An untimestamped
+    applied event also keeps the exemption — the conservative default
+    pinned by test_cold_scope_skipped_when_any_memory_applied.)"""
+    now = datetime.now(timezone.utc)
+    m = _memory(
+        "thesis pipeline runbook",
+        scopes=["projects:thesis-pipeline"],
+        created=now - timedelta(days=900),
+        updated=now - timedelta(days=900),
+    )
+    events = [
+        {
+            "kind": "use",
+            "ids": [m.id],
+            "outcome": "applied",
+            "ts": (now - timedelta(days=10)).isoformat(),
+        }
+    ]
+    suggestions = find_cold_scopes([m], events, cold_scope_days=180, now=now)
     assert suggestions == []
 
 
@@ -425,6 +822,20 @@ def test_scope_typo_pair_found_for_close_neighbors() -> None:
     assert pairs[0].typo == "projets:foo"
     assert pairs[0].keeper_count == 2
     assert pairs[0].typo_count == 1
+
+
+def test_scope_typo_no_pair_for_well_populated_neighbors() -> None:
+    """Regression: two established multi-memory scopes at edit distance
+    1-2 (projects:app / projects:api — both real projects) used to be
+    flagged as a typo pair with an executable mass-rename suggestion.
+    The singleton gate (typo side must hold exactly one memory) mirrors
+    health.py's rare-scopes rule: a typo by definition accumulates ~one
+    memory before being noticed."""
+    memories = [
+        _memory(f"app body {i}", scopes=["projects:app"]) for i in range(22)
+    ] + [_memory(f"api body {i}", scopes=["projects:api"]) for i in range(15)]
+    pairs = find_scope_typo_pairs(memories)
+    assert pairs == []
 
 
 def test_scope_typo_pair_not_found_for_distant_scopes() -> None:
@@ -485,6 +896,41 @@ def test_consolidate_apply_tombstones_duplicates(store: Store) -> None:
     surviving_ids = {m.id for m in store.load_all()}
     assert newer.id in surviving_ids
     assert older.id not in surviving_ids
+
+
+def test_consolidate_apply_merges_duplicate_scopes_into_keeper(store: Store) -> None:
+    """Regression: similarity is scope-blind, so identical boilerplate
+    bodies in DIFFERENT project scopes dedup at 1.0 — and the apply
+    loop used to tombstone the duplicate without merging its scopes
+    into the keeper, silently removing the fact from one project's
+    auto-scoped retrieval. The keeper must inherit the sorted union of
+    both scope lists before the duplicate is tombstoned."""
+    older = store.write(
+        content="Run pnpm install then pnpm dev; node 20 required.",
+        scopes=["projects:alpha"],
+    )
+    newer = store.write(
+        content="Run pnpm install then pnpm dev; node 20 required.",
+        scopes=["projects:beta"],
+    )
+    # Bump newer's `updated` so the keeper signal is unambiguous (same
+    # trick as _write_two_near_duplicates).
+    newer = store.update(newer)
+
+    report = consolidate(store, apply=True)
+    tombstoned = {
+        act.memory_id for act in report.actions_taken if act.kind == "tombstoned"
+    }
+    assert older.id in tombstoned
+    remaining = store.load_all()
+    assert len(remaining) == 1
+    keeper = remaining[0]
+    assert keeper.id == newer.id
+    assert keeper.scopes == ["projects:alpha", "projects:beta"], (
+        "the duplicate's scope must be merged into the keeper before "
+        "tombstoning, or the fact vanishes from projects:alpha's "
+        f"auto-scoped retrieval; got scopes={keeper.scopes!r}"
+    )
 
 
 def test_consolidate_apply_demotes_dead_weight(store: Store, memory_dir: Path) -> None:
