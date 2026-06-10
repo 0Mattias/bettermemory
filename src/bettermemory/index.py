@@ -71,6 +71,7 @@ from pathlib import Path
 from typing import Any
 
 from .models import Memory
+from .search import fts_match_query
 
 log = logging.getLogger("bettermemory.index")
 
@@ -512,14 +513,20 @@ def query(
     conn = _connect(path)
     try:
         _ensure_schema(conn)
-        # Build the MATCH clause. FTS5 special characters get escaped
-        # by wrapping each term in quotes — protects against a user
-        # query containing `:` or `*` from being interpreted as
-        # column-prefix or prefix-match syntax.
-        terms = [f'"{_escape_fts(t)}"' for t in text.split() if t.strip()]
-        if not terms:
+        # Build the MATCH clause from the SAME tokenisation the Python
+        # rankers use (`search.fts_match_query`), not a raw
+        # `text.split()`: tokenize() carries normalisations (symbol
+        # aliases, '_'->'-' canonicalisation, contraction stripping)
+        # plus per-token OR-variants (alias <-> raw symbol spelling,
+        # joined token <-> AND of its components) that the candidate
+        # set must mirror, or indexed stores silently drop hits the
+        # rankers rate 'high'. FTS5 special characters stay inert —
+        # every variant is emitted as a quoted phrase with embedded
+        # quotes doubled, so `:` / `*` in a user query can't be read
+        # as column-prefix or prefix-match syntax.
+        match_query = fts_match_query(text)
+        if not match_query:
             return []
-        match_query = " OR ".join(terms)
 
         sql = (
             "SELECT m.id, bm25(memories_fts) AS score "
@@ -773,14 +780,6 @@ def status(root: Path) -> dict[str, Any]:
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
-
-
-def _escape_fts(term: str) -> str:
-    """Escape a token for use inside an FTS5 MATCH expression. FTS5
-    treats most special chars as syntax — `"foo"` is the safest form
-    (a literal phrase), so we double-quote-escape any existing
-    quotes inside the term."""
-    return term.replace('"', '""')
 
 
 def _scopes_text(scopes: list[str]) -> str:

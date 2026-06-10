@@ -97,12 +97,26 @@ _CONTRACTION_RE = re.compile(r"(?<=\w)['’](?:s|t|d|m|ll|re|ve)\b")
 # to accept '+'/'#', which would change tokens for every body. 'c++' maps
 # to 'cpp ' (trailing space) so 'C++20' tokenizes as ['cpp', '20'] and a
 # bare 'C++' query still hits it.
-_SYMBOL_ALIASES: tuple[tuple[re.Pattern[str], str], ...] = (
-    (re.compile(r"(?<!\w)c\+\+"), "cpp "),
-    (re.compile(r"(?<!\w)c#(?!\w)"), "csharp"),
-    (re.compile(r"(?<!\w)f#(?!\w)"), "fsharp"),
-    (re.compile(r"(?<!\w)\.net(?!\w)"), "dotnet"),
+#
+# Each entry carries the raw surface spelling alongside the pattern (the
+# patterns themselves are NOT mechanically derivable from it — e.g. 'c++'
+# deliberately drops the trailing `(?!\w)` guard so 'C++20' still aliases)
+# so `_SYMBOL_ALIAS_RAW` below is derived from the same row and the FTS5
+# prefilter's reverse mapping can't drift from the forward aliasing.
+_SYMBOL_ALIASES: tuple[tuple[re.Pattern[str], str, str], ...] = (
+    (re.compile(r"(?<!\w)c\+\+"), "cpp ", "c++"),
+    (re.compile(r"(?<!\w)c#(?!\w)"), "csharp", "c#"),
+    (re.compile(r"(?<!\w)f#(?!\w)"), "fsharp", "f#"),
+    (re.compile(r"(?<!\w)\.net(?!\w)"), "dotnet", ".net"),
 )
+
+# Reverse alias map for `fts_match_query`: normalised alias token -> raw
+# surface spelling, so a query token the forward pass produced ('cpp') can
+# also be matched against bodies the FTS5 index tokenized from the raw
+# spelling ('C++' indexes as the bare token 'c' under unicode61).
+_SYMBOL_ALIAS_RAW: dict[str, str] = {
+    replacement.strip(): raw for _, replacement, raw in _SYMBOL_ALIASES
+}
 
 
 # Short English stopword list. Stripped from the *query* only — bodies stay
@@ -223,7 +237,7 @@ def tokenize(text: str) -> list[str]:
     """
     text = _fold_diacritics(text.lower())
     text = _CONTRACTION_RE.sub("", text)
-    for pattern, replacement in _SYMBOL_ALIASES:
+    for pattern, replacement, _ in _SYMBOL_ALIASES:
         text = pattern.sub(replacement, text)
     return _TOKEN_RE.findall(text.replace("_", "-"))
 
@@ -261,14 +275,86 @@ def _expand_kebab(tokens: list[str]) -> list[str]:
 
 
 def _kebab_parts(tok: str) -> list[str]:
-    """Components of a hyphen/underscore-joined token, or [] when the token
-    isn't joined. Used by the conjunctive fallback in the scorers: a joined
-    query token with no direct hit ('claude-code' against a body spelling
-    it 'Claude Code') counts as matched iff ALL its components hit."""
-    if "-" not in tok and "_" not in tok:
+    """Components of a hyphen/underscore-joined or dotted-numeric token,
+    or [] when the token isn't joined. Used by the conjunctive fallback in
+    the scorers — a joined query token with no direct hit ('claude-code'
+    against a body spelling it 'Claude Code'; '3.12' against a body whose
+    '3.12.1' expanded to bare components) counts as matched iff ALL its
+    components hit — and by `_pairwise_content_jaccard`'s one-sided dedup
+    expansion. The split mirrors `_expand_kebab` branch for branch so the
+    query-side fallback and the index-side expansion can't disagree about
+    what counts as a component. Known accepted imprecision: the fallback
+    is order-insensitive, so '3.12' also matches a body carrying '12.3' —
+    the same class of looseness the kebab fallback already carries."""
+    if "-" in tok or "_" in tok:
+        parts = [p for p in _KEBAB_SPLIT_RE.split(tok) if p]
+    elif "." in tok:
+        # Only dotted numerics ('16.3') survive `_TOKEN_RE` with a '.'.
+        parts = [p for p in tok.split(".") if p]
+    else:
         return []
-    parts = [p for p in _KEBAB_SPLIT_RE.split(tok) if p]
     return parts if len(parts) >= 2 else []
+
+
+def _fts_phrase(term: str) -> str:
+    """Quote a term as an FTS5 phrase literal. Doubling embedded quotes is
+    the FTS5 escape; wrapping in quotes keeps special characters (`:`,
+    `*`, `+`, `.`) as literal phrase content instead of MATCH syntax.
+    `tokenize` output can't contain '"', but the raw symbol spellings
+    ('c++', '.net') pass through here too — the escape stays unconditional
+    so the helper never depends on its input's shape."""
+    escaped = term.replace('"', '""')
+    return f'"{escaped}"'
+
+
+def fts_match_query(query: str) -> str:
+    """Build the FTS5 MATCH expression `index.query` prefilters with.
+
+    Prefilter/ranker parity is a hard invariant (see `_fold_diacritics`):
+    the FTS5 index serves the CANDIDATE set on large stores, so every
+    normalisation `tokenize` applies to a query has to be mirrored here —
+    a raw `str.split` builder silently dropped candidates the rankers
+    rate 'high' once tokenize grew symbol aliases, '_'->'-'
+    canonicalisation, and the conjunctive kebab fallback. Living next to
+    `tokenize` (and consuming it) is the point: the two sides can't
+    drift apart again without touching the same module.
+
+    Per token (deduplicated, insertion-ordered) the expression carries
+    OR-variants for the two places where one ranker token corresponds to
+    several indexed spellings:
+
+    - aliased symbol names also emit the raw spelling: 'cpp' ->
+      '("cpp" OR "c++")'. unicode61 indexes a body's 'C++' as the bare
+      token 'c', and the quoted "c++" phrase tokenizes the same way, so
+      the variant is over-inclusive (a list-enumeration 'c.' matches
+      too) — acceptable for a prefilter the rankers re-score;
+    - joined tokens (kebab/snake/dotted, per `_kebab_parts`) also emit
+      their conjunctive form: 'claude-code' ->
+      '("claude-code" OR ("claude" AND "code"))'. The quoted compound
+      alone is an FTS *phrase* (adjacent tokens only), which misses the
+      non-adjacent and possessive spellings the rankers' conjunctive
+      fallback matches; AND-of-components has the fallback's
+      anywhere-in-body semantics.
+
+    Stopwords are kept: the rankers strip them from the query, so
+    stopword terms only ever ADD candidates ahead of authoritative
+    scoring — dropping them here could not widen recall, and keeping
+    them matches the raw-split builder's historical candidate sets.
+    Returns '' when the query yields no tokens; callers treat that as
+    "nothing to match"."""
+    groups: list[str] = []
+    for tok in dict.fromkeys(tokenize(query)):
+        variants = [_fts_phrase(tok)]
+        raw_symbol = _SYMBOL_ALIAS_RAW.get(tok)
+        if raw_symbol is not None:
+            variants.append(_fts_phrase(raw_symbol))
+        parts = _kebab_parts(tok)
+        if parts:
+            variants.append("(" + " AND ".join(_fts_phrase(p) for p in parts) + ")")
+        groups.append(
+            variants[0] if len(variants) == 1 else "(" + " OR ".join(variants) + ")"
+        )
+    return " OR ".join(groups)
 
 
 def _strip_stopwords(tokens: list[str]) -> list[str]:
@@ -348,62 +434,84 @@ _BM25_K1_DEFAULT = 1.2
 _BM25_B_DEFAULT = 0.75
 
 
-def compute_idf(memories: list[Memory]) -> tuple[dict[str, float], float]:
-    """Build a per-term IDF map and the average doc length for BM25.
+def compute_idf(
+    memories: list[Memory],
+) -> tuple[dict[str, float], dict[str, float], float]:
+    """Build the per-term IDF maps and the average doc length for BM25.
 
-    `idf_map`: term -> log((N - df + 0.5) / (df + 0.5) + 1.0)`, the Okapi
-    BM25 IDF variant that stays non-negative (so terms appearing in
-    >half the corpus still contribute a tiny positive signal rather
-    than pushing scores down).
+    Returns ``(body_idf_map, scope_idf_map, avgdl)``. Both maps carry
+    `term -> log((N - df + 0.5) / (df + 0.5) + 1.0)`, the Okapi BM25 IDF
+    variant that stays non-negative (so terms appearing in >half the
+    corpus still contribute a tiny positive signal rather than pushing
+    scores down) — they differ only in what counts toward df:
 
-    `avgdl`: average kebab-expanded stopword-stripped doc length across
-    the corpus. Length normalisation in BM25 reads from this. Scope
-    tokens do NOT count toward `avgdl` — it is a body-length statistic.
+    - ``body_idf_map``: df over BODY tokens only. Prices the tf > 0
+      branch in `score_memory_bm25` off body rarity. Scope tokens are
+      deliberately excluded: a single shared map fed body scoring too,
+      which crushed the body-match weight of any term that rides every
+      candidate's scope — under auto-scoping that is the project's own
+      name, the most-queried term of all, so a body literally answering
+      'bettermemory crash' lost to a fresher body that never mentioned
+      the project (the term's df hit N via scopes and its IDF ~0).
+    - ``scope_idf_map``: df over body AND scope tokens (each term once
+      per memory). Prices the `2.0 * idf` scope bonus, which
+      self-deflates for ubiquitous namespace tokens: 'projects' sits on
+      every project-scoped memory, so its df approaches N and its Okapi
+      IDF approaches 0, while a discriminating scope token ('homelab')
+      keeps a high IDF. Body-only IDF priced that bonus off body rarity
+      alone, letting the bare namespace prefix outrank genuine
+      full-coverage body matches.
 
-    Document frequency counts each memory's scope tokens alongside its
-    body tokens (each term once per memory), so the `2.0 * idf` scope
-    bonus in `score_memory_bm25` self-deflates for ubiquitous namespace
-    tokens: 'projects' sits on every project-scoped memory, so its df
-    approaches N and its Okapi IDF approaches 0, while a discriminating
-    scope token ('homelab') keeps a high IDF. Body-only IDF priced that
-    bonus off body rarity alone, letting the bare namespace prefix
-    outrank genuine full-coverage body matches.
+    ``avgdl``: average kebab-expanded stopword-stripped doc length
+    across the corpus. Length normalisation in BM25 reads from this.
+    Scope tokens do NOT count toward `avgdl` — it is a body-length
+    statistic.
 
     Tokenisation here matches `_content_token_set` (the dedup path) on
     the body side — kebab expansion symmetric, stopwords stripped. The
     search-time query side strips stopwords too. Empty corpus returns
-    `({}, 0.0)` so callers can short-circuit.
+    `({}, {}, 0.0)` so callers can short-circuit.
     """
     n = len(memories)
     if n == 0:
-        return {}, 0.0
+        return {}, {}, 0.0
 
-    df: dict[str, int] = {}
+    body_df: dict[str, int] = {}
+    scope_df: dict[str, int] = {}
     total_len = 0
     for memory in memories:
         toks = _strip_stopwords(_expand_kebab(tokenize(memory.body)))
         total_len += len(toks)
         # Count each term once per doc — that's document-frequency, not
         # term-frequency. set() collapses repeats; scope tokens join the
-        # per-doc set (see docstring) while avgdl stays body-only.
-        doc_terms = set(toks)
+        # scope-side per-doc set only (see docstring) and avgdl stays
+        # body-only.
+        body_terms = set(toks)
+        for term in body_terms:
+            body_df[term] = body_df.get(term, 0) + 1
+        doc_terms = set(body_terms)
         for scope in memory.scopes:
             doc_terms.update(_scope_tokens(scope))
         for term in doc_terms:
-            df[term] = df.get(term, 0) + 1
+            scope_df[term] = scope_df.get(term, 0) + 1
 
     avgdl = total_len / n if n else 0.0
-    idf_map: dict[str, float] = {
-        term: math.log((n - dfi + 0.5) / (dfi + 0.5) + 1.0) for term, dfi in df.items()
-    }
-    return idf_map, avgdl
+
+    def _okapi(df: dict[str, int]) -> dict[str, float]:
+        return {
+            term: math.log((n - dfi + 0.5) / (dfi + 0.5) + 1.0)
+            for term, dfi in df.items()
+        }
+
+    return _okapi(body_df), _okapi(scope_df), avgdl
 
 
 def score_memory_bm25(
     memory: Memory,
     query_tokens: list[str],
     *,
-    idf_map: dict[str, float],
+    body_idf_map: dict[str, float],
+    scope_idf_map: dict[str, float],
     avgdl: float,
     now: datetime,
     half_life_days: float = 30.0,
@@ -413,12 +521,14 @@ def score_memory_bm25(
     """BM25 score for one memory against a tokenized query.
 
     Body terms scored via standard Okapi BM25: `idf * tf * (k1+1) /
-    (tf + k1 * (1 - b + b*dl/avgdl))`. Scope matches add `2.0 * idf` as
-    a fixed bonus, matching the keyword scorer's 2x scope weight so
-    fusing the two rankers doesn't reweight scopes accidentally. The
-    recency multiplier (`_recency_factor`) is applied at the end so a
-    recently-edited memory climbs the same way it does in the keyword
-    scorer.
+    (tf + k1 * (1 - b + b*dl/avgdl))`, priced off `body_idf_map`. Scope
+    matches add `2.0 * idf` as a fixed bonus priced off the
+    scope-inclusive `scope_idf_map`, matching the keyword scorer's 2x
+    scope weight so fusing the two rankers doesn't reweight scopes
+    accidentally — see `compute_idf` for why the two signals read
+    different df statistics. The recency multiplier (`_recency_factor`)
+    is applied at the end so a recently-edited memory climbs the same
+    way it does in the keyword scorer.
 
     Returns `(score, matched_terms)`. `matched_terms` is the unique
     subset of `query_tokens` that hit body or scopes — used for the
@@ -426,9 +536,9 @@ def score_memory_bm25(
     query words actually pulled the result up.
 
     Empty `query_tokens` or `avgdl <= 0` (empty corpus) returns
-    `(0.0, [])`. Unknown terms (not in `idf_map`) contribute zero from
-    the body but can still match a scope; scope-only matches default to
-    `idf=1.0` since the term has no corpus statistics yet.
+    `(0.0, [])`. Unknown terms (not in `body_idf_map`) contribute zero
+    from the body but can still match a scope; scope-only matches
+    default to `idf=1.0` since the term has no corpus statistics yet.
     """
     if not query_tokens or avgdl <= 0:
         return 0.0, []
@@ -455,15 +565,15 @@ def score_memory_bm25(
         contrib = 0.0
 
         tf = body_count.get(tok, 0)
-        body_idf = idf_map.get(tok, 0.0)
+        body_idf = body_idf_map.get(tok, 0.0)
         scope_hit = tok in scope_set
         # Floor IDF at 1.0 for scope-only hits so a brand-new scope
         # term (absent from every body AND scope in the idf corpus)
         # still contributes; the 2x factor keeps it aligned with the
-        # keyword scorer. compute_idf counts scope tokens into df, so
-        # known scope terms price off real corpus statistics instead
-        # of this floor.
-        scope_idf = idf_map.get(tok, 1.0)
+        # keyword scorer. compute_idf counts scope tokens into the
+        # scope-inclusive map's df, so known scope terms price off real
+        # corpus statistics instead of this floor.
+        scope_idf = scope_idf_map.get(tok, 1.0)
         if tf == 0 and not scope_hit:
             # Conjunctive fallback for a joined query token with no
             # direct hit — see `_kebab_parts`. ALL components must hit
@@ -477,10 +587,10 @@ def score_memory_bm25(
                 component_hits = [body_count.get(p, 0) for p in parts]
                 if min(component_hits) > 0:
                     tf = min(component_hits)
-                    body_idf = min(idf_map.get(p, 0.0) for p in parts)
+                    body_idf = min(body_idf_map.get(p, 0.0) for p in parts)
                 if all(p in scope_set for p in parts):
                     scope_hit = True
-                    scope_idf = min(idf_map.get(p, 1.0) for p in parts)
+                    scope_idf = min(scope_idf_map.get(p, 1.0) for p in parts)
 
         if tf > 0:
             denom = tf + k1 * length_norm
@@ -528,6 +638,7 @@ def score_memory(
 
     raw = 0.0
     matched: list[str] = []
+    query_unique = len(set(query_tokens))
     # De-duplicate query tokens (insertion-ordered) before accumulating:
     # coverage and `matched` always used set semantics, but the raw loop
     # re-added the full contribution per duplicate, so a reduplicated
@@ -555,7 +666,23 @@ def score_memory(
         # would overrun it: a single-term spam body capped at 2 tops out
         # at 2 * (0.5 + 0.5/n) <= 1.5, strictly below any full-coverage
         # match (raw >= n, multiplier 1.0) for every query length n >= 2.
-        contrib = min(body_hits, 2) + 2 * scope_hit
+        #
+        # n == 1 is a deliberate carve-out: the proof above only covers
+        # n >= 2, and at n == 1 the coverage multiplier is CONSTANT
+        # (every matching doc has coverage 1/1), so there is no
+        # cross-term coverage race for repeated TF to overrun. The hard
+        # cap there erased ALL term-frequency discrimination instead —
+        # a focal six-mention body and an incidental two-mention body
+        # tied at raw 2, recency decided, and the mirrored hybrid RRF
+        # tie's created-desc tiebreaker handed rank 1 (and expand_top's
+        # inlined body) to the newer wrong doc. A log1p residual above
+        # the cap restores monotone TF ordering while staying
+        # sub-linear: 1000 mentions earn ~2 + log1p(998) ≈ 8.9 raw, not
+        # 1000, so repetition has steeply diminishing returns rather
+        # than a linear takeover.
+        contrib: float = min(body_hits, 2) + 2 * scope_hit
+        if query_unique == 1 and body_hits > 2:
+            contrib += math.log1p(body_hits - 2)
         if contrib > 0:
             matched.append(tok)
         raw += contrib
@@ -566,7 +693,7 @@ def score_memory(
     # Mild boost for matching multiple distinct query terms — together with
     # the per-term TF cap above, this is what actually keeps "foo bar"
     # ranked above "foo foo foo" when the latter is just keyword spam.
-    coverage = len(matched) / len(set(query_tokens))
+    coverage = len(matched) / query_unique
     base = raw * (0.5 + 0.5 * coverage)
 
     # Recency boost reads from the freshness timestamp — `max(created, updated)`
@@ -755,7 +882,7 @@ def _score_bm25(
     """Run the BM25 scorer across all candidates. Returns
     `(memory, score, matched)` tuples for candidates with `score > 0`.
     `applied_by_id`: see `_score_keyword`."""
-    idf_map, avgdl = compute_idf(candidates)
+    body_idf_map, scope_idf_map, avgdl = compute_idf(candidates)
     if avgdl <= 0:
         return []
     out: list[tuple[Memory, float, list[str]]] = []
@@ -763,7 +890,8 @@ def _score_bm25(
         score, matched = score_memory_bm25(
             memory,
             query_tokens,
-            idf_map=idf_map,
+            body_idf_map=body_idf_map,
+            scope_idf_map=scope_idf_map,
             avgdl=avgdl,
             now=now,
             half_life_days=half_life_days,

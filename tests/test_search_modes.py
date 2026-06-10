@@ -229,6 +229,46 @@ def test_mode_hybrid_body_match_beats_scope_namespace_noise() -> None:
     assert hits and hits[0].id == genuine.id
 
 
+def test_mode_hybrid_body_idf_not_crushed_by_pool_ubiquitous_scope_token() -> None:
+    """Hybrid leg of the round-88 body-IDF regression (see
+    test_bm25_body_match_not_crushed_by_pool_ubiquitous_scope_token):
+    with every candidate scoped projects:bettermemory, the shared df map
+    priced a BODY mention of the project name near zero, so the bm25 leg
+    lost its decisive margin for 'bettermemory crash' and the hybrid RRF
+    tie's created-desc tiebreaker handed rank 1 to a fresher memory that
+    never mentions the project. With body-only df the bm25 leg agrees
+    with the keyword leg and the genuine hit wins the default mode."""
+    now = datetime.now(timezone.utc)
+    fillers = [
+        "Uses ruff and mypy in CI for linting",
+        "Restic snapshots run nightly at three",
+        "Kuma monitors ping every minute",
+        "Diun watches container image tags",
+        "Tailscale subnet router runs on the NAS",
+        "Prefers oat milk lattes from the corner shop",
+        "Vendored frontmatter handling lives in the store module",
+        "Episode handoffs summarize long loops",
+        "Scope overview returns curation counts",
+        "Tombstones are restorable for thirty days",
+    ]
+    corpus = [
+        _memory(b, scopes=["projects:bettermemory"], created=now - timedelta(days=2))
+        for b in fillers
+    ]
+    focal = _memory(
+        "bettermemory crash on startup traced to a stale index file",
+        scopes=["projects:bettermemory"],
+        created=now - timedelta(days=30),
+    )
+    decoy = _memory(
+        "MCP server crash loop traced to systemd restart limits",
+        scopes=["projects:bettermemory"],
+        created=now - timedelta(days=1),
+    )
+    hits = search(corpus + [focal, decoy], "bettermemory crash", mode="hybrid", now=now)
+    assert hits and hits[0].id == focal.id
+
+
 def test_mode_invalid_returns_typed_error() -> None:
     """An unknown mode raises ValueError at the dispatch boundary —
     the runtime guard above the if/elif chain catches typos like

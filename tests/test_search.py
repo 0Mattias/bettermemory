@@ -194,6 +194,32 @@ def test_dotted_version_ranking_repro() -> None:
     assert "16.3" in by_id[right.id].match_terms
 
 
+def test_dotted_query_token_matches_finer_version_body() -> None:
+    """Round-88 audit repro: query 'python 3.12' against a body pinning
+    'Python 3.12.1'. The body expands its dotted token to bare
+    components but never emits '3.12' itself, and `_kebab_parts` gave
+    dotted query tokens no split, so '3.12' contributed nothing and a
+    fresher unrelated 'python scripts' memory outranked the version doc
+    in keyword AND default hybrid mode. The dotted conjunctive fallback
+    (ALL components must hit) restores the match without reviving the
+    stray-digit false positive
+    (test_version_query_does_not_match_bare_digit_body)."""
+    now = datetime.now(timezone.utc)
+    version_doc = _memory(
+        "Python 3.12.1 is the pinned interpreter for the data pipeline.",
+        created=now - timedelta(days=20),
+    )
+    unrelated = _memory(
+        "Keeps python scripts for one-off data fixes in ~/bin.",
+        created=now - timedelta(days=1),
+    )
+    modes: tuple[SearchMode, ...] = ("keyword", "hybrid")
+    for mode in modes:
+        hits = search([version_doc, unrelated], "python 3.12", mode=mode, now=now)
+        assert hits and hits[0].id == version_doc.id, f"inversion in mode={mode}"
+        assert "3.12" in hits[0].match_terms
+
+
 def test_tokenize_symbol_identifier_aliases() -> None:
     """Symbol-bearing tech names must not collapse to a bare letter:
     'C++' -> 'c' made C/C++/C#/Objective-C mutually indistinguishable and
@@ -574,6 +600,47 @@ def test_keyword_tf_cap_ranks_full_coverage_first() -> None:
         assert hits and hits[0].id == ontopic.id, f"inversion in mode={mode}"
 
 
+def test_keyword_single_term_tf_discriminates_above_cap() -> None:
+    """Round-88 audit repro: query 'redis' — a focal memory with six
+    redis mentions (20 days old) must outrank an incidental two-mention
+    memory written today. The per-term TF cap's invariant proof only
+    covers n >= 2; at n == 1 it forced raw 2 vs 2, recency decided
+    keyword mode, and the mirrored RRF tie's created-desc tiebreaker
+    handed hybrid rank 1 (which expand_top inlines) to the incidental
+    doc. The n == 1 log1p residual restores TF ordering in both modes;
+    multi-term behavior stays byte-identical (see the cap tests above)."""
+    now = datetime.now(timezone.utc)
+    focal = _memory(
+        "redis tuning notes: redis maxmemory 2gb, redis appendonly yes, "
+        "redis save disabled; benchmark redis with redis-benchmark.",
+        created=now - timedelta(days=20),
+    )
+    incidental = _memory(
+        "Deployed the new cache service today; redis backs sessions and "
+        "redis backs the queue.",
+        created=now,
+    )
+    modes: tuple[SearchMode, ...] = ("keyword", "hybrid")
+    for mode in modes:
+        hits = search([focal, incidental], "redis", mode=mode, now=now)
+        assert hits and hits[0].id == focal.id, f"inversion in mode={mode}"
+
+
+def test_keyword_single_term_tf_residual_is_sublinear() -> None:
+    """The n == 1 carve-out must not reopen the spam door it was capped
+    for: the residual is logarithmic, so a 100-mention body earns
+    ~2 + log1p(98) ≈ 6.6 raw — monotone above a six-mention doc, nowhere
+    near linear TF's 100. Pin both directions: more mentions still rank
+    higher, but the ratio stays in log territory."""
+    now = datetime.now(timezone.utc)
+    six = _memory(("redis " * 6).strip())
+    spam = _memory(("redis " * 100).strip())
+    s_six, _ = score_memory(six, ["redis"], now=now)
+    s_spam, _ = score_memory(spam, ["redis"], now=now)
+    assert s_spam > s_six  # monotone in TF above the cap
+    assert s_spam < s_six * 3  # sub-linear: ~1.8x, not ~16x
+
+
 # ---------------------------------------------------------------------------
 # Kebab/snake expansion on indexed text
 #
@@ -731,6 +798,24 @@ def test_find_similar_shared_compound_does_not_inflate_jaccard() -> None:
     assert hits, "the pair is genuinely related — it must still surface"
     assert hits[0].relevance == "medium"
     assert hits[0].similarity < 0.75
+
+
+def test_find_similar_version_drift_duplicate_blocks() -> None:
+    """Round-88 audit repro: version-bump near-duplicates ('Postgres
+    16.3 ...' vs 'Postgres 16 ...') are the canonical same-fact drift
+    the dedup gate exists to block, but `_kebab_parts` had no dotted
+    split, so the pair's expansion never intersected on '16' and the
+    Jaccard sat below the 0.75 write-blocking line ('medium' — write
+    proceeds). With the dotted pairwise expansion the pair lands at
+    exactly 6/8 = 0.75 (intersection gains '16'; union carries
+    '16.3'/'16'/'3'), crossing into 'high'. Deliberately the minimal
+    five-shared-token fixture: one shared token fewer and the fix can't
+    reach the line, one more and the pre-fix code already blocked."""
+    existing = _memory("Postgres 16.3 pinned for the homelab backup stack")
+    candidate = "Postgres 16 pinned for the homelab backup stack"
+    hits = find_similar(candidate, [existing])
+    assert hits and hits[0].relevance == "high"
+    assert hits[0].similarity >= 0.75
 
 
 def test_find_similar_flags_nfc_duplicate_of_nfd_body() -> None:

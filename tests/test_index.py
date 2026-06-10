@@ -162,6 +162,54 @@ def test_query_escapes_fts_special_chars(store: Store, memory_dir: Path) -> None
     assert len(result) == 1
 
 
+def test_query_covers_every_candidate_the_rankers_score(
+    store: Store, memory_dir: Path
+) -> None:
+    """Prefilter/ranker parity (round 88 audit): `search.tokenize` grew
+    normalisations the raw `text.split()` MATCH builder never saw —
+    symbol aliases ('C++' <-> 'cpp'), '_'->'-' canonicalisation, the
+    conjunctive kebab fallback — so on indexed stores the FTS prefilter
+    silently dropped candidates the rankers rate 'high': a 'cpp' query
+    missed 'C++'-spelled bodies (unicode61 indexes 'C++' as bare 'c'),
+    'claude-code' returned zero rows against a non-adjacent
+    'Claude ... code' body (the quoted term is an FTS *phrase*). The
+    MATCH expression is now built by `search.fts_match_query` from the
+    same tokenisation, with alias and AND-of-components OR-variants.
+
+    Self-validating: each case first asserts the ranker DOES surface the
+    expected bodies, so a future tokenize change keeps the parity
+    assertion meaningful instead of vacuously passing."""
+    from bettermemory.search import search as rank
+
+    cxx = store.write(content="Prefers C++ for the renderer hot path", scopes=["tools"])
+    cpp_lit = store.write(content="The cpp build flags live in meson", scopes=["tools"])
+    spaced = store.write(
+        content="Claude reviews the code before merging", scopes=["tools"]
+    )
+    compose = store.write(
+        content="The docker stack uses compose v2 profiles", scopes=["tools"]
+    )
+    memories = [cxx, cpp_lit, spaced, compose]
+    index.rebuild(memory_dir, store.iter_active())
+
+    cases: list[tuple[str, set[str]]] = [
+        ("cpp", {cxx.id, cpp_lit.id}),
+        ("C++", {cxx.id, cpp_lit.id}),
+        ("claude-code", {spaced.id}),
+        ("docker_compose", {compose.id}),
+    ]
+    for query, expected in cases:
+        ranked = {h.id for h in rank(memories, query)}
+        assert expected <= ranked, (
+            f"ranker precondition drifted for {query!r}: expected the "
+            f"rankers themselves to surface these bodies"
+        )
+        prefiltered = {cid for cid, _ in index.query(memory_dir, query)}
+        assert expected <= prefiltered, (
+            f"FTS prefilter dropped candidates the rankers score for {query!r}"
+        )
+
+
 # ---------------------------------------------------------------------------
 # Store hooks — incremental update
 # ---------------------------------------------------------------------------
