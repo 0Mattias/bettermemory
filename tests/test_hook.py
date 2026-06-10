@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import io
 import json
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 import pytest
@@ -1446,12 +1447,35 @@ _MISS_BODY = "backup strategy uses triangular restic replication"
 _MISS_QUERY = "backup strategy"
 
 
+def _write_miss_memory(mem_dir: Path) -> None:
+    """Seed the high-relevance memory, backdated past the created-time
+    filter in `probe_for_miss` (a memory born inside the lookback window
+    cannot be retrieval-miss evidence, so a same-breath write-then-audit
+    would probe an empty candidate list). Backdating keeps every test in
+    this family exercising the mechanism it names — the disabled-scope
+    suppressions in particular must come from scope logic, not from the
+    filter emptying the store. Mirrors `_backdate_created` in
+    test_audit.py; an hour comfortably predates the clamped maximum
+    lookback (600s)."""
+    store = Store(mem_dir)
+    written = store.write(content=_MISS_BODY, scopes=["infrastructure"])
+    backdated = datetime.now(timezone.utc) - timedelta(hours=1)
+    for path, mem in store.iter_active():
+        if mem.id == written.id:
+            store._write_path(
+                path,
+                mem.model_copy(update={"created": backdated, "updated": backdated}),
+            )
+            return
+    raise AssertionError(f"memory {written.id!r} not found in store")
+
+
 def test_run_audit_baseline_flags_miss(tmp_path: Path) -> None:
     """Control: with no disabled scopes, a high-relevance hit and no
     recent retrieval is a silent miss."""
     mem_dir = tmp_path / "mem"
     mem_dir.mkdir()
-    Store(mem_dir).write(content=_MISS_BODY, scopes=["infrastructure"])
+    _write_miss_memory(mem_dir)
 
     result = run_audit(
         user_message=_MISS_QUERY,
@@ -1477,7 +1501,7 @@ def test_run_audit_recent_retrieval_under_server_session_suppresses_miss(
     isolates the shield."""
     mem_dir = tmp_path / "mem"
     mem_dir.mkdir()
-    Store(mem_dir).write(content=_MISS_BODY, scopes=["infrastructure"])
+    _write_miss_memory(mem_dir)
 
     # The server emits a retrieval event under its own session id, exactly
     # as memory_search does. The hook reads it back cross-process.
@@ -1506,7 +1530,7 @@ def test_run_audit_foreign_worktree_event_does_not_unshield(
 
     mem_dir = tmp_path / "mem"
     mem_dir.mkdir()
-    Store(mem_dir).write(content=_MISS_BODY, scopes=["infrastructure"])
+    _write_miss_memory(mem_dir)
 
     wt_this = str(tmp_path / "wt-this")
     wt_other = str(tmp_path / "wt-other")
@@ -1547,7 +1571,7 @@ def test_run_audit_foreign_worktree_search_does_not_shield(
 
     mem_dir = tmp_path / "mem"
     mem_dir.mkdir()
-    Store(mem_dir).write(content=_MISS_BODY, scopes=["infrastructure"])
+    _write_miss_memory(mem_dir)
 
     wt_this = str(tmp_path / "wt-this")
     wt_other = str(tmp_path / "wt-other")
@@ -1582,7 +1606,7 @@ def test_run_audit_disabled_scope_suppresses_stop_hook_miss(tmp_path: Path) -> N
     same turn that would otherwise be flagged is no longer a miss."""
     mem_dir = tmp_path / "mem"
     mem_dir.mkdir()
-    Store(mem_dir).write(content=_MISS_BODY, scopes=["infrastructure"])
+    _write_miss_memory(mem_dir)
 
     # Seed the in-process server's disable event onto disk, exactly as
     # memory_scope_disable would. The hook reads it back cross-process.
@@ -1608,7 +1632,7 @@ def test_run_audit_reenabled_scope_reflags_miss(tmp_path: Path) -> None:
     the same server session is back in scope, so the miss fires again."""
     mem_dir = tmp_path / "mem"
     mem_dir.mkdir()
-    Store(mem_dir).write(content=_MISS_BODY, scopes=["infrastructure"])
+    _write_miss_memory(mem_dir)
 
     rec = Recorder(root=mem_dir, session_id="sess_server")
     rec.record("scope_disable", scope="infrastructure")
@@ -1629,7 +1653,7 @@ def test_run_audit_disable_resets_after_server_restart(tmp_path: Path) -> None:
     written in-process activity — the miss fires again."""
     mem_dir = tmp_path / "mem"
     mem_dir.mkdir()
-    Store(mem_dir).write(content=_MISS_BODY, scopes=["infrastructure"])
+    _write_miss_memory(mem_dir)
 
     # Old server disabled the scope, then restarted; the new server's first
     # in-process activity lands under a fresh session id, which re-anchors
@@ -1665,7 +1689,7 @@ def test_run_audit_stale_disable_shields_during_restart_gap(tmp_path: Path) -> N
     test_run_audit_disable_resets_after_server_restart)."""
     mem_dir = tmp_path / "mem"
     mem_dir.mkdir()
-    Store(mem_dir).write(content=_MISS_BODY, scopes=["infrastructure"])
+    _write_miss_memory(mem_dir)
 
     # Prior server disabled the scope, then restarted. The new server has
     # not yet written ANY in-process event, so the latest non-stop-hook

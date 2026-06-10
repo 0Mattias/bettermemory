@@ -19,6 +19,7 @@ rather than poking the handler directly so the wire shape stays pinned.
 from __future__ import annotations
 
 import json
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
@@ -101,18 +102,29 @@ async def test_memory_acknowledge_miss_desc_mentions_key_concepts(
 # ---------------------------------------------------------------------------
 
 
-async def _emit_search_miss(server: Any) -> str:
+async def _emit_search_miss(server: Any, memory_dir: Path) -> str:
     """Write a memory, audit a turn that misses retrieving it, return
     the resulting `search_miss` event's event_id. The fixture this
     function lives next to keeps the wire shape honest: the search_miss
     came from the real production path (memory_audit_turn → recorder),
-    not a hand-crafted dict."""
+    not a hand-crafted dict. The memory is backdated past probe_for_miss's
+    created-time filter (a memory born inside the lookback window cannot
+    be miss evidence), preserving the "memory existed before this turn"
+    shape the write-then-audit sequence means to exercise — mirrors
+    `_backdate_created` in test_audit.py."""
     await _call(
         server,
         "memory_write",
         content="backup strategy uses triangular restic replication",
         scopes=["infrastructure"],
     )
+    store = Store(memory_dir)
+    backdated = datetime.now(timezone.utc) - timedelta(hours=1)
+    for path, mem in store.iter_active():
+        store._write_path(
+            path,
+            mem.model_copy(update={"created": backdated, "updated": backdated}),
+        )
     report = await _call(
         server,
         "memory_audit_turn",
@@ -130,7 +142,7 @@ async def test_acknowledge_miss_happy_path_drops_miss_from_rollup(
     pin at the unit level, exercised end-to-end through the MCP
     handler."""
     server, memory_dir, _ = server_with_events
-    await _emit_search_miss(server)
+    await _emit_search_miss(server, memory_dir)
 
     miss_events = [e for e in _events(memory_dir) if e["kind"] == "search_miss"]
     assert len(miss_events) == 1
@@ -165,7 +177,7 @@ async def test_acknowledge_miss_emits_miss_ack_event(
     """One `miss_ack` event lands in the log carrying event_id +
     reason."""
     server, memory_dir, _ = server_with_events
-    await _emit_search_miss(server)
+    await _emit_search_miss(server, memory_dir)
     miss_events = [e for e in _events(memory_dir) if e["kind"] == "search_miss"]
     event_id = miss_events[0]["event_id"]
 
@@ -189,7 +201,7 @@ async def test_acknowledge_miss_idempotent_second_call(
     times AND only emits ONE `miss_ack` event — the handler
     short-circuits on the second call by detecting the existing ack."""
     server, memory_dir, _ = server_with_events
-    await _emit_search_miss(server)
+    await _emit_search_miss(server, memory_dir)
     miss_events = [e for e in _events(memory_dir) if e["kind"] == "search_miss"]
     event_id = miss_events[0]["event_id"]
 
@@ -222,8 +234,8 @@ async def test_acknowledge_miss_surfaces_in_recent_silent_misses_pre_ack(
     """Before the ack lands, `memory_health.recent_silent_misses`
     carries the event_id so the model can discover it. After the ack
     lands, the entry disappears from the list."""
-    server, _, _ = server_with_events
-    await _emit_search_miss(server)
+    server, memory_dir, _ = server_with_events
+    await _emit_search_miss(server, memory_dir)
 
     pre = await _call(server, "memory_health")
     assert len(pre["recent_silent_misses"]) == 1
@@ -293,10 +305,10 @@ async def test_acknowledge_miss_rejects_short_reason(
     """A reason shorter than the minimum length raises ValueError so
     the MCP boundary surfaces a structured error rather than emitting
     an audit-thin `miss_ack`."""
-    server, _, _ = server_with_events
+    server, memory_dir, _ = server_with_events
     # Pre-emit a search_miss so the failure is on the reason check,
     # not the not-found check.
-    await _emit_search_miss(server)
+    await _emit_search_miss(server, memory_dir)
     miss_events = [
         e for e in _events(server_with_events[1]) if e["kind"] == "search_miss"
     ]
@@ -331,8 +343,8 @@ async def test_acknowledge_miss_rejects_whitespace_only_reason(
 ) -> None:
     """A whitespace-only reason fails the minimum-length check after
     stripping — protects against `ack(reason="        ")` drive-by."""
-    server, _, _ = server_with_events
-    await _emit_search_miss(server)
+    server, memory_dir, _ = server_with_events
+    await _emit_search_miss(server, memory_dir)
     miss_events = [
         e for e in _events(server_with_events[1]) if e["kind"] == "search_miss"
     ]
@@ -362,7 +374,7 @@ async def test_acknowledge_miss_rejects_overlong_reason(
     the event log. The boundary block behind the `_MAX_REASON_LENGTH`
     import pins the exact cap (cap+1 rejected, cap accepted)."""
     server, memory_dir, _ = server_with_events
-    await _emit_search_miss(server)
+    await _emit_search_miss(server, memory_dir)
     miss_events = [e for e in _events(memory_dir) if e["kind"] == "search_miss"]
     event_id = miss_events[0]["event_id"]
 
