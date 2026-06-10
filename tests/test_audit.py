@@ -1047,8 +1047,9 @@ def test_probe_half_life_days_matches_run_search_ranking() -> None:
     `recency_boost_half_life_days` had the probe ranking with a
     different scorer than production retrieval.
 
-    Fixture: the OLD memory's keyword base score (12: six hits per
-    query token) beats the NEW memory's (11) by ~9.1%, inside the
+    Fixture: six distinct query tokens; per-term body TF saturates at 2,
+    so the OLD memory (every token twice) holds raw 12 while the NEW one
+    (five tokens twice, one once) holds raw 11 — a ~9.1% gap, inside the
     recency boost's 10% ceiling. Under the default 30-day half-life
     the 1-day-old memory's ~+9.7% boost flips the order; under a
     0.5-day half-life its boost decays to ~+1.4% and the old memory's
@@ -1058,19 +1059,21 @@ def test_probe_half_life_days_matches_run_search_ranking() -> None:
     from bettermemory.search import search as run_search
 
     now = _utc(2026, 5, 1)
+    query = "backup strategy restic replication offsite archive"
+    tokens = query.split()
     old_strong = _memory(
-        " ".join(["backup"] * 6 + ["strategy"] * 6),
+        " ".join(t for t in tokens for _ in range(2)),
         created=now - timedelta(days=300),
     )
     new_close = _memory(
-        " ".join(["backup"] * 6 + ["strategy"] * 5),
+        " ".join(t for t in tokens[:5] for _ in range(2)) + " archive",
         created=now - timedelta(days=1),
     )
     memories = [old_strong, new_close]
 
     default_report = probe_for_miss(
         memories,
-        "backup strategy",
+        query,
         recent_events=[],
         session_id="sess_x",
         now=now,
@@ -1080,7 +1083,7 @@ def test_probe_half_life_days_matches_run_search_ranking() -> None:
 
     short_report = probe_for_miss(
         memories,
-        "backup strategy",
+        query,
         recent_events=[],
         session_id="sess_x",
         now=now,
@@ -1093,7 +1096,7 @@ def test_probe_half_life_days_matches_run_search_ranking() -> None:
     # identical to run_search's under the same value.
     hits = run_search(
         memories,
-        "backup strategy",
+        query,
         max_results=3,
         now=now,
         mode="keyword",

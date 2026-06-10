@@ -85,13 +85,15 @@ async def test_memory_health_reflects_recent_activity(server: Any) -> None:
 
 
 async def test_memory_health_window_days_filters_dead_and_cold(
-    server: Any,
+    server: Any, memory_dir: Path
 ) -> None:
     """A freshly-written memory shouldn't appear in either curation bucket
     when the window is generous; with window=0 it's eligible. Under the
     new rule a memory with zero retrievals lands in `cold_memories`,
-    not `dead_weight`. To land in dead_weight we need a retrieval
-    event with no applied — exercise both."""
+    not `dead_weight`, and a retrieval only counts against the memory
+    once it is older than the endorsement grace (the auto-applied
+    endorsement structurally lags retrieval, so a seconds-old search
+    must NOT make the memory dead weight) — exercise all three."""
     written = await _call(
         server, "memory_write", content="freshly written body", scopes=["tools"]
     )
@@ -105,13 +107,51 @@ async def test_memory_health_window_days_filters_dead_and_cold(
     assert len(zero_window["cold_memories"]) == 1
     assert zero_window["cold_memories"][0]["id"] == written["id"]
 
-    # Now retrieve the memory once (no record_use → no applied) so it
-    # crosses into the dead-weight bucket the next time we check.
+    # Retrieve the memory once (no record_use → no applied). Inside the
+    # endorsement grace the retrieval is evidence the ranker works, not
+    # evidence against the memory: neither bucket may claim it.
     await _call(server, "memory_search", query="freshly written body")
-    after_retrieval = await _call(server, "memory_health", window_days=0)
-    assert len(after_retrieval["dead_weight"]) == 1
-    assert after_retrieval["dead_weight"][0]["id"] == written["id"]
-    assert len(after_retrieval["cold_memories"]) == 0
+    in_grace = await _call(server, "memory_health", window_days=0)
+    assert len(in_grace["dead_weight"]) == 0
+    assert len(in_grace["cold_memories"]) == 0
+
+    # Age the retrieval past the grace (the recorder always stamps
+    # "now", so rewrite the event's ts on disk) — retrieved-never-applied
+    # now crosses into dead_weight. The in-grace health calls above were
+    # memory-tool turns, so the session's auto-`applied` commit for the
+    # search has fired by now; drop those `use` events too — they are
+    # plumbing artifacts of this test's extra turns, and the scenario
+    # under test is retrieved-NEVER-applied.
+    from datetime import datetime, timedelta, timezone
+
+    events_path = memory_dir / ".events.jsonl"
+    aged = (datetime.now(timezone.utc) - timedelta(days=3)).isoformat()
+    lines = []
+    for line in events_path.read_text(encoding="utf-8").splitlines():
+        event = json.loads(line)
+        if event["kind"] == "use":
+            continue
+        if event["kind"] == "search":
+            event["ts"] = aged
+        lines.append(json.dumps(event))
+    events_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+    # Query from a FRESH server session: the original session still holds
+    # the search's pending use-token, and any further tool turn on it
+    # would auto-commit a new `use(applied)` event mid-call, re-shielding
+    # the memory. A later session inspecting health is also the realistic
+    # consumer of this bucket.
+    fresh_state = SessionState()
+    fresh = build_server(
+        config=Config(storage=StorageConfig(directory=str(memory_dir))),
+        store=Store(memory_dir),
+        state=fresh_state,
+        recorder=Recorder(root=memory_dir, session_id=fresh_state.session_id),
+    )
+    after_grace = await _call(fresh, "memory_health", window_days=0)
+    assert len(after_grace["dead_weight"]) == 1
+    assert after_grace["dead_weight"][0]["id"] == written["id"]
+    assert len(after_grace["cold_memories"]) == 0
 
 
 async def test_memory_health_surfaces_marker_overrides(server: Any) -> None:
