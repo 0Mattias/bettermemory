@@ -49,10 +49,13 @@ from itertools import chain
 TRANSIENT_PHRASE_MARKERS: tuple[str, ...] = (
     # Direct timestamp / state markers. "temporarily" / "for the time
     # being" are the author labeling the state transient — same FP
-    # profile as "currently". "interim" is deliberately absent ("interim
-    # report", "interim CTO" are durable). The dated form "as of <date>"
-    # is handled by _AS_OF_DATE_RE below; "as of today" / "as of
-    # yesterday" are subsumed by the bare time-word markers.
+    # profile as "currently", except the habitual present-tense form
+    # ("the rate limiter temporarily blocks an IP") describes designed
+    # recurring behavior and is exempted via _PATTERN_OVERRIDES.
+    # "interim" is deliberately absent ("interim report", "interim CTO"
+    # are durable). The dated form "as of <date>" is handled by
+    # _AS_OF_DATE_RE below; "as of today" / "as of yesterday" are
+    # subsumed by the bare time-word markers.
     "currently",
     "as of now",
     "as of this writing",
@@ -94,10 +97,18 @@ TRANSIENT_PHRASE_MARKERS: tuple[str, ...] = (
     "recently switched",
     "recently migrated",
     "recently renamed",
-    # In-flight work references. "wip" is deliberately absent: kanban
-    # column descriptions and WIP-limit conventions are durable. Known
-    # residual: hyphenated "in-progress" doesn't match the literal space.
-    "in progress",
+    # In-flight work references. "wip" is deliberately absent and
+    # "in progress" is copula-anchored for the same reason: kanban
+    # column descriptions ("Todo, In Progress, and Done columns") and
+    # WIP-limit conventions are durable, while the copula forms ("the
+    # migration is in progress") carry the transience. Known residual:
+    # hyphenated "in-progress" doesn't match the literal space. The two
+    # idioms only fire with an in-flight-work object — see
+    # _PATTERN_OVERRIDES; bare uses are dominated by durable
+    # temporal-generic phrasing ("pinged in the middle of a focus
+    # block", "reboots halfway through").
+    "is in progress",
+    "are in progress",
     "in the middle of",
     "halfway through",
     # Branch/repo state references. Bare "unpushed" catches every word
@@ -105,12 +116,23 @@ TRANSIENT_PHRASE_MARKERS: tuple[str, ...] = (
     # word has essentially no durable usage. The copula forms for stash
     # keep durable policy facts ("prefers stashing WIP") silent. "dirty
     # working tree" / "not committed" are deliberately absent — both
-    # appear in durable tool-behavior facts.
+    # appear in durable tool-behavior facts. Bare "uncommitted changes"
+    # / "untracked files" share that dual-use profile (deploy guards
+    # that "refuse to run when there are uncommitted changes", git-clean
+    # caveats, stash policies), so both are copula-anchored — with an
+    # asymmetry: "are uncommitted changes" is deliberately missing
+    # because the existential form is how CI/deploy guards state their
+    # trigger condition, while "are untracked files" stays because the
+    # existential there-are form is the natural transient repo-state
+    # report ("There are untracked files under scripts/").
     "unpushed",
     "commits ahead",
     "commits behind",
-    "uncommitted changes",
-    "untracked files",
+    "has uncommitted changes",
+    "have uncommitted changes",
+    "has untracked files",
+    "have untracked files",
+    "are untracked files",
     "is stashed",
     "are stashed",
     # New-thing references — these are the subtle ones. Plural/first-
@@ -192,11 +214,40 @@ _AS_OF_DATE_MARKER = "as of <date>"
 #   event-trigger clause describing durable behavior, never the now-sense,
 #   so suppressing those heads costs zero recall. The ambiguous a/an/the
 #   heads ("At the moment the plan is ...") deliberately keep firing.
+# - "temporarily": the habitual present-tense third-person form
+#   ("the rate limiter temporarily blocks an IP") describes designed
+#   recurring system behavior — durable, and unlike "currently" the word
+#   can't just be deleted in a rephrase without flipping the meaning
+#   (temporary -> permanent). The \w+s lookahead skips exactly that
+#   conjugation; past/progressive/imperative forms ("temporarily
+#   disabled", "we're temporarily using") keep firing.
+# - "in the middle of" / "halfway through": the bare idioms are dominated
+#   by durable temporal-generic uses ("pinged in the middle of a focus
+#   block", "the installer reboots halfway through"). They only fire with
+#   an in-flight-work object: a bare gerund immediately after of/through
+#   ("migrating the database" — morning/evening excluded, they share the
+#   -ing shape) or an optionally articled work noun ("a migration",
+#   "the rollout").
+
+# In-flight-work object shape shared by the two idiom overrides.
+_IN_FLIGHT_WORK_OBJECT = (
+    r"(?:(?!(?:morning|evening)\b)\w+ing\b"
+    r"|(?:(?:a|an|the)\s+)?(?:migration|refactor(?:ing)?|rewrite|upgrade"
+    r"|rollout|deploy(?:ment)?|rebase|merge|release)\b)"
+)
+
 _PATTERN_OVERRIDES: dict[str, re.Pattern[str]] = {
     "today": re.compile(r"\btoday\b(?!['’]s|\.\w)", re.IGNORECASE),
     "the new": re.compile(r"\b[Tt]he new\b"),
     "at the moment": re.compile(
         r"\bat the moment\b(?!\s+(?:of|when|that)\b)", re.IGNORECASE
+    ),
+    "temporarily": re.compile(r"\btemporarily\b(?!\s+\w+s\b)", re.IGNORECASE),
+    "in the middle of": re.compile(
+        rf"\bin the middle of {_IN_FLIGHT_WORK_OBJECT}", re.IGNORECASE
+    ),
+    "halfway through": re.compile(
+        rf"\bhalfway through {_IN_FLIGHT_WORK_OBJECT}", re.IGNORECASE
     ),
 }
 

@@ -133,6 +133,73 @@ def test_pushed_alone_does_not_fire_unpushed() -> None:
 @pytest.mark.parametrize(
     "body",
     [
+        "Tracks work on a GitHub Projects board with Todo, In Progress, "
+        "and Done columns.",
+        "Remember that I keep active tasks in the In Progress column.",
+    ],
+)
+def test_in_progress_kanban_column_does_not_fire(body: str) -> None:
+    """Kanban column names ('In Progress') are durable board descriptions —
+    the same rationale that keeps 'wip' off the list. Only the copula
+    state-report forms ('is/are in progress') are markers."""
+    assert find_transient_markers(body) == []
+
+
+@pytest.mark.parametrize(
+    "body",
+    [
+        "The deploy script refuses to run when there are uncommitted changes.",
+        "Running git clean -fd deletes untracked files for good; dry-run "
+        "with -n first.",
+        "Use git stash --include-untracked so untracked files survive the stash.",
+    ],
+)
+def test_working_tree_tool_behavior_does_not_fire(body: str) -> None:
+    """Durable tool-behavior facts (deploy guards, git-clean caveats, stash
+    policies) use the bare phrases — the same dual-use profile as the
+    deliberately-absent 'dirty working tree'. The existential guard
+    conditional ('when there ARE uncommitted changes') is why that marker
+    anchors on has/have only."""
+    assert find_transient_markers(body) == []
+
+
+@pytest.mark.parametrize(
+    "body",
+    [
+        "The rate limiter temporarily blocks an IP after 10 failed login attempts.",
+        "fail2ban temporarily bans hosts that fail SSH auth five times.",
+        "The CDN temporarily caches 404 responses for sixty seconds.",
+    ],
+)
+def test_temporarily_habitual_behavior_does_not_fire(body: str) -> None:
+    """'temporarily <verb>s' is the habitual present tense — designed,
+    recurring system behavior, a primary durable write category. Unlike
+    'currently', deleting the word flips the meaning (temporary ->
+    permanent), so every fire here would train an acknowledge_transient
+    rubber-stamp."""
+    assert find_transient_markers(body) == []
+
+
+@pytest.mark.parametrize(
+    "body",
+    [
+        "Prefers not to be pinged in the middle of a focus block.",
+        "I prefer doing code review in the middle of the day.",
+        "Likes a long walk in the middle of the evening.",
+        "The installer always reboots halfway through; this is expected.",
+    ],
+)
+def test_in_flight_idiom_without_work_object_does_not_fire(body: str) -> None:
+    """Temporal-generic idiom uses ('middle of a focus block', 'reboots
+    halfway through') are durable preferences/behavior — the markers only
+    fire with an in-flight-work object (bare gerund or work noun).
+    'the evening' guards the gerund shape against time-of-day -ing nouns."""
+    assert find_transient_markers(body) == []
+
+
+@pytest.mark.parametrize(
+    "body",
+    [
         "Access tokens are refreshed at the moment of expiry, not on a timer.",
         "The lease is re-checked at the moment when it renews.",
     ],
@@ -201,9 +268,21 @@ def test_today_possessive_does_not_fire(body: str) -> None:
 # ---------------------------------------------------------------------------
 
 
+# The in-flight idioms only fire with a following in-flight-work object
+# (see _PATTERN_OVERRIDES) — the generic objectless template below is
+# exactly the durable shape they must NOT match, so they get a
+# representative transient body instead.
+_OBJECT_ANCHORED_BODIES: dict[str, str] = {
+    "in the middle of": "Some context, in the middle of migrating the database.",
+    "halfway through": "Some context, halfway through the migration, and more.",
+}
+
+
 @pytest.mark.parametrize("phrase", TRANSIENT_PHRASE_MARKERS)
 def test_each_phrase_marker_fires(phrase: str) -> None:
-    body = f"Some context, {phrase} and more context after."
+    body = _OBJECT_ANCHORED_BODIES.get(
+        phrase, f"Some context, {phrase} and more context after."
+    )
     hits = find_transient_markers(body)
     assert any(h.marker == phrase for h in hits), (
         f"expected marker {phrase!r} to fire, got {[h.marker for h in hits]}"
@@ -318,10 +397,21 @@ def test_unpushed_noun_phrase_fires() -> None:
     assert any(h.marker == "unpushed" for h in hits)
 
 
-def test_in_progress_fires() -> None:
-    body = "The migration from REST to gRPC is in progress; auth is not cut over."
+@pytest.mark.parametrize(
+    ("body", "marker"),
+    [
+        (
+            "The migration from REST to gRPC is in progress; auth is not cut over.",
+            "is in progress",
+        ),
+        ("Two schema refactors are in progress across the repo.", "are in progress"),
+    ],
+)
+def test_in_progress_copula_state_fires(body: str, marker: str) -> None:
+    """The copula forms are the genuine state reports — anchoring on them
+    loses nothing while keeping kanban column names silent."""
     hits = find_transient_markers(body)
-    assert any(h.marker == "in progress" for h in hits)
+    assert any(h.marker == marker for h in hits)
 
 
 @pytest.mark.parametrize(
@@ -329,18 +419,23 @@ def test_in_progress_fires() -> None:
     [
         (
             "The bettermemory checkout has uncommitted changes to server.py.",
-            "uncommitted changes",
+            "has uncommitted changes",
+        ),
+        (
+            "The branch has uncommitted changes after the hotfix.",
+            "has uncommitted changes",
         ),
         (
             "There are untracked files under scripts/ that never got added.",
-            "untracked files",
+            "are untracked files",
         ),
         ("The fix is stashed, not committed.", "is stashed"),
     ],
 )
 def test_working_tree_state_fires(body: str, marker: str) -> None:
     """Working-tree state mutates on the next git command — strictly more
-    volatile than the push-distance vocabulary already covered."""
+    volatile than the push-distance vocabulary already covered. The
+    copula-anchored forms keep these genuine repo-state reports firing."""
     hits = find_transient_markers(body)
     assert any(h.marker == marker for h in hits)
 
@@ -379,6 +474,47 @@ def test_temporarily_fires() -> None:
     )
     hits = find_transient_markers(body)
     assert any(h.marker == "temporarily" for h in hits)
+
+
+@pytest.mark.parametrize(
+    "body",
+    [
+        "Temporarily disabled the nightly cron job while we debug the deploy.",
+        "We're temporarily using the old endpoint until the gateway ships.",
+    ],
+)
+def test_temporarily_non_habitual_still_fires(body: str) -> None:
+    """Guards the habitual-form lookahead against widening: past,
+    progressive, and imperative 'temporarily' keep firing — only the
+    present-tense third-person-singular shape is exempt."""
+    hits = find_transient_markers(body)
+    assert any(h.marker == "temporarily" for h in hits)
+
+
+@pytest.mark.parametrize(
+    ("body", "marker"),
+    [
+        (
+            "We are in the middle of migrating the database to Postgres 16.",
+            "in the middle of",
+        ),
+        ("The team is in the middle of a migration off MySQL.", "in the middle of"),
+        (
+            "We are halfway through the migration; auth still reads the old table.",
+            "halfway through",
+        ),
+        (
+            "Halfway through rewriting the parser to drop the backtracking.",
+            "halfway through",
+        ),
+    ],
+)
+def test_in_flight_idiom_with_work_object_fires(body: str, marker: str) -> None:
+    """Both object shapes keep firing: the bare gerund ('migrating the
+    database', 'rewriting the parser') and the articled work noun
+    ('a migration', 'the migration')."""
+    hits = find_transient_markers(body)
+    assert any(h.marker == marker for h in hits)
 
 
 @pytest.mark.parametrize(
