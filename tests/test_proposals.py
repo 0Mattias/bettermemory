@@ -246,6 +246,39 @@ def test_extract_catches_remember_this() -> None:
     assert props[0].suggested_category == "fact"
 
 
+def test_extract_catches_remember_this_short_colon_form() -> None:
+    # The content after the colon clears the non-marker content bar, so
+    # the explicit exemption holds even though "I deploy" matches no
+    # preference pattern — the deictic reject must not overreach onto
+    # content-bearing "remember this" forms.
+    props = extract_proposals("Remember this: I deploy on Fridays.", now=_NOW)
+    assert len(props) == 1
+    assert props[0].suggested_category == "fact"
+
+
+def test_extract_rejects_contentless_deictic_remember_requests() -> None:
+    # The deictic "remember this" family points at content OUTSIDE the
+    # sentence, so the queued body would be the bare request itself —
+    # zero durable content. Below the non-marker content bar the sentence
+    # loses its explicit exemption (demoted, not hard-dropped) and the
+    # normal length floor / question-command gates reject it.
+    for text in (
+        "Can you remember this?",
+        "Please remember this one.",
+    ):
+        assert extract_proposals(text, now=_NOW) == []
+
+
+def test_extract_trailing_marker_keeps_explicit_status() -> None:
+    # Non-marker content is counted sentence-wide, not just after the
+    # marker, so a trailing "keep in mind" keeps explicit (fact) status.
+    # Trailing-only counting would demote this to the "I always"
+    # preference branch and flip the category to user-inference.
+    props = extract_proposals("I always deploy on Fridays, keep in mind.", now=_NOW)
+    assert len(props) == 1
+    assert props[0].suggested_category == "fact"
+
+
 def test_extract_joins_hard_wrapped_sentences() -> None:
     # A single mid-sentence newline (hard wrap) must not truncate the
     # proposed body at the wrap point.

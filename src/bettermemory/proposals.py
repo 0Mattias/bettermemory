@@ -55,9 +55,25 @@ _MIN_TOKENS = 6
 
 # Explicit capture requests are exempt from the full floor — "Remember
 # that I use zsh." is a self-contained instruction whose marker text alone
-# eats half the char budget. A small token guard still rejects degenerate
-# fragments ("Remember that.").
+# eats half the char budget. The reduced token guard is only a backstop:
+# on its own it cannot reject contentless requests ("Can you remember
+# this?" is four tokens), so the exemption additionally requires content
+# beyond the marker itself (_MIN_CONTENT_TOKENS_EXPLICIT below).
 _MIN_TOKENS_EXPLICIT = 4
+
+# Minimum content-bearing tokens (at least one alphanumeric char each)
+# OUTSIDE the matched marker span for a sentence to keep its explicit
+# exemption. The deictic "remember this" family points at content outside
+# the sentence, so a bare request ("Can you remember this?", "Please
+# remember this one.") would otherwise queue the request itself as a
+# contentless body — the module's named expensive failure. Counted
+# sentence-wide rather than trailing-only so trailing markers keep their
+# recall ("I always deploy on Fridays, keep in mind."). Below the bar the
+# sentence is DEMOTED to the non-explicit path (full length floor + the
+# question/command gates), not hard-dropped: "Remember that I use zsh."
+# (3 non-marker tokens) and "Remember this: I deploy on Fridays." (4)
+# stay explicit.
+_MIN_CONTENT_TOKENS_EXPLICIT = 3
 
 # Default cap on proposals produced from a single exchange — capture
 # wants the strongest one or two, not a transcript dump. The queue-level
@@ -358,7 +374,11 @@ def _iter_candidate_sentences(text: str) -> list[tuple[str, bool]]:
     `is_explicit` is computed here (after list-prefix stripping, before the
     floor) because explicit capture requests are exempt from the full floor
     — the floor is the one gate the documented "explicit marker wins"
-    override would otherwise never reach.
+    override would otherwise never reach. A marker match alone is not
+    enough: without `_MIN_CONTENT_TOKENS_EXPLICIT` tokens of content beyond
+    the marker span, the sentence is demoted to the non-explicit path — a
+    deictic "remember this" points outside the sentence, so the bare
+    request itself is not a capturable body.
     """
     text = _HARD_WRAP_RE.sub(" ", text)
     out: list[tuple[str, bool]] = []
@@ -366,7 +386,20 @@ def _iter_candidate_sentences(text: str) -> list[tuple[str, bool]]:
         s = _LIST_PREFIX_RE.sub("", raw.strip()).strip()
         if not s:
             continue
-        is_explicit = bool(_EXPLICIT_MARKER_RE.search(s.lower()))
+        lowered = s.lower()
+        marker = _EXPLICIT_MARKER_RE.search(lowered)
+        is_explicit = marker is not None
+        if marker is not None:
+            # Demote (never hard-drop) marker sentences with no content
+            # beyond the marker span — see _MIN_CONTENT_TOKENS_EXPLICIT.
+            # Demoted sentences are judged on their own merits by the
+            # normal floor here and the question/command gates downstream.
+            rest = lowered[: marker.start()] + " " + lowered[marker.end() :]
+            content_tokens = sum(
+                1 for tok in rest.split() if any(ch.isalnum() for ch in tok)
+            )
+            if content_tokens < _MIN_CONTENT_TOKENS_EXPLICIT:
+                is_explicit = False
         if is_explicit:
             if len(s.split()) < _MIN_TOKENS_EXPLICIT:
                 continue
@@ -394,7 +427,8 @@ def extract_proposals(
     *missed* capture cheaper than a *bad* one. A sentence is proposed
     only when it (a) clears the length floor (a reduced degenerate guard
     for explicit-marker sentences), (b) carries an explicit "remember
-    this" marker OR a first-person preference/setup pattern, (c) is not a
+    this" marker with content beyond the marker itself OR a first-person
+    preference/setup pattern, (c) is not a
     question, a hypothetical, or a task-request to the assistant (unless
     an explicit marker overrides — retrieval questions like "Do you
     remember if…?" are rejected outright), and (d) trips no
