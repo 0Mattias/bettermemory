@@ -9,9 +9,11 @@ from __future__ import annotations
 import logging
 from collections.abc import Iterator
 from datetime import datetime, timezone
+from typing import Any
 
 import pytest
 
+from bettermemory.config import BehaviorConfig, Config
 from bettermemory.models import (
     Confidence,
     Memory,
@@ -25,6 +27,7 @@ from bettermemory.semantic import (
     get_model,
     reset_caches,
 )
+from bettermemory.semantic_setup import _semantic_model_or_none
 
 
 @pytest.fixture(autouse=True)
@@ -363,3 +366,100 @@ def test_stale_dimension_cache_entries_are_purged() -> None:
     assert len(vec) == 4
     other = semantic.cached_embed(model, "fresh", "k2", "other")
     assert semantic.cosine_similarity_normalized(vec, other) == 1.0
+
+
+# ---------------------------------------------------------------------------
+# _semantic_model_or_none — consumer gating (semantic_setup.py)
+#
+# The factory must resolve the model when EITHER configured consumer
+# needs it: write-dedup (`semantic_dedup = true`) or retrieval
+# (`search_mode = "semantic"`). Regression for the conflation where
+# gating on `semantic_dedup` alone hard-errored `search_mode =
+# "semantic"` searches (and no_signal'd every audit probe) for users
+# who never enabled dedup — even with an embeddings extra installed.
+# Hybrid is deliberately NOT a trigger — see
+# `_search_mode_needs_model`'s docstring and the hybrid test below.
+#
+# All tests pin the extra-presence probes and `get_model` via
+# monkeypatch, so they are extras-independent (no `no_extras` marker
+# needed) and never attempt a real model load.
+# ---------------------------------------------------------------------------
+
+
+def _behavior_config(**behavior: Any) -> Config:
+    return Config(behavior=BehaviorConfig(**behavior))
+
+
+def _forbid_get_model(monkeypatch: pytest.MonkeyPatch) -> None:
+    def _boom(*args: Any, **kwargs: Any) -> Any:
+        raise AssertionError("get_model must not be called for this config")
+
+    monkeypatch.setattr("bettermemory.semantic.get_model", _boom)
+
+
+def test_factory_resolves_for_semantic_search_mode_without_dedup(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """`search_mode = "semantic"` with `semantic_dedup = false` (the
+    shipped default) must still resolve the model: the search handler
+    hard-errors on a None model, so the old dedup-only gate turned a
+    documented config into a permanent ValueError from memory_search."""
+    sentinel = _FakeModel()
+    monkeypatch.setattr("bettermemory.semantic.get_model", lambda *a, **kw: sentinel)
+    cfg = _behavior_config(search_mode="semantic", semantic_dedup=False)
+    assert _semantic_model_or_none(cfg) is sentinel
+
+
+def test_factory_hybrid_with_extra_without_dedup_stays_none(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Hybrid must NOT trigger model resolution at the factory, even
+    with an extra installed: the factory result also feeds the
+    write-dedup gates, so resolving here would silently flip dedup
+    from Jaccard to cosine without the `semantic_dedup` opt-in — and
+    would make the shipped default config pay a model load whenever
+    an extra happens to be present. Hybrid keeps its graceful
+    keyword+bm25 degrade (see `_search_mode_needs_model`)."""
+    monkeypatch.setattr("bettermemory.semantic._torch_extra_installed", lambda: True)
+    _forbid_get_model(monkeypatch)
+    cfg = _behavior_config(search_mode="hybrid", semantic_dedup=False)
+    assert _semantic_model_or_none(cfg) is None
+
+
+def test_factory_default_config_without_extras_never_loads(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The shipped default config (hybrid, dedup off) must return None
+    without ever attempting a model load. The extra-presence probes
+    are pinned False so this also holds verbatim in the embeddings CI
+    jobs (where the gate short-circuits before any probe runs)."""
+    monkeypatch.setattr("bettermemory.semantic._torch_extra_installed", lambda: False)
+    monkeypatch.setattr(
+        "bettermemory.semantic._fastembed_extra_installed", lambda: False
+    )
+    _forbid_get_model(monkeypatch)
+    assert _semantic_model_or_none(Config()) is None
+
+
+def test_factory_non_semantic_mode_without_dedup_stays_none(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A non-semantic search mode plus dedup off has no model consumer:
+    the factory must stay None even when an extra IS installed, so
+    keyword/bm25 users never pay a model load."""
+    monkeypatch.setattr("bettermemory.semantic._torch_extra_installed", lambda: True)
+    _forbid_get_model(monkeypatch)
+    cfg = _behavior_config(search_mode="keyword", semantic_dedup=False)
+    assert _semantic_model_or_none(cfg) is None
+
+
+def test_factory_dedup_alone_still_resolves(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """`semantic_dedup = true` keeps its standalone opt-in semantics:
+    the model resolves regardless of search mode (here `keyword`)."""
+    sentinel = _FakeModel()
+    monkeypatch.setattr("bettermemory.semantic._torch_extra_installed", lambda: True)
+    monkeypatch.setattr("bettermemory.semantic.get_model", lambda *a, **kw: sentinel)
+    cfg = _behavior_config(search_mode="keyword", semantic_dedup=True)
+    assert _semantic_model_or_none(cfg) is sentinel

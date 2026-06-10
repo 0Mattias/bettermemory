@@ -51,14 +51,52 @@ def _resolve_semantic_provider_and_model(
     return None, None
 
 
-def _semantic_model_or_none(config: Config) -> Any:
-    """Lazy load the embedding model when ``semantic_dedup = true`` and
-    an extra is installed. Returns ``None`` otherwise — callers treat
-    ``None`` as the Jaccard fallback signal. The first call after
-    ``semantic_dedup`` is enabled pays the model-load cost (~1-2s);
-    subsequent calls hit ``semantic.get_model``'s in-memory cache.
+def _search_mode_needs_model(config: Config) -> bool:
+    """True when ``[behavior] search_mode`` REQUIRES the embedding
+    model — i.e. only ``semantic``, where the search handler
+    hard-errors on a None model and the audit probe degrades to a
+    permanent ``no_signal``. The factory must then at least attempt
+    the load; a missing extra surfaces via ``get_model``'s
+    per-provider WARNING plus the handler's install hint.
+
+    ``hybrid`` is deliberately NOT a trigger, even with an extra
+    installed. The factory result feeds every consumer — including
+    the write-dedup gates (``handlers/write.py`` passes any non-None
+    factory result straight into ``find_similar``) — so resolving for
+    hybrid would silently flip dedup from Jaccard to cosine for any
+    extra-installed user who never opted into ``semantic_dedup``, and
+    would make the DEFAULT config (hybrid) pay a model load the
+    moment an extra is present. Hybrid keeps its graceful
+    keyword+bm25 degrade, and per-call ``mode="semantic"`` without
+    the config-level opt-in keeps its explicit install-hint error
+    (``tests/test_server_search_mode.py`` pins that contract).
+    Decoupling the search model from the dedup model would let hybrid
+    fuse semantic without the dedup side effect; that needs the
+    write-path consumer to stop reading the shared factory first.
     """
-    if not config.behavior.semantic_dedup:
+    mode = (config.behavior.search_mode or "hybrid").strip().lower()
+    return mode == "semantic"
+
+
+def _semantic_model_or_none(config: Config) -> Any:
+    """Lazy load the embedding model when a configured consumer needs
+    it: write-dedup (``semantic_dedup = true``) or retrieval
+    (``search_mode = "semantic"`` — see ``_search_mode_needs_model``).
+    Returns ``None`` otherwise — callers treat ``None`` as the
+    Jaccard / keyword+bm25 fallback signal.
+
+    Gating on ``semantic_dedup`` alone (the pre-fix shape) conflated
+    the dedup opt-in with search-mode model resolution: a user setting
+    ``search_mode = "semantic"`` without the dedup flag hard-errored
+    every memory_search and no_signal'd every audit probe even with an
+    extra installed, contradicting the documented contract (config
+    prose + docs/api.md: semantic mode needs only the extra).
+
+    The first call after a consumer is enabled pays the model-load
+    cost (~1-2s); subsequent calls hit ``semantic.get_model``'s
+    in-memory cache.
+    """
+    if not (config.behavior.semantic_dedup or _search_mode_needs_model(config)):
         return None
     from .semantic import Provider, get_model
 
@@ -76,8 +114,11 @@ def _configure_persistent_embeddings(config: Config, store: Store) -> None:
     semantic dedup is enabled. The cache file lives next to the events
     log and the memory bodies so it shares the same trust boundary —
     nothing new in the permissions story. No-op when semantic dedup is
-    off; when off, the in-memory cache is unused too, so persistence
-    would be a write-only cycle.
+    off: on-disk persistence (and the ``.embeddings.<model>.npz`` file
+    it creates) stays part of the dedup opt-in. A search-mode-only
+    consumer (see ``_search_mode_needs_model``) runs on the in-memory
+    cache alone — deliberately, so flipping ``search_mode`` never
+    starts writing new files into the store dir.
     """
     if not config.behavior.semantic_dedup:
         return

@@ -140,6 +140,13 @@ class ToolHandlers:
     # via the BETTERMEMORY_INDEX_THRESHOLD env var for testing.
     _INDEX_THRESHOLD_DEFAULT = 500
 
+    # Candidate cap threaded into `index.query` by
+    # `_load_search_candidates`. A full cap-sized row set from the
+    # index means the FTS prefilter was saturated — the loader reports
+    # that via its second return value so `handlers/search.py` can run
+    # its cap-starvation guard.
+    _PREFILTER_CAP = 50
+
     def _index_threshold(self) -> int:
         """Resolve the live threshold above which the FTS candidate
         pre-filter kicks in. Reads from BETTERMEMORY_INDEX_THRESHOLD
@@ -158,9 +165,21 @@ class ToolHandlers:
 
     def _load_search_candidates(
         self, query: str, scopes: list[str] | None = None
-    ) -> list[Any]:
+    ) -> tuple[list[Any], bool]:
         """Either load all active memories or pre-filter via the FTS5
         index, depending on store size and index health.
+
+        Returns ``(candidates, prefilter_saturated)``.
+        ``prefilter_saturated`` is True only when the FTS prefilter
+        path served the candidates AND the index returned a full
+        cap-sized slice (`_PREFILTER_CAP` rows) — the signal the
+        cap-starvation guard in `handlers/search.py` keys on. It is
+        computed from the INDEX row count, not the loaded list: the
+        per-candidate skips below (filename-lookup misses, id/body
+        drift) can shrink the loaded list under the cap, which would
+        mask saturation from a length check on the returned list.
+        Every `load_all` branch reports False — the full corpus has
+        no cap to be starved by.
 
         When `scopes` is given it is threaded into the FTS pre-filter so
         the bounded candidate slice is drawn from IN-SCOPE matches. Without
@@ -187,26 +206,29 @@ class ToolHandlers:
         from . import index as _index
 
         if not query.strip():
-            return self.store.load_all()
+            return self.store.load_all(), False
         status = _index.status(self.store.root)
         if not status.get("exists") or status.get("corrupt"):
-            return self.store.load_all()
+            return self.store.load_all(), False
         indexed_count = int(status.get("indexed_count", 0) or 0)
         if indexed_count < self._index_threshold():
-            return self.store.load_all()
+            return self.store.load_all(), False
 
         # Pre-filter via the index. 50 candidates is generous for a
         # default max_results of 5 — the downstream ranker reorders
         # within the candidate pool, so we want enough variety for
         # recency / scope-boost / coverage to find the best 5.
         candidate_pairs = _index.query(
-            self.store.root, query, scopes=scopes, max_results=50
+            self.store.root, query, scopes=scopes, max_results=self._PREFILTER_CAP
         )
         if not candidate_pairs:
             # Stale index or query that genuinely matches nothing —
             # fall back to load_all so we don't silently miss recent
             # writes that aren't in the index yet.
-            return self.store.load_all()
+            return self.store.load_all(), False
+        # Pin the saturation signal HERE, before the per-candidate
+        # loading loop can drop rows — see the docstring.
+        prefilter_saturated = len(candidate_pairs) == self._PREFILTER_CAP
         candidate_ids = {cid for cid, _ in candidate_pairs}
 
         # Load just the candidates via the index's id → filename
@@ -251,8 +273,8 @@ class ToolHandlers:
             # working through schema upgrades and stale-index
             # windows" — actually holds. Hot path is the loaded
             # branch above; this is the safety net.
-            return self.store.load_all()
-        return loaded
+            return self.store.load_all(), False
+        return loaded, prefilter_saturated
 
     # ---- delegations to per-tool modules --------------------------------
     #
@@ -597,10 +619,13 @@ class ToolHandlers:
 
 
 # A SemanticModelFactory is `(Config) -> Any | None` — the model object
-# (when `semantic_dedup` is enabled and the extras are installed) or
-# None for the Jaccard fallback. Kept as a callable rather than a hard
-# import so `_handlers.py` doesn't pull in `semantic` (and through it
-# `sentence-transformers`) at import time when semantic dedup is off.
+# (when a configured consumer needs it: `semantic_dedup = true` or
+# `search_mode = "semantic"`, with an extra installed — see
+# `semantic_setup._semantic_model_or_none`) or None for the
+# Jaccard / keyword+bm25 fallback. Kept as a callable rather than a
+# hard import so `_handlers.py` doesn't pull in `semantic` (and
+# through it `sentence-transformers`) at import time when no consumer
+# is configured.
 SemanticModelFactory: TypeAlias = Callable[[Config], Any]
 
 

@@ -182,3 +182,38 @@ async def test_prefilter_path_still_serves_when_filters_leave_survivors(
         "the guard must not pay the load_all reload when the prefilter "
         "slice already has enough in-filter survivors"
     )
+
+
+async def test_masked_saturation_still_triggers_reload(
+    memory_dir: Path, store: Store, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A cap-saturated INDEX slice can arrive at the guard with fewer
+    than 50 loaded candidates: the per-candidate skips in
+    `_load_search_candidates` (filename-lookup misses, id/body drift —
+    here a backing file deleted after the index was built) shrink the
+    loaded list below the cap. The old `len(memories) == 50` check
+    never fired on such a slice, so the post-cap repo filter starved
+    the search to zero hits while in-repo matches existed past the
+    cap. The guard must key on the loader's index-level saturation
+    signal, not the post-drop list length."""
+    monkeypatch.setenv("BETTERMEMORY_INDEX_THRESHOLD", "1")
+    _write_dense(store, 60, scopes=["tools"], origin=Origin(repo=REPO_B))
+    a_ids = _write_weak(store, 3, scopes=["tools"], origin=Origin(repo=REPO_A))
+    index.rebuild(memory_dir, store.iter_active())
+    _assert_starved_precondition(memory_dir, a_ids)
+
+    # Drop one in-slice candidate's backing file WITHOUT reindexing:
+    # the index still serves a full 50-row slice, but the loader skips
+    # the stale filename, so the guard sees only 49 loaded candidates.
+    victim = next(cid for cid, _ in index.query(memory_dir, "alpha", max_results=50))
+    victim_file = index.filenames_for_ids(memory_dir, [victim])[victim]
+    (memory_dir / victim_file).unlink()
+
+    server = _build_server(memory_dir)
+    _pin_caller_origin(monkeypatch, Origin(cwd="/projects/a", repo=REPO_A))
+
+    hits = _unwrap(await _call(server, "memory_search", query="alpha"))
+    assert {h["id"] for h in hits} == set(a_ids), (
+        "index-saturated slice masked by a loader drop: the in-repo matches "
+        "ranked past the cap must still surface via the load_all reload"
+    )

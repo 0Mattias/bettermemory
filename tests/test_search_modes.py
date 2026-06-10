@@ -9,12 +9,19 @@ returns deterministic vectors based on token overlap.
 
 from __future__ import annotations
 
+import json
 from datetime import datetime, timedelta, timezone
+from pathlib import Path
+from typing import Any
 
 import pytest
 
+from bettermemory.config import BehaviorConfig, Config, StorageConfig
 from bettermemory.models import Confidence, Memory, Source, generate_ulid
 from bettermemory.search import search, tokenize
+from bettermemory.server import build_server
+from bettermemory.session import SessionState
+from bettermemory.store import Store
 
 
 def _memory(
@@ -239,3 +246,48 @@ def test_mode_invalid_returns_typed_error() -> None:
     # genuinely a closed-set check, not a typo-specific reject.
     with pytest.raises(ValueError, match="unknown search mode"):
         search([a], "anything", mode="")  # type: ignore[arg-type]
+
+
+# ---------------------------------------------------------------------------
+# mode dispatch through the MCP tool surface
+#
+# Regression for the semantic-gating conflation: `_semantic_model_or_none`
+# used to gate the model on `semantic_dedup` alone, so a config with
+# `search_mode = "semantic"` and dedup off (the shipped default for the
+# dedup flag) hard-errored EVERY memory_search with "requires the
+# embeddings extra" — even with the extra installed. Exercised end-to-end
+# through the real factory chain; the stub model stands in for the
+# installed extra at the `get_model` boundary, so the test holds both
+# with and without a real extra in the environment.
+# ---------------------------------------------------------------------------
+
+
+async def test_config_semantic_mode_without_dedup_serves_search(
+    memory_dir: Path, store: Store, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    model = _StubSemanticModel(
+        ["python", "list", "comprehension", "kubernetes", "networking", "notes"]
+    )
+    monkeypatch.setattr("bettermemory.semantic.get_model", lambda *a, **kw: model)
+    target = store.write(content="python list comprehension", scopes=["tools"])
+    store.write(content="kubernetes networking notes", scopes=["tools"])
+
+    cfg = Config(
+        storage=StorageConfig(directory=str(memory_dir)),
+        behavior=BehaviorConfig(search_mode="semantic", semantic_dedup=False),
+    )
+    # Typed as Any for the same reason test_search_prefilter.py's
+    # `_build_server` returns Any: `call_tool`'s content blocks are a
+    # broad union that the JSON round-trip below erases anyway.
+    server: Any = build_server(config=cfg, store=store, state=SessionState())
+
+    content, structured = await server.call_tool(
+        "memory_search", {"query": "python list"}
+    )
+    result = structured
+    if result is None and content and hasattr(content[0], "text"):
+        result = json.loads(content[0].text)
+    hits = result.get("result", result) if isinstance(result, dict) else result
+
+    assert hits, "semantic search mode without semantic_dedup must serve hits"
+    assert hits[0]["id"] == target.id

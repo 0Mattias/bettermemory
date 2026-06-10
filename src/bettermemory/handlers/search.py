@@ -32,13 +32,6 @@ if TYPE_CHECKING:
     from .._handlers import ToolHandlers
 
 
-# Mirror of the candidate cap `_handlers._load_search_candidates` passes
-# to `index.query` (its hardcoded `max_results=50`). A candidate slice of
-# exactly this size means the FTS prefilter was saturated — see the
-# cap-starvation guard below.
-_PREFILTER_CAP = 50
-
-
 DESC_MEMORY_SEARCH = (
     "Search stored memories. Default: do NOT call — reach for it only "
     "when the user references shared context you lack "
@@ -166,10 +159,11 @@ async def memory_search(
             "must be one of: keyword, bm25, semantic, hybrid"
         )
     # Semantic model is resolved only when the mode needs it. The
-    # factory returns None when the embeddings extra isn't installed;
-    # for `semantic` mode that's a hard error (the caller asked for
-    # it specifically), for `hybrid` it's a graceful degrade to
-    # keyword+bm25 fusion.
+    # factory returns None when no embedding extra is installed (or
+    # when no configured consumer needs the model — see
+    # `semantic_setup._semantic_model_or_none`); for `semantic` mode
+    # that's a hard error (the caller asked for it specifically), for
+    # `hybrid` it's a graceful degrade to keyword+bm25 fusion.
     semantic_model: Any | None = None
     if resolved_mode in ("semantic", "hybrid"):
         semantic_model = deps._semantic_model_factory(deps.config)
@@ -260,28 +254,35 @@ async def memory_search(
             # session" workflow.
             memories = [m for m in deps.store.load_all() if m.updated > prior_boundary]
     else:
-        memories = deps._load_search_candidates(query, scopes=scopes)
+        memories, prefilter_saturated = deps._load_search_candidates(
+            query, scopes=scopes
+        )
         # Cap-starvation guard. The FTS prefilter threads only `scopes`
         # into SQL — the repo/worktree auto-scope filter and session-
         # disabled scopes apply post-cap inside run_search's
-        # `_filter_candidates` pass. On a cap-saturated slice (exactly
-        # `_PREFILTER_CAP` rows) those post-cap filters can strip every
-        # candidate even though in-filter matches exist past the cap —
-        # the failure mode the `_load_search_candidates` docstring
-        # names: on a >50-memory store, in-repo matches ranked #51+
-        # globally would return zero hits. Detect it with a dry-run of
-        # the same authoritative filter; when fewer than `max_results`
-        # candidates survive, reload the full corpus — the same cost as
-        # the existing stale-index fallback, paid only on starved
-        # searches. (Threading repo/worktree into SQL would need origin
-        # columns in the index, i.e. a SCHEMA_VERSION bump — this guard
-        # restores correctness without one.)
+        # `_filter_candidates` pass. On a cap-saturated slice those
+        # post-cap filters can strip every candidate even though
+        # in-filter matches exist past the cap — the failure mode the
+        # `_load_search_candidates` docstring names: on a >50-memory
+        # store, in-repo matches ranked #51+ globally would return
+        # zero hits. The saturation signal comes from the loader
+        # (keyed on the INDEX row count) — NOT from `len(memories)`,
+        # which the loader's per-candidate skips (filename-lookup
+        # misses, id/body drift) can shrink below the cap, silently
+        # masking a saturated slice from the guard. Detect starvation
+        # with a dry-run of the same authoritative filter; when fewer
+        # than `max_results` candidates survive, reload the full
+        # corpus — the same cost as the existing stale-index fallback,
+        # paid only on starved searches. (Threading repo/worktree into
+        # SQL would need origin columns in the index, i.e. a
+        # SCHEMA_VERSION bump — this guard restores correctness
+        # without one.)
         post_cap_filter_active = (
             repo_filter is not None
             or worktree_filter is not None
             or bool(state.disabled_scopes)
         )
-        if post_cap_filter_active and len(memories) == _PREFILTER_CAP:
+        if post_cap_filter_active and prefilter_saturated:
             survivors = _filter_candidates(
                 memories,
                 scopes=scopes,
