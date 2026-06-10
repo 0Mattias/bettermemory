@@ -100,11 +100,14 @@ async def memory_audit_turn(
       the shield to the live server session by replaying the event
       log (`retrieval_session_id` resolved via
       `_latest_in_process_session`, anchored to the hook's
-      worktree). The residual gap is the bridge's anchor, not the
-      process boundary: when no worktree-stamped in-process event
-      exists (legacy logs, a server outside a git checkout, the
-      restart gap, concurrent sessions in the SAME worktree) it
-      falls back to latest-any and can mis-shield in either
+      worktree; the shield also counts any in-window retrieval
+      stamped with that worktree regardless of session, so a
+      same-worktree concurrent session or a mid-conversation
+      restart can't orphan this turn's own search). The residual
+      gap is the bridge's anchor, not the process boundary: when no
+      worktree-stamped in-process event exists (legacy logs, a
+      server outside a git checkout, the restart gap) it falls back
+      to latest-any session matching and can mis-shield in either
       direction. See the `hook.py` module docstring for the full
       divergence analysis.
     """

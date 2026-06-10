@@ -53,10 +53,18 @@ Residual divergence (two cases, opposite directions):
   verdict in both directions (the foreign session's search *shielding*
   this window's real miss, and the foreign session's unrelated events
   *unshielding* a turn that searched correctly — anti-conservative
-  over-flagging). What remains: concurrent sessions in the SAME
-  worktree, and logs with no stamped match for this worktree (legacy
-  events, server outside a git checkout), where the anchor falls back
-  to latest-any and both directions are still possible.
+  over-flagging). The retrieval shield additionally counts any
+  in-window retrieval stamped with this worktree REGARDLESS of session
+  (`audit._count_recent_retrievals`), so a concurrent session in the
+  SAME worktree — or a mid-conversation server restart flipping the
+  anchor — can no longer orphan this window's own search and re-fire a
+  false miss. What remains: the disabled-scope replay is still
+  single-session-anchored (reset-on-restart is load-bearing there), so
+  a same-worktree concurrent session can anchor the OTHER session's
+  scope toggles; and logs with no stamped match for this worktree
+  (legacy events, server outside a git checkout) fall back to
+  latest-any session matching, where both directions are still
+  possible.
 - Rotation bound: the event read is window-aware (`iter_events_window`
   prepends the newest rotated segment when the active log doesn't cover
   the attribution window), so a single mid-window rotation no longer
@@ -92,7 +100,12 @@ from typing import Any
 
 from ._fsutil import bounded_stream_read, bounded_tail_read
 from .attribution import attribute_uses
-from .audit import probe_for_miss, search_miss_fields, turn_audited_fields
+from .audit import (
+    ATTRIBUTION_LOOKBACK_SECONDS,
+    probe_for_miss,
+    search_miss_fields,
+    turn_audited_fields,
+)
 from .config import Config, load_config
 from .events import Recorder
 from .events import iter_events_window
@@ -107,8 +120,12 @@ from .time_utils import parse_event_ts
 # fired (the in-process TTL is two turns, typically seconds to
 # minutes), so attributing to a stale retrieval would risk
 # double-counting. Wide enough to cover normal conversational
-# pauses, narrow enough to focus on the current turn.
-_ATTRIBUTION_LOOKBACK_SECONDS = 600
+# pauses, narrow enough to focus on the current turn. The constant
+# itself lives in `audit.py` (round 88) so the production search
+# handler's endorsement tally can share the exact window without
+# importing this module; the module-local alias keeps every existing
+# in-file reference (and the historical name) intact.
+_ATTRIBUTION_LOOKBACK_SECONDS = ATTRIBUTION_LOOKBACK_SECONDS
 
 # Cap the transcript read to the trailing 1 MiB. The hook only needs the
 # latest user + assistant message, which sit at the tail of an append-only

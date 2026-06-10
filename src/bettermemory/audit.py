@@ -116,6 +116,37 @@ _TOP_HITS_RETAINED = 3
 # search from earlier in the session doesn't paper over a fresh miss.
 DEFAULT_LOOKBACK_SECONDS = 60
 
+# Wall-clock window the Stop hook attributes against (and, since round
+# 88, the window the production search handler's endorsement tally
+# reads with — `handlers/search.py` imports this constant so the
+# probe's tally and the model's actual retrieval tally share one
+# substrate). A retrieval older than this is considered settled —
+# auto-commit will already have fired (the in-process TTL is two
+# turns, typically seconds to minutes), so attributing to a stale
+# retrieval would risk double-counting. Wide enough to cover normal
+# conversational pauses, narrow enough to focus on the current turn.
+# Lives here rather than in hook.py because audit.py imports nothing
+# from the handlers or events modules, so both producers AND the
+# search handler can import it without a cycle.
+ATTRIBUTION_LOOKBACK_SECONDS = 600
+
+# Default creation-shield window: memories CREATED within this many
+# seconds of `now` are dropped from the probe's candidate set — a
+# memory written during the current turn did not exist when the user
+# message arrived, so it cannot be evidence of a retrieval miss (see
+# the filter comment in `probe_for_miss`). Deliberately a SEPARATE
+# knob from the retrieval-shield lookback: the creation shield asks
+# "could this memory have been retrieved this turn?" and wants
+# ~turn-duration; the retrieval shield asks "did the model already
+# search?" and legitimately wants the much wider attribution window
+# (`ATTRIBUTION_LOOKBACK_SECONDS`, 600s, on the Stop hook). Round 84
+# calibrated the creation filter at the then-shared 60s window; when
+# round 85 widened the hook's lookback to 600s the filter silently
+# inherited the 10x window, structurally hiding every memory younger
+# than ten minutes from the primary producer's probe — the exact
+# freshest-most-relevant cohort whose misses matter most.
+DEFAULT_CREATION_SHIELD_SECONDS = 60
+
 # Minimum UNIQUE content tokens (stopwords stripped, pure-digit tokens
 # excluded) a probe query must carry before the threshold rule is even
 # evaluated. The v1 rule labels any 1/1 coverage as "high", so a bare
@@ -237,8 +268,11 @@ class MissReport:
       had nothing to work with."
 
     `recent_retrieval_count` is the number of retrieval events (see
-    `_RETRIEVAL_EVENT_KINDS`: `search`, `show`, or `list`) found in the
-    session within `lookback_seconds`. Zero means no retrieval happened
+    `_RETRIEVAL_EVENT_KINDS`: `search`, `show`, or `list`) found within
+    `lookback_seconds` — matched on the session id, plus (when the
+    caller has a worktree) any event stamped with the caller's
+    `worktree_root` regardless of session (see
+    `_count_recent_retrievals`). Zero means no retrieval happened
     within the window; non-zero is the "model did retrieve" branch.
 
     `threshold_rule` records which decision rule was applied. Versioned
@@ -311,13 +345,23 @@ def turn_audited_fields(
     impossible. ``triggered_from`` is the source discriminator —
     ``"stop_hook"`` or ``"mcp_tool"``, a closed set both producers
     populate so a consumer can split traffic without guessing.
+
+    ``no_signal_reason`` rides along additively, omitted when None (the
+    common non-no_signal case keeps its exact pre-existing shape).
+    Without it the reason lived only in the tool-response/hook-stdout
+    dict (``MissReport.to_dict``), so a STRUCTURAL no_signal — the
+    semantic-mode-without-a-model branch the Stop hook hits on every
+    single turn of a ``search_mode="semantic"`` deployment — was
+    event-identical to a benign per-turn one (bare continuation, no
+    hits), and no log consumer could split the permanently-unmeasured
+    cohort from the healthy one.
     """
     if triggered_from not in _VALID_TRIGGERED_FROM:
         raise ValueError(
             f"triggered_from must be one of "
             f"{sorted(_VALID_TRIGGERED_FROM)!r}, got {triggered_from!r}"
         )
-    return {
+    fields: dict[str, Any] = {
         "session_id": session_id,
         "verdict": report.verdict,
         "lookback_seconds": report.lookback_seconds,
@@ -327,6 +371,9 @@ def turn_audited_fields(
         "assistant_present": assistant_present,
         "triggered_from": triggered_from,
     }
+    if report.no_signal_reason is not None:
+        fields["no_signal_reason"] = report.no_signal_reason
+    return fields
 
 
 def search_miss_fields(
@@ -380,6 +427,7 @@ def probe_for_miss(
     retrieval_session_id: str | None = None,
     now: datetime | None = None,
     lookback_seconds: int = DEFAULT_LOOKBACK_SECONDS,
+    creation_shield_seconds: int = DEFAULT_CREATION_SHIELD_SECONDS,
     caller_origin: Origin | None = None,
     excluded_scopes: set[str] | None = None,
     mode: str = "hybrid",
@@ -434,6 +482,16 @@ def probe_for_miss(
     thing, and crashing would cost the audit cadence entirely (the Stop
     hook cannot afford a per-turn model load, so it always passes None).
 
+    `creation_shield_seconds` is the creation-shield window: memories
+    whose `created` falls within it are dropped from the candidate set
+    (a memory written during the current turn cannot be retrieval-miss
+    evidence — see the filter comment below). It is deliberately
+    decoupled from `lookback_seconds`: the retrieval shield wants the
+    wide attribution window (600s on the Stop hook), but reusing that
+    width here would hide every memory younger than ten minutes from
+    the probe. Both production producers leave the
+    `DEFAULT_CREATION_SHIELD_SECONDS` (60s, ~turn duration) default.
+
     `retrieval_session_id` is the session id used ONLY for the "did the
     model already retrieve this turn?" shield (`_count_recent_retrievals`).
     It defaults to `session_id`. Out-of-process callers (the Stop hook)
@@ -442,7 +500,12 @@ def probe_for_miss(
     `sess_<hex>` — so it never matches the search/show/list events the
     server emitted, leaving the shield dead and every searched-then-
     continued turn mis-flagged as a miss. In-process callers omit it; their
-    `session_id` already is the server session.
+    `session_id` already is the server session. The shield additionally
+    counts retrieval events stamped with the caller's
+    `caller_origin.worktree_root` under ANY session id, so a concurrent
+    same-worktree session (or a mid-conversation server restart that
+    re-anchored the bridge) can't orphan an in-window retrieval and
+    re-fire a false miss.
 
     Returns a `MissReport`. The handler is responsible for emitting a
     `search_miss` event when `report.is_miss` — this function is
@@ -497,22 +560,34 @@ def probe_for_miss(
             probe_query=user_message,
         )
 
-    # A memory created inside the lookback window did not exist when the
-    # user message arrived, so it cannot be evidence of a retrieval miss.
-    # Without this filter the proactive-capture flow self-flags: the
-    # model writes a NEW durable fact this turn (correctly, without a
-    # pointless search), the body echoes the user's phrasing, and the
-    # just-written memory scores "high" against the very message that
-    # prompted it. `write` events are deliberately NOT a retrieval
-    # shield (`_RETRIEVAL_EVENT_KINDS`) — shielding the whole verdict on
-    # a write would mask genuine misses on OLDER memories, which this
-    # filter leaves free to flag. Filter on `created` only, never
-    # `updated`: an updated memory existed before and its prior content
-    # was retrievable. The lookback window is the module's established
-    # proxy for "this turn" (see `_count_recent_retrievals`). If the
-    # filter empties the candidate list, `run_search` returns no hits
-    # and the no_signal-with-probe_query branch below reports it.
-    creation_cutoff = now - timedelta(seconds=lookback_seconds)
+    # A memory created inside the CREATION-SHIELD window did not exist
+    # when the user message arrived, so it cannot be evidence of a
+    # retrieval miss. Without this filter the proactive-capture flow
+    # self-flags: the model writes a NEW durable fact this turn
+    # (correctly, without a pointless search), the body echoes the
+    # user's phrasing, and the just-written memory scores "high"
+    # against the very message that prompted it. `write` events are
+    # deliberately NOT a retrieval shield (`_RETRIEVAL_EVENT_KINDS`) —
+    # shielding the whole verdict on a write would mask genuine misses
+    # on OLDER memories, which this filter leaves free to flag. Filter
+    # on `created` only, never `updated`: an updated memory existed
+    # before and its prior content was retrievable.
+    #
+    # Two DECOUPLED windows are in play here (round 88; they were one
+    # knob in round 84, when both sat at 60s): the creation shield
+    # (`creation_shield_seconds`, ~turn duration) asks "could this
+    # memory have been retrieved this turn at all?", while the
+    # retrieval/attribution shield (`lookback_seconds`, 600s on the
+    # Stop hook since round 85) asks "did the model already search?".
+    # Reusing `lookback_seconds` here — the round-84 shape — meant the
+    # Stop hook's 600s widening silently made every memory younger
+    # than ten minutes invisible to the primary producer's probe: a
+    # memory captured two turns back existed well before this message
+    # and is exactly the freshest, most-likely-relevant content a
+    # failed search should be flagged over. If the filter empties the
+    # candidate list, `run_search` returns no hits and the
+    # no_signal-with-probe_query branch below reports it.
+    creation_cutoff = now - timedelta(seconds=creation_shield_seconds)
     memories = [
         m for m in memories if (ensure_utc(m.created) or now) <= creation_cutoff
     ]
@@ -603,6 +678,11 @@ def probe_for_miss(
         session_id=retrieval_session_id or session_id,
         now=now,
         lookback_seconds=lookback_seconds,
+        # The caller's worktree widens the shield to ANY session's
+        # stamped retrievals in the same checkout — the shield's real
+        # question is "did the model retrieve in THIS worktree within
+        # the window", not "under this one anchored session id".
+        worktree_root=worktree_filter,
     )
 
     if not clears_threshold:
@@ -693,8 +773,10 @@ def _count_recent_retrievals(
     session_id: str,
     now: datetime,
     lookback_seconds: int,
+    worktree_root: str | None = None,
 ) -> int:
-    """Count retrieval events for `session_id` within the window.
+    """Count retrieval events for the caller's worktree or `session_id`
+    within the window.
 
     Retrieval = `kind in _RETRIEVAL_EVENT_KINDS` (`{"search", "show",
     "list"}`). All three shield the audit from flagging a miss: a
@@ -703,6 +785,28 @@ def _count_recent_retrievals(
     re-searching. Counting only `search` would mis-flag the common
     search-then-show round-trip, where the search happens early in the
     turn and the show happens later.
+
+    An in-window retrieval counts when EITHER:
+
+    * its `worktree_root` stamp matches the caller's `worktree_root` —
+      under ANY session id. The shield's question is "did the model
+      retrieve in THIS worktree within the window", and a single
+      anchored session id can't answer it: a concurrent session in the
+      same worktree, or a mid-conversation server restart that flipped
+      `_latest_in_process_session`'s anchor, used to orphan every
+      in-window retrieval the previous session made and re-fire a
+      false miss (round 85's 60→600s widening scaled that collision
+      window ~10x in the over-flag direction); or
+    * its session matches `session_id` — the legacy single-session
+      match, kept so unstamped events (logs written before the
+      Recorder stamped `worktree_root`, a server outside any git
+      checkout) and callers with no worktree keep their pre-round-88
+      behavior. The union is strictly additive on the shield side
+      (everything that shielded before still does), so the bias is
+      conservative — over-suppress, the project's stance on
+      miss-signal noise. The session-anchored `_disabled_scopes_from_
+      events` replay deliberately keeps its single-session semantics:
+      reset-on-restart is load-bearing there, not here.
 
     Defensive against the same malformed-event cases the rest of the
     health pipeline handles: missing ts, non-string ts, non-session
@@ -713,18 +817,26 @@ def _count_recent_retrievals(
     for ev in events:
         if ev.get("kind") not in _RETRIEVAL_EVENT_KINDS:
             continue
+        ts = parse_event_ts(ev.get("ts"))
+        if ts is None or ts < cutoff:
+            continue
+        # Worktree-stamped match first: a retrieval the caller's own
+        # checkout provably performed shields regardless of which
+        # server session emitted it.
+        if worktree_root is not None and ev.get("worktree_root") == worktree_root:
+            count += 1
+            continue
         # Canonical-first session read with the legacy fallback the
         # other event consumers use — see 70e41a4.
         if (ev.get("session") or ev.get("session_id")) != session_id:
-            continue
-        ts = parse_event_ts(ev.get("ts"))
-        if ts is None or ts < cutoff:
             continue
         count += 1
     return count
 
 
 __all__ = [
+    "ATTRIBUTION_LOOKBACK_SECONDS",
+    "DEFAULT_CREATION_SHIELD_SECONDS",
     "DEFAULT_LOOKBACK_SECONDS",
     "MIN_PROBE_CONTENT_TOKENS",
     "THRESHOLD_RULE_V1",

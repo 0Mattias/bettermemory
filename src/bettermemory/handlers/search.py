@@ -299,12 +299,24 @@ async def memory_search(
     # event list is reused below for `recent_negative_outcomes`, so an enabled
     # boost adds no extra I/O on a hit-producing search. Stays None (ranker
     # neutral) when the flag is off — the shipped default is unchanged.
+    # Window-aware read (round 88): both audit producers (`hook.run_audit`,
+    # `memory_audit_turn`) tally over `iter_events_window` while this
+    # handler read the active log only (`iter_events`) — so the moment a
+    # rotation cut the applied events into an archive, the production
+    # tally silently reset to {} while the probes still saw the history,
+    # and a near-tie top-1 could rank differently in the audit than in
+    # the model's actual retrieval. One substrate at all three sites,
+    # sharing the probes' attribution window; this also fixes the
+    # production tally's reset-on-rotation as a side effect.
     recent_events: list[dict[str, Any]] | None = None
     applied_by_id: dict[str, int] | None = None
     if deps.config.behavior.endorsement_boost and memories:
-        from ..events import iter_events
+        from ..audit import ATTRIBUTION_LOOKBACK_SECONDS
+        from ..events import iter_events_window
 
-        recent_events = list(iter_events(deps.store.root))
+        recent_events = list(
+            iter_events_window(deps.store.root, ATTRIBUTION_LOOKBACK_SECONDS)
+        )
         applied_by_id = _explicit_applied_counts(
             recent_events, {m.id for m in memories}
         )
@@ -360,12 +372,17 @@ async def memory_search(
     # same junk; cheap to compute, high signal-to-noise. Skip when
     # the hit list is empty (nothing to annotate). Loading events
     # lazily here rather than at handler construction time keeps
-    # the cost off searches that produce no hits.
+    # the cost off searches that produce no hits. Same window-aware
+    # substrate as the endorsement tally above, so the annotation
+    # doesn't lose a just-archived negative outcome to a rotation.
     if out:
         if recent_events is None:
-            from ..events import iter_events
+            from ..audit import ATTRIBUTION_LOOKBACK_SECONDS
+            from ..events import iter_events_window
 
-            recent_events = list(iter_events(deps.store.root))
+            recent_events = list(
+                iter_events_window(deps.store.root, ATTRIBUTION_LOOKBACK_SECONDS)
+            )
         deps.responses.attach_recent_negative_outcomes(
             out, hits, recent_events, now=now
         )

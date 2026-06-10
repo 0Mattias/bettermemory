@@ -1600,6 +1600,92 @@ def test_run_audit_foreign_worktree_search_does_not_shield(
     )
 
 
+def test_run_audit_same_worktree_concurrent_session_retrieval_shields(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Round-88 regression (same-worktree anchor collision): THIS
+    worktree's server searched within the window under sess_A, then a
+    SECOND same-worktree session (a concurrent Claude window, or the
+    restarted server mid-conversation) wrote the latest in-process
+    event under sess_B. `_latest_in_process_session` correctly anchors
+    to sess_B (latest worktree-stamped event), but the retrieval shield
+    used to match that single session id only — orphaning sess_A's
+    in-window search and re-firing a false `search_miss` for a turn
+    that retrieved correctly. The shield now counts retrievals stamped
+    with this worktree under ANY session, so the verdict stays "ok".
+    (Round 85's 60→600s widening scaled this collision window ~10x in
+    the over-flag direction; the cross-worktree variants above pin the
+    foreign-worktree directions.)"""
+    from bettermemory.origin import Origin
+
+    mem_dir = tmp_path / "mem"
+    mem_dir.mkdir()
+    _write_miss_memory(mem_dir)
+
+    wt_this = str(tmp_path / "wt-this")
+    monkeypatch.setattr(
+        "bettermemory.hook.capture_origin",
+        lambda *a, **k: Origin(worktree_root=wt_this),
+    )
+
+    # This worktree's first server session searched within the window…
+    Recorder(root=mem_dir, session_id="sess_A", worktree_root=wt_this).record("search")
+    # …then a second SAME-worktree session wrote the latest in-process
+    # event (a non-retrieval `write`, so only the orphaned search can
+    # feed the shield), flipping the anchor to sess_B.
+    Recorder(root=mem_dir, session_id="sess_B", worktree_root=wt_this).record("write")
+
+    result = run_audit(
+        user_message=_MISS_QUERY,
+        assistant_response=None,
+        session_id="claude-concurrent-same-wt",
+        config=_miss_config(mem_dir),  # type: ignore[arg-type]
+    )
+    assert result["verdict"] == "ok", (
+        "the same-worktree session's later event flipped the anchor and "
+        "orphaned this worktree's own in-window search — the shield is "
+        "matching a single session id again"
+    )
+
+
+def test_run_audit_flags_miss_on_memory_minutes_old(tmp_path: Path) -> None:
+    """Round-88 regression (creation shield re-coupled to the lookback):
+    the hook probes with `lookback_seconds=600`, and the created-time
+    filter used to reuse that window — so a memory created 1-10 minutes
+    ago (existing well before this turn's message; the freshest,
+    most-likely-relevant content) was structurally invisible to the
+    primary production producer, while the in-process handler flagged
+    the identical turn. A 5-minute-old memory with a matching message
+    and zero retrieval events must flag a miss through the hook."""
+    mem_dir = tmp_path / "mem"
+    mem_dir.mkdir()
+    store = Store(mem_dir)
+    written = store.write(content=_MISS_BODY, scopes=["infrastructure"])
+    # Backdate to 300s — outside the 60s creation shield, INSIDE the
+    # hook's 600s attribution lookback. (`_write_miss_memory`'s 1h
+    # backdate clears both windows, so it cannot discriminate.)
+    backdated = datetime.now(timezone.utc) - timedelta(seconds=300)
+    for path, mem in store.iter_active():
+        if mem.id == written.id:
+            store._write_path(
+                path,
+                mem.model_copy(update={"created": backdated, "updated": backdated}),
+            )
+            break
+
+    result = run_audit(
+        user_message=_MISS_QUERY,
+        assistant_response=None,
+        session_id="claude-fresh-memory",
+        config=_miss_config(mem_dir),  # type: ignore[arg-type]
+    )
+    assert result["verdict"] == "miss", (
+        "a 5-minute-old memory must be probe-visible at the hook's 600s "
+        "lookback; 'no_signal' means the creation shield re-coupled to "
+        "the retrieval-shield window"
+    )
+
+
 def test_run_audit_disabled_scope_suppresses_stop_hook_miss(tmp_path: Path) -> None:
     """C3 core: a scope the user disabled in-session (recorded as a
     `scope_disable` event) is excluded from the hook's probe, so the
@@ -1810,6 +1896,10 @@ def test_run_audit_semantic_mode_records_no_signal_instead_of_aborting(
     assert len(audited) == 1
     assert audited[0]["verdict"] == "no_signal"
     assert audited[0]["probe_mode"] == "semantic"
+    # Round-88: the reason reaches the WIRE too (turn_audited_fields
+    # forwards it additively), so log consumers can split the
+    # permanently-unmeasured semantic cohort from benign no_signals.
+    assert audited[0]["no_signal_reason"] == "semantic_model_unavailable"
 
 
 def test_run_audit_threads_ranker_config_into_probe(

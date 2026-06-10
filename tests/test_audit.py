@@ -599,6 +599,125 @@ def test_old_memory_still_flags_miss_alongside_same_turn_write() -> None:
     assert report.top_hits[0].id == old.id
 
 
+def test_creation_shield_decoupled_from_wide_lookback() -> None:
+    """Round-88 regression: the created-time filter keys on the dedicated
+    `creation_shield_seconds` window (default 60s, ~turn duration), NOT
+    on `lookback_seconds`. Round 84 calibrated the filter when both
+    windows shared 60s; round 85 widened the Stop hook's lookback to
+    600s and the filter silently inherited the 10x window, so a memory
+    created 1-10 minutes ago — well before this turn's user message,
+    and exactly the freshest most-likely-relevant content — was
+    structurally invisible to the primary producer's probe. A
+    5-minute-old memory with a matching message and zero retrieval
+    events must flag a miss at the hook's 600s lookback, exactly as it
+    does at the in-process handler's 60s default (the two producers
+    returned opposite verdicts for the identical turn pre-fix)."""
+    now = _utc(2026, 5, 1)
+    m = _memory(
+        "backup strategy uses triangular restic replication",
+        created=now - timedelta(seconds=300),
+    )
+    report = probe_for_miss(
+        [m],
+        "backup strategy",
+        recent_events=[],
+        session_id="sess_x",
+        now=now,
+        lookback_seconds=600,
+    )
+    assert report.verdict == "miss", (
+        "a 5-minute-old memory must be probe-visible at lookback=600; "
+        "'no_signal' means the creation shield re-coupled to the "
+        "retrieval-shield window"
+    )
+    assert report.top_hits[0].id == m.id
+
+
+def test_creation_shield_still_drops_same_turn_write_at_wide_lookback() -> None:
+    """Shield direction of the round-88 decoupling: a memory created
+    INSIDE the creation-shield window (here 20s ago, the same-turn
+    proactive-capture shape) stays filtered even when the caller's
+    retrieval lookback is the wide 600s window — decoupling must not
+    disable the self-flag protection the filter exists for."""
+    now = _utc(2026, 5, 1)
+    fresh = _memory(
+        "staging deploys switched to blue-green",
+        scopes=["infrastructure"],
+        created=now - timedelta(seconds=20),
+    )
+    report = probe_for_miss(
+        [fresh],
+        "we switched the staging deploys to blue-green",
+        recent_events=[],
+        session_id="sess_x",
+        now=now,
+        lookback_seconds=600,
+    )
+    assert report.verdict == "no_signal"
+    assert report.top_hits == ()
+
+
+def test_same_worktree_retrieval_shields_under_any_session() -> None:
+    """Round-88 regression (same-worktree anchor collision): the
+    retrieval shield's question is "did the model retrieve in THIS
+    worktree within the window", but it used to match a single anchored
+    session id — so a concurrent same-worktree session (or a
+    mid-conversation server restart) whose later event flipped the
+    anchor orphaned every in-window retrieval the previous session made
+    and re-fired a false miss. A `search` stamped with the caller's
+    `worktree_root` must shield regardless of which session emitted it."""
+    now = _utc(2026, 5, 1)
+    m = _memory("backup strategy uses triangular restic replication")
+    search_ev = _search_event(
+        session="sess_A", ts=now - timedelta(seconds=300), returned=[m.id]
+    )
+    search_ev["worktree_root"] = "/wt/this"
+    report = probe_for_miss(
+        [m],
+        "backup strategy",
+        recent_events=[search_ev],
+        session_id="claude-x",
+        # The anchor flipped to the OTHER same-worktree session — the
+        # repro's `write under sess_B at T-60s` shape.
+        retrieval_session_id="sess_B",
+        now=now,
+        lookback_seconds=600,
+        caller_origin=Origin(worktree_root="/wt/this"),
+    )
+    assert report.verdict == "ok", (
+        "a same-worktree in-window search must shield even when the "
+        "session anchor points at the other session"
+    )
+    assert report.recent_retrieval_count == 1
+
+
+def test_foreign_worktree_retrieval_does_not_shield_under_any_session() -> None:
+    """Control for the worktree-wide shield: a retrieval stamped with a
+    DIFFERENT worktree stays invisible to the shield unless its session
+    matches the anchor — the any-session widening is scoped to the
+    caller's own checkout, so the cross-worktree anti-hijack stance
+    (foreign windows' searches must not shield this window's miss)
+    is preserved."""
+    now = _utc(2026, 5, 1)
+    m = _memory("backup strategy uses triangular restic replication")
+    search_ev = _search_event(
+        session="sess_A", ts=now - timedelta(seconds=300), returned=[m.id]
+    )
+    search_ev["worktree_root"] = "/wt/other"
+    report = probe_for_miss(
+        [m],
+        "backup strategy",
+        recent_events=[search_ev],
+        session_id="claude-x",
+        retrieval_session_id="sess_B",
+        now=now,
+        lookback_seconds=600,
+        caller_origin=Origin(worktree_root="/wt/this"),
+    )
+    assert report.verdict == "miss"
+    assert report.recent_retrieval_count == 0
+
+
 def test_caller_in_project_suppresses_high_relevance_miss() -> None:
     """When the caller is in the same git project as the top-hit memory
     was written from, the probe returns ``"ok"`` instead of ``"miss"`` —
@@ -1305,6 +1424,10 @@ async def test_audit_turn_always_emits_turn_audited(
     assert len(events) == 1
     assert events[0]["verdict"] in ("ok", "no_signal", "miss")
     assert events[0]["threshold_rule"] == THRESHOLD_RULE_V1
+    # `no_signal_reason` is additive and omit-when-None: this probe ran
+    # without a structural reason (no semantic gating in play), so the
+    # emitted event must not carry the key.
+    assert "no_signal_reason" not in events[0]
 
 
 async def test_audit_turn_emits_search_miss_on_miss(
@@ -1510,6 +1633,11 @@ async def test_audit_turn_semantic_mode_without_extra_records_no_signal(
     assert len(audited) == 1
     assert audited[0]["verdict"] == "no_signal"
     assert audited[0]["probe_mode"] == "semantic"
+    # Round-88: the reason must reach the WIRE, not just the tool
+    # response — without it the eventlog/health consumers cannot split
+    # the structurally-unmeasured semantic cohort from benign
+    # per-turn no_signals.
+    assert audited[0]["no_signal_reason"] == "semantic_model_unavailable"
 
 
 async def test_audit_turn_threads_ranker_config_into_probe(
@@ -1564,6 +1692,82 @@ async def test_audit_turn_threads_ranker_config_into_probe(
     assert captured["half_life_days"] == 7.0
     assert captured["applied_by_id"] == {written.id: 1}
     assert captured["semantic_model"] is model_sentinel
+
+
+async def test_search_endorsement_tally_matches_audit_probe_across_rotation(
+    memory_dir: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Round-88 regression (endorsement-tally substrate divergence): the
+    production memory_search handler tallied explicit applies over
+    `iter_events`, the ACTIVE log only, while both audit producers
+    tally over `iter_events_window` (active log + newest rotated
+    segment) — despite the probes' comments claiming to mirror the
+    production tally. The moment a rotation archived the applied
+    events, the production tally silently reset to {} while the probe
+    still saw the history, so the probe ranked with an endorsement
+    nudge the model's actual retrieval would not have applied — a
+    near-tie high/medium top-1 swap could flip the audit verdict in
+    either direction. Force a GENUINE `_rotate_if_needed` rotation that
+    archives the applied events, then pin that the handler and the
+    in-process audit probe compute the IDENTICAL non-empty tally (the
+    non-empty half is the load-bearing bit: pre-fix the handler saw {})."""
+    from bettermemory.audit import probe_for_miss as real_probe
+    from bettermemory.config import BehaviorConfig
+    from bettermemory.search import search as real_search
+
+    cfg = Config(
+        storage=StorageConfig(directory=str(memory_dir)),
+        behavior=BehaviorConfig(endorsement_boost=True),
+    )
+    state = SessionState()
+    # Small max_bytes so the filler below trips a real size-triggered
+    # rotation — no hand-built archives, the production path end-to-end.
+    rec = Recorder(
+        root=memory_dir, session_id=state.session_id, enabled=True, max_bytes=2048
+    )
+    server = build_server(
+        config=cfg, store=Store(memory_dir), state=state, recorder=rec
+    )
+    written = Store(memory_dir).write(
+        content="backup strategy uses triangular restic replication",
+        scopes=["infrastructure"],
+    )
+
+    # Five explicit (non-auto) applies — the only kind the tally counts.
+    for _ in range(5):
+        rec.record("use", ids=[written.id], outcome="applied", auto=False)
+    # Push the active log over max_bytes, then trigger the rotation on
+    # the next append: `_rotate_if_needed` archives the ENTIRE active
+    # log (applied events included) and the trigger event lands alone
+    # in a fresh active log.
+    rec.record("write", note="x" * 4000)
+    rec.record("write")
+    assert list(memory_dir.glob(".events-*.jsonl.gz")), "rotation did not fire"
+    active_kinds = [e["kind"] for e in _events(memory_dir)]
+    assert "use" not in active_kinds, "applied events were not archived"
+
+    captured_search: dict[str, Any] = {}
+    captured_probe: dict[str, Any] = {}
+
+    def search_spy(*args: Any, **kwargs: Any) -> Any:
+        captured_search.update(kwargs)
+        return real_search(*args, **kwargs)
+
+    def probe_spy(*args: Any, **kwargs: Any) -> Any:
+        captured_probe.update(kwargs)
+        return real_probe(*args, **kwargs)
+
+    monkeypatch.setattr("bettermemory.handlers.search.run_search", search_spy)
+    monkeypatch.setattr("bettermemory.handlers.audit_turn.probe_for_miss", probe_spy)
+
+    await _call(server, "memory_search", query="backup strategy")
+    await _call(server, "memory_audit_turn", user_message="backup strategy")
+
+    assert captured_search["applied_by_id"] == {written.id: 5}, (
+        "the production search tally lost the archived applies — the "
+        "handler is reading the active log only again"
+    )
+    assert captured_probe["applied_by_id"] == captured_search["applied_by_id"]
 
 
 # ---------------------------------------------------------------------------
@@ -1632,6 +1836,7 @@ def test_health_to_dict_carries_silent_misses() -> None:
         "audited_total": 0,
         "miss_total": 0,
         "unique_miss_memories": 0,
+        "no_signal_total": 0,
     }
 
 
@@ -1687,6 +1892,61 @@ def test_event_field_builders_pin_canonical_shape() -> None:
     # top_hits is the canonical list-of-dicts shape, not list-of-str.
     assert isinstance(sm["top_hits"][0], dict)
     assert sm["top_hits"][0]["id"] == "m1"
+
+
+def test_turn_audited_fields_carries_no_signal_reason_when_set() -> None:
+    """Round-88 regression: `no_signal_reason` never reached the wire —
+    `turn_audited_fields` omitted it, so the only place
+    `semantic_model_unavailable` existed was the tool-response dict and
+    a STRUCTURAL no_signal (the Stop hook's permanent semantic-mode
+    state) was event-identical to a benign bare-continuation one. The
+    builder must forward the reason when the report carries one."""
+    from bettermemory.audit import MissReport, turn_audited_fields
+
+    report = MissReport(
+        verdict="no_signal",
+        checked_at=_utc(2026, 5, 22),
+        session_id="s1",
+        lookback_seconds=600,
+        recent_retrieval_count=0,
+        threshold_rule=THRESHOLD_RULE_V1,
+        probe_query="backup strategy",
+        no_signal_reason="semantic_model_unavailable",
+    )
+    ta = turn_audited_fields(
+        report,
+        session_id="s1",
+        probe_mode="semantic",
+        assistant_present=False,
+        triggered_from="stop_hook",
+    )
+    assert ta["no_signal_reason"] == "semantic_model_unavailable"
+
+
+def test_turn_audited_fields_omits_no_signal_reason_when_none() -> None:
+    """Omit-when-None direction of the round-88 additive field: the
+    common non-no_signal event (and the legacy no-signal classes that
+    set no reason) keeps its exact pre-existing shape, so the event log
+    stays churn-free and shape-stable for existing consumers."""
+    from bettermemory.audit import MissReport, turn_audited_fields
+
+    report = MissReport(
+        verdict="ok",
+        checked_at=_utc(2026, 5, 22),
+        session_id="s1",
+        lookback_seconds=60,
+        recent_retrieval_count=1,
+        threshold_rule=THRESHOLD_RULE_V1,
+        probe_query="backup strategy",
+    )
+    ta = turn_audited_fields(
+        report,
+        session_id="s1",
+        probe_mode="hybrid",
+        assistant_present=True,
+        triggered_from="mcp_tool",
+    )
+    assert "no_signal_reason" not in ta
 
 
 # ---------------------------------------------------------------------------

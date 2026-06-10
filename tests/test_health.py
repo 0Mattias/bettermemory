@@ -748,6 +748,72 @@ def test_silent_miss_cutoff_latest_wins_filters_audited_side_too() -> None:
     assert report.silent_misses.audited_total == 1
 
 
+def test_no_signal_audits_split_out_of_audited_total() -> None:
+    """Round-88 regression: `verdict == "no_signal"` audits structurally
+    cannot flag a miss, so counting them in `audited_total` diluted the
+    miss rate — and for a `search_mode="semantic"` deployment, whose
+    Stop hook hardcodes `semantic_model=None` and therefore no_signals
+    on EVERY turn forever, it manufactured the exact "audited heavily,
+    model behaved" false-green signature the two-count shape exists to
+    rule out (the module's own docstrings described no_signal-only runs
+    as both-zero in two places, contradicted by the behavior). The
+    no_signal audits move to the additive `no_signal_total`; a missing
+    or legacy verdict stays in the miss-capable denominator, the
+    conservative read."""
+    events = [
+        _event("turn_audited", ts=_utc(2026, 4, 1), verdict="no_signal"),
+        _event("turn_audited", ts=_utc(2026, 4, 2), verdict="no_signal"),
+        _event("turn_audited", ts=_utc(2026, 4, 3), verdict="no_signal"),
+        _event("turn_audited", ts=_utc(2026, 4, 4), verdict="ok"),
+        # Legacy event written before producers stamped a verdict —
+        # treated as miss-capable so old logs keep their denominator.
+        _event("turn_audited", ts=_utc(2026, 4, 5)),
+    ]
+    report = compute_health([], events, now=_utc(2026, 5, 1))
+    assert report.silent_misses.audited_total == 2
+    assert report.silent_misses.no_signal_total == 3
+    assert report.silent_misses.miss_total == 0
+
+
+def test_no_signal_only_deployment_reads_as_unmeasured_not_green() -> None:
+    """The semantic-config signature end-to-end at the rollup level:
+    audits firing every turn but ALL no_signal must NOT present as a
+    healthy non-zero denominator with zero misses. Post-fix the
+    denominator stays at zero (nothing miss-capable ran) and the
+    no_signal bucket carries the cadence, so a consumer can tell
+    "probe can't measure" apart from both "stalled hook" (all three
+    zero) and "healthy run" (non-zero audited)."""
+    events = [
+        _event("turn_audited", ts=_utc(2026, 4, d), verdict="no_signal")
+        for d in range(1, 6)
+    ]
+    report = compute_health([], events, now=_utc(2026, 5, 1))
+    assert report.silent_misses.audited_total == 0
+    assert report.silent_misses.no_signal_total == 5
+
+
+def test_silent_miss_cutoff_filters_no_signal_bucket_too() -> None:
+    """The bulk `silent_miss_cutoff` hatch applies the same ts filter to
+    BOTH audit buckets — dropping only the miss-capable side would skew
+    the no_signal/audited proportions a calibration pass reads."""
+    pre_ns = _event("turn_audited", ts=_utc(2026, 4, 1), verdict="no_signal")
+    post_ns = _event("turn_audited", ts=_utc(2026, 4, 20), verdict="no_signal")
+    pre_ok = _event("turn_audited", ts=_utc(2026, 4, 2), verdict="ok")
+    post_ok = _event("turn_audited", ts=_utc(2026, 4, 21), verdict="ok")
+    cutoff = _event(
+        "silent_miss_cutoff",
+        ts=_utc(2026, 4, 10),
+        cutoff_ts=_utc(2026, 4, 10).isoformat().replace("+00:00", "Z"),
+    )
+    report = compute_health(
+        [],
+        [pre_ns, pre_ok, post_ns, post_ok, cutoff],
+        now=_utc(2026, 5, 1),
+    )
+    assert report.silent_misses.audited_total == 1
+    assert report.silent_misses.no_signal_total == 1
+
+
 def test_silent_miss_cutoff_resolved_globally_under_since_delta() -> None:
     """`curation_counts(since=...)` filters event walk by `--since`, but
     `silent_miss_cutoff` events are global markers — their effect must
@@ -978,6 +1044,7 @@ def test_silent_misses_to_dict_carries_unique_miss_memories() -> None:
         "audited_total": 0,
         "miss_total": 2,
         "unique_miss_memories": 1,
+        "no_signal_total": 0,
     }
 
 

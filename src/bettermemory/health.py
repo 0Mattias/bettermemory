@@ -595,18 +595,32 @@ class SilentMissStats:
 
     Surfaces the false-negative half of the retrieval contract: turns
     where the model should have searched but didn't. `audited_total` is
-    the denominator (audits that ran at all); `miss_total` is the
-    numerator (audits that flagged a miss). A consumer can compute the
-    miss *rate* with `miss_total / audited_total` when audited_total > 0;
-    we don't ship the float here because rate-vs-count is a presentation
-    choice and the raw counts are stable across consumers.
+    the denominator — MISS-CAPABLE audits only, i.e. `turn_audited`
+    events whose verdict is anything but ``"no_signal"`` (a missing or
+    legacy verdict counts as miss-capable, the conservative read);
+    `miss_total` is the numerator (audits that flagged a miss). A
+    consumer can compute the miss *rate* with
+    `miss_total / audited_total` when audited_total > 0; we don't ship
+    the float here because rate-vs-count is a presentation choice and
+    the raw counts are stable across consumers.
 
-    Empty bucket (both zero) means the audit hook either wasn't invoked
-    in the window or invoked but never fired anything past the
-    no-signal branch — distinct from "audited heavily, no misses,"
-    which would have a non-zero `audited_total`. The two-count shape is
-    deliberate so a stalled hook ("nothing audited at all") doesn't
-    look the same as a healthy run ("audited a lot, model behaved").
+    `no_signal_total` (additive, round 88) counts the audits the probe
+    declined to evaluate (`verdict == "no_signal"`). They used to land
+    in `audited_total`, which made a deployment whose probe can NEVER
+    measure a miss — `search_mode = "semantic"` under the Stop hook,
+    which hardcodes `semantic_model=None`, turns 100% of its audits
+    into permanent no_signals — read as the healthy "audited heavily,
+    model behaved" signature (audited climbing, misses pinned at 0).
+    Splitting them out keeps the rate denominator honest and makes the
+    structurally-unmeasured cohort visible.
+
+    Empty bucket (audited and miss both zero) means the audit hook
+    either wasn't invoked in the window or every audit it fired stopped
+    at the no-signal branch — `no_signal_total` distinguishes those two
+    (zero vs. non-zero). The split-count shape is deliberate so a
+    stalled hook ("nothing audited at all") and a structurally-blind
+    probe ("every audit no_signal") don't look the same as a healthy
+    run ("audited a lot, model behaved").
 
     `miss_total` historically counted every `search_miss` event in the
     window. That conflates "9 turns hammering the same unretrieved
@@ -632,12 +646,14 @@ class SilentMissStats:
     audited_total: int = 0
     miss_total: int = 0
     unique_miss_memories: int = 0
+    no_signal_total: int = 0
 
     def to_dict(self) -> dict[str, Any]:
         return {
             "audited_total": self.audited_total,
             "miss_total": self.miss_total,
             "unique_miss_memories": self.unique_miss_memories,
+            "no_signal_total": self.no_signal_total,
         }
 
 
@@ -811,9 +827,13 @@ class HealthReport:
     # `turn_audited` and `search_miss` event kinds emitted by
     # memory_audit_turn. The pair is the denominator + numerator for the
     # miss rate; we keep them as raw counts so the consumer chooses how
-    # to render. Both zero means the audit hook hasn't fired in the
-    # window (or fired but only produced no_signal verdicts) — distinct
-    # from "audited heavily, no misses found."
+    # to render. `audited_total` counts MISS-CAPABLE audits only;
+    # `no_signal` verdicts land in the separate `no_signal_total` so a
+    # probe that structurally can't measure (semantic mode under the
+    # Stop hook) doesn't masquerade as "audited heavily, no misses
+    # found." Audited and miss both zero means the audit hook hasn't
+    # fired in the window or every audit stopped at the no-signal
+    # branch — `no_signal_total` tells those apart.
     silent_misses: SilentMissStats = field(default_factory=SilentMissStats)
     # Inline subset of unacknowledged `search_miss` events for triage.
     # Newest first, capped at `_RECENT_SILENT_MISSES_CAP`. Each entry
@@ -897,7 +917,12 @@ class _AccumulatorRollups:
     sessions: set[str]
     total_events: int
     orphan_use_events: int
-    silent_miss_audited_ts: list[datetime | None]
+    # Per-audit `(ts, verdict_or_None)` records. The verdict rides
+    # along so `_silent_miss_stats` can split miss-capable audits (the
+    # rate denominator) from `no_signal` audits, which structurally
+    # cannot flag a miss; a missing/legacy verdict reads as None and
+    # counts as miss-capable (conservative).
+    silent_miss_audited: list[tuple[datetime | None, str | None]]
     # Per-miss-event records carrying everything downstream rollups
     # need. Each entry is `(ts, top_hit_id_or_None, event_id_or_None,
     # query_preview_or_None)`. The id is the first entry in the
@@ -1010,12 +1035,14 @@ class _StatsAccumulator:
         self._sessions: set[str] = set()
         self._total_events = 0
         self._orphan_use_events = 0
-        # Audit telemetry is buffered as timestamps and resolved after
-        # the events pass so a `silent_miss_cutoff` event later in the
-        # log can retroactively drop events before its `cutoff_ts` —
-        # the post-fix rollup hatch documented at the `_handle_search_miss`
-        # branch.
-        self._silent_miss_audited_ts: list[datetime | None] = []
+        # Audit telemetry is buffered as `(ts, verdict)` pairs and
+        # resolved after the events pass so a `silent_miss_cutoff`
+        # event later in the log can retroactively drop events before
+        # its `cutoff_ts` — the post-fix rollup hatch documented at the
+        # `_handle_search_miss` branch. The verdict is carried so the
+        # rollup can keep `no_signal` audits out of the miss-rate
+        # denominator (see `SilentMissStats`).
+        self._silent_miss_audited: list[tuple[datetime | None, str | None]] = []
         # Each miss event contributes
         # `(ts, top_hit_id_or_None, event_id_or_None, query_preview_or_None)`.
         # `top_hit_id` is the first id in the event's `top_hits`
@@ -1186,11 +1213,25 @@ class _StatsAccumulator:
             self._marker_overrides[marker] += 1
 
     def _handle_turn_audited(self, ev: dict[str, Any]) -> None:
-        # Denominator for the silent-miss rate. Buffered with the
-        # event ts so a later `silent_miss_cutoff` can retroactively
-        # drop pre-cutoff audits — keeping just the numerator filtered
-        # would skew the rate (low miss / high audited).
-        self._silent_miss_audited_ts.append(_ensure_utc(parse_event_ts(ev.get("ts"))))
+        # Denominator bookkeeping for the silent-miss rate. Buffered
+        # with the event ts so a later `silent_miss_cutoff` can
+        # retroactively drop pre-cutoff audits — keeping just the
+        # numerator filtered would skew the rate (low miss / high
+        # audited). The verdict rides along (round 88) so `no_signal`
+        # audits — which structurally cannot flag a miss — land in
+        # `no_signal_total` instead of inflating `audited_total`: a
+        # `search_mode="semantic"` deployment's Stop hook no_signals
+        # EVERY turn forever (hook.py hardcodes semantic_model=None),
+        # and counting those as the denominator produced a perpetual
+        # false-green 0% miss rate. Missing/legacy verdicts read as
+        # None and stay in the miss-capable denominator (conservative).
+        verdict = ev.get("verdict")
+        self._silent_miss_audited.append(
+            (
+                _ensure_utc(parse_event_ts(ev.get("ts"))),
+                verdict if isinstance(verdict, str) else None,
+            )
+        )
 
     def _handle_search_miss(self, ev: dict[str, Any]) -> None:
         # Numerator. A separate kind from `turn_audited` (rather than
@@ -1261,7 +1302,7 @@ class _StatsAccumulator:
             sessions=self._sessions,
             total_events=self._total_events,
             orphan_use_events=self._orphan_use_events,
-            silent_miss_audited_ts=self._silent_miss_audited_ts,
+            silent_miss_audited=self._silent_miss_audited,
             silent_miss_events=self._silent_miss_events,
             latest_miss_cutoff=self._latest_miss_cutoff,
             acknowledged_miss_event_ids=self._acknowledged_miss_event_ids,
@@ -1393,7 +1434,7 @@ def compute_health(
     # corresponding field.
     total_events = rollups.total_events
     orphan_use_events = rollups.orphan_use_events
-    silent_miss_audited_ts = rollups.silent_miss_audited_ts
+    silent_miss_audited = rollups.silent_miss_audited
     silent_miss_events = rollups.silent_miss_events
     latest_miss_cutoff = rollups.latest_miss_cutoff
     acknowledged_miss_event_ids = rollups.acknowledged_miss_event_ids
@@ -1620,7 +1661,7 @@ def compute_health(
         verification_debt=verification_debt,
         commit_drift_debt=commit_drift_debt,
         silent_misses=_silent_miss_stats(
-            audited_ts=silent_miss_audited_ts,
+            audited=silent_miss_audited,
             miss_events=silent_miss_events,
             cutoff=latest_miss_cutoff,
             tombstoned_ids=tombstoned_ids,
@@ -2115,13 +2156,23 @@ def _count_post_cutoff(
 
 def _silent_miss_stats(
     *,
-    audited_ts: list[datetime | None],
+    audited: list[tuple[datetime | None, str | None]],
     miss_events: list[tuple[datetime | None, str | None, str | None, str | None]],
     cutoff: datetime | None,
     tombstoned_ids: set[str],
     acknowledged_event_ids: set[str] | None = None,
 ) -> SilentMissStats:
     """Fold the buffered audit telemetry into a `SilentMissStats`.
+
+    `audited` is the list of `(ts, verdict_or_None)` pairs buffered
+    from `turn_audited` events. Audits whose verdict is ``"no_signal"``
+    are counted into `no_signal_total` rather than `audited_total` —
+    they structurally cannot flag a miss, so leaving them in the rate
+    denominator dilutes it (and for a semantic-config Stop hook, whose
+    audits are ALL permanent no_signals, manufactured a perpetual
+    false-green 0% miss rate). A None verdict (missing/legacy field)
+    counts as miss-capable, the conservative read. The cutoff filter
+    below applies to BOTH buckets.
 
     Four filters compose in order:
 
@@ -2153,7 +2204,16 @@ def _silent_miss_stats(
        count but not to the unique-memories count).
     """
     acknowledged_event_ids = acknowledged_event_ids or set()
-    audited_total = _count_post_cutoff(audited_ts, cutoff)
+    # Verdict split BEFORE the shared cutoff count so both buckets get
+    # the identical `_count_post_cutoff` semantics (None-ts handling
+    # included) — filtering one bucket and not the other would let a
+    # cutoff skew the no_signal/audited proportions.
+    audited_total = _count_post_cutoff(
+        [ts for ts, verdict in audited if verdict != "no_signal"], cutoff
+    )
+    no_signal_total = _count_post_cutoff(
+        [ts for ts, verdict in audited if verdict == "no_signal"], cutoff
+    )
     miss_total = 0
     unique_ids: set[str] = set()
     for ts, top_hit_id, event_id, _query_preview in miss_events:
@@ -2170,6 +2230,7 @@ def _silent_miss_stats(
         audited_total=audited_total,
         miss_total=miss_total,
         unique_miss_memories=len(unique_ids),
+        no_signal_total=no_signal_total,
     )
 
 
@@ -2533,7 +2594,7 @@ def curation_counts(
             silent_miss_events_list.append(_parse_silent_miss_event(ev))
 
     silent_miss_stats = _silent_miss_stats(
-        audited_ts=[],  # curation_counts only surfaces the numerator
+        audited=[],  # curation_counts only surfaces the numerator
         miss_events=silent_miss_events_list,
         cutoff=latest_miss_cutoff,
         tombstoned_ids=tombstoned_ids_set,
