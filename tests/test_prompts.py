@@ -387,6 +387,94 @@ def test_api_md_documents_max_takeaway_bytes() -> None:
     )
 
 
+def test_api_md_dead_weight_rule_matches_shared_predicate() -> None:
+    """api.md memory_curate states the consolidated dead-weight rule.
+
+    round-88 Branch B flagged that the demotion parenthetical still
+    taught the pre-consolidation rule ("created before the window,
+    retrieved at least once, never applied") while the shared
+    `_is_dead_weight` predicate (health.py) keys the window on the
+    freshest maintenance touch (created/updated/last_verified_at),
+    grants a 2-day endorsement grace on the earliest retrieval, and
+    parks memories with an unresolved contradiction. Every extra gate
+    is exclusionary, so the stale form over-promises demotions that
+    never happen on `dry_run=False` — a state-mutating contract. Pin
+    both directions so the doc can't drift back.
+    """
+    api_md = Path(__file__).resolve().parents[1] / "docs" / "api.md"
+    text = api_md.read_text(encoding="utf-8")
+    assert "created before the window" not in text, (
+        "docs/api.md has drifted back to the stale pre-consolidation "
+        "dead-weight rule; `_is_dead_weight` windows on the freshest "
+        "touch (created/updated/verified), not `created` alone."
+    )
+    assert "earliest retrieval" in text, (
+        "docs/api.md memory_curate no longer documents the 2-day "
+        "endorsement grace on the earliest retrieval; the shared "
+        "predicate exempts freshly-retrieved memories whose "
+        "auto-applied endorsement hasn't had time to land."
+    )
+    assert "no unresolved contradiction" in text, (
+        "docs/api.md memory_curate no longer documents contradiction "
+        "parking; the shared predicate excludes memories with an "
+        "unresolved `use(contradicted)` event from demotion."
+    )
+
+
+def test_docs_state_semantic_config_optin_gate() -> None:
+    """api.md + README state the semantic model-gating contract.
+
+    round-88 Branch B: `_semantic_model_or_none` (semantic_setup.py)
+    resolves the embedding model ONLY behind the config-level opt-in
+    (`[behavior] search_mode = "semantic"` or `semantic_dedup = true`)
+    — installation status of the `[embeddings]` extra is never
+    consulted on its own. The extra alone therefore leaves hybrid at
+    keyword+BM25 fusion and per-call mode="semantic" erroring with
+    the install hint (tests/test_server_search_mode.py pins the code
+    side; the gate is deliberate — resolving on extra-presence alone
+    would silently flip write-dedup from Jaccard to cosine). Pin both
+    directions on both doc surfaces so they can't drift back to the
+    extra-is-sufficient claim.
+    """
+    root = Path(__file__).resolve().parents[1]
+    api_text = (root / "docs" / "api.md").read_text(encoding="utf-8")
+    readme_text = (root / "README.md").read_text(encoding="utf-8")
+    # Direction 1: the stale extra-is-sufficient claims are gone.
+    assert "+ semantic when the `[embeddings]` extra is installed" not in api_text, (
+        "docs/api.md hybrid bullet has drifted back to claiming the "
+        "`[embeddings]` extra alone adds the semantic leg; the model "
+        "factory never consults installation status without the "
+        "config-level opt-in."
+    )
+    assert "requires the `[embeddings]` extra)" not in api_text, (
+        "docs/api.md semantic bullet has drifted back to the "
+        "extra-is-sufficient claim; per-call mode='semantic' under "
+        "the default config errors even with the extra installed."
+    )
+    assert "plus semantic when the embeddings extra is installed)" not in readme_text
+    assert "add the semantic third leg with one extra" not in readme_text, (
+        "README.md has drifted back to claiming one extra adds the "
+        "semantic leg; the config-level opt-in is also required."
+    )
+    # Direction 2: both surfaces name the config-level opt-in knobs.
+    for name, text in (("docs/api.md", api_text), ("README.md", readme_text)):
+        assert 'search_mode = "semantic"' in text, (
+            f"{name} no longer names the `search_mode` config opt-in "
+            "that gates semantic participation."
+        )
+        assert "semantic_dedup" in text, (
+            f"{name} no longer names the `semantic_dedup` config "
+            "opt-in that gates semantic participation."
+        )
+    # api.md additionally qualifies the per-call override: it picks the
+    # ranker but cannot bypass the model gate.
+    assert "does not bypass the model gate" in api_text, (
+        "docs/api.md no longer qualifies 'per-call override beats "
+        "config' against the model gate; unqualified, it reads as if "
+        "mode='semantic' works under the default config."
+    )
+
+
 async def test_addendum_tool_names_exist_on_server(tmp_path: Path) -> None:
     """Every `memory_*` tool referenced in the addendum is registered on the server.
 

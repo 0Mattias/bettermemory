@@ -86,7 +86,7 @@ Retrieval is opt-in; writes about *you* always stage for your confirmation. Work
 
 - **Opt-in retrieval.** `memory_search` is a deliberate tool call. The default per turn is *not* to search — false positives cost more than false negatives.
 - **Proactive writing, structurally safe.** A durability check, a credential check, content/tombstone dedup, scope-mismatch check, and the pending tier let the model write aggressively without polluting the store.
-- **Hybrid retrieval.** Four selectable rankers: `hybrid` (default — RRF over keyword + BM25, plus semantic when the embeddings extra is installed), `bm25`, `keyword`, or `semantic`. Degrades gracefully with zero extra deps. Opt-in `[behavior] endorsement_boost` adds usage-aware ranking — a bounded tie-breaker (capped at +10%, never overrides relevance) that nudges memories you've *deliberately* applied up the results.
+- **Hybrid retrieval.** Four selectable rankers: `hybrid` (default — RRF over keyword + BM25, plus semantic when the embeddings extra is installed AND config opts in via `[behavior] search_mode = "semantic"` or `semantic_dedup = true`), `bm25`, `keyword`, or `semantic`. Degrades gracefully with zero extra deps. Opt-in `[behavior] endorsement_boost` adds usage-aware ranking — a bounded tie-breaker (capped at +10%, never overrides relevance) that nudges memories you've *deliberately* applied up the results.
 - **Typed inter-memory links, live at retrieval.** `supersedes` / `contradicts` / `extends` / `depends_on`, surfaced bidirectionally. On a search hit they're trust signals, not just stored metadata: `superseded_by` names the active memories that replace this hit (prefer them), `contradicts` names facts in tension with it, and `depends_on` targets are auto-resolved inline.
 - **Tombstones, not deletes.** Removed memories keep their `removed_reason`; tombstone-aware dedup catches paraphrases months later. Reversible via `memory_restore`.
 - **Auto-scoped by repo and worktree.** Memories carry the repo URL and worktree root; search filters by both. Live sibling worktrees stay isolated, while a linked worktree (a spawned agent checkout, a PR-review tree) still sees the memories written in its primary checkout, and memories from since-deleted worktrees degrade to repo-level matching. Cross-project queries are explicit.
@@ -213,7 +213,7 @@ Claude Code 2.x ships its own filesystem-backed memory that auto-injects into th
 
 Below ~500 memories, search loads everything (byte-stable to 1.x). Above the threshold (`BETTERMEMORY_INDEX_THRESHOLD`), an SQLite FTS5 inverted index pre-filters candidates, capping per-search work regardless of corpus size. Files stay canonical; the index is a derived cache at `<store>/.index.sqlite`, kept live by every write/update/remove/restore/rename. Out-of-band edits (hand-editing a file, `sync pull`, restore-from-backup) bypass the hook — the server warns at startup when it detects the divergence, and `bettermemory reindex` rebuilds from disk.
 
-**Semantic retrieval** is optional. Hybrid (RRF over keyword + BM25) is the zero-dep default; add the semantic third leg with one extra:
+**Semantic retrieval** is optional. Hybrid (RRF over keyword + BM25) is the zero-dep default; the semantic third leg needs one extra plus a config-level opt-in (`[behavior] search_mode = "semantic"` or `semantic_dedup = true` — the extra alone never changes ranking):
 
 ```sh
 uv pip install -e ".[embeddings]"       # sentence-transformers + PyTorch (~500MB; well-trodden)
