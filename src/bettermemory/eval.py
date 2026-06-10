@@ -242,7 +242,8 @@ class EvalReport:
     explicit_endorsements_with_excerpt: int  # numerator
     applied_total: int  # denominator for endorsement_rate
     applied_explicit: int  # numerator
-    turns_audited: int  # denominator for silent_miss_rate
+    turns_audited: int  # denominator for silent_miss_rate (miss-capable only)
+    turns_no_signal: int  # audits the probe declined (excluded from the rate)
     silent_misses: int  # numerator
 
     memory_helped_rate: RateCI = field(
@@ -276,6 +277,7 @@ class EvalReport:
                 "applied_total": self.applied_total,
                 "applied_explicit": self.applied_explicit,
                 "turns_audited": self.turns_audited,
+                "turns_no_signal": self.turns_no_signal,
                 "silent_misses": self.silent_misses,
             },
             "memory_helped_rate": self.memory_helped_rate.to_dict(),
@@ -385,6 +387,7 @@ def compute_eval(
     applied_total = 0
     applied_explicit = 0
     turns_audited = 0
+    turns_no_signal = 0
     silent_misses = 0
     total_events_scanned = 0
 
@@ -502,7 +505,15 @@ def compute_eval(
                     if isinstance(excerpt, str) and excerpt.strip():
                         explicit_endorsements_with_excerpt += 1
         elif kind == "turn_audited":
-            turns_audited += 1
+            # `no_signal` audits (empty store, gated probe, semantic model
+            # unavailable) are not miss-capable turns; counting them dilutes
+            # silent_miss_rate's denominator. Mirrors health.py's
+            # `no_signal_total` split (round 88) so a config stuck at
+            # permanent no_signal reads as "probe declined", not "healthy".
+            if ev.get("verdict") == "no_signal":
+                turns_no_signal += 1
+            else:
+                turns_audited += 1
             rule = ev.get("threshold_rule")
             if isinstance(rule, str) and rule:
                 threshold_rule = rule
@@ -572,6 +583,7 @@ def compute_eval(
         applied_total=applied_total,
         applied_explicit=applied_explicit,
         turns_audited=turns_audited,
+        turns_no_signal=turns_no_signal,
         silent_misses=silent_misses,
         cold_endorsement_memories_rows=cold_rows,
         cold_endorsement_memories_total=cold_total,
@@ -611,6 +623,10 @@ def render_text(report: EvalReport) -> str:
     )
     lines.append(f"Applied use events (auto+explicit)  {report.applied_total:>5d}")
     lines.append(f"Turns audited                       {report.turns_audited:>5d}")
+    if report.turns_no_signal:
+        lines.append(
+            f"Turns no-signal (excluded)          {report.turns_no_signal:>5d}"
+        )
     lines.append("")
     lines.append(_format_rate("memory_helped_rate", report.memory_helped_rate))
     lines.append(_format_rate("endorsement_rate ", report.endorsement_rate))

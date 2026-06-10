@@ -442,6 +442,26 @@ class TestSilentMissRate:
         assert cand.top_missed_id == "mem-A"
         assert cand.top_missed_relevance == "high"
 
+    def test_no_signal_audits_excluded_from_denominator(self) -> None:
+        """`no_signal` audits (probe declined: empty store, gated probe,
+        semantic model unavailable) are not miss-capable turns — they land
+        in `turns_no_signal`, not the silent_miss_rate denominator. Mirrors
+        health.py's `no_signal_total` split: a config stuck at permanent
+        no_signal must not read as a healthy 0% miss rate over a growing
+        denominator."""
+        events = [
+            _ev("turn_audited", verdict="ok"),
+            _ev("turn_audited", verdict="no_signal"),
+            _ev("turn_audited", verdict="no_signal"),
+            _ev("search_miss", session_id="sess-A"),
+        ]
+        report = compute_eval(memories=[], events=events)
+        assert report.turns_audited == 1
+        assert report.turns_no_signal == 2
+        assert report.silent_misses == 1
+        assert report.silent_miss_rate.rate == pytest.approx(1.0)
+        assert report.to_dict()["counts"]["turns_no_signal"] == 2
+
     def test_silent_miss_buffer_truncates(self) -> None:
         # 20 audited turns, 15 of which were misses — well above the
         # default limit. Counts must still be exact; the buffer is

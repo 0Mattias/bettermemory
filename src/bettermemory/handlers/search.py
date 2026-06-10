@@ -92,9 +92,9 @@ DESC_MEMORY_SEARCH = (
     "from 'no baseline' by also calling memory_scope_overview and "
     "checking `curation_pending_new_since_last_session is None`.\n"
     "- `mode` (optional, default from config; package default `hybrid`): `keyword`, `bm25`, "
-    "`semantic` (needs embeddings extra), or `hybrid` (RRF of the "
-    "first three). `hybrid` for paraphrase recall; `keyword` for "
-    "literal-token queries.\n\n"
+    "`semantic` (needs embeddings extra + config opt-in), or `hybrid` "
+    "(RRF of all three). `hybrid` for paraphrase recall; `keyword` for "
+    "literal tokens.\n\n"
     "Outcome is recorded automatically via the use_token within ~2 "
     "turns; only call memory_record_use to override "
     "(ignored / contradicted / corrected)."
@@ -169,7 +169,9 @@ async def memory_search(
         semantic_model = deps._semantic_model_factory(deps.config)
         if resolved_mode == "semantic" and semantic_model is None:
             raise ValueError(
-                "mode='semantic' requires the embeddings extra. "
+                "mode='semantic' requires the embeddings extra and the "
+                "config-level opt-in ([behavior] search_mode = 'semantic' "
+                "or semantic_dedup = true). "
                 "Install with `pip install bettermemory[embeddings]` "
                 "or use mode='hybrid' for graceful keyword+bm25 fallback."
             )

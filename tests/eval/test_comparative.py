@@ -62,18 +62,23 @@ def test_silent_miss_lane_matches_workload_intent():
     assert result.eval_report is not None
     ev = result.eval_report
 
-    # Every probe is an audited turn.
-    assert ev.turns_audited == len(wl.probes) == 10
+    # Every probe is audited, but the 3 distractor probes land
+    # `no_signal` (nothing relevant stored) and are excluded from the
+    # miss-capable denominator since the round-88 `turns_no_signal`
+    # split — only the 7 signal-bearing turns count.
+    assert ev.turns_audited + ev.turns_no_signal == len(wl.probes) == 10
+    assert ev.turns_audited == 7
+    assert ev.turns_no_signal == 3
     # Exactly the gold + not-searched probes register as silent misses.
     assert ev.silent_misses == len(wl.expected_miss_probes) == 5
 
     rate = ev.silent_miss_rate
     assert rate.numerator == 5
-    assert rate.denominator == 10
-    assert rate.rate == pytest.approx(0.5)
+    assert rate.denominator == 7
+    assert rate.rate == pytest.approx(5 / 7)
     # A real Wilson interval is produced (denominator > 0).
     assert rate.lower is not None and rate.upper is not None
-    assert rate.lower < 0.5 < rate.upper
+    assert rate.lower < 5 / 7 < rate.upper
 
 
 def test_live_agent_metrics_are_na_offline_not_zero():
@@ -141,7 +146,7 @@ def test_render_json_roundtrips_and_carries_numbers():
     bm = by_name["bettermemory"]
     assert bm["ran"] is True
     assert bm["recall_at_k"] == pytest.approx(1.0)
-    assert bm["eval"]["silent_miss_rate"]["rate"] == pytest.approx(0.5)
+    assert bm["eval"]["silent_miss_rate"]["rate"] == pytest.approx(5 / 7)
     assert bm["eval"]["memory_helped_rate"]["rate"] is None
     assert bm["capabilities"]["can_compute_trio"] is True
 
@@ -261,10 +266,12 @@ def test_scripted_driver_computes_the_full_trio():
     assert ev.endorsement_rate.denominator == 1
     assert ev.endorsement_rate.rate == pytest.approx(1.0)
 
-    # Silent-miss lane is unchanged by the driver (still 5/10).
+    # Silent-miss lane is unchanged by the driver — still 5 misses over
+    # the 7 miss-capable turns (the 3 distractor no_signal audits are
+    # excluded from the denominator since the round-88 split).
     assert ev.silent_miss_rate.numerator == 5
-    assert ev.silent_miss_rate.denominator == 10
-    assert ev.silent_miss_rate.rate == pytest.approx(0.5)
+    assert ev.silent_miss_rate.denominator == 7
+    assert ev.silent_miss_rate.rate == pytest.approx(5 / 7)
 
 
 def test_scripted_driver_helped_rate_is_below_recall():

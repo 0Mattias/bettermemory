@@ -57,14 +57,19 @@ recency_boost_half_life_days = 30
 #   "keyword" — the original TF + coverage + recency scorer (legacy default
 #       in 1.6.0). No IDF weighting, so rare-term queries underperform.
 #   "bm25"    — Okapi BM25 with the same scope-bonus + recency boost
-#   "semantic" — sentence-transformers cosine; requires the embeddings
-#       extra. Falls back to "keyword" with a WARNING log if the extra
-#       isn't installed.
-#   "hybrid"  — reciprocal-rank-fusion of keyword + BM25 (plus semantic
-#       when the embeddings extra is installed). Strict improvement over
-#       any single mode; gracefully degrades to keyword + BM25 fusion when
-#       no embedding extra is present. Default since 2.6.8.
-# The MCP `mode` parameter on memory_search overrides this per-call.
+#   "semantic" — embedding-model cosine. Setting this IS the config-level
+#       opt-in that loads the model (an embeddings extra must be
+#       installed; without one, semantic searches error with an install
+#       hint and turn audits record no_signal — there is no silent
+#       keyword fallback for an explicit ask).
+#   "hybrid"  — reciprocal-rank-fusion of keyword + BM25, plus a semantic
+#       leg only when the model is opted in (an embeddings extra AND
+#       `semantic_dedup = true`; "hybrid" alone never loads a model, so
+#       extra-installed users don't silently pay a model load or flip
+#       write-dedup to cosine). Gracefully degrades to keyword + BM25
+#       fusion otherwise. Default since 2.6.8.
+# The MCP `mode` parameter on memory_search overrides this per-call for
+# ranker selection, but does not bypass the model gate above.
 search_mode = "hybrid"
 
 # Usage-aware ranking. When true, a bounded "endorsement" factor (the same
