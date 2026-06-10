@@ -521,3 +521,51 @@ def test_code_assignment_operators_fire() -> None:
     ):
         kinds = [m.kind for m in find_credential_markers(body)]
         assert "generic-secret-assignment" in kinds, body
+
+
+# ---------------------------------------------------------------------------
+# Regression: adversarial re-review of the extractor-hunt drain
+# ---------------------------------------------------------------------------
+
+
+def test_long_keyword_assigned_token_fires() -> None:
+    """The cap half of the path-guard/200-char-cap finding: 'api_key = ' +
+    a 240-char high-entropy token returned [] because the old 200-char
+    ceiling read length as innocence. A very long whitespace-free token
+    after a credential keyword separator is MORE suspicious, not less.
+    Fixture is fragment-assembled (8-char fragment repeated), so no full
+    token literal sits in this file's source."""
+    secret = _shaped(*(["A1b2C3d4"] * 30))
+    assert len(secret) == 240
+    hits = find_credential_markers(f"api_key = {secret}")
+    assert "generic-secret-assignment" in [m.kind for m in hits]
+    # Redaction contract holds at this length: no raw window survives.
+    for h in hits:
+        assert secret not in h.snippet
+        for i in range(0, len(secret) - 10):
+            assert secret[i : i + 10] not in h.snippet, f"leaked window at {i}"
+
+
+def test_iso_timestamp_after_rotation_connective_does_not_fire() -> None:
+    """False-positive regression from the connective-separator widening:
+    'was rotated' / 'was updated' (no 'to') capture a following ISO-8601
+    timestamp as the value — rotation METADATA, not a secret. Both repro
+    strings are the adversarial reviewer's exact confirmed cases; both
+    returned [] before the widening."""
+    for body in (
+        "the admin password was rotated 2026-01-15T00:30:00Z by the ops team",
+        "the password was updated 2026-06-01T09:30:00+02:00",
+    ):
+        assert find_credential_markers(body) == [], body
+
+
+def test_genuine_secret_after_rotation_connective_still_fires() -> None:
+    """The timestamp guard rejects only the fullmatch datetime shape — a
+    real secret after 'was rotated to' keeps firing exactly as it did
+    before the guard."""
+    for body in (
+        "the password was rotated to hunter2Abc9XyZ12Q",
+        "the admin password was updated to hunter2Abc9XyZ12Q yesterday",
+    ):
+        kinds = [m.kind for m in find_credential_markers(body)]
+        assert "generic-secret-assignment" in kinds, body

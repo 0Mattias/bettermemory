@@ -173,7 +173,7 @@ def _is_masked_token(match: re.Match[str]) -> bool:
 # capped at some length): the captured span is what `_redact_all` later
 # erases, so a cap shorter than the real secret would leave the tail
 # un-redacted and leak it into the snippet. Length policy lives entirely in
-# `_looks_like_secret` (12–200), which decides whether the captured token is
+# `_looks_like_secret` (12–1024), which decides whether the captured token is
 # a secret at all — never the regex.
 #
 # Anchor anatomy (precision lives in `_looks_like_secret`, never here):
@@ -274,6 +274,23 @@ _PLACEHOLDER_WORDS: frozenset[str] = frozenset(
 )
 
 
+# ISO-8601 datetime shape, extended (2026-01-15T00:30:00Z,
+# 2026-06-01T09:30:00+02:00) and basic/compact (20260115T003000Z) forms.
+# The connective separators make `to` optional ("password was rotated <when>"
+# is natural prose), so a following timestamp gets captured as the "value" —
+# but a datetime is rotation METADATA, not a secret, and it sails through the
+# mixed-class checks (digits + T/Z, 8+ distinct chars). The shape is as
+# structurally unambiguous as a vendor prefix, so rejecting a fullmatch costs
+# zero recall: no real secret is spelled exactly digits-dashes-colons with a
+# single mid-string T. (Date-only forms never reach this guard — at 10 chars
+# they fail the length floor.)
+_DATETIME_SHAPE_RE = re.compile(
+    r"\d{4}-\d{2}-\d{2}[Tt]\d{2}:\d{2}(?::\d{2}(?:\.\d+)?)?"
+    r"(?:[Zz]|[+-]\d{2}:?\d{2})?"
+    r"|\d{8}[Tt]\d{4,6}(?:[Zz]|[+-]\d{2}:?\d{2})?"
+)
+
+
 def _is_placeholder(v: str) -> bool:
     """True when `v` is a conventional placeholder, not a secret.
 
@@ -317,7 +334,16 @@ def _looks_like_secret(value: str) -> bool:
         v = v[:-1]
     elif v.endswith("%") and "%" not in v[:-1]:
         v = v[:-1]
-    if len(v) < 12 or len(v) > 200:
+    # Length floor: anything under 12 chars is prose-plausible. The CEILING
+    # is deliberately generous (1024, not the old 200): a very long
+    # whitespace-free token sitting after a credential keyword separator is
+    # MORE suspicious, not less — a 240-char base64 paste after `api_key =`
+    # is exactly the config-paste this rule targets, and the old cap waved
+    # it through. The value class already excludes whitespace, so a prose
+    # paragraph after "password is" can never reach here; the bound only
+    # stops pathological single-token blobs (a base64-encoded *file*, a
+    # minified-code fragment) from reading as a credential.
+    if len(v) < 12 or len(v) > 1024:
         return False
     # Env-var / template reference, not a literal secret: $VAR, ${VAR},
     # <your-key>, {{token}}, %SECRET%.
@@ -353,6 +379,10 @@ def _looks_like_secret(value: str) -> bool:
     if re.fullmatch(r"[A-Za-z_][\w.]*\(.*\)", v):
         return False
     if re.fullmatch(r"[A-Z][A-Z0-9]*(?:_[A-Z0-9]+)+", v):
+        return False
+    # Timestamp, not a token: "the password was rotated 2026-01-15T00:30:00Z"
+    # records WHEN, not WHAT — see _DATETIME_SHAPE_RE.
+    if _DATETIME_SHAPE_RE.fullmatch(v):
         return False
     # All-identical run (xxxxxxxx, ********) — a mask, not a secret.
     if len(set(v)) < 8:
