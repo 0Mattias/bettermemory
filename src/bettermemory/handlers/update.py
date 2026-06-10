@@ -245,13 +245,15 @@ async def memory_update(
     # that no longer exists — reset `last_verified_at` to None so the
     # caller has to re-confirm against the new body. The structured
     # attestation lists (`verified_paths`, `verified_commits`,
-    # `verified_versions`) were also attached to the prior prose and
-    # would lie about the new body — clear them in lockstep so the
-    # staleness rollup doesn't read e.g. `verified_paths=["/etc/foo"]`
-    # against text that no longer mentions `/etc/foo`. Scope/confidence/
-    # category/links edits don't touch the body's claims, so the
-    # verification stays intact for those. This matches the intuition
-    # that verification is a property of body content, not of metadata.
+    # `verified_versions`, `verified_absent_paths`) were also attached
+    # to the prior prose and would lie about the new body — clear them
+    # in lockstep so the staleness rollup doesn't read e.g.
+    # `verified_paths=["/etc/foo"]` against text that no longer mentions
+    # `/etc/foo` (or keep suppressing a missing-flag the new body's
+    # citation deserves). Scope/confidence/category/links edits don't
+    # touch the body's claims, so the verification stays intact for
+    # those. This matches the intuition that verification is a property
+    # of body content, not of metadata.
     update_fields: dict[str, Any] = {
         "body": new_body,
         "scopes": new_scopes,
@@ -264,6 +266,7 @@ async def memory_update(
         update_fields["verified_paths"] = []
         update_fields["verified_commits"] = []
         update_fields["verified_versions"] = []
+        update_fields["verified_absent_paths"] = []
 
     merged = existing.model_copy(update=update_fields)
     try:

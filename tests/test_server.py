@@ -4763,11 +4763,13 @@ async def test_memory_update_content_clears_verified_attestation(
         verified_paths=["/etc/foo"],
         verified_commits=["abc1234"],
         verified_versions=["1.2.3"],
+        verified_absent_paths=["/data/remote-only"],
     )
     pre = await _call(server, "memory_show", id=written["id"])
     assert pre["verified_paths"] == ["/etc/foo"]
     assert pre["verified_commits"] == ["abc1234"]
     assert pre["verified_versions"] == ["1.2.3"]
+    assert pre["verified_absent_paths"] == ["/data/remote-only"]
 
     await _call(server, "memory_update", id=written["id"], content="rewritten body")
     post = await _call(server, "memory_show", id=written["id"])
@@ -4775,6 +4777,7 @@ async def test_memory_update_content_clears_verified_attestation(
     assert post["verified_paths"] == []
     assert post["verified_commits"] == []
     assert post["verified_versions"] == []
+    assert post["verified_absent_paths"] == []
 
 
 async def test_memory_update_scope_only_preserves_verified_attestation(
