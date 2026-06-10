@@ -1384,15 +1384,19 @@ def test_template_placeholder_paths_rejected() -> None:
 
 
 def test_shell_escaped_spaces_unescaped(tmp_path: Path) -> None:
+    """Candidates keep the author's separator spelling, so compare via
+    Path equality, not raw strings — on Windows `str(tmp_path)` is the
+    backslash form while the citation uses `/` (both resolve)."""
     f = tmp_path / "My Drive" / "notes.txt"
     f.parent.mkdir()
     f.write_text("x")
-    backtick = detect_path_drift(f"vault at `{tmp_path}/My\\ Drive/notes.txt` synced")
-    assert str(f) in backtick.checked and backtick.missing == ()
-    bare = detect_path_drift(
-        f"vault lives at {tmp_path}/My\\ Drive/notes.txt synced via Drive"
-    )
-    assert str(f) in bare.checked and bare.missing == ()
+    cited = f"{tmp_path.as_posix()}/My\\ Drive/notes.txt"
+    backtick = detect_path_drift(f"vault at `{cited}` synced")
+    assert backtick.missing == ()
+    assert [Path(c) for c in backtick.checked] == [f]
+    bare = detect_path_drift(f"vault lives at {cited} synced via Drive")
+    assert bare.missing == ()
+    assert [Path(c) for c in bare.checked] == [f]
 
 
 def test_markdown_table_pipe_is_bare_boundary(tmp_path: Path) -> None:
@@ -1401,11 +1405,14 @@ def test_markdown_table_pipe_is_bare_boundary(tmp_path: Path) -> None:
     assert str(gone) in report.missing
 
 
-def test_acronym_pair_glue_falls_back_to_existing_prefix() -> None:
-    """`/etc/hosts TCP/IP keepalive` — the continuation rule glues the
-    acronym pair on; the disk arbitrates back to the real path."""
-    report = detect_path_drift("tuned /etc/hosts TCP/IP keepalive overrides today")
-    assert "/etc/hosts" in report.checked
+def test_acronym_pair_glue_falls_back_to_existing_prefix(tmp_path: Path) -> None:
+    """`<existing-dir> TCP/IP keepalive` — the continuation rule glues the
+    acronym pair on; the disk arbitrates back to the real path. Uses a
+    tmp dir rather than `/etc/hosts` so the existing-prefix arm also
+    holds on Windows runners."""
+    cited = tmp_path.as_posix()
+    report = detect_path_drift(f"tuned {cited} TCP/IP keepalive overrides today")
+    assert cited in report.checked
     assert report.missing == ()
 
 
