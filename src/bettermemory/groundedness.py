@@ -20,11 +20,16 @@ Calibration:
   "OK." has no semantic anchor to check). But a sub-minimum sentence
   with at least two content tokens and ZERO anchors is still flagged:
   "Lives in Berlin." is a fully verifiable claim, and sharing nothing
-  with the transcript is the unambiguous hallucination signal. A
-  single anchor is enough to pass — the conservative stance for
-  legitimately tiny claims stays. One-token fragments and trailing-
-  colon fragments (section headers like "Action items:") stay
-  skipped entirely.
+  with the transcript is the strongest hallucination signal this
+  heuristic has. A single anchor is enough to pass — the conservative
+  stance for legitimately tiny claims stays — and because down here a
+  single spelling mismatch flips the whole verdict, anchoring for
+  this rule alone is alias-tolerant: a token whose spelling has a
+  substring or first-char-anchored-subsequence relation with a
+  transcript token counts as anchored, so "Prefers Neovim." grounds
+  against a transcript that says "nvim" (see `_is_alias_anchored`).
+  One-token fragments and trailing-colon fragments (section headers
+  like "Action items:") stay skipped entirely.
 - A sentence is grounded when at least `GROUNDEDNESS_THRESHOLD` of its
   stopword-stripped content tokens are anchored in the transcript. The
   ratio is computed over the sentence's *original* tokens — each
@@ -79,10 +84,22 @@ MIN_CONTENT_TOKENS = 3
 # Sub-minimum sentences with at least this many content tokens are
 # still checked for the zero-anchor case: "Lives in Berlin." (two
 # content tokens) is a fully verifiable claim, and ZERO overlap with
-# the transcript is the unambiguous hallucination signal. One anchor
-# passes — legitimately tiny grounded claims stay unflagged. One-token
-# fragments stay exempt: "OK." / "Done." carry no checkable claim.
+# the transcript is the strongest hallucination signal this heuristic
+# has. One anchor passes — legitimately tiny grounded claims stay
+# unflagged. One-token fragments stay exempt: "OK." / "Done." carry
+# no checkable claim.
 _ZERO_ANCHOR_MIN_TOKENS = 2
+
+# Alias rescue (zero-anchor rule ONLY): minimum length of the SHORTER
+# spelling in a candidate alias pair. At 4, real alias/abbreviation
+# pairs qualify (nvim/neovim, code/vscode, postgres/postgresql) while
+# 1-3-letter particles ("vs", "db") can't anchor a claim by being a
+# substring of half the dictionary. "k8s"/"Kubernetes" is the
+# documented miss of this rescue: numeronyms share no spelling
+# relation with their expansion (the '8' replaces the letters), so no
+# length tuning covers them — that would need a synonym table, out of
+# scope for a spelling-level heuristic.
+_ALIAS_MIN_TOKEN_LEN = 4
 
 # Sentence-level overlap ratio required for "grounded". Below this, we
 # flag the sentence as ungrounded. 0.30 is calibrated so that a sentence
@@ -299,6 +316,53 @@ def _is_anchored(token: str, transcript_tokens: set[str]) -> bool:
     return False
 
 
+def _is_subsequence(needle: str, haystack: str) -> bool:
+    """True when `needle`'s characters appear in `haystack` in order,
+    not necessarily contiguously: 'nvim' ⊑ 'neovim'. (Standard
+    consume-the-iterator idiom — each `in` scan resumes where the
+    previous one stopped.)"""
+    haystack_iter = iter(haystack)
+    return all(ch in haystack_iter for ch in needle)
+
+
+def _is_alias_anchored(token: str, transcript_tokens: set[str]) -> bool:
+    """Zero-anchor-rule rescue for alias/abbreviation spellings.
+
+    Terse summary bodies routinely normalize a tool name to its
+    canonical spelling while the transcript used the colloquial one:
+    "Prefers Neovim." against a transcript that says "nvim".
+    Exact-token anchoring calls that ZERO overlap, and at two content
+    tokens a single spelling mismatch flips the whole verdict with no
+    ratio cushion. So, for the zero-anchor rule ONLY, a sentence
+    token also anchors when its spelling relates to a transcript
+    token's: order the pair by length — anchored when the shorter (at
+    least `_ALIAS_MIN_TOKEN_LEN` chars, so particles can't anchor) is
+    a substring of the longer ("code" ⊂ "vscode", "postgres" ⊂
+    "postgresql") or, sharing the longer's first character, a
+    subsequence of it ("nvim" ⊑ "neovim", and "postgres" ⊑
+    "postgre-sql" as the camel split respells PostgreSQL). The length
+    ordering covers both directions: the short alias may sit on
+    either side of the comparison.
+
+    Deliberately NOT consulted by the ratio test — at three-plus
+    content tokens there is cushion for one alias mismatch, and
+    spelling-relation anchoring is loose enough (incidental
+    containments like "rust" ⊂ "trust" anchor too) that applying it
+    everywhere would erode the gate. Confined here, it can only turn
+    a would-be flag of a tiny claim into a pass — the precision-first
+    direction for this advisory gate.
+    """
+    for other in transcript_tokens:
+        shorter, longer = sorted((token, other), key=len)
+        if len(shorter) < _ALIAS_MIN_TOKEN_LEN:
+            continue
+        if shorter in longer:
+            return True
+        if shorter[0] == longer[0] and _is_subsequence(shorter, longer):
+            return True
+    return False
+
+
 def check_groundedness(
     body: str,
     transcript: str,
@@ -316,7 +380,11 @@ def check_groundedness(
     ratio test but still flag when they carry at least
     `_ZERO_ANCHOR_MIN_TOKENS` content tokens and share ZERO anchors
     with the transcript — "Lives in Berlin." is a verifiable claim,
-    not an "OK.". With an empty transcript nothing is grounded: every
+    not an "OK.". Anchoring for that zero-anchor rule alone is
+    alias-tolerant ("Prefers Neovim." grounds against a transcript
+    that says "nvim" — see `_is_alias_anchored`); the ratio test
+    keeps exact-token anchoring. With an empty transcript nothing is
+    grounded: every
     checkable sentence comes back as ungrounded (overlap_ratio=0.0),
     so the caller sees a clear signal that they passed an empty
     transcript.
@@ -337,14 +405,23 @@ def check_groundedness(
         if n_tokens < min_content_tokens:
             # Too short for the ratio test, but not too short to be a
             # verifiable claim: two-plus content tokens with ZERO
-            # anchors is the unambiguous hallucination shape. One
+            # anchors is the canonical hallucination shape. One
             # anchor passes (conservative stance for tiny grounded
             # claims); trailing-colon fragments are section headers
-            # ("Action items:"), not claims, and stay exempt.
+            # ("Action items:"), not claims, and stay exempt. Down
+            # here one spelling mismatch flips the whole verdict, so
+            # the anchor test gets an alias-tolerant rescue (last
+            # clause): "Prefers Neovim." must not flag against a
+            # transcript that spelled it "nvim". The ratio branch
+            # below stays exact-spelling on purpose — see
+            # _is_alias_anchored for both rationales.
             if (
                 n_tokens >= _ZERO_ANCHOR_MIN_TOKENS
                 and matched == 0
                 and not sentence.endswith(":")
+                and not any(
+                    _is_alias_anchored(t, transcript_tokens) for t in sentence_tokens
+                )
             ):
                 ungrounded.append(UngroundedClaim(sentence=sentence, overlap_ratio=0.0))
             continue

@@ -192,6 +192,61 @@ def test_two_token_grounded_claim_still_passes() -> None:
     assert check_groundedness("Postgres.", "completely unrelated transcript") == []
 
 
+def test_alias_spelling_grounds_short_claim() -> None:
+    """The zero-anchor rule is alias-tolerant: a terse two-token claim
+    whose tool name is spelled canonically must not flag when the
+    transcript used the colloquial alias (audit's verbatim repros).
+    Covers all three spelling relations: first-char-anchored
+    subsequence ('nvim' ⊑ 'neovim'), plain substring ('code' ⊂
+    'vscode'), and subsequence through the camelCase split
+    ('postgres' ⊑ 'postgre-sql')."""
+    assert (
+        check_groundedness(
+            "Prefers Neovim.", "User: I do all my editing in nvim these days."
+        )
+        == []
+    )
+    assert (
+        check_groundedness(
+            "Prefers PostgreSQL.", "User: let's use postgres for the job queue."
+        )
+        == []
+    )
+    assert (
+        check_groundedness("Prefers VSCode.", "User: I do everything in VS Code now.")
+        == []
+    )
+
+
+def test_alias_rescue_does_not_unflag_unanchored_claim() -> None:
+    """The rescue is a spelling relation, not a free pass: a two-token
+    claim sharing no substring/subsequence spelling with any
+    transcript token still flags at 0.0 — and with an empty
+    transcript there is nothing to alias-relate, so the
+    empty-transcript signal is preserved too."""
+    transcript = (
+        "User: I prefer terse code-driven explanations.\n"
+        "Assistant: Got it, terse it is."
+    )
+    ungrounded = check_groundedness("Owns a ferret.", transcript)
+    assert len(ungrounded) == 1
+    assert ungrounded[0].overlap_ratio == 0.0
+    # Empty transcript: the rescue can't manufacture an anchor.
+    assert len(check_groundedness("Prefers Neovim.", "")) == 1
+
+
+def test_alias_rescue_scoped_to_zero_anchor_rule() -> None:
+    """Alias tolerance exists ONLY below MIN_CONTENT_TOKENS, where one
+    spelling mismatch flips the verdict. At three-plus content tokens
+    the ratio branch keeps exact-spelling anchoring — an alias-only
+    sentence whose other tokens have no transcript support still
+    flags."""
+    transcript = "User: these days I do everything in nvim."
+    ungrounded = check_groundedness("Prefers Neovim for fast editing.", transcript)
+    assert len(ungrounded) == 1
+    assert ungrounded[0].overlap_ratio < GROUNDEDNESS_THRESHOLD
+
+
 def test_bullet_list_items_evaluated_independently() -> None:
     """Single-newline markdown bullets are separate fragments. A
     hallucinated bullet can't hide behind grounded siblings by
