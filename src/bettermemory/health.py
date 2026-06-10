@@ -33,6 +33,7 @@ from __future__ import annotations
 
 import bisect
 import json
+import re
 from collections import Counter
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
@@ -1365,17 +1366,24 @@ def compute_health(
     # in practice are legitimate narrow tags ("career", "personal-context")
     # rather than misspells, and flagging them produced enough false
     # positives that the bucket stopped being actionable. The neighbor
-    # check (Levenshtein distance <= 2 against any other scope, including
+    # check (`_scope_typo_neighbor`, against any other scope, including
     # other singletons) restricts the bucket to scopes that almost
     # certainly *are* typos: "projct:foo" against an existing
-    # "projects:foo", "tool" against "tools", "bug"/"bugs" pairs.
+    # "projects:foo", "tool" against "tools", "bug"/"bugs" pairs, and
+    # namespace omission/truncation ("bettermemory" or
+    # "proj:bettermemory" against "projects:bettermemory" — exact name
+    # part, wrong namespace). A raw whole-string Levenshtein threshold
+    # was both too loose and too tight here, so the helper compares
+    # namespace-stripped tails with a length-scaled threshold and
+    # exempts deliberate sibling/successor scopes (aoc2023/aoc2024,
+    # blog-v2/blog-v3, foo/foo2) — see its docstring for the rules.
     all_scopes = list(scope_distribution.keys())
     rare_scopes = sorted(
         scope
         for scope, count in scope_distribution.items()
         if count == 1
         and any(
-            other != scope and _edit_distance_within(scope, other, 2)
+            other != scope and _scope_typo_neighbor(scope, other)
             for other in all_scopes
         )
     )
@@ -2084,6 +2092,71 @@ def _build_recent_silent_misses(
     return [row for _ts, row in surviving[:cap]]
 
 
+# Trailing successor suffix on a scope's name part: a digit run,
+# optionally preceded by '-'/'_'/'v' ("2024" in "aoc2024", "-v2" in
+# "blog-v2", "2" in "foo2"). Two tails that are equal once this suffix
+# is stripped are deliberate siblings, not typos of each other.
+_SIBLING_SUFFIX_RE = re.compile(r"[-_]?v?\d+$")
+
+
+def _scope_typo_neighbor(scope: str, other: str) -> bool:
+    """True iff `scope` plausibly looks like a typo of `other`.
+
+    Backs the `rare_scopes` neighbor check. A raw whole-string
+    Levenshtein threshold misfires on real scope shapes in both
+    directions — a shared "projects:" prefix contributes zero distance
+    (so any two short project names collide), while namespace omission
+    ("bettermemory" vs "projects:bettermemory") yields distance 9 and is
+    never seen. The rules, in order:
+
+    1. Exact name-part equality across a namespace boundary flags: the
+       text after the first ':' (the whole string when bare) matching
+       another scope's name part exactly is a stronger mis-tag signal
+       than any distance-2 hit ("bettermemory" / "proj:bettermemory"
+       against "projects:bettermemory").
+    2. Equal leading ':'-segments are stripped and only the differing
+       tails are compared, so a long shared namespace prefix can't lend
+       distance slack to a short tail ("projects:vim" vs "projects:git"
+       compares vim/git; "projct:foo" vs "projects:foo" differs in its
+       first segment and still compares full strings).
+    3. Tails equal after stripping a trailing successor suffix
+       (`_SIBLING_SUFFIX_RE`) are exempt: aoc2023/aoc2024, blog-v2/
+       blog-v3, foo/foo2 are deliberate sibling scopes.
+    4. The distance threshold scales with tail length: 2 only when both
+       tails are >= 6 chars, 1 below that, and for tails <= 3 chars only
+       a length-changing edit counts — a substitution at that length
+       rewrites a third or more of the tag (vim/git, gpu/cpu, api/aws)
+       and isn't typo evidence, while insert/delete keeps the genuine
+       bug/bugs catch. Residual accepted false positive: just/rust
+       (distance-1 substitution at length 4) — clearing it would need
+       threshold 0 for short names, dropping tool/tools and bug/bugs.
+    """
+    if scope.split(":", 1)[-1] == other.split(":", 1)[-1]:
+        return True
+
+    segs_a = scope.split(":")
+    segs_b = other.split(":")
+    common = 0
+    for seg_a, seg_b in zip(segs_a, segs_b):
+        if seg_a != seg_b:
+            break
+        common += 1
+    tail_a = ":".join(segs_a[common:])
+    tail_b = ":".join(segs_b[common:])
+
+    if _SIBLING_SUFFIX_RE.sub("", tail_a) == _SIBLING_SUFFIX_RE.sub("", tail_b):
+        return False
+
+    shorter = min(len(tail_a), len(tail_b))
+    if shorter >= 6:
+        return _edit_distance_within(tail_a, tail_b, 2)
+    if shorter <= 3 and len(tail_a) == len(tail_b):
+        # Equal-length short tails: a distance-1 hit would have to be a
+        # substitution, which rule 4 rejects below this length.
+        return False
+    return _edit_distance_within(tail_a, tail_b, 1)
+
+
 def _edit_distance_within(a: str, b: str, max_dist: int) -> bool:
     """True iff Levenshtein(a, b) <= max_dist.
 
@@ -2094,9 +2167,10 @@ def _edit_distance_within(a: str, b: str, max_dist: int) -> bool:
     complexity. The length-difference shortcut catches the obviously
     far cases without running the table at all.
 
-    Used by the `rare_scopes` neighbor check; lifted out as a helper
-    so it stays testable in isolation if we ever need to tune the
-    threshold or swap algorithms.
+    Used by the `rare_scopes` neighbor check (via
+    `_scope_typo_neighbor`, which owns the scope-shape rules); lifted
+    out as a helper so it stays testable in isolation if we ever need
+    to tune the threshold or swap algorithms.
     """
     if abs(len(a) - len(b)) > max_dist:
         return False

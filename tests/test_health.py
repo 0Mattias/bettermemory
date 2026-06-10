@@ -1736,6 +1736,98 @@ def test_rare_scopes_neighbor_can_be_high_count_or_singleton() -> None:
     assert sorted(report.rare_scopes) == ["bug", "bugs", "tool"]
 
 
+def test_rare_scopes_excludes_year_suffixed_sibling_project() -> None:
+    """A year-suffixed successor of an existing project scope is a
+    deliberate new sibling, not a typo — and count==1 is the natural
+    state for a just-started project, so without the suffix exemption
+    the flag would fire exactly when a legitimate new scope appears.
+    The shared 'projects:' prefix must not lend distance slack either."""
+    a = _memory(scopes=["projects:aoc2023"])
+    b = _memory(scopes=["projects:aoc2023"])
+    sibling = _memory(scopes=["projects:aoc2024"])  # new year, new repo
+    report = compute_health([a, b, sibling], [], now=_utc(2026, 5, 1))
+    assert report.rare_scopes == []
+
+
+def test_rare_scopes_excludes_version_and_numeric_suffix_siblings() -> None:
+    """Version-suffixed ('blog-v2'/'blog-v3') and bare-numeric
+    ('foo'/'foo2') successors are equal once the trailing digit run
+    (optionally preceded by '-'/'v') is stripped — deliberate siblings,
+    exempt from the typo flag even when both sides are singletons."""
+    v2 = _memory(scopes=["projects:blog-v2"])
+    v3 = _memory(scopes=["projects:blog-v3"])
+    base_a = _memory(scopes=["projects:foo"])
+    base_b = _memory(scopes=["projects:foo"])
+    successor = _memory(scopes=["projects:foo2"])
+    report = compute_health(
+        [v2, v3, base_a, base_b, successor], [], now=_utc(2026, 5, 1)
+    )
+    assert report.rare_scopes == []
+
+
+def test_rare_scopes_flags_bare_name_missing_namespace() -> None:
+    """Dropping the namespace — tagging 'bettermemory' instead of
+    'projects:bettermemory' — is the most common scope mis-tag, but the
+    whole-string distance is the full prefix length (9), so the old
+    check could never see it. Exact name-part equality across a
+    namespace boundary flags it."""
+    a = _memory(scopes=["projects:bettermemory"])
+    b = _memory(scopes=["projects:bettermemory"])
+    bare = _memory(scopes=["bettermemory"])  # name part matches exactly
+    report = compute_health([a, b, bare], [], now=_utc(2026, 5, 1))
+    assert report.rare_scopes == ["bettermemory"]
+
+
+def test_rare_scopes_flags_truncated_namespace() -> None:
+    """Same namespace-omission rule covers a truncated namespace:
+    'proj:bettermemory' carries the exact name part of an existing
+    'projects:bettermemory' (whole-string distance 4, invisible to the
+    old check) and gets flagged."""
+    a = _memory(scopes=["projects:bettermemory"])
+    b = _memory(scopes=["projects:bettermemory"])
+    truncated = _memory(scopes=["proj:bettermemory"])
+    report = compute_health([a, b, truncated], [], now=_utc(2026, 5, 1))
+    assert report.rare_scopes == ["proj:bettermemory"]
+
+
+def test_rare_scopes_excludes_unrelated_short_tags() -> None:
+    """Short topic tags land within flat distance 2 of each other while
+    being completely unrelated — vim/git, gpu/cpu, api/aws are
+    substitution-distance hits that rewrite most of the tag, and
+    ml/sql is distance 2 on a 2-char name. The length-scaled threshold
+    (substitutions don't count at <= 3 chars; distance 1 only below
+    6 chars) keeps every one of these singletons out of the bucket."""
+    gits = [_memory(scopes=["git"]) for _ in range(3)]
+    cpu_a = _memory(scopes=["cpu"])
+    cpu_b = _memory(scopes=["cpu"])
+    aws_a = _memory(scopes=["aws"])
+    aws_b = _memory(scopes=["aws"])
+    sql_a = _memory(scopes=["sql"])
+    sql_b = _memory(scopes=["sql"])
+    vim = _memory(scopes=["vim"])
+    gpu = _memory(scopes=["gpu"])
+    api = _memory(scopes=["api"])
+    ml = _memory(scopes=["ml"])
+    report = compute_health(
+        [*gits, cpu_a, cpu_b, aws_a, aws_b, sql_a, sql_b, vim, gpu, api, ml],
+        [],
+        now=_utc(2026, 5, 1),
+    )
+    assert report.rare_scopes == []
+
+
+def test_rare_scopes_excludes_short_tails_under_shared_namespace() -> None:
+    """The shared 'projects:' prefix contributes zero distance, so
+    'projects:vim' vs 'projects:git' degenerated to vim/git under the
+    flat threshold. Stripping the equal leading segment and comparing
+    only the 3-char tails (where substitutions don't count) clears it."""
+    a = _memory(scopes=["projects:git"])
+    b = _memory(scopes=["projects:git"])
+    vim = _memory(scopes=["projects:vim"])
+    report = compute_health([a, b, vim], [], now=_utc(2026, 5, 1))
+    assert report.rare_scopes == []
+
+
 def test_orphan_use_events_count_unknown_ids() -> None:
     """A memory_record_use referencing a fabricated/unknown ULID gets
     counted in `orphan_use_events`. The count is the smoke test for
