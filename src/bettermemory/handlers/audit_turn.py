@@ -89,11 +89,24 @@ async def memory_audit_turn(
       missed an unrelated B-relevant retrieval won't be flagged.
       Tightening this would require per-hit shielding — out of
       scope for v1.
-    - **Cross-process audits**: the audit must share its
-      SessionState with the model (same MCP `client_id`). A hook
-      that opens its own MCP connection would get a fresh session
-      and always see zero recent retrievals, false-flagging every
-      turn. Production hooks must run in-process with the model.
+    - **Cross-process audits**: THIS handler's retrieval shield is
+      bound to the caller's MCP session
+      (`deps.sessions.for_request(ctx)`), so a hook that opens its
+      own MCP connection to call this tool still gets a fresh
+      session, sees zero recent retrievals, and false-flags every
+      turn. That no longer means hooks have to run in-process: the
+      out-of-process Stop hook (`hook.run_audit`) is the primary
+      production producer — it bypasses the MCP channel and bridges
+      the shield to the live server session by replaying the event
+      log (`retrieval_session_id` resolved via
+      `_latest_in_process_session`, anchored to the hook's
+      worktree). The residual gap is the bridge's anchor, not the
+      process boundary: when no worktree-stamped in-process event
+      exists (legacy logs, a server outside a git checkout, the
+      restart gap, concurrent sessions in the SAME worktree) it
+      falls back to latest-any and can mis-shield in either
+      direction. See the `hook.py` module docstring for the full
+      divergence analysis.
     """
     from .. import _handlers as _h
 

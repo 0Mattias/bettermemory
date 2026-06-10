@@ -1786,3 +1786,42 @@ def test_turn_audited_fields_rejects_unknown_triggered_from() -> None:
         assert ta["triggered_from"] == value
         sm = search_miss_fields(report, session_id="s1", triggered_from=value)
         assert sm["triggered_from"] == value
+
+
+def test_audit_turn_docstring_limitation_reflects_stop_hook_bridge() -> None:
+    """The handler docstring's "Known v1 limitations" entry must not
+    resurrect the pre-bridge claim that production hooks have to run
+    in-process with the model.
+
+    Since the `retrieval_session_id` bridge landed in `hook.py`
+    (`run_audit` threads the live server session resolved by
+    `_latest_in_process_session` into the probe's retrieval shield),
+    the out-of-process Stop hook is the primary production producer.
+    The honest residual limitation is the bridge's event-log anchor
+    (latest-any fallback when no worktree-stamped in-process event
+    exists), not the process boundary itself. Doc-only pin so a future
+    docstring edit can't drift back to the stale prescription, which
+    would steer integrators away from the supported Stop-hook path.
+    """
+    from bettermemory.handlers.audit_turn import memory_audit_turn
+
+    doc = memory_audit_turn.__doc__ or ""
+    assert "must run in-process" not in doc, (
+        "audit_turn docstring resurrected the stale pre-bridge claim "
+        "that production hooks must run in-process with the model; "
+        "hook.run_audit bridges the retrieval shield to the live "
+        "server session via retrieval_session_id and is the primary "
+        "production producer."
+    )
+    assert "retrieval_session_id" in doc, (
+        "audit_turn docstring no longer names the "
+        "retrieval_session_id bridge; the limitations entry must "
+        "point out-of-process callers at the Stop hook's event-log "
+        "bridge instead of a dead run-in-process prescription."
+    )
+    assert "_latest_in_process_session" in doc, (
+        "audit_turn docstring no longer names "
+        "_latest_in_process_session; the residual limitation IS that "
+        "anchor's latest-any fallback, so the entry has to identify "
+        "where the bridge resolution lives."
+    )
