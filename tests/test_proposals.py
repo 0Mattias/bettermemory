@@ -9,8 +9,11 @@ surface (`memory_proposals`) and the Stop-hook wiring are exercised in
 
 from __future__ import annotations
 
+import logging
 from datetime import datetime, timezone
 from pathlib import Path
+
+import pytest
 
 from bettermemory.proposals import (
     Proposal,
@@ -359,6 +362,119 @@ def test_extract_dont_forget_still_proposes() -> None:
     )
     assert len(props) == 1
     assert props[0].suggested_category == "fact"
+
+
+# ---------------------------------------------------------------------------
+# extract_proposals — smart-quote (U+2018/U+2019) normalization
+#
+# macOS/iOS keyboards substitute typographic apostrophes by default, so
+# contractions arrive as U+2019 ("I’m", "Let’s", "Don’t"). Every
+# contraction-aware pattern in the extractor is written against the ASCII
+# apostrophe; without early normalization the smart spelling silently
+# inverted outcomes in BOTH directions (preferences/markers missed,
+# question/command rejects bypassed). Each case below changes behaviour
+# with normalization — its smart-quote outcome differs from the
+# pre-normalization one while matching its ASCII twin.
+# ---------------------------------------------------------------------------
+
+
+def test_extract_catches_smart_quote_progressive_setup() -> None:
+    # "I’m using …" (U+2019) must hit the same preference branch as the
+    # ASCII "I'm using …" — pre-normalization it matched nothing at all.
+    for text in (
+        "I’m using ripgrep for all file searches in this repo.",
+        "We’re using Terraform Cloud for all infrastructure state management.",
+    ):
+        props = extract_proposals(text, now=_NOW)
+        assert len(props) == 1
+        assert props[0].suggested_category == "user-inference"
+    # Normalization happens before extraction, so the proposed body carries
+    # the ASCII spelling (one canonical form for dedup-by-source_excerpt).
+    props = extract_proposals(
+        "I’m using ripgrep for all file searches in this repo.", now=_NOW
+    )
+    assert "I'm using" in props[0].body
+
+
+def test_extract_catches_smart_quote_explicit_marker() -> None:
+    # "Don’t forget …" (U+2019) must fire the "don't forget" explicit
+    # marker exactly like its ASCII twin (test_extract_dont_forget_still_
+    # proposes) — pre-normalization the capture request was dropped.
+    props = extract_proposals(
+        "Don’t forget that we deploy to fly.io for production releases.",
+        now=_NOW,
+    )
+    assert len(props) == 1
+    assert props[0].suggested_category == "fact"
+
+
+def test_extract_rejects_smart_quote_command_like_ascii_twin() -> None:
+    # "Let’s …" must be rejected by the let'?s command alternative exactly
+    # like "Let's …". The sentence carries "we always", so the preference
+    # branch fires and only the command reject stands between it and a
+    # proposal — pre-normalization the curly apostrophe slipped past
+    # let'?s and the task request was captured as user-inference.
+    smart = "Let’s make sure we always deploy from the release branch."
+    ascii_twin = "Let's make sure we always deploy from the release branch."
+    assert extract_proposals(ascii_twin, now=_NOW) == []
+    assert extract_proposals(smart, now=_NOW) == []
+
+
+def test_extract_rejects_smart_quote_negated_contraction_question() -> None:
+    # A negated-contraction question with NO terminal "?" — the trailing-?
+    # reject can't help, so only the shouldn'?t alternative rejects it.
+    # The ASCII twin is rejected (pinned by test_extract_rejects_negated_
+    # contraction_questions); the U+2019 spelling must match it instead of
+    # being captured via the "I always" preference branch.
+    smart = "Shouldn’t I always run the formatter before committing here"
+    ascii_twin = "Shouldn't I always run the formatter before committing here"
+    assert extract_proposals(ascii_twin, now=_NOW) == []
+    assert extract_proposals(smart, now=_NOW) == []
+
+
+# ---------------------------------------------------------------------------
+# extract_proposals — explicit-drop telemetry at the transient gate
+# ---------------------------------------------------------------------------
+
+
+def test_explicit_transient_drop_logs_warning(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """An explicit "remember…" request whose body trips the transient gate
+    is still dropped (no exemption — parity with memory_write's
+    acknowledge_transient bar) but the drop must be observable at WARNING:
+    the production caller chain (Stop hook → hook.main →
+    propose_from_exchange) never configures logging, and Python's
+    lastResort handler only emits WARNING and above, so anything quieter
+    is a production no-op."""
+    with caplog.at_level(logging.WARNING, logger="bettermemory.proposals"):
+        props = extract_proposals(
+            "Remember that we are currently deploying from the hotfix branch.",
+            now=_NOW,
+        )
+    assert props == []
+    records = [r for r in caplog.records if r.name == "bettermemory.proposals"]
+    assert len(records) == 1
+    assert records[0].levelno == logging.WARNING
+    message = records[0].getMessage()
+    # The tripped marker name and the dropped excerpt are both in the record.
+    assert "'currently'" in message
+    assert "Remember that we are currently deploying" in message
+
+
+def test_non_explicit_transient_drop_stays_silent(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    # Ordinary transient prose (no explicit marker) trips this gate
+    # constantly — it must be dropped without logging at ANY level, or the
+    # Stop hook's stderr fills with noise.
+    with caplog.at_level(logging.DEBUG, logger="bettermemory.proposals"):
+        props = extract_proposals(
+            "I prefer to currently run everything against the staging cluster.",
+            now=_NOW,
+        )
+    assert props == []
+    assert [r for r in caplog.records if r.name == "bettermemory.proposals"] == []
 
 
 # ---------------------------------------------------------------------------

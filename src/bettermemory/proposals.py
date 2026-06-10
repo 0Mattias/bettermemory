@@ -87,6 +87,17 @@ _HARD_WRAP_RE = re.compile(r"(?<![.!?:\n])\n(?=\S)(?![-*+•>])(?!\d{1,3}[.)]\s)
 # proposal bodies don't carry the bullet prefix.
 _LIST_PREFIX_RE = re.compile(r"^(?:[-*+•]\s+|\d{1,3}[.)]\s+|>\s+)+")
 
+# Typographic single quotes (U+2018/U+2019) → ASCII apostrophe. macOS and
+# iOS keyboards substitute smart quotes by default, so contractions arrive
+# as "Let’s" / "I’m" / "Don’t" — and every contraction-aware pattern below
+# (`_EXPLICIT_MARKERS`' "don't forget", `_PREFERENCE_RE`'s "i'?m using",
+# `_QUESTION_OR_COMMAND_RE`'s "let'?s" and its negated contractions) is
+# written against the ASCII apostrophe. Applied ONCE, at the top of
+# `extract_proposals` before any pattern sees the text, so no pattern needs
+# a smart-quote variant and dedup-by-source_excerpt can't treat the smart
+# and ASCII spellings of one sentence as distinct entries.
+_SMART_APOSTROPHES = str.maketrans({"‘": "'", "’": "'"})
+
 # Explicit "remember this" intent. High precision — when the user says
 # any of these, they are asking to be remembered, so we propose even if
 # the sentence also looks like a question/command ("can you remember
@@ -389,6 +400,8 @@ def extract_proposals(
     remember if…?" are rejected outright), and (d) trips no
     transient-state marker (`durability.find_transient_markers`) —
     run-local state is the episode tier's job, not a durable memory.
+    Explicit markers get no exemption from (d), but their drop is logged
+    at WARNING so the swallowed capture request stays observable.
 
     `exclude_excerpts`: sentences already queued (matched verbatim) are
     skipped BEFORE they count against `max_proposals`, so a recurring
@@ -402,6 +415,10 @@ def extract_proposals(
     """
     if not user_text or not user_text.strip():
         return []
+    # Normalize smart quotes before ANY pattern — including the
+    # explicit-marker scan inside `_iter_candidate_sentences` — sees the
+    # text (see _SMART_APOSTROPHES).
+    user_text = user_text.translate(_SMART_APOSTROPHES)
     when = (now or utcnow()).isoformat().replace("+00:00", "Z")
     out: list[Proposal] = []
     for sentence, is_explicit in _iter_candidate_sentences(user_text):
@@ -425,7 +442,27 @@ def extract_proposals(
             if _HYPOTHETICAL_RE.match(sentence):
                 continue
         # Transient run-state belongs in episodes, never durable memory.
-        if find_transient_markers(sentence):
+        transient_hits = find_transient_markers(sentence)
+        if transient_hits:
+            # Design decision (settled): an explicit "remember…" request
+            # gets NO exemption from this gate — parity with memory_write,
+            # where even a direct write of transient content must clear the
+            # acknowledge_transient bar. But a silent drop leaves the user
+            # believing their explicit request was captured, so the drop
+            # must be OBSERVABLE. WARNING, not INFO: the production caller
+            # chain (Stop hook → hook.main → propose_from_exchange) never
+            # configures logging, and Python's lastResort handler only
+            # emits WARNING and above — an INFO record here would be a
+            # production no-op. Non-explicit drops stay silent: ordinary
+            # prose trips this gate constantly and must not spam the
+            # hook's stderr.
+            if is_explicit:
+                log.warning(
+                    "proposals: explicit capture request dropped by the "
+                    "transient-marker gate (marker=%r): %.80s",
+                    transient_hits[0].marker,
+                    sentence,
+                )
             continue
         # An explicit capture request is a stated fact; a bare first-person
         # preference is a claim about the user → the tier that wants
