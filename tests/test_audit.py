@@ -120,6 +120,26 @@ def _list_event(
     }
 
 
+def _write_event(
+    *,
+    session: str,
+    ts: datetime,
+    memory_id: str,
+) -> dict[str, Any]:
+    """A `memory_write` event. NOT a retrieval — `write` is deliberately
+    absent from `_RETRIEVAL_EVENT_KINDS` (a write puts nothing stored in
+    front of the model), so its presence in the lookback window must not
+    shield the verdict. The proactive-capture tests below pass it to pin
+    that the created-time filter, not a write shield, is what keeps a
+    same-turn capture from self-flagging."""
+    return {
+        "ts": ts.isoformat().replace("+00:00", "Z"),
+        "session": session,
+        "kind": "write",
+        "id": memory_id,
+    }
+
+
 # ---------------------------------------------------------------------------
 # probe_for_miss — no-signal branches
 # ---------------------------------------------------------------------------
@@ -158,11 +178,23 @@ def test_single_content_token_query_returns_no_signal() -> None:
     always score "high" against any memory that mentions the token
     (1/1 = 1.0). Probe short-circuits to no_signal before the ranker
     runs so the entire single-content-token cohort drops out of the
-    search_miss bucket. probe_query is preserved so a `no_signal`
-    report on this path is distinguishable from the empty-query
-    branch (which sets probe_query=None)."""
-    m = _memory("yes the backup strategy uses triangular restic replication")
-    for query in ("yes", "continue", "go for it", "push it"):
+    search_miss bucket. The gate counts UNIQUE content tokens — the v1
+    coverage denominator is unique tokens, so a repeated-word
+    continuation ("yes yes", "push it push it") is the same
+    single-token class and must not slip past on list length (the body
+    mentions both "yes" and "push", so an ungated probe would score
+    1/1 = "high" and fire a false miss). probe_query is preserved so a
+    `no_signal` report on this path is distinguishable from the
+    empty-query branch (which sets probe_query=None)."""
+    m = _memory("yes push the backup strategy uses triangular restic replication")
+    for query in (
+        "yes",
+        "continue",
+        "go for it",
+        "push it",
+        "yes yes",
+        "push it push it",
+    ):
         report = probe_for_miss(
             [m],
             query,
@@ -173,6 +205,89 @@ def test_single_content_token_query_returns_no_signal() -> None:
         assert report.verdict == "no_signal", query
         assert report.top_hits == ()
         assert report.probe_query == query
+
+
+def test_all_acknowledgment_message_returns_no_signal() -> None:
+    """Two-word acknowledgments built from non-stopword filler ("all
+    done", "looks good", "sounds good") are bare continuations the gate
+    documents itself as dropping — but the words aren't in search.py's
+    deliberately-short stopword list, so they'd otherwise clear the
+    two-token floor and score 2/2 = "high" against any ordinary body
+    containing both words (the fixture body contains all of them). The
+    audit-local `_ACK_TOKENS` set gates the all-acknowledgment cohort
+    to no_signal before the ranker runs."""
+    m = _memory(
+        "once the migration is done it all looks good and the cutover sounds good"
+    )
+    for query in ("all done", "looks good", "sounds good"):
+        report = probe_for_miss(
+            [m],
+            query,
+            recent_events=[],
+            session_id="sess_x",
+            now=_utc(2026, 5, 1),
+        )
+        assert report.verdict == "no_signal", query
+        assert report.top_hits == ()
+        assert report.probe_query == query
+
+
+def test_mixed_acknowledgment_message_passes_the_gate() -> None:
+    """Control for `_ACK_TOKENS`: an acknowledgment followed by a real
+    request must NOT be gated — the non-acknowledgment tokens
+    ("update", "backup", "docs") fall outside the set, so the probe
+    runs normally and the miss fires."""
+    m = _memory("update the backup docs now it looks good")
+    report = probe_for_miss(
+        [m],
+        "looks good, now update the backup docs",
+        recent_events=[],
+        session_id="sess_x",
+        now=_utc(2026, 5, 1),
+    )
+    assert report.verdict == "miss"
+
+
+def test_bare_numeric_continuation_returns_no_signal() -> None:
+    """tokenize() splits dotted strings on ".", so a bare numeric
+    continuation ("3.8.0" answering "which version should I pin?")
+    fragments into digit pseudo-tokens that would otherwise clear the
+    two-token floor and score "high" against any unrelated
+    digit-bearing body (version pins, ports, cron specs). Pure-digit
+    tokens don't count toward the gate, so the bare-numeric cohort is
+    no_signal — at HEAD before the fix, "3.8.0" and "option 2" both
+    flagged "miss" against the unrelated fixture bodies here."""
+    memories = [
+        _memory("web app toolchain: node 18.0.1 with pnpm 8.3.2"),
+        _memory("backups: option b mirrors to s3 every 2 hours"),
+    ]
+    for query in ("3.8.0", "option 2", "3.12"):
+        report = probe_for_miss(
+            memories,
+            query,
+            recent_events=[],
+            session_id="sess_x",
+            now=_utc(2026, 5, 1),
+        )
+        assert report.verdict == "no_signal", query
+        assert report.top_hits == ()
+        assert report.probe_query == query
+
+
+def test_substantive_query_with_version_number_passes_the_gate() -> None:
+    """Control for the digit exclusion: it only drops digit fragments
+    from the gate COUNT — a substantive query that happens to carry a
+    version still passes on its word tokens ("pin", "python") and the
+    ranker scores the digits normally."""
+    m = _memory("pin python 3.12 for the data toolchain")
+    report = probe_for_miss(
+        [m],
+        "pin python 3.12",
+        recent_events=[],
+        session_id="sess_x",
+        now=_utc(2026, 5, 1),
+    )
+    assert report.verdict == "miss"
 
 
 def test_two_content_token_query_passes_the_gate() -> None:
@@ -412,6 +527,78 @@ def test_show_in_different_session_does_not_shield() -> None:
     assert report.verdict == "miss"
 
 
+def test_memory_created_inside_lookback_window_does_not_flag_miss() -> None:
+    """Proactive-capture turns must not self-flag: a memory written THIS
+    turn (created inside the lookback window) did not exist when the
+    user message arrived, so it cannot be evidence of a retrieval miss.
+    Memory bodies routinely echo the user's phrasing, so before the
+    created-time filter the just-written memory scored "high" against
+    the very message that prompted it — every correct no-search
+    proactive write emitted a `search_miss`. The `write` event in the
+    window is included to pin that it does NOT shield (write isn't
+    retrieval); the filter, not a shield, is what clears the turn. With
+    the just-written memory as the only candidate, the probe falls
+    through to the ran-and-saw-nothing no_signal branch (probe_query
+    set)."""
+    now = _utc(2026, 5, 1)
+    fresh = _memory(
+        "staging deploys switched to blue-green",
+        scopes=["infrastructure"],
+        created=now - timedelta(seconds=20),
+    )
+    events = [
+        _write_event(
+            session="sess_x",
+            ts=now - timedelta(seconds=18),
+            memory_id=fresh.id,
+        ),
+    ]
+    report = probe_for_miss(
+        [fresh],
+        "we switched the staging deploys to blue-green",
+        recent_events=events,
+        session_id="sess_x",
+        now=now,
+        lookback_seconds=60,
+    )
+    assert report.verdict == "no_signal"
+    assert report.top_hits == ()
+    assert report.probe_query == "we switched the staging deploys to blue-green"
+
+
+def test_old_memory_still_flags_miss_alongside_same_turn_write() -> None:
+    """Control for the created-time filter: an OLD high-relevance memory
+    still flags a miss even when the model wrote a different memory this
+    turn. The filter drops only the hit that could not have been
+    retrieved — it is not a write shield, so older unretrieved hits stay
+    free to flag (adding `write` to `_RETRIEVAL_EVENT_KINDS` instead
+    would have masked exactly this case)."""
+    now = _utc(2026, 5, 1)
+    old = _memory("backup strategy uses triangular restic replication")
+    fresh = _memory(
+        "staging deploys switched to blue-green",
+        scopes=["infrastructure"],
+        created=now - timedelta(seconds=20),
+    )
+    events = [
+        _write_event(
+            session="sess_x",
+            ts=now - timedelta(seconds=18),
+            memory_id=fresh.id,
+        ),
+    ]
+    report = probe_for_miss(
+        [old, fresh],
+        "backup strategy",
+        recent_events=events,
+        session_id="sess_x",
+        now=now,
+        lookback_seconds=60,
+    )
+    assert report.verdict == "miss"
+    assert report.top_hits[0].id == old.id
+
+
 def test_caller_in_project_suppresses_high_relevance_miss() -> None:
     """When the caller is in the same git project as the top-hit memory
     was written from, the probe returns ``"ok"`` instead of ``"miss"`` —
@@ -478,6 +665,57 @@ def test_global_memory_top_hit_does_not_suppress() -> None:
     )
     # No project: scope on the hit → suppression doesn't apply → miss
     # fires normally.
+    assert report.verdict == "miss"
+
+
+def test_low_rank_project_hit_does_not_suppress_global_top_hit_miss() -> None:
+    """Mixed-store regression: the verdict threshold reads only the top
+    hit, so only that hit can explain away the missing search. A
+    low-relevance ``projects:`` memory at rank 2 must not swallow a real
+    miss on a global (cross-cutting) memory at rank 1 — before the gate
+    was restricted to ``top_hits[:1]``, ANY same-repo project hit in the
+    retained top 3 suppressed the verdict, so in a store dominated by
+    project memories the global-miss cohort the helper's docstring
+    carves out essentially never fired while working in a repo."""
+    repo = "git@github.com:owner/foo.git"
+    origin = Origin(cwd="/tmp/foo", repo=repo, worktree_root="/tmp/foo")
+    global_mem = Memory(
+        id=generate_ulid(),
+        created=_utc(2026, 1, 1),
+        updated=_utc(2026, 1, 1),
+        scopes=["infrastructure"],
+        confidence=Confidence.MEDIUM,
+        source=Source.EXPLICIT,
+        body="restic backup strategy for the home dir",
+        origin=origin,
+    )
+    project_mem = Memory(
+        id=generate_ulid(),
+        created=_utc(2026, 1, 1),
+        updated=_utc(2026, 1, 1),
+        scopes=["projects:foo"],
+        confidence=Confidence.MEDIUM,
+        source=Source.EXPLICIT,
+        body="foo deploy notes: backup the postgres db before each release",
+        origin=origin,
+    )
+    report = probe_for_miss(
+        [global_mem, project_mem],
+        "restic backup strategy",
+        recent_events=[],
+        session_id="sess_x",
+        now=_utc(2026, 5, 1),
+        caller_origin=origin,
+    )
+    # Sanity: the global memory decides the threshold at rank 1 and the
+    # same-repo project memory really is retained at a lower rank — the
+    # exact mix that used to trip the suppression.
+    assert report.top_hits[0].id == global_mem.id
+    assert report.top_hits[0].relevance == "high"
+    assert any("projects:foo" in h.scopes for h in report.top_hits[1:]), (
+        "fixture broken: project memory not retained in top hits"
+    )
+    # The rank-2 project hit must not suppress the global top-1 miss.
     assert report.verdict == "miss"
 
 
@@ -846,6 +1084,29 @@ def _events(memory_dir: Path) -> list[dict[str, Any]]:
     return list(iter_events(memory_dir))
 
 
+def _backdate_created(memory_dir: Path, memory_id: str) -> None:
+    """Push a stored memory's `created`/`updated` an hour into the past.
+
+    The created-time filter in `probe_for_miss` drops memories born
+    inside the audit lookback window — they did not exist when the user
+    message arrived, so they cannot be retrieval-miss evidence.
+    Integration tests that write through the server and audit in the
+    same breath would otherwise probe an empty candidate list;
+    backdating restores the "memory existed before this turn" shape the
+    tests mean to exercise. An hour comfortably predates the clamped
+    maximum lookback (600s)."""
+    store = Store(memory_dir)
+    backdated = datetime.now(timezone.utc) - timedelta(hours=1)
+    for path, mem in store.iter_active():
+        if mem.id == memory_id:
+            store._write_path(
+                path,
+                mem.model_copy(update={"created": backdated, "updated": backdated}),
+            )
+            return
+    raise AssertionError(f"memory {memory_id!r} not found in store")
+
+
 async def test_audit_turn_always_emits_turn_audited(
     server_with_events: tuple[Any, Path, SessionState],
 ) -> None:
@@ -878,12 +1139,16 @@ async def test_audit_turn_emits_search_miss_on_miss(
     design; the integration test is about wiring, not threshold tuning.
     """
     server, memory_dir, _ = server_with_events
-    await _call(
+    written = await _call(
         server,
         "memory_write",
         content="backup strategy uses triangular restic replication",
         scopes=["infrastructure"],
     )
+    # The probe only considers memories that predate the lookback window
+    # (a same-turn write can't be a retrieval miss) — backdate so the
+    # just-written memory is a legitimate probe candidate.
+    _backdate_created(memory_dir, written["id"])
 
     user_query = "backup strategy"
     report = await _call(
@@ -911,12 +1176,15 @@ async def test_audit_turn_no_miss_after_recent_search(
 ) -> None:
     """If the model *did* search before the audit fires, no miss event."""
     server, memory_dir, _ = server_with_events
-    await _call(
+    written = await _call(
         server,
         "memory_write",
         content="backup strategy uses triangular restic replication",
         scopes=["infrastructure"],
     )
+    # Backdate past the created-time filter so the verdict is decided by
+    # the retrieval shield, not by an empty candidate list.
+    _backdate_created(memory_dir, written["id"])
     # Model searched — this should shield the audit.
     await _call(server, "memory_search", query="backup strategy")
     report = await _call(
@@ -976,6 +1244,9 @@ async def test_audit_turn_show_shields_miss_via_handler(
         content="backup strategy uses triangular restic replication",
         scopes=["infrastructure"],
     )
+    # Backdate past the created-time filter so the verdict is decided by
+    # the show-shield, not by an empty candidate list.
+    _backdate_created(memory_dir, written["id"])
     await _call(server, "memory_show", id=written["id"])
     report = await _call(
         server,

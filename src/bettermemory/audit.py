@@ -55,11 +55,15 @@ Design notes:
   Single-token user messages structurally always score "high" if the
   token appears anywhere (1/1 = 1.0); multi-token natural language
   with stopwords often lands at 2/3 = "medium" and does not fire.
-  Queries with fewer than `MIN_PROBE_CONTENT_TOKENS` content tokens
-  short-circuit to ``no_signal`` before the rule runs — bare
+  Queries with fewer than `MIN_PROBE_CONTENT_TOKENS` unique content
+  tokens short-circuit to ``no_signal`` before the rule runs — bare
   continuations like "yes" / "continue" / "go for it" structurally
   carry no signal, so dropping them from the audit corpus keeps the
-  threshold rule honest. The rule version is recorded on every
+  threshold rule honest. Pure-digit tokens don't count toward the
+  floor (a bare numeric reply like "3.8.0" fragments to digit
+  pseudo-tokens), and a message whose content tokens are all
+  conversational acknowledgments ("all done", "looks good" — see
+  `_ACK_TOKENS`) is gated the same way. The rule version is recorded on every
   emitted event so a later calibration pass can replay historical
   logs under a new threshold without losing the audit trail.
 
@@ -112,16 +116,62 @@ _TOP_HITS_RETAINED = 3
 # search from earlier in the session doesn't paper over a fresh miss.
 DEFAULT_LOOKBACK_SECONDS = 60
 
-# Minimum content tokens (stopwords stripped) a probe query must carry
-# before the threshold rule is even evaluated. The v1 rule labels any
-# 1/1 coverage as "high", so a bare continuation like "yes", "continue",
-# "go for it" (1 content token after stopword strip) structurally
-# always fires "miss" if the token appears anywhere in any memory —
-# the entire single-content-token cohort is a no-signal false-positive
-# class. Surfaced on the 2.7.x dogfood log as ~26% of `search_miss`
-# events. Two content tokens isn't a calibration claim; it's the
-# floor below which coverage carries no information.
+# Minimum UNIQUE content tokens (stopwords stripped, pure-digit tokens
+# excluded) a probe query must carry before the threshold rule is even
+# evaluated. The v1 rule labels any 1/1 coverage as "high", so a bare
+# continuation like "yes", "continue", "go for it" (1 content token
+# after stopword strip) structurally always fires "miss" if the token
+# appears anywhere in any memory — the entire single-content-token
+# cohort is a no-signal false-positive class. Surfaced on the 2.7.x
+# dogfood log as ~26% of `search_miss` events. Two content tokens isn't
+# a calibration claim; it's the floor below which coverage carries no
+# information. The count is over UNIQUE tokens because the v1 coverage
+# denominator is unique tokens (`query_unique` in search.py) — a
+# doubled word ("yes yes", "push it push it") is still the
+# single-token class. Pure-digit tokens are excluded because
+# `tokenize` splits dotted strings on ".", so a bare numeric reply
+# ("3.8.0" -> "3"/"8"/"0", "option 2") would otherwise clear the floor
+# with digit fragments that carry no coverage information for the same
+# structural reason single tokens don't.
 MIN_PROBE_CONTENT_TOKENS = 2
+
+# Conversational acknowledgment tokens. A probe query whose content
+# tokens (stopwords stripped) fall ENTIRELY inside this set is a bare
+# continuation by another name: "all done", "looks good", "sounds
+# good" are two distinct non-stopword tokens, so they clear the
+# MIN_PROBE_CONTENT_TOKENS floor and then score 2/2 = "high" against
+# any ordinary memory body that happens to contain both words. The set
+# lives here (audit-local) rather than in search.py's `_STOPWORDS` on
+# purpose — "good" / "done" / "all" must stay searchable as body and
+# query terms; they're only noise as a COMPLETE probe query. Mixed
+# messages ("looks good, now update the backup docs") still pass the
+# gate because their non-acknowledgment tokens fall outside the set.
+_ACK_TOKENS: frozenset[str] = frozenset(
+    {
+        "agreed",
+        "all",
+        "correct",
+        "done",
+        "exactly",
+        "fine",
+        "good",
+        "great",
+        "lgtm",
+        "looks",
+        "nice",
+        "ok",
+        "okay",
+        "perfect",
+        "right",
+        "sounds",
+        "sure",
+        "thanks",
+        "works",
+        "yeah",
+        "yep",
+        "yes",
+    }
+)
 
 # Closed set of `triggered_from` discriminator values for `turn_audited`
 # and `search_miss` events. The Stop hook emits `"stop_hook"`; the
@@ -396,9 +446,16 @@ def probe_for_miss(
     # the v1 rule because 1/1 = 1.0 = "high" against any memory that
     # mentions the token. Bare continuations ("yes", "continue",
     # "go for it" — "for"/"it" are stopwords) fall in this bucket and
-    # are pure noise. probe_query is set so a `no_signal` report on
-    # this path is distinguishable from the empty-query branch above.
-    if len(_strip_stopwords(tokenize(user_message))) < MIN_PROBE_CONTENT_TOKENS:
+    # are pure noise. The count is over UNIQUE content tokens with
+    # pure-digit tokens excluded, and an all-acknowledgment message is
+    # gated even above the floor — see the MIN_PROBE_CONTENT_TOKENS /
+    # _ACK_TOKENS comments for why each carve-out exists. probe_query
+    # is set so a `no_signal` report on this path is distinguishable
+    # from the empty-query branch above.
+    content_tokens = {
+        t for t in _strip_stopwords(tokenize(user_message)) if not t.isdigit()
+    }
+    if len(content_tokens) < MIN_PROBE_CONTENT_TOKENS or content_tokens <= _ACK_TOKENS:
         return MissReport(
             verdict="no_signal",
             checked_at=now,
@@ -409,6 +466,26 @@ def probe_for_miss(
             top_hits=(),
             probe_query=user_message,
         )
+
+    # A memory created inside the lookback window did not exist when the
+    # user message arrived, so it cannot be evidence of a retrieval miss.
+    # Without this filter the proactive-capture flow self-flags: the
+    # model writes a NEW durable fact this turn (correctly, without a
+    # pointless search), the body echoes the user's phrasing, and the
+    # just-written memory scores "high" against the very message that
+    # prompted it. `write` events are deliberately NOT a retrieval
+    # shield (`_RETRIEVAL_EVENT_KINDS`) — shielding the whole verdict on
+    # a write would mask genuine misses on OLDER memories, which this
+    # filter leaves free to flag. Filter on `created` only, never
+    # `updated`: an updated memory existed before and its prior content
+    # was retrievable. The lookback window is the module's established
+    # proxy for "this turn" (see `_count_recent_retrievals`). If the
+    # filter empties the candidate list, `run_search` returns no hits
+    # and the no_signal-with-probe_query branch below reports it.
+    creation_cutoff = now - timedelta(seconds=lookback_seconds)
+    memories = [
+        m for m in memories if (ensure_utc(m.created) or now) <= creation_cutoff
+    ]
 
     repo_filter = caller_origin.repo if caller_origin else None
     worktree_filter = caller_origin.worktree_root if caller_origin else None
@@ -480,14 +557,20 @@ def probe_for_miss(
         verdict: Verdict = "ok"
     elif recent_retrieval_count > 0:
         verdict = "ok"
-    elif _caller_in_top_hit_project(top_hits, memories, caller_origin):
-        # Caller is working inside the same git project a top-hit memory
-        # was written from. The model already has that project's source
-        # tree open, so the absence of a memory_search isn't a contract
-        # slip — the relevant context is reachable without one.
+    elif _caller_in_top_hit_project(top_hits[:1], memories, caller_origin):
+        # Caller is working inside the same git project the
+        # threshold-deciding top hit was written from. The model already
+        # has that project's source tree open, so the absence of a
+        # memory_search isn't a contract slip — the relevant context is
+        # reachable without one. Only `top_hits[:1]` is consulted: the
+        # verdict threshold reads only the top hit, so only that hit can
+        # explain away the missing search — a low-relevance project hit
+        # at rank 2-3 must not swallow a real miss on a global top-1.
         # Dogfood evidence (2.7.x): ~95% of replayable misses came from
         # this cohort ("update bettermemory", "push it", "is X up to
-        # date") asked from inside the matching repo.
+        # date") asked from inside the matching repo, with the project
+        # memory AS the top hit — so restricting to top-1 preserves the
+        # designed suppression.
         verdict = "ok"
     else:
         verdict = "miss"
@@ -509,10 +592,15 @@ def _caller_in_top_hit_project(
     memories: list[Memory],
     caller_origin: Origin | None,
 ) -> bool:
-    """True when the caller is in the same git project as a top-hit memory.
+    """True when the caller is in the same git project as the
+    threshold-deciding top hit.
 
     Used to suppress the miss verdict when "the model has source open"
-    explains the missing search. Both halves are load-bearing:
+    explains the missing search. The caller passes ``top_hits[:1]`` —
+    the verdict threshold reads only the top hit, so only that hit can
+    explain away the missing search; a lower-ranked project hit must
+    not swallow a miss on a global top-1. Both halves of the per-hit
+    check are load-bearing:
 
     * ``projects:`` scope on the hit — a global memory has no project
       boundary to suppress against. Surfacing one through this gate
