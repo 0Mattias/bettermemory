@@ -42,6 +42,10 @@ _GITHUB_PAT = _shaped("github_pat_", "11ABCDEFG0abcdefghij_klmnopqrstuvwxyz12345
 _SLACK = _shaped("xoxb-", "1234567890-ABCDEFGHIJKLMNOP")
 _GOOGLE = _shaped("AIza", "SyA1234567890abcdefghijklmnopqrstuv")
 _PEM_HEADER = _shaped("-----BEGIN OPENSSH ", "PRIVATE KEY-----")
+_SENDGRID = _shaped(
+    "SG.", "aBcDeFgH1234iJkLmNoP56", ".", "AbCdEfGhIjKlMnOpQrStUvWxYz0123456789AbCdEfG"
+)
+_VAULT = _shaped("hvs.", "AbCdEfGhIjKlMnOpQrStUvWx")
 _JWT = _shaped(
     "eyJ",
     "hbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9."
@@ -87,6 +91,12 @@ def test_placeholder_values_do_not_fire() -> None:
         "api_key = $OPENAI_API_KEY",
         "password = <your-password-here>",
         "secret = xxxxxxxxxxxx",
+        # Digit-suffixed / word-decomposable spellings of the same
+        # placeholders — sample-config docs, not secrets.
+        "password = changeme12345",
+        "password = dummy_password_123",
+        "api_key = test_api_key_12345",
+        "secret = example_secret_1234",
     ):
         assert find_credential_markers(body) == [], body
 
@@ -121,6 +131,8 @@ def test_plain_hex_or_ulid_does_not_fire() -> None:
         ("github-token", f"{_GITHUB_PAT}"),
         ("slack-token", f"slack {_SLACK} webhook"),
         ("google-api-key", f"maps {_GOOGLE} key"),
+        ("sendgrid-api-key", f"sendgrid {_SENDGRID} key"),
+        ("vault-token", f"vault {_VAULT} token"),
         ("private-key-pem", f"{_PEM_HEADER}\nb3BlbnNzaC1rZXk=\n"),
         ("jwt", f"Authorization: Bearer {_JWT}"),
         ("generic-secret-assignment", "password = hunter2Abc9XyZ12Q"),
@@ -235,13 +247,21 @@ def test_sk_kebab_identifier_does_not_fire() -> None:
 
 
 def test_code_config_references_do_not_fire() -> None:
-    """Dotted attribute refs, paths, and SCREAMING_SNAKE constant names are
-    common durable content, not literal secrets."""
+    """Dotted attribute refs, paths, call expressions, and SCREAMING_SNAKE
+    constant names are common durable content, not literal secrets."""
     for body in (
         "client_secret = config.SECRET_KEY_V2",
         "api_key = settings.DEFAULT_API_KEY_V2",
         "secret = DEFAULT_API_KEY_V2",
         "password = /etc/secrets/db_password",
+        # Call expressions: a documented key-generation decision, not a key.
+        "api_key = secrets.token_hex(32), generated per-tenant at signup",
+        "api_key = str(uuid4())",
+        "secret = os.urandom(24)",
+        "api_key = settings.get_key(tenant_id1)",
+        # '==' comparison against a structured ref (admitted by the := / =>
+        # separator widening, rejected by the dotted-ref value guard).
+        "password == user.hashed_password",
     ):
         assert find_credential_markers(body) == [], body
 
@@ -293,3 +313,211 @@ def test_slack_app_and_client_token_families_fire() -> None:
         token = prefix + body
         kinds = [m.kind for m in find_credential_markers(f"token is {token} ok")]
         assert "slack-token" in kinds, prefix
+
+
+# ---------------------------------------------------------------------------
+# Regression: extractor false-signal hunt drain (2026-06-10 batch)
+# ---------------------------------------------------------------------------
+
+
+def test_env_prefixed_and_compound_keywords_fire() -> None:
+    """The old \\b anchors made the generic rule blind to the canonical
+    .env / docker-compose / AWS-credentials-file paste shapes."""
+    for body in (
+        f"POSTGRES_PASSWORD={_shaped('tr0ub4dor', '3Xy9QmW2')}",
+        f"SECRET_KEY={_shaped('x8f2nQv9', 'Lp4Rt7Zw1Kj6')}",
+        f"secret_key = {_shaped('x8f2nQv9', 'Lp4Rt7Zw1Kj6Bm3')}",
+        f"aws_secret_access_key = {_shaped('wJalrXUtnFEMI', 'K7MDENGbPxRfiCY')}",
+    ):
+        kinds = [m.kind for m in find_credential_markers(body)]
+        assert "generic-secret-assignment" in kinds, body
+
+
+def test_env_prefixed_path_value_does_not_fire() -> None:
+    """The _FILE convention assigns a path, not a secret."""
+    body = "POSTGRES_PASSWORD_FILE=/run/secrets/db_password"
+    assert find_credential_markers(body) == []
+
+
+def test_hyphenated_descriptor_prose_does_not_fire() -> None:
+    """'password is sha256-hashed' DESCRIBES credential handling — the
+    exact describe-don't-embed rewrite the credential_warning suggests."""
+    for body in (
+        "The admin password is sha256-hashed before storage; never plaintext.",
+        "The session-cookie signing secret is base64-encoded, 32 bytes, in Vault.",
+        "Backup archive password is gpg2-encrypted and rotated quarterly.",
+    ):
+        assert find_credential_markers(body) == [], body
+
+
+def test_hyphenated_value_with_uppercase_still_fires() -> None:
+    """The descriptor guard keys on all-lowercase: a hyphenated value that
+    carries uppercase is still secret-shaped."""
+    kinds = [m.kind for m in find_credential_markers("password is xK9-mQ2-vR7-bT4w")]
+    assert "generic-secret-assignment" in kinds
+
+
+def test_masked_token_shapes_do_not_fire() -> None:
+    """Masks and docs placeholders of vendor shapes are not secrets: x-runs
+    and the Slack docs placeholder stay silent (the same class the sk-
+    lookaheads already reject). Fixtures are fragment-assembled."""
+    for body in (
+        "Slack bot token format is " + _shaped("xoxb-", "your-bot-token") + ", env.",
+        "Rotated the leaked key " + _shaped("AKIA", "X" * 16) + " per the ticket.",
+        "PAT shape: " + _shaped("ghp_", "x" * 36),
+        "fine-grained shape: " + _shaped("github_pat_", "x" * 22),
+    ):
+        assert find_credential_markers(body) == [], body
+
+
+def test_base64_value_with_slash_fires() -> None:
+    """Standard (non-url-safe) base64 uses '/' in its alphabet — a
+    mid-string slash is not a filesystem path."""
+    for body in (
+        f"client_secret = {_shaped('mP9/QxT2vNb8', 'KdR5wYe3UfH7jc2L0aQ=')}",
+        f"password = {_shaped('N8v2kQ/', 'p9Rt4Lx7ZwJm5')}",
+    ):
+        kinds = [m.kind for m in find_credential_markers(body)]
+        assert "generic-secret-assignment" in kinds, body
+
+
+def test_path_shaped_values_still_do_not_fire() -> None:
+    for body in (
+        "api_key = ~/secrets/key1.pem",
+        "password = myapp-${VAULT_SECRET}",
+    ):
+        assert find_credential_markers(body) == [], body
+
+
+def test_quoted_and_markdown_keys_fire() -> None:
+    """JSON / quoted-YAML / markdown-bold keys are the config-paste shape;
+    the rule already tolerated quotes around the VALUE."""
+    for body in (
+        'DB config: {"user": "admin", "password": "S3cr3tPazzw0rdX"}',
+        "'password': 'S3cr3tPazzw0rdX'",
+        "**Password**: hunter2Abc9XyZ12Q",
+    ):
+        kinds = [m.kind for m in find_credential_markers(body)]
+        assert "generic-secret-assignment" in kinds, body
+
+
+def test_authorization_bearer_header_fires() -> None:
+    """Opaque bearer tokens have no vendor prefix — the header anchor is
+    the only detector that can see the canonical curl paste."""
+    body = (
+        'curl -H "Authorization: Bearer Zx9Kq7Wm2Pv5Bn8Lt4Rd6Fy1" '
+        "https://metrics.internal/api"
+    )
+    kinds = [m.kind for m in find_credential_markers(body)]
+    assert "generic-secret-assignment" in kinds
+
+
+def test_bearer_token_key_fires() -> None:
+    """Prometheus/YAML-style `bearer_token:` was killed by \\b before `_`."""
+    kinds = [
+        m.kind
+        for m in find_credential_markers("bearer_token: Zx9Kq7Wm2Pv5Bn8Lt4Rd6Fy1")
+    ]
+    assert "generic-secret-assignment" in kinds
+
+
+def test_bearer_prose_does_not_fire() -> None:
+    body = "Authorization: Bearer tokens expire after 15 minutes."
+    assert find_credential_markers(body) == []
+
+
+def test_connection_uri_password_fires_and_redacts() -> None:
+    """The classic DATABASE_URL paste: a live userinfo password that no
+    vendor prefix or keyword anchor can see."""
+    secret = _shaped("S3cr3t", "Pazz42")
+    for body in (
+        f"Staging DB is at postgres://app:{secret}@db.internal:5432/app",
+        f"redis://default:{secret}@cache.internal:6379/0 for sessions",
+    ):
+        hits = find_credential_markers(body)
+        assert "connection-uri-password" in [m.kind for m in hits], body
+        for h in hits:
+            assert secret not in h.snippet
+
+
+def test_connection_uri_placeholder_does_not_fire() -> None:
+    """Docs placeholders and template refs in userinfo stay silent via the
+    existing _looks_like_secret guards."""
+    for body in (
+        "postgres://user:password@localhost/db",
+        "mysql://app:${DB_PASS}@db.internal/app",
+    ):
+        assert find_credential_markers(body) == [], body
+
+
+def test_spaced_compound_keywords_fire() -> None:
+    """Prose spells 'api key', not 'api_key' — the \\bis\\b separator exists
+    precisely for the prose shape."""
+    for body in (
+        f"My Mailgun api key is {_shaped('4f9d8e7c6b5a', '4321fedcba9890aa')}",
+        "My Notion access token is hunter2Abc9XyZ12Q",
+    ):
+        kinds = [m.kind for m in find_credential_markers(body)]
+        assert "generic-secret-assignment" in kinds, body
+
+
+def test_spaced_keyword_prose_does_not_fire() -> None:
+    assert find_credential_markers("the api key is stored in 1Password") == []
+
+
+def test_dotted_vendor_secrets_fire_in_assignments() -> None:
+    """SendGrid SG.x.y and Vault hvs. tokens are intrinsically dotted; the
+    dotted-ref guard read them as attribute references, so they need the
+    JWT-style dedicated detectors."""
+    for kind, body in (
+        ("sendgrid-api-key", f"api_key = {_SENDGRID}"),
+        ("vault-token", f"auth_token = {_VAULT}"),
+    ):
+        kinds = [m.kind for m in find_credential_markers(body)]
+        assert kind in kinds, body
+
+
+def test_connective_phrasing_fires() -> None:
+    """'is set to' / 'was changed to' are the conversational family the
+    \\bis\\b separator was already reaching for."""
+    for body in (
+        "the admin password is set to hunter2Abc9XyZ12Q",
+        "the password was changed to hunter2Abc9XyZ12Q",
+    ):
+        kinds = [m.kind for m in find_credential_markers(body)]
+        assert "generic-secret-assignment" in kinds, body
+
+
+def test_connective_prose_does_not_fire() -> None:
+    assert find_credential_markers("the password was compromised last week") == []
+
+
+def test_pem_header_prose_does_not_fire() -> None:
+    """Quoting the header to describe a key FORMAT carries no key bytes —
+    the lookahead requires a following line of key material."""
+    rsa_header = _shaped("-----BEGIN RSA ", "PRIVATE KEY-----")
+    for body in (
+        "Paramiko < 2.7 cannot read the new OpenSSH key format (files begin "
+        f"'{_PEM_HEADER}'); convert with ssh-keygen -p -m PEM.",
+        f"GitLab CI's SSH_PRIVATE_KEY must be PEM, i.e. start with {rsa_header}",
+    ):
+        assert find_credential_markers(body) == [], body
+
+
+def test_trailing_brace_from_flow_mapping_fires() -> None:
+    """Position-dependence bug: the same secret fired mid-mapping but was
+    silent in final position because the lone closing brace read as a
+    template reference."""
+    body = "auth: {username: deploy, password: hunter2Abc9XyZ12Q}"
+    kinds = [m.kind for m in find_credential_markers(body)]
+    assert "generic-secret-assignment" in kinds
+
+
+def test_code_assignment_operators_fire() -> None:
+    """Go ':=' and Ruby '=>' spell the same assignment the '=' form blocks."""
+    for body in (
+        'password := "hunter2Abc9XyZ12Q"',
+        ":password => 'hunter2Abc9XyZ12Q'",
+    ):
+        kinds = [m.kind for m in find_credential_markers(body)]
+        assert "generic-secret-assignment" in kinds, body
