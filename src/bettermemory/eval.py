@@ -21,8 +21,12 @@ Three rates the existing event log makes computable today:
   reaching for ``memory_record_use`` nor the Stop hook's heuristic
   attribution — produced evidence the retrieval shaped a reply.
 - ``silent_miss_rate`` — ``search_miss`` events divided by
-  ``turn_audited`` events. The opt-in-retrieval contract's blind spot:
-  turns where the model should have searched but didn't.
+  miss-capable ``turn_audited`` events (``verdict != "no_signal"``).
+  Audits the probe declined are excluded from the denominator and
+  reported separately as ``turns_no_signal``, so a probe stuck at
+  "declined" can't read as a healthy 0% miss rate. The
+  opt-in-retrieval contract's blind spot: turns where the model
+  should have searched but didn't.
 
 The methodology is described in ``docs/eval.md``. This module owns the
 pure computation; the CLI wrapper lives in ``server.py``.
