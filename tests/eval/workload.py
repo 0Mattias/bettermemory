@@ -135,7 +135,9 @@ def default_workload() -> Workload:
       - 3 distractor           -> ok / no_signal (nothing relevant stored)
 
     So a correct run yields recall@5 == 1.0 over the 7 gold probes and a
-    silent_miss_rate numerator of 5 over a denominator of 10.
+    silent_miss_rate numerator of 5 over a miss-capable denominator of 7 —
+    the 3 distractor probes land no_signal (nothing relevant stored) and
+    are excluded from the denominator since the turns_no_signal split.
     """
     facts = [
         WorkloadFact(
