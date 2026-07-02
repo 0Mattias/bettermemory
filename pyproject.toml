@@ -68,15 +68,19 @@ build-backend = "hatchling.build"
 packages = ["src/bettermemory"]
 
 [tool.hatch.build.targets.sdist]
-# Explicit exclude — hatch defaults to `git ls-files` when in a repo,
-# but a release built from a clean checkout of an unindexed tree (e.g.
-# a CI runner that does `git clone --filter=blob:none && uv build`)
-# falls back to "everything not gitignored". These caches are not
-# tracked but the gitignore alone isn't a hard guarantee; spell out
-# the dev/test cruft so the sdist on PyPI stays tight and
-# reproducible. `.claude` is the highest-stakes entry: session
-# scratch plus Workflow-agent worktrees — full untracked copies of
-# the whole repo that must never sweep into a published sdist.
+# Explicit exclude — two entry classes. Most are untracked dev/test
+# caches: hatch defaults to `git ls-files` when in a repo, but a
+# release built from a clean checkout of an unindexed tree (e.g. a CI
+# runner that does `git clone --filter=blob:none && uv build`) falls
+# back to "everything not gitignored", and the gitignore alone isn't a
+# hard guarantee — spell out the cruft so the sdist on PyPI stays
+# tight and reproducible. `.claude` is the highest-stakes cache:
+# session scratch plus Workflow-agent worktrees — full untracked
+# copies of the whole repo that must never sweep into a published
+# sdist. `.envrc` is the one TRACKED entry (shared direnv config for
+# the iCloud .venv workaround, ce01f40): its exclude is load-bearing
+# on the default `git ls-files` path, keeping it in git but out of
+# the sdist. Do NOT gitignore or `git rm --cached` it.
 exclude = [
     ".hypothesis",
     ".mypy_cache",
