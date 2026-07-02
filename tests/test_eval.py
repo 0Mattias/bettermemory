@@ -769,11 +769,15 @@ class TestSilentMissInvalidation:
         metric, and the whole point of mirroring the invalidation is
         that they cannot disagree after an escape hatch runs. The
         stream exercises every filter arm at once: pre-cutoff drops
-        (both kinds + no_signal), the ack, a legacy un-ack-able miss,
-        and a legacy verdict-less audit."""
+        (both kinds + no_signal), the ack, a tombstoned top-hit (drops
+        on both sides), a legacy `top_hit_ids` miss whose id is
+        tombstoned (counts on both sides — the filter is
+        canonical-only), a legacy un-ack-able miss, and a legacy
+        verdict-less audit."""
         from bettermemory.health import compute_health
 
         now = self._utc(2026, 5, 1)
+        tomb_id = generate_ulid()
         events = [
             # Pre-cutoff — all three drop.
             _ev("turn_audited", ts=self._utc(2026, 4, 1), verdict="ok"),
@@ -821,12 +825,130 @@ class TestSilentMissInvalidation:
                 event_id="EVID_A",
                 reason="false positive",
             ),
+            # Tombstoned top-hit — drops from BOTH numerators (health's
+            # `_silent_miss_stats` filter #2; audited denominators keep
+            # their turns on both sides).
+            _ev(
+                "search_miss",
+                ts=self._utc(2026, 4, 19),
+                session_id="s-d",
+                event_id="EVID_D",
+                top_hits=[{"id": tomb_id, "relevance": "high"}],
+            ),
+            # Legacy `top_hit_ids` shape carrying the SAME tombstoned id
+            # — counts on both sides: the filter reads the canonical
+            # `top_hits[0].id` only, and the legacy shape degrades to
+            # None (can't-prove-tombstoned conservative read).
+            _ev(
+                "search_miss",
+                ts=self._utc(2026, 4, 20),
+                session_id="s-e",
+                top_hit_ids=[tomb_id],
+            ),
         ]
-        report = compute_eval(memories=[], events=events, now=now)
-        health_stats = compute_health([], events, now=now).silent_misses
+        report = compute_eval(
+            memories=[], events=events, now=now, tombstoned_ids={tomb_id}
+        )
+        health_stats = compute_health(
+            [], events, now=now, tombstoned_ids={tomb_id}
+        ).silent_misses
         assert report.turns_audited == health_stats.audited_total == 2
         assert report.turns_no_signal == health_stats.no_signal_total == 1
-        assert report.silent_misses == health_stats.miss_total == 2
+        # EVID_B + legacy s-c + legacy s-e survive; EVID_A acked,
+        # EVID_D tombstone-filtered, everything pre-cutoff dropped.
+        assert report.silent_misses == health_stats.miss_total == 3
+
+    def test_tombstoned_top_hit_dropped_from_numerator_not_denominator(self) -> None:
+        """A miss whose canonical top-hit memory is in `tombstoned_ids`
+        drops from the numerator and the triage buffer — once the memory
+        is gone the miss is no longer actionable — while BOTH audited
+        denominator buckets keep their turns (audits carry no per-memory
+        payload): health's `_silent_miss_stats` filter #2."""
+        tomb = generate_ulid()
+        events = [
+            _ev("turn_audited", ts=self._utc(2026, 4, 1), verdict="ok"),
+            _ev("turn_audited", ts=self._utc(2026, 4, 2), verdict="no_signal"),
+            _ev(
+                "search_miss",
+                ts=self._utc(2026, 4, 3),
+                session_id="s-tomb",
+                top_hits=[{"id": tomb, "relevance": "high"}],
+            ),
+            _ev(
+                "search_miss",
+                ts=self._utc(2026, 4, 4),
+                session_id="s-live",
+                top_hits=[{"id": "mem-live", "relevance": "high"}],
+            ),
+        ]
+        report = compute_eval(memories=[], events=events, tombstoned_ids={tomb})
+        assert report.silent_misses == 1
+        assert report.turns_audited == 1
+        assert report.turns_no_signal == 1
+        assert report.silent_miss_rate.rate == pytest.approx(1.0)
+        assert [c.top_missed_id for c in report.silent_miss_recent] == ["mem-live"]
+
+    def test_tombstone_filter_is_canonical_only_matching_health(self) -> None:
+        """A legacy `top_hit_ids`-shaped miss whose id IS in the
+        tombstone set still counts: health's `_parse_silent_miss_event`
+        reads only the canonical `top_hits` payload, degrades the legacy
+        shape to None, and falls through filter #2 on the
+        can't-prove-tombstoned conservative read. Eval must extract the
+        same way — reusing the renderer's legacy `top_hit_ids` fallback
+        for the filter would drop events health counts, splitting the
+        two surfaces on pre-2.6.4 archives. Pinned against
+        compute_health directly."""
+        from bettermemory.health import compute_health
+
+        now = self._utc(2026, 5, 1)
+        tomb = generate_ulid()
+        events = [
+            _ev("turn_audited", ts=self._utc(2026, 4, 1), verdict="ok"),
+            _ev(
+                "search_miss",
+                ts=self._utc(2026, 4, 2),
+                session_id="s-legacy",
+                top_hit_ids=[tomb],
+            ),
+        ]
+        report = compute_eval(
+            memories=[], events=events, now=now, tombstoned_ids={tomb}
+        )
+        health_stats = compute_health(
+            [], events, now=now, tombstoned_ids={tomb}
+        ).silent_misses
+        assert report.silent_misses == health_stats.miss_total == 1
+
+    def test_no_tombstones_is_pinned_byte_identical(self) -> None:
+        """Default `tombstoned_ids=None`, an explicit empty set, and a
+        set matching nothing all produce the identical serialised report
+        over a miss-carrying stream — the parameter must be invisible
+        unless a top-hit id actually matches, so `run_driver` / the
+        comparative harness and every existing caller stay untouched."""
+        events = [
+            _ev("turn_audited", ts=self._utc(2026, 4, 1), verdict="ok"),
+            _ev(
+                "search_miss",
+                ts=self._utc(2026, 4, 2),
+                session_id="s-a",
+                top_hits=[{"id": "mem-A", "relevance": "high"}],
+            ),
+        ]
+        now = self._utc(2026, 5, 1)
+        baseline = compute_eval(memories=[], events=events, now=now).to_dict()
+        assert (
+            compute_eval(
+                memories=[], events=events, now=now, tombstoned_ids=set()
+            ).to_dict()
+            == baseline
+        )
+        assert (
+            compute_eval(
+                memories=[], events=events, now=now, tombstoned_ids={"mem-other"}
+            ).to_dict()
+            == baseline
+        )
+        assert baseline["counts"]["silent_misses"] == 1
 
 
 # ---------------------------------------------------------------------------
@@ -1281,6 +1403,52 @@ class TestCLI:
         assert report.applied_explicit == 1
         assert report.explicit_endorsements_with_excerpt == 1
         assert report.memory_helped_rate.rate == pytest.approx(1.0)
+
+    def test_eval_cli_applies_store_tombstone_filter(
+        self, tmp_path: Path, capsys: Any
+    ) -> None:
+        """The CLI wrapper enumerates the store's real tombstone set
+        (`store.load_tombstones()`, same as `health.report_for_directory`)
+        and passes it into compute_eval — after a miss's top-hit memory
+        is tombstoned, `bettermemory eval` must agree with `memory_health`
+        (numerator and triage list drop, audited denominator keeps its
+        turn) rather than keep counting the unactionable miss."""
+        from bettermemory.server import main as server_main
+
+        memdir = tmp_path / "memdir"
+        store = Store(memdir)
+        recorder = Recorder(root=memdir, session_id="sess-test")
+        mem = store.write(
+            content="The auth middleware lives in src/auth/middleware.py.",
+            scopes=["tools"],
+            confidence=Confidence.HIGH,
+            source=Source.EXPLICIT,
+        )
+        recorder.record("turn_audited", verdict="miss", session_id="sess-test")
+        recorder.record(
+            "search_miss",
+            session_id="sess-test",
+            top_hits=[{"id": mem.id, "score": 10.0, "relevance": "high"}],
+        )
+        store.tombstone(mem.id, "superseded")
+
+        env_save = os.environ.get("BETTERMEMORY_DIR")
+        os.environ["BETTERMEMORY_DIR"] = str(memdir)
+        argv_save = sys.argv[:]
+        sys.argv = ["bettermemory", "eval", "--json", "--since", "all"]
+        try:
+            server_main()
+        finally:
+            sys.argv = argv_save
+            if env_save is None:
+                os.environ.pop("BETTERMEMORY_DIR", None)
+            else:
+                os.environ["BETTERMEMORY_DIR"] = env_save
+
+        parsed = json.loads(capsys.readouterr().out)
+        assert parsed["counts"]["turns_audited"] == 1
+        assert parsed["counts"]["silent_misses"] == 0
+        assert parsed["silent_miss_recent"] == []
 
 
 # ---------------------------------------------------------------------------
@@ -1782,6 +1950,98 @@ class TestComputeThresholdSweep:
         assert v2.would_flag == 5
         assert v2.delta_pct == 0.5
         assert v2.delta_from_v1 == -5
+
+    def test_cutoff_invalidated_misses_dropped_from_replay_and_footnote(self) -> None:
+        """Misses earlier than the latest `silent_miss_cutoff` were
+        flagged by a since-fixed code bug, not by a genuine rule
+        decision — they vanish from the replay set AND the legacy-skip
+        footnote, as if never logged, so bug-invalidated telemetry can't
+        pollute the "is v1 over-firing" calibration. Latest `cutoff_ts`
+        wins: a stale earlier cutoff arriving later in the log cannot
+        shrink the invalidated window (same max-semantics as
+        `compute_eval` / health)."""
+        events = [
+            # Pre-cutoff modern miss — bug-flagged, drops.
+            _miss_event(top_hits=[_hit()], ts="2026-04-01T00:00:00+00:00"),
+            # Pre-cutoff legacy miss — drops from the footnote too.
+            _ev(
+                "search_miss",
+                ts="2026-04-02T00:00:00+00:00",
+                top_hit_ids=["01XXXXXX"],
+            ),
+            # Post-cutoff modern miss — survives.
+            _miss_event(top_hits=[_hit()], ts="2026-04-20T00:00:00+00:00"),
+            _ev(
+                "silent_miss_cutoff",
+                ts="2026-04-25T00:00:00+00:00",
+                cutoff_ts="2026-04-10T00:00:00Z",
+            ),
+            # Stale earlier cutoff later in the log — ignored.
+            _ev(
+                "silent_miss_cutoff",
+                ts="2026-04-26T00:00:00+00:00",
+                cutoff_ts="2026-03-01T00:00:00Z",
+            ),
+        ]
+        report = compute_threshold_sweep(events)
+        assert report.replayable_misses == 1
+        assert report.skipped_legacy_event_count == 0
+        assert report.v1_drift == 0
+        v1 = next(r for r in report.rows if r.rule == "v1_top1_high")
+        assert v1.would_flag == 1
+
+    def test_cutoff_resolves_globally_under_since_window(self) -> None:
+        """A cutoff event whose own ts falls OUTSIDE `--since` still
+        invalidates in-window telemetry — the same global-marker
+        semantics `compute_eval` applies, so a windowed sweep can't
+        replay events every rate surface has already dropped."""
+        now = datetime(2026, 5, 1, tzinfo=timezone.utc)
+        events = [
+            # Cutoff written long before the window opens.
+            _ev(
+                "silent_miss_cutoff",
+                ts="2026-01-01T00:00:00+00:00",
+                cutoff_ts="2026-04-20T00:00:00Z",
+            ),
+            # In-window but pre-cutoff — must drop.
+            _miss_event(top_hits=[_hit()], ts="2026-04-15T00:00:00+00:00"),
+            # In-window and post-cutoff — survives.
+            _miss_event(top_hits=[_hit()], ts="2026-04-25T00:00:00+00:00"),
+        ]
+        report = compute_threshold_sweep(events, since=timedelta(days=21), now=now)
+        assert report.replayable_misses == 1
+
+    def test_acked_misses_retained_in_replay(self) -> None:
+        """`miss_ack` retractions are deliberately NOT honored by the
+        sweep: an acked miss is a confirmed false positive of the
+        current rule — exactly the calibration signal a stricter
+        candidate is judged against. The rate surfaces drop it (they
+        report outstanding actionable misses); the sweep replays rule
+        decisions, so it stays. The v2 pin below shows the payoff: the
+        stricter rule demonstrably would have declined the miss a human
+        had to retract."""
+        events = [
+            _ev(
+                "search_miss",
+                ts="2026-04-15T00:00:00+00:00",
+                event_id="EVID_FP",
+                # Below v2's score floor — v1 fired, v2 wouldn't have.
+                top_hits=[_hit(relevance="high", score=20.0)],
+                recent_retrieval_count=0,
+            ),
+            _ev(
+                "miss_ack",
+                ts="2026-04-16T00:00:00+00:00",
+                event_id="EVID_FP",
+                reason="false positive",
+            ),
+        ]
+        report = compute_threshold_sweep(events)
+        assert report.replayable_misses == 1
+        v1 = next(r for r in report.rows if r.rule == "v1_top1_high")
+        v2 = next(r for r in report.rows if r.rule == "v2_top1_high_score_50")
+        assert v1.would_flag == 1
+        assert v2.would_flag == 0
 
 
 class TestComputeEvalListKind:

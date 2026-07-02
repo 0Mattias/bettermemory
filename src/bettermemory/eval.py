@@ -32,8 +32,13 @@ Three rates the existing event log makes computable today:
   and the triage buffer alike (latest ``cutoff_ts`` wins), and a
   ``miss_ack`` event (written by ``memory_acknowledge_miss``) drops
   the one referenced miss from the numerator while the audited
-  denominator keeps its turn. The opt-in-retrieval contract's blind
-  spot: turns where the model should have searched but didn't.
+  denominator keeps its turn. When the caller passes
+  ``tombstoned_ids``, a miss whose canonical top-hit memory has been
+  tombstoned drops from the numerator (and the triage buffer) the
+  same way — ``health._silent_miss_stats``' filter #2 — while both
+  denominator buckets keep their turns. The opt-in-retrieval
+  contract's blind spot: turns where the model should have searched
+  but didn't.
 
 The methodology is described in ``docs/eval.md``. This module owns the
 pure computation; the CLI wrapper lives in ``server.py``.
@@ -354,6 +359,7 @@ def compute_eval(
     scope: str | None = None,
     endorsement_min_retrievals: int = DEFAULT_ENDORSEMENT_MIN_RETRIEVALS,
     silent_miss_limit: int = DEFAULT_SILENT_MISS_LIMIT,
+    tombstoned_ids: set[str] | None = None,
 ) -> EvalReport:
     """Build an ``EvalReport`` from active memories + the event stream.
 
@@ -383,13 +389,28 @@ def compute_eval(
     the ``since`` window, mirroring ``curation_counts``' delta-mode
     exemption. Streams carrying no markers count exactly as before.
 
-    A memory that's been tombstoned (no longer in ``memories``) still
-    counts toward retrieval / use occurrences — we attribute via id, not
-    via live status — but it cannot participate in cold-endorsement
-    rows because we need its body/scopes for display.
+    ``tombstoned_ids`` mirrors ``health._silent_miss_stats``' filter
+    #2: a ``search_miss`` whose canonical top-hit id
+    (``top_hits[0].id``) is in the set drops from the numerator and
+    the triage buffer — once the memory is gone the miss is no longer
+    actionable — while both audited denominator buckets keep their
+    turns (``turn_audited`` carries no per-memory payload). Default
+    ``None`` preserves the tombstone-blind behavior byte-identically,
+    so callers without a store handle (the comparative harness, the
+    scripted driver) are untouched; the CLI wrapper enumerates the
+    real set via ``store.load_tombstones()``, same as
+    ``health.report_for_directory``. Legacy ``top_hit_ids``-shaped
+    events carry no canonical top-hit id and fall through the filter
+    (health's can't-prove-tombstoned conservative read).
+
+    A memory that's been tombstoned still counts toward retrieval /
+    use occurrences — we attribute via id, not via live status — but
+    it cannot participate in cold-endorsement rows because we need
+    its body/scopes for display.
     """
     now = now or datetime.now(timezone.utc)
     cutoff: datetime | None = (now - since) if since is not None else None
+    tombstoned_ids = tombstoned_ids or set()
 
     # Live store: id → memory, for cold-endorsement rows + scope filter.
     by_id: dict[str, Memory] = {m.id: m for m in memories}
@@ -585,12 +606,13 @@ def compute_eval(
     # conservative read) is dropped from EVERYTHING: the miss-capable
     # and no_signal denominators, the numerator, the threshold-rule
     # tracking, and the inline triage buffer — as if it were never
-    # logged. An acked miss drops the same way but from the numerator
-    # side only: audits carry no `event_id`, and the audit itself
+    # logged. A tombstoned-top-hit miss and an acked miss drop the
+    # same way but from the numerator side only: audits carry neither
+    # a per-memory payload nor an `event_id`, and the audit itself
     # wasn't the false positive (the audit ran, the probe found
-    # something, the model acknowledged the verdict), so the
-    # denominator keeps its turn — filter #3 of
-    # `health._silent_miss_stats`.
+    # something, the model acknowledged the verdict — or the memory
+    # was later removed), so the denominator keeps its turn — filters
+    # #2 and #3 of `health._silent_miss_stats`.
     for ev in audit_telemetry:
         if latest_miss_cutoff is not None:
             ts = _parse_ts(ev.get("ts"))
@@ -610,6 +632,17 @@ def compute_eval(
             if isinstance(rule, str) and rule:
                 threshold_rule = rule
         else:  # search_miss
+            # Tombstone filter — health's filter #2, applied BEFORE the
+            # ack filter to mirror `_silent_miss_stats`' documented
+            # order (both `continue`, so the order is cosmetic). The
+            # extraction is canonical-only on purpose: reading the
+            # legacy `top_hit_ids` fallback here would drop events
+            # health still counts (its parser degrades that shape to
+            # None), splitting the two surfaces on old archives.
+            if tombstoned_ids:
+                top_hit_id = _canonical_top_hit_id(ev)
+                if top_hit_id is not None and top_hit_id in tombstoned_ids:
+                    continue
             event_id = ev.get("event_id")
             if isinstance(event_id, str) and event_id in acknowledged_miss_event_ids:
                 continue
@@ -810,6 +843,30 @@ def _wilson_interval(k: int, n: int, z: float = _WILSON_Z) -> tuple[float, float
 # so callers can compare against the tz-aware cutoff every rollup
 # derives from `datetime.now(timezone.utc)` without raising.
 _parse_ts = parse_event_ts
+
+
+def _canonical_top_hit_id(ev: dict[str, Any]) -> str | None:
+    """The tombstone-filter key for a ``search_miss`` event: the ``id``
+    of the first entry in the canonical ``top_hits`` payload, or None
+    when the shape is malformed or legacy.
+
+    Mirrors the ``top_hit_id`` half of ``health._parse_silent_miss_event``
+    exactly — canonical-only, NO ``top_hit_ids`` fallback. The legacy
+    fallback in ``_silent_miss_from_event`` exists for the renderer's
+    ``top_missed_id`` display; using it for the tombstone filter would
+    drop legacy events health's filter #2 counts (its parser reads the
+    legacy shape as None, which falls through on the
+    can't-prove-tombstoned conservative read), diverging the two
+    surfaces on pre-2.6.4 archives.
+    """
+    top_hits = ev.get("top_hits")
+    if isinstance(top_hits, list) and top_hits:
+        first = top_hits[0]
+        if isinstance(first, dict):
+            candidate = first.get("id")
+            if isinstance(candidate, str):
+                return candidate
+    return None
 
 
 def _silent_miss_from_event(ev: dict[str, Any]) -> SilentMissCandidate | None:
@@ -1134,37 +1191,100 @@ def compute_threshold_sweep(
     because the companion `turn_audited` event doesn't carry
     `top_hits`. That limitation is the calibration question
     `audit.py`'s docstring flags as open.
+
+    The two invalidation markers the rate surfaces
+    (`compute_eval` / `health.compute_health`) honor apply
+    ASYMMETRICALLY here, and the asymmetry is deliberate:
+
+    - `silent_miss_cutoff` (bulk, written by `bettermemory
+      consolidate --acknowledge-misses-before`) IS honored: events
+      earlier than the latest `cutoff_ts` drop from the replay set
+      and the legacy footnote alike, as if never logged. The cutoff
+      exists to retract batches flagged by a since-fixed code bug
+      (e.g. the v2.7.3 cwd-suppression batch) — those events were
+      never genuine rule decisions, so replaying them pollutes the
+      "is v1 over-firing" calibration with noise no rule change can
+      address. Resolution is global, like `compute_eval`'s: a cutoff
+      whose own ts falls outside `since` still applies, and the
+      latest `cutoff_ts` wins.
+    - `miss_ack` (per-event, written by `memory_acknowledge_miss`)
+      is deliberately NOT honored: an acked miss is a *confirmed
+      false positive of the current rule* — exactly the calibration
+      signal a stricter candidate is judged against ("would v2/v3/v4
+      have declined to flag the miss a human had to retract?").
+      Dropping acks would blind the sweep to precisely the events it
+      exists to learn from. The rate surfaces drop them because they
+      report *outstanding actionable misses*; the sweep replays
+      *rule decisions*.
     """
     now = now or datetime.now(timezone.utc)
     cutoff: datetime | None = (now - since) if since is not None else None
     rules_in_use = rules or THRESHOLD_RULES
 
-    replayable: list[tuple[list[dict[str, Any]], int]] = []
+    # In-window `search_miss` rows buffered as (ts, top_hits-or-None,
+    # recent) for post-pass resolution against the invalidation cutoff —
+    # same buffer-then-resolve shape as `compute_eval`, because a
+    # `silent_miss_cutoff` later in the log must be able to retract
+    # earlier telemetry. `top_hits is None` marks the legacy
+    # `top_hit_ids`-only shape, buffered rather than counted inline so a
+    # cutoff-invalidated legacy event doesn't inflate the honesty
+    # footnote with a row that was never valid telemetry.
+    buffered: list[tuple[datetime | None, list[dict[str, Any]] | None, int]] = []
     total_events_scanned = 0
-    legacy_skipped = 0
+    latest_miss_cutoff: datetime | None = None
     for ev in events:
         if not isinstance(ev, dict):
             continue
         total_events_scanned += 1
-        if cutoff is not None:
-            ts = _parse_ts(ev.get("ts"))
-            if ts is None or ts < cutoff:
-                continue
-        if ev.get("kind") != "search_miss":
+        kind = ev.get("kind")
+        # Marker resolution BEFORE the `since` window filter — global
+        # semantics, mirroring `compute_eval`: a cutoff whose own ts
+        # falls outside the window still applies, so a windowed sweep
+        # can't replay events every rate surface has already
+        # invalidated. Latest `cutoff_ts` wins; a malformed value
+        # parses to None and is ignored. `miss_ack` events are
+        # deliberately not resolved here — see the docstring.
+        if kind == "silent_miss_cutoff":
+            parsed_cutoff = _parse_ts(ev.get("cutoff_ts"))
+            if parsed_cutoff is not None and (
+                latest_miss_cutoff is None or parsed_cutoff > latest_miss_cutoff
+            ):
+                latest_miss_cutoff = parsed_cutoff
+            continue
+        if kind != "search_miss":
+            continue
+        ts = _parse_ts(ev.get("ts"))
+        if cutoff is not None and (ts is None or ts < cutoff):
             continue
         top_hits = ev.get("top_hits")
         if not isinstance(top_hits, list):
             # Legacy hook shape carried `top_hit_ids` only — no relevance
-            # label, so no rule can re-evaluate. Skip but count for the
-            # denominator-honesty footnote.
+            # label, so no rule can re-evaluate. Buffer as legacy so a
+            # cutoff-surviving row still lands in the honesty footnote.
             if isinstance(ev.get("top_hit_ids"), list):
-                legacy_skipped += 1
+                buffered.append((ts, None, 0))
             continue
         recent = ev.get("recent_retrieval_count")
         # `bool` ⊂ `int` — same caveat as `_silent_miss_from_event`.
         if not isinstance(recent, int) or isinstance(recent, bool):
             recent = 0
-        replayable.append((top_hits, recent))
+        buffered.append((ts, top_hits, recent))
+
+    # Resolve against the cutoff: an invalidated event (ts strictly
+    # before `cutoff_ts`; an unparseable ts drops too once a cutoff
+    # exists — `health._count_post_cutoff`'s conservative read)
+    # vanishes from the replay set AND the legacy footnote, as if it
+    # were never logged. With no cutoff in the stream this loop is the
+    # identity split the pre-buffer inline code performed.
+    replayable: list[tuple[list[dict[str, Any]], int]] = []
+    legacy_skipped = 0
+    for ts, top_hits, recent in buffered:
+        if latest_miss_cutoff is not None and (ts is None or ts < latest_miss_cutoff):
+            continue
+        if top_hits is None:
+            legacy_skipped += 1
+        else:
+            replayable.append((top_hits, recent))
 
     # Compute v1's flag count first — it acts as the reference for
     # `delta_from_v1` on every other row.

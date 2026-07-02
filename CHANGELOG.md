@@ -28,7 +28,28 @@ spells out exactly what's stable.
   the inline triage list alike; an acked miss drops from the numerator
   only, since the audit itself wasn't the false positive. Streams with
   no cutoff/ack events — including the comparative harness's — are
-  byte-identical to before.
+  byte-identical to before. Follow-up in the same defect class closed
+  the two remaining gaps: (a) **tombstone parity** — health's
+  `_silent_miss_stats` also drops misses whose canonical top-hit
+  memory has been tombstoned (numerator only; the audited denominator
+  keeps its turns), which `compute_eval` couldn't see (its `memories`
+  param is active-only), so after a miss's top-hit was removed the
+  eval CLI's numerator exceeded `memory_health`'s `miss_total` over
+  the same stream. `compute_eval` now takes an optional
+  `tombstoned_ids` set (default `None` — byte-identical, so the
+  comparative harness / scripted driver are untouched) applying
+  health's filter #2 exactly (canonical `top_hits[0].id` only — no
+  legacy `top_hit_ids` fallback, matching health's conservative
+  read), and the eval CLI passes the store's real tombstone set. (b)
+  **threshold-sweep policy** — `compute_threshold_sweep` replayed ALL
+  logged misses, including bulk-cutoff-invalidated ones (flagged by a
+  since-fixed code bug, so replaying them polluted the "is v1
+  over-firing" calibration); it now applies the `silent_miss_cutoff`
+  filter with the same global latest-wins resolution, while
+  deliberately RETAINING acked misses in the replay — a confirmed
+  false positive is exactly the calibration signal a stricter rule is
+  judged against — with the asymmetry documented in the sweep
+  docstring and docs/eval.md.
 
 ### Removed
 

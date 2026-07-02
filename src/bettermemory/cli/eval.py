@@ -222,6 +222,13 @@ def _cli_eval(
         scope=scope,
         endorsement_min_retrievals=floor,
         silent_miss_limit=silent_miss_limit,
+        # Same enumeration `health.report_for_directory` and the
+        # scope-overview handler feed `compute_health`, so the eval
+        # CLI's silent-miss numerator applies the identical tombstone
+        # filter (health's `_silent_miss_stats` filter #2) — a miss
+        # whose top-hit memory was since removed is no longer
+        # actionable and must not keep the two surfaces disagreeing.
+        tombstoned_ids={t.id for t in store.load_tombstones()},
     )
     if json_out:
         sys.stdout.write(_json.dumps(report.to_dict(), indent=2) + "\n")
