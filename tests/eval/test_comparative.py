@@ -327,6 +327,25 @@ def test_cli_driver_scripted_emits_full_trio(capsys):
     assert data["silent_miss_rate"]["rate"] is not None
 
 
+def test_cli_driver_scripted_text_carries_scripted_disclaimer(capsys):
+    """`--driver scripted` WITHOUT --json takes the render_driver_text arm —
+    zero-covered since the live CLI test was deleted. The SCRIPTED / "NOT a
+    measurement" header is load-bearing per render_driver_text's own docstring
+    (it keeps copy-pasted CLI output from being passed off as a measurement,
+    the eval's core honesty concern), so pin it here — plus one rate line
+    proving the _fmt_rate wiring — lest a future edit silently drop the
+    disclaimer while the suite stays green."""
+    from .comparative import main
+
+    rc = main(["--driver", "scripted"])
+    assert rc == 0
+    out = capsys.readouterr().out
+    # The load-bearing header: authored demonstration, not a measurement.
+    assert "SCRIPTED" in out and "NOT a measurement" in out
+    # One rate line proves the _fmt_rate wiring reached the text render.
+    assert "memory_helped_rate" in out
+
+
 def test_run_driver_silent_miss_follows_search_decision_not_hits():
     """End-to-end F1: the silent-miss lane is driven by the agent's search
     DECISION, decoupled from whether hits exist. An agent that never searches
