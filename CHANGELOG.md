@@ -60,6 +60,21 @@ tombstoned top-hits). Tests 2,533 → 2,552; no breaking changes
   false positive is exactly the calibration signal a stricter rule is
   judged against — with the asymmetry documented in the sweep
   docstring and docs/eval.md.
+- **Corrupt event-log lines that parse as valid JSON but not an object
+  no longer crash `memory_health`.** A hand-edited / partially
+  overwritten line in the plain-text, git-syncable event log that
+  json-parses to a list, string, number, or null slipped past the
+  reader's JSONDecodeError guard and flowed to consumers as a non-dict,
+  violating the iterator's declared `Iterator[dict]` contract: the eval
+  surfaces' isinstance guards skipped the row, but `compute_health`'s
+  first `ev.get(...)` raised AttributeError — one corrupt line took
+  `memory_health` / `memory_scope_overview` / `report_for_directory`
+  down entirely, the same eval-vs-health corrupt-row-tolerance
+  divergence this release's theme covers. Such lines are now skipped at
+  the shared parse site (`_iter_json_lines`) like any other corrupt
+  line, so every reader — `iter_events`, `iter_all_events`,
+  `iter_events_window` — is protected identically, matching the eval
+  surfaces.
 
 ### Removed
 

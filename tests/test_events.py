@@ -88,6 +88,35 @@ def test_iter_events_skips_invalid_utf8_in_active_log(tmp_path: Path) -> None:
     assert [e["kind"] for e in events] == ["write", "show"]
 
 
+def test_iter_events_skips_valid_json_non_object_lines(tmp_path: Path) -> None:
+    """A line that parses as VALID JSON but isn't an object (`[1,2,3]`,
+    `"a string"`, `42`, `null` — a hand-edit or partial overwrite of this
+    plain-text, git-syncable log) must be skipped like any other corrupt
+    line. Regression: json.loads succeeded, so the JSONDecodeError guard
+    never fired and the non-dict leaked through the Iterator[dict]
+    contract — the eval rollups' isinstance guards tolerated it, but
+    compute_health's first `ev.get(...)` raised AttributeError, taking
+    memory_health / scope_overview / report_for_directory down with it.
+    """
+    rec = Recorder(root=tmp_path, session_id="sess_test")
+    rec.record("write", id="01HXYZ", scopes=["tools"])
+    log_path = tmp_path / EVENT_LOG_FILENAME
+    with log_path.open("a", encoding="utf-8") as f:
+        f.write("[1, 2, 3]\n")
+        f.write('"a string"\n')
+    rec.record("show", id="01HXYZ")
+    with log_path.open("a", encoding="utf-8") as f:
+        f.write("42\n")
+        f.write("null\n")
+        f.write("not json at all\n")
+    rec.record("search", query="anything")
+
+    events = list(iter_events(tmp_path))  # must not yield a non-dict
+    assert all(isinstance(e, dict) for e in events)
+    # ONLY the dict events survive, in write order.
+    assert [e["kind"] for e in events] == ["write", "show", "search"]
+
+
 def test_iter_all_events_survives_corrupt_archives_and_bytes(tmp_path: Path) -> None:
     """A truncated/CRC-corrupt gzip archive or an invalid-UTF-8 byte must not
     crash iter_all_events. It is the sole reader for memory_health,

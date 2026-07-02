@@ -2201,6 +2201,42 @@ def test_report_for_directory_loads_store_and_events(
     assert report.heavily_used[0].applied_count == 1
 
 
+def test_report_for_directory_survives_valid_json_non_object_line(
+    memory_dir: Path,
+) -> None:
+    """A corrupt event-log line that parses as VALID JSON but not an
+    object (`[1, 2, 3]` — a hand-edit of the plain-text, git-syncable
+    log) must not crash the health rollup. Regression: json.loads
+    succeeded, so the reader's JSONDecodeError guard never fired and
+    the list flowed through iter_all_events into handle_event, whose
+    first `ev.get(...)` raised AttributeError — taking memory_health /
+    memory_scope_overview / report_for_directory down with it (the
+    eval surfaces' own isinstance guards skipped the same row). The
+    reader now drops the line for every consumer, so the corrupted
+    log must produce the SAME report as the uncorrupted one.
+    """
+    from bettermemory.events import EVENT_LOG_FILENAME, Recorder
+    from bettermemory.store import Store
+
+    store = Store(memory_dir)
+    rec = Recorder(root=memory_dir, session_id="sess_test")
+    m = store.write(content="durable fact", scopes=["tools"])
+    rec.record("search", query="anything", returned=[m.id], relevance=["high"])
+    rec.record("use", ids=[m.id], outcome="applied")
+    # Fixed `now` so both reports derive every age/window from
+    # identical inputs and the comparison below is exact.
+    now = _utc(2026, 5, 1)
+    baseline = report_for_directory(memory_dir, heavily_used_min_applied=1, now=now)
+
+    with (memory_dir / EVENT_LOG_FILENAME).open("a", encoding="utf-8") as f:
+        f.write("[1, 2, 3]\n")
+
+    # Must not raise — and the skipped line contributes nothing, not
+    # even to total_events (it never reaches handle_event).
+    report = report_for_directory(memory_dir, heavily_used_min_applied=1, now=now)
+    assert report.to_dict() == baseline.to_dict()
+
+
 # ---------------------------------------------------------------------------
 # Change C — auto vs explicit applied count split
 # ---------------------------------------------------------------------------

@@ -510,6 +510,18 @@ def _iter_json_lines(f: Any) -> Iterator[dict[str, Any]]:
     - a truncated gzip archive: `readline` raises EOFError (not an OSError).
     - a CRC-corrupt gzip archive: `readline` raises zlib.error (not OSError).
 
+    A fourth mode crashes not the reader but its consumers: a line that
+    parses as VALID JSON yet isn't an object (`[1, 2, 3]`, `"a string"`,
+    `42`, `null` — a hand-edit or partial overwrite of this plain-text,
+    git-syncable log). `json.loads` succeeds, so the JSONDecodeError
+    guard never fires, and the non-dict used to flow straight through
+    the declared Iterator[dict] contract: the eval rollups' isinstance
+    guards tolerated it, but `compute_health`'s first `ev.get(...)`
+    raised AttributeError, taking memory_health / scope_overview /
+    report_for_directory down with it. Such lines are now skipped here
+    — at the single parse site every reader shares — exactly like any
+    other corrupt line.
+
     Reading line-by-line under a try lets a truncated/corrupt archive still
     yield its readable prefix rather than contributing nothing.
     """
@@ -524,9 +536,16 @@ def _iter_json_lines(f: Any) -> Iterator[dict[str, Any]]:
         if not line:
             continue
         try:
-            yield json.loads(line)
+            parsed = json.loads(line)
         except json.JSONDecodeError:
             continue
+        # Fourth corruption mode (docstring): valid JSON, wrong shape.
+        # The parse succeeded but the value isn't an object — yielding
+        # it would violate the Iterator[dict] contract every consumer
+        # types against. Skip it like any other corrupt line.
+        if not isinstance(parsed, dict):
+            continue
+        yield parsed
 
 
 def iter_events(root: Path) -> Iterator[dict[str, Any]]:
