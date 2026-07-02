@@ -74,7 +74,9 @@ packages = ["src/bettermemory"]
 # falls back to "everything not gitignored". These caches are not
 # tracked but the gitignore alone isn't a hard guarantee; spell out
 # the dev/test cruft so the sdist on PyPI stays tight and
-# reproducible.
+# reproducible. `.claude` is the highest-stakes entry: session
+# scratch plus Workflow-agent worktrees — full untracked copies of
+# the whole repo that must never sweep into a published sdist.
 exclude = [
     ".hypothesis",
     ".mypy_cache",
@@ -83,6 +85,7 @@ exclude = [
     ".coverage*",
     ".DS_Store",
     ".envrc",
+    ".claude",
     "dist",
     "venv",
     ".venv",
