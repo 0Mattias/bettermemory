@@ -177,31 +177,39 @@ MIN_PROBE_CONTENT_TOKENS = 2
 # query terms; they're only noise as a COMPLETE probe query. Mixed
 # messages ("looks good, now update the backup docs") still pass the
 # gate because their non-acknowledgment tokens fall outside the set.
+#
+# The surface spellings are canonicalised through `tokenize` at import
+# so the set is always in the tokenizer's own normal form — the gate
+# compares against tokenize() output, and a hand-maintained literal set
+# silently detached from it when tokenizer v2 started stemming
+# ('done' → 'don', 'looks' → 'look'). Mapping at import means the two
+# can't drift again.
+_ACK_SURFACE: tuple[str, ...] = (
+    "agreed",
+    "all",
+    "correct",
+    "done",
+    "exactly",
+    "fine",
+    "good",
+    "great",
+    "lgtm",
+    "looks",
+    "nice",
+    "ok",
+    "okay",
+    "perfect",
+    "right",
+    "sounds",
+    "sure",
+    "thanks",
+    "works",
+    "yeah",
+    "yep",
+    "yes",
+)
 _ACK_TOKENS: frozenset[str] = frozenset(
-    {
-        "agreed",
-        "all",
-        "correct",
-        "done",
-        "exactly",
-        "fine",
-        "good",
-        "great",
-        "lgtm",
-        "looks",
-        "nice",
-        "ok",
-        "okay",
-        "perfect",
-        "right",
-        "sounds",
-        "sure",
-        "thanks",
-        "works",
-        "yeah",
-        "yep",
-        "yes",
-    }
+    tok for word in _ACK_SURFACE for tok in tokenize(word)
 )
 
 # Closed set of `triggered_from` discriminator values for `turn_audited`

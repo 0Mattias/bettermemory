@@ -49,10 +49,10 @@ def test_tokenize_preserves_unicode_letters() -> None:
     'nino' are one token), so the prefilter and the Python rankers
     agree. Pin the regression so a future "tighten the token regex"
     change can't quietly re-break it."""
-    assert tokenize("Niño café") == ["nino", "cafe"]
+    assert tokenize("Niño café") == ["nino", "caf"]
     assert tokenize("Mañana 2026 Zürich") == ["manana", "2026", "zurich"]
     # Mixed ASCII + non-ASCII inside one kebab token also stays whole.
-    assert tokenize("café-bar") == ["cafe-bar"]
+    assert tokenize("café-bar") == ["caf-bar"]
 
 
 def test_unicode_query_finds_unicode_body() -> None:
@@ -111,7 +111,7 @@ def test_tokenize_strips_contraction_fragments() -> None:
     assert tokenize("I'm") == ["i"]
     # The strip is anchored to the apostrophe: standalone tokens that
     # happen to spell a contraction suffix are untouched.
-    assert tokenize("the re module") == ["the", "re", "module"]
+    assert tokenize("the re module") == ["the", "re", "modul"]
 
 
 def test_contraction_query_relevance_high_for_full_answer() -> None:
@@ -137,7 +137,7 @@ def test_joined_query_token_matches_spaced_body() -> None:
     a = _memory("Claude Code hooks run before every tool call")
     hits = search([a], "claude-code")
     assert hits and hits[0].id == a.id
-    assert "claude-code" in hits[0].match_terms
+    assert "claud-cod" in hits[0].match_terms
 
 
 def test_separator_variant_query_matches_body() -> None:
@@ -156,7 +156,7 @@ def test_tokenize_keeps_dotted_version_whole() -> None:
     """Dotted numeric literals are first-class memory content ('Postgres
     16.3') — splitting them on '.' turned the version into free-floating
     digit tokens that matched any enumeration digit."""
-    assert tokenize("postgres 16.3 upgrade") == ["postgres", "16.3", "upgrade"]
+    assert tokenize("postgres 16.3 upgrade") == ["postgr", "16.3", "upgrad"]
     assert tokenize("python 3.12.1") == ["python", "3.12.1"]
 
 
@@ -225,8 +225,8 @@ def test_tokenize_symbol_identifier_aliases() -> None:
     'C++' -> 'c' made C/C++/C#/Objective-C mutually indistinguishable and
     matched list-enumeration bodies ('a. ..., b. ..., c. ...'). The fixed
     alias allowlist normalizes them symmetrically on both sides."""
-    assert tokenize("C++ style guide") == ["cpp", "style", "guide"]
-    assert tokenize("C++20 modules") == ["cpp", "20", "modules"]
+    assert tokenize("C++ style guide") == ["cpp", "styl", "guid"]
+    assert tokenize("C++20 modules") == ["cpp", "20", "modul"]
     assert tokenize("C# and F# on .NET") == ["csharp", "and", "fsharp", "on", "dotnet"]
     # Word-ish boundaries: 'asp.net' is not the standalone '.NET' name.
     assert tokenize("asp.net") == ["asp", "net"]
@@ -491,8 +491,8 @@ def test_stopwords_stripped_but_real_terms_still_match() -> None:
 def test_hit_includes_match_terms() -> None:
     a = _memory("python list comprehension performance notes")
     hits = search([a], "python performance")
-    assert hits[0].match_terms == ["python", "performance"] or hits[0].match_terms == [
-        "performance",
+    assert hits[0].match_terms == ["python", "performanc"] or hits[0].match_terms == [
+        "performanc",
         "python",
     ]
 
@@ -842,3 +842,162 @@ def test_find_similar_ignores_recency() -> None:
     candidate = "vendored python-frontmatter to drop the deprecated codecs.open call"
     hits = find_similar(candidate, [old])
     assert hits and hits[0].relevance == "high"
+
+
+# ---------------------------------------------------------------------------
+# Tokenizer v2 — CJK bigrams, plural stemming, multilingual stopwords
+# (the six deferred segmentation/inflection findings from the 2026-06-09
+# extractor hunt, shipped as one coherent feature)
+# ---------------------------------------------------------------------------
+
+
+def test_stem_folds_plural_query_onto_singular_body() -> None:
+    """Audit repro ('no stemming anywhere in the pipeline'): users
+    naturally pluralize when asking — 'what do I have about standups?' —
+    while bodies record the singular. Exact-equality matching made that a
+    total miss in every lexical ranker. The light stemmer folds the
+    inflection symmetrically, so the query now hits in keyword, bm25,
+    and hybrid modes, and a partially-matching phrasing at least
+    surfaces the memory instead of returning nothing."""
+    body = _memory("Daily standup is at 9:15 in the office")
+    for mode in ("keyword", "bm25", "hybrid"):
+        hits = search([body], "standups", mode=mode)
+        assert hits, f"plural query missed singular body in mode={mode}"
+        assert hits[0].relevance == "high"
+    assert search([body], "standups schedule", mode="hybrid")
+
+
+def test_stem_equality_pairs() -> None:
+    """The stem is an index KEY, not a word — what matters is that both
+    inflections of one lexeme land on the same key. The final-e
+    normalisation is what lets '-es attachment' ambiguity fold both
+    ways: 'branches' (branch+es) and 'caches' (cache+s) both end in
+    'ches' and no dictionary-free rule can split them, but collapsing
+    final 'e' everywhere makes both pairs meet."""
+    pairs = [
+        ("standups", "standup"),
+        ("branches", "branch"),
+        ("caches", "cache"),
+        ("fixes", "fix"),
+        ("boxes", "box"),
+        ("policies", "policy"),
+        ("queries", "query"),
+        ("classes", "class"),
+        ("repos", "repo"),
+        ("files", "file"),
+        ("dotfiles", "dotfile"),
+        ("migrations", "migration"),
+        ("containers", "container"),
+        ("indexes", "index"),
+    ]
+    for plural, singular in pairs:
+        assert tokenize(plural) == tokenize(singular), (plural, singular)
+
+
+def test_stem_guards() -> None:
+    """The conservative edges: guards that keep the stemmer from
+    manufacturing noise. Stopwords are exempt by surface form ('does'
+    must not leak the content token 'doe' past the audit gate);
+    rule-chain results that LAND on a stopword revert ('ones' must not
+    strip-then-e-drop into the stopword 'on'); 'ss'/'us'/'is' endings,
+    digit-final acronyms, and 3-letter tokens stay whole."""
+    assert tokenize("does") == ["does"]
+    assert tokenize("news") == ["news"]
+    assert tokenize("k8s") == ["k8s"]
+    assert tokenize("aws dns yes") == ["aws", "dns", "yes"]
+    assert tokenize("status class basis redis") == [
+        "status",
+        "class",
+        "basis",
+        "redis",
+    ]
+    # e-drop blocked when the result would be a stopword: 'note' -> 'not'
+    # and 'theme' -> 'them' both stay whole, so 'notes'/'themes' still
+    # meet their singulars.
+    assert tokenize("notes") == tokenize("note") == ["note"]
+    assert tokenize("themes") == tokenize("theme") == ["theme"]
+    assert tokenize("ones") == tokenize("one") == ["one"]
+
+
+def test_stem_applies_per_compound_segment() -> None:
+    """Compounds stem segment-by-segment so the whole token, its
+    `_expand_kebab` parts, and the `_kebab_parts` conjunctive fallback
+    all speak the same stemmed form."""
+    assert tokenize("docker-containers") == ["docker-container"]
+    assert tokenize("feature_branches") == ["featur-branch"]
+
+
+def test_cjk_body_searchable_via_bigrams() -> None:
+    """Audit repro ('CJK memory bodies tokenize as one giant token'):
+    the exact body from the finding. Every realistic query — a word, a
+    compound, a fragment — previously scored zero in all rankers; with
+    symmetric bigram segmentation they all hit."""
+    body = _memory("東京オフィスは2026年に移転する予定")
+    for query in ("東京", "移転", "東京オフィス", "2026"):
+        for mode in ("keyword", "bm25", "hybrid"):
+            hits = search([body], query, mode=mode)
+            assert hits, f"CJK query {query!r} missed in mode={mode}"
+    # An unrelated CJK query stays a miss — bigrams don't hand out
+    # matches for free.
+    assert search([body], "大阪城", mode="hybrid") == []
+
+
+def test_cjk_bigram_tokenization_shapes() -> None:
+    """Bigram mechanics: runs of length >= 2 emit overlapping bigrams,
+    a stranded single char emits itself, and mixed-script tokens keep
+    their Latin/digit chunks whole alongside the bigrams."""
+    assert tokenize("東京") == ["東京"]
+    assert tokenize("車") == ["車"]
+    assert tokenize("2026年に移転") == ["2026", "年に", "に移", "移転"]
+
+
+def test_multilingual_stopwords_query_side() -> None:
+    """Audit repro (multilingual stopword lists): non-English filler no
+    longer counts as content. The collision-curated skips stay
+    searchable — 'vi', 'man', 'du', 'mit', 'war' are real tech
+    vocabulary and must NOT be stripped."""
+    from bettermemory.search import _strip_stopwords
+
+    assert _strip_stopwords(tokenize("och att det som en av")) == []
+    assert _strip_stopwords(tokenize("der und ist nicht auch")) == []
+    assert _strip_stopwords(tokenize("le la les dans avec")) == []
+    assert _strip_stopwords(tokenize("el los para por cuando")) == []
+    # Folded spellings match what folded tokens look like.
+    assert _strip_stopwords(tokenize("är på över")) == ["over"]
+    # Deliberate skips (documented collisions) survive stripping.
+    kept = _strip_stopwords(tokenize("vi man du mit war"))
+    assert kept == ["vi", "man", "du", "mit", "war"]
+
+
+def test_swedish_query_hits_english_body() -> None:
+    """End-to-end: a natural Swedish retrieval phrasing is filler plus
+    one content token, so the on-topic memory now labels 'high' instead
+    of drowning in an inflated coverage denominator."""
+    body = _memory("Postgres 16 runs on the NAS")
+    hits = search([body], "finns det mer om postgres")
+    assert hits and hits[0].relevance == "high"
+
+
+def test_fts_match_query_emits_normalised_tokens_only() -> None:
+    """Schema v4 indexes `fts_index_text` output, so the MATCH builder
+    emits tokenize()'s normal forms directly — no raw-symbol OR arm
+    ('c++') and no unstemmed spellings."""
+    from bettermemory.search import fts_match_query
+
+    assert fts_match_query("C++ modules") == '"cpp" OR "modul"'
+    assert fts_match_query("standups") == '"standup"'
+    assert fts_match_query("claude-code") == '("claud-cod" OR ("claud" AND "cod"))'
+
+
+def test_fts_index_text_carries_stems_bigrams_and_parts() -> None:
+    """`fts_index_text` is the indexed side of prefilter/ranker parity:
+    it must carry the stemmed forms, the CJK bigrams, and the kebab
+    expansion (compound plus parts) the rankers score."""
+    from bettermemory.search import fts_index_text
+
+    text = fts_index_text("Claude-Code caches 東京タワー data")
+    toks = text.split()
+    assert "claud-cod" in toks  # compound, stemmed per segment
+    assert "claud" in toks and "cod" in toks  # expanded parts
+    assert "cach" in toks  # 'caches' stem
+    assert "東京" in toks and "京タ" in toks  # bigrams

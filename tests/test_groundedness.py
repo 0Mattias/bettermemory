@@ -410,3 +410,71 @@ def test_shared_compound_counted_once() -> None:
     assert len(flagged_hyphen) == 1
     assert len(flagged_plain) == 1
     assert flagged_hyphen[0].overlap_ratio == flagged_plain[0].overlap_ratio
+
+
+# ---------------------------------------------------------------------------
+# Tokenizer v2 — CJK segmentation and multilingual stopwords in the gate
+# ---------------------------------------------------------------------------
+
+
+def test_cjk_hallucinated_claim_flagged() -> None:
+    """Audit repro ('CJK bodies bypass the gate entirely'): the exact
+    fabricated claim from the finding — user lives in Tokyo, owns three
+    cats — against a transcript about editor dark mode. Pre-v2 the
+    whole sentence was 2 giant tokens, fell under MIN_CONTENT_TOKENS,
+    and passed silently; bigram tokens put it through the ratio test,
+    where it shares nothing and flags."""
+    body = "用户住在东京，养了三只猫。"
+    transcript = (
+        "User: 我想把编辑器切换成深色模式。 Assistant: 好的，已经把主题改成深色了。"
+    )
+    flagged = check_groundedness(body, transcript)
+    assert len(flagged) == 1
+    assert flagged[0].overlap_ratio == 0.0
+
+
+def test_cjk_grounded_paraphrase_passes() -> None:
+    """The finding's other direction: a grounded CJK restatement used to
+    require a character-identical clause to count as anchored. Bigram
+    overlap grounds a normal paraphrase."""
+    transcript = "User: 部署时间表改了吗？ Assistant: 是的，部署时间表改到每周五下午。"
+    body = "部署时间表是每周五下午。"
+    assert check_groundedness(body, transcript) == []
+
+
+def test_fullwidth_terminator_splits_sentences() -> None:
+    """The splitter treats 。！？； as sentence boundaries WITHOUT
+    requiring trailing whitespace (CJK prose has none), so a
+    hallucinated second sentence can't hide behind a grounded first."""
+    transcript = "User: 部署时间表改到每周五下午。"
+    body = "部署时间表是每周五下午。用户养了三只猫。"
+    flagged = check_groundedness(body, transcript)
+    assert len(flagged) == 1
+    assert "三只猫" in flagged[0].sentence
+
+
+def test_swedish_hallucination_no_longer_grounds_on_function_words() -> None:
+    """Audit repro ('stopword defense is English-only'): a fabricated
+    Swedish claim used to clear the 30% bar purely on {vill, att, på}
+    against any Swedish transcript. Those are stopwords now, so the
+    claim's real content tokens carry the ratio — and they anchor
+    nowhere."""
+    body = "Användaren vill att alla möten ska bokas på fredagar."
+    transcript = (
+        "User: Jag vill att temat ska vara mörkt på kvällen. "
+        "Assistant: Klart, mörkt tema på kvällen."
+    )
+    flagged = check_groundedness(body, transcript)
+    assert len(flagged) == 1
+
+
+def test_swedish_grounded_claim_passes() -> None:
+    """Symmetry check for the test above: a Swedish claim that IS
+    anchored in the transcript's content vocabulary still passes once
+    the filler is stripped."""
+    transcript = (
+        "User: Jag vill att temat ska vara mörkt på kvällen. "
+        "Assistant: Klart, mörkt tema på kvällen."
+    )
+    body = "Mörkt tema på kvällen."
+    assert check_groundedness(body, transcript) == []

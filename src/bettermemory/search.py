@@ -100,23 +100,18 @@ _CONTRACTION_RE = re.compile(r"(?<=\w)['’](?:s|t|d|m|ll|re|ve)\b")
 #
 # Each entry carries the raw surface spelling alongside the pattern (the
 # patterns themselves are NOT mechanically derivable from it — e.g. 'c++'
-# deliberately drops the trailing `(?!\w)` guard so 'C++20' still aliases)
-# so `_SYMBOL_ALIAS_RAW` below is derived from the same row and the FTS5
-# prefilter's reverse mapping can't drift from the forward aliasing.
+# deliberately drops the trailing `(?!\w)` guard so 'C++20' still aliases).
+# Since index schema v4 the raw spelling is documentation only: the FTS
+# table indexes `fts_index_text` output — the SAME normalised tokens the
+# rankers see — so a query token 'cpp' matches the indexed 'cpp' directly
+# and the old reverse map ('cpp' -> also try '"c++"', because raw bodies
+# indexed 'C++' as the bare unicode61 token 'c') has nothing left to widen.
 _SYMBOL_ALIASES: tuple[tuple[re.Pattern[str], str, str], ...] = (
     (re.compile(r"(?<!\w)c\+\+"), "cpp ", "c++"),
     (re.compile(r"(?<!\w)c#(?!\w)"), "csharp", "c#"),
     (re.compile(r"(?<!\w)f#(?!\w)"), "fsharp", "f#"),
     (re.compile(r"(?<!\w)\.net(?!\w)"), "dotnet", ".net"),
 )
-
-# Reverse alias map for `fts_match_query`: normalised alias token -> raw
-# surface spelling, so a query token the forward pass produced ('cpp') can
-# also be matched against bodies the FTS5 index tokenized from the raw
-# spelling ('C++' indexes as the bare token 'c' under unicode61).
-_SYMBOL_ALIAS_RAW: dict[str, str] = {
-    replacement.strip(): raw for _, replacement, raw in _SYMBOL_ALIASES
-}
 
 
 # Short English stopword list. Stripped from the *query* only — bodies stay
@@ -128,11 +123,16 @@ _SYMBOL_ALIAS_RAW: dict[str, str] = {
 # indefinite pronouns ('anything', 'something', 'everything') are pure
 # grammatical filler within word classes the list already covers; without
 # them, natural retrieval phrasings ("anything stored about X") deflate the
-# relevance-coverage denominator and label exact-topic hits 'low'.
-_STOPWORDS = frozenset(
+# relevance-coverage denominator and label exact-topic hits 'low'. 'am' and
+# the third-person pronouns (he/she/him/his/her/hers) complete the pronoun
+# rows that were already here; 'her' doubles as the guard that keeps the
+# final-e normalisation in `_stem_segment` from folding 'here' into a
+# content token.
+_STOPWORDS_EN = frozenset(
     {
         "a",
         "about",
+        "am",
         "an",
         "and",
         "anything",
@@ -151,6 +151,11 @@ _STOPWORDS = frozenset(
         "had",
         "has",
         "have",
+        "he",
+        "her",
+        "hers",
+        "him",
+        "his",
         "how",
         "i",
         "if",
@@ -166,6 +171,7 @@ _STOPWORDS = frozenset(
         "of",
         "on",
         "or",
+        "she",
         "so",
         "something",
         "than",
@@ -198,6 +204,262 @@ _STOPWORDS = frozenset(
     }
 )
 
+# Non-English function-word lists (tokenizer v2). Same philosophy as the
+# English list — short, high-frequency grammatical filler only — covering
+# the languages that show up in real stores (this user's sessions are
+# partly Swedish; the groundedness gate's stopword defence was previously
+# English-only, so a hallucinated non-English claim could anchor on pure
+# filler like 'vill'/'att'/'på'). Two ground rules:
+#
+# - Entries are spelled in their POST-`_fold_diacritics` form ('på' → 'pa',
+#   'är' → 'ar', 'über' → 'uber', 'où' → 'ou'): membership tests run on
+#   folded tokens, so an accented spelling here would never match anything.
+# - Function words that collide with live tech vocabulary stay OUT, even
+#   when high-frequency in their language: 'vi'/'du'/'man' (unix commands
+#   and man-pages), 'ni' (rare anyway), 'men' (English plural of man),
+#   'mit' (the license), 'war' (Java .war artifacts), 'du'/'mon'/'son'/
+#   'car'/'plus'/'meme' (fr: disk-usage, monitoring shorthand, English
+#   nouns, memes), 'y'/'o'/'sin'/'con'/'son' (es: math variables, big-O,
+#   sin(), pros-and-cons). Accepted borderline collisions, documented so
+#   nobody re-litigates them one at a time: 'ar' (unix archiver), 'pa'
+#   (PA systems), 'es' (Elasticsearch shorthand), 'est' (the timezone),
+#   'en'/'de' (locale codes, particles in names) — a query for those as
+#   standalone terms is far rarer than the function word is in its
+#   language, and stripping them still leaves the query's real content
+#   tokens to match on.
+_STOPWORDS_SV = frozenset(
+    {
+        "och",
+        "att",
+        "det",
+        "den",
+        "som",
+        "en",
+        "ett",
+        "av",
+        "ar",
+        "pa",
+        "med",
+        "till",
+        "inte",
+        "har",
+        "hade",
+        "ska",
+        "skulle",
+        "kan",
+        "kunde",
+        "vill",
+        "ville",
+        "jag",
+        "han",
+        "hon",
+        "dom",
+        "sig",
+        "sin",
+        "sitt",
+        "nar",
+        "dar",
+        "vad",
+        "vem",
+        "hur",
+        "varfor",
+        "om",
+        "eller",
+        "sa",
+        "nu",
+        "da",
+        "sedan",
+        "innan",
+        "mycket",
+        "mer",
+        "mest",
+        "alla",
+        "allt",
+        "bara",
+        "ocksa",
+        "aven",
+        "utan",
+        "vara",
+        "blir",
+        "blev",
+        "finns",
+    }
+)
+
+_STOPWORDS_DE = frozenset(
+    {
+        "der",
+        "die",
+        "das",
+        "und",
+        "ist",
+        "sind",
+        "waren",
+        "ein",
+        "eine",
+        "einen",
+        "einem",
+        "einer",
+        "nicht",
+        "fur",
+        "von",
+        "auf",
+        "dem",
+        "den",
+        "des",
+        "im",
+        "am",
+        "um",
+        "zu",
+        "zum",
+        "zur",
+        "sich",
+        "auch",
+        "aber",
+        "oder",
+        "wenn",
+        "wie",
+        "ich",
+        "sie",
+        "er",
+        "es",
+        "wird",
+        "werden",
+        "wurde",
+        "kann",
+        "muss",
+        "haben",
+        "hat",
+        "hatte",
+        "sein",
+        "seine",
+        "ihr",
+        "ihre",
+        "dass",
+        "noch",
+        "nur",
+        "schon",
+        "sehr",
+        "uber",
+        "aus",
+        "bei",
+        "nach",
+        "vor",
+        "durch",
+        "als",
+        "wir",
+        "alle",
+    }
+)
+
+_STOPWORDS_FR = frozenset(
+    {
+        "le",
+        "la",
+        "les",
+        "un",
+        "une",
+        "des",
+        "de",
+        "et",
+        "est",
+        "sont",
+        "dans",
+        "pour",
+        "par",
+        "sur",
+        "avec",
+        "sans",
+        "mais",
+        "ou",
+        "qui",
+        "que",
+        "quoi",
+        "ne",
+        "pas",
+        "se",
+        "ce",
+        "cette",
+        "ces",
+        "ses",
+        "leur",
+        "nous",
+        "vous",
+        "ils",
+        "elles",
+        "il",
+        "elle",
+        "je",
+        "tu",
+        "au",
+        "aux",
+        "si",
+        "comme",
+        "tout",
+        "tous",
+        "toute",
+        "etre",
+        "avoir",
+        "fait",
+        "tres",
+        "bien",
+        "aussi",
+        "deja",
+        "encore",
+        "alors",
+    }
+)
+
+_STOPWORDS_ES = frozenset(
+    {
+        "el",
+        "los",
+        "las",
+        "unos",
+        "unas",
+        "pero",
+        "porque",
+        "como",
+        "cuando",
+        "donde",
+        "quien",
+        "para",
+        "por",
+        "del",
+        "al",
+        "lo",
+        "le",
+        "su",
+        "sus",
+        "mi",
+        "mis",
+        "yo",
+        "ella",
+        "ellos",
+        "nosotros",
+        "hay",
+        "ha",
+        "han",
+        "ser",
+        "estar",
+        "muy",
+        "mas",
+        "tambien",
+        "ya",
+        "todo",
+        "todos",
+        "esta",
+        "este",
+        "esto",
+        "estos",
+        "estas",
+    }
+)
+
+_STOPWORDS = (
+    _STOPWORDS_EN | _STOPWORDS_SV | _STOPWORDS_DE | _STOPWORDS_FR | _STOPWORDS_ES
+)
+
 
 def _fold_diacritics(text: str) -> str:
     """NFD-decompose and drop combining marks, so 'Zürich' and 'zurich'
@@ -216,6 +478,145 @@ def _fold_diacritics(text: str) -> str:
     )
 
 
+# Scripts written without inter-word whitespace (tokenizer v2). `\w` treats
+# an entire CJK clause as one giant token — '東京オフィスは移転する' came out
+# as a single 12-char "word" that only a byte-exact query could ever match,
+# so CJK-language memories were written successfully, passed dedup, and were
+# then unfindable in every ranker AND the FTS5 index. The standard
+# dictionary-free fix (Lucene's CJKAnalyzer, among others) is overlapping
+# character bigrams: '東京オフ' → 東京 / 京オ / オフ. Applied symmetrically
+# (tokenize serves query and indexed text alike), a two-char query word is
+# exactly one bigram and a longer query word is a bag of bigrams the body's
+# own bigrams cover.
+#
+# Ranges: Han (+ Ext A, compatibility ideographs, Ext B–F astral planes),
+# Hiragana, Katakana (+ phonetic extensions and halfwidth forms), Hangul —
+# NOTE: `_fold_diacritics` runs NFD first, which canonically decomposes
+# Hangul syllables into Jamo (U+1100–U+11FF), so the Jamo blocks matter
+# even though typed Korean arrives as syllables — and Thai, whose prose is
+# also unspaced (its combining vowel marks are already stripped by the NFD
+# fold; the surviving Lo letters bigram consistently on both sides).
+_UNSEGMENTED_RE = re.compile(
+    "["
+    "\u0e01-\u0e5b"  # Thai letters (post-fold survivors)
+    "\u1100-\u11ff"  # Hangul Jamo (NFD form of syllables)
+    "\u3041-\u30ff"  # Hiragana + Katakana
+    "\u31f0-\u31ff"  # Katakana phonetic extensions
+    "\u3400-\u4dbf"  # CJK Unified Ideographs Extension A
+    "\u4e00-\u9fff"  # CJK Unified Ideographs
+    "\ua960-\ua97f"  # Hangul Jamo Extended-A
+    "\uac00-\ud7ff"  # Hangul syllables + Jamo Extended-B
+    "\uf900-\ufaff"  # CJK Compatibility Ideographs
+    "\uff66-\uff9d"  # Halfwidth Katakana
+    "\U00020000-\U0002ebef"  # CJK Unified Ideographs Extensions B-F
+    "]+"
+)
+
+
+def _segment_unspaced(token: str) -> list[str]:
+    """Split a raw `_TOKEN_RE` token into matchable units.
+
+    Tokens without unsegmented-script runs pass through whole (the
+    `isascii` fast path covers virtually every token in a Latin-script
+    store). A token that mixes scripts — '2026年に移転' — yields its
+    non-CJK chunks whole and each CJK run as overlapping bigrams; a
+    single stranded CJK char is emitted as itself so it stays matchable.
+    Chunk edges are stripped of separator hyphens ('docker-東京' must not
+    emit the dead token 'docker-')."""
+    if token.isascii() or not _UNSEGMENTED_RE.search(token):
+        return [token]
+    out: list[str] = []
+    pos = 0
+    for m in _UNSEGMENTED_RE.finditer(token):
+        if m.start() > pos:
+            chunk = token[pos : m.start()].strip("-")
+            if chunk:
+                out.append(chunk)
+        run = m.group()
+        if len(run) == 1:
+            out.append(run)
+        else:
+            out.extend(run[i : i + 2] for i in range(len(run) - 1))
+        pos = m.end()
+    if pos < len(token):
+        chunk = token[pos:].strip("-")
+        if chunk:
+            out.append(chunk)
+    return out
+
+
+# Words the suffix rules below would fold into a misleading form. 'news'
+# is not the plural of 'new' (Porter makes the same mistake); keeping it
+# whole costs nothing because the bare singular spelling doesn't occur.
+_STEM_EXCEPTIONS = frozenset({"news"})
+
+
+def _stem_segment(seg: str) -> str:
+    """Light inflectional stem of one hyphen-free segment (tokenizer v2).
+
+    Matching is exact token equality, so without this the most ordinary
+    morphological variance between a retrieval question and a stored fact
+    — plural vs singular ('standups' vs 'standup') — was a total miss in
+    every ranker and the FTS5 index. This is deliberately NOT Porter:
+    relevance buckets and dedup Jaccard feed automation, so aggressive
+    derivational conflation ('general'/'generous') is a worse failure
+    mode here than an occasional unfolded plural. Plural inflection only:
+
+    - 'sses' → 'ss' (classes → class), 'ies' → 'y' (policies → policy;
+      4-char forms keep 'ie' so ties/dies still meet tie/die);
+    - final 's' dropped behind the usual guards ('ss'/'us'/'is' endings
+      and digit-final acronyms like 'k8s' stay; 3-char tokens like
+      'aws'/'dns'/'yes' stay whole);
+    - final-e NORMALISATION on everything that survives, both plural and
+      singular: dropping final 'e' collapses the '-es attachment'
+      ambiguity that no dictionary-free rule can split — 'branches'
+      (branch+es) and 'caches' (cache+s) both end in 'ches', but
+      branches→branche→branch meets branch→branch and
+      caches→cache→cach meets cache→cach. The result is an index KEY,
+      not a word; symmetry is what matters. Guarded so it can't fold a
+      token into a stopword ('note' would become 'not', 'here' would
+      become 'her' — both stay whole) and so 'ee' endings keep their
+      spelling ('tree', 'free').
+
+    Stopwords are exempt BY SURFACE FORM before any rule runs —
+    'does'→'doe' would otherwise leak a former stopword into content-token
+    counts and quietly weaken the audit gate — and any rule chain whose
+    RESULT lands on a stopword returns the original spelling for the same
+    reason ('ares'→'are' stays 'ares'). CJK bigrams and digit-bearing
+    tokens fall out naturally: no rule fires on them.
+    """
+    if len(seg) < 4 or seg in _STOPWORDS or seg in _STEM_EXCEPTIONS:
+        return seg
+    stem = seg
+    if stem.endswith("sses"):
+        stem = stem[:-2]
+    elif stem.endswith("ies"):
+        stem = stem[:-3] + "y" if len(stem) > 4 else stem[:-1]
+    elif stem.endswith(("ss", "us", "is")):
+        pass
+    elif stem.endswith("s") and stem[-2].isalpha():
+        stem = stem[:-1]
+    if (
+        len(stem) >= 4
+        and stem.endswith("e")
+        and not stem.endswith("ee")
+        and stem[:-1] not in _STOPWORDS
+    ):
+        stem = stem[:-1]
+    return seg if stem in _STOPWORDS else stem
+
+
+def _stem_token(tok: str) -> str:
+    """Apply `_stem_segment` per hyphen-separated segment so compounds
+    fold the same way their expanded parts do: 'docker-containers' →
+    'docker-container', whose `_expand_kebab` / `_kebab_parts` components
+    are exactly the stemmed singles. Hyphen structure (including
+    consecutive hyphens `_TOKEN_RE` can admit) is preserved verbatim."""
+    if "-" in tok:
+        return "-".join(_stem_segment(p) for p in tok.split("-"))
+    return _stem_segment(tok)
+
+
 def tokenize(text: str) -> list[str]:
     """Regex tokenization behind a small symmetric normalisation pipeline.
 
@@ -230,16 +631,40 @@ def tokenize(text: str) -> list[str]:
     - canonicalize '_' to '-' so `docker_compose` and `docker-compose`
       spell the same token;
     - keep dotted numerics whole ('16.3') and end tokens on a word
-      character ('pre-' -> 'pre'), per `_TOKEN_RE`.
+      character ('pre-' -> 'pre'), per `_TOKEN_RE`;
+    - segment unspaced scripts into overlapping CJK bigrams (see
+      `_UNSEGMENTED_RE`) so CJK-language text is matchable at all;
+    - fold plural inflection with the light stemmer (see
+      `_stem_segment`) so 'standups' meets 'standup'.
 
     Pair with `_expand_kebab` on indexed text if you also want to match by
     component.
     """
+    return _tokenize_impl(text, stem=True)
+
+
+def _tokenize_unstemmed(text: str) -> list[str]:
+    """`tokenize` minus the plural stemmer — same folds, contraction
+    strips, symbol aliases, and CJK bigrams, but tokens keep their
+    surface spelling. Consumed by groundedness's alias-anchor rescue,
+    which reasons about SPELLING relations (substring / subsequence):
+    stems shorten words below that rescue's particle length gate
+    ('code' → 'cod' falls under `_ALIAS_MIN_TOKEN_LEN`), so that one
+    path compares surface forms. Everything that SCORES uses
+    `tokenize`."""
+    return _tokenize_impl(text, stem=False)
+
+
+def _tokenize_impl(text: str, *, stem: bool) -> list[str]:
     text = _fold_diacritics(text.lower())
     text = _CONTRACTION_RE.sub("", text)
     for pattern, replacement, _ in _SYMBOL_ALIASES:
         text = pattern.sub(replacement, text)
-    return _TOKEN_RE.findall(text.replace("_", "-"))
+    out: list[str] = []
+    for raw in _TOKEN_RE.findall(text.replace("_", "-")):
+        for seg in _segment_unspaced(raw):
+            out.append(_stem_token(seg) if stem else seg)
+    return out
 
 
 def _expand_kebab(tokens: list[str]) -> list[str]:
@@ -300,41 +725,59 @@ def _fts_phrase(term: str) -> str:
     """Quote a term as an FTS5 phrase literal. Doubling embedded quotes is
     the FTS5 escape; wrapping in quotes keeps special characters (`:`,
     `*`, `+`, `.`) as literal phrase content instead of MATCH syntax.
-    `tokenize` output can't contain '"', but the raw symbol spellings
-    ('c++', '.net') pass through here too — the escape stays unconditional
-    so the helper never depends on its input's shape."""
+    `tokenize` output can't contain '"', but the escape stays
+    unconditional so the helper never depends on its input's shape."""
     escaped = term.replace('"', '""')
     return f'"{escaped}"'
+
+
+def fts_index_text(text: str) -> str:
+    """The text the FTS5 index stores for a memory (schema v4+).
+
+    `' '.join(_expand_kebab(tokenize(text)))` — the exact index-side token
+    stream the Python rankers score, joined so unicode61 re-derives it
+    losslessly (tokens are space-free; a compound like 'claude-code'
+    re-splits into the adjacent pair the quoted phrase query matches).
+    This is what makes prefilter/ranker parity hold BY CONSTRUCTION:
+    before v4 the index tokenized the RAW body under unicode61, so every
+    normalisation `tokenize` grew (diacritic folds, symbol aliases,
+    contraction strips — and now stems and CJK bigrams) had to be
+    hand-mirrored in `fts_match_query`'s OR-variants or indexed stores
+    silently dropped candidates the rankers rate 'high'. Indexing the
+    pipeline's own output removes the second spelling authority: both
+    sides of a MATCH are `tokenize` tokens.
+
+    Used by `index._insert_memory` / `_upsert_memory` / `rebuild` for the
+    `body_fts` column (and for `scopes_fts` over the space-joined scope
+    list). Raw bodies stay canonical on disk and in `memories.body`; this
+    is derived-index content only.
+    """
+    return " ".join(_expand_kebab(tokenize(text)))
 
 
 def fts_match_query(query: str) -> str:
     """Build the FTS5 MATCH expression `index.query` prefilters with.
 
     Prefilter/ranker parity is a hard invariant (see `_fold_diacritics`):
-    the FTS5 index serves the CANDIDATE set on large stores, so every
-    normalisation `tokenize` applies to a query has to be mirrored here —
-    a raw `str.split` builder silently dropped candidates the rankers
-    rate 'high' once tokenize grew symbol aliases, '_'->'-'
-    canonicalisation, and the conjunctive kebab fallback. Living next to
-    `tokenize` (and consuming it) is the point: the two sides can't
-    drift apart again without touching the same module.
+    the FTS5 index serves the CANDIDATE set on large stores, so the
+    candidate set must be a superset of what the rankers would score.
+    Since schema v4 the index stores `fts_index_text` output — the same
+    `tokenize` stream this builder consumes — so parity holds by
+    construction and the expression stays simple: each query token is a
+    quoted phrase of itself. Living next to `tokenize` (and consuming it)
+    is still the point: the two sides can't drift apart without touching
+    the same module.
 
-    Per token (deduplicated, insertion-ordered) the expression carries
-    OR-variants for the two places where one ranker token corresponds to
-    several indexed spellings:
-
-    - aliased symbol names also emit the raw spelling: 'cpp' ->
-      '("cpp" OR "c++")'. unicode61 indexes a body's 'C++' as the bare
-      token 'c', and the quoted "c++" phrase tokenizes the same way, so
-      the variant is over-inclusive (a list-enumeration 'c.' matches
-      too) — acceptable for a prefilter the rankers re-score;
-    - joined tokens (kebab/snake/dotted, per `_kebab_parts`) also emit
-      their conjunctive form: 'claude-code' ->
-      '("claude-code" OR ("claude" AND "code"))'. The quoted compound
-      alone is an FTS *phrase* (adjacent tokens only), which misses the
-      non-adjacent and possessive spellings the rankers' conjunctive
-      fallback matches; AND-of-components has the fallback's
-      anywhere-in-body semantics.
+    Per token (deduplicated, insertion-ordered) one OR-variant remains:
+    joined tokens (kebab/snake/dotted, per `_kebab_parts`) also emit
+    their conjunctive form: 'claude-code' ->
+    '("claude-code" OR ("claude" AND "code"))'. The quoted compound is
+    an FTS *phrase* (adjacent tokens only) — it matches the compound's
+    own indexed split — but the rankers' conjunctive fallback also
+    matches the parts anywhere in the body; AND-of-components mirrors
+    that anywhere-in-body semantics. (The pre-v4 raw-symbol variant —
+    'cpp' also trying '"c++"' — is gone: the indexed text already says
+    'cpp'.)
 
     Stopwords are kept: the rankers strip them from the query, so
     stopword terms only ever ADD candidates ahead of authoritative
@@ -345,9 +788,6 @@ def fts_match_query(query: str) -> str:
     groups: list[str] = []
     for tok in dict.fromkeys(tokenize(query)):
         variants = [_fts_phrase(tok)]
-        raw_symbol = _SYMBOL_ALIAS_RAW.get(tok)
-        if raw_symbol is not None:
-            variants.append(_fts_phrase(raw_symbol))
         parts = _kebab_parts(tok)
         if parts:
             variants.append("(" + " AND ".join(_fts_phrase(p) for p in parts) + ")")

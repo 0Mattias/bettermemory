@@ -71,7 +71,13 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass
 
-from .search import _KEBAB_SPLIT_RE, _expand_kebab, _strip_stopwords, tokenize
+from .search import (
+    _KEBAB_SPLIT_RE,
+    _expand_kebab,
+    _strip_stopwords,
+    _tokenize_unstemmed,
+    tokenize,
+)
 
 
 # Minimum number of content tokens a sentence needs before we apply
@@ -109,7 +115,7 @@ _ALIAS_MIN_TOKEN_LEN = 4
 GROUNDEDNESS_THRESHOLD = 0.30
 
 
-# Sentence splitter, three boundary shapes — still deliberately simple,
+# Sentence splitter, four boundary shapes — still deliberately simple,
 # heavy NLP isn't worth the false sense of precision:
 #
 # 1. Terminal punctuation (period / exclamation / question / semicolon),
@@ -129,8 +135,16 @@ GROUNDEDNESS_THRESHOLD = 0.30
 # Dotted abbreviation runs ("i.e.", "e.g.", "Ph.D.", "U.S.") are
 # collapsed before splitting (see _DOTTED_ABBREV_RE) so their internal
 # dots neither split a sentence mid-claim nor shatter into junk tokens.
+#
+# 4. Full-width terminators (。！？；) split too — with the trailing
+#    whitespace OPTIONAL, because CJK prose puts no space after the
+#    ideographic full stop. Without this branch a multi-sentence
+#    Japanese/Chinese body collapsed into one "sentence", letting a
+#    hallucinated clause hide behind a grounded sibling (and inflating
+#    the token count past any per-sentence signal).
 _SENTENCE_SPLIT_RE = re.compile(
     r"[.!?;][\"'”’)\]*_`]*\s+"
+    r"|[。！？；][」』”’）】\"']*\s*"
     r"|(?:\r?\n[^\S\n]*){2,}"
     r"|\r?\n(?=[^\S\n]*(?:[-*•]|\d+[.)])[^\S\n])"
 )
@@ -297,6 +311,35 @@ def _sentence_content_tokens(sentence: str) -> set[str]:
     )
 
 
+def _alias_transcript_tokens(text: str) -> set[str]:
+    """Transcript-side tokens for the alias-anchor rescue ONLY:
+    identical pipeline to `_content_tokens` except the plural stemmer
+    is off. The rescue reasons about SPELLING relations — substring and
+    first-char-anchored subsequence — and those are surface properties:
+    the stem 'cod' (from "Code") falls under `_ALIAS_MIN_TOKEN_LEN` and
+    can no longer anchor 'vscode', flipping a documented pass into a
+    flag. The ratio test keeps scoring on stemmed tokens; only the
+    rescue compares surfaces."""
+    return set(
+        _strip_contractions(
+            _strip_stopwords(
+                _expand_kebab(_tokenize_unstemmed(_normalize_token_text(text)))
+            )
+        )
+    )
+
+
+def _alias_sentence_tokens(sentence: str) -> set[str]:
+    """Sentence-side surface tokens for the alias-anchor rescue — the
+    unstemmed twin of `_sentence_content_tokens` (no kebab expansion,
+    same rationale)."""
+    return set(
+        _strip_contractions(
+            _strip_stopwords(_tokenize_unstemmed(_normalize_token_text(sentence)))
+        )
+    )
+
+
 def _is_anchored(token: str, transcript_tokens: set[str]) -> bool:
     """A sentence token is anchored when it appears in the transcript's
     expanded token set directly, or — for kebab/snake compounds — when
@@ -351,6 +394,11 @@ def _is_alias_anchored(token: str, transcript_tokens: set[str]) -> bool:
     everywhere would erode the gate. Confined here, it can only turn
     a would-be flag of a tiny claim into a pass — the precision-first
     direction for this advisory gate.
+
+    Both sides arrive UNSTEMMED (`_alias_sentence_tokens` /
+    `_alias_transcript_tokens`): spelling relations are surface
+    properties, and the plural stem 'cod' would fall under the length
+    gate that keeps particles from anchoring.
     """
     for other in transcript_tokens:
         shorter, longer = sorted((token, other), key=len)
@@ -392,7 +440,11 @@ def check_groundedness(
     if not body.strip():
         return []
 
-    transcript_tokens = _content_tokens(_SPEAKER_LABEL_RE.sub(" ", transcript))
+    transcript_stripped = _SPEAKER_LABEL_RE.sub(" ", transcript)
+    transcript_tokens = _content_tokens(transcript_stripped)
+    # Surface-spelling twin for the alias rescue, built once — see
+    # `_alias_transcript_tokens` for why the rescue can't run on stems.
+    alias_transcript_tokens = _alias_transcript_tokens(transcript_stripped)
     sentences = _split_sentences(body)
 
     ungrounded: list[UngroundedClaim] = []
@@ -420,7 +472,8 @@ def check_groundedness(
                 and matched == 0
                 and not sentence.endswith(":")
                 and not any(
-                    _is_alias_anchored(t, transcript_tokens) for t in sentence_tokens
+                    _is_alias_anchored(t, alias_transcript_tokens)
+                    for t in _alias_sentence_tokens(sentence)
                 )
             ):
                 ungrounded.append(UngroundedClaim(sentence=sentence, overlap_ratio=0.0))

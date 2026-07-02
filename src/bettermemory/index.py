@@ -71,7 +71,7 @@ from pathlib import Path
 from typing import Any
 
 from .models import Memory
-from .search import fts_match_query
+from .search import fts_index_text, fts_match_query
 
 log = logging.getLogger("bettermemory.index")
 
@@ -106,7 +106,19 @@ log = logging.getLogger("bettermemory.index")
 # index must mirror them, so `note` joins the key and both rows
 # survive. A pure schema change to a derived cache — the bump forces
 # a one-time rebuild via `_ensure_schema`'s older-version path.
-SCHEMA_VERSION = 3
+#
+# Version 4 (tokenizer v2): the FTS table stops indexing the raw body
+# under unicode61 and instead indexes `body_fts` / `scopes_fts` —
+# preprocessed columns holding `search.fts_index_text` output, i.e. the
+# exact token stream the Python rankers score (diacritic-folded,
+# contraction-stripped, symbol-aliased, plural-stemmed, CJK-bigrammed,
+# kebab-expanded). Prefilter/ranker parity becomes structural instead
+# of hand-mirrored, and CJK bodies — previously ONE giant unicode61
+# token per unspaced clause, unmatchable by any realistic query —
+# become searchable at all. Raw `body` and `scopes_text` columns stay
+# (the LIKE-based scope filter and debuggability read them); only what
+# the FTS virtual table indexes changes.
+SCHEMA_VERSION = 4
 
 INDEX_FILENAME = ".index.sqlite"
 
@@ -131,32 +143,42 @@ CREATE TABLE IF NOT EXISTS memories (
     confidence TEXT NOT NULL,
     category TEXT,
     body TEXT NOT NULL,
+    body_fts TEXT NOT NULL DEFAULT '',
     scopes_text TEXT NOT NULL,
+    scopes_fts TEXT NOT NULL DEFAULT '',
     scopes_json TEXT NOT NULL,
     filename TEXT NOT NULL DEFAULT ''
 );
 
+-- The FTS table indexes the PREPROCESSED columns (schema v4): body_fts /
+-- scopes_fts carry `search.fts_index_text` output, the same normalised
+-- token stream the Python rankers score, so a MATCH built by
+-- `search.fts_match_query` agrees with the rankers by construction.
+-- unicode61 here only re-splits the space-joined tokens (and the hyphens
+-- inside preserved compounds, which is what lets the quoted compound
+-- phrase match). Raw body/scopes_text stay on the content table for the
+-- LIKE scope filter and debuggability but are NOT indexed.
 CREATE VIRTUAL TABLE IF NOT EXISTS memories_fts USING fts5(
-    body, scopes_text,
+    body_fts, scopes_fts,
     content='memories', content_rowid='rowid',
     tokenize='unicode61'
 );
 
 CREATE TRIGGER IF NOT EXISTS memories_ai AFTER INSERT ON memories BEGIN
-    INSERT INTO memories_fts(rowid, body, scopes_text)
-    VALUES (new.rowid, new.body, new.scopes_text);
+    INSERT INTO memories_fts(rowid, body_fts, scopes_fts)
+    VALUES (new.rowid, new.body_fts, new.scopes_fts);
 END;
 
 CREATE TRIGGER IF NOT EXISTS memories_ad AFTER DELETE ON memories BEGIN
-    INSERT INTO memories_fts(memories_fts, rowid, body, scopes_text)
-    VALUES ('delete', old.rowid, old.body, old.scopes_text);
+    INSERT INTO memories_fts(memories_fts, rowid, body_fts, scopes_fts)
+    VALUES ('delete', old.rowid, old.body_fts, old.scopes_fts);
 END;
 
 CREATE TRIGGER IF NOT EXISTS memories_au AFTER UPDATE ON memories BEGIN
-    INSERT INTO memories_fts(memories_fts, rowid, body, scopes_text)
-    VALUES ('delete', old.rowid, old.body, old.scopes_text);
-    INSERT INTO memories_fts(rowid, body, scopes_text)
-    VALUES (new.rowid, new.body, new.scopes_text);
+    INSERT INTO memories_fts(memories_fts, rowid, body_fts, scopes_fts)
+    VALUES ('delete', old.rowid, old.body_fts, old.scopes_fts);
+    INSERT INTO memories_fts(rowid, body_fts, scopes_fts)
+    VALUES (new.rowid, new.body_fts, new.scopes_fts);
 END;
 
 CREATE INDEX IF NOT EXISTS memories_by_updated ON memories(updated DESC);
@@ -515,12 +537,12 @@ def query(
         _ensure_schema(conn)
         # Build the MATCH clause from the SAME tokenisation the Python
         # rankers use (`search.fts_match_query`), not a raw
-        # `text.split()`: tokenize() carries normalisations (symbol
-        # aliases, '_'->'-' canonicalisation, contraction stripping)
-        # plus per-token OR-variants (alias <-> raw symbol spelling,
-        # joined token <-> AND of its components) that the candidate
-        # set must mirror, or indexed stores silently drop hits the
-        # rankers rate 'high'. FTS5 special characters stay inert —
+        # `text.split()`. Since schema v4 the indexed text is itself
+        # `search.fts_index_text` output, so both sides of the MATCH
+        # speak tokenize()'s normalised tokens (folds, aliases, stems,
+        # CJK bigrams) and parity is structural; the one remaining
+        # OR-variant is the joined-token conjunctive form (compound <->
+        # AND of its components). FTS5 special characters stay inert —
         # every variant is emitted as a quoted phrase with embedded
         # quotes doubled, so `:` / `*` in a user query can't be read
         # as column-prefix or prefix-match syntax.
@@ -808,8 +830,8 @@ def _insert_memory(conn: sqlite3.Connection, memory: Memory, filename: str) -> N
     conn.execute(
         "INSERT INTO memories("
         "id, created, updated, last_verified_at, confidence, category, "
-        "body, scopes_text, scopes_json, filename) "
-        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        "body, body_fts, scopes_text, scopes_fts, scopes_json, filename) "
+        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
         (
             memory.id,
             memory.created.isoformat(),
@@ -818,7 +840,9 @@ def _insert_memory(conn: sqlite3.Connection, memory: Memory, filename: str) -> N
             memory.confidence.value,
             memory.category.value if memory.category is not None else None,
             memory.body,
+            fts_index_text(memory.body),
             _scopes_text(memory.scopes),
+            fts_index_text(" ".join(memory.scopes)),
             json.dumps(memory.scopes),
             filename,
         ),
@@ -835,8 +859,8 @@ def _upsert_memory(conn: sqlite3.Connection, memory: Memory, filename: str) -> N
     conn.execute(
         "INSERT INTO memories("
         "id, created, updated, last_verified_at, confidence, category, "
-        "body, scopes_text, scopes_json, filename) "
-        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?) "
+        "body, body_fts, scopes_text, scopes_fts, scopes_json, filename) "
+        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) "
         "ON CONFLICT(id) DO UPDATE SET "
         "created = excluded.created, "
         "updated = excluded.updated, "
@@ -844,7 +868,9 @@ def _upsert_memory(conn: sqlite3.Connection, memory: Memory, filename: str) -> N
         "confidence = excluded.confidence, "
         "category = excluded.category, "
         "body = excluded.body, "
+        "body_fts = excluded.body_fts, "
         "scopes_text = excluded.scopes_text, "
+        "scopes_fts = excluded.scopes_fts, "
         "scopes_json = excluded.scopes_json, "
         "filename = excluded.filename",
         (
@@ -855,7 +881,9 @@ def _upsert_memory(conn: sqlite3.Connection, memory: Memory, filename: str) -> N
             memory.confidence.value,
             memory.category.value if memory.category is not None else None,
             memory.body,
+            fts_index_text(memory.body),
             _scopes_text(memory.scopes),
+            fts_index_text(" ".join(memory.scopes)),
             json.dumps(memory.scopes),
             filename,
         ),

@@ -1064,3 +1064,72 @@ def test_rebuild_unlink_failure_leaves_main_db_intact(
     # -wal is unlinked first and fails, so the main .db is never removed:
     # consistent, retryable state — not a .db-gone / WAL-orphaned mess.
     assert index_file.exists()
+
+
+# ---------------------------------------------------------------------------
+# Tokenizer v2 / schema v4 — preprocessed FTS content
+# ---------------------------------------------------------------------------
+
+
+def test_query_matches_cjk_body_via_bigrams(store: Store, memory_dir: Path) -> None:
+    """Audit repro (FTS side): unicode61 over the raw body treated an
+    unspaced CJK clause as ONE token, so MATCH '"東京"' returned zero
+    rows against a body that plainly says 東京. Schema v4 indexes the
+    bigram-segmented `fts_index_text`, so word-level CJK queries hit."""
+    cjk = store.write(
+        content="東京オフィスは2026年に移転する予定", scopes=["projects:tokyo"]
+    )
+    other = store.write(content="kubernetes networking", scopes=["tools"])
+    index.rebuild(memory_dir, store.iter_active())
+
+    for query in ("東京", "移転", "東京オフィス"):
+        ids = [r[0] for r in index.query(memory_dir, query)]
+        assert cjk.id in ids, f"FTS missed CJK query {query!r}"
+        assert other.id not in ids
+
+
+def test_query_matches_plural_query_against_singular_body(
+    store: Store, memory_dir: Path
+) -> None:
+    """Audit repro (FTS side of the stemming finding): 'standups'
+    against a body that says 'standup' returned nothing, so on a large
+    store the prefilter starved the rankers of the candidate. Both
+    sides of the MATCH now speak stemmed tokens."""
+    a = store.write(content="Daily standup is at 9:15", scopes=["tools"])
+    index.rebuild(memory_dir, store.iter_active())
+
+    ids = [r[0] for r in index.query(memory_dir, "standups")]
+    assert a.id in ids
+    # And the mirror image: singular query, plural body.
+    b = store.write(content="Rotate the feature branches weekly", scopes=["tools"])
+    ids = [r[0] for r in index.query(memory_dir, "branch")]
+    assert b.id in ids
+
+
+def test_schema_v4_stores_preprocessed_fts_columns(
+    store: Store, memory_dir: Path
+) -> None:
+    """The `body_fts` column is `fts_index_text` output — stems, CJK
+    bigrams, kebab parts — while raw `body` and the space-padded
+    `scopes_text` stay untouched for canonical reads and the LIKE
+    scope filter."""
+    import sqlite3
+
+    store.write(content="Claude-Code caches 東京タワー", scopes=["projects:alpha-beta"])
+    index.rebuild(memory_dir, store.iter_active())
+
+    conn = sqlite3.connect(str(index.index_path(memory_dir)))
+    try:
+        row = conn.execute(
+            "SELECT body, body_fts, scopes_text, scopes_fts FROM memories"
+        ).fetchone()
+    finally:
+        conn.close()
+    body, body_fts, scopes_text, scopes_fts = row
+    assert body.rstrip("\n") == "Claude-Code caches 東京タワー"
+    for tok in ("claud-cod", "cach", "東京", "京タ"):
+        assert tok in body_fts.split(), tok
+    assert scopes_text == " projects:alpha-beta "
+    # Scope tokens are searchable in their stemmed/expanded form.
+    for tok in ("project", "alpha", "beta"):
+        assert tok in scopes_fts.split(), tok

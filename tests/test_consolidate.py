@@ -2477,3 +2477,31 @@ def test_auto_consolidate_dedup_keeper_retains_identity(
     original = originals[keeper.id]
     assert keeper.created == original.created
     assert keeper.body == original.body
+
+
+# ---------------------------------------------------------------------------
+# Tokenizer v2 — CJK dedup
+# ---------------------------------------------------------------------------
+
+
+def test_dedup_flags_cjk_near_duplicates() -> None:
+    """Audit repro ('CJK bodies are invisible to Jaccard dedup'): two
+    rephrasings of the same Japanese deploy-schedule fact scored
+    Jaccard 0.0 because each unspaced clause was one giant token —
+    dedup could never fire for CJK users. Bigram token sets overlap
+    heavily for a rephrase, so the pair surfaces."""
+    now = datetime.now(timezone.utc)
+    a = _memory(
+        "デプロイは毎週金曜日の午後に行う予定です。",
+        updated=now - timedelta(days=2),
+    )
+    b = _memory(
+        "デプロイは毎週金曜日の午後に行う予定。",
+        updated=now,
+    )
+    distinct = _memory("Kubernetes networking notes for the homelab.")
+    candidates, method = find_dedup_candidates([a, b, distinct])
+    assert method == "jaccard"
+    assert len(candidates) == 1
+    assert candidates[0].keeper_id == b.id
+    assert candidates[0].similarity > 0.75

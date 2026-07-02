@@ -36,11 +36,18 @@ Per-finding dispositions are journaled in the audit-loop episodes
 
 ## Parked (feature-class residuals)
 
-- **Tokenization v2** — CJK bigram segmentation, stemming, multilingual
+- **Tokenization v2** — ~~CJK bigram segmentation, stemming, multilingual
   stopword lists, and tokenizer-level apostrophe normalization in the shared
   pipeline (`search.py` + `index.py` FTS `SCHEMA_VERSION` bump; consumers:
   groundedness, consolidate, audit). One coherent feature covering the six
-  deferred segmentation/inflection findings.
+  deferred segmentation/inflection findings.~~ **Shipped in v3.12.0**
+  (2026-07-02): CJK bigrams, a light plural stemmer, sv/de/fr/es stopword
+  sets, full-width sentence boundaries in groundedness, and FTS schema v4
+  (the index now stores the pipeline's own token stream, making
+  prefilter/ranker parity structural). The apostrophe-normalization leg had
+  already landed earlier as `search._CONTRACTION_RE` +
+  groundedness's `_APOSTROPHE_RE`; v3.12.0 closes the remaining five
+  findings — each carries a regression repro in the suite.
 - **Write-time origin hints for Desktop / web-UI writes** — the ingest leg
   landed in round 85; the other two write paths need an explicit origin-hint
   surface (design work, not capture plumbing).

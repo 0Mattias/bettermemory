@@ -9,8 +9,98 @@ spells out exactly what's stable.
 
 ## Unreleased
 
+## 3.12.0 - 2026-07-02
+
+The tokenizer v2 release — the "Tokenization v2" feature-class
+residual parked in the 2026-06-09 extractor hunt
+(`docs/audit/extractor-hunt-2026-06-09.md`), shipped as one coherent
+change to the shared pipeline instead of six heuristic patches. The
+headline: CJK-language memories stop being write-only (they were
+written successfully, passed dedup, and were then unfindable in every
+ranker AND the FTS5 index), plural/singular query inflection stops
+being a total miss, and the groundedness gate's stopword defence
+stops being English-only. One consequence worth knowing: FTS index
+schema v3 → v4 forces a one-time rebuild (`bettermemory reindex`, or
+let the write hooks repopulate; search falls back to full scans
+meanwhile). Tests 2,546 → 2,565 under the full local extras matrix.
+
+### Added
+
+- **CJK bigram segmentation in the shared tokenizer.** `\w`-based
+  tokenization treated an unspaced CJK clause as ONE giant token —
+  `東京オフィスは移転する` was a single 12-char "word" only a
+  byte-exact query could match. `tokenize` now emits overlapping
+  character bigrams for Han / Kana / Hangul / Thai runs (the standard
+  dictionary-free segmentation, per Lucene's CJKAnalyzer), applied
+  symmetrically to query and indexed text. Because search, write-time
+  dedup, groundedness, and the audit probe all consume the one
+  pipeline, three parked findings close at once: CJK bodies are
+  searchable (every lexical ranker + FTS5), Jaccard dedup sees CJK
+  near-duplicates (previously similarity 0.0 for any rephrase), and
+  the groundedness gate actually evaluates CJK sentences instead of
+  skipping them under `MIN_CONTENT_TOKENS`. Hangul is bigrammed in
+  its NFD Jamo form (the diacritic fold decomposes syllables first)
+  — consistent on both sides, so matching works.
+- **Light plural stemmer.** Matching was exact token equality, so
+  'standups' vs a body saying 'standup' returned nothing anywhere.
+  `tokenize` now folds plural inflection — 'sses'/'ies'/final-'s'
+  rules plus a final-e normalisation that collapses the '-es
+  attachment' ambiguity ('branches'/'branch' and 'caches'/'cache'
+  both fold correctly, which no dictionary-free rule can split
+  without normalising the singular too). Deliberately NOT Porter:
+  relevance buckets and dedup Jaccard feed automation, so
+  derivational conflation is the worse failure mode. Guards:
+  stopwords exempt by surface form ('does' can't leak 'doe' into
+  content-token counts), rule results landing on a stopword revert
+  ('ones' folds to 'one', never to 'on'), 'ss'/'us'/'is' endings,
+  digit-final acronyms ('k8s'), and 3-letter tokens ('aws', 'dns',
+  'yes') stay whole. Compounds stem per segment so `_expand_kebab` /
+  `_kebab_parts` stay coherent ('docker-containers' →
+  'docker-container').
+- **Multilingual stopword lists (sv/de/fr/es).** The stopword defence
+  — the only thing keeping filler from anchoring groundedness ratios
+  and inflating relevance-coverage denominators — was English-only,
+  so a hallucinated Swedish claim grounded on {vill, att, på} against
+  any Swedish transcript. Four curated function-word sets join
+  `_STOPWORDS`, spelled in post-diacritic-fold form ('på' → 'pa').
+  Collision-curated: 'vi'/'du'/'man' (unix), 'mit' (the license),
+  'war' (.war artifacts), 'sin'/'con'/'y'/'o' (math, pros-and-cons)
+  and friends stay searchable; accepted borderline cases ('ar', 'es',
+  'est', 'en', 'de') are documented at the definition. English gains
+  'am' and the third-person pronouns (he/she/him/his/her/hers).
+
 ### Changed
 
+- **FTS index schema v4: prefilter/ranker parity by construction.**
+  The FTS5 table stops indexing the raw body under unicode61 and
+  indexes new `body_fts` / `scopes_fts` columns holding
+  `search.fts_index_text` output — the exact token stream the Python
+  rankers score. Every past parity bug (diacritic folds, symbol
+  aliases, contraction strips) came from the index having its own
+  spelling authority that `fts_match_query` had to hand-mirror; now
+  both sides of a MATCH speak `tokenize` tokens, and the raw-symbol
+  OR-variant ('cpp' also trying '"c++"') is gone because the indexed
+  text already says 'cpp'. Raw `body`/`scopes_text` stay on the
+  content table (LIKE scope filter, debuggability). On-disk v3
+  indexes are dropped and recreated empty on first touch — run
+  `bettermemory reindex` to repopulate eagerly.
+- **`match_terms` now carries the tokenizer's normal forms.** A query
+  'standups' that hits reports 'standup'; 'caches' reports 'cach'.
+  The stems are index keys, not words — the field still means "which
+  query tokens actually hit", the spellings are just canonical now.
+- **Groundedness: full-width sentence boundaries and a surface-form
+  alias rescue.** The splitter treats 。！？； as terminators without
+  requiring trailing whitespace (CJK prose has none), so a
+  hallucinated second sentence can't hide behind a grounded first.
+  The zero-anchor alias rescue ("Prefers VSCode." vs a transcript
+  saying "VS Code") now compares UNSTEMMED spellings — spelling
+  relations are surface properties, and the stem 'cod' fell under
+  the rescue's particle length gate.
+- **`audit._ACK_TOKENS` canonicalises through the tokenizer at
+  import.** The acknowledgment gate compares against `tokenize`
+  output; a hand-maintained literal set silently detached when the
+  stemmer landed ('done' → 'don'). Mapping the surface list through
+  `tokenize` at import means the two can't drift again.
 - **Docs rewritten for brevity.** The README had grown into a pitch
   deck — competitor tables, narrative walkthroughs, feature essays
   restating each other. It, `docs/ROADMAP.md`, `docs/eval.md`,

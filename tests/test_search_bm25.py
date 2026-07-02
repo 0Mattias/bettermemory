@@ -70,7 +70,7 @@ def test_bm25_idf_rare_terms_outscore_common_terms() -> None:
 
     rare_score, _ = score_memory_bm25(
         rare_doc,
-        ["obscure"],
+        ["obscur"],
         body_idf_map=body_idf,
         scope_idf_map=scope_idf,
         avgdl=avgdl,
@@ -78,7 +78,7 @@ def test_bm25_idf_rare_terms_outscore_common_terms() -> None:
     )
     common_score, _ = score_memory_bm25(
         common1,
-        ["code"],
+        ["cod"],
         body_idf_map=body_idf,
         scope_idf_map=scope_idf,
         avgdl=avgdl,
@@ -162,14 +162,14 @@ def test_bm25_scope_match_contributes() -> None:
 
     score, matched = score_memory_bm25(
         scoped,
-        ["projects"],
+        ["project"],
         body_idf_map=body_idf,
         scope_idf_map=scope_idf,
         avgdl=avgdl,
         now=now,
     )
     assert score > 0
-    assert "projects" in matched
+    assert "project" in matched
 
 
 def test_bm25_empty_query_returns_zero() -> None:
@@ -294,9 +294,9 @@ def test_compute_idf_counts_scope_tokens_into_scope_df() -> None:
     memories = [_memory(b, scopes=["projects:homelab"]) for b in bodies]
     _, scope_idf, _ = compute_idf(memories)
     # Present at all (previously absent: 'projects' is in no body)...
-    assert "projects" in scope_idf
+    assert "project" in scope_idf
     # ...but ubiquitous => far less discriminating than a one-doc term.
-    assert scope_idf["projects"] < scope_idf["restic"]
+    assert scope_idf["project"] < scope_idf["restic"]
 
 
 def test_compute_idf_body_map_excludes_scope_tokens() -> None:
@@ -317,7 +317,7 @@ def test_compute_idf_body_map_excludes_scope_tokens() -> None:
     body_idf, scope_idf, _ = compute_idf(memories)
     # Scope-only token: priced (deflated) in the scope map, absent from
     # the body map entirely.
-    assert "projects" in scope_idf
+    assert "project" in scope_idf
     assert "projects" not in body_idf
     # Body-rare + scope-ubiquitous term: high body IDF, deflated scope IDF.
     assert body_idf["bettermemory"] > 1.0

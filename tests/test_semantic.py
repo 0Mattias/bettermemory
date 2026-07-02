@@ -324,7 +324,7 @@ def test_hybrid_semantic_hit_does_not_fabricate_match_terms() -> None:
 
     # Literal-overlap hit: only the tokens actually present are reported.
     lit_hit = by_id[lit.id]
-    assert "kubernetes" in lit_hit.match_terms
+    assert "kubernet" in lit_hit.match_terms
     assert "rollout" in lit_hit.match_terms
     assert "helm" not in lit_hit.match_terms  # 'helm' is in neither body
 
