@@ -539,6 +539,48 @@ def test_run_driver_repeat_citations_of_one_memory_count_once():
     assert ev.endorsement_rate.denominator == 1
 
 
+def test_run_driver_invalid_citation_does_not_shadow_later_valid_citation():
+    """Ordering pin for the honesty guard: run_driver VALIDATES citations
+    before the per-memory dedup, so an invalid citation can never shadow a
+    later valid citation of the SAME memory. A natural refactor that dedups
+    raw citations first (first-per-id over `turn.citations`) and validates
+    the lone survivor would keep the body-invalid first citation, drop it,
+    and zero the turn — helped 1 -> 0, endorsement 1/1 -> 0/0, and a phantom
+    silent miss on an abstained probe — while the rest of the suite stays
+    green. Validate-before-dedup is parity with compute_eval's within-event
+    upgrade rule (eval.py's `seen_ids`: a whitespace/empty first excerpt
+    upgrades to a later non-empty one for the same id): through either path,
+    a degenerate citation never masks a genuine one."""
+    from .driver import AgentTurn, Citation, ScriptedAgent, run_driver
+
+    wl = default_workload()
+    probe = wl.probes[0]  # the pytest gold + not-searched probe
+    assert probe.gold_key is not None and not probe.agent_searched
+    mem_id = wl.gold_id(probe)
+    assert mem_id is not None
+
+    # Everything else searched, so any miss isolates to this one probe.
+    script = {p.query: AgentTurn(searched=True) for p in wl.probes}
+    script[probe.query] = AgentTurn(
+        searched=False,
+        citations=(
+            # Body-INVALID first: dropped by the guard, so it must not claim
+            # the memory's dedup slot...
+            Citation(mem_id, "phrase absent from body"),
+            # ...leaving the body-valid second citation to survive.
+            Citation(mem_id, "pytest over unittest"),
+        ),
+    )
+    ev = run_driver(wl, ScriptedAgent(script=script))
+
+    # The valid citation counts: helped +1 and endorsement 1/1...
+    assert ev.memory_helped_rate.numerator == 1
+    assert ev.endorsement_rate.numerator == 1
+    assert ev.endorsement_rate.denominator == 1
+    # ...and it upgrades the abstention to searched — no phantom miss.
+    assert ev.silent_miss_rate.numerator == 0
+
+
 def test_run_driver_drops_whitespace_only_excerpt():
     """The degenerate-excerpt trap: a bare " " excerpt is truthy AND a genuine
     substring of every body, so only the `strip()` gate catches it — yet
