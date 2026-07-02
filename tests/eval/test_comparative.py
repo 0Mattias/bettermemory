@@ -499,3 +499,76 @@ def test_run_driver_searched_coherence_uses_validated_citations():
     ev_invalid = run_driver(wl, invalid)
     assert ev_invalid.silent_miss_rate.numerator == 1
     assert ev_invalid.memory_helped_rate.numerator == 0
+
+
+def test_run_driver_repeat_citations_of_one_memory_count_once():
+    """Counting parity with compute_eval: run_driver emits one singleton use
+    event per citation (ids=[one id]), so N citations of the SAME retrieved
+    memory would bypass compute_eval's WITHIN-event id dedup (eval.py's
+    `seen_ids`, whose comment names record_use(memory_ids=["A", "A"]) as the
+    inflation vector) and mint N helped/endorsement counts — where the real
+    record_use path, carrying all of a turn's ids in ONE event, scores 1.
+    run_driver must dedup validated citations per memory (first survivor
+    wins) so identical telemetry scores identically through either path."""
+    from .driver import AgentTurn, Citation, ScriptedAgent, run_driver
+
+    wl = default_workload()
+    probe = wl.probes[0]  # the pytest gold probe; its memory tops these hits
+    mem_id = wl.gold_id(probe)
+    assert mem_id is not None
+    # Two identical excerpts + one different, ALL genuine body substrings —
+    # every citation passes the three validations on its own.
+    body = {f.key: f.body for f in wl.facts}["pytest"]
+    assert "pytest over unittest" in body and "unittest TestCase style" in body
+
+    script = {p.query: AgentTurn(searched=True) for p in wl.probes}
+    script[probe.query] = AgentTurn(
+        searched=True,
+        citations=(
+            Citation(mem_id, "pytest over unittest"),
+            Citation(mem_id, "pytest over unittest"),
+            Citation(mem_id, "unittest TestCase style"),
+        ),
+    )
+    ev = run_driver(wl, ScriptedAgent(script=script))
+
+    # One use event per memory per turn: helped counts 1 (not 3), and
+    # endorsement is 1/1 (not 3/3).
+    assert ev.memory_helped_rate.numerator == 1
+    assert ev.endorsement_rate.numerator == 1
+    assert ev.endorsement_rate.denominator == 1
+
+
+def test_run_driver_drops_whitespace_only_excerpt():
+    """The degenerate-excerpt trap: a bare " " excerpt is truthy AND a genuine
+    substring of every body, so only the `strip()` gate catches it — yet
+    compute_eval's helped numerator requires `excerpt.strip()` (eval.py). Left
+    unguarded it would flip an explicit searched=False abstention via the
+    coherence upgrade (suppressing a real silent miss) and mint
+    endorsement_rate 1/1 while contributing 0 to helped — the cross-layer
+    contradiction the guard exists to prevent. run_driver must drop it."""
+    from .driver import AgentTurn, Citation, ScriptedAgent, run_driver
+
+    wl = default_workload()
+    probe = wl.probes[0]  # the pytest gold + not-searched probe
+    assert probe.gold_key is not None and not probe.agent_searched
+    mem_id = wl.gold_id(probe)
+    assert mem_id is not None
+    # The trap conditions: truthiness and the substring check both pass " ".
+    body = {f.key: f.body for f in wl.facts}[probe.gold_key]
+    assert " " in body
+
+    # Everything else searched, so any miss isolates to this one probe.
+    script = {p.query: AgentTurn(searched=True) for p in wl.probes}
+    script[probe.query] = AgentTurn(searched=False, citations=(Citation(mem_id, " "),))
+    ev = run_driver(wl, ScriptedAgent(script=script))
+
+    # Dropped outright: no use event exists, so endorsement stays the honest
+    # 0/0 n/a and nothing reaches the helped numerator...
+    assert ev.endorsement_rate.numerator == 0
+    assert ev.endorsement_rate.denominator == 0
+    assert ev.endorsement_rate.rate is None
+    assert ev.memory_helped_rate.numerator == 0
+    # ...and the explicit abstention is NOT flipped: the probe stays the
+    # run's single silent miss.
+    assert ev.silent_miss_rate.numerator == 1

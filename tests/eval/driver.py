@@ -53,10 +53,10 @@ _SESSION_ID = "sess_agent_driver"
 @dataclass(frozen=True)
 class Citation:
     """A memory the agent deliberately cited in its reply, plus the
-    load-bearing phrase. `excerpt` MUST be a real, non-empty substring of the
-    cited memory's body — that is what the Stop hook's attribution would have
-    captured (hook.py), and `compute_eval` only counts a non-empty excerpt
-    toward `memory_helped_rate`."""
+    load-bearing phrase. `excerpt` MUST be a real, non-whitespace substring of
+    the cited memory's body — that is what the Stop hook's attribution would
+    have captured (hook.py), and `compute_eval` only counts an excerpt that
+    survives `.strip()` toward `memory_helped_rate`."""
 
     memory_id: str
     excerpt: str
@@ -75,10 +75,14 @@ class Agent(Protocol):
     """Decides, for one probe, whether the agent searched and what it cited.
 
     Receives the REAL ranker hits so citations can reference actually
-    retrieved memories — but the invariant ("you can't cite what you never
-    saw") is NOT assumed of implementations: `run_driver` enforces it
-    centrally, dropping any citation whose id is absent from this probe's
-    hits, so a protocol-violating agent cannot inflate the trio."""
+    retrieved memories — but the citation contract is NOT assumed of
+    implementations: `run_driver` enforces it centrally, dropping any
+    citation whose id is absent from this probe's hits ("you can't cite what
+    you never saw"), whose excerpt is whitespace-only, or whose excerpt is
+    not a substring of the cited body, then keeping at most ONE surviving
+    citation per memory per turn (compute_eval's within-event id dedup,
+    replayed here because the driver emits singleton use events), so a
+    protocol-violating agent cannot inflate the trio."""
 
     def decide(self, probe: WorkloadProbe, hits: list[MemoryHit]) -> AgentTurn: ...
 
@@ -95,8 +99,9 @@ def run_driver(
 
     For each probe: run the real `search`, ask the agent to decide, then emit
     genuinely-shaped events — a `search` event (the retrieval-occurrence
-    denominator) when the agent searched, a `use`/`applied` event per citation
-    (the helped/endorsement numerators), and the `turn_audited` / `search_miss`
+    denominator) when the agent searched, a `use`/`applied` event per validated
+    cited MEMORY (the helped/endorsement numerators; repeat citations of one
+    memory collapse to one event), and the `turn_audited` / `search_miss`
     audit events (the silent-miss lane). All flow through `compute_eval`, so a
     driver that supplies citations gets a non-`None` trio."""
     memories = workload.memories()
@@ -110,14 +115,20 @@ def run_driver(
 
         # Honesty guard — the Citation contract, enforced for EVERY agent
         # (run_driver is generic over Agent implementations, so the protocol's
-        # invariant lives HERE, not on trust). Two validations:
+        # invariant lives HERE, not on trust). Three validations:
         #   1. the cited id must be among THIS probe's ranker hits — you
         #      can't cite what you never saw. A hit-absent citation would
         #      otherwise mint a helped-rate numerator with no retrieval
         #      denominator behind it (1/0) and, via the coherence upgrade
         #      below, flip an abstention into `searched`, suppressing a
         #      real silent miss.
-        #   2. the excerpt must be a real substring of the cited memory's
+        #   2. the excerpt must be non-WHITESPACE, matching the
+        #      `excerpt.strip()` gate on compute_eval's helped numerator
+        #      (eval.py). A bare " " passes truthiness AND the substring
+        #      check (whitespace appears in every body), so it would flip an
+        #      abstention and mint endorsement_rate 1/1 while contributing
+        #      nothing to helped — a cross-layer contradiction.
+        #   3. the excerpt must be a real substring of the cited memory's
         #      BODY, never merely of the truncated snippet the agent was
         #      shown. `snippet_for` truncates bodies >200 chars and appends a
         #      synthetic "..."; a model echoing that ellipsis would otherwise
@@ -125,21 +136,31 @@ def run_driver(
         #      never contained (and a genuine phrase past the snippet
         #      boundary would be wrongly dropped). Validate against the body
         #      here, where the driver holds it.
+        # Then dedup by memory_id, FIRST surviving citation per memory —
+        # mirroring compute_eval's within-event `seen_ids` semantics. The
+        # real record_use path carries a whole turn's ids in ONE event, which
+        # compute_eval dedups (its comment names memory_ids=["A", "A"] as the
+        # inflation vector); the driver emits one singleton event per
+        # citation, so without this dedup N repeat citations of one memory
+        # would score N helped/endorsement counts where identical production
+        # telemetry scores 1.
         hit_ids = {h.id for h in hits}
-        citations = tuple(
-            c
-            for c in turn.citations
-            if c.memory_id in hit_ids
-            and c.excerpt
-            and c.excerpt in body_by_id.get(c.memory_id, "")
-        )
+        cited_by_id: dict[str, Citation] = {}
+        for c in turn.citations:
+            if (
+                c.memory_id in hit_ids
+                and c.excerpt.strip()
+                and c.excerpt in body_by_id.get(c.memory_id, "")
+            ):
+                cited_by_id.setdefault(c.memory_id, c)
+        citations = tuple(cited_by_id.values())
 
         # The agent searched iff it SAID so, OR a citation survived the guards
         # above (a genuine citation proves it consulted memory). Applying the
-        # citation-implies-searched coherence HERE — on validated citations,
-        # not the raw ones — means a citation dropped by either guard can
-        # never flip an explicit `searched=false`, so the silent-miss lane and
-        # the helped-rate numerator stay consistent.
+        # citation-implies-searched coherence HERE — on the validated, deduped
+        # survivors, not the raw citations — means a citation dropped by any
+        # guard can never flip an explicit `searched=false`, so the
+        # silent-miss lane and the helped-rate numerator stay consistent.
         searched = turn.searched or bool(citations)
 
         if searched:
