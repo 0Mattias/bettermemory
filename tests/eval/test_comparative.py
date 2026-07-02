@@ -241,9 +241,11 @@ def test_render_text_omits_lanes_for_ran_result_without_eval_report():
 
 
 # ---------------------------------------------------------------------------
-# Live-agent driver — the machinery that computes the full trio. The scripted
-# agent is a deterministic recorded transcript (authored citations) that proves
-# the compute path end-to-end; the real measurement needs the LiveAgent.
+# Agent driver — the machinery that computes the full trio. The scripted agent
+# is a deterministic recorded transcript (authored citations) that proves the
+# compute path end-to-end; a real measurement needs a real agent's decisions
+# (production telemetry — the key-gated LiveAgent role-play was removed, see
+# driver.py's module docstring).
 # ---------------------------------------------------------------------------
 
 
@@ -312,130 +314,17 @@ def test_offline_adapter_still_reports_na_with_driver_present():
     assert ev.endorsement_rate.rate is None
 
 
-def test_live_agent_unavailable_without_key(monkeypatch):
-    """LiveAgent is gated: no ANTHROPIC_API_KEY -> SystemUnavailable, so CI
-    takes the scripted path and the live run is an explicit opt-in."""
-    from .driver import LiveAgent
-
-    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
-    with pytest.raises(SystemUnavailable) as exc:
-        LiveAgent()
-    assert "ANTHROPIC_API_KEY" in exc.value.reason
-
-
-def test_cli_driver_scripted_emits_full_trio(capsys, monkeypatch):
+def test_cli_driver_scripted_emits_full_trio(capsys):
     """`--driver scripted --json` runs the driver and emits all three rates as
     real numbers (not n/a)."""
     from .comparative import main
 
-    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
     rc = main(["--driver", "scripted", "--json"])
     assert rc == 0
     data = json.loads(capsys.readouterr().out)
     assert data["memory_helped_rate"]["rate"] is not None
     assert data["endorsement_rate"]["rate"] is not None
     assert data["silent_miss_rate"]["rate"] is not None
-
-
-def test_cli_driver_live_reports_unavailable_without_key(capsys, monkeypatch):
-    """`--driver live` without a key exits cleanly with an explanation rather
-    than crashing — the same honest-unavailable contract as competitor rows."""
-    from .comparative import main
-
-    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
-    rc = main(["--driver", "live"])
-    assert rc == 0
-    assert "unavailable" in capsys.readouterr().out.lower()
-
-
-# ---------------------------------------------------------------------------
-# LiveAgent honesty — the live path is the publishable one, so its decision
-# logic is extracted into a pure `_parse_live_decision` and unit-tested here
-# (the model call itself stays the # pragma: no cover live boundary).
-# ---------------------------------------------------------------------------
-
-
-def test_parse_live_decision_searched_is_model_choice_not_bool_hits():
-    """`searched` must be the model's own decision, never derived from whether
-    the ranker returned hits. A model that says searched=false WHILE hits exist
-    yields searched=False — otherwise the silent-miss lane is a tautology of
-    retrieval (any hit ⇒ searched ⇒ never a miss)."""
-    from .driver import _parse_live_decision
-
-    turn = _parse_live_decision('{"searched": false, "citations": []}', {"A", "B"})
-    assert turn.searched is False  # hits present, but the model did not search
-    assert turn.citations == ()
-
-    # And the converse: no hits, but the model says it searched.
-    assert _parse_live_decision('{"searched": true, "citations": []}', set()).searched
-
-
-def test_parse_live_decision_reports_model_searched_verbatim():
-    """The parse FAITHFULLY reports the model's explicit `searched`; it does NOT
-    coerce it from the presence of a citation. The "a genuine citation implies
-    searched" coherence is applied later, in run_driver, AFTER body validation —
-    so a body-invalid citation can't flip an explicit abstention here (the
-    cross-layer contradiction the self-audit caught)."""
-    from .driver import _parse_live_decision
-
-    turn = _parse_live_decision(
-        '{"searched": false, "citations": [{"id": "A", "excerpt": "foo"}]}', {"A"}
-    )
-    assert turn.searched is False  # model said false; parse does not override
-    assert [c.memory_id for c in turn.citations] == ["A"]
-
-
-def test_parse_live_decision_drops_citation_for_unseen_id():
-    """Honest by construction: a citation referencing an id the agent never
-    retrieved is dropped — you can't cite what you never saw. The model's
-    search decision still stands."""
-    from .driver import _parse_live_decision
-
-    turn = _parse_live_decision(
-        '{"searched": true, "citations": [{"id": "Z", "excerpt": "foo"}]}', {"A"}
-    )
-    assert turn.citations == ()
-    assert turn.searched is True
-
-
-def test_parse_live_decision_missing_searched_defaults_false_never_hits():
-    """When the model omits `searched`, the parse defaults to False — never
-    bool(hits), and never bool(citations) (the citation upgrade is run_driver's
-    job, applied only to body-validated citations). Hits in scope must not make
-    searched True."""
-    from .driver import _parse_live_decision
-
-    # No `searched`, no citation, but hits exist -> False (NOT bool(hits)).
-    assert _parse_live_decision('{"citations": []}', {"A", "B"}).searched is False
-    # No `searched`, a candidate citation present -> still False at parse level
-    # (run_driver upgrades iff the excerpt survives the body guard).
-    parsed = _parse_live_decision(
-        '{"citations": [{"id": "A", "excerpt": "foo"}]}', {"A"}
-    )
-    assert parsed.searched is False
-    assert [c.memory_id for c in parsed.citations] == ["A"]
-
-
-def test_parse_live_decision_malformed_is_clean_noop():
-    """Best-effort: a malformed payload degrades to a dropped field, never an
-    exception — the live run must not crash mid-measurement on one odd reply."""
-    from .driver import AgentTurn, _parse_live_decision
-
-    assert _parse_live_decision("not json at all", {"A"}) == AgentTurn(searched=False)
-    assert _parse_live_decision("[1, 2, 3]", {"A"}).searched is False
-    assert _parse_live_decision('"a bare string"', {"A"}).citations == ()
-    # A non-string `excerpt` (number / bool / array / object) must be treated as
-    # absent, not `.strip()`ed into an AttributeError that aborts the run.
-    for bad in ("42", "true", "[1, 2]", '{"x": 1}'):
-        turn = _parse_live_decision(
-            f'{{"searched": true, "citations": [{{"id": "A", "excerpt": {bad}}}]}}',
-            {"A"},
-        )
-        assert turn.searched is True  # model's decision survives
-        assert turn.citations == ()  # the type-wrong excerpt is dropped, no crash
-    # A non-list `citations` and non-dict entries are also tolerated.
-    assert _parse_live_decision('{"citations": "nope"}', {"A"}).citations == ()
-    assert _parse_live_decision('{"citations": [1, "x"]}', {"A"}).citations == ()
 
 
 def test_run_driver_silent_miss_follows_search_decision_not_hits():

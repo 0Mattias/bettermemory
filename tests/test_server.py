@@ -5826,8 +5826,9 @@ async def test_point_of_call_cues_survive_in_descriptions(
     call: the announce-on-search rule in memory_search and the proactive-write
     reflex in memory_write may earn their compliance by sitting next to the
     tool the model is about to invoke. A future "just make it shorter" pass
-    that removed them would be invisible to the offline eval (there is no
-    live-agent driver yet), so it is pinned here instead."""
+    that removed them would be invisible to the offline eval (nothing in the
+    harness exercises a live model's tool-description compliance), so it is
+    pinned here instead."""
     descs = await _lean_descriptions(tmp_path)
     assert "Using your stored preference" in descs.get("memory_search", ""), (
         "memory_search lost its inline announce-on-search cue; the "

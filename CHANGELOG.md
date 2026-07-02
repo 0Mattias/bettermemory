@@ -7,6 +7,27 @@ breaking changes, minor for additive features, patch for fixes. The
 [compatibility contract](CONTRIBUTING.md#versioning-and-the-compatibility-contract)
 spells out exactly what's stable.
 
+## Unreleased
+
+### Removed
+
+- **The key-gated `LiveAgent` eval path.** `tests/eval/driver.py` no longer
+  ships the one-shot Anthropic-API "agent", and `--driver live` is gone from
+  `python -m tests.eval.comparative`. Three reasons: it required a raw
+  `ANTHROPIC_API_KEY` that the project's own agent workflow never holds (so
+  it could never actually run where the eval is driven from); it had already
+  cost two honesty-defect fixes (3.7.1); and a staged single-turn completion
+  role-playing "an agent answering with these memories" is not an agent
+  session — its output would have worn the "publishable measurement" label
+  the eval surface exists to keep honest. The `Agent` protocol, `run_driver`,
+  and the deterministic `ScriptedAgent` (the CI-exercised compute-path proof)
+  all stay; the honest source for live `memory_helped_rate` /
+  `endorsement_rate` numbers is production telemetry — `bettermemory eval`
+  over a real store's event log. The driver's internal event label
+  `triggered_from` changed `live_agent_driver` → `agent_driver` (nothing
+  consumes it), and docs/ROADMAP re-scope the comparative-publication plan
+  onto dogfood telemetry.
+
 ## 3.10.0 - 2026-06-10
 
 The heuristic-correctness release: the parked 146-finding extractor-hunt

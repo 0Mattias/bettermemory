@@ -159,17 +159,15 @@ def render_json(report: ComparativeReport) -> str:
     return json.dumps(report.to_dict(), indent=2)
 
 
-def render_driver_text(report: EvalReport, *, scripted: bool) -> str:
-    """Render the live-agent driver's full trio. The scripted header is
-    load-bearing: it states the numbers are an authored demonstration, not a
-    measurement, so a copy-paste of this output can't be mistaken for one."""
-    tag = (
-        "(SCRIPTED — authored citations prove the compute path, NOT a measurement)"
-        if scripted
-        else "(LIVE model — publishable measurement)"
-    )
+def render_driver_text(report: EvalReport) -> str:
+    """Render the agent driver's full trio. The header is load-bearing: it
+    states the numbers are an authored demonstration, not a measurement, so a
+    copy-paste of this output can't be mistaken for one. (The CLI's only
+    driver is the ScriptedAgent — the key-gated LiveAgent was removed; see
+    driver.py's module docstring.)"""
+    tag = "(SCRIPTED — authored citations prove the compute path, NOT a measurement)"
     lines = [
-        f"live-agent driver — full metric trio {tag}",
+        f"agent driver — full metric trio {tag}",
         "=" * 70,
         f"  memory_helped_rate   {_fmt_rate(report.memory_helped_rate)}",
         f"  endorsement_rate     {_fmt_rate(report.endorsement_rate)}",
@@ -191,31 +189,25 @@ def main(argv: Sequence[str] | None = None) -> int:
     )
     parser.add_argument(
         "--driver",
-        choices=["scripted", "live"],
+        choices=["scripted"],
         default=None,
         help=(
-            "run the live-agent driver to compute the full trio instead of the "
+            "run the agent driver to compute the full trio instead of the "
             "comparative matrix. 'scripted' is a deterministic demo (authored "
-            "citations); 'live' uses a real model (needs ANTHROPIC_API_KEY)."
+            "citations proving the compute path — not a measurement)."
         ),
     )
     args = parser.parse_args(argv)
 
     if args.driver is not None:
-        from .driver import LiveAgent, default_scripted_agent, run_driver
+        from .driver import default_scripted_agent, run_driver
 
         workload = default_workload()
-        scripted = args.driver == "scripted"
-        try:
-            agent: Any = default_scripted_agent(workload) if scripted else LiveAgent()
-        except SystemUnavailable as exc:
-            print(f"live driver unavailable: {exc.reason}")
-            return 0
-        eval_report = run_driver(workload, agent, k=args.k)
+        eval_report = run_driver(workload, default_scripted_agent(workload), k=args.k)
         print(
             json.dumps(eval_report.to_dict(), indent=2)
             if args.json
-            else render_driver_text(eval_report, scripted=scripted)
+            else render_driver_text(eval_report)
         )
         return 0
 

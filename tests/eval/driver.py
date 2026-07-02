@@ -1,14 +1,14 @@
-"""Live-agent driver — turn an agent's cite-decisions into the full eval trio.
+"""Agent driver — turn an agent's cite-decisions into the full eval trio.
 
 `BetterMemoryAdapter` (adapters.py) deliberately reports `memory_helped_rate`
 and `endorsement_rate` as `n/a` offline: fabricating `use` events from the
 gold labels would just relabel recall (the circular implementation the
 package refuses to ship — see __init__.py honesty constraint #2). The two
-live-agent rates need a REAL agent deciding which retrieved memory it cited.
+agent-decision rates need a REAL agent deciding which retrieved memory it
+cited.
 
-This module supplies the machinery that was the open piece before publication
-(docs/eval.md, ROADMAP "publish the comparative numbers") WITHOUT touching
-that honest offline `n/a`:
+This module supplies the compute-path machinery WITHOUT touching that honest
+offline `n/a`:
 
 - `Agent` protocol — given a probe and the REAL search hits, decide whether
   the agent retrieved and which hit ids it deliberately cited (with the
@@ -20,19 +20,22 @@ that honest offline `n/a`:
   transcript). Its citations are AUTHORED, not measured: it proves the compute
   path end-to-end and gives CI a reproducible trio, but its numbers are a
   demonstration, NOT a published measurement.
-- `LiveAgent` — the real-model path that produces the publishable numbers.
-  Gated behind the Anthropic SDK + an API key; raises `SystemUnavailable` when
-  absent so CI takes the scripted path and the live run stays opt-in.
 
 The honesty boundary is explicit: the trio is "computable" the moment a driver
 feeds real-shaped citation events; whether those citations are a *measurement*
-depends entirely on whether the agent is a real model (LiveAgent) or a script.
+depends on whether a real agent in a real session produced them. A key-gated
+`LiveAgent` (a one-shot Anthropic-API role-play of "an agent answering with
+these memories") shipped in 3.7.0 and was deliberately REMOVED: it could not
+run in the project's actual workflow (agent sessions there hold no raw
+`ANTHROPIC_API_KEY`), it had already cost two honesty-defect fixes (3.7.1),
+and a staged single-turn completion is not an agent session. The honest source
+for live helped/endorsement numbers is production telemetry — `bettermemory
+eval` over a real store's event log. The `Agent` protocol stays open for a
+future driver wired to REAL transcripts; do not re-add a role-played one.
 """
 
 from __future__ import annotations
 
-import json
-import os
 from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Any, Protocol, runtime_checkable
@@ -42,10 +45,9 @@ from bettermemory.eval import EvalReport, compute_eval
 from bettermemory.models import MemoryHit
 from bettermemory.search import search
 
-from .adapters import SystemUnavailable
 from .workload import BASE_NOW, Workload, WorkloadProbe
 
-_SESSION_ID = "sess_live_agent_driver"
+_SESSION_ID = "sess_agent_driver"
 
 
 @dataclass(frozen=True)
@@ -104,9 +106,9 @@ def run_driver(
         hits = search(memories, probe.query, max_results=k, now=now)
         turn = agent.decide(probe, hits)
 
-        # Honesty guard — the Citation contract, enforced for EVERY agent (not
-        # just the live one): an excerpt must be a real substring of the cited
-        # memory's BODY, never merely of the truncated snippet the live agent
+        # Honesty guard — the Citation contract, enforced for EVERY agent: an
+        # excerpt must be a real substring of the cited memory's BODY, never
+        # merely of the truncated snippet the agent
         # was shown. `snippet_for` truncates bodies >200 chars and appends a
         # synthetic "..."; a model echoing that ellipsis would otherwise inflate
         # the helped-rate numerator with a phrase the memory never contained
@@ -146,7 +148,7 @@ def run_driver(
                     "auto": False,
                     "attribution": "model",
                     "claim_excerpts": [cite.excerpt],
-                    "triggered_from": "live_agent_driver",
+                    "triggered_from": "agent_driver",
                 }
             )
 
@@ -197,7 +199,8 @@ class ScriptedAgent:
     "did not search, cited nothing". This is a RECORDED TRANSCRIPT, not a
     measurement: its citations are authored, so the trio it produces proves
     the compute path is wired end-to-end and is reproducible in CI — it is not
-    a published number (that needs `LiveAgent`)."""
+    a published number (that needs a real agent's decisions; see the module
+    docstring for why the role-played `LiveAgent` was removed)."""
 
     script: dict[str, AgentTurn] = field(default_factory=dict)
 
@@ -238,120 +241,3 @@ def default_scripted_agent(workload: Workload) -> ScriptedAgent:
             ),
         }
     )
-
-
-def _parse_live_decision(text: str, hit_ids: set[str]) -> AgentTurn:
-    """Parse a live model's JSON reply into an `AgentTurn`.
-
-    Pure (no I/O) so the honesty-critical logic is unit-testable without an API
-    key — only the surrounding model call stays `# pragma: no cover`. Contract:
-
-    - `searched` is the MODEL's own explicit decision (the ``"searched"``
-      boolean), NEVER derived from whether the ranker returned hits. Deriving it
-      from ``bool(hits)`` would make the silent-miss lane a tautology of
-      retrieval (any probe with a hit ⇒ "searched" ⇒ never a miss), turning a
-      published "measurement" into a restatement of the ranker output. When the
-      model omits a usable boolean, default to False — `run_driver` upgrades it
-      to True iff a citation SURVIVES body validation (see below), so a citation
-      can only imply "searched" once it's proven genuine, not before.
-    - A citation must reference a memory the agent actually saw
-      (``id in hit_ids``) — you can't cite what you never retrieved. The
-      excerpt-is-a-real-body-substring invariant is enforced centrally in
-      `run_driver` (which holds the bodies), so this stays snippet-agnostic.
-    - Best-effort: any malformed shape (non-JSON, non-object, non-list
-      citations, non-dict entries, a non-string ``excerpt``) degrades to a
-      dropped field, never an exception — the live measurement must not crash
-      mid-run on one odd model reply.
-    """
-    try:
-        parsed = json.loads(text)
-    except (json.JSONDecodeError, TypeError):
-        return AgentTurn(searched=False)
-    if not isinstance(parsed, dict):
-        return AgentTurn(searched=False)
-
-    citations: list[Citation] = []
-    raw = parsed.get("citations")
-    if isinstance(raw, list):
-        for c in raw:
-            if not isinstance(c, dict):
-                continue
-            mid = c.get("id")
-            # `excerpt` may be any JSON type — coerce safely. A non-string
-            # (number/bool/array/object) is treated as absent, not `.strip()`ed
-            # (which would raise AttributeError and abort the whole run).
-            raw_excerpt = c.get("excerpt")
-            excerpt = raw_excerpt.strip() if isinstance(raw_excerpt, str) else ""
-            if isinstance(mid, str) and mid in hit_ids and excerpt:
-                citations.append(Citation(memory_id=mid, excerpt=excerpt))
-
-    # Faithfully report the model's stated decision; default False when it omits
-    # the field. The "a genuine citation implies searched" coherence is applied
-    # in run_driver AFTER body validation, so a body-invalid citation can't flip
-    # an explicit abstention while being dropped from the count.
-    searched_raw = parsed.get("searched")
-    searched = searched_raw if isinstance(searched_raw, bool) else False
-    return AgentTurn(searched=searched, citations=tuple(citations))
-
-
-class LiveAgent:
-    """The real-model path — the publishable measurement.
-
-    A real agent is given the probe and the retrieved hits and decides, on its
-    own, whether the retrieval shaped its reply and which memory it cited. That
-    decision (not a gold label) is what makes `memory_helped_rate` /
-    `endorsement_rate` a measurement rather than a relabeling of recall.
-
-    Gated: requires the `anthropic` SDK and `ANTHROPIC_API_KEY`. Without both
-    it raises `SystemUnavailable` (the same contract competitor adapters use),
-    so CI runs the `ScriptedAgent` path and the live measurement stays an
-    explicit, key-bearing opt-in. The model call itself is the one surface this
-    harness cannot exercise in CI — by design, it's the live boundary.
-    """
-
-    def __init__(self, *, model: str = "claude-sonnet-4-6") -> None:
-        if not os.environ.get("ANTHROPIC_API_KEY"):
-            raise SystemUnavailable(
-                "LiveAgent needs ANTHROPIC_API_KEY (and the `anthropic` SDK) — "
-                "set them to produce the publishable trio; CI uses ScriptedAgent."
-            )
-        try:
-            import anthropic  # noqa: F401  # pyright: ignore[reportMissingImports]
-        except ImportError as exc:
-            raise SystemUnavailable(
-                "LiveAgent needs the `anthropic` SDK (pip install anthropic)."
-            ) from exc
-        self._model = model
-
-    def decide(
-        self, probe: WorkloadProbe, hits: list[MemoryHit]
-    ) -> AgentTurn:  # pragma: no cover - live boundary, not run in CI
-        import anthropic  # pyright: ignore[reportMissingImports]
-
-        client = anthropic.Anthropic()
-        catalog = "\n".join(f"- id={h.id}: {h.snippet}" for h in hits)
-        prompt = (
-            "You are a coding agent answering a user message. Your memory store "
-            f"surfaced these memories as possibly relevant:\n{catalog or '(none)'}"
-            f"\n\nUser message: {probe.query}\n\nDecide for yourself: (1) did you "
-            "actually need to consult stored memory to answer this — is any "
-            "surfaced memory genuinely relevant, or is the query self-contained? "
-            "and (2) which memories did your reply actually rely on? Reply ONLY "
-            'with JSON: {"searched": <true if you consulted memory, false if the '
-            'query needed none>, "citations": [{"id": <id of a memory you relied '
-            'on>, "excerpt": <the load-bearing phrase, a verbatim substring of '
-            'that memory>}]}. Use "searched": false with an empty citations list '
-            "when no surfaced memory was relevant."
-        )
-        msg = client.messages.create(
-            model=self._model,
-            max_tokens=512,
-            messages=[{"role": "user", "content": prompt}],
-        )
-        text = "".join(
-            b.text for b in msg.content if getattr(b, "type", None) == "text"
-        )
-        # `searched` comes from the model's reply, NOT bool(hits) — see
-        # _parse_live_decision. Deriving it from the ranker would make the live
-        # silent_miss_rate a tautology of retrieval.
-        return _parse_live_decision(text, {h.id for h in hits})
