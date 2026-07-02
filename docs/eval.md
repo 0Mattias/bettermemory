@@ -42,7 +42,7 @@ This is the dead-letter detector. A low rate (mostly auto-applied) means nothing
 
 ### `silent_miss_rate`
 
-> Of turns where the configured ranker would have surfaced a high-relevance hit, what fraction had **no** `memory_search`, `memory_show`, or `memory_list` call?
+> Of all miss-capable audited turns (every audit the probe didn't decline, not just turns with a high-relevance hit), what fraction were **silent misses** — the configured ranker would have surfaced a high-relevance hit AND the model made no `memory_search`, `memory_show`, or `memory_list` call?
 
 Numerator: `search_miss` events emitted by `memory_audit_turn`.
 
