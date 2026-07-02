@@ -108,7 +108,13 @@ meanwhile). Tests 2,546 → 2,565 under the full local extras matrix.
   conventional OSS register: what it is, install, features as
   one-liners, docs links. No behavioral claims changed; `docs/api.md`
   (the pinned tool contract) and the drift-tested
-  `docs/system_prompt.md` block are untouched.
+  `docs/system_prompt.md` block are untouched. A follow-up pass in
+  this release re-aims the README at the person deciding whether to
+  install rather than the person reading the code: an illustrative
+  two-session transcript up top (remember across the gap, distrust
+  the drifted fact), benefit-led "why this one" bullets, and the
+  mechanics compressed below an explicit fold. The drift-tested
+  claims (semantic opt-in knobs) are preserved verbatim.
 
 ## 3.11.0 - 2026-07-02
 

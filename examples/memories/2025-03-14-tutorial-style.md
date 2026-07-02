@@ -7,6 +7,5 @@ scopes: [tools, learning-style]
 confidence: high
 source: explicit-statement
 ---
-When I ask for a "zero to hero" tutorial, I want a hands-on
-walkthrough with code I can run, not a tour of the IDE
-or interface chrome.
+When I ask for a tutorial, I want a hands-on walkthrough with code
+I can run, not a tour of the IDE or interface chrome.

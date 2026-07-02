@@ -5,29 +5,81 @@
 [![Python](https://img.shields.io/badge/python-3.11%E2%80%933.14-blue.svg)](https://www.python.org/downloads/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
-Persistent memory for AI coding agents, served over MCP. Memories are
-plain markdown files on disk, and every retrieval carries a verdict on
-whether the stored fact is still true.
+Claude forgets you. Every session starts from zero: the stack you
+explained yesterday, the deploy quirk you debugged last week, the "we
+use uv, not pip" you have now said eleven times.
 
-Stored facts rot: files move, preferences change, a commit two days ago
-can invalidate a config note. bettermemory checks each hit against
-calendar age, the file paths it cites, and the commits landed since it
-was last confirmed, and returns the rollup as a per-hit
-`staleness_verdict` — so the model spot-checks before it trusts:
+bettermemory gives Claude Code — or any MCP client — memory that
+survives the session. And it handles the part every memory layer
+skips: memories go stale, and a confidently remembered stale fact is
+worse than no memory at all. So every recall here comes with a
+verdict on whether the fact still holds, and the model checks before
+it trusts.
 
-```jsonc
-{
-  "snippet": "Auth middleware lives in src/auth/middleware.py …",
-  "relevance": "high",
-  "staleness_verdict": "spot_check_recommended",
-  "path_drift": { "missing": ["src/auth/middleware.py"] },  // file moved
-  "commit_drift_count": 12   // commits since the fact was last verified
-}
+## What that feels like
+
+Three weeks ago, mid-session:
+
+```text
+> for the record: staging deploys go through Fly now, the Render
+  setup is dead
+
+⏺ Stored: "Staging deploys via fly deploy --config fly.staging.toml;
+  the old Render service is decommissioned." (projects:acme)
 ```
 
-The model repoints the path with `memory_update`, attests the rest with
-`memory_verify`, and answers from the corrected memory. No database, no
-cloud, no account.
+Today, brand-new session, no context given:
+
+```text
+> staging is 404ing after every deploy. ideas?
+
+⏺ You have a stored note that staging deploys through Fly and Render
+  is gone — last verified 3 weeks and 41 commits ago, so checking it
+  before relying on it… fly.staging.toml still exists, but its
+  internal_port changed on Monday. That's the 404: the app listens
+  on 8080, the config still says 3000.
+
+> fix it
+
+⏺ Fixed. Re-verified the memory too, so the next session inherits it
+  fresh instead of re-checking.
+```
+
+(Illustrative transcript.) Two things happened that a raw session
+cannot do: it remembered across a three-week gap, and it distrusted
+itself exactly enough to catch that the world had moved since.
+
+Want to see the distrust moment for real before wiring anything up?
+
+```sh
+uv tool install bettermemory
+bettermemory try     # 60-second offline demo in a throwaway store
+```
+
+It writes a memory citing a file, deletes the file, and shows the
+next search flag the memory as stale.
+
+## Why this one
+
+- **It knows when it might be wrong.** Facts rot — files move,
+  decisions get reversed, a commit from Tuesday invalidates a config
+  note. Every hit carries a staleness verdict built from calendar
+  age, the file paths the memory cites, and the commits landed since
+  it was last confirmed. Trust is checked, not assumed.
+- **It stays out of your context.** Nothing is auto-injected.
+  Retrieval is a deliberate tool call, and the model is instructed to
+  say when a stored memory shaped its answer — no silent steering
+  from last month's context.
+- **It refuses to hoard.** Writes pass gates: transient state bounces
+  ("we just merged…" stops being true next week), secret-shaped
+  tokens bounce, near-duplicates bounce, and claims about *you* stage
+  for your confirmation before they commit.
+- **It's your data, on your disk.** One markdown file per memory —
+  greppable, hand-editable, git-syncable across machines. No
+  database, no cloud, no account. MIT.
+- **It proves it's helping.** A built-in eval reports how often
+  retrieved memory actually shaped a reply, and how often the model
+  should have retrieved but didn't. Numbers, not vibes.
 
 ## Install
 
@@ -45,18 +97,34 @@ uv tool install bettermemory        # or pipx / pip
 bettermemory init --client claude-desktop
 ```
 
-`bettermemory try` runs a 60-second offline demo in a throwaway store:
-it writes a memory citing a file, deletes the file, and shows the next
-search flag the memory stale. Already using Claude Code's built-in
-auto-memory? `bettermemory ingest` imports those files once.
+Already using Claude Code's built-in auto-memory? `bettermemory
+ingest` imports those files once. Per-client setup:
+[docs/clients.md](docs/clients.md); troubleshooting:
+[docs/installation.md](docs/installation.md).
 
-Per-client setup: [docs/clients.md](docs/clients.md). Install details
-and troubleshooting: [docs/installation.md](docs/installation.md).
+---
 
-## Features
+Everything below is mechanics — useful when you want to know *how*,
+unnecessary for using it.
 
-- Staleness verdict on every retrieval: calendar age + cited-path
-  drift + git commit drift, with the missing paths listed inline.
+## Under the hood
+
+The staleness verdict the model acts on, as it appears on a search
+hit:
+
+```jsonc
+{
+  "snippet": "Auth middleware lives in src/auth/middleware.py …",
+  "relevance": "high",
+  "staleness_verdict": "spot_check_recommended",
+  "path_drift": { "missing": ["src/auth/middleware.py"] },  // file moved
+  "commit_drift_count": 12   // commits since the fact was last verified
+}
+```
+
+The model repoints the path with `memory_update`, attests the rest
+with `memory_verify`, and answers from the corrected memory.
+
 - Retrieval is opt-in. `memory_search` is a deliberate tool call;
   nothing is auto-injected into context.
 - Claims about the user always stage for confirmation before commit.
@@ -68,9 +136,10 @@ and troubleshooting: [docs/installation.md](docs/installation.md).
   each memory shaped; a turn-end probe flags retrievals the model
   should have made but didn't; `memory_health` and `memory_curate`
   report and act on the resulting rot.
-- Hybrid search (keyword + BM25). An optional semantic leg needs the
-  `embeddings` extra plus a config opt-in:
-  `[behavior] search_mode = "semantic"` or `semantic_dedup = true`.
+- Hybrid search (keyword + BM25), with plural-folding and CJK-capable
+  tokenization. An optional semantic leg needs the `embeddings` extra
+  plus a config opt-in: `[behavior] search_mode = "semantic"` or
+  `semantic_dedup = true`.
 - Typed inter-memory links (`supersedes`, `contradicts`, `extends`,
   `depends_on`), surfaced as trust signals at retrieval.
 - Auto-scoping by repo and worktree; explicit cross-project queries.
@@ -93,12 +162,12 @@ schema_version: 1
 id: 01HXYZ123ABCDEFGHJKMNPQRST
 created: 2025-03-14T10:23:00+00:00
 updated: 2025-03-14T10:23:00+00:00
-scopes: [tools, learning-style]
+scopes: [projects:acme, infrastructure]
 confidence: high
 source: explicit-statement
 ---
-When I ask for a "zero to hero" tutorial, I want a hands-on
-walkthrough with code I can run, not a tour of the IDE.
+Staging deploys via `fly deploy --config fly.staging.toml`; the old
+Render service is decommissioned.
 ```
 
 Verification attestations, origin (repo/branch/worktree), and typed
