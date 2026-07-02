@@ -396,6 +396,51 @@ def test_run_driver_drops_citation_whose_excerpt_is_not_in_body():
     assert run_driver(wl, real).memory_helped_rate.numerator == 1
 
 
+def test_run_driver_drops_citation_absent_from_probes_hits():
+    """The citation honesty guard's OTHER validation: the cited id must be
+    among the hits the ranker returned for THIS probe — "you can't cite what
+    you never saw" is enforced centrally in run_driver, not assumed of the
+    Agent (the protocol is explicitly open to future implementations). The
+    excerpt here is a GENUINE substring of the foreign memory's body, so the
+    body guard alone would pass it; only hit-membership catches it. Left
+    unguarded it would mint a helped-rate numerator with no retrieval
+    denominator behind it (1/0) and, via the citation-implies-searched
+    coherence upgrade, flip an explicit abstention and suppress a real
+    silent miss."""
+    from bettermemory.search import search
+
+    from .driver import AgentTurn, Citation, ScriptedAgent, run_driver
+    from .workload import BASE_NOW
+
+    wl = default_workload()
+    probe = wl.probes[0]  # the pytest gold + not-searched probe
+    assert probe.gold_key is not None and not probe.agent_searched
+
+    # A memory from a different probe's lane: the argo-deploy fact shares no
+    # vocabulary with the pytest query, so this probe's hits never contain it
+    # (pinned below with the same k/now run_driver uses).
+    foreign = {f.key: m for f, m in zip(wl.facts, wl.memories())}["deploy"]
+    hits = search(wl.memories(), probe.query, max_results=5, now=BASE_NOW)
+    assert foreign.id not in {h.id for h in hits}
+    excerpt = "Argo rollouts"
+    assert excerpt in foreign.body  # the body guard alone WOULD pass it
+
+    # Everything else searched, so any miss isolates to this one probe.
+    script = {p.query: AgentTurn(searched=True) for p in wl.probes}
+    script[probe.query] = AgentTurn(
+        searched=False, citations=(Citation(foreign.id, excerpt),)
+    )
+    ev = run_driver(wl, ScriptedAgent(script=script))
+
+    # Dropped outright: no use event exists at all (endorsement's denominator
+    # counts applied use events), so nothing reaches the helped numerator...
+    assert ev.memory_helped_rate.numerator == 0
+    assert ev.endorsement_rate.denominator == 0
+    # ...and the explicit searched=False abstention is NOT flipped by the
+    # dropped citation: the probe stays the run's single silent miss.
+    assert ev.silent_miss_rate.numerator == 1
+
+
 def test_run_driver_searched_coherence_uses_validated_citations():
     """Cross-layer consistency (the self-audit's Bug B): a citation forces
     `searched`=True only if it SURVIVES the body guard. On a gold+not-searched

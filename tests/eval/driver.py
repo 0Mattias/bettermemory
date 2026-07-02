@@ -74,9 +74,11 @@ class AgentTurn:
 class Agent(Protocol):
     """Decides, for one probe, whether the agent searched and what it cited.
 
-    Receives the REAL ranker hits so any citation references an actually
-    retrieved memory (honest by construction — you can't cite what you never
-    saw)."""
+    Receives the REAL ranker hits so citations can reference actually
+    retrieved memories — but the invariant ("you can't cite what you never
+    saw") is NOT assumed of implementations: `run_driver` enforces it
+    centrally, dropping any citation whose id is absent from this probe's
+    hits, so a protocol-violating agent cannot inflate the trio."""
 
     def decide(self, probe: WorkloadProbe, hits: list[MemoryHit]) -> AgentTurn: ...
 
@@ -106,24 +108,36 @@ def run_driver(
         hits = search(memories, probe.query, max_results=k, now=now)
         turn = agent.decide(probe, hits)
 
-        # Honesty guard — the Citation contract, enforced for EVERY agent: an
-        # excerpt must be a real substring of the cited memory's BODY, never
-        # merely of the truncated snippet the agent
-        # was shown. `snippet_for` truncates bodies >200 chars and appends a
-        # synthetic "..."; a model echoing that ellipsis would otherwise inflate
-        # the helped-rate numerator with a phrase the memory never contained
-        # (and a genuine phrase past the snippet boundary would be wrongly
-        # dropped). Validate against the body here, where the driver holds it.
+        # Honesty guard — the Citation contract, enforced for EVERY agent
+        # (run_driver is generic over Agent implementations, so the protocol's
+        # invariant lives HERE, not on trust). Two validations:
+        #   1. the cited id must be among THIS probe's ranker hits — you
+        #      can't cite what you never saw. A hit-absent citation would
+        #      otherwise mint a helped-rate numerator with no retrieval
+        #      denominator behind it (1/0) and, via the coherence upgrade
+        #      below, flip an abstention into `searched`, suppressing a
+        #      real silent miss.
+        #   2. the excerpt must be a real substring of the cited memory's
+        #      BODY, never merely of the truncated snippet the agent was
+        #      shown. `snippet_for` truncates bodies >200 chars and appends a
+        #      synthetic "..."; a model echoing that ellipsis would otherwise
+        #      inflate the helped-rate numerator with a phrase the memory
+        #      never contained (and a genuine phrase past the snippet
+        #      boundary would be wrongly dropped). Validate against the body
+        #      here, where the driver holds it.
+        hit_ids = {h.id for h in hits}
         citations = tuple(
             c
             for c in turn.citations
-            if c.excerpt and c.excerpt in body_by_id.get(c.memory_id, "")
+            if c.memory_id in hit_ids
+            and c.excerpt
+            and c.excerpt in body_by_id.get(c.memory_id, "")
         )
 
-        # The agent searched iff it SAID so, OR a citation survived the body
-        # guard above (a genuine citation proves it consulted memory). Applying
-        # the citation-implies-searched coherence HERE — on validated citations,
-        # not the raw ones — means a body-invalid excerpt that gets dropped can
+        # The agent searched iff it SAID so, OR a citation survived the guards
+        # above (a genuine citation proves it consulted memory). Applying the
+        # citation-implies-searched coherence HERE — on validated citations,
+        # not the raw ones — means a citation dropped by either guard can
         # never flip an explicit `searched=false`, so the silent-miss lane and
         # the helped-rate numerator stay consistent.
         searched = turn.searched or bool(citations)
