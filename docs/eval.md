@@ -46,7 +46,7 @@ This is the dead-letter detector. A low rate (mostly auto-applied) means nothing
 
 Numerator: `search_miss` events emitted by `memory_audit_turn`.
 
-Denominator: total audited turns (`turn_audited` events).
+Denominator: audited turns (`turn_audited` events) **excluding** `no_signal` verdicts — audits where the probe declined (empty store, gated probe, nothing relevant stored) are reported separately as `turns_no_signal`, so a probe stuck at "declined" can't read as a healthy 0% miss rate.
 
 This is the opposite failure mode of `endorsement_rate`. A high rate means the model is failing to reach for memory when it should. The threshold rule is versioned (`THRESHOLD_RULE_V1 = "v1_top1_high"`); the event records which rule fired so cross-version comparison stays meaningful.
 
@@ -96,6 +96,7 @@ Events scanned                        768
 Retrieval occurrences                 198
 Applied use events (auto+explicit)    142
 Turns audited                         412
+Turns no-signal (excluded)             57
 
 memory_helped_rate   0.61 [0.54, 0.68]   ▇▇▇▇▇▇▁▁▁▁   (k=121, n=198)
 endorsement_rate     0.74 [0.66, 0.80]   ▇▇▇▇▇▇▇▁▁▁   (k=105, n=142)
