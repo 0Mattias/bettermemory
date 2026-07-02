@@ -9,6 +9,27 @@ spells out exactly what's stable.
 
 ## Unreleased
 
+### Fixed
+
+- **`bettermemory eval` now honors the silent-miss invalidation
+  markers.** `compute_eval` counted every in-window `turn_audited` /
+  `search_miss` event, while the `memory_health` /
+  `memory_scope_overview` rollups drop telemetry invalidated by a
+  `silent_miss_cutoff` event (`consolidate
+  --acknowledge-misses-before`) or a per-event `miss_ack`
+  (`memory_acknowledge_miss`) — so after either escape hatch ran, the
+  eval CLI's `silent_miss_rate` silently disagreed with the health
+  surfaces over the same event stream, and the eval CLI is exactly the
+  surface docs/eval.md tells people to compute the publishable trio
+  from. `compute_eval` now applies the same invalidation semantics
+  (latest `cutoff_ts` wins; both markers resolve globally even when
+  their own ts falls outside `--since`): pre-cutoff events drop from
+  the numerator, the miss-capable denominator, `turns_no_signal`, and
+  the inline triage list alike; an acked miss drops from the numerator
+  only, since the audit itself wasn't the false positive. Streams with
+  no cutoff/ack events — including the comparative harness's — are
+  byte-identical to before.
+
 ### Removed
 
 - **The key-gated `LiveAgent` eval path.** `tests/eval/driver.py` no longer

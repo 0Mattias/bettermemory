@@ -24,9 +24,16 @@ Three rates the existing event log makes computable today:
   miss-capable ``turn_audited`` events (``verdict != "no_signal"``).
   Audits the probe declined are excluded from the denominator and
   reported separately as ``turns_no_signal``, so a probe stuck at
-  "declined" can't read as a healthy 0% miss rate. The
-  opt-in-retrieval contract's blind spot: turns where the model
-  should have searched but didn't.
+  "declined" can't read as a healthy 0% miss rate. Both sides honor
+  the same invalidation markers ``health.py``'s rollups honor: a
+  ``silent_miss_cutoff`` event (written by ``bettermemory consolidate
+  --acknowledge-misses-before``) drops every earlier ``turn_audited``
+  / ``search_miss`` event from numerator, both denominator buckets,
+  and the triage buffer alike (latest ``cutoff_ts`` wins), and a
+  ``miss_ack`` event (written by ``memory_acknowledge_miss``) drops
+  the one referenced miss from the numerator while the audited
+  denominator keeps its turn. The opt-in-retrieval contract's blind
+  spot: turns where the model should have searched but didn't.
 
 The methodology is described in ``docs/eval.md``. This module owns the
 pure computation; the CLI wrapper lives in ``server.py``.
@@ -361,6 +368,21 @@ def compute_eval(
     *not* filtered by scope (they're per-turn), so the silent-miss
     rate reflects the global cadence regardless of scope filter.
 
+    Silent-miss telemetry honors the same two invalidation markers
+    ``health.compute_health`` / ``health.curation_counts`` honor, so
+    every surface reporting ``silent_miss_rate`` agrees over the same
+    event stream: a ``silent_miss_cutoff`` event (written by
+    ``bettermemory consolidate --acknowledge-misses-before``) drops
+    ``turn_audited`` / ``search_miss`` events earlier than the latest
+    ``cutoff_ts`` from the numerator, both denominator buckets, and
+    the triage buffer — an earlier cutoff seen later in the log cannot
+    shrink the window — and a ``miss_ack`` event (written by
+    ``memory_acknowledge_miss``) drops the one referenced miss from
+    the numerator while the denominator keeps its turn. Both markers
+    are global: they apply even when their own ``ts`` falls outside
+    the ``since`` window, mirroring ``curation_counts``' delta-mode
+    exemption. Streams carrying no markers count exactly as before.
+
     A memory that's been tombstoned (no longer in ``memories``) still
     counts toward retrieval / use occurrences — we attribute via id, not
     via live status — but it cannot participate in cold-endorsement
@@ -409,17 +431,57 @@ def compute_eval(
     # from. Empty string means no audits in the window.
     threshold_rule = ""
 
+    # In-window ``turn_audited`` / ``search_miss`` events, buffered for
+    # post-pass resolution against the invalidation markers below —
+    # counting them inline would let a marker later in the log arrive
+    # too late to retract an already-counted event. Same
+    # buffer-then-resolve shape as ``health._StatsAccumulator``.
+    audit_telemetry: list[dict[str, Any]] = []
+    # The two escape hatches health.py's rollups honor, mirrored here
+    # so the eval CLI, memory_health, and memory_scope_overview agree
+    # over the same event stream: `silent_miss_cutoff` wipes all miss
+    # telemetry before its `cutoff_ts`; `miss_ack` retracts one
+    # `search_miss` by `event_id`.
+    latest_miss_cutoff: datetime | None = None
+    acknowledged_miss_event_ids: set[str] = set()
+
     for ev in events:
         if not isinstance(ev, dict):
             continue
         total_events_scanned += 1
+
+        kind = ev.get("kind")
+        # Invalidation markers — resolved BEFORE the `since` window
+        # filter, mirroring `curation_counts`' delta-mode exemption:
+        # both are global markers, so a cutoff/ack whose own ts falls
+        # outside the window still applies to in-window telemetry.
+        # Without the exemption a windowed run would silently drop the
+        # marker and over-count events health.py's rollups (which walk
+        # the whole log) have already invalidated.
+        if kind == "silent_miss_cutoff":
+            # Latest `cutoff_ts` wins; an earlier cutoff seen later in
+            # the log cannot shrink the invalidated window — same
+            # max-semantics as `health._handle_silent_miss_cutoff`. A
+            # malformed `cutoff_ts` parses to None and is ignored.
+            parsed_cutoff = _parse_ts(ev.get("cutoff_ts"))
+            if parsed_cutoff is not None and (
+                latest_miss_cutoff is None or parsed_cutoff > latest_miss_cutoff
+            ):
+                latest_miss_cutoff = parsed_cutoff
+            continue
+        if kind == "miss_ack":
+            # A missing / non-string / empty `event_id` is a malformed
+            # admin event; ignore it rather than poisoning the set.
+            target = ev.get("event_id")
+            if isinstance(target, str) and target:
+                acknowledged_miss_event_ids.add(target)
+            continue
 
         if cutoff is not None:
             ts = _parse_ts(ev.get("ts"))
             if ts is None or ts < cutoff:
                 continue
 
-        kind = ev.get("kind")
         if kind in ("search", "list"):
             # `list` is bundled with `search` because `audit.py` and the
             # tool-usage map both treat memory_list as a retrieval
@@ -508,7 +570,33 @@ def compute_eval(
                     explicit_applied_count[mid] = explicit_applied_count.get(mid, 0) + 1
                     if isinstance(excerpt, str) and excerpt.strip():
                         explicit_endorsements_with_excerpt += 1
-        elif kind == "turn_audited":
+        elif kind in ("turn_audited", "search_miss"):
+            # Buffered rather than counted inline so a cutoff/ack
+            # marker later in the log can retroactively invalidate
+            # earlier telemetry. Resolution happens after the pass,
+            # below — chronological order is preserved, so the
+            # counting is identical to the pre-buffer inline loop
+            # whenever no marker exists.
+            audit_telemetry.append(ev)
+
+    # Resolve the buffered audit telemetry. An event invalidated by the
+    # latest cutoff (ts strictly before `cutoff_ts`; an unparseable ts
+    # drops too once a cutoff exists — `health._count_post_cutoff`'s
+    # conservative read) is dropped from EVERYTHING: the miss-capable
+    # and no_signal denominators, the numerator, the threshold-rule
+    # tracking, and the inline triage buffer — as if it were never
+    # logged. An acked miss drops the same way but from the numerator
+    # side only: audits carry no `event_id`, and the audit itself
+    # wasn't the false positive (the audit ran, the probe found
+    # something, the model acknowledged the verdict), so the
+    # denominator keeps its turn — filter #3 of
+    # `health._silent_miss_stats`.
+    for ev in audit_telemetry:
+        if latest_miss_cutoff is not None:
+            ts = _parse_ts(ev.get("ts"))
+            if ts is None or ts < latest_miss_cutoff:
+                continue
+        if ev.get("kind") == "turn_audited":
             # `no_signal` audits (empty store, gated probe, semantic model
             # unavailable) are not miss-capable turns; counting them dilutes
             # silent_miss_rate's denominator. Mirrors health.py's
@@ -521,7 +609,10 @@ def compute_eval(
             rule = ev.get("threshold_rule")
             if isinstance(rule, str) and rule:
                 threshold_rule = rule
-        elif kind == "search_miss":
+        else:  # search_miss
+            event_id = ev.get("event_id")
+            if isinstance(event_id, str) and event_id in acknowledged_miss_event_ids:
+                continue
             silent_misses += 1
             rule = ev.get("threshold_rule")
             if isinstance(rule, str) and rule:

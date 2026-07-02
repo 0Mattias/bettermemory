@@ -526,6 +526,310 @@ class TestSilentMissRate:
 
 
 # ---------------------------------------------------------------------------
+# silent-miss invalidation markers — cutoff + per-event ack
+# ---------------------------------------------------------------------------
+
+
+class TestSilentMissInvalidation:
+    """`compute_eval` honors the same two escape hatches health.py's
+    rollups honor — the bulk `silent_miss_cutoff` (written by
+    `bettermemory consolidate --acknowledge-misses-before`) and the
+    per-event `miss_ack` (written by `memory_acknowledge_miss`).
+    Before this suite existed, the eval CLI counted every in-window
+    event, so after either hatch ran, `bettermemory eval`'s
+    silent_miss_rate silently disagreed with `memory_health` /
+    `memory_scope_overview` over the same event stream — and the eval
+    CLI is the surface docs/eval.md tells people to compute the
+    publishable trio from."""
+
+    @staticmethod
+    def _utc(year: int, month: int, day: int) -> datetime:
+        return datetime(year, month, day, tzinfo=timezone.utc)
+
+    @classmethod
+    def _z(cls, year: int, month: int, day: int) -> str:
+        """Canonical `Z`-suffixed cutoff_ts shape the consolidate CLI writes."""
+        return cls._utc(year, month, day).isoformat().replace("+00:00", "Z")
+
+    def test_cutoff_drops_pre_cutoff_events_from_both_sides(self) -> None:
+        """`turn_audited` AND `search_miss` events before cutoff_ts drop
+        from numerator, both denominator buckets, and the triage buffer.
+        Filtering only the numerator would skew the rate (low miss /
+        high audited) — the joint pin mirrors health's
+        test_silent_miss_cutoff_drops_numerator_and_denominator_together."""
+        events = [
+            _ev("turn_audited", ts=self._utc(2026, 4, 1), verdict="ok"),
+            _ev("turn_audited", ts=self._utc(2026, 4, 2), verdict="no_signal"),
+            _ev(
+                "search_miss",
+                ts=self._utc(2026, 4, 3),
+                session_id="sess-pre",
+                top_hits=[{"id": "mem-pre", "relevance": "high"}],
+            ),
+            _ev("turn_audited", ts=self._utc(2026, 4, 20), verdict="ok"),
+            _ev(
+                "search_miss",
+                ts=self._utc(2026, 4, 21),
+                session_id="sess-post",
+                top_hits=[{"id": "mem-post", "relevance": "high"}],
+            ),
+            _ev(
+                "silent_miss_cutoff",
+                ts=self._utc(2026, 4, 25),
+                cutoff_ts=self._z(2026, 4, 10),
+            ),
+        ]
+        report = compute_eval(memories=[], events=events)
+        assert report.turns_audited == 1
+        assert report.turns_no_signal == 0
+        assert report.silent_misses == 1
+        assert report.silent_miss_rate.rate == pytest.approx(1.0)
+        # The invalidated miss vanishes from the triage buffer too —
+        # surfacing known-bad telemetry there would contradict the hatch.
+        assert [c.top_missed_id for c in report.silent_miss_recent] == ["mem-post"]
+
+    def test_cutoff_keeps_events_at_exact_boundary(self) -> None:
+        """`ts >= cutoff_ts` survives — same boundary as health's
+        `_count_post_cutoff`. Flipping the guard to `>` would silently
+        diverge the two surfaces on second-exact telemetry."""
+        boundary = self._utc(2026, 4, 10)
+        events = [
+            _ev("turn_audited", ts=boundary - timedelta(seconds=1), verdict="ok"),
+            _ev("search_miss", ts=boundary - timedelta(seconds=1), session_id="s-pre"),
+            _ev("turn_audited", ts=boundary, verdict="ok"),
+            _ev("search_miss", ts=boundary, session_id="s-at"),
+            _ev("silent_miss_cutoff", ts=boundary, cutoff_ts=self._z(2026, 4, 10)),
+        ]
+        report = compute_eval(memories=[], events=events)
+        assert report.turns_audited == 1
+        assert report.silent_misses == 1
+
+    def test_cutoff_latest_wins_and_earlier_cutoff_cannot_shrink(self) -> None:
+        """With multiple cutoff events the max `cutoff_ts` wins — an
+        earlier cutoff arriving LATER in the log cannot un-shrink the
+        invalidated window. Both the miss side and the audited side
+        resolve to the same cutoff value."""
+        events = [
+            _ev("turn_audited", ts=self._utc(2026, 4, 5), verdict="ok"),
+            _ev("search_miss", ts=self._utc(2026, 4, 5), session_id="s-a"),
+            _ev("turn_audited", ts=self._utc(2026, 4, 15), verdict="ok"),
+            _ev("search_miss", ts=self._utc(2026, 4, 15), session_id="s-b"),
+            _ev("turn_audited", ts=self._utc(2026, 4, 25), verdict="ok"),
+            _ev("search_miss", ts=self._utc(2026, 4, 25), session_id="s-c"),
+            # Newer cutoff written first…
+            _ev(
+                "silent_miss_cutoff",
+                ts=self._utc(2026, 4, 26),
+                cutoff_ts=self._z(2026, 4, 20),
+            ),
+            # …then a stale earlier cutoff lands later in the log.
+            _ev(
+                "silent_miss_cutoff",
+                ts=self._utc(2026, 4, 27),
+                cutoff_ts=self._z(2026, 4, 10),
+            ),
+        ]
+        report = compute_eval(memories=[], events=events)
+        # Max cutoff is 04-20: only the 04-25 audit + miss survive.
+        assert report.turns_audited == 1
+        assert report.silent_misses == 1
+
+    def test_acked_miss_dropped_but_audited_denominator_keeps_turn(self) -> None:
+        """A `miss_ack` retracts exactly the one referenced miss from
+        the numerator (and the triage buffer). The denominator is NOT
+        reduced — the audit itself wasn't the false positive (the audit
+        ran, the probe found something, the model acknowledged the
+        verdict): filter #3 of health's `_silent_miss_stats`. A dangling
+        ack referencing a never-logged event_id degrades silently."""
+        events = [
+            _ev("turn_audited", ts=self._utc(2026, 4, 1), verdict="ok"),
+            _ev("turn_audited", ts=self._utc(2026, 4, 2), verdict="ok"),
+            _ev(
+                "search_miss",
+                ts=self._utc(2026, 4, 5),
+                session_id="s-a",
+                event_id="EVID_A",
+                top_hits=[{"id": "mem-A", "relevance": "high"}],
+            ),
+            _ev(
+                "search_miss",
+                ts=self._utc(2026, 4, 6),
+                session_id="s-b",
+                event_id="EVID_B",
+                top_hits=[{"id": "mem-B", "relevance": "high"}],
+            ),
+            _ev(
+                "miss_ack",
+                ts=self._utc(2026, 4, 10),
+                event_id="EVID_A",
+                reason="false positive",
+            ),
+            _ev("miss_ack", ts=self._utc(2026, 4, 11), event_id="EVID_DANGLING"),
+        ]
+        report = compute_eval(memories=[], events=events)
+        assert report.silent_misses == 1
+        assert report.turns_audited == 2
+        assert report.silent_miss_rate.rate == pytest.approx(0.5)
+        assert [c.top_missed_id for c in report.silent_miss_recent] == ["mem-B"]
+
+    def test_markers_resolve_globally_under_since_window(self) -> None:
+        """A cutoff event whose own ts falls OUTSIDE the `--since`
+        window still applies to in-window telemetry — global-marker
+        semantics, mirroring `curation_counts`' delta-mode exemption
+        (health's test_silent_miss_cutoff_resolved_globally_under_since_delta).
+        Without the exemption a windowed eval run would over-count
+        events the health surfaces have already invalidated."""
+        now = self._utc(2026, 5, 1)
+        events = [
+            # Cutoff written long before the window opens.
+            _ev(
+                "silent_miss_cutoff",
+                ts=self._utc(2026, 1, 1),
+                cutoff_ts=self._z(2026, 4, 20),
+            ),
+            # In-window (>= 04-10) but pre-cutoff — must drop.
+            _ev("turn_audited", ts=self._utc(2026, 4, 15), verdict="ok"),
+            _ev("search_miss", ts=self._utc(2026, 4, 15), session_id="s-pre"),
+            # In-window and post-cutoff — survives.
+            _ev("turn_audited", ts=self._utc(2026, 4, 25), verdict="ok"),
+            _ev("search_miss", ts=self._utc(2026, 4, 25), session_id="s-post"),
+        ]
+        report = compute_eval(
+            memories=[], events=events, now=now, since=timedelta(days=21)
+        )
+        assert report.turns_audited == 1
+        assert report.silent_misses == 1
+
+    def test_stream_without_markers_is_pinned_byte_identical(self) -> None:
+        """No-regression pin: a stream carrying NO cutoff/ack events
+        produces exactly the report the pre-invalidation implementation
+        produced — the buffer-then-resolve restructure must be invisible
+        unless a marker exists. Every count, both denominators, the
+        threshold-rule tracking, the buffer contents, and the full
+        serialised shape are pinned (values hand-computed against the
+        pre-change event loop)."""
+        now = datetime(2026, 5, 20, 12, 0, tzinfo=timezone.utc)
+        mem = _mem()
+        events = [
+            _ev("search", returned=[mem.id]),
+            _ev("show", id=mem.id),
+            _ev("use", ids=[mem.id], outcome="applied", claim_excerpts=["load"]),
+            _ev("use", ids=[mem.id], outcome="applied", auto=True),
+            _ev("turn_audited", verdict="ok", threshold_rule="v1_top1_high"),
+            _ev("turn_audited", verdict="no_signal"),
+            _ev(
+                "search_miss",
+                session_id="sess-A",
+                threshold_rule="v1_top1_high",
+                top_hits=[{"id": "mem-A", "relevance": "high"}],
+            ),
+            # Legacy audit without a verdict — stays miss-capable.
+            _ev("turn_audited"),
+        ]
+        report = compute_eval(memories=[mem], events=events, now=now)
+        assert report.to_dict() == {
+            "generated_at": now.isoformat(),
+            "window_seconds": None,
+            "scope_filter": None,
+            "threshold_rule": "v1_top1_high",
+            "total_events_scanned": 8,
+            "counts": {
+                "retrieval_occurrences": 2,
+                "explicit_endorsements_with_excerpt": 1,
+                "applied_total": 2,
+                "applied_explicit": 1,
+                "turns_audited": 2,
+                "turns_no_signal": 1,
+                "silent_misses": 1,
+            },
+            "memory_helped_rate": RateCI.from_counts(1, 2).to_dict(),
+            "endorsement_rate": RateCI.from_counts(1, 2).to_dict(),
+            "silent_miss_rate": RateCI.from_counts(1, 2).to_dict(),
+            "cold_endorsement_memories": {
+                "min_retrievals": DEFAULT_ENDORSEMENT_MIN_RETRIEVALS,
+                "total": 0,
+                "rows": [],
+            },
+            "silent_miss_recent": [
+                {
+                    "ts": "2026-05-15T12:00:00.000+00:00",
+                    "session_id": "sess-A",
+                    "top_missed_id": "mem-A",
+                    "top_missed_relevance": "high",
+                    "threshold_rule": "v1_top1_high",
+                    "recent_retrieval_count": 0,
+                }
+            ],
+        }
+
+    def test_parity_with_compute_health_over_same_stream(self) -> None:
+        """compute_eval's audited / no_signal / miss counts must equal
+        `health.compute_health`'s SilentMissStats over the same
+        synthetic stream — the two surfaces report the same citable
+        metric, and the whole point of mirroring the invalidation is
+        that they cannot disagree after an escape hatch runs. The
+        stream exercises every filter arm at once: pre-cutoff drops
+        (both kinds + no_signal), the ack, a legacy un-ack-able miss,
+        and a legacy verdict-less audit."""
+        from bettermemory.health import compute_health
+
+        now = self._utc(2026, 5, 1)
+        events = [
+            # Pre-cutoff — all three drop.
+            _ev("turn_audited", ts=self._utc(2026, 4, 1), verdict="ok"),
+            _ev("turn_audited", ts=self._utc(2026, 4, 2), verdict="no_signal"),
+            _ev(
+                "search_miss",
+                ts=self._utc(2026, 4, 3),
+                session_id="s-old",
+                event_id="EVID_OLD",
+                top_hits=[{"id": "mem-old", "relevance": "high"}],
+            ),
+            _ev(
+                "silent_miss_cutoff",
+                ts=self._utc(2026, 4, 10),
+                cutoff_ts=self._z(2026, 4, 10),
+            ),
+            # Post-cutoff telemetry.
+            _ev("turn_audited", ts=self._utc(2026, 4, 12), verdict="ok"),
+            _ev("turn_audited", ts=self._utc(2026, 4, 13), verdict="no_signal"),
+            _ev("turn_audited", ts=self._utc(2026, 4, 14)),  # legacy, miss-capable
+            _ev(
+                "search_miss",
+                ts=self._utc(2026, 4, 15),
+                session_id="s-a",
+                event_id="EVID_A",
+                top_hits=[{"id": "mem-A", "relevance": "high"}],
+            ),
+            _ev(
+                "search_miss",
+                ts=self._utc(2026, 4, 16),
+                session_id="s-b",
+                event_id="EVID_B",
+                top_hits=[{"id": "mem-B", "relevance": "high"}],
+            ),
+            # Legacy miss without an event_id — cannot be acked.
+            _ev(
+                "search_miss",
+                ts=self._utc(2026, 4, 17),
+                session_id="s-c",
+                top_hits=[{"id": "mem-C", "relevance": "high"}],
+            ),
+            _ev(
+                "miss_ack",
+                ts=self._utc(2026, 4, 18),
+                event_id="EVID_A",
+                reason="false positive",
+            ),
+        ]
+        report = compute_eval(memories=[], events=events, now=now)
+        health_stats = compute_health([], events, now=now).silent_misses
+        assert report.turns_audited == health_stats.audited_total == 2
+        assert report.turns_no_signal == health_stats.no_signal_total == 1
+        assert report.silent_misses == health_stats.miss_total == 2
+
+
+# ---------------------------------------------------------------------------
 # cold-endorsement rows
 # ---------------------------------------------------------------------------
 
