@@ -7,7 +7,17 @@ breaking changes, minor for additive features, patch for fixes. The
 [compatibility contract](CONTRIBUTING.md#versioning-and-the-compatibility-contract)
 spells out exactly what's stable.
 
-## Unreleased
+## 3.11.0 - 2026-07-02
+
+The eval-consistency release, opened by a removal: the key-gated
+`LiveAgent` role-play path is gone (it demanded a raw API key the
+project's own agent workflow never holds, and a staged one-shot
+completion is not a measurement), and the removal's diff-audit chain
+then surfaced a real divergence family between the two silent-miss
+reporting surfaces — `bettermemory eval` and `memory_health` now apply
+identical invalidation semantics (bulk cutoffs, per-miss acks,
+tombstoned top-hits). Tests 2,533 → 2,552; no breaking changes
+(`compute_eval`'s new parameter is optional and default-preserving).
 
 ### Fixed
 
