@@ -46,3 +46,7 @@ htmlcov/
 
 # Local Claude Code settings (keep settings.json shared, ignore the per-machine one)
 .claude/settings.local.json
+
+# Claude Code session scratch (settings.local.json) + Workflow-agent worktrees —
+# untracked repo copies here must never enter lint/test globs or get committed.
+.claude/
