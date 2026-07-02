@@ -1,12 +1,25 @@
 # bettermemory: Claude Code plugin
 
-The Claude Code plugin wrapper for [bettermemory](https://github.com/0Mattias/bettermemory) — **memory you can verify**. Every retrieved fact carries a staleness verdict (calendar age + filesystem path drift + git commit drift) so the model can spot-check before relying on it; every use leaves a claim-level audit trail. Memories live on disk as plain markdown + YAML.
+The Claude Code plugin wrapper for
+[bettermemory](https://github.com/0Mattias/bettermemory) — persistent
+memory over MCP where every retrieved fact carries a staleness verdict.
 
 The plugin bundles three things:
 
-1. **MCP server registration** ([`.mcp.json`](.mcp.json)) — spawns `uvx bettermemory` as a stdio MCP server. 18 tools become available on plugin enable by default; the seven curation/power-user tools (`memory_health`, `memory_curate`, `memory_acknowledge_miss`, `memory_rename_scope`, `memory_restore`, `memory_list_tombstones`, `memory_proposals`) register only with `full_tool_surface = true` under `[behavior]` (`memory_proposals` also under `[proposals]`); six have a direct `bettermemory` CLI counterpart (including `memory_curate`, which wraps `consolidate`), with `memory_acknowledge_miss`'s per-event ack staying MCP-only. 25 in total (21 `memory_*` + 4 `episode_*`).
-2. **Memory-discipline skill** ([`skills/bettermemory/SKILL.md`](skills/bettermemory/SKILL.md)) — lands the opt-in retrieval policy, transparency requirement, and writing discipline at the system-prompt level. The MCP server's own `instructions` block carries a short summary; the skill is the long-form companion (Claude Code truncates the `instructions` block at ~1.8 KB).
-3. **Stop hook** ([`hooks/hooks.json`](hooks/hooks.json)) — runs `uvx bettermemory audit-turn --quiet` at each turn end to detect silent retrieval misses (turns where stored memory would have helped but `memory_search` was never called) and write `turn_audited` / `search_miss` events to the on-disk event log. The CLI always exits 0 and the binding ends in `|| true`, so a transient `uvx` failure never surfaces as a hook-error banner.
+1. **MCP server registration** ([`.mcp.json`](.mcp.json)) — spawns
+   `uvx bettermemory` as a stdio MCP server. 18 of the 25 tools
+   register by default; the curation/power-user tools sit behind
+   `[behavior] full_tool_surface = true` (see
+   [docs/api.md](../docs/api.md)).
+2. **Memory-discipline skill**
+   ([`skills/bettermemory/SKILL.md`](skills/bettermemory/SKILL.md)) —
+   the long-form retrieval/writing policy at the system-prompt level.
+   The server's own `instructions` block carries a short summary;
+   Claude Code truncates that block at ~1.8 KB, the skill has no cap.
+3. **Stop hook** ([`hooks/hooks.json`](hooks/hooks.json)) — runs
+   `uvx bettermemory audit-turn --quiet` at each turn end to log
+   silent retrieval misses. Always exits 0, so a transient failure
+   never surfaces as a hook-error banner.
 
 ## Install
 
@@ -15,25 +28,18 @@ The plugin bundles three things:
 /plugin install bettermemory@bettermemory
 ```
 
-Requires `uv` ([Astral](https://docs.astral.sh/uv/)) on `$PATH`. `uvx` fetches bettermemory from PyPI on first run.
-
-If you prefer a pre-installed `bettermemory` binary, edit `.mcp.json` after install to use `"command": "bettermemory"` instead of `uvx`, and `uv tool install bettermemory` (or `pipx install bettermemory`) first.
+Requires [`uv`](https://docs.astral.sh/uv/) on `$PATH`; `uvx` fetches
+bettermemory from PyPI on first run. To use a pre-installed binary
+instead, `uv tool install bettermemory` and edit `.mcp.json` to
+`"command": "bettermemory"`.
 
 ## Verify
 
-```text
-What memory tools do you have?
-```
-
-You should see the tools listed with the `mcp__bettermemory__` prefix — 18 by default, or all 25 (21 `memory_*` + 4 `episode_*`) when `full_tool_surface = true` under `[behavior]`. Then:
-
-```text
-Remember that I prefer hands-on tutorials with runnable code, not screenshots.
-```
-
-Claude should call `memory_write` with `category="user-inference"`, ask for confirmation, and commit. Look in `~/.claude-memory/` for the markdown file.
-
-In a fresh session, ask *"Walk me through pandas from zero to hero"* — Claude should call `memory_search`, surface the preference, and say *"Using your stored preference for code-driven tutorials…"* before answering.
+Ask the model *"what memory tools do you have?"* — you should see tools
+with the `mcp__bettermemory__` prefix. Then try *"remember that I
+prefer hands-on tutorials with runnable code"*: the model should call
+`memory_write` with `category="user-inference"`, ask for confirmation,
+and a markdown file lands in `~/.claude-memory/`.
 
 ## Troubleshooting
 
@@ -41,7 +47,8 @@ In a fresh session, ask *"Walk me through pandas from zero to hero"* — Claude 
 uvx bettermemory doctor
 ```
 
-Runs ten checks — Python version, binary on PATH, config loadable, storage writable, memories parse cleanly, event log writable, whether the Stop hook is firing (`turn_audited` cadence), the optional embeddings extra, any client config referencing a stale path, and the installed package metadata. Each failed check has a one-line fix hint, and the process exits 0/1/2 for ok/warn/fail.
+Checks the install end to end (binary, config, storage, event log,
+hook cadence, stale client paths), one fix hint per failed check.
 
 ## Uninstall
 
@@ -49,11 +56,15 @@ Runs ten checks — Python version, binary on PATH, config loadable, storage wri
 /plugin uninstall bettermemory@bettermemory
 ```
 
-Memories on disk (`~/.claude-memory/`) are not touched. Uninstall removes the server registration and skill, not your data.
+Removes the server registration and skill. Memories on disk
+(`~/.claude-memory/`) are not touched.
 
 ## Other clients
 
-For Claude Desktop, Cursor, Continue, Cline, or anything else, see the main [installation docs](../docs/installation.md) and [per-client setup](../docs/clients.md). The plugin is just the Claude Code-specific wrapper around the same MCP server.
+The plugin is the Claude Code-specific wrapper around the same MCP
+server. For Claude Desktop, Cursor, Continue, Cline, or anything else,
+see [docs/installation.md](../docs/installation.md) and
+[docs/clients.md](../docs/clients.md).
 
 ## License
 

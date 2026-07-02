@@ -1,124 +1,91 @@
 # bettermemory
 
-[![Claude Code plugin](https://img.shields.io/badge/Claude%20Code-plugin-d97757)](plugin/README.md)
 [![PyPI](https://img.shields.io/pypi/v/bettermemory.svg)](https://pypi.org/project/bettermemory/)
 [![CI](https://github.com/0Mattias/bettermemory/actions/workflows/ci.yml/badge.svg)](https://github.com/0Mattias/bettermemory/actions/workflows/ci.yml)
 [![Python](https://img.shields.io/badge/python-3.11%E2%80%933.14-blue.svg)](https://www.python.org/downloads/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
-**Memory you can verify** — local-first, MCP-native memory for AI coding agents where every fact comes back with a verdict on whether it's *still true*.
+Persistent memory for AI coding agents, served over MCP. Memories are
+plain markdown files on disk, and every retrieval carries a verdict on
+whether the stored fact is still true.
 
-Most memory tools store a fact and hand it back months later as if nothing changed — but files move, preferences change, and a commit two days ago can quietly invalidate a config note. bettermemory attaches a **staleness verdict** to every retrieval (calendar age **+** moved file paths **+** commits since the fact was last confirmed), so your agent spot-checks *before* it trusts. Plain markdown on disk. No cloud, no database, no account. MIT.
+Stored facts rot: files move, preferences change, a commit two days ago
+can invalidate a config note. bettermemory checks each hit against
+calendar age, the file paths it cites, and the commits landed since it
+was last confirmed, and returns the rollup as a per-hit
+`staleness_verdict` — so the model spot-checks before it trusts:
 
-## Quick start
+```jsonc
+{
+  "snippet": "Auth middleware lives in src/auth/middleware.py …",
+  "relevance": "high",
+  "staleness_verdict": "spot_check_recommended",
+  "path_drift": { "missing": ["src/auth/middleware.py"] },  // file moved
+  "commit_drift_count": 12   // commits since the fact was last verified
+}
+```
 
-**Claude Code** — one marketplace, one install:
+The model repoints the path with `memory_update`, attests the rest with
+`memory_verify`, and answers from the corrected memory. No database, no
+cloud, no account.
+
+## Install
+
+Claude Code:
 
 ```text
 /plugin marketplace add 0Mattias/bettermemory
 /plugin install bettermemory@bettermemory
 ```
 
-**Any other MCP client** — Claude Desktop, Cursor, Continue, Cline:
+Any other MCP client (Claude Desktop, Cursor, Continue, Cline):
 
 ```sh
-uv tool install bettermemory        # or: pipx install / pip install
+uv tool install bettermemory        # or pipx / pip
 bettermemory init --client claude-desktop
 ```
 
-That's it — the server registers itself in the right config file and runs over stdio. No database to provision, no API key, no account. Per-client setup → [`docs/clients.md`](docs/clients.md); deeper install notes → [`docs/installation.md`](docs/installation.md).
+`bettermemory try` runs a 60-second offline demo in a throwaway store:
+it writes a memory citing a file, deletes the file, and shows the next
+search flag the memory stale. Already using Claude Code's built-in
+auto-memory? `bettermemory ingest` imports those files once.
 
-See the whole point in 60 seconds, offline:
-
-```sh
-bettermemory try        # writes a memory, moves a file it cites, shows the next search flag it stale
-```
-
-## Why it's different
-
-```jsonc
-// The model asks: "where does the auth middleware live again?"
-// memory_search returns the fact — and the fact's health alongside it:
-{
-  "snippet": "Auth middleware lives in src/auth/middleware.py, wraps every /api route…",
-  "relevance": "high",
-  "staleness_verdict": "spot_check_recommended",          // ← don't trust this blindly
-  "path_drift": { "missing": ["src/auth/middleware.py"] }, // ← that file moved weeks ago
-  "commit_drift_count": 12                                 // ← 12 commits since last confirmed
-}
-// So the model says so, calls memory_update to repoint the path, and answers from the
-// corrected memory. The rot is caught at retrieval — not buried inside a confident wrong answer.
-```
-
-**Three things bettermemory does that no other memory layer does:**
-
-1. **Tells the model when a stored fact has rotted** — a per-hit `staleness_verdict` folding calendar age, filesystem path drift, and git commit drift into one signal.
-2. **Records which sentence of the reply a memory shaped** — a claim-level audit trail, so a model's answer months later traces back to the load-bearing stored claim.
-3. **Surfaces the retrievals the model never reaches for** — the search-result equivalent of a dead-letter queue, so over-surfaced or stale memories become visible instead of silently dragging on every turn.
-
-Retrieval is opt-in; writes about *you* always stage for your confirmation. Works with Claude Code, Claude Desktop, Cursor, Continue, Cline, and any MCP client.
-
-## What it looks like in practice
-
-**Day one.** You say: *"When I ask for a tutorial, I want runnable code, not screenshots of an IDE."* Claude calls `memory_write(category="user-inference")`. Because it's a claim about *you*, the write stages pending and Claude asks: *"Want me to remember that?"* You confirm. A markdown file lands at `~/.claude-memory/`.
-
-**Week two**, fresh session: *"Walk me through pandas from zero to hero."* The phrase is ambiguous in a way your stored preference resolves, so Claude calls `memory_search`, finds it, and tells you up front: *"Using your stored preference for code-driven tutorials…"* before answering.
-
-**Month three:** *"Where does the auth middleware live again?"* — the scenario above. The hit comes back `spot_check_recommended` with `path_drift.missing`, the file having been renamed weeks ago. Claude says so, repoints the path, and answers from the corrected memory.
-
-**Month six:** *"What's the difference between `find` and `fd`?"* Generic question. Claude doesn't search. The reply isn't tinted by months of accumulated personal context. **That's the design point** — opt-in retrieval means memory helps when it's relevant and stays out of the way when it isn't.
+Per-client setup: [docs/clients.md](docs/clients.md). Install details
+and troubleshooting: [docs/installation.md](docs/installation.md).
 
 ## Features
 
-### The verification surface — the lane bettermemory runs in
+- Staleness verdict on every retrieval: calendar age + cited-path
+  drift + git commit drift, with the missing paths listed inline.
+- Retrieval is opt-in. `memory_search` is a deliberate tool call;
+  nothing is auto-injected into context.
+- Claims about the user always stage for confirmation before commit.
+- Write gates instead of trust: durability check (rejects transient
+  state), credential check (rejects secret-shaped tokens), duplicate
+  and tombstone dedup, scope-mismatch check, optional groundedness
+  check against the source transcript.
+- Usage telemetry: `memory_record_use` logs which sentence of a reply
+  each memory shaped; a turn-end probe flags retrievals the model
+  should have made but didn't; `memory_health` and `memory_curate`
+  report and act on the resulting rot.
+- Hybrid search (keyword + BM25). An optional semantic leg needs the
+  `embeddings` extra plus a config opt-in:
+  `[behavior] search_mode = "semantic"` or `semantic_dedup = true`.
+- Typed inter-memory links (`supersedes`, `contradicts`, `extends`,
+  `depends_on`), surfaced as trust signals at retrieval.
+- Auto-scoping by repo and worktree; explicit cross-project queries.
+- Episodes: a sibling journal tier for run-state that never pollutes
+  durable search, with promotion when a takeaway hardens into a fact.
+- Tombstones instead of deletes; everything is restorable.
+- Scales past ~500 memories via a derived SQLite FTS5 index. The
+  markdown files stay canonical; `bettermemory reindex` rebuilds.
+- Cross-machine sync over your own git remote, a local web UI, and an
+  eval CLI (`memory_helped_rate` / `endorsement_rate` /
+  `silent_miss_rate`, see [docs/eval.md](docs/eval.md)).
 
-- **Per-hit staleness verdict.** Every retrieval carries `staleness_verdict ∈ {fresh, spot_check_recommended, spot_check_required}`, derived from three orthogonal drift signals: calendar verification age, filesystem path drift (cited paths that no longer exist), and commit drift against the memory's origin repo. Hits also carry an inline `path_drift = {checked, missing, verified, expected_absent}` so the model can `memory_update` the rotted path or `memory_verify` the rest without a round-trip. Paths that are absent *on purpose* — a remote host's path, another platform's config location — are attestable via `memory_verify(verified_absent_paths=[…])` so they stop flagging forever.
-- **Claim-level audit trail.** `memory_record_use(claim_excerpts=[…])` logs the load-bearing sentence each retrieved memory shaped. A Stop hook catches retrievals the model forgot to log via a precision-tuned substring match; anything neither path covers falls back to an `auto` attribution. Three tiers, one event per retrieval, no double-counting.
-- **Cold-endorsement visibility.** `memory_health` surfaces memories the ranker keeps serving but the model never *deliberately* uses — a dead-letter queue for retrieval. No other memory system exposes this.
-- **Silent-miss probe.** `memory_audit_turn` re-runs the ranker over the just-finished turn and flags high-relevance hits the model *should* have retrieved but didn't — closing the loop on contract slippage that is otherwise invisible.
-- **In-session curation.** `memory_curate` *executes* the cleanup `memory_health` only diagnoses — tombstone near-duplicates, demote dead-weight facts to `ambient` — wrapping the same hardened engine the Stop-hook auto-consolidation uses. Dry-run by default; every action is reversible (`memory_restore` / `memory_update`).
-- **Confirmation tier for claims about you.** `category="user-inference"` *always* stages pending, regardless of config. Misattributed preferences stick for months, so you always hold the veto on claims about yourself.
-- **Write-time groundedness gate.** Opt-in `memory_write(groundedness_check=True, …)` flags sentences in a proposed memory that don't anchor to the conversation that produced them — catching extraction hallucinations at write time.
-- **Credential check at write time.** A secret-shaped token in a proposed memory (vendor-prefixed API key, private-key PEM, JWT, a guarded `password=…`) is refused before it touches disk — the store is plain text and `sync` pushes it across hosts via git, so a pasted key would rot there unencrypted and in the audit log. The matched value is redacted from the warning *and* the event log; `acknowledge_credential=True` overrides for a documented public/example value.
-- **Negative-results suppression.** A hit recently `ignored` or `contradicted` and not since `applied` carries `recent_negative_outcomes`, so the model doesn't re-suggest junk you already rejected.
+## Storage
 
-### The fundamentals — done right
-
-- **Opt-in retrieval.** `memory_search` is a deliberate tool call. The default per turn is *not* to search — false positives cost more than false negatives.
-- **Proactive writing, structurally safe.** A durability check, a credential check, content/tombstone dedup, scope-mismatch check, and the pending tier let the model write aggressively without polluting the store.
-- **Hybrid retrieval.** Four selectable rankers: `hybrid` (default — RRF over keyword + BM25, plus semantic when the embeddings extra is installed AND config opts in via `[behavior] search_mode = "semantic"` or `semantic_dedup = true`), `bm25`, `keyword`, or `semantic`. Degrades gracefully with zero extra deps. Opt-in `[behavior] endorsement_boost` adds usage-aware ranking — a bounded tie-breaker (capped at +10%, never overrides relevance) that nudges memories you've *deliberately* applied up the results.
-- **Typed inter-memory links, live at retrieval.** `supersedes` / `contradicts` / `extends` / `depends_on`, surfaced bidirectionally. On a search hit they're trust signals, not just stored metadata: `superseded_by` names the active memories that replace this hit (prefer them), `contradicts` names facts in tension with it, and `depends_on` targets are auto-resolved inline.
-- **Tombstones, not deletes.** Removed memories keep their `removed_reason`; tombstone-aware dedup catches paraphrases months later. Reversible via `memory_restore`.
-- **Auto-scoped by repo and worktree.** Memories carry the repo URL and worktree root; search filters by both. Live sibling worktrees stay isolated, while a linked worktree (a spawned agent checkout, a PR-review tree) still sees the memories written in its primary checkout, and memories from since-deleted worktrees degrade to repo-level matching. Cross-project queries are explicit.
-- **Cross-machine sync, no cloud.** `bettermemory sync` is a thin git wrapper — your laptop and workstation share one store over your own remote, no SaaS account.
-- **Plain-text storage.** No database, no opaque blob. Files are `grep`-able, `git`-versionable, hand-editable.
-
-## How it compares
-
-bettermemory occupies the file-backed, retrieval-on-demand corner of the design space. Most other projects optimize for *more memory, faster retrieval*; bettermemory optimizes for *memory the model can decide whether to trust*. Every other memory layer — Mem0, Zep, Letta, claude-mem, Anthropic's reference server, the SQLite-FTS5 clones — stores facts well. None of them tell the model *when a fact has rotted*, *which sentence a memory shaped*, or *which retrievals the model never reaches for*.
-
-| | bettermemory | mem0 | Letta (MemGPT) | Zep / Graphiti | Anthropic native | claude-mem |
-|---|---|---|---|---|---|---|
-| Storage | Markdown + YAML on disk | Vector DB (+ optional graph) | Tiered core/recall/archival | Temporal knowledge graph | Filesystem + auto-managed | SQLite + ChromaDB |
-| Retrieval | MCP tool-call, opt-in per turn | Explicit `search()` API | Tool-routed across tiers | `search()` over temporal graph | Auto-injected + on-demand | KG + vector |
-| **Per-hit staleness verdict** | **Calendar + path + commit drift, per result** | Temporal `created`/`updated` | — | Bi-temporal (`t_valid`+`t_invalid`) | Async refresh, no per-hit signal | — |
-| **Claim-level audit trail** | **`memory_record_use(claim_excerpts=…)`** | — | — | — | — | — |
-| **User-inference confirmation tier** | **Claims about you always stage for veto** | Auto-extraction | Background manager | Auto-ingest | Auto-write | Auto-compress |
-| **Cold-endorsement visibility** | **`memory_health` surfaces never-used hits** | — | Letta Evals (offline) | — | — | — |
-| **Run-state journal tier** | **`episode_*` family, TTL-pruned, promote-gated** | Working memory (auto-decayed) | Core/recall/archival tiers | Time-versioned in one graph | Auto-injected mix | Per-session blob |
-| Inter-memory links | Typed (4 kinds) | Graph edges (optional Neo4j) | Implicit via tiers | Graph edges (Graphiti) | — | KG |
-| Cross-host sync | Built-in git wrapper, BYO remote | Self-host or managed cloud | Self-host or managed cloud | Self-host or managed cloud | Provider-managed | Per-machine |
-| License | MIT | Apache-2.0 | Apache-2.0 | Apache-2.0 (Graphiti) | Closed | MIT |
-
-The bolded rows are the lane bettermemory deliberately runs in. The dashes elsewhere aren't gaps — they're choices; most of those projects optimize for objectives bettermemory doesn't (multi-tenant cloud, graph reasoning, transparent in-context memory). Pick what fits.
-
-## On-disk format
-
-One file per memory — `grep`-able, `git`-versionable, hand-editable:
-
-```
-~/.claude-memory/2025-03-14-jupyter-tutorial-style.md
-```
+One file per memory, grep-able and hand-editable:
 
 ```markdown
 ---
@@ -134,125 +101,70 @@ When I ask for a "zero to hero" tutorial, I want a hands-on
 walkthrough with code I can run, not a tour of the IDE.
 ```
 
-A richer memory — captured under a repo, verified against a couple of paths, superseding an earlier record — adds optional frontmatter only when populated:
+Verification attestations, origin (repo/branch/worktree), and typed
+links are optional frontmatter, added only when populated. Removed
+memories move to `.tombstones/` with their `removed_reason`; episodes
+live under `episodes/<session_id>/` with a 30-day TTL.
 
-```markdown
----
-schema_version: 1
-id: 01HXYZ456DEFGHJKMNPQRSTVWX
-created: 2025-04-02T09:11:00+00:00
-updated: 2025-05-10T14:02:00+00:00
-scopes: [projects:bettermemory, infrastructure]
-confidence: high
-source: explicit-statement
-category: fact
-origin:
-  cwd: /Users/m/code/bettermemory
-  repo: https://github.com/0Mattias/bettermemory
-  branch: main
-  worktree_root: /Users/m/code/bettermemory
-last_verified_at: 2025-05-10T14:02:00+00:00
-verified_paths:
-  - src/bettermemory/health.py
-links:
-  - {type: supersedes, target_id: 01HXYZ111AAABCDEFGHJKMNPQR}
----
-The compute_health rollup honors the latest silent_miss_cutoff
-event and drops earlier turn_audited / search_miss rows.
-```
-
-Tombstones move to `.tombstones/` keeping their `removed_reason`. **Episodes** — the sibling tier for journal-shaped run-state (loop-iteration takeaways, "what we tried") — live under `episodes/<session_id>/<ulid>.md`, auto-pruned at 30 days, and stay invisible to `memory_search` so durable retrieval never gets polluted by run-state.
-
-Storage resolves to `$BETTERMEMORY_DIR` if set, else `./.claude-memory/` if it exists, else `~/.claude-memory/`. Project-scoped overrides global; cross-project queries are explicit (`auto_scope=false`).
+The store resolves to `$BETTERMEMORY_DIR` if set, else `./.claude-memory/`
+if it exists, else `~/.claude-memory/`.
 
 ## Tools
 
-**25 MCP tools — 18 registered by default.** Seven curation / power-user tools (`memory_health`, `memory_curate`, `memory_acknowledge_miss`, `memory_rename_scope`, `memory_restore`, `memory_list_tombstones`, `memory_proposals`) register only under `[behavior] full_tool_surface = true` — except `memory_proposals`, which also surfaces when `[proposals]` is enabled. Six have a direct `bettermemory` CLI counterpart on the lean default — `health`, `tombstones list` / `tombstones restore`, `rename-scope`, `proposals`, and `consolidate` (which `memory_curate` wraps as a dry-run-by-default tool) — so trimming them keeps the per-turn tool-description context lean without giving up the capability. `memory_acknowledge_miss` is the exception: its per-event ack stays MCP-only, with the CLI offering the blunter bulk `consolidate --acknowledge-misses-before` cutoff instead.
-
-- **Retrieval** — `memory_search` (incl. `since_prior_session`), `memory_show`, `memory_list`, `memory_scope_overview`
-- **Writing** — `memory_write` (+ `memory_write_confirm` / `memory_write_cancel` for the staged flow), `memory_update`
-- **Lifecycle** — `memory_remove`, `memory_restore`, `memory_list_tombstones`
-- **Verification** — `memory_verify`
-- **Curation** — `memory_record_use`, `memory_health`, `memory_curate`, `memory_audit_turn`, `memory_acknowledge_miss`, `memory_rename_scope`, `memory_proposals`
-- **Session-local** — `memory_scope_disable`, `memory_scope_enable`
-- **Episodes** (journal / run-state tier) — `episode_write`, `episode_handoff`, `episode_search`, `episode_promote`
-
-Full signatures, defaults, and return shapes in [`docs/api.md`](docs/api.md).
+25 MCP tools; 18 register by default. Seven curation/power-user tools
+sit behind `[behavior] full_tool_surface = true`, and most of those
+have a CLI counterpart, so the default per-turn tool context stays
+small. Grouped: retrieval, writing (with a staged-confirm flow),
+lifecycle, verification, curation, session-local scope toggles, and
+episodes. Signatures, defaults, and return shapes: [docs/api.md](docs/api.md).
 
 ## CLI
 
-The `bettermemory` script *is* the MCP server with no arguments (stdio). It also exposes offline tooling:
+`bettermemory` with no arguments is the MCP server (stdio). It also
+provides:
 
-```sh
-bettermemory try                         # 60s offline demo: watch a memory go stale when a file it cites moves
-bettermemory init --client claude-code   # register with a client (idempotent)
-bettermemory doctor                      # diagnose install state
-bettermemory health                      # curation rollup (text or --json)
-bettermemory tombstones list|restore ID|prune    # inspect / restore / hard-delete removed memories
-bettermemory rename-scope OLD NEW        # bulk-rename a scope tag across the store
-bettermemory proposals list|accept ID --scope S|dismiss ID   # review the write-reflex queue
-bettermemory consolidate                 # dedup + demote + cold-scope + typo passes (dry-run)
-bettermemory consolidate --llm           # + an LLM pass: merges, contradictions, date rewrites, demotions
-bettermemory consolidate --llm --from-transcript PATH   # propose new memories from a transcript
-bettermemory eval                        # memory_helped_rate / endorsement_rate / silent_miss_rate
-bettermemory ingest                      # import Claude Code's auto-memory directory
-bettermemory reindex [--embeddings]      # rebuild the FTS5 index (and re-embed)
-bettermemory sync push | pull | auto     # git-based cross-host sync
-bettermemory ui                          # local FastAPI curation UI ([ui] extra)
-bettermemory episodes list | prune       # inspect the journal tier
-bettermemory export                      # backup
+```text
+bettermemory try              # offline staleness demo
+bettermemory init --client X  # register with a client (idempotent)
+bettermemory doctor           # diagnose install state
+bettermemory health           # curation rollup
+bettermemory consolidate      # dedup/demote pass (dry-run; --llm for more)
+bettermemory eval             # the three metrics, with CIs
+bettermemory sync push|pull   # git-based cross-host sync
+bettermemory ui               # local curation UI ([ui] extra)
 ```
 
-Run `bettermemory <command> --help` for the flags on each; the [API docs](docs/api.md) cover the MCP tool surface.
+`bettermemory <command> --help` for flags; `reindex`, `ingest`,
+`tombstones`, `proposals`, `rename-scope`, `episodes`, and `export`
+also exist.
 
-## Coexistence with Claude Code's built-in memory
+## Configuration
 
-Claude Code 2.x ships its own filesystem-backed memory that auto-injects into the system prompt. Installing the plugin lands an anchor in the system prompt — *"persistent memory lives in this server's MCP tools, don't fragment it across ad-hoc files"* — that keeps the model from drifting back to the built-in directory mid-conversation. Manual installs can paste [`docs/system_prompt.md`](docs/system_prompt.md) into `CLAUDE.md` for the same effect. Already have auto-memory files? `bettermemory ingest` imports them once.
-
-## Performance
-
-Below ~500 memories, search loads everything (byte-stable to 1.x). Above the threshold (`BETTERMEMORY_INDEX_THRESHOLD`), an SQLite FTS5 inverted index pre-filters candidates, capping per-search work regardless of corpus size. Files stay canonical; the index is a derived cache at `<store>/.index.sqlite`, kept live by every write/update/remove/restore/rename. Out-of-band edits (hand-editing a file, `sync pull`, restore-from-backup) bypass the hook — the server warns at startup when it detects the divergence, and `bettermemory reindex` rebuilds from disk.
-
-**Semantic retrieval** is optional. Hybrid (RRF over keyword + BM25) is the zero-dep default; the semantic third leg needs one extra plus a config-level opt-in (`[behavior] search_mode = "semantic"` or `semantic_dedup = true` — the extra alone never changes ranking):
-
-```sh
-uv pip install -e ".[embeddings]"       # sentence-transformers + PyTorch (~500MB; well-trodden)
-uv pip install -e ".[embeddings-fast]"  # fastembed + ONNX Runtime (~50MB; same retrieval surface)
-```
-
-`[behavior] semantic_provider = "auto"` picks torch when installed, else fastembed, else falls back to keyword. Run `bettermemory reindex --embeddings` after switching providers.
-
-## Config
-
-`config.toml` is created on first run under `platformdirs` (`~/Library/Application Support/bettermemory/` on macOS, `~/.config/bettermemory/` on Linux, `%LOCALAPPDATA%\bettermemory\` on Windows). Defaults are sensible — most users never edit it. The knobs that matter: `behavior.search_mode` (`hybrid` default), `behavior.semantic_provider` (`auto`/`torch`/`fastembed`), `behavior.endorsement_boost` (off by default — flip on for usage-aware ranking), `behavior.require_write_confirmation` (off by default for solo setups; `user-inference` always stages regardless), `behavior.verification_stale_days` (30), and `telemetry.enabled` (flip to `false` to disable the event log).
+`config.toml` lives under platformdirs (`~/Library/Application
+Support/bettermemory/` on macOS, `~/.config/bettermemory/` on Linux).
+Defaults are sensible; most installs never edit it. See
+[docs/api.md](docs/api.md) and the file's own comments for the knobs.
 
 ## Limitations
 
-- **No encryption.** Memories are plaintext on disk. Don't store secrets; use OS-level disk encryption if you need it.
-- **No automatic sync conflict resolution.** `bettermemory sync` delegates to git; content conflicts surface as normal merge conflicts.
-- **Web UI is read-mostly.** Curation and one-click `memory_verify`; writes happen in-conversation.
-- **Disabled scopes don't survive restart.** Intentional — each session starts fresh.
-- **Multi-process locking is a no-op on Windows.** Single-process recommended there.
+- No encryption at rest. Don't store secrets (a write-time check
+  refuses secret-shaped tokens); use disk encryption if you need it.
+- Sync conflicts are git merge conflicts; there is no auto-resolution.
+- The web UI is read-mostly; writes happen in-conversation.
+- Multi-process file locking is a no-op on Windows.
 
-## Out of scope
+## Docs
 
-- **Cloud sync as a service.** Sync is git-based; bring your own remote.
-- **Cross-user sharing / RBAC.** Single-user tool. Team scopes are deferred.
-- **Silent transcript extraction.** Writes behind your back defeat the opt-in contract. `bettermemory consolidate --llm --from-transcript` is the audited alternative — explicit, dry-run by default, every proposal a reviewable diff with provenance.
+- [docs/api.md](docs/api.md) — the tool contract: signatures,
+  defaults, return shapes.
+- [docs/clients.md](docs/clients.md) / [docs/installation.md](docs/installation.md)
+  — setup.
+- [docs/eval.md](docs/eval.md) — metric definitions and the eval CLI.
+- [docs/ROADMAP.md](docs/ROADMAP.md) — planned and not-planned work.
+- [docs/incidents/](docs/incidents/) — postmortems for memory-rot bugs
+  the verification surface should have caught.
+- [CHANGELOG.md](CHANGELOG.md) — what shipped, release by release.
+- [CONTRIBUTING.md](CONTRIBUTING.md) — dev setup and the 3.x
+  compatibility contract.
 
-## Design notes
-
-Stored facts rot. A memory written last quarter about "the auth middleware in `src/auth/middleware.py`" doesn't know the file moved to `src/auth/jwt.py`. A preference captured in March may have been provisional. A config fact may have been superseded by a commit two days ago. Most memory systems treat retrieval as a black box that returns text — once the text comes back, the model is on its own to judge it.
-
-bettermemory's answer is to surface the *provenance and freshness of every memory at retrieval time*: calendar age, path drift, commit drift, the supersession chain, and your prior outcomes. The opt-in retrieval contract, the confirmation tier, the typed links, the groundedness gate, the silent-miss probe, and the cold-endorsement rollup all exist to make that loop trustworthy enough to actually depend on.
-
-## Learn more
-
-- [`docs/api.md`](docs/api.md) — every tool's signature, defaults, and return shape.
-- [`docs/clients.md`](docs/clients.md) · [`docs/installation.md`](docs/installation.md) — per-client setup and install paths.
-- [`docs/eval.md`](docs/eval.md) — the three metrics bettermemory wants the field to adopt: `memory_helped_rate`, `endorsement_rate`, `silent_miss_rate`. Defined for any system with the right telemetry, not just this one.
-- [`docs/ROADMAP.md`](docs/ROADMAP.md) — what's planned and what's deliberately out of scope.
-- [`docs/incidents/`](docs/incidents/) — public postmortems for memory-rot bugs the verification surface should have caught. The contract puts a verdict in every retrieval; we owe an accounting when the verdict was wrong.
-- [`CHANGELOG.md`](CHANGELOG.md) — the source of truth for what shipped, release by release.
-
-Built by Mattias Rask. MIT licensed — see [LICENSE](LICENSE).
+MIT licensed — see [LICENSE](LICENSE).

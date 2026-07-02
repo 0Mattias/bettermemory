@@ -11,17 +11,21 @@ pip install bettermemory           # or plain pip into a venv
 Optional extras:
 
 ```sh
-uv tool install 'bettermemory[embeddings]'        # sentence-transformers for semantic / hybrid search
-uv tool install 'bettermemory[embeddings-fast]'   # fastembed (ONNX, ~50 MB) — lighter alternative to embeddings
+uv tool install 'bettermemory[embeddings]'        # sentence-transformers (PyTorch, ~500 MB)
+uv tool install 'bettermemory[embeddings-fast]'   # fastembed (ONNX, ~50 MB)
 uv tool install 'bettermemory[ui]'                # FastAPI + uvicorn for `bettermemory ui`
-uv tool install 'bettermemory[embeddings,ui]'
 ```
 
-`[embeddings]` pulls PyTorch (~500 MB on disk) via sentence-transformers and is the default when both extras are installed (the cache byte-stability story wins). `[embeddings-fast]` swaps in ONNX Runtime — same retrieval surface, ~10× smaller install — and is the right pick on CI runners, small VMs, and air-gapped boxes. Select fastembed explicitly via `[behavior] semantic_provider = "fastembed"` in your config.
+The two embeddings extras expose the same retrieval surface;
+`embeddings-fast` is the right pick on CI runners, small VMs, and
+air-gapped boxes. When both are installed, sentence-transformers wins
+unless `[behavior] semantic_provider = "fastembed"` is set. Note the
+extra alone doesn't change ranking — semantic search also needs the
+config opt-in (see [api.md](api.md)).
 
-Python 3.11–3.14. From a development clone: `uv tool install .` (or `uv pip install -e .` for editable).
-
-Either path puts a `bettermemory` script on `$PATH`.
+Python 3.11–3.14. From a development clone: `uv tool install .` (or
+`uv pip install -e .` for editable). Either path puts a `bettermemory`
+script on `$PATH`.
 
 ## 2. Register with your MCP client
 
@@ -29,15 +33,10 @@ Either path puts a `bettermemory` script on `$PATH`.
 bettermemory init --client claude-code      # or claude-desktop / cursor / continue / cline
 ```
 
-Idempotently merges the bettermemory entry into the right config file (creating the file if needed). Re-running is safe; an unchanged entry is a no-op; a stale binary path is updated.
-
-If `init` doesn't know your client, run it with no flags:
-
-```sh
-bettermemory init
-```
-
-Prints the canonical JSON snippet plus the known config locations, with `[✓]` markers for files that exist. The snippet itself:
+Idempotently merges the bettermemory entry into the right config file,
+creating it if needed. Re-running is safe; a stale binary path is
+updated. With no flags, `init` prints the canonical JSON snippet plus
+known config locations:
 
 ```json
 {
@@ -52,42 +51,39 @@ Prints the canonical JSON snippet plus the known config locations, with `[✓]` 
 }
 ```
 
-`type: "stdio"` and `env: {}` are optional in the MCP spec but match what `claude mcp add` writes by default.
+If `bettermemory` isn't on the spawned client's `$PATH` (common for GUI
+clients launched from Finder), `init` substitutes the absolute path.
+`--print-only` previews the patch without writing.
 
-If `bettermemory` isn't on the spawned client's `$PATH` (common for GUI clients launched from Finder or Launchpad on macOS), `init` substitutes the absolute path. `bettermemory init --print-only --client <name>` previews the patch without writing.
+The server key under `mcpServers` becomes the tool-name prefix
+(`mcp__bettermemory__memory_search`). `init` detects and removes legacy
+`memory` entries (the pre-1.1 default key) pointing at the same binary.
 
-The server key under `mcpServers` becomes the tool-name prefix (`mcp__bettermemory__memory_search`). The 1.0 default was the shorter `memory`; 1.1+ defaults to `bettermemory` because the shorter name collided. `bettermemory init` detects and removes legacy `memory` entries pointing at the same binary.
+Per-client paths and quirks: [clients.md](clients.md).
 
 ## 3. Verify
 
-See the whole point in 60 seconds, offline — no client needed:
-
 ```sh
-bettermemory try
+bettermemory try     # offline demo in a temp store, no client needed
 ```
 
-It writes a memory citing a file, deletes the file, and shows the next search flagging it stale (`staleness_verdict: spot_check_recommended`, `path_drift.missing` populated) — in an isolated temp store that never touches your real one.
-
-Then, in a Claude Code session:
-
-> What memory tools do you have?
-
-You should see `memory_search`, `memory_show`, `memory_write`, etc. Then:
-
-> Remember that I prefer hands-on tutorials with runnable code, not screenshots.
-
-Claude calls `memory_write` with `category="user-inference"`, asks for confirmation, and commits. Look in `~/.claude-memory/` for the markdown file.
-
-In a *new* session: *"Walk me through pandas from zero to hero."* Claude calls `memory_search`, surfaces the preference, and says *"Using your stored preference for code-driven tutorials…"* before answering.
+Then, in a session, ask the model *"what memory tools do you have?"* —
+you should see `memory_search`, `memory_write`, etc. If not, the server
+failed to start; `bettermemory doctor` will say why.
 
 ## 4. Optional: long-form policy
 
-The server's `instructions` block carries the core contract and lands at the system-prompt level on every compliant client. Fresh installs behave correctly out of the box for most workflows.
+The server's `instructions` block carries the core contract and lands
+at the system-prompt level on every compliant client; fresh installs
+behave correctly out of the box. For the full writing-discipline and
+verification policy:
 
-Two cases where you want more:
-
-- **Claude Code and you want the long-form policy.** Claude Code truncates the `instructions` block at ~1.8 KB, which fits the core rules but not the full writing-discipline / scope-hygiene / confirmation-tier surface. Install the [plugin](../plugin/README.md) — its `SKILL.md` ships without the cap.
-- **Any other client (or you don't want the plugin).** Paste the fenced block from [`system_prompt.md`](system_prompt.md) into your project's `CLAUDE.md` or global system prompt.
+- **Claude Code**: install the [plugin](../plugin/README.md) — its
+  skill ships the policy without Claude Code's ~1.8 KB `instructions`
+  truncation.
+- **Other clients**: paste the fenced block from
+  [system_prompt.md](system_prompt.md) into your `CLAUDE.md` or
+  equivalent.
 
 ## Troubleshooting
 
@@ -95,11 +91,19 @@ Two cases where you want more:
 bettermemory doctor
 ```
 
-Checks binary on PATH, config loadable, storage writable, memories parse cleanly, event log writable, semantic-dedup extras present (when enabled), and any MCP client config referencing a stale binary path. Each failed check has a one-line fix hint. `--json` for machine-readable; exit codes `0` ok, `1` warn, `2` fail.
+Checks binary on PATH, config loadable, storage writable, memories
+parse cleanly, event log writable, embeddings extras present (when
+enabled), and client configs referencing a stale binary path. Each
+failed check has a one-line fix hint. `--json` for machine-readable;
+exit codes 0/1/2 for ok/warn/fail.
 
-Common failures it catches:
+Common failures:
 
-- **`bettermemory` not found** when Claude tries to start the server. Use the absolute path (`bettermemory init --client X` does this automatically).
-- **Memories not found by `memory_search`.** Check `BETTERMEMORY_DIR` and the startup-log "memory directory" line. Project-scoped `./.claude-memory/` overrides global `~/.claude-memory/`.
-- **Server not picking up file edits.** There is no in-memory cache; restart Claude Code if you see staleness.
-- **Claude over-calling `memory_search`.** Verify the client is surfacing the server's `instructions` block. Most do automatically; if yours doesn't, paste [`system_prompt.md`](system_prompt.md) into `CLAUDE.md` as a fallback.
+- **`bettermemory` not found** when the client starts the server: use
+  the absolute path (`bettermemory init --client X` does this).
+- **Memories not found by `memory_search`**: check `BETTERMEMORY_DIR`
+  and the startup-log "memory directory" line. Project-scoped
+  `./.claude-memory/` overrides global `~/.claude-memory/`.
+- **Model over-calling `memory_search`**: verify the client surfaces
+  the server's `instructions` block; if not, paste
+  [system_prompt.md](system_prompt.md) into `CLAUDE.md`.

@@ -7,6 +7,19 @@ breaking changes, minor for additive features, patch for fixes. The
 [compatibility contract](CONTRIBUTING.md#versioning-and-the-compatibility-contract)
 spells out exactly what's stable.
 
+## Unreleased
+
+### Changed
+
+- **Docs rewritten for brevity.** The README had grown into a pitch
+  deck — competitor tables, narrative walkthroughs, feature essays
+  restating each other. It, `docs/ROADMAP.md`, `docs/eval.md`,
+  `docs/installation.md`, and `plugin/README.md` are rewritten in
+  conventional OSS register: what it is, install, features as
+  one-liners, docs links. No behavioral claims changed; `docs/api.md`
+  (the pinned tool contract) and the drift-tested
+  `docs/system_prompt.md` block are untouched.
+
 ## 3.11.0 - 2026-07-02
 
 The eval-consistency release, opened by a removal: the key-gated
