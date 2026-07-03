@@ -27,6 +27,7 @@ from bettermemory.doctor import (
     _check_distinfo_metadata,
     _check_embeddings_extra,
     _check_event_log_writable,
+    _check_index_health,
     _check_mcp_client_configs,
     _check_memory_parse_health,
     _check_python_version,
@@ -261,6 +262,104 @@ def test_memory_parse_health_does_not_create_missing_dir(tmp_path: Path) -> None
     diag = _check_memory_parse_health(ghost)
     assert diag.status == "ok"
     assert not ghost.exists()
+
+
+# ---------------------------------------------------------------------------
+# index_health
+# ---------------------------------------------------------------------------
+
+
+def test_index_health_missing_dir_does_not_create_it(tmp_path: Path) -> None:
+    """A read-only probe against a never-created storage dir must not
+    materialize anything (same contract as memory_parse_health)."""
+    ghost = tmp_path / "ghost"
+    diag = _check_index_health(ghost)
+    assert diag.status == "ok"
+    assert not ghost.exists()
+
+
+def test_index_health_ok_on_empty_store(tmp_path: Path) -> None:
+    """Existing-but-empty storage dir: no index file is the healthy
+    state (it's created on the first write), not a divergence."""
+    diag = _check_index_health(tmp_path)
+    assert diag.status == "ok"
+    assert diag.details["disk_count"] == 0
+    assert list(tmp_path.iterdir()) == []  # probe stays read-only
+
+
+def test_index_health_healthy_index_matches_disk(tmp_path: Path) -> None:
+    """Writes through the Store keep the index live via hooks — a
+    healthy store reports ok with indexed_count == disk_count."""
+    from bettermemory.store import Store
+
+    store = Store(tmp_path)
+    store.write(content="alpha indexer note", scopes=["tools"])
+    store.write(content="beta indexer note", scopes=["tools"])
+    diag = _check_index_health(tmp_path)
+    assert diag.status == "ok"
+    assert diag.details["indexed_count"] == 2
+    assert diag.details["disk_count"] == 2
+
+
+def test_index_health_warns_on_corrupt_index(tmp_path: Path) -> None:
+    """A garbage .index.sqlite makes `index.status()` report
+    `corrupt=True` (never raises); doctor must surface it with the
+    reindex repair instead of reporting all-ok while every
+    memory_search silently degrades to a linear scan."""
+    from bettermemory.index import index_path
+    from bettermemory.store import Store
+
+    store = Store(tmp_path)
+    store.write(content="alpha indexer note", scopes=["tools"])
+    index_path(tmp_path).write_bytes(b"not a sqlite database at all " * 16)
+    diag = _check_index_health(tmp_path)
+    assert diag.status == "warn"
+    assert "corrupt" in diag.message.lower()
+    assert "reindex" in (diag.fix_hint or "")
+    assert diag.details["corrupt"] is True
+
+
+def test_index_health_warns_when_rebuild_pending(tmp_path: Path) -> None:
+    """A schema-version migration drops the data tables and flags
+    `needs_rebuild`; until `rebuild()` clears it, memory_search bypasses
+    the index. Roll the on-disk version backwards (the idiom from
+    test_index.py's migration test) — the check's own `status()` call
+    runs the migration and must then report the pending rebuild."""
+    import sqlite3
+
+    from bettermemory.index import index_path
+    from bettermemory.store import Store
+
+    store = Store(tmp_path)
+    store.write(content="alpha indexer note", scopes=["tools"])
+    conn = sqlite3.connect(index_path(tmp_path))
+    try:
+        conn.execute("UPDATE meta SET value = '1' WHERE key = 'schema_version'")
+        conn.commit()
+    finally:
+        conn.close()
+    diag = _check_index_health(tmp_path)
+    assert diag.status == "warn"
+    assert "rebuild-pending" in diag.message
+    assert "reindex" in (diag.fix_hint or "")
+    assert diag.details["needs_rebuild"] is True
+
+
+def test_index_health_warns_on_disk_divergence(tmp_path: Path) -> None:
+    """An .md file dropped outside the Store API (sync pull, hand copy,
+    generic Write tool) leaves the index count behind disk — the S4
+    divergence shape, reported with the same reindex repair."""
+    from bettermemory.store import Store
+
+    store = Store(tmp_path)
+    store.write(content="alpha indexer note", scopes=["tools"])
+    (tmp_path / "hand-copied.md").write_text("out-of-band body\n", encoding="utf-8")
+    diag = _check_index_health(tmp_path)
+    assert diag.status == "warn"
+    assert "out of sync" in diag.message
+    assert "reindex" in (diag.fix_hint or "")
+    assert diag.details["indexed_count"] == 1
+    assert diag.details["disk_count"] == 2
 
 
 # ---------------------------------------------------------------------------

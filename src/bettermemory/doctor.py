@@ -39,7 +39,7 @@ from typing import Any, Literal
 from .config import Config, load_config
 from .events import EVENT_LOG_FILENAME, iter_all_events
 from .init import KNOWN_CLIENTS, find_binary
-from .store import Store
+from .store import Store, count_active_memory_files
 
 
 CheckStatus = Literal["ok", "warn", "fail"]
@@ -366,6 +366,109 @@ def _check_memory_parse_health(directory: Path) -> Diagnosis:
             "to read memories written under the newer version."
         ),
         details={"parsed": parsed, "files_on_disk": on_disk, "skipped": skipped},
+    )
+
+
+def _check_index_health(directory: Path) -> Diagnosis:
+    """Probe the FTS5 index via `index.status()` (never raises) and
+    compare its `indexed_count` against the on-disk file count.
+
+    A corrupt, missing, or rebuild-pending index never breaks
+    correctness — `_load_search_candidates` routes every
+    `memory_search` to a full `load_all` — but the degradation to a
+    linear scan is silent, and a count divergence additionally means
+    stale filename lookups and link annotations. Every unhealthy state
+    shares the one repair: `bettermemory reindex`. The disk count
+    reuses the S4 divergence machinery
+    (`store.count_active_memory_files`) so doctor and the startup
+    warning cannot disagree about what "in sync" means.
+    """
+    # Lazy import mirrors every other `index` consumer (store,
+    # _handlers, the reindex CLI): an interpreter built without sqlite3
+    # then fails THIS check via `_safe`, not `import bettermemory.doctor`.
+    from . import index
+
+    if not directory.exists():
+        return Diagnosis(
+            name="index_health",
+            status="ok",
+            message="Storage dir does not exist yet — no index to check.",
+        )
+    status = index.status(directory)
+    try:
+        disk_count = count_active_memory_files(directory)
+    except OSError as exc:
+        return Diagnosis(
+            name="index_health",
+            status="fail",
+            message=f"Could not count memory files: {exc}.",
+            fix_hint=f"Check permissions on {directory}.",
+        )
+    details: dict[str, Any] = dict(status)
+    details["disk_count"] = disk_count
+    fix = "Run `bettermemory reindex` to rebuild the index from canonical disk state."
+
+    if not status.get("exists"):
+        if disk_count == 0:
+            return Diagnosis(
+                name="index_health",
+                status="ok",
+                message="No index yet — created on the first memory write.",
+                details=details,
+            )
+        return Diagnosis(
+            name="index_health",
+            status="warn",
+            message=(
+                f"No index file but {disk_count} memory file(s) on disk "
+                f"(typical after a sync pull); memory_search falls back "
+                f"to a linear scan."
+            ),
+            fix_hint=fix,
+            details=details,
+        )
+    if status.get("corrupt"):
+        return Diagnosis(
+            name="index_health",
+            status="warn",
+            message=(
+                f"Index at {status.get('path')} is corrupt or unreadable "
+                f"({status.get('error')}); memory_search falls back to a "
+                f"linear scan."
+            ),
+            fix_hint=fix,
+            details=details,
+        )
+    if status.get("needs_rebuild"):
+        return Diagnosis(
+            name="index_health",
+            status="warn",
+            message=(
+                "Index is rebuild-pending after a schema upgrade; "
+                "memory_search bypasses it (linear scan) until it is "
+                "rebuilt."
+            ),
+            fix_hint=fix,
+            details=details,
+        )
+    indexed_count = int(status.get("indexed_count", 0) or 0)
+    if indexed_count != disk_count:
+        return Diagnosis(
+            name="index_health",
+            status="warn",
+            message=(
+                f"Index out of sync with disk (index={indexed_count}, "
+                f"disk={disk_count}) — a memory file was likely "
+                f"added/edited outside the Store API."
+            ),
+            fix_hint=fix,
+            details=details,
+        )
+    return Diagnosis(
+        name="index_health",
+        status="ok",
+        message=f"Index healthy: {indexed_count} memories indexed (matches disk).",
+        details=details,
     )
 
 
@@ -977,6 +1080,17 @@ def run_diagnostics() -> DoctorReport:
             _safe(
                 "memory_parse_health",
                 lambda: _check_memory_parse_health(directory),
+            )
+        )
+        # After memory_parse_health deliberately: that check constructs
+        # a Store, whose __post_init__ auto-rebuilds a rebuild-pending
+        # index — a needs_rebuild that still shows here means the
+        # auto-heal itself failed and `bettermemory reindex` is
+        # genuinely needed.
+        checks.append(
+            _safe(
+                "index_health",
+                lambda: _check_index_health(directory),
             )
         )
         checks.append(_safe("event_log", lambda: _check_event_log_writable(directory)))

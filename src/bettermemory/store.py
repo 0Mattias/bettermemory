@@ -1525,6 +1525,23 @@ def _rebuild_index_if_flagged(store: Store) -> None:
     )
 
 
+def count_active_memory_files(root: Path) -> int:
+    """Count the active-memory ``.md`` files under `root` without
+    parsing them — the `_iter_active_paths()` filter (regular file, not
+    a symlink, `.md` suffix) as a bare count, for callers that have no
+    Store instance and must not construct one (`Store.__post_init__`
+    mkdirs and auto-rebuilds — write side effects). Shared by the S4
+    divergence warning below and doctor's index-health check so the two
+    disk-vs-`indexed_count` comparisons cannot drift apart. Propagates
+    OSError from an unlistable directory; callers pick their own
+    degraded answer."""
+    count = 0
+    for entry in root.iterdir():
+        if entry.is_file() and not entry.is_symlink() and entry.suffix == ".md":
+            count += 1
+    return count
+
+
 def _warn_on_index_divergence(root: Path) -> None:
     """Compare the on-disk active-memory count to the FTS5 index's
     `indexed_count` and emit a one-shot WARNING per root if they
@@ -1557,14 +1574,7 @@ def _warn_on_index_divergence(root: Path) -> None:
         from . import index as _index
 
         status = _index.status(root)
-        # Walk `_iter_active_paths()` shape inline — we don't have a
-        # Store instance here. Symlinks and non-`.md` files are
-        # filtered exactly as `_iter_active_paths()` does so the disk
-        # count compares apples-to-apples with the indexed count.
-        disk_count = 0
-        for entry in root.iterdir():
-            if entry.is_file() and not entry.is_symlink() and entry.suffix == ".md":
-                disk_count += 1
+        disk_count = count_active_memory_files(root)
     except OSError:
         # Best-effort. If we can't read the directory, the rest of
         # the Store will surface a clearer error on its first real
