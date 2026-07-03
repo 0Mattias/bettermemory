@@ -437,15 +437,20 @@ def _open_for_rebuild(path: Path) -> sqlite3.Connection:
     corrupt or version-skewed index by dropping and recreating it.
 
     `rebuild` is the documented repair primitive, so it must tolerate
-    ANY prior on-disk state rather than crash on it. Two unusable
+    ANY prior on-disk state rather than crash on it. Three unusable
     states are exactly the ones whose recovery instruction is "run
     `bettermemory reindex`":
       - a torn / zero-byte .db -> `sqlite3.DatabaseError`, surfaced
         lazily during `_connect`'s PRAGMA setup (sqlite3.connect only
         validates the header on first use);
       - an on-disk `schema_version` newer than this code ->
-        `IndexVersionError` from `_ensure_schema`.
-    Either way, drop the index file (+ siblings) and rebuild from a
+        `IndexVersionError` from `_ensure_schema`;
+      - a non-integer `schema_version` -> `ValueError` from
+        `_ensure_schema`'s `int()` read — unparseable meta IS
+        corruption, the same call `status()` makes when it reports
+        this state `corrupt=True` and doctor answers with "run
+        `bettermemory reindex`".
+    In every case, drop the index file (+ siblings) and rebuild from a
     clean slate. The canonical .md files are untouched, so nothing is
     lost. (Before this, the recovery primitive crashed on exactly the
     inputs it exists to repair.)"""
@@ -465,7 +470,7 @@ def _open_for_rebuild(path: Path) -> sqlite3.Connection:
     try:
         try:
             _ensure_schema(conn, path)
-        except (sqlite3.DatabaseError, IndexVersionError):
+        except (ValueError, sqlite3.DatabaseError, IndexVersionError):
             conn.close()
             _unlink_index_files(path)
             conn = _connect(path)

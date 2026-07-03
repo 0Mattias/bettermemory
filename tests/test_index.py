@@ -457,6 +457,54 @@ def test_status_never_raises_on_poisoned_indexed_count(
     assert "banana" in s["error"]
 
 
+def test_rebuild_recovers_from_poisoned_schema_version(
+    store: Store, memory_dir: Path
+) -> None:
+    """A non-integer `meta.schema_version` fails `_ensure_schema`'s
+    `int()` read with ValueError. status() reports the state
+    corrupt=True — so doctor's recovery instruction is `bettermemory
+    reindex` — and rebuild() IS that command: it must drop + recreate,
+    not crash. Pre-fix, `_open_for_rebuild`'s recovery except caught
+    only (DatabaseError, IndexVersionError), so the recommended repair
+    raised the very ValueError it was recommended for."""
+    store.write(content="alpha indexer note", scopes=["tools"])
+    store.write(content="beta indexer note", scopes=["tools"])
+    _poison_meta(memory_dir, "schema_version")
+    assert index.status(memory_dir).get("corrupt") is True
+
+    count = index.rebuild(memory_dir, store.iter_active())
+
+    assert count == 2
+    s = index.status(memory_dir)
+    assert "corrupt" not in s
+    assert s["schema_version"] == index.SCHEMA_VERSION
+    assert s["indexed_count"] == 2
+    # The repaired index actually answers queries.
+    assert index.query(memory_dir, "alpha")
+
+
+def test_rebuild_recovers_from_poisoned_indexed_count(
+    store: Store, memory_dir: Path
+) -> None:
+    """The other poisoned-meta variant: a non-integer `indexed_count`
+    passes `_ensure_schema` (schema_version is intact), so rebuild's
+    normal truncate-and-refill runs and its `INSERT OR REPLACE`
+    overwrites the poisoned row with the real count — repair without
+    a drop. Same tolerate-any-prior-state contract as above, pinned so
+    a future meta read added to the rebuild path can't quietly turn
+    this state into a crash."""
+    store.write(content="alpha indexer note", scopes=["tools"])
+    _poison_meta(memory_dir, "indexed_count")
+    assert index.status(memory_dir).get("corrupt") is True
+
+    count = index.rebuild(memory_dir, store.iter_active())
+
+    assert count == 1
+    s = index.status(memory_dir)
+    assert "corrupt" not in s
+    assert s["indexed_count"] == 1
+
+
 # ---------------------------------------------------------------------------
 # id → filename lookup (H1 — schema v2)
 # ---------------------------------------------------------------------------
