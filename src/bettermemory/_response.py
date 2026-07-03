@@ -15,6 +15,7 @@ a single multi-hit response uses one consistent "now" across rows.
 from __future__ import annotations
 
 import bisect
+from collections.abc import Iterable
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -739,13 +740,18 @@ class ResponseBuilder:
         (absent, not null) when empty — the same absence-as-signal contract
         as `depends_on_resolved`. Bounded by `max_per_hit` / `max_total`.
 
-        Inbound edges come from the links index (`index.links_for`); when no
-        index exists the annotation is a best-effort no-op, like the rest of
-        the index-backed surface. Resolution reuses the `depends_on`
-        discipline: a side-map over the loaded candidates, a targeted
-        `store.load_one` for targets outside the FTS prefilter, tombstoned /
-        missing skipped silently, and the caller's scope/origin filter
-        re-applied so a link can't leak a hidden-scope memory.
+        Inbound edges come from the links index (`index.links_for_many`);
+        when no index exists the annotation is a best-effort no-op, like the
+        rest of the index-backed surface. When the index IS present but
+        flagged rebuild-pending (`meta.needs_rebuild` — a schema migration
+        dropped the link rows and only touched memories are back), the index
+        answer may be silently missing edges, so it is merged with a scan of
+        the already-loaded `memories` candidates instead of being trusted
+        alone (see `_links_map_with_candidate_scan`). Resolution reuses the
+        `depends_on` discipline: a side-map over the loaded candidates, a
+        targeted `store.load_one` for targets outside the FTS prefilter,
+        tombstoned / missing skipped silently, and the caller's scope/origin
+        filter re-applied so a link can't leak a hidden-scope memory.
         """
         from .index import links_for_many
         from .models import first_summary_line
@@ -780,12 +786,31 @@ class ResponseBuilder:
         # One index open for ALL hits, not one per hit. attach_link_annotations
         # is default-on on the busiest tool; the per-hit `links_for` opened the
         # index file up to `max_results` (50) times per search. links_for_many
-        # folds that into a single connection + two `IN (...)` queries.
+        # folds that into a single connection + two `IN (...)` queries, and
+        # reports the `needs_rebuild` meta flag read on that same connection.
+        hit_ids = [h.id for h in hits]
         try:
-            links_map = links_for_many(store.root, [h.id for h in hits])
+            links_map, needs_rebuild = links_for_many(store.root, hit_ids)
         except Exception:  # noqa: BLE001 — a corrupt/locked index is a
             # best-effort no-op; never abort a search over an annotation.
-            links_map = {}
+            links_map, needs_rebuild = {}, False
+        if needs_rebuild:
+            # Rebuild-pending window: a schema migration dropped the
+            # `memory_links` rows and the incremental hooks have refilled
+            # only touched memories, so the index answer above may be
+            # silently missing the very inbound `supersedes` edge this
+            # annotation exists to surface. `_load_search_candidates`
+            # routes this SAME window to `load_all` (same flag), so
+            # `memories` here is the full active corpus — scan it for the
+            # edges instead of trusting the partial index, at zero extra
+            # I/O. Union, not replace: on the one narrowed caller path
+            # (`since_prior_session`'s post-boundary slice) the partial
+            # index can still hold live hook-written edges whose sources
+            # fall outside `memories`, so keeping both sides means the
+            # fallback never serves fewer edges than the index alone.
+            # Dangling rows stay harmless — tombstoned / hidden targets
+            # are filtered at `_resolve` time either way.
+            links_map = _links_map_with_candidate_scan(links_map, memories, hit_ids)
 
         total = 0
         for hit_dict, hit in zip(out, hits):
@@ -960,6 +985,67 @@ class ResponseBuilder:
 
             if entries:
                 hit_dict["recent_negative_outcomes"] = entries
+
+
+def _links_map_with_candidate_scan(
+    links_map: dict[
+        str,
+        tuple[list[tuple[str, str, str | None]], list[tuple[str, str, str | None]]],
+    ],
+    memories: Iterable[Any],
+    hit_ids: list[str],
+) -> dict[
+    str,
+    tuple[list[tuple[str, str, str | None]], list[tuple[str, str, str | None]]],
+]:
+    """Merge the (possibly partial) `links_for_many` answer with a link scan
+    over the already-loaded `memories` candidates.
+
+    Serves `attach_link_annotations` during the rebuild-pending window
+    (`meta.needs_rebuild` set): the index's `memory_links` rows exist only
+    for memories touched since the schema migration, so inbound edges from
+    untouched legacy sources — the 'superseded by X' warning included — are
+    silently absent from the index answer. The scan recovers them from the
+    candidate list the search loader already paid for: while the flag is
+    set, `_load_search_candidates` routes to `load_all` (same flag, same
+    window), so `memories` carries every active memory and the scan yields
+    exactly the edge set a completed `rebuild()` would serve. Pure in-memory
+    work — no second store walk, no index reads.
+
+    Union semantics with exact-duplicate collapse over the full
+    `(type, other_id, note)` tuple, mirroring the index's primary-key dedup.
+    Each per-id list comes back sorted `(type, other_id)` like `links_for`'s
+    ORDER BY; `note` breaks the remaining tie (None first), so the merged
+    order is deterministic where SQL's note-tie order is unspecified."""
+    wanted = set(hit_ids)
+    outbound_sets: dict[str, set[tuple[str, str, str | None]]] = {
+        hid: set() for hid in hit_ids
+    }
+    inbound_sets: dict[str, set[tuple[str, str, str | None]]] = {
+        hid: set() for hid in hit_ids
+    }
+    for hid in hit_ids:
+        outbound, inbound = links_map.get(hid, ([], []))
+        outbound_sets[hid].update(outbound)
+        inbound_sets[hid].update(inbound)
+    for memory in memories:
+        for link in memory.links:
+            link_type = link.type.value
+            if memory.id in wanted:
+                outbound_sets[memory.id].add((link_type, link.target_id, link.note))
+            if link.target_id in wanted:
+                inbound_sets[link.target_id].add((link_type, memory.id, link.note))
+
+    def _order(entry: tuple[str, str, str | None]) -> tuple[str, str, bool, str]:
+        return (entry[0], entry[1], entry[2] is not None, entry[2] or "")
+
+    return {
+        hid: (
+            sorted(outbound_sets[hid], key=_order),
+            sorted(inbound_sets[hid], key=_order),
+        )
+        for hid in hit_ids
+    }
 
 
 def _claim_at_index(event: dict[str, Any], index: int) -> str | None:

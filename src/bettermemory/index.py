@@ -712,11 +712,14 @@ def links_for(
 
 def links_for_many(
     root: Path, memory_ids: Iterable[str]
-) -> dict[
-    str, tuple[list[tuple[str, str, str | None]], list[tuple[str, str, str | None]]]
+) -> tuple[
+    dict[
+        str, tuple[list[tuple[str, str, str | None]], list[tuple[str, str, str | None]]]
+    ],
+    bool,
 ]:
     """Bulk `links_for`: resolve outbound + inbound links for many ids over a
-    SINGLE index connection.
+    SINGLE index connection. Returns ``(links_map, needs_rebuild)``.
 
     `attach_link_annotations` (the supersedes/contradicts search activation)
     runs on every hit-producing search and is NOT config-gated, so a naive
@@ -726,21 +729,34 @@ def links_for_many(
     ``IN (...)`` queries — mirroring how the other ``attach_*`` helpers resolve
     everything from a single already-paid load instead of churning the index.
 
-    Returns ``{id: (outbound, inbound)}`` for every requested id; an id with no
-    links maps to ``([], [])``. Tuple shapes and per-id ordering match
+    `links_map` maps every requested id to ``(outbound, inbound)``; an id with
+    no links maps to ``([], [])``. Tuple shapes and per-id ordering match
     `links_for` exactly (outbound ``(type, target_id, note)``, inbound
     ``(type, source_id, note)``). An absent / empty index file maps every id to
-    ``([], [])`` — the same best-effort no-op `links_for` returns."""
+    ``([], [])`` — the same best-effort no-op `links_for` returns.
+
+    `needs_rebuild` mirrors `links_for_with_status`: the meta flag read on the
+    SAME connection the link queries already hold, not via a second
+    `status()` open. True between a schema-version migration and the next
+    successful `rebuild()` — the window where `memory_links` holds rows only
+    for memories touched since the migration, so `links_map` may be silently
+    missing edges from every untouched legacy source (including the inbound
+    `supersedes` edge the annotation surface exists to warn about). A
+    flag-set answer must not be trusted as complete; the caller falls back
+    to scanning its already-loaded candidates. Reported False when the index
+    file is absent (nothing was migrated; the empty map IS the correct
+    no-index answer) and on the empty-ids short-circuit (no connection is
+    opened to read it)."""
     ids = list(dict.fromkeys(memory_ids))
     out: dict[
         str,
         tuple[list[tuple[str, str, str | None]], list[tuple[str, str, str | None]]],
     ] = {mid: ([], []) for mid in ids}
     if not ids:
-        return out
+        return out, False
     path = index_path(root)
     if not path.exists():
-        return out
+        return out, False
     placeholders = ",".join("?" * len(ids))
     conn = _connect(path)
     try:
@@ -761,9 +777,12 @@ def links_for_many(
             out[row["target_id"]][1].append(
                 (row["type"], row["source_id"], row["note"])
             )
+        rebuild_row = conn.execute(
+            "SELECT value FROM meta WHERE key = 'needs_rebuild'"
+        ).fetchone()
+        return out, bool(rebuild_row and rebuild_row[0] == "1")
     finally:
         conn.close()
-    return out
 
 
 def links_for_with_status(

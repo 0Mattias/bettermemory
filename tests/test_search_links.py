@@ -179,7 +179,8 @@ async def test_links_for_many_matches_per_id_links_for(
     )
 
     ids = [a["id"], b["id"], c["id"]]
-    bulk = links_for_many(memory_dir, ids)
+    bulk, needs_rebuild = links_for_many(memory_dir, ids)
+    assert needs_rebuild is False
     assert set(bulk) == set(ids)
     for mid in ids:
         assert bulk[mid] == links_for(memory_dir, mid)
@@ -211,11 +212,108 @@ async def test_links_for_many_opens_index_once(
 
 async def test_links_for_many_absent_index_returns_empty_per_id(tmp_path: Path) -> None:
     """No index file -> every requested id maps to ([], []), the best-effort
-    no-op contract `links_for` already honors (and never creates the file)."""
+    no-op contract `links_for` already honors (and never creates the file).
+    The flag reads False — nothing was migrated, so the empty map IS the
+    correct no-index answer, not a partial one to distrust."""
     from bettermemory.index import index_path, links_for_many
 
     empty_root = tmp_path / "no-index"
     empty_root.mkdir()
     result = links_for_many(empty_root, ["01ABC", "01DEF"])
-    assert result == {"01ABC": ([], []), "01DEF": ([], [])}
+    assert result == ({"01ABC": ([], []), "01DEF": ([], [])}, False)
     assert not index_path(empty_root).exists()
+
+
+async def test_links_for_many_reports_needs_rebuild_flag(
+    server: Any, memory_dir: Path
+) -> None:
+    """The second return element mirrors `links_for_with_status`: the
+    `meta.needs_rebuild` flag read on the SAME connection. Healthy index
+    -> False; flag stamped (the post-schema-migration state) -> True,
+    telling `attach_link_annotations` the map may be missing edges from
+    every source untouched since the migration."""
+    import sqlite3
+
+    from bettermemory.index import index_path, links_for_many
+
+    a = await _call(server, "memory_write", content="flag probe note", scopes=["tools"])
+    _, needs_rebuild = links_for_many(memory_dir, [a["id"]])
+    assert needs_rebuild is False
+
+    conn = sqlite3.connect(str(index_path(memory_dir)))
+    try:
+        conn.execute(
+            "INSERT OR REPLACE INTO meta(key, value) VALUES ('needs_rebuild', '1')"
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+    _, needs_rebuild = links_for_many(memory_dir, [a["id"]])
+    assert needs_rebuild is True
+
+
+async def test_link_annotations_merge_keeps_index_edges_outside_candidates(
+    server: Any, memory_dir: Path
+) -> None:
+    """Union, not replace: while `needs_rebuild` is set the candidate-scan
+    fallback MERGES with the index answer. An inbound edge whose source
+    lies outside the caller's `memories` list (the `since_prior_session`
+    post-boundary slice is the production case) but is still present in
+    the partially refilled index would be lost by a replace — the window
+    would then drop annotations the index alone was already serving.
+    Driven directly against `attach_link_annotations` so the candidate
+    list can be narrowed to exclude the superseder."""
+    import sqlite3
+
+    from bettermemory._response import ResponseBuilder
+    from bettermemory.index import index_path
+    from bettermemory.models import Confidence, MemoryHit
+
+    # Constructed BEFORE the flag lands — no Store construction afterwards,
+    # so the construction-time auto-rebuild can't clear it.
+    store = Store(memory_dir)
+    a = await _call(
+        server, "memory_write", content="narrow slice target", scopes=["tools"]
+    )
+    b = await _call(
+        server, "memory_write", content="superseder outside the slice", scopes=["tools"]
+    )
+    await _call(
+        server,
+        "memory_update",
+        id=b["id"],
+        links=[{"type": "supersedes", "target_id": a["id"]}],
+    )
+    memory_a = store.load_one(a["id"])
+
+    # Stamp the flag while leaving the hook-written link rows intact —
+    # the partially-refilled state where B happens to be back in the index.
+    conn = sqlite3.connect(str(index_path(memory_dir)))
+    try:
+        conn.execute(
+            "INSERT OR REPLACE INTO meta(key, value) VALUES ('needs_rebuild', '1')"
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+    hit = MemoryHit(
+        id=a["id"],
+        scopes=["tools"],
+        confidence=Confidence.MEDIUM,
+        snippet="narrow slice target",
+        score=1.0,
+        relevance="high",
+        created=memory_a.created,
+        updated=memory_a.updated,
+    )
+    out: list[dict[str, Any]] = [{"id": a["id"]}]
+    ResponseBuilder(stale_after_days=30).attach_link_annotations(
+        out, [hit], [memory_a], store=store
+    )
+    assert "superseded_by" in out[0], (
+        "the index-held edge (source outside the candidate list) was "
+        "dropped by the rebuild-pending fallback — merge, don't replace"
+    )
+    assert [e["id"] for e in out[0]["superseded_by"]] == [b["id"]]

@@ -206,6 +206,104 @@ async def test_search_bypasses_index_flagged_by_schema_migration(
     )
 
 
+async def test_link_annotations_survive_rebuild_pending_partial_index(
+    server: Any, memory_dir: Path
+) -> None:
+    """The rebuild-pending window on the search-hit annotation surface —
+    the third surface with the `needs_rebuild` hole class (after the FTS
+    prefilter and memory_show's reverse_links). A SCHEMA_VERSION
+    migration drops `memory_links` empty and sets `meta.needs_rebuild`;
+    the incremental hooks then refill only touched memories, so the
+    inbound `supersedes` edge of an untouched superseder is missing from
+    the index while its target still ranks in search results. Pre-fix
+    `attach_link_annotations` trusted `links_for_many`'s partial answer
+    and the superseded hit surfaced WITHOUT its `superseded_by` warning
+    — quietly defeating the retrieval-side suppression signal the link
+    system exists to provide. The flag now routes the annotation to a
+    scan of the already-loaded candidates — the same window in which
+    `_load_search_candidates` routes to `load_all`, so the scan sees the
+    full active corpus.
+
+    Deliberately avoids constructing a Store after the migration so the
+    flag-handling in `attach_link_annotations` is exercised on its own,
+    not rescued by the construction-time auto-rebuild."""
+    import sqlite3
+
+    from bettermemory import index as _index
+
+    a = _unwrap(
+        await _call(
+            server,
+            "memory_write",
+            content="the auth subsystem validates JWT session tokens",
+            scopes=["tools"],
+        )
+    )
+    b = _unwrap(
+        await _call(
+            server,
+            "memory_write",
+            content="replacement auth note with unrelated wording xyzzy",
+            scopes=["tools"],
+        )
+    )
+    await _call(
+        server,
+        "memory_update",
+        id=b["id"],
+        links=[{"type": "supersedes", "target_id": a["id"]}],
+    )
+
+    async def _hit_a() -> dict[str, Any]:
+        hits = _unwrap(
+            await _call(
+                server,
+                "memory_search",
+                query="auth JWT session tokens",
+                auto_scope=False,
+            )
+        )
+        return next(h for h in hits if h["id"] == a["id"])
+
+    # Sanity: the healthy index serves the annotation before the bump,
+    # so the post-migration assertion proves the fallback (not a
+    # coincidentally-annotated hit).
+    assert "superseded_by" in await _hit_a()
+
+    # Back-date the on-disk index version; the next index op migrates
+    # (drop empty + flag rebuild-pending).
+    conn = sqlite3.connect(str(_index.index_path(memory_dir)))
+    try:
+        conn.execute(
+            "UPDATE meta SET value = ? WHERE key = 'schema_version'",
+            (str(_index.SCHEMA_VERSION - 1),),
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+    # A post-upgrade write triggers the migration AND refills one row
+    # via the incremental hook: `indexed_count` is back above zero, the
+    # flag is still set, and B's `supersedes` row is still missing.
+    await _call(
+        server,
+        "memory_write",
+        content="unrelated post-upgrade note about container networking",
+        scopes=["tools"],
+    )
+    status = _index.status(memory_dir)
+    assert status["needs_rebuild"] is True
+    assert status["indexed_count"] >= 1
+
+    hit_a = await _hit_a()
+    assert "superseded_by" in hit_a, (
+        "superseded_by dropped during the rebuild-pending window "
+        "(needs_rebuild set, memory_links partially refilled) — the "
+        "suppression signal must survive via the candidate-scan fallback"
+    )
+    assert [e["id"] for e in hit_a["superseded_by"]] == [b["id"]]
+
+
 @pytest.mark.parametrize("corruption", ["garbage", "version_newer"])
 async def test_show_falls_back_when_index_corrupt(
     server: Any,
