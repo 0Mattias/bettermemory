@@ -389,6 +389,29 @@ class EpisodeStore:
         # loads as the expected type rather than tripping the validator.
         swarm_raw = meta.get("swarm_id")
         swarm_id = str(swarm_raw) if swarm_raw is not None else None
+        # Missing key → [] (the writer only emits `scopes` when non-empty;
+        # floors and legacy episodes carry none). Coerce defensively like
+        # `is_floor` / `swarm_id` above: a scalar (`scopes: 5`, hand-edited
+        # or a buggy client) made the previous bare `list(...)` raise
+        # TypeError — NOT in the (ValueError, KeyError, OSError) skip set
+        # `list_by_session` catches — so ONE malformed file crashed every
+        # episode read surface (episode_handoff on the /loop iteration-entry
+        # hot path, episode_search, episode_promote, list_by_swarm). A
+        # non-list shape degrades to [] with body/takeaway preserved
+        # (scopes are advisory tags, not identity; a bare str would
+        # otherwise explode per-character through `list(...)`). List
+        # elements are str()-coerced so a numeric tag (`scopes: [5]`)
+        # loads instead of tripping the model validator and dropping the
+        # row; an element whose string form fails scope validation still
+        # raises ValueError, the designed skip-this-row signal.
+        scopes_raw = meta.get("scopes")
+        scopes = [str(s) for s in scopes_raw] if isinstance(scopes_raw, list) else []
+        # Missing key → None (the writer only emits it when set). Same
+        # str-coercion as `swarm_id`: a hand-edited scalar (`takeaway: 5`)
+        # loads as its string form rather than tripping the validator and
+        # silently dropping the whole row from reads.
+        takeaway_raw = meta.get("takeaway")
+        takeaway = str(takeaway_raw) if takeaway_raw is not None else None
         # Normalise `created` to tz-aware UTC at load, date-aware, mirroring
         # `store._as_dt`. The vendored YAML loader produces THREE distinct
         # shapes for a `created` value and an unguarded one fails the WHOLE
@@ -441,8 +464,8 @@ class EpisodeStore:
             session_id=str(meta["session_id"]),
             created=created,
             body=post.content,
-            scopes=list(meta.get("scopes", [])),
-            takeaway=meta.get("takeaway"),
+            scopes=scopes,
+            takeaway=takeaway,
             swarm_id=swarm_id,
             origin=origin_obj,
             is_floor=is_floor,

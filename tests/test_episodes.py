@@ -8,11 +8,13 @@ contract.
 
 from __future__ import annotations
 
+import json
 import stat
 import sys
 import time
 from datetime import datetime, timezone
 from pathlib import Path
+from typing import Any
 
 import pytest
 
@@ -213,6 +215,193 @@ def test_quoted_str_created_episode_does_not_crash_reads(
     quoted_ep = next(e for e in eps if e.body.strip() == "quoted str one")
     assert quoted_ep.created == datetime(2026, 5, 31, 12, 0, tzinfo=timezone.utc)
     assert quoted_ep.created.tzinfo is not None
+
+
+@pytest.mark.parametrize(
+    "scopes_line",
+    ["scopes: 5", "scopes: banana", "scopes: {nested: 1}"],
+    ids=["scalar-int", "bare-str", "mapping"],
+)
+def test_non_list_scopes_episode_does_not_crash_reads(
+    episode_store: EpisodeStore, scopes_line: str
+) -> None:
+    """`scopes: 5` is well-formed YAML, so the frontmatter boundary
+    accepts it — the parse then died at the bare `list(...)` coercion
+    with TypeError, OUTSIDE the (ValueError, KeyError, OSError) skip set
+    `list_by_session` catches, so a SINGLE such file (hand-edited or
+    written by a buggy client) crashed the whole episode read surface:
+    episode_handoff on the /loop iteration-entry hot path,
+    episode_search, episode_promote, list_by_swarm. Same defect class
+    the store side fixed for memories (`scopes: 5` →
+    `list(meta["scopes"])`). The load now degrades a non-list `scopes`
+    to [] with body/takeaway preserved, mirroring the defensive
+    `is_floor` / `swarm_id` coercions. The bare-str shape is included
+    because `list("banana")` didn't crash — it silently exploded into
+    per-character garbage scopes."""
+    episode_store.write(session_id="sess_aaaa1111", body="well-formed sibling")
+    episode_store.write(
+        session_id="sess_aaaa1111", body="bad scopes one", takeaway="kept takeaway"
+    )
+
+    target = next(
+        p
+        for p in episode_store._iter_session_paths("sess_aaaa1111")
+        if "bad scopes one" in p.read_text(encoding="utf-8")
+    )
+    # `write` omits the `scopes` key when empty, so inject the
+    # adversarial line right after the opening `---` (no duplicate key).
+    lines = target.read_text(encoding="utf-8").splitlines()
+    lines.insert(1, scopes_line)
+    target.write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+    # Must not raise; BOTH rows return — the malformed one with its
+    # scopes dropped but body/takeaway intact (scopes are advisory
+    # tags, not identity).
+    eps = episode_store.list_by_session("sess_aaaa1111")
+    assert {e.body.strip() for e in eps} == {"well-formed sibling", "bad scopes one"}
+    bad = next(e for e in eps if e.body.strip() == "bad scopes one")
+    assert bad.scopes == []
+    assert bad.takeaway == "kept takeaway"
+    # The swarm fan-in walks every session through the same parser —
+    # it must survive the malformed file too.
+    assert episode_store.list_by_swarm("sess_nonesuch") == []
+
+
+def test_numeric_scope_list_entry_coerces_to_str(
+    episode_store: EpisodeStore,
+) -> None:
+    """A list-shaped `scopes` with a numeric entry (`scopes: [5, tools]`)
+    used to trip the Episode model's list[str] validation (pydantic does
+    not coerce int → str), silently dropping the whole row via the
+    ValueError skip path. Elements are now str()-coerced — the same
+    idiom as the `swarm_id` guard — so the row loads with the tag's
+    string form."""
+    episode_store.write(session_id="sess_aaaa1111", body="numeric scope one")
+    target = next(iter(episode_store._iter_session_paths("sess_aaaa1111")))
+    lines = target.read_text(encoding="utf-8").splitlines()
+    lines.insert(1, "scopes: [5, tools]")
+    target.write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+    eps = episode_store.list_by_session("sess_aaaa1111")
+    assert len(eps) == 1
+    assert eps[0].scopes == ["5", "tools"]
+
+
+def test_scalar_takeaway_episode_coerced_not_dropped(
+    episode_store: EpisodeStore,
+) -> None:
+    """Sibling guard to the scopes coercion: a hand-edited numeric
+    `takeaway: 7` used to trip the model's `str | None` validation and
+    silently drop the whole row via the ValueError skip path. The load
+    now str()-coerces it — same idiom as `swarm_id` — preserving the
+    row and its body."""
+    episode_store.write(session_id="sess_aaaa1111", body="numeric takeaway one")
+    target = next(iter(episode_store._iter_session_paths("sess_aaaa1111")))
+    lines = target.read_text(encoding="utf-8").splitlines()
+    lines.insert(1, "takeaway: 7")
+    target.write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+    eps = episode_store.list_by_session("sess_aaaa1111")
+    assert len(eps) == 1
+    assert eps[0].takeaway == "7"
+    assert eps[0].body.strip() == "numeric takeaway one"
+
+
+async def _call_episode_tool(server: Any, name: str, **kwargs: Any) -> Any:
+    """Minimal mirror of test_server.py's `_call` + `_unwrap` for the
+    two handler-surface pins below — kept local so this module doesn't
+    import the whole handler test suite."""
+    content, structured = await server.call_tool(name, kwargs)
+    res = structured
+    if res is None and content and hasattr(content[0], "text"):
+        res = json.loads(content[0].text)
+    return res.get("result", res) if isinstance(res, dict) and "result" in res else res
+
+
+def _corrupt_scopes_to_scalar(memory_dir: Path, body_marker: str) -> None:
+    """Rewrite the frontmatter of the episode whose body contains
+    `body_marker` so its `scopes` value is the scalar `5`. Handler-
+    written episodes carry an auto-defaulted (block-style, multi-line)
+    `scopes` key, so a line-insert would create a duplicate key — the
+    frontmatter round-trip replaces the value shape exactly."""
+    from bettermemory import _frontmatter as frontmatter
+
+    target = next(
+        p
+        for p in (memory_dir / "episodes").rglob("*.md")
+        if body_marker in p.read_text(encoding="utf-8")
+    )
+    post = frontmatter.load(target)
+    post.metadata["scopes"] = 5
+    target.write_text(frontmatter.dumps(post), encoding="utf-8")
+
+
+async def test_scalar_scopes_episode_does_not_crash_episode_handoff(
+    memory_dir: Path,
+) -> None:
+    """End-to-end pin on the /loop iteration-entry surface: ONE
+    scalar-scopes episode file in the prior session used to raise
+    TypeError straight through the `episode_handoff` MCP tool (its
+    `list_by_session` guard catches only ValueError). Handler-level
+    tests generally live in test_server.py; this pin sits beside the
+    storage-layer adversarial-frontmatter family that shares its
+    fixture shape."""
+    from bettermemory.config import Config, StorageConfig
+    from bettermemory.server import build_server
+    from bettermemory.session import SessionState
+    from bettermemory.store import Store
+
+    cfg = Config(storage=StorageConfig(directory=str(memory_dir)))
+    server_a = build_server(config=cfg, store=Store(memory_dir), state=SessionState())
+    await _call_episode_tool(
+        server_a, "episode_write", body="clean iteration", takeaway="clean takeaway"
+    )
+    await _call_episode_tool(
+        server_a, "episode_write", body="corrupted iteration", takeaway="doomed scopes"
+    )
+    _corrupt_scopes_to_scalar(memory_dir, "corrupted iteration")
+
+    server_b = build_server(config=cfg, store=Store(memory_dir), state=SessionState())
+    res = await _call_episode_tool(server_b, "episode_handoff")
+
+    assert res["prior_session_id"] is not None
+    # Both episodes surface: the malformed one degrades to scopes=[]
+    # with its takeaway preserved instead of crashing the handoff.
+    takeaways = {e["takeaway"] for e in res["episodes"]}
+    assert takeaways == {"clean takeaway", "doomed scopes"}
+    corrupted = next(e for e in res["episodes"] if e["takeaway"] == "doomed scopes")
+    assert corrupted["scopes"] == []
+
+
+async def test_scalar_scopes_episode_does_not_crash_episode_search(
+    memory_dir: Path,
+) -> None:
+    """Same adversarial fixture as the handoff pin, on the other
+    crash surface the parser feeds: the `episode_search` bare walk
+    (its per-session guard also catches only ValueError, so the
+    TypeError escaped to the MCP caller)."""
+    from bettermemory.config import Config, StorageConfig
+    from bettermemory.server import build_server
+    from bettermemory.session import SessionState
+    from bettermemory.store import Store
+
+    cfg = Config(storage=StorageConfig(directory=str(memory_dir)))
+    server_a = build_server(config=cfg, store=Store(memory_dir), state=SessionState())
+    await _call_episode_tool(
+        server_a, "episode_write", body="clean iteration", takeaway="clean takeaway"
+    )
+    await _call_episode_tool(
+        server_a, "episode_write", body="corrupted iteration", takeaway="doomed scopes"
+    )
+    _corrupt_scopes_to_scalar(memory_dir, "corrupted iteration")
+
+    server_b = build_server(config=cfg, store=Store(memory_dir), state=SessionState())
+    rows = await _call_episode_tool(server_b, "episode_search")
+
+    takeaways = {r["takeaway"] for r in rows}
+    assert takeaways == {"clean takeaway", "doomed scopes"}
+    corrupted = next(r for r in rows if r["takeaway"] == "doomed scopes")
+    assert corrupted["scopes"] == []
 
 
 def test_list_by_swarm_fans_in_across_sessions(
