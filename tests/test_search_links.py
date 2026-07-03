@@ -317,3 +317,138 @@ async def test_link_annotations_merge_keeps_index_edges_outside_candidates(
         "dropped by the rebuild-pending fallback — merge, don't replace"
     )
     assert [e["id"] for e in out[0]["superseded_by"]] == [b["id"]]
+
+
+# ---------------------------------------------------------------------------
+# Unreadable-index fallback — a corrupt or version-newer index makes
+# links_for_many raise. The annotation must take the same candidate scan as
+# the rebuild-pending window, not silently drop the superseded_by /
+# contradicts warnings exactly when the index is broken.
+# ---------------------------------------------------------------------------
+
+
+async def test_link_annotations_survive_corrupt_index(
+    server: Any, memory_dir: Path
+) -> None:
+    """Garbage where the SQLite header should be: `links_for_many` raises
+    `sqlite3.DatabaseError`, and `status()` reports the same state
+    `corrupt=True` so the candidate loader serves `load_all` — the scan
+    fallback recovers the inbound `supersedes` edge from those candidates.
+    Pre-fix the broad except mapped the failure to an empty links map and
+    the `superseded_by` suppression signal died silently."""
+    from bettermemory.index import index_path
+
+    a = await _call(
+        server,
+        "memory_write",
+        content="the auth subsystem validates JWT session tokens",
+        scopes=["tools"],
+    )
+    b = await _call(
+        server,
+        "memory_write",
+        content="unrelated replacement note xyzzy",
+        scopes=["tools"],
+    )
+    await _call(
+        server,
+        "memory_update",
+        id=b["id"],
+        links=[{"type": "supersedes", "target_id": a["id"]}],
+    )
+
+    # Torn-file corruption, past the 100-byte header so SQLite can't read
+    # it as fresh-empty. The -wal/-shm siblings go too — a surviving
+    # journal must not paper over the torn main file.
+    path = index_path(memory_dir)
+    path.write_bytes(b"deliberately not a sqlite header " * 8)
+    for suffix in ("-wal", "-shm"):
+        sibling = path.with_suffix(path.suffix + suffix)
+        if sibling.exists():
+            sibling.unlink()
+
+    hit_a = _hit(await _search(server, "auth JWT session tokens"), a["id"])
+    assert "superseded_by" in hit_a, (
+        "a corrupt index must fall back to the candidate scan, not "
+        "silently drop the superseded_by warning"
+    )
+    assert [e["id"] for e in hit_a["superseded_by"]] == [b["id"]]
+
+
+async def test_link_annotations_survive_version_newer_index(
+    server: Any, memory_dir: Path, monkeypatch: Any
+) -> None:
+    """`IndexVersionError` — the on-disk schema is newer than this reader —
+    takes the same candidate-scan fallback as corruption. Driven directly
+    against `attach_link_annotations` with a raising `links_for_many` so
+    the exception path is pinned without staging real migration state.
+    `memories` models the loader output for this window: `status()`
+    reports it `corrupt=True`, so `load_all` served the full corpus."""
+    from bettermemory import index as index_mod
+    from bettermemory._response import ResponseBuilder
+    from bettermemory.models import Confidence, MemoryHit
+
+    store = Store(memory_dir)
+    a = await _call(
+        server, "memory_write", content="version probe target", scopes=["tools"]
+    )
+    b = await _call(
+        server, "memory_write", content="newer schema superseder", scopes=["tools"]
+    )
+    await _call(
+        server,
+        "memory_update",
+        id=b["id"],
+        links=[{"type": "supersedes", "target_id": a["id"]}],
+    )
+    memory_a = store.load_one(a["id"])
+    memory_b = store.load_one(b["id"])
+
+    def raising(root: Path, ids: Any) -> Any:
+        raise index_mod.IndexVersionError("index schema version 99 is newer")
+
+    monkeypatch.setattr(index_mod, "links_for_many", raising)
+
+    hit = MemoryHit(
+        id=a["id"],
+        scopes=["tools"],
+        confidence=Confidence.MEDIUM,
+        snippet="version probe target",
+        score=1.0,
+        relevance="high",
+        created=memory_a.created,
+        updated=memory_a.updated,
+    )
+    out: list[dict[str, Any]] = [{"id": a["id"]}]
+    ResponseBuilder(stale_after_days=30).attach_link_annotations(
+        out, [hit], [memory_a, memory_b], store=store
+    )
+    assert "superseded_by" in out[0], (
+        "a version-newer index must fall back to the candidate scan, not "
+        "silently drop the superseded_by warning"
+    )
+    assert [e["id"] for e in out[0]["superseded_by"]] == [b["id"]]
+
+
+async def test_link_annotation_failure_never_breaks_search(
+    server: Any, monkeypatch: Any
+) -> None:
+    """The broad except stays the OUTERMOST guard: when both the index read
+    and the candidate-scan fallback raise, the annotation degrades to
+    absent keys — the search itself still returns the hit."""
+    import bettermemory._response as response_mod
+    from bettermemory import index as index_mod
+
+    a = await _call(
+        server, "memory_write", content="guard probe fact alpha", scopes=["tools"]
+    )
+
+    def raising(*args: Any, **kwargs: Any) -> Any:
+        raise RuntimeError("boom")
+
+    monkeypatch.setattr(index_mod, "links_for_many", raising)
+    monkeypatch.setattr(response_mod, "_links_map_with_candidate_scan", raising)
+
+    hit_a = _hit(await _search(server, "guard probe fact alpha"), a["id"])
+    assert "superseded_by" not in hit_a
+    assert "contradicts" not in hit_a

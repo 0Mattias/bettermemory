@@ -747,7 +747,12 @@ class ResponseBuilder:
         dropped the link rows and only touched memories are back), the index
         answer may be silently missing edges, so it is merged with a scan of
         the already-loaded `memories` candidates instead of being trusted
-        alone (see `_links_map_with_candidate_scan`). Resolution reuses the
+        alone (see `_links_map_with_candidate_scan`). An index that can't
+        answer at all (corruption, a newer-version schema) takes the same
+        scan fallback rather than an empty map — `status()` reports those
+        states `corrupt=True` and `_load_search_candidates` routes them to
+        `load_all` too, so the candidates carry the edges the index can't
+        serve. Resolution reuses the
         `depends_on` discipline: a side-map over the loaded candidates, a
         targeted `store.load_one` for targets outside the FTS prefilter,
         tombstoned / missing skipped silently, and the caller's scope/origin
@@ -790,27 +795,44 @@ class ResponseBuilder:
         # reports the `needs_rebuild` meta flag read on that same connection.
         hit_ids = [h.id for h in hits]
         try:
-            links_map, needs_rebuild = links_for_many(store.root, hit_ids)
-        except Exception:  # noqa: BLE001 — a corrupt/locked index is a
-            # best-effort no-op; never abort a search over an annotation.
-            links_map, needs_rebuild = {}, False
-        if needs_rebuild:
-            # Rebuild-pending window: a schema migration dropped the
-            # `memory_links` rows and the incremental hooks have refilled
-            # only touched memories, so the index answer above may be
-            # silently missing the very inbound `supersedes` edge this
-            # annotation exists to surface. `_load_search_candidates`
-            # routes this SAME window to `load_all` (same flag), so
-            # `memories` here is the full active corpus — scan it for the
-            # edges instead of trusting the partial index, at zero extra
-            # I/O. Union, not replace: on the one narrowed caller path
-            # (`since_prior_session`'s post-boundary slice) the partial
-            # index can still hold live hook-written edges whose sources
-            # fall outside `memories`, so keeping both sides means the
-            # fallback never serves fewer edges than the index alone.
-            # Dangling rows stay harmless — tombstoned / hidden targets
-            # are filtered at `_resolve` time either way.
-            links_map = _links_map_with_candidate_scan(links_map, memories, hit_ids)
+            try:
+                links_map, needs_rebuild = links_for_many(store.root, hit_ids)
+            except Exception:  # noqa: BLE001 — an unreadable index (sqlite
+                # corruption, IndexVersionError from a newer-version store,
+                # a lock outliving the busy timeout) is the same
+                # answer-may-be-missing-edges state as the rebuild-pending
+                # flag, with the same recovery (`rebuild()`) — so take the
+                # same candidate-scan fallback below instead of mapping the
+                # failure to an empty links map, which killed the
+                # `superseded_by` suppression signal exactly when the index
+                # was broken. `status()` reports these states `corrupt=True`,
+                # so `_load_search_candidates` served `memories` via
+                # `load_all` — the scan's corpus is already paid for.
+                links_map, needs_rebuild = {}, True
+            if needs_rebuild:
+                # True from the meta flag, or forced by the except above.
+                # Flag case — the rebuild-pending window: a schema migration
+                # dropped the `memory_links` rows and the incremental hooks
+                # have refilled only touched memories, so the index answer
+                # above may be silently missing the very inbound `supersedes`
+                # edge this annotation exists to surface.
+                # `_load_search_candidates` routes this SAME window to
+                # `load_all` (same flag), so `memories` here is the full
+                # active corpus — scan it for the edges instead of trusting
+                # the partial index, at zero extra I/O. Union, not replace:
+                # on the one narrowed caller path (`since_prior_session`'s
+                # post-boundary slice) the partial index can still hold live
+                # hook-written edges whose sources fall outside `memories`,
+                # so keeping both sides means the fallback never serves
+                # fewer edges than the index alone. Dangling rows stay
+                # harmless — tombstoned / hidden targets are filtered at
+                # `_resolve` time either way.
+                links_map = _links_map_with_candidate_scan(links_map, memories, hit_ids)
+        except Exception:  # noqa: BLE001 — outermost guard: the annotation
+            # is best-effort all the way down; even a failure in the
+            # fallback scan degrades to no annotations, never a broken
+            # search.
+            links_map = {}
 
         total = 0
         for hit_dict, hit in zip(out, hits):
@@ -1010,7 +1032,10 @@ def _links_map_with_candidate_scan(
     set, `_load_search_candidates` routes to `load_all` (same flag, same
     window), so `memories` carries every active memory and the scan yields
     exactly the edge set a completed `rebuild()` would serve. Pure in-memory
-    work — no second store walk, no index reads.
+    work — no second store walk, no index reads. The unreadable-index
+    fallback (corruption / newer-version schema — states the candidate
+    loader likewise routes to `load_all`) reuses this same scan with an
+    empty `links_map`.
 
     Union semantics with exact-duplicate collapse over the full
     `(type, other_id, note)` tuple, mirroring the index's primary-key dedup.
