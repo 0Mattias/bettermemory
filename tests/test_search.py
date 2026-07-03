@@ -5,6 +5,8 @@ from __future__ import annotations
 import unicodedata
 from datetime import datetime, timedelta, timezone
 
+import pytest
+
 from bettermemory.models import Confidence, Memory, Source, generate_ulid
 from bettermemory.search import (
     SearchMode,
@@ -1162,3 +1164,392 @@ def test_fts_index_text_carries_stems_bigrams_and_parts() -> None:
     assert "claud" in toks and "cod" in toks  # expanded parts
     assert "cach" in toks  # 'caches' stem
     assert "東京" in toks and "京タ" in toks  # bigrams
+
+
+def test_ascii_normalization_invariance() -> None:
+    """The two lemmas `_tokenize_impl`'s ASCII fast path rests on:
+
+    - no ASCII char changes under NFKC or NFD (per-char identity), and
+    - no ASCII char is a combining mark, so a pure-ASCII string can
+      never compose either — normalize() is identity on any `isascii()`
+      string, `_fold_diacritics` strips nothing, and skipping both is
+      stream-safe.
+
+    These are Unicode stability guarantees, but the fast path is only
+    correct while they hold for the running interpreter — pin them so a
+    unicodedata surprise fails here, not as silent stream drift."""
+    ascii_all = "".join(map(chr, range(128)))
+    assert unicodedata.normalize("NFKC", ascii_all) == ascii_all
+    assert unicodedata.normalize("NFD", ascii_all) == ascii_all
+    assert all(not unicodedata.combining(ch) for ch in ascii_all)
+
+
+# Golden token streams, generated at 3.12.0 (commit 1353141) BEFORE the
+# once-per-search token threading and the ASCII fast path landed — byte
+# equality against these proves the perf work never touched the streams.
+# The `fts` column is the PERSISTED stream (schema v4 indexes
+# `fts_index_text` output), so any drift here would demand the
+# SCHEMA_VERSION bump the perf change is contractually barred from.
+# Corpus: plurals/stems, contractions, symbol aliases, kebab/snake,
+# dotted numerics, diacritics, CJK bigrams, fullwidth/halfwidth folds,
+# Hangul/Thai segmentation, mixed script, and stopword-bearing prose in
+# all five stopword languages (bodies KEEP stopwords — only query-side
+# stripping removes them, which `_strip_stopwords` tests pin).
+_STREAM_GOLDENS: list[tuple[str, list[str], list[str], str]] = [
+    (
+        "The standups and retros are Kai's favorite meetings",
+        ["the", "standup", "and", "retro", "are", "kai", "favorit", "meeting"],
+        ["the", "standups", "and", "retros", "are", "kai", "favorite", "meetings"],
+        "the standup and retro are kai favorit meeting",
+    ),
+    (
+        "docker_compose caches C++ and C# builds; what's in .NET 3.12.1?",
+        [
+            "docker-compos",
+            "cach",
+            "cpp",
+            "and",
+            "csharp",
+            "build",
+            "what",
+            "in",
+            "dotnet",
+            "3.12.1",
+        ],
+        [
+            "docker-compose",
+            "caches",
+            "cpp",
+            "and",
+            "csharp",
+            "builds",
+            "what",
+            "in",
+            "dotnet",
+            "3.12.1",
+        ],
+        "docker-compos docker compos cach cpp and csharp build what in dotnet 3.12.1 3 12 1",
+    ),
+    (
+        "pre- and post-deploy checks for k8s aliases atlas news classes policies",
+        [
+            "pre",
+            "and",
+            "post-deploi",
+            "check",
+            "for",
+            "k8s",
+            "alias",
+            "atlas",
+            "news",
+            "class",
+            "polici",
+        ],
+        [
+            "pre",
+            "and",
+            "post-deploy",
+            "checks",
+            "for",
+            "k8s",
+            "aliases",
+            "atlas",
+            "news",
+            "classes",
+            "policies",
+        ],
+        "pre and post-deploi post deploi check for k8s alias atlas news class polici",
+    ),
+    (
+        "cookies movie branches caches trees don't they're I'm users' o'clock",
+        [
+            "cooki",
+            "movi",
+            "branch",
+            "cach",
+            "tree",
+            "don",
+            "they",
+            "i",
+            "user",
+            "o",
+            "clock",
+        ],
+        [
+            "cookies",
+            "movie",
+            "branches",
+            "caches",
+            "trees",
+            "don",
+            "they",
+            "i",
+            "users",
+            "o",
+            "clock",
+        ],
+        "cooki movi branch cach tree don they i user o clock",
+    ),
+    (
+        "Zürich café Mañana Tjörn niño",
+        ["zurich", "caf", "manana", "tjorn", "nino"],
+        ["zurich", "cafe", "manana", "tjorn", "nino"],
+        "zurich caf manana tjorn nino",
+    ),
+    (
+        "東京オフィスは移転する 2026年に移転",
+        [
+            "東京",
+            "京オ",
+            "オフ",
+            "フィ",
+            "ィス",
+            "スは",
+            "は移",
+            "移転",
+            "転す",
+            "する",
+            "2026",
+            "年に",
+            "に移",
+            "移転",
+        ],
+        [
+            "東京",
+            "京オ",
+            "オフ",
+            "フィ",
+            "ィス",
+            "スは",
+            "は移",
+            "移転",
+            "転す",
+            "する",
+            "2026",
+            "年に",
+            "に移",
+            "移転",
+        ],
+        "東京 東 京 京オ 京 オ オフ オ フ フィ フ ィ ィス ィ ス スは ス は は移 は 移 移転 移 転 転す 転 す する す る 2026 年に 年 に に移 に 移 移転 移 転",
+    ),
+    (
+        "ＧＰＵ２０２６ ｻｰﾊﾞｰ サーバー m² ﬁle ㎞",
+        ["gpu2026", "サー", "ーハ", "ハー", "サー", "ーハ", "ハー", "m2", "fil", "km"],
+        ["gpu2026", "サー", "ーハ", "ハー", "サー", "ーハ", "ハー", "m2", "file", "km"],
+        "gpu2026 サー サ ー ーハ ー ハ ハー ハ ー サー サ ー ーハ ー ハ ハー ハ ー m2 fil km",
+    ),
+    # Hangul + Thai, spelled in \u escapes: the NFD fold decomposes the
+    # typed syllables into Jamo (U+11xx) that recompose under NFC, so a
+    # literal-glyph spelling of the EXPECTED side would be silently
+    # rewritten by any NFC-normalising editor — escapes pin the exact
+    # code points.
+    (
+        "\ud55c\uad6d\uc5b4 \uba54\ubaa8\ub9ac \ud14c\uc2a4\ud2b8 \u0e17\u0e14\u0e2a\u0e2d\u0e1a\u0e20\u0e32\u0e29\u0e32\u0e44\u0e17\u0e22",
+        [
+            "\u1112\u1161",
+            "\u1161\u11ab",
+            "\u11ab\u1100",
+            "\u1100\u116e",
+            "\u116e\u11a8",
+            "\u11a8\u110b",
+            "\u110b\u1165",
+            "\u1106\u1166",
+            "\u1166\u1106",
+            "\u1106\u1169",
+            "\u1169\u1105",
+            "\u1105\u1175",
+            "\u1110\u1166",
+            "\u1166\u1109",
+            "\u1109\u1173",
+            "\u1173\u1110",
+            "\u1110\u1173",
+            "\u0e17\u0e14",
+            "\u0e14\u0e2a",
+            "\u0e2a\u0e2d",
+            "\u0e2d\u0e1a",
+            "\u0e1a\u0e20",
+            "\u0e20\u0e32",
+            "\u0e32\u0e29",
+            "\u0e29\u0e32",
+            "\u0e32\u0e44",
+            "\u0e44\u0e17",
+            "\u0e17\u0e22",
+        ],
+        [
+            "\u1112\u1161",
+            "\u1161\u11ab",
+            "\u11ab\u1100",
+            "\u1100\u116e",
+            "\u116e\u11a8",
+            "\u11a8\u110b",
+            "\u110b\u1165",
+            "\u1106\u1166",
+            "\u1166\u1106",
+            "\u1106\u1169",
+            "\u1169\u1105",
+            "\u1105\u1175",
+            "\u1110\u1166",
+            "\u1166\u1109",
+            "\u1109\u1173",
+            "\u1173\u1110",
+            "\u1110\u1173",
+            "\u0e17\u0e14",
+            "\u0e14\u0e2a",
+            "\u0e2a\u0e2d",
+            "\u0e2d\u0e1a",
+            "\u0e1a\u0e20",
+            "\u0e20\u0e32",
+            "\u0e32\u0e29",
+            "\u0e29\u0e32",
+            "\u0e32\u0e44",
+            "\u0e44\u0e17",
+            "\u0e17\u0e22",
+        ],
+        "\u1112\u1161 \u1112 \u1161 \u1161\u11ab \u1161 \u11ab \u11ab\u1100 \u11ab \u1100 \u1100\u116e \u1100 \u116e \u116e\u11a8 \u116e \u11a8 \u11a8\u110b \u11a8 \u110b \u110b\u1165 \u110b \u1165 \u1106\u1166 \u1106 \u1166 \u1166\u1106 \u1166 \u1106 \u1106\u1169 \u1106 \u1169 \u1169\u1105 \u1169 \u1105 \u1105\u1175 \u1105 \u1175 \u1110\u1166 \u1110 \u1166 \u1166\u1109 \u1166 \u1109 \u1109\u1173 \u1109 \u1173 \u1173\u1110 \u1173 \u1110 \u1110\u1173 \u1110 \u1173 \u0e17\u0e14 \u0e17 \u0e14 \u0e14\u0e2a \u0e14 \u0e2a \u0e2a\u0e2d \u0e2a \u0e2d \u0e2d\u0e1a \u0e2d \u0e1a \u0e1a\u0e20 \u0e1a \u0e20 \u0e20\u0e32 \u0e20 \u0e32 \u0e32\u0e29 \u0e32 \u0e29 \u0e29\u0e32 \u0e29 \u0e32 \u0e32\u0e44 \u0e32 \u0e44 \u0e44\u0e17 \u0e44 \u0e17 \u0e17\u0e22 \u0e17 \u0e22",
+    ),
+    (
+        "docker-東京 redis-cache 猫 alpha_beta-gamma",
+        ["docker", "東京", "redis-cach", "猫", "alpha-beta-gamma"],
+        ["docker", "東京", "redis-cache", "猫", "alpha-beta-gamma"],
+        "docker 東京 東 京 redis-cach redis cach 猫 alpha-beta-gamma alpha beta gamma",
+    ),
+    (
+        "jag vill att den ska fungera på servern",
+        ["jag", "vill", "att", "den", "ska", "fungera", "pa", "servern"],
+        ["jag", "vill", "att", "den", "ska", "fungera", "pa", "servern"],
+        "jag vill att den ska fungera pa servern",
+    ),
+    (
+        "der Server wird nicht durch die Firewall blockiert",
+        ["der", "server", "wird", "nicht", "durch", "die", "firewall", "blockiert"],
+        ["der", "server", "wird", "nicht", "durch", "die", "firewall", "blockiert"],
+        "der server wird nicht durch die firewall blockiert",
+    ),
+    (
+        "le serveur est dans la production avec les caches",
+        ["le", "serveur", "est", "dans", "la", "production", "avec", "les", "cach"],
+        ["le", "serveur", "est", "dans", "la", "production", "avec", "les", "caches"],
+        "le serveur est dans la production avec les cach",
+    ),
+    (
+        "el servidor esta en la produccion pero los datos",
+        ["el", "servidor", "esta", "en", "la", "produccion", "pero", "los", "dato"],
+        ["el", "servidor", "esta", "en", "la", "produccion", "pero", "los", "datos"],
+        "el servidor esta en la produccion pero los dato",
+    ),
+]
+
+
+def test_tokenize_stream_golden_multilingual() -> None:
+    """Byte-identity pin for tokenizer v2's output across every pipeline
+    branch — see `_STREAM_GOLDENS`. The ASCII fast path and the
+    once-per-search threading are perf-only by contract; if this test
+    needs regenerating, the change under review is NOT perf-only and
+    needs the full schema/relevance impact analysis instead."""
+    from bettermemory.search import _tokenize_unstemmed, fts_index_text
+
+    for text, stemmed, unstemmed, fts in _STREAM_GOLDENS:
+        assert tokenize(text) == stemmed, text
+        assert _tokenize_unstemmed(text) == unstemmed, text
+        assert fts_index_text(text) == fts, text
+
+
+def test_precomputed_candidate_tokens_byte_identical() -> None:
+    """The `tokens` threading through the three scorers must be a pure
+    perf change: for every memory in a corpus spanning the tokenizer's
+    branches (plurals, CJK, halfwidth, diacritics, stopwords, compounds)
+    and every query shape (content, filler-heavy, compound-fallback,
+    CJK), the precomputed path returns exactly what the recompute path
+    returns — scores, matched terms, IDF maps, and avgdl alike."""
+    from bettermemory.search import (
+        _memory_tokens,
+        _strip_stopwords,
+        compute_idf,
+        score_memory_bm25,
+    )
+
+    now = datetime(2026, 7, 1, tzinfo=timezone.utc)
+    corpus = [
+        _memory(text, scopes, created=now)
+        for text, scopes in [
+            ("The standups and retros moved to Tuesdays", ["projects:demo"]),
+            ("docker_compose caches C++ builds for .NET 3.12.1", ["tools"]),
+            ("東京オフィスは移転する 2026年に移転", ["projects:tokyo-move"]),
+            ("ＧＰＵは２０２６年に交換予定 ｻｰﾊﾞｰ", ["infrastructure"]),
+            ("Zürich café notes: Tjörn trip planning", ["personal-context"]),
+            ("jag vill att den ska fungera på servern", ["projects:demo", "tools"]),
+            ("der Server wird durch die Firewall blockiert", ["infrastructure"]),
+        ]
+    ]
+    queries = [
+        "standups zürich",
+        "docker-compose caches",
+        "東京 移転",
+        "ｻｰﾊﾞｰ gpu",
+        "vad har jag om servern",
+        "firewall",
+        "3.12",
+    ]
+
+    idf_plain = compute_idf(corpus)
+    pre = [_memory_tokens(m) for m in corpus]
+    assert compute_idf(corpus, tokens=pre) == idf_plain
+
+    body_idf, scope_idf, avgdl = idf_plain
+    for query in queries:
+        query_tokens = _strip_stopwords(tokenize(query)) or tokenize(query)
+        for memory, tokens in zip(corpus, pre):
+            assert score_memory(memory, query_tokens, now=now) == score_memory(
+                memory, query_tokens, now=now, tokens=tokens
+            ), (
+                query,
+                memory.body,
+            )
+            plain = score_memory_bm25(
+                memory,
+                query_tokens,
+                body_idf_map=body_idf,
+                scope_idf_map=scope_idf,
+                avgdl=avgdl,
+                now=now,
+            )
+            threaded = score_memory_bm25(
+                memory,
+                query_tokens,
+                body_idf_map=body_idf,
+                scope_idf_map=scope_idf,
+                avgdl=avgdl,
+                now=now,
+                tokens=tokens,
+            )
+            assert plain == threaded, (query, memory.body)
+
+
+def test_search_tokenizes_each_candidate_once(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The perf property itself: a hybrid search runs `tokenize` exactly
+    once per candidate body, once per scope entry, and once for the
+    query — not once per (candidate, consumer). Pre-fix the same search
+    made 6 tokenize calls per memory (body+scopes across the keyword
+    scorer, compute_idf, and BM25), 88% of cumulative search time."""
+    import bettermemory.search as search_module
+
+    now = datetime(2026, 7, 1, tzinfo=timezone.utc)
+    memories = [
+        _memory(f"memory number {i} about docker and redis caches", created=now)
+        for i in range(20)
+    ]
+
+    calls = {"n": 0}
+    real_impl = search_module._tokenize_impl
+
+    def counting(text: str, *, stem: bool) -> list[str]:
+        calls["n"] += 1
+        return real_impl(text, stem=stem)
+
+    monkeypatch.setattr(search_module, "_tokenize_impl", counting)
+    hits = search(memories, "docker redis caches", mode="hybrid", now=now)
+    assert hits  # the counted run must be a real, scoring search
+    # 1 query + per candidate: 1 body + 1 scope (each _memory has one).
+    assert calls["n"] == 1 + 2 * len(memories)

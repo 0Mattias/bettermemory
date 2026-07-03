@@ -35,7 +35,7 @@ import math
 import re
 import unicodedata
 from datetime import datetime, timezone
-from typing import Any, Callable, Literal
+from typing import Any, Callable, Literal, NamedTuple
 
 from .models import Memory, MemoryHit, SimilarHit, TombstonedMemory, snippet_for
 from .origin import should_include_for_caller
@@ -680,7 +680,29 @@ def _tokenize_unstemmed(text: str) -> list[str]:
     return _tokenize_impl(text, stem=False)
 
 
+def _fold_ascii_safe(text: str) -> str:
+    """The pipeline folds that map ASCII to ASCII: contraction strip,
+    symbol aliases, '_' → '-' canonicalisation. Shared by both
+    `_tokenize_impl` paths — the ASCII fast path's stream identity
+    depends on every fold here preserving `isascii()`."""
+    text = _CONTRACTION_RE.sub("", text)
+    for pattern, replacement, _ in _SYMBOL_ALIASES:
+        text = pattern.sub(replacement, text)
+    return text.replace("_", "-")
+
+
 def _tokenize_impl(text: str, *, stem: bool) -> list[str]:
+    # ASCII fast path (the overwhelming case in Latin-script stores):
+    # NFKC and NFD are identity on pure ASCII — no ASCII char has a
+    # decomposition, and composition needs a combining mark, all of which
+    # are non-ASCII — so the NFKC pass and `_fold_diacritics` are no-ops,
+    # and since `.lower()` and `_fold_ascii_safe` keep ASCII ASCII, every
+    # raw token would pass `_segment_unspaced` through whole. Stream
+    # identity is pinned by test_ascii_normalization_invariance and the
+    # golden-stream test in test_search.py.
+    if text.isascii():
+        raws = _TOKEN_RE.findall(_fold_ascii_safe(text.lower()))
+        return [_stem_token(r) for r in raws] if stem else raws
     # NFKC first — the NFD fold below is canonical-only, so width variants
     # never met it: fullwidth Latin/digits ('ＧＰＵ', '２０２６' — standard
     # Japanese IME output) missed 'gpu'/'2026' in both directions, and
@@ -694,11 +716,8 @@ def _tokenize_impl(text: str, *, stem: bool) -> list[str]:
     # 'ﬁ'→'fi', '㎞'→'km').
     text = unicodedata.normalize("NFKC", text)
     text = _fold_diacritics(text.lower())
-    text = _CONTRACTION_RE.sub("", text)
-    for pattern, replacement, _ in _SYMBOL_ALIASES:
-        text = pattern.sub(replacement, text)
     out: list[str] = []
-    for raw in _TOKEN_RE.findall(text.replace("_", "-")):
+    for raw in _TOKEN_RE.findall(_fold_ascii_safe(text)):
         for seg in _segment_unspaced(raw):
             out.append(_stem_token(seg) if stem else seg)
     return out
@@ -879,6 +898,46 @@ def _scope_tokens(scope: str) -> list[str]:
     return _expand_kebab(tokenize(scope))
 
 
+class _MemoryTokens(NamedTuple):
+    """Per-memory token streams, computed once per `search()` call.
+
+    `tokenize()` is the hot spot of a search (NFKC + diacritic fold +
+    stemmer + CJK segmentation), and before this existed each candidate's
+    body and scopes were re-tokenized by every consumer — the keyword
+    scorer, `compute_idf`, and `score_memory_bm25` — 6 tokenize calls per
+    memory per hybrid search, ~88% of cumulative search time on a
+    ~500-memory store. The scorers accept this as an optional `tokens`
+    argument; passing it must be a pure perf change (the fields are
+    exactly the expressions the recompute path evaluates), pinned by the
+    precompute-equality test in test_search.py. Consumers only read —
+    never mutate — the shared lists/sets.
+    """
+
+    body: list[str]
+    """`_expand_kebab(tokenize(memory.body))` — stopwords kept (the
+    keyword scorer's stream; `set()` of it is the semantic literal-match
+    stream)."""
+
+    content: list[str]
+    """`_strip_stopwords(body)` — the BM25/IDF stream."""
+
+    scope_set: set[str]
+    """Union of `_scope_tokens(scope)` across `memory.scopes` — every
+    consumer builds a set from the per-scope lists, so only the union is
+    kept."""
+
+
+def _memory_tokens(memory: Memory) -> _MemoryTokens:
+    """Build the `_MemoryTokens` for one candidate. Field expressions
+    mirror the scorers' recompute paths token for token — see
+    `_MemoryTokens` for why equality is load-bearing."""
+    body = _expand_kebab(tokenize(memory.body))
+    scope_set: set[str] = set()
+    for scope in memory.scopes:
+        scope_set.update(_scope_tokens(scope))
+    return _MemoryTokens(body=body, content=_strip_stopwords(body), scope_set=scope_set)
+
+
 def _recency_factor(created: datetime, now: datetime, half_life_days: float) -> float:
     """1 + 0.1 * exp(-days_old / half_life). Mild bump, not a takeover."""
     if created.tzinfo is None:
@@ -930,6 +989,8 @@ _BM25_B_DEFAULT = 0.75
 
 def compute_idf(
     memories: list[Memory],
+    *,
+    tokens: list[_MemoryTokens] | None = None,
 ) -> tuple[dict[str, float], dict[str, float], float]:
     """Build the per-term IDF maps and the average doc length for BM25.
 
@@ -965,6 +1026,10 @@ def compute_idf(
     the body side — kebab expansion symmetric, stopwords stripped. The
     search-time query side strips stopwords too. Empty corpus returns
     `({}, {}, 0.0)` so callers can short-circuit.
+
+    ``tokens``: optional precomputed `_MemoryTokens`, index-aligned with
+    `memories` — `search()` tokenizes each candidate once and threads the
+    streams here. None recomputes them; identical output either way.
     """
     n = len(memories)
     if n == 0:
@@ -973,8 +1038,13 @@ def compute_idf(
     body_df: dict[str, int] = {}
     scope_df: dict[str, int] = {}
     total_len = 0
-    for memory in memories:
-        toks = _strip_stopwords(_expand_kebab(tokenize(memory.body)))
+    for i, memory in enumerate(memories):
+        pre = tokens[i] if tokens is not None else None
+        toks = (
+            pre.content
+            if pre is not None
+            else _strip_stopwords(_expand_kebab(tokenize(memory.body)))
+        )
         total_len += len(toks)
         # Count each term once per doc — that's document-frequency, not
         # term-frequency. set() collapses repeats; scope tokens join the
@@ -984,8 +1054,11 @@ def compute_idf(
         for term in body_terms:
             body_df[term] = body_df.get(term, 0) + 1
         doc_terms = set(body_terms)
-        for scope in memory.scopes:
-            doc_terms.update(_scope_tokens(scope))
+        if pre is not None:
+            doc_terms.update(pre.scope_set)
+        else:
+            for scope in memory.scopes:
+                doc_terms.update(_scope_tokens(scope))
         for term in doc_terms:
             scope_df[term] = scope_df.get(term, 0) + 1
 
@@ -1011,6 +1084,7 @@ def score_memory_bm25(
     half_life_days: float = 30.0,
     k1: float = _BM25_K1_DEFAULT,
     b: float = _BM25_B_DEFAULT,
+    tokens: _MemoryTokens | None = None,
 ) -> tuple[float, list[str]]:
     """BM25 score for one memory against a tokenized query.
 
@@ -1033,19 +1107,30 @@ def score_memory_bm25(
     `(0.0, [])`. Unknown terms (not in `body_idf_map`) contribute zero
     from the body but can still match a scope; scope-only matches
     default to `idf=1.0` since the term has no corpus statistics yet.
+
+    ``tokens``: optional precomputed `_MemoryTokens` for this memory —
+    `search()` tokenizes each candidate once and threads the streams
+    here. None recomputes them; identical output either way.
     """
     if not query_tokens or avgdl <= 0:
         return 0.0, []
 
-    body_tokens = _strip_stopwords(_expand_kebab(tokenize(memory.body)))
+    body_tokens = (
+        tokens.content
+        if tokens is not None
+        else _strip_stopwords(_expand_kebab(tokenize(memory.body)))
+    )
     body_count: dict[str, int] = {}
     for tok in body_tokens:
         body_count[tok] = body_count.get(tok, 0) + 1
     dl = len(body_tokens)
 
-    scope_set: set[str] = set()
-    for scope in memory.scopes:
-        scope_set.update(_scope_tokens(scope))
+    if tokens is not None:
+        scope_set = tokens.scope_set
+    else:
+        scope_set = set()
+        for scope in memory.scopes:
+            scope_set.update(_scope_tokens(scope))
 
     score = 0.0
     matched: list[str] = []
@@ -1110,25 +1195,34 @@ def score_memory(
     *,
     now: datetime,
     half_life_days: float = 30.0,
+    tokens: _MemoryTokens | None = None,
 ) -> tuple[float, list[str]]:
     """Score a memory against a query. Return `(score, matched_terms)`.
 
     `matched_terms` is the de-duplicated subset of `query_tokens` that hit
     the body or scopes — surfaced in the result so the consumer can tell
     whether a partial match is meaningful or stopword-driven noise.
+
+    ``tokens``: optional precomputed `_MemoryTokens` for this memory —
+    `search()` tokenizes each candidate once and threads the streams
+    here. None recomputes them; identical output either way.
     """
     if not query_tokens:
         return 0.0, []
 
-    body_tokens = _expand_kebab(tokenize(memory.body))
+    body_tokens = (
+        tokens.body if tokens is not None else _expand_kebab(tokenize(memory.body))
+    )
     body_count: dict[str, int] = {}
     for tok in body_tokens:
         body_count[tok] = body_count.get(tok, 0) + 1
 
-    scope_tokens: list[str] = []
-    for scope in memory.scopes:
-        scope_tokens.extend(_scope_tokens(scope))
-    scope_set = set(scope_tokens)
+    if tokens is not None:
+        scope_set = tokens.scope_set
+    else:
+        scope_set = set()
+        for scope in memory.scopes:
+            scope_set.update(_scope_tokens(scope))
 
     raw = 0.0
     matched: list[str] = []
@@ -1345,6 +1439,7 @@ def _score_keyword(
     now: datetime,
     half_life_days: float,
     applied_by_id: dict[str, int] | None = None,
+    candidate_tokens: list[_MemoryTokens] | None = None,
 ) -> list[tuple[Memory, float, list[str]]]:
     """Run the original keyword scorer across all candidates. Returns
     `(memory, score, matched)` tuples for every candidate with `score > 0`.
@@ -1352,11 +1447,18 @@ def _score_keyword(
 
     `applied_by_id` (optional) maps memory id → explicit-applied count; when
     given, a bounded `_endorsement_factor` nudges endorsed memories. None
-    (the default) leaves scores untouched."""
+    (the default) leaves scores untouched.
+
+    `candidate_tokens` (optional): precomputed `_MemoryTokens`,
+    index-aligned with `candidates` — see `search()`."""
     out: list[tuple[Memory, float, list[str]]] = []
-    for memory in candidates:
+    for i, memory in enumerate(candidates):
         score, matched = score_memory(
-            memory, query_tokens, now=now, half_life_days=half_life_days
+            memory,
+            query_tokens,
+            now=now,
+            half_life_days=half_life_days,
+            tokens=candidate_tokens[i] if candidate_tokens is not None else None,
         )
         if score > 0:
             if applied_by_id:
@@ -1372,15 +1474,18 @@ def _score_bm25(
     now: datetime,
     half_life_days: float,
     applied_by_id: dict[str, int] | None = None,
+    candidate_tokens: list[_MemoryTokens] | None = None,
 ) -> list[tuple[Memory, float, list[str]]]:
     """Run the BM25 scorer across all candidates. Returns
     `(memory, score, matched)` tuples for candidates with `score > 0`.
-    `applied_by_id`: see `_score_keyword`."""
-    body_idf_map, scope_idf_map, avgdl = compute_idf(candidates)
+    `applied_by_id` / `candidate_tokens`: see `_score_keyword`."""
+    body_idf_map, scope_idf_map, avgdl = compute_idf(
+        candidates, tokens=candidate_tokens
+    )
     if avgdl <= 0:
         return []
     out: list[tuple[Memory, float, list[str]]] = []
-    for memory in candidates:
+    for i, memory in enumerate(candidates):
         score, matched = score_memory_bm25(
             memory,
             query_tokens,
@@ -1389,6 +1494,7 @@ def _score_bm25(
             avgdl=avgdl,
             now=now,
             half_life_days=half_life_days,
+            tokens=candidate_tokens[i] if candidate_tokens is not None else None,
         )
         if score > 0:
             if applied_by_id:
@@ -1406,6 +1512,7 @@ def _score_semantic(
     half_life_days: float,
     matched_terms_fallback: list[str],
     applied_by_id: dict[str, int] | None = None,
+    candidate_tokens: list[_MemoryTokens] | None = None,
 ) -> list[tuple[Memory, float, list[str]]]:
     """Cosine-similarity scoring over sentence-transformers embeddings.
 
@@ -1448,7 +1555,7 @@ def _score_semantic(
 
     threshold = 0.3
     out: list[tuple[Memory, float, list[str]]] = []
-    for memory in candidates:
+    for i, memory in enumerate(candidates):
         body_clean = memory.body.strip()
         if not body_clean:
             continue
@@ -1471,10 +1578,14 @@ def _score_semantic(
         # body or scopes (same overlap `score_memory` computes), not the
         # whole query — so a paraphrase-only hit carries honest match_terms
         # and an honest (low) relevance label rather than a fabricated one.
-        body_token_set = set(_expand_kebab(tokenize(memory.body)))
-        scope_token_set: set[str] = set()
-        for scope in memory.scopes:
-            scope_token_set.update(_scope_tokens(scope))
+        if candidate_tokens is not None:
+            body_token_set = set(candidate_tokens[i].body)
+            scope_token_set = candidate_tokens[i].scope_set
+        else:
+            body_token_set = set(_expand_kebab(tokenize(memory.body)))
+            scope_token_set = set()
+            for scope in memory.scopes:
+                scope_token_set.update(_scope_tokens(scope))
         literal_matched = [
             tok
             for tok in matched_terms_fallback
@@ -1672,6 +1783,13 @@ def search(
     if not candidates:
         return []
 
+    # Tokenize each candidate exactly once per call and thread the streams
+    # through every consumer below — the keyword scorer, compute_idf, BM25,
+    # and the semantic literal-match block otherwise re-tokenize the same
+    # bodies and scopes (6 tokenize calls per memory per hybrid search,
+    # ~88% of cumulative search time). Pure perf: see `_MemoryTokens`.
+    candidate_tokens = [_memory_tokens(m) for m in candidates]
+
     if mode == "keyword":
         scored = _score_keyword(
             candidates,
@@ -1679,6 +1797,7 @@ def search(
             now=now,
             half_life_days=half_life_days,
             applied_by_id=applied_by_id,
+            candidate_tokens=candidate_tokens,
         )
         # Sort by score, then created (newer wins on tie), then id as the
         # final discriminator. Without `id` the tiebreaker is undefined for
@@ -1694,6 +1813,7 @@ def search(
             now=now,
             half_life_days=half_life_days,
             applied_by_id=applied_by_id,
+            candidate_tokens=candidate_tokens,
         )
         scored.sort(key=lambda x: (x[1], x[0].created, x[0].id), reverse=True)
     elif mode == "semantic":
@@ -1710,6 +1830,7 @@ def search(
                 half_life_days=half_life_days,
                 matched_terms_fallback=list(dict.fromkeys(query_tokens)),
                 applied_by_id=applied_by_id,
+                candidate_tokens=candidate_tokens,
             )
         except Exception as exc:  # noqa: BLE001 — degrade to keyword on encode failure.
             # A LOADED model can still raise at encode() time (device fault,
@@ -1727,6 +1848,7 @@ def search(
                 now=now,
                 half_life_days=half_life_days,
                 applied_by_id=applied_by_id,
+                candidate_tokens=candidate_tokens,
             )
         scored.sort(key=lambda x: (x[1], x[0].created, x[0].id), reverse=True)
     else:  # mode == "hybrid"
@@ -1737,6 +1859,7 @@ def search(
                 now=now,
                 half_life_days=half_life_days,
                 applied_by_id=applied_by_id,
+                candidate_tokens=candidate_tokens,
             ),
             _score_bm25(
                 candidates,
@@ -1744,6 +1867,7 @@ def search(
                 now=now,
                 half_life_days=half_life_days,
                 applied_by_id=applied_by_id,
+                candidate_tokens=candidate_tokens,
             ),
         ]
         if semantic_model is not None:
@@ -1757,6 +1881,7 @@ def search(
                         half_life_days=half_life_days,
                         matched_terms_fallback=list(dict.fromkeys(query_tokens)),
                         applied_by_id=applied_by_id,
+                        candidate_tokens=candidate_tokens,
                     )
                 )
             except Exception as exc:  # noqa: BLE001 — degrade to lexical fusion.
