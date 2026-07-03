@@ -484,7 +484,9 @@ def _fold_diacritics(text: str) -> str:
 # character bigrams: '東京オフ' → 東京 / 京オ / オフ. Applied symmetrically
 # (tokenize serves query and indexed text alike), a two-char query word is
 # exactly one bigram and a longer query word is a bag of bigrams the body's
-# own bigrams cover.
+# own bigrams cover. A SINGLE-char query word is one unigram; matching it
+# inside a body's runs is `_expand_kebab`'s job — the index side also
+# emits each bigram's chars.
 #
 # Ranges: Han (+ Ext A, compatibility ideographs, Ext B–F astral planes),
 # Hiragana, Katakana (+ phonetic extensions and halfwidth forms), Hangul —
@@ -518,8 +520,10 @@ def _segment_unspaced(token: str) -> list[str]:
     store). A token that mixes scripts — '2026年に移転' — yields its
     non-CJK chunks whole and each CJK run as overlapping bigrams; a
     single stranded CJK char is emitted as itself so it stays matchable.
-    Chunk edges are stripped of separator hyphens ('docker-東京' must not
-    emit the dead token 'docker-')."""
+    Symmetric — query and indexed text alike; the index-side unigram
+    widening for chars INSIDE runs lives in `_expand_kebab`. Chunk edges
+    are stripped of separator hyphens ('docker-東京' must not emit the
+    dead token 'docker-')."""
     if token.isascii() or not _UNSEGMENTED_RE.search(token):
         return [token]
     out: list[str] = []
@@ -700,6 +704,17 @@ def _expand_kebab(tokens: list[str]) -> list[str]:
     emits '16' and '3', so a query for 'postgres 16' still hits a body
     that says 'Postgres 16.3' — while the query token '16.3' can no
     longer be satisfied by a stray enumeration digit.
+
+    CJK bigrams (see `_segment_unspaced`) too: each bigram also emits its
+    two chars, so a single-char query ('猫') hits a body whose 猫 lives
+    inside a run and therefore only exists in bigrams ('い猫', '猫を').
+    Without this the char matched only where it stranded ALONE ('年' hit
+    '2026年' but not '2026年に移転'), and — matching being exact token
+    equality — single-char queries scored zero in every ranker and the
+    FTS index. Since the query side never widens, multi-char queries
+    keep bigram semantics instead of decaying into shared-char recall.
+    A char interior to a run rides two bigrams and is emitted twice —
+    the same per-containing-compound TF the kebab parts already carry.
     """
     out: list[str] = []
     for t in tokens:
@@ -713,6 +728,12 @@ def _expand_kebab(tokens: list[str]) -> list[str]:
             for sub in t.split("."):
                 if sub:
                     out.append(sub)
+        elif len(t) == 2 and not t.isascii() and _UNSEGMENTED_RE.fullmatch(t):
+            # Post-tokenize, a two-char unsegmented-script token can only
+            # be a `_segment_unspaced` bigram — runs never share a token
+            # with other characters.
+            out.append(t[0])
+            out.append(t[1])
     return out
 
 

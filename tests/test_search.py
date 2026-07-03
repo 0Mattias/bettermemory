@@ -1001,6 +1001,44 @@ def test_cjk_bigram_tokenization_shapes() -> None:
     assert tokenize("2026年に移転") == ["2026", "年に", "に移", "移転"]
 
 
+def test_cjk_single_char_query_matches_inside_runs() -> None:
+    """Audit repro: runs >= 2 emitted bigrams ONLY and matching is exact
+    token equality, so query '猫' scored zero in every ranker against a
+    body plainly containing 猫 — and inconsistently, '年' matched
+    '2026年' (char stranded alone) but not '2026年に移転' (char alive
+    only inside bigrams). The index side now emits each bigram's chars
+    (`_expand_kebab`), so a single-char query hits inside runs."""
+    body = _memory("黒い猫を飼っている")
+    for mode in ("keyword", "bm25", "hybrid"):
+        hits = search([body], "猫", mode=mode)
+        assert hits, f"single-char CJK query missed in mode={mode}"
+        assert hits[0].relevance == "high"
+    # Both placements of 年 now match — the stranded-vs-run split is gone.
+    for text in ("2026年", "2026年に移転"):
+        assert search([_memory(text)], "年"), text
+    # A char the body never contains is still a miss.
+    assert search([body], "犬") == []
+
+
+def test_cjk_unigrams_widen_index_side_only() -> None:
+    """Pin the asymmetry decision: the persisted FTS stream AND the live
+    ranker body streams emit unigrams alongside bigrams — parity by
+    construction, both run through `_expand_kebab` — while the query
+    side stays narrow, so a multi-char CJK query keeps bigram phrase
+    semantics instead of matching on any shared char."""
+    from bettermemory.search import _expand_kebab, fts_index_text
+
+    body = "黒い猫を飼っている"
+    toks = fts_index_text(body).split()
+    assert "猫" in toks and "黒" in toks  # unigrams in the index stream
+    assert "い猫" in toks and "猫を" in toks  # bigrams kept
+    assert toks == _expand_kebab(tokenize(body))  # ranker-side parity
+    # Query tokenization stays bigrams-only: '東京' shares the char 京
+    # with '京都' but must not match a body about Kyoto.
+    assert tokenize("東京") == ["東京"]
+    assert search([_memory("京都に住んでいる")], "東京") == []
+
+
 def test_multilingual_stopwords_query_side() -> None:
     """Audit repro (multilingual stopword lists): non-English filler no
     longer counts as content, and the collision curation binds across
