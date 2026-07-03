@@ -189,14 +189,24 @@ def _links_payload(deps: "ToolHandlers", memory: Any) -> dict[str, Any]:
     zero-row case to `load_all` too keeps reverse_links correct
     while the index repopulates.
 
-    `links_for_with_status` returns the inbound links AND
-    `indexed_count` from a SINGLE index open — the empty-index signal
-    rides the connection the inbound query already holds. That keeps
-    the common populated-but-no-inbound `memory_show` (most memories
-    are not link targets) to ONE index open: a non-zero count proves
-    the index is usable, so we return empty reverse_links with no
-    second connection. A zero count (index absent or empty) triggers
-    the `load_all` scan.
+    The count alone can't see the whole window, though: incremental
+    Store hooks repopulate touched memories, so `indexed_count` climbs
+    back above zero while the migration's `needs_rebuild` flag is still
+    set and untouched legacy sources' `memory_links` rows are still
+    missing. Flag-set is therefore treated exactly like a zero count —
+    discard the (possibly partial) index answer and take the `load_all`
+    scan — mirroring the `needs_rebuild` gate `_load_search_candidates`
+    applies on the search surface.
+
+    `links_for_with_status` returns the inbound links AND the
+    `indexed_count` / `needs_rebuild` meta pair from a SINGLE index
+    open — the unusable-index signals ride the connection the inbound
+    query already holds. That keeps the common populated-but-no-inbound
+    `memory_show` (most memories are not link targets) to ONE index
+    open: a non-zero count with the flag clear proves the index is
+    usable, so we return empty reverse_links with no second
+    connection. A zero count (index absent or empty) or a set flag
+    (rebuild pending) triggers the `load_all` scan.
 
     A torn / truncated `.index.sqlite` raises `sqlite3.DatabaseError`
     and an on-disk schema_version newer than this reader raises
@@ -223,7 +233,7 @@ def _links_payload(deps: "ToolHandlers", memory: Any) -> dict[str, Any]:
             for link in memory.links
         ]
     try:
-        outbound, inbound, indexed_count = _index.links_for_with_status(
+        outbound, inbound, indexed_count, needs_rebuild = _index.links_for_with_status(
             deps.store.root, memory.id
         )
     except (sqlite3.DatabaseError, _index.IndexVersionError):
@@ -237,8 +247,15 @@ def _links_payload(deps: "ToolHandlers", memory: Any) -> dict[str, Any]:
         # than hard-crashing memory_show for every id until reindex.
         # Same tolerance `_load_search_candidates` gets from the
         # corruption-swallowing `index.status()`. `outbound` is unused
-        # downstream (only `inbound` + `indexed_count` drive the
-        # fallback), so it's dropped here.
+        # downstream (only `inbound` + `indexed_count` + `needs_rebuild`
+        # drive the fallback), so it's dropped here.
+        inbound, indexed_count, needs_rebuild = [], 0, False
+    if needs_rebuild:
+        # Rebuild-pending window: a schema migration dropped the data
+        # tables and the incremental hooks have refilled only touched
+        # memories, so `memory_links` can be missing rows from every
+        # untouched legacy source no matter what `indexed_count` says.
+        # Discard the partial answer and take the zero-count path.
         inbound, indexed_count = [], 0
     reverse: list[dict[str, Any]] = []
     if inbound:
@@ -258,9 +275,10 @@ def _links_payload(deps: "ToolHandlers", memory: Any) -> dict[str, Any]:
         # (file present but tables dropped empty by the SCHEMA_VERSION
         # rebuild) still get reverse links. `links_for_with_status`
         # reports `indexed_count == 0` for the absent, empty, and
-        # corrupt cases alike — read on the SAME connection it already
-        # opened for the inbound query, so the common populated-but-no-
-        # inbound case stays a single index open (no second `status()`
+        # corrupt cases alike (rebuild-pending is coerced to zero
+        # above) — read on the SAME connection it already opened for
+        # the inbound query, so the common populated-but-no-inbound
+        # case stays a single index open (no second `status()`
         # connection). Any zero count means the index can't answer, so
         # walk the active set. After the next write / reindex the index
         # repopulates and this branch stops firing.

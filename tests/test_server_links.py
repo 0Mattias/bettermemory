@@ -184,6 +184,75 @@ async def test_reverse_links_survive_post_schema_bump_empty_index(
     assert rev["source_id"] == b_id
 
 
+async def test_reverse_links_survive_rebuild_pending_partial_index(
+    server: Any, memory_dir: Path
+) -> None:
+    """Regression: the rebuild-PENDING window with a PARTIALLY refilled
+    index. A `SCHEMA_VERSION` migration drops the tables empty and sets
+    `meta.needs_rebuild`; the incremental Store hooks then repopulate
+    only whatever gets touched, so one post-upgrade write pushes
+    `indexed_count` above zero while the linking memory's
+    `memory_links` row is still missing. Pre-fix `_links_payload`'s
+    only unusable-index signal was `indexed_count == 0`, so this state
+    returned EMPTY reverse_links for the untouched legacy target with
+    no fallback — the same hole class `_load_search_candidates` closes
+    with its `needs_rebuild` gate, on the links surface.
+
+    Deliberately avoids constructing a Store after the migration so
+    the flag-handling in `_links_payload` is exercised on its own, not
+    rescued by the construction-time auto-rebuild.
+    """
+    import sqlite3
+
+    from bettermemory import index as _index
+
+    a_id = await _seed(server, "old version of the fact")
+    b_id = await _seed(server, "new version of the fact")
+    await _call(
+        server,
+        "memory_update",
+        id=b_id,
+        links=[{"type": "supersedes", "target_id": a_id}],
+    )
+
+    # Sanity: the healthy index serves the reverse link before the bump.
+    shown_before = await _call(server, "memory_show", id=a_id)
+    assert shown_before.get("reverse_links")
+
+    # Back-date the on-disk index version; the next index op migrates
+    # (drop empty + flag rebuild-pending).
+    root = Path(memory_dir).expanduser().resolve()
+    conn = sqlite3.connect(str(_index.index_path(root)))
+    try:
+        conn.execute(
+            "UPDATE meta SET value = ? WHERE key = 'schema_version'",
+            (str(_index.SCHEMA_VERSION - 1),),
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+    # A post-upgrade write triggers the migration AND repopulates one
+    # row via the incremental hook: `indexed_count` is back above zero,
+    # the flag is still set, and B's link row is still missing.
+    await _seed(server, "unrelated post-upgrade write")
+    status = _index.status(root)
+    assert status["needs_rebuild"] is True
+    assert status["indexed_count"] >= 1
+
+    # The reverse link must still surface — via the load_all fallback,
+    # since the flag marks the partial index unusable.
+    shown = await _call(server, "memory_show", id=a_id)
+    assert "reverse_links" in shown, (
+        "reverse_links dropped during the rebuild-pending window "
+        "(needs_rebuild set, indexed_count > 0)"
+    )
+    assert len(shown["reverse_links"]) == 1
+    rev = shown["reverse_links"][0]
+    assert rev["type"] == "supersedes"
+    assert rev["source_id"] == b_id
+
+
 async def test_no_inbound_show_opens_index_once(
     server: Any, memory_dir: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

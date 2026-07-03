@@ -768,33 +768,49 @@ def links_for_many(
 
 def links_for_with_status(
     root: Path, memory_id: str
-) -> tuple[list[tuple[str, str, str | None]], list[tuple[str, str, str | None]], int]:
-    """Like `links_for`, but also returns `meta.indexed_count` read on
-    the SAME connection. Returns `(outbound, inbound, indexed_count)`.
+) -> tuple[
+    list[tuple[str, str, str | None]],
+    list[tuple[str, str, str | None]],
+    int,
+    bool,
+]:
+    """Like `links_for`, but also returns `meta.indexed_count` and the
+    `meta.needs_rebuild` flag read on the SAME connection. Returns
+    `(outbound, inbound, indexed_count, needs_rebuild)`.
 
-    The handler (`_links_payload`) needs two facts to build
-    `reverse_links` correctly: this id's inbound links, AND whether the
-    index is populated at all. The naive shape — `links_for(...)` then
-    a separate `status(...)` — opens the index file twice (two
+    The handler (`_links_payload`) needs three facts to build
+    `reverse_links` correctly: this id's inbound links, whether the
+    index is populated at all, AND whether a schema migration left it
+    rebuild-pending. The naive shape — `links_for(...)` then a
+    separate `status(...)` — opens the index file twice (two
     `_connect` + `_ensure_schema` round-trips on the same DB), and the
     second open fires on the COMMON case: any `memory_show` of a memory
     with no inbound links, even against a perfectly healthy populated
-    index. Folding `indexed_count` into the single open `links_for`
+    index. Folding both meta reads into the single open `links_for`
     already holds removes that second connection on the hot path.
 
     `indexed_count` is 0 when the index is absent, empty (the
     post-`SCHEMA_VERSION`-bump rebuild window), or otherwise can't
     answer — every state where the handler should fall back to
     `load_all`. When the file is absent we short-circuit before opening
-    anything and report 0, mirroring `status()`'s absent-file branch.
+    anything and report `(…, 0, False)`, mirroring `status()`'s
+    absent-file branch.
+
+    `needs_rebuild` is True between a schema-version migration and the
+    next successful `rebuild()`: the incremental Store hooks repopulate
+    only touched memories, so `indexed_count` can climb back above zero
+    while untouched legacy sources' `memory_links` rows are still
+    missing. The handler must treat flag-set exactly like a zero count
+    — the same unusable-index routing `_load_search_candidates` applies
+    (via `status()`) on the search surface.
 
     A populated-but-no-inbound id (the common case) returns
-    `([], [], n>0)`: empty inbound, but a non-zero count tells the
-    handler the index IS usable, so it returns empty reverse_links
-    with NO fallback scan."""
+    `([], [], n>0, False)`: empty inbound, but a non-zero count with
+    the flag clear tells the handler the index IS usable, so it returns
+    empty reverse_links with NO fallback scan."""
     path = index_path(root)
     if not path.exists():
-        return [], [], 0
+        return [], [], 0, False
     conn = _connect(path)
     try:
         _ensure_schema(conn, path)
@@ -812,10 +828,14 @@ def links_for_with_status(
             "SELECT value FROM meta WHERE key = 'indexed_count'"
         ).fetchone()
         indexed_count = int(count_row[0]) if count_row else 0
+        rebuild_row = conn.execute(
+            "SELECT value FROM meta WHERE key = 'needs_rebuild'"
+        ).fetchone()
         return (
             [(row["type"], row["target_id"], row["note"]) for row in outbound],
             [(row["type"], row["source_id"], row["note"]) for row in inbound],
             indexed_count,
+            bool(rebuild_row and rebuild_row[0] == "1"),
         )
     finally:
         conn.close()
