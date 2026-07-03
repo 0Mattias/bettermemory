@@ -30,11 +30,13 @@ cosine when a model is supplied.
 
 from __future__ import annotations
 
+import hashlib
 import logging
 import math
 import re
 import unicodedata
 from datetime import datetime, timezone
+from functools import lru_cache
 from typing import Any, Callable, Literal, NamedTuple
 
 from .models import Memory, MemoryHit, SimilarHit, TombstonedMemory, snippet_for
@@ -914,6 +916,67 @@ def fts_match_query(query: str) -> str:
             variants[0] if len(variants) == 1 else "(" + " OR ".join(variants) + ")"
         )
     return " OR ".join(groups)
+
+
+# Fixed probe corpus for `tokenizer_fingerprint`. One entry per
+# normalisation family in the pipeline, so any behavioural change to the
+# index-side token stream — tokenize()'s folds, stopword lists, stemmer
+# rules, CJK segmentation, or `_expand_kebab`'s widening — lands in the
+# digest. The corpus is part of the fingerprint's identity: editing it
+# changes the digest exactly like a tokenizer change does and requires
+# the same `index.SCHEMA_VERSION` bump ceremony.
+_FINGERPRINT_PROBES: tuple[str, ...] = (
+    # Plural stemmer: -ies/-es/-s pairs plus the final-e/-y
+    # normalisations that put both inflections on one key.
+    "cookies cookie policies policy caches cache branches branch",
+    # Singular guards: -ss/-us/-is endings, digit-final acronyms, the
+    # 3-char early return, and the `_STEM_EXCEPTIONS` pins.
+    "class status analysis k8s aws alias aliases news",
+    # Stopword-list sensitivity. `_stem_segment` exempts stopwords by
+    # surface form, so membership edits respell the stream: one
+    # stemmable member per list (en/sv/de/fr/es), 'todos' (an es
+    # curation already flipped it 'todos'→'todo' once), and
+    # 'notes here' (the final-e guard reads OTHER entries: 'not', 'her').
+    "does these skulle eine cette estas todos notes here",
+    # CJK run (overlapping bigrams + index-side unigrams) and a
+    # stranded single char.
+    "東京オフィスは移転する予定 猫",
+    # NFKC compatibility fold: halfwidth katakana with a dakuten,
+    # fullwidth Latin/digits.
+    "ｻｰﾊﾞｰ ＧＰＵ２０２６",
+    # Diacritic fold (the Latin fast-path table).
+    "Zürich café naïve",
+    # Kebab compound (per-segment stems + part expansion), contraction
+    # strip, symbol aliases, dotted numeric.
+    "docker-containers what's C++ .NET 3.12.1",
+)
+
+
+@lru_cache(maxsize=1)
+def tokenizer_fingerprint() -> str:
+    """sha256 over `fts_index_text` applied to `_FINGERPRINT_PROBES` —
+    a stable identity for the persisted index-side token stream.
+
+    Schema v4+ stores tokenize() output on disk (`body_fts` /
+    `scopes_fts`), so query/index parity holds only while the persisted
+    stream matches the live tokenizer — four separate post-3.12.0 fixes
+    (stopword curation, final-y normalisation, CJK index-side unigrams,
+    the NFKC fold) respelled the stream with no schema bump, leaving
+    every 3.12.0-built index stale-spelled against live queries.
+    `index._ensure_schema` stamps this digest into the index meta next
+    to `schema_version` and treats a mismatch exactly like an older
+    version (atomic wipe + rebuild-pending flag → auto-rebuild), so
+    tokenizer drift heals through the standard migration path instead
+    of silently losing recall. The pinned value lives at
+    `index.TOKENIZER_FINGERPRINT`; the regression test asserting it
+    equals this function is the ratchet that forces a deliberate
+    `SCHEMA_VERSION` bump on any stream change.
+
+    Cached: the probe corpus is a module-level constant, so the digest
+    is process-stable, and `_ensure_schema` reads it on every index
+    connect."""
+    joined = "\n".join(fts_index_text(probe) for probe in _FINGERPRINT_PROBES)
+    return hashlib.sha256(joined.encode("utf-8")).hexdigest()
 
 
 def _strip_stopwords(tokens: list[str]) -> list[str]:

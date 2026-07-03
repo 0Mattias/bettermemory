@@ -20,7 +20,9 @@ Lifecycle:
   fresh database creates the schema; subsequent calls drop and
   refill the data tables but keep the schema.
 - A small ``meta`` table records the schema version (so a future
-  bump can detect mismatched indexes and force a rebuild) and the
+  bump can detect mismatched indexes and force a rebuild), the
+  tokenizer fingerprint (so a tokenizer change respelling the
+  persisted FTS stream forces the same rebuild — schema v5), and the
   number of memories indexed (so callers can sanity-check against
   the on-disk count without a full scan).
 - The CLI exposes ``bettermemory reindex`` as the explicit rebuild
@@ -72,7 +74,7 @@ from typing import Any
 
 from ._fsutil import flock_excl
 from .models import Memory
-from .search import fts_index_text, fts_match_query
+from .search import fts_index_text, fts_match_query, tokenizer_fingerprint
 
 log = logging.getLogger("bettermemory.index")
 
@@ -123,7 +125,32 @@ log = logging.getLogger("bettermemory.index")
 # become searchable at all. Raw `body` and `scopes_text` columns stay
 # (the LIKE-based scope filter and debuggability read them); only what
 # the FTS virtual table indexes changes.
-SCHEMA_VERSION = 4
+#
+# Version 5 (tokenizer fingerprint ratchet): identical DDL to v4. The
+# bump exists because v4 PERSISTS tokenize() output, so query/index
+# parity requires the persisted stream to match the live tokenizer —
+# and four post-3.12.0 tokenizer fixes respelled that stream (stopword
+# curation, final-y normalisation, CJK index-side unigrams, the NFKC
+# fold), leaving every 3.12.0-built index stale-spelled against live
+# queries ('todos' indexed, 'todo' queried). The wipe forces a respell
+# through the standard heal path. To keep this class of skew from
+# recurring silently, the meta table also records
+# `tokenizer_fingerprint` (see `search.tokenizer_fingerprint`) next to
+# `schema_version`, stamped in the same transaction; `_ensure_schema`
+# treats a fingerprint mismatch at the CURRENT version exactly like an
+# older version.
+SCHEMA_VERSION = 5
+
+# Pinned `search.tokenizer_fingerprint()` digest as of the last
+# SCHEMA_VERSION bump. Consumed only by the ratchet test
+# (test_index.py::test_tokenizer_fingerprint_pinned_constant_is_the_ratchet)
+# — the runtime stamp/compare uses the live function, so persisted rows
+# and their meta stamp can never disagree. If the test reports a diff,
+# the index-side token stream changed: bump SCHEMA_VERSION AND re-pin
+# this constant. Never re-pin it alone.
+TOKENIZER_FINGERPRINT = (
+    "463d1fe01eca8d32f5262423c0d2fe863002f7ffc841b8453ba1c46e6accdd44"
+)
 
 INDEX_FILENAME = ".index.sqlite"
 
@@ -268,18 +295,23 @@ def _connect(path: Path) -> sqlite3.Connection:
 
 def _ensure_schema(conn: sqlite3.Connection, path: Path) -> None:
     """Apply the schema (CREATE IF NOT EXISTS everywhere) and stamp the
-    meta table with the current schema_version. Idempotent — repeat
-    calls on the same connection are safe. `path` is the index file
-    `conn` is open on; the older-version migration serialises on a
-    flock sidecar next to it.
+    meta table with the current schema_version and tokenizer
+    fingerprint. Idempotent — repeat calls on the same connection are
+    safe. `path` is the index file `conn` is open on; the migration
+    serialises on a flock sidecar next to it.
 
     Version handling:
     - On-disk > code SCHEMA_VERSION: raise `IndexVersionError`. Callers
       (Store / CLI) should drop the file and call `rebuild` from
       scratch.
-    - On-disk < code SCHEMA_VERSION: drop the data tables, recreate
-      them at the current schema, and set `meta.needs_rebuild = '1'` —
-      all in ONE transaction, under a cross-process migration lock (the
+    - On-disk < code SCHEMA_VERSION, or `meta.tokenizer_fingerprint`
+      differing from the live `search.tokenizer_fingerprint()` (the
+      persisted `body_fts` / `scopes_fts` streams were spelled by a
+      different tokenizer, so query/index parity is broken even though
+      the DDL matches — the skew four 3.12.x tokenizer fixes shipped):
+      drop the data tables, recreate them at the current schema, stamp
+      version + fingerprint, and set `meta.needs_rebuild = '1'` — all
+      in ONE transaction, under a cross-process migration lock (the
       inline comments below name the two races that shape closes).
       Memory data lives on disk in the .md files; `Store.__post_init__`
       auto-rebuilds from them on the next construction, and
@@ -292,28 +324,58 @@ def _ensure_schema(conn: sqlite3.Connection, path: Path) -> None:
     # First-touch path: meta table may not exist yet. CREATE IF NOT
     # EXISTS is safe to run before the version check.
     conn.executescript(_SCHEMA)
+    live_fp = tokenizer_fingerprint()
     row = conn.execute("SELECT value FROM meta WHERE key = 'schema_version'").fetchone()
     if row is None:
+        # Both stamps land in one implicit transaction — a reader never
+        # sees a version row without its fingerprint sibling.
         conn.execute(
             "INSERT INTO meta(key, value) VALUES ('schema_version', ?)",
             (str(SCHEMA_VERSION),),
+        )
+        conn.execute(
+            "INSERT INTO meta(key, value) VALUES ('tokenizer_fingerprint', ?)",
+            (live_fp,),
         )
         conn.commit()
         return
     on_disk = int(row[0])
     if on_disk > SCHEMA_VERSION:
         raise _newer_version_error(on_disk)
-    if on_disk < SCHEMA_VERSION:
-        log.warning(
-            "index schema version %s is older than current (%s); "
-            "dropping and recreating empty. Search bypasses the index "
-            "until the next Store construction auto-rebuilds it (or "
-            "`bettermemory reindex` is run).",
-            on_disk,
-            SCHEMA_VERSION,
-        )
-        # The version read above is deliberately unguarded (the common
-        # on_disk == SCHEMA_VERSION case must not pay a lock), so two
+    # The fingerprint read is ordered AFTER the newer-version raise: a
+    # future build's fingerprint always differs, and the wipe below must
+    # never claim an index a newer reader owns. Plain TEXT equality — no
+    # int() parse, so status()/rebuild()'s corruption tolerance gains no
+    # new escape path. An absent row counts as a mismatch: pre-v5
+    # indexes never wrote one, and every v5 stamp writes both keys in
+    # the same transaction.
+    fp_row = conn.execute(
+        "SELECT value FROM meta WHERE key = 'tokenizer_fingerprint'"
+    ).fetchone()
+    fingerprint_stale = fp_row is None or fp_row[0] != live_fp
+    if on_disk < SCHEMA_VERSION or fingerprint_stale:
+        if on_disk < SCHEMA_VERSION:
+            log.warning(
+                "index schema version %s is older than current (%s); "
+                "dropping and recreating empty. Search bypasses the index "
+                "until the next Store construction auto-rebuilds it (or "
+                "`bettermemory reindex` is run).",
+                on_disk,
+                SCHEMA_VERSION,
+            )
+        else:
+            log.warning(
+                "index tokenizer fingerprint %s does not match this "
+                "build's (%s) — the persisted FTS token stream was "
+                "spelled by a different tokenizer; dropping and "
+                "recreating empty. Search bypasses the index until the "
+                "next Store construction auto-rebuilds it (or "
+                "`bettermemory reindex` is run).",
+                fp_row[0] if fp_row is not None else None,
+                live_fp,
+            )
+        # The version/fingerprint reads above are deliberately unguarded
+        # (the common up-to-date case must not pay a lock), so two
         # upgrading processes can both reach this branch. The flock
         # serialises them; the re-read below turns the loser into a
         # no-op instead of a second wipe destroying rows the winner's
@@ -330,9 +392,19 @@ def _ensure_schema(conn: sqlite3.Connection, path: Path) -> None:
                 # A newer-version migrator won the race while we waited.
                 # Same contract as the primary check above.
                 raise _newer_version_error(current)
-            if current == SCHEMA_VERSION:
-                # Lost the race to an equal-version migrator: the swap
-                # is already committed, stamped, and flagged.
+            fp_row = conn.execute(
+                "SELECT value FROM meta WHERE key = 'tokenizer_fingerprint'"
+            ).fetchone()
+            if (
+                current == SCHEMA_VERSION
+                and fp_row is not None
+                and fp_row[0] == live_fp
+            ):
+                # Lost the race to an equal migrator: the swap is
+                # already committed, stamped, and flagged. BOTH stamps
+                # must match for the no-op — an equal-version winner
+                # running a different tokenizer build left a stream
+                # this build still cannot query.
                 return
             # Drop + re-create as a single atomic transaction. A parallel
             # reader opening the index between the DROP and the CREATE
@@ -352,12 +424,13 @@ def _ensure_schema(conn: sqlite3.Connection, path: Path) -> None:
             # transaction; a concurrent reader sees the old schema or the
             # new one, never the gap. Verified on CPython 3.11–3.13.
             #
-            # The version stamp, `indexed_count` reset, and
-            # `needs_rebuild` flag are string-built into the SAME script
-            # (`executescript` takes no bound parameters; everything
-            # interpolated is a module-level integer or string literal,
-            # so there is no injection surface). Committing them
-            # separately after the swap left a window where the new
+            # The version stamp, fingerprint stamp, `indexed_count`
+            # reset, and `needs_rebuild` flag are string-built into the
+            # SAME script (`executescript` takes no bound parameters;
+            # everything interpolated is a module-level integer/string
+            # literal or a sha256 hexdigest with a fixed `[0-9a-f]`
+            # alphabet, so there is no injection surface). Committing
+            # them separately after the swap left a window where the new
             # tables were live but meta still carried the old version:
             # a pre-bump process reading in that window passed its own
             # version check and its old-column-list INSERT succeeded
@@ -378,6 +451,8 @@ def _ensure_schema(conn: sqlite3.Connection, path: Path) -> None:
                     f"{_SCHEMA}\n"
                     f"UPDATE meta SET value = '{SCHEMA_VERSION}' "
                     "WHERE key = 'schema_version';\n"
+                    "INSERT OR REPLACE INTO meta(key, value) "
+                    f"VALUES ('tokenizer_fingerprint', '{live_fp}');\n"
                     "UPDATE meta SET value = '0' WHERE key = 'indexed_count';\n"
                     "INSERT OR REPLACE INTO meta(key, value) "
                     "VALUES ('needs_rebuild', '1');\n"
@@ -1070,6 +1145,7 @@ def _bump_count(conn: sqlite3.Connection) -> None:
 __all__ = [
     "INDEX_FILENAME",
     "SCHEMA_VERSION",
+    "TOKENIZER_FINGERPRINT",
     "IndexVersionError",
     "filenames_for_ids",
     "index_path",

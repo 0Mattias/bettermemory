@@ -1725,3 +1725,127 @@ def test_schema_v4_stores_preprocessed_fts_columns(
     # Scope tokens are searchable in their stemmed/expanded form.
     for tok in ("project", "alpha", "beta"):
         assert tok in scopes_fts.split(), tok
+
+
+# ---------------------------------------------------------------------------
+# Tokenizer fingerprint ratchet (schema v5)
+#
+# Schema v4+ PERSISTS tokenize() output (`body_fts` / `scopes_fts`), so
+# query/index parity requires the persisted stream to match the live
+# tokenizer across releases. Nothing enforced that until v5: four
+# post-3.12.0 tokenizer fixes (stopword curation, final-y
+# normalisation, CJK index-side unigrams, the NFKC fold) respelled the
+# stream with no schema bump, so every 3.12.0-built index answered
+# live queries against stale spellings. The meta table now carries a
+# tokenizer fingerprint next to schema_version; a mismatch migrates
+# exactly like an older version.
+# ---------------------------------------------------------------------------
+
+
+def test_tokenizer_fingerprint_pinned_constant_is_the_ratchet() -> None:
+    """THE RATCHET. If this assertion fails, a change to the shared
+    pipeline (tokenize()'s folds, stopword lists, stemmer rules, CJK
+    segmentation, `_expand_kebab`'s widening — or the probe corpus
+    itself) respelled the index-side token stream, which makes every
+    existing on-disk index stale against live queries. Any diff
+    REQUIRES bumping `index.SCHEMA_VERSION` and re-pinning
+    `index.TOKENIZER_FINGERPRINT` to the new value — never re-pin the
+    constant alone. (On-disk stores heal either way — the runtime
+    stamp/compare uses the live fingerprint — but the bump is what
+    keeps version semantics and the CHANGELOG honest.)"""
+    from bettermemory.search import tokenizer_fingerprint
+
+    assert tokenizer_fingerprint() == index.TOKENIZER_FINGERPRINT, (
+        "index-side token stream changed: bump index.SCHEMA_VERSION and "
+        f"re-pin index.TOKENIZER_FINGERPRINT = {tokenizer_fingerprint()!r}"
+    )
+
+
+def test_stale_tokenizer_fingerprint_heals_like_older_schema_version(
+    store: Store, memory_dir: Path
+) -> None:
+    """A `meta.tokenizer_fingerprint` differing from the live tokenizer
+    at the CURRENT schema version — the "tokenizer changed, nobody
+    bumped" state the ratchet exists for — must take exactly the
+    older-version migration path: atomic wipe + `needs_rebuild`, then
+    the Store-construction auto-rebuild, ending with the live
+    fingerprint stamped so the next open is stable."""
+    from bettermemory.search import tokenizer_fingerprint
+
+    a = store.write(content="tokenizer drift probe", scopes=["tools"])
+    conn = sqlite3.connect(str(index.index_path(memory_dir)))
+    try:
+        conn.execute(
+            "UPDATE meta SET value = 'stale-digest' WHERE key = 'tokenizer_fingerprint'"
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+    # First open: the older-version shape — current stamp, empty
+    # tables, rebuild-pending.
+    s = index.status(memory_dir)
+    assert s["schema_version"] == index.SCHEMA_VERSION
+    assert s["indexed_count"] == 0
+    assert s["needs_rebuild"] is True
+
+    # Construction auto-rebuild heals it end-to-end.
+    Store(memory_dir)
+    s_after = index.status(memory_dir)
+    assert s_after["needs_rebuild"] is False
+    assert s_after["indexed_count"] == 1
+    assert [r[0] for r in index.query(memory_dir, "drift")] == [a.id]
+
+    conn = sqlite3.connect(str(index.index_path(memory_dir)))
+    try:
+        stamped = conn.execute(
+            "SELECT value FROM meta WHERE key = 'tokenizer_fingerprint'"
+        ).fetchone()[0]
+    finally:
+        conn.close()
+    assert stamped == tokenizer_fingerprint()
+
+
+def test_v4_index_with_stale_spelled_stream_heals_on_construction(
+    store: Store, memory_dir: Path
+) -> None:
+    """End-to-end v4→v5 heal against the GENUINE 3.12.0 on-disk state:
+    version stamped 4, no fingerprint row (3.12.0 never wrote one), and
+    `body_fts` spelled by the 3.12.0 tokenizer ('todos', 'cooky') —
+    which live queries ('todo', 'cooki') can no longer match. The first
+    Store construction after upgrading must wipe, flag, and auto-rebuild
+    so live-tokenizer queries hit again with no manual reindex."""
+    m = store.write(content="Track the TODOs and cookies backlog", scopes=["tools"])
+
+    conn = sqlite3.connect(str(index.index_path(memory_dir)))
+    try:
+        # The literal 3.12.0 `fts_index_text` output for this body
+        # ('todos' was still an es stopword — surface-exempt from the
+        # stemmer — and 'cookies' took the pre-final-y 'ies'→'y' rule).
+        # The AFTER UPDATE trigger keeps the FTS table in sync with the
+        # stale spelling, exactly like a real 3.12.0-built index.
+        conn.execute(
+            "UPDATE memories SET body_fts = 'track the todos and cooky backlog'"
+        )
+        conn.execute("UPDATE meta SET value = '4' WHERE key = 'schema_version'")
+        conn.execute("DELETE FROM meta WHERE key = 'tokenizer_fingerprint'")
+        conn.commit()
+    finally:
+        conn.close()
+
+    # First open under v5 code migrates (wipe + flag); the hollowed-out
+    # index matches nothing until the rebuild.
+    assert index.query(memory_dir, "todo") == []
+    s = index.status(memory_dir)
+    assert s["schema_version"] == index.SCHEMA_VERSION
+    assert s["needs_rebuild"] is True
+
+    Store(memory_dir)  # first construction after the upgrade
+
+    s_after = index.status(memory_dir)
+    assert s_after["needs_rebuild"] is False
+    assert s_after["indexed_count"] == 1
+    # The respelled index answers live-tokenizer queries again — both
+    # inflections of both words the 3.12.0 spelling silently missed.
+    for q in ("todo", "TODOs", "cookie", "cookies"):
+        assert [r[0] for r in index.query(memory_dir, q)] == [m.id], q

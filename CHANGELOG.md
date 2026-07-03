@@ -9,6 +9,31 @@ spells out exactly what's stable.
 
 ## Unreleased
 
+### Changed
+
+- **FTS index schema v5: one-time reindex (automatic), plus a
+  tokenizer-fingerprint ratchet so persisted-stream drift can't recur
+  silently.** Schema v4 persists `tokenize()` output on disk
+  (`body_fts`/`scopes_fts`), so query/index parity requires the
+  persisted stream to match the live tokenizer — and four post-3.12.0
+  tokenizer fixes (stopword curation, final-y normalisation, CJK
+  index-side unigrams, the NFKC fold) respelled the stream with no
+  schema bump, leaving every 3.12.0-built index stale-spelled: a
+  live query 'todo'/'cooki' could not match the indexed
+  'todos'/'cooky', so prefiltered search on large stores silently
+  dropped exactly the memories the rankers rate high. The v5 bump
+  routes existing indexes through the standard heal (atomic wipe +
+  rebuild-pending flag; the next Store construction auto-rebuilds —
+  no manual `bettermemory reindex` needed, search falls back to full
+  scans meanwhile). The ratchet: index meta now records a tokenizer
+  fingerprint (sha256 of `fts_index_text` over a fixed multilingual
+  probe corpus) next to `schema_version`, stamped in the same atomic
+  migration transaction; on open, a fingerprint mismatch at the
+  current version migrates exactly like an older version, and a
+  pinned regression test asserts the recorded constant matches the
+  live pipeline so any future stream change fails CI until
+  `SCHEMA_VERSION` is bumped.
+
 ### Fixed
 
 - **The audit's acknowledgment gate compares surface spellings again,
