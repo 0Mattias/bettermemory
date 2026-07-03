@@ -70,6 +70,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
+from ._fsutil import flock_excl
 from .models import Memory
 from .search import fts_index_text, fts_match_query
 
@@ -265,17 +266,21 @@ def _connect(path: Path) -> sqlite3.Connection:
     return conn
 
 
-def _ensure_schema(conn: sqlite3.Connection) -> None:
+def _ensure_schema(conn: sqlite3.Connection, path: Path) -> None:
     """Apply the schema (CREATE IF NOT EXISTS everywhere) and stamp the
     meta table with the current schema_version. Idempotent — repeat
-    calls on the same connection are safe.
+    calls on the same connection are safe. `path` is the index file
+    `conn` is open on; the older-version migration serialises on a
+    flock sidecar next to it.
 
     Version handling:
     - On-disk > code SCHEMA_VERSION: raise `IndexVersionError`. Callers
       (Store / CLI) should drop the file and call `rebuild` from
       scratch.
     - On-disk < code SCHEMA_VERSION: drop the data tables, recreate
-      them at the current schema, and set `meta.needs_rebuild = '1'`.
+      them at the current schema, and set `meta.needs_rebuild = '1'` —
+      all in ONE transaction, under a cross-process migration lock (the
+      inline comments below name the two races that shape closes).
       Memory data lives on disk in the .md files; `Store.__post_init__`
       auto-rebuilds from them on the next construction, and
       `bettermemory reindex` remains the manual path. While the flag is
@@ -297,11 +302,7 @@ def _ensure_schema(conn: sqlite3.Connection) -> None:
         return
     on_disk = int(row[0])
     if on_disk > SCHEMA_VERSION:
-        raise IndexVersionError(
-            f"index schema version {on_disk} is newer than this "
-            f"reader supports (max {SCHEMA_VERSION}); delete the "
-            f"index file and run `bettermemory reindex`"
-        )
+        raise _newer_version_error(on_disk)
     if on_disk < SCHEMA_VERSION:
         log.warning(
             "index schema version %s is older than current (%s); "
@@ -311,59 +312,98 @@ def _ensure_schema(conn: sqlite3.Connection) -> None:
             on_disk,
             SCHEMA_VERSION,
         )
-        # Drop + re-create as a single atomic transaction. A parallel
-        # reader opening the index between the DROP and the CREATE
-        # would otherwise see an inconsistent schema (no `memories`
-        # table) and its SELECT would fail — the SQLite busy timeout
-        # doesn't help, no BUSY is raised when the table simply isn't
-        # there yet.
-        #
-        # The transaction control (`BEGIN IMMEDIATE` … `COMMIT`) lives
-        # *inside* the executescript string, deliberately. A
-        # `conn.execute("BEGIN IMMEDIATE")` followed by a separate
-        # `conn.executescript(...)` does NOT wrap: `executescript`
-        # implicitly COMMITs any pending transaction before it runs
-        # (documented behaviour), so the BEGIN is committed away and
-        # the DROP/CREATE run unprotected. Keeping BEGIN/COMMIT in the
-        # script body holds the whole drop+recreate in one
-        # transaction; a concurrent reader sees the old schema or the
-        # new one, never the gap. Verified on CPython 3.11–3.13.
-        try:
-            conn.executescript(
-                "BEGIN IMMEDIATE;\n"
-                "DROP TABLE IF EXISTS memory_links;\n"
-                "DROP TABLE IF EXISTS memories_fts;\n"
-                "DROP TABLE IF EXISTS memories;\n"
-                f"{_SCHEMA}\n"
-                "COMMIT;"
-            )
-            # The `meta` table is never dropped, so a reader can't race
-            # these the way it can the schema swap above — run them
-            # after the atomic CREATE rather than inside it (which
-            # would mean string-building the version into the script,
-            # since executescript takes no bound parameters).
-            conn.execute(
-                "UPDATE meta SET value = ? WHERE key = 'schema_version'",
-                (str(SCHEMA_VERSION),),
-            )
-            conn.execute("UPDATE meta SET value = '0' WHERE key = 'indexed_count'")
-            # Recall-hole guard: mark the index rebuild-pending. Cleared
-            # ONLY by `rebuild()` — incremental hook upserts must not be
-            # able to make a post-migration index look usable while the
+        # The version read above is deliberately unguarded (the common
+        # on_disk == SCHEMA_VERSION case must not pay a lock), so two
+        # upgrading processes can both reach this branch. The flock
+        # serialises them; the re-read below turns the loser into a
+        # no-op instead of a second wipe destroying rows the winner's
+        # caller already started repopulating. Lock ordering is safe:
+        # this flock is leaf-level (nothing is acquired under it but
+        # the SQLite write lock, and SQLite-lock holders never take
+        # this flock), and it releases before `_ensure_schema` returns.
+        with flock_excl(path):
+            row = conn.execute(
+                "SELECT value FROM meta WHERE key = 'schema_version'"
+            ).fetchone()
+            current = int(row[0]) if row is not None else on_disk
+            if current > SCHEMA_VERSION:
+                # A newer-version migrator won the race while we waited.
+                # Same contract as the primary check above.
+                raise _newer_version_error(current)
+            if current == SCHEMA_VERSION:
+                # Lost the race to an equal-version migrator: the swap
+                # is already committed, stamped, and flagged.
+                return
+            # Drop + re-create as a single atomic transaction. A parallel
+            # reader opening the index between the DROP and the CREATE
+            # would otherwise see an inconsistent schema (no `memories`
+            # table) and its SELECT would fail — the SQLite busy timeout
+            # doesn't help, no BUSY is raised when the table simply isn't
+            # there yet.
+            #
+            # The transaction control (`BEGIN IMMEDIATE` … `COMMIT`) lives
+            # *inside* the executescript string, deliberately. A
+            # `conn.execute("BEGIN IMMEDIATE")` followed by a separate
+            # `conn.executescript(...)` does NOT wrap: `executescript`
+            # implicitly COMMITs any pending transaction before it runs
+            # (documented behaviour), so the BEGIN is committed away and
+            # the DROP/CREATE run unprotected. Keeping BEGIN/COMMIT in the
+            # script body holds the whole drop+recreate in one
+            # transaction; a concurrent reader sees the old schema or the
+            # new one, never the gap. Verified on CPython 3.11–3.13.
+            #
+            # The version stamp, `indexed_count` reset, and
+            # `needs_rebuild` flag are string-built into the SAME script
+            # (`executescript` takes no bound parameters; everything
+            # interpolated is a module-level integer or string literal,
+            # so there is no injection surface). Committing them
+            # separately after the swap left a window where the new
+            # tables were live but meta still carried the old version:
+            # a pre-bump process reading in that window passed its own
+            # version check and its old-column-list INSERT succeeded
+            # against the new table (`body_fts` / `scopes_fts` DEFAULT
+            # ''), so the FTS trigger indexed empty strings and the row
+            # stuck FTS-invisible once the stamp landed.
+            #
+            # Recall-hole guard: `needs_rebuild` is cleared ONLY by
+            # `rebuild()` — incremental hook upserts must not be able
+            # to make a post-migration index look usable while the
             # untouched rest of the corpus is missing from it.
-            conn.execute(
-                "INSERT OR REPLACE INTO meta(key, value) VALUES ('needs_rebuild', '1')"
-            )
-            conn.commit()
-        except Exception:
-            conn.rollback()
-            raise
+            try:
+                conn.executescript(
+                    "BEGIN IMMEDIATE;\n"
+                    "DROP TABLE IF EXISTS memory_links;\n"
+                    "DROP TABLE IF EXISTS memories_fts;\n"
+                    "DROP TABLE IF EXISTS memories;\n"
+                    f"{_SCHEMA}\n"
+                    f"UPDATE meta SET value = '{SCHEMA_VERSION}' "
+                    "WHERE key = 'schema_version';\n"
+                    "UPDATE meta SET value = '0' WHERE key = 'indexed_count';\n"
+                    "INSERT OR REPLACE INTO meta(key, value) "
+                    "VALUES ('needs_rebuild', '1');\n"
+                    "COMMIT;"
+                )
+            except Exception:
+                conn.rollback()
+                raise
         return
     conn.commit()
 
 
 class IndexVersionError(RuntimeError):
     """Raised when the on-disk index schema is newer than this code."""
+
+
+def _newer_version_error(on_disk: int) -> IndexVersionError:
+    """Uniform error for an on-disk schema newer than this reader.
+    Raised by `_ensure_schema`'s primary version check and by the
+    under-lock re-check (a newer-version migrator can win the race
+    while an older one waits on the migration flock)."""
+    return IndexVersionError(
+        f"index schema version {on_disk} is newer than this "
+        f"reader supports (max {SCHEMA_VERSION}); delete the "
+        f"index file and run `bettermemory reindex`"
+    )
 
 
 def _unlink_index_files(path: Path) -> None:
@@ -424,12 +464,12 @@ def _open_for_rebuild(path: Path) -> sqlite3.Connection:
     # otherwise leak.
     try:
         try:
-            _ensure_schema(conn)
+            _ensure_schema(conn, path)
         except (sqlite3.DatabaseError, IndexVersionError):
             conn.close()
             _unlink_index_files(path)
             conn = _connect(path)
-            _ensure_schema(conn)
+            _ensure_schema(conn, path)
     except BaseException:
         conn.close()
         raise
@@ -500,7 +540,7 @@ def upsert(root: Path, memory: Memory, *, filename: str) -> None:
     path = index_path(root)
     conn = _connect(path)
     try:
-        _ensure_schema(conn)
+        _ensure_schema(conn, path)
         with conn:
             _upsert_memory(conn, memory, filename)
             _bump_count(conn)
@@ -517,7 +557,7 @@ def remove(root: Path, memory_id: str) -> None:
         return
     conn = _connect(path)
     try:
-        _ensure_schema(conn)
+        _ensure_schema(conn, path)
         with conn:
             conn.execute("DELETE FROM memories WHERE id = ?", (memory_id,))
             _bump_count(conn)
@@ -553,7 +593,7 @@ def query(
 
     conn = _connect(path)
     try:
-        _ensure_schema(conn)
+        _ensure_schema(conn, path)
         # Build the MATCH clause from the SAME tokenisation the Python
         # rankers use (`search.fts_match_query`), not a raw
         # `text.split()`. Since schema v4 the indexed text is itself
@@ -612,7 +652,7 @@ def filenames_for_ids(root: Path, ids: list[str]) -> dict[str, str]:
         return {}
     conn = _connect(path)
     try:
-        _ensure_schema(conn)
+        _ensure_schema(conn, path)
         placeholders = ",".join("?" * len(ids))
         rows = conn.execute(
             f"SELECT id, filename FROM memories WHERE id IN ({placeholders})",
@@ -651,7 +691,7 @@ def links_for(
         return [], []
     conn = _connect(path)
     try:
-        _ensure_schema(conn)
+        _ensure_schema(conn, path)
         outbound = conn.execute(
             "SELECT type, target_id, note FROM memory_links "
             "WHERE source_id = ? ORDER BY type, target_id",
@@ -704,7 +744,7 @@ def links_for_many(
     placeholders = ",".join("?" * len(ids))
     conn = _connect(path)
     try:
-        _ensure_schema(conn)
+        _ensure_schema(conn, path)
         for row in conn.execute(
             "SELECT source_id, type, target_id, note FROM memory_links "
             f"WHERE source_id IN ({placeholders}) ORDER BY source_id, type, target_id",
@@ -757,7 +797,7 @@ def links_for_with_status(
         return [], [], 0
     conn = _connect(path)
     try:
-        _ensure_schema(conn)
+        _ensure_schema(conn, path)
         outbound = conn.execute(
             "SELECT type, target_id, note FROM memory_links "
             "WHERE source_id = ? ORDER BY type, target_id",
@@ -792,7 +832,7 @@ def status(root: Path) -> dict[str, Any]:
     try:
         conn = _connect(path)
         try:
-            _ensure_schema(conn)
+            _ensure_schema(conn, path)
             count_row = conn.execute(
                 "SELECT value FROM meta WHERE key = 'indexed_count'"
             ).fetchone()

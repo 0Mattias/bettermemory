@@ -913,7 +913,7 @@ def test_schema_rebuild_executescript_is_transactional(
         # Initial setup: build a current-schema index with one row,
         # then force the meta version backwards so the next
         # `_ensure_schema` call enters the v1→v2 migration branch.
-        index._ensure_schema(conn)
+        index._ensure_schema(conn, db)
         conn.execute(
             "INSERT INTO memories(id, created, updated, confidence, body, "
             "scopes_text, scopes_json) VALUES "
@@ -932,7 +932,7 @@ def test_schema_rebuild_executescript_is_transactional(
     conn = sqlite3.connect(db)
     try:
         with pytest.raises(sqlite3.Error):
-            index._ensure_schema(conn)
+            index._ensure_schema(conn, db)
     finally:
         conn.close()
 
@@ -945,6 +945,205 @@ def test_schema_rebuild_executescript_is_transactional(
         "v1→v2 rebuild left the on-disk memories table without its "
         "original row — the DROP was committed before the failure, "
         "exactly the 2.6.4 bug shape"
+    )
+
+
+def _make_v3_index(db: Path, *, row_id: str | None = None) -> None:
+    """Build a genuine v3 index file at `db`: literal v3 DDL, meta
+    stamped '3', optionally one v3-shaped row. Fixture for the
+    migration race tests below."""
+    conn = sqlite3.connect(db)
+    try:
+        conn.executescript(_V3_SCHEMA)
+        conn.execute("INSERT INTO meta VALUES ('schema_version', '3')")
+        if row_id is not None:
+            conn.execute(
+                "INSERT INTO memories(id, created, updated, confidence, body, "
+                "scopes_text, scopes_json) VALUES "
+                "(?, '2026-01-01', '2026-01-01', 'fact', 'b', ' s ', '[]')",
+                (row_id,),
+            )
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def test_migration_stamp_commits_atomically_with_swap(tmp_path: Path) -> None:
+    """The version stamp / `indexed_count` reset / `needs_rebuild` flag
+    must commit in the SAME transaction as the drop+recreate. When they
+    committed separately, a pre-bump process reading meta between the
+    two commits saw the new tables with the old version stamp, passed
+    its own version check, and its old-column-list INSERT landed as a
+    permanently FTS-invisible row (`body_fts` DEFAULT '' indexed by the
+    trigger).
+
+    Proven via crash-consistency: a trigger aborts the stamp UPDATE,
+    and the whole migration — swap included — must roll back with it.
+    The old two-transaction shape fails this by committing the swap
+    first, leaving v4 tables stamped '3' on disk."""
+    db = tmp_path / "t.sqlite"
+    _make_v3_index(db, row_id="keep")
+    conn = sqlite3.connect(db)
+    try:
+        # Abort the stamp statement. RAISE(ABORT) backs out the
+        # statement but leaves the enclosing transaction open, so
+        # `_ensure_schema`'s rollback decides what survives.
+        conn.execute(
+            "CREATE TRIGGER stamp_fails BEFORE UPDATE ON meta "
+            f"WHEN new.key = 'schema_version' AND new.value = '{index.SCHEMA_VERSION}' "
+            "BEGIN SELECT RAISE(ABORT, 'stamp blocked by test'); END"
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+    conn = sqlite3.connect(db)
+    try:
+        with pytest.raises(sqlite3.DatabaseError):
+            index._ensure_schema(conn, db)
+    finally:
+        conn.close()
+
+    conn = sqlite3.connect(db)
+    try:
+        cols = {r[1] for r in conn.execute("PRAGMA table_info(memories)")}
+        version = conn.execute(
+            "SELECT value FROM meta WHERE key = 'schema_version'"
+        ).fetchone()[0]
+        row = conn.execute("SELECT id FROM memories").fetchone()
+    finally:
+        conn.close()
+    # Consistency is the contract: the shape the tables have and the
+    # version meta claims must agree. Swap committed + stamp rolled
+    # back (the old bug shape) shows up as body_fts present with
+    # version still '3'.
+    assert "body_fts" not in cols, (
+        "the failed stamp left v4 tables behind — the swap committed "
+        "in a separate transaction from the version stamp"
+    )
+    assert version == "3"
+    assert row == ("keep",)
+
+
+def test_concurrent_migrators_loser_is_noop(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Two same-version processes can both read the old schema_version
+    and enter the migration branch. The migration flock serialises
+    them, and the loser's under-lock re-read must turn it into a no-op
+    — NOT a second wipe destroying rows the winner's caller already
+    started repopulating."""
+    import contextlib
+
+    from bettermemory._fsutil import flock_excl as real_flock
+
+    db = tmp_path / "race.sqlite"
+    _make_v3_index(db)
+
+    state = {"winner_ran": False}
+
+    @contextlib.contextmanager
+    def racing_flock(path: Path):
+        # Deterministic lost race: before the loser acquires the lock,
+        # a winner runs the SAME migration to completion on its own
+        # connection (the nested `_ensure_schema` re-enters this
+        # wrapper with winner_ran already set, so it goes straight to
+        # the real, still-uncontended flock).
+        if not state["winner_ran"]:
+            state["winner_ran"] = True
+            winner = sqlite3.connect(db)
+            try:
+                index._ensure_schema(winner, db)
+                # Post-migration repopulation the loser must not wipe.
+                winner.execute(
+                    "INSERT INTO memories(id, created, updated, confidence, "
+                    "body, scopes_text, scopes_json) VALUES "
+                    "('marker', '2026-01-01', '2026-01-01', 'fact', 'b', "
+                    "' s ', '[]')"
+                )
+                winner.commit()
+            finally:
+                winner.close()
+        with real_flock(path):
+            yield
+
+    monkeypatch.setattr(index, "flock_excl", racing_flock)
+
+    loser = sqlite3.connect(db)
+    try:
+        index._ensure_schema(loser, db)
+    finally:
+        loser.close()
+
+    check = sqlite3.connect(db)
+    try:
+        rows = check.execute("SELECT id FROM memories").fetchall()
+        version = check.execute(
+            "SELECT value FROM meta WHERE key = 'schema_version'"
+        ).fetchone()[0]
+        flag = check.execute(
+            "SELECT value FROM meta WHERE key = 'needs_rebuild'"
+        ).fetchone()
+    finally:
+        check.close()
+    assert rows == [("marker",)], (
+        "the losing migrator re-wiped the tables instead of no-opping "
+        "after its under-lock re-read"
+    )
+    assert version == str(index.SCHEMA_VERSION)
+    # dfa7867 semantics: the winner's migration set the flag; only a
+    # successful `rebuild()` may clear it.
+    assert flag is not None and flag[0] == "1"
+
+
+def test_migration_reread_newer_version_raises(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """If a NEWER-version migrator wins the race while we wait on the
+    migration flock, the re-read must raise `IndexVersionError` (the
+    primary check's contract) rather than wipe tables a newer reader
+    now depends on."""
+    import contextlib
+
+    from bettermemory._fsutil import flock_excl as real_flock
+
+    db = tmp_path / "race.sqlite"
+    _make_v3_index(db, row_id="newer-owned")
+
+    state = {"stamped": False}
+
+    @contextlib.contextmanager
+    def racing_flock(path: Path):
+        if not state["stamped"]:
+            state["stamped"] = True
+            winner = sqlite3.connect(db)
+            try:
+                winner.execute(
+                    "UPDATE meta SET value = ? WHERE key = 'schema_version'",
+                    (str(index.SCHEMA_VERSION + 1),),
+                )
+                winner.commit()
+            finally:
+                winner.close()
+        with real_flock(path):
+            yield
+
+    monkeypatch.setattr(index, "flock_excl", racing_flock)
+
+    loser = sqlite3.connect(db)
+    try:
+        with pytest.raises(index.IndexVersionError):
+            index._ensure_schema(loser, db)
+    finally:
+        loser.close()
+
+    check = sqlite3.connect(db)
+    try:
+        row = check.execute("SELECT id FROM memories").fetchone()
+    finally:
+        check.close()
+    assert row == ("newer-owned",), (
+        "the losing migrator wiped tables that a newer-version index now owns"
     )
 
 
@@ -1213,10 +1412,10 @@ def test_rebuild_recovery_closes_connection_on_compound_failure(
     real_ensure = index._ensure_schema
     calls = {"n": 0}
 
-    def flaky_ensure(conn: sqlite3.Connection) -> None:
+    def flaky_ensure(conn: sqlite3.Connection, path: Path) -> None:
         calls["n"] += 1
         if calls["n"] == 1:
-            real_ensure(conn)  # raises IndexVersionError on the skewed index
+            real_ensure(conn, path)  # raises IndexVersionError on skewed index
         else:
             raise sqlite3.OperationalError("simulated disk I/O error")
 
