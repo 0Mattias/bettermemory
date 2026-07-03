@@ -7,6 +7,74 @@ breaking changes, minor for additive features, patch for fixes. The
 [compatibility contract](CONTRIBUTING.md#versioning-and-the-compatibility-contract)
 spells out exactly what's stable.
 
+## 3.14.0 - 2026-07-03
+
+The measurement release: three layers of the effectiveness telemetry
+were structurally miscalibrated — the relevance label compressed
+on long queries, the helped-rate under-measured because the in-process
+auto-commit raced the Stop hook's attribution pass, and the silent-miss
+counters double-counted multi-stop turns. Every change here is
+measurement-precision work surfaced by the 2026-07-03 model dogfood
+sessions (Sonnet 5 and Fable 5 reflections) and the live event log.
+
+### Added
+
+- **Shadow relevance label v2 + raw coverage features in the log.**
+  `search._relevance_label_v2` keeps the v1 coverage mapping and adds
+  an absolute matched-token floor to the "high" arm (`matched_unique
+  >= 4`), targeting the documented blind spot where long
+  natural-language queries land at "medium" on strong matches. SHADOW
+  ONLY: the label rides on `search` / `turn_audited` / `search_miss`
+  events, never in an MCP response. `search` events additionally log
+  per-hit `scores` / `match_counts` and the per-search `query_unique`
+  denominator, making the historical record formula-agnostic — any
+  future labeling rule can be replayed from the log alone.
+- **Per-turn calibration payload on `turn_audited`.** Every audited
+  turn now carries `probe_query` (redacted `{hash, preview, len}`
+  unless `log_queries_verbatim`) and a compact `top_hits` list
+  (id/score/relevance/relevance_v2/matched_unique/query_unique — no
+  snippets). This closes the "threshold-sweep can narrow but never
+  widen" constraint at the data layer.
+- **`bettermemory eval --widening-preview`.** Replays candidate
+  LOOSER threshold rules (registry: `eval.WIDENING_RULES`, bundled
+  candidate `w1_top1_v2_high`) over the turn_audited stream against a
+  replayed v1 baseline — the forward-looking counterpart to
+  `--threshold-sweep`.
+- **Per-model telemetry.** The Stop hook reads the model id off the
+  transcript's newest assistant row and stamps `client_model` on the
+  `turn_audited` / `search_miss` / `use` events it emits; `bettermemory
+  eval` reports a per-model breakdown (`by_model`). The MCP channel
+  carries no model identity, so the hook is the only possible source.
+- **`pending_writes` on `memory_scope_overview`.** Counts this
+  session's staged writes still awaiting confirm/cancel, so a dangling
+  user-inference confirmation is visible before its silent 1-hour
+  expiry (the live log showed staged writes expiring unresolved).
+
+### Changed
+
+- **End-of-turn use settlement (auto-commit race fix).** The
+  in-process auto-commit's clock is handler entries, so a tool-heavy
+  turn auto-committed its own retrievals mid-turn — before the reply
+  existed — starving the Stop hook's attribution matcher of every id
+  it would have matched (~98% of applied events on the dogfood store
+  were bare autos). `session.consume_old_tokens` now requires BOTH
+  axes: ≥2 handler entries AND ≥`AUTO_COMMIT_MIN_AGE_SECONDS` (600s,
+  mirroring the hook's attribution window; cross-pinned in tests). The
+  Stop hook settles each turn at turn end instead: reply-matched
+  retrievals record `attribution="hook"` with excerpts, and the
+  unmatched remainder records the plain `auto=true` fallback in the
+  same pass. Hookless deployments keep the in-process fallback (first
+  handler call past the floor, still inside the 30-minute eviction
+  window); a session's final-turn retrievals with no hook remain
+  unsettled, as before.
+- **Re-audit dedup.** A long autonomous turn stops many times without
+  a new user message, and each stop re-probed and re-flagged the same
+  message (7 identical `search_miss` events from one ship-go message
+  on the 2026-07-03 log). Repeats inside an hour now record
+  `turn_audited` with `repeat: true` — cadence stays observable — and
+  never emit a second `search_miss`; eval and health exclude repeats
+  from every denominator.
+
 ## 3.13.1 - 2026-07-03
 
 ### Added
