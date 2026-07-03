@@ -1435,6 +1435,22 @@ _INDEX_REPAIR_HINT = "Run `bettermemory reindex` to repair."
 _DIVERGENCE_WARNED_ROOTS: set[Path] = set()
 
 
+# Backoff for the construction-time auto-rebuild: a deterministically
+# failing rebuild (read-only index dir, disk full, corruption even the
+# data-phase retry can't clear) must not re-run a full-store
+# re-tokenization on EVERY Store construction — one attempt per window
+# is plenty; search stays correct on the full-scan path meanwhile. Two
+# layers, because each covers the other's blind spot: the best-effort
+# `meta.last_rebuild_failure` marker survives across processes (every
+# CLI invocation constructs a fresh Store) but can't be written when
+# the index dir itself is unwritable; the in-process memo needs no
+# writable anything but dies with the process. `bettermemory reindex`
+# calls `index.rebuild` directly and always bypasses both.
+_REBUILD_FAILURE_BACKOFF_S = 3600.0
+_REBUILD_FAILURE_MEMO: dict[str, float] = {}
+_REBUILD_SKIP_WARNED: set[str] = set()
+
+
 @best_effort(
     "index auto-rebuild after schema upgrade",
     logger=_INDEX_LOG,
@@ -1459,16 +1475,53 @@ def _rebuild_index_if_flagged(store: Store) -> None:
 
     Best-effort via the decorator: a rebuild failure warns (with the
     reindex hint) and must not block construction — the flag stays set,
-    so search keeps bypassing the index and the next construction
+    so search keeps bypassing the index and a LATER construction
     retries. On success the log is INFO: this shape used to surface as
     the S4 divergence WARNING below, but a self-healed index is a
     resolution notice, not an operator action item.
+
+    Failure backoff: "the next construction retries" must not mean
+    "every construction re-runs a full-store re-tokenization against
+    the same broken disk". A failed attempt is recorded twice — in the
+    in-process `_REBUILD_FAILURE_MEMO` and via the best-effort
+    cross-process `meta.last_rebuild_failure` marker — and further
+    attempts are skipped (log-once per process) until
+    `_REBUILD_FAILURE_BACKOFF_S` elapses. A successful rebuild clears
+    both; manual `bettermemory reindex` bypasses the backoff entirely.
     """
+    import time
+
     from . import index as _index
 
-    if not _index.status(store.root).get("needs_rebuild"):
+    st = _index.status(store.root)
+    if not st.get("needs_rebuild"):
         return
-    count = _index.rebuild(store.root, store.iter_active())
+    key = str(store.root)
+    now = time.time()
+    recent_failures = [
+        ts
+        for ts in (_REBUILD_FAILURE_MEMO.get(key), st.get("last_rebuild_failure"))
+        if ts is not None and 0 <= now - ts < _REBUILD_FAILURE_BACKOFF_S
+    ]
+    if recent_failures:
+        if key not in _REBUILD_SKIP_WARNED:
+            _REBUILD_SKIP_WARNED.add(key)
+            _INDEX_LOG.warning(
+                "bettermemory: index rebuild is pending but the last "
+                "automatic attempt failed recently; skipping the retry "
+                "for now (search stays on the safe full-scan path). Run "
+                "`bettermemory reindex` to retry immediately."
+            )
+        return
+    try:
+        count = _index.rebuild(store.root, store.iter_active())
+    except Exception:
+        _REBUILD_FAILURE_MEMO[key] = now
+        _REBUILD_SKIP_WARNED.discard(key)
+        _index.record_rebuild_failure(store.root)
+        raise
+    _REBUILD_FAILURE_MEMO.pop(key, None)
+    _REBUILD_SKIP_WARNED.discard(key)
     _INDEX_LOG.info(
         "bettermemory: index schema upgraded; rebuilt %d memories from "
         "canonical disk state.",

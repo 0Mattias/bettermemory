@@ -67,6 +67,7 @@ import json
 import logging
 import os
 import sqlite3
+import time
 from collections.abc import Iterable
 from datetime import datetime
 from pathlib import Path
@@ -706,6 +707,10 @@ def _rebuild_data(conn: sqlite3.Connection, entries: list[tuple[Path, Memory]]) 
         # stamp a recovery reopen sets on a populated root clears the
         # same way — only when the retry's rows actually land.)
         conn.execute("DELETE FROM meta WHERE key = 'needs_rebuild'")
+        # The auto-rebuild failure-backoff marker clears with it: a
+        # successful rebuild ends the backoff no matter how recently a
+        # prior attempt failed.
+        conn.execute("DELETE FROM meta WHERE key = 'last_rebuild_failure'")
     return count
 
 
@@ -1065,6 +1070,9 @@ def status(root: Path) -> dict[str, Any]:
             rebuild_row = conn.execute(
                 "SELECT value FROM meta WHERE key = 'needs_rebuild'"
             ).fetchone()
+            failure_row = conn.execute(
+                "SELECT value FROM meta WHERE key = 'last_rebuild_failure'"
+            ).fetchone()
             size_bytes = path.stat().st_size
             return {
                 "exists": True,
@@ -1077,6 +1085,12 @@ def status(root: Path) -> dict[str, Any]:
                 # so readers must treat the index as unusable no matter
                 # what `indexed_count` says.
                 "needs_rebuild": bool(rebuild_row and rebuild_row[0] == "1"),
+                # Wall-clock (`time.time()`) of the last FAILED
+                # construction-time auto-rebuild attempt, or None. Parsed
+                # defensively OUTSIDE the corruption tuple below: the
+                # marker is advisory backoff state — a garbage value
+                # means "no usable marker", never "corrupt index".
+                "last_rebuild_failure": _parse_failure_marker(failure_row),
                 "size_bytes": size_bytes,
             }
         finally:
@@ -1099,6 +1113,48 @@ def status(root: Path) -> dict[str, Any]:
             "corrupt": True,
             "error": str(exc),
         }
+
+
+def record_rebuild_failure(root: Path) -> None:
+    """Best-effort cross-process marker for the construction-time
+    auto-rebuild backoff: stamp the wall-clock of a FAILED attempt in
+    meta so the NEXT process (every CLI invocation constructs a fresh
+    Store) can skip re-running a full-store rebuild that just failed.
+
+    Best-effort by design: the most common persistent failure cause is
+    an unwritable index, in which case this write fails too and the
+    in-process memo in `store._rebuild_index_if_flagged` remains the
+    only (per-process) backoff floor. Never raises — the caller is
+    already unwinding the rebuild's real error, which must win.
+    Cleared transactionally by `_rebuild_data` on the next SUCCESSFUL
+    rebuild, alongside `needs_rebuild`. `bettermemory reindex` calls
+    `rebuild()` directly and never consults the marker."""
+    try:
+        conn = _connect(index_path(root))
+        try:
+            with conn:
+                conn.execute(
+                    "INSERT OR REPLACE INTO meta(key, value) "
+                    "VALUES ('last_rebuild_failure', ?)",
+                    (str(time.time()),),
+                )
+        finally:
+            conn.close()
+    except Exception:  # noqa: BLE001 — advisory marker; never mask the rebuild error
+        pass
+
+
+def _parse_failure_marker(row: Any) -> float | None:
+    """`meta.last_rebuild_failure` → float timestamp, or None when the
+    row is absent or unparseable. Deliberately NOT routed through
+    `status()`'s corruption tuple: the marker is advisory, so garbage
+    degrades to "no marker" rather than tainting the whole snapshot."""
+    if not row:
+        return None
+    try:
+        return float(row[0])
+    except (TypeError, ValueError):
+        return None
 
 
 # ---------------------------------------------------------------------------

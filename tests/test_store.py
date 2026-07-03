@@ -1109,3 +1109,167 @@ async def test_memory_search_survives_file_gone_adversarial_after_indexing(
     _write_scalar_scopes_file(memory_dir, memory_id=bad.id, filename=bad_path.name)
 
     assert await _search_ids(memory_dir, "alpha") == [good.id]
+
+
+# ---------------------------------------------------------------------------
+# Construction-time auto-rebuild failure backoff
+# ---------------------------------------------------------------------------
+
+
+def _flag_index_rebuild_pending(root: Path) -> None:
+    """Set `meta.needs_rebuild='1'` directly on the index sidecar — the
+    state a schema migration leaves behind for the construction-time
+    auto-rebuild to pick up."""
+    import sqlite3
+
+    from bettermemory import index as _index
+
+    conn = sqlite3.connect(str(_index.index_path(root)))
+    try:
+        with conn:
+            conn.execute(
+                "INSERT OR REPLACE INTO meta(key, value) VALUES ('needs_rebuild', '1')"
+            )
+    finally:
+        conn.close()
+
+
+def _set_failure_marker(root: Path, value: str) -> None:
+    import sqlite3
+
+    from bettermemory import index as _index
+
+    conn = sqlite3.connect(str(_index.index_path(root)))
+    try:
+        with conn:
+            conn.execute(
+                "INSERT OR REPLACE INTO meta(key, value) "
+                "VALUES ('last_rebuild_failure', ?)",
+                (value,),
+            )
+    finally:
+        conn.close()
+
+
+@pytest.fixture()
+def fresh_backoff_state(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Isolate the module-level backoff memo/warn state per test."""
+    from bettermemory import store as store_mod
+
+    monkeypatch.setattr(store_mod, "_REBUILD_FAILURE_MEMO", {})
+    monkeypatch.setattr(store_mod, "_REBUILD_SKIP_WARNED", set())
+
+
+def _count_rebuild_attempts(monkeypatch: pytest.MonkeyPatch) -> list[int]:
+    """Replace `index.rebuild` with a counting stub that always fails."""
+    from bettermemory import index as _index
+
+    attempts: list[int] = []
+
+    def _boom(root: Path, items: Any) -> NoReturn:
+        attempts.append(1)
+        raise sqlite3_like_error("simulated persistent rebuild failure")
+
+    monkeypatch.setattr(_index, "rebuild", _boom)
+    return attempts
+
+
+def sqlite3_like_error(msg: str) -> Exception:
+    import sqlite3
+
+    return sqlite3.OperationalError(msg)
+
+
+def test_failing_auto_rebuild_attempted_once_not_per_construction(
+    store: Store,
+    monkeypatch: pytest.MonkeyPatch,
+    fresh_backoff_state: None,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """The in-process memo suppresses re-attempts within the backoff
+    window: three constructions pay ONE full-store rebuild attempt, and
+    the skip notice logs once per process."""
+    store.write(content="alpha memory", scopes=["tools"])
+    store.write(content="beta memory", scopes=["tools"])
+    _flag_index_rebuild_pending(store.root)
+    attempts = _count_rebuild_attempts(monkeypatch)
+
+    with caplog.at_level("INFO", logger="bettermemory.store"):
+        for _ in range(3):
+            Store(store.root)
+
+    assert len(attempts) == 1
+    skip_notices = [
+        r for r in caplog.records if "skipping the retry" in r.getMessage()
+    ]
+    assert len(skip_notices) == 1
+
+
+def test_failure_marker_suppresses_fresh_process(
+    store: Store,
+    monkeypatch: pytest.MonkeyPatch,
+    fresh_backoff_state: None,
+) -> None:
+    """The best-effort meta marker carries the backoff across process
+    boundaries: after a failed attempt, a simulated fresh process (empty
+    in-process memo) still skips the retry."""
+    from bettermemory import index as _index
+    from bettermemory import store as store_mod
+
+    store.write(content="alpha memory", scopes=["tools"])
+    _flag_index_rebuild_pending(store.root)
+    attempts = _count_rebuild_attempts(monkeypatch)
+
+    Store(store.root)
+    assert len(attempts) == 1
+    marker = _index.status(store.root).get("last_rebuild_failure")
+    assert isinstance(marker, float)
+
+    # Fresh process: the module-level memo dies with the process.
+    monkeypatch.setattr(store_mod, "_REBUILD_FAILURE_MEMO", {})
+    monkeypatch.setattr(store_mod, "_REBUILD_SKIP_WARNED", set())
+    Store(store.root)
+    assert len(attempts) == 1  # marker suppressed the second attempt
+
+
+def test_expired_marker_allows_retry_and_success_clears_backoff(
+    store: Store,
+    fresh_backoff_state: None,
+) -> None:
+    """A marker older than the backoff window does not suppress, the
+    real rebuild runs, and success clears BOTH the flag and the marker
+    transactionally."""
+    from bettermemory import index as _index
+
+    store.write(content="alpha memory", scopes=["tools"])
+    store.write(content="beta memory", scopes=["tools"])
+    _flag_index_rebuild_pending(store.root)
+    _set_failure_marker(store.root, str(time.time() - 7200))
+
+    Store(store.root)
+
+    st = _index.status(store.root)
+    assert st.get("needs_rebuild") is False
+    assert st.get("last_rebuild_failure") is None
+    assert st.get("indexed_count") == 2
+
+
+def test_garbage_failure_marker_is_no_marker_not_corruption(
+    store: Store,
+    fresh_backoff_state: None,
+) -> None:
+    """An unparseable marker value degrades to 'no marker' — it neither
+    taints status() as corrupt nor suppresses the retry."""
+    from bettermemory import index as _index
+
+    store.write(content="alpha memory", scopes=["tools"])
+    _flag_index_rebuild_pending(store.root)
+    _set_failure_marker(store.root, "banana")
+
+    st = _index.status(store.root)
+    assert "corrupt" not in st
+    assert st.get("last_rebuild_failure") is None
+
+    Store(store.root)  # retry not suppressed; real rebuild heals
+    st_after = _index.status(store.root)
+    assert st_after.get("needs_rebuild") is False
