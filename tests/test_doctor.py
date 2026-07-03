@@ -787,14 +787,18 @@ def test_mcp_client_configs_warns_on_stale_path(
 ) -> None:
     # The command must contain the "bettermemory" substring to pass the
     # entry filter — the old "/nonexistent/old/bm" fixture silently fell
-    # through to the no-references branch and tested the wrong warn.
+    # through to the no-references branch and tested the wrong warn. It
+    # must also be tmp_path-based: a bare "/..." string is NOT absolute
+    # on Windows (no drive letter), so the missing-binary branch would
+    # never fire there.
+    missing = tmp_path / "gone" / "bettermemory"
     target = tmp_path / "fake_config.json"
     target.write_text(
         json.dumps(
             {
                 "mcpServers": {
                     "memory": {
-                        "command": "/nonexistent/old/bettermemory",
+                        "command": str(missing),
                         "args": [],
                     }
                 }
@@ -907,14 +911,16 @@ def test_mcp_client_configs_missing_binary_names_client(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """The missing-on-disk warn names the client and config path directly
-    in the human-readable message (previously only in --json details)."""
+    in the human-readable message (previously only in --json details).
+    tmp_path-based command so the path is absolute on Windows too."""
+    missing = tmp_path / "gone" / "bettermemory"
     target = tmp_path / "fake_config.json"
     target.write_text(
         json.dumps(
             {
                 "mcpServers": {
                     "memory": {
-                        "command": "/nonexistent/old/bettermemory",
+                        "command": str(missing),
                         "args": [],
                     }
                 }
@@ -928,7 +934,7 @@ def test_mcp_client_configs_missing_binary_names_client(
     diag = _check_mcp_client_configs()
     assert diag.status == "warn"
     assert "fakeclient" in diag.message
-    assert "/nonexistent/old/bettermemory" in diag.message
+    assert str(missing) in diag.message
     assert "init --client fakeclient" in (diag.fix_hint or "")
 
 
