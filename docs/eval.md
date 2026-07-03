@@ -28,10 +28,14 @@ Two attestation tiers feed the numerator:
 
 - `attribution="model"`: the model called `memory_record_use` with the
   load-bearing excerpt.
-- `attribution="hook"`: the Stop hook found a body sentence of a
-  retrieved memory verbatim in the reply (case/whitespace-normalised,
-  ≥6 tokens, ≥30 chars, stopword-filtered). Misses paraphrases;
-  precision-tuned so false positives stay rare.
+- `attribution="hook"`: the Stop hook matched a body sentence of a
+  retrieved memory (≥6 tokens, ≥30 chars, stopword-filtered) against
+  the reply — verbatim (case/whitespace-normalised), or by
+  distinctive-token containment (≥60% of the sentence's distinct
+  content tokens appear in the reply, ≥4-token floor), catching
+  paraphrases that keep the memory's vocabulary. Deep rewordings
+  still slip through; thresholds precision-tuned so false positives
+  stay rare.
 
 The bare auto-fallback (`attribution="auto"`, no excerpt) is excluded.
 The CLI's `applied_explicit` count is everything non-auto; recompute
