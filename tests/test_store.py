@@ -6,7 +6,7 @@ import os
 import time
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from typing import NoReturn
+from typing import Any, NoReturn
 
 import pytest
 from pydantic import ValidationError
@@ -991,3 +991,121 @@ def test_unparseable_counter_and_iter_active_agree_on_any_parse_failure(
     monkeypatch.setattr(store_mod, "_parse_memory_file", _boom)
     assert count_unparseable_memory_files(store.root) == 1
     assert list(store.iter_active()) == []
+
+
+def _write_scalar_scopes_file(root: Path, *, memory_id: str, filename: str) -> None:
+    """Well-formed YAML whose `scopes: 5` dies at `list(meta["scopes"])`
+    with TypeError — outside the historic (ValueError, KeyError, OSError)
+    catch tuples. The same fixture the construction-crash test above
+    uses, parameterized so it can sit next to healthy memories."""
+    (root / filename).write_text(
+        "---\n"
+        "schema_version: 1\n"
+        f"id: {memory_id}\n"
+        "created: 2026-01-01T00:00:00Z\n"
+        "updated: 2026-01-01T00:00:00Z\n"
+        "scopes: 5\n"
+        "confidence: medium\n"
+        "source: explicit-statement\n"
+        "---\n\nvalid YAML, wrong shape\n",
+        encoding="utf-8",
+    )
+
+
+def test_adversarial_scalar_scopes_file_skipped_by_every_read_surface(
+    tmp_path: Path,
+) -> None:
+    """The construction fix taught the counter and `iter_active` to
+    survive the scalar-scopes TypeError, but `load_all`, `load_one`,
+    and `rename_scope` kept narrower tuples — so the same file that no
+    longer bricked Store() still crashed memory_search (`load_all` is
+    its candidate source), memory_list, and memory_health one layer up.
+    All per-file parse catches now share `PARSE_SKIP_EXCEPTIONS`: the
+    file the counter counts is the file every reader skips."""
+    root = tmp_path / "adversarial"
+    root.mkdir()
+    store = Store(root)
+    good = store.write(content="survives the bad neighbor\n", scopes=["tools"])
+    _write_scalar_scopes_file(
+        root,
+        memory_id="01HXYZAAAAAAAAAAAAAAAAAAAA",
+        filename="2026-01-01-scalar-scopes.md",
+    )
+
+    assert count_unparseable_memory_files(root) == 1
+    # The bulk readers skip the file the counter counted (TypeError
+    # pre-fix in load_all).
+    assert [m.id for m in store.load_all()] == [good.id]
+    assert [m.id for _, m in store.iter_active()] == [good.id]
+    # The id walks survive it too: a hit on a healthy id, and a miss
+    # that walks past the bad file into MemoryNotFoundError — the miss
+    # is guaranteed to visit every file, so it crashed pre-fix
+    # regardless of directory iteration order.
+    assert store.load_one(good.id).id == good.id
+    with pytest.raises(MemoryNotFoundError):
+        store.load_one(generate_ulid())
+    # rename_scope's active walk skips it rather than dying mid-walk.
+    renamed = store.rename_scope("tools", "infrastructure")
+    assert renamed["active"] == [good.id]
+
+
+async def _search_ids(memory_dir: Path, query: str) -> list[str]:
+    """Run memory_search end-to-end through the MCP tool surface (the
+    same build_server + call_tool shape test_server.py uses) and return
+    the hit ids. Local imports keep this module's header pure-store."""
+    from bettermemory.config import Config, StorageConfig
+    from bettermemory.server import build_server
+    from bettermemory.session import SessionState
+
+    server: Any = build_server(
+        config=Config(storage=StorageConfig(directory=str(memory_dir))),
+        store=Store(memory_dir),
+        state=SessionState(),
+    )
+    _content, structured = await server.call_tool("memory_search", {"query": query})
+    hits = (
+        structured.get("result", structured)
+        if isinstance(structured, dict)
+        else structured
+    )
+    return [h["id"] for h in hits]
+
+
+async def test_memory_search_survives_adversarial_file_on_load_all_path(
+    memory_dir: Path, store: Store
+) -> None:
+    """E2e for the crash that outlived the construction fix: a small
+    store routes `memory_search` through `load_all`, whose per-file
+    catch didn't cover the scalar-scopes TypeError — one hand-written
+    file next to a healthy store crashed the whole tool call pre-fix."""
+    good = store.write(
+        content="The home lab is on subnet 10.42.\n", scopes=["infrastructure"]
+    )
+    _write_scalar_scopes_file(
+        memory_dir,
+        memory_id="01HXYZAAAAAAAAAAAAAAAAAAAA",
+        filename="2026-01-01-scalar-scopes.md",
+    )
+
+    assert await _search_ids(memory_dir, "home lab subnet") == [good.id]
+
+
+async def test_memory_search_survives_file_gone_adversarial_after_indexing(
+    memory_dir: Path, store: Store, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The lazy-load twin: a memory hand-edited into the scalar-scopes
+    shape AFTER it was indexed. The FTS prefilter still returns its id
+    and filename, so the per-candidate `_load_path` in
+    `_handlers._load_search_candidates` hit the same TypeError pre-fix
+    — the crash just moved from the full scan to the indexed path."""
+    monkeypatch.setenv("BETTERMEMORY_INDEX_THRESHOLD", "1")
+    good = store.write(
+        content="alpha survives the corrupted sibling\n", scopes=["tools"]
+    )
+    bad = store.write(content="alpha goes bad after indexing\n", scopes=["tools"])
+    # Rewrite bad's file in place, keeping id and filename, so the index
+    # row (body text + filename column) still resolves to it.
+    bad_path = next(p for p, m in store.iter_active() if m.id == bad.id)
+    _write_scalar_scopes_file(memory_dir, memory_id=bad.id, filename=bad_path.name)
+
+    assert await _search_ids(memory_dir, "alpha") == [good.id]

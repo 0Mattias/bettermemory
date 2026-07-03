@@ -120,6 +120,32 @@ _locked = flock_excl
 
 
 # ---------------------------------------------------------------------------
+# Parse-failure skip set
+# ---------------------------------------------------------------------------
+#
+# The ONE skip-set every per-file catch around `_parse_memory_file` uses:
+# the bulk readers (`load_all`, `iter_active`), the id walks (`load_one`,
+# `rename_scope`'s active branch), the search prefilter's per-candidate
+# load (`_handlers._load_search_candidates`), and the divergence counter
+# (`count_unparseable_memory_files`). Deliberately `(Exception,)` rather
+# than an enumerated tuple: the parser delegates to pydantic and enum
+# internals whose raise surface can't be enumerated durably — the audited
+# escapes already include TypeError on valid-YAML-but-wrong-shape values
+# (`scopes: 5` → `list(meta["scopes"])`), which slipped past the historic
+# (ValueError, KeyError, OSError) tuple and crashed `memory_search` on the
+# same file that construction had already been taught to survive. The
+# contract: any parse failure == unparseable file — counted by the counter,
+# skipped by every reader, never a crash. One shared name keeps the
+# surfaces aligned; a catch that drifts narrower re-opens a gap the
+# parse-aware divergence arithmetic (the S4 warning, doctor's index_health)
+# can never explain, because "counted here" must equal "skipped there".
+# Targeted mutators (`update`, `mark_verified`, `restore`) deliberately do
+# NOT catch: a parse failure on the specific id being mutated is a loud
+# error, not a skippable neighbor.
+PARSE_SKIP_EXCEPTIONS: tuple[type[Exception], ...] = (Exception,)
+
+
+# ---------------------------------------------------------------------------
 # Store
 # ---------------------------------------------------------------------------
 
@@ -200,8 +226,10 @@ class Store:
     def load_all(self) -> list[Memory]:
         """All active (non-tombstoned) memories. Sort by `created` desc.
 
-        Defensive against three failure modes:
-        - **Malformed file** (ValueError, KeyError): skip and continue.
+        Skips per-file failures on `PARSE_SKIP_EXCEPTIONS` (any parse
+        failure; see the tuple's rationale). The motivating modes:
+        - **Malformed file** (ValueError, KeyError, TypeError from
+          valid-YAML-but-wrong-shape values): skip and continue.
           Better to operate on the rest of the store than refuse to
           start because of one bad memory.
         - **Concurrent tombstone race** (FileNotFoundError): skip and
@@ -220,15 +248,16 @@ class Store:
         for path in self._iter_active_paths():
             try:
                 memories.append(self._load_path(path))
-            except (ValueError, KeyError, OSError):
+            except PARSE_SKIP_EXCEPTIONS:
                 continue
         memories.sort(key=lambda m: m.created, reverse=True)
         return memories
 
     def iter_active(self) -> Iterator[tuple[Path, Memory]]:
         """`(path, memory)` pairs for every active (non-tombstoned)
-        memory. Skips malformed / racing files like `load_all` does,
-        on ANY per-file exception rather than `load_all`'s tuple.
+        memory. Skips malformed / racing files on the same
+        `PARSE_SKIP_EXCEPTIONS` width as `load_all`, so the rebuild
+        feed and the bulk read see the same set.
 
         Use this when the on-disk filename matters to the caller —
         notably `index.rebuild`, which needs the actual filename (not
@@ -237,13 +266,9 @@ class Store:
         for path in self._iter_active_paths():
             try:
                 memory = self._load_path(path)
-            except Exception:  # noqa: BLE001
-                # Deliberately wider than `load_all`'s (ValueError,
-                # KeyError, OSError): `_parse_memory_file` can raise
-                # outside that tuple on adversarial-but-valid YAML —
-                # `scopes: 5` makes `list(meta["scopes"])` raise
-                # TypeError — and this iterator must skip exactly the
-                # files `count_unparseable_memory_files` counts, or the
+            except PARSE_SKIP_EXCEPTIONS:
+                # Must skip exactly the files
+                # `count_unparseable_memory_files` counts, or the
                 # parse-aware divergence arithmetic (the S4 warning,
                 # doctor's index_health) reports gaps a rebuild can
                 # never clear.
@@ -278,7 +303,12 @@ class Store:
         for path in self._iter_active_paths():
             try:
                 memory = self._load_path(path)
-            except (ValueError, KeyError):
+            except PARSE_SKIP_EXCEPTIONS:
+                # A file the bulk readers skip must not block the walk
+                # to a different id. If the requested id IS the
+                # unparseable file, the walk ends in
+                # MemoryNotFoundError — matching its invisibility to
+                # `load_all` / memory_search.
                 continue
             if memory.id == memory_id:
                 return memory
@@ -1115,10 +1145,14 @@ class Store:
                 # the tombstone) silently rewrite the scopes of an
                 # unrelated memory. Skip on miss; the next
                 # `rename_scope` invocation will pick up any
-                # newly-written files.
+                # newly-written files. Unparseable files
+                # (`PARSE_SKIP_EXCEPTIONS`) are skipped on the same
+                # width — a memory no read surface can load can't have
+                # its scopes rewritten, and one bad neighbor must not
+                # kill the walk for the rest of the store.
                 try:
                     memory = self._load_path(path)
-                except (ValueError, KeyError, FileNotFoundError):
+                except PARSE_SKIP_EXCEPTIONS:
                     continue
                 new_scopes = self._scopes_after_rename(memory.scopes, old, new)
                 if new_scopes is None:
@@ -1576,27 +1610,21 @@ def count_unparseable_memory_files(root: Path) -> int:
 
     Parses every file (unlike the bare count above), so callers reach
     for it only after the cheap raw-count comparison has already
-    diverged. Any per-file exception matches `iter_active`'s skip set
-    and counts as unparseable; OSError from the `iterdir` itself
-    propagates."""
+    diverged. Per-file failures match the readers' shared skip set
+    (`PARSE_SKIP_EXCEPTIONS`) and count as unparseable; OSError from
+    the `iterdir` itself propagates."""
     count = 0
     for entry in root.iterdir():
         if entry.is_file() and not entry.is_symlink() and entry.suffix == ".md":
             try:
                 _parse_memory_file(entry)
-            except Exception:  # noqa: BLE001
+            except PARSE_SKIP_EXCEPTIONS:
                 # Any parse failure counts as unparseable — never a
-                # crash. `_parse_memory_file`'s raise surface is wider
-                # than the (ValueError, KeyError, OSError) tuple the
-                # bulk readers catch: a valid-YAML-but-wrong-shape
-                # value escapes it (`scopes: 5` → TypeError from
-                # `list(meta["scopes"])`), and the pydantic/enum
-                # internals it delegates to keep a full enumeration
-                # fragile. This walk runs at every Store construction
+                # crash: this walk runs at every Store construction
                 # (via `_warn_on_index_divergence`), so a missed type
-                # would brick server boot on one weird file.
-                # `iter_active` skips on the same width, keeping
-                # "counted here" == "skipped by rebuild".
+                # would brick server boot on one weird file. The
+                # readers skip on the same width, keeping "counted
+                # here" == "skipped there".
                 count += 1
     return count
 

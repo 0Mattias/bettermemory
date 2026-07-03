@@ -51,7 +51,7 @@ from .handlers._shared import (
 )
 from .origin import capture as capture_origin
 from .session import SessionSource
-from .store import Store
+from .store import PARSE_SKIP_EXCEPTIONS, Store
 
 log = logging.getLogger("bettermemory._handlers")
 
@@ -302,11 +302,15 @@ class ToolHandlers:
             file_path = self.store.root / filename
             try:
                 memory = self.store._load_path(file_path)
-            except (ValueError, KeyError, OSError):
+            except PARSE_SKIP_EXCEPTIONS:
                 # Stale filename (memory was moved / tombstoned
                 # between the index lookup and the read) or a
-                # malformed frontmatter row. Skip — the fallback
-                # below covers the "every candidate failed" case.
+                # malformed frontmatter row — the store's shared
+                # any-parse-failure width, so a file `load_all` would
+                # skip (e.g. hand-edited into a shape that raises
+                # TypeError after it was indexed) can't crash the
+                # prefilter path either. Skip — the fallback below
+                # covers the "every candidate failed" case.
                 continue
             # Index-drift defense: `sync pull` rewrites files in
             # place, so the filename column can briefly point at a
