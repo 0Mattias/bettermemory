@@ -7,6 +7,26 @@ breaking changes, minor for additive features, patch for fixes. The
 [compatibility contract](CONTRIBUTING.md#versioning-and-the-compatibility-contract)
 spells out exactly what's stable.
 
+## Unreleased
+
+### Fixed
+
+- **`doctor` no longer warns forever about deliberate multi-install
+  topologies, and the stale-path warn names the client.** A client
+  config pointing at a different install than PATH resolves (dev venv
+  vs `uv tool`) warned on every run even when both binaries ran the
+  same release; the check now probes both with `--version` (only in
+  the mismatch branch, memoized) and downgrades the same-version case
+  to ok with a "different install, same version: <client>" note.
+  Genuinely stale paths still warn — and the message now carries the
+  client name, config path, and both versions inline (previously only
+  in `--json` details), so the fix_hint names the actual client
+  (`bettermemory init --client claude-code`) instead of the literal
+  placeholder "client X". Also corrects a latent test whose
+  `/nonexistent/old/bm` fixture missed the "bettermemory" entry filter
+  and asserted against the no-references branch instead of the
+  stale-path branch it claimed to cover.
+
 ## 3.13.0 - 2026-07-03
 
 ### Changed

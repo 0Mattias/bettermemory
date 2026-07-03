@@ -21,6 +21,7 @@ from bettermemory.doctor import (
     CheckStatus,
     Diagnosis,
     DoctorReport,
+    _binary_dist_version,
     _check_audit_turn_cadence,
     _check_binary_on_path,
     _check_config_loadable,
@@ -784,13 +785,16 @@ def test_mcp_client_configs_warns_on_stale_path(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    # The command must contain the "bettermemory" substring to pass the
+    # entry filter — the old "/nonexistent/old/bm" fixture silently fell
+    # through to the no-references branch and tested the wrong warn.
     target = tmp_path / "fake_config.json"
     target.write_text(
         json.dumps(
             {
                 "mcpServers": {
                     "memory": {
-                        "command": "/nonexistent/old/bm",
+                        "command": "/nonexistent/old/bettermemory",
                         "args": [],
                     }
                 }
@@ -823,6 +827,153 @@ def test_mcp_client_configs_skips_files_without_betterentries(
     # No bettermemory entries found -> "no client config references
     # bettermemory" warn (same as no-files case).
     assert diag.status == "warn"
+
+
+def _two_installs(tmp_path: Path) -> tuple[Path, Path]:
+    """Two distinct on-disk binaries (different install locations) that
+    both pass the "bettermemory" substring filter and do NOT resolve to
+    the same inode — the same-string and symlink fast paths must miss so
+    the version probe is what decides."""
+    configured = tmp_path / "venvbin" / "bettermemory"
+    resolved = tmp_path / "uvbin" / "bettermemory"
+    for p in (configured, resolved):
+        p.parent.mkdir()
+        p.write_text("#!/bin/sh\n", encoding="utf-8")
+    return configured, resolved
+
+
+def test_mcp_client_configs_ok_when_different_install_same_version(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A config pointing at a different install than PATH resolves is NOT
+    stale when both binaries report the same version — deliberate
+    dev-venv/uv-tool topologies must not warn forever."""
+    configured, resolved = _two_installs(tmp_path)
+    target = tmp_path / "fake_config.json"
+    target.write_text(
+        json.dumps(
+            {"mcpServers": {"memory": {"command": str(configured), "args": []}}}
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr("bettermemory.doctor.KNOWN_CLIENTS", _tmp_clients(tmp_path))
+    monkeypatch.setattr("bettermemory.doctor.find_binary", lambda: str(resolved))
+    monkeypatch.setattr(
+        "bettermemory.doctor._binary_dist_version", lambda _binary: "3.13.0"
+    )
+
+    diag = _check_mcp_client_configs()
+    assert diag.status == "ok"
+    assert "same version" in diag.message
+    assert "fakeclient" in diag.message
+    assert diag.details["findings"][0]["same_version"] == "3.13.0"
+
+
+def test_mcp_client_configs_warns_on_version_mismatch_and_names_client(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Different install AND different version is real staleness: the warn
+    must name the client, both versions, and the fix_hint must carry the
+    concrete `init --client <name>` command, not a placeholder."""
+    configured, resolved = _two_installs(tmp_path)
+    target = tmp_path / "fake_config.json"
+    target.write_text(
+        json.dumps(
+            {"mcpServers": {"memory": {"command": str(configured), "args": []}}}
+        ),
+        encoding="utf-8",
+    )
+    versions = {str(configured): "3.12.0", str(resolved): "3.13.0"}
+    monkeypatch.setattr("bettermemory.doctor.KNOWN_CLIENTS", _tmp_clients(tmp_path))
+    monkeypatch.setattr("bettermemory.doctor.find_binary", lambda: str(resolved))
+    monkeypatch.setattr(
+        "bettermemory.doctor._binary_dist_version",
+        lambda binary: versions.get(binary),
+    )
+
+    diag = _check_mcp_client_configs()
+    assert diag.status == "warn"
+    assert "fakeclient" in diag.message
+    assert "3.12.0" in diag.message and "3.13.0" in diag.message
+    assert "init --client fakeclient" in (diag.fix_hint or "")
+    mismatch = diag.details["findings"][0]["version_mismatch"]
+    assert mismatch == {"configured": "3.12.0", "resolved": "3.13.0"}
+
+
+def test_mcp_client_configs_missing_binary_names_client(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The missing-on-disk warn names the client and config path directly
+    in the human-readable message (previously only in --json details)."""
+    target = tmp_path / "fake_config.json"
+    target.write_text(
+        json.dumps(
+            {
+                "mcpServers": {
+                    "memory": {
+                        "command": "/nonexistent/old/bettermemory",
+                        "args": [],
+                    }
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr("bettermemory.doctor.KNOWN_CLIENTS", _tmp_clients(tmp_path))
+    monkeypatch.setattr("bettermemory.doctor.find_binary", lambda: "/new/bm")
+
+    diag = _check_mcp_client_configs()
+    assert diag.status == "warn"
+    assert "fakeclient" in diag.message
+    assert "/nonexistent/old/bettermemory" in diag.message
+    assert "init --client fakeclient" in (diag.fix_hint or "")
+
+
+def test_binary_dist_version_parses_trailing_token(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class _Proc:
+        returncode = 0
+        stdout = "bettermemory 9.9.9\n"
+        stderr = ""
+
+    monkeypatch.setattr(
+        "bettermemory.doctor.subprocess.run", lambda *_a, **_k: _Proc()
+    )
+    assert _binary_dist_version("/any/bettermemory") == "9.9.9"
+
+
+def test_binary_dist_version_none_on_failure_modes(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # Real OSError path: the binary does not exist.
+    assert _binary_dist_version(str(tmp_path / "missing" / "bm")) is None
+
+    # Non-zero exit.
+    class _Failed:
+        returncode = 1
+        stdout = "bettermemory 9.9.9\n"
+        stderr = ""
+
+    monkeypatch.setattr(
+        "bettermemory.doctor.subprocess.run", lambda *_a, **_k: _Failed()
+    )
+    assert _binary_dist_version("/any/bettermemory") is None
+
+    # Empty output.
+    class _Silent:
+        returncode = 0
+        stdout = ""
+        stderr = ""
+
+    monkeypatch.setattr(
+        "bettermemory.doctor.subprocess.run", lambda *_a, **_k: _Silent()
+    )
+    assert _binary_dist_version("/any/bettermemory") is None
 
 
 # ---------------------------------------------------------------------------

@@ -29,6 +29,7 @@ import json
 import os
 import re
 import shutil
+import subprocess
 import sys
 import sysconfig
 from dataclasses import dataclass, field
@@ -794,6 +795,33 @@ def _check_embeddings_extra(cfg: Config) -> Diagnosis:
     )
 
 
+def _binary_dist_version(binary: str) -> str | None:
+    """Best-effort ``<binary> --version`` probe. Returns the trailing
+    version token ("bettermemory 3.13.0" -> "3.13.0") or None when the
+    binary can't be executed, times out, exits non-zero, or prints
+    nothing. Only ever invoked on paths the user themselves registered
+    as a bettermemory binary in an MCP client config (plus our own
+    PATH-resolved binary), so executing it is the same trust decision
+    the client makes on every spawn.
+    """
+    try:
+        proc = subprocess.run(
+            [binary, "--version"],
+            capture_output=True,
+            text=True,
+            timeout=10,
+            check=False,
+        )
+    except (OSError, subprocess.TimeoutExpired, ValueError):
+        return None
+    if proc.returncode != 0:
+        return None
+    out = proc.stdout.strip() or proc.stderr.strip()
+    if not out:
+        return None
+    return out.split()[-1] or None
+
+
 def _check_mcp_client_configs() -> Diagnosis:
     """Scan known clients' MCP config files; report which ones reference
     bettermemory and whether the registered binary path matches the one
@@ -801,7 +829,11 @@ def _check_mcp_client_configs() -> Diagnosis:
 
     Mismatch is the most common "I reinstalled into a venv and now
     nothing works" failure mode — the client's config still points at
-    the old binary path, which no longer exists.
+    the old binary path, which no longer exists. A path that exists but
+    differs from the PATH resolution is only stale when it actually runs
+    a DIFFERENT version — a dev-venv binary serving the same release as
+    the uv-tool install is a deliberate topology, not drift, so that
+    case degrades to ok instead of warning forever.
     """
     resolved_binary = find_binary()
     # Whether find_binary() pinned a real on-disk absolute path. When it
@@ -813,7 +845,17 @@ def _check_mcp_client_configs() -> Diagnosis:
         Path(resolved_binary).is_absolute() and Path(resolved_binary).exists()
     )
     findings: list[dict[str, Any]] = []
-    has_mismatch = False
+    stale_rows: list[str] = []
+    stale_clients: list[str] = []
+    same_version_clients: list[str] = []
+    # The resolved binary's version is probed at most once, and only
+    # when some config actually needs the comparison.
+    resolved_version_memo: list[str | None] = []
+
+    def _resolved_version() -> str | None:
+        if not resolved_version_memo:
+            resolved_version_memo.append(_binary_dist_version(resolved_binary))
+        return resolved_version_memo[0]
 
     for client_name, getter in KNOWN_CLIENTS.items():
         for path in getter().paths:
@@ -882,12 +924,40 @@ def _check_mcp_client_configs() -> Diagnosis:
                     }
                 )
                 if Path(command).is_absolute() and not exists_on_disk:
-                    has_mismatch = True
+                    stale_rows.append(
+                        f"{client_name} ({path}): {command} no longer exists"
+                    )
+                    stale_clients.append(client_name)
                 elif not matches and resolved_is_real:
                     # Only call it a stale path when we have a real canonical
                     # binary to compare against; otherwise this is a PATH
                     # problem (binary_on_path covers it), not a stale config.
-                    has_mismatch = True
+                    configured_version = (
+                        _binary_dist_version(command) if exists_on_disk else None
+                    )
+                    resolved_version = (
+                        _resolved_version() if configured_version else None
+                    )
+                    if (
+                        configured_version is not None
+                        and configured_version == resolved_version
+                    ):
+                        # Different install, same release — deliberate
+                        # multi-install topology, not staleness.
+                        findings[-1]["same_version"] = configured_version
+                        same_version_clients.append(client_name)
+                    else:
+                        findings[-1]["version_mismatch"] = {
+                            "configured": configured_version,
+                            "resolved": resolved_version,
+                        }
+                        stale_rows.append(
+                            f"{client_name} ({path}): {command} runs "
+                            f"{configured_version or 'an unknown version'} but PATH "
+                            f"resolves {resolved_version or 'an unknown version'} "
+                            f"at {resolved_binary}"
+                        )
+                        stale_clients.append(client_name)
 
     if not findings:
         return Diagnosis(
@@ -904,17 +974,31 @@ def _check_mcp_client_configs() -> Diagnosis:
             details={"resolved_binary": resolved_binary, "findings": findings},
         )
 
-    if has_mismatch:
+    if stale_rows:
+        distinct_stale = sorted(set(stale_clients))
         return Diagnosis(
             name="mcp_client_configs",
             status="warn",
-            message=(
-                "At least one MCP client has a stale binary path or one "
-                "that doesn't exist on disk."
-            ),
+            message="Stale MCP client binary path: " + "; ".join(stale_rows),
             fix_hint=(
-                "Re-run `bettermemory init --client X` to refresh the "
-                "command path. The init patch is idempotent."
+                "Re-run "
+                + " / ".join(
+                    f"`bettermemory init --client {name}`" for name in distinct_stale
+                )
+                + " to refresh the command path. The init patch is idempotent."
+            ),
+            details={"resolved_binary": resolved_binary, "findings": findings},
+        )
+
+    if same_version_clients:
+        distinct_same = sorted(set(same_version_clients))
+        return Diagnosis(
+            name="mcp_client_configs",
+            status="ok",
+            message=(
+                f"{len(findings)} client config(s) reference bettermemory; "
+                f"all paths match or run the same version as the resolved "
+                f"binary (different install, same version: {', '.join(distinct_same)})."
             ),
             details={"resolved_binary": resolved_binary, "findings": findings},
         )
