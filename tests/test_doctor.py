@@ -345,21 +345,93 @@ def test_index_health_warns_when_rebuild_pending(tmp_path: Path) -> None:
     assert diag.details["needs_rebuild"] is True
 
 
+_OUT_OF_BAND_MEMORY = (
+    "---\n"
+    "schema_version: 1\n"
+    "id: 01HXYZAAAAAAAAAAAAAAAAAAAA\n"
+    "created: 2026-01-01T00:00:00Z\n"
+    "updated: 2026-01-01T00:00:00Z\n"
+    "scopes:\n  - tools\n"
+    "confidence: medium\n"
+    "source: explicit-statement\n"
+    "---\n"
+    "body written outside the Store API\n"
+)
+
+
 def test_index_health_warns_on_disk_divergence(tmp_path: Path) -> None:
-    """An .md file dropped outside the Store API (sync pull, hand copy,
-    generic Write tool) leaves the index count behind disk — the S4
-    divergence shape, reported with the same reindex repair."""
+    """A *parseable* .md file dropped outside the Store API (sync pull,
+    hand copy, generic Write tool) leaves the index count behind disk —
+    the S4 divergence shape, reported with the reindex repair (which,
+    because the file parses, genuinely clears it — see the follow-up
+    assertion)."""
+    from bettermemory import index
     from bettermemory.store import Store
 
     store = Store(tmp_path)
     store.write(content="alpha indexer note", scopes=["tools"])
-    (tmp_path / "hand-copied.md").write_text("out-of-band body\n", encoding="utf-8")
+    (tmp_path / "hand-copied.md").write_text(_OUT_OF_BAND_MEMORY, encoding="utf-8")
     diag = _check_index_health(tmp_path)
     assert diag.status == "warn"
     assert "out of sync" in diag.message
     assert "reindex" in (diag.fix_hint or "")
     assert diag.details["indexed_count"] == 1
     assert diag.details["disk_count"] == 2
+    assert diag.details["unparseable_count"] == 0
+    # The prescribed repair must actually clear the warning.
+    index.rebuild(tmp_path, store.iter_active())
+    assert _check_index_health(tmp_path).status == "ok"
+
+
+def test_index_health_ok_when_gap_is_only_unparseable_files(tmp_path: Path) -> None:
+    """N parseable + 1 permanently-unparseable file with the index at N:
+    the raw counts read N+1 vs N, but `index.rebuild` consumes
+    `iter_active()` and can never index the junk file — a warn here
+    prescribes a repair that can never clear it (the user reindexes,
+    the warning persists, trust erodes). The index is as synced as a
+    rebuild can make it; the junk file is memory_parse_health's finding."""
+    from bettermemory.store import Store
+
+    store = Store(tmp_path)
+    store.write(content="alpha indexer note", scopes=["tools"])
+    (tmp_path / "junk.md").write_text("no frontmatter at all\n", encoding="utf-8")
+    diag = _check_index_health(tmp_path)
+    assert diag.status == "ok"
+    assert "unparseable" in diag.message
+    assert diag.details["indexed_count"] == 1
+    assert diag.details["disk_count"] == 2
+    assert diag.details["unparseable_count"] == 1
+    # ... and the sibling check owns the actual defect.
+    assert _check_memory_parse_health(tmp_path).status == "warn"
+
+
+def test_index_health_real_divergence_annotated_with_unparseable_count(
+    tmp_path: Path,
+) -> None:
+    """Mixed shape: one parseable out-of-band file (real divergence a
+    rebuild fixes) plus one junk file (a rebuild never indexes). The
+    warn must fire, with the message annotating the unparseable count
+    so the post-reindex arithmetic is visibly explained — and the
+    prescribed reindex must then land the check on ok, not on a fresh
+    warn about the junk file."""
+    from bettermemory import index
+    from bettermemory.store import Store
+
+    store = Store(tmp_path)
+    store.write(content="alpha indexer note", scopes=["tools"])
+    (tmp_path / "hand-copied.md").write_text(_OUT_OF_BAND_MEMORY, encoding="utf-8")
+    (tmp_path / "junk.md").write_text("no frontmatter at all\n", encoding="utf-8")
+    diag = _check_index_health(tmp_path)
+    assert diag.status == "warn"
+    assert "out of sync" in diag.message
+    assert "unparseable" in diag.message
+    assert "index=2" in diag.message  # the reachable post-rebuild count
+    assert diag.details["unparseable_count"] == 1
+    assert "reindex" in (diag.fix_hint or "")
+    index.rebuild(tmp_path, store.iter_active())
+    diag = _check_index_health(tmp_path)
+    assert diag.status == "ok"
+    assert diag.details["indexed_count"] == 2
 
 
 # ---------------------------------------------------------------------------

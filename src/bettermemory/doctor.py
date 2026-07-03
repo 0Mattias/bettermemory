@@ -39,7 +39,7 @@ from typing import Any, Literal
 from .config import Config, load_config
 from .events import EVENT_LOG_FILENAME, iter_all_events
 from .init import KNOWN_CLIENTS, find_binary
-from .store import Store, count_active_memory_files
+from .store import Store, count_active_memory_files, count_unparseable_memory_files
 
 
 CheckStatus = Literal["ok", "warn", "fail"]
@@ -378,10 +378,15 @@ def _check_index_health(directory: Path) -> Diagnosis:
     `memory_search` to a full `load_all` — but the degradation to a
     linear scan is silent, and a count divergence additionally means
     stale filename lookups and link annotations. Every unhealthy state
-    shares the one repair: `bettermemory reindex`. The disk count
+    shares the one repair: `bettermemory reindex`. The count comparison
     reuses the S4 divergence machinery
-    (`store.count_active_memory_files`) so doctor and the startup
-    warning cannot disagree about what "in sync" means.
+    (`store.count_active_memory_files` +
+    `store.count_unparseable_memory_files`) so doctor and the startup
+    warning cannot disagree about what "in sync" means — in particular
+    both subtract the unparseable files a rebuild can never index, so
+    this check never prescribes a reindex that cannot clear it (those
+    files are memory_parse_health's finding, with the accurate
+    fix-the-file hint).
     """
     # Lazy import mirrors every other `index` consumer (store,
     # _handlers, the reindex CLI): an interpreter built without sqlite3
@@ -452,22 +457,56 @@ def _check_index_health(directory: Path) -> Diagnosis:
             details=details,
         )
     indexed_count = int(status.get("indexed_count", 0) or 0)
-    if indexed_count != disk_count:
+    if indexed_count == disk_count:
         return Diagnosis(
             name="index_health",
-            status="warn",
-            message=(
-                f"Index out of sync with disk (index={indexed_count}, "
-                f"disk={disk_count}) — a memory file was likely "
-                f"added/edited outside the Store API."
-            ),
-            fix_hint=fix,
+            status="ok",
+            message=f"Index healthy: {indexed_count} memories indexed (matches disk).",
             details=details,
         )
+    # Raw counts diverged — refine with the parse walk (parse_health
+    # already walks every file, so no new cost class for doctor).
+    # `disk - unparseable` is the highest count a rebuild can reach.
+    try:
+        unparseable_count = count_unparseable_memory_files(directory)
+    except OSError as exc:
+        return Diagnosis(
+            name="index_health",
+            status="fail",
+            message=f"Could not count memory files: {exc}.",
+            fix_hint=f"Check permissions on {directory}.",
+        )
+    details["unparseable_count"] = unparseable_count
+    indexable_count = disk_count - unparseable_count
+    if indexed_count == indexable_count:
+        # As synced as a rebuild can make it. The unparseable files are
+        # a real problem, but they're memory_parse_health's finding —
+        # warning here would prescribe a reindex that can never clear.
+        return Diagnosis(
+            name="index_health",
+            status="ok",
+            message=(
+                f"Index healthy: {indexed_count} memories indexed — matches "
+                f"every parseable file on disk ({unparseable_count} "
+                f"unparseable file(s) excluded; see memory_parse_health)."
+            ),
+            details=details,
+        )
+    unparseable_note = (
+        f" {unparseable_count} of the disk files are unparseable and will "
+        f"never index; expect index={indexable_count} after the rebuild."
+        if unparseable_count
+        else ""
+    )
     return Diagnosis(
         name="index_health",
-        status="ok",
-        message=f"Index healthy: {indexed_count} memories indexed (matches disk).",
+        status="warn",
+        message=(
+            f"Index out of sync with disk (index={indexed_count}, "
+            f"disk={disk_count}) — a memory file was likely "
+            f"added/edited outside the Store API.{unparseable_note}"
+        ),
+        fix_hint=fix,
         details=details,
     )
 

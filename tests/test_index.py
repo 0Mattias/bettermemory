@@ -1394,6 +1394,54 @@ def test_diverged_store_construction_emits_warning(
     )
 
 
+def test_unparseable_only_gap_warns_about_files_not_index(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    """A junk `.md` that can never parse must NOT trip the out-of-sync
+    warning: `index.rebuild` consumes `iter_active()`, which skips the
+    file, so the prescribed `bettermemory reindex` could never clear
+    the divergence (N+1 disk files vs N indexed, forever). The store
+    still surfaces the gap — as a fix-the-files warning that says
+    reindex will not help — and the one-shot guard applies to it the
+    same way."""
+    from bettermemory import store as _store
+
+    root = tmp_path / "junked"
+    setup = Store(root)
+    setup.write(content="indexed via store", scopes=["tools"])
+    (root / "junk.md").write_text("no frontmatter at all\n", encoding="utf-8")
+    _store._DIVERGENCE_WARNED_ROOTS.discard(root.expanduser().resolve())
+
+    caplog.clear()
+    with caplog.at_level("WARNING", logger="bettermemory.store"):
+        Store(root)  # warns (about the files)
+        Store(root)  # silent — same one-shot guard
+    out_of_sync = [
+        r
+        for r in caplog.records
+        if r.levelname == "WARNING" and "out-of-sync" in r.getMessage()
+    ]
+    assert not out_of_sync, (
+        f"unparseable-only gap must not claim the index is out-of-sync "
+        f"(reindex can never clear it), got: {out_of_sync!r}"
+    )
+    parse_warnings = [
+        r
+        for r in caplog.records
+        if r.levelname == "WARNING" and "cannot be parsed" in r.getMessage()
+    ]
+    assert len(parse_warnings) == 1, (
+        f"expected exactly one fix-the-files WARNING, got {parse_warnings!r}"
+    )
+    message = parse_warnings[0].getMessage()
+    assert "reindex` will not change this" in message, (
+        f"warning must steer away from the useless repair, got: {message!r}"
+    )
+    assert "1 of 2" in message, (
+        f"warning must show the unparseable/disk arithmetic, got: {message!r}"
+    )
+
+
 def test_divergence_warning_fires_only_once_per_root(
     tmp_path: Path, caplog: pytest.LogCaptureFixture
 ) -> None:

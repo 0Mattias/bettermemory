@@ -298,105 +298,12 @@ class Store:
         return self.load_one(memory_id)
 
     def _load_path(self, path: Path) -> Memory:
-        post = frontmatter.load(path)
-        meta = post.metadata
-        # Schema-version gate. Memories without `schema_version` are
-        # implicitly version 1 (the format predates the field). Anything
-        # *higher* than what this reader supports is refused — the caller
-        # (`load_all`, etc.) catches ValueError and skips the file silently
-        # (the skip path emits no log; `bettermemory doctor` surfaces the
-        # count gap), so a user who downgrades bettermemory after writing
-        # memories under a newer minor sees them drop out of the retrieval
-        # surface rather than risk the reader misinterpreting fields whose
-        # semantics changed.
-        on_disk_version = meta.get("schema_version", 1)
-        try:
-            on_disk_int = int(on_disk_version)
-        except (TypeError, ValueError) as exc:
-            raise ValueError(
-                f"{path}: schema_version is not an integer: {on_disk_version!r}"
-            ) from exc
-        if on_disk_int > SCHEMA_VERSION:
-            raise ValueError(
-                f"{path}: schema_version {on_disk_int} is newer than this "
-                f"reader supports (max {SCHEMA_VERSION}); upgrade bettermemory "
-                f"or remove the file from the active set."
-            )
-        try:
-            # `origin` is additive — memories written before this field
-            # existed have no entry, and that's intentionally fine: they're
-            # treated as "global" by the auto-scope filter.
-            origin_raw = meta.get("origin")
-            origin = (
-                Origin.model_validate(origin_raw)
-                if isinstance(origin_raw, dict)
-                else None
-            )
-            # `last_verified_at` is also additive — older memories have no
-            # entry and read as "never verified". A malformed timestamp is
-            # treated the same as missing (rather than raising) so a typo
-            # in the file doesn't render the whole memory unloadable.
-            verified_raw = meta.get("last_verified_at")
-            last_verified_at: datetime | None
-            if verified_raw is None:
-                last_verified_at = None
-            else:
-                try:
-                    last_verified_at = _as_dt(verified_raw)
-                except ValueError:
-                    last_verified_at = None
-            # `category`, `verified_paths`, `verified_commits`,
-            # `verified_versions` are additive — legacy memories load
-            # with None / empty lists. Unknown category values fall back
-            # to None rather than raising; the runtime treats None as
-            # the legacy "fact" default, so a memory written by a newer
-            # bettermemory that introduces a new category still loads
-            # cleanly under an older reader (semantics revert to fact).
-            category_raw = meta.get("category")
-            category: Category | None
-            if category_raw is None:
-                category = None
-            else:
-                try:
-                    category = Category(str(category_raw))
-                except ValueError:
-                    category = None
-            # `links` is additive (T2.2). Legacy memories load with [].
-            # Each entry must be a dict with `type` and `target_id`;
-            # entries with unknown type or invalid target_id are
-            # silently dropped rather than raising, so a forward-compat
-            # downgrade (memory written under a newer reader that
-            # introduced a new link type) doesn't break the older
-            # reader for the whole file.
-            links_raw = meta.get("links")
-            links: list[MemoryLink] = []
-            if isinstance(links_raw, list):
-                for entry in links_raw:
-                    if not isinstance(entry, dict):
-                        continue
-                    try:
-                        links.append(MemoryLink.model_validate(entry))
-                    except (ValueError, KeyError):
-                        continue
-            return Memory(
-                id=str(meta["id"]),
-                created=_as_dt(meta["created"]),
-                updated=_as_dt(meta["updated"]),
-                scopes=list(meta["scopes"]),
-                confidence=Confidence(meta["confidence"]),
-                source=Source(meta["source"]),
-                body=post.content.strip() + "\n",
-                origin=origin,
-                last_verified_at=last_verified_at,
-                category=category,
-                verified_paths=_load_str_list(meta.get("verified_paths")),
-                verified_commits=_load_str_list(meta.get("verified_commits")),
-                verified_versions=_load_str_list(meta.get("verified_versions")),
-                verified_absent_paths=_load_str_list(meta.get("verified_absent_paths")),
-                links=links,
-            )
-        except KeyError as exc:
-            raise ValueError(f"{path}: missing field {exc.args[0]}") from exc
+        # Instance hook over the module-level parser: kept as a method so
+        # tests can monkeypatch per-Store read behavior (the CAS races in
+        # test_concurrency), while Store-free callers
+        # (`count_unparseable_memory_files`) share the exact same parse
+        # semantics via `_parse_memory_file`.
+        return _parse_memory_file(path)
 
     # ---- write ------------------------------------------------------------
 
@@ -1525,6 +1432,110 @@ def _rebuild_index_if_flagged(store: Store) -> None:
     )
 
 
+def _parse_memory_file(path: Path) -> Memory:
+    """Parse one on-disk memory file into a `Memory`. The canonical
+    reader — `Store._load_path` delegates here, and
+    `count_unparseable_memory_files` reuses it so "unparseable" means
+    exactly "what `iter_active()` would skip"."""
+    post = frontmatter.load(path)
+    meta = post.metadata
+    # Schema-version gate. Memories without `schema_version` are
+    # implicitly version 1 (the format predates the field). Anything
+    # *higher* than what this reader supports is refused — the caller
+    # (`load_all`, etc.) catches ValueError and skips the file silently
+    # (the skip path emits no log; `bettermemory doctor` surfaces the
+    # count gap), so a user who downgrades bettermemory after writing
+    # memories under a newer minor sees them drop out of the retrieval
+    # surface rather than risk the reader misinterpreting fields whose
+    # semantics changed.
+    on_disk_version = meta.get("schema_version", 1)
+    try:
+        on_disk_int = int(on_disk_version)
+    except (TypeError, ValueError) as exc:
+        raise ValueError(
+            f"{path}: schema_version is not an integer: {on_disk_version!r}"
+        ) from exc
+    if on_disk_int > SCHEMA_VERSION:
+        raise ValueError(
+            f"{path}: schema_version {on_disk_int} is newer than this "
+            f"reader supports (max {SCHEMA_VERSION}); upgrade bettermemory "
+            f"or remove the file from the active set."
+        )
+    try:
+        # `origin` is additive — memories written before this field
+        # existed have no entry, and that's intentionally fine: they're
+        # treated as "global" by the auto-scope filter.
+        origin_raw = meta.get("origin")
+        origin = (
+            Origin.model_validate(origin_raw) if isinstance(origin_raw, dict) else None
+        )
+        # `last_verified_at` is also additive — older memories have no
+        # entry and read as "never verified". A malformed timestamp is
+        # treated the same as missing (rather than raising) so a typo
+        # in the file doesn't render the whole memory unloadable.
+        verified_raw = meta.get("last_verified_at")
+        last_verified_at: datetime | None
+        if verified_raw is None:
+            last_verified_at = None
+        else:
+            try:
+                last_verified_at = _as_dt(verified_raw)
+            except ValueError:
+                last_verified_at = None
+        # `category`, `verified_paths`, `verified_commits`,
+        # `verified_versions` are additive — legacy memories load
+        # with None / empty lists. Unknown category values fall back
+        # to None rather than raising; the runtime treats None as
+        # the legacy "fact" default, so a memory written by a newer
+        # bettermemory that introduces a new category still loads
+        # cleanly under an older reader (semantics revert to fact).
+        category_raw = meta.get("category")
+        category: Category | None
+        if category_raw is None:
+            category = None
+        else:
+            try:
+                category = Category(str(category_raw))
+            except ValueError:
+                category = None
+        # `links` is additive (T2.2). Legacy memories load with [].
+        # Each entry must be a dict with `type` and `target_id`;
+        # entries with unknown type or invalid target_id are
+        # silently dropped rather than raising, so a forward-compat
+        # downgrade (memory written under a newer reader that
+        # introduced a new link type) doesn't break the older
+        # reader for the whole file.
+        links_raw = meta.get("links")
+        links: list[MemoryLink] = []
+        if isinstance(links_raw, list):
+            for entry in links_raw:
+                if not isinstance(entry, dict):
+                    continue
+                try:
+                    links.append(MemoryLink.model_validate(entry))
+                except (ValueError, KeyError):
+                    continue
+        return Memory(
+            id=str(meta["id"]),
+            created=_as_dt(meta["created"]),
+            updated=_as_dt(meta["updated"]),
+            scopes=list(meta["scopes"]),
+            confidence=Confidence(meta["confidence"]),
+            source=Source(meta["source"]),
+            body=post.content.strip() + "\n",
+            origin=origin,
+            last_verified_at=last_verified_at,
+            category=category,
+            verified_paths=_load_str_list(meta.get("verified_paths")),
+            verified_commits=_load_str_list(meta.get("verified_commits")),
+            verified_versions=_load_str_list(meta.get("verified_versions")),
+            verified_absent_paths=_load_str_list(meta.get("verified_absent_paths")),
+            links=links,
+        )
+    except KeyError as exc:
+        raise ValueError(f"{path}: missing field {exc.args[0]}") from exc
+
+
 def count_active_memory_files(root: Path) -> int:
     """Count the active-memory ``.md`` files under `root` without
     parsing them — the `_iter_active_paths()` filter (regular file, not
@@ -1542,6 +1553,31 @@ def count_active_memory_files(root: Path) -> int:
     return count
 
 
+def count_unparseable_memory_files(root: Path) -> int:
+    """Count the active-memory ``.md`` files under `root` that
+    `iter_active()` would skip (malformed frontmatter, missing required
+    fields, a schema_version newer than this reader). Those files can
+    never enter the FTS5 index — `index.rebuild` consumes
+    `iter_active()` — so a disk-vs-`indexed_count` comparison that
+    ignores them reports a divergence `bettermemory reindex` cannot
+    clear. Same Store-free contract as `count_active_memory_files`, and
+    the same shared role: the S4 warning below and doctor's index-health
+    check both subtract this count before calling the index stale.
+
+    Parses every file (unlike the bare count above), so callers reach
+    for it only after the cheap raw-count comparison has already
+    diverged. Per-file errors match `iter_active`'s skip set and count
+    as unparseable; OSError from the `iterdir` itself propagates."""
+    count = 0
+    for entry in root.iterdir():
+        if entry.is_file() and not entry.is_symlink() and entry.suffix == ".md":
+            try:
+                _parse_memory_file(entry)
+            except (ValueError, KeyError, OSError):
+                count += 1
+    return count
+
+
 def _warn_on_index_divergence(root: Path) -> None:
     """Compare the on-disk active-memory count to the FTS5 index's
     `indexed_count` and emit a one-shot WARNING per root if they
@@ -1556,6 +1592,13 @@ def _warn_on_index_divergence(root: Path) -> None:
       count is unknowable and the surface to fix it is the same:
       `bettermemory reindex`.
     - Mismatched counts on an otherwise healthy index.
+
+    The count comparison is parse-aware: `index.rebuild` consumes
+    `iter_active()`, which skips unparseable files, so the highest
+    count a rebuild can reach is `disk - unparseable`. A gap fully
+    explained by unparseable files gets a fix-the-files warning
+    instead — recommending reindex there would send the user to a
+    repair that can never clear the warning.
 
     Best-effort: failures inside the check (a transient OSError on
     `iterdir`, a sqlite issue inside `status`) are swallowed. The
@@ -1606,7 +1649,40 @@ def _warn_on_index_divergence(root: Path) -> None:
     if indexed_count == disk_count:
         return
 
+    # Raw counts diverged — refine with the parse walk (paid only on
+    # this rare path; the aligned common case above stays a bare
+    # iterdir). `disk - unparseable` is the highest count a rebuild
+    # can reach.
+    try:
+        unparseable_count = count_unparseable_memory_files(root)
+    except OSError:
+        return
+    indexable_count = disk_count - unparseable_count
+
     _DIVERGENCE_WARNED_ROOTS.add(root)
+    if indexed_count == indexable_count:
+        # Not an index problem: the index already holds every file a
+        # rebuild could parse. Point at the actual defect — the files.
+        _INDEX_LOG.warning(
+            "bettermemory: %d of %d memory file(s) at %s cannot be parsed "
+            "and are invisible to memory_search (the FTS5 index already "
+            "holds all %d parseable memories). `bettermemory reindex` will "
+            "not change this — run `bettermemory doctor` to identify the "
+            "files, then fix their frontmatter or remove them.",
+            unparseable_count,
+            disk_count,
+            root,
+            indexed_count,
+        )
+        return
+
+    unparseable_note = (
+        f" {unparseable_count} of the disk files cannot be parsed and will "
+        f"never index; a rebuild reaches index={indexable_count}, "
+        f"not {disk_count}."
+        if unparseable_count
+        else ""
+    )
     _INDEX_LOG.warning(
         "bettermemory: FTS5 index appears out-of-sync with disk "
         "(index=%d memories, disk=%d). This usually means a memory "
@@ -1614,9 +1690,10 @@ def _warn_on_index_divergence(root: Path) -> None:
         "sync pull, or a process bypassing memory_write). "
         "Run `bettermemory reindex` to rebuild the index from "
         "canonical disk state. Search results may be incomplete or "
-        "include stale references until then.",
+        "include stale references until then.%s",
         indexed_count,
         disk_count,
+        unparseable_note,
     )
 
 
