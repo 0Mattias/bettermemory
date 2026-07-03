@@ -799,7 +799,7 @@ class Store:
         for path in self._iter_tombstone_paths():
             try:
                 tombstone = self._load_tombstone_path(path)
-            except (ValueError, KeyError, OSError):
+            except PARSE_SKIP_EXCEPTIONS:
                 # Same race rationale as load_all: a concurrent
                 # `prune_tombstones` could delete a file between
                 # listdir and read.
@@ -842,7 +842,7 @@ class Store:
         for path in self._iter_tombstone_paths():
             try:
                 tombstone = self._load_tombstone_path(path)
-            except (ValueError, KeyError):
+            except PARSE_SKIP_EXCEPTIONS:
                 continue
             if tombstone.id == memory_id:
                 return tombstone
@@ -855,7 +855,7 @@ class Store:
         for path in self._iter_tombstone_paths():
             try:
                 post = frontmatter.load(path)
-            except (ValueError, KeyError, OSError):
+            except PARSE_SKIP_EXCEPTIONS:
                 continue
             if post.metadata.get("id") == memory_id:
                 return path
@@ -1190,7 +1190,7 @@ class Store:
                     # id is in the file at lock time and act on it.
                     try:
                         post = frontmatter.load(tpath)
-                    except (ValueError, KeyError, OSError):
+                    except PARSE_SKIP_EXCEPTIONS:
                         continue
                     raw_scopes = post.metadata.get("scopes")
                     if not isinstance(raw_scopes, list):
@@ -1273,7 +1273,7 @@ class Store:
             with _locked(path):
                 try:
                     tombstone = self._load_tombstone_path(path)
-                except (ValueError, KeyError):
+                except PARSE_SKIP_EXCEPTIONS:
                     # Malformed tombstones are left alone — pruning them
                     # would silently drop possibly-recoverable history.
                     continue
@@ -1346,7 +1346,7 @@ class Store:
         for path in self._iter_active_paths():
             try:
                 post = frontmatter.load(path)
-            except (ValueError, KeyError, OSError):
+            except PARSE_SKIP_EXCEPTIONS:
                 continue
             if post.metadata.get("id") == memory_id:
                 return path

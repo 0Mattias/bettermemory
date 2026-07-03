@@ -1199,9 +1199,7 @@ def test_failing_auto_rebuild_attempted_once_not_per_construction(
             Store(store.root)
 
     assert len(attempts) == 1
-    skip_notices = [
-        r for r in caplog.records if "skipping the retry" in r.getMessage()
-    ]
+    skip_notices = [r for r in caplog.records if "skipping the retry" in r.getMessage()]
     assert len(skip_notices) == 1
 
 
@@ -1273,3 +1271,63 @@ def test_garbage_failure_marker_is_no_marker_not_corruption(
     Store(store.root)  # retry not suppressed; real rebuild heals
     st_after = _index.status(store.root)
     assert st_after.get("needs_rebuild") is False
+
+
+# ---------------------------------------------------------------------------
+# Tombstone twin of the scalar-scopes hardening: a tombstone whose
+# frontmatter carries `scopes: 5` raises TypeError at the `list(...)`
+# coercion inside `_load_tombstone_path` — every read surface must skip
+# it, never crash.
+# ---------------------------------------------------------------------------
+
+
+def _drop_scalar_scopes_tombstone(store: Store) -> Path:
+    """A VALID-YAML tombstone whose `scopes` is a scalar — parses fine,
+    then blows up the `list(meta["scopes"])` coercion with TypeError,
+    the shape the memory-side hardening already covers."""
+    store.tombstone_dir.mkdir(mode=0o700, exist_ok=True)
+    bad = store.tombstone_dir / "00000000-scalar-scopes.tombstone.md"
+    bad.write_text(
+        "---\n"
+        "id: 01JZZZZZZZZZZZZZZZZZZZZZZZ\n"
+        "created: 2026-01-01T00:00:00+00:00\n"
+        "updated: 2026-01-01T00:00:00+00:00\n"
+        "removed: 2026-01-02T00:00:00+00:00\n"
+        "scopes: 5\n"
+        "confidence: medium\n"
+        "source: explicit-statement\n"
+        "---\n\nadversarial tombstone body\n",
+        encoding="utf-8",
+    )
+    return bad
+
+
+def test_scalar_scopes_tombstone_skipped_by_every_read_surface(
+    store: Store,
+) -> None:
+    good = store.write(content="keep me", scopes=["tools"])
+    store.tombstone(good.id, reason="cleanup")
+    _drop_scalar_scopes_tombstone(store)
+
+    loaded = store.load_tombstones()
+    assert [t.id for t in loaded] == [good.id]
+
+    listed = store.list_tombstones()
+    assert [t.id for t in listed] == [good.id]
+
+    fetched = store.load_tombstone(good.id)
+    assert fetched.id == good.id
+
+    with pytest.raises(MemoryNotFoundError):
+        store.load_tombstone(generate_ulid())
+
+
+def test_scalar_scopes_tombstone_survives_prune(store: Store) -> None:
+    good = store.write(content="keep me too", scopes=["tools"])
+    store.tombstone(good.id, reason="cleanup")
+    bad_path = _drop_scalar_scopes_tombstone(store)
+
+    pruned = store.prune_tombstones(timedelta(days=0))
+    assert isinstance(pruned, list)
+    # The adversarial file is skipped, not deleted and not fatal.
+    assert bad_path.exists()
