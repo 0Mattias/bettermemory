@@ -409,6 +409,7 @@ async def test_show_falls_back_when_index_corrupt(
       supports (a downgrade / forward-incompatible index) ->
       `index.IndexVersionError`.
     """
+    import contextlib
     import sqlite3
 
     from bettermemory import index as _index
@@ -441,7 +442,9 @@ async def test_show_falls_back_when_index_corrupt(
     else:
         # On-disk schema newer than this reader -> IndexVersionError out
         # of _ensure_schema. Stamp directly into the existing meta row.
-        with sqlite3.connect(str(index_file)) as conn:
+        # Transaction-with only; closing() releases the handle too
+        # (GC-timed ResourceWarnings, Windows unlink sensitivity).
+        with contextlib.closing(sqlite3.connect(str(index_file))) as conn, conn:
             conn.execute(
                 "UPDATE meta SET value = ? WHERE key = 'schema_version'",
                 (str(_index.SCHEMA_VERSION + 1),),
@@ -498,6 +501,7 @@ async def test_search_skips_candidate_when_index_filename_drifts(
     check the handler would score the candidate's FTS hit against
     the wrong body. The fix verifies `memory.id == candidate_id`
     after loading; mismatched files are silently dropped."""
+    import contextlib
     import sqlite3
 
     from bettermemory import index as _index
@@ -528,7 +532,8 @@ async def test_search_skips_candidate_when_index_filename_drifts(
     # b's body scored against a's query and surfaces it as a hit
     # for "python".
     db_path = _index.index_path(memory_dir)
-    with sqlite3.connect(str(db_path)) as conn:
+    # Transaction-with only; closing() releases the handle too.
+    with contextlib.closing(sqlite3.connect(str(db_path))) as conn, conn:
         b_filename = conn.execute(
             "SELECT filename FROM memories WHERE id = ?", (b["id"],)
         ).fetchone()[0]
@@ -567,6 +572,7 @@ async def test_search_falls_back_to_load_all_when_all_filenames_drift(
     this: empty `loaded` after a non-empty `candidate_pairs` routes
     through `load_all` so the FTS hit isn't lost.
     """
+    import contextlib
     import sqlite3
 
     from bettermemory import index as _index
@@ -585,7 +591,8 @@ async def test_search_falls_back_to_load_all_when_all_filenames_drift(
     # returned [] — the test would see zero hits despite the body
     # matching.
     db_path = _index.index_path(memory_dir)
-    with sqlite3.connect(str(db_path)) as conn:
+    # Transaction-with only; closing() releases the handle too.
+    with contextlib.closing(sqlite3.connect(str(db_path))) as conn, conn:
         conn.execute("UPDATE memories SET filename = ''")
 
     hits = _unwrap(await _call(server, "memory_search", query="python"))

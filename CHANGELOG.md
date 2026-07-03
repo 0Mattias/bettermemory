@@ -11,6 +11,16 @@ spells out exactly what's stable.
 
 ### Fixed
 
+- **The four GC-timed sqlite `ResourceWarning`s under `-W default` are
+  gone — all were test-side.** Four tests tweaked the index with
+  `with sqlite3.connect(...)`, which scopes the *transaction*, not the
+  handle; the leaked connections surfaced as ResourceWarnings
+  attributed to whatever test was running when GC fired (and kept an
+  open handle that Windows CI's unlink is sensitive to). Production
+  code audited clean — every `src/` connect site closes
+  deterministically. The tests now use
+  `contextlib.closing(...) as conn, conn:` so the transaction still
+  commits before the handle closes.
 - **`doctor` no longer warns forever about deliberate multi-install
   topologies, and the stale-path warn names the client.** A client
   config pointing at a different install than PATH resolves (dev venv

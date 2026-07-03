@@ -859,13 +859,17 @@ def test_older_schema_index_upgraded_to_current_via_drop_and_recreate(
     `needs_rebuild` so search bypasses it until `rebuild()` — the
     explicit reindex here, or the Store-construction auto-rebuild —
     restores full coverage and clears the flag."""
+    import contextlib
     import sqlite3
 
     a = store.write(content="bridge", scopes=["tools"])
     db_path = index.index_path(memory_dir)
     # Force the on-disk version backwards to simulate a stale older
     # index. The data tables look fine; only the meta version flips.
-    with sqlite3.connect(db_path) as conn:
+    # `with sqlite3.connect(...)` scopes the transaction, not the
+    # handle — the nested `conn` commits the UPDATE, closing() then
+    # releases the fd (GC-timed ResourceWarnings, Windows unlink).
+    with contextlib.closing(sqlite3.connect(db_path)) as conn, conn:
         conn.execute("UPDATE meta SET value = '1' WHERE key = 'schema_version'")
 
     # Status call triggers _ensure_schema, which sees the older
