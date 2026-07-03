@@ -141,15 +141,19 @@ log = logging.getLogger("bettermemory.index")
 # older version.
 SCHEMA_VERSION = 5
 
-# Pinned `search.tokenizer_fingerprint()` digest as of the last
-# SCHEMA_VERSION bump. Consumed only by the ratchet test
+# Pinned `search.tokenizer_fingerprint()` digest for the current
+# SCHEMA_VERSION. Consumed only by the ratchet test
 # (test_index.py::test_tokenizer_fingerprint_pinned_constant_is_the_ratchet)
 # — the runtime stamp/compare uses the live function, so persisted rows
 # and their meta stamp can never disagree. If the test reports a diff,
-# the index-side token stream changed: bump SCHEMA_VERSION AND re-pin
-# this constant. Never re-pin it alone.
+# the index-side token stream changed: re-pin this constant, and bump
+# SCHEMA_VERSION with it iff the current version has shipped in a
+# release (the fingerprint mismatch already heals same-version stores;
+# the bump is what keeps version semantics honest once a release
+# persisted the old stream — pre-release stream amendments fold into
+# the pending bump).
 TOKENIZER_FINGERPRINT = (
-    "463d1fe01eca8d32f5262423c0d2fe863002f7ffc841b8453ba1c46e6accdd44"
+    "70bc8e2452b87298538b81bca1cf9039b867734e2aed1078aba4deceb6be6797"
 )
 
 INDEX_FILENAME = ".index.sqlite"

@@ -604,6 +604,24 @@ def _segment_unspaced(token: str) -> list[str]:
 # Pinning the singular whole puts both inflections on the surface key.
 _STEM_EXCEPTIONS = frozenset({"alias", "atlas", "bias", "canvas", "lens", "news"})
 
+# Irregular plural → singular surface map, consulted BEFORE the suffix
+# rules: acronym plurals whose '-s' lands ON the 'ss'/'us'/'is' singular
+# guard ('apis' ends in 'is', 'gpus' in 'us') while the 3-char singular
+# early-returns whole — the mirror image of the `_STEM_EXCEPTIONS` class,
+# and the same total plural/singular miss in every ranker and the FTS
+# index. A tiny audited list of top-tier tech acronyms, not a widened
+# guard: the guard's own members (redis, analysis, status, basis) are
+# singulars that must stay pinned.
+_ACRONYM_PLURALS = {
+    "apis": "api",
+    "clis": "cli",
+    "cpus": "cpu",
+    "gpus": "gpu",
+    "guis": "gui",
+    "skus": "sku",
+    "uris": "uri",
+}
+
 
 def _stem_segment(seg: str) -> str:
     """Light inflectional stem of one hyphen-free segment (tokenizer v2).
@@ -616,6 +634,10 @@ def _stem_segment(seg: str) -> str:
     derivational conflation ('general'/'generous') is a worse failure
     mode here than an occasional unfolded plural. Plural inflection only:
 
+    - acronym plurals the guards would strand ('apis' hits the 'is'
+      ending, 'gpus' the 'us' ending, while 'api'/'gpu' early-return
+      whole at 3 chars) fold via the `_ACRONYM_PLURALS` surface map
+      before any suffix rule runs;
     - 'sses' → 'ss' (classes → class), 'ies' → 'y' (policies → policy —
       the final-y normalisation below carries both spellings to
       'polici'; 4-char forms keep 'ie', so ties meets tie whole);
@@ -654,6 +676,9 @@ def _stem_segment(seg: str) -> str:
     """
     if len(seg) < 4 or seg in _STOPWORDS or seg in _STEM_EXCEPTIONS:
         return seg
+    mapped = _ACRONYM_PLURALS.get(seg)
+    if mapped is not None:
+        return mapped
     stem = seg
     if stem.endswith("sses"):
         stem = stem[:-2]
@@ -930,8 +955,9 @@ _FINGERPRINT_PROBES: tuple[str, ...] = (
     # normalisations that put both inflections on one key.
     "cookies cookie policies policy caches cache branches branch",
     # Singular guards: -ss/-us/-is endings, digit-final acronyms, the
-    # 3-char early return, and the `_STEM_EXCEPTIONS` pins.
-    "class status analysis k8s aws alias aliases news",
+    # 3-char early return, the `_STEM_EXCEPTIONS` pins, and the
+    # `_ACRONYM_PLURALS` fold ('apis' must land on 'api').
+    "class status analysis k8s aws alias aliases news apis api",
     # Stopword-list sensitivity. `_stem_segment` exempts stopwords by
     # surface form, so membership edits respell the stream: one
     # stemmable member per list (en/sv/de/fr/es), 'todos' (an es

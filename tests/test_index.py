@@ -1748,16 +1748,19 @@ def test_tokenizer_fingerprint_pinned_constant_is_the_ratchet() -> None:
     segmentation, `_expand_kebab`'s widening — or the probe corpus
     itself) respelled the index-side token stream, which makes every
     existing on-disk index stale against live queries. Any diff
-    REQUIRES bumping `index.SCHEMA_VERSION` and re-pinning
-    `index.TOKENIZER_FINGERPRINT` to the new value — never re-pin the
-    constant alone. (On-disk stores heal either way — the runtime
-    stamp/compare uses the live fingerprint — but the bump is what
-    keeps version semantics and the CHANGELOG honest.)"""
+    REQUIRES re-pinning `index.TOKENIZER_FINGERPRINT` to the new value
+    — and bumping `index.SCHEMA_VERSION` with it iff the current
+    version has shipped in a release. (On-disk stores heal either way —
+    the runtime stamp/compare uses the live fingerprint — but the bump
+    is what keeps version semantics and the CHANGELOG honest for
+    released streams; pre-release stream amendments fold into the
+    pending bump.)"""
     from bettermemory.search import tokenizer_fingerprint
 
     assert tokenizer_fingerprint() == index.TOKENIZER_FINGERPRINT, (
-        "index-side token stream changed: bump index.SCHEMA_VERSION and "
-        f"re-pin index.TOKENIZER_FINGERPRINT = {tokenizer_fingerprint()!r}"
+        "index-side token stream changed: re-pin index.TOKENIZER_FINGERPRINT"
+        f" = {tokenizer_fingerprint()!r} (and bump index.SCHEMA_VERSION iff"
+        " the current version has shipped in a release)"
     )
 
 

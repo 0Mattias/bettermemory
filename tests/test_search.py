@@ -1023,6 +1023,48 @@ def test_stem_s_final_singular_meets_es_plural() -> None:
         )
 
 
+def test_stem_acronym_plurals_fold_to_singular() -> None:
+    """The mirror image of the `_STEM_EXCEPTIONS` class: acronym plurals
+    whose '-s' lands ON the 'ss'/'us'/'is' singular guard ('apis',
+    'gpus') were pinned whole while their 3-char singulars early-return
+    whole — a total cross-inflection miss in every ranker and the FTS
+    index ('APIs' never found a body saying 'GitHub API rate limits').
+    The `_ACRONYM_PLURALS` surface map folds the plural before the
+    suffix rules run."""
+    from bettermemory.search import fts_match_query
+
+    for plural, singular in [
+        ("apis", "api"),
+        ("clis", "cli"),
+        ("cpus", "cpu"),
+        ("gpus", "gpu"),
+        ("guis", "gui"),
+        ("skus", "sku"),
+        ("uris", "uri"),
+    ]:
+        assert tokenize(plural) == tokenize(singular) == [singular], (
+            plural,
+            singular,
+        )
+    # The guard's own members are singulars and stay pinned.
+    assert tokenize("status analysis basis redis iris travis") == [
+        "status",
+        "analysis",
+        "basis",
+        "redis",
+        "iris",
+        "travis",
+    ]
+    # Both sides of the FTS MATCH speak the folded form.
+    assert fts_match_query("APIs") == '"api"'
+    # End-to-end audit repro: plural query, singular body, every ranker.
+    body = _memory("GitHub API rate limits")
+    for mode in ("keyword", "bm25", "hybrid"):
+        hits = search([body], "APIs", mode=mode)
+        assert hits, f"'APIs' missed the 'API' body in mode={mode}"
+        assert hits[0].relevance == "high"
+
+
 def test_stem_applies_per_compound_segment() -> None:
     """Compounds stem segment-by-segment so the whole token, its
     `_expand_kebab` parts, and the `_kebab_parts` conjunctive fallback
