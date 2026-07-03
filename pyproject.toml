@@ -135,6 +135,8 @@ module = [
     "httpx",
     "anthropic",
     "openai",
+    "mem0",
+    "mem0.*",
 ]
 ignore_missing_imports = true
 
