@@ -7,7 +7,7 @@ breaking changes, minor for additive features, patch for fixes. The
 [compatibility contract](CONTRIBUTING.md#versioning-and-the-compatibility-contract)
 spells out exactly what's stable.
 
-## Unreleased
+## 3.13.0 - 2026-07-03
 
 ### Changed
 
@@ -111,6 +111,52 @@ spells out exactly what's stable.
   could never clear the gap — and parse-health counts files with the
   store's own enumeration (README.md, dot-prefixed .md) so the two
   checks cannot disagree.
+
+- **Acronym plurals meet their singulars.** 'APIs' tokenized whole
+  while 'API' stemmed to 'api' — cross-inflection queries missed
+  entirely for the most common tech plurals. A small irregular-plural
+  map (apis, clis, cpus, gpus, guis, skus, uris) folds them ahead of
+  the suffix rules; status/basis/analysis/redis stay guarded. This
+  respells the persisted stream: the tokenizer fingerprint is
+  re-pinned and existing indexes heal automatically.
+- **The stopword-only query fallback works in bm25 mode too.** The
+  fallback ranked unstripped tokens in keyword and hybrid mode, but
+  bm25 counted term frequency on the stripped stream — so
+  `mode="bm25"` still returned zero hits for queries like 'des'.
+  Fallen-back tokens now count against the unstripped body stream.
+- **A fresh index inside a populated store rebuilds instead of
+  trusting itself.** Deleting `.index.sqlite` (the historical recovery
+  advice) created an empty index stamped current; once enough
+  post-creation writes accumulated, the prefilter re-engaged and
+  untouched legacy memories vanished from search — the migration
+  recall hole, alive on the first-touch path. First touch on a
+  populated store now stamps rebuild-pending, and the next Store
+  construction auto-rebuilds.
+- **Page-level index corruption degrades instead of crashing.**
+  `status()` reads only meta pages, so a torn data/FTS b-tree page
+  passed the health gate — and then `memory_search` crashed at the
+  tool boundary, doctor certified the index healthy, and reindex
+  crashed mid-rebuild: the exact corruption class the repair path
+  exists for. Search now routes to the full scan, doctor runs a real
+  integrity probe (`PRAGMA quick_check`), and `rebuild()`'s data phase
+  recovers by recreating the file and retrying once.
+- **Annotation and show guards complete their truth tables.**
+  Search-hit link annotations treat an absent or never-populated index
+  like rebuild-pending (same candidate-scan fallback), and
+  `memory_show`'s link guard tolerates OSError from the migration
+  lock alongside the corruption cases.
+- **One adversarial file can't take down a read surface.** A memory,
+  tombstone, or episode whose frontmatter parses but carries the wrong
+  shape (`scopes: 5`) crashed Store construction, `memory_search`'s
+  scan, tombstone listing and pruning, or episode handoff — whichever
+  touched it first. Every per-file parse catch now shares one
+  skip-set: malformed files are counted and skipped, never fatal.
+- **Failed auto-rebuilds back off.** A deterministically failing index
+  rebuild (read-only dir, disk full) re-ran a full-store
+  re-tokenization on every CLI invocation and server boot. Failures
+  record an in-process memo plus a best-effort cross-process marker;
+  retries wait out an hour-long window, `bettermemory reindex` always
+  bypasses, and a successful rebuild clears both.
 
 ### Performance
 
