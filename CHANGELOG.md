@@ -7,7 +7,7 @@ breaking changes, minor for additive features, patch for fixes. The
 [compatibility contract](CONTRIBUTING.md#versioning-and-the-compatibility-contract)
 spells out exactly what's stable.
 
-## Unreleased
+## 3.13.1 - 2026-07-03
 
 ### Added
 
