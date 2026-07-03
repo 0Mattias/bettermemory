@@ -844,8 +844,9 @@ def links_for_with_status(
 def status(root: Path) -> dict[str, Any]:
     """Diagnostic snapshot of the index file. Used by
     `bettermemory doctor` to surface index health and by the reindex
-    CLI to report before/after counts. Never raises — a missing or
-    corrupt index file returns a status dict with `exists=False`."""
+    CLI to report before/after counts. Never raises — a missing index
+    file returns `exists=False`; a corrupt, version-skewed, or
+    unreadable one returns the degraded `corrupt=True` shape."""
     path = index_path(root)
     if not path.exists():
         return {"exists": False, "path": str(path)}
@@ -878,7 +879,14 @@ def status(root: Path) -> dict[str, Any]:
             }
         finally:
             conn.close()
-    except (sqlite3.DatabaseError, IndexVersionError) as exc:
+    except (OSError, sqlite3.DatabaseError, IndexVersionError) as exc:
+        # OSError is load-bearing for the never-raises contract:
+        # `_connect`'s `path.parent.mkdir` can raise EACCES/EROFS, and
+        # `path.stat()` raises FileNotFoundError when a concurrent
+        # rebuild-recovery unlinks the file between the exists() check
+        # above and the stat. Every caller treats this degraded shape
+        # as "index unusable — fall back / suggest reindex", which is
+        # the right answer mid-recovery too.
         return {
             "exists": True,
             "path": str(path),

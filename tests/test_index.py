@@ -361,6 +361,54 @@ def test_status_returns_path_for_missing(tmp_path: Path) -> None:
     assert s["path"].endswith(".index.sqlite")
 
 
+def test_status_never_raises_when_file_unlinked_mid_call(
+    store: Store, memory_dir: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The never-raises contract must hold when a concurrent
+    rebuild-recovery unlinks the index file between status()'s exists()
+    check and its `path.stat()` size read. Simulate the race by
+    unlinking right after `_ensure_schema` — where a real
+    `_unlink_index_files` from another process would land: the meta
+    reads still answer through the open fd, then the stat hits
+    FileNotFoundError. Pre-fix that OSError escaped the
+    (DatabaseError, IndexVersionError)-only except and turned doctor's
+    diagnostic call into a crash exactly when the index was mid-repair."""
+    store.write(content="alpha", scopes=["tools"])
+    real_ensure = index._ensure_schema
+
+    def ensure_then_unlink(conn: sqlite3.Connection, path: Path) -> None:
+        real_ensure(conn, path)
+        path.unlink()
+
+    monkeypatch.setattr(index, "_ensure_schema", ensure_then_unlink)
+    s = index.status(memory_dir)
+    assert s.get("corrupt") is True
+    assert "error" in s
+
+
+def test_status_never_raises_on_connect_oserror(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """`_connect`'s `path.parent.mkdir` can raise OSError (EACCES, a
+    read-only filesystem); status() must return the degraded corrupt
+    shape rather than propagate — doctor and the reindex CLI call it
+    precisely when the index is in a weird state."""
+    root = tmp_path / "memories"
+    root.mkdir()
+    # A placeholder file passes the exists() gate so status() reaches
+    # the monkeypatched _connect; its content is never read.
+    index.index_path(root).write_bytes(b"placeholder")
+
+    def raise_oserror(path: Path) -> sqlite3.Connection:
+        raise PermissionError(13, "Permission denied", str(path))
+
+    monkeypatch.setattr(index, "_connect", raise_oserror)
+    s = index.status(root)
+    assert s["exists"] is True
+    assert s.get("corrupt") is True
+    assert "Permission denied" in s["error"]
+
+
 # ---------------------------------------------------------------------------
 # id → filename lookup (H1 — schema v2)
 # ---------------------------------------------------------------------------
