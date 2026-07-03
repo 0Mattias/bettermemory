@@ -15,11 +15,12 @@ from typing import TYPE_CHECKING, Any
 
 from ..audit import (
     DEFAULT_LOOKBACK_SECONDS,
+    is_duplicate_audit,
     probe_for_miss,
     search_miss_fields,
     turn_audited_fields,
 )
-from ..events import iter_events_window
+from ..events import iter_events_window, redact_query
 from ..models import utcnow
 from ._shared import Context, _advance_turn
 
@@ -185,6 +186,22 @@ async def memory_audit_turn(
     # split lets `memory_health` derive a denominator (audits run)
     # for the silent-miss *rate* without conflating "audit didn't
     # run this turn" with "audit ran and found nothing."
+    #
+    # Re-audit dedup, mirroring the Stop hook: a repeated audit of the
+    # same (session, message) inside `REAUDIT_DEDUP_WINDOW_SECONDS`
+    # records `turn_audited` with `repeat=True` and skips the
+    # companion `search_miss` — multi-stop turns re-dispatch the same
+    # last user message and used to multiply one decision point into
+    # N miss events. `client_model` stays unset on this producer: the
+    # MCP channel carries no model identity (the transcript-reading
+    # Stop hook is the only source).
+    repeat = is_duplicate_audit(
+        recent,
+        session_id=state.session_id,
+        probe_query_hash=redact_query(user_message)["hash"],
+        probe_query_text=user_message,
+        now=utcnow(),
+    )
     deps.recorder.record(
         "turn_audited",
         **turn_audited_fields(
@@ -193,9 +210,10 @@ async def memory_audit_turn(
             probe_mode=probe_mode,
             assistant_present=assistant_response is not None,
             triggered_from="mcp_tool",
+            repeat=repeat,
         ),
     )
-    if report.is_miss:
+    if report.is_miss and not repeat:
         deps.recorder.record(
             "search_miss",
             **search_miss_fields(

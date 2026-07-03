@@ -75,7 +75,7 @@ search_mode = "hybrid"
 # Usage-aware ranking. When true, a bounded "endorsement" factor (the same
 # shape as the recency boost — capped at +10%, so it only breaks near-ties,
 # never overrides relevance) nudges memories the model has DELIBERATELY
-# applied (an explicit memory_record_use(applied), not the ~2-turn auto-
+# applied (an explicit memory_record_use(applied), not the auto-
 # fallback) up the results — so a fact that keeps proving load-bearing wins
 # a tie over a never-endorsed peer. Off by default: it reorders results and
 # costs one event-log read per search. Counts are recent (active-log window),

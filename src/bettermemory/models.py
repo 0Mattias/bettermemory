@@ -428,6 +428,15 @@ class MemoryHit(BaseModel):
 
     `category` mirrors the persisted memory field; surfaced on every hit
     so triage can spot ambient context without expanding.
+
+    `query_unique` is the coverage denominator the relevance label was
+    computed against (distinct query tokens; the same value on every hit
+    of one search, 0 on browse-mode hits). Together with
+    `len(match_terms)` it makes the label REPLAYABLE — a logged hit can
+    be re-labelled under a candidate formula without re-running the
+    ranker. Telemetry-only: the response builder deliberately does not
+    serialise it, so the shadow-label calibration never nudges live
+    model behavior.
     """
 
     id: str
@@ -447,6 +456,7 @@ class MemoryHit(BaseModel):
     path_drift_verified_paths: list[str] = []
     path_drift_expected_absent_paths: list[str] = []
     category: Category | None = None
+    query_unique: int = 0
 
 
 class MemorySummary(BaseModel):

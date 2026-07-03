@@ -280,6 +280,13 @@ class EvalReport:
 
     silent_miss_recent: list[SilentMissCandidate] = field(default_factory=list)
 
+    # Repeat audits excluded from the denominators (3.14+ dedup) and
+    # per-model telemetry slices ({model: {audited, no_signal,
+    # misses}}, from the Stop hook's transcript-derived `client_model`
+    # stamp). Both additive: zero / empty on pre-3.14 logs.
+    repeat_audits: int = 0
+    by_model: dict[str, dict[str, int]] = field(default_factory=dict)
+
     def to_dict(self) -> dict[str, Any]:
         return {
             "generated_at": self.generated_at.isoformat(),
@@ -295,7 +302,9 @@ class EvalReport:
                 "turns_audited": self.turns_audited,
                 "turns_no_signal": self.turns_no_signal,
                 "silent_misses": self.silent_misses,
+                "repeat_audits": self.repeat_audits,
             },
+            "by_model": self.by_model,
             "memory_helped_rate": self.memory_helped_rate.to_dict(),
             "endorsement_rate": self.endorsement_rate.to_dict(),
             "silent_miss_rate": self.silent_miss_rate.to_dict(),
@@ -465,6 +474,18 @@ def compute_eval(
     # `search_miss` by `event_id`.
     latest_miss_cutoff: datetime | None = None
     acknowledged_miss_event_ids: set[str] = set()
+    # Repeat audits (the same session+message re-probed by a
+    # multi-stop turn; `repeat=True` since 3.14) are excluded from
+    # every denominator — their companion `search_miss` is never
+    # emitted, so counting them would dilute the rate. Tallied
+    # separately so the report can show how much re-audit noise the
+    # dedup absorbed.
+    repeat_audits = 0
+    # Per-model slices of the audit telemetry, keyed by the
+    # `client_model` the Stop hook stamps off the transcript (absent
+    # on pre-3.14 events and on the MCP producer — those events simply
+    # don't bucket; no "unknown" row is manufactured).
+    by_model: dict[str, dict[str, int]] = {}
 
     for ev in events:
         if not isinstance(ev, dict):
@@ -619,6 +640,9 @@ def compute_eval(
             if ts is None or ts < latest_miss_cutoff:
                 continue
         if ev.get("kind") == "turn_audited":
+            if ev.get("repeat"):
+                repeat_audits += 1
+                continue
             # `no_signal` audits (empty store, gated probe, semantic model
             # unavailable) are not miss-capable turns; counting them dilutes
             # silent_miss_rate's denominator. Mirrors health.py's
@@ -628,6 +652,15 @@ def compute_eval(
                 turns_no_signal += 1
             else:
                 turns_audited += 1
+            model = ev.get("client_model")
+            if isinstance(model, str) and model:
+                bucket = by_model.setdefault(
+                    model, {"audited": 0, "no_signal": 0, "misses": 0}
+                )
+                if ev.get("verdict") == "no_signal":
+                    bucket["no_signal"] += 1
+                else:
+                    bucket["audited"] += 1
             rule = ev.get("threshold_rule")
             if isinstance(rule, str) and rule:
                 threshold_rule = rule
@@ -647,6 +680,11 @@ def compute_eval(
             if isinstance(event_id, str) and event_id in acknowledged_miss_event_ids:
                 continue
             silent_misses += 1
+            model = ev.get("client_model")
+            if isinstance(model, str) and model:
+                by_model.setdefault(model, {"audited": 0, "no_signal": 0, "misses": 0})[
+                    "misses"
+                ] += 1
             rule = ev.get("threshold_rule")
             if isinstance(rule, str) and rule:
                 threshold_rule = rule
@@ -717,6 +755,8 @@ def compute_eval(
         cold_endorsement_memories_total=cold_total,
         endorsement_min_retrievals=floor,
         silent_miss_recent=silent_miss_buffer,
+        repeat_audits=repeat_audits,
+        by_model=by_model,
     )
     report.memory_helped_rate = RateCI.from_counts(
         explicit_endorsements_with_excerpt, retrieval_occurrences
@@ -755,10 +795,23 @@ def render_text(report: EvalReport) -> str:
         lines.append(
             f"Turns no-signal (excluded)          {report.turns_no_signal:>5d}"
         )
+    if report.repeat_audits:
+        lines.append(f"Repeat audits (deduped, excluded)   {report.repeat_audits:>5d}")
     lines.append("")
     lines.append(_format_rate("memory_helped_rate", report.memory_helped_rate))
     lines.append(_format_rate("endorsement_rate ", report.endorsement_rate))
     lines.append(_format_rate("silent_miss_rate ", report.silent_miss_rate))
+
+    if report.by_model:
+        lines.append("")
+        lines.append("Per-model audit telemetry (Stop-hook `client_model` stamp):")
+        for model in sorted(report.by_model):
+            counts = report.by_model[model]
+            lines.append(
+                f"  {model:<28s} audited={counts.get('audited', 0):<5d} "
+                f"misses={counts.get('misses', 0):<4d} "
+                f"no_signal={counts.get('no_signal', 0)}"
+            )
 
     if report.cold_endorsement_memories_rows or report.cold_endorsement_memories_total:
         lines.append("")
@@ -1380,8 +1433,228 @@ def render_threshold_sweep_text(report: ThresholdSweepReport) -> str:
         lines.append(f"  {row.rule:<30s} {row.would_flag:>7d}  {delta:>7s}  {pct:>6s}")
     lines.append("")
     lines.append("Caveat: this is a *relative* sweep over events the v1 rule")
-    lines.append("already flagged. Strictly looser rules cannot be evaluated")
-    lines.append("from the log alone — turn_audited does not carry top_hits.")
+    lines.append("already flagged. Strictly looser rules replay over the")
+    lines.append("turn_audited stream instead — see --widening-preview.")
+    return "\n".join(lines) + "\n"
+
+
+# ---------------------------------------------------------------------------
+# Widening preview — replay of candidate LOOSER rules over turn_audited
+# ---------------------------------------------------------------------------
+#
+# The strict sweep above can only compare rules at least as strict as
+# v1, because historically only `search_miss` events (v1 already fired)
+# carried `top_hits`. Since 3.14 every miss-capable `turn_audited`
+# event carries a compact `top_hits` payload with the RAW coverage
+# features (matched_unique / query_unique / score) plus the shadow
+# `relevance_v2` label — so a candidate rule that fires where v1
+# didn't finally has a denominator to replay against. This lane is the
+# calibration surface for the relevance-label widening (the
+# "long natural-language queries land at medium" blind spot audit.py's
+# docstring names).
+#
+# Honesty note on the baseline: the v1 count here is REPLAYED from the
+# logged features (`_rule_v1_top1_high`), not read off the logged
+# verdict. The production pipeline applies one suppression the event
+# payload can't reproduce (the caller-in-top-hit-project arm), so both
+# the v1 replay and every widening row overcount what production would
+# flag — symmetrically. The delta between rows is the honest signal;
+# the absolute counts are upper bounds.
+
+
+def _rule_w1_top1_v2_high(
+    top_hits: list[dict[str, Any]], recent_retrieval_count: int
+) -> bool:
+    """Widening candidate: top-1 SHADOW label == "high" and no recent
+    retrieval. The shadow label (`search._relevance_label_v2`) keeps
+    v1's coverage arm and adds an absolute matched-token floor, so this
+    rule flags a strict superset of the v1 replay — the delta is
+    exactly the cohort the coverage-fraction blind spot hides."""
+    if recent_retrieval_count > 0:
+        return False
+    if not top_hits:
+        return False
+    return top_hits[0].get("relevance_v2") == "high"
+
+
+# Registry of widening candidates, separate from THRESHOLD_RULES on
+# purpose: mixing looser rules into the strict sweep would render
+# meaningless rows there (over the v1-flagged replay set a widening
+# always reads 100%). Additive like THRESHOLD_RULES.
+WIDENING_RULES: dict[str, ThresholdRule] = {
+    "w1_top1_v2_high": ThresholdRule(
+        name="w1_top1_v2_high",
+        description="Top-1 shadow relevance_v2 == 'high' (coverage >= 0.75 "
+        "OR matched_unique >= 4) AND no retrieval in window.",
+        check=_rule_w1_top1_v2_high,
+    ),
+}
+
+
+@dataclass
+class WideningPreviewReport:
+    """Replay of `WIDENING_RULES` over miss-capable `turn_audited` events.
+
+    `audits_with_features` is the denominator — turn_audited events
+    carrying the 3.14+ `top_hits` payload. Older events (and producers
+    that probed to a no-hit result) land in `audits_without_features`
+    so the report is explicit about how much history was replayable.
+    Repeat audits are excluded (`repeat_audits_skipped`), matching the
+    rate surfaces. The bulk `silent_miss_cutoff` marker is deliberately
+    NOT applied: it retracts pre-3.14 miss batches, and no event that
+    predates the feature payload can enter this replay anyway.
+    """
+
+    generated_at: datetime
+    window_seconds: int | None
+    total_events_scanned: int
+    audits_with_features: int
+    audits_without_features: int
+    repeat_audits_skipped: int
+    v1_baseline_flagged: int
+    rows: list[ThresholdSweepRow] = field(default_factory=list)
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "generated_at": self.generated_at.isoformat(),
+            "window_seconds": self.window_seconds,
+            "total_events_scanned": self.total_events_scanned,
+            "audits_with_features": self.audits_with_features,
+            "audits_without_features": self.audits_without_features,
+            "repeat_audits_skipped": self.repeat_audits_skipped,
+            "v1_baseline_flagged": self.v1_baseline_flagged,
+            "rows": [r.to_dict() for r in self.rows],
+        }
+
+
+def compute_widening_preview(
+    events: Iterable[dict[str, Any]],
+    *,
+    rules: dict[str, ThresholdRule] | None = None,
+    since: timedelta | None = None,
+    now: datetime | None = None,
+) -> WideningPreviewReport:
+    """Replay candidate looser rules over the turn_audited stream.
+
+    Walks miss-capable (`verdict != "no_signal"`, non-repeat)
+    `turn_audited` events carrying `top_hits` and counts, per rule in
+    `rules` (default `WIDENING_RULES`), how many turns it would have
+    flagged — alongside the replayed v1 baseline the deltas are
+    measured against. See the section comment above for why the
+    baseline is replayed rather than read off the logged verdict.
+    """
+    now = now or datetime.now(timezone.utc)
+    cutoff: datetime | None = (now - since) if since is not None else None
+    rules_in_use = rules or WIDENING_RULES
+
+    total_events_scanned = 0
+    with_features = 0
+    without_features = 0
+    repeats_skipped = 0
+    v1_count = 0
+    counts: dict[str, int] = {name: 0 for name in rules_in_use}
+    for ev in events:
+        if not isinstance(ev, dict):
+            continue
+        total_events_scanned += 1
+        if ev.get("kind") != "turn_audited":
+            continue
+        ts = _parse_ts(ev.get("ts"))
+        if cutoff is not None and (ts is None or ts < cutoff):
+            continue
+        if ev.get("repeat"):
+            repeats_skipped += 1
+            continue
+        if ev.get("verdict") == "no_signal":
+            continue
+        top_hits = ev.get("top_hits")
+        if not isinstance(top_hits, list) or not top_hits:
+            without_features += 1
+            continue
+        recent = ev.get("recent_retrieval_count")
+        # `bool` ⊂ `int` — same caveat as `_silent_miss_from_event`.
+        if not isinstance(recent, int) or isinstance(recent, bool):
+            recent = 0
+        with_features += 1
+        if _rule_v1_top1_high(top_hits, recent):
+            v1_count += 1
+        for name, rule in rules_in_use.items():
+            if rule.check(top_hits, recent):
+                counts[name] += 1
+
+    rows = [
+        ThresholdSweepRow(
+            rule=name,
+            description=rules_in_use[name].description,
+            would_flag=counts[name],
+            delta_from_v1=counts[name] - v1_count,
+            delta_pct=(counts[name] / v1_count) if v1_count > 0 else None,
+        )
+        for name in rules_in_use
+    ]
+    rows.sort(key=lambda r: (-r.would_flag, r.rule))
+
+    return WideningPreviewReport(
+        generated_at=now,
+        window_seconds=int(since.total_seconds()) if since is not None else None,
+        total_events_scanned=total_events_scanned,
+        audits_with_features=with_features,
+        audits_without_features=without_features,
+        repeat_audits_skipped=repeats_skipped,
+        v1_baseline_flagged=v1_count,
+        rows=rows,
+    )
+
+
+def render_widening_preview_text(report: WideningPreviewReport) -> str:
+    """Plain-text rendering, mirroring the strict sweep's shape."""
+    lines: list[str] = []
+    window = (
+        "all time"
+        if report.window_seconds is None
+        else _humanize_seconds(report.window_seconds)
+    )
+    lines.append(f"bettermemory eval --widening-preview — last {window}")
+    lines.append("─" * 60)
+    lines.append(f"Events scanned              {report.total_events_scanned:>5d}")
+    lines.append(f"Replayable audited turns    {report.audits_with_features:>5d}")
+    if report.audits_without_features:
+        lines.append(
+            f"  (skipped {report.audits_without_features} audits without "
+            "top_hits — pre-3.14 events or no-hit probes)"
+        )
+    if report.repeat_audits_skipped:
+        lines.append(
+            f"  (skipped {report.repeat_audits_skipped} repeat audits — "
+            "multi-stop re-probes of the same message)"
+        )
+    if report.audits_with_features == 0:
+        lines.append("")
+        lines.append(
+            "No replayable audited turns yet. The preview needs "
+            "`turn_audited` events carrying `top_hits` (3.14+); let the "
+            "Stop hook run for a while and re-check."
+        )
+        return "\n".join(lines) + "\n"
+    lines.append("")
+    lines.append(f"v1 baseline (replayed)      {report.v1_baseline_flagged:>5d}")
+    lines.append("")
+    lines.append(f"{'rule':<32s} {'flagged':>7s}  {'Δ v1':>7s}  {'% v1':>6s}")
+    for row in report.rows:
+        if row.delta_pct is None:
+            pct = "—"
+        else:
+            pct = f"{row.delta_pct * 100:5.1f}%"
+        lines.append(
+            f"  {row.rule:<30s} {row.would_flag:>7d}  "
+            f"{row.delta_from_v1:+7d}  {pct:>6s}"
+        )
+    lines.append("")
+    lines.append("Δ v1 counts turns the widened rule would flag that the")
+    lines.append("replayed v1 baseline would not — the coverage-fraction")
+    lines.append("blind-spot cohort. Both sides exclude shielded turns but")
+    lines.append("not the project-suppression arm (see compute docstring),")
+    lines.append("so absolute counts are upper bounds; the delta is the signal.")
     return "\n".join(lines) + "\n"
 
 

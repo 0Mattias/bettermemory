@@ -833,10 +833,18 @@ async def test_show_response_includes_use_token(server: Any) -> None:
 
 async def test_use_token_auto_commits_after_two_turns(
     server_with_state: tuple[Any, SessionState, Path],
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """Issue token at turn N; two more memory_* calls (turns N+1, N+2)
     later, the next call (turn N+3) sees the search ids logged as
-    auto-applied in the event log."""
+    auto-applied in the event log.
+
+    The wall-clock floor (3.14 — the Stop hook normally settles a turn's
+    retrievals first) is zeroed to exercise the turn axis end-to-end;
+    the floor has its own coverage in test_telemetry_v2.py."""
+    import bettermemory.session as session_mod
+
+    monkeypatch.setattr(session_mod, "AUTO_COMMIT_MIN_AGE_SECONDS", 0.0)
     srv, _state, memory_dir = server_with_state
     res = await _call(
         srv, "memory_write", content="A retrievable fact.", scopes=["tools"]
@@ -1055,6 +1063,7 @@ async def test_production_cross_id_space_hook_event_suppresses_auto_commit(
 
 async def test_stale_use_event_does_not_falsely_purge_fresh_token(
     server_with_state: tuple[Any, SessionState, Path],
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """Regression: pre-2.6.8 the in-process dedup scan matched on
     `(session_id, memory_id)` only, with no timestamp guard. A memory
@@ -1063,7 +1072,13 @@ async def test_stale_use_event_does_not_falsely_purge_fresh_token(
     first record_use event, dropping the auto-commit cadence on a
     legitimate new retrieval. The fix is the `event.ts >= token.issued_at`
     filter in `_already_recorded_pending_ids`.
+
+    The 3.14 wall-clock floor is zeroed so the final auto-commit proof
+    still runs on the turn axis (its own coverage: test_telemetry_v2).
     """
+    import bettermemory.session as session_mod
+
+    monkeypatch.setattr(session_mod, "AUTO_COMMIT_MIN_AGE_SECONDS", 0.0)
     srv, state, memory_dir = server_with_state
     res = await _call(
         srv, "memory_write", content="A retrievable fact.", scopes=["tools"]

@@ -118,7 +118,13 @@ output. The compute layer is `src/bettermemory/eval.py`
 (`compute_eval` / `parse_since` / `render_text`) for callers outside
 the CLI.
 
-Two additional modes:
+The default report also breaks the audit telemetry down per model
+(`by_model`, from the `client_model` stamp the Stop hook reads off the
+transcript — absent on pre-3.14 events) and shows how many repeat
+audits the re-audit dedup absorbed (`repeat_audits`, excluded from
+every denominator).
+
+Three additional modes:
 
 - `--tool-usage`: per-MCP-tool call counts from the event log — the
   empirical input for trimming the default tool surface. Tools without
@@ -128,18 +134,31 @@ Two additional modes:
   `proposals_enqueued`) are excluded — they're consequences of calls,
   not calls.
 - `--threshold-sweep`: replays logged `search_miss` events against
-  alternative threshold rules (`v2_top1_high_score_50`,
+  alternative STRICTER threshold rules (`v2_top1_high_score_50`,
   `v3_top1_high_dominant`, `v4_top1_high_strict_combined`) to ask
   whether `v1_top1_high` over-fires. Only stricter-than-v1 rules are
-  replayable: `turn_audited` events don't carry `top_hits`, so turns v1
-  didn't flag can't be re-evaluated. Cutoff-invalidated misses are
-  excluded (a code bug, not a rule decision); acked misses are
-  deliberately kept (a confirmed false positive is exactly what a
-  stricter candidate is judged against).
+  replayable here: historical `search_miss` events exist only for turns
+  v1 already flagged. Cutoff-invalidated misses are excluded (a code
+  bug, not a rule decision); acked misses are deliberately kept (a
+  confirmed false positive is exactly what a stricter candidate is
+  judged against).
+- `--widening-preview`: the forward-looking counterpart — replays
+  candidate LOOSER rules over the `turn_audited` stream, which since
+  3.14 carries per-turn `top_hits` with the raw coverage features
+  (`matched_unique` / `query_unique` / `score`) plus the shadow
+  `relevance_v2` label. The bundled candidate (`w1_top1_v2_high`) adds
+  an absolute matched-token floor to the coverage fraction, targeting
+  the documented blind spot where long natural-language queries land at
+  "medium" on strong matches. The v1 baseline is replayed from the same
+  features, so the delta isolates the rule change; both sides slightly
+  overcount production (the project-suppression arm isn't replayable
+  from the event), so read the delta, not the absolutes. Because
+  logging the RAW pair makes the record formula-agnostic, any future
+  candidate rule can be back-tested the same way.
 
-Both honor `--since` and `--json`. Rules live in
-`eval.THRESHOLD_RULES`; adding one is a checker function plus a
-registry entry.
+All honor `--since` and `--json`. Rules live in
+`eval.THRESHOLD_RULES` / `eval.WIDENING_RULES`; adding one is a checker
+function plus a registry entry.
 
 ## Comparative harness
 

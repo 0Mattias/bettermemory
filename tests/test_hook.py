@@ -95,7 +95,7 @@ def test_extract_last_exchange_finds_last_pair(tmp_path: Path) -> None:
             "message": {"content": [{"type": "text", "text": "latest reply"}]},
         },
     )
-    user, assistant = _extract_last_exchange(transcript)
+    user, assistant, _ = _extract_last_exchange(transcript)
     assert user == "latest ask"
     assert assistant == "latest reply"
 
@@ -121,14 +121,14 @@ def test_extract_last_exchange_skips_thinking_and_tool_use(
             },
         },
     )
-    _, assistant = _extract_last_exchange(transcript)
+    _, assistant, _ = _extract_last_exchange(transcript)
     assert assistant == "user-visible reply"
 
 
 def test_extract_last_exchange_handles_missing_file(tmp_path: Path) -> None:
     """A transcript path that doesn't exist must return (None, None)
     rather than raising. The hook handles the None case by no-oping."""
-    user, assistant = _extract_last_exchange(tmp_path / "missing.jsonl")
+    user, assistant, _ = _extract_last_exchange(tmp_path / "missing.jsonl")
     assert user is None and assistant is None
 
 
@@ -153,7 +153,7 @@ def test_extract_last_exchange_tolerates_malformed_lines(tmp_path: Path) -> None
         + "\n",
         encoding="utf-8",
     )
-    user, assistant = _extract_last_exchange(transcript)
+    user, assistant, _ = _extract_last_exchange(transcript)
     assert user == "first"
     assert assistant == "reply"
 
@@ -186,7 +186,7 @@ def test_extract_last_exchange_skips_task_notification_row(tmp_path: Path) -> No
             "message": {"content": [{"type": "text", "text": "deployed"}]},
         },
     )
-    user, assistant = _extract_last_exchange(transcript)
+    user, assistant, _ = _extract_last_exchange(transcript)
     assert user == "how do we deploy myapp to staging again?"
     assert assistant == "deployed"
 
@@ -223,7 +223,7 @@ def test_extract_last_exchange_skips_meta_and_wrapper_rows(tmp_path: Path) -> No
             "message": {"content": [{"type": "text", "text": "docs shown"}]},
         },
     )
-    user, assistant = _extract_last_exchange(transcript)
+    user, assistant, _ = _extract_last_exchange(transcript)
     assert user == "/plugin-marketplace docs"
     assert assistant == "docs shown"
 
@@ -242,7 +242,7 @@ def test_extract_last_exchange_skips_empty_user_rows(tmp_path: Path) -> None:
             "message": {"content": [{"type": "text", "text": "answer"}]},
         },
     )
-    user, _ = _extract_last_exchange(transcript)
+    user, _, _ = _extract_last_exchange(transcript)
     assert user == "real question"
 
 
@@ -263,7 +263,7 @@ def test_extract_last_exchange_none_when_only_synthetic_rows(tmp_path: Path) -> 
             "message": {"content": "expanded skill markdown"},
         },
     )
-    user, assistant = _extract_last_exchange(transcript)
+    user, assistant, _ = _extract_last_exchange(transcript)
     assert user is None
     assert assistant is None
 
@@ -1082,12 +1082,16 @@ def test_hook_skips_attribution_when_already_used(
     assert use_events[0]["attribution"] == "model"
 
 
-def test_hook_emits_no_attribution_event_when_reply_doesnt_quote(
+def test_hook_emits_auto_fallback_when_reply_doesnt_quote(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     """If no candidate sentence from any retrieved memory's body
-    appears in the reply, the hook must NOT emit a `use` event —
-    silence is the correct signal for a no-match turn."""
+    appears in the reply, the hook settles the pending retrieval with
+    the plain auto-fallback event (`auto=True, attribution="auto"`) —
+    the turn is over and the memory demonstrably didn't shape the
+    reply, so this is the end-of-turn home of the commit that used to
+    fire mid-turn from the in-process ~2-turn TTL. No hook-attributed
+    (`attribution="hook"`) event may be emitted for a no-match turn."""
     mem_dir = tmp_path / "mem"
     mem_dir.mkdir()
     monkeypatch.setenv("BETTERMEMORY_DIR", str(mem_dir))
@@ -1118,7 +1122,13 @@ def test_hook_emits_no_attribution_event_when_reply_doesnt_quote(
 
     events = list(iter_events(mem_dir))
     use_events = [e for e in events if e["kind"] == "use"]
-    assert use_events == []
+    assert len(use_events) == 1
+    auto_event = use_events[0]
+    assert auto_event["ids"] == [written.id]
+    assert auto_event["outcome"] == "applied"
+    assert auto_event["auto"] is True
+    assert auto_event["attribution"] == "auto"
+    assert auto_event["triggered_from"] == "stop_hook"
 
 
 # ---------------------------------------------------------------------------

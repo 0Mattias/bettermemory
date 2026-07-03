@@ -85,6 +85,7 @@ from .models import Memory, MemoryHit, generate_ulid
 from .origin import Origin, repos_match
 from .search import (
     SearchMode,
+    _relevance_label_v2,
     _strip_stopwords,
     _tokenize_unstemmed,
     search as run_search,
@@ -128,14 +129,27 @@ DEFAULT_LOOKBACK_SECONDS = 60
 # reads with — `handlers/search.py` imports this constant so the
 # probe's tally and the model's actual retrieval tally share one
 # substrate). A retrieval older than this is considered settled —
-# auto-commit will already have fired (the in-process TTL is two
-# turns, typically seconds to minutes), so attributing to a stale
-# retrieval would risk double-counting. Wide enough to cover normal
-# conversational pauses, narrow enough to focus on the current turn.
+# the Stop hook settles each turn's retrievals at turn end, and the
+# in-process fallback (`session.consume_old_tokens`) holds behind a
+# wall-clock floor mirroring this same window (cross-pinned in
+# tests), so attributing to a stale retrieval would risk
+# double-counting. Wide enough to cover normal conversational
+# pauses, narrow enough to focus on the current turn.
 # Lives here rather than in hook.py because audit.py imports nothing
 # from the handlers or events modules, so both producers AND the
 # search handler can import it without a cycle.
 ATTRIBUTION_LOOKBACK_SECONDS = 600
+
+# Window for the re-audit dedup (`is_duplicate_audit`). The Stop hook
+# fires on EVERY stop of a session, and a long autonomous turn stops
+# many times without the user typing anything new — so the same last
+# user message gets re-probed on each stop. Dogfood evidence
+# (2026-07-03): one ship-go message produced 7 identical `search_miss`
+# events over 45 minutes, inflating the miss numerator ~7x for one
+# actual decision point. An hour comfortably covers the longest
+# observed autonomous turns; a genuinely re-typed identical message an
+# hour later is a fresh decision point and legitimately re-audits.
+REAUDIT_DEDUP_WINDOW_SECONDS = 3600
 
 # Default creation-shield window: memories CREATED within this many
 # seconds of `now` are dropped from the probe's candidate set — a
@@ -251,6 +265,14 @@ class MissHit:
     usage on a busy store. Snippet uses the same `snippet_for` shape the
     search response builds, so a replay can look identical to a real
     search hit.
+
+    `matched_unique` / `query_unique` are the raw coverage pair the
+    relevance label was computed from, and `relevance_v2` is the shadow
+    label (`search._relevance_label_v2`) over the same pair. Logging
+    the RAW pair — not just the labels — is what makes the historical
+    record formula-agnostic: any future candidate rule can be replayed
+    from the log alone, closing the "threshold-sweep can narrow but
+    never widen" constraint at the data layer.
     """
 
     id: str
@@ -258,6 +280,9 @@ class MissHit:
     relevance: str
     scopes: tuple[str, ...]
     snippet: str
+    matched_unique: int = 0
+    query_unique: int = 0
+    relevance_v2: str = "low"
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -266,6 +291,27 @@ class MissHit:
             "relevance": self.relevance,
             "scopes": list(self.scopes),
             "snippet": self.snippet,
+            "matched_unique": self.matched_unique,
+            "query_unique": self.query_unique,
+            "relevance_v2": self.relevance_v2,
+        }
+
+    def to_compact_dict(self) -> dict[str, Any]:
+        """Lean per-hit shape for the every-turn `turn_audited` event.
+
+        Drops `scopes` and `snippet` — those matter for triaging a
+        flagged miss (`search_miss` keeps the full shape), while the
+        every-turn event only needs the calibration features. Keeping
+        the two shapes distinct keeps ~60% of the bytes off the event
+        that fires on every single turn.
+        """
+        return {
+            "id": self.id,
+            "score": self.score,
+            "relevance": self.relevance,
+            "relevance_v2": self.relevance_v2,
+            "matched_unique": self.matched_unique,
+            "query_unique": self.query_unique,
         }
 
 
@@ -354,6 +400,8 @@ def turn_audited_fields(
     probe_mode: str,
     assistant_present: bool,
     triggered_from: str,
+    repeat: bool = False,
+    client_model: str | None = None,
 ) -> dict[str, Any]:
     """Canonical field set for a ``turn_audited`` event.
 
@@ -376,6 +424,30 @@ def turn_audited_fields(
     event-identical to a benign per-turn one (bare continuation, no
     hits), and no log consumer could split the permanently-unmeasured
     cohort from the healthy one.
+
+    Additive calibration fields (each omitted when absent, so events
+    from older producers keep their exact prior shape):
+
+    - ``probe_query`` — the probed user message; the Recorder redacts
+      it to ``{hash, preview, len}`` unless ``log_queries_verbatim``.
+      Carrying it on EVERY audited turn (not just flagged misses) is
+      what makes the re-audit dedup possible and gives the widening
+      calibration its denominator.
+    - ``top_hits`` — compact per-hit calibration features
+      (`MissHit.to_compact_dict`: id/score/relevance/relevance_v2/
+      matched_unique/query_unique, no snippet). Pre-change only
+      `search_miss` carried hits, so a rule that fires where v1 didn't
+      could never be evaluated against history.
+    - ``repeat`` — True when `is_duplicate_audit` matched an earlier
+      audit of the same (session, message) inside
+      `REAUDIT_DEDUP_WINDOW_SECONDS`. Repeat events keep cadence
+      visible while eval/health exclude them from denominators, and
+      producers skip the companion `search_miss` entirely.
+    - ``client_model`` — the model id the Stop hook read off the
+      transcript's latest assistant row (e.g. "claude-sonnet-5").
+      The MCP channel carries no model identity, so the hook is the
+      only producer that can stamp it; per-model usage slices in
+      `bettermemory eval` read this field.
     """
     if triggered_from not in _VALID_TRIGGERED_FROM:
         raise ValueError(
@@ -394,6 +466,14 @@ def turn_audited_fields(
     }
     if report.no_signal_reason is not None:
         fields["no_signal_reason"] = report.no_signal_reason
+    if report.probe_query is not None:
+        fields["probe_query"] = report.probe_query
+    if report.top_hits:
+        fields["top_hits"] = [h.to_compact_dict() for h in report.top_hits]
+    if repeat:
+        fields["repeat"] = True
+    if client_model is not None:
+        fields["client_model"] = client_model
     return fields
 
 
@@ -403,6 +483,7 @@ def search_miss_fields(
     session_id: str,
     triggered_from: str,
     event_id: str | None = None,
+    client_model: str | None = None,
 ) -> dict[str, Any]:
     """Canonical field set for a ``search_miss`` event. Pairs with
     :func:`turn_audited_fields` — see that docstring for the
@@ -427,7 +508,7 @@ def search_miss_fields(
             f"triggered_from must be one of "
             f"{sorted(_VALID_TRIGGERED_FROM)!r}, got {triggered_from!r}"
         )
-    return {
+    fields: dict[str, Any] = {
         "event_id": event_id if event_id is not None else generate_ulid(),
         "session_id": session_id,
         "threshold_rule": report.threshold_rule,
@@ -437,6 +518,67 @@ def search_miss_fields(
         "probe_query": report.probe_query,
         "triggered_from": triggered_from,
     }
+    if client_model is not None:
+        fields["client_model"] = client_model
+    return fields
+
+
+def is_duplicate_audit(
+    events: list[dict[str, Any]],
+    *,
+    session_id: str,
+    probe_query_hash: str | None,
+    probe_query_text: str,
+    now: datetime,
+    window_seconds: int = REAUDIT_DEDUP_WINDOW_SECONDS,
+) -> bool:
+    """True when this (session, message) pair was already audited inside
+    the dedup window.
+
+    The Stop hook fires on every stop of a session; a long autonomous
+    turn stops many times with the same last user message, and each
+    stop re-probed and re-flagged it — the 2026-07-03 dogfood log shows
+    one message producing 7 identical `search_miss` events. Producers
+    call this before emitting: a duplicate still records `turn_audited`
+    (with `repeat=True`, keeping cadence observable) but never a second
+    `search_miss`, and eval/health exclude repeats from denominators.
+
+    Matching reads the `probe_query` field that `turn_audited_fields`
+    now carries, in BOTH shapes the Recorder can produce: the redacted
+    ``{hash, preview, len}`` dict (compared via `probe_query_hash` — the
+    producer computes it with `events.redact_query` so the comparison
+    uses the exact production hash) and the verbatim string
+    (`log_queries_verbatim = true`, compared via `probe_query_text`).
+    Events without `probe_query` (older producers) never match — the
+    dedup only engages on data written after this field shipped, which
+    biases toward the pre-existing behavior (re-flag) rather than
+    suppressing a genuine miss on legacy evidence.
+
+    `events` is the producer's already-loaded recent-events list in
+    append (chronological) order; the walk is newest-first and stops at
+    the window boundary, so cost is bounded by the window, not the log.
+    """
+    cutoff = now - timedelta(seconds=window_seconds)
+    for ev in reversed(events):
+        if ev.get("kind") != "turn_audited":
+            continue
+        if (ev.get("session_id") or ev.get("session")) != session_id:
+            continue
+        ts = parse_event_ts(ev.get("ts"))
+        if ts is None:
+            continue
+        if ts < cutoff:
+            # Append order means every remaining event in the reversed
+            # walk is older still — nothing left can be in-window.
+            break
+        pq = ev.get("probe_query")
+        if isinstance(pq, dict):
+            if probe_query_hash is not None and pq.get("hash") == probe_query_hash:
+                return True
+        elif isinstance(pq, str):
+            if pq == probe_query_text:
+                return True
+    return False
 
 
 def probe_for_miss(
@@ -689,6 +831,9 @@ def probe_for_miss(
             relevance=h.relevance,
             scopes=tuple(h.scopes),
             snippet=h.snippet,
+            matched_unique=len(h.match_terms),
+            query_unique=h.query_unique,
+            relevance_v2=_relevance_label_v2(len(h.match_terms), h.query_unique),
         )
         for h in hits
     )
@@ -870,10 +1015,12 @@ __all__ = [
     "DEFAULT_CREATION_SHIELD_SECONDS",
     "DEFAULT_LOOKBACK_SECONDS",
     "MIN_PROBE_CONTENT_TOKENS",
+    "REAUDIT_DEDUP_WINDOW_SECONDS",
     "THRESHOLD_RULE_V1",
     "MissHit",
     "MissReport",
     "Verdict",
+    "is_duplicate_audit",
     "probe_for_miss",
     "search_miss_fields",
     "turn_audited_fields",

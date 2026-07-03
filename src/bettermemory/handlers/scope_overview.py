@@ -30,10 +30,14 @@ DESC_MEMORY_SCOPE_OVERVIEW = (
     "Returns `{current_repo, current_cwd, auto_scope, scopes: "
     "{scope: count}, total, disabled_scopes, curation_pending, "
     "curation_pending_new_since_last_session, "
-    "recently_removed_in_worktree, proposals_pending}`. "
+    "recently_removed_in_worktree, proposals_pending, "
+    "pending_writes}`. "
     "`proposals_pending` is the count of write-reflex proposals the "
     "Stop hook has captured awaiting review via `memory_proposals` "
     "(0 unless the opt-in [proposals] auto_propose is on). "
+    "`pending_writes` is this session's staged writes awaiting "
+    "memory_write_confirm/cancel — a dangling confirmation "
+    "(silent 1h expiry). "
     "`curation_pending` is an integer-count rollup the model "
     "should branch on:\n"
     "  {stale, never_verified, drifted, cold, dead, "
@@ -64,14 +68,11 @@ DESC_MEMORY_SCOPE_OVERVIEW = (
     "an older record aging into `stale` between sessions stays "
     "visible only in the absolute `curation_pending` view — note "
     "this is distinct from the separate `drifted` bucket, which "
-    "tracks working-tree drift). Branch "
-    "on this dict when deciding whether to *prompt* the user about "
-    "curation — non-zero values here mean new rot has accumulated "
-    "since you were last around, vs. the absolute `curation_pending` "
-    "view which stays non-zero across sessions until each item is "
-    "actually resolved. The field is `null` on the very first "
-    "session (no prior boundary to delta against); fall back to "
-    "`curation_pending` in that case.\n\n"
+    "tracks working-tree drift). Branch on it when deciding "
+    "whether to *prompt* about curation — non-zero means new rot "
+    "since the last session, vs. the absolute view which persists "
+    "until resolved. `null` on the very first session — fall back "
+    "to `curation_pending`.\n\n"
     "Default-scoped to the caller's current repository; memories "
     "with no origin always pass as global. Set `auto_scope=False` "
     "for the cross-project view. Counts respect session-disabled "
@@ -238,6 +239,15 @@ async def memory_scope_overview(
     # off and the queue file doesn't exist.
     proposals_pending = len(ProposalQueue(deps.store.root).load())
 
+    # Unresolved staged writes for THIS session (user-inference writes
+    # awaiting memory_write_confirm / memory_write_cancel, or any write
+    # under require_write_confirmation). `_advance_turn` above already
+    # evicted TTL-expired entries, so this is the live count. Surfaced
+    # because the dogfood event log shows staged writes silently
+    # expiring — the model staged, the conversation moved on, and
+    # nothing ever re-surfaced the dangling confirmation.
+    pending_writes = len(state.pending_writes)
+
     deps.recorder.record(
         "scope_overview",
         auto_scope=auto_scope,
@@ -249,6 +259,7 @@ async def memory_scope_overview(
         prior_session_boundary=isoformat_optional(prior_boundary),
         recently_removed_in_worktree=recent_removed,
         proposals_pending=proposals_pending,
+        pending_writes=pending_writes,
     )
     return {
         "current_repo": repo_filter,
@@ -261,6 +272,7 @@ async def memory_scope_overview(
         "curation_pending_new_since_last_session": curation_delta,
         "recently_removed_in_worktree": recent_removed,
         "proposals_pending": proposals_pending,
+        "pending_writes": pending_writes,
     }
 
 

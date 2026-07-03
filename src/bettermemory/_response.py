@@ -995,7 +995,7 @@ class ResponseBuilder:
             # after rejecting it earlier, so the rejection no longer tells us
             # anything actionable. But the auto-`record_use` fallback emits
             # outcome="applied" with no model/user judgment — it fires merely
-            # because a re-surfaced use-token aged past its ~2-turn TTL. An
+            # because a re-surfaced use-token was never explicitly settled. An
             # auto-apply must NOT clear a contradiction, or a memory the model
             # explicitly flagged as wrong would lose its warning the next time
             # it's retrieved. Only a non-auto applied event supersedes.

@@ -25,7 +25,7 @@ only see what these tools surface.
 | Search? | shared-context reference or ambiguity → yes. Otherwise no. |
 | Write? | something durable just entered the conversation → yes. Don't wait for "remember that". State, timestamps, or commit-SHA-like tokens → no (durability check will reject; rephrase to the durable level-up form). |
 | Category? | claim about the user → `user-inference` (always pending). Atmospheric / no verifiable claims → `ambient`. Else → `fact`. |
-| Outcome? | retrieval shaped reply → silence (auto-commits as `applied` ~2 turns later). Off-topic / wrong → explicit `ignored` / `contradicted` / `corrected`. |
+| Outcome? | retrieval shaped reply → silence (settles as `applied` at turn end). Off-topic / wrong → explicit `ignored` / `contradicted` / `corrected`. |
 | Verify? | `staleness_verdict != "fresh"` → `path_drift.missing` on the hit lists what rotted; memory_update those, memory_verify the rest with `verified_paths`. |
 | Scope? | project name if obvious; never `general`. |
 
@@ -62,10 +62,11 @@ your stored preference for code-driven tutorials…" Non-negotiable.
 
 ## Recording use
 
-Every memory_search hit carries an opaque use_token. If you don't
-call memory_record_use within ~2 turns, the server auto-commits as
-outcome="applied" on the next memory_* call. Only call explicitly
-to override:
+Every memory_search hit carries an opaque use_token. Unless you call
+memory_record_use, the retrieval settles as outcome="applied"
+automatically — at turn end via the Stop hook (with excerpts when the
+reply demonstrably used it), or on a later memory_* call as the
+in-process fallback. Only call explicitly to override:
 - `ignored`: retrieved but off-topic.
 - `contradicted`: stored fact disagreed AND you haven't fixed it.
   Raises the unresolved-contradiction flag in memory_health until a

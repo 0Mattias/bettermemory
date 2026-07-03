@@ -51,7 +51,7 @@ Non-negotiable. The user needs to know when stored context shaped a reply.
 
 ## Recording use
 
-Every `memory_search` hit and `memory_show` response carries an opaque `use_token`. **If you don't call `memory_record_use` within ~2 turns, the server auto-commits as `outcome="applied"`** on the next `memory_*` call (logged with `auto=true`). The common case handles itself.
+Every `memory_search` hit and `memory_show` response carries an opaque `use_token`. **Unless you call `memory_record_use`, the retrieval settles as `outcome="applied"` automatically at turn end** — the Stop hook records reply-matched hits with excerpts (`attribution="hook"`) and the rest as the plain auto-fallback (`auto=true`); hookless setups settle on a later `memory_*` call. The common case handles itself.
 
 Call `memory_record_use(memory_ids=[…], outcome=…)` explicitly only to override:
 

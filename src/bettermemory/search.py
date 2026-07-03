@@ -1026,6 +1026,44 @@ def _relevance_label(matched_unique: int, query_unique: int) -> str:
     return "low"
 
 
+# Absolute matched-token floor for the v2 relevance label's "high" arm.
+# Four distinct content tokens landing in one memory is strong evidence
+# regardless of query length; the value deliberately mirrors
+# `attribution._MIN_CONTAINMENT_TOKENS` — both gates answer "how many
+# distinct content-token overlaps constitute a deliberate connection
+# rather than coincidence" (cross-pinned in tests).
+_V2_HIGH_MATCHED_FLOOR = 4
+
+
+def _relevance_label_v2(matched_unique: int, query_unique: int) -> str:
+    """Candidate successor to `_relevance_label` — SHADOW-ONLY.
+
+    Same coverage mapping, plus an absolute matched-count floor on the
+    "high" arm: a long natural-language query that matches >=
+    `_V2_HIGH_MATCHED_FLOOR` distinct content tokens labels "high" even
+    when the coverage FRACTION dips below 0.75 — the denominator grows
+    with query length, the evidence doesn't shrink. This is the
+    structural candidate fix for audit.py's documented blind spot
+    ("multi-token natural language with stopwords often lands at
+    2/3 = medium and does not fire").
+
+    Shadow contract: the v2 label is logged on `search` /
+    `turn_audited` / `search_miss` events for calibration and NEVER
+    surfaced in an MCP response — live behavior (expand_top, the miss
+    threshold rule) stays on v1 until the logged v1/v2 disagreement
+    data justifies a flip. v1-high implies v2-high (the fraction arm is
+    unchanged), so v2 is a strict widening.
+    """
+    if query_unique <= 0:
+        return "low"
+    coverage = matched_unique / query_unique
+    if coverage >= 0.75 or matched_unique >= _V2_HIGH_MATCHED_FLOOR:
+        return "high"
+    if coverage >= 0.40:
+        return "medium"
+    return "low"
+
+
 def _scope_tokens(scope: str) -> list[str]:
     """Break `projects:foo-bar` into ['projects', 'foo-bar', 'foo', 'bar']
     for matching — both the joined form and its components are emitted.
@@ -1582,6 +1620,7 @@ def _build_hit(
         score=round(score, 4),
         relevance=_relevance_label(len(matched), query_unique),
         match_terms=matched,
+        query_unique=query_unique,
         created=memory.created,
         updated=memory.updated,
         last_verified_at=memory.last_verified_at,

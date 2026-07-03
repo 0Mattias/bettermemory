@@ -47,12 +47,17 @@ def test_consume_old_tokens_returns_empty_when_within_ttl() -> None:
 
 
 def test_consume_old_tokens_returns_aged_ids() -> None:
+    # `min_age_seconds=0` isolates the TURN axis under test; the
+    # wall-clock floor (3.14) has its own coverage in
+    # test_telemetry_v2.py.
     state = SessionState()
     state.issue_use_tokens(["a"])
     # Advance enough turns to age out the token.
     for _ in range(DEFAULT_USE_TOKEN_TTL_TURNS + 1):
         state.advance_turn()
-    out = state.consume_old_tokens(ttl_turns=DEFAULT_USE_TOKEN_TTL_TURNS)
+    out = state.consume_old_tokens(
+        ttl_turns=DEFAULT_USE_TOKEN_TTL_TURNS, min_age_seconds=0
+    )
     assert out == ["a"]
     assert "a" not in state.pending_use_tokens
 
@@ -67,6 +72,7 @@ def test_consume_old_tokens_respects_override_ids() -> None:
         state.advance_turn()
     out = state.consume_old_tokens(
         ttl_turns=DEFAULT_USE_TOKEN_TTL_TURNS,
+        min_age_seconds=0,
         override_ids={"a"},
     )
     # Only `b` came back.
@@ -110,7 +116,9 @@ def test_misattribution_guard_per_id_aging() -> None:
         state.advance_turn()
     # Now issue a fresh token — at turn ~3.
     state.issue_use_tokens(["fresh"])
-    out = state.consume_old_tokens(ttl_turns=DEFAULT_USE_TOKEN_TTL_TURNS)
+    out = state.consume_old_tokens(
+        ttl_turns=DEFAULT_USE_TOKEN_TTL_TURNS, min_age_seconds=0
+    )
     # Only `old` is aged out; `fresh` is still pending.
     assert out == ["old"]
     assert "fresh" in state.pending_use_tokens

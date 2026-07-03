@@ -18,7 +18,12 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Any, cast
 
 from ..models import utcnow, validate_scope
-from ..search import SearchMode, _filter_candidates, search as run_search
+from ..search import (
+    SearchMode,
+    _filter_candidates,
+    _relevance_label_v2,
+    search as run_search,
+)
 from ..store import MemoryNotFoundError, TombstonedError
 from ..verify import (
     compute_commit_drift,
@@ -530,6 +535,15 @@ async def memory_search(
 
     from .._response import isoformat_optional
 
+    # Shadow-label calibration features, event-log only (the response
+    # dicts deliberately do NOT carry them — a surfaced v2 label would
+    # nudge live model behavior before the calibration data justifies
+    # a flip). `scores` / `match_counts` / `query_unique` are the RAW
+    # features, so any future labeling formula — not just the bundled
+    # v2 — can be replayed over this event history; that's the data-
+    # layer fix for "the threshold sweep can narrow but never widen".
+    # `query_unique` is per-search (every hit shares the denominator).
+    _query_unique = hits[0].query_unique if hits else 0
     deps.recorder.record(
         "search",
         query=query,
@@ -537,6 +551,12 @@ async def memory_search(
         max_results=max_results,
         returned=[h["id"] for h in out],
         relevance=[h["relevance"] for h in out],
+        relevance_v2=[
+            _relevance_label_v2(len(h["match_terms"]), _query_unique) for h in out
+        ],
+        scores=[h["score"] for h in out],
+        match_counts=[len(h["match_terms"]) for h in out],
+        query_unique=_query_unique,
         expand_top=expand_top,
         expanded_id=expanded_id,
         expanded_drift_missing=expanded_drift_missing,

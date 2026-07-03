@@ -71,6 +71,18 @@ _PENDING_USE_TOKEN_TTL_SECONDS = 30 * 60  # 30 minutes
 # its window). Tunable on the call-site for tests.
 DEFAULT_USE_TOKEN_TTL_TURNS = 2
 
+# Wall-clock floor for the in-process auto-commit, the second axis of
+# `consume_old_tokens`'s readiness test. Mirrors
+# `audit.ATTRIBUTION_LOOKBACK_SECONDS` (cross-pinned in tests, not
+# imported — session.py stays dependency-free of the audit stack): the
+# Stop hook settles a turn's retrievals at turn end within that
+# window, so the in-process fallback must not fire earlier or it
+# races the hook and re-creates the mid-turn auto-commit problem the
+# floor exists to close. Deliberately below
+# `_PENDING_USE_TOKEN_TTL_SECONDS` (30 min) so hookless deployments
+# still auto-commit before the silent wall-clock eviction.
+AUTO_COMMIT_MIN_AGE_SECONDS = 600.0
+
 
 def _new_session_id() -> str:
     """Per-process session identifier. Stamped onto every event in the log
@@ -307,9 +319,27 @@ class SessionState:
         self,
         *,
         ttl_turns: int = DEFAULT_USE_TOKEN_TTL_TURNS,
+        min_age_seconds: float | None = None,
         override_ids: set[str] | None = None,
     ) -> list[str]:
-        """Pop and return memory_ids whose tokens are older than `ttl_turns`.
+        """Pop and return memory_ids whose tokens aged past BOTH TTL axes.
+
+        A token is ready when it is older than `ttl_turns` handler
+        entries AND older than `min_age_seconds` of wall clock (default
+        `AUTO_COMMIT_MIN_AGE_SECONDS`; resolved at call time so tests
+        can monkeypatch the module constant). The turn axis alone was
+        the original design — and its clock is HANDLER ENTRIES, not
+        conversational turns, so a tool-heavy turn advanced it fast
+        enough to auto-commit this turn's own retrievals mid-turn,
+        before the reply existed. That mid-turn commit starved the Stop
+        hook's end-of-turn attribution pass (`hook.
+        _emit_hook_attributions`) of every id it would have matched:
+        ~98% of applied events on the 2026-07-03 dogfood store were
+        bare autos. The wall-clock floor makes the hook — which fires
+        seconds after the reply — the normal settlement path; this
+        in-process pass remains the fallback for hookless deployments
+        (their auto-commits now land on the first handler call ≥ the
+        floor, still inside the 30-minute wall-clock eviction window).
 
         `override_ids` are excluded — used by the explicit
         `memory_record_use` path so a caller's deliberate choice
@@ -322,12 +352,15 @@ class SessionState:
         """
         if override_ids is None:
             override_ids = set()
+        if min_age_seconds is None:
+            min_age_seconds = AUTO_COMMIT_MIN_AGE_SECONDS
         cutoff_turn = self.turn_counter - ttl_turns
+        age_cutoff = time.time() - min_age_seconds
         ready: list[str] = []
         for mid, tok in list(self.pending_use_tokens.items()):
             if mid in override_ids:
                 continue
-            if tok.issued_at_turn <= cutoff_turn:
+            if tok.issued_at_turn <= cutoff_turn and tok.issued_at <= age_cutoff:
                 ready.append(mid)
         for mid in ready:
             del self.pending_use_tokens[mid]

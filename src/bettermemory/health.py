@@ -197,8 +197,8 @@ class MemoryStats:
     # reached.
     applied_count: int = 0
     # The model never called memory_record_use(applied) explicitly for
-    # this id — the count came entirely from the server's auto-commit
-    # pass that fires ~2 turns after a retrieval. A high
+    # this id — the count came entirely from automatic settlement (the
+    # Stop hook's turn-end fallback or the in-process pass). A high
     # `auto_applied_count` with zero `explicit_applied_count` is the
     # "weakly endorsed" signal: the ranker keeps surfacing it, the auto
     # pass keeps logging it, but the model never deliberately reaches
@@ -1225,6 +1225,14 @@ class _StatsAccumulator:
         # and counting those as the denominator produced a perpetual
         # false-green 0% miss rate. Missing/legacy verdicts read as
         # None and stay in the miss-capable denominator (conservative).
+        if ev.get("repeat"):
+            # Re-audit of the same (session, message) inside the dedup
+            # window (3.14+; `audit.is_duplicate_audit`) — cadence
+            # bookkeeping only. Producers never emit a companion
+            # `search_miss` for a repeat, so counting it into either
+            # denominator bucket would dilute a rate whose numerator
+            # structurally can't include it.
+            return
         verdict = ev.get("verdict")
         self._silent_miss_audited.append(
             (

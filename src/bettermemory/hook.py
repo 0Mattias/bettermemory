@@ -102,12 +102,14 @@ from ._fsutil import bounded_stream_read, bounded_tail_read
 from .attribution import attribute_uses
 from .audit import (
     ATTRIBUTION_LOOKBACK_SECONDS,
+    REAUDIT_DEDUP_WINDOW_SECONDS,
+    is_duplicate_audit,
     probe_for_miss,
     search_miss_fields,
     turn_audited_fields,
 )
 from .config import Config, load_config
-from .events import Recorder
+from .events import Recorder, redact_query
 from .events import iter_events_window
 from .models import utcnow
 from .origin import capture as capture_origin
@@ -116,11 +118,12 @@ from .time_utils import parse_event_ts
 
 
 # Wall-clock window the hook attributes against. A retrieval older
-# than this is considered settled — auto-commit will already have
-# fired (the in-process TTL is two turns, typically seconds to
-# minutes), so attributing to a stale retrieval would risk
-# double-counting. Wide enough to cover normal conversational
-# pauses, narrow enough to focus on the current turn. The constant
+# than this is considered settled — a prior turn's hook run settled
+# it at that turn's end, or the in-process fallback (held behind the
+# wall-clock floor mirroring this window) has fired, so attributing
+# to a stale retrieval would risk double-counting. Wide enough to
+# cover normal conversational pauses, narrow enough to focus on the
+# current turn. The constant
 # itself lives in `audit.py` (round 88) so the production search
 # handler's endorsement tally can share the exact window without
 # importing this module; the module-local alias keeps every existing
@@ -181,13 +184,22 @@ def _read_payload(stdin_text: str) -> dict[str, Any]:
 
 def _extract_last_exchange(
     transcript_path: Path,
-) -> tuple[str | None, str | None]:
+) -> tuple[str | None, str | None, str | None]:
     """Walk the transcript JSONL backwards to find the latest user
-    message and the latest assistant response.
+    message, the latest assistant response, and the model that
+    produced it.
 
-    Returns `(user_message, assistant_response)`. Either field is
+    Returns `(user_message, assistant_response, model)`. Any field is
     None when not found. Defensive against malformed lines — a
     single bad JSON line doesn't abort the whole parse.
+
+    `model` is read off the newest assistant row's `message.model`
+    (e.g. "claude-sonnet-5") — captured even when that row carries no
+    text blocks (a tool-use-only stop), since any assistant row of the
+    turn identifies the model. The MCP channel carries no model
+    identity at all, so this transcript read is the ONLY place in the
+    system that can attribute telemetry per-model; `run_audit` stamps
+    it onto the events it emits as `client_model`.
 
     Format reference (Claude Code transcript schema, observed
     May 2026): one JSON object per line. User messages carry
@@ -212,6 +224,7 @@ def _extract_last_exchange(
     """
     user: str | None = None
     assistant: str | None = None
+    model: str | None = None
     # `bounded_tail_read` handles the seek-to-end + partial-line-discard +
     # unseekable-stream fallback. The latest user+assistant pair sits at
     # the tail of an append-only JSONL, so the head is uninteresting and
@@ -219,7 +232,7 @@ def _extract_last_exchange(
     try:
         chunk = bounded_tail_read(transcript_path, _TRANSCRIPT_TAIL_READ_BYTES)
     except OSError:
-        return None, None
+        return None, None, None
     text = chunk.decode("utf-8", errors="replace")
 
     # Walk lines in reverse — the most recent user/assistant come
@@ -238,8 +251,13 @@ def _extract_last_exchange(
         message = row.get("message")
         if not isinstance(message, dict):
             continue
-        if assistant is None and row_type == "assistant":
-            assistant = _flatten_assistant_content(message.get("content"))
+        if row_type == "assistant":
+            if model is None:
+                raw_model = message.get("model")
+                if isinstance(raw_model, str) and raw_model:
+                    model = raw_model
+            if assistant is None:
+                assistant = _flatten_assistant_content(message.get("content"))
         elif user is None and row_type == "user":
             # Harness-injected rows: skill/command expansions are stamped
             # `isMeta: true` at the row level. Keep walking — the human's
@@ -264,7 +282,7 @@ def _extract_last_exchange(
             user = candidate
         if user is not None and assistant is not None:
             break
-    return user, assistant
+    return user, assistant, model
 
 
 def _flatten_assistant_content(content: Any) -> str | None:
@@ -291,12 +309,19 @@ def run_audit(
     user_message: str,
     assistant_response: str | None,
     session_id: str,
+    client_model: str | None = None,
     config: Config | None = None,
 ) -> dict[str, Any]:
     """Pure-function entry point: given a user message and session
     id, run the probe and emit events. Returns a small dict suitable
     for JSON dumping. Side effects (event-log writes) only happen
-    when there's something to report and the probe runs cleanly."""
+    when there's something to report and the probe runs cleanly.
+
+    `client_model` is the transcript-derived model id (see
+    `_extract_last_exchange`); stamped as `client_model` on the
+    `turn_audited` / `search_miss` / `use` events this hook emits so
+    eval can slice telemetry per-model. None (unknown) omits the
+    field."""
     cfg = config or load_config(None)
     root = cfg.resolved_directory()
     store = Store(root)
@@ -306,11 +331,16 @@ def run_audit(
     # rotation would lose its own `search` / `scope_disable` events
     # from a plain active-log read and re-fire as a false miss.
     # `iter_events_window` prepends the newest rotated segment whenever
-    # the active log doesn't cover the attribution window, so every
+    # the active log doesn't cover the requested window, so every
     # consumer of `recent` below (the retrieval shield, the disabled-
     # scope replay, the pending-retrieval attribution) sees the full
-    # window across a single rotation.
-    recent = list(iter_events_window(root, _ATTRIBUTION_LOOKBACK_SECONDS))
+    # window across a single rotation. The request asks for the WIDEST
+    # window any consumer needs — the re-audit dedup's
+    # `REAUDIT_DEDUP_WINDOW_SECONDS` — which is a coverage request, not
+    # a filter: the reader yields the whole active log either way, and
+    # every time-scoped consumer (the retrieval shield, the attribution
+    # pass) applies its own narrower cutoff internally.
+    recent = list(iter_events_window(root, REAUDIT_DEDUP_WINDOW_SECONDS))
     # Capture once; reused for the probe's auto-scope and stamped on the
     # hook's events so episode_handoff can worktree-match this turn's
     # session (queue #28). The hook runs as a fresh process in the
@@ -400,7 +430,23 @@ def run_audit(
     # handler (`_handlers._advance_turn`) cannot drift — the 2.6.4
     # audit found them already diverged. `triggered_from="stop_hook"`
     # tags the source.
+    #
+    # Re-audit dedup: a long autonomous turn stops many times with the
+    # same last user message, and each stop used to re-probe and
+    # re-flag it (7 identical `search_miss` events from one ship-go
+    # message on the 2026-07-03 dogfood log). A repeat still records
+    # `turn_audited` — with `repeat=True`, so cadence stays observable
+    # and eval/health can exclude it — but never a second
+    # `search_miss`. The hash is computed with the production
+    # `redact_query` so it compares equal to what the Recorder wrote.
     probe_mode = cfg.behavior.search_mode or "hybrid"
+    repeat = is_duplicate_audit(
+        recent,
+        session_id=session_id,
+        probe_query_hash=redact_query(user_message)["hash"],
+        probe_query_text=user_message,
+        now=utcnow(),
+    )
     recorder.record(
         "turn_audited",
         **turn_audited_fields(
@@ -409,28 +455,43 @@ def run_audit(
             probe_mode=probe_mode,
             assistant_present=assistant_response is not None,
             triggered_from="stop_hook",
+            repeat=repeat,
+            client_model=client_model,
         ),
     )
-    if report.is_miss:
+    if report.is_miss and not repeat:
         recorder.record(
             "search_miss",
             **search_miss_fields(
-                report, session_id=session_id, triggered_from="stop_hook"
+                report,
+                session_id=session_id,
+                triggered_from="stop_hook",
+                client_model=client_model,
             ),
         )
 
-    # Post-hoc claim_excerpt attribution. The MCP contract asks the
-    # model to attach `claim_excerpts` on explicit memory_record_use
-    # when a retrieved memory shaped a sentence in its reply; in
-    # practice the model defaults to the free auto-commit path and
-    # `memory_helped_rate` reads 0%. The hook closes the loop by
-    # substring-matching recently-retrieved memories' bodies against
-    # the assistant's reply text — when a body sentence appears
-    # verbatim (case- and whitespace-normalised), record an
-    # `applied` event with the matched phrase as the excerpt and
-    # `attribution="hook"`. The in-process `_advance_turn` reads
-    # these events and skips the redundant auto-commit so the
-    # retrieval generates one applied event total, not two.
+    # Post-hoc use settlement — the turn's end is the semantically
+    # correct place to decide what happened to this turn's retrievals.
+    # Two tiers per pending retrieval:
+    #
+    # 1. ATTRIBUTION: phrase/containment-match recently-retrieved
+    #    memories' bodies against the reply text; a match records
+    #    `applied` with the matched sentence as the excerpt and
+    #    `attribution="hook"` — the same shape an explicit model
+    #    record_use would have produced.
+    # 2. AUTO-FALLBACK: everything retrieved-but-unmatched records the
+    #    plain `applied, auto=True, attribution="auto"` event HERE, at
+    #    turn end. The in-process auto-commit used to own this and
+    #    fired mid-turn (its clock is handler entries, and a tool-heavy
+    #    turn advances it fast), which marked retrievals used before
+    #    the reply even existed — starving tier 1 of everything it
+    #    would have matched. `session.consume_old_tokens` now holds the
+    #    in-process fallback behind a wall-clock floor
+    #    (`AUTO_COMMIT_MIN_AGE_SECONDS`) so this hook settles first;
+    #    the in-process path remains the fallback for hookless
+    #    deployments. `_advance_turn` reads these events off the log
+    #    and purges the matching in-memory tokens, so each retrieval
+    #    generates one applied event total.
     if assistant_response:
         _emit_hook_attributions(
             store=store,
@@ -439,6 +500,7 @@ def run_audit(
             session_id=session_id,
             assistant_response=assistant_response,
             worktree_root=caller_origin.worktree_root,
+            client_model=client_model,
         )
 
     # Opt-in self-improving loop. Run the structurally-safe consolidation
@@ -599,9 +661,11 @@ def _emit_hook_attributions(
     session_id: str,
     assistant_response: str,
     worktree_root: str | None = None,
+    client_model: str | None = None,
 ) -> None:
-    """Substring-match recently-retrieved memories against the reply
-    text and emit `applied` events for matches.
+    """Settle this turn's pending retrievals: emit attributed `applied`
+    events for reply-matched memories and the plain auto-fallback
+    `applied` for the rest.
 
     `pending` is the set of memory_ids retrieved (via `search`, `show`,
     or `list`/`list_active`) within the lookback window, MINUS ids that
@@ -639,7 +703,10 @@ def _emit_hook_attributions(
     if not pending:
         return
     bodies: dict[str, str] = {}
-    for memory_id in pending:
+    # Sorted iteration: `pending` is a set, and both event payloads
+    # below inherit this order — deterministic ids keep the log
+    # reproducible across runs (same discipline as consume_old_tokens).
+    for memory_id in sorted(pending):
         try:
             memory = store.load_one(memory_id)
         except (MemoryNotFoundError, TombstonedError):
@@ -650,17 +717,40 @@ def _emit_hook_attributions(
     if not bodies:
         return
     matches = attribute_uses(bodies, assistant_response)
-    if not matches:
-        return
-    recorder.record(
-        "use",
-        ids=[m.memory_id for m in matches],
-        outcome="applied",
-        auto=False,
-        attribution="hook",
-        claim_excerpts=[m.claim_excerpt for m in matches],
-        triggered_from="stop_hook",
-    )
+    if matches:
+        fields: dict[str, Any] = {
+            "ids": [m.memory_id for m in matches],
+            "outcome": "applied",
+            "auto": False,
+            "attribution": "hook",
+            "claim_excerpts": [m.claim_excerpt for m in matches],
+            "triggered_from": "stop_hook",
+        }
+        if client_model is not None:
+            fields["client_model"] = client_model
+        recorder.record("use", **fields)
+    # Auto-fallback for the retrieved-but-unmatched remainder — the
+    # turn is over, the reply exists, and these memories demonstrably
+    # did not shape it verbatim or by containment. Settling them NOW
+    # (instead of the in-process ~2-turn TTL, which fired mid-turn and
+    # starved the matcher) is the whole point of the wall-clock floor
+    # in `session.consume_old_tokens`. Same event shape the in-process
+    # fallback emits, so every downstream consumer (eval's
+    # auto/explicit split, health's endorsement ratio, the
+    # `_already_recorded_pending_ids` purge) reads it identically.
+    matched_ids = {m.memory_id for m in matches}
+    unmatched = [mid for mid in bodies if mid not in matched_ids]
+    if unmatched:
+        auto_fields: dict[str, Any] = {
+            "ids": unmatched,
+            "outcome": "applied",
+            "auto": True,
+            "attribution": "auto",
+            "triggered_from": "stop_hook",
+        }
+        if client_model is not None:
+            auto_fields["client_model"] = client_model
+        recorder.record("use", **auto_fields)
 
 
 def _pending_retrievals(
@@ -814,7 +904,7 @@ def main(argv: list[str] | None = None) -> int:
         transcript_path = Path(str(transcript_raw)).expanduser().resolve()
         if not transcript_path.is_file():
             return 0
-        user, assistant = _extract_last_exchange(transcript_path)
+        user, assistant, model = _extract_last_exchange(transcript_path)
         if not user:
             return 0
 
@@ -822,6 +912,7 @@ def main(argv: list[str] | None = None) -> int:
             user_message=user,
             assistant_response=assistant,
             session_id=str(session_id),
+            client_model=model,
         )
         if not args.quiet:
             print(json.dumps(result), file=sys.stdout)

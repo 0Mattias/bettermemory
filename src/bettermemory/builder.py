@@ -195,7 +195,7 @@ def build_server(
             "worktree.\n\n"
             "When a retrieved memory shapes your reply, say so briefly "
             '("Using your stored preference for…"). memory_record_use '
-            "auto-commits as `applied` ~2 turns later; call to "
+            "settles as `applied` automatically at turn end; call to "
             "override.\n\n"
             "Verify before relying. When staleness_verdict isn't fresh, "
             "spot-check; memory_verify if it holds, memory_update if "

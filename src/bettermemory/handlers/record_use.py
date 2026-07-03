@@ -28,8 +28,9 @@ if TYPE_CHECKING:
 
 DESC_MEMORY_RECORD_USE = (
     "Override the auto-`applied` outcome. Default behavior: every "
-    "memory_search hit auto-commits as `applied` ~2 turns later "
-    "(logged with `auto=true`). The common case handles itself — "
+    "memory_search hit settles as `applied` at turn end (excerpts "
+    "when the reply used it, `auto=true` otherwise). The common "
+    "case handles itself — "
     "only call this tool when the model needs to record one of the "
     "three actionable outcomes below.\n\n"
     "| Outcome | When | What it does |\n"

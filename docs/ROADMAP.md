@@ -11,6 +11,15 @@ Planned work, in rough priority order. Plans change; the
 - **Read-only `bettermemory ui --tunnel`.** One-shot Cloudflare or
   Tailscale Funnel for browsing from another device. No mutations over
   the tunnel.
+- **Relevance-label v2 default flip.** The forward-looking half
+  shipped in 3.14.0: every audited turn now logs its top hits' raw
+  coverage features plus the shadow `relevance_v2` label (coverage
+  fraction OR an absolute matched-token floor), and `bettermemory eval
+  --widening-preview` replays candidate rules over that stream. What
+  remains is the flip itself — promote the v2 formula to the live
+  `relevance` label (unlocking `expand_top` and the miss probe on the
+  long-query cohort) once a few weeks of live calibration data show an
+  acceptable widening delta.
 
 ## Not planned
 

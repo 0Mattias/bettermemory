@@ -1,0 +1,816 @@
+"""Tests for the 3.14 measurement layer.
+
+Covers, in one place, the feature set that ships together:
+
+- shadow relevance label v2 (`search._relevance_label_v2`) and the
+  `query_unique` coverage denominator threaded onto `MemoryHit`;
+- per-turn calibration features on `turn_audited` (probe_query /
+  compact top_hits) and the enriched `MissHit`;
+- re-audit dedup (`audit.is_duplicate_audit`, the `repeat` flag, and
+  its exclusion from eval/health denominators);
+- transcript-derived model attribution (`client_model`);
+- end-of-turn use settlement: hook attribution + auto-fallback split,
+  and the wall-clock floor that keeps the in-process auto-commit from
+  racing the hook;
+- the `pending_writes` count on memory_scope_overview;
+- the eval `--widening-preview` replay lane.
+
+Response-shape guards live here too: the shadow fields must NEVER
+appear in an MCP response — they are event-log-only calibration data.
+"""
+
+from __future__ import annotations
+
+import json
+import time
+from datetime import datetime, timedelta, timezone
+from pathlib import Path
+from typing import Any
+
+import pytest
+
+from bettermemory.audit import (
+    ATTRIBUTION_LOOKBACK_SECONDS,
+    MissHit,
+    MissReport,
+    THRESHOLD_RULE_V1,
+    is_duplicate_audit,
+    probe_for_miss,
+    search_miss_fields,
+    turn_audited_fields,
+)
+from bettermemory.config import Config, StorageConfig
+from bettermemory.eval import (
+    compute_eval,
+    compute_widening_preview,
+    render_widening_preview_text,
+)
+from bettermemory.events import Recorder, iter_events, redact_query
+from bettermemory.health import compute_health
+from bettermemory.hook import _extract_last_exchange, main as hook_main, run_audit
+from bettermemory.models import Confidence, Memory, Source, generate_ulid
+from bettermemory.search import (
+    _V2_HIGH_MATCHED_FLOOR,
+    _relevance_label,
+    _relevance_label_v2,
+    search,
+)
+from bettermemory.server import build_server
+from bettermemory.session import (
+    AUTO_COMMIT_MIN_AGE_SECONDS,
+    PendingUseToken,
+    SessionState,
+)
+from bettermemory.store import Store
+
+
+def _memory(
+    body: str,
+    scopes: list[str] | None = None,
+    *,
+    created: datetime | None = None,
+) -> Memory:
+    now = created or datetime.now(timezone.utc)
+    return Memory(
+        id=generate_ulid(),
+        created=now,
+        updated=now,
+        scopes=scopes or ["tools"],
+        confidence=Confidence.MEDIUM,
+        source=Source.EXPLICIT,
+        body=body,
+    )
+
+
+def _iso(dt: datetime) -> str:
+    return dt.isoformat().replace("+00:00", "Z")
+
+
+# ---------------------------------------------------------------------------
+# Shadow relevance label v2
+# ---------------------------------------------------------------------------
+
+
+def test_v2_floor_promotes_long_query_to_high() -> None:
+    """The motivating case: a long natural-language query whose coverage
+    fraction lands v1 at 'medium' even though it matched the absolute
+    floor's worth of distinct content tokens."""
+    assert _relevance_label(4, 9) == "medium"
+    assert _relevance_label_v2(4, 9) == "high"
+    assert _relevance_label(5, 8) == "medium"
+    assert _relevance_label_v2(5, 8) == "high"
+
+
+def test_v2_matches_v1_below_the_floor() -> None:
+    """Below the matched-count floor the two formulas are identical —
+    the v2 change is ONLY the absolute floor on the high arm."""
+    for matched in range(0, _V2_HIGH_MATCHED_FLOOR):
+        for query in range(0, 13):
+            assert _relevance_label_v2(matched, query) == _relevance_label(
+                matched, query
+            ), (matched, query)
+
+
+def test_v2_is_a_strict_widening_of_v1() -> None:
+    """v1-high implies v2-high, and v2 never demotes: anything not
+    promoted to high keeps its exact v1 label. This property is what
+    makes the widening-preview delta interpretable."""
+    for matched in range(0, 13):
+        for query in range(0, 13):
+            v1 = _relevance_label(matched, query)
+            v2 = _relevance_label_v2(matched, query)
+            if v1 == "high":
+                assert v2 == "high", (matched, query)
+            if v2 != "high":
+                assert v2 == v1, (matched, query)
+
+
+def test_v2_floor_cross_pinned_to_attribution_containment() -> None:
+    """The v2 high-arm floor and the attribution containment floor
+    answer the same question ("how many distinct content-token overlaps
+    constitute a deliberate connection?") and are deliberately the same
+    value. Not an import edge — a pin, so a future recalibration of one
+    has to consciously decide about the other."""
+    from bettermemory.attribution import _MIN_CONTAINMENT_TOKENS
+
+    assert _V2_HIGH_MATCHED_FLOOR == _MIN_CONTAINMENT_TOKENS
+
+
+def test_search_hits_carry_query_unique() -> None:
+    mem = _memory("alpha beta gamma delta epsilon body text")
+    hits = search([mem], "alpha beta gamma", max_results=5)
+    assert hits
+    assert all(h.query_unique == 3 for h in hits)
+
+
+def test_browse_mode_hits_carry_zero_query_unique() -> None:
+    mem = _memory("alpha beta gamma")
+    hits = search([mem], "", max_results=5, allow_empty_query=True)
+    assert hits
+    assert all(h.query_unique == 0 for h in hits)
+
+
+# ---------------------------------------------------------------------------
+# MissHit / turn_audited calibration features
+# ---------------------------------------------------------------------------
+
+
+def _old_memory(body: str) -> Memory:
+    """A memory old enough to clear the probe's creation shield."""
+    return _memory(body, created=datetime.now(timezone.utc) - timedelta(hours=2))
+
+
+def test_probe_populates_coverage_features() -> None:
+    """The probe's MissHit carries the raw coverage pair and the shadow
+    label; the long-query blind-spot case reads medium/v1, high/v2."""
+    mem = _old_memory(
+        "The kubernetes ingress lives on the staging cluster; "
+        "deployment happens through the blue pipeline."
+    )
+    message = (
+        "where does the kubernetes ingress for the staging cluster "
+        "live in our deployment pipeline exactly, remind me please"
+    )
+    report = probe_for_miss(
+        [mem],
+        message,
+        recent_events=[],
+        session_id="sess-features",
+    )
+    assert report.top_hits, report
+    top = report.top_hits[0]
+    assert top.matched_unique >= _V2_HIGH_MATCHED_FLOOR
+    assert top.query_unique > top.matched_unique
+    assert top.relevance == "medium"
+    assert top.relevance_v2 == "high"
+    full = top.to_dict()
+    for key in ("matched_unique", "query_unique", "relevance_v2", "snippet", "scopes"):
+        assert key in full
+    compact = top.to_compact_dict()
+    assert set(compact) == {
+        "id",
+        "score",
+        "relevance",
+        "relevance_v2",
+        "matched_unique",
+        "query_unique",
+    }
+
+
+def _report_with_hits(now: datetime) -> MissReport:
+    return MissReport(
+        verdict="ok",
+        checked_at=now,
+        session_id="sess-1",
+        lookback_seconds=60,
+        recent_retrieval_count=0,
+        threshold_rule=THRESHOLD_RULE_V1,
+        top_hits=(
+            MissHit(
+                id="mem-1",
+                score=1.5,
+                relevance="medium",
+                scopes=("tools",),
+                snippet="snippet text",
+                matched_unique=4,
+                query_unique=8,
+                relevance_v2="high",
+            ),
+        ),
+        probe_query="a long natural language question",
+    )
+
+
+def test_turn_audited_fields_carry_calibration_payload() -> None:
+    now = datetime.now(timezone.utc)
+    fields = turn_audited_fields(
+        _report_with_hits(now),
+        session_id="sess-1",
+        probe_mode="hybrid",
+        assistant_present=True,
+        triggered_from="stop_hook",
+        repeat=True,
+        client_model="claude-sonnet-5",
+    )
+    assert fields["probe_query"] == "a long natural language question"
+    assert fields["repeat"] is True
+    assert fields["client_model"] == "claude-sonnet-5"
+    (hit,) = fields["top_hits"]
+    assert hit["relevance_v2"] == "high"
+    assert hit["matched_unique"] == 4
+    assert hit["query_unique"] == 8
+    assert "snippet" not in hit and "scopes" not in hit
+
+
+def test_turn_audited_fields_omit_additive_keys_when_absent() -> None:
+    """Events from turns with no probe payload keep the exact legacy
+    shape — the additive fields must not appear as None/False noise."""
+    now = datetime.now(timezone.utc)
+    bare = MissReport(
+        verdict="no_signal",
+        checked_at=now,
+        session_id="sess-1",
+        lookback_seconds=60,
+        recent_retrieval_count=0,
+        threshold_rule=THRESHOLD_RULE_V1,
+    )
+    fields = turn_audited_fields(
+        bare,
+        session_id="sess-1",
+        probe_mode="hybrid",
+        assistant_present=False,
+        triggered_from="mcp_tool",
+    )
+    for key in ("probe_query", "top_hits", "repeat", "client_model"):
+        assert key not in fields
+
+
+def test_search_miss_fields_carry_client_model_when_known() -> None:
+    now = datetime.now(timezone.utc)
+    with_model = search_miss_fields(
+        _report_with_hits(now),
+        session_id="sess-1",
+        triggered_from="stop_hook",
+        client_model="claude-fable-5",
+    )
+    assert with_model["client_model"] == "claude-fable-5"
+    without = search_miss_fields(
+        _report_with_hits(now), session_id="sess-1", triggered_from="stop_hook"
+    )
+    assert "client_model" not in without
+
+
+# ---------------------------------------------------------------------------
+# Re-audit dedup
+# ---------------------------------------------------------------------------
+
+
+def _audited(
+    *,
+    session: str,
+    ts: datetime,
+    probe_query: Any,
+    kind: str = "turn_audited",
+) -> dict[str, Any]:
+    return {
+        "kind": kind,
+        "session_id": session,
+        "ts": _iso(ts),
+        "probe_query": probe_query,
+    }
+
+
+def test_duplicate_detected_via_redacted_hash() -> None:
+    now = datetime.now(timezone.utc)
+    message = "nice, push and update, the works"
+    events = [
+        _audited(
+            session="s1",
+            ts=now - timedelta(minutes=10),
+            probe_query=redact_query(message),
+        )
+    ]
+    assert is_duplicate_audit(
+        events,
+        session_id="s1",
+        probe_query_hash=redact_query(message)["hash"],
+        probe_query_text=message,
+        now=now,
+    )
+
+
+def test_duplicate_detected_via_verbatim_text() -> None:
+    now = datetime.now(timezone.utc)
+    message = "verbatim logged message"
+    events = [
+        _audited(session="s1", ts=now - timedelta(minutes=5), probe_query=message)
+    ]
+    assert is_duplicate_audit(
+        events,
+        session_id="s1",
+        probe_query_hash=redact_query(message)["hash"],
+        probe_query_text=message,
+        now=now,
+    )
+
+
+def test_no_duplicate_across_sessions_windows_or_messages() -> None:
+    now = datetime.now(timezone.utc)
+    message = "same message text here"
+    kwargs: dict[str, Any] = {
+        "session_id": "s1",
+        "probe_query_hash": redact_query(message)["hash"],
+        "probe_query_text": message,
+        "now": now,
+    }
+    other_session = [
+        _audited(
+            session="s2",
+            ts=now - timedelta(minutes=5),
+            probe_query=redact_query(message),
+        )
+    ]
+    assert not is_duplicate_audit(other_session, **kwargs)
+    outside_window = [
+        _audited(
+            session="s1", ts=now - timedelta(hours=2), probe_query=redact_query(message)
+        )
+    ]
+    assert not is_duplicate_audit(outside_window, **kwargs)
+    different_message = [
+        _audited(
+            session="s1",
+            ts=now - timedelta(minutes=5),
+            probe_query=redact_query("a different message entirely"),
+        )
+    ]
+    assert not is_duplicate_audit(different_message, **kwargs)
+    legacy_no_query = [
+        {"kind": "turn_audited", "session_id": "s1", "ts": _iso(now)},
+    ]
+    assert not is_duplicate_audit(legacy_no_query, **kwargs)
+    wrong_kind = [
+        _audited(
+            session="s1",
+            ts=now - timedelta(minutes=5),
+            probe_query=redact_query(message),
+            kind="search",
+        )
+    ]
+    assert not is_duplicate_audit(wrong_kind, **kwargs)
+
+
+# ---------------------------------------------------------------------------
+# Hook: model extraction, dedup wiring, settlement split
+# ---------------------------------------------------------------------------
+
+
+def _write_transcript(path: Path, *rows: dict[str, object]) -> None:
+    path.write_text("\n".join(json.dumps(r) for r in rows) + "\n", encoding="utf-8")
+
+
+def test_extract_last_exchange_captures_model(tmp_path: Path) -> None:
+    transcript = tmp_path / "t.jsonl"
+    _write_transcript(
+        transcript,
+        {"type": "user", "message": {"content": "the question"}},
+        {
+            "type": "assistant",
+            "message": {
+                "model": "claude-sonnet-5",
+                "content": [{"type": "text", "text": "the answer"}],
+            },
+        },
+    )
+    user, assistant, model = _extract_last_exchange(transcript)
+    assert user == "the question"
+    assert assistant == "the answer"
+    assert model == "claude-sonnet-5"
+
+
+def test_extract_model_from_tool_use_only_stop(tmp_path: Path) -> None:
+    """A turn can stop on a tool-use-only assistant row (no text
+    blocks). The model id still comes from the NEWEST assistant row;
+    the response text falls back to the older text-bearing row."""
+    transcript = tmp_path / "t.jsonl"
+    _write_transcript(
+        transcript,
+        {"type": "user", "message": {"content": "do the thing"}},
+        {
+            "type": "assistant",
+            "message": {
+                "model": "claude-old-model",
+                "content": [{"type": "text", "text": "working on it"}],
+            },
+        },
+        {
+            "type": "assistant",
+            "message": {
+                "model": "claude-fable-5",
+                "content": [{"type": "tool_use", "name": "Bash", "input": {}}],
+            },
+        },
+    )
+    user, assistant, model = _extract_last_exchange(transcript)
+    assert user == "do the thing"
+    assert assistant == "working on it"
+    assert model == "claude-fable-5"
+
+
+def test_run_audit_dedups_repeats_and_stamps_model(tmp_path: Path) -> None:
+    """Two audits of the same (session, message) inside the dedup
+    window: the second records `repeat=True` and both carry the
+    transcript-derived `client_model` stamp."""
+    mem_dir = tmp_path / "mem"
+    store = Store(mem_dir)
+    store.write(
+        content="kubernetes ingress staging cluster deployment pipeline notes",
+        scopes=["infrastructure"],
+    )
+    cfg = Config(storage=StorageConfig(directory=str(mem_dir)))
+    message = "where does the kubernetes ingress staging cluster live"
+    for _ in range(2):
+        run_audit(
+            user_message=message,
+            assistant_response="answered inline",
+            session_id="cc-transcript-1",
+            client_model="claude-sonnet-5",
+            config=cfg,
+        )
+    audits = [e for e in iter_events(mem_dir) if e["kind"] == "turn_audited"]
+    assert len(audits) == 2
+    first, second = audits
+    assert "repeat" not in first
+    assert second["repeat"] is True
+    assert first["client_model"] == "claude-sonnet-5"
+    assert second["client_model"] == "claude-sonnet-5"
+    # Redaction: the probe_query lands as {hash, preview, len}, never raw.
+    assert isinstance(first["probe_query"], dict)
+    assert first["probe_query"]["hash"] == redact_query(message)["hash"]
+    # A miss (if flagged at all) is never emitted twice for a repeat.
+    misses = [e for e in iter_events(mem_dir) if e["kind"] == "search_miss"]
+    assert len(misses) <= 1
+
+
+def test_hook_settlement_splits_attribution_and_auto(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Reply quotes memory A verbatim and never touches memory B: the
+    hook emits one hook-attributed event for A and one auto-fallback
+    event for B, both stamped with the transcript model."""
+    mem_dir = tmp_path / "mem"
+    mem_dir.mkdir()
+    monkeypatch.setenv("BETTERMEMORY_DIR", str(mem_dir))
+
+    store = Store(mem_dir)
+    quoted = store.write(
+        content="The staging ingress terminates TLS at the haproxy edge node.",
+        scopes=["infrastructure"],
+    )
+    unquoted = store.write(
+        content="Database migrations for the billing service run from the cron box.",
+        scopes=["infrastructure"],
+    )
+    Recorder(root=mem_dir, session_id="sess-split").record(
+        "search",
+        query="seed",
+        scopes_filter=None,
+        max_results=5,
+        returned=[quoted.id, unquoted.id],
+    )
+
+    transcript = tmp_path / "t.jsonl"
+    _write_transcript(
+        transcript,
+        {"type": "user", "message": {"content": "how is staging TLS set up?"}},
+        {
+            "type": "assistant",
+            "message": {
+                "model": "claude-sonnet-5",
+                "content": [
+                    {
+                        "type": "text",
+                        "text": (
+                            "Per your infra notes: the staging ingress "
+                            "terminates TLS at the haproxy edge node."
+                        ),
+                    }
+                ],
+            },
+        },
+    )
+    code = hook_main(
+        ["--transcript-path", str(transcript), "--session-id", "sess-split", "--quiet"]
+    )
+    assert code == 0
+
+    use_events = [e for e in iter_events(mem_dir) if e["kind"] == "use"]
+    hook_events = [e for e in use_events if e.get("attribution") == "hook"]
+    auto_events = [e for e in use_events if e.get("attribution") == "auto"]
+    assert len(hook_events) == 1
+    assert hook_events[0]["ids"] == [quoted.id]
+    assert hook_events[0]["client_model"] == "claude-sonnet-5"
+    assert len(auto_events) == 1
+    assert auto_events[0]["ids"] == [unquoted.id]
+    assert auto_events[0]["auto"] is True
+    assert auto_events[0]["client_model"] == "claude-sonnet-5"
+
+
+# ---------------------------------------------------------------------------
+# Session: wall-clock floor on the in-process auto-commit
+# ---------------------------------------------------------------------------
+
+
+def test_consume_holds_turn_old_but_wall_young_tokens() -> None:
+    """The race fix itself: a token issued seconds ago is NOT consumed
+    no matter how many handler entries have advanced the turn counter —
+    the Stop hook gets first claim at turn end."""
+    state = SessionState()
+    state.issue_use_tokens(["m1"])
+    for _ in range(5):
+        state.advance_turn()
+    assert state.consume_old_tokens() == []
+    assert "m1" in state.pending_use_tokens
+
+
+def test_consume_fires_when_both_axes_old() -> None:
+    state = SessionState()
+    state.pending_use_tokens["m1"] = PendingUseToken(
+        token="use_x",
+        memory_id="m1",
+        issued_at=time.time() - AUTO_COMMIT_MIN_AGE_SECONDS - 60,
+        issued_at_turn=0,
+    )
+    state.turn_counter = 5
+    assert state.consume_old_tokens() == ["m1"]
+    assert state.pending_use_tokens == {}
+
+
+def test_consume_min_age_zero_restores_turn_only_behavior() -> None:
+    state = SessionState()
+    state.issue_use_tokens(["m1"])
+    for _ in range(3):
+        state.advance_turn()
+    assert state.consume_old_tokens(min_age_seconds=0) == ["m1"]
+
+
+def test_auto_commit_floor_cross_pinned_to_attribution_window() -> None:
+    """session.py deliberately doesn't import the audit stack; the two
+    constants describe the same turn-settlement window and are pinned
+    here instead."""
+    assert AUTO_COMMIT_MIN_AGE_SECONDS == float(ATTRIBUTION_LOOKBACK_SECONDS)
+
+
+# ---------------------------------------------------------------------------
+# Eval: repeat exclusion, per-model slices, widening preview
+# ---------------------------------------------------------------------------
+
+
+def _ev(
+    kind: str, ts: str = "2026-05-15T12:00:00.000+00:00", **fields: Any
+) -> dict[str, Any]:
+    out: dict[str, Any] = {"kind": kind, "ts": ts, "session": "sess-A"}
+    out.update(fields)
+    return out
+
+
+def test_eval_excludes_repeat_audits_from_denominators() -> None:
+    now = datetime(2026, 5, 20, 12, 0, tzinfo=timezone.utc)
+    events = [
+        _ev("turn_audited", verdict="ok"),
+        _ev("turn_audited", verdict="ok", repeat=True),
+        _ev("turn_audited", verdict="miss", repeat=True),
+    ]
+    report = compute_eval(memories=[], events=events, now=now)
+    assert report.turns_audited == 1
+    assert report.repeat_audits == 2
+
+
+def test_eval_buckets_by_client_model() -> None:
+    now = datetime(2026, 5, 20, 12, 0, tzinfo=timezone.utc)
+    events = [
+        _ev("turn_audited", verdict="ok", client_model="claude-sonnet-5"),
+        _ev("turn_audited", verdict="no_signal", client_model="claude-sonnet-5"),
+        _ev(
+            "search_miss",
+            client_model="claude-sonnet-5",
+            top_hits=[{"id": "mem-A", "relevance": "high"}],
+        ),
+        _ev("turn_audited", verdict="ok"),  # no model — must not bucket
+    ]
+    report = compute_eval(memories=[], events=events, now=now)
+    assert report.by_model == {
+        "claude-sonnet-5": {"audited": 1, "no_signal": 1, "misses": 1}
+    }
+    assert report.turns_audited == 2
+
+
+def _hit(relevance: str, relevance_v2: str) -> dict[str, Any]:
+    return {
+        "id": "mem-A",
+        "score": 1.0,
+        "relevance": relevance,
+        "relevance_v2": relevance_v2,
+        "matched_unique": 4,
+        "query_unique": 8,
+    }
+
+
+def test_widening_preview_counts_and_deltas() -> None:
+    now = datetime(2026, 5, 20, 12, 0, tzinfo=timezone.utc)
+    events = [
+        # v1 and w1 both flag.
+        _ev(
+            "turn_audited",
+            verdict="miss",
+            recent_retrieval_count=0,
+            top_hits=[_hit("high", "high")],
+        ),
+        # The blind-spot cohort: only the widened rule flags.
+        _ev(
+            "turn_audited",
+            verdict="ok",
+            recent_retrieval_count=0,
+            top_hits=[_hit("medium", "high")],
+        ),
+        # Neither flags.
+        _ev(
+            "turn_audited",
+            verdict="ok",
+            recent_retrieval_count=0,
+            top_hits=[_hit("medium", "medium")],
+        ),
+        # Shielded: a retrieval happened — neither flags.
+        _ev(
+            "turn_audited",
+            verdict="ok",
+            recent_retrieval_count=2,
+            top_hits=[_hit("high", "high")],
+        ),
+        # Excluded rows.
+        _ev("turn_audited", verdict="ok", repeat=True, top_hits=[_hit("high", "high")]),
+        _ev("turn_audited", verdict="no_signal"),
+        _ev("turn_audited", verdict="ok"),  # pre-3.14: no top_hits
+        _ev("search", returned=[]),
+    ]
+    report = compute_widening_preview(events, now=now)
+    assert report.audits_with_features == 4
+    assert report.audits_without_features == 1
+    assert report.repeat_audits_skipped == 1
+    assert report.v1_baseline_flagged == 1
+    (row,) = report.rows
+    assert row.rule == "w1_top1_v2_high"
+    assert row.would_flag == 2
+    assert row.delta_from_v1 == 1
+    text = render_widening_preview_text(report)
+    assert "w1_top1_v2_high" in text
+    assert "v1 baseline" in text
+
+
+def test_widening_preview_render_empty_state() -> None:
+    report = compute_widening_preview([], now=datetime.now(timezone.utc))
+    text = render_widening_preview_text(report)
+    assert "No replayable audited turns yet" in text
+
+
+# ---------------------------------------------------------------------------
+# Health: repeat exclusion
+# ---------------------------------------------------------------------------
+
+
+def test_health_excludes_repeat_audits_from_audited_total() -> None:
+    now = datetime(2026, 5, 20, 12, 0, tzinfo=timezone.utc)
+    events = [
+        _ev("turn_audited", verdict="ok"),
+        _ev("turn_audited", verdict="ok", repeat=True),
+        _ev("turn_audited", verdict="no_signal", repeat=True),
+    ]
+    report = compute_health([], events, now=now)
+    assert report.silent_misses.audited_total == 1
+    assert report.silent_misses.no_signal_total == 0
+
+
+# ---------------------------------------------------------------------------
+# Server-level: pending_writes surface, shadow-field leak guards, dedup
+# ---------------------------------------------------------------------------
+
+
+async def _call(server: Any, name: str, **kwargs: Any) -> Any:
+    content, structured = await server.call_tool(name, kwargs)
+    if structured is not None:
+        return structured
+    if content and hasattr(content[0], "text"):
+        return json.loads(content[0].text)
+    return None
+
+
+@pytest.fixture
+def confirming_server(memory_dir: Path) -> tuple[Any, SessionState]:
+    from bettermemory.config import BehaviorConfig
+
+    cfg = Config(
+        storage=StorageConfig(directory=str(memory_dir)),
+        behavior=BehaviorConfig(require_write_confirmation=True),
+    )
+    state = SessionState()
+    return build_server(config=cfg, store=Store(memory_dir), state=state), state
+
+
+@pytest.fixture
+def plain_server(memory_dir: Path) -> Any:
+    cfg = Config(storage=StorageConfig(directory=str(memory_dir)))
+    return build_server(config=cfg, store=Store(memory_dir), state=SessionState())
+
+
+async def test_scope_overview_counts_pending_writes(
+    confirming_server: tuple[Any, SessionState],
+) -> None:
+    server, _state = confirming_server
+    staged = await _call(
+        server,
+        "memory_write",
+        content="a durable fact awaiting explicit confirmation",
+        scopes=["tools"],
+    )
+    assert staged["status"] == "pending"
+    overview = await _call(server, "memory_scope_overview", auto_scope=False)
+    assert overview["pending_writes"] == 1
+    confirmed = await _call(
+        server, "memory_write_confirm", pending_id=staged["pending_id"]
+    )
+    assert confirmed["status"] == "committed"
+    overview = await _call(server, "memory_scope_overview", auto_scope=False)
+    assert overview["pending_writes"] == 0
+
+
+async def test_search_event_carries_shadow_features_response_does_not(
+    plain_server: Any, memory_dir: Path
+) -> None:
+    """The calibration features land on the `search` EVENT; the MCP
+    response stays shadow-free — surfacing relevance_v2 live would
+    nudge model behavior before the calibration justifies a flip."""
+    await _call(
+        plain_server,
+        "memory_write",
+        content="alpha beta gamma delta epsilon reference body",
+        scopes=["tools"],
+    )
+    hits = await _call(
+        plain_server, "memory_search", query="alpha beta", auto_scope=False
+    )
+    hit_list = hits["result"] if isinstance(hits, dict) else hits
+    assert hit_list
+    for hit in hit_list:
+        assert "relevance_v2" not in hit
+        assert "query_unique" not in hit
+
+    search_events = [e for e in iter_events(memory_dir) if e["kind"] == "search"]
+    assert search_events
+    ev = search_events[-1]
+    assert ev["query_unique"] == 2
+    assert ev["relevance_v2"] == [
+        _relevance_label_v2(count, ev["query_unique"]) for count in ev["match_counts"]
+    ]
+    assert len(ev["scores"]) == len(ev["returned"])
+    assert len(ev["match_counts"]) == len(ev["returned"])
+
+
+async def test_audit_turn_handler_dedups_repeats(
+    plain_server: Any, memory_dir: Path
+) -> None:
+    # A non-empty store is required for a dedup anchor: on an empty
+    # store the probe aborts before `probe_query` is set, so the first
+    # audit event carries nothing to match a repeat against.
+    await _call(
+        plain_server,
+        "memory_write",
+        content="kubernetes ingress staging cluster reference notes",
+        scopes=["infrastructure"],
+    )
+    message = "kubernetes ingress staging cluster question"
+    for _ in range(2):
+        await _call(plain_server, "memory_audit_turn", user_message=message)
+    audits = [e for e in iter_events(memory_dir) if e["kind"] == "turn_audited"]
+    assert len(audits) == 2
+    assert "repeat" not in audits[0]
+    assert audits[1]["repeat"] is True

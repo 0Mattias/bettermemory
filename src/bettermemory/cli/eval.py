@@ -91,6 +91,20 @@ def add_subparser(
         ),
     )
     parser.add_argument(
+        "--widening-preview",
+        action="store_true",
+        help=(
+            "Switch to a replay of candidate LOOSER threshold rules over "
+            "the turn_audited stream (3.14+ events carry per-turn "
+            "top_hits with the raw coverage features). Reports how many "
+            "audited turns each widening candidate (w1_top1_v2_high — "
+            "the shadow relevance label) would flag beyond the replayed "
+            "v1 baseline. The forward-looking counterpart to "
+            "--threshold-sweep, which can only compare rules at least "
+            "as strict as v1. Honours `--since` and `--json`."
+        ),
+    )
+    parser.add_argument(
         "--json",
         action="store_true",
         help="Emit JSON instead of human-readable text.",
@@ -117,6 +131,7 @@ def run(
         json_out=args.json,
         tool_usage=args.tool_usage,
         threshold_sweep=args.threshold_sweep,
+        widening_preview=args.widening_preview,
         parser=sub_parser,
     )
 
@@ -130,24 +145,29 @@ def _cli_eval(
     json_out: bool,
     tool_usage: bool,
     threshold_sweep: bool,
+    widening_preview: bool,
     parser: Any,
 ) -> None:
     """`bettermemory eval` — compute and render the effectiveness report.
 
     Default mode reports the three effectiveness rates
-    (memory_helped_rate, endorsement_rate, silent_miss_rate). Two
+    (memory_helped_rate, endorsement_rate, silent_miss_rate). Three
     alternative modes:
 
     - ``--tool-usage``: per-MCP-tool call-count rollup. Answers
       "which tools is the model actually reaching for?".
     - ``--threshold-sweep``: counterfactual replay of logged
-      `search_miss` events against alternative threshold rules.
-      Answers "is the current v1_top1_high rule over-firing?".
+      `search_miss` events against alternative STRICTER threshold
+      rules. Answers "is the current v1_top1_high rule over-firing?".
+    - ``--widening-preview``: replay of candidate LOOSER rules over
+      the `turn_audited` stream (needs 3.14+ per-turn top_hits).
+      Answers "what would a widened rule flag that v1 misses?".
 
     The pure compute layer lives in ``bettermemory.eval`` so tests
-    can drive every mode directly with synthetic events. The two
-    alternative modes are mutually exclusive; if both flags are set
-    the parser exits with an error before this function runs.
+    can drive every mode directly with synthetic events. The
+    alternative modes are pairwise mutually exclusive; if more than
+    one flag is set the parser exits with an error before this
+    function runs.
     """
     import json as _json
 
@@ -156,15 +176,20 @@ def _cli_eval(
         compute_eval,
         compute_threshold_sweep,
         compute_tool_usage,
+        compute_widening_preview,
         parse_since,
         render_text,
         render_threshold_sweep_text,
         render_tool_usage_text,
+        render_widening_preview_text,
     )
     from ..events import iter_all_events
 
-    if tool_usage and threshold_sweep:
-        parser.error("--tool-usage and --threshold-sweep are mutually exclusive")
+    if sum((tool_usage, threshold_sweep, widening_preview)) > 1:
+        parser.error(
+            "--tool-usage, --threshold-sweep, and --widening-preview "
+            "are mutually exclusive"
+        )
         return  # pragma: no cover — parser.error raises SystemExit
 
     try:
@@ -205,6 +230,17 @@ def _cli_eval(
             sys.stdout.write(_json.dumps(sweep_report.to_dict(), indent=2) + "\n")
         else:
             sys.stdout.write(render_threshold_sweep_text(sweep_report))
+        return
+
+    if widening_preview:
+        preview_report = compute_widening_preview(
+            events=iter_all_events(directory),
+            since=since,
+        )
+        if json_out:
+            sys.stdout.write(_json.dumps(preview_report.to_dict(), indent=2) + "\n")
+        else:
+            sys.stdout.write(render_widening_preview_text(preview_report))
         return
 
     store = ctx.store
