@@ -104,6 +104,11 @@ Common failures:
 - **Memories not found by `memory_search`**: check `BETTERMEMORY_DIR`
   and the startup-log "memory directory" line. Project-scoped
   `./.claude-memory/` overrides global `~/.claude-memory/`.
+- **Slow first start after upgrading**: releases that bump the index
+  schema rebuild the derived search index automatically on first start
+  (one-time; INFO log on success). If that rebuild fails, search falls
+  back to full scans — correct, just slower — until a manual
+  `bettermemory reindex` repairs it.
 - **Model over-calling `memory_search`**: verify the client surfaces
   the server's `instructions` block; if not, paste
   [system_prompt.md](system_prompt.md) into `CLAUDE.md`.

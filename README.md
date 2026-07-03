@@ -147,7 +147,8 @@ with `memory_verify`, and answers from the corrected memory.
   durable search, with promotion when a takeaway hardens into a fact.
 - Tombstones instead of deletes; everything is restorable.
 - Scales past ~500 memories via a derived SQLite FTS5 index. The
-  markdown files stay canonical; `bettermemory reindex` rebuilds.
+  markdown files stay canonical; upgrades rebuild it automatically,
+  and `bettermemory reindex` rebuilds on demand.
 - Cross-machine sync over your own git remote, a local web UI, and an
   eval CLI (`memory_helped_rate` / `endorsement_rate` /
   `silent_miss_rate`, see [docs/eval.md](docs/eval.md)).
