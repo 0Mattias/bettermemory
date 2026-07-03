@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import random
 import unicodedata
 from datetime import datetime, timedelta, timezone
 
@@ -1182,6 +1183,67 @@ def test_ascii_normalization_invariance() -> None:
     assert unicodedata.normalize("NFKC", ascii_all) == ascii_all
     assert unicodedata.normalize("NFD", ascii_all) == ascii_all
     assert all(not unicodedata.combining(ch) for ch in ascii_all)
+
+
+def test_fold_diacritics_fast_path_equals_nfd_reference() -> None:
+    """Old-vs-new equivalence for the `_fold_diacritics` translate fast
+    path: byte equality against the reference NFD fold (the pre-table
+    implementation, spelled inline) over a broad Unicode sample. Pins
+    the two lemmas the `_LATIN_FOLD_TABLE` comment states — the fold is
+    per-char decomposable, and the table agrees with the reference on
+    every code point the gate admits — so drift here means the table
+    and the gate regex changed out of step."""
+    from bettermemory.search import _FOLD_FALLBACK_RE, _fold_diacritics
+
+    def reference(text: str) -> str:
+        return "".join(
+            ch
+            for ch in unicodedata.normalize("NFD", text)
+            if not unicodedata.combining(ch)
+        )
+
+    # Exhaustive over the gate-admitted range: every char alone, and the
+    # whole range as one translate call.
+    covered = "".join(map(chr, range(0x180)))
+    for ch in covered:
+        assert _fold_diacritics(ch) == reference(ch), f"U+{ord(ch):04X}"
+    assert _fold_diacritics(covered) == reference(covered)
+    # The fast path must actually FIRE for the workload it exists for:
+    # Latin-diacritic prose, newlines and tabs included.
+    assert not _FOLD_FALLBACK_RE.search("sommarstugan ligger\npå tjörn\tän")
+
+    # Combining marks and the Angstrom sign are spelled in \u escapes:
+    # an NFC-normalising editor would silently recompose the literal
+    # glyphs ('a' + U+0308 into 'ä', U+212B into U+00C5), rewriting the
+    # very inputs that exercise the fallback boundary.
+    samples = [
+        "",
+        "Sommarstugan ligger på Tjörn — nyckeln hänger hos Görel",
+        unicodedata.normalize("NFD", "Tjörn crème brûlée"),
+        # Marks in both orders (ccc 220/230): canonical reordering fires
+        # inside NFD; both spellings must fold to bare 'a a'.
+        "a\u0323\u0308 a\u0308\u0323",
+        # Latin Extended-B carries real folds OUTSIDE the table — these
+        # must route to the reference path, not pass through unfolded.
+        "ǎǹǔ pinyin",
+        "\u212bngström",  # precomposed singleton beyond the gate
+        "Ελληνικά ώρα Русский й",
+        "Tiếng Việt",
+        "한국어 메모리 テスト 東京",
+        "🇸🇪 flaggan 𝔘𝔫𝔦𝔠𝔬𝔡𝔢",
+    ]
+    for s in samples:
+        assert _fold_diacritics(s) == reference(s), ascii(s)
+
+    # Deterministic pseudo-random strings over an alphabet mixing
+    # gate-admitted chars, combining marks, foldable chars beyond the
+    # gate, and non-Latin scripts — samples the fast path, the fallback,
+    # and the boundary between them beyond the hand-picked shapes.
+    rng = random.Random(0x5EED)
+    alphabet = covered + "\u0300\u0301\u0308\u0323" + "ǎǔḯ\u212b東й한ば"
+    for _ in range(300):
+        s = "".join(rng.choice(alphabet) for _ in range(rng.randrange(0, 40)))
+        assert _fold_diacritics(s) == reference(s), ascii(s)
 
 
 # Golden token streams, generated at 3.12.0 (commit 1353141) BEFORE the

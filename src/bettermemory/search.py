@@ -458,6 +458,45 @@ _STOPWORDS = (
 )
 
 
+def _nfd_fold(text: str) -> str:
+    """The reference diacritic fold: NFD-decompose, drop combining marks.
+    Per-char Python-level cost (a genexp with a `unicodedata.combining`
+    call per char) — `_fold_diacritics` reserves it for input outside
+    `_LATIN_FOLD_TABLE`'s range and serves the common Latin ranges via
+    `str.translate`."""
+    return "".join(
+        ch for ch in unicodedata.normalize("NFD", text) if not unicodedata.combining(ch)
+    )
+
+
+# `str.translate` fold table over ASCII + Latin-1 Supplement + Latin
+# Extended-A (U+0000–U+017F), generated at import by running each code
+# point through `_nfd_fold`. A dense list, not a dict: sequence tables
+# index at C speed per char, where a dict table pays a caught KeyError
+# per miss on the ASCII majority — measured as slow as the genexp it
+# replaces. Applying the fold per-char via the table is exact, not an
+# approximation, by two facts:
+#
+# - the fold is per-char decomposable: NFD concatenates each char's own
+#   canonical decomposition, and canonical reordering only permutes
+#   combining marks (ccc > 0) past each other, never past a starter —
+#   and every combining char is dropped anyway, so the whole-string fold
+#   IS the concatenation of the per-char folds;
+# - the table covers every code point the gate below admits: foldable
+#   entries carry their base letters ('é' → 'e', 'å' → 'a'), the rest
+#   map to themselves ('ß', 'ø', 'æ', 'ĳ' have no canonical
+#   decomposition; the NFD path never folded them either).
+#
+# Both facts are pinned byte-for-byte against the reference fold by
+# test_fold_diacritics_fast_path_equals_nfd_reference.
+_LATIN_FOLD_TABLE = [_nfd_fold(chr(cp)) for cp in range(0x180)]
+
+# Any char beyond the table's range (combining sequences, Latin Ext-B and
+# up, non-Latin scripts, precomposed singletons like U+212B) routes the
+# whole string to the NFD fallback.
+_FOLD_FALLBACK_RE = re.compile(r"[^\u0000-\u017f]")
+
+
 def _fold_diacritics(text: str) -> str:
     """NFD-decompose and drop combining marks, so 'Zürich' and 'zurich'
     share one token form.
@@ -469,10 +508,17 @@ def _fold_diacritics(text: str) -> str:
     normalises combining-mark *input*: a body pasted from macOS in
     decomposed form ('Tjörn' as 'o' + U+0308) previously SPLIT at the mark
     — ``\\w`` excludes category Mn — yielding ['tjo', 'rn']; now both the
-    precomposed and decomposed spellings fold to 'tjorn'."""
-    return "".join(
-        ch for ch in unicodedata.normalize("NFD", text) if not unicodedata.combining(ch)
-    )
+    precomposed and decomposed spellings fold to 'tjorn'.
+
+    Latin-diacritic text — the dominant non-ASCII case in a partly-Swedish
+    store, which `_tokenize_impl`'s `isascii` fast path never spares —
+    folds via `_LATIN_FOLD_TABLE` at C speed instead of the per-char NFD
+    genexp; byte-identical by construction (see the table comment).
+    Anything the table doesn't cover takes `_nfd_fold`, the unchanged
+    original path."""
+    if not _FOLD_FALLBACK_RE.search(text):
+        return text.translate(_LATIN_FOLD_TABLE)
+    return _nfd_fold(text)
 
 
 # Scripts written without inter-word whitespace (tokenizer v2). `\w` treats
