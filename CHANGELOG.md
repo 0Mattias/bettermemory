@@ -22,20 +22,55 @@ spells out exactly what's stable.
   live query 'todo'/'cooki' could not match the indexed
   'todos'/'cooky', so prefiltered search on large stores silently
   dropped exactly the memories the rankers rate high. The v5 bump
-  routes existing indexes through the standard heal (atomic wipe +
-  rebuild-pending flag; the next Store construction auto-rebuilds —
-  no manual `bettermemory reindex` needed, search falls back to full
-  scans meanwhile). The ratchet: index meta now records a tokenizer
-  fingerprint (sha256 of `fts_index_text` over a fixed multilingual
-  probe corpus) next to `schema_version`, stamped in the same atomic
-  migration transaction; on open, a fingerprint mismatch at the
-  current version migrates exactly like an older version, and a
-  pinned regression test asserts the recorded constant matches the
-  live pipeline so any future stream change fails CI until
-  `SCHEMA_VERSION` is bumped.
+  routes existing indexes through the schema heal path — machinery
+  that is itself new this cycle (3.12.0's v4 migration dropped the
+  tables and waited for incremental writes to repopulate): the wipe,
+  version stamp, and rebuild-pending flag commit in one atomic
+  flock-revalidated transaction, the flag keeps search on full scans
+  (slower, never lossy), and the next Store construction
+  auto-rebuilds — no manual `bettermemory reindex` needed. The
+  ratchet: index meta now records a tokenizer fingerprint (sha256 of
+  `fts_index_text` over a fixed multilingual probe corpus) next to
+  `schema_version`, stamped in the same atomic migration
+  transaction; on open, a fingerprint mismatch at the current
+  version migrates exactly like an older version, and a pinned
+  regression test asserts the recorded constant matches the
+  live pipeline, so any future stream change fails CI until the
+  constant is deliberately re-pinned. Existing indexes heal either
+  way — the runtime compares the live fingerprint, not the pin — so
+  the `SCHEMA_VERSION` bump the test's failure message prescribes
+  keeps version semantics honest rather than gating the heal.
 
 ### Fixed
 
+- **Sixteen developer-vocabulary collisions un-stopworded from the
+  multilingual lists.** todo/todos, su, dom, hat, uber, die, ist,
+  para, fur, hay, si, finns, sans, ses — and 'sin', which 3.12.0
+  promised out but leaked back via the Swedish possessive — were
+  absorbed as function words, and stopword-only queries
+  short-circuited to zero hits before any ranker. `search()` also
+  falls back to the unstripped tokens when stripping empties a query,
+  so no future stopword addition can make a query unanswerable.
+- **Plural-stemmer symmetry restored: -ie/-y nouns share one key,
+  s-final singulars pinned.** 'cookies' stemmed to 'cooky' but
+  'cookie' to 'cooki' — two index keys, zero matches for every
+  movie/rookie/hoodie-shaped lexeme; a final-y normalisation
+  mirroring the final-e rule puts both inflections on one key
+  ('policy' meets 'policies'). s-final singulars outside the
+  ss/us/is guard (alias, atlas, bias, canvas, lens) are pinned whole
+  so they meet their own -es plurals.
+- **Single-character CJK queries match inside runs.** '猫' scored
+  zero against a body plainly containing 猫 — bigram segmentation
+  left no single-char token to equal. The index side now emits each
+  bigram's characters as unigrams (queries keep bigram phrase
+  semantics), so one-character queries hit in every ranker and the
+  FTS index.
+- **NFKC compatibility fold in the tokenizer.** Fullwidth Latin and
+  digits ('ＧＰＵ', '２０２６' — standard Japanese IME output) never
+  met 'gpu'/'2026', halfwidth katakana never met fullwidth, and the
+  halfwidth voiced-sound marks stranded as junk tokens. NFKC ahead of
+  the case/diacritic folds fixes all three, symmetrically on query
+  and index side.
 - **The audit's acknowledgment gate compares surface spellings again,
   restoring its 3.11 width.** 3.12.0 canonicalised `_ACK_SURFACE`
   through the now-stemming `tokenize`, which put generic stems in
@@ -51,6 +86,45 @@ spells out exactly what's stable.
   acknowledgments ("sounds good", "thanks, done!") gate exactly as
   before; the two-content-token floor stays in stemmed space, matching
   the ranker's coverage denominator.
+- **Link surfaces degrade to scans instead of silently dropping
+  annotations while the index is unhealthy.** Search-hit link
+  annotations and `memory_show` reverse-links honour the
+  rebuild-pending flag, and a corrupt or version-newer index takes
+  the same candidate-scan fallback for search-hit annotations —
+  previously those states returned hits with their links quietly
+  missing.
+- **Poisoned index meta is corruption, not a crash.** A readable
+  index whose meta rows were hand-edited or written by a foreign tool
+  (non-integer `schema_version` / `indexed_count`) crashed
+  `index.status()` with ValueError — and OSError from a concurrent
+  unlink did the same — taking doctor and reindex diagnostics down on
+  exactly the corruption they exist to report. `status()` now returns
+  its degraded corrupt shape in both cases, `rebuild()` recovers from
+  the poisoned meta instead of raising, and `memory_show`'s link
+  guard treats it as corruption too.
+- **`bettermemory doctor` checks FTS index health, and the
+  index-divergence warning is parse-aware.** A new `index_health`
+  check surfaces a corrupt, missing, rebuild-pending, or
+  out-of-sync-with-disk index (one repair: `bettermemory reindex`).
+  Doctor and the startup S4 warning both subtract unparseable files a
+  rebuild can never index — previously they prescribed a reindex that
+  could never clear the gap — and parse-health counts files with the
+  store's own enumeration (README.md, dot-prefixed .md) so the two
+  checks cannot disagree.
+
+### Performance
+
+- **Search tokenizes each candidate once instead of six times.** One
+  token stream per candidate now threads through the keyword scorer,
+  IDF, BM25, and the semantic literal-match block, and pure-ASCII
+  input skips the Unicode folds entirely; hybrid search over a
+  499-memory store drops 91.5 ms → 26.8 ms with byte-identical hits,
+  ordering, and relevance labels (pinned by golden streams).
+- **Diacritic folding via a precomputed translate table.** Common
+  Latin (U+0000–U+017F) folds through a dense `str.translate` table
+  built at import instead of a per-character NFD genexp; anything
+  beyond the range routes to the unchanged NFD path. Non-ASCII Latin
+  bodies tokenize at 1.17x ASCII cost, down from 1.46x.
 
 ## 3.12.0 - 2026-07-02
 

@@ -92,9 +92,10 @@ bettermemory doctor
 ```
 
 Checks binary on PATH, config loadable, storage writable, memories
-parse cleanly, event log writable, embeddings extras present (when
-enabled), and client configs referencing a stale binary path. Each
-failed check has a one-line fix hint. `--json` for machine-readable;
+parse cleanly, search index healthy and in sync with disk, event log
+writable, embeddings extras present (when enabled), and client
+configs referencing a stale binary path. Each failed check has a
+one-line fix hint. `--json` for machine-readable;
 exit codes 0/1/2 for ok/warn/fail.
 
 Common failures:
