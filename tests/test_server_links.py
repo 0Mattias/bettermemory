@@ -309,6 +309,95 @@ async def test_show_survives_poisoned_index_meta(
     assert rev["source_id"] == b_id
 
 
+async def test_show_survives_unwritable_root_during_index_migration(
+    server: Any, memory_dir: Path
+) -> None:
+    """A store root that lost its write bit (permission change, backup
+    restore) turns `_ensure_schema`'s migration branch into an OSError
+    source: the migration serialises on `flock_excl`, whose
+    `os.open(..., O_CREAT)` of the `.index.sqlite.lock` sidecar raises
+    `PermissionError` when the sidecar doesn't exist yet. That is an
+    `OSError` — not `ValueError` / `sqlite3.DatabaseError` /
+    `IndexVersionError` — so pre-fix it escaped `_links_payload`'s
+    corruption guard and hard-crashed memory_show, the only index-read
+    surface still letting it out (`index.status()` declares the class
+    load-bearing for its never-raises contract; the search-annotation
+    surface catches Exception). The show must instead take the same
+    reverse-scan fallback as a torn file — the .md bodies are intact
+    and still readable, the root kept its read bit.
+
+    The back-dating connection is HELD OPEN across the show so the
+    index's -wal/-shm siblings survive the chmod. Without a live
+    connection SQLite removes them on close, and `_connect`'s WAL
+    pragma in the read-only dir then fails first with
+    `sqlite3.DatabaseError` (already guarded) — the held connection is
+    what makes the flock line reachable, mirroring the real trigger:
+    another process has the index open when the permission change
+    lands.
+    """
+    import os
+    import sqlite3
+
+    from bettermemory import index as _index
+
+    a_id = await _seed(server, "old version of the fact")
+    b_id = await _seed(server, "new version of the fact")
+    await _call(
+        server,
+        "memory_update",
+        id=b_id,
+        links=[{"type": "supersedes", "target_id": a_id}],
+    )
+
+    # Sanity: the healthy index serves the reverse link before the
+    # tampering, so the post-chmod assertion proves the fallback.
+    shown_before = await _call(server, "memory_show", id=a_id)
+    assert shown_before.get("reverse_links")
+
+    root = Path(memory_dir).expanduser().resolve()
+    idx_path = _index.index_path(root)
+    lock_path = idx_path.with_suffix(idx_path.suffix + ".lock")
+    # The sidecar must be absent so the flock's os.open has to O_CREAT
+    # it — an existing sidecar opens fine in a read-only dir. A fresh
+    # store never migrated, so nothing has created it yet.
+    assert not lock_path.exists()
+
+    conn = sqlite3.connect(str(idx_path))
+    try:
+        # Back-date the on-disk version so the next index op enters the
+        # migration branch (the only path that acquires the flock).
+        conn.execute(
+            "UPDATE meta SET value = ? WHERE key = 'schema_version'",
+            (str(_index.SCHEMA_VERSION - 1),),
+        )
+        conn.commit()
+        os.chmod(root, 0o500)
+        try:
+            # On some platforms (CI runners as root, Windows) the chmod
+            # doesn't actually deny write — the OSError can't be provoked.
+            if os.access(root, os.W_OK):
+                pytest.skip("filesystem ignored chmod; cannot exercise it")
+            # memory_show must not raise: the PermissionError from the
+            # lock sidecar's os.open routes to the reverse-scan
+            # fallback, which recovers the link from the .md files.
+            shown = await _call(server, "memory_show", id=a_id)
+        finally:
+            os.chmod(root, 0o700)  # restore so pytest can clean up
+    finally:
+        conn.close()
+
+    assert shown["id"] == a_id
+    assert "reverse_links" in shown, (
+        "reverse_links dropped on the unwritable-root migration OSError; "
+        "the reverse-scan fallback should have recovered it from the .md "
+        "files"
+    )
+    assert len(shown["reverse_links"]) == 1
+    rev = shown["reverse_links"][0]
+    assert rev["type"] == "supersedes"
+    assert rev["source_id"] == b_id
+
+
 async def test_no_inbound_show_opens_index_once(
     server: Any, memory_dir: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

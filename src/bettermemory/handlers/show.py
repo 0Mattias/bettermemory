@@ -210,19 +210,23 @@ def _links_payload(deps: "ToolHandlers", memory: Any) -> dict[str, Any]:
 
     A torn / truncated `.index.sqlite` raises `sqlite3.DatabaseError`,
     an on-disk schema_version newer than this reader raises
-    `index.IndexVersionError`, and a poisoned non-integer meta row (a
+    `index.IndexVersionError`, a poisoned non-integer meta row (a
     hand-edited or foreign-tool-written index) raises `ValueError`
     from the `int()` reads (`_ensure_schema`'s version check, the
-    helper's own `indexed_count` read) — all three surface out of
-    `links_for_with_status` (it opens + `_ensure_schema`s the file),
-    NOT as `indexed_count == 0`. We catch all three and route to the
-    same zero-row `load_all` fallback: unparseable meta IS corruption
-    (`index.status()` classifies it the same), the index is a
-    regenerable best-effort cache, and the canonical `.md` bodies are
-    intact, so the show must degrade gracefully rather than hard-crash
-    for every id until reindex — mirroring the corruption tolerance
-    `_load_search_candidates` already gets from the tolerant
-    `index.status()`.
+    helper's own `indexed_count` read), and a store root that lost its
+    write bit raises `OSError` when `_ensure_schema`'s migration
+    branch has to O_CREAT the `.index.sqlite.lock` flock sidecar —
+    all four surface out of `links_for_with_status` (it opens +
+    `_ensure_schema`s the file), NOT as `indexed_count == 0`. We catch
+    all four and route to the same zero-row `load_all` fallback:
+    unparseable meta IS corruption (`index.status()` classifies it the
+    same — and declares the same `OSError` class load-bearing for its
+    never-raises contract), the index is a regenerable best-effort
+    cache, and the canonical `.md` bodies are intact (still readable —
+    the root kept its read bit), so the show must degrade gracefully
+    rather than hard-crash for every id until reindex — mirroring the
+    corruption tolerance `_load_search_candidates` already gets from
+    the tolerant `index.status()`.
     """
     from .. import index as _index
 
@@ -240,16 +244,20 @@ def _links_payload(deps: "ToolHandlers", memory: Any) -> dict[str, Any]:
         outbound, inbound, indexed_count, needs_rebuild = _index.links_for_with_status(
             deps.store.root, memory.id
         )
-    except (ValueError, sqlite3.DatabaseError, _index.IndexVersionError):
+    except (OSError, ValueError, sqlite3.DatabaseError, _index.IndexVersionError):
         # A torn/truncated index raises DatabaseError; an on-disk
         # schema_version newer than this reader raises
         # IndexVersionError; a poisoned non-integer meta row raises
         # ValueError from the `int()` reads (`_ensure_schema`'s version
         # check, the helper's own `indexed_count` read) — unparseable
         # meta IS corruption, exactly as `index.status()` classifies
-        # it. All fire inside `links_for_with_status` after it opens
-        # the file. The index is a regenerable cache and the canonical
-        # .md bodies are intact, so treat it as an unusable index (no
+        # it; an unwritable store root raises OSError when
+        # `_ensure_schema`'s migration branch has to O_CREAT the
+        # `.index.sqlite.lock` flock sidecar (the class `status()`
+        # declares load-bearing for its never-raises contract). All
+        # fire inside `links_for_with_status` after it opens the file.
+        # The index is a regenerable cache and the canonical .md
+        # bodies are intact, so treat it as an unusable index (no
         # inbound, zero rows) and route to the reverse-scan fallback
         # below rather than hard-crashing memory_show for every id
         # until reindex. Same tolerance `_load_search_candidates` gets
