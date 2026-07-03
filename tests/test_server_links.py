@@ -253,6 +253,62 @@ async def test_reverse_links_survive_rebuild_pending_partial_index(
     assert rev["source_id"] == b_id
 
 
+@pytest.mark.parametrize("poisoned_key", ["schema_version", "indexed_count"])
+async def test_show_survives_poisoned_index_meta(
+    server: Any, memory_dir: Path, poisoned_key: str
+) -> None:
+    """A non-integer meta row (a hand-edited or foreign-tool-written
+    index — the file stays a valid SQLite database) fails an `int()`
+    read inside `links_for_with_status` with ValueError:
+    `meta.schema_version` in `_ensure_schema`'s version check,
+    `meta.indexed_count` in the helper's own count read. Neither is
+    `sqlite3.DatabaseError` nor `IndexVersionError`, so pre-fix both
+    escaped `_links_payload`'s corruption guard and hard-crashed
+    memory_show for EVERY id until reindex — defeating the
+    degrade-gracefully contract the guard exists to keep. Unparseable
+    meta IS corruption (`index.status()` already classifies it so):
+    the show must take the same reverse-scan fallback as a torn file,
+    recovering the reverse link from the intact .md files."""
+    import sqlite3
+
+    from bettermemory import index as _index
+
+    a_id = await _seed(server, "old version of the fact")
+    b_id = await _seed(server, "new version of the fact")
+    await _call(
+        server,
+        "memory_update",
+        id=b_id,
+        links=[{"type": "supersedes", "target_id": a_id}],
+    )
+
+    # Sanity: the healthy index serves the reverse link before the
+    # poisoning, so the post-poison assertion proves the fallback.
+    shown_before = await _call(server, "memory_show", id=a_id)
+    assert shown_before.get("reverse_links")
+
+    root = Path(memory_dir).expanduser().resolve()
+    conn = sqlite3.connect(str(_index.index_path(root)))
+    try:
+        conn.execute("UPDATE meta SET value = 'banana' WHERE key = ?", (poisoned_key,))
+        conn.commit()
+    finally:
+        conn.close()
+
+    # memory_show must not raise, and the reverse-scan fallback must
+    # still recover the reverse link from the intact .md files.
+    shown = await _call(server, "memory_show", id=a_id)
+    assert shown["id"] == a_id
+    assert "reverse_links" in shown, (
+        "reverse_links dropped on poisoned index meta; the reverse-scan "
+        "fallback should have recovered it from the .md files"
+    )
+    assert len(shown["reverse_links"]) == 1
+    rev = shown["reverse_links"][0]
+    assert rev["type"] == "supersedes"
+    assert rev["source_id"] == b_id
+
+
 async def test_no_inbound_show_opens_index_once(
     server: Any, memory_dir: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

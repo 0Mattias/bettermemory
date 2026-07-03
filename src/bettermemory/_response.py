@@ -799,7 +799,9 @@ class ResponseBuilder:
                 links_map, needs_rebuild = links_for_many(store.root, hit_ids)
             except Exception:  # noqa: BLE001 — an unreadable index (sqlite
                 # corruption, IndexVersionError from a newer-version store,
-                # a lock outliving the busy timeout) is the same
+                # ValueError from a poisoned non-integer meta row failing
+                # `_ensure_schema`'s int() version read, a lock outliving
+                # the busy timeout) is the same
                 # answer-may-be-missing-edges state as the rebuild-pending
                 # flag, with the same recovery (`rebuild()`) — so take the
                 # same candidate-scan fallback below instead of mapping the

@@ -430,6 +430,57 @@ async def test_link_annotations_survive_version_newer_index(
     assert [e["id"] for e in out[0]["superseded_by"]] == [b["id"]]
 
 
+async def test_link_annotations_survive_poisoned_index_meta(
+    server: Any, memory_dir: Path
+) -> None:
+    """A non-integer `meta.schema_version` (a hand-edited or foreign-
+    tool-written index — the file stays a valid SQLite database) fails
+    `_ensure_schema`'s `int()` version read with ValueError before
+    `links_for_many` runs its queries — a third failure mode alongside
+    DatabaseError / IndexVersionError. The broad except around
+    `links_for_many` already catches it; this pins that the
+    poisoned-meta ValueError takes the same candidate-scan fallback
+    (`status()` reports the state corrupt=True, so the loader served
+    the full corpus) instead of ever crashing the search or silently
+    dropping the `superseded_by` warning."""
+    import sqlite3
+
+    from bettermemory.index import index_path
+
+    a = await _call(
+        server,
+        "memory_write",
+        content="the auth subsystem validates JWT session tokens",
+        scopes=["tools"],
+    )
+    b = await _call(
+        server,
+        "memory_write",
+        content="unrelated replacement note xyzzy",
+        scopes=["tools"],
+    )
+    await _call(
+        server,
+        "memory_update",
+        id=b["id"],
+        links=[{"type": "supersedes", "target_id": a["id"]}],
+    )
+
+    conn = sqlite3.connect(str(index_path(memory_dir)))
+    try:
+        conn.execute("UPDATE meta SET value = 'banana' WHERE key = 'schema_version'")
+        conn.commit()
+    finally:
+        conn.close()
+
+    hit_a = _hit(await _search(server, "auth JWT session tokens"), a["id"])
+    assert "superseded_by" in hit_a, (
+        "poisoned index meta must take the candidate-scan fallback, not "
+        "silently drop the superseded_by warning"
+    )
+    assert [e["id"] for e in hit_a["superseded_by"]] == [b["id"]]
+
+
 async def test_link_annotation_failure_never_breaks_search(
     server: Any, monkeypatch: Any
 ) -> None:

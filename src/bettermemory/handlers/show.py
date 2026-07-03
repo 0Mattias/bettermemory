@@ -208,15 +208,19 @@ def _links_payload(deps: "ToolHandlers", memory: Any) -> dict[str, Any]:
     connection. A zero count (index absent or empty) or a set flag
     (rebuild pending) triggers the `load_all` scan.
 
-    A torn / truncated `.index.sqlite` raises `sqlite3.DatabaseError`
-    and an on-disk schema_version newer than this reader raises
-    `index.IndexVersionError` — both surface out of
+    A torn / truncated `.index.sqlite` raises `sqlite3.DatabaseError`,
+    an on-disk schema_version newer than this reader raises
+    `index.IndexVersionError`, and a poisoned non-integer meta row (a
+    hand-edited or foreign-tool-written index) raises `ValueError`
+    from the `int()` reads (`_ensure_schema`'s version check, the
+    helper's own `indexed_count` read) — all three surface out of
     `links_for_with_status` (it opens + `_ensure_schema`s the file),
-    NOT as `indexed_count == 0`. We catch both and route to the same
-    zero-row `load_all` fallback: the index is a regenerable
-    best-effort cache and the canonical `.md` bodies are intact, so the
-    show must degrade gracefully rather than hard-crash for every id
-    until reindex — mirroring the corruption tolerance
+    NOT as `indexed_count == 0`. We catch all three and route to the
+    same zero-row `load_all` fallback: unparseable meta IS corruption
+    (`index.status()` classifies it the same), the index is a
+    regenerable best-effort cache, and the canonical `.md` bodies are
+    intact, so the show must degrade gracefully rather than hard-crash
+    for every id until reindex — mirroring the corruption tolerance
     `_load_search_candidates` already gets from the tolerant
     `index.status()`.
     """
@@ -236,19 +240,22 @@ def _links_payload(deps: "ToolHandlers", memory: Any) -> dict[str, Any]:
         outbound, inbound, indexed_count, needs_rebuild = _index.links_for_with_status(
             deps.store.root, memory.id
         )
-    except (sqlite3.DatabaseError, _index.IndexVersionError):
+    except (ValueError, sqlite3.DatabaseError, _index.IndexVersionError):
         # A torn/truncated index raises DatabaseError; an on-disk
         # schema_version newer than this reader raises
-        # IndexVersionError (both fire inside `_ensure_schema`, which
-        # `links_for_with_status` runs after opening the file). The
-        # index is a regenerable cache and the canonical .md bodies are
-        # intact, so treat it as an unusable index (no inbound, zero
-        # rows) and route to the reverse-scan fallback below rather
-        # than hard-crashing memory_show for every id until reindex.
-        # Same tolerance `_load_search_candidates` gets from the
-        # corruption-swallowing `index.status()`. `outbound` is unused
-        # downstream (only `inbound` + `indexed_count` + `needs_rebuild`
-        # drive the fallback), so it's dropped here.
+        # IndexVersionError; a poisoned non-integer meta row raises
+        # ValueError from the `int()` reads (`_ensure_schema`'s version
+        # check, the helper's own `indexed_count` read) — unparseable
+        # meta IS corruption, exactly as `index.status()` classifies
+        # it. All fire inside `links_for_with_status` after it opens
+        # the file. The index is a regenerable cache and the canonical
+        # .md bodies are intact, so treat it as an unusable index (no
+        # inbound, zero rows) and route to the reverse-scan fallback
+        # below rather than hard-crashing memory_show for every id
+        # until reindex. Same tolerance `_load_search_candidates` gets
+        # from the corruption-swallowing `index.status()`. `outbound`
+        # is unused downstream (only `inbound` + `indexed_count` +
+        # `needs_rebuild` drive the fallback), so it's dropped here.
         inbound, indexed_count, needs_rebuild = [], 0, False
     if needs_rebuild:
         # Rebuild-pending window: a schema migration dropped the data
