@@ -50,3 +50,6 @@ htmlcov/
 # Claude Code session scratch (settings.local.json) + Workflow-agent worktrees —
 # untracked repo copies here must never enter lint/test globs or get committed.
 .claude/
+
+# throwaway venv for the live comparative eval lane (tests/eval/run_live.sh)
+.eval-venv/

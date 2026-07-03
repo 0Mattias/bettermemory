@@ -15,6 +15,7 @@ import pytest
 from .adapters import (
     BetterMemoryAdapter,
     SystemUnavailable,
+    agentmemory_adapter,
     claude_mem_adapter,
     default_adapters,
     mem0_adapter,
@@ -97,7 +98,12 @@ def test_live_agent_metrics_are_na_offline_not_zero():
 
 def test_capability_matrix_only_bettermemory_computes_trio():
     assert BetterMemoryAdapter().capabilities().can_compute_trio is True
-    for adapter in (mem0_adapter(), server_memory_adapter(), claude_mem_adapter()):
+    for adapter in (
+        mem0_adapter(),
+        server_memory_adapter(),
+        agentmemory_adapter(),
+        claude_mem_adapter(),
+    ):
         caps = adapter.capabilities()
         assert caps.can_compute_trio is False
         # Each missing-signal row spells out which signal is absent.
@@ -106,7 +112,12 @@ def test_capability_matrix_only_bettermemory_computes_trio():
 
 def test_competitor_adapters_raise_with_reason():
     wl = default_workload()
-    for adapter in (mem0_adapter(), server_memory_adapter(), claude_mem_adapter()):
+    for adapter in (
+        mem0_adapter(),
+        server_memory_adapter(),
+        agentmemory_adapter(),
+        claude_mem_adapter(),
+    ):
         with pytest.raises(SystemUnavailable) as exc:
             adapter.run(wl, k=5)
         assert exc.value.reason
@@ -114,11 +125,16 @@ def test_competitor_adapters_raise_with_reason():
 
 def test_run_comparative_separates_ran_from_unavailable():
     report = run_comparative(default_adapters(), default_workload(), k=5)
-    assert len(report.results) == 4
+    assert len(report.results) == 5
     ran = report.ran
     unavailable = report.unavailable
     assert [r.name for r in ran] == ["bettermemory"]
-    assert {r.name for r in unavailable} == {"mem0", "server-memory", "claude-mem"}
+    assert {r.name for r in unavailable} == {
+        "mem0",
+        "server-memory",
+        "agentmemory",
+        "claude-mem",
+    }
     for r in unavailable:
         assert r.unavailable_reason
         assert r.recall_at_k is None
@@ -140,7 +156,7 @@ def test_render_json_roundtrips_and_carries_numbers():
     data = json.loads(render_json(report))
     assert data["workload"] == "default-coding-agent"
     assert data["k"] == 5
-    assert len(data["results"]) == 4
+    assert len(data["results"]) == 5
 
     by_name = {r["name"]: r for r in data["results"]}
     bm = by_name["bettermemory"]
@@ -149,8 +165,10 @@ def test_render_json_roundtrips_and_carries_numbers():
     assert bm["eval"]["silent_miss_rate"]["rate"] == pytest.approx(5 / 7)
     assert bm["eval"]["memory_helped_rate"]["rate"] is None
     assert bm["capabilities"]["can_compute_trio"] is True
+    # Ran-rows carry the executed package's version for reproducibility.
+    assert bm["system_version"]
 
-    for name in ("mem0", "server-memory", "claude-mem"):
+    for name in ("mem0", "server-memory", "agentmemory", "claude-mem"):
         row = by_name[name]
         assert row["ran"] is False
         assert row["capabilities"]["can_compute_trio"] is False
@@ -166,7 +184,7 @@ def test_main_json_flag_emits_machine_readable(capsys):
     assert rc == 0
     data = json.loads(capsys.readouterr().out)
     assert data["k"] == 3
-    assert len(data["results"]) == 4
+    assert len(data["results"]) == 5
 
 
 def test_main_default_text_output(capsys):

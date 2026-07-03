@@ -188,6 +188,16 @@ def main(argv: Sequence[str] | None = None) -> int:
         "--k", type=int, default=5, help="retrieval cutoff for recall@k (default 5)"
     )
     parser.add_argument(
+        "--live",
+        action="store_true",
+        help=(
+            "use the live competitor adapters (tests/eval/live_adapters.py) "
+            "instead of the honest stubs — maintainer runs only, via "
+            "tests/eval/run_live.sh; prerequisites missing at runtime still "
+            "degrade to unavailable rows"
+        ),
+    )
+    parser.add_argument(
         "--driver",
         choices=["scripted"],
         default=None,
@@ -211,7 +221,16 @@ def main(argv: Sequence[str] | None = None) -> int:
         )
         return 0
 
-    report = run_comparative(default_adapters(), default_workload(), k=args.k)
+    if args.live:
+        # Lazy import: the live module is part of the maintainer lane; the
+        # default harness (and CI) never touches it.
+        from .live_adapters import live_adapters
+
+        adapters = live_adapters()
+    else:
+        adapters = default_adapters()
+
+    report = run_comparative(adapters, default_workload(), k=args.k)
     print(render_json(report) if args.json else render_text(report))
     return 0
 

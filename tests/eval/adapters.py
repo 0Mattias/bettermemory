@@ -16,6 +16,7 @@ requires.
 
 from __future__ import annotations
 
+import importlib.metadata
 from dataclasses import dataclass, field
 from typing import Any, Protocol, runtime_checkable
 
@@ -85,6 +86,9 @@ class RunResult:
     `ran` is False for systems that couldn't execute here; their metric
     fields stay None and `unavailable_reason` explains why. `capabilities`
     is always populated so the capability matrix is complete regardless.
+    `system_version` records the executed package's version for ran-rows
+    (live results are single-run snapshots — the version is what makes a
+    committed artifact reproducible later).
     """
 
     name: str
@@ -97,6 +101,7 @@ class RunResult:
     recalled: int = 0
     recall_at_k: float | None = None
     eval_report: EvalReport | None = None
+    system_version: str | None = None
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -110,6 +115,7 @@ class RunResult:
             "recalled": self.recalled,
             "recall_at_k": self.recall_at_k,
             "eval": self.eval_report.to_dict() if self.eval_report else None,
+            "system_version": self.system_version,
         }
 
 
@@ -208,6 +214,11 @@ class BetterMemoryAdapter:
 
         eval_report = compute_eval(memories, events, now=BASE_NOW)
 
+        try:
+            version: str | None = importlib.metadata.version("bettermemory")
+        except importlib.metadata.PackageNotFoundError:
+            version = None
+
         return RunResult(
             name=self.name,
             capabilities=self.capabilities(),
@@ -218,6 +229,7 @@ class BetterMemoryAdapter:
             recalled=recalled,
             recall_at_k=recall,
             eval_report=eval_report,
+            system_version=version,
         )
 
 
@@ -240,22 +252,65 @@ class _UnavailableAdapter:
         raise SystemUnavailable(self._reason)
 
 
+# Capability rows are shared between the honest stubs below and the live
+# adapters in `live_adapters.py` — one source so the matrix is row-identical
+# whether or not a competitor actually executes.
+
+MEM0_CAPS = Capabilities(
+    logs_retrieval=True,
+    logs_endorsement=False,
+    has_audit_hook=False,
+    notes=(
+        "search() returns ranked memories (retrieval is logged), but "
+        "there is no load-bearing/cited tagging and no post-turn "
+        "silent-miss audit — so the endorsement and silent-miss lanes "
+        "have no source signal."
+    ),
+)
+
+SERVER_MEMORY_CAPS = Capabilities(
+    logs_retrieval=True,
+    logs_endorsement=False,
+    has_audit_hook=False,
+    notes=(
+        "read_graph / search_nodes surface entities (retrieval is "
+        "observable), but nothing records which node shaped a reply "
+        "and there is no miss-audit primitive."
+    ),
+)
+
+AGENTMEMORY_CAPS = Capabilities(
+    logs_retrieval=True,
+    logs_endorsement=False,
+    has_audit_hook=False,
+    notes=(
+        "search_memory() returned ranked chroma hits (retrieval "
+        "observable), but no cited/load-bearing tagging and no "
+        "miss-audit primitive existed."
+    ),
+)
+
+CLAUDE_MEM_CAPS = Capabilities(
+    logs_retrieval=False,
+    logs_endorsement=False,
+    has_audit_hook=False,
+    notes=(
+        "as of 2026 it exposes chroma-backed MCP search over "
+        "AI-compressed session observations, but ingest is its hook "
+        "pipeline (no direct fact-insertion path), retrieved context "
+        "is injected without per-hit occurrence logging the trio's "
+        "denominator needs, and there is no endorsement tagging or "
+        "miss audit."
+    ),
+)
+
+
 def mem0_adapter() -> _UnavailableAdapter:
     """mem0 (mem0ai) — vector + graph store with LLM fact extraction."""
     return _UnavailableAdapter(
         name="mem0",
-        _caps=Capabilities(
-            logs_retrieval=True,
-            logs_endorsement=False,
-            has_audit_hook=False,
-            notes=(
-                "search() returns ranked memories (retrieval is logged), but "
-                "there is no load-bearing/cited tagging and no post-turn "
-                "silent-miss audit — so the endorsement and silent-miss lanes "
-                "have no source signal."
-            ),
-        ),
-        _reason="package 'mem0ai' is not installed in this environment (pip install mem0ai); capability row from public docs",
+        _caps=MEM0_CAPS,
+        _reason="package 'mem0ai' is not installed in this environment (run tests/eval/run_live.sh for a live row); capability row from public docs",
     )
 
 
@@ -263,35 +318,39 @@ def server_memory_adapter() -> _UnavailableAdapter:
     """The reference MCP knowledge-graph memory server (@modelcontextprotocol/server-memory)."""
     return _UnavailableAdapter(
         name="server-memory",
-        _caps=Capabilities(
-            logs_retrieval=True,
-            logs_endorsement=False,
-            has_audit_hook=False,
-            notes=(
-                "read_graph / search_nodes surface entities (retrieval is "
-                "observable), but nothing records which node shaped a reply "
-                "and there is no miss-audit primitive."
-            ),
+        _caps=SERVER_MEMORY_CAPS,
+        _reason="reference MCP memory server is a separate Node package, not run by the default harness (run tests/eval/run_live.sh for a live row); capability row from public docs",
+    )
+
+
+def agentmemory_adapter() -> _UnavailableAdapter:
+    """agentmemory (PyPI) — chroma-backed agent memory, unmaintained."""
+    return _UnavailableAdapter(
+        name="agentmemory",
+        _caps=AGENTMEMORY_CAPS,
+        _reason=(
+            "PyPI 'agentmemory' (chroma-backed) last released 0.4.8 in Oct 2023 — "
+            "unmaintained as of 2026-07 and pinned against a pre-1.x chromadb API; "
+            "the unrelated 2026 TypeScript service of the same name "
+            "(rohitg00/agentmemory) is a separate Node system, out of this "
+            "harness's scope. Capability row from the PyPI package's docs."
         ),
-        _reason="reference MCP memory server is a separate Node package, not runnable from this Python harness; capability row from public docs",
     )
 
 
 def claude_mem_adapter() -> _UnavailableAdapter:
-    """claude-mem — session-summary / compaction memory."""
+    """claude-mem — AI-compressed session-observation memory (2026: Claude Code plugin)."""
     return _UnavailableAdapter(
         name="claude-mem",
-        _caps=Capabilities(
-            logs_retrieval=False,
-            logs_endorsement=False,
-            has_audit_hook=False,
-            notes=(
-                "injects compacted session context wholesale rather than "
-                "emitting per-hit retrieval occurrences, so even the "
-                "retrieval denominator the trio needs is absent."
-            ),
+        _caps=CLAUDE_MEM_CAPS,
+        _reason=(
+            "claude-mem ingests via its PostToolUse/compression hook pipeline — "
+            "there is no direct fact-insertion path, so seeding this workload "
+            "would mean simulating whole sessions through a key-dependent, "
+            "nondeterministic compressor; measuring it on a corpus its ingest "
+            "path can't accept would be a rigged number in either direction. "
+            "Capability row from its public docs (checked 2026-07)."
         ),
-        _reason="claude-mem is a separate Node/CLI tool, not runnable from this Python harness; capability row from public docs",
     )
 
 
@@ -301,5 +360,6 @@ def default_adapters() -> list[SystemAdapter]:
         BetterMemoryAdapter(),
         mem0_adapter(),
         server_memory_adapter(),
+        agentmemory_adapter(),
         claude_mem_adapter(),
     ]

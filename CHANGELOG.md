@@ -9,6 +9,29 @@ spells out exactly what's stable.
 
 ## Unreleased
 
+### Added
+
+- **The comparative eval's live competitor lane.** `python -m
+  tests.eval.comparative --live` swaps the honest stubs for executing
+  adapters where execution is honest: mem0 runs fully local and
+  keyless (HuggingFace MiniLM embedder, embedded qdrant in a tempdir,
+  `infer=False` so its LLM extraction pipeline is never invoked —
+  measured claim: its retrieval stack over verbatim facts), and the
+  Anthropic reference `@modelcontextprotocol/server-memory` is bridged
+  over stdio with the `mcp` client the project already ships (its
+  native `search_nodes` is whole-query substring matching, so the
+  harness donates a tokenized-OR ranker — documented, and a test pins
+  that no gold probe matches verbatim, i.e. the raw server scores 0/7
+  by construction). agentmemory joins the matrix as a fifth,
+  documented-unavailable row (the PyPI package died in Oct 2023; the
+  trending 2026 namesake is an unrelated TypeScript service), and the
+  claude-mem row's prose is refreshed against its 2026 plugin
+  architecture. Competitor stacks never touch the dev venv, uv.lock,
+  or CI — `tests/eval/run_live.sh` builds a throwaway `.eval-venv/`,
+  and the live integration tests self-skip without `BM_EVAL_LIVE=1`.
+  Ran-rows now carry `system_version`; the first committed artifact
+  lives at `docs/eval/comparative-live-2026-07-03.json`.
+
 ### Fixed
 
 - **The four GC-timed sqlite `ResourceWarning`s under `-W default` are

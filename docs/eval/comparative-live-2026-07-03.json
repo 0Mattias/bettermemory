@@ -1,0 +1,188 @@
+{
+  "workload": "default-coding-agent",
+  "k": 5,
+  "generated_at": "2026-07-03T20:34:47.606128+00:00",
+  "results": [
+    {
+      "name": "bettermemory",
+      "ran": true,
+      "k": 5,
+      "unavailable_reason": null,
+      "capabilities": {
+        "logs_retrieval": true,
+        "logs_endorsement": true,
+        "has_audit_hook": true,
+        "can_compute_trio": true,
+        "notes": "record_use logs auto-vs-load-bearing with claim excerpts; probe_for_miss / turn_audited is the post-turn audit hook."
+      },
+      "probes_total": 10,
+      "gold_total": 7,
+      "recalled": 7,
+      "recall_at_k": 1.0,
+      "eval": {
+        "generated_at": "2026-05-28T12:00:00+00:00",
+        "window_seconds": null,
+        "scope_filter": null,
+        "threshold_rule": "v1_top1_high",
+        "total_events_scanned": 15,
+        "counts": {
+          "retrieval_occurrences": 0,
+          "explicit_endorsements_with_excerpt": 0,
+          "applied_total": 0,
+          "applied_explicit": 0,
+          "turns_audited": 7,
+          "turns_no_signal": 3,
+          "silent_misses": 5
+        },
+        "memory_helped_rate": {
+          "numerator": 0,
+          "denominator": 0,
+          "rate": null,
+          "ci95_lower": null,
+          "ci95_upper": null,
+          "torn_read": false
+        },
+        "endorsement_rate": {
+          "numerator": 0,
+          "denominator": 0,
+          "rate": null,
+          "ci95_lower": null,
+          "ci95_upper": null,
+          "torn_read": false
+        },
+        "silent_miss_rate": {
+          "numerator": 5,
+          "denominator": 7,
+          "rate": 0.7142857142857143,
+          "ci95_lower": 0.35892909014821267,
+          "ci95_upper": 0.9177828342909844,
+          "torn_read": false
+        },
+        "cold_endorsement_memories": {
+          "min_retrievals": 5,
+          "total": 0,
+          "rows": []
+        },
+        "silent_miss_recent": [
+          {
+            "ts": "2026-05-28T12:00:00+00:00",
+            "session_id": "sess_comparative_eval",
+            "top_missed_id": "01KWMV1N5ZPHS6AMPFNSBEEDNH",
+            "top_missed_relevance": "high",
+            "threshold_rule": "v1_top1_high",
+            "recent_retrieval_count": 0
+          },
+          {
+            "ts": "2026-05-28T12:00:00+00:00",
+            "session_id": "sess_comparative_eval",
+            "top_missed_id": "01KWMV1N5ZD8Q9SXGZ83QM8QCM",
+            "top_missed_relevance": "high",
+            "threshold_rule": "v1_top1_high",
+            "recent_retrieval_count": 0
+          },
+          {
+            "ts": "2026-05-28T12:00:00+00:00",
+            "session_id": "sess_comparative_eval",
+            "top_missed_id": "01KWMV1N5ZK36MH61WMAXTEXNA",
+            "top_missed_relevance": "high",
+            "threshold_rule": "v1_top1_high",
+            "recent_retrieval_count": 0
+          },
+          {
+            "ts": "2026-05-28T12:00:00+00:00",
+            "session_id": "sess_comparative_eval",
+            "top_missed_id": "01KWMV1N5ZZ3CGK3BFEJ0S4RVC",
+            "top_missed_relevance": "high",
+            "threshold_rule": "v1_top1_high",
+            "recent_retrieval_count": 0
+          },
+          {
+            "ts": "2026-05-28T12:00:00+00:00",
+            "session_id": "sess_comparative_eval",
+            "top_missed_id": "01KWMV1N5ZBJA7JRRGNMQWJJYY",
+            "top_missed_relevance": "high",
+            "threshold_rule": "v1_top1_high",
+            "recent_retrieval_count": 0
+          }
+        ]
+      },
+      "system_version": "3.13.0"
+    },
+    {
+      "name": "mem0",
+      "ran": true,
+      "k": 5,
+      "unavailable_reason": null,
+      "capabilities": {
+        "logs_retrieval": true,
+        "logs_endorsement": false,
+        "has_audit_hook": false,
+        "can_compute_trio": false,
+        "notes": "search() returns ranked memories (retrieval is logged), but there is no load-bearing/cited tagging and no post-turn silent-miss audit \u2014 so the endorsement and silent-miss lanes have no source signal."
+      },
+      "probes_total": 10,
+      "gold_total": 7,
+      "recalled": 7,
+      "recall_at_k": 1.0,
+      "eval": null,
+      "system_version": "2.0.11"
+    },
+    {
+      "name": "server-memory",
+      "ran": true,
+      "k": 5,
+      "unavailable_reason": null,
+      "capabilities": {
+        "logs_retrieval": true,
+        "logs_endorsement": false,
+        "has_audit_hook": false,
+        "can_compute_trio": false,
+        "notes": "read_graph / search_nodes surface entities (retrieval is observable), but nothing records which node shaped a reply and there is no miss-audit primitive."
+      },
+      "probes_total": 10,
+      "gold_total": 7,
+      "recalled": 7,
+      "recall_at_k": 1.0,
+      "eval": null,
+      "system_version": "0.6.3"
+    },
+    {
+      "name": "agentmemory",
+      "ran": false,
+      "k": 5,
+      "unavailable_reason": "PyPI 'agentmemory' (chroma-backed) last released 0.4.8 in Oct 2023 \u2014 unmaintained as of 2026-07 and pinned against a pre-1.x chromadb API; the unrelated 2026 TypeScript service of the same name (rohitg00/agentmemory) is a separate Node system, out of this harness's scope. Capability row from the PyPI package's docs.",
+      "capabilities": {
+        "logs_retrieval": true,
+        "logs_endorsement": false,
+        "has_audit_hook": false,
+        "can_compute_trio": false,
+        "notes": "search_memory() returned ranked chroma hits (retrieval observable), but no cited/load-bearing tagging and no miss-audit primitive existed."
+      },
+      "probes_total": 0,
+      "gold_total": 0,
+      "recalled": 0,
+      "recall_at_k": null,
+      "eval": null,
+      "system_version": null
+    },
+    {
+      "name": "claude-mem",
+      "ran": false,
+      "k": 5,
+      "unavailable_reason": "claude-mem ingests via its PostToolUse/compression hook pipeline \u2014 there is no direct fact-insertion path, so seeding this workload would mean simulating whole sessions through a key-dependent, nondeterministic compressor; measuring it on a corpus its ingest path can't accept would be a rigged number in either direction. Capability row from its public docs (checked 2026-07).",
+      "capabilities": {
+        "logs_retrieval": false,
+        "logs_endorsement": false,
+        "has_audit_hook": false,
+        "can_compute_trio": false,
+        "notes": "as of 2026 it exposes chroma-backed MCP search over AI-compressed session observations, but ingest is its hook pipeline (no direct fact-insertion path), retrieved context is injected without per-hit occurrence logging the trio's denominator needs, and there is no endorsement tagging or miss audit."
+      },
+      "probes_total": 0,
+      "gold_total": 0,
+      "recalled": 0,
+      "recall_at_k": null,
+      "eval": null,
+      "system_version": null
+    }
+  ]
+}
