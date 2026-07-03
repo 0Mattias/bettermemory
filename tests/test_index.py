@@ -409,6 +409,54 @@ def test_status_never_raises_on_connect_oserror(
     assert "Permission denied" in s["error"]
 
 
+def _poison_meta(memory_dir: Path, key: str) -> None:
+    """Overwrite a meta row with a non-integer value, simulating a
+    hand-edited or foreign-tool-written index. The file stays a valid
+    SQLite database — only the `int()` reads on the value can fail."""
+    conn = sqlite3.connect(str(index.index_path(memory_dir)))
+    try:
+        conn.execute("UPDATE meta SET value = 'banana' WHERE key = ?", (key,))
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def test_status_never_raises_on_poisoned_schema_version(
+    store: Store, memory_dir: Path
+) -> None:
+    """A non-integer `meta.schema_version` fails the `int()` read in
+    `_ensure_schema`'s version check before status() gets to its own
+    meta reads. Unparseable meta is corruption: status() must return
+    the degraded corrupt=True shape, not leak ValueError — pre-fix it
+    was missing from the (OSError, DatabaseError, IndexVersionError)
+    except and crashed doctor on exactly the state it exists to
+    report."""
+    store.write(content="alpha", scopes=["tools"])
+    _poison_meta(memory_dir, "schema_version")
+
+    s = index.status(memory_dir)
+    assert s["exists"] is True
+    assert s.get("corrupt") is True
+    assert "banana" in s["error"]
+
+
+def test_status_never_raises_on_poisoned_indexed_count(
+    store: Store, memory_dir: Path
+) -> None:
+    """A non-integer `meta.indexed_count` passes `_ensure_schema`
+    (schema_version is intact) and fails status()'s own
+    `int(count_row[0])` read while building the result dict — the
+    other ValueError escape path. Same contract: degraded corrupt=True
+    shape, never a raise."""
+    store.write(content="alpha", scopes=["tools"])
+    _poison_meta(memory_dir, "indexed_count")
+
+    s = index.status(memory_dir)
+    assert s["exists"] is True
+    assert s.get("corrupt") is True
+    assert "banana" in s["error"]
+
+
 # ---------------------------------------------------------------------------
 # id → filename lookup (H1 — schema v2)
 # ---------------------------------------------------------------------------

@@ -898,14 +898,18 @@ def status(root: Path) -> dict[str, Any]:
             }
         finally:
             conn.close()
-    except (OSError, sqlite3.DatabaseError, IndexVersionError) as exc:
+    except (OSError, ValueError, sqlite3.DatabaseError, IndexVersionError) as exc:
         # OSError is load-bearing for the never-raises contract:
         # `_connect`'s `path.parent.mkdir` can raise EACCES/EROFS, and
         # `path.stat()` raises FileNotFoundError when a concurrent
         # rebuild-recovery unlinks the file between the exists() check
-        # above and the stat. Every caller treats this degraded shape
-        # as "index unusable — fall back / suggest reindex", which is
-        # the right answer mid-recovery too.
+        # above and the stat. ValueError is too: a hand-edited or
+        # foreign-tool-written meta row with a non-integer
+        # schema_version / indexed_count fails the `int()` reads (in
+        # `_ensure_schema`'s version check and in the dict build above)
+        # — unparseable meta IS corruption. Every caller treats this
+        # degraded shape as "index unusable — fall back / suggest
+        # reindex", which is the right answer mid-recovery too.
         return {
             "exists": True,
             "path": str(path),
