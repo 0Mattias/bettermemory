@@ -227,7 +227,8 @@ class Store:
 
     def iter_active(self) -> Iterator[tuple[Path, Memory]]:
         """`(path, memory)` pairs for every active (non-tombstoned)
-        memory. Skips malformed / racing files like `load_all` does.
+        memory. Skips malformed / racing files like `load_all` does,
+        on ANY per-file exception rather than `load_all`'s tuple.
 
         Use this when the on-disk filename matters to the caller —
         notably `index.rebuild`, which needs the actual filename (not
@@ -236,7 +237,16 @@ class Store:
         for path in self._iter_active_paths():
             try:
                 memory = self._load_path(path)
-            except (ValueError, KeyError, OSError):
+            except Exception:  # noqa: BLE001
+                # Deliberately wider than `load_all`'s (ValueError,
+                # KeyError, OSError): `_parse_memory_file` can raise
+                # outside that tuple on adversarial-but-valid YAML —
+                # `scopes: 5` makes `list(meta["scopes"])` raise
+                # TypeError — and this iterator must skip exactly the
+                # files `count_unparseable_memory_files` counts, or the
+                # parse-aware divergence arithmetic (the S4 warning,
+                # doctor's index_health) reports gaps a rebuild can
+                # never clear.
                 continue
             yield path, memory
 
@@ -1566,14 +1576,27 @@ def count_unparseable_memory_files(root: Path) -> int:
 
     Parses every file (unlike the bare count above), so callers reach
     for it only after the cheap raw-count comparison has already
-    diverged. Per-file errors match `iter_active`'s skip set and count
-    as unparseable; OSError from the `iterdir` itself propagates."""
+    diverged. Any per-file exception matches `iter_active`'s skip set
+    and counts as unparseable; OSError from the `iterdir` itself
+    propagates."""
     count = 0
     for entry in root.iterdir():
         if entry.is_file() and not entry.is_symlink() and entry.suffix == ".md":
             try:
                 _parse_memory_file(entry)
-            except (ValueError, KeyError, OSError):
+            except Exception:  # noqa: BLE001
+                # Any parse failure counts as unparseable — never a
+                # crash. `_parse_memory_file`'s raise surface is wider
+                # than the (ValueError, KeyError, OSError) tuple the
+                # bulk readers catch: a valid-YAML-but-wrong-shape
+                # value escapes it (`scopes: 5` → TypeError from
+                # `list(meta["scopes"])`), and the pydantic/enum
+                # internals it delegates to keep a full enumeration
+                # fragile. This walk runs at every Store construction
+                # (via `_warn_on_index_divergence`), so a missed type
+                # would brick server boot on one weird file.
+                # `iter_active` skips on the same width, keeping
+                # "counted here" == "skipped by rebuild".
                 count += 1
     return count
 

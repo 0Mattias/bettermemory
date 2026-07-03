@@ -6,6 +6,7 @@ import os
 import time
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
+from typing import NoReturn
 
 import pytest
 from pydantic import ValidationError
@@ -15,6 +16,7 @@ from bettermemory.store import (
     MemoryNotFoundError,
     Store,
     TombstonedError,
+    count_unparseable_memory_files,
 )
 
 
@@ -929,3 +931,63 @@ def test_update_preserve_verification_keeps_absent_paths(store: Store) -> None:
     edited = snapshot.model_copy(update={"scopes": ["tools", "infrastructure"]})
     updated = store.update(edited, preserve_verification=True)
     assert updated.verified_absent_paths == ["/data/compose"]
+
+
+def test_adversarial_scalar_scopes_file_never_bricks_store_construction(
+    tmp_path: Path,
+) -> None:
+    """`scopes: 5` is a well-formed YAML mapping, so the frontmatter
+    boundary accepts it — the parse then dies at `list(meta["scopes"])`
+    with TypeError, OUTSIDE the (ValueError, KeyError, OSError) tuple
+    the read surfaces catch. Pre-fix, the parse-aware divergence walk
+    in `Store.__post_init__` (`_warn_on_index_divergence` →
+    `count_unparseable_memory_files`) let that TypeError escape, so one
+    weird file bricked every Store construction: server boot and every
+    CLI command. The contract is "any parse failure == unparseable
+    file, never a construction crash" — and `iter_active` must skip
+    exactly the file the counter counted."""
+    root = tmp_path / "adversarial"
+    root.mkdir()
+    (root / "2026-01-01-scalar-scopes.md").write_text(
+        "---\n"
+        "schema_version: 1\n"
+        "id: 01HXYZAAAAAAAAAAAAAAAAAAAA\n"
+        "created: 2026-01-01T00:00:00Z\n"
+        "updated: 2026-01-01T00:00:00Z\n"
+        "scopes: 5\n"
+        "confidence: medium\n"
+        "source: explicit-statement\n"
+        "---\n\nvalid YAML, wrong shape\n",
+        encoding="utf-8",
+    )
+
+    # The counter classifies the parse failure instead of crashing...
+    assert count_unparseable_memory_files(root) == 1
+    # ...construction survives the walk (disk=1 vs indexed=0 diverges,
+    # so the parse-aware refinement runs right here, in __post_init__)...
+    store = Store(root)
+    # ...and the rebuild feed skips the same file the counter counted.
+    assert list(store.iter_active()) == []
+
+
+def test_unparseable_counter_and_iter_active_agree_on_any_parse_failure(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The skip/count width is `Exception`, not an enumerated tuple:
+    `_parse_memory_file` delegates to pydantic and enum internals whose
+    raise surface can't be enumerated durably, and the counter runs at
+    every Store construction — a new exception type must degrade to
+    "one more unparseable file", not a boot crash. Force a type no real
+    file produces today and assert both surfaces treat the file as
+    unparseable rather than propagating."""
+    from bettermemory import store as store_mod
+
+    store = Store(tmp_path / "contract")
+    store.write(content="parses fine before the patch\n", scopes=["tools"])
+
+    def _boom(path: Path) -> NoReturn:
+        raise RuntimeError("synthetic parse failure")
+
+    monkeypatch.setattr(store_mod, "_parse_memory_file", _boom)
+    assert count_unparseable_memory_files(store.root) == 1
+    assert list(store.iter_active()) == []
