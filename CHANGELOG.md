@@ -9,6 +9,24 @@ spells out exactly what's stable.
 
 ## Unreleased
 
+### Fixed
+
+- **The audit's acknowledgment gate compares surface spellings again,
+  restoring its 3.11 width.** 3.12.0 canonicalised `_ACK_SURFACE`
+  through the now-stemming `tokenize`, which put generic stems in
+  `_ACK_TOKENS` ('works' → 'work', 'sounds' → 'sound', 'done' → 'don',
+  'nice' → 'nic', 'fine' → 'fin') — so ordinary content queries whose
+  tokens all landed on those stems ("does the sound work", 'Don' the
+  name, 'NIC' the card) were classified `no_signal` and never probed
+  for a retrieval miss, silently under-detecting the telemetry the
+  eval/health pipeline reads. The set is now built from the UNSTEMMED
+  tokenization and the gate compares the message's unstemmed tokens
+  against it — the curation is a judgment about spellings, so the
+  membership check happens in the space where it was made. Real
+  acknowledgments ("sounds good", "thanks, done!") gate exactly as
+  before; the two-content-token floor stays in stemmed space, matching
+  the ranker's coverage denominator.
+
 ## 3.12.0 - 2026-07-02
 
 The tokenizer v2 release — the "Tokenization v2" feature-class

@@ -62,8 +62,9 @@ Design notes:
   threshold rule honest. Pure-digit tokens don't count toward the
   floor (a bare numeric reply like "3.8.0" fragments to digit
   pseudo-tokens), and a message whose content tokens are all
-  conversational acknowledgments ("all done", "looks good" — see
-  `_ACK_TOKENS`) is gated the same way. The rule version is recorded on every
+  conversational acknowledgments ("all done", "looks good" — compared
+  by surface spelling, see `_ACK_TOKENS`) is gated the same way. The
+  rule version is recorded on every
   emitted event so a later calibration pass can replay historical
   logs under a new threshold without losing the audit trail.
 
@@ -82,7 +83,13 @@ from typing import Any, Iterable, Literal, cast
 
 from .models import Memory, MemoryHit, generate_ulid
 from .origin import Origin, repos_match
-from .search import SearchMode, _strip_stopwords, search as run_search, tokenize
+from .search import (
+    SearchMode,
+    _strip_stopwords,
+    _tokenize_unstemmed,
+    search as run_search,
+    tokenize,
+)
 from .time_utils import ensure_utc, isoformat_utc, parse_event_ts
 
 
@@ -178,12 +185,18 @@ MIN_PROBE_CONTENT_TOKENS = 2
 # messages ("looks good, now update the backup docs") still pass the
 # gate because their non-acknowledgment tokens fall outside the set.
 #
-# The surface spellings are canonicalised through `tokenize` at import
-# so the set is always in the tokenizer's own normal form — the gate
-# compares against tokenize() output, and a hand-maintained literal set
-# silently detached from it when tokenizer v2 started stemming
-# ('done' → 'don', 'looks' → 'look'). Mapping at import means the two
-# can't drift again.
+# Membership is compared in SURFACE space: the set is built from
+# `_tokenize_unstemmed` output and the gate tokenizes the message the
+# same way, so both sides carry every tokenize() fold (lowercase,
+# diacritics, contractions — a hand-maintained literal set silently
+# detached from those) EXCEPT the plural stemmer. The exemption is the
+# point, not a shortcut: the curation above is a judgment about
+# spellings ('sounds' the ack, not 'sound' the noun), and stems erase
+# exactly that line — canonicalising through the stemming `tokenize`
+# put 'work'/'look'/'sound'/'don'/'fin'/'nic'/'thank' in the set, so
+# ordinary content queries ('does the sound work', 'is Don around')
+# fell entirely inside it and were gated to no_signal — silent
+# under-detection of the retrieval misses this module exists to count.
 _ACK_SURFACE: tuple[str, ...] = (
     "agreed",
     "all",
@@ -209,7 +222,7 @@ _ACK_SURFACE: tuple[str, ...] = (
     "yes",
 )
 _ACK_TOKENS: frozenset[str] = frozenset(
-    tok for word in _ACK_SURFACE for tok in tokenize(word)
+    tok for word in _ACK_SURFACE for tok in _tokenize_unstemmed(word)
 )
 
 # Closed set of `triggered_from` discriminator values for `turn_audited`
@@ -550,13 +563,23 @@ def probe_for_miss(
     # are pure noise. The count is over UNIQUE content tokens with
     # pure-digit tokens excluded, and an all-acknowledgment message is
     # gated even above the floor — see the MIN_PROBE_CONTENT_TOKENS /
-    # _ACK_TOKENS comments for why each carve-out exists. probe_query
-    # is set so a `no_signal` report on this path is distinguishable
-    # from the empty-query branch above.
+    # _ACK_TOKENS comments for why each carve-out exists. The two
+    # checks deliberately read different token spaces: the floor counts
+    # STEMMED tokens (its denominator must match the ranker's
+    # unique-token coverage), while the ack subset compares UNSTEMMED
+    # surfaces ('sound'/'work' must not be swallowed by the stems of
+    # 'sounds'/'works' — see _ACK_TOKENS). probe_query is set so a
+    # `no_signal` report on this path is distinguishable from the
+    # empty-query branch above.
     content_tokens = {
         t for t in _strip_stopwords(tokenize(user_message)) if not t.isdigit()
     }
-    if len(content_tokens) < MIN_PROBE_CONTENT_TOKENS or content_tokens <= _ACK_TOKENS:
+    surface_tokens = {
+        t
+        for t in _strip_stopwords(_tokenize_unstemmed(user_message))
+        if not t.isdigit()
+    }
+    if len(content_tokens) < MIN_PROBE_CONTENT_TOKENS or surface_tokens <= _ACK_TOKENS:
         return MissReport(
             verdict="no_signal",
             checked_at=now,

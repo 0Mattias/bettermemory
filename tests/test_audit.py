@@ -209,17 +209,18 @@ def test_single_content_token_query_returns_no_signal() -> None:
 
 def test_all_acknowledgment_message_returns_no_signal() -> None:
     """Two-word acknowledgments built from non-stopword filler ("all
-    done", "looks good", "sounds good") are bare continuations the gate
-    documents itself as dropping — but the words aren't in search.py's
-    deliberately-short stopword list, so they'd otherwise clear the
-    two-token floor and score 2/2 = "high" against any ordinary body
-    containing both words (the fixture body contains all of them). The
-    audit-local `_ACK_TOKENS` set gates the all-acknowledgment cohort
-    to no_signal before the ranker runs."""
+    done", "looks good", "sounds good", "thanks, done!") are bare
+    continuations the gate documents itself as dropping — but the words
+    aren't in search.py's deliberately-short stopword list, so they'd
+    otherwise clear the two-token floor and score 2/2 = "high" against
+    any ordinary body containing both words (the fixture body contains
+    all of them). The audit-local `_ACK_TOKENS` set gates the
+    all-acknowledgment cohort to no_signal before the ranker runs."""
     m = _memory(
-        "once the migration is done it all looks good and the cutover sounds good"
+        "thanks — once the migration is done it all looks good and the "
+        "cutover sounds good"
     )
-    for query in ("all done", "looks good", "sounds good"):
+    for query in ("all done", "looks good", "sounds good", "thanks, done!"):
         report = probe_for_miss(
             [m],
             query,
@@ -241,6 +242,28 @@ def test_mixed_acknowledgment_message_passes_the_gate() -> None:
     report = probe_for_miss(
         [m],
         "looks good, now update the backup docs",
+        recent_events=[],
+        session_id="sess_x",
+        now=_utc(2026, 5, 1),
+    )
+    assert report.verdict == "miss"
+
+
+def test_content_query_sharing_ack_stems_is_probed() -> None:
+    """Control for the SURFACE-space comparison in the `_ACK_TOKENS`
+    gate: content words whose stems collide with acknowledgment
+    spellings ('sound'/'work' under 'sounds'/'works'; likewise 'don'
+    under 'done', 'nic' under 'nice') must NOT be gated. Canonicalising
+    `_ACK_SURFACE` through the stemming `tokenize` put those stems in
+    the set, so "does the sound work" — content tokens
+    {'sound', 'work'} — fell entirely inside it and was classified
+    no_signal: the probe never ran and the retrieval miss below went
+    uncounted. The gate compares unstemmed surfaces, so the query
+    reaches the ranker and the miss fires."""
+    m = _memory("living room tv: sound works only over the hdmi arc input")
+    report = probe_for_miss(
+        [m],
+        "does the sound work",
         recent_events=[],
         session_id="sess_x",
         now=_utc(2026, 5, 1),
