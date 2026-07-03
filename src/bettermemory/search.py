@@ -52,8 +52,8 @@ SearchMode = Literal["keyword", "bm25", "semantic", "hybrid"]
 
 
 # Strip punctuation, keep word characters (incl. unicode letters) and dashes
-# inside tokens. Lowercase (and diacritic-fold — see `_fold_diacritics`)
-# before tokenizing.
+# inside tokens. NFKC-fold, lowercase, and diacritic-fold (see
+# `_tokenize_impl` / `_fold_diacritics`) before tokenizing.
 #
 # `\w` (with `re.UNICODE`, which is the default in Python 3) is the right
 # character class here: it covers ASCII alphanumerics plus the rest of
@@ -506,7 +506,7 @@ _UNSEGMENTED_RE = re.compile(
     "\ua960-\ua97f"  # Hangul Jamo Extended-A
     "\uac00-\ud7ff"  # Hangul syllables + Jamo Extended-B
     "\uf900-\ufaff"  # CJK Compatibility Ideographs
-    "\uff66-\uff9d"  # Halfwidth Katakana
+    "\uff66-\uff9d"  # Halfwidth Katakana (defensive: NFKC folds these out first)
     "\U00020000-\U0002ebef"  # CJK Unified Ideographs Extensions B-F
     "]+"
 )
@@ -645,6 +645,10 @@ def tokenize(text: str) -> list[str]:
     `python-frontmatter` is one token). Every normalisation applies to
     query and indexed text alike (tokenize serves both sides):
 
+    - NFKC compatibility fold, so width variants meet: fullwidth
+      Latin/digits ('ＧＰＵ', '２０２６') become ASCII and halfwidth
+      katakana ('ｻｰﾊﾞｰ') becomes fullwidth ahead of bigram
+      segmentation ('²' -> '2' and 'ﬁ' -> 'fi' ride along);
     - lowercase, then fold diacritics (see `_fold_diacritics`);
     - strip possessive/contraction suffixes ("what's" -> "what");
     - alias symbol-bearing tech names ("C++" -> "cpp", see
@@ -677,6 +681,18 @@ def _tokenize_unstemmed(text: str) -> list[str]:
 
 
 def _tokenize_impl(text: str, *, stem: bool) -> list[str]:
+    # NFKC first — the NFD fold below is canonical-only, so width variants
+    # never met it: fullwidth Latin/digits ('ＧＰＵ', '２０２６' — standard
+    # Japanese IME output) missed 'gpu'/'2026' in both directions, and
+    # halfwidth katakana ('ｻｰﾊﾞｰ') missed fullwidth. NFKC folds fullwidth
+    # to ASCII and halfwidth kana to fullwidth BEFORE `_segment_unspaced`
+    # bigrams the run, composing the halfwidth voiced-sound marks
+    # U+FF9E/U+FF9F (outside `_UNSEGMENTED_RE`'s ranges — they stranded as
+    # junk tokens) into base kana whose dakuten the NFD fold then strips
+    # exactly like the fullwidth spelling's. The remaining compatibility
+    # folds ride along, symmetric on query and index side alike ('²'→'2',
+    # 'ﬁ'→'fi', '㎞'→'km').
+    text = unicodedata.normalize("NFKC", text)
     text = _fold_diacritics(text.lower())
     text = _CONTRACTION_RE.sub("", text)
     for pattern, replacement, _ in _SYMBOL_ALIASES:

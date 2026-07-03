@@ -100,6 +100,57 @@ def test_nfc_query_finds_nfd_body() -> None:
     assert hits and hits[0].id == a.id
 
 
+def test_tokenize_nfkc_folds_width_variants() -> None:
+    """Width variants are one text: fullwidth Latin/digits are what
+    Japanese IMEs emit around CJK ('ＧＰＵ', '２０２６'), halfwidth
+    katakana ('ｻｰﾊﾞｰ') is legacy-width output. The NFD-only fold never
+    touched compatibility characters, so both classes missed their
+    ASCII/fullwidth spellings in BOTH directions — and the halfwidth
+    voiced-sound mark U+FF9E, outside `_UNSEGMENTED_RE`'s ranges,
+    stranded as a junk token. NFKC ahead of the case/diacritic folds
+    lands every spelling on one key."""
+    assert tokenize("ＧＰＵ") == tokenize("GPU") == ["gpu"]
+    assert tokenize("２０２６") == tokenize("2026") == ["2026"]
+    # The halfwidth fold runs BEFORE bigram segmentation, and the
+    # composed dakuten (ﾊ + U+FF9E -> バ) is then stripped by the NFD
+    # fold exactly like fullwidth バ's — no stray 'ﾞ' token.
+    assert tokenize("ｻｰﾊﾞｰ") == tokenize("サーバー") == ["サー", "ーハ", "ハー"]
+    # Documented NFKC side effects, symmetric on query and index side:
+    # superscripts and ligatures fold to their compatibility forms.
+    assert tokenize("m²") == tokenize("m2") == ["m2"]
+    assert tokenize("ﬁle") == tokenize("file") == ["fil"]
+
+
+def test_width_variant_query_finds_body_bidirectional() -> None:
+    """End-to-end: an IME-fullwidth query must hit the ASCII body and an
+    ASCII query the fullwidth body — previously zero hits in every
+    ranker, and the v4 FTS index (which stores tokenize output via
+    `fts_index_text`) missed identically."""
+    ascii_body = _memory("GPU upgrade planned for 2026")
+    for query in ("ＧＰＵ", "２０２６"):
+        hits = search([ascii_body], query)
+        assert hits and hits[0].id == ascii_body.id, query
+    fullwidth_body = _memory("ＧＰＵは２０２６年に交換予定")
+    hits = search([fullwidth_body], "gpu 2026")
+    assert hits and hits[0].id == fullwidth_body.id
+    assert hits[0].relevance == "high"
+
+
+def test_halfwidth_katakana_query_meets_fullwidth_body() -> None:
+    """ｻｰﾊﾞｰ (halfwidth) and サーバー (fullwidth) are one word; pin both
+    directions plus MATCH-builder parity so the FTS prefilter can't
+    disagree with the rankers."""
+    from bettermemory.search import fts_match_query
+
+    full = _memory("サーバーは自宅ラックにある")
+    hits = search([full], "ｻｰﾊﾞｰ")
+    assert hits and hits[0].id == full.id
+    half = _memory("ｻｰﾊﾞｰは自宅ラックにある")
+    hits = search([half], "サーバー")
+    assert hits and hits[0].id == half.id
+    assert fts_match_query("ｻｰﾊﾞｰ") == fts_match_query("サーバー")
+
+
 def test_tokenize_strips_contraction_fragments() -> None:
     """Possessive/contraction suffixes leave orphan fragments ('s', 't')
     that survive stopword stripping, deflate the coverage denominator,
