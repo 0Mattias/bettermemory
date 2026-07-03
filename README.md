@@ -79,7 +79,8 @@ next search flag the memory as stale.
   database, no cloud, no account. MIT.
 - **It proves it's helping.** A built-in eval reports how often
   retrieved memory actually shaped a reply, and how often the model
-  should have retrieved but didn't. Numbers, not vibes.
+  should have retrieved but didn't. Numbers, not vibes —
+  [published](docs/eval-results.md).
 
 ## Install
 

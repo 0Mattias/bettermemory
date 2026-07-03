@@ -31,6 +31,12 @@ spells out exactly what's stable.
   and the live integration tests self-skip without `BM_EVAL_LIVE=1`.
   Ran-rows now carry `system_version`; the first committed artifact
   lives at `docs/eval/comparative-live-2026-07-03.json`.
+- **`docs/eval-results.md` — the published numbers.** Production
+  telemetry trio (two months of the author's real usage, n=1 stated)
+  plus the comparative capability matrix and live recall rows, with
+  every fairness accommodation spelled out and exact reproduce
+  commands. Linked from the README's "numbers, not vibes" bullet;
+  the corresponding ROADMAP item retires.
 
 ### Fixed
 

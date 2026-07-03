@@ -164,6 +164,22 @@ The rates are computable for any system that logs retrieval timing,
 logs whether the model deliberately tagged each retrieved item as
 load-bearing, and can replay a turn against its ranker post-hoc.
 
+### The `--live` lane
+
+`--live` swaps the stubs for executing adapters where execution is
+honest (`tests/eval/live_adapters.py`): mem0 runs fully local and
+keyless (`infer=False` — its LLM extraction is deliberately bypassed,
+so the row measures its retrieval stack over verbatim facts), and the
+reference MCP memory server is bridged over stdio with a harness-side
+tokenized-OR ranker, because its native `search_nodes` is whole-query
+substring matching (a pinned test shows the raw server scores 0/7 on
+this workload by construction). agentmemory and claude-mem stay
+documented-unavailable — their stub reasons explain why a live run
+would not be honest. Maintainer runs only, via
+`tests/eval/run_live.sh` (throwaway `.eval-venv/`, never CI); missing
+prerequisites degrade to the stub row at runtime. Published numbers
+live in [eval-results.md](eval-results.md).
+
 ## Caveats
 
 - The `v1_top1_high` rule is calibrated against the author's own usage.

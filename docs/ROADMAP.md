@@ -5,13 +5,6 @@ Planned work, in rough priority order. Plans change; the
 
 ## Planned
 
-- **Publish comparative eval numbers.** The harness (`tests/eval/`) and
-  agent driver exist; what remains is computing the live rates from
-  production telemetry (`bettermemory eval` over a real store's event
-  log), wiring live competitor runs (Mem0, claude-mem, Anthropic's
-  reference server, agentmemory), and the write-up. Existing
-  comparisons measure retrieval recall; the point of this one is
-  whether retrieved memory actually shaped the reply.
 - **Encryption at rest.** An `[encrypted]` extra with `age`-backed
   per-file envelope encryption, complementing the write-time
   credential check. Not expected in 2026.
