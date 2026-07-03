@@ -1030,6 +1030,93 @@ def test_store_construction_auto_rebuilds_migrated_index(
     ), "the auto-rebuild must leave an INFO record of what it did"
 
 
+def test_first_touch_index_in_populated_store_is_flagged_rebuild_pending(
+    store: Store, memory_dir: Path
+) -> None:
+    """The deleted-index recovery hole — the first-touch sibling of the
+    schema-migration hole above. Deleting `.index.sqlite` was the
+    historical recovery advice (and a backup restore can drop the
+    sidecar); the next hook write then creates a FRESH index inside a
+    populated store, stamped current with no flag. The incremental
+    hooks refill only touched memories, so once `indexed_count`
+    crosses the prefilter threshold every untouched legacy memory
+    silently vanishes from `memory_search`. First-touch creation must
+    flag `needs_rebuild` when the store root already holds memories."""
+    legacy = store.write(content="alpha legacy landmark", scopes=["tools"])
+    index._unlink_index_files(index.index_path(memory_dir))
+
+    # The hook write recreates the index first-touch: one indexed row,
+    # while the legacy memory has none.
+    store.write(content="alpha fresh note", scopes=["tools"])
+
+    s = index.status(memory_dir)
+    assert s["indexed_count"] == 1
+    assert s["needs_rebuild"] is True, (
+        "a fresh index born inside a populated store must be flagged "
+        "rebuild-pending, or the prefilter re-engages on indexed_count "
+        "alone and untouched legacy memories vanish from search"
+    )
+    # Same lifecycle as the migration flag: rebuild() restores full
+    # coverage and is the only thing that clears it.
+    assert index.rebuild(memory_dir, store.iter_active()) == 2
+    s_after = index.status(memory_dir)
+    assert s_after["needs_rebuild"] is False
+    assert legacy.id in index.filenames_for_ids(memory_dir, [legacy.id])
+
+
+def test_first_touch_index_on_fresh_store_first_write_stays_unflagged(
+    store: Store, memory_dir: Path
+) -> None:
+    """A genuinely-new store's first hook write is also a first-touch
+    creation — but the only memory file on disk is the one this same
+    upsert writes a row for (hook order is write-file-then-upsert), so
+    coverage is complete and no rebuild flag belongs. Pins the
+    `inflight_filename` exclusion in the populated-check."""
+    store.write(content="first ever note", scopes=["tools"])
+
+    s = index.status(memory_dir)
+    assert s["indexed_count"] == 1
+    assert s["needs_rebuild"] is False
+
+
+def test_first_touch_via_status_on_empty_db_file_in_populated_store_flags(
+    store: Store, memory_dir: Path
+) -> None:
+    """The no-exclusion default: a schema-empty index FILE (a crashed
+    process's `connect()` remnant — zero bytes is a valid empty SQLite
+    database) inside a populated store gets its schema created by
+    whichever reader touches it first, `status()` here. No upsert is in
+    flight, so every on-disk memory counts and the flag must land."""
+    store.write(content="alpha legacy landmark", scopes=["tools"])
+    db_path = index.index_path(memory_dir)
+    index._unlink_index_files(db_path)
+    db_path.write_bytes(b"")
+
+    s = index.status(memory_dir)
+    assert s["indexed_count"] == 0
+    assert s["needs_rebuild"] is True
+
+
+def test_store_construction_auto_rebuilds_after_index_deletion(
+    store: Store, memory_dir: Path
+) -> None:
+    """End of the deleted-index recovery arc: the first-touch flag
+    routes search to `load_all` immediately, and the NEXT Store
+    construction auto-rebuilds from canonical disk state and clears it
+    — the same heal `test_store_construction_auto_rebuilds_migrated_index`
+    pins for the migration flag."""
+    a = store.write(content="alpha legacy landmark", scopes=["tools"])
+    index._unlink_index_files(index.index_path(memory_dir))
+    b = store.write(content="alpha fresh note", scopes=["tools"])
+
+    Store(memory_dir)
+
+    s = index.status(memory_dir)
+    assert s["needs_rebuild"] is False
+    assert s["indexed_count"] == 2
+    assert {r[0] for r in index.query(memory_dir, "alpha")} == {a.id, b.id}
+
+
 def test_schema_rebuild_executescript_is_transactional(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

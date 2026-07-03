@@ -297,12 +297,53 @@ def _connect(path: Path) -> sqlite3.Connection:
     return conn
 
 
-def _ensure_schema(conn: sqlite3.Connection, path: Path) -> None:
+def _root_has_memory_files(root: Path, *, exclude: str | None = None) -> bool:
+    """True when the store root holds at least one active memory file
+    other than `exclude` (a bare filename). The filter — regular file,
+    not a symlink, `.md` suffix — mirrors `Store._iter_active_paths`
+    without importing the store module (store.py imports index.py, not
+    the reverse). Short-circuits on the first hit; tombstones live in a
+    subdirectory and never match. Best-effort: an unlistable root reads
+    as empty — nothing could be rebuilt from it either, and first-touch
+    stamping must not grow a failure mode `status()`'s never-raises
+    contract would otherwise have to absorb."""
+    try:
+        for entry in root.iterdir():
+            if (
+                entry.suffix == ".md"
+                and entry.name != exclude
+                and entry.is_file()
+                and not entry.is_symlink()
+            ):
+                return True
+    except OSError:
+        return False
+    return False
+
+
+def _ensure_schema(
+    conn: sqlite3.Connection, path: Path, *, inflight_filename: str | None = None
+) -> None:
     """Apply the schema (CREATE IF NOT EXISTS everywhere) and stamp the
     meta table with the current schema_version and tokenizer
     fingerprint. Idempotent — repeat calls on the same connection are
     safe. `path` is the index file `conn` is open on; the migration
     serialises on a flock sidecar next to it.
+
+    First-touch (no `schema_version` row yet): stamp version +
+    fingerprint, and — when the store root (`path.parent`) already
+    holds memory files — set `meta.needs_rebuild = '1'` in the SAME
+    transaction. A fresh index born inside a populated root (the user
+    deleted `.index.sqlite`, historically the recovery advice, or
+    restored a backup without the sidecar) is exactly as hollow as a
+    post-migration one: the incremental hooks refill only touched
+    memories, so without the flag the prefilter would re-engage on
+    `indexed_count` alone and every untouched legacy memory would
+    silently vanish from `memory_search`. `inflight_filename` names
+    the one file whose row the caller is writing in this same
+    operation (`upsert` threads it; the Store hooks write the .md
+    before upserting): it is excluded from the populated-check so a
+    genuinely-new store's first write does not flag itself.
 
     Version handling:
     - On-disk > code SCHEMA_VERSION: raise `IndexVersionError`. Callers
@@ -331,8 +372,9 @@ def _ensure_schema(conn: sqlite3.Connection, path: Path) -> None:
     live_fp = tokenizer_fingerprint()
     row = conn.execute("SELECT value FROM meta WHERE key = 'schema_version'").fetchone()
     if row is None:
-        # Both stamps land in one implicit transaction — a reader never
-        # sees a version row without its fingerprint sibling.
+        # All stamps land in one implicit transaction — a reader never
+        # sees a version row without its fingerprint sibling (nor, on a
+        # populated root, without the rebuild flag below).
         conn.execute(
             "INSERT INTO meta(key, value) VALUES ('schema_version', ?)",
             (str(SCHEMA_VERSION),),
@@ -341,6 +383,17 @@ def _ensure_schema(conn: sqlite3.Connection, path: Path) -> None:
             "INSERT INTO meta(key, value) VALUES ('tokenizer_fingerprint', ?)",
             (live_fp,),
         )
+        # Recall-hole guard, first-touch shape (see the docstring): a
+        # fresh index inside an already-populated store must not look
+        # trustworthy — flag it rebuild-pending exactly like the
+        # migration branch does, cleared only by `rebuild()`. The
+        # in-flight upsert's own file doesn't count as missing
+        # coverage; a store holding nothing else is genuinely new and
+        # stays unflagged.
+        if _root_has_memory_files(path.parent, exclude=inflight_filename):
+            conn.execute(
+                "INSERT OR REPLACE INTO meta(key, value) VALUES ('needs_rebuild', '1')"
+            )
         conn.commit()
         return
     on_disk = int(row[0])
@@ -615,7 +668,9 @@ def rebuild(root: Path, items: Iterable[tuple[Path, Memory]]) -> int:
 def upsert(root: Path, memory: Memory, *, filename: str) -> None:
     """Insert or replace one memory in the index. Called by Store hooks
     on write / update. Safe to call before the index file exists — the
-    schema is created on demand.
+    schema is created on demand (and, when the store already holds
+    memories beyond this one, flagged `needs_rebuild`: a hook-created
+    fresh index in a populated store covers only what gets touched).
 
     `filename` is the on-disk filename (no leading directory) the
     Store actually wrote. Threading it through — rather than
@@ -624,7 +679,7 @@ def upsert(root: Path, memory: Memory, *, filename: str) -> None:
     path = index_path(root)
     conn = _connect(path)
     try:
-        _ensure_schema(conn, path)
+        _ensure_schema(conn, path, inflight_filename=filename)
         with conn:
             _upsert_memory(conn, memory, filename)
             _bump_count(conn)
