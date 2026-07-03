@@ -148,6 +148,11 @@ class Store:
         # in `removed_reason`, body hashes for dedup), so directory-listing
         # them should require the owner just like the active store.
         (self.root / TOMBSTONE_DIR).mkdir(mode=0o700, exist_ok=True)
+        # Schema-upgrade auto-heal, BEFORE the divergence check: when a
+        # SCHEMA_VERSION bump emptied the index (`meta.needs_rebuild`),
+        # rebuild it from the canonical .md files now, so the migration
+        # resolves as an INFO note instead of the S4 WARNING below.
+        _rebuild_index_if_flagged(self)
         # S4: one-shot startup divergence check. The FTS5 index is a
         # derived cache kept consistent with disk only via Store hooks
         # (`_index_upsert_quietly` / `_index_remove_quietly` under the
@@ -1477,6 +1482,47 @@ _INDEX_REPAIR_HINT = "Run `bettermemory reindex` to repair."
 # anchors — we want the warning suppressed across short-lived Store
 # objects on the same root, not just within one Store's lifetime.
 _DIVERGENCE_WARNED_ROOTS: set[Path] = set()
+
+
+@best_effort(
+    "index auto-rebuild after schema upgrade",
+    logger=_INDEX_LOG,
+    repair_hint=_INDEX_REPAIR_HINT,
+)
+def _rebuild_index_if_flagged(store: Store) -> None:
+    """Rebuild the FTS5 index from disk when a schema-version migration
+    flagged it rebuild-pending (`meta.needs_rebuild`, set by
+    `index._ensure_schema`'s older-version path).
+
+    The migration drops the data tables empty; the incremental Store
+    hooks repopulate only whatever gets touched afterwards. On a store
+    above the prefilter threshold that means `memory_search` would —
+    without the flag — re-engage the FTS prefilter once enough
+    post-upgrade upserts accumulate and silently lose every untouched
+    legacy memory. Rebuilding here, at the first Store construction
+    after the upgrade, closes that window at its earliest opportunity;
+    `index.rebuild` is transactional and clears the flag only when the
+    repopulation lands, and `_load_search_candidates` routes to
+    `load_all` while the flag is set, so search stays correct (just
+    linear-scan slow) before/without this rebuild.
+
+    Best-effort via the decorator: a rebuild failure warns (with the
+    reindex hint) and must not block construction — the flag stays set,
+    so search keeps bypassing the index and the next construction
+    retries. On success the log is INFO: this shape used to surface as
+    the S4 divergence WARNING below, but a self-healed index is a
+    resolution notice, not an operator action item.
+    """
+    from . import index as _index
+
+    if not _index.status(store.root).get("needs_rebuild"):
+        return
+    count = _index.rebuild(store.root, store.iter_active())
+    _INDEX_LOG.info(
+        "bettermemory: index schema upgraded; rebuilt %d memories from "
+        "canonical disk state.",
+        count,
+    )
 
 
 def _warn_on_index_divergence(root: Path) -> None:

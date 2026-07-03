@@ -8,6 +8,7 @@ set. Falls back to load_all when:
 - the query is empty
 - the index file doesn't exist
 - the index is corrupt
+- the index is flagged `needs_rebuild` by a schema-version migration
 - the indexed_count is below the threshold
 - the index returns zero candidates (stale index suspected)
 
@@ -152,6 +153,57 @@ async def test_search_falls_back_when_index_corrupt(
 
     hits = _unwrap(await _call(server, "memory_search", query="python"))
     assert hits
+
+
+async def test_search_bypasses_index_flagged_by_schema_migration(
+    server: Any, memory_dir: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The schema-migration recall hole: a SCHEMA_VERSION bump drops the
+    index tables empty, and the incremental hooks repopulate only the
+    memories that get touched afterwards — so `indexed_count` crosses
+    the threshold while every untouched legacy memory is missing from
+    the index. Pre-fix the prefilter re-engaged on the count alone and
+    the legacy memory silently vanished from results (the zero-candidate
+    fallback never fired: the query DOES match an indexed row). The
+    `needs_rebuild` flag must route the search to load_all until a real
+    rebuild restores coverage.
+
+    Deliberately avoids constructing a Store after the migration so the
+    flag-gate in `_load_search_candidates` is exercised on its own,
+    not rescued by the construction-time auto-rebuild."""
+    import sqlite3
+
+    from bettermemory import index as _index
+
+    monkeypatch.setenv("BETTERMEMORY_INDEX_THRESHOLD", "1")
+    # Constructed BEFORE the migration — reused for both writes below.
+    store = Store(memory_dir)
+    legacy = store.write(content="alpha legacy landmark", scopes=["tools"])
+
+    # Back-date the on-disk index version; the next index open migrates
+    # (drop empty + flag rebuild-pending).
+    conn = sqlite3.connect(str(_index.index_path(memory_dir)))
+    try:
+        conn.execute("UPDATE meta SET value = '3' WHERE key = 'schema_version'")
+        conn.commit()
+    finally:
+        conn.close()
+
+    # One post-upgrade write repopulates a single row via the
+    # incremental hook: indexed_count (1) meets the lowered threshold,
+    # but the legacy memory has no index row.
+    fresh = store.write(content="alpha fresh note", scopes=["tools"])
+    status = _index.status(memory_dir)
+    assert status["needs_rebuild"] is True
+    assert status["indexed_count"] >= 1
+
+    hits = _unwrap(await _call(server, "memory_search", query="alpha"))
+    ids = {h["id"] for h in hits}
+    assert {legacy.id, fresh.id} <= ids, (
+        "a rebuild-pending index must not serve the prefilter: the "
+        "untouched legacy memory has no index row and would silently "
+        "vanish from results"
+    )
 
 
 @pytest.mark.parametrize("corruption", ["garbage", "version_newer"])

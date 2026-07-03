@@ -84,12 +84,16 @@ log = logging.getLogger("bettermemory.index")
 #     caller (Store / CLI) should delete the index file and run
 #     `bettermemory reindex`. We don't downgrade because we don't
 #     know what newer columns the existing rows depend on.
-#   - on-disk < code SCHEMA_VERSION: drop the data tables and
-#     recreate empty. The Store hooks repopulate gradually as
-#     writes land; `bettermemory reindex` does the explicit
-#     full rebuild. The fallback path in `_load_search_candidates`
-#     handles the empty-index case by routing to `load_all`, so
-#     search keeps working while the index repopulates.
+#   - on-disk < code SCHEMA_VERSION: drop the data tables, recreate
+#     empty, and set `meta.needs_rebuild = '1'`. The flag is cleared
+#     ONLY by a successful `rebuild()` — never by the incremental
+#     Store hooks, which repopulate just the memories that happen to
+#     get touched. Without the flag, `_load_search_candidates` would
+#     re-engage the FTS prefilter as soon as `indexed_count` crossed
+#     its threshold and every untouched pre-upgrade memory would be
+#     silently unreachable in `memory_search`; with it, search routes
+#     to `load_all` until `Store.__post_init__`'s auto-rebuild (or an
+#     explicit `bettermemory reindex`) restores full coverage.
 #
 # Version 2: adds `memories.filename` for id → path lookup (so
 # `_load_search_candidates` can directly read the candidate set
@@ -270,13 +274,15 @@ def _ensure_schema(conn: sqlite3.Connection) -> None:
     - On-disk > code SCHEMA_VERSION: raise `IndexVersionError`. Callers
       (Store / CLI) should drop the file and call `rebuild` from
       scratch.
-    - On-disk < code SCHEMA_VERSION: drop the data tables and recreate
-      them at the current schema. Memory data lives on disk in the .md
-      files; the Store hooks repopulate as writes happen, and
-      `bettermemory reindex` does the explicit full rebuild. The
-      `_load_search_candidates` fallback routes to `load_all` while
-      the index is empty, so search keeps working through the
-      transition.
+    - On-disk < code SCHEMA_VERSION: drop the data tables, recreate
+      them at the current schema, and set `meta.needs_rebuild = '1'`.
+      Memory data lives on disk in the .md files; `Store.__post_init__`
+      auto-rebuilds from them on the next construction, and
+      `bettermemory reindex` remains the manual path. While the flag is
+      set, `_load_search_candidates` treats the index as unusable and
+      routes to `load_all` — the incremental Store hooks only
+      repopulate touched memories, so `indexed_count` alone can cross
+      the prefilter threshold with most of the corpus still missing.
     """
     # First-touch path: meta table may not exist yet. CREATE IF NOT
     # EXISTS is safe to run before the version check.
@@ -299,9 +305,9 @@ def _ensure_schema(conn: sqlite3.Connection) -> None:
     if on_disk < SCHEMA_VERSION:
         log.warning(
             "index schema version %s is older than current (%s); "
-            "dropping and recreating empty. Run `bettermemory reindex` "
-            "to fully repopulate, or let it fill incrementally as "
-            "memories are written.",
+            "dropping and recreating empty. Search bypasses the index "
+            "until the next Store construction auto-rebuilds it (or "
+            "`bettermemory reindex` is run).",
             on_disk,
             SCHEMA_VERSION,
         )
@@ -341,6 +347,13 @@ def _ensure_schema(conn: sqlite3.Connection) -> None:
                 (str(SCHEMA_VERSION),),
             )
             conn.execute("UPDATE meta SET value = '0' WHERE key = 'indexed_count'")
+            # Recall-hole guard: mark the index rebuild-pending. Cleared
+            # ONLY by `rebuild()` — incremental hook upserts must not be
+            # able to make a post-migration index look usable while the
+            # untouched rest of the corpus is missing from it.
+            conn.execute(
+                "INSERT OR REPLACE INTO meta(key, value) VALUES ('needs_rebuild', '1')"
+            )
             conn.commit()
         except Exception:
             conn.rollback()
@@ -434,7 +447,8 @@ def rebuild(root: Path, items: Iterable[tuple[Path, Memory]]) -> int:
     Returns the number of memories indexed. The data tables are
     truncated (not the schema) so triggers and indexes survive.
     `meta.indexed_count` is updated at the end so callers can
-    sanity-check against the on-disk count.
+    sanity-check against the on-disk count, and the schema-migration
+    `needs_rebuild` flag is cleared — this is the ONLY place it clears.
 
     Idempotent — running twice produces the same final state. Safe
     against partial failures: the rebuild runs in a single
@@ -464,6 +478,11 @@ def rebuild(root: Path, items: Iterable[tuple[Path, Memory]]) -> int:
                 "INSERT OR REPLACE INTO meta(key, value) VALUES ('indexed_count', ?)",
                 (str(count),),
             )
+            # The schema-migration `needs_rebuild` flag clears here and
+            # ONLY here, inside the same transaction as the repopulation:
+            # a mid-build crash rolls back both, so the flag can never
+            # clear without the rows actually landing.
+            conn.execute("DELETE FROM meta WHERE key = 'needs_rebuild'")
         return count
     finally:
         conn.close()
@@ -780,12 +799,21 @@ def status(root: Path) -> dict[str, Any]:
             schema_row = conn.execute(
                 "SELECT value FROM meta WHERE key = 'schema_version'"
             ).fetchone()
+            rebuild_row = conn.execute(
+                "SELECT value FROM meta WHERE key = 'needs_rebuild'"
+            ).fetchone()
             size_bytes = path.stat().st_size
             return {
                 "exists": True,
                 "path": str(path),
                 "schema_version": int(schema_row[0]) if schema_row else None,
                 "indexed_count": int(count_row[0]) if count_row else 0,
+                # True between a schema-version migration and the next
+                # successful `rebuild()`: the data tables were dropped
+                # empty and only incrementally-touched memories are back,
+                # so readers must treat the index as unusable no matter
+                # what `indexed_count` says.
+                "needs_rebuild": bool(rebuild_row and rebuild_row[0] == "1"),
                 "size_bytes": size_bytes,
             }
         finally:

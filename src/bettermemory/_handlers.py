@@ -193,9 +193,11 @@ class ToolHandlers:
         drops a candidate the authoritative pass would have kept.
 
         The current heuristic: walk the index status once. If the
-        on-disk index exists, has `indexed_count >= threshold`, and the
-        query is non-empty, we query the index for up to 50 candidate
-        ids and load just those by walking the file store for matches.
+        on-disk index exists, is not flagged `needs_rebuild` (the
+        post-schema-migration state where only touched memories are
+        indexed), has `indexed_count >= threshold`, and the query is
+        non-empty, we query the index for up to 50 candidate ids and
+        load just those by walking the file store for matches.
         Otherwise the full `load_all` runs (current behaviour, byte-
         stable result quality).
 
@@ -208,7 +210,17 @@ class ToolHandlers:
         if not query.strip():
             return self.store.load_all(), False
         status = _index.status(self.store.root)
-        if not status.get("exists") or status.get("corrupt"):
+        # `needs_rebuild` means a schema-version migration dropped the
+        # data tables and only incrementally-touched memories are back:
+        # `indexed_count` can cross the threshold while every untouched
+        # pre-upgrade memory is missing, so the count is not a coverage
+        # signal until `rebuild()` clears the flag. Treat the index as
+        # unusable outright — same routing as corrupt/absent.
+        if (
+            not status.get("exists")
+            or status.get("corrupt")
+            or status.get("needs_rebuild")
+        ):
             return self.store.load_all(), False
         indexed_count = int(status.get("indexed_count", 0) or 0)
         if indexed_count < self._index_threshold():

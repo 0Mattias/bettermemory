@@ -650,39 +650,240 @@ def test_links_cleanup_on_tombstone(store: Store, memory_dir: Path) -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_v1_index_downgraded_to_v2_via_drop_and_recreate(
+def test_older_schema_index_upgraded_to_current_via_drop_and_recreate(
     store: Store, memory_dir: Path
 ) -> None:
-    """Regression: an existing v1-schema index on disk must be
-    transparently upgraded to v2 on the next connect. The data
-    tables are dropped and recreated empty; store hooks repopulate
-    incrementally and `bettermemory reindex` does the explicit full
-    rebuild. The fallback in `_load_search_candidates` keeps search
-    working through the transition."""
+    """Regression: an older-schema index on disk must be transparently
+    upgraded to the current version on the next connect. The data
+    tables are dropped and recreated empty, and the index is flagged
+    `needs_rebuild` so search bypasses it until `rebuild()` — the
+    explicit reindex here, or the Store-construction auto-rebuild —
+    restores full coverage and clears the flag."""
     import sqlite3
 
     a = store.write(content="bridge", scopes=["tools"])
     db_path = index.index_path(memory_dir)
-    # Force the on-disk version backwards to simulate a stale v1
+    # Force the on-disk version backwards to simulate a stale older
     # index. The data tables look fine; only the meta version flips.
     with sqlite3.connect(db_path) as conn:
         conn.execute("UPDATE meta SET value = '1' WHERE key = 'schema_version'")
 
-    # Status call triggers _ensure_schema, which sees v1 < v2 and
-    # drops + recreates.
+    # Status call triggers _ensure_schema, which sees the older
+    # version and drops + recreates.
     s = index.status(memory_dir)
     assert s["schema_version"] == index.SCHEMA_VERSION
     assert s["indexed_count"] == 0, (
-        "after a v1→v2 migration the table should be empty until "
-        "the next write or explicit reindex"
+        "after a schema migration the table should be empty until the rebuild"
     )
-    # A subsequent reindex restores the row count.
+    assert s["needs_rebuild"] is True, (
+        "the migration must flag the index rebuild-pending so search "
+        "routes to load_all instead of the hollowed-out prefilter"
+    )
+    # A subsequent reindex restores the row count and clears the flag.
     index.rebuild(memory_dir, store.iter_active())
     s_after = index.status(memory_dir)
     assert s_after["indexed_count"] >= 1
+    assert s_after["needs_rebuild"] is False
     # And the H1 surfaces work again on the reindexed store.
     filenames = index.filenames_for_ids(memory_dir, [a.id])
     assert a.id in filenames
+
+
+# The LITERAL index `_SCHEMA` string as shipped before 30e912a (schema
+# v3, releases <= 3.11): no `body_fts` / `scopes_fts` columns — the FTS
+# table indexed the raw body under unicode61. Copied verbatim so the
+# fixture below builds a byte-genuine 3.11 index rather than a
+# back-projection of the current schema with the version stamp flipped.
+_V3_SCHEMA = """
+CREATE TABLE IF NOT EXISTS meta (
+    key TEXT PRIMARY KEY,
+    value TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS memories (
+    rowid INTEGER PRIMARY KEY,
+    id TEXT NOT NULL UNIQUE,
+    created TEXT NOT NULL,
+    updated TEXT NOT NULL,
+    last_verified_at TEXT,
+    confidence TEXT NOT NULL,
+    category TEXT,
+    body TEXT NOT NULL,
+    scopes_text TEXT NOT NULL,
+    scopes_json TEXT NOT NULL,
+    filename TEXT NOT NULL DEFAULT ''
+);
+
+CREATE VIRTUAL TABLE IF NOT EXISTS memories_fts USING fts5(
+    body, scopes_text,
+    content='memories', content_rowid='rowid',
+    tokenize='unicode61'
+);
+
+CREATE TRIGGER IF NOT EXISTS memories_ai AFTER INSERT ON memories BEGIN
+    INSERT INTO memories_fts(rowid, body, scopes_text)
+    VALUES (new.rowid, new.body, new.scopes_text);
+END;
+
+CREATE TRIGGER IF NOT EXISTS memories_ad AFTER DELETE ON memories BEGIN
+    INSERT INTO memories_fts(memories_fts, rowid, body, scopes_text)
+    VALUES ('delete', old.rowid, old.body, old.scopes_text);
+END;
+
+CREATE TRIGGER IF NOT EXISTS memories_au AFTER UPDATE ON memories BEGIN
+    INSERT INTO memories_fts(memories_fts, rowid, body, scopes_text)
+    VALUES ('delete', old.rowid, old.body, old.scopes_text);
+    INSERT INTO memories_fts(rowid, body, scopes_text)
+    VALUES (new.rowid, new.body, new.scopes_text);
+END;
+
+CREATE INDEX IF NOT EXISTS memories_by_updated ON memories(updated DESC);
+
+-- Inter-memory links. Keeps `_links_payload`'s reverse-link scan
+-- out of `load_all` — that path was O(N) per `memory_show` because
+-- finding "everyone who links AT this id" required walking every
+-- memory's `links` field on disk. Now it's an index lookup.
+CREATE TABLE IF NOT EXISTS memory_links (
+    source_id TEXT NOT NULL,
+    type TEXT NOT NULL,
+    target_id TEXT NOT NULL,
+    note TEXT,
+    PRIMARY KEY (source_id, type, target_id, note)
+);
+
+CREATE INDEX IF NOT EXISTS memory_links_by_target ON memory_links(target_id);
+
+-- Cascade link cleanup when a memory is removed. Both source-side
+-- (this memory's outbound links) and target-side (other memories
+-- linking AT this id) get dropped. The target-side cleanup keeps
+-- the reverse-link query honest: a hit against `target_id = X`
+-- after X is tombstoned would otherwise dangle.
+CREATE TRIGGER IF NOT EXISTS memory_links_cleanup AFTER DELETE ON memories BEGIN
+    DELETE FROM memory_links
+    WHERE source_id = old.id OR target_id = old.id;
+END;
+"""
+
+
+def test_genuine_v3_index_migrates_and_rebuild_restores_search(
+    store: Store, memory_dir: Path
+) -> None:
+    """End-to-end against a GENUINE pre-3.12 (schema v3) index: the
+    literal v3 DDL with v3-shaped rows, not a current-schema index with
+    the version stamp flipped back. Opening under current code must
+    migrate cleanly (drop empty + flag rebuild-pending — no sqlite
+    error from the missing `body_fts` / `scopes_fts` columns), and
+    `rebuild()` must repopulate the preprocessed `body_fts` column so
+    token search actually works on the migrated index."""
+    import json
+
+    a = store.write(content="tokyo relocation plan", scopes=["tools"])
+    b = store.write(content="kubernetes networking", scopes=["infrastructure"])
+
+    # Replace the hook-built current-schema index with a genuine v3 one
+    # (siblings too — a stale WAL must not shadow the fresh file).
+    db_path = index.index_path(memory_dir)
+    index._unlink_index_files(db_path)
+    conn = sqlite3.connect(str(db_path))
+    try:
+        conn.executescript(_V3_SCHEMA)
+        rows = list(store.iter_active())
+        for path, memory in rows:
+            # The v3 `_insert_memory` shape: raw body, space-padded
+            # scopes_text, no preprocessed columns.
+            conn.execute(
+                "INSERT INTO memories("
+                "id, created, updated, last_verified_at, confidence, "
+                "category, body, scopes_text, scopes_json, filename) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                (
+                    memory.id,
+                    memory.created.isoformat(),
+                    memory.updated.isoformat(),
+                    None,
+                    memory.confidence.value,
+                    None,
+                    memory.body,
+                    " " + " ".join(memory.scopes) + " ",
+                    json.dumps(memory.scopes),
+                    path.name,
+                ),
+            )
+        conn.execute("INSERT INTO meta VALUES ('schema_version', '3')")
+        conn.execute("INSERT INTO meta VALUES ('indexed_count', ?)", (str(len(rows)),))
+        conn.commit()
+        # Fixture sanity: the v3 table really lacks the v4 columns.
+        cols = {r[1] for r in conn.execute("PRAGMA table_info(memories)")}
+        assert "body_fts" not in cols and "scopes_fts" not in cols
+    finally:
+        conn.close()
+
+    # First open under current code: a clean v3→v4 migration — current
+    # version stamp, empty tables, rebuild-pending.
+    s = index.status(memory_dir)
+    assert s["schema_version"] == index.SCHEMA_VERSION
+    assert s["indexed_count"] == 0
+    assert s["needs_rebuild"] is True
+    # The hollowed-out index matches nothing yet; the flag is what
+    # keeps `_load_search_candidates` off it in the meantime.
+    assert index.query(memory_dir, "tokyo") == []
+
+    # rebuild() repopulates `body_fts` from canonical disk state and
+    # clears the flag; token search works again.
+    assert index.rebuild(memory_dir, store.iter_active()) == 2
+    s_after = index.status(memory_dir)
+    assert s_after["needs_rebuild"] is False
+    assert s_after["indexed_count"] == 2
+    assert [r[0] for r in index.query(memory_dir, "tokyo")] == [a.id]
+    assert [r[0] for r in index.query(memory_dir, "kubernetes")] == [b.id]
+
+
+def test_store_construction_auto_rebuilds_migrated_index(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    """The auto-heal for the migration recall hole: a schema-version
+    bump empties the index and flags it rebuild-pending; the NEXT Store
+    construction rebuilds from canonical disk state without waiting for
+    a manual `bettermemory reindex`. The S4 divergence WARNING for this
+    shape is demoted to an INFO rebuild notice — a self-healed index is
+    a resolution, not an operator action item."""
+    from bettermemory import store as _store
+
+    root = tmp_path / "auto_heal"
+    setup = Store(root)
+    a = setup.write(content="legacy searchable body", scopes=["tools"])
+    b = setup.write(content="second legacy entry", scopes=["tools"])
+
+    # Back-date the on-disk index version; the next index open migrates
+    # (drop empty + flag).
+    conn = sqlite3.connect(str(index.index_path(root)))
+    try:
+        conn.execute("UPDATE meta SET value = '1' WHERE key = 'schema_version'")
+        conn.commit()
+    finally:
+        conn.close()
+
+    _store._DIVERGENCE_WARNED_ROOTS.discard(root.expanduser().resolve())
+
+    caplog.clear()
+    with caplog.at_level("INFO", logger="bettermemory.store"):
+        Store(root)
+
+    s = index.status(root)
+    assert s["needs_rebuild"] is False
+    assert s["indexed_count"] == 2
+    assert {r[0] for r in index.query(root, "legacy")} == {a.id, b.id}
+    # Demotion contract: no out-of-sync WARNING for the healed
+    # migration; an INFO records the rebuild instead.
+    assert not [
+        r
+        for r in caplog.records
+        if r.levelname == "WARNING" and "out-of-sync" in r.getMessage()
+    ], "a self-healed migration must not fire the S4 divergence warning"
+    assert any(
+        r.levelname == "INFO" and "rebuilt 2 memories" in r.getMessage()
+        for r in caplog.records
+    ), "the auto-rebuild must leave an INFO record of what it did"
 
 
 def test_schema_rebuild_executescript_is_transactional(
