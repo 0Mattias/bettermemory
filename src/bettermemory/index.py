@@ -585,7 +585,9 @@ def _open_for_rebuild(path: Path) -> sqlite3.Connection:
     In every case, drop the index file (+ siblings) and rebuild from a
     clean slate. The canonical .md files are untouched, so nothing is
     lost. (Before this, the recovery primitive crashed on exactly the
-    inputs it exists to repair.)"""
+    inputs it exists to repair.) Corruption these open-time reads CAN'T
+    see — a torn FTS shadow page first walked by the data sweep — is
+    recovered by `rebuild`'s own data-phase fallback, not here."""
     try:
         conn = _connect(path)
     except sqlite3.DatabaseError:
@@ -628,41 +630,83 @@ def rebuild(root: Path, items: Iterable[tuple[Path, Memory]]) -> int:
     `needs_rebuild` flag is cleared — this is the ONLY place it clears.
 
     Idempotent — running twice produces the same final state. Safe
-    against partial failures: the rebuild runs in a single
-    transaction, so a mid-build crash leaves the prior index intact.
+    against partial failures: the data phase runs in a single
+    transaction, so a mid-build non-SQLite crash leaves the prior
+    index intact.
 
-    Recovery primitive: tolerates ANY prior on-disk index state. A
-    corrupt/torn .db or a schema_version newer than this code is
-    dropped and recreated from scratch (see `_open_for_rebuild`) rather
-    than crashing — the .md files are canonical, so `bettermemory
-    reindex` can always repair the derived index. A *valid* prior index
-    is still preserved through the transactional build above.
+    Recovery primitive: tolerates ANY prior on-disk index state, in
+    BOTH phases. Open-time — a torn .db header, a schema_version newer
+    than this code, unparseable meta — is dropped and recreated by
+    `_open_for_rebuild`. Data-phase corruption those open-time reads
+    cannot see (a torn FTS shadow page passes `_connect`'s PRAGMAs and
+    `_ensure_schema`'s meta reads, then first raises when the
+    DELETE/INSERT sweep's triggers walk the damaged pages — exactly
+    the class doctor's `PRAGMA quick_check` detects and answers with
+    "run `bettermemory reindex`") falls back to the same nuclear path:
+    drop the file (+ WAL/SHM siblings) and re-run the data phase ONCE
+    against a fresh file. A second failure propagates — the retry runs
+    on a file this process just created, so it is not prior-state
+    corruption. The .md files are canonical throughout; a *valid*
+    prior index is still preserved through the transactional build.
 
     Each entry pairs the on-disk path with its parsed Memory so the
     `filename` column can mirror the real file (collision-suffixed
     names included). Callers typically pass `Store.iter_active()`.
     """
     path = index_path(root)
+    # Materialised before anything touches SQLite: the corruption
+    # fallback below re-runs the data phase, and callers typically pass
+    # a one-shot generator (`Store.iter_active()`) the failed first
+    # attempt would have partially drained. Same memory envelope
+    # `load_all` already pays on every fallback search.
+    entries = list(items)
     conn = _open_for_rebuild(path)
     try:
-        with conn:
-            conn.execute("DELETE FROM memories")
-            count = 0
-            for entry_path, memory in items:
-                _insert_memory(conn, memory, entry_path.name)
-                count += 1
-            conn.execute(
-                "INSERT OR REPLACE INTO meta(key, value) VALUES ('indexed_count', ?)",
-                (str(count),),
+        try:
+            return _rebuild_data(conn, entries)
+        except sqlite3.DatabaseError as exc:
+            log.warning(
+                "index rebuild data phase failed on the existing file "
+                "(%s); dropping %s and its WAL/SHM siblings, then "
+                "rebuilding from scratch",
+                exc,
+                path,
             )
-            # The schema-migration `needs_rebuild` flag clears here and
-            # ONLY here, inside the same transaction as the repopulation:
-            # a mid-build crash rolls back both, so the flag can never
-            # clear without the rows actually landing.
-            conn.execute("DELETE FROM meta WHERE key = 'needs_rebuild'")
-        return count
+            conn.close()
+            _unlink_index_files(path)
+            conn = _open_for_rebuild(path)
+            return _rebuild_data(conn, entries)
     finally:
+        # Reassignment-safe: if the recovery `_open_for_rebuild` itself
+        # raised, `conn` still names the already-closed first connection
+        # and sqlite3's close() is idempotent.
         conn.close()
+
+
+def _rebuild_data(conn: sqlite3.Connection, entries: list[tuple[Path, Memory]]) -> int:
+    """The transactional data phase of `rebuild`: truncate, refill,
+    stamp `indexed_count`, clear `needs_rebuild`. Takes a LIST rather
+    than the caller's iterable because `rebuild`'s corruption fallback
+    re-runs this phase against a fresh file — a one-shot generator
+    would replay empty."""
+    with conn:
+        conn.execute("DELETE FROM memories")
+        count = 0
+        for entry_path, memory in entries:
+            _insert_memory(conn, memory, entry_path.name)
+            count += 1
+        conn.execute(
+            "INSERT OR REPLACE INTO meta(key, value) VALUES ('indexed_count', ?)",
+            (str(count),),
+        )
+        # The schema-migration `needs_rebuild` flag clears here and
+        # ONLY here, inside the same transaction as the repopulation:
+        # a mid-build crash rolls back both, so the flag can never
+        # clear without the rows actually landing. (The first-touch
+        # stamp a recovery reopen sets on a populated root clears the
+        # same way — only when the retry's rows actually land.)
+        conn.execute("DELETE FROM meta WHERE key = 'needs_rebuild'")
+    return count
 
 
 def upsert(root: Path, memory: Memory, *, filename: str) -> None:

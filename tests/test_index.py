@@ -505,6 +505,62 @@ def test_rebuild_recovers_from_poisoned_indexed_count(
     assert s["indexed_count"] == 1
 
 
+def test_rebuild_recovers_from_torn_fts_shadow_page(
+    store: Store, memory_dir: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    """Page-level corruption inside an FTS5 shadow table survives every
+    open-time check — `_connect`'s PRAGMAs read the header,
+    `_ensure_schema` reads meta, and status() therefore reports the
+    index healthy — and first raises mid-DATA-phase, when the
+    DELETE/INSERT sweep's triggers walk the damaged pages. Doctor's
+    quick_check detects exactly this class and prescribes `bettermemory
+    reindex`; pre-fix, `_open_for_rebuild` was the only recovery layer,
+    so the prescribed repair crashed with "database disk image is
+    malformed" and the recommendation dead-ended. rebuild() must fall
+    back to the nuclear path — drop the file + WAL/SHM siblings,
+    recreate, re-run the data phase once — and log the recovery."""
+    store.write(content="alpha indexer note", scopes=["tools"])
+    store.write(content="beta indexer note", scopes=["tools"])
+    index_file = index.index_path(memory_dir)
+    # Fold the WAL into the main file first so the page overwrite below
+    # can't be shadowed by a fresher WAL copy of the same page.
+    conn = sqlite3.connect(str(index_file))
+    try:
+        conn.execute("PRAGMA wal_checkpoint(TRUNCATE)")
+        page_size = conn.execute("PRAGMA page_size").fetchone()[0]
+        rootpage = conn.execute(
+            "SELECT rootpage FROM sqlite_master WHERE name = 'memories_fts_data'"
+        ).fetchone()[0]
+    finally:
+        conn.close()
+    # Tear the shadow table's root page: every FTS read/write of the
+    # inverted index starts there, but no open-time check touches it.
+    with index_file.open("r+b") as fh:
+        fh.seek((rootpage - 1) * page_size)
+        fh.write(b"\xff" * page_size)
+    # The premise that makes this the dead-end class: the meta-only
+    # status() reads pass, so nothing upstream of rebuild sees damage.
+    assert "corrupt" not in index.status(memory_dir)
+
+    caplog.clear()
+    with caplog.at_level("WARNING", logger="bettermemory.index"):
+        count = index.rebuild(memory_dir, store.iter_active())
+
+    assert count == 2
+    assert any("data phase failed" in r.getMessage() for r in caplog.records), (
+        "nuclear recovery must be logged at WARNING with the corruption context"
+    )
+    s = index.status(memory_dir)
+    assert "corrupt" not in s
+    assert s["indexed_count"] == 2
+    # The recovery reopen's first-touch stamp must not outlive the
+    # successful retry — the flag clears in the same transaction the
+    # rows land in.
+    assert s["needs_rebuild"] is False
+    # The repaired index actually answers queries.
+    assert index.query(memory_dir, "alpha")
+
+
 # ---------------------------------------------------------------------------
 # id → filename lookup (H1 — schema v2)
 # ---------------------------------------------------------------------------
