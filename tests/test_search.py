@@ -529,6 +529,113 @@ def test_stopword_only_query_falls_back_to_unstripped_tokens() -> None:
     assert search([a], "") == []
 
 
+def test_stopword_only_fallback_effective_in_bm25_mode() -> None:
+    """The unstripped-token fallback must be effective in every lexical
+    mode, not just keyword. BM25 counts TF against the stopword-STRIPPED
+    body stream, so pre-fix a fallen-back token could match scopes but
+    never a body: search(mode='bm25', 'des') returned [] while keyword
+    and hybrid surfaced the DES-cipher memory — silent zero recall for
+    exactly the accepted-collision stopword terms ('des', 'aux', 'del',
+    ...) whose standalone answerability the stopword-list comment
+    delegates to the fallback. mode='bm25' is a validated per-call MCP
+    argument AND a legal [behavior] search_mode default, so the
+    guarantee has to hold there too."""
+    now = datetime(2026, 7, 1, tzinfo=timezone.utc)
+    des = _memory(
+        "Legacy payment auth still uses the DES cipher, migrate to AES",
+        created=now,
+    )
+    others = [
+        _memory("Postgres 16 runs on the homelab box", created=now),
+        _memory("Deployment pipeline uses docker-compose", created=now),
+    ]
+    modes: tuple[SearchMode, ...] = ("keyword", "bm25", "hybrid")
+    for mode in modes:
+        hits = search([des, *others], "des", mode=mode, now=now)
+        assert hits and hits[0].id == des.id, f"zero recall in mode={mode}"
+        assert "des" in hits[0].match_terms
+    # Filler ranking still can't fabricate: a fallback token appearing
+    # in no body (and no scope) stays a miss in bm25 mode too.
+    assert search(others, "des", mode="bm25", now=now) == []
+
+    # Precompute-threading parity holds under the flag: search() threads
+    # `_MemoryTokens`; the recompute path must agree.
+    from bettermemory.search import _memory_tokens, compute_idf, score_memory_bm25
+
+    corpus = [des, *others]
+    body_idf, scope_idf, avgdl = compute_idf(corpus)
+    plain = score_memory_bm25(
+        des,
+        ["des"],
+        body_idf_map=body_idf,
+        scope_idf_map=scope_idf,
+        avgdl=avgdl,
+        now=now,
+        stopword_fallback=True,
+    )
+    threaded = score_memory_bm25(
+        des,
+        ["des"],
+        body_idf_map=body_idf,
+        scope_idf_map=scope_idf,
+        avgdl=avgdl,
+        now=now,
+        tokens=_memory_tokens(des),
+        stopword_fallback=True,
+    )
+    assert plain == threaded
+    assert plain[0] > 0
+
+
+def test_bm25_non_fallback_scoring_unchanged_by_fallback_plumbing() -> None:
+    """Threading the fallback signal must be a pure no-op for every query
+    stripping does NOT empty: over a mixed corpus (stopword-heavy prose,
+    compounds, CJK, scoped bodies) search(mode='bm25') hit scores must
+    equal the default-arg `score_memory_bm25` output exactly — i.e. the
+    non-fallback path stays byte-identical and `search()` raises the
+    flag only when the fallback actually fired."""
+    from bettermemory.search import _strip_stopwords, compute_idf, score_memory_bm25
+
+    now = datetime(2026, 7, 1, tzinfo=timezone.utc)
+    corpus = [
+        _memory(text, scopes, created=now)
+        for text, scopes in [
+            ("Legacy payment auth still uses the DES cipher", ["tools"]),
+            ("docker_compose caches C++ builds for .NET 3.12.1", ["tools"]),
+            ("東京オフィスは移転する 2026年に移転", ["projects:tokyo-move"]),
+            ("jag vill att den ska fungera på servern", ["projects:demo"]),
+            ("der Server wird durch die Firewall blockiert", ["infrastructure"]),
+            ("Postgres 16 runs on the homelab box", ["infrastructure"]),
+        ]
+    ]
+    queries = [
+        "the des cipher",  # collision stopword stripped, content term kept
+        "docker-compose caches",  # compound + conjunctive fallback
+        "東京 移転",  # CJK bigrams
+        "vad har jag om servern",  # filler-heavy but not emptied
+        "demo servern",  # scope hit + body hit
+        "postgres homelab",  # plain content
+    ]
+    body_idf, scope_idf, avgdl = compute_idf(corpus)
+    for query in queries:
+        query_tokens = _strip_stopwords(tokenize(query))
+        assert query_tokens, f"query {query!r} unexpectedly fired the fallback"
+        expected: dict[str, float] = {}
+        for m in corpus:
+            score, _ = score_memory_bm25(
+                m,
+                query_tokens,
+                body_idf_map=body_idf,
+                scope_idf_map=scope_idf,
+                avgdl=avgdl,
+                now=now,
+            )
+            if score > 0:
+                expected[m.id] = round(score, 4)
+        hits = search(corpus, query, mode="bm25", now=now, max_results=len(corpus))
+        assert {h.id: h.score for h in hits} == expected, query
+
+
 def test_stopwords_dont_create_phantom_matches() -> None:
     """An off-topic query with one shared stopword shouldn't surface a hit."""
     a = _memory("python list comprehension tips")

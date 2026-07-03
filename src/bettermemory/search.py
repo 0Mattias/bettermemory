@@ -1220,6 +1220,7 @@ def score_memory_bm25(
     k1: float = _BM25_K1_DEFAULT,
     b: float = _BM25_B_DEFAULT,
     tokens: _MemoryTokens | None = None,
+    stopword_fallback: bool = False,
 ) -> tuple[float, list[str]]:
     """BM25 score for one memory against a tokenized query.
 
@@ -1246,19 +1247,41 @@ def score_memory_bm25(
     ``tokens``: optional precomputed `_MemoryTokens` for this memory —
     `search()` tokenizes each candidate once and threads the streams
     here. None recomputes them; identical output either way.
+
+    ``stopword_fallback``: set by `search()` when stopword stripping
+    emptied the query and the unstripped-token fallback fired (every
+    query token is a stopword). Body TF is then counted against the
+    UNSTRIPPED body stream — the keyword scorer's stream — instead of
+    the stripped content stream, with body IDF floored at 1.0 (fallback
+    tokens are stopwords, absent from the content-stream `body_idf_map`
+    by construction; the same no-corpus-statistics floor scope-only
+    matches use). `dl` and the caller's `avgdl` stay on the content
+    stream so length normalisation prices one consistent statistic in
+    both calls. False (the default) is byte-identical to the scoring
+    behaviour before the flag existed; without it a fallen-back token
+    could match scopes but never a body — silent zero recall in
+    mode="bm25" for exactly the stopword-collision queries the
+    `search()` fallback guarantees answerable.
     """
     if not query_tokens or avgdl <= 0:
         return 0.0, []
 
-    body_tokens = (
-        tokens.content
-        if tokens is not None
-        else _strip_stopwords(_expand_kebab(tokenize(memory.body)))
-    )
+    # Fallback calls count TF against the unstripped stream (stopwords
+    # kept) so the fallen-back tokens are matchable at all; `dl` stays
+    # on the content stream in BOTH calls — avgdl is a content-stream
+    # statistic, and length normalisation must keep pricing the same
+    # ratio whether or not the fallback fired.
+    if tokens is not None:
+        content_tokens = tokens.content
+        count_tokens = tokens.body if stopword_fallback else content_tokens
+    else:
+        unstripped = _expand_kebab(tokenize(memory.body))
+        content_tokens = _strip_stopwords(unstripped)
+        count_tokens = unstripped if stopword_fallback else content_tokens
     body_count: dict[str, int] = {}
-    for tok in body_tokens:
+    for tok in count_tokens:
         body_count[tok] = body_count.get(tok, 0) + 1
-    dl = len(body_tokens)
+    dl = len(content_tokens)
 
     if tokens is not None:
         scope_set = tokens.scope_set
@@ -1279,7 +1302,11 @@ def score_memory_bm25(
         contrib = 0.0
 
         tf = body_count.get(tok, 0)
-        body_idf = body_idf_map.get(tok, 0.0)
+        # Fallback tokens are stopwords — absent from the content-stream
+        # `body_idf_map` by construction — so floor their body IDF at 1.0
+        # (the scope bonus's no-corpus-statistics floor below), or the
+        # occurrence just counted would be zeroed right back by a 0.0 IDF.
+        body_idf = body_idf_map.get(tok, 1.0 if stopword_fallback else 0.0)
         scope_hit = tok in scope_set
         # Floor IDF at 1.0 for scope-only hits so a brand-new scope
         # term (absent from every body AND scope in the idf corpus)
@@ -1610,10 +1637,12 @@ def _score_bm25(
     half_life_days: float,
     applied_by_id: dict[str, int] | None = None,
     candidate_tokens: list[_MemoryTokens] | None = None,
+    stopword_fallback: bool = False,
 ) -> list[tuple[Memory, float, list[str]]]:
     """Run the BM25 scorer across all candidates. Returns
     `(memory, score, matched)` tuples for candidates with `score > 0`.
-    `applied_by_id` / `candidate_tokens`: see `_score_keyword`."""
+    `applied_by_id` / `candidate_tokens`: see `_score_keyword`;
+    `stopword_fallback`: see `score_memory_bm25`."""
     body_idf_map, scope_idf_map, avgdl = compute_idf(
         candidates, tokens=candidate_tokens
     )
@@ -1630,6 +1659,7 @@ def _score_bm25(
             now=now,
             half_life_days=half_life_days,
             tokens=candidate_tokens[i] if candidate_tokens is not None else None,
+            stopword_fallback=stopword_fallback,
         )
         if score > 0:
             if applied_by_id:
@@ -1880,13 +1910,20 @@ def search(
     # future stopword addition absorbs), fall back to the unstripped
     # tokens: stopword curation must never make a real query unanswerable,
     # so the worst case is filler-grade ranking, not silent zero recall.
+    # The fallback flag threads into the BM25 legs below: BM25 counts TF
+    # against the stopword-STRIPPED body stream, so without the signal a
+    # fallen-back token could match scopes but never a body — silent zero
+    # recall in mode="bm25", exactly what this fallback exists to rule
+    # out (the keyword scorer's stream keeps stopwords and needs no flag).
     # A truly empty query still returns empty rather than serving every
     # memory at score 0, and browse mode keeps its recency-ordered
     # semantics for both empty and stopword-only queries — see
     # `allow_empty_query` above.
     query_tokens = _strip_stopwords(raw_tokens)
+    stopword_fallback = False
     if not query_tokens and raw_tokens and not allow_empty_query:
         query_tokens = raw_tokens
+        stopword_fallback = True
     if not query_tokens:
         if not allow_empty_query:
             return []
@@ -1949,6 +1986,7 @@ def search(
             half_life_days=half_life_days,
             applied_by_id=applied_by_id,
             candidate_tokens=candidate_tokens,
+            stopword_fallback=stopword_fallback,
         )
         scored.sort(key=lambda x: (x[1], x[0].created, x[0].id), reverse=True)
     elif mode == "semantic":
@@ -2003,6 +2041,7 @@ def search(
                 half_life_days=half_life_days,
                 applied_by_id=applied_by_id,
                 candidate_tokens=candidate_tokens,
+                stopword_fallback=stopword_fallback,
             ),
         ]
         if semantic_model is not None:
