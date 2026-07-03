@@ -31,6 +31,7 @@ patch propagates — see ``handlers/_shared.py`` for the contract.
 
 from __future__ import annotations
 
+import logging
 from typing import Any, Callable, TypeAlias
 
 from . import handlers as _handlers_pkg
@@ -51,6 +52,8 @@ from .handlers._shared import (
 from .origin import capture as capture_origin
 from .session import SessionSource
 from .store import Store
+
+log = logging.getLogger("bettermemory._handlers")
 
 
 # Re-export the description constants the server's `_register_tools`
@@ -204,7 +207,17 @@ class ToolHandlers:
         Falls back to load_all when the index returns no candidates —
         a stale index missing recent writes shouldn't silently hide
         results. The recovery path is `bettermemory reindex`.
+
+        Also falls back (with a logged warning) when the index reads
+        themselves raise: `status()` above inspects only the
+        meta/sqlite_master pages, so page-level corruption in the
+        data/FTS b-trees passes the gate and first surfaces out of
+        `query()` / `filenames_for_ids()`. Same routing as
+        `needs_rebuild` — full scan, correct results, never a crashed
+        search.
         """
+        import sqlite3
+
         from . import index as _index
 
         if not query.strip():
@@ -230,9 +243,41 @@ class ToolHandlers:
         # default max_results of 5 — the downstream ranker reorders
         # within the candidate pool, so we want enough variety for
         # recency / scope-boost / coverage to find the best 5.
-        candidate_pairs = _index.query(
-            self.store.root, query, scopes=scopes, max_results=self._PREFILTER_CAP
-        )
+        #
+        # Both index reads sit in ONE guard: the `status()` gate above
+        # reads only the meta/sqlite_master pages, so an index whose
+        # data/FTS b-tree pages are corrupt (torn WAL recovery, disk
+        # fault) passes the gate and first fails HERE. The catch set
+        # mirrors `status()`'s never-raises classification (ValueError:
+        # unparseable meta IS corruption; IndexVersionError: a
+        # concurrent migration can land a newer schema between the gate
+        # and these reads). The index is a regenerable cache and the
+        # canonical .md files are intact, so warn once and take the
+        # same `load_all` routing as `needs_rebuild` — degrade, never
+        # crash the tool call. (`filenames_for_ids` resolves inside the
+        # guard because it walks the same data pages; its empty-ids
+        # call is a free short-circuit.)
+        try:
+            candidate_pairs = _index.query(
+                self.store.root, query, scopes=scopes, max_results=self._PREFILTER_CAP
+            )
+            candidate_ids = {cid for cid, _ in candidate_pairs}
+            ids = list(candidate_ids)
+            filenames = _index.filenames_for_ids(self.store.root, ids)
+        except (
+            OSError,
+            ValueError,
+            sqlite3.DatabaseError,
+            _index.IndexVersionError,
+        ) as exc:
+            log.warning(
+                "index candidate pre-filter failed: %s: %s. Search falls "
+                "back to a full store scan. Run `bettermemory reindex` "
+                "to repair.",
+                type(exc).__name__,
+                exc,
+            )
+            return self.store.load_all(), False
         if not candidate_pairs:
             # Stale index or query that genuinely matches nothing —
             # fall back to load_all so we don't silently miss recent
@@ -241,18 +286,15 @@ class ToolHandlers:
         # Pin the saturation signal HERE, before the per-candidate
         # loading loop can drop rows — see the docstring.
         prefilter_saturated = len(candidate_pairs) == self._PREFILTER_CAP
-        candidate_ids = {cid for cid, _ in candidate_pairs}
 
-        # Load just the candidates via the index's id → filename
-        # lookup — true O(k) on file IO. Candidates that aren't in
-        # the lookup (a row written by a pre-v2 schema, an entry
-        # that's been removed since the FTS pre-filter ran, etc.)
+        # Load just the candidates via the id → filename lookup
+        # resolved above — true O(k) on file IO. Candidates that
+        # aren't in the lookup (a row written by a pre-v2 schema, an
+        # entry that's been removed since the FTS pre-filter ran, etc.)
         # are skipped per-candidate. If every candidate misses we
         # fall back to `load_all` below — search must never silently
         # return empty when the FTS pre-filter actually matched.
         loaded: list[Any] = []
-        ids = list(candidate_ids)
-        filenames = _index.filenames_for_ids(self.store.root, ids)
         for cid in ids:
             filename = filenames.get(cid)
             if not filename:

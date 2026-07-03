@@ -8,6 +8,8 @@ set. Falls back to load_all when:
 - the query is empty
 - the index file doesn't exist
 - the index is corrupt
+- the index reads raise mid-search (data/FTS page corruption the
+  status() pre-gate can't see)
 - the index is flagged `needs_rebuild` by a schema-version migration
 - the indexed_count is below the threshold
 - the index returns zero candidates (stale index suspected)
@@ -153,6 +155,77 @@ async def test_search_falls_back_when_index_corrupt(
 
     hits = _unwrap(await _call(server, "memory_search", query="python"))
     assert hits
+
+
+async def test_search_falls_back_when_index_data_pages_corrupt(
+    server: Any,
+    memory_dir: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """PAGE-level corruption — the header and meta pages are intact but
+    a data b-tree page is garbage (torn WAL recovery, disk fault).
+    Unlike the whole-file garbage above, `index.status()` reads only
+    the meta/sqlite_master pages, so the pre-gate in
+    `_load_search_candidates` passes and the `sqlite3.DatabaseError`
+    first surfaces from `_index.query()` mid-search. Pre-fix it escaped
+    to the MCP tool boundary and EVERY memory_search failed until
+    reindex; the guard must instead warn once (with the reindex hint)
+    and degrade to the load_all scan.
+
+    The zap targets the `memories` table's root page, looked up from
+    `sqlite_master` — the meta table lives on its own page, so the
+    status() gate keeps reporting a healthy index (asserted below: the
+    premise, pinned)."""
+    import logging
+    import sqlite3
+
+    from bettermemory import index as _index
+
+    monkeypatch.setenv("BETTERMEMORY_INDEX_THRESHOLD", "1")
+    await _call(
+        server, "memory_write", content="python list comprehension", scopes=["tools"]
+    )
+    await _call(server, "memory_write", content="rust borrow checker", scopes=["tools"])
+
+    db_path = _index.index_path(memory_dir)
+    conn = sqlite3.connect(str(db_path))
+    try:
+        # Fold the WAL into the main file first so the page zap below
+        # can't be shadowed by intact WAL frames on the next read.
+        conn.execute("PRAGMA wal_checkpoint(TRUNCATE)")
+        page_size = conn.execute("PRAGMA page_size").fetchone()[0]
+        rootpage = conn.execute(
+            "SELECT rootpage FROM sqlite_master WHERE name = 'memories'"
+        ).fetchone()[0]
+    finally:
+        conn.close()
+    with open(db_path, "r+b") as fh:
+        fh.seek((rootpage - 1) * page_size)
+        fh.write(b"\xde\xad" * (page_size // 2))
+
+    # The premise, pinned: the status() pre-gate does NOT see this
+    # corruption — exists, no corrupt flag, no rebuild flag, count
+    # above the (lowered) threshold. If a future SQLite starts
+    # detecting it here, this test stops exercising the guard and
+    # must zap a page status() can't reach.
+    status = _index.status(memory_dir)
+    assert status.get("exists") is True
+    assert not status.get("corrupt")
+    assert not status.get("needs_rebuild")
+    assert int(status.get("indexed_count", 0)) >= 1
+
+    with caplog.at_level(logging.WARNING, logger="bettermemory._handlers"):
+        hits = _unwrap(await _call(server, "memory_search", query="python"))
+    assert hits, "memory_search must degrade to the load_all scan, not crash"
+    assert any("python" in h["match_terms"] for h in hits)
+    warnings = [
+        r
+        for r in caplog.records
+        if "index candidate pre-filter failed" in r.getMessage()
+    ]
+    assert len(warnings) == 1, "exactly one warning per degraded search"
+    assert "bettermemory reindex" in warnings[0].getMessage()
 
 
 async def test_search_bypasses_index_flagged_by_schema_migration(
