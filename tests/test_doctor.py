@@ -940,9 +940,7 @@ def test_binary_dist_version_parses_trailing_token(
         stdout = "bettermemory 9.9.9\n"
         stderr = ""
 
-    monkeypatch.setattr(
-        "bettermemory.doctor.subprocess.run", lambda *_a, **_k: _Proc()
-    )
+    monkeypatch.setattr("bettermemory.doctor.subprocess.run", lambda *_a, **_k: _Proc())
     assert _binary_dist_version("/any/bettermemory") == "9.9.9"
 
 

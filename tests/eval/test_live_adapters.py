@@ -69,9 +69,7 @@ def test_mem0_unavailable_without_package(monkeypatch: pytest.MonkeyPatch):
 
 
 def test_server_memory_unavailable_without_npx(monkeypatch: pytest.MonkeyPatch):
-    monkeypatch.setattr(
-        "tests.eval.live_adapters.shutil.which", lambda _name: None
-    )
+    monkeypatch.setattr("tests.eval.live_adapters.shutil.which", lambda _name: None)
     with pytest.raises(SystemUnavailable) as exc:
         ServerMemoryLiveAdapter().run(default_workload(), k=5)
     assert "npx" in exc.value.reason
