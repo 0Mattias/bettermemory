@@ -33,6 +33,7 @@ from bettermemory.doctor import (
     _check_python_version,
     _check_storage_directory,
     _discover_site_packages,
+    _probe_index_integrity,
     _EXIT_CODE_BY_STATUS,
     _STATUS_GLYPH,
     cli_doctor,
@@ -337,6 +338,11 @@ def test_index_health_healthy_index_matches_disk(tmp_path: Path) -> None:
     assert diag.status == "ok"
     assert diag.details["indexed_count"] == 2
     assert diag.details["disk_count"] == 2
+    # The healthy verdict must say what was actually verified: counts
+    # AND a real page walk, not counts alone (a torn interior page has
+    # clean counts — see test_index_health_warns_on_torn_interior_page).
+    assert "quick_check" in diag.message
+    assert diag.details["quick_check"] == "ok"
 
 
 def test_index_health_warns_on_corrupt_index(tmp_path: Path) -> None:
@@ -381,6 +387,81 @@ def test_index_health_warns_when_rebuild_pending(tmp_path: Path) -> None:
     assert "rebuild-pending" in diag.message
     assert "reindex" in (diag.fix_hint or "")
     assert diag.details["needs_rebuild"] is True
+
+
+def _tear_fts_interior_page(index_file: Path) -> None:
+    """Scribble over the root page of the `memories_fts_data` shadow
+    table, leaving the header, sqlite_master, and `meta` pages intact —
+    the extent-corruption shape `index.status()`'s meta-only reads
+    cannot see. Checkpoints the WAL first so the main file is the
+    authoritative copy of the page being torn."""
+    import sqlite3
+
+    conn = sqlite3.connect(index_file)
+    try:
+        conn.execute("PRAGMA wal_checkpoint(TRUNCATE)")
+        rootpage = conn.execute(
+            "SELECT rootpage FROM sqlite_master WHERE name = 'memories_fts_data'"
+        ).fetchone()[0]
+    finally:
+        conn.close()
+    raw = index_file.read_bytes()
+    # DB header offset 16 holds the page size (big-endian; 1 means 64 KiB).
+    size_field = int.from_bytes(raw[16:18], "big")
+    page_size = 65536 if size_field == 1 else size_field
+    start = (rootpage - 1) * page_size
+    assert len(raw) >= start + page_size, "fixture: rootpage past EOF"
+    index_file.write_bytes(
+        raw[:start] + b"\xde\xad\xbe\xef" * (page_size // 4) + raw[start + page_size :]
+    )
+
+
+def test_index_health_warns_on_torn_interior_page(tmp_path: Path) -> None:
+    """Extent corruption: a torn interior page in the FTS shadow tables
+    leaves the header, sqlite_master, and `meta` pages readable, so
+    `index.status()` — meta-only by design; it runs on every Store
+    construction — reports clean counts, and pre-fix doctor certified
+    the index 'healthy: N memories indexed (matches disk)' while any
+    read touching the damaged pages (an FTS MATCH, the next rebuild's
+    table sweep) raises `database disk image is malformed`. Doctor runs
+    on demand and can afford the page walk: PRAGMA quick_check must
+    classify this as corrupt with the reindex repair — not crash, and
+    not certify."""
+    from bettermemory import index
+    from bettermemory.store import Store
+
+    store = Store(tmp_path)
+    for i in range(3):
+        store.write(content=f"memory number {i} about widgets", scopes=["tools"])
+    _tear_fts_interior_page(index.index_path(tmp_path))
+
+    # Premise pin: the meta-only surface sees nothing wrong. If this
+    # ever starts reporting corrupt, status() grew data-page reads and
+    # the doctor-local probe may be redundant — revisit the design
+    # rather than patching the assertion.
+    s = index.status(tmp_path)
+    assert s.get("exists") and not s.get("corrupt") and not s.get("needs_rebuild")
+    assert s.get("indexed_count") == 3
+
+    diag = _check_index_health(tmp_path)
+    assert diag.status == "warn"
+    assert "quick_check" in diag.message
+    assert "reindex" in (diag.fix_hint or "")
+    assert diag.details["quick_check"] != "ok"
+
+
+def test_probe_index_integrity_missing_file_reports_without_creating(
+    tmp_path: Path,
+) -> None:
+    """The probe opens read-only (URI mode=ro): a file that vanishes
+    between status() and the probe (concurrent rebuild-recovery) must
+    come back as a finding string — the degraded answer, never a raise
+    — and must NOT be created as an empty database by the probe itself
+    (a plain `sqlite3.connect` would create it)."""
+    ghost = tmp_path / ".index.sqlite"
+    err = _probe_index_integrity(ghost)
+    assert err is not None
+    assert not ghost.exists()
 
 
 _OUT_OF_BAND_MEMORY = (
@@ -439,6 +520,9 @@ def test_index_health_ok_when_gap_is_only_unparseable_files(tmp_path: Path) -> N
     assert diag.details["indexed_count"] == 1
     assert diag.details["disk_count"] == 2
     assert diag.details["unparseable_count"] == 1
+    # This ok path certifies too — it must carry the same page-walk
+    # attestation as the full-match branch.
+    assert diag.details["quick_check"] == "ok"
     # ... and the sibling check owns the actual defect.
     assert _check_memory_parse_health(tmp_path).status == "warn"
 

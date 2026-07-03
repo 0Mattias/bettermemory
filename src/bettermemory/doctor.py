@@ -371,16 +371,65 @@ def _check_memory_parse_health(directory: Path) -> Diagnosis:
     )
 
 
-def _check_index_health(directory: Path) -> Diagnosis:
-    """Probe the FTS5 index via `index.status()` (never raises) and
-    compare its `indexed_count` against the on-disk file count.
+def _probe_index_integrity(index_file: Path) -> str | None:
+    """`PRAGMA quick_check` over the index database; None when it
+    reports `ok`, else a one-line description of the damage.
 
-    A corrupt, missing, or rebuild-pending index never breaks
-    correctness — `_load_search_candidates` routes every
-    `memory_search` to a full `load_all` — but the degradation to a
-    linear scan is silent, and a count divergence additionally means
-    stale filename lookups and link annotations. Every unhealthy state
-    shares the one repair: `bettermemory reindex`. The count comparison
+    `index.status()` is meta-only BY DESIGN — it runs on every Store
+    construction, so it reads the meta table and a stat and never
+    touches the FTS shadow/data pages; a torn interior page passes it
+    with clean counts. Doctor runs on demand and can afford the full
+    page walk. The connection is read-only (URI `mode=ro`) so the probe
+    can neither create a missing file nor mutate an existing one, and
+    the broad except mirrors `status()`'s never-raises tolerance:
+    severe corruption makes the PRAGMA itself raise (`database disk
+    image is malformed`) rather than return finding rows, and either
+    shape IS the finding.
+    """
+    # Lazy for the same no-sqlite3-interpreter reason as
+    # `_check_index_health`'s `index` import.
+    import sqlite3
+
+    try:
+        # `as_uri()` percent-encodes the path (spaces, `?`, `#`), so
+        # `?mode=ro` is the only query parameter SQLite parses.
+        conn = sqlite3.connect(
+            index_file.resolve().as_uri() + "?mode=ro", uri=True, timeout=5.0
+        )
+        try:
+            rows = conn.execute("PRAGMA quick_check").fetchall()
+        finally:
+            conn.close()
+    except Exception as exc:  # noqa: BLE001
+        return f"{exc.__class__.__name__}: {exc}"
+    # Milder damage comes back as finding rows (possibly multi-line,
+    # e.g. "Tree 6 page 6: free space corruption"); flatten and cap so
+    # the diagnosis stays one line.
+    findings = [" ".join(str(row[0]).split()) for row in rows]
+    if findings == ["ok"]:
+        return None
+    if len(findings) > 3:
+        findings = findings[:3] + [f"… +{len(findings) - 3} more"]
+    return "; ".join(findings) or "quick_check returned no rows"
+
+
+def _check_index_health(directory: Path) -> Diagnosis:
+    """Probe the FTS5 index: `index.status()` (never raises) for the
+    meta-level states, `PRAGMA quick_check` for the page-level
+    corruption those meta reads can't see (see
+    `_probe_index_integrity`), and compare `indexed_count` against the
+    on-disk file count.
+
+    A status()-visible unhealthy index (corrupt meta, missing,
+    rebuild-pending) never breaks correctness —
+    `_load_search_candidates` routes every `memory_search` to a full
+    `load_all` — but the degradation to a linear scan is silent, and a
+    count divergence additionally means stale filename lookups and link
+    annotations. Page-level corruption is worse: that routing keys off
+    the same meta-only `status()`, so nothing falls back and the first
+    read to touch a damaged page raises — doctor is the surface that
+    has to catch it. Every unhealthy state shares the one repair:
+    `bettermemory reindex`. The count comparison
     reuses the S4 divergence machinery
     (`store.count_active_memory_files` +
     `store.count_unparseable_memory_files`) so doctor and the startup
@@ -458,12 +507,35 @@ def _check_index_health(directory: Path) -> Diagnosis:
             fix_hint=fix,
             details=details,
         )
+    # Everything above came from meta reads alone — a torn interior
+    # page passes those gates with clean counts, and the runtime never
+    # notices until a query lands on the damaged pages (an FTS MATCH,
+    # the next rebuild's table sweep) and raises. Walk the pages for
+    # real before certifying anything healthy.
+    integrity_error = _probe_index_integrity(index.index_path(directory))
+    if integrity_error is not None:
+        details["quick_check"] = integrity_error
+        return Diagnosis(
+            name="index_health",
+            status="warn",
+            message=(
+                f"Index at {status.get('path')} fails PRAGMA quick_check "
+                f"({integrity_error}) — page-level corruption the "
+                f"meta-only runtime checks cannot see."
+            ),
+            fix_hint=fix,
+            details=details,
+        )
+    details["quick_check"] = "ok"
     indexed_count = int(status.get("indexed_count", 0) or 0)
     if indexed_count == disk_count:
         return Diagnosis(
             name="index_health",
             status="ok",
-            message=f"Index healthy: {indexed_count} memories indexed (matches disk).",
+            message=(
+                f"Index healthy: {indexed_count} memories indexed "
+                f"(matches disk; PRAGMA quick_check passed)."
+            ),
             details=details,
         )
     # Raw counts diverged — refine with the parse walk (parse_health
@@ -490,7 +562,8 @@ def _check_index_health(directory: Path) -> Diagnosis:
             message=(
                 f"Index healthy: {indexed_count} memories indexed — matches "
                 f"every parseable file on disk ({unparseable_count} "
-                f"unparseable file(s) excluded; see memory_parse_health)."
+                f"unparseable file(s) excluded; see memory_parse_health). "
+                f"PRAGMA quick_check passed."
             ),
             details=details,
         )
