@@ -255,6 +255,44 @@ def test_memory_parse_health_ignores_symlinks(tmp_path: Path) -> None:
     assert diag.status == "ok", f"symlink miscounted as a parse failure: {diag.message}"
 
 
+def test_memory_parse_health_counts_readme_and_dotfiles_like_the_store(
+    tmp_path: Path,
+) -> None:
+    """The store's enumeration (`_iter_active_paths` / the shared count
+    helpers) makes no exception for README.md or dot-prefixed `.md`
+    names — they parse and index like any other memory file. Doctor's
+    old hand-rolled filter excluded them, so on a store containing
+    such files index_health counted them unparseable and deferred to
+    memory_parse_health, which then reported fewer skips (or "all
+    parse cleanly") — two checks in one report disagreeing about the
+    same directory. Pin both checks to the store's enumeration: every
+    file index_health subtracts must show up in parse-health's
+    `skipped`."""
+    from bettermemory.store import Store, count_unparseable_memory_files
+
+    store = Store(tmp_path)
+    store.write(content="a real memory body about widgets", scopes=["tools"])
+    (tmp_path / "README.md").write_text("# Not a memory\n", encoding="utf-8")
+    (tmp_path / ".notes.md").write_text("dot-prefixed, no fm\n", encoding="utf-8")
+    (tmp_path / "junk.md").write_text("no frontmatter at all\n", encoding="utf-8")
+
+    parse_diag = _check_memory_parse_health(tmp_path)
+    assert parse_diag.status == "warn"
+    assert parse_diag.details["parsed"] == 1
+    assert parse_diag.details["files_on_disk"] == 4
+    assert parse_diag.details["skipped"] == 3
+    # Reconcile with the store helper index_health / the S4 warning share.
+    assert parse_diag.details["skipped"] == count_unparseable_memory_files(tmp_path)
+
+    # index_health on the same store: the gap is fully explained by the
+    # unparseable files, and its arithmetic must agree file-for-file
+    # with parse-health's (disk == files_on_disk, unparseable == skipped).
+    index_diag = _check_index_health(tmp_path)
+    assert index_diag.status == "ok"
+    assert index_diag.details["disk_count"] == parse_diag.details["files_on_disk"]
+    assert index_diag.details["unparseable_count"] == parse_diag.details["skipped"]
+
+
 def test_memory_parse_health_does_not_create_missing_dir(tmp_path: Path) -> None:
     """The read-only probe must not materialize a non-existent storage dir
     (Store.__post_init__ would mkdir it + a .tombstones/). Early-return."""

@@ -329,16 +329,18 @@ def _check_memory_parse_health(directory: Path) -> Diagnosis:
             fix_hint=f"Inspect {directory} for corrupt files.",
         )
 
-    # Exclude symlinks: `Store._iter_active_paths` rejects them as a security
-    # boundary BEFORE parsing, so counting them as "failed to parse" would be
-    # a false positive pointing the user at frontmatter that was never read.
-    md_files = [
-        p
-        for p in directory.glob("*.md")
-        if p.name != "README.md" and not p.name.startswith(".") and not p.is_symlink()
-    ]
+    # Count with the store's own enumeration: `count_active_memory_files`
+    # is the `_iter_active_paths` filter (regular file, not a symlink,
+    # `.md` suffix) as a bare count. The store makes no exception for
+    # README.md or dot-prefixed names, so neither can this check — a
+    # hand-rolled filter that skipped them made this check disagree with
+    # index_health, which counts via the same store helpers (it deferred
+    # unparseable READMEs here while this check reported "all clean").
+    # Symlink exclusion is part of the same contract: `_iter_active_paths`
+    # rejects symlinks BEFORE parsing, so counting one as "failed to
+    # parse" would point the user at frontmatter that was never read.
     parsed = len(memories)
-    on_disk = len(md_files)
+    on_disk = count_active_memory_files(directory)
     if parsed == on_disk:
         return Diagnosis(
             name="memory_parse_health",
