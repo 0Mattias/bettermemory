@@ -545,7 +545,12 @@ def _segment_unspaced(token: str) -> list[str]:
 # Words the suffix rules below would fold into a misleading form. 'news'
 # is not the plural of 'new' (Porter makes the same mistake); keeping it
 # whole costs nothing because the bare singular spelling doesn't occur.
-_STEM_EXCEPTIONS = frozenset({"news"})
+# The rest are singulars that END in 's' yet escape the 'ss'/'us'/'is'
+# guard: their '-es' plural strips back to the singular's SURFACE form
+# (aliases → aliase → alias) while the bare-s drop moved the singular
+# itself elsewhere (alias → alia) — a guaranteed plural/singular miss.
+# Pinning the singular whole puts both inflections on the surface key.
+_STEM_EXCEPTIONS = frozenset({"alias", "atlas", "bias", "canvas", "lens", "news"})
 
 
 def _stem_segment(seg: str) -> str:
@@ -559,11 +564,15 @@ def _stem_segment(seg: str) -> str:
     derivational conflation ('general'/'generous') is a worse failure
     mode here than an occasional unfolded plural. Plural inflection only:
 
-    - 'sses' → 'ss' (classes → class), 'ies' → 'y' (policies → policy;
-      4-char forms keep 'ie' so ties/dies still meet tie/die);
+    - 'sses' → 'ss' (classes → class), 'ies' → 'y' (policies → policy —
+      the final-y normalisation below carries both spellings to
+      'polici'; 4-char forms keep 'ie', so ties meets tie whole);
     - final 's' dropped behind the usual guards ('ss'/'us'/'is' endings
       and digit-final acronyms like 'k8s' stay; 3-char tokens like
-      'aws'/'dns'/'yes' stay whole);
+      'aws'/'dns'/'yes' stay whole; singulars that end in 's' OUTSIDE
+      those guards — alias, canvas — are pinned in `_STEM_EXCEPTIONS`,
+      because the drop moved them off the key their own '-es' plural
+      strips back to);
     - final-e NORMALISATION on everything that survives, both plural and
       singular: dropping final 'e' collapses the '-es attachment'
       ambiguity that no dictionary-free rule can split — 'branches'
@@ -573,7 +582,16 @@ def _stem_segment(seg: str) -> str:
       not a word; symmetry is what matters. Guarded so it can't fold a
       token into a stopword ('note' would become 'not', 'here' would
       become 'her' — both stay whole) and so 'ee' endings keep their
-      spelling ('tree', 'free').
+      spelling ('tree', 'free');
+    - final-y NORMALISATION mirroring it: a final 'y' rewrites to 'i'
+      under the same guards (4+ char stems only, never onto a
+      stopword). Without this the '-ies' rule and the final-e rule
+      split the -ie noun class across two keys — cookies→cooky but
+      cookie→'cooki' — so plural and singular could never meet; now
+      cookies→cooky→'cooki' meets cookie→'cooki' (likewise movie,
+      rookie, hoodie) and policy→'polici' meets policies. The length
+      guard keeps 'guys'→'guy' on the surface form the 3-char early
+      return already gives 'guy'.
 
     Stopwords are exempt BY SURFACE FORM before any rule runs —
     'does'→'doe' would otherwise leak a former stopword into content-token
@@ -600,6 +618,8 @@ def _stem_segment(seg: str) -> str:
         and stem[:-1] not in _STOPWORDS
     ):
         stem = stem[:-1]
+    if len(stem) >= 4 and stem.endswith("y") and stem[:-1] + "i" not in _STOPWORDS:
+        stem = stem[:-1] + "i"
     return seg if stem in _STOPWORDS else stem
 
 

@@ -255,8 +255,9 @@ def test_cpp_query_matches_cpp_body() -> None:
 def test_tokenize_strips_suspended_hyphen() -> None:
     """Suspended hyphenation ('pre- and post-deploy') used to leave the
     query token 'pre-', which could never match anything (queries are not
-    kebab-expanded) yet still counted in the coverage denominator."""
-    assert tokenize("pre- and post-deploy") == ["pre", "and", "post-deploy"]
+    kebab-expanded) yet still counted in the coverage denominator.
+    ('deploy' spells 'deploi' since the final-y key normalisation.)"""
+    assert tokenize("pre- and post-deploy") == ["pre", "and", "post-deploi"]
 
 
 def test_suspended_hyphenation_query_full_coverage() -> None:
@@ -896,6 +897,10 @@ def test_stem_equality_pairs() -> None:
         ("migrations", "migration"),
         ("containers", "container"),
         ("indexes", "index"),
+        ("cookies", "cookie"),
+        ("movies", "movie"),
+        ("stories", "story"),
+        ("aliases", "alias"),
     ]
     for plural, singular in pairs:
         assert tokenize(plural) == tokenize(singular), (plural, singular)
@@ -924,6 +929,44 @@ def test_stem_guards() -> None:
     assert tokenize("notes") == tokenize("note") == ["note"]
     assert tokenize("themes") == tokenize("theme") == ["theme"]
     assert tokenize("ones") == tokenize("one") == ["one"]
+
+
+def test_stem_final_y_normalisation_symmetric() -> None:
+    """The '-ies' → 'y' rule vs the final-e drop used to split the -ie
+    noun class across two keys: cookies → 'cooky' while cookie →
+    'cooki', so plural and singular could NEVER meet (same for movies /
+    rookies / hoodies) — violating the module's own symmetry invariant.
+    The final-y → 'i' rewrite mirrors the final-e rule so both
+    inflection paths land on ONE key, and carries 'y' singulars onto
+    their plurals' key (policy → 'polici' == policies)."""
+    assert tokenize("cookies") == tokenize("cookie") == ["cooki"]
+    assert tokenize("hoodies") == tokenize("hoodie") == ["hoodi"]
+    assert tokenize("policies") == tokenize("policy") == ["polici"]
+    # Same guards as the e-drop: sub-4-char stems keep their 'y', so
+    # 'guys' still meets the 3-char early-returned 'guy' (and 'skies'
+    # meets 'sky' via the same length gate after the '-ies' rule).
+    assert tokenize("guys") == tokenize("guy") == ["guy"]
+    assert tokenize("skies") == tokenize("sky") == ["sky"]
+
+
+def test_stem_s_final_singular_meets_es_plural() -> None:
+    """Singulars ending in 's' that escape the 'ss'/'us'/'is' guard
+    stemmed AWAY from their own '-es' plural: 'aliases' stripped back
+    to the singular's surface form ('alias') while 'alias' itself
+    dropped to 'alia' — a guaranteed miss in every ranker and the FTS
+    index. The `_STEM_EXCEPTIONS` pins put both inflections on the
+    surface-form key."""
+    for plural, singular in [
+        ("aliases", "alias"),
+        ("atlases", "atlas"),
+        ("biases", "bias"),
+        ("canvases", "canvas"),
+        ("lenses", "lens"),
+    ]:
+        assert tokenize(plural) == tokenize(singular) == [singular], (
+            plural,
+            singular,
+        )
 
 
 def test_stem_applies_per_compound_segment() -> None:

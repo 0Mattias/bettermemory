@@ -12,7 +12,7 @@ from __future__ import annotations
 from datetime import datetime, timedelta, timezone
 
 from bettermemory.models import Confidence, Memory, Source, generate_ulid
-from bettermemory.search import compute_idf, score_memory_bm25, search
+from bettermemory.search import compute_idf, score_memory_bm25, search, tokenize
 
 
 def _memory(
@@ -319,9 +319,13 @@ def test_compute_idf_body_map_excludes_scope_tokens() -> None:
     # the body map entirely.
     assert "project" in scope_idf
     assert "projects" not in body_idf
-    # Body-rare + scope-ubiquitous term: high body IDF, deflated scope IDF.
-    assert body_idf["bettermemory"] > 1.0
-    assert scope_idf["bettermemory"] < 0.2
+    # Body-rare + scope-ubiquitous term: high body IDF, deflated scope
+    # IDF. Map keys are tokenize()'s index keys ('bettermemory' spells
+    # 'bettermemori' under the final-y normalisation), so derive the key
+    # rather than pinning the stem shape here.
+    (key,) = tokenize("bettermemory")
+    assert body_idf[key] > 1.0
+    assert scope_idf[key] < 0.2
 
 
 def test_bm25_body_match_not_crushed_by_pool_ubiquitous_scope_token() -> None:
