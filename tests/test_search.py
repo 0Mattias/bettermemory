@@ -460,11 +460,18 @@ def test_snippet_does_not_cut_mid_word() -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_stopwords_alone_in_query_returns_empty() -> None:
-    """A query that is *only* stopwords has no signal — should return []."""
+def test_stopword_only_query_falls_back_to_unstripped_tokens() -> None:
+    """A query that stripping EMPTIES falls back to the raw tokens —
+    stopword curation must never make a non-empty query unanswerable
+    (the first multilingual lists silently zeroed single-word queries
+    like 'todo'; this fallback is the guard for the next addition).
+    Filler ranking still can't fabricate: a fallback query whose tokens
+    appear nowhere stays a miss, and a truly empty query stays empty."""
     a = _memory("the kubernetes networking notes")
-    assert search([a], "what is the") == []
+    hits = search([a], "what is the")
+    assert hits and hits[0].id == a.id
     assert search([a], "how do i") == []
+    assert search([a], "") == []
 
 
 def test_stopwords_dont_create_phantom_matches() -> None:
@@ -953,28 +960,50 @@ def test_cjk_bigram_tokenization_shapes() -> None:
 
 def test_multilingual_stopwords_query_side() -> None:
     """Audit repro (multilingual stopword lists): non-English filler no
-    longer counts as content. The collision-curated skips stay
-    searchable — 'vi', 'man', 'du', 'mit', 'war' are real tech
-    vocabulary and must NOT be stripped."""
+    longer counts as content, and the collision curation binds across
+    ALL four lists. Every documented exclusion must survive stripping —
+    the first cut of the lists absorbed 'todo', 'sin' (promised out for
+    sin()), 'su', SES, sans-serif and friends, zeroing single-word
+    recall on live developer vocabulary."""
     from bettermemory.search import _strip_stopwords
 
     assert _strip_stopwords(tokenize("och att det som en av")) == []
-    assert _strip_stopwords(tokenize("der und ist nicht auch")) == []
+    assert _strip_stopwords(tokenize("der und sind nicht auch")) == []
     assert _strip_stopwords(tokenize("le la les dans avec")) == []
-    assert _strip_stopwords(tokenize("el los para por cuando")) == []
+    assert _strip_stopwords(tokenize("el los por cuando donde")) == []
     # Folded spellings match what folded tokens look like.
     assert _strip_stopwords(tokenize("är på över")) == ["over"]
     # Deliberate skips (documented collisions) survive stripping.
     kept = _strip_stopwords(tokenize("vi man du mit war"))
     assert kept == ["vi", "man", "du", "mit", "war"]
+    # The full documented exclusion set — one entry per curated-out
+    # collision at the `_STOPWORDS_SV`..`_STOPWORDS_ES` definitions.
+    # Assert survival rather than exact spelling: the stemmer may fold
+    # the surface form ('todos' → 'todo', 'finns' → 'finn'), and a fold
+    # landing ON a stopword is exactly the leak this pins against.
+    excluded = (
+        "todo todos su dom hat uber die ist para fur hay si finns sans ses sin"
+    ).split()
+    for word in excluded:
+        assert _strip_stopwords(tokenize(word)), (
+            f"documented exclusion {word!r} was stripped as a stopword"
+        )
+    # End-to-end spot check on the flagship regression: single-word
+    # queries for the promised-out vocabulary must reach the ranker.
+    body = _memory("TODO: fix the sin() rounding in the eval parser")
+    assert search([body], "todo")
+    assert search([body], "sin")
 
 
 def test_swedish_query_hits_english_body() -> None:
     """End-to-end: a natural Swedish retrieval phrasing is filler plus
     one content token, so the on-topic memory now labels 'high' instead
-    of drowning in an inflated coverage denominator."""
+    of drowning in an inflated coverage denominator. ('finns' — this
+    test's original filler — moved to the searchable side in the
+    collision re-curation, so the phrasing sticks to words that stayed
+    stopwords.)"""
     body = _memory("Postgres 16 runs on the NAS")
-    hits = search([body], "finns det mer om postgres")
+    hits = search([body], "vad har jag om postgres")
     assert hits and hits[0].relevance == "high"
 
 

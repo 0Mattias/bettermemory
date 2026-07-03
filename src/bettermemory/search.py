@@ -212,21 +212,34 @@ _STOPWORDS_EN = frozenset(
 # filler like 'vill'/'att'/'på'). Two ground rules:
 #
 # - Entries are spelled in their POST-`_fold_diacritics` form ('på' → 'pa',
-#   'är' → 'ar', 'über' → 'uber', 'où' → 'ou'): membership tests run on
-#   folded tokens, so an accented spelling here would never match anything.
+#   'är' → 'ar', 'où' → 'ou'): membership tests run on folded tokens, so
+#   an accented spelling here would never match anything.
 # - Function words that collide with live tech vocabulary stay OUT, even
-#   when high-frequency in their language: 'vi'/'du'/'man' (unix commands
-#   and man-pages), 'ni' (rare anyway), 'men' (English plural of man),
-#   'mit' (the license), 'war' (Java .war artifacts), 'du'/'mon'/'son'/
-#   'car'/'plus'/'meme' (fr: disk-usage, monitoring shorthand, English
-#   nouns, memes), 'y'/'o'/'sin'/'con'/'son' (es: math variables, big-O,
-#   sin(), pros-and-cons). Accepted borderline collisions, documented so
-#   nobody re-litigates them one at a time: 'ar' (unix archiver), 'pa'
-#   (PA systems), 'es' (Elasticsearch shorthand), 'est' (the timezone),
-#   'en'/'de' (locale codes, particles in names) — a query for those as
+#   when high-frequency in their language — and the rule binds across ALL
+#   four lists: 'sin' was curated out of the Spanish list for sin() and
+#   then leaked back in as the Swedish possessive, zeroing single-word
+#   recall until the cross-list re-curation. Out: 'vi'/'du'/'man'/'su'
+#   (unix commands and man-pages), 'ni' (rare anyway), 'men' (English
+#   plural of man), 'dom'/'sin'/'finns' (sv: the DOM, sin(), Finn the
+#   name — 'finns' stems onto it), 'mit' (the license), 'war' (Java .war
+#   artifacts), 'die'/'ist'/'hat'/'uber'/'fur' (de: dying processes —
+#   the stemmer's own contract folds 'dies' onto 'die' — the IST
+#   timezone, Red Hat, the company, the English noun), 'mon'/'son'/
+#   'car'/'plus'/'meme'/'sans'/'ses'/'si' (fr: monitoring shorthand,
+#   English nouns, memes, sans-serif, AWS SES, SI units), 'y'/'o'/
+#   'con'/'son'/'para'/'hay'/'todo'/'todos' (es: math variables, big-O,
+#   pros-and-cons, paragraph shorthand, the English noun, TODO markers).
+#   Accepted borderline collisions, documented so nobody re-litigates
+#   them one at a time: 'ar' (unix archiver), 'pa' (PA systems), 'av'
+#   (audio/video), 'har' (.har dumps), 'nu' (nushell), 'sig' (.sig
+#   files), 'es' (Elasticsearch shorthand), 'est' (the timezone), 'des'
+#   (the cipher), 'en'/'de' (locale codes, particles in names), 'aux'
+#   ('ps aux'), 'del' (Python's del), 'ha' (high-availability
+#   shorthand), 'lo' (the loopback interface) — a query for those as
 #   standalone terms is far rarer than the function word is in its
-#   language, and stripping them still leaves the query's real content
-#   tokens to match on.
+#   language, stripping them still leaves a mixed query's real content
+#   tokens to match on, and the unstripped-token fallback in `search()`
+#   keeps even the standalone query answerable.
 _STOPWORDS_SV = frozenset(
     {
         "och",
@@ -253,9 +266,7 @@ _STOPWORDS_SV = frozenset(
         "jag",
         "han",
         "hon",
-        "dom",
         "sig",
-        "sin",
         "sitt",
         "nar",
         "dar",
@@ -282,17 +293,14 @@ _STOPWORDS_SV = frozenset(
         "vara",
         "blir",
         "blev",
-        "finns",
     }
 )
 
 _STOPWORDS_DE = frozenset(
     {
         "der",
-        "die",
         "das",
         "und",
-        "ist",
         "sind",
         "waren",
         "ein",
@@ -301,7 +309,6 @@ _STOPWORDS_DE = frozenset(
         "einem",
         "einer",
         "nicht",
-        "fur",
         "von",
         "auf",
         "dem",
@@ -329,7 +336,6 @@ _STOPWORDS_DE = frozenset(
         "kann",
         "muss",
         "haben",
-        "hat",
         "hatte",
         "sein",
         "seine",
@@ -340,7 +346,6 @@ _STOPWORDS_DE = frozenset(
         "nur",
         "schon",
         "sehr",
-        "uber",
         "aus",
         "bei",
         "nach",
@@ -369,7 +374,6 @@ _STOPWORDS_FR = frozenset(
         "par",
         "sur",
         "avec",
-        "sans",
         "mais",
         "ou",
         "qui",
@@ -381,7 +385,6 @@ _STOPWORDS_FR = frozenset(
         "ce",
         "cette",
         "ces",
-        "ses",
         "leur",
         "nous",
         "vous",
@@ -393,7 +396,6 @@ _STOPWORDS_FR = frozenset(
         "tu",
         "au",
         "aux",
-        "si",
         "comme",
         "tout",
         "tous",
@@ -423,13 +425,11 @@ _STOPWORDS_ES = frozenset(
         "cuando",
         "donde",
         "quien",
-        "para",
         "por",
         "del",
         "al",
         "lo",
         "le",
-        "su",
         "sus",
         "mi",
         "mis",
@@ -437,7 +437,6 @@ _STOPWORDS_ES = frozenset(
         "ella",
         "ellos",
         "nosotros",
-        "hay",
         "ha",
         "han",
         "ser",
@@ -446,8 +445,6 @@ _STOPWORDS_ES = frozenset(
         "mas",
         "tambien",
         "ya",
-        "todo",
-        "todos",
         "esta",
         "este",
         "esto",
@@ -1545,7 +1542,11 @@ def search(
       mode. Hits get `score=0.0`, no `match_terms`, and the default
       "low" relevance label. Used by callers that already narrowed
       the candidate pool externally (e.g. `since_prior_session=True`)
-      and want recency ordering rather than relevance ranking.
+      and want recency ordering rather than relevance ranking. When
+      False (the default), only a truly EMPTY query returns `[]`; a
+      stopword-only query is ranked on its unstripped tokens instead
+      (see the fallback note in the body), so stopword curation can
+      never make a non-empty query unanswerable.
 
     Score semantics vary by mode: keyword/BM25/semantic scores live on
     different scales and are not comparable across modes. Hybrid scores
@@ -1571,12 +1572,18 @@ def search(
 
     now = now or datetime.now(timezone.utc)
     raw_tokens = tokenize(query)
-    # Strip stopwords from the query — bodies stay unfiltered. If the query
-    # was *only* stopwords ("what is the"), there's nothing meaningful left
-    # to match on; return empty rather than serving every memory at score 0
-    # (unless the caller explicitly asked for browse mode — see
-    # `allow_empty_query` above).
+    # Strip stopwords from the query — bodies stay unfiltered. If stripping
+    # EMPTIES a non-empty token list ("what is the" — or a lone term some
+    # future stopword addition absorbs), fall back to the unstripped
+    # tokens: stopword curation must never make a real query unanswerable,
+    # so the worst case is filler-grade ranking, not silent zero recall.
+    # A truly empty query still returns empty rather than serving every
+    # memory at score 0, and browse mode keeps its recency-ordered
+    # semantics for both empty and stopword-only queries — see
+    # `allow_empty_query` above.
     query_tokens = _strip_stopwords(raw_tokens)
+    if not query_tokens and raw_tokens and not allow_empty_query:
+        query_tokens = raw_tokens
     if not query_tokens:
         if not allow_empty_query:
             return []
