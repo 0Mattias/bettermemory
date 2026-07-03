@@ -481,6 +481,112 @@ async def test_link_annotations_survive_poisoned_index_meta(
     assert [e["id"] for e in hit_a["superseded_by"]] == [b["id"]]
 
 
+# ---------------------------------------------------------------------------
+# Absent / present-but-empty index — `links_for_many` returns an all-empty map
+# with the flag clear in both states, indistinguishable from "these hits have
+# no links". Every sibling surface treats them as unusable (the prefilter
+# routes both to load_all; reverse_links treats a zero count the same), so the
+# annotation must take the same candidate scan instead of silently dropping
+# the superseded_by / contradicts warnings.
+# ---------------------------------------------------------------------------
+
+
+async def test_link_annotations_survive_absent_index(
+    server: Any, memory_dir: Path
+) -> None:
+    """Index file deleted after the link landed (a hand-cleaned cache, a
+    crashed reindex): `links_for_many` short-circuits to an all-empty map
+    with the flag False — the same answer a healthy index gives for
+    unlinked hits. `status()` reports `exists=False`, so the candidate
+    loader served `load_all` — the scan fallback recovers the inbound
+    `supersedes` edge from those candidates. Pre-fix the empty map was
+    trusted and the warning silently vanished."""
+    from bettermemory.index import index_path
+
+    a = await _call(
+        server,
+        "memory_write",
+        content="the auth subsystem validates JWT session tokens",
+        scopes=["tools"],
+    )
+    b = await _call(
+        server,
+        "memory_write",
+        content="unrelated replacement note xyzzy",
+        scopes=["tools"],
+    )
+    await _call(
+        server,
+        "memory_update",
+        id=b["id"],
+        links=[{"type": "supersedes", "target_id": a["id"]}],
+    )
+
+    # Remove the index outright — the -wal/-shm siblings too, so no
+    # surviving journal can resurrect it on a later open.
+    path = index_path(memory_dir)
+    path.unlink()
+    for suffix in ("-wal", "-shm"):
+        sibling = path.with_suffix(path.suffix + suffix)
+        if sibling.exists():
+            sibling.unlink()
+
+    hit_a = _hit(await _search(server, "auth JWT session tokens"), a["id"])
+    assert "superseded_by" in hit_a, (
+        "an absent index must fall back to the candidate scan, not "
+        "silently drop the superseded_by warning"
+    )
+    assert [e["id"] for e in hit_a["superseded_by"]] == [b["id"]]
+
+
+async def test_link_annotations_survive_present_but_empty_index(
+    server: Any, memory_dir: Path
+) -> None:
+    """Present-but-empty: a zero-item `rebuild()` leaves the file and schema
+    in place with `indexed_count` '0' and the `needs_rebuild` flag clear
+    (the rebuild is the ONLY place the flag clears), so `links_for_many`
+    opens it fine and returns the same all-empty map with the flag False.
+    The prefilter routes a zero count to `load_all` (count < threshold)
+    and reverse_links treats it as no-usable-index; the annotation must
+    complete the same truth table instead of trusting the empty answer."""
+    from bettermemory.index import rebuild, status
+
+    a = await _call(
+        server,
+        "memory_write",
+        content="the auth subsystem validates JWT session tokens",
+        scopes=["tools"],
+    )
+    b = await _call(
+        server,
+        "memory_write",
+        content="unrelated replacement note xyzzy",
+        scopes=["tools"],
+    )
+    await _call(
+        server,
+        "memory_update",
+        id=b["id"],
+        links=[{"type": "supersedes", "target_id": a["id"]}],
+    )
+
+    # Truncate the data tables but keep file + schema. The `DELETE FROM
+    # memories` inside rebuild fires the `memory_links_cleanup` trigger,
+    # so the link rows go too — staging exactly the flag-clear empty
+    # state `links_for_many` cannot distinguish from healthy-no-links.
+    assert rebuild(memory_dir, []) == 0
+    st = status(memory_dir)
+    assert st["indexed_count"] == 0 and st["needs_rebuild"] is False
+
+    hit_a = _hit(await _search(server, "auth JWT session tokens"), a["id"])
+    assert "superseded_by" in hit_a, (
+        "a present-but-empty index (indexed_count == 0, flag clear) must "
+        "fall back to the candidate scan, not silently drop the "
+        "superseded_by warning"
+    )
+    assert [e["id"] for e in hit_a["superseded_by"]] == [b["id"]]
+
+
 async def test_link_annotation_failure_never_breaks_search(
     server: Any, monkeypatch: Any
 ) -> None:

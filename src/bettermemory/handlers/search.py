@@ -432,7 +432,10 @@ async def memory_search(
         # depends_on_resolved this is post-rank and additive (it never
         # reorders or drops a hit), with the same scope/origin re-filter
         # so a link can't leak a hidden-scope memory. Inbound edges come
-        # from the links index; no-op when no index exists.
+        # from the links index, with a candidate-scan fallback whenever
+        # the index can't answer (absent / empty / rebuild-pending /
+        # unreadable — the states the candidate loader routed to
+        # load_all).
         deps.responses.attach_link_annotations(
             out,
             hits,

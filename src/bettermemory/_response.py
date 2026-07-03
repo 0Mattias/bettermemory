@@ -740,25 +740,27 @@ class ResponseBuilder:
         (absent, not null) when empty — the same absence-as-signal contract
         as `depends_on_resolved`. Bounded by `max_per_hit` / `max_total`.
 
-        Inbound edges come from the links index (`index.links_for_many`);
-        when no index exists the annotation is a best-effort no-op, like the
-        rest of the index-backed surface. When the index IS present but
-        flagged rebuild-pending (`meta.needs_rebuild` — a schema migration
-        dropped the link rows and only touched memories are back), the index
-        answer may be silently missing edges, so it is merged with a scan of
-        the already-loaded `memories` candidates instead of being trusted
-        alone (see `_links_map_with_candidate_scan`). An index that can't
-        answer at all (corruption, a newer-version schema) takes the same
-        scan fallback rather than an empty map — `status()` reports those
-        states `corrupt=True` and `_load_search_candidates` routes them to
-        `load_all` too, so the candidates carry the edges the index can't
-        serve. Resolution reuses the
+        Inbound edges come from the links index (`index.links_for_many`).
+        The index answer is trusted only when the index can provably
+        answer; every unusable state — absent file, present-but-empty
+        (`indexed_count == 0` with the flag clear), rebuild-pending
+        (`meta.needs_rebuild` — a schema migration dropped the link rows
+        and only touched memories are back, so the answer may be silently
+        missing edges), unreadable (corruption, a newer-version schema —
+        raises out of `links_for_many`) — is merged with a scan of the
+        already-loaded `memories` candidates instead of being trusted
+        alone (see `_links_map_with_candidate_scan`). That is the same
+        truth table every sibling surface applies:
+        `_load_search_candidates` routes all four states to `load_all`
+        (so the candidates here carry the edges the index can't serve, at
+        zero extra file I/O) and `_links_payload`'s reverse_links treats
+        a zero count / set flag as no-usable-index. Resolution reuses the
         `depends_on` discipline: a side-map over the loaded candidates, a
         targeted `store.load_one` for targets outside the FTS prefilter,
         tombstoned / missing skipped silently, and the caller's scope/origin
         filter re-applied so a link can't leak a hidden-scope memory.
         """
-        from .index import links_for_many
+        from .index import links_for_many, status
         from .models import first_summary_line
         from .store import MemoryNotFoundError, TombstonedError
 
@@ -796,7 +798,7 @@ class ResponseBuilder:
         hit_ids = [h.id for h in hits]
         try:
             try:
-                links_map, needs_rebuild = links_for_many(store.root, hit_ids)
+                links_map, unusable = links_for_many(store.root, hit_ids)
             except Exception:  # noqa: BLE001 — an unreadable index (sqlite
                 # corruption, IndexVersionError from a newer-version store,
                 # ValueError from a poisoned non-integer meta row failing
@@ -810,25 +812,47 @@ class ResponseBuilder:
                 # was broken. `status()` reports these states `corrupt=True`,
                 # so `_load_search_candidates` served `memories` via
                 # `load_all` — the scan's corpus is already paid for.
-                links_map, needs_rebuild = {}, True
-            if needs_rebuild:
-                # True from the meta flag, or forced by the except above.
+                links_map, unusable = {}, True
+            if not unusable:
+                # A clear flag doesn't finish the truth table:
+                # `links_for_many` returns the SAME all-empty map for an
+                # index that can't answer as for hits that genuinely have
+                # no links. Absent file (it short-circuits before
+                # connecting, flag reported False) and present-but-empty
+                # (`indexed_count == 0` with the flag clear — a zero-item
+                # rebuild, a schema created before the first write) are
+                # both states `_load_search_candidates` routes to
+                # `load_all` and reverse_links treats as no-usable-index,
+                # so judge them unusable here too. `status()` never raises
+                # and never creates the file (absent is a bare stat); its
+                # degraded corrupt shape omits `indexed_count`, caught by
+                # the explicit clause. One meta read per search — the same
+                # cost class as the candidate loader's own `status()` call.
+                index_status = status(store.root)
+                unusable = (
+                    not index_status.get("exists")
+                    or bool(index_status.get("corrupt"))
+                    or int(index_status.get("indexed_count", 0) or 0) == 0
+                )
+            if unusable:
+                # The completed unusable-index truth table: absent OR
+                # `indexed_count == 0` OR `needs_rebuild` OR exception.
                 # Flag case — the rebuild-pending window: a schema migration
                 # dropped the `memory_links` rows and the incremental hooks
                 # have refilled only touched memories, so the index answer
                 # above may be silently missing the very inbound `supersedes`
                 # edge this annotation exists to surface.
-                # `_load_search_candidates` routes this SAME window to
-                # `load_all` (same flag), so `memories` here is the full
-                # active corpus — scan it for the edges instead of trusting
-                # the partial index, at zero extra I/O. Union, not replace:
-                # on the one narrowed caller path (`since_prior_session`'s
-                # post-boundary slice) the partial index can still hold live
-                # hook-written edges whose sources fall outside `memories`,
-                # so keeping both sides means the fallback never serves
-                # fewer edges than the index alone. Dangling rows stay
-                # harmless — tombstoned / hidden targets are filtered at
-                # `_resolve` time either way.
+                # `_load_search_candidates` routes every one of these states
+                # to `load_all` (same signals), so `memories` here is the
+                # full active corpus — scan it for the edges instead of
+                # trusting the partial index, at zero extra I/O. Union, not
+                # replace: on the one narrowed caller path
+                # (`since_prior_session`'s post-boundary slice) the partial
+                # index can still hold live hook-written edges whose sources
+                # fall outside `memories`, so keeping both sides means the
+                # fallback never serves fewer edges than the index alone.
+                # Dangling rows stay harmless — tombstoned / hidden targets
+                # are filtered at `_resolve` time either way.
                 links_map = _links_map_with_candidate_scan(links_map, memories, hit_ids)
         except Exception:  # noqa: BLE001 — outermost guard: the annotation
             # is best-effort all the way down; even a failure in the
@@ -1034,10 +1058,12 @@ def _links_map_with_candidate_scan(
     set, `_load_search_candidates` routes to `load_all` (same flag, same
     window), so `memories` carries every active memory and the scan yields
     exactly the edge set a completed `rebuild()` would serve. Pure in-memory
-    work — no second store walk, no index reads. The unreadable-index
-    fallback (corruption / newer-version schema — states the candidate
-    loader likewise routes to `load_all`) reuses this same scan with an
-    empty `links_map`.
+    work — no second store walk, no index reads. The other unusable-index
+    states reuse this same scan (the candidate loader routes every one of
+    them to `load_all` too): unreadable (corruption / newer-version schema)
+    with an empty `links_map`, and absent / present-but-empty
+    (`indexed_count == 0` with the flag clear), where the index's all-empty
+    answer contributes nothing and the scan is the whole result.
 
     Union semantics with exact-duplicate collapse over the full
     `(type, other_id, note)` tuple, mirroring the index's primary-key dedup.
