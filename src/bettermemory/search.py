@@ -1361,7 +1361,15 @@ def score_memory_bm25(
             # (the joined phrase can occur at most that often) and IDF
             # is the min across components — the weakest component
             # bounds how discriminating the joined phrase can be.
-            parts = _kebab_parts(tok)
+            # In non-fallback mode `body_count` is built from the
+            # stopword-STRIPPED content stream, so a stopword component
+            # ('to' in 'end-to-end', 'of' in 'out-of-band') has count 0
+            # there and would zero the min() — silent no-match for a
+            # perfectly good body. Range the conjunction over the
+            # NON-stopword parts only; that leaves the precision guard
+            # intact ('python-frontmatter' has no stopword part, so both
+            # 'python' AND 'frontmatter' must still hit).
+            parts = [p for p in _kebab_parts(tok) if p not in _STOPWORDS]
             if parts:
                 component_hits = [body_count.get(p, 0) for p in parts]
                 if min(component_hits) > 0:
@@ -2132,6 +2140,24 @@ def search(
 HIGH_SIMILARITY = 0.75
 MEDIUM_SIMILARITY = 0.40
 
+# Minimum size of the SMALLER token set before the containment score in
+# `_pairwise_content_jaccard` is allowed to fire. A 3-token fact whose
+# handful of words all happen to appear somewhere in a long, topically
+# unrelated note otherwise reaches containment ~1.0; requiring a real
+# overlap keeps containment aimed at its actual target — a multi-token
+# near-verbatim restatement of one sentence of a long body — rather than
+# incidental common-vocabulary reuse.
+_CONTAINMENT_MIN_TOKENS = 8
+# Containment is a SOFT signal: it may raise a pair to 'related' but never
+# to the 'high'/block bar. The ingest dedup gate (ingest.py) and the write
+# gate skip/block only on a 'high' active hit, so an unbounded containment
+# score would let a short vocabulary overlap SILENTLY drop a legitimately
+# distinct write. Pin the containment contribution into the middle of the
+# 'related' band so it always SURFACES (never silently blocks); a genuine
+# verbatim duplicate still carries enough raw Jaccard to reach 'high' on
+# its own merits.
+_CONTAINMENT_CEILING = (HIGH_SIMILARITY + MEDIUM_SIMILARITY) / 2
+
 
 def _content_token_set(text: str) -> set[str]:
     """Stopword-stripped token set with UNCONDITIONAL symmetric kebab/snake
@@ -2187,7 +2213,33 @@ def _pairwise_content_jaccard(raw_a: set[str], raw_b: set[str]) -> float:
     intersection = a & b
     if not intersection:
         return 0.0
-    return len(intersection) / len(a | b)
+    jaccard = len(intersection) / len(a | b)
+    # Containment blind spot: a short near-verbatim restatement of one
+    # sentence of a long body has |intersection| ~= the small set but a
+    # union dominated by the long body, so Jaccard sinks below the
+    # 'related' floor and the near-duplicate commits silently. Add a
+    # containment score |intersection|/min — but tightly gated so it
+    # targets that case and ONLY that case:
+    #   - LARGE size asymmetry (larger >= 3x smaller) so ordinary
+    #     comparable-length pairs keep pure Jaccard;
+    #   - an absolute floor on the smaller set (`_CONTAINMENT_MIN_TOKENS`)
+    #     so a 3-token fact sharing a few common words with a long
+    #     unrelated note can't reach containment ~1.0; and
+    #   - the result CAPPED into the 'related' band (`_CONTAINMENT_CEILING`,
+    #     below HIGH_SIMILARITY) so containment can raise a pair to
+    #     'related' but never to the 'high'/block bar — the ingest/write
+    #     dedup gates skip only on a 'high' active hit, so an uncapped
+    #     containment score could silently drop a legitimately distinct
+    #     short write.
+    # A genuine verbatim duplicate still reaches 'high' via raw Jaccard.
+    # When the gate doesn't fire this is byte-identical to the old
+    # symmetric Jaccard.
+    smaller, larger = (a, b) if len(a) <= len(b) else (b, a)
+    if len(smaller) >= _CONTAINMENT_MIN_TOKENS and len(larger) >= 3 * len(smaller):
+        containment = len(intersection) / len(smaller)
+        if containment >= MEDIUM_SIMILARITY:
+            return max(jaccard, min(containment, _CONTAINMENT_CEILING))
+    return jaccard
 
 
 def find_similar(

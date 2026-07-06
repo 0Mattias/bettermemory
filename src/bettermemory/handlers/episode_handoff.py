@@ -29,12 +29,15 @@ Returns `None`-rich shape so the caller can distinguish:
   falls back to the strict None-only-matches-None rule for legacy
   (pre-#28) events that lack the field. A caller with no worktree only
   adopts a candidate that is also worktree-less.
-- "prior session crashed before writing a takeaway" — returns
+- "prior session recorded no takeaway" — returns
   `{"prior_session_id": "sess_xxx", "episodes": [], "note": "..."}`.
   The prior tick called `episode_handoff` (which wrote a session-tag
-  floor anchoring its worktree on disk) but crashed before its
-  `episode_write` could record the takeaway. The `note` key
-  distinguishes this from the benign no-write case above. E2 fix.
+  floor anchoring its worktree on disk) but no `episode_write`
+  followed. Because the floor is written unconditionally at entry,
+  this is ambiguous: the tick may have crashed before its takeaway,
+  or it may have been a clean read-only tick with nothing to record.
+  The `note` key surfaces both readings and distinguishes this
+  floor-only shape from the "no prior session at all" case. E2 fix.
 - "prior session has takeaways" — `{"prior_session_id": "sess_xxx",
   "episodes": [...]}` with the latest N entries (oldest first within
   the slice).
@@ -362,11 +365,17 @@ async def episode_handoff(
     episodes: list[dict[str, Any]] = []
     # E2: when the resolved session has ONLY floor episodes (no real
     # takeaway-bearing entries), surface a marker note so the caller
-    # can render "prior session crashed before writing a takeaway"
-    # instead of treating the empty episodes list as "session existed
-    # but wrote nothing on purpose". The two are observably distinct
-    # from the model's perspective: the latter is benign (the prior
-    # tick was a search-only session); the former is a crash signal.
+    # can render "prior session recorded no takeaway" instead of
+    # treating the empty episodes list as "no prior session at all".
+    # The floor is written UNCONDITIONALLY at handoff entry, so a
+    # floor-only session is ambiguous: it may have crashed before its
+    # episode_write, OR it may have been a clean read-only tick that
+    # ran episode_handoff and had nothing to journal. Both are
+    # observably distinct from "no prior session" (empty list, no
+    # note); the note itself acknowledges both readings rather than
+    # asserting a crash the on-disk shape can't actually prove. The
+    # variable name is historical (advisory-only; nothing branches
+    # on it downstream).
     prior_crashed_pre_takeaway = False
     if resolved_session_id is not None:
         # An explicit `prior_session_id` flows in verbatim (the
@@ -435,15 +444,27 @@ async def episode_handoff(
     }
     if prior_crashed_pre_takeaway:
         # Additive surface key — only present when the floor-only
-        # crash-signal fires. A caller that doesn't know about the
+        # shape is adopted. A caller that doesn't know about the
         # field sees the same shape as before; a caller that does
-        # can render "Prior session crashed before writing a
-        # takeaway." rather than silently treating the empty list
-        # as "nothing to surface".
+        # can render the note below rather than silently treating
+        # the empty list as "nothing to surface".
+        #
+        # The note deliberately does NOT assert a crash: the floor
+        # is written UNCONDITIONALLY at handoff entry, so a
+        # floor-only prior session is genuinely ambiguous between
+        # (a) a crash after entry but before episode_write and
+        # (b) a clean read-only tick that ran episode_handoff and
+        # simply had no takeaway to journal. The on-disk shape is
+        # identical (a bare `is_floor` marker with no entry-vs-exit
+        # field), so we surface both readings instead of the
+        # misleading bare "crashed" claim.
         result["note"] = (
-            "Prior session crashed before writing a takeaway. The "
-            "session-tag floor on disk anchored the worktree match "
-            "but no episode_write was issued before the crash."
+            "Prior session recorded no takeaway before it ended: it "
+            "called episode_handoff (which wrote the session-tag "
+            "floor that anchored the worktree match) but no "
+            "episode_write followed — either it crashed before the "
+            "takeaway, or it was a clean read-only tick with nothing "
+            "to record."
         )
     return result
 

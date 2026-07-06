@@ -57,6 +57,21 @@ _MAX_YAML_BYTES = 64 * 1024
 # inputs hit a clean ValueError instead of an OOM.
 _MAX_FILE_BYTES = 1024 * 1024
 
+# Headroom reserved below the read cap for content-admitting writes, so any
+# record we ACCEPT as active can still be tombstoned or renamed and stay
+# readable. `Store.tombstone` re-dumps a loaded record with `removed` /
+# `removed_reason` / `removed_session` appended, and `rename_scope` may swap
+# in a longer scope string; those maintenance re-dumps must be allowed up to
+# the full `_MAX_FILE_BYTES` (a tombstone over the read cap would be silently
+# skipped on restore). Enforcing the reduced `_MAX_WRITE_BYTES` at admission
+# guarantees that bounded growth always fits: without it, a record written
+# right up to the read cap became un-removable AND un-renameable — the
+# tombstone re-dump crossed the cap and the write-side guard rejected it,
+# leaving a fully-visible record that could not be removed. 4 KiB comfortably
+# covers the fixed tombstone metadata plus a multi-KB removal reason.
+_MAINTENANCE_HEADROOM_BYTES = 4 * 1024
+_MAX_WRITE_BYTES = _MAX_FILE_BYTES - _MAINTENANCE_HEADROOM_BYTES
+
 # Pre-flight bounds for the `dumps` alias-expansion guard. `_NoAliasDumper`
 # (below) refuses to emit YAML anchors/aliases, so every shared reference in
 # a metadata structure expands into a full literal copy on dump. A crafted
@@ -277,7 +292,7 @@ class _NoAliasDumper(yaml.SafeDumper):
         return True
 
 
-def dumps(post: Post) -> str:
+def dumps(post: Post, *, max_file_bytes: int = _MAX_WRITE_BYTES) -> str:
     """Serialise a Post to a frontmatter string.
 
     Matches python-frontmatter's output: `---\\n<yaml>\\n---\\n\\n<body>`,
@@ -285,6 +300,12 @@ def dumps(post: Post) -> str:
     preserved). Existing files written by the previous library round-trip
     byte-for-byte (modulo the alias-suppression policy above, which only
     affects metadata dicts where two fields share the same object).
+
+    `max_file_bytes` bounds the total serialized size. It defaults to
+    `_MAX_WRITE_BYTES` (the read cap minus maintenance headroom) so any
+    accepted record can later be tombstoned/renamed and stay readable;
+    the lifecycle re-dump paths (`store.tombstone` / `rename_scope`) pass
+    `_MAX_FILE_BYTES` to use the full read cap for that bounded growth.
     """
     # Pre-flight: reject an alias/nesting bomb BEFORE `yaml.dump` materializes
     # its (alias-free) expansion. The `_MAX_YAML_BYTES` check below is a
@@ -317,7 +338,33 @@ def dumps(post: Post) -> str:
             "would be rejected on read, silently dropping the record"
         )
     body = post.content.rstrip()
-    return f"{_DELIM}\n{yaml_text}\n{_DELIM}\n\n{body}"
+    final = f"{_DELIM}\n{yaml_text}\n{_DELIM}\n\n{body}"
+    # Total-file cap: the `_MAX_YAML_BYTES` check above bounds only the
+    # frontmatter region, but `load` rejects the WHOLE file (frontmatter +
+    # body) against `_MAX_FILE_BYTES` via `bounded_read`'s stat check. A
+    # legal-sized frontmatter (dense `verified_paths` etc.) plus a body near
+    # the handler-boundary `max_content_bytes` cap (config-tunable, default
+    # 1 MB) can push the serialized total over that read cap — whereupon the
+    # store's malformed-file skip silently drops the record from every read
+    # surface (load_all / load_one / search / health) while the write reported
+    # committed. The byte count here matches exactly what `bounded_read` will
+    # measure on read: store.py / episodes.py both persist
+    # `dumps(post).encode("utf-8")`, i.e. this same string. Catching it at the
+    # one chokepoint every persist routes through turns that silent permanent
+    # data loss into a clean ValueError for body+frontmatter combined and ALL
+    # fields, present and future — the write-side mirror of the file cap.
+    # `max_file_bytes` defaults to `_MAX_WRITE_BYTES` (read cap minus
+    # maintenance headroom) for content-admitting writes so the record stays
+    # tombstoneable; the lifecycle re-dump paths pass the full `_MAX_FILE_BYTES`
+    # to allow that bounded growth up to (but never past) the read cap.
+    final_bytes = len(final.encode("utf-8"))
+    if final_bytes > max_file_bytes:
+        raise ValueError(
+            f"serialized frontmatter file exceeds {max_file_bytes}-byte cap "
+            f"({final_bytes} bytes); refusing to write — a file this large "
+            "would be rejected on read, silently dropping the record"
+        )
+    return final
 
 
 __all__ = ["Post", "load", "loads", "dumps"]

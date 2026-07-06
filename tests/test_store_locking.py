@@ -171,3 +171,59 @@ def test_rename_scope_tombstone_reads_inside_lock(
     traced.clear()
     store.rename_scope("old-scope", "new-scope")
     _assert_one_event_inside_lock(traced, "fm_load", tombstone_path.name)
+
+
+def test_restore_index_upsert_under_active_lock(
+    store: Store, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """F6: the FTS index upsert in `restore()` must run under the
+    ACTIVE-path lock (H1 invariant), not the tombstone-path lock. Pre-fix
+    the upsert ran while only the tombstone lock was held, so a
+    concurrent update()/verify() holding the active-path lock could
+    interleave its SQLite upsert and leave index-vs-disk divergence.
+    We trace `_locked` enter/exit and `_index_upsert_quietly` and assert
+    the upsert lands inside an active-path lock block.
+    """
+    memory = store.write(content="body", scopes=["tools"])
+    store.tombstone(memory.id, reason="oops")
+
+    events: list[str] = []
+    original_locked = store_module._locked
+    original_upsert = store_module._index_upsert_quietly
+
+    @contextlib.contextmanager
+    def traced_locked(path: Path):
+        events.append(f"lock_enter:{path.name}")
+        with original_locked(path):
+            yield
+        events.append(f"lock_exit:{path.name}")
+
+    def traced_upsert(root, mem, *, filename):
+        events.append(f"upsert:{filename}")
+        return original_upsert(root, mem, filename=filename)
+
+    monkeypatch.setattr(store_module, "_locked", traced_locked)
+    monkeypatch.setattr(store_module, "_index_upsert_quietly", traced_upsert)
+
+    store.restore(memory.id)
+
+    # Find the active file's name (the restore just recreated it).
+    active_name = next(p.name for p in store._iter_active_paths() if p.is_file())
+
+    # The upsert event must sit between a lock_enter and lock_exit for
+    # the ACTIVE path — not merely inside the tombstone lock.
+    in_active_lock = False
+    upsert_under_active_lock = False
+    for e in events:
+        if e == f"lock_enter:{active_name}":
+            in_active_lock = True
+        elif e == f"lock_exit:{active_name}":
+            in_active_lock = False
+        elif e == f"upsert:{active_name}" and in_active_lock:
+            upsert_under_active_lock = True
+            break
+    assert upsert_under_active_lock, (
+        f"restore's index upsert did not run under "
+        f"_locked({active_name!r}) — H1 active-path-lock invariant "
+        f"violated; events={events}"
+    )

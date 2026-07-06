@@ -760,7 +760,10 @@ class Store:
                 )
             post = frontmatter.load(path)
             post.metadata["removed"] = utcnow()
-            post.metadata["removed_reason"] = reason
+            # Bound the reason so appending it (plus the fixed removal keys)
+            # can't push a near-write-cap record's tombstone re-dump past the
+            # read cap — that would make the record un-removable.
+            post.metadata["removed_reason"] = _cap_removed_reason(reason)
             # Only emit the field when a session_id was passed — keeps
             # legacy tests and ad-hoc callers from getting an opaque
             # `None` lying in frontmatter. The reader treats missing
@@ -768,7 +771,11 @@ class Store:
             if session_id is not None:
                 post.metadata["removed_session"] = session_id
 
-            _atomic_write_post(target, post)
+            # Lifecycle re-dump: appends removal metadata to an already-valid
+            # record. Allow the full read cap (not the headroom-reserved write
+            # cap) so a record written right up to the write cap can always be
+            # tombstoned and stay readable as a tombstone.
+            _atomic_write_post(target, post, max_file_bytes=frontmatter._MAX_FILE_BYTES)
             try:
                 path.unlink()
             except OSError as exc:
@@ -1062,10 +1069,22 @@ class Store:
                     f"{tombstone_path}: cannot restore — missing/invalid created"
                 ) from exc
             slug = make_slug(post.content)
-            short = memory_id[-6:].lower()
-            active_path = self.root / build_filename(created, f"{slug}-{short}")
+            # Mirror `_path_for`: the suffix carries the FULL ULID, not
+            # `id[-6:]`. The 6-char tail was only 30 bits, so two
+            # differently-tombstoned memories whose bodies slugify to
+            # the same value (e.g. two non-ASCII bodies, both landing
+            # on the `memory` fallback) could restore to the same
+            # active path on the same day and silently clobber one.
+            active_path = self.root / build_filename(
+                created, f"{slug}-{memory_id.lower()}"
+            )
 
-            _atomic_write_post(active_path, post)
+            # Lifecycle re-dump: re-materialises a previously-valid record
+            # (a legacy tombstone may sit near the read cap). Use the full
+            # read cap so restore can't fail on a record that already existed.
+            _atomic_write_post(
+                active_path, post, max_file_bytes=frontmatter._MAX_FILE_BYTES
+            )
             try:
                 tombstone_path.unlink()
             except OSError as exc:
@@ -1079,12 +1098,23 @@ class Store:
             # the tombstone alongside the restored active file.
             fsync_dir(tombstone_path.parent)
 
-            restored = self._load_path(active_path)
             # Restored memories rejoin the searchable set — keep the FTS5
             # index in step with the file system. The remove-on-tombstone
             # call dropped this id; the restore is the symmetric upsert.
-            # perf: index upsert under lock is intentional — see audit H1.
-            _index_upsert_quietly(self.root, restored, filename=active_path.name)
+            #
+            # H1 invariant: every mutator upserts the index UNDER THE
+            # ACTIVE-PATH LOCK, so a concurrent `update()`/`verify()` on
+            # the restored id (which holds `_locked(active_path)`) can't
+            # interleave its SQLite upsert with ours and leave the index
+            # pointing at the deleted body. Pre-fix the upsert ran under
+            # the tombstone-path lock only — a different lockfile — so
+            # that interleaving was possible. The active-path lockfile is
+            # distinct from the tombstone lockfile and no code path takes
+            # them in the reverse order (tombstone→active is restore's
+            # own direction), so nesting here cannot deadlock.
+            with _locked(active_path):
+                restored = self._load_path(active_path)
+                _index_upsert_quietly(self.root, restored, filename=active_path.name)
         return restored
 
     # ---- scope rename ----------------------------------------------------
@@ -1207,7 +1237,12 @@ class Store:
                     # the tombstone partially written. The active-side
                     # rename_scope path goes through `_write_path` which
                     # already does this; mirror it here.
-                    _atomic_write_post(tpath, post)
+                    # Lifecycle re-dump of an existing tombstone (relabel a
+                    # scope). Full read cap — the tombstone may already sit
+                    # near it, and a scope swap must not fail.
+                    _atomic_write_post(
+                        tpath, post, max_file_bytes=frontmatter._MAX_FILE_BYTES
+                    )
                     tombstoned_changed.append(str(post.metadata.get("id")))
 
         return {"active": active_changed, "tombstoned": tombstoned_changed}
@@ -1315,7 +1350,7 @@ class Store:
     def _path_for(self, memory: Memory) -> Path:
         slug = make_slug(memory.body)
 
-        # Unconditionally embed the short ULID in the filename so the
+        # Unconditionally embed the FULL ULID in the filename so the
         # name is unique by construction. Pre-2.7 the code picked the
         # bare `<date>-<slug>.md` when the file didn't yet exist and
         # added the ULID only on collision — a TOCTOU silent-data-loss
@@ -1327,18 +1362,28 @@ class Store:
         # parsed, but it carried writer B's id; writer A's memory was
         # gone with no trace.
         #
-        # Always-suffixed kills the race: with distinct ULIDs (which
-        # `generate_ulid` makes vanishingly unlikely to collide), two
-        # writers can never pick the same path even if their bodies
-        # slugify identically. Matches the discipline `tombstone()`
-        # adopted in 2.6.4 (see store.py:474-485) for the same reason.
+        # The suffix must carry the ULID's FULL entropy, not a short
+        # tail. Pre-fix this used `id[-6:]` — only 30 bits. When two
+        # bodies slugify identically the suffix is the *sole* entropy
+        # in the name (same date prefix, same slug), and every
+        # non-ASCII body slugifies to the bare `memory` fallback
+        # (`make_slug` splits on `[^a-z0-9]+`, so CJK/etc. contribute
+        # none), so a 30-bit birthday collision among a single day's
+        # writes would silently clobber one memory — SEQUENTIALLY, not
+        # just under concurrency. Embedding all 26 Crockford chars (80
+        # bits of randomness) makes a same-path collision astronomically
+        # unlikely: two writers can never realistically pick the same
+        # path even if their bodies slugify identically. Matches the
+        # discipline `tombstone()` adopted in 2.6.4 (see
+        # store.py:474-485) for the same reason.
         #
-        # Existing unsuffixed memories on disk continue to load — the
-        # reader keys off the `id` field, not the filename. The cost
-        # is a slightly longer filename (6 hex chars + a hyphen) on
-        # every new write; the benefit is no silent overwrites.
-        short = memory.id[-6:].lower()
-        return self.root / build_filename(memory.created, f"{slug}-{short}")
+        # Existing short-suffixed / unsuffixed memories on disk
+        # continue to load — the reader keys off the `id` field, not
+        # the filename. The cost is a slightly longer filename (26
+        # chars + a hyphen) on every new write; the benefit is no
+        # silent overwrites.
+        suffix = memory.id.lower()
+        return self.root / build_filename(memory.created, f"{slug}-{suffix}")
 
     def _find_path_for_id(self, memory_id: str) -> Path | None:
         if not is_valid_ulid(memory_id):
@@ -1846,7 +1891,34 @@ def _index_remove_quietly(root: Path, memory_id: str) -> None:
     _index.remove(root, memory_id)
 
 
-def _atomic_write_post(path: Path, post: frontmatter.Post) -> None:
+# Cap on a tombstone's removal reason. `_frontmatter` reserves a fixed
+# maintenance headroom below the read cap so a record admitted at the write
+# cap can always be tombstoned and stay readable; the fixed removal keys
+# (`removed` timestamp, `removed_session` id) plus this bounded reason and its
+# YAML-quoting overhead fit comfortably inside that headroom. Without the
+# bound, `removed_reason` is an arbitrary-length caller string and a long one
+# on a near-cap record could push the tombstone re-dump past the read cap,
+# making the record un-removable. A removal reason is an annotation, not
+# memory content, so 1 KiB is generous.
+_MAX_REMOVED_REASON_BYTES = 1024
+
+
+def _cap_removed_reason(reason: str) -> str:
+    """Bound a removal reason to `_MAX_REMOVED_REASON_BYTES` (UTF-8), so a
+    near-write-cap record is always tombstoneable. Truncates on a codepoint
+    boundary — silently shortening an over-long reason beats failing removal."""
+    encoded = reason.encode("utf-8")
+    if len(encoded) <= _MAX_REMOVED_REASON_BYTES:
+        return reason
+    return encoded[:_MAX_REMOVED_REASON_BYTES].decode("utf-8", errors="ignore")
+
+
+def _atomic_write_post(
+    path: Path,
+    post: frontmatter.Post,
+    *,
+    max_file_bytes: int = frontmatter._MAX_WRITE_BYTES,
+) -> None:
     """Atomic, durable, 0o600 write of a frontmatter Post to `path`.
 
     Serialises the Post to UTF-8 bytes and delegates to
@@ -1861,9 +1933,16 @@ def _atomic_write_post(path: Path, post: frontmatter.Post) -> None:
     One definition of "durable private write" for every persistent write
     in the store: new memories, tombstones, restores, and rename_scope
     in-place edits all route through here.
+
+    `max_file_bytes` is forwarded to `dumps` (see it): content-admitting
+    writes use the default write cap (headroom reserved), while the
+    lifecycle re-dump paths (`tombstone` / `rename_scope`) pass the full
+    read cap so appending removal metadata to a near-cap record can't fail.
     """
     atomic_write_bytes(
-        path, frontmatter.dumps(post).encode("utf-8"), mode_before_rename=0o600
+        path,
+        frontmatter.dumps(post, max_file_bytes=max_file_bytes).encode("utf-8"),
+        mode_before_rename=0o600,
     )
 
 

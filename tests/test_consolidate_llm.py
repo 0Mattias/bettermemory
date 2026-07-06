@@ -905,7 +905,7 @@ def test_anthropic_provider_passes_request_timeout(
             return SimpleNamespace(content=[block], stop_reason="end_turn")
 
     class _FakeAnthropic:
-        def __init__(self, *, api_key: str) -> None:
+        def __init__(self, *, api_key: str, max_retries: int = 2) -> None:
             self.messages = _FakeMessages()
 
     monkeypatch.setitem(
@@ -940,10 +940,119 @@ def test_openai_provider_passes_request_timeout(
             self.completions = _FakeCompletions()
 
     class _FakeOpenAI:
-        def __init__(self, *, api_key: str) -> None:
+        def __init__(self, *, api_key: str, max_retries: int = 2) -> None:
             self.chat = _FakeChat()
 
     monkeypatch.setitem(sys.modules, "openai", SimpleNamespace(OpenAI=_FakeOpenAI))
 
     OpenAIProvider(api_key="sk-test").propose(_one_member_cluster(), today="2026-05-20")
     assert captured.get("timeout") == DEFAULT_TIMEOUT
+
+
+def test_propose_new_persists_inferred_source(tmp_path: Path) -> None:
+    """Regression: an LLM-distilled propose_new memory is machine-inferred,
+    not user-stated, so it must persist with source=INFERRED — matching the
+    accept-proposal path (handlers/proposals.py, ingest.py). The write used to
+    omit source= and default to Source.EXPLICIT, defeating the provenance
+    distinction between what the user said and what the LLM inferred.
+    """
+    store = _make_store_with_existing(tmp_path)
+    transcript = tmp_path / "session.md"
+    transcript.write_text(
+        "[user] My Postgres is on port 5433, not 5432.\n[assistant] Saved.",
+        encoding="utf-8",
+    )
+    proposal = ProposeNewProposal(
+        scope="infrastructure",
+        category="fact",
+        body="Postgres listens on port 5433, not the default 5432.",
+        source_excerpt="[user] My Postgres is on port 5433, not 5432.",
+        rationale="user-stated infrastructure fact",
+    )
+    provider = FakeProvider(proposals=[proposal])
+
+    applied = consolidate_llm(
+        store,
+        provider,
+        apply=True,
+        accept=True,
+        from_transcript=str(transcript),
+    )
+    assert any(a.kind == "llm_propose_new" for a in applied.actions_taken)
+    assert not applied.failures, f"propose_new failed unexpectedly: {applied.failures}"
+
+    memories_after = store.load_all()
+    assert len(memories_after) == 2
+    new_memory = next(m for m in memories_after if "port 5433" in m.body)
+    # Machine-distilled content — INFERRED, not the write() EXPLICIT default.
+    assert new_memory.source == Source.INFERRED
+
+
+def test_anthropic_provider_disables_sdk_retries(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # The Anthropic SDK defaults to max_retries=2 and retries APITimeoutError,
+    # so without max_retries=0 the `timeout=` bound stacks up to 3x against a
+    # hung provider. Assert the client is constructed with retries disabled so
+    # the timeout is a true single-shot wall-clock bound.
+    import sys
+    from types import SimpleNamespace
+
+    from bettermemory.llm import AnthropicProvider
+
+    captured_ctor: dict[str, object] = {}
+
+    class _FakeMessages:
+        def create(self, **kwargs: object) -> object:
+            block = SimpleNamespace(type="text", text='{"proposals": []}')
+            return SimpleNamespace(content=[block], stop_reason="end_turn")
+
+    class _FakeAnthropic:
+        def __init__(self, *, api_key: str, max_retries: int = 2) -> None:
+            captured_ctor["api_key"] = api_key
+            captured_ctor["max_retries"] = max_retries
+            self.messages = _FakeMessages()
+
+    monkeypatch.setitem(
+        sys.modules, "anthropic", SimpleNamespace(Anthropic=_FakeAnthropic)
+    )
+
+    AnthropicProvider(api_key="sk-test").propose(
+        _one_member_cluster(), today="2026-05-20"
+    )
+    assert captured_ctor.get("max_retries") == 0
+
+
+def test_openai_provider_disables_sdk_retries(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # Same rationale as the Anthropic branch: the OpenAI SDK defaults to
+    # max_retries=2 and retries timeouts, so max_retries=0 is required for the
+    # `timeout=` argument to bound the call to a single attempt.
+    import sys
+    from types import SimpleNamespace
+
+    from bettermemory.llm import OpenAIProvider
+
+    captured_ctor: dict[str, object] = {}
+
+    class _FakeCompletions:
+        def create(self, **kwargs: object) -> object:
+            message = SimpleNamespace(content='{"proposals": []}')
+            choice = SimpleNamespace(message=message, finish_reason="stop")
+            return SimpleNamespace(choices=[choice])
+
+    class _FakeChat:
+        def __init__(self) -> None:
+            self.completions = _FakeCompletions()
+
+    class _FakeOpenAI:
+        def __init__(self, *, api_key: str, max_retries: int = 2) -> None:
+            captured_ctor["api_key"] = api_key
+            captured_ctor["max_retries"] = max_retries
+            self.chat = _FakeChat()
+
+    monkeypatch.setitem(sys.modules, "openai", SimpleNamespace(OpenAI=_FakeOpenAI))
+
+    OpenAIProvider(api_key="sk-test").propose(_one_member_cluster(), today="2026-05-20")
+    assert captured_ctor.get("max_retries") == 0

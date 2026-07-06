@@ -1440,3 +1440,46 @@ def test_later_clean_occurrence_downgrades_ambiguity(tmp_path: Path) -> None:
 def test_smb_share_spec_rejected() -> None:
     report = detect_path_drift("photos live on //nas/photos (SMB share).")
     assert report.checked == ()
+
+
+def test_domain_route_regex_bounded_against_redos() -> None:
+    """ReDoS guard: `_DOMAIN_ROUTE_RE` is finditer'd over the whole raw
+    body per search hit. An unbounded label repeat backtracks
+    catastrophically on a long domain-shaped run with NO trailing slash
+    (the `/segment` tail never matches). The `{1,20}` bound keeps the scan
+    linear. Assert both that the pathological body is handled correctly
+    (no phantom candidates) and that it returns well under a generous
+    wall-clock guard — the current unbounded regex takes multiple seconds
+    on this input."""
+    import time
+
+    # A ~20k-label dotted run with no slash — the pathological shape that
+    # forces the engine to retry every partition at every start offset.
+    poison = "a" + ".a" * 20000
+    body = f"see /etc/hosts and then {poison} in the notes"
+    start = time.monotonic()
+    report = detect_path_drift(body)
+    elapsed = time.monotonic() - start
+    # Generous bound: fixed code runs in ~0.01s; unbounded takes ~3.7-4.7s.
+    assert elapsed < 2.0, f"path-drift scan took {elapsed:.2f}s — regex not bounded"
+    # The poison run is not a filesystem path and must not leak into the
+    # report; the real path in the same body is still handled normally.
+    assert poison not in report.checked
+    assert poison not in report.missing
+    assert all("a.a.a" not in c for c in report.checked)
+
+
+def test_domain_route_bound_preserves_route_suppression() -> None:
+    """The `{1,20}` label bound must not change route-suppression behavior
+    for realistic domains: a body citing a domain-attached route in one
+    place and the same first-segment bare route in another still has the
+    bare route suppressed (empty `missing`), exactly as before the bound.
+    Correctness anchor — passes both before and after the fix; guards
+    against a future over-tightening of the bound."""
+    body = (
+        "hit `pypi.org/pypi/bettermemory/<ver>/json` (200 = live) — the "
+        "top-level `/pypi/bettermemory/json` index lags ~1min"
+    )
+    report = detect_path_drift(body)
+    assert report.checked == ()
+    assert report.missing == ()

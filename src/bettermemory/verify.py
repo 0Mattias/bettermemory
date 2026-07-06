@@ -189,7 +189,21 @@ _WELLKNOWN_ROUTE_SEGMENTS: frozenset[str] = frozenset(
 # false match is one skipped drift check on a same-named top-level dir
 # cited alongside a URL sharing its first segment — conservative in the
 # direction this module prefers (miss a real path over chasing ghosts).
-_DOMAIN_ROUTE_RE = re.compile(r"\b[\w-]+(?:\.[\w-]+)+/([\w.\-]+)")
+#
+# The label repetition is bounded (`{1,20}`, not `+`) on purpose: this
+# regex is `finditer`'d over the ENTIRE raw body inside
+# `_extract_candidates`, which runs per search hit, and an unbounded `+`
+# backtracks catastrophically on a domain-shaped run that is NOT followed
+# by a slash — the `/([\w.\-]+)` tail fails, so the engine retries every
+# partition of the repeat at every start offset. A poisoned body
+# (`a.a.a…` × tens of thousands, arriving via git-sync pull, a hostile
+# write, or a hand-edited .md) otherwise pegs the whole server for
+# seconds-to-minutes; `_MAX_PATHS_PER_BODY` can't help because it caps
+# only AFTER the regex has already scanned. Twenty dot-separated labels is
+# far past any real FQDN (2-5 in practice), and the `\b[\w-]+` anchor lets
+# a match restart at a later label on the rare longer token, so the bound
+# can't drop a route the suppression logic would otherwise catch.
+_DOMAIN_ROUTE_RE = re.compile(r"\b[\w-]+(?:\.[\w-]+){1,20}/([\w.\-]+)")
 
 # Trailing punctuation that's almost never part of a real path. We strip
 # these from the right edge of a candidate before validating. `~` is in
@@ -390,6 +404,17 @@ def detect_path_drift(
             if norm in absent_set:
                 expected_absent.append(path)
             else:
+                # Known limitation: a bare absolute path that legitimately
+                # lives on a REMOTE host (`/opt/gophish`, `/data/compose/.env`
+                # on a homelab board) is stat'd against the LOCAL filesystem
+                # and so reads as `missing` here — a perpetual drift signal
+                # until the caller attests it via
+                # `memory_verify(verified_absent_paths=[...])`, which routes it
+                # to `expected_absent` above. That attestation is the intended
+                # escape hatch: there is no local-only heuristic that can tell
+                # a legitimately-remote path from a genuinely-deleted local one
+                # without also suppressing real local drift, so absence stays
+                # `missing` until proven expected.
                 missing.append(path)
             continue
         if norm in verified_set:

@@ -675,3 +675,72 @@ def test_migrated_memory_loads_correctly_via_store(tmp_path: Path) -> None:
     assert loaded.origin.repo == "git@github.com:example/foo.git"
     assert loaded.origin.cwd == "/projects/foo"
     assert loaded.origin.branch is None
+
+
+def test_migration_survives_scalar_scopes_field(tmp_path: Path) -> None:
+    """A malformed memory whose `scopes` is a scalar (not a list) must not
+    abort scope-routed migration. Pre-fix, `scope in <scalar>` raised
+    TypeError *outside* the per-file try/except, killing the whole loop so
+    the migration call raised before returning — no report was produced and
+    any file not yet scanned went unmigrated.
+
+    Note: `_iter_active_memory_files` uses `iterdir()`, whose order is
+    filesystem-dependent, so this test does NOT rely on scan order. Pre-fix
+    the loop crashes whenever it reaches the scalar file (regardless of
+    order), so the call raises and the test errors before its assertions.
+    Post-fix both files are always scanned, so the assertions are
+    order-independent too."""
+    memory_dir = tmp_path / ".claude-memory"
+    memory_dir.mkdir()
+
+    # `scopes: 5` — the permissive frontmatter parser loads this as an int,
+    # exactly the scalar-scopes class the store readers defensively coerce.
+    scalar = (
+        "---\n"
+        f"id: {_LEGACY_IDS[0]}\n"
+        "created: 2025-01-01T00:00:00+00:00\n"
+        "updated: 2025-01-01T00:00:00+00:00\n"
+        "scopes: 5\n"
+        "confidence: medium\n"
+        "source: explicit-statement\n"
+        "---\n"
+        "malformed scalar scopes\n"
+    )
+    valid = (
+        "---\n"
+        f"id: {_LEGACY_IDS[1]}\n"
+        "created: 2025-01-01T00:00:00+00:00\n"
+        "updated: 2025-01-01T00:00:00+00:00\n"
+        "scopes:\n"
+        "- tools\n"
+        "confidence: medium\n"
+        "source: explicit-statement\n"
+        "---\n"
+        "valid list scopes\n"
+    )
+    bad_path = memory_dir / "2025-01-01-bad.md"
+    good_path = memory_dir / "2025-01-01-good.md"
+    bad_path.write_text(scalar, encoding="utf-8")
+    good_path.write_text(valid, encoding="utf-8")
+
+    # Scope-routed migration only — no `inferred`/`force_repo`, so the
+    # fallback never fires. The scalar file simply matches nothing; the
+    # `tools`-scoped file must still get its origin backfilled.
+    report = migrate_origin_in_directory(
+        memory_dir,
+        scope_repo_map={"tools": "git@github.com:example/foo.git"},
+    )
+
+    # Both files scanned; the crash never happens (pre-fix, the call above
+    # raised TypeError and never returned a report).
+    assert report.scanned == 2
+    # Only the valid, tools-scoped memory was routed and updated.
+    assert report.updated == 1
+    # The scalar file matched no scope and has no fallback, so it is left
+    # alone — untouched and NOT flagged malformed (it loaded fine).
+    assert bad_path not in report.malformed
+    assert "origin" not in _read_metadata(bad_path)
+    # The regression witness: the valid file still migrated.
+    assert _read_metadata(good_path)["origin"] == {
+        "repo": "git@github.com:example/foo.git",
+    }

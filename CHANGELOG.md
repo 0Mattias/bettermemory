@@ -7,6 +7,126 @@ breaking changes, minor for additive features, patch for fixes. The
 [compatibility contract](CONTRIBUTING.md#versioning-and-the-compatibility-contract)
 spells out exactly what's stable.
 
+## 3.14.1 - 2026-07-06
+
+An audit-backlog drain: the 2026-07-06 whole-repo review surfaced 15
+confirmed findings (2 data-loss, 6 correctness, 7 low/observation),
+each adversarially verified with a runnable repro before it was
+filed. This release fixes all of them. Every fix ships with a
+regression test that fails without it; no behavior visible to a
+correctly-sized memory changes.
+
+### Fixed
+
+- **Silent data loss: a legally-sized write could be unreadable.**
+  `_frontmatter.dumps` capped only the frontmatter region against
+  `_MAX_YAML_BYTES`, but `load` rejects the whole file against the
+  larger `_MAX_FILE_BYTES`. A body near the `max_content_bytes`
+  handler cap plus a dense-but-legal frontmatter (many
+  `verified_paths`) could serialize past the read cap, whereupon the
+  file was stat-rejected on read and the malformed-file skip dropped
+  the record from every surface — while the write reported committed.
+  `dumps` now enforces a total-file guard at the one serialization
+  chokepoint, turning silent permanent loss into a clean `ValueError`.
+  Content-admitting writes reserve a small headroom below the read cap
+  (`_MAX_WRITE_BYTES`) so any accepted record can always be tombstoned
+  or renamed and stay readable; the lifecycle re-dump paths pass the
+  full read cap for that bounded metadata growth.
+- **Migration dropped a relocated store.** The legacy `memory` →
+  `bettermemory` rename in `init.patch_client_config` seeded the new
+  entry from the *new* name (absent on the rename path), so
+  `env.BETTERMEMORY_DIR` (and any `disabled` / `timeout` / transport
+  keys) on the legacy entry were discarded — a user who had relocated
+  their store then booted against the default dir and saw it empty.
+  The rename now carries the legacy entry's keys forward, overwriting
+  only the canonical `type` / `command` / `args`.
+- **ReDoS on the search hot path.** `_DOMAIN_ROUTE_RE` ran unbounded
+  (`(?:\.[\w-]+)+`) via `finditer` over the entire body inside
+  `detect_path_drift`, which fires per search hit; a poisoned body
+  (`a.a.a…`) backtracked catastrophically (seconds-to-minutes) — the
+  path cap only applies *after* the scan. The repetition is now
+  bounded to `{1,20}`, far past any real FQDN.
+- **`migrate origin --scope-repo` crashed on a scalar `scopes`.** The
+  scope-routing `scope in memory_scopes` test sat outside the per-file
+  guard, so one malformed file with a scalar `scopes` raised
+  `TypeError` and aborted the entire migration. `scopes` is now
+  coerced to a list before the membership test.
+- **Same-day path collision could clobber a memory.** `_path_for`
+  (and `restore`) used only the last 6 ULID chars (30 bits) for the
+  filename suffix; non-ASCII bodies all slugify to the bare `memory`
+  fallback, so two same-day writes could birthday-collide and silently
+  overwrite one. Both now use the full ULID; the stale "two writers
+  can never collide" docstring is corrected.
+- **`restore` upserted the search index under the wrong lock.** The
+  FTS upsert ran under the tombstone-path lock rather than the
+  active-path lock every other mutator holds (audit invariant H1),
+  so a concurrent `update` / `verify` could diverge index from disk.
+  The upsert now runs under the active-path lock.
+- **Re-audit dedup missed events across a log rotation.**
+  `memory_audit_turn` read only the narrow probe window (≤600s) but
+  deduped over `REAUDIT_DEDUP_WINDOW_SECONDS` (3600s), so a prior
+  `turn_audited` beyond the probe window slipped through and a
+  duplicate `search_miss` inflated the miss numerator. The read now
+  covers the full dedup window; each consumer still applies its own
+  narrower cutoff (matching the Stop hook).
+- **A scalar id-field could blank `memory_health`.** Six sites
+  iterating event id-fields (`for mid in ev.get(...)`) would raise
+  `TypeError` on a well-formed dict event carrying a scalar where a
+  list was expected, taking down `memory_health` / `scope_overview` /
+  `doctor` wholesale. All sites now normalize to a list.
+- **bm25 mode returned nothing for hyphenated stopword queries.**
+  `end-to-end`, `up-to-date`, `time-to-live` and kin failed because
+  the conjunctive kebab fallback counted components off the
+  stopword-stripped stream, so a stopword component scored zero and
+  collapsed the `min()`. Component counts now come off the unstripped
+  stream, preserving the `python-frontmatter` precision guard.
+- **Dedup missed a short restatement contained in a long memory.**
+  `_pairwise_content_jaccard` is symmetric, so a near-verbatim
+  restatement of one sentence of a long memory scored far below the
+  `related` floor and committed. A containment score
+  (`|∩| / min(|A|,|B|)`), gated on large size asymmetry, now flags it —
+  bounded by an absolute floor on the smaller token set and capped into
+  the `related` band so it surfaces a near-duplicate without ever
+  silently blocking a legitimately distinct short write.
+- **LLM-distilled memories were mis-attributed.** `consolidate --llm
+  --from-transcript` wrote proposals with `source=explicit-statement`
+  instead of `inferred`, defeating the provenance distinction the
+  proposal-accept path already keeps. Now `Source.INFERRED`.
+- **A clean read-only tick was mislabeled a crash.** An entry-floor is
+  written unconditionally at handoff entry, so a legitimate
+  handoff-without-takeaway read as "prior session crashed before
+  writing a takeaway". The determination now distinguishes the
+  read-only-tick case from a genuine crash.
+- **Unbounded LLM provider retries widened the timeout bound.** The
+  Anthropic and OpenAI clients kept the SDK default `max_retries=2`,
+  and since `APITimeoutError` is retryable the `timeout=` bound could
+  stack to ~3× against a hung provider. Both clients now set
+  `max_retries=0`, making the timeout a true single-shot deadline
+  (matching the Ollama path).
+- **mypy silently type-checked nothing when numpy was installed.**
+  With the `[embeddings]` extra present, mypy aborted parsing
+  numpy 2.5's `.pyi` stubs (a `type` statement needs 3.12) under
+  `python_version = "3.11"`, emitting "errors prevented further
+  checking" and checking zero files; CI dodged it by installing only
+  `dev`+`ui`. A `[[tool.mypy.overrides]]` block now sets
+  `follow_imports = "skip"` **and** `follow_imports_for_stubs = true`
+  for numpy — the stub setting is load-bearing, since `follow_imports`
+  is otherwise ignored for `.pyi` files and mypy would still open
+  numpy's stubs. `python_version` stays pinned to the project minimum
+  (3.11) — bumping it would silently admit 3.12-only syntax the shipped
+  package can't run.
+
+### Documented
+
+- Path-drift on a bare absolute path that legitimately lives on a
+  remote host (e.g. `/opt/gophish` on a homelab board) is stat'd
+  against the local filesystem and reads as `missing` until attested
+  via `memory_verify(verified_absent_paths=[...])`. This is the
+  intended escape hatch — there is no local-only heuristic that
+  separates a legitimately-remote path from a deleted local one
+  without suppressing real drift — and is now called out in
+  `detect_path_drift`.
+
 ## 3.14.0 - 2026-07-03
 
 The measurement release: three layers of the effectiveness telemetry

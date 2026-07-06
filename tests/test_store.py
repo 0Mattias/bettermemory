@@ -11,7 +11,13 @@ from typing import Any, NoReturn
 import pytest
 from pydantic import ValidationError
 
-from bettermemory.models import Confidence, Source, generate_ulid, is_valid_ulid
+from bettermemory.models import (
+    Confidence,
+    Memory,
+    Source,
+    generate_ulid,
+    is_valid_ulid,
+)
 from bettermemory.store import (
     MemoryNotFoundError,
     Store,
@@ -1331,3 +1337,115 @@ def test_scalar_scopes_tombstone_survives_prune(store: Store) -> None:
     assert isinstance(pruned, list)
     # The adversarial file is skipped, not deleted and not fatal.
     assert bad_path.exists()
+
+
+def test_path_for_full_ulid_suffix_avoids_slug_collision(store: Store) -> None:
+    """F5: two memories whose bodies slugify identically (non-ASCII
+    bodies both collapse to the `memory` fallback) written on the same
+    day must land on DISTINCT paths. Pre-fix the suffix was only
+    `id[-6:]` (30 bits), so two ids sharing their last 6 chars produced
+    the same `<date>-memory-<tail>.md` and one memory silently clobbered
+    the other. Full-ULID suffixing makes the whole id the entropy.
+    """
+    created = datetime(2026, 7, 6, 12, 0, 0, tzinfo=timezone.utc)
+    # Two valid ULIDs sharing their last 6 chars but differing earlier.
+    # (Position -6 must be equal: both end in `0WEVGZ`.)
+    id_a = "01BX5ZZKBKAAAAAAAAAA0WEVGZ"
+    id_b = "01BX5ZZKBKBBBBBBBBBB0WEVGZ"
+    assert is_valid_ulid(id_a) and is_valid_ulid(id_b)
+    assert id_a[-6:] == id_b[-6:]  # the truncated suffix collides
+    assert id_a != id_b
+
+    def _mk(mid: str, body: str) -> Memory:
+        return Memory(
+            id=mid,
+            created=created,
+            updated=created,
+            scopes=["tools"],
+            confidence=Confidence.MEDIUM,
+            source=Source.EXPLICIT,
+            body=body,
+        )
+
+    # Non-ASCII bodies both slugify to the bare `memory` fallback, so
+    # the slug contributes zero entropy — the suffix is all there is.
+    mem_a = _mk(id_a, "日本語のメモ\n")
+    mem_b = _mk(id_b, "中文的内容\n")
+
+    path_a = store._path_for(mem_a)
+    path_b = store._path_for(mem_b)
+    # Same date prefix and same `memory` slug — the fix's full-id
+    # suffix is the only thing keeping the two names apart.
+    assert path_a != path_b, (
+        f"path collision: both memories map to {path_a.name!r} — "
+        f"the filename suffix carries too little of the ULID"
+    )
+
+    # And both are actually retrievable after writing through the store.
+    store._write_path(path_a, mem_a)
+    store._write_path(path_b, mem_b)
+    assert store.load_one(id_a).id == id_a
+    assert store.load_one(id_b).id == id_b
+
+
+def test_tombstone_redump_uses_full_read_cap(
+    store: Store, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """F1: tombstone appends removal metadata to an already-valid record, so
+    its re-dump must use the full read cap (`_MAX_FILE_BYTES`), not the
+    headroom-reserved write cap. Otherwise a record written right up to the
+    write cap becomes un-removable — the tombstone re-dump crosses the write
+    cap and the write-side guard rejects it, leaving a fully-visible record
+    that can neither be removed nor renamed."""
+    import bettermemory.store as store_module
+    from bettermemory import _frontmatter as fm
+
+    memory = store.write(content="body to remove", scopes=["tools"])
+    captured: dict[str, int] = {}
+    real = store_module._atomic_write_post
+
+    def spy(path, post, *, max_file_bytes=fm._MAX_WRITE_BYTES):
+        captured["max_file_bytes"] = max_file_bytes
+        return real(path, post, max_file_bytes=max_file_bytes)
+
+    monkeypatch.setattr(store_module, "_atomic_write_post", spy)
+    store.tombstone(memory.id, reason="obsolete")
+    assert captured["max_file_bytes"] == fm._MAX_FILE_BYTES
+    # The record really is gone from the active set and readable as a tombstone.
+    assert memory.id in {t.id for t in store.load_tombstones()}
+
+
+def test_near_write_cap_record_tombstoneable_with_overlong_reason(
+    store: Store,
+) -> None:
+    """F1 completeness: a record admitted right at the write cap must ALWAYS be
+    tombstoneable, even with a pathologically long removal reason.
+
+    The maintenance headroom reserved below the read cap covers the fixed
+    removal keys plus a BOUNDED reason; `Store.tombstone` caps `removed_reason`
+    (`_cap_removed_reason`) so appending it can never push the tombstone
+    re-dump past the read cap. Without the cap, an unbounded reason on a
+    near-cap record re-dumped over `_MAX_FILE_BYTES` and the write-side guard
+    left the record un-removable."""
+    from bettermemory import _frontmatter as fm
+    from bettermemory.store import _MAX_REMOVED_REASON_BYTES
+
+    # Fresh-record frontmatter is a couple hundred bytes; size the body so the
+    # serialized record lands just under the write cap (accepted at write).
+    body = "x" * (fm._MAX_WRITE_BYTES - 512)
+    mem = store.write(content=body, scopes=["tools"])
+
+    # A reason far larger than the headroom must not make the record
+    # un-removable — it is bounded, and the removal completes.
+    overlong = "why-" * 4000  # ~16 KB, well over _MAX_REMOVED_REASON_BYTES
+    path = store.tombstone(mem.id, reason=overlong)
+
+    assert path.exists()
+    # The tombstone stays readable (<= read cap) and appears in the listing.
+    assert path.stat().st_size <= fm._MAX_FILE_BYTES
+    assert mem.id in {t.id for t in store.load_tombstones()}
+    # Reason was bounded to the cap (as UTF-8 bytes).
+    text = path.read_text()
+    assert "why-" in text  # a prefix of the reason survived
+    stored_reason_len = len(overlong.encode("utf-8"))
+    assert stored_reason_len > _MAX_REMOVED_REASON_BYTES  # test really is over-cap

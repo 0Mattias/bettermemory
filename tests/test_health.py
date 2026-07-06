@@ -3141,3 +3141,48 @@ def test_recent_silent_misses_serialised_in_to_dict() -> None:
         "ts": entry["ts"],  # ts shape varies — just pin the key exists
     }
     assert entry["ts"].startswith("2026-04-05")
+
+
+def test_scalar_id_field_does_not_blank_health_rollup() -> None:
+    """A well-formed dict event carrying a SCALAR where a list of ids is
+    expected must not crash the whole rollup. A numeric scalar under
+    `for mid in <scalar>` raises TypeError (blanking memory_health /
+    scope_overview / doctor); a bare string would iterate by character
+    and mis-attribute counts. Valid events around the malformed ones
+    must still be aggregated normally, and a lone-string id must be
+    treated as a single id rather than iterated per-character.
+
+    Exercises all four iteration sites: `_StatsAccumulator` handles
+    (compute_health, sites 1/2) and the curation_counts loop (sites
+    3/4) both walk the same event list.
+    """
+    m = _memory(created=_utc(2026, 1, 1))
+    events = [
+        # Numeric scalar in `returned` — the search-site crash case.
+        _event("search", ts=_utc(2026, 4, 1), returned=99999),
+        # Numeric scalar in `ids` on a use/applied event — the use-site
+        # crash case. Post-fix it coerces to [] so it contributes no
+        # applied count (the memory must stay dead-weight-eligible).
+        _event("use", ts=_utc(2026, 4, 2), ids=99999, outcome="applied"),
+        # Bare-string scalar in `returned` — the silently-wrong case.
+        # Pre-fix this iterates the ULID by character (0 matches);
+        # post-fix it wraps to a single id and counts as one retrieval.
+        _event("search", ts=_utc(2026, 4, 3), returned=m.id),
+        # A genuinely valid retrieval that must survive the malformed ones.
+        _event("search", ts=_utc(2026, 4, 4), returned=[m.id]),
+    ]
+    # Must not raise, and must return a populated report.
+    report = compute_health([m], events, window_days=30, now=_utc(2026, 5, 1))
+    assert report.total_active_memories == 1
+    # The bare-string search (wrapped) plus the list-valued search both
+    # counted — exactly two retrievals, no per-character mis-attribution
+    # and no applied recorded from the numeric use event.
+    assert len(report.dead_weight) == 1
+    assert report.dead_weight[0].id == m.id
+    assert report.dead_weight[0].retrieval_count == 2
+    assert report.dead_weight[0].applied_count == 0
+
+    # curation_counts walks its own event loop (sites 3/4) — it must
+    # survive the same malformed events and classify the memory as dead.
+    counts = curation_counts([m], events, window_days=30, now=_utc(2026, 5, 1))
+    assert counts["dead"] == 1

@@ -1,6 +1,6 @@
 [project]
 name = "bettermemory"
-version = "3.14.0"
+version = "3.14.1"
 description = "Memory you can verify — MCP-native memory for AI coding agents, with per-hit staleness verdicts and claim-level audit trails. Local-first, MIT, no cloud."
 readme = "README.md"
 requires-python = ">=3.11"
@@ -130,14 +130,39 @@ module = [
     "sentence_transformers.*",
     "fastembed",
     "fastembed.*",
-    "numpy",
-    "numpy.*",
     "httpx",
     "anthropic",
     "openai",
     "mem0",
     "mem0.*",
 ]
+ignore_missing_imports = true
+
+[[tool.mypy.overrides]]
+# numpy gets its OWN block (not the shared list above) because
+# `ignore_missing_imports` alone does not help once numpy is actually
+# installed — with the `embeddings` extra present, mypy *follows* the
+# import and parses numpy 2.x's `__init__.pyi`, which uses the 3.12-only
+# `type` statement. Under `python_version = "3.11"` (which MUST stay at
+# the project minimum so 3.11-incompatible syntax in our own code keeps
+# getting flagged) that is a hard parse error, mypy prints "errors
+# prevented further checking", and it silently type-checks NOTHING.
+# `follow_imports = "skip"` makes mypy treat numpy as `Any` without ever
+# opening its stubs, so the run completes and actually checks the
+# bettermemory package in a numpy-present env. CI's mypy job installs
+# only dev+ui (no numpy) so it never hit this — but a local
+# `uv sync --extra embeddings` did.
+module = [
+    "numpy",
+    "numpy.*",
+]
+follow_imports = "skip"
+# `follow_imports` is IGNORED for stub (`.pyi`) files by default, and numpy
+# ships its types as bundled `.pyi` — so without this, mypy still opens
+# numpy's `__init__.pyi` and aborts on its 3.12-only `type` statement.
+# Setting this makes `follow_imports = "skip"` apply to the stubs too, so
+# mypy treats numpy as `Any` without ever parsing them.
+follow_imports_for_stubs = true
 ignore_missing_imports = true
 
 [tool.pyright]

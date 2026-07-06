@@ -92,7 +92,7 @@ from .health import (
     _is_dead_weight,
     _scope_typo_neighbor,
 )
-from .models import Category, Memory, snippet_for
+from .models import Category, Memory, Source, snippet_for
 from .search import _pairwise_content_jaccard, _raw_content_token_set
 from .semantic import cached_embed, cosine_similarity_normalized
 from .store import Store
@@ -2128,6 +2128,11 @@ def _apply_llm_proposal(
             content=body_with_provenance,
             scopes=[proposal.scope],
             category=new_category,
+            # Machine-distilled from a transcript turn, not something the
+            # user explicitly stated — mirror the accept-proposal path
+            # (handlers/proposals.py, ingest.py) and stamp INFERRED so the
+            # provenance distinction between said and inferred survives.
+            source=Source.INFERRED,
         )
         actions.append(
             LLMProposalAction(

@@ -2119,3 +2119,162 @@ def test_audit_turn_docstring_limitation_reflects_stop_hook_bridge() -> None:
         "anchor's latest-any fallback, so the entry has to identify "
         "where the bridge resolution lives."
     )
+
+
+async def test_reaudit_dedup_sees_history_beyond_the_probe_window(
+    server_with_events: tuple[Any, Path, SessionState],
+) -> None:
+    """F7 regression: the re-audit dedup must see history across the full
+    `REAUDIT_DEDUP_WINDOW_SECONDS` (3600s), not just the narrow probe
+    `window` (60s default).
+
+    The handler feeds ONE `recent` list to two consumers with different
+    horizons: `probe_for_miss` clamps to `lookback_seconds=window`
+    internally, while `is_duplicate_audit` dedups over 3600s. Reading the
+    event window at the narrow probe `window` starved the dedup: a prior
+    `turn_audited` older than 60s but inside the 3600s dedup horizon,
+    sitting in a rotated segment, fell off the read (`iter_events_window`
+    prepends the newest archive only when the active log's oldest event
+    is younger than `now - window`), so the dedup missed it and a
+    DUPLICATE `search_miss` was emitted -- inflating the miss numerator.
+
+    Construct exactly that shape: a stale `turn_audited` (~1000s old,
+    matching session + redacted query hash) in a hand-built rotated
+    archive, and an active log whose oldest event is ~100s old -- older
+    than the 60s probe window (so the narrow read never reaches the
+    archive) but well inside the 3600s dedup window (so the widened read
+    does). A genuine size-triggered rotation can't reproduce this: its
+    events all land at ~now, so the active log's oldest event would be
+    younger than `now - 60s` and the narrow read would reach the archive
+    anyway -- the controlled-timestamp hand-built archive is required.
+
+    The memory is written via `Store.write` (which emits no event) and
+    backdated, so the hand-placed filler is the oldest active-log entry
+    and the probe still scores a genuine `miss`. Post-fix the dedup sees
+    the stale audit, records `repeat=True`, and suppresses the companion
+    `search_miss`.
+    """
+    import gzip
+
+    from bettermemory.events import EVENT_LOG_FILENAME, redact_query
+
+    server, memory_dir, state = server_with_events
+
+    # Write via Store (no `write` event) so the hand-placed filler below
+    # is the oldest ACTIVE-log entry -- the memory_write TOOL would log a
+    # fresh event at ~now, making the active log cover the 60s window and
+    # masking the bug.
+    written = Store(memory_dir).write(
+        content="backup strategy uses triangular restic replication",
+        scopes=["infrastructure"],
+    )
+    _backdate_created(memory_dir, written.id)
+
+    user_query = "backup strategy"
+    now = datetime.now(timezone.utc)
+
+    # Stale prior audit of the SAME (session, message): ~1000s old, past
+    # the 60s probe window, inside the 3600s dedup window. Lives in a
+    # rotated archive -- `iter_events_window` reaches it only when the
+    # requested window predates the active log's oldest event. Store the
+    # redacted `probe_query` dict shape (`log_queries_verbatim` defaults
+    # off) so `is_duplicate_audit` matches on the hash.
+    stale_audit = {
+        "ts": (now - timedelta(seconds=1000)).isoformat().replace("+00:00", "Z"),
+        "session": state.session_id,
+        "kind": "turn_audited",
+        "verdict": "miss",
+        "probe_query": redact_query(user_query),
+    }
+    archive = memory_dir / ".events-20260706120000.jsonl.gz"
+    with gzip.open(archive, "wt", encoding="utf-8") as gz:
+        gz.write(json.dumps(stale_audit) + "\n")
+
+    # Active-log filler ~100s old: older than the 60s probe window (so a
+    # narrow read stops at the active log and never prepends the archive)
+    # but far inside the 3600s dedup window. `write` is not a retrieval
+    # kind, so it never shields the verdict or self-dedups.
+    filler = {
+        "ts": (now - timedelta(seconds=100)).isoformat().replace("+00:00", "Z"),
+        "session": state.session_id,
+        "kind": "write",
+        "id": written.id,
+    }
+    with (memory_dir / EVENT_LOG_FILENAME).open("ab") as f:
+        f.write((json.dumps(filler) + "\n").encode("utf-8"))
+
+    report = await _call(server, "memory_audit_turn", user_message=user_query)
+    # The turn is a genuine miss -- the dedup, not the verdict, is what
+    # must suppress the duplicate event.
+    assert report["verdict"] == "miss"
+
+    # `_events` reads the ACTIVE log only, so the archived stale audit is
+    # invisible here -- the assertions below count only newly-written
+    # active-log events.
+    miss_events = [e for e in _events(memory_dir) if e["kind"] == "search_miss"]
+    assert miss_events == [], (
+        "re-audit dedup missed the >probe-window-old prior turn_audited: a "
+        "duplicate search_miss was emitted, inflating the miss numerator"
+    )
+    audited = [e for e in _events(memory_dir) if e["kind"] == "turn_audited"]
+    assert len(audited) == 1
+    assert audited[0].get("repeat") is True
+
+
+async def test_audit_turn_endorsement_tally_uses_production_window(
+    memory_dir: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """F7 regression: the endorsement tally in the in-process audit probe must
+    be counted over the SAME window production search uses
+    (`ATTRIBUTION_LOOKBACK_SECONDS`, 600s) — NOT the dedup-widened read
+    (`max(window, REAUDIT_DEDUP_WINDOW_SECONDS)`, 3600s).
+
+    `_explicit_applied_counts` applies no cutoff of its own, and
+    `iter_events_window` differs between the two windows only in whether it
+    prepends the newest rotated archive (it does when the active log's oldest
+    event is younger than `now - window`). So feeding the tally the 3600s read
+    counts applies from an archive that production's 600s ranker would not have
+    prepended — an endorsement nudge the model's real retrieval never applied,
+    which can flip a near-tie top-1 into a false `search_miss`.
+
+    Assert the handler issues a `iter_events_window` read at the 600s
+    attribution window when `endorsement_boost` is on (pre-fix it reused the
+    3600s `recent` list and never read the narrower window)."""
+    import bettermemory.handlers.audit_turn as audit_mod
+    from bettermemory.audit import (
+        ATTRIBUTION_LOOKBACK_SECONDS,
+        REAUDIT_DEDUP_WINDOW_SECONDS,
+    )
+    from bettermemory.config import BehaviorConfig
+    from bettermemory.events import iter_events_window as real_iew
+
+    windows: list[int] = []
+
+    def spy(root: Any, window_seconds: int, **kw: Any) -> Any:
+        windows.append(window_seconds)
+        return real_iew(root, window_seconds, **kw)
+
+    monkeypatch.setattr(audit_mod, "iter_events_window", spy)
+
+    cfg = Config(
+        storage=StorageConfig(directory=str(memory_dir)),
+        behavior=BehaviorConfig(endorsement_boost=True),
+    )
+    state = SessionState()
+    rec = Recorder(root=memory_dir, session_id=state.session_id, enabled=True)
+    server = build_server(
+        config=cfg, store=Store(memory_dir), state=state, recorder=rec
+    )
+    written = Store(memory_dir).write(
+        content="backup strategy uses triangular restic replication",
+        scopes=["infrastructure"],
+    )
+    rec.record("use", ids=[written.id], outcome="applied", auto=False)
+
+    await _call(server, "memory_audit_turn", user_message="backup strategy")
+
+    # The dedup still reads the full 3600s window...
+    assert REAUDIT_DEDUP_WINDOW_SECONDS in windows
+    # ...but the endorsement tally is scoped to production's 600s window,
+    # so the audit ranker matches what the model's retrieval actually saw.
+    assert ATTRIBUTION_LOOKBACK_SECONDS in windows

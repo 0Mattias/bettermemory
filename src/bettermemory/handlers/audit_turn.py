@@ -15,6 +15,7 @@ from typing import TYPE_CHECKING, Any
 
 from ..audit import (
     DEFAULT_LOOKBACK_SECONDS,
+    REAUDIT_DEDUP_WINDOW_SECONDS,
     is_duplicate_audit,
     probe_for_miss,
     search_miss_fields,
@@ -139,7 +140,27 @@ async def memory_audit_turn(
     # newest rotated segment when the active log doesn't cover the
     # clamped lookback window.
     memories = deps.store.load_all()
-    recent = list(iter_events_window(deps.store.root, window))
+    # Read the WIDE dedup window, not the narrow probe `window`. Two
+    # consumers walk `recent` with different horizons: `probe_for_miss`
+    # applies its own `lookback_seconds=window` cutoff internally
+    # (via `_count_recent_retrievals`), and `is_duplicate_audit`
+    # applies `REAUDIT_DEDUP_WINDOW_SECONDS` (3600s). Clamping the read
+    # to the 60s probe window meant a prior `turn_audited` older than
+    # `window` but inside the dedup horizon fell off the read across a
+    # log rotation — the dedup missed it and a duplicate `search_miss`
+    # inflated the miss numerator. Read `max(...)` so the dedup sees its
+    # full history. The two time-scoped consumers of `recent` re-derive
+    # their own narrower cutoff internally — `_count_recent_retrievals`
+    # (via `probe_for_miss`, `lookback_seconds=window`) and
+    # `is_duplicate_audit` (`REAUDIT_DEDUP_WINDOW_SECONDS`) — so widening
+    # the read can't leak stale events into them. The endorsement tally is
+    # the exception: `_explicit_applied_counts` applies NO cutoff of its
+    # own, so it is fed a separately-scoped read below, NOT this list.
+    # Mirrors the Stop hook (`hook.run_audit`), which reads
+    # `REAUDIT_DEDUP_WINDOW_SECONDS`.
+    recent = list(
+        iter_events_window(deps.store.root, max(window, REAUDIT_DEDUP_WINDOW_SECONDS))
+    )
 
     current_origin = _h.capture_origin()
     # Probe uses the same search mode the model would have used —
@@ -158,14 +179,25 @@ async def memory_audit_turn(
     semantic_model: Any | None = None
     if probe_mode in ("semantic", "hybrid"):
         semantic_model = deps._semantic_model_factory(deps.config)
-    # Endorsement nudge: same opt-in tally the search handler feeds the
-    # ranker, computed from the already-loaded event list (no extra
-    # I/O). Stays None when the flag is off — ranker neutral.
+    # Endorsement nudge: same opt-in tally the production search handler
+    # feeds the ranker. It MUST be counted over the same horizon production
+    # uses — `ATTRIBUTION_LOOKBACK_SECONDS` (handlers/search.py) — not the
+    # dedup-widened `recent` above. `_explicit_applied_counts` applies no
+    # cutoff, so feeding it the 3600s read would count applies from up to an
+    # hour ago that production's 600s ranker never saw, letting the audit
+    # probe nudge a near-tie top-1 to "high" and flip a false `search_miss`.
+    # Read a separately-scoped window so the audit ranker matches production.
     applied_by_id: dict[str, int] | None = None
     if deps.config.behavior.endorsement_boost and memories:
+        from ..audit import ATTRIBUTION_LOOKBACK_SECONDS
         from .search import _explicit_applied_counts
 
-        applied_by_id = _explicit_applied_counts(recent, {m.id for m in memories})
+        endorsement_events = list(
+            iter_events_window(deps.store.root, ATTRIBUTION_LOOKBACK_SECONDS)
+        )
+        applied_by_id = _explicit_applied_counts(
+            endorsement_events, {m.id for m in memories}
+        )
     report = probe_for_miss(
         memories,
         user_message,

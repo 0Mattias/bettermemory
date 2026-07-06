@@ -380,3 +380,94 @@ def test_dumps_accepts_largest_legitimate_frontmatter() -> None:
     out = dumps(Post(content="body text", metadata=metadata))
     # And it must still round-trip through `loads`.
     assert loads(out).metadata["id"] == "01HXYZ123ABC"
+
+
+def test_dumps_rejects_when_total_file_exceeds_read_cap() -> None:
+    """Total-file cap mirrors `load`'s `_MAX_FILE_BYTES` read guard.
+
+    `dumps` caps the frontmatter REGION at `_MAX_YAML_BYTES` (64 KiB), but
+    `load` (via `bounded_read`) rejects the WHOLE file against the larger
+    `_MAX_FILE_BYTES` (1 MiB). A legal-sized frontmatter plus a body near the
+    handler-boundary `max_content_bytes` cap (default 1 MB) can serialize to a
+    file over the read cap — whereupon the store's malformed-file skip
+    silently drops the record from every read surface while the write reported
+    committed. `dumps` must reject the oversized TOTAL up front, turning that
+    silent permanent data loss into a clean ValueError.
+    """
+    from bettermemory._frontmatter import (
+        _MAX_FILE_BYTES,
+        _MAX_WRITE_BYTES,
+        _MAX_YAML_BYTES,
+    )
+
+    # A fully-legal frontmatter (well under the 64 KiB YAML region cap) plus a
+    # body that pushes the serialized total past the 1 MiB file cap — exactly
+    # the shape a 1 MB body + a successful memory_verify attaching valid paths
+    # produces. The YAML region here is ~2 KB, so the region cap does NOT fire;
+    # only the new total-file guard can catch this.
+    metadata = {
+        "id": "01HXYZ123ABC",
+        "verified_paths": [f"/path/to/file{i}.py" for i in range(50)],
+    }
+    body = "x" * _MAX_FILE_BYTES  # body alone already == the file cap
+    huge = Post(content=body, metadata=metadata)
+
+    with pytest.raises(ValueError, match="exceeds .*byte cap") as excinfo:
+        dumps(huge)
+    # It must be the TOTAL-file guard that fires, not the YAML-region guard:
+    # the frontmatter region is only a couple of KB, far under _MAX_YAML_BYTES.
+    # Content-admitting writes cap at the headroom-reserved `_MAX_WRITE_BYTES`.
+    msg = str(excinfo.value)
+    assert "file" in msg
+    assert str(_MAX_WRITE_BYTES) in msg
+    assert str(_MAX_YAML_BYTES) not in msg
+
+    # Symmetry / headroom: a Post whose total serialization sits well under the
+    # write cap still dumps and round-trips cleanly — the guard rejects only
+    # genuinely over-cap files, not merely-large ones.
+    small_body = "y" * (_MAX_WRITE_BYTES // 2)
+    ok = Post(content=small_body, metadata={"id": "01HXYZ123ABC"})
+    out = dumps(ok)
+    assert len(out.encode("utf-8")) <= _MAX_WRITE_BYTES
+    assert loads(out).content == small_body
+
+
+def test_dumps_reserves_maintenance_headroom_for_lifecycle_redumps() -> None:
+    """A record accepted at write time must remain tombstoneable/renameable.
+
+    The default `dumps` cap is `_MAX_WRITE_BYTES` (the read cap minus a
+    maintenance-headroom reserve) so that appending removal metadata
+    (`removed` / `removed_reason` / `removed_session`) during tombstone —
+    or swapping a longer scope during rename — can grow the file up to the
+    full `_MAX_FILE_BYTES` and still be accepted. Without the reserve, a
+    record written right up to the read cap became un-removable: the
+    tombstone re-dump crossed the cap and the write-side guard rejected it.
+
+    A file serialized into the reserved band (> `_MAX_WRITE_BYTES`,
+    <= `_MAX_FILE_BYTES`) is rejected by the default (content-admitting)
+    path but accepted by the lifecycle path that passes the full read cap.
+    """
+    from bettermemory._frontmatter import (
+        _MAINTENANCE_HEADROOM_BYTES,
+        _MAX_FILE_BYTES,
+        _MAX_WRITE_BYTES,
+    )
+
+    # Body sized so the serialized total lands inside the reserved band:
+    # a couple hundred bytes above _MAX_WRITE_BYTES, comfortably below the
+    # read cap and below the headroom reserve.
+    overhead = 512
+    body = "z" * (_MAX_WRITE_BYTES + overhead)
+    post = Post(content=body, metadata={"id": "01HXYZ123ABC"})
+    total = len(dumps(post, max_file_bytes=_MAX_FILE_BYTES).encode("utf-8"))
+    assert _MAX_WRITE_BYTES < total <= _MAX_FILE_BYTES
+    assert total <= _MAX_WRITE_BYTES + _MAINTENANCE_HEADROOM_BYTES
+
+    # Default (content-admitting) cap rejects it...
+    with pytest.raises(ValueError, match="exceeds .*byte cap"):
+        dumps(post)
+
+    # ...but the lifecycle re-dump path (full read cap) accepts it and it
+    # round-trips, so a near-cap record can always be tombstoned/renamed.
+    out = dumps(post, max_file_bytes=_MAX_FILE_BYTES)
+    assert loads(out).content == body

@@ -126,3 +126,64 @@ async def test_episode_handoff_valid_explicit_prior_session_id_still_reads(
     assert res["prior_session_id"] == a_session_id
     assert len(res["episodes"]) == 1
     assert res["episodes"][0]["takeaway"] == "from A"
+
+
+async def test_episode_handoff_floor_only_note_is_not_a_bare_crash_claim(
+    memory_dir: Path,
+) -> None:
+    """A clean read-only /loop tick (episode_handoff at entry, no
+    episode_write at exit) leaves the SAME floor-only shape on disk as a
+    genuine crash, because the session-tag floor is written
+    UNCONDITIONALLY at handoff entry. The adopted-prior note must NOT
+    assert unconditionally that the prior session *crashed* — it must
+    acknowledge the benign read-only-tick reading too.
+
+    Pre-fix the note was the bare sentence "Prior session crashed before
+    writing a takeaway. ... but no episode_write was issued before the
+    crash." — a misleading definitive claim for the clean-tick case.
+    Post-fix the note acknowledges both readings (crash OR read-only
+    tick) while still mentioning 'crashed' as one possibility.
+    """
+    cfg = Config(storage=StorageConfig(directory=str(memory_dir)))
+
+    # Tick T: a fresh session runs episode_handoff (writes the entry
+    # floor) and then ends WITHOUT calling episode_write. This is a
+    # clean read-only tick, not a crash — but on disk it is
+    # indistinguishable from one.
+    server_t = build_server(config=cfg, store=Store(memory_dir), state=SessionState())
+    await _call(server_t, "episode_handoff")
+
+    # Tick T+1: a fresh session in the same (test) worktree resolves the
+    # floor-only prior session and surfaces the marker note.
+    server_t_plus_1 = build_server(
+        config=cfg, store=Store(memory_dir), state=SessionState()
+    )
+    res = await _call(server_t_plus_1, "episode_handoff")
+
+    # The floor-only prior session IS adopted (T anchored its worktree
+    # on disk via the floor) and no takeaway bodies are emitted.
+    assert res["prior_session_id"] is not None
+    assert res["episodes"] == []
+    # The marker note fires for the floor-only adoption.
+    assert "note" in res, (
+        f"floor-only prior session should surface a marker note; got: {res!r}"
+    )
+    note = res["note"]
+
+    # The note must NOT be a bare, unconditional crash claim. The
+    # clean read-only-tick reading has to be acknowledged. The old
+    # (buggy) note began with this exact sentence and never mentioned a
+    # read-only tick.
+    assert not note.startswith("Prior session crashed before writing a takeaway."), (
+        f"note must not assert a bare crash for the ambiguous floor-only "
+        f"shape; got: {note!r}"
+    )
+    assert "read-only tick" in note, (
+        f"note must acknowledge the benign read-only-tick reading; got: {note!r}"
+    )
+    # 'crashed' is still an acknowledged possibility, just no longer the
+    # sole framing — this keeps the shape informative and keeps the
+    # existing crash-recovery assertions in test_server.py green.
+    assert "crash" in note.lower(), (
+        f"note should still name crash as one possible reading; got: {note!r}"
+    )

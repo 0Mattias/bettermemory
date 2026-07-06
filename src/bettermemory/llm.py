@@ -461,7 +461,12 @@ class AnthropicProvider:
                 "api_key=... explicitly."
             )
 
-        client = anthropic.Anthropic(api_key=key)
+        # `max_retries=0` disables the SDK's default 2 automatic retries.
+        # `APITimeoutError` is retryable, so with the default the blocking
+        # `create()` below could stack up to 3x `DEFAULT_TIMEOUT` against a
+        # hung provider — this keeps the `timeout=` bound a single-shot
+        # wall-clock deadline, matching the Ollama path's single HTTP call.
+        client = anthropic.Anthropic(api_key=key, max_retries=0)
         prompt = build_prompt(cluster, today=today)
         msg = client.messages.create(
             model=self.model,
@@ -519,7 +524,9 @@ class OpenAIProvider:
                 "api_key=... explicitly."
             )
 
-        client = openai.OpenAI(api_key=key)
+        # `max_retries=0` disables the SDK's default 2 automatic retries; see
+        # the Anthropic branch above for why the timeout bound needs this.
+        client = openai.OpenAI(api_key=key, max_retries=0)
         prompt = build_prompt(cluster, today=today)
         response = client.chat.completions.create(
             model=self.model,

@@ -87,6 +87,22 @@ from .time_utils import (
 _ENDORSEMENT_GRACE_DAYS = 2
 
 
+def _event_id_list(value: Any) -> list[str]:
+    """Normalize an event's id-list field (`returned` / `memory_ids` /
+    `hit_ids` / `ids`) to a list before iteration. A well-formed dict
+    event that carries a scalar where a list is expected must not take
+    down the whole health rollup: a numeric scalar would raise
+    `TypeError` under `for mid in <scalar>`, and a bare string would
+    iterate by CHARACTER (mis-attributing per-char retrieval/apply
+    counts). A lone non-empty string is treated as a single id; every
+    other non-list (int, float, None, dict, …) coerces to empty."""
+    if isinstance(value, list):
+        return value
+    if isinstance(value, str) and value:
+        return [value]
+    return []
+
+
 def _freshest_touch_ts(
     created: datetime, updated: datetime, last_verified_at: datetime | None
 ) -> float:
@@ -1121,8 +1137,8 @@ class _StatsAccumulator:
         # _response) — keeps the health rollups consistent if an
         # event carries the older `memory_ids` / `hit_ids` spelling.
         ts = _ensure_utc(parse_event_ts(ev.get("ts")))
-        for mid in (
-            ev.get("returned") or ev.get("memory_ids") or ev.get("hit_ids") or []
+        for mid in _event_id_list(
+            ev.get("returned") or ev.get("memory_ids") or ev.get("hit_ids")
         ):
             stats = self._by_id.get(mid)
             if stats:
@@ -1140,7 +1156,7 @@ class _StatsAccumulator:
     def _handle_use(self, ev: dict[str, Any]) -> None:
         outcome = ev.get("outcome")
         ts = _ensure_utc(parse_event_ts(ev.get("ts")))
-        for mid in ev.get("ids") or ev.get("memory_ids") or []:
+        for mid in _event_id_list(ev.get("ids") or ev.get("memory_ids")):
             stats = self._by_id.get(mid)
             if stats is None:
                 # Memory may have been tombstoned after the use was
@@ -2572,8 +2588,8 @@ def curation_counts(
         if kind == "search":
             # Legacy-name fallback — see the note in `compute_health`.
             search_ts = _ensure_utc(_parse_event_ts(ev.get("ts")))
-            for mid in (
-                ev.get("returned") or ev.get("memory_ids") or ev.get("hit_ids") or []
+            for mid in _event_id_list(
+                ev.get("returned") or ev.get("memory_ids") or ev.get("hit_ids")
             ):
                 if mid in retrieval_counts:
                     retrieval_counts[mid] += 1
@@ -2583,7 +2599,7 @@ def curation_counts(
                             earliest_retrieval[mid] = search_ts
         elif kind == "use" and ev.get("outcome") == "applied":
             is_auto = ev.get("auto") is True
-            for mid in ev.get("ids") or ev.get("memory_ids") or []:
+            for mid in _event_id_list(ev.get("ids") or ev.get("memory_ids")):
                 if mid in applied_counts:
                     applied_counts[mid] += 1
                     if not is_auto and mid in explicit_applied_counts:
@@ -2591,7 +2607,7 @@ def curation_counts(
         elif kind == "use" and ev.get("outcome") == "contradicted":
             use_ts = _ensure_utc(_parse_event_ts(ev.get("ts")))
             if use_ts is not None:
-                for mid in ev.get("ids") or ev.get("memory_ids") or []:
+                for mid in _event_id_list(ev.get("ids") or ev.get("memory_ids")):
                     if mid in retrieval_counts:
                         prev = last_contradicted.get(mid)
                         if prev is None or use_ts > prev:

@@ -28,7 +28,7 @@ from typing import Iterator
 from . import _frontmatter as frontmatter
 from .models import SCHEMA_VERSION
 from .origin import Origin, capture
-from .store import TOMBSTONE_DIR, _atomic_write_post, _locked
+from .store import TOMBSTONE_DIR, _atomic_write_post, _load_str_list, _locked
 
 log = logging.getLogger("bettermemory.migrate")
 
@@ -224,7 +224,16 @@ def migrate_origin_in_directory(
             # insertion order, which is the order the caller passed flags.
             chosen: dict[str, object] | None = None
             if mapped_payloads:
-                memory_scopes = post.metadata.get("scopes") or []
+                # Coerce with the same helper the store readers use: a
+                # hand-edited or malformed file can carry `scopes` as a
+                # scalar (`scopes: 5`) rather than a list, and the bare
+                # `... or []` below would leave the scalar in place — the
+                # membership test `scope in <scalar>` then raises
+                # TypeError. This block is *outside* the per-file
+                # try/except above, so that TypeError would abort the
+                # whole loop and every file after the bad one would go
+                # unmigrated. Normalize a non-list to [] (store.py).
+                memory_scopes = _load_str_list(post.metadata.get("scopes"))
                 for scope, payload in mapped_payloads.items():
                     if scope in memory_scopes:
                         chosen = payload

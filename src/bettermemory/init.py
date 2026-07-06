@@ -308,24 +308,6 @@ def patch_client_config(
             f"expected `{{...}}`."
         )
 
-    # MERGE the canonical keys into any existing entry rather than replacing
-    # it wholesale. A user may have added keys to their bettermemory entry —
-    # notably `env` (BETTERMEMORY_DIR relocates the whole store), but also
-    # `disabled`, `timeout`, or transport overrides. Re-running init after an
-    # upgrade (exactly when the docstring says migration runs) must NOT silently
-    # drop them; clobbering `env.BETTERMEMORY_DIR` makes the server boot against
-    # the default dir and the user's store looks empty/gone from that client.
-    # We own only type/command/args; everything else the user set is preserved,
-    # and `env` defaults to {} only when absent.
-    existing_entry = mcp_servers.get(name)
-    new_entry: dict[str, Any] = (
-        dict(existing_entry) if isinstance(existing_entry, dict) else {}
-    )
-    new_entry["type"] = "stdio"
-    new_entry["command"] = binary
-    new_entry["args"] = []
-    new_entry.setdefault("env", {})
-
     # Legacy-name migration: only when writing under the new default
     # name. A user who explicitly passes `--name memory` (or some other
     # string) has opinions; don't second-guess. The match is on `command`
@@ -336,6 +318,32 @@ def patch_client_config(
         and isinstance(mcp_servers[LEGACY_SERVER_NAME], dict)
         and mcp_servers[LEGACY_SERVER_NAME].get("command") == binary
     )
+
+    # MERGE the canonical keys into any existing entry rather than replacing
+    # it wholesale. A user may have added keys to their bettermemory entry —
+    # notably `env` (BETTERMEMORY_DIR relocates the whole store), but also
+    # `disabled`, `timeout`, or transport overrides. Re-running init after an
+    # upgrade (exactly when the docstring says migration runs) must NOT silently
+    # drop them; clobbering `env.BETTERMEMORY_DIR` makes the server boot against
+    # the default dir and the user's store looks empty/gone from that client.
+    # We own only type/command/args; everything else the user set is preserved,
+    # and `env` defaults to {} only when absent.
+    #
+    # On the RENAME path the user's keys live under LEGACY_SERVER_NAME, not
+    # `name` — so when there's no entry under the new name yet but a legacy
+    # entry is being migrated, seed from the legacy entry so its env/disabled/
+    # timeout/transport keys carry forward before the old entry is deleted.
+    # Otherwise a user who relocated their store via env.BETTERMEMORY_DIR would
+    # boot against the default dir post-migration and their store looks gone.
+    existing_entry = mcp_servers.get(name)
+    seed_entry = existing_entry
+    if not isinstance(seed_entry, dict) and legacy_present:
+        seed_entry = mcp_servers[LEGACY_SERVER_NAME]
+    new_entry: dict[str, Any] = dict(seed_entry) if isinstance(seed_entry, dict) else {}
+    new_entry["type"] = "stdio"
+    new_entry["command"] = binary
+    new_entry["args"] = []
+    new_entry.setdefault("env", {})
 
     # Idempotency check: same name, same shape, no legacy to migrate →
     # no rewrite needed.

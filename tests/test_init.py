@@ -672,3 +672,50 @@ def test_init_via_cli_exits_clean_on_unwritable_config_path(
     err = capsys.readouterr().err
     assert "error:" in err
     assert "Traceback (most recent call last)" not in err
+
+
+def test_patch_migration_carries_forward_user_keys_on_legacy_entry(
+    tmp_path: Path,
+) -> None:
+    """Regression: the legacy `memory` → `bettermemory` rename must carry
+    forward the user's keys that live on the LEGACY entry — most critically
+    `env.BETTERMEMORY_DIR` (which relocates the whole store), but also
+    `disabled`, `timeout`, and transport overrides. The pre-fix code seeded
+    the new entry from `mcp_servers.get(name)`, which is None on the rename
+    path (the config only has the entry under `memory`), so those keys were
+    silently dropped when the legacy entry was deleted — a user who relocated
+    their store then booted against the default dir and their store looked
+    gone."""
+    target = tmp_path / "config.json"
+    target.write_text(
+        json.dumps(
+            {
+                "mcpServers": {
+                    LEGACY_SERVER_NAME: {
+                        "type": "stdio",
+                        "command": "/x/bm",
+                        "args": [],
+                        "env": {"BETTERMEMORY_DIR": "/custom/store"},
+                        "disabled": True,
+                        "timeout": 90,
+                    },
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+    result = patch_client_config(target, binary="/x/bm")
+    assert result["action"] == "added"
+    assert result["migrated_from_legacy"] is True
+    body = json.loads(target.read_text(encoding="utf-8"))
+    # Legacy entry gone…
+    assert LEGACY_SERVER_NAME not in body["mcpServers"]
+    entry = body["mcpServers"][DEFAULT_SERVER_NAME]
+    # …canonical keys owned by us reflect the current binary…
+    assert entry["command"] == "/x/bm"
+    assert entry["type"] == "stdio"
+    assert entry["args"] == []
+    # …and the user's customizations survived the rename.
+    assert entry["env"] == {"BETTERMEMORY_DIR": "/custom/store"}
+    assert entry["disabled"] is True
+    assert entry["timeout"] == 90

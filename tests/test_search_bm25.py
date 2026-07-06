@@ -418,3 +418,114 @@ def test_bm25_unknown_term_in_query_zero_contribution_but_others_still_score() -
     assert score > 0
     assert "python" in matched
     assert "qzzzzx" not in matched
+
+
+def test_bm25_hyphenated_stopword_component_query_matches_spaced_body() -> None:
+    """F9 regression: a hyphenated query whose components include a stopword
+    ('end-to-end' -> ['end', 'to', 'end']) must still match a body that spells
+    the phrase spaced ('end to end') in mode='bm25'. The conjunctive kebab
+    fallback counts components off the stopword-STRIPPED body stream, where
+    'to' has count 0 -> min(component_hits) was 0 -> silent zero recall in
+    bm25 only (keyword/hybrid keep stopwords and were fine). Ranging the
+    conjunction over the NON-stopword parts fixes it while preserving the
+    'python-frontmatter' must-not-match-plain-'python' precision guard.
+    """
+    now = datetime.now(timezone.utc)
+    # Body spells the phrase SPACED, so the query compound 'end-to-end' has
+    # no direct hit and must go through the conjunctive fallback.
+    focal = _memory("The end to end pipeline runs nightly and gates deploys")
+    other = _memory("unrelated content here about widgets and gadgets")
+    corpus = [focal, other]
+
+    for mode in ("bm25", "keyword", "hybrid"):
+        hits = search(corpus, "end-to-end", mode=mode, now=now)
+        assert any(h.id == focal.id for h in hits), (
+            f"mode={mode} failed to match spaced body for hyphenated query"
+        )
+
+    # Precision guard intact: 'python-frontmatter' (no stopword component)
+    # must still NOT match a body of plain 'python'.
+    guard_focal = _memory("python code and notes about scripting")
+    guard_other = _memory("totally different subject matter entirely")
+    guard_hits = search(
+        [guard_focal, guard_other], "python-frontmatter", mode="bm25", now=now
+    )
+    assert not any(h.id == guard_focal.id for h in guard_hits)
+
+
+def test_find_similar_flags_short_restatement_contained_in_long_body() -> None:
+    """F14 regression: a short (~10-token) near-verbatim restatement of the
+    first sentence of a long (~48-token) memory scores ~0.18 Jaccard, below
+    the 0.40 'related' floor (the long body dominates the union), and used to
+    commit SILENTLY. The containment score |intersection|/min, gated on
+    large size asymmetry, now surfaces it as at-least-'related'.
+    """
+    from bettermemory.search import find_similar
+
+    first = (
+        "The deploy pipeline builds the Docker image tags it with the commit "
+        "SHA and pushes it to the registry before the staging rollout begins."
+    )
+    filler = " ".join(
+        [
+            "Afterwards the health checks poll the readiness endpoint until it "
+            "returns success or the timeout elapses and the rollout is aborted "
+            "with a notification to the on-call channel.",
+            "Rollback restores the previous image reference and re-runs the "
+            "smoke suite while the engineer inspects the dashboards for "
+            "elevated error rates across the fleet.",
+        ]
+        * 6
+    )
+    long_mem = _memory(first + " " + filler)
+    short_restatement = (
+        "The deploy pipeline builds the Docker image tagging it with the "
+        "commit SHA then pushes it to the registry."
+    )
+
+    hits = find_similar(short_restatement, [long_mem])
+    assert hits, "short restatement contained in a long body was not flagged"
+    assert hits[0].relevance in ("high", "medium")
+
+    # Guard against over-triggering: a distinct short memory that shares
+    # no content tokens with a long one must NOT be flagged.
+    distinct_short = "Prefers oat milk lattes from the corner shop near the office."
+    distinct_hits = find_similar(distinct_short, [long_mem])
+    assert not distinct_hits
+
+
+def test_find_similar_short_common_vocab_not_silently_dropped() -> None:
+    """F14 over-trigger guard: containment must never SILENTLY drop a write.
+
+    A short, topically-distinct fact whose few words all happen to appear in
+    a long unrelated memory used to reach containment ~1.0 -> 'high' -> the
+    ingest dedup gate's `skip_duplicate` (it blocks only on a 'high' active
+    hit). Two guards now prevent that: an absolute floor on the smaller token
+    set (so a 2-3 token fact never triggers containment at all) and a ceiling
+    that pins any containment-derived score into the 'related' band (so even a
+    fully-contained longer short memory surfaces as 'related', never 'high').
+    """
+    from bettermemory.search import find_similar
+
+    long_mem = _memory(
+        "Development environment notes for newcomers: python 3.12 is the "
+        "pinned interpreter, ruff handles both linting and formatting, mypy "
+        "runs in strict mode, and the pre-commit hook chains all three before "
+        "every commit lands."
+    )
+
+    # Below the smaller-set floor: a 2-3 content-token fact whose words all
+    # appear in the long body. Must NOT be flagged 'high' (would silently drop
+    # a distinct fact); in practice its raw Jaccard is below the 'related'
+    # floor too, so it is not flagged at all.
+    tiny_distinct = "Ruff handles linting."
+    tiny_hits = find_similar(tiny_distinct, [long_mem])
+    assert not [h for h in tiny_hits if h.relevance == "high"]
+
+    # Above the floor and fully contained: containment ~1.0 fires, but the
+    # ceiling keeps it 'related' (medium), never 'high'/block.
+    contained = "python ruff mypy linting formatting strict interpreter commit hook"
+    contained_hits = find_similar(contained, [long_mem])
+    assert contained_hits, "a fully-contained multi-token memory should flag"
+    assert all(h.relevance != "high" for h in contained_hits)
+    assert any(h.relevance == "medium" for h in contained_hits)
