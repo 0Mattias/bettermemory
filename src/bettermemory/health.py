@@ -1149,9 +1149,15 @@ class _StatsAccumulator:
                         self._earliest_retrieval_by_id[mid] = ts
 
     def _handle_show(self, ev: dict[str, Any]) -> None:
-        stats = self._by_id.get(ev.get("id", ""))
-        if stats:
-            stats.show_count += 1
+        # Guard the id exactly like `_handle_update` / `_handle_verify`:
+        # a non-str (e.g. an unhashable list/dict) id would raise out of
+        # `dict.get` and blank the whole rollup. Only a non-empty str can
+        # match a real memory anyway.
+        mid = ev.get("id", "")
+        if isinstance(mid, str) and mid:
+            stats = self._by_id.get(mid)
+            if stats:
+                stats.show_count += 1
 
     def _handle_use(self, ev: dict[str, Any]) -> None:
         outcome = ev.get("outcome")
@@ -1223,9 +1229,14 @@ class _StatsAccumulator:
             self._append_resolution(mid, "verify", ev.get("ts"), ev.get("note"))
 
     def _handle_write(self, ev: dict[str, Any]) -> None:
-        for marker in ev.get("markers", []) or []:
+        # Normalize through the shared id-list helper so a malformed
+        # event can't take down the rollup: a numeric scalar under
+        # `for marker in <scalar>` raises TypeError, and a bare string
+        # would shred into per-character marker rows. `_event_id_list`
+        # gives list-passthrough / lone-string -> [value] / else [].
+        for marker in _event_id_list(ev.get("markers")):
             self._marker_fires[marker] += 1
-        for marker in ev.get("markers_acknowledged", []) or []:
+        for marker in _event_id_list(ev.get("markers_acknowledged")):
             self._marker_overrides[marker] += 1
 
     def _handle_turn_audited(self, ev: dict[str, Any]) -> None:

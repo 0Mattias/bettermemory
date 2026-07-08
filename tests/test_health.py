@@ -3170,10 +3170,32 @@ def test_scalar_id_field_does_not_blank_health_rollup() -> None:
         _event("search", ts=_utc(2026, 4, 3), returned=m.id),
         # A genuinely valid retrieval that must survive the malformed ones.
         _event("search", ts=_utc(2026, 4, 4), returned=[m.id]),
+        # Numeric scalar in `markers` on a write event — pre-fix
+        # `for marker in <int>` raises TypeError and blanks the rollup;
+        # a bare string would shred into per-character marker rows.
+        _event("write", ts=_utc(2026, 4, 5), status="transient_warning", markers=99999),
+        # Bare-string scalar in `markers_acknowledged` — wraps to a
+        # single marker rather than iterating per-character.
+        _event(
+            "write",
+            ts=_utc(2026, 4, 6),
+            status="committed",
+            id=generate_ulid(),
+            markers_acknowledged="currently",
+        ),
+        # Unhashable (list) id on a show event — pre-fix this raises
+        # out of `dict.get(<list>)` and takes down the whole rollup.
+        _event("show", ts=_utc(2026, 4, 7), id=[m.id]),
     ]
     # Must not raise, and must return a populated report.
     report = compute_health([m], events, window_days=30, now=_utc(2026, 5, 1))
     assert report.total_active_memories == 1
+    # The numeric `markers` coerced to no fires; the lone-string
+    # `markers_acknowledged` wrapped to exactly one override row with no
+    # per-character shredding.
+    by_marker = {ms.marker: ms for ms in report.marker_stats}
+    assert by_marker["currently"].override_count == 1
+    assert all(len(name) > 1 for name in by_marker)
     # The bare-string search (wrapped) plus the list-valued search both
     # counted — exactly two retrievals, no per-character mis-attribution
     # and no applied recorded from the numeric use event.
