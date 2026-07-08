@@ -93,6 +93,7 @@ from .health import (
     _scope_typo_neighbor,
 )
 from .models import Category, Memory, Source, snippet_for
+from .origin import Origin
 from .search import _pairwise_content_jaccard, _raw_content_token_set
 from .semantic import cached_embed, cosine_similarity_normalized
 from .store import Store
@@ -1719,6 +1720,8 @@ def consolidate_llm(
     session_id: str | None = None,
     from_transcript: str | None = None,
     max_content_bytes: int | None = None,
+    allowed_scopes: list[str] | None = None,
+    origin: Origin | None = None,
 ) -> LLMConsolidateReport:
     """Run an LLM-driven consolidation pass.
 
@@ -1768,6 +1771,20 @@ def consolidate_llm(
     context, so guardrails that don't depend on a single-call view of
     the store have to fire here. None disables the size cap (used
     only by tests that exercise the apply path without a Config).
+
+    `allowed_scopes` mirrors the `[scopes] allowed` config knob the same
+    way — `memory_write` rejects an out-of-allowlist scope in
+    `_validate_write_payload`, but the propose_new write path never
+    routes through it, so the allowlist gate has to fire here too. An
+    empty/None list disables the check (matching `_validate_write_payload`,
+    which enforces only when the allowlist is non-empty).
+
+    `origin` is stamped onto every propose_new write so an LLM-distilled
+    memory carries the caller's repo/worktree context — without it the
+    write persists `origin=None`, which `origin.should_include_for_caller`
+    treats as global and surfaces in every scope and worktree. Threaded
+    from the CLI (which has the CWD context to `capture()` it); mirrors
+    the accept-proposal sibling (`handlers/proposals.py`, `ingest.py`).
     """
     from . import llm as _llm
 
@@ -1863,6 +1880,8 @@ def consolidate_llm(
                 session_id=session_id,
                 max_content_bytes=max_content_bytes,
                 semantic_model=semantic_model,
+                allowed_scopes=allowed_scopes,
+                origin=origin,
             )
             report.actions_taken.extend(actions)
         except Exception as exc:  # noqa: BLE001
@@ -1888,6 +1907,8 @@ def _apply_llm_proposal(
     session_id: str | None,
     max_content_bytes: int | None = None,
     semantic_model: Any | None = None,
+    allowed_scopes: list[str] | None = None,
+    origin: Origin | None = None,
 ) -> list[LLMProposalAction]:
     """Translate a validated `Proposal` into store-level mutations.
 
@@ -1897,12 +1918,18 @@ def _apply_llm_proposal(
     LLM is right here, and the surface area for "what can --llm
     actually do" is short enough to scan.
 
-    `max_content_bytes` and `semantic_model` gate the `propose_new`
-    branch's write — the LLM only saw a small cluster slice, so the
-    dedup / size / transient checks `memory_write` runs at the MCP
-    surface have to fire here too. Gate failures raise `RuntimeError`;
-    `consolidate_llm` catches it as one `LLMClusterFailure` and the
-    operator sees the rejection reason in the report.
+    `max_content_bytes`, `allowed_scopes`, and `semantic_model` gate the
+    `propose_new` branch's write — the LLM only saw a small cluster
+    slice, so the credential / size / scope-allowlist / transient /
+    dedup checks `memory_write` runs at the MCP surface have to fire
+    here too. Gate failures raise `RuntimeError`; `consolidate_llm`
+    catches it as one `LLMClusterFailure` and the operator sees the
+    rejection reason in the report.
+
+    `origin` is passed straight into the propose_new `store.write` so
+    the persisted memory carries the caller's repo/worktree context;
+    without it the write lands `origin=None` and leaks across scopes and
+    worktrees (see `origin.should_include_for_caller`).
     """
     from . import llm as _llm
 
@@ -2048,6 +2075,44 @@ def _apply_llm_proposal(
         )
         body_with_provenance = proposal.body.rstrip() + provenance
 
+        # Credential gate — FIRST, mirroring the ordering
+        # `handlers/write.py` uses (`CredentialGate` runs before every
+        # other write gate: "credential before everything so a secret is
+        # refused before any other gate records body-derived data"). The
+        # store is plain-text markdown that `sync` pushes across hosts,
+        # so persisting a live secret leaks it to disk, the audit log,
+        # and every clone. Scan the STAMPED body: the source_excerpt is a
+        # verbatim transcript quote, so a secret the user pasted mid-turn
+        # rides into `body_with_provenance` even when `proposal.body`
+        # itself is clean. Unlike `memory_write` there is no
+        # `acknowledge_credential` escape hatch on this unattended path —
+        # a hit is a hard refuse.
+        from .credentials import find_credential_markers
+
+        credential_hits = find_credential_markers(body_with_provenance)
+        if credential_hits:
+            kinds = ", ".join(h.kind for h in credential_hits)
+            raise RuntimeError(
+                f"propose_new body contains a secret-shaped token "
+                f"({kinds}); refuse — the consolidate path can't ask the "
+                "LLM to acknowledge_credential and this store syncs "
+                "plain-text across hosts"
+            )
+
+        # Scope allowlist gate — the `[scopes] allowed` config knob.
+        # `memory_write` enforces this in `_validate_write_payload`
+        # (handlers/_shared.py), but the propose_new write below never
+        # routes through it, so the allowlist would be a no-op on this
+        # path without an explicit check. Enforce only when the list is
+        # non-empty, matching `_validate_write_payload`'s semantics (an
+        # empty allowlist means "any scope").
+        if allowed_scopes and proposal.scope not in set(allowed_scopes):
+            raise RuntimeError(
+                f"propose_new scope {proposal.scope!r} is not in the "
+                f"configured [scopes] allowed list ({sorted(allowed_scopes)}); "
+                "refuse rather than write to an unsanctioned scope"
+            )
+
         # Mirror the write-time guardrails `_handlers.memory_write` runs.
         # The LLM only sees ~8 cluster members as "don't duplicate
         # these" context, so dedup against the full active set + the
@@ -2133,6 +2198,13 @@ def _apply_llm_proposal(
             # (handlers/proposals.py, ingest.py) and stamp INFERRED so the
             # provenance distinction between said and inferred survives.
             source=Source.INFERRED,
+            # Stamp the caller's repo/worktree context. Omitting origin
+            # persists origin=None, which `should_include_for_caller`
+            # treats as global — the memory would then surface in every
+            # scope and worktree, not just where it was distilled. The
+            # accept-proposal sibling passes origin=capture(...) for the
+            # same reason.
+            origin=origin,
         )
         actions.append(
             LLMProposalAction(

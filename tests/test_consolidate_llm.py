@@ -37,6 +37,7 @@ from bettermemory.llm import (
     RewriteRelativeDateProposal,
 )
 from bettermemory.models import Category, Confidence, Source
+from bettermemory.origin import Origin
 from bettermemory.store import Store
 
 
@@ -986,6 +987,171 @@ def test_propose_new_persists_inferred_source(tmp_path: Path) -> None:
     new_memory = next(m for m in memories_after if "port 5433" in m.body)
     # Machine-distilled content — INFERRED, not the write() EXPLICIT default.
     assert new_memory.source == Source.INFERRED
+
+
+# ---------------------------------------------------------------------------
+# LLM-write guardrails memory_write enforces but propose_new used to skip
+# ---------------------------------------------------------------------------
+
+
+def test_propose_new_refuses_credential_in_provenance_excerpt(
+    tmp_path: Path,
+) -> None:
+    """Regression (credential bypass): `_apply_llm_proposal` must scan the
+    STAMPED body (body + provenance excerpt) for credential markers before
+    writing, mirroring `handlers/write.py`'s credential-first gate. The
+    `source_excerpt` is a verbatim transcript quote, so a secret the user
+    pasted mid-turn rides into the persisted body even when the LLM-authored
+    claim is clean. Without the gate, `consolidate --llm --from-transcript
+    --apply --yes` writes the secret-bearing body straight to disk.
+    """
+    store = _make_store_with_existing(tmp_path)
+    transcript = tmp_path / "session.md"
+    # Canonical AWS example access-key-id shape — detected by
+    # `credentials.find_credential_markers` as `aws-access-key-id`.
+    secret = "AKIAIOSFODNN7EXAMPLE"
+    transcript.write_text(
+        f"[user] our deploy aws key is {secret}\n[assistant] Noted.",
+        encoding="utf-8",
+    )
+    proposal = ProposeNewProposal(
+        scope="infrastructure",
+        category="fact",
+        # Durable claim is CLEAN — the secret lives only in the excerpt,
+        # so a fix that scanned proposal.body alone would still leak it.
+        body="The deploy pipeline authenticates to AWS with a stored access key.",
+        source_excerpt=f"our deploy aws key is {secret}",
+        rationale="infra credential fact",
+    )
+    provider = FakeProvider(proposals=[proposal])
+
+    applied = consolidate_llm(
+        store, provider, apply=True, accept=True, from_transcript=str(transcript)
+    )
+    # Refused: no write, a failure carrying the credential rejection reason.
+    assert not any(a.kind == "llm_propose_new" for a in applied.actions_taken)
+    assert applied.failures
+    assert "secret-shaped token" in applied.failures[0].reason
+    # The store is untouched — only the pre-existing memory remains, and the
+    # secret never landed on disk.
+    remaining = store.load_all()
+    assert len(remaining) == 1
+    assert not any(secret in m.body for m in remaining)
+
+
+def test_propose_new_stamps_caller_origin(tmp_path: Path) -> None:
+    """Regression (origin=None leak): the propose_new `store.write` must
+    thread the caller's `origin` through. Omitting it persists
+    `origin=None`, which `origin.should_include_for_caller` treats as
+    global — the LLM-distilled memory then surfaces in every scope and
+    worktree instead of only where it was distilled. The accept-proposal
+    sibling stamps `origin=capture(...)` for the same reason.
+    """
+    store = _make_store_with_existing(tmp_path)
+    transcript = tmp_path / "session.md"
+    transcript.write_text(
+        "[user] My Postgres is on port 5433, not 5432.\n[assistant] Saved.",
+        encoding="utf-8",
+    )
+    proposal = ProposeNewProposal(
+        scope="infrastructure",
+        category="fact",
+        body="Postgres listens on port 5433, not the default 5432.",
+        source_excerpt="[user] My Postgres is on port 5433, not 5432.",
+        rationale="user-stated infrastructure fact",
+    )
+    provider = FakeProvider(proposals=[proposal])
+
+    origin = Origin(
+        cwd="/work/proj",
+        repo="git@github.com:me/proj.git",
+        worktree_root="/work/proj",
+    )
+    applied = consolidate_llm(
+        store,
+        provider,
+        apply=True,
+        accept=True,
+        from_transcript=str(transcript),
+        origin=origin,
+    )
+    assert any(a.kind == "llm_propose_new" for a in applied.actions_taken)
+    assert not applied.failures, f"propose_new failed unexpectedly: {applied.failures}"
+
+    new_memory = next(m for m in store.load_all() if "port 5433" in m.body)
+    # A non-None origin carrying the caller's repo — reverting the
+    # `origin=origin` thread-through lands origin=None and fails here.
+    assert new_memory.origin is not None
+    assert new_memory.origin.repo == "git@github.com:me/proj.git"
+
+
+def test_propose_new_rejects_scope_outside_allowlist(tmp_path: Path) -> None:
+    """Regression (scopes allowlist bypass): the propose_new write goes
+    straight through `store.write`, bypassing `_validate_write_payload`'s
+    `allowed_scopes` gate, so the `[scopes] allowed` config would be a
+    no-op on this path. `_apply_llm_proposal` must reject a proposal whose
+    scope is not in the (non-empty) allowlist.
+    """
+    store = _make_store_with_existing(tmp_path)
+    transcript = tmp_path / "session.md"
+    transcript.write_text(
+        "[user] My Postgres is on port 5433, not 5432.\n[assistant] Saved.",
+        encoding="utf-8",
+    )
+    proposal = ProposeNewProposal(
+        scope="rogue-scope",
+        category="fact",
+        body="Postgres listens on port 5433, not the default 5432.",
+        source_excerpt="[user] My Postgres is on port 5433, not 5432.",
+        rationale="user-stated infrastructure fact",
+    )
+    provider = FakeProvider(proposals=[proposal])
+
+    applied = consolidate_llm(
+        store,
+        provider,
+        apply=True,
+        accept=True,
+        from_transcript=str(transcript),
+        allowed_scopes=["infrastructure", "tools"],
+    )
+    # Refused: scope not sanctioned, nothing written.
+    assert not any(a.kind == "llm_propose_new" for a in applied.actions_taken)
+    assert applied.failures
+    assert "not in the configured" in applied.failures[0].reason
+    assert len(store.load_all()) == 1
+
+
+def test_propose_new_allows_in_allowlist_scope(tmp_path: Path) -> None:
+    """Positive control for the allowlist gate: a proposal whose scope IS
+    in the allowlist still writes. Guards against an over-broad reject that
+    would bounce every propose_new once an allowlist is configured."""
+    store = _make_store_with_existing(tmp_path)
+    transcript = tmp_path / "session.md"
+    transcript.write_text(
+        "[user] My Postgres is on port 5433, not 5432.\n[assistant] Saved.",
+        encoding="utf-8",
+    )
+    proposal = ProposeNewProposal(
+        scope="infrastructure",
+        category="fact",
+        body="Postgres listens on port 5433, not the default 5432.",
+        source_excerpt="[user] My Postgres is on port 5433, not 5432.",
+        rationale="user-stated infrastructure fact",
+    )
+    provider = FakeProvider(proposals=[proposal])
+
+    applied = consolidate_llm(
+        store,
+        provider,
+        apply=True,
+        accept=True,
+        from_transcript=str(transcript),
+        allowed_scopes=["infrastructure", "tools"],
+    )
+    assert any(a.kind == "llm_propose_new" for a in applied.actions_taken)
+    assert not applied.failures, f"propose_new failed unexpectedly: {applied.failures}"
+    assert len(store.load_all()) == 2
 
 
 def test_anthropic_provider_disables_sdk_retries(

@@ -303,6 +303,7 @@ def _cli_consolidate(
             url=llm_url,
             from_transcript=from_transcript,
             max_content_bytes=config.behavior.max_content_bytes,
+            allowed_scopes=config.scopes.allowed,
         )
 
     if acknowledge_debt:
@@ -681,6 +682,7 @@ def _cli_consolidate_llm(
     url: str | None,
     from_transcript: str | None = None,
     max_content_bytes: int | None = None,
+    allowed_scopes: list[str] | None = None,
 ) -> None:
     """Run the --llm pass after the structural passes have rendered.
 
@@ -689,6 +691,7 @@ def _cli_consolidate_llm(
     """
     from .. import llm as _llm
     from ..consolidate import consolidate_llm, render_llm_json, render_llm_text
+    from ..origin import capture as _capture_origin
 
     provider_kwargs: dict[str, Any] = {}
     if model is not None:
@@ -715,5 +718,11 @@ def _cli_consolidate_llm(
         session_id=session_id,
         from_transcript=from_transcript,
         max_content_bytes=max_content_bytes,
+        allowed_scopes=allowed_scopes,
+        # Capture the caller's CWD context here (the CLI is the layer
+        # that has it) so every propose_new write carries a real origin
+        # instead of persisting origin=None and leaking across scopes /
+        # worktrees. Mirrors the accept-proposal path's capture_origin().
+        origin=_capture_origin(),
     )
     sys.stdout.write(render_llm_json(report) if json_out else render_llm_text(report))
