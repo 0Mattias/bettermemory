@@ -1467,26 +1467,33 @@ def _write_band_memory_file(
     memory_id: str,
     body_bytes: int,
     scopes: list[str] | None = None,
+    updated: datetime | None = None,
+    last_verified_at: datetime | None = None,
 ) -> Path:
     """Hand-write a memory file whose serialized size lands in the reserved
     band (> _MAX_WRITE_BYTES, <= _MAX_FILE_BYTES). The store's own `write()`
     caps at the write cap and could never produce one, so we serialize at the
     read cap directly — the exact shape a pre-3.14.1 record (written before the
-    total-file cap) presents on disk today."""
+    total-file cap) presents on disk today.
+
+    `last_verified_at` (when passed) is embedded so the fixture models a band
+    record that has ALREADY been attested — the shape a re-verify must keep
+    maintainable at its CURRENT size under the max(write-cap, current-size) cap.
+    """
     from bettermemory import _frontmatter as fm
 
-    post = fm.Post(
-        content="x" * body_bytes,
-        metadata={
-            "schema_version": 1,
-            "id": memory_id,
-            "created": datetime(2025, 1, 1, tzinfo=timezone.utc),
-            "updated": datetime(2025, 1, 1, tzinfo=timezone.utc),
-            "scopes": scopes or ["tools"],
-            "confidence": "medium",
-            "source": "explicit-statement",
-        },
-    )
+    meta: dict[str, Any] = {
+        "schema_version": 1,
+        "id": memory_id,
+        "created": datetime(2025, 1, 1, tzinfo=timezone.utc),
+        "updated": updated or datetime(2025, 1, 1, tzinfo=timezone.utc),
+        "scopes": scopes or ["tools"],
+        "confidence": "medium",
+        "source": "explicit-statement",
+    }
+    if last_verified_at is not None:
+        meta["last_verified_at"] = last_verified_at
+    post = fm.Post(content="x" * body_bytes, metadata=meta)
     text = fm.dumps(post, max_file_bytes=fm._MAX_FILE_BYTES)
     total = len(text.encode("utf-8"))
     assert fm._MAX_WRITE_BYTES < total <= fm._MAX_FILE_BYTES, (
@@ -1497,41 +1504,158 @@ def _write_band_memory_file(
     return path
 
 
-def test_mark_verified_rewrites_band_record_at_read_cap(memory_dir: Path) -> None:
-    """F1/item-1b: a record whose serialized size already sits in the reserved
-    band must remain verifiable. `mark_verified` re-dumps an already-admitted,
-    already-readable record, so it uses the full read cap — not the
-    headroom-reserved write cap that `write()` admits at. Reverting the fix
-    (re-dumping at the write cap) freezes the record: the write-side guard
-    rejects the re-dump and it can never be verified again."""
+def test_mark_verified_rewrites_band_record_at_current_size(
+    memory_dir: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """F1 (intent preserved): a record whose serialized size ALREADY sits in the
+    reserved band — e.g. a pre-3.14.1 record — stays verifiable. `mark_verified`
+    caps its re-dump at max(write cap, current on-disk size), so re-verifying at
+    the record's CURRENT size (no caller-driven growth) still succeeds even
+    though the record is above the write cap. Reverting the cap to the plain
+    write cap freezes the record (the write-side guard rejects the re-dump)."""
+    from bettermemory import _frontmatter as fm  # noqa: F401
+
+    fixed = datetime(2025, 1, 1, 0, 0, 0, 500000, tzinfo=timezone.utc)
+    # Pin utcnow to the fixture's own last_verified_at so the re-verify re-dump
+    # is byte-for-byte the current size (only last_verified_at is re-stamped,
+    # and to the same value) — it lands exactly at the max(write-cap, current)
+    # cap, not over it.
+    monkeypatch.setattr("bettermemory.store.utcnow", lambda: fixed)
+    monkeypatch.setattr("bettermemory.models.utcnow", lambda: fixed)
+
     mid = generate_ulid()
-    _write_band_memory_file(memory_dir, memory_id=mid, body_bytes=1_047_000)
+    # Band record that is ALREADY attested (carries last_verified_at).
+    _write_band_memory_file(
+        memory_dir, memory_id=mid, body_bytes=1_047_000, last_verified_at=fixed
+    )
 
     store = Store(memory_dir)
-    # ~1.047 MB record — over the write cap, under the read cap.
+    # No caller-driven growth: a plain re-verify slides last_verified_at at the
+    # record's current size and is admitted.
     verified = store.mark_verified(mid)
-    assert verified.last_verified_at is not None
-    # And it persisted: a fresh store reads the bumped attestation back.
+    assert verified.last_verified_at == fixed
+    # And it persisted: a fresh store reads it back, still band-sized.
     reloaded = Store(memory_dir).load_one(mid)
-    assert reloaded.last_verified_at is not None
+    assert reloaded.last_verified_at == fixed
     assert len(reloaded.body) >= 1_047_000  # still a band-sized record
 
 
-def test_rename_scope_rewrites_band_record_at_read_cap(memory_dir: Path) -> None:
-    """Item-1b twin for `rename_scope`'s active branch: a band-sized record
-    must still be renameable. The active-branch re-dump uses the full read cap;
-    reverting to the write cap raises out of `rename_scope`, freezing the
-    record's scopes."""
+def test_mark_verified_first_verify_of_legacy_band_record_succeeds(
+    memory_dir: Path,
+) -> None:
+    """F1 (scenario D): a legacy band record with NO last_verified_at (a genuine
+    pre-3.14.1 record) must accept its FIRST verify — which necessarily GROWS the
+    record by ~40 bytes of last_verified_at. Because the record already sits in
+    the band, the cap is the full read cap, so the small attestation-timestamp
+    growth is admitted: it cannot make the record less maintainable than it
+    already is. Capping a band record at its EXACT current size (the earlier
+    max(write-cap, current-size) form) froze first-time verification of exactly
+    the records F1 exists to keep maintainable — reverting to that makes this
+    fail."""
+    mid = generate_ulid()
+    # Band record that has NEVER been attested, with room below the read cap for
+    # the added last_verified_at.
+    _write_band_memory_file(memory_dir, memory_id=mid, body_bytes=1_046_000)
+
+    store = Store(memory_dir)
+    verified = store.mark_verified(mid)
+    assert verified.last_verified_at is not None
+    reloaded = Store(memory_dir).load_one(mid)
+    assert reloaded.last_verified_at is not None
+    assert len(reloaded.body) >= 1_046_000  # still band-sized, just now attested
+
+
+def test_mark_verified_rejects_growth_into_reserved_band(store: Store) -> None:
+    """Invariant restored (the data-loss seam): a verify whose caller-controlled
+    verified_* additions would GROW a record admitted just under the write cap up
+    into the reserved band `(_MAX_WRITE_BYTES, _MAX_FILE_BYTES]` is REJECTED.
+
+    Without the max(write-cap, current-size) cap, `mark_verified` re-dumped at
+    the flat read cap and silently minted a band record that `update` (write cap)
+    can no longer touch, `tombstone` with a normal reason can push past the read
+    cap (un-removable), and `restore` refuses to re-admit — so
+    `prune_tombstones` eventually hard-deletes it: silent data loss. Reverting
+    the cap to the plain read cap makes this verify succeed and this test fail."""
+    from bettermemory import _frontmatter as fm
+
+    # Admit a record a few KB under the write cap (a normal, maintainable
+    # record — headroom reserved for its own tombstone/rename re-dump).
+    body = "x" * (fm._MAX_WRITE_BYTES - 3000)
+    mem = store.write(content=body, scopes=["tools"])
+    assert mem.last_verified_at is None
+
+    # Attest verified_paths whose re-dump crosses the write cap and lands SQUARELY
+    # in the reserved band `(_MAX_WRITE_BYTES, _MAX_FILE_BYTES]` (~5 KB of paths on
+    # a record ~2.8 KB below the write cap → ~2 KB into the 4 KB band). This is
+    # the exact seam: at the flat read cap the growth is admitted (minting the
+    # un-maintainable band record); at max(write-cap, current-size) it is
+    # rejected. Well within the handler's 64 x 1024 per-list limits.
+    big_paths = ["/repo/src/" + ("y" * 490) for _ in range(10)]  # ~5 KB of paths
+    with pytest.raises(ValueError, match="(?i)shrink"):
+        store.mark_verified(mem.id, verified_paths=big_paths)
+
+    # The rejected verify left the on-disk record untouched: not attested, not
+    # grown into the band — so it stays updatable/removable/restorable.
+    reloaded = store.load_one(mem.id)
+    assert reloaded.last_verified_at is None
+    assert reloaded.verified_paths == []
+    assert reloaded.body.strip() == body
+    # Still admissible at the write cap: a normal metadata update succeeds.
+    store.update(reloaded.model_copy(update={"scopes": ["tools", "infra"]}))
+
+
+def test_rename_scope_rewrites_band_record_at_current_size(
+    memory_dir: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """F1 twin for `rename_scope`'s active branch: a band-sized record stays
+    renameable when the rename does not grow it (equal-length scope swap). The
+    active-branch re-dump caps at max(write cap, current size); reverting to the
+    plain write cap raises out of the re-dump and strands the record's scopes."""
+    fixed = datetime(2025, 1, 1, tzinfo=timezone.utc)
+    # Pin utcnow to the fixture's `updated` so the `updated` bump on rename does
+    # not change the serialized width; the equal-length scope swap keeps the
+    # re-dump exactly at the current size.
+    monkeypatch.setattr("bettermemory.store.utcnow", lambda: fixed)
+    monkeypatch.setattr("bettermemory.models.utcnow", lambda: fixed)
+
     mid = generate_ulid()
     _write_band_memory_file(
-        memory_dir, memory_id=mid, scopes=["oldscope"], body_bytes=1_047_000
+        memory_dir,
+        memory_id=mid,
+        scopes=["oldscope"],
+        body_bytes=1_047_000,
+        updated=fixed,
     )
 
     store = Store(memory_dir)
     changed = store.rename_scope("oldscope", "newscope")
     assert changed["active"] == [mid]
+    assert "failed" not in changed
     reloaded = Store(memory_dir).load_one(mid)
     assert reloaded.scopes == ["newscope"]
+
+
+def test_rename_scope_reports_growth_into_band_as_failed(store: Store) -> None:
+    """Invariant twin for `rename_scope`: a rename whose longer `new` scope would
+    grow a record admitted just under the write cap into the reserved band is
+    collected in `failed` (not applied, not counted as a clean rename) — the same
+    max(write-cap, current-size) cap as `mark_verified`. Reverting to the plain
+    read cap admits the growth and drops the record from `failed`."""
+    from bettermemory import _frontmatter as fm
+
+    # A record just under the write cap carrying a short scope.
+    body = "x" * (fm._MAX_WRITE_BYTES - 512)
+    mem = store.write(content=body, scopes=["s"])
+    # Rename `s` -> a scope ~1 KB longer, pushing the re-dump past the write cap.
+    long_new = "s" + ("z" * 1000)
+    result = store.rename_scope("s", long_new)
+
+    assert result["active"] == []  # not admitted into the band
+    assert mem.id in {entry["id"] for entry in result["failed"]}
+    assert any("shrink" in entry["reason"].lower() for entry in result["failed"])
+    # On-disk record is untouched: still the short scope, still maintainable.
+    reloaded = store.load_one(mem.id)
+    assert reloaded.scopes == ["s"]
 
 
 def test_restore_oversized_tombstone_raises_shrink_message(store: Store) -> None:

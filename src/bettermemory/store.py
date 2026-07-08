@@ -655,17 +655,48 @@ class Store:
             if verified_absent_paths is not None:
                 update["verified_absent_paths"] = list(verified_absent_paths)
             new_memory = existing.model_copy(update=update)
-            # Lifecycle re-dump of an already-admitted, already-readable record:
-            # bumping `last_verified_at` (and the verified_* lists) re-serialises
-            # a record that already lives on disk. Use the full read cap, not the
-            # headroom-reserved write cap, so a record whose serialized size sits
-            # in the reserved band — e.g. a pre-3.14.1 record written before the
-            # total-file cap existed — can still be verified instead of being
-            # frozen (F1: the write-cap guard would reject the re-dump and the
-            # record could never be verified/updated again).
-            self._write_path(
-                existing_path, new_memory, max_file_bytes=frontmatter._MAX_FILE_BYTES
+            # Lifecycle re-dump of an already-admitted, already-readable record.
+            # `mark_verified` GROWS the record: the caller-controlled verified_*
+            # lists (handler-capped at 4 lists x 64 entries x 1024 chars) REPLACE
+            # the prior attestation. Re-dumping at the flat read cap would let a
+            # verify push a record that was admitted just under `_MAX_WRITE_BYTES`
+            # up into the reserved maintenance band `(_MAX_WRITE_BYTES,
+            # _MAX_FILE_BYTES]` — after which `update` (write cap) rejects it,
+            # `tombstone` with a normal reason can cross the read cap and leave it
+            # un-removable, and `restore` re-admission (write cap) refuses it once
+            # tombstoned, so `prune_tombstones` eventually hard-deletes it: silent
+            # data loss the verify introduced.
+            #
+            # Thread F1 by keying the cap on which band the record is ALREADY in:
+            # a sub-write-cap record caps at `_MAX_WRITE_BYTES` (a verify whose
+            # additions would push it up into the reserved band is rejected,
+            # preserving the tombstone/rename/restore headroom); a record whose
+            # serialized size ALREADY sits in the band (e.g. a pre-3.14.1 record
+            # written before the total-file cap existed) caps at the full
+            # `_MAX_FILE_BYTES` so it stays verifiable — including a FIRST verify,
+            # which must add ~40 bytes of `last_verified_at`. (Capping a band
+            # record at its exact current size froze first-time verification of
+            # exactly the legacy records F1 exists to keep maintainable.)
+            try:
+                current_size = existing_path.stat().st_size
+            except OSError:
+                current_size = 0
+            verify_cap = (
+                frontmatter._MAX_FILE_BYTES
+                if current_size > frontmatter._MAX_WRITE_BYTES
+                else frontmatter._MAX_WRITE_BYTES
             )
+            try:
+                self._write_path(existing_path, new_memory, max_file_bytes=verify_cap)
+            except ValueError as exc:
+                raise ValueError(
+                    f"cannot verify memory {memory_id}: the attested "
+                    f"verified_paths / verified_commits / verified_versions / "
+                    f"verified_absent_paths would grow the record past its "
+                    f"{verify_cap}-byte size cap. Shrink the attestation lists "
+                    f"before verifying so the record stays removable and "
+                    f"restorable ({exc})."
+                ) from exc
             # perf: index upsert under lock is intentional — see audit H1.
             _index_upsert_quietly(self.root, new_memory, filename=existing_path.name)
         return new_memory
@@ -1279,24 +1310,49 @@ class Store:
                     update={"scopes": new_scopes, "updated": utcnow()}
                 )
                 # Lifecycle re-dump: relabels a scope on an already-admitted,
-                # already-readable record. Full read cap (not the write cap) so
-                # a record whose serialized size sits in the reserved band (e.g.
-                # a pre-3.14.1 record) can still be renamed instead of frozen —
-                # same rationale as `mark_verified` / `tombstone`.
+                # already-readable record. Same cap discipline as `mark_verified`:
+                # a sub-write-cap record caps at `_MAX_WRITE_BYTES`, a record
+                # already in the reserved band caps at the full `_MAX_FILE_BYTES`.
+                # A record whose serialized size ALREADY sits in the band (e.g. a
+                # pre-3.14.1 record) may be re-dumped (bounded by the read cap) so
+                # it stays renameable (F1), but a rename that would GROW a
+                # sub-write-cap record past `_MAX_WRITE_BYTES` — swapping in a
+                # longer `new` scope — is rejected rather than minting a record in
+                # the band that `update`/`tombstone`/`restore` can no longer
+                # maintain (the same silent-data-loss seam `mark_verified` closes).
                 #
-                # Item 6: per-record guard around the re-dump. A single record
-                # can still overflow the read cap here — the swap to a longer
-                # `new` scope grows the serialized file past `_MAX_FILE_BYTES`
-                # (dumps raises ValueError), or the atomic write hits a disk
-                # error (OSError). Without this guard that raise aborts the loop
-                # mid-rename, stranding the records already renamed above with a
-                # diverged FTS index. Collect the failure, skip this record, and
-                # continue; the index upsert runs ONLY on a successful write.
+                # Item 6: per-record guard around the re-dump. A single record can
+                # still overflow its cap here — the swap to a longer `new` scope
+                # grows the serialized file past the cap (dumps raises ValueError),
+                # or the atomic write hits a disk error (OSError). Without this
+                # guard that raise aborts the loop mid-rename, stranding the
+                # records already renamed above with a diverged FTS index. Collect
+                # the failure, skip this record, and continue; the index upsert
+                # runs ONLY on a successful write.
                 try:
-                    self._write_path(
-                        path, refreshed, max_file_bytes=frontmatter._MAX_FILE_BYTES
+                    current_size = path.stat().st_size
+                except OSError:
+                    current_size = 0
+                rename_cap = (
+                    frontmatter._MAX_FILE_BYTES
+                    if current_size > frontmatter._MAX_WRITE_BYTES
+                    else frontmatter._MAX_WRITE_BYTES
+                )
+                try:
+                    self._write_path(path, refreshed, max_file_bytes=rename_cap)
+                except ValueError as exc:
+                    failed.append(
+                        {
+                            "id": memory.id,
+                            "reason": (
+                                f"rename would grow the record past its "
+                                f"{rename_cap}-byte size cap; shrink its scopes / "
+                                f"verified_paths before renaming ({exc})"
+                            ),
+                        }
                     )
-                except (OSError, ValueError) as exc:
+                    continue
+                except OSError as exc:
                     failed.append({"id": memory.id, "reason": str(exc)})
                     continue
                 # perf: index upsert under lock is intentional — see audit H1.
