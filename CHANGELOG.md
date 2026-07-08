@@ -7,6 +7,68 @@ breaking changes, minor for additive features, patch for fixes. The
 [compatibility contract](CONTRIBUTING.md#versioning-and-the-compatibility-contract)
 spells out exactly what's stable.
 
+## 3.16.0 - 2026-07-08
+
+A measurement-driven calibration release. The centerpiece: the
+relevance-v2 widening got its first live precision read — 103 replayable
+audited turns, every flagged turn hand-labeled against its logged
+evidence — and the verdict reshaped the roadmap. The bare matched-token
+floor (`w1_top1_v2_high`) measured ~15–30% precision and is ruled out as
+the flip target: its v1-low→high promotions (long pasted messages
+crossing `matched_unique >= 4` against any domain-adjacent memory at
+coverage ~0.2) were almost pure noise, while its v1-medium→high
+promotions measured ~50% and contained every clearly-real catch. The
+tooling that produced the readout ships in this release, so the next
+calibration pass is one command, not an archaeology project.
+Methodology and aggregates: `docs/eval/widening-labeling-2026-07-08.md`
+(raw turns stay in the local event log — they contain user-message
+previews).
+
+### Added
+
+- **`bettermemory eval --widening-preview --detail`** — the
+  precision-labeling surface behind the widening counts. Dumps each
+  flagged turn's logged evidence (the redacted `probe_query` preview,
+  the top hit's raw coverage pair, both relevance labels, the hit's
+  memory id joined against the active store + tombstone log for a
+  summary) plus a per-memory concentration rollup, since concentration
+  is the first diagnostic: N flags on two memories is a ranking
+  problem, N flags across N memories is a wide label change. Reads
+  only what the event log already holds — no new logging, no exposure
+  widening. Both widening lanes now share one event-filter pipeline
+  (`_collect_replayable_audits`), so the counts and the listed turns
+  can never disagree.
+- **`w2_top1_v2_high_from_medium` widening candidate** — v1's high arm
+  plus the shadow floor's medium→high promotions only, i.e. exactly
+  the original blind-spot thesis (long natural-language queries
+  landing at *medium* on strong matches) without the junk-dominated
+  low→high cohort. On the labeling window it flags 12 turns (Δ v1
+  +11) vs w1's 32, at ~50% labeled precision. The flip gate is now:
+  a follow-up labeling pass over a few more weeks holding w2 at
+  ≥~70%.
+- **`doctor` gained an `auto_memory_stranded` check.** Claude Code's
+  filesystem auto-memory (`~/.claude/projects/<sanitized-cwd>/memory/`)
+  accumulates facts bettermemory retrieval never sees; `bettermemory
+  ingest` imports them, but nothing *surfaced* that stranded files
+  exist. The check reuses `compute_ingest_plan`'s dedup classification
+  rather than a bare file count, so a completed import goes quiet even
+  though ingest deliberately never mutates the source files.
+- **Deferred-harness loading hint in the server instructions.** Clients
+  that gate MCP tool schemas behind a ToolSearch step (Claude Code
+  with large tool surfaces) were nudged into loading bettermemory's
+  tools one round-trip at a time; the instructions block now names the
+  core four to load in one call. Paid for inside the existing 1700-char
+  truncation budget by compressing the write-trigger list — the
+  detail lives on `memory_write`'s own description, per the block's
+  push-detail-down doctrine.
+
+### Changed
+
+- `docs/ROADMAP.md`'s relevance-v2 flip item restated empirically: the
+  flip target is w2, w1-as-is is ruled out, and the gate is a
+  precision number on a named artifact rather than "an acceptable
+  widening delta."
+
 ## 3.15.1 - 2026-07-08
 
 A post-release external review of 3.15.0 itself — five parallel
