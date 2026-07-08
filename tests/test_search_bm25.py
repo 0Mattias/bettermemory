@@ -681,3 +681,70 @@ def test_find_similar_subfloor_full_containment_not_flagged() -> None:
 
     hits = find_similar(short_body, [_memory(long_body)])
     assert not hits, "a sub-floor fully-contained fact must not be flagged"
+
+
+def test_find_similar_comparable_length_distinct_not_over_rejected() -> None:
+    """Ratio-gate removal guard: dropping the old `larger >= 3 * smaller`
+    asymmetry gate widened the containment score to COMPARABLE-length pairs.
+    The worst failure class for a memory product is a distinct write being
+    SILENTLY REJECTED — the ingest dedup gate skips only on a 'high' active
+    hit (ingest.py: `high_active = [h for h in active_hits if
+    h.relevance == "high"]`). This test pins that containment can never push
+    a comparable-length pair to that 'high'/block bar, while the intended
+    short-in-long restatement still surfaces.
+
+    Three arms, all over pure single-token pool words so the token-set sizes
+    (and thus the exact jaccard/containment ratios) are pinned and can't
+    drift under an unrelated tokenizer change:
+
+    1. Comparable length (10 vs 10), heavy overlap (8 shared): raw Jaccard
+       8/12 = 0.667 but containment 8/10 = 0.80. The `_CONTAINMENT_CEILING`
+       (0.575) caps the containment contribution below HIGH_SIMILARITY, so
+       `max(jaccard, min(containment, ceiling))` = 0.667 => 'medium', never
+       'high'. MUTATION-SOUND against the ceiling: drop the `min(...,
+       _CONTAINMENT_CEILING)` cap and the score becomes 0.80 => 'high',
+       silently rejecting a distinct write — this assertion then fails.
+    2. Comparable length (12 vs 12), modest overlap (4 shared): containment
+       4/12 = 0.333 is below the MEDIUM floor, jaccard 4/20 = 0.20, so a
+       legitimately-distinct comparable pair is not flagged at all.
+    3. Short-in-long (8 fully contained in 22, ratio 2.75): the intended
+       containment case still fires. MUTATION-SOUND against re-adding the
+       ratio gate: restoring `len(larger) >= 3 * len(smaller)` drops this
+       (ratio 2.75 < 3) back to jaccard 8/22 = 0.364 < MEDIUM => no hit.
+    """
+    from bettermemory.search import (
+        HIGH_SIMILARITY,
+        _raw_content_token_set,
+        find_similar,
+    )
+
+    # Arm 1: comparable length, heavy overlap, must stay 'medium' (never
+    # silently rejected as a 'high' duplicate).
+    a1 = " ".join(_POOL_EIGHT + _POOL_EXTRA[0:2])  # 8 shared + 2 unique = 10
+    b1 = " ".join(_POOL_EIGHT + _POOL_EXTRA[2:4])  # 8 shared + 2 unique = 10
+    sa1, sb1 = _raw_content_token_set(a1), _raw_content_token_set(b1)
+    assert len(sa1) == 10 and len(sb1) == 10
+    assert len(sa1 & sb1) == 8
+    assert len(sa1 | sb1) == 12  # jaccard 8/12 = 0.667 < HIGH_SIMILARITY
+    assert 8 / 12 < HIGH_SIMILARITY
+    arm1 = find_similar(a1, [_memory(b1)])
+    assert arm1, "a heavy-overlap comparable pair should surface as related"
+    assert arm1[0].relevance == "medium"
+    assert all(h.relevance != "high" for h in arm1), (
+        "containment must never silently reject a comparable-length write"
+    )
+
+    # Arm 2: comparable length, modest overlap => legitimately distinct,
+    # flagged neither 'high' nor 'medium'.
+    a2 = " ".join(_POOL_EIGHT[0:4] + _POOL_EXTRA[0:8])  # 12, 4 shared
+    b2 = " ".join(_POOL_EIGHT[0:4] + _POOL_EXTRA[8:16])  # 12, 4 shared
+    sa2, sb2 = _raw_content_token_set(a2), _raw_content_token_set(b2)
+    assert len(sa2) == 12 and len(sb2) == 12 and len(sa2 & sb2) == 4
+    assert not find_similar(a2, [_memory(b2)])
+
+    # Arm 3: the intended short-in-long containment case still fires.
+    short_in_long_short = " ".join(_POOL_EIGHT)  # 8
+    short_in_long_long = " ".join(_POOL_EIGHT + _POOL_EXTRA[:14])  # 22
+    arm3 = find_similar(short_in_long_short, [_memory(short_in_long_long)])
+    assert arm3, "short-in-long restatement must still be flagged"
+    assert arm3[0].relevance == "medium"
