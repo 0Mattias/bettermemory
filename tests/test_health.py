@@ -3208,3 +3208,81 @@ def test_scalar_id_field_does_not_blank_health_rollup() -> None:
     # survive the same malformed events and classify the memory as dead.
     counts = curation_counts([m], events, window_days=30, now=_utc(2026, 5, 1))
     assert counts["dead"] == 1
+
+
+def test_unhashable_session_and_nested_id_elements_do_not_blank_rollup() -> None:
+    """Two residual malformed-event hazards in the `_StatsAccumulator`
+    walk that survive the scalar-container guards:
+
+    - A list/dict-valued `session`/`session_id` is truthy but
+      unhashable — under a bare `if sess:` truthiness guard it raises
+      TypeError at `set.add()` and blanks the whole rollup.
+    - A well-formed list whose ELEMENTS are themselves lists (e.g.
+      `returned=[[id]]` / `ids=[[id]]` / `markers=[[x]]`) passes the
+      container-shape check but leaves an unhashable member that raises
+      at `dict.get(<list>)` or a `Counter` key.
+
+    Mutation soundness: reverting the `isinstance(sess, str)` guard makes
+    the list-session event crash; reverting `_event_id_list`'s per-element
+    filter makes the nested-list `returned`/`ids`/`markers` events crash.
+    Either regression turns this from a populated rollup into an
+    exception, so the single "populated rollup" assertion pins both fixes.
+    """
+    m = _memory(created=_utc(2026, 1, 1))
+    events: list[dict[str, Any]] = [
+        # List-valued session — unhashable, truthy. Carries a valid
+        # retrieval that must still be counted once the session is dropped.
+        {
+            "ts": _utc(2026, 4, 1).isoformat().replace("+00:00", "Z"),
+            "session": ["not", "hashable"],
+            "kind": "search",
+            "returned": [m.id],
+        },
+        # Dict-valued session on a legacy `session_id` field — same hazard.
+        {
+            "ts": _utc(2026, 4, 2).isoformat().replace("+00:00", "Z"),
+            "session_id": {"unhashable": 1},
+            "kind": "show",
+            "id": m.id,
+        },
+        # Nested-list ELEMENT in `returned` — container is a list, but the
+        # lone member is itself a list (unhashable dict.get key).
+        _event("search", ts=_utc(2026, 4, 3), session="sess_ok", returned=[[m.id]]),
+        # Nested-list ELEMENT in `ids` on a use/applied event.
+        _event(
+            "use",
+            ts=_utc(2026, 4, 4),
+            session="sess_ok",
+            ids=[[m.id]],
+            outcome="applied",
+        ),
+        # Nested-list ELEMENT in `markers` on a write event — unhashable
+        # Counter key pre-fix.
+        _event(
+            "write",
+            ts=_utc(2026, 4, 5),
+            session="sess_ok",
+            status="transient_warning",
+            markers=[["mk"]],
+        ),
+    ]
+    # Must not raise, and must return a populated rollup.
+    report = compute_health([m], events, window_days=30, now=_utc(2026, 5, 1))
+    assert report.total_active_memories == 1
+    assert report.total_events == 5
+    # Only the well-formed string session survives; the unhashable ones
+    # are dropped rather than crashing the walk.
+    assert report.distinct_sessions == 1
+    # The nested-list `returned`/`ids` ELEMENTS dropped to nothing, so the
+    # only counted retrieval is the valid `[m.id]` on the list-session
+    # event, and no applied event landed — the memory stays dead-weight.
+    assert len(report.dead_weight) == 1
+    assert report.dead_weight[0].id == m.id
+    assert report.dead_weight[0].retrieval_count == 1
+    assert report.dead_weight[0].applied_count == 0
+    # The nested-list marker element produced no fires — no shredded rows.
+    assert all(ms.marker != "mk" for ms in report.marker_stats)
+
+    # curation_counts shares `_event_id_list`; it must survive too.
+    counts = curation_counts([m], events, window_days=30, now=_utc(2026, 5, 1))
+    assert counts["dead"] == 1

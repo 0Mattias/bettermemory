@@ -95,9 +95,18 @@ def _event_id_list(value: Any) -> list[str]:
     `TypeError` under `for mid in <scalar>`, and a bare string would
     iterate by CHARACTER (mis-attributing per-char retrieval/apply
     counts). A lone non-empty string is treated as a single id; every
-    other non-list (int, float, None, dict, …) coerces to empty."""
+    other non-list (int, float, None, dict, …) coerces to empty.
+
+    Element hazard: normalizing the CONTAINER is not enough. A
+    well-formed list whose ELEMENTS are themselves lists/dicts (e.g.
+    ``returned=[[id]]`` / ``ids=[[id]]`` / ``markers=[[x]]``) passes the
+    container check but leaves an unhashable member that raises at
+    ``self._by_id.get(mid)`` or when used as a ``Counter`` / set key —
+    blanking the whole rollup exactly like the scalar-container case. So
+    every non-str element is dropped here, not just coerced at the
+    container level; the return is always a clean ``list[str]``."""
     if isinstance(value, list):
-        return value
+        return [v for v in value if isinstance(v, str)]
     if isinstance(value, str) and value:
         return [value]
     return []
@@ -1120,8 +1129,13 @@ class _StatsAccumulator:
         # `search_miss` use `session_id` as their canonical field —
         # without the fallback, those event kinds were silently
         # dropped from the distinct-session rollup.
+        # `isinstance(sess, str)` guard, not bare truthiness: a
+        # list/dict-valued `session` is truthy but unhashable, so
+        # `set.add()` would raise TypeError and blank the whole rollup
+        # (memory_health / scope_overview / doctor). Only a non-empty
+        # string can be a real session id anyway.
         sess = ev.get("session") or ev.get("session_id")
-        if sess:
+        if isinstance(sess, str) and sess:
             self._sessions.add(sess)
 
         kind = ev.get("kind")
