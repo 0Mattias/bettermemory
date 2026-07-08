@@ -261,6 +261,11 @@ async def episode_handoff(
     # on the result; it does NOT gate the rewind (we still surface an
     # older real takeaway when one exists).
     note_floor_only = False
+    # Distinct from floor-only: an immediately-prior ZERO-episode session
+    # (events recorded but no episode/floor on disk — a search-only tick, or a
+    # crash before the entry floor landed). It has NO floor, so its note must
+    # NOT claim one was written or that episode_handoff was called.
+    note_zero_episode = False
 
     resolved_session_id: str | None = prior_session_id
     if resolved_session_id is None:
@@ -376,7 +381,7 @@ async def episode_handoff(
                     # below) as `{sid, episodes: []}` + note only when no
                     # older real session exists.
                     if not seen_worktree_match:
-                        note_floor_only = True
+                        note_zero_episode = True
                         floor_only_fallback_sid = sid
                     seen_worktree_match = True
                     continue
@@ -520,23 +525,19 @@ async def episode_handoff(
         "prior_session_id": resolved_session_id,
         "episodes": episodes,
     }
+    # Additive surface key — only present when the immediately-prior worktree
+    # session left no takeaway. A caller that doesn't know about the field sees
+    # the same shape as before. `episodes` may be NON-empty here: the walk
+    # rewound past the empty session to an older real takeaway, and the note
+    # flags that the most recent session left nothing. The two empty shapes get
+    # distinct text because their on-disk cause differs.
     if note_floor_only:
-        # Additive surface key — only present when the immediately-prior
-        # worktree session was floor-only. A caller that doesn't know
-        # about the field sees the same shape as before; a caller that
-        # does can render the note below. Note that `episodes` may be
-        # NON-empty here: the walk rewound past the floor-only session
-        # to an older real takeaway, and the note flags that the most
-        # recent session left nothing.
-        #
-        # The note deliberately does NOT assert a crash: the floor is
-        # written UNCONDITIONALLY at handoff entry, so a floor-only
-        # session is genuinely ambiguous between (a) a crash after entry
-        # but before episode_write and (b) a clean read-only tick that
-        # ran episode_handoff and simply had no takeaway to journal. The
-        # on-disk shape is identical (a bare `is_floor` marker with no
-        # entry-vs-exit field), so we surface both readings instead of
-        # the misleading bare "crashed" claim.
+        # Floor-only: a real `is_floor` marker exists on disk (the session
+        # called episode_handoff, which writes the entry floor). Genuinely
+        # ambiguous between (a) a crash after entry but before episode_write
+        # and (b) a clean read-only tick that ran episode_handoff with no
+        # takeaway — the on-disk shape is identical, so surface both readings
+        # rather than the misleading bare "crashed" claim.
         result["note"] = (
             "The immediately-preceding session recorded no takeaway "
             "before it ended: it called episode_handoff (which wrote "
@@ -544,6 +545,20 @@ async def episode_handoff(
             "but no episode_write followed — either it crashed before "
             "the takeaway, or it was a clean read-only tick with "
             "nothing to record. Any takeaways above (if present) come "
+            "from an older session in this worktree that the handoff "
+            "rewound to."
+        )
+    elif note_zero_episode:
+        # Zero-episode: NO floor on disk — the worktree match came from an
+        # event's `worktree_root`, not a floor. So do NOT claim a floor was
+        # written or that episode_handoff was called (it wasn't): the session
+        # recorded activity (e.g. a search-only tick) but journaled nothing,
+        # or crashed before its entry floor landed.
+        result["note"] = (
+            "The immediately-preceding session in this worktree recorded "
+            "activity but journaled no takeaway (and left no handoff "
+            "floor) — it may have been a non-handoff tick, or crashed "
+            "before journaling. Any takeaways above (if present) come "
             "from an older session in this worktree that the handoff "
             "rewound to."
         )

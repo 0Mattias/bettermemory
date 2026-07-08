@@ -153,6 +153,14 @@ def accept_proposal(
         "id": memory.id,
         "scopes": memory.scopes,
         "category": cat_written,
+        # Kind only, never the value: the detector kinds a forced
+        # `acknowledge_credential` override bypassed (empty when none), so the
+        # MCP handler can log the override to the event stream.
+        "credentials_acknowledged": (
+            [h.kind for h in credential_hits]
+            if credential_hits and acknowledge_credential
+            else []
+        ),
     }
 
 
@@ -248,6 +256,10 @@ async def memory_proposals(
                 id=result["id"],
                 scopes=result["scopes"],
                 category=result["category"],
+                # Kind only, never the value — a forced credential override so a
+                # too-loose detector / high override rate is observable, mirroring
+                # what `memory_write` records for the same escape hatch.
+                credentials_acknowledged=result.get("credentials_acknowledged", []),
             )
         return result
 

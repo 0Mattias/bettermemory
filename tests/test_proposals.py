@@ -812,3 +812,8 @@ def test_accept_proposal_acknowledge_credential_bypasses_refusal(
     assert len(written) == 1
     assert written[0].body.strip() == body
     assert q.load() == []
+    # The forced override is observable in the result (detector kind only,
+    # never the value) so the MCP handler logs it to the event stream —
+    # auditability parity with memory_write. Mutation-sound: drop the field
+    # and this fails.
+    assert result["credentials_acknowledged"] == ["aws-access-key-id"]

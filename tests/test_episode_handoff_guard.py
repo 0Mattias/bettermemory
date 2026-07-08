@@ -351,6 +351,19 @@ async def test_episode_handoff_rewinds_past_zero_episode_to_older_real_takeaway(
         f"zero-episode immediately-prior session should still surface the "
         f"soft note alongside the rewound takeaway; got: {res!r}"
     )
-    assert "read-only tick" in res["note"], (
-        f"note must acknowledge the benign read-only-tick reading; got: {res['note']!r}"
+    # The note must be the ZERO-EPISODE variant, not the floor-only one: S2
+    # left NO floor (it never called episode_handoff), so a note claiming "it
+    # called episode_handoff (which wrote the session-tag floor...)" would be a
+    # lie. Mutation-sound: reverting the note split (routing zero-episode
+    # through the floor-only note) makes the "wrote the session-tag floor"
+    # clause appear and fails the `not in` assertions.
+    assert "left no handoff floor" in res["note"], (
+        f"zero-episode note must state no floor was left; got: {res['note']!r}"
+    )
+    assert "wrote the session-tag floor" not in res["note"], (
+        f"zero-episode note must NOT claim a floor was written; got: {res['note']!r}"
+    )
+    assert "it called episode_handoff" not in res["note"], (
+        f"zero-episode note must NOT claim episode_handoff was called; got: "
+        f"{res['note']!r}"
     )
