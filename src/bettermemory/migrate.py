@@ -28,7 +28,13 @@ from typing import Iterator
 from . import _frontmatter as frontmatter
 from .models import SCHEMA_VERSION
 from .origin import Origin, capture
-from .store import TOMBSTONE_DIR, _atomic_write_post, _coerce_scopes, _locked
+from .store import (
+    TOMBSTONE_DIR,
+    _atomic_write_post,
+    _coerce_scopes,
+    _lifecycle_redump_cap,
+    _locked,
+)
 
 log = logging.getLogger("bettermemory.migrate")
 
@@ -278,16 +284,29 @@ def migrate_origin_in_directory(
             # failed transiently.
             #
             # Lifecycle re-dump: this only APPENDS a small `origin` block to an
-            # already-admitted, already-readable legacy record. Use the full
-            # read cap (not `_atomic_write_post`'s headroom-reserved write-cap
-            # default) so a record whose serialized size sits in the reserved
-            # band — e.g. a pre-3.14.1 record written before the total-file cap
-            # existed — still gets its origin backfilled instead of being
-            # rejected and (mis)reported malformed. Same rationale as the store
-            # re-dump paths (`mark_verified` / `rename_scope` / `tombstone`).
+            # already-admitted, already-readable legacy record. Cap it with the
+            # store's shared band-keyed `_lifecycle_redump_cap` — the same
+            # discipline as `mark_verified` / `rename_scope`. The flat read cap
+            # this replaces let the backfill grow a just-under-write-cap record
+            # into the reserved band (the origin URL / cwd are caller- and
+            # environment-controlled, so the appended block is unbounded from
+            # the record's point of view), after which the record's own
+            # tombstone headroom was gone — the exact un-removable /
+            # hard-delete chain the band discipline exists to close. A
+            # band-resident legacy record still gets its origin backfilled
+            # (the band arm reserves only the removal-metadata budget); a
+            # record too close to its cap lands in `report.malformed` below
+            # with the file untouched, and a re-run after shrinking it picks
+            # it up.
+            try:
+                current_size = path.stat().st_size
+            except OSError:
+                current_size = 0
             try:
                 _atomic_write_post(
-                    path, post, max_file_bytes=frontmatter._MAX_FILE_BYTES
+                    path,
+                    post,
+                    max_file_bytes=_lifecycle_redump_cap(current_size),
                 )
             except (OSError, ValueError) as exc:
                 log.warning("skipping file that failed to write %s: %s", path, exc)

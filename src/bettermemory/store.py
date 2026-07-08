@@ -667,25 +667,24 @@ class Store:
             # tombstoned, so `prune_tombstones` eventually hard-deletes it: silent
             # data loss the verify introduced.
             #
-            # Thread F1 by keying the cap on which band the record is ALREADY in:
-            # a sub-write-cap record caps at `_MAX_WRITE_BYTES` (a verify whose
-            # additions would push it up into the reserved band is rejected,
-            # preserving the tombstone/rename/restore headroom); a record whose
-            # serialized size ALREADY sits in the band (e.g. a pre-3.14.1 record
-            # written before the total-file cap existed) caps at the full
-            # `_MAX_FILE_BYTES` so it stays verifiable — including a FIRST verify,
-            # which must add ~40 bytes of `last_verified_at`. (Capping a band
-            # record at its exact current size froze first-time verification of
-            # exactly the legacy records F1 exists to keep maintainable.)
+            # Thread F1 by keying the cap on which band the record is ALREADY
+            # in — the shared `_lifecycle_redump_cap`: a sub-write-cap record
+            # caps at `_MAX_WRITE_BYTES` (a verify whose additions would push
+            # it up into the reserved band is rejected, preserving the
+            # tombstone/rename/restore headroom); a record already in the band
+            # (e.g. a pre-3.14.1 file) stays verifiable — including a FIRST
+            # verify, which must add ~40 bytes of `last_verified_at` — up to
+            # the band ceiling that reserves `_REMOVAL_META_BUDGET_BYTES`, so
+            # a verify can never eat the room the record's own tombstone
+            # needs. (The 3.15.0 flat-read-cap band arm let a legal
+            # verified_paths attestation grow a band record to within a few
+            # bytes of the read cap, after which `tombstone` failed: an
+            # un-removable record.)
             try:
                 current_size = existing_path.stat().st_size
             except OSError:
                 current_size = 0
-            verify_cap = (
-                frontmatter._MAX_FILE_BYTES
-                if current_size > frontmatter._MAX_WRITE_BYTES
-                else frontmatter._MAX_WRITE_BYTES
-            )
+            verify_cap = _lifecycle_redump_cap(current_size)
             try:
                 self._write_path(existing_path, new_memory, max_file_bytes=verify_cap)
             except ValueError as exc:
@@ -736,6 +735,12 @@ class Store:
               ENOENT-on-unlink race is swallowed; everything else
               propagates. `memory_remove` catches this and translates it
               to a structured `ValueError`.
+            ValueError: the record sits so close to the read cap that even
+              the adaptively-trimmed removal metadata (empty reason, no
+              session) does not fit — only reachable for a legacy file
+              written within `_REMOVED_TIMESTAMP_HEADROOM_BYTES` of the
+              read cap. `memory_remove` translates it with a
+              shrink-first remediation hint.
         """
         path = self._find_path_for_id(memory_id)
         if path is None:
@@ -801,25 +806,50 @@ class Store:
                 )
             post = frontmatter.load(path)
             post.metadata["removed"] = utcnow()
-            # Bound the reason so appending it (plus the fixed removal keys)
-            # can't push a near-write-cap record's tombstone re-dump past the
-            # read cap — that would make the record un-removable.
-            post.metadata["removed_reason"] = _cap_removed_reason(reason)
-            # Only emit the field when a session_id was passed — keeps
-            # legacy tests and ad-hoc callers from getting an opaque
-            # `None` lying in frontmatter. The reader treats missing
+            # Bound the removal metadata so appending it can't push the
+            # tombstone re-dump past the read cap and make the record
+            # un-removable. The fixed per-field budgets (`_cap_removed_reason`
+            # / `_cap_removed_session`, both SERIALIZED-size bounds — item 7)
+            # cover every record the `_lifecycle_redump_cap` discipline
+            # admits; for a legacy record sitting even closer to the read cap
+            # the budgets ADAPT to the room the record actually has left: the
+            # session id is dropped first (it is an optional join key — the
+            # event log remains the canonical session join), then the reason
+            # is trimmed toward empty. Losing annotation bytes beats refusing
+            # the removal and stranding the record active forever.
+            try:
+                current_size = path.stat().st_size
+            except OSError:
+                current_size = 0
+            removal_budget = (
+                frontmatter._MAX_FILE_BYTES
+                - current_size
+                - _REMOVED_TIMESTAMP_HEADROOM_BYTES
+            )
+            reason_capped = _cap_removed_reason(reason)
+            session_capped = (
+                _cap_removed_session(session_id) if session_id is not None else None
+            )
+            if (
+                session_capped is not None
+                and _serialized_reason_bytes(reason_capped)
+                + _serialized_session_bytes(session_capped)
+                > removal_budget
+            ):
+                session_capped = None
+            if _serialized_reason_bytes(reason_capped) > removal_budget:
+                reason_capped = _cap_serialized_meta(
+                    reason_capped,
+                    key="removed_reason",
+                    max_bytes=max(0, removal_budget),
+                )
+            post.metadata["removed_reason"] = reason_capped
+            # Only emit `removed_session` when a session_id was passed AND it
+            # fits — keeps legacy tests and ad-hoc callers from getting an
+            # opaque `None` lying in frontmatter. The reader treats missing
             # or None identically.
-            #
-            # Bound `removed_session` on its SERIALIZED size (item 7), exactly
-            # as `removed_reason` is bounded above. Both land in the fixed
-            # maintenance headroom reserved below the read cap, so an unbounded
-            # session id could — on a near-write-cap record — push the tombstone
-            # re-dump past `_MAX_FILE_BYTES` and make the record un-removable,
-            # the same F1 class the reason bound already closes. Their combined
-            # worst case is checked to fit the headroom at import (see
-            # `_MAX_REMOVED_SESSION_BYTES`).
-            if session_id is not None:
-                post.metadata["removed_session"] = _cap_removed_session(session_id)
+            if session_capped is not None:
+                post.metadata["removed_session"] = session_capped
 
             # Lifecycle re-dump: appends removal metadata to an already-valid
             # record. Allow the full read cap (not the headroom-reserved write
@@ -1159,37 +1189,26 @@ class Store:
             # (`_atomic_write_post`, `Path.unlink`, `fsync_dir`, `_load_path`,
             # `_index_upsert_quietly` take no per-file flock).
             with _locked(active_path):
-                # Item 1 / F1: restore RE-ADMITS the tombstone as an active
-                # record, so it must satisfy the same headroom-reserving
-                # admission cap a fresh write does — otherwise a tombstone
-                # that grew while active (accumulated verified_* lists) or a
-                # pre-3.14.1 record admitted before the cap existed would mint
-                # an active record above the write cap that could never be
-                # re-tombstoned/renamed. Validate the would-be active record
-                # against the write cap and fail loudly with a shrink-the-body
-                # message rather than silently minting an un-maintainable
-                # record. The tombstone is still on disk (not yet unlinked),
-                # so a rejected restore loses nothing. Serialize once at the
-                # read cap (which rejects only genuinely-unreadable shapes —
-                # alias bombs, > read cap — with their own error), then
-                # require the result to fit the write cap.
-                serialized_bytes = len(
-                    frontmatter.dumps(
-                        post, max_file_bytes=frontmatter._MAX_FILE_BYTES
-                    ).encode("utf-8")
-                )
-                if serialized_bytes > frontmatter._MAX_WRITE_BYTES:
-                    raise ValueError(
-                        f"{tombstone_path}: cannot restore memory {memory_id} "
-                        f"— the restored active record would serialize to "
-                        f"{serialized_bytes} bytes, over the "
-                        f"{frontmatter._MAX_WRITE_BYTES}-byte admission cap; "
-                        f"shrink the body (or its verified_paths / links) "
-                        f"before restoring so the restored record stays "
-                        f"removable and renameable."
-                    )
+                # Item 1 / F1 (v2): restore RE-ADMITS the tombstone as an
+                # active record at the READ cap, not the write cap. The
+                # 3.15.0 write-cap refusal protected the store from minting
+                # band actives, but it turned every band tombstone into a
+                # one-way door: there is no tombstone-edit surface, so
+                # nothing could shrink a refused tombstone, and
+                # `prune_tombstones` eventually HARD-DELETED it — strictly
+                # worse than the un-maintainable-active class the refusal
+                # guarded against. Band actives are maintainable now:
+                # `_lifecycle_redump_cap` keeps them verifiable/renameable
+                # while reserving the removal-metadata budget, and
+                # `tombstone`'s adaptive trimming keeps them removable — so
+                # re-admitting at the read cap loses nothing, and every
+                # tombstone the store can load can round-trip back to
+                # active. (`dumps` at the read cap still rejects the only
+                # genuinely unreadable shapes — alias bombs, > read cap —
+                # with their own error, and the tombstone is still on disk
+                # if it does.)
                 _atomic_write_post(
-                    active_path, post, max_file_bytes=frontmatter._MAX_WRITE_BYTES
+                    active_path, post, max_file_bytes=frontmatter._MAX_FILE_BYTES
                 )
                 try:
                     tombstone_path.unlink()
@@ -1310,16 +1329,15 @@ class Store:
                     update={"scopes": new_scopes, "updated": utcnow()}
                 )
                 # Lifecycle re-dump: relabels a scope on an already-admitted,
-                # already-readable record. Same cap discipline as `mark_verified`:
-                # a sub-write-cap record caps at `_MAX_WRITE_BYTES`, a record
-                # already in the reserved band caps at the full `_MAX_FILE_BYTES`.
-                # A record whose serialized size ALREADY sits in the band (e.g. a
-                # pre-3.14.1 record) may be re-dumped (bounded by the read cap) so
-                # it stays renameable (F1), but a rename that would GROW a
-                # sub-write-cap record past `_MAX_WRITE_BYTES` — swapping in a
-                # longer `new` scope — is rejected rather than minting a record in
-                # the band that `update`/`tombstone`/`restore` can no longer
-                # maintain (the same silent-data-loss seam `mark_verified` closes).
+                # already-readable record. Same shared cap discipline as
+                # `mark_verified` (`_lifecycle_redump_cap`): a sub-write-cap
+                # record caps at `_MAX_WRITE_BYTES` — a rename that would GROW
+                # it past the write cap by swapping in a longer `new` scope is
+                # rejected rather than minting a band record — and a record
+                # already in the band stays renameable up to the band ceiling
+                # that reserves the removal-metadata budget, so a rename can
+                # never leave a record its own tombstone no longer fits
+                # (the same silent-data-loss seam `mark_verified` closes).
                 #
                 # Item 6: per-record guard around the re-dump. A single record can
                 # still overflow its cap here — the swap to a longer `new` scope
@@ -1333,11 +1351,7 @@ class Store:
                     current_size = path.stat().st_size
                 except OSError:
                     current_size = 0
-                rename_cap = (
-                    frontmatter._MAX_FILE_BYTES
-                    if current_size > frontmatter._MAX_WRITE_BYTES
-                    else frontmatter._MAX_WRITE_BYTES
-                )
+                rename_cap = _lifecycle_redump_cap(current_size)
                 try:
                     self._write_path(path, refreshed, max_file_bytes=rename_cap)
                 except ValueError as exc:
@@ -1382,8 +1396,14 @@ class Store:
                         post = frontmatter.load(tpath)
                     except PARSE_SKIP_EXCEPTIONS:
                         continue
-                    raw_scopes = post.metadata.get("scopes")
-                    if not isinstance(raw_scopes, list):
+                    # F4 twin: resolve the scope shape with the same shared
+                    # `_coerce_scopes` the tombstone READERS use
+                    # (`_load_tombstone_path`), so a dict/set/scalar-shaped
+                    # `scopes:` that the curation views list under the old
+                    # name is actually renamed here instead of being
+                    # silently skipped (reader-vs-mutator divergence).
+                    raw_scopes = _coerce_scopes(post.metadata.get("scopes"))
+                    if not raw_scopes:
                         continue
                     new_scopes_or_none = self._scopes_after_rename(
                         [str(s) for s in raw_scopes], old, new
@@ -2124,12 +2144,50 @@ _MAX_REMOVED_SESSION_BYTES = 512
 # import so a future cap bump that would blow the budget fails loudly here
 # rather than silently reintroducing the un-removable-record class.
 _REMOVED_TIMESTAMP_HEADROOM_BYTES = 128
-assert (
+
+# The removal metadata's combined worst-case SERIALIZED size. Every lifecycle
+# re-dump of an ACTIVE record must leave at least this much room below the
+# read cap, or the record can be grown (by a verify / scope rename / origin
+# backfill) to a size whose own tombstone re-dump no longer fits — the
+# un-removable-record class. `_lifecycle_redump_cap` reserves it.
+_REMOVAL_META_BUDGET_BYTES = (
     _MAX_REMOVED_REASON_BYTES
     + _MAX_REMOVED_SESSION_BYTES
     + _REMOVED_TIMESTAMP_HEADROOM_BYTES
-    <= frontmatter._MAINTENANCE_HEADROOM_BYTES
-), "tombstone removal metadata worst case exceeds the maintenance headroom"
+)
+assert _REMOVAL_META_BUDGET_BYTES <= frontmatter._MAINTENANCE_HEADROOM_BYTES, (
+    "tombstone removal metadata worst case exceeds the maintenance headroom"
+)
+
+
+def _lifecycle_redump_cap(current_size: int) -> int:
+    """Size cap for a lifecycle re-dump (verify / scope rename / origin
+    backfill) of an already-admitted active record, keyed on which band the
+    record is ALREADY in. One shared choke point: every mutator that re-dumps
+    an active record routes its cap through here, so no caller can re-open
+    the grow-into-the-band seam on its own.
+
+    - A sub-write-cap record caps at `_MAX_WRITE_BYTES`: growth into the
+      reserved maintenance band is rejected outright, preserving the
+      tombstone / rename / restore headroom a fresh admission guarantees.
+    - A record already inside the band (a pre-3.14.1 file, or a restored
+      band tombstone) caps at the read cap MINUS `_REMOVAL_META_BUDGET_BYTES`
+      so it stays maintainable — verifiable (including a FIRST verify),
+      renameable — while always leaving room for its own tombstone's removal
+      metadata. The flat read-cap arm this replaces let a legal verify eat
+      that budget and mint an un-removable record.
+    - A record already ABOVE that ceiling (a legacy file written within the
+      removal budget of the read cap) freezes at its current size: a re-dump
+      may shrink or hold it, never grow it — every byte of growth comes
+      straight out of what remains of its removal headroom.
+    """
+    if current_size <= frontmatter._MAX_WRITE_BYTES:
+        return frontmatter._MAX_WRITE_BYTES
+    band_ceiling = max(
+        frontmatter._MAX_FILE_BYTES - _REMOVAL_META_BUDGET_BYTES,
+        frontmatter._MAX_WRITE_BYTES,
+    )
+    return min(max(band_ceiling, current_size), frontmatter._MAX_FILE_BYTES)
 
 
 def _serialized_meta_bytes(key: str, value: str) -> int:

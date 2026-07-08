@@ -1658,23 +1658,27 @@ def test_rename_scope_reports_growth_into_band_as_failed(store: Store) -> None:
     assert reloaded.scopes == ["s"]
 
 
-def test_restore_oversized_tombstone_raises_shrink_message(store: Store) -> None:
-    """Item-1a: restore RE-ADMITS a tombstone as an active record, so the
-    would-be active record must satisfy the same headroom-reserving admission
-    cap a fresh write does. A tombstone whose stripped active record exceeds the
-    write cap (a pre-3.14.1 record, or one that grew while active) cannot be
-    restored without minting an un-maintainable record; restore must fail LOUDLY
-    with a shrink-the-body message rather than silently admitting it. Reverting
-    the fix (re-dumping at the read cap with no re-validation) makes restore
-    succeed and mint the un-removable record."""
+def test_restore_band_tombstone_round_trips(store: Store) -> None:
+    """Item-1a (v2): restore RE-ADMITS any loadable tombstone — including one
+    whose stripped active record exceeds the write cap (a pre-3.14.1 record, or
+    one that grew while active). The 3.15.0 write-cap refusal turned these into
+    a one-way door: no tombstone-edit surface exists, so nothing could shrink a
+    refused tombstone, and `prune_tombstones` eventually HARD-DELETED it —
+    silent data loss for exactly the records the band discipline exists to
+    protect. Restore now re-admits at the read cap; the restored band active
+    stays maintainable (`_lifecycle_redump_cap`) and removable (adaptive
+    removal-metadata trimming), so the tombstone⇄active round-trip holds in
+    both directions. Reverting restore to the write-cap refusal makes the
+    restore below raise and this test fail."""
     from bettermemory import _frontmatter as fm
 
     mid = generate_ulid()
     # Body == the write cap: the stripped active record (body + frontmatter)
     # necessarily exceeds the write cap, while the tombstone (+ removal
     # metadata) still fits under the read cap so `frontmatter.load` can read it.
+    body = "x" * fm._MAX_WRITE_BYTES
     post = fm.Post(
-        content="x" * fm._MAX_WRITE_BYTES,
+        content=body,
         metadata={
             "schema_version": 1,
             "id": mid,
@@ -1693,11 +1697,95 @@ def test_restore_oversized_tombstone_raises_shrink_message(store: Store) -> None
     tpath = store.tombstone_dir / f"2025-01-01-legacy.{mid}.tombstone.md"
     tpath.write_text(tomb_text, encoding="utf-8")
 
+    restored = store.restore(mid)
+    assert restored.id == mid
+    assert restored.body.strip() == body
+    assert not tpath.exists()
+
+    # The restored band active is NOT a one-way object: it can be re-removed
+    # (adaptive trimming keeps its tombstone under the read cap) …
+    new_tomb = store.tombstone(mid, "re-removed after restore", session_id="sess-x")
+    assert new_tomb.exists()
+    assert new_tomb.stat().st_size <= fm._MAX_FILE_BYTES
+
+    # … and restored again: the full round-trip holds both ways.
+    again = store.restore(mid)
+    assert again.body.strip() == body
+
+
+def test_mark_verified_band_arm_reserves_removal_budget(memory_dir: Path) -> None:
+    """F1 (v2): the band arm of `mark_verified` caps at the read cap MINUS
+    `_REMOVAL_META_BUDGET_BYTES`, not the flat read cap. At the flat read cap a
+    LEGAL verified_paths attestation (one entry, well within the handler's
+    64x1024 limits) could grow a band record to within a few bytes of the read
+    cap — after which `tombstone`, which must append removal metadata under the
+    same read cap, raised: an un-removable record. The band arm must reject
+    growth past the ceiling AND the record must remain removable afterwards.
+    Reverting the band arm to the flat read cap admits the growth and fails
+    this test at the `raises` below."""
+    from bettermemory import _frontmatter as fm
+    from bettermemory.store import _REMOVAL_META_BUDGET_BYTES
+
+    mid = generate_ulid()
+    _write_band_memory_file(memory_dir, memory_id=mid, body_bytes=1_046_600)
+    store = Store(memory_dir)
+    path = next(p for p in store._iter_active_paths() if mid.lower() in p.name)
+    current = path.stat().st_size
+    ceiling = fm._MAX_FILE_BYTES - _REMOVAL_META_BUDGET_BYTES
+    # Fixture sanity: in the band, below the ceiling — the shape the band arm
+    # exists to keep maintainable.
+    assert fm._MAX_WRITE_BYTES < current < ceiling
+
+    # One verified path sized to cross the ceiling while staying comfortably
+    # under the read cap — the exact growth the flat-read-cap arm admitted.
+    overshoot = ceiling - current + 400
+    assert overshoot < 1024  # legal single-entry input at the handler layer
     with pytest.raises(ValueError, match="(?i)shrink"):
-        store.restore(mid)
-    # Loud failure loses nothing: the tombstone is untouched, no active file.
-    assert tpath.exists()
-    assert not any(p.stem.endswith(mid.lower()) for p in store._iter_active_paths())
+        store.mark_verified(mid, verified_paths=["/repo/" + "y" * overshoot])
+
+    # The refused verify left the record intact — and, the actual point,
+    # still REMOVABLE: its tombstone re-dump fits under the read cap.
+    tomb = store.tombstone(mid, "still removable", session_id="sess-y")
+    assert tomb.stat().st_size <= fm._MAX_FILE_BYTES
+
+
+def test_tombstone_adaptively_trims_removal_metadata_near_read_cap(
+    memory_dir: Path,
+) -> None:
+    """Adaptive removal-metadata trimming: a legacy record within the removal
+    budget of the read cap (ABOVE the `_lifecycle_redump_cap` ceiling — nothing
+    post-fix can create one, but a pre-3.14.1 file presents exactly this shape)
+    must still be removable. The fixed 1 KiB reason budget alone would push its
+    tombstone past the read cap; the caps ADAPT to the room the record actually
+    has left: the session id is dropped first, then the reason is trimmed
+    toward empty. Reverting to the fixed budgets makes this tombstone raise out
+    of the re-dump — the un-removable-record class, one band deeper."""
+    from bettermemory import _frontmatter as fm
+    from bettermemory.store import _REMOVAL_META_BUDGET_BYTES
+
+    mid = generate_ulid()
+    _write_band_memory_file(memory_dir, memory_id=mid, body_bytes=1_048_100)
+    store = Store(memory_dir)
+    path = next(p for p in store._iter_active_paths() if mid.lower() in p.name)
+    current = path.stat().st_size
+    # Fixture sanity: above the band ceiling (the doomed sliver).
+    assert current > fm._MAX_FILE_BYTES - _REMOVAL_META_BUDGET_BYTES
+
+    long_reason = "r" * 2000
+    tomb = store.tombstone(mid, long_reason, session_id="s" * 100)
+    assert tomb.stat().st_size <= fm._MAX_FILE_BYTES
+
+    match = next(t for t in store.load_tombstones() if t.id == mid)
+    # The reason survived as a (much shorter) prefix; the session was dropped
+    # — the event log remains the canonical session join for the audit trail.
+    assert match.removed_reason
+    assert long_reason.startswith(match.removed_reason)
+    assert len(match.removed_reason) < 2000
+    assert match.removed_session is None
+
+    # And the round-trip back to active still holds.
+    restored = store.restore(mid)
+    assert restored.id == mid
 
 
 def test_cap_removed_reason_bounds_serialized_size_not_raw() -> None:

@@ -45,6 +45,20 @@ async def memory_remove(
         # Surface as ValueError so the MCP tool boundary returns a clean
         # structured error rather than letting the bare OSError leak.
         raise ValueError(f"failed to tombstone memory {id}: {exc}") from exc
+    except ValueError as exc:
+        # Only reachable for a legacy record written within the removal-
+        # metadata headroom of the absolute read cap: even the adaptively-
+        # trimmed removal metadata (empty reason, dropped session) does not
+        # fit, so `Store.tombstone`'s re-dump refuses. Translate the raw
+        # cap-refusal into a remediation the caller can act on instead of
+        # leaking the dumper's "refusing to write" text with no next step.
+        raise ValueError(
+            f"cannot tombstone memory {id}: the record sits within the "
+            f"removal-metadata headroom of the absolute file cap, so even "
+            f"trimmed removal metadata does not fit. Shrink it first — "
+            f"memory_update with a shorter body, or memory_verify with empty "
+            f"verified_* lists — then retry the removal. ({exc})"
+        ) from exc
     deps.recorder.record("remove", id=id, reason=reason)
     return {
         "removed": id,

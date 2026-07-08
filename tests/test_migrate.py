@@ -824,19 +824,22 @@ def test_scope_repo_map_routes_set_shaped_scopes(tmp_path: Path) -> None:
 
 
 def test_migration_backfills_band_legacy_record(tmp_path: Path) -> None:
-    """Item-1c: the origin backfill only APPENDS a small `origin` block to an
-    already-admitted, already-readable legacy record, so it re-dumps at the full
-    read cap. A pre-3.14.1 record whose serialized size sits in the reserved
-    band (> write cap, <= read cap) must still get its origin backfilled.
-    Reverting to the write-cap default makes the re-dump raise ValueError, which
-    the loop records as `malformed` — the record silently never gets origin."""
+    """Item-1c (v2): the origin backfill only APPENDS a small `origin` block to
+    an already-admitted, already-readable legacy record, so it re-dumps at the
+    band-keyed `_lifecycle_redump_cap`. A pre-3.14.1 record whose serialized
+    size sits in the reserved band — below the removal-budget ceiling — must
+    still get its origin backfilled. Reverting the cap to the write-cap default
+    makes the re-dump raise ValueError, which the loop records as `malformed` —
+    the record silently never gets origin."""
     from datetime import datetime, timezone
+
+    from bettermemory.store import _REMOVAL_META_BUDGET_BYTES
 
     memory_dir = tmp_path / ".claude-memory"
     memory_dir.mkdir()
 
     post = frontmatter.Post(
-        content="x" * 1_047_000,
+        content="x" * 1_045_000,
         metadata={
             "id": _LEGACY_IDS[0],
             "created": datetime(2025, 1, 1, tzinfo=timezone.utc),
@@ -848,7 +851,10 @@ def test_migration_backfills_band_legacy_record(tmp_path: Path) -> None:
     )
     text = frontmatter.dumps(post, max_file_bytes=frontmatter._MAX_FILE_BYTES)
     total = len(text.encode("utf-8"))
-    assert frontmatter._MAX_WRITE_BYTES < total <= frontmatter._MAX_FILE_BYTES
+    # In the band, with room under the removal-budget ceiling for the origin
+    # block — the shape the band arm exists to keep backfillable.
+    assert frontmatter._MAX_WRITE_BYTES < total
+    assert total < frontmatter._MAX_FILE_BYTES - _REMOVAL_META_BUDGET_BYTES - 200
     band = memory_dir / f"2025-01-01-band-{_LEGACY_IDS[0].lower()}.md"
     band.write_text(text, encoding="utf-8")
 
@@ -859,3 +865,49 @@ def test_migration_backfills_band_legacy_record(tmp_path: Path) -> None:
     assert band not in report.malformed
     assert report.updated == 1
     assert _read_metadata(band)["origin"]["repo"] == "git@github.com:example/foo.git"
+
+
+def test_migration_refuses_to_grow_subcap_record_into_band(tmp_path: Path) -> None:
+    """The band-discipline twin `mark_verified` / `rename_scope` got in 3.15.0,
+    applied to the one mutator that release missed: the origin backfill's
+    re-dump caps through the shared `_lifecycle_redump_cap`, so a legacy record
+    admitted just under the write cap cannot be grown INTO the reserved band by
+    a long caller-controlled origin (a `--force-repo` URL, a deep checkout
+    `cwd`). At the flat read cap the backfill silently minted a band record —
+    re-opening the exact un-removable / restore-refused / prune-hard-deletes
+    chain the discipline closed. The refusal is loud: the file lands in
+    `report.malformed` untouched. Reverting the cap to the flat read cap makes
+    the backfill succeed here and this test fail."""
+    from datetime import datetime, timezone
+
+    memory_dir = tmp_path / ".claude-memory"
+    memory_dir.mkdir()
+
+    post = frontmatter.Post(
+        content="x" * 1_044_100,
+        metadata={
+            "id": _LEGACY_IDS[0],
+            "created": datetime(2025, 1, 1, tzinfo=timezone.utc),
+            "updated": datetime(2025, 1, 1, tzinfo=timezone.utc),
+            "scopes": ["tools"],
+            "confidence": "medium",
+            "source": "explicit-statement",
+        },
+    )
+    text = frontmatter.dumps(post, max_file_bytes=frontmatter._MAX_FILE_BYTES)
+    total = len(text.encode("utf-8"))
+    # Just under the write cap: a normal, maintainable record whose headroom
+    # the origin block below would eat.
+    assert total <= frontmatter._MAX_WRITE_BYTES
+    assert frontmatter._MAX_WRITE_BYTES - total < 400
+    near_cap = memory_dir / f"2025-01-01-nearcap-{_LEGACY_IDS[0].lower()}.md"
+    near_cap.write_text(text, encoding="utf-8")
+
+    long_repo = "https://example.com/" + "r" * 400  # caller-controlled growth
+    report = migrate_origin_in_directory(memory_dir, force_repo=long_repo)
+
+    # Loud refusal, file untouched: no origin, size unchanged, reported.
+    assert near_cap in report.malformed
+    assert report.updated == 0
+    assert near_cap.stat().st_size == total
+    assert "origin" not in _read_metadata(near_cap)
