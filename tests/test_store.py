@@ -1597,6 +1597,178 @@ def test_cap_removed_reason_bounds_serialized_size_not_raw() -> None:
     assert _cap_removed_reason("user said so") == "user said so"
 
 
+# ---------------------------------------------------------------------------
+# rename_scope partial-rename abort (item 6): a single record that overflows
+# the read cap on re-dump (the scope swap grows the file past _MAX_FILE_BYTES)
+# or hits a disk error must NOT abort the whole rename mid-loop. Both the active
+# and tombstone branches guard the per-record re-dump: on failure they collect
+# {id, reason}, skip the record, and continue; the FTS index upsert runs only
+# on a successful write. The failed ids are returned so a partial run reports
+# which records did not rename instead of silently claiming full success.
+# ---------------------------------------------------------------------------
+
+
+def _write_overflow_on_rename_active(
+    memory_dir: Path, *, memory_id: str, old_scope: str
+) -> Path:
+    """Hand-write an active memory that is readable on disk with `old_scope`
+    (total <= read cap) but whose re-dump overflows the read cap once
+    `old_scope` is swapped for a much longer new scope — the exact
+    partial-rename-abort trigger item 6 guards. The store's own `write()` caps
+    at the write cap and could never mint one; we serialize at the read cap."""
+    from bettermemory import _frontmatter as fm
+
+    post = fm.Post(
+        content="x" * 1_045_000,
+        metadata={
+            "schema_version": 1,
+            "id": memory_id,
+            "created": datetime(2025, 1, 1, tzinfo=timezone.utc),
+            "updated": datetime(2025, 1, 1, tzinfo=timezone.utc),
+            "scopes": [old_scope],
+            "confidence": "medium",
+            "source": "explicit-statement",
+        },
+    )
+    text = fm.dumps(post, max_file_bytes=fm._MAX_FILE_BYTES)
+    assert len(text.encode("utf-8")) <= fm._MAX_FILE_BYTES  # readable as written
+    path = memory_dir / f"2025-01-01-overflow-{memory_id.lower()}.md"
+    path.write_text(text, encoding="utf-8")
+    return path
+
+
+def _write_overflow_on_rename_tombstone(
+    store: Store, *, memory_id: str, old_scope: str
+) -> Path:
+    """Tombstone twin of `_write_overflow_on_rename_active`: readable as a
+    tombstone with `old_scope`, but its re-dump overflows the read cap once the
+    scope swaps to a much longer value."""
+    from bettermemory import _frontmatter as fm
+
+    post = fm.Post(
+        content="y" * 1_045_000,
+        metadata={
+            "schema_version": 1,
+            "id": memory_id,
+            "created": datetime(2025, 1, 1, tzinfo=timezone.utc),
+            "updated": datetime(2025, 1, 1, tzinfo=timezone.utc),
+            "scopes": [old_scope],
+            "confidence": "medium",
+            "source": "explicit-statement",
+            "removed": datetime(2025, 1, 2, tzinfo=timezone.utc),
+            "removed_reason": "legacy oversized tombstone",
+        },
+    )
+    text = fm.dumps(post, max_file_bytes=fm._MAX_FILE_BYTES)
+    assert len(text.encode("utf-8")) <= fm._MAX_FILE_BYTES
+    store.tombstone_dir.mkdir(mode=0o700, exist_ok=True)
+    tpath = (
+        store.tombstone_dir / f"2025-01-01-overflow.{memory_id.lower()}.tombstone.md"
+    )
+    tpath.write_text(text, encoding="utf-8")
+    return tpath
+
+
+def test_rename_scope_skips_overflowing_records_on_both_branches(
+    store: Store, memory_dir: Path
+) -> None:
+    """Item 6: `rename_scope` completes the healthy records and REPORTS the
+    overflowing ones instead of aborting mid-loop. Exercises BOTH branches:
+    an overflowing active record and an overflowing tombstone sit alongside a
+    healthy active record and a healthy tombstone, all carrying the old scope.
+
+    Mutation-sound for both guards: reverting EITHER branch's try/except lets
+    the overflowing record's re-dump raise straight out of `rename_scope`, so
+    the call under test raises and the test errors. (The active branch runs
+    first, so dropping its guard raises before the tombstone branch; dropping
+    only the tombstone guard raises after the active branch completes.)"""
+    old, new = "oldscope", "z" * 6000
+
+    # Healthy active + healthy tombstone (renamed cleanly).
+    active_good = store.write(content="small active body\n", scopes=[old])
+    tomb_seed = store.write(content="small tombstoned body\n", scopes=[old])
+    store.tombstone(tomb_seed.id, reason="removed for the test")
+    tomb_good_id = tomb_seed.id
+
+    # Overflowing active + overflowing tombstone (skipped + reported).
+    active_bad_id = generate_ulid()
+    _write_overflow_on_rename_active(memory_dir, memory_id=active_bad_id, old_scope=old)
+    tomb_bad_id = generate_ulid()
+    _write_overflow_on_rename_tombstone(store, memory_id=tomb_bad_id, old_scope=old)
+
+    result = store.rename_scope(old, new)
+
+    # Healthy records renamed on both branches.
+    assert result["active"] == [active_good.id]
+    assert result["tombstoned"] == [tomb_good_id]
+    # Both overflowing records reported failed with a reason, neither renamed.
+    failed_ids = {entry["id"] for entry in result["failed"]}
+    assert failed_ids == {active_bad_id, tomb_bad_id}
+    assert all(entry["reason"] for entry in result["failed"])
+
+    # The healthy active record actually carries the new scope on a fresh read.
+    reloaded = Store(memory_dir).load_one(active_good.id)
+    assert reloaded.scopes == [new]
+    # The overflowing active record kept the OLD scope (skip, not partial write).
+    from bettermemory import _frontmatter as fm
+
+    bad_meta = fm.load(memory_dir / f"2025-01-01-overflow-{active_bad_id.lower()}.md")
+    assert bad_meta.metadata["scopes"] == [old]
+
+
+def test_tombstone_caps_pathological_session_id(store: Store) -> None:
+    """Item 7: `Store.tombstone` bounds `removed_session` on its SERIALIZED size
+    the same way `removed_reason` is bounded, so a pathological session id can't
+    push a near-write-cap record's tombstone re-dump past the read cap and make
+    the record un-removable.
+
+    Mutation-sound: reverting the cap (storing the raw session id) escape-
+    inflates ~8 KB of control bytes to ~32 KB, overflowing `_MAX_FILE_BYTES` in
+    the tombstone re-dump so `store.tombstone` raises — the call under test
+    would error instead of returning a path."""
+    from bettermemory import _frontmatter as fm
+    from bettermemory.store import (
+        _MAX_REMOVED_SESSION_BYTES,
+        _serialized_session_bytes,
+    )
+
+    # Land the record just under the write cap so only the session id's headroom
+    # contribution decides whether the tombstone stays under the read cap.
+    body = "x" * (fm._MAX_WRITE_BYTES - 512)
+    mem = store.write(content=body, scopes=["tools"])
+
+    # ~8 KiB of control bytes: raw ~8 KB, YAML-escaped ~4x. Uncapped, this alone
+    # overruns the 4 KiB maintenance headroom and the read cap.
+    pathological = "\x01" * 8192
+    path = store.tombstone(mem.id, reason="obsolete", session_id=pathological)
+
+    assert path.exists()
+    # The tombstone stays readable (<= read cap) and appears in the listing.
+    assert path.stat().st_size <= fm._MAX_FILE_BYTES
+    tomb = store.load_tombstone(mem.id)
+    # Session was bounded on serialized size, not dropped entirely.
+    assert tomb.removed_session is not None
+    assert len(tomb.removed_session) > 0
+    assert _serialized_session_bytes(tomb.removed_session) <= _MAX_REMOVED_SESSION_BYTES
+
+
+def test_cap_removed_session_bounds_serialized_size_not_raw() -> None:
+    """Item 7 helper: `_cap_removed_session` bounds on SERIALIZED (YAML-escaped)
+    size, mirroring `_cap_removed_reason`. A control-character session id
+    escape-inflates under `yaml.dump`, so a raw-length bound would let it
+    overflow the headroom. A short printable id is returned verbatim."""
+    from bettermemory.store import (
+        _MAX_REMOVED_SESSION_BYTES,
+        _cap_removed_session,
+        _serialized_session_bytes,
+    )
+
+    control_heavy = "\x01" * 4096
+    capped = _cap_removed_session(control_heavy)
+    assert _serialized_session_bytes(capped) <= _MAX_REMOVED_SESSION_BYTES
+    assert _cap_removed_session("session-01HXYZ") == "session-01HXYZ"
+
+
 def test_episode_write_admits_band_body_at_read_cap(memory_dir: Path) -> None:
     """Item-1 critic gap: episodes are written once and pruned wholesale, never
     tombstoned/renamed, so they reserve no headroom and admit at the full read

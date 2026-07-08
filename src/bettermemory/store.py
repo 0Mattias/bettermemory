@@ -12,7 +12,7 @@ import logging as _logging
 from dataclasses import dataclass
 from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
-from typing import Iterator
+from typing import Any, Iterator
 
 import yaml
 
@@ -778,8 +778,17 @@ class Store:
             # legacy tests and ad-hoc callers from getting an opaque
             # `None` lying in frontmatter. The reader treats missing
             # or None identically.
+            #
+            # Bound `removed_session` on its SERIALIZED size (item 7), exactly
+            # as `removed_reason` is bounded above. Both land in the fixed
+            # maintenance headroom reserved below the read cap, so an unbounded
+            # session id could — on a near-write-cap record — push the tombstone
+            # re-dump past `_MAX_FILE_BYTES` and make the record un-removable,
+            # the same F1 class the reason bound already closes. Their combined
+            # worst case is checked to fit the headroom at import (see
+            # `_MAX_REMOVED_SESSION_BYTES`).
             if session_id is not None:
-                post.metadata["removed_session"] = session_id
+                post.metadata["removed_session"] = _cap_removed_session(session_id)
 
             # Lifecycle re-dump: appends removal metadata to an already-valid
             # record. Allow the full read cap (not the headroom-reserved write
@@ -1185,7 +1194,7 @@ class Store:
         new: str,
         *,
         include_tombstones: bool = True,
-    ) -> dict[str, list[str]]:
+    ) -> dict[str, list[Any]]:
         """Replace `old` with `new` across active memories' scope lists.
 
         Renaming is the cheap fix for typo'd or deprecated scopes —
@@ -1202,17 +1211,32 @@ class Store:
         spelling. Pass `include_tombstones=False` to leave the
         removal audit log unchanged.
 
-        Returns `{"active": [ids], "tombstoned": [ids]}` — the lists
-        of memory ids whose scope sets actually changed. A memory
-        that already had `new` and didn't have `old` is not touched
-        (and not listed). A memory whose only effect would be
-        de-duplication of the new scope IS counted, since the on-disk
+        Returns `{"active": [ids], "tombstoned": [ids]}`, plus a `"failed"`
+        key when — and only when — some record could not be renamed.
+        `active` / `tombstoned` are the lists of memory ids whose scope sets
+        actually changed. A memory that already had `new` and didn't have
+        `old` is not touched (and not listed). A memory whose only effect
+        would be de-duplication of the new scope IS counted, since the on-disk
         list shrank.
+
+        `failed` (item 6) is the list of `{"id", "reason"}` records whose
+        per-record re-dump raised and were SKIPPED rather than aborting the
+        whole rename. Without the per-record guard, one record that overflows
+        the read cap on re-dump (e.g. the rename grows the scope list past
+        `_MAX_FILE_BYTES`) or hits a disk error would raise mid-loop, leaving
+        PARTIAL renames on disk with the FTS index diverged for the already-
+        renamed files. The failures are collected so the caller can report
+        exactly which records did not rename instead of silently claiming a
+        clean run. The key is omitted on a clean run so the common two-key
+        contract is preserved; callers normalise with `.get("failed", [])`.
         """
         if old == new:
             return {"active": [], "tombstoned": []}
 
         active_changed: list[str] = []
+        # Item 6: ids (with reasons) whose per-record re-dump raised and were
+        # skipped, shared across both the active and tombstone branches.
+        failed: list[dict[str, str]] = []
         for path in self._iter_active_paths():
             # Read-modify-write under the same lock per file. The prior
             # shape loaded outside the lock, opening a window where a
@@ -1259,9 +1283,22 @@ class Store:
                 # a record whose serialized size sits in the reserved band (e.g.
                 # a pre-3.14.1 record) can still be renamed instead of frozen —
                 # same rationale as `mark_verified` / `tombstone`.
-                self._write_path(
-                    path, refreshed, max_file_bytes=frontmatter._MAX_FILE_BYTES
-                )
+                #
+                # Item 6: per-record guard around the re-dump. A single record
+                # can still overflow the read cap here — the swap to a longer
+                # `new` scope grows the serialized file past `_MAX_FILE_BYTES`
+                # (dumps raises ValueError), or the atomic write hits a disk
+                # error (OSError). Without this guard that raise aborts the loop
+                # mid-rename, stranding the records already renamed above with a
+                # diverged FTS index. Collect the failure, skip this record, and
+                # continue; the index upsert runs ONLY on a successful write.
+                try:
+                    self._write_path(
+                        path, refreshed, max_file_bytes=frontmatter._MAX_FILE_BYTES
+                    )
+                except (OSError, ValueError) as exc:
+                    failed.append({"id": memory.id, "reason": str(exc)})
+                    continue
                 # perf: index upsert under lock is intentional — see audit H1.
                 _index_upsert_quietly(self.root, refreshed, filename=path.name)
                 active_changed.append(refreshed.id)
@@ -1298,6 +1335,7 @@ class Store:
                     if new_scopes_or_none is None:
                         continue
                     post.metadata["scopes"] = new_scopes_or_none
+                    tomb_id = str(post.metadata.get("id"))
                     # Atomic in-place rewrite via tmp+rename. The previous
                     # implementation used `write_bytes`, which truncates
                     # and rewrites in place — a crash mid-write would leave
@@ -1307,12 +1345,31 @@ class Store:
                     # Lifecycle re-dump of an existing tombstone (relabel a
                     # scope). Full read cap — the tombstone may already sit
                     # near it, and a scope swap must not fail.
-                    _atomic_write_post(
-                        tpath, post, max_file_bytes=frontmatter._MAX_FILE_BYTES
-                    )
-                    tombstoned_changed.append(str(post.metadata.get("id")))
+                    #
+                    # Item 6: same per-record guard as the active branch. A
+                    # tombstone whose scope swap overflows `_MAX_FILE_BYTES`
+                    # (ValueError) or that hits a disk error (OSError) must not
+                    # abort the rename and strand the active-side renames plus a
+                    # diverged FTS index — collect the failure and skip it.
+                    try:
+                        _atomic_write_post(
+                            tpath, post, max_file_bytes=frontmatter._MAX_FILE_BYTES
+                        )
+                    except (OSError, ValueError) as exc:
+                        failed.append({"id": tomb_id, "reason": str(exc)})
+                        continue
+                    tombstoned_changed.append(tomb_id)
 
-        return {"active": active_changed, "tombstoned": tombstoned_changed}
+        result: dict[str, list[Any]] = {
+            "active": active_changed,
+            "tombstoned": tombstoned_changed,
+        }
+        # Surface `failed` only when non-empty: the clean run keeps the
+        # established two-key contract, and a caller only ever sees the failure
+        # list when there is something to report.
+        if failed:
+            result["failed"] = failed
+        return result
 
     @staticmethod
     def _scopes_after_rename(scopes: list[str], old: str, new: str) -> list[str] | None:
@@ -1989,41 +2046,99 @@ def _index_remove_quietly(root: Path, memory_id: str) -> None:
 # annotation, not memory content, so 1 KiB is generous.
 _MAX_REMOVED_REASON_BYTES = 1024
 
+# Cap on a tombstone's `removed_session`, measured on its SERIALIZED (YAML-
+# escaped) size — same axis and rationale as `_MAX_REMOVED_REASON_BYTES`
+# (item 7). `removed_session` is joined onto the same maintenance headroom
+# reserved below the read cap, so it must be bounded too; a control-char /
+# pathologically long session id would otherwise escape-inflate under
+# `yaml.dump` and, on a near-write-cap record, push the tombstone re-dump past
+# `_MAX_FILE_BYTES` and make the record un-removable. A session id is an opaque
+# join key (a ULID/UUID-ish token in practice), so 512 serialized bytes is
+# already far more than any real value needs.
+_MAX_REMOVED_SESSION_BYTES = 512
 
-def _serialized_reason_bytes(reason: str) -> int:
-    """Serialized (YAML) byte size of the `removed_reason:` line for `reason`.
+# Combined worst case (item 7): the tombstone re-dump appends, at most, the
+# fixed `removed:` timestamp line plus a bounded `removed_reason` and a bounded
+# `removed_session`. Their combined SERIALIZED size must fit inside the
+# maintenance headroom `_frontmatter` reserves below the read cap, so a record
+# admitted right at the write cap always stays tombstoneable — the F1 guarantee
+# the headroom exists to provide. `_REMOVED_TIMESTAMP_HEADROOM_BYTES` is a
+# generous fixed allowance for the `removed:` datetime line (its real width is
+# ~45 bytes) so the check stays honest against formatting drift. Enforced at
+# import so a future cap bump that would blow the budget fails loudly here
+# rather than silently reintroducing the un-removable-record class.
+_REMOVED_TIMESTAMP_HEADROOM_BYTES = 128
+assert (
+    _MAX_REMOVED_REASON_BYTES
+    + _MAX_REMOVED_SESSION_BYTES
+    + _REMOVED_TIMESTAMP_HEADROOM_BYTES
+    <= frontmatter._MAINTENANCE_HEADROOM_BYTES
+), "tombstone removal metadata worst case exceeds the maintenance headroom"
+
+
+def _serialized_meta_bytes(key: str, value: str) -> int:
+    """Serialized (YAML) byte size of the `<key>: <value>` line.
 
     Mirrors how `_frontmatter.dumps` renders the value (`allow_unicode=True`,
-    block style), so the bound in `_cap_removed_reason` reflects the reason's
-    real contribution to the tombstone file — escapes included. `_NoAliasDumper`
-    only overrides alias emission, which is irrelevant for a single scalar, so
-    plain `safe_dump` produces byte-identical output here."""
+    block style), so the bounds in `_cap_removed_reason` / `_cap_removed_session`
+    reflect the value's real contribution to the tombstone file — escapes
+    included. `_NoAliasDumper` only overrides alias emission, which is
+    irrelevant for a single scalar, so plain `safe_dump` produces byte-identical
+    output here."""
     return len(
         yaml.safe_dump(
-            {"removed_reason": reason}, allow_unicode=True, default_flow_style=False
+            {key: value}, allow_unicode=True, default_flow_style=False
         ).encode("utf-8")
     )
+
+
+def _serialized_reason_bytes(reason: str) -> int:
+    """Serialized (YAML) byte size of the `removed_reason:` line for `reason`."""
+    return _serialized_meta_bytes("removed_reason", reason)
+
+
+def _serialized_session_bytes(session_id: str) -> int:
+    """Serialized (YAML) byte size of the `removed_session:` line."""
+    return _serialized_meta_bytes("removed_session", session_id)
+
+
+def _cap_serialized_meta(value: str, *, key: str, max_bytes: int) -> str:
+    """Return the longest codepoint-prefix of `value` whose SERIALIZED
+    `<key>: <value>` line stays within `max_bytes`. Silently shortening an
+    over-long or escape-inflated value beats failing the removal."""
+    if _serialized_meta_bytes(key, value) <= max_bytes:
+        return value
+    # Binary-search the longest prefix (on codepoint boundaries) whose
+    # serialized form still fits. Serialized size is non-decreasing in prefix
+    # length, so the search is well-defined; the empty value always fits.
+    lo, hi = 0, len(value)
+    while lo < hi:
+        mid = (lo + hi + 1) // 2
+        if _serialized_meta_bytes(key, value[:mid]) <= max_bytes:
+            lo = mid
+        else:
+            hi = mid - 1
+    return value[:lo]
 
 
 def _cap_removed_reason(reason: str) -> str:
     """Bound a removal reason so its SERIALIZED YAML contribution stays within
     `_MAX_REMOVED_REASON_BYTES`, so a near-write-cap record is always
-    tombstoneable even when the reason is escape-heavy. Returns the longest
-    codepoint-prefix that fits — silently shortening an over-long or
-    escape-inflated reason beats failing the removal."""
-    if _serialized_reason_bytes(reason) <= _MAX_REMOVED_REASON_BYTES:
-        return reason
-    # Binary-search the longest prefix (on codepoint boundaries) whose
-    # serialized form still fits. Serialized size is non-decreasing in prefix
-    # length, so the search is well-defined; the empty reason always fits.
-    lo, hi = 0, len(reason)
-    while lo < hi:
-        mid = (lo + hi + 1) // 2
-        if _serialized_reason_bytes(reason[:mid]) <= _MAX_REMOVED_REASON_BYTES:
-            lo = mid
-        else:
-            hi = mid - 1
-    return reason[:lo]
+    tombstoneable even when the reason is escape-heavy."""
+    return _cap_serialized_meta(
+        reason, key="removed_reason", max_bytes=_MAX_REMOVED_REASON_BYTES
+    )
+
+
+def _cap_removed_session(session_id: str) -> str:
+    """Bound a `removed_session` id so its SERIALIZED YAML contribution stays
+    within `_MAX_REMOVED_SESSION_BYTES` (item 7). Mirror of `_cap_removed_reason`
+    on the sibling headroom field — together they provably fit the maintenance
+    headroom so a near-write-cap record stays removable regardless of how
+    escape-heavy the session id is."""
+    return _cap_serialized_meta(
+        session_id, key="removed_session", max_bytes=_MAX_REMOVED_SESSION_BYTES
+    )
 
 
 def _atomic_write_post(

@@ -21,8 +21,11 @@ DESC_MEMORY_RENAME_SCOPE = (
     "didn't change, only the tag did). Memories that already "
     "carry `new_scope` get `old_scope` removed without "
     "duplicating `new_scope`. Returns "
-    "`{active: [ids], tombstoned: [ids]}` for the records that "
-    "were actually modified. Pass `include_tombstones=False` to "
+    "`{active: [ids], tombstoned: [ids], failed: [{id, reason}]}` — "
+    "the first two list the records actually modified; `failed` lists "
+    "any records whose re-dump was skipped (e.g. the rename would push "
+    "the file past the size cap) so a partial run is never reported as "
+    "a clean one. Pass `include_tombstones=False` to "
     "leave the removal audit log untouched. Use after "
     "memory_health surfaces a typo in `rare_scopes`."
 )
@@ -67,6 +70,13 @@ async def memory_rename_scope(
             f"failed to rename scope {clean_old!r} -> {clean_new!r}: {exc} "
             "(rename may be partially applied; safe to re-run)"
         ) from exc
+    # Item 6/6b: `failed` lists the {id, reason} records whose per-record
+    # re-dump raised inside the rename loop and were skipped rather than
+    # aborting the whole run. `Store.rename_scope` omits the key on a clean run,
+    # so normalise with `.get`. Surface it (always, even when empty) so a
+    # partial run reports which records did not rename instead of silently
+    # claiming full success.
+    failed = result.get("failed", [])
     deps.recorder.record(
         "rename_scope",
         old=clean_old,
@@ -74,12 +84,14 @@ async def memory_rename_scope(
         include_tombstones=include_tombstones,
         active_count=len(result["active"]),
         tombstoned_count=len(result["tombstoned"]),
+        failed_count=len(failed),
     )
     return {
         "old_scope": clean_old,
         "new_scope": clean_new,
         "active": result["active"],
         "tombstoned": result["tombstoned"],
+        "failed": failed,
     }
 
 

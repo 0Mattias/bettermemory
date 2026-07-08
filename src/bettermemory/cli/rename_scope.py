@@ -112,6 +112,11 @@ def _cli_rename_scope(
 
     active = result["active"]
     tombstoned = result["tombstoned"]
+    # Item 6/6b: records whose per-record re-dump was skipped inside the rename
+    # loop (e.g. the rename would push the file past the size cap). Surface them
+    # so a partial run isn't silently reported as a clean one. `Store.rename_scope`
+    # omits the key on a clean run, so normalise with `.get`.
+    failed = result.get("failed", [])
     if json_out:
         sys.stdout.write(
             _json.dumps(
@@ -120,6 +125,7 @@ def _cli_rename_scope(
                     "new_scope": clean_new,
                     "active": active,
                     "tombstoned": tombstoned,
+                    "failed": failed,
                 },
                 indent=2,
             )
@@ -132,3 +138,11 @@ def _cli_rename_scope(
         f"Renamed scope {clean_old!r} -> {clean_new!r}: "
         f"{len(active)} active + {len(tombstoned)} tombstoned {noun} updated.\n"
     )
+    if failed:
+        fnoun = "record" if len(failed) == 1 else "records"
+        sys.stdout.write(
+            f"WARNING: {len(failed)} {fnoun} could not be renamed and were "
+            f"skipped (re-run after shrinking them):\n"
+        )
+        for entry in failed:
+            sys.stdout.write(f"  - {entry['id']}: {entry['reason']}\n")
