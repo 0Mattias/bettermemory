@@ -1837,6 +1837,23 @@ def consolidate_llm(
     for cluster in clusters:
         try:
             cluster_proposals = provider.propose(cluster, today=today)
+        except _llm.LLMParseError as exc:
+            # A total parse failure (garbage / non-JSON / fence-mangled
+            # response) is distinct from a well-formed object carrying
+            # zero valid proposals — `parse_and_validate` raises rather
+            # than returning [] so a broken provider surfaces as a
+            # recorded cluster failure instead of hiding as a phantom
+            # empty cluster. Record it the same way any other
+            # cluster-level failure is recorded.
+            log.warning(
+                "consolidate --llm: cluster %s returned an unparseable response: %s",
+                cluster.cluster_id,
+                exc,
+            )
+            report.failures.append(
+                LLMClusterFailure(cluster_id=cluster.cluster_id, reason=str(exc))
+            )
+            continue
         except Exception as exc:  # noqa: BLE001 — one bad cluster shouldn't tank the pass
             log.warning(
                 "consolidate --llm: cluster %s failed: %s",

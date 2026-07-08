@@ -138,6 +138,29 @@ class LLMResponseTruncated(RuntimeError):
     """
 
 
+class LLMParseError(RuntimeError):
+    """Raised by ``parse_and_validate`` when the LLM response cannot be
+    read as a JSON object AT ALL — none of the extraction candidates
+    (raw text -> first fenced block -> outermost brace span) yields
+    valid JSON, or the parsed payload is not a JSON object.
+
+    This is deliberately DISTINCT from returning ``[]``. An empty list
+    means "a well-formed ``{"proposals": [...]}`` object that carried
+    zero *valid* proposals" — a legitimate, common outcome. A parse
+    FAILURE means the provider handed back garbage / non-JSON / a
+    fence-mangled body, which the round-120 llm-fence fix could no
+    longer silently truncate but still collapsed to ``[]``, making a
+    broken provider indistinguishable from an empty cluster. Raising
+    here lets ``consolidate_llm`` record an ``LLMClusterFailure`` so the
+    operator sees the broken provider instead of a phantom "0 proposals"
+    result. Carries the (truncated) offending body for diagnosis.
+    """
+
+    def __init__(self, reason: str) -> None:
+        self.reason = reason
+        super().__init__(reason)
+
+
 class MemoryFenceInjectionError(ValueError):
     """audit H5 — a memory body contains a substring matching one of
     the random per-prompt fence delimiters. With an 8-byte random
@@ -822,13 +845,26 @@ def parse_and_validate(
             last_exc,
             raw_text.strip(),
         )
-        return []
+        # A TOTAL parse failure is NOT "0 valid proposals" — it's a
+        # broken/garbage provider response. Signal it distinctly so the
+        # caller records a cluster failure instead of a phantom empty
+        # cluster (see LLMParseError).
+        raise LLMParseError(
+            f"LLM response was not valid JSON ({last_exc}); "
+            f"body: {raw_text.strip()[:200]!r}"
+        )
 
     if not isinstance(payload, dict):
         log.warning(
             "LLM response was not a JSON object; got %r", type(payload).__name__
         )
-        return []
+        # Parsed, but the top-level value isn't the required object — a
+        # bare array/string/number is a malformed response, not a
+        # zero-proposal one. Same distinct signal as the unparseable
+        # branch above.
+        raise LLMParseError(
+            f"LLM response was not a JSON object; got {type(payload).__name__}"
+        )
 
     proposals_raw = payload.get("proposals", [])
     if not isinstance(proposals_raw, list):
@@ -1385,4 +1421,5 @@ __all__ = [
     "MAX_SOURCE_EXCERPT_CHARS",
     "MemoryFenceInjectionError",
     "LLMResponseTruncated",
+    "LLMParseError",
 ]

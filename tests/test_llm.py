@@ -15,6 +15,7 @@ here.
 from __future__ import annotations
 
 import json
+from dataclasses import dataclass
 from datetime import datetime, timezone
 
 import pytest
@@ -23,6 +24,7 @@ from bettermemory.llm import (
     Cluster,
     ClusterMember,
     DemoteTierProposal,
+    LLMParseError,
     MemoryExcerpt,
     MergeProposal,
     OllamaProvider,
@@ -353,16 +355,40 @@ def test_parse_strips_markdown_fences() -> None:
     assert len(proposals) == 1
 
 
-def test_parse_invalid_json_returns_empty() -> None:
+def test_parse_invalid_json_raises_parse_error() -> None:
+    """A totally-unparseable response is a broken provider, NOT a valid
+    "0 proposals" result. `parse_and_validate` must raise `LLMParseError`
+    so `consolidate_llm` can record a cluster failure instead of hiding
+    the breakage as a phantom empty cluster."""
     cluster = _make_cluster([_make_memory("body")])
-    proposals = parse_and_validate("not json at all {{{", cluster)
-    assert proposals == []
+    with pytest.raises(LLMParseError):
+        parse_and_validate("not json at all {{{", cluster)
+
+
+def test_parse_non_object_json_raises_parse_error() -> None:
+    """Parses as JSON, but the top-level value is an array — the
+    required top-level object is absent. Signal a parse failure, not an
+    empty proposal list."""
+    cluster = _make_cluster([_make_memory("body")])
+    with pytest.raises(LLMParseError):
+        parse_and_validate(json.dumps([1, 2, 3]), cluster)
 
 
 def test_parse_missing_proposals_array_returns_empty() -> None:
+    """A well-formed JSON OBJECT that simply lacks a 'proposals' key is
+    a zero-proposal result, not a parse failure — it must return [] and
+    must NOT raise (guards against over-signaling)."""
     cluster = _make_cluster([_make_memory("body")])
     raw = json.dumps({"not_the_right_key": []})
     proposals = parse_and_validate(raw, cluster)
+    assert proposals == []
+
+
+def test_parse_empty_proposals_array_returns_empty() -> None:
+    """The canonical "nothing to do" response — a valid object with an
+    explicitly empty proposals array — returns [] and never raises."""
+    cluster = _make_cluster([_make_memory("body")])
+    proposals = parse_and_validate(json.dumps({"proposals": []}), cluster)
     assert proposals == []
 
 
@@ -1372,3 +1398,86 @@ def test_validate_propose_new_accepts_every_proposable_category(category: str) -
     )
     assert isinstance(proposals[0], ProposeNewProposal)
     assert proposals[0].category == category
+
+
+# ---------------------------------------------------------------------------
+# parse-failure signal wired end-to-end through consolidate_llm
+#
+# These exercise the caller (`consolidate_llm`) rather than the parser
+# in isolation, because the bug being guarded is a *wiring* bug: a
+# fence-mangled / garbage response used to collapse to [] and get
+# counted as an empty cluster, hiding a broken provider. A provider
+# that runs the real `parse_and_validate` on its raw text is the exact
+# shape the three shipped providers have.
+# ---------------------------------------------------------------------------
+
+
+@dataclass
+class _RawParsingProvider:
+    """Provider stub that runs the REAL `parse_and_validate` over a
+    fixed raw string — i.e. the same call every shipped provider makes
+    after pulling text off the wire. Lets the consolidate_llm tests
+    drive the genuine parse path (raise on garbage, [] on empty)."""
+
+    raw: str
+    name: str = "raw-parsing-fake"
+
+    def propose(self, cluster: Cluster, today: str) -> list:
+        return parse_and_validate(self.raw, cluster)
+
+
+def _store_with_near_duplicates(tmp_path):
+    """Two near-duplicate memories so `consolidate_llm`'s dedup pre-pass
+    surfaces one `near_duplicates` cluster for the provider to act on."""
+    from bettermemory.store import Store
+
+    store = Store(tmp_path)
+    store.write(
+        content="postgres on port 5432 used by the queue",
+        scopes=["tools"],
+        confidence=Confidence.MEDIUM,
+        source=Source.EXPLICIT,
+    )
+    store.write(
+        content="postgres on port 5432 used by the queue worker",
+        scopes=["tools"],
+        confidence=Confidence.MEDIUM,
+        source=Source.EXPLICIT,
+    )
+    return store
+
+
+def test_consolidate_llm_records_failure_on_unparseable_response(tmp_path) -> None:
+    """Mutation-soundness (1): a genuinely-unparseable provider response
+    must surface as an `LLMClusterFailure`, not a silent empty cluster.
+    Reverting the `parse_and_validate` raise (return [] instead) makes
+    this fail — no failure would be recorded."""
+    from bettermemory.consolidate import consolidate_llm
+
+    store = _store_with_near_duplicates(tmp_path)
+    provider = _RawParsingProvider(raw="not json at all {{{")
+    report = consolidate_llm(store, provider, apply=False)
+
+    assert len(report.failures) >= 1, (
+        "an unparseable LLM response must be recorded as a cluster "
+        "failure, not counted as an empty (zero-proposal) cluster"
+    )
+    assert report.proposals == []
+
+
+def test_consolidate_llm_no_failure_on_empty_proposals_array(tmp_path) -> None:
+    """Mutation-soundness (2): a well-formed object with an empty
+    proposals array is a legitimate "nothing to do" result — it must
+    NOT be recorded as a failure. Guards against over-signaling (e.g.
+    raising for every zero-proposal cluster)."""
+    from bettermemory.consolidate import consolidate_llm
+
+    store = _store_with_near_duplicates(tmp_path)
+    provider = _RawParsingProvider(raw=json.dumps({"proposals": []}))
+    report = consolidate_llm(store, provider, apply=False)
+
+    assert report.failures == [], (
+        "a valid object with zero proposals is not a failure; "
+        f"got failures: {report.failures}"
+    )
+    assert report.proposals == []
