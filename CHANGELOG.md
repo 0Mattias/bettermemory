@@ -7,6 +7,81 @@ breaking changes, minor for additive features, patch for fixes. The
 [compatibility contract](CONTRIBUTING.md#versioning-and-the-compatibility-contract)
 spells out exactly what's stable.
 
+## 3.15.0 - 2026-07-08
+
+A deep audit-drain of the 3.14.1 release itself. A set-audit of the
+3.14.1 window surfaced 26 confirmed findings — many of them defects the
+3.14.1 fixes had *introduced* (a green test suite is not evidence) — and
+a multi-round adversarial drain fixed all of them, then set-audited its
+own output twice more until the finding count converged to zero. Every
+fix ships with a mutation-sound regression test (it fails without the
+fix), and the highest-consequence ones were reproduced dynamically
+against a running store, not just reasoned about. Behaviour visible to a
+correctly-sized memory and a well-formed request is unchanged; the new
+`acknowledge_credential` parameter on the proposal-accept path and the
+richer `episode_handoff` output (chain rewind + an honest soft note) are
+additive, which is why this is a minor rather than a patch.
+
+### Fixed
+
+- **Silent data loss: a verify or scope-rename could freeze a memory.**
+  `mark_verified` and `rename_scope` re-dumped at the full read cap, so
+  caller-controlled growth (`verified_paths`, a longer scope) on a memory
+  admitted just under the write cap pushed it into the reserved
+  maintenance band — after which `update` rejected it, `tombstone` could
+  cross the read cap (un-removable), and `restore` refused re-admission,
+  so pruning eventually hard-deleted it. Both paths now cap by which band
+  the record is already in: a sub-cap record cannot grow into the band; a
+  record already in the band (e.g. a pre-3.14.1 file) stays maintainable
+  up to the read cap, including a first verify.
+- **The removal-metadata caps are budgeted on serialized size.**
+  `removed_reason` and `removed_session` are bounded so a tombstone's
+  YAML-escaped growth provably fits the maintenance headroom.
+- **`restore` and `rename_scope` no longer race a concurrent remove.**
+  `restore` now writes the active file, unlinks the tombstone, and
+  upserts the index all under the active-path lock; `rename_scope` guards
+  each record's re-dump and reports a partial run instead of aborting
+  mid-loop with a diverged index.
+- **bm25 search recovers X-to-X compound queries** (`end-to-end`,
+  `back-to-back`, `to-do`, …) that previously returned nothing, and the
+  content-dedup containment check no longer over-flags comparable-length
+  distinct writes while still catching a short fact buried in a long one.
+- **Semantic dedup falls back correctly when the embeddings extra is
+  absent** (cosine thresholds are no longer applied to Jaccard scores, so
+  dedup actually fires).
+- **Endorsement telemetry reads the right window.** `_explicit_applied_counts`
+  now enforces its own attribution horizon so no caller can over-count
+  against the wider re-audit window; the health rollup tolerates every
+  malformed-event shape instead of one bad event blanking
+  `memory_health` / `memory_scope_overview` / `doctor`.
+- **`episode_handoff` no longer severs the journal chain.** A clean
+  read-only tick (floor-only *or* zero-episode) is rewound past to the
+  most recent real takeaway, with an honest note that no longer claims a
+  crash — and, for a zero-episode session, no longer claims a handoff
+  floor was written.
+- **Credential and scope guardrails now cover the LLM-consolidate and
+  proposal-accept write paths**, which previously bypassed the
+  credential scan, origin capture, and scope allowlist that
+  `memory_write` enforces; both now expose the same
+  `acknowledge_credential` escape hatch and log a forced override (kind
+  only) to the event stream.
+- **Path-drift scanning is bounded on untrusted input** (a poisoned
+  memory body can no longer drive super-linear work per search hit), and
+  `migrate origin` routes dict/set-shaped `scopes` the same way the store
+  reader does instead of silently stamping the wrong repo.
+- **LLM JSON extraction is robust to fenced responses.** A provider that
+  wraps its answer in a ```` ```json ```` fence (the expected Anthropic
+  shape) — even one whose body contains a nested fence — is parsed
+  instead of silently truncated, and a genuinely unparseable response is
+  recorded as a cluster failure rather than counted as zero proposals.
+- **Client-config migration preserves user keys and stays schema-clean.**
+  The legacy → `bettermemory` rename keeps `env.BETTERMEMORY_DIR`, `cwd`,
+  `timeout`, and `disabled`, drops remote-transport keys that would make a
+  strict client reject the stdio entry wholesale, migrates via a
+  recognizer that matches the bare-name and `uvx` shapes (so `doctor`
+  stops reporting a healthy `uvx` install as missing), and captures its
+  change-signature before the read to close a concurrent-writer window.
+
 ## 3.14.1 - 2026-07-06
 
 An audit-backlog drain: the 2026-07-06 whole-repo review surfaced 15
