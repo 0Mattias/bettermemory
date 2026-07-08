@@ -7,6 +7,116 @@ breaking changes, minor for additive features, patch for fixes. The
 [compatibility contract](CONTRIBUTING.md#versioning-and-the-compatibility-contract)
 spells out exactly what's stable.
 
+## 3.15.1 - 2026-07-08
+
+A post-release external review of 3.15.0 itself — five parallel
+adversarial slice reviews, every finding reproduced against a live store
+or client before it was filed — confirmed nine defects that release's
+own set-audit had converged past, several *introduced by* its fixes. The
+recurring shape: each miss sat just outside a fix's framing (a missed
+mutator, an unwired tool boundary, a foreign lock protocol). This release
+fixes all of them, moves the relevant guards to shared choke points so a
+per-caller miss of the same class can't recur, and ships a mutation-sound
+regression test with every fix (each verified to fail against 3.15.0).
+
+### Fixed
+
+- **`init --client claude-code` no longer wedges Claude Code's own config
+  lock.** 3.15.0's RMW lock left a persistent regular file at
+  `~/.claude.json.lock` — the exact path Claude Code locks with a
+  mkdir-style directory lock — so the client's stale-lock cleanup failed
+  (`ENOTDIR`) forever and its config saves broke until the file was
+  deleted by hand; conversely, the client's live lock directory crashed
+  init with `EISDIR`. bettermemory now locks a private
+  `<config>.bettermemory.lock` sidecar, heals the poisoned 3.15.0
+  artifact on the next `init` run (the result carries
+  `removed_stale_lockfile`), and `doctor` gained a
+  `stale_config_lockfiles` check that reports it with the fix. The
+  pre-write guard also covers the create path now: a config file that
+  APPEARS between init's read and write aborts loudly instead of being
+  replaced by the skeleton doc.
+- **The band-cap discipline now holds at every mutator, in both
+  directions.** 3.15.0 closed grow-into-the-reserved-band for
+  `mark_verified` / `rename_scope` but missed `migrate origin`, whose
+  re-dump ran at the full read cap — an origin backfill (caller- and
+  environment-controlled bytes) could still grow a just-under-cap record
+  into the band and toward the hard-delete chain. And the band arm itself
+  capped at the flat read cap, so a *legal* verify could eat the
+  removal-metadata budget and leave a band record un-tombstoneable. One
+  shared `_lifecycle_redump_cap` now caps every lifecycle re-dump: sub-cap
+  records at the write cap, band records at the read cap minus the
+  removal-metadata budget (their own tombstone always fits), and legacy
+  records above that ceiling frozen at their current size.
+- **Band tombstones are no longer a one-way door.** 3.15.0's restore
+  refused any tombstone whose stripped record exceeded the write cap;
+  with no tombstone-edit surface, a refused record just waited for
+  `prune_tombstones` to hard-delete it. Restore re-admits at the read cap
+  (band actives are maintainable and removable now, so nothing is lost),
+  and `tombstone` adaptively trims its removal metadata — the session
+  join is dropped first, then the reason is trimmed toward empty — so
+  even a legacy record within the old fixed budgets of the read cap stays
+  removable. `memory_remove` explains the shrink-first remediation for
+  the truly unfittable sliver.
+- **One malformed event can no longer take down retrieval.** The
+  endorsement tally and the `recent_negative_outcomes` attach iterated
+  raw event id fields, so a scalar or nested-list `ids` in the plaintext,
+  hand-editable log failed every `memory_search` (the attach needs no
+  feature flag) — the exact poison shapes 3.15.0 hardened `memory_health`
+  against. The normalizer moved to `events.py` as the single shared choke
+  point, with an index-preserving variant so `claim_excerpts` (recorded
+  parallel to the raw list) still attributes to the right memory when
+  malformed elements are dropped.
+- **`episode_handoff` survives scope-disable.** A worktree session whose
+  takeaways were all scope-hidden suppressed the fallback machinery, so
+  the handoff collapsed to the first-ever-invocation shape
+  (`prior_session_id: None`) — a regression below 3.14.1's honest note.
+  The hidden session now resolves as the prior with a note naming the
+  disabled-scope cause and the `memory_scope_enable` way back;
+  rewind-through to an older *visible* takeaway is unchanged. The
+  floor-only / zero-episode notes also stop mis-reporting a healthy
+  write-then-promote session as "crashed or read-only": promotion is
+  detected from the event log (including the deferred-confirm path) and
+  named as the cause.
+- **`acknowledge_credential` on proposal-accept actually works.** The
+  3.15.0 escape hatch was dead at both shipped surfaces: the MCP
+  wrapper's signature omitted the parameter (so the schema never carried
+  it and FastMCP silently dropped it) and the CLI had no flag — while the
+  refusal message told users to pass exactly that. The wrapper forwards
+  it, the CLI grew `--acknowledge-credential`, and the forced-override
+  audit event (detector kinds only, never the value) is recorded inside
+  `accept_proposal` — one choke point, every surface, exactly once. The
+  regression tests now pin the registered tool schema and the full
+  MCP/CLI round-trips, not just the in-process core.
+- **The verify scan cap can only drop path claims, never invent one.**
+  The 32 KiB input bound sliced at a hard byte offset, so a legitimate
+  citation straddling the boundary was bisected into a phantom prefix
+  that validated as a path, failed the disk check, and fabricated a
+  `path_drift_missing` — a false non-fresh staleness verdict from a body
+  whose real path exists. The cut now lands on the last whitespace inside
+  the cap.
+- **`uv`/`uvx` entry recognition is positional and pin-aware.** The
+  any-arg scan recognized `--with bettermemory` dependencies of FOREIGN
+  servers as ours (init would delete and rewrite that entry), while the
+  version-pinned shapes uvx documents (`bettermemory@latest`,
+  `bettermemory==3.15.0`) and the Windows `uvx.exe` spelling matched
+  nothing — resurrecting the doctor false-negative 3.15.0 claimed
+  eliminated. The shared recognizer now walks the arg vector (skipping
+  run-subcommands and flag values) to the first real positional, and
+  doctor consumes it directly so the two can never drift again.
+- **LLM fence extraction skips a leading non-JSON code fence** (a stray
+  python scratch block ahead of the real payload), preferring
+  json-tagged fences in document order; a genuinely unparseable response
+  still raises the distinct cluster failure rather than counting as zero
+  proposals.
+- **Doc/comment honesty.** The 3.15.0 notes claimed the config migration
+  preserves `disabled:` — it deliberately drops it (born-enabled; only a
+  `disabled` set on the surviving new-name entry survives), and the entry
+  below is corrected in place. The containment scorer's in-code claim
+  that dropping the size-ratio gate "doesn't widen the firing set" was
+  false: the advisory band IS wider for comparable-length pairs —
+  deliberate, ceiling-bounded, and now pinned by a test that keeps the
+  comment and the behavior telling the same story.
+
 ## 3.15.0 - 2026-07-08
 
 A deep audit-drain of the 3.14.1 release itself. A set-audit of the
@@ -76,8 +186,11 @@ additive, which is why this is a minor rather than a patch.
   recorded as a cluster failure rather than counted as zero proposals.
 - **Client-config migration preserves user keys and stays schema-clean.**
   The legacy → `bettermemory` rename keeps `env.BETTERMEMORY_DIR`, `cwd`,
-  `timeout`, and `disabled`, drops remote-transport keys that would make a
-  strict client reject the stdio entry wholesale, migrates via a
+  and `timeout` (a legacy `disabled:` is deliberately dropped — the
+  migrated entry is born enabled, and only a `disabled` set on the
+  surviving new-name entry survives; this sentence originally claimed
+  `disabled` was kept — corrected in 3.15.1), drops remote-transport keys
+  that would make a strict client reject the stdio entry wholesale, migrates via a
   recognizer that matches the bare-name and `uvx` shapes (so `doctor`
   stops reporting a healthy `uvx` install as missing), and captures its
   change-signature before the read to close a concurrent-writer window.
