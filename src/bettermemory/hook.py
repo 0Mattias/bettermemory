@@ -393,7 +393,10 @@ def run_audit(
             iter_events_window(root, ATTRIBUTION_LOOKBACK_SECONDS)
         )
         applied_by_id = _explicit_applied_counts(
-            endorsement_events, {m.id for m in memories}
+            endorsement_events,
+            {m.id for m in memories},
+            now=utcnow(),
+            lookback_seconds=ATTRIBUTION_LOOKBACK_SECONDS,
         )
     report = probe_for_miss(
         memories,

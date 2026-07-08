@@ -10,7 +10,7 @@ test_search* suites.
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
@@ -89,22 +89,87 @@ def test_endorsement_unset_is_neutral() -> None:
     assert a == b == c
 
 
+def _ts(now: datetime, *, ago: int) -> str:
+    """Canonical ``…Z`` event ts, `ago` seconds before `now`."""
+    return (now - timedelta(seconds=ago)).isoformat().replace("+00:00", "Z")
+
+
 def test_explicit_applied_counts_excludes_auto_and_filters_ids() -> None:
+    now = datetime(2026, 1, 1, 12, 0, 0, tzinfo=timezone.utc)
+    ts = _ts(now, ago=100)  # comfortably inside the 600s window
     events: list[dict[str, Any]] = [
-        {"kind": "use", "outcome": "applied", "auto": False, "ids": ["m1", "m1"]},
-        {"kind": "use", "outcome": "applied", "auto": True, "ids": ["m1"]},  # auto
         {
+            "ts": ts,
+            "kind": "use",
+            "outcome": "applied",
+            "auto": False,
+            "ids": ["m1", "m1"],
+        },
+        {
+            "ts": ts,
+            "kind": "use",
+            "outcome": "applied",
+            "auto": True,
+            "ids": ["m1"],
+        },  # auto
+        {
+            "ts": ts,
             "kind": "use",
             "outcome": "ignored",
             "auto": False,
             "ids": ["m1"],
         },  # not applied
-        {"kind": "use", "outcome": "applied", "auto": False, "ids": ["m2", "off"]},
-        {"kind": "search", "returned": ["m1"]},  # not a use event
-        {"kind": "use", "outcome": "applied", "memory_ids": ["m2"]},  # legacy key
+        {
+            "ts": ts,
+            "kind": "use",
+            "outcome": "applied",
+            "auto": False,
+            "ids": ["m2", "off"],
+        },
+        {"ts": ts, "kind": "search", "returned": ["m1"]},  # not a use event
+        {
+            "ts": ts,
+            "kind": "use",
+            "outcome": "applied",
+            "memory_ids": ["m2"],
+        },  # legacy key
     ]
-    counts = _explicit_applied_counts(events, {"m1", "m2"})
+    counts = _explicit_applied_counts(
+        events, {"m1", "m2"}, now=now, lookback_seconds=600
+    )
     assert counts == {"m1": 2, "m2": 2}  # auto + ignored + off-set id all excluded
+
+
+def test_explicit_applied_counts_enforces_its_own_cutoff() -> None:
+    """The window is a MANDATORY, self-enforced argument: handing the tally an
+    OVER-WIDE event list (an apply from 1800s ago, plus one with no `ts` at
+    all) still yields only the in-600s count. This is the structural guard the
+    fix adds — the function no longer trusts callers to pre-window. Reverting
+    the internal `ts` drop re-counts the stale/undatable applies and this
+    assertion fails."""
+    now = datetime(2026, 1, 1, 12, 0, 0, tzinfo=timezone.utc)
+    events: list[dict[str, Any]] = [
+        # In-window: the only apply that must count.
+        {
+            "ts": _ts(now, ago=100),
+            "kind": "use",
+            "outcome": "applied",
+            "auto": False,
+            "ids": ["m1"],
+        },
+        # Out-of-window (inside a 3600s dedup read, outside 600s): dropped.
+        {
+            "ts": _ts(now, ago=1800),
+            "kind": "use",
+            "outcome": "applied",
+            "auto": False,
+            "ids": ["m1"],
+        },
+        # No parseable ts — unprovable, so dropped rather than counted.
+        {"kind": "use", "outcome": "applied", "auto": False, "ids": ["m1"]},
+    ]
+    counts = _explicit_applied_counts(events, {"m1"}, now=now, lookback_seconds=600)
+    assert counts == {"m1": 1}
 
 
 def test_config_endorsement_boost_defaults_off_and_loads() -> None:

@@ -2053,6 +2053,68 @@ def test_run_audit_threads_ranker_config_into_probe(
     assert captured["half_life_days"] == 7.0
     assert captured["applied_by_id"] == {memory_id: 1}
     assert captured["semantic_model"] is None
+
+
+def test_run_audit_endorsement_tally_drops_out_of_window_applies(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Mutation-sound: `_explicit_applied_counts` now enforces its OWN 600s
+    cutoff, so an explicit apply backdated past `ATTRIBUTION_LOOKBACK_SECONDS`
+    can no longer reach `applied_by_id` — even though it rides in on the
+    active-log read the hook feeds the tally. The prior contract applied no
+    cutoff of its own and trusted the caller to pre-window, so a stale apply
+    (t-1800s: inside the 3600s dedup horizon, outside the 600s attribution
+    window) was counted, nudging the probe's near-tie ranker. Seed one apply
+    at t-100s (in-window) and one at t-1800s (out-of-window); the probe must
+    see only the in-window count. Reverting the internal `ts` drop re-counts
+    the stale apply as ``{id: 2}`` and this fails."""
+    from bettermemory.audit import probe_for_miss as real_probe
+    from bettermemory.config import BehaviorConfig, Config, StorageConfig
+    from bettermemory.models import utcnow
+
+    mem_dir = tmp_path / "mem"
+    mem_dir.mkdir()
+    memory_id = _write_miss_memory(mem_dir)
+
+    now = utcnow()
+    fresh_ts = (now - timedelta(seconds=100)).isoformat().replace("+00:00", "Z")
+    stale_ts = (now - timedelta(seconds=1800)).isoformat().replace("+00:00", "Z")
+    with (mem_dir / ".events.jsonl").open("a", encoding="utf-8") as fh:
+        for ts in (fresh_ts, stale_ts):
+            fh.write(
+                json.dumps(
+                    {
+                        "ts": ts,
+                        "session": "sess_server",
+                        "kind": "use",
+                        "ids": [memory_id],
+                        "outcome": "applied",
+                        "auto": False,
+                    }
+                )
+                + "\n"
+            )
+
+    captured: dict[str, object] = {}
+
+    def spy(*args: object, **kwargs: object) -> object:
+        captured.update(kwargs)
+        return real_probe(*args, **kwargs)  # type: ignore[arg-type]
+
+    monkeypatch.setattr("bettermemory.hook.probe_for_miss", spy)
+    cfg = Config(
+        storage=StorageConfig(directory=str(mem_dir)),
+        behavior=BehaviorConfig(endorsement_boost=True),
+    )
+    run_audit(
+        user_message=_MISS_QUERY,
+        assistant_response=None,
+        session_id="claude-window",
+        config=cfg,
+    )
+    # Only the t-100s apply is in-window; the t-1800s apply is dropped by the
+    # tally's internal cutoff even though both sit in the read it was fed.
+    assert captured["applied_by_id"] == {memory_id: 1}
     # And the probe window is the shared attribution window, not the
     # old hardcoded 60.
     assert captured["lookback_seconds"] == 600

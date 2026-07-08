@@ -15,9 +15,11 @@ Description-edit history:
 
 from __future__ import annotations
 
+from datetime import datetime
 from typing import TYPE_CHECKING, Any, cast
 
 from ..models import utcnow, validate_scope
+from ..time_utils import parse_event_ts
 from ..search import (
     SearchMode,
     _filter_candidates,
@@ -107,7 +109,11 @@ DESC_MEMORY_SEARCH = (
 
 
 def _explicit_applied_counts(
-    events: list[dict[str, Any]], candidate_ids: set[str]
+    events: list[dict[str, Any]],
+    candidate_ids: set[str],
+    *,
+    now: datetime,
+    lookback_seconds: int,
 ) -> dict[str, int]:
     """Tally explicit `memory_record_use(applied)` events per candidate id.
 
@@ -115,12 +121,31 @@ def _explicit_applied_counts(
     auto-fallback) are excluded, mirroring the auto/explicit split health.py
     and eval.py already use — auto-applies would otherwise inflate every
     retrieved memory and defeat the point. Restricted to `candidate_ids` so
-    the tally is bounded by the result set, not the whole store."""
+    the tally is bounded by the result set, not the whole store.
+
+    The attribution cutoff is MANDATORY and enforced HERE, not delegated to
+    the caller. Every consumer must supply `now` + `lookback_seconds`; an
+    event whose `ts` is older than `now - lookback_seconds` (or that carries
+    no parseable `ts` at all — an unprovable event can't be shown in-window)
+    is dropped internally. The old contract applied no cutoff of its own and
+    trusted each caller to pre-window the event list; that mismatch let a
+    caller feeding a wider coverage read (the dedup-widened 3600s `recent`
+    the audit producers walk) silently over-count applies from up to an hour
+    ago that production's 600s ranker never saw, nudging a near-tie top-1 and
+    flipping a false `search_miss`. Making the window a required argument the
+    function enforces closes that whole class of caller misuse: every site
+    now passes the same 600s attribution horizon
+    (`ATTRIBUTION_LOOKBACK_SECONDS`) and the tally can no longer be silently
+    widened."""
+    cutoff_ts = now.timestamp() - lookback_seconds
     counts: dict[str, int] = {}
     for ev in events:
         if ev.get("kind") != "use" or ev.get("outcome") != "applied":
             continue
         if ev.get("auto") is True:
+            continue
+        ts = parse_event_ts(ev.get("ts"))
+        if ts is None or ts.timestamp() < cutoff_ts:
             continue
         for mid in ev.get("ids") or ev.get("memory_ids") or []:
             if mid in candidate_ids:
@@ -325,7 +350,10 @@ async def memory_search(
             iter_events_window(deps.store.root, ATTRIBUTION_LOOKBACK_SECONDS)
         )
         applied_by_id = _explicit_applied_counts(
-            recent_events, {m.id for m in memories}
+            recent_events,
+            {m.id for m in memories},
+            now=utcnow(),
+            lookback_seconds=ATTRIBUTION_LOOKBACK_SECONDS,
         )
 
     hits = run_search(
