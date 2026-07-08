@@ -765,3 +765,50 @@ def test_accept_proposal_refuses_credential_body(
     assert [p.id for p in q.load()] == ["c1"]
     # The error names the detector kind but never echoes the raw secret span.
     assert token not in str(excinfo.value)
+
+
+def test_accept_proposal_acknowledge_credential_bypasses_refusal(
+    tmp_path: Path,
+) -> None:
+    """The credential gate must expose the SAME `acknowledge_credential=True`
+    escape hatch as memory_write / memory_update: a credential-bearing proposal
+    is refused by default, but ACCEPTED (written durably) when the caller
+    acknowledges it (a proposal that DESCRIBES a documented public/example
+    credential pattern). Mutation-sound: drop the parameter (revert the gate to
+    an unconditional refuse) and this test fails on the accept half."""
+    from bettermemory.config import Config, StorageConfig
+    from bettermemory.handlers.proposals import accept_proposal
+    from bettermemory.store import Store
+
+    token = "AKIAIOSFODNN7EXAMPLE"
+    body = f"AWS access-key ids look like {token} — a documented example shape."
+    q = ProposalQueue(tmp_path)
+    q.append([_proposal(body, pid="ack1")])
+    config = Config(storage=StorageConfig(directory=str(tmp_path)))
+    store = Store(tmp_path)
+
+    # Default: refused, proposal stays queued, nothing written.
+    with pytest.raises(ValueError, match="aws-access-key-id"):
+        accept_proposal(
+            store=store,
+            config=config,
+            proposal_id="ack1",
+            scopes=["infrastructure"],
+        )
+    assert store.load_all() == []
+    assert [p.id for p in q.load()] == ["ack1"]
+
+    # Escape hatch: acknowledged → the durable write lands and the proposal
+    # is claimed out of the queue.
+    result = accept_proposal(
+        store=store,
+        config=config,
+        proposal_id="ack1",
+        scopes=["infrastructure"],
+        acknowledge_credential=True,
+    )
+    assert result["status"] == "accepted"
+    written = store.load_all()
+    assert len(written) == 1
+    assert written[0].body.strip() == body
+    assert q.load() == []

@@ -41,7 +41,12 @@ DESC_MEMORY_PROPOSALS = (
     "least one scope; the queue does not guess them). `category` defaults "
     "to the proposal's `suggested_category` — override if wrong "
     "(`fact` / `user-inference` / `ambient`). The write goes through the "
-    "normal store path (source=inferred) and is indexed immediately.\n"
+    "normal store path (source=inferred) and is indexed immediately. A "
+    "proposal whose body contains a secret-shaped token is refused (the "
+    "store is plain-text and `sync`'d across hosts); pass "
+    "`acknowledge_credential=True` to accept anyway when the value is a "
+    "documented public/example credential, mirroring the memory_write / "
+    "memory_update escape hatch.\n"
     "- `dismiss`: drop the proposal from the queue without writing it. "
     "Requires `proposal_id`. Use for anything not worth remembering.\n\n"
     "Returns `{status, action, ...}`; `status` is one of `ok` (list), "
@@ -56,6 +61,7 @@ def accept_proposal(
     proposal_id: str,
     scopes: list[str],
     category: str | None = None,
+    acknowledge_credential: bool = False,
 ) -> dict[str, Any]:
     """Validate, atomically claim, and write one proposal as a durable memory.
 
@@ -79,7 +85,11 @@ def accept_proposal(
        could reach the plain-text store WITHOUT ever passing the write-path
        gate. Runs BEFORE the claim, so a hit refuses with the proposal still
        queued (raises ``ValueError`` naming the detector kinds only — never
-       the value, exactly as the write/update paths redact it).
+       the value, exactly as the write/update paths redact it). Passing
+       ``acknowledge_credential=True`` bypasses this refusal, mirroring the
+       identically-named escape hatch on ``memory_write`` / ``memory_update``
+       for the rare legitimate case (a proposal that DESCRIBES a documented
+       public/example credential PATTERN rather than leaking a live secret).
     4. Atomically CLAIM the proposal — ``ProposalQueue.remove`` re-checks it
        still exists under the queue's per-file flock and hands it to the single
        racer that wins, so a concurrent double-accept can't write twice.
@@ -115,14 +125,17 @@ def accept_proposal(
     # claim so the proposal stays queued, and the error names the detector
     # `kind`s only — the value is never echoed, same as the write/update paths.
     credential_hits = find_credential_markers(payload["content"])
-    if credential_hits:
+    if credential_hits and not acknowledge_credential:
         kinds = sorted({h.kind for h in credential_hits})
         raise ValueError(
             f"proposal {proposal_id} body contains a secret-shaped token "
             f"({', '.join(kinds)}) — this store is plain-text and `sync` "
             "pushes it across hosts via git, so the accept is refused. Edit "
-            "the proposal to describe the secret without embedding it, or "
-            "dismiss it. The value is redacted from this error regardless."
+            "the proposal to describe the secret without embedding it, dismiss "
+            "it, or pass acknowledge_credential=True if the value is a "
+            "documented public/example credential (mirrors the memory_write / "
+            "memory_update escape hatch). The value is redacted from this "
+            "error regardless."
         )
     # Atomically CLAIM under the queue lock before the durable write — the
     # idempotency guard against a concurrent double-accept.
@@ -149,6 +162,7 @@ async def memory_proposals(
     proposal_id: str | None = None,
     scopes: list[str] | None = None,
     category: str | None = None,
+    acknowledge_credential: bool = False,
     ctx: Context | None = None,
 ) -> dict[str, Any]:
     """Handler body for the `memory_proposals` MCP tool."""
@@ -208,6 +222,7 @@ async def memory_proposals(
                 proposal_id=proposal_id,
                 scopes=scopes,
                 category=category,
+                acknowledge_credential=acknowledge_credential,
             )
         except OSError as exc:
             # A disk-level failure (ENOSPC/EIO/EACCES). Translate to
