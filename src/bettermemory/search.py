@@ -1311,15 +1311,25 @@ def score_memory_bm25(
     # ratio whether or not the fallback fired.
     if tokens is not None:
         content_tokens = tokens.content
-        count_tokens = tokens.body if stopword_fallback else content_tokens
+        body_stream = tokens.body
     else:
-        unstripped = _expand_kebab(tokenize(memory.body))
-        content_tokens = _strip_stopwords(unstripped)
-        count_tokens = unstripped if stopword_fallback else content_tokens
+        body_stream = _expand_kebab(tokenize(memory.body))
+        content_tokens = _strip_stopwords(body_stream)
+    count_tokens = body_stream if stopword_fallback else content_tokens
     body_count: dict[str, int] = {}
     for tok in count_tokens:
         body_count[tok] = body_count.get(tok, 0) + 1
     dl = len(content_tokens)
+    # Component counter for the conjunctive kebab fallback below, built
+    # lazily (only when a compound query token misses directly). It reads
+    # the UNSTRIPPED `body_stream` so a stopword component ('to' in
+    # 'end-to-end', both parts of 'to-do') is countable at all: in
+    # non-fallback mode `body_count` above is built from the stopword-
+    # STRIPPED content stream, where such a component has count 0 and would
+    # zero the min() — silent zero recall in mode='bm25' for the whole
+    # X-to-X / X-by-X compound family. Mirrors the keyword scorer, whose
+    # `body_count` is unstripped by construction.
+    comp_count: dict[str, int] | None = None
 
     if tokens is not None:
         scope_set = tokens.scope_set
@@ -1361,20 +1371,41 @@ def score_memory_bm25(
             # (the joined phrase can occur at most that often) and IDF
             # is the min across components — the weakest component
             # bounds how discriminating the joined phrase can be.
-            # In non-fallback mode `body_count` is built from the
-            # stopword-STRIPPED content stream, so a stopword component
-            # ('to' in 'end-to-end', 'of' in 'out-of-band') has count 0
-            # there and would zero the min() — silent no-match for a
-            # perfectly good body. Range the conjunction over the
-            # NON-stopword parts only; that leaves the precision guard
-            # intact ('python-frontmatter' has no stopword part, so both
-            # 'python' AND 'frontmatter' must still hit).
-            parts = [p for p in _kebab_parts(tok) if p not in _STOPWORDS]
+            #
+            # Range the conjunction over the UNFILTERED parts and count
+            # them against the unstripped `comp_count`. Filtering the
+            # stopword parts out instead collapsed the conjunction: an
+            # 'X-to-X' compound reduced to a single-word OR ('end-to-end'
+            # -> match any 'end'), and a compound whose parts are ALL
+            # stopwords ('to-do' -> ['to','do']) emptied `parts` and
+            # skipped the fallback entirely — and 'to-do' survives
+            # `_strip_stopwords` too, so it never reached the stopword
+            # fallback either: silent zero recall in mode='bm25' for the
+            # whole X-to-X / X-by-X family. This mirrors the keyword
+            # scorer, whose fallback already ranges over unfiltered parts
+            # on an unstripped body_count.
+            parts = _kebab_parts(tok)
             if parts:
-                component_hits = [body_count.get(p, 0) for p in parts]
+                if comp_count is None:
+                    comp_count = {}
+                    for t in body_stream:
+                        comp_count[t] = comp_count.get(t, 0) + 1
+                component_hits = [comp_count.get(p, 0) for p in parts]
                 if min(component_hits) > 0:
                     tf = min(component_hits)
-                    body_idf = min(body_idf_map.get(p, 0.0) for p in parts)
+                    # Price body IDF off the parts that carry content-
+                    # stream corpus statistics — the non-stopword ones.
+                    # When EVERY part is a stopword ('to-do') there is no
+                    # body IDF to read; floor at 1.0 (the same no-corpus-
+                    # statistics floor scope-only and fallback matches use)
+                    # rather than letting a defaulted 0.0 IDF zero the
+                    # occurrence just counted.
+                    content_parts = [p for p in parts if p not in _STOPWORDS]
+                    body_idf = (
+                        min(body_idf_map.get(p, 0.0) for p in content_parts)
+                        if content_parts
+                        else 1.0
+                    )
                 if all(p in scope_set for p in parts):
                     scope_hit = True
                     scope_idf = min(scope_idf_map.get(p, 1.0) for p in parts)
@@ -2218,24 +2249,40 @@ def _pairwise_content_jaccard(raw_a: set[str], raw_b: set[str]) -> float:
     # sentence of a long body has |intersection| ~= the small set but a
     # union dominated by the long body, so Jaccard sinks below the
     # 'related' floor and the near-duplicate commits silently. Add a
-    # containment score |intersection|/min — but tightly gated so it
-    # targets that case and ONLY that case:
-    #   - LARGE size asymmetry (larger >= 3x smaller) so ordinary
-    #     comparable-length pairs keep pure Jaccard;
+    # containment score |intersection|/min — gated so it targets that case
+    # and ONLY that case:
     #   - an absolute floor on the smaller set (`_CONTAINMENT_MIN_TOKENS`)
     #     so a 3-token fact sharing a few common words with a long
-    #     unrelated note can't reach containment ~1.0; and
+    #     unrelated note can't reach containment ~1.0;
+    #   - it must itself clear MEDIUM_SIMILARITY (a weak overlap stays
+    #     ignored); and
     #   - the result CAPPED into the 'related' band (`_CONTAINMENT_CEILING`,
     #     below HIGH_SIMILARITY) so containment can raise a pair to
     #     'related' but never to the 'high'/block bar — the ingest/write
     #     dedup gates skip only on a 'high' active hit, so an uncapped
     #     containment score could silently drop a legitimately distinct
     #     short write.
-    # A genuine verbatim duplicate still reaches 'high' via raw Jaccard.
-    # When the gate doesn't fire this is byte-identical to the old
-    # symmetric Jaccard.
-    smaller, larger = (a, b) if len(a) <= len(b) else (b, a)
-    if len(smaller) >= _CONTAINMENT_MIN_TOKENS and len(larger) >= 3 * len(smaller):
+    #
+    # There is NO size-ratio gate. The earlier `larger >= 3 * smaller`
+    # cliff left a dead band: pure Jaccard covers full containment only up
+    # to ratio 2.5 (1/r >= 0.40 = MEDIUM), so full containment at a ratio
+    # in (2.5, 3.0) scored 0.333-0.400 — below MEDIUM AND below the gate,
+    # hence silently ignored. `_CONTAINMENT_MIN_TOKENS` + the MEDIUM floor
+    # + the ceiling already fence containment to its target case without
+    # the discontinuity; `max(jaccard, containment)` makes containment a
+    # no-op for near-identical pairs (jaccard already dominates there), so
+    # dropping the ratio gate only closes the band, it doesn't widen the
+    # firing set for comparable-length pairs.
+    #
+    # Ceiling guarantee: containment contributes at most _CONTAINMENT_CEILING
+    # (< HIGH_SIMILARITY), so it can never raise a pair to the 'high'/block
+    # band on its own — a genuine verbatim duplicate reaches 'high' via raw
+    # Jaccard, which `max` leaves untouched. (Contested C3: this guarantee
+    # is technically false only if a caller passes high_threshold <=
+    # _CONTAINMENT_CEILING; no production caller does — the Jaccard-natural
+    # high is HIGH_SIMILARITY and the semantic path uses a different scorer.)
+    smaller = a if len(a) <= len(b) else b
+    if len(smaller) >= _CONTAINMENT_MIN_TOKENS:
         containment = len(intersection) / len(smaller)
         if containment >= MEDIUM_SIMILARITY:
             return max(jaccard, min(containment, _CONTAINMENT_CEILING))

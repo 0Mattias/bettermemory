@@ -453,6 +453,57 @@ def test_bm25_hyphenated_stopword_component_query_matches_spaced_body() -> None:
     assert not any(h.id == guard_focal.id for h in guard_hits)
 
 
+def test_bm25_matches_keyword_for_x_to_x_compound_family() -> None:
+    """F9 regression: the whole X-to-X / X-by-X compound family must match a
+    spaced body in mode='bm25' exactly as it does in mode='keyword'.
+
+    The conjunctive kebab fallback used to filter stopword components out of
+    the parts and count the survivors against the stopword-STRIPPED content
+    stream. That collapsed the conjunction: 'end-to-end' reduced to "any
+    'end'", and 'to-do' (both parts stopwords) emptied the parts list and
+    skipped the fallback entirely — and 'to-do' survives stopword stripping,
+    so it never reached the stopword fallback either: silent zero recall in
+    bm25 only. The 'to-do' iteration is the mutation-sound one — reverting the
+    fix leaves keyword matching but bm25 not, breaking parity.
+    """
+    now = datetime.now(timezone.utc)
+    other = _memory("totally unrelated widgets and gadgets galore")
+    cases = [
+        ("end-to-end", "The end to end pipeline runs nightly and gates deploys"),
+        ("back-to-back", "We shipped two releases back to back last week"),
+        ("to-do", "Add the migration to do list for the sprint planning"),
+    ]
+    for compound, body in cases:
+        focal = _memory(body)
+        corpus = [focal, other]
+        bm = any(
+            h.id == focal.id for h in search(corpus, compound, mode="bm25", now=now)
+        )
+        kw = any(
+            h.id == focal.id for h in search(corpus, compound, mode="keyword", now=now)
+        )
+        assert kw, f"keyword baseline failed to match {compound!r}"
+        assert bm == kw, f"bm25 diverged from keyword for {compound!r}"
+
+
+def test_bm25_conjunction_requires_every_part_including_stopwords() -> None:
+    """F9 precision: the fixed conjunction is a REAL conjunction over the
+    UNFILTERED parts counted on the unstripped body — so 'end-to-end' matches
+    a body only when 'end', 'to', AND 'end' all occur. A body that mentions
+    'end' twice but never 'to' must NOT match.
+
+    Mutation-sound: the pre-fix code filtered 'to' out and counted the
+    duplicated ['end','end'] against the stripped stream, so this body DID
+    match. Reverting the fix flips this assertion.
+    """
+    now = datetime.now(timezone.utc)
+    other = _memory("totally unrelated widgets and gadgets galore")
+    # 'end' twice, no 'to' anywhere.
+    no_to = _memory("The end result matched the end goal exactly")
+    hits = search([no_to, other], "end-to-end", mode="bm25", now=now)
+    assert not any(h.id == no_to.id for h in hits)
+
+
 def test_find_similar_flags_short_restatement_contained_in_long_body() -> None:
     """F14 regression: a short (~10-token) near-verbatim restatement of the
     first sentence of a long (~48-token) memory scores ~0.18 Jaccard, below
@@ -529,3 +580,104 @@ def test_find_similar_short_common_vocab_not_silently_dropped() -> None:
     assert contained_hits, "a fully-contained multi-token memory should flag"
     assert all(h.relevance != "high" for h in contained_hits)
     assert any(h.relevance == "medium" for h in contained_hits)
+
+
+# Token pools for the containment-gate tests below. Each word is a distinct,
+# stopword-free, non-stemming stem (verified via `_raw_content_token_set`
+# inside the tests), so the token-set sizes — and thus the Jaccard/containment
+# ratios the assertions pin — are exact and won't drift silently under an
+# unrelated tokenizer change.
+_POOL_EIGHT = [
+    "carbon",
+    "oxygen",
+    "radon",
+    "argon",
+    "cobalt",
+    "nickel",
+    "helium",
+    "wolfram",
+]
+_POOL_EXTRA = [
+    "granite",
+    "basalt",
+    "quartz",
+    "marble",
+    "gypsum",
+    "copper",
+    "silver",
+    "bismuth",
+    "uranium",
+    "plutonium",
+    "krypton",
+    "xenon",
+    "neon",
+    "fluorine",
+    "iodine",
+    "bromine",
+]
+
+
+def test_find_similar_full_containment_in_dead_band_is_flagged() -> None:
+    """F14 dead-band regression: full containment at a size ratio in the
+    (2.5, 3.0) window was silently ignored. Pure Jaccard reaches the MEDIUM
+    'related' floor (0.40) only up to ratio 2.5 (1/r >= 0.40), while the old
+    `larger >= 3 * smaller` gate engaged the containment score only at ratio
+    3.0 — so an 8-token fact fully contained in a 22-token body (ratio 2.75)
+    scored Jaccard 8/22 = 0.36, below MEDIUM AND below the gate, and the
+    near-duplicate committed silently.
+
+    Mutation-sound for the ratio-gate removal: restoring `len(larger) >= 3 *
+    len(smaller)` drops back to the 0.36 Jaccard (< MEDIUM), so no hit is
+    returned and the assertion fails.
+    """
+    from bettermemory.search import (
+        MEDIUM_SIMILARITY,
+        _raw_content_token_set,
+        find_similar,
+    )
+
+    short_body = " ".join(_POOL_EIGHT)
+    long_body = " ".join(_POOL_EIGHT + _POOL_EXTRA[:14])
+    # Pin the geometry the regression depends on: 8 fully contained in 22,
+    # ratio 2.75 (inside the dead band), raw Jaccard below the MEDIUM floor.
+    small_set = _raw_content_token_set(short_body)
+    long_set = _raw_content_token_set(long_body)
+    assert len(small_set) == 8
+    assert len(long_set) == 22
+    assert small_set <= long_set
+    assert len(small_set) / len(long_set) < MEDIUM_SIMILARITY
+
+    hits = find_similar(short_body, [_memory(long_body)])
+    assert hits, "full containment in the (2.5, 3.0) dead band was not flagged"
+    assert hits[0].relevance == "medium"
+
+
+def test_find_similar_subfloor_full_containment_not_flagged() -> None:
+    """F14 floor guard: a below-floor short fact (< _CONTAINMENT_MIN_TOKENS)
+    FULLY CONTAINED in a long body must be flagged NEITHER 'high' NOR
+    'medium'. A 4-token fact whose every word appears in a 20-token body has
+    containment 1.0 but raw Jaccard 4/20 = 0.20; the token floor keeps
+    containment from firing, so it stays below MEDIUM and is ignored.
+
+    Mutation-sound for the floor: with `_CONTAINMENT_MIN_TOKENS = 0` the
+    sub-floor fact clears the (now-absent) floor, containment 1.0 caps to
+    _CONTAINMENT_CEILING (0.575) and surfaces it as 'medium' — flipping this
+    assertion.
+    """
+    from bettermemory.search import (
+        MEDIUM_SIMILARITY,
+        _raw_content_token_set,
+        find_similar,
+    )
+
+    short_body = " ".join(_POOL_EIGHT[:4])
+    long_body = " ".join(_POOL_EIGHT[:4] + _POOL_EXTRA)
+    small_set = _raw_content_token_set(short_body)
+    long_set = _raw_content_token_set(long_body)
+    assert len(small_set) == 4
+    assert len(long_set) == 20
+    assert small_set <= long_set
+    assert len(small_set) / len(long_set) < MEDIUM_SIMILARITY
+
+    hits = find_similar(short_body, [_memory(long_body)])
+    assert not hits, "a sub-floor fully-contained fact must not be flagged"
