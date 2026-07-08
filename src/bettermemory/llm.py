@@ -47,6 +47,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+import re
 import secrets
 from dataclasses import dataclass
 from datetime import datetime
@@ -464,8 +465,11 @@ class AnthropicProvider:
         # `max_retries=0` disables the SDK's default 2 automatic retries.
         # `APITimeoutError` is retryable, so with the default the blocking
         # `create()` below could stack up to 3x `DEFAULT_TIMEOUT` against a
-        # hung provider — this keeps the `timeout=` bound a single-shot
-        # wall-clock deadline, matching the Ollama path's single HTTP call.
+        # hung provider — disabling retries removes that stacking. Note the
+        # remaining `timeout=` is a bare float the SDK hands to httpx, which
+        # applies it PER PHASE (connect/read/write/pool each get it), so it
+        # bounds each phase rather than being a single total wall-clock
+        # deadline; it still prevents an unbounded hang.
         client = anthropic.Anthropic(api_key=key, max_retries=0)
         prompt = build_prompt(cluster, today=today)
         msg = client.messages.create(
@@ -750,6 +754,42 @@ class ProposalValidationError:
     reason: str
 
 
+# Matches the FIRST markdown code fence and captures its inner body. The
+# opening info-string (``` or ```json) is consumed up to the newline; the
+# body is non-greedy so we stop at the first closing fence. Used only as a
+# fallback after a raw parse fails (see `_json_object_candidates`).
+_FENCE_RE = re.compile(r"```[^\n`]*\n(.*?)\n?```", re.DOTALL)
+
+
+def _json_object_candidates(raw_text: str) -> list[str]:
+    """Yield candidate JSON strings from an LLM response, in order of
+    preference. The caller tries `json.loads` on each and uses the first
+    that parses.
+
+    Every candidate is a superset of what the old lenient fence-strip
+    accepted, so any payload that parsed before still parses — this must
+    NEVER over-reject a shape a provider already returns:
+
+      1. the text as-is — a bare JSON object with no fence, and (crucially)
+         a valid object whose *string values* happen to contain ``` fences;
+      2. the body of the first ```-fenced block — tolerates a leading
+         ```json wrapper AND trailing prose after the close;
+      3. the substring from the first '{' to the last '}' — last-ditch
+         recovery when a fenced wrapper's own body carries an inner fence
+         that would truncate candidate 2.
+    """
+    text = raw_text.strip()
+    candidates = [text]
+    match = _FENCE_RE.search(text)
+    if match:
+        candidates.append(match.group(1).strip())
+    lo = text.find("{")
+    hi = text.rfind("}")
+    if lo != -1 and hi > lo:
+        candidates.append(text[lo : hi + 1])
+    return candidates
+
+
 def parse_and_validate(
     raw_text: str,
     cluster: Cluster,
@@ -762,20 +802,32 @@ def parse_and_validate(
     — useful for prompt-tuning and for catching providers that don't
     honour `response_format=json_object`.
     """
-    cleaned = raw_text.strip()
-    # Some Ollama models wrap JSON in ```json fences despite the
-    # format=json hint; strip them defensively.
-    if cleaned.startswith("```"):
-        cleaned = cleaned.lstrip("`")
-        if cleaned.startswith("json"):
-            cleaned = cleaned[4:].lstrip()
-        if "```" in cleaned:
-            cleaned = cleaned.split("```", 1)[0].strip()
+    # Providers routinely wrap JSON in ```json fences (Anthropic has no
+    # response_format=json_object and is prompted to preserve markdown, so a
+    # fence is the EXPECTED shape) and may add trailing prose. The old code
+    # split at the first ``` anywhere, which truncated a payload whose body
+    # string legitimately contained a fence. Try the raw text first, then
+    # progressively looser extractions — never truncating a valid object.
+    payload: Any = None
+    last_exc: json.JSONDecodeError | None = None
+    for candidate in _json_object_candidates(raw_text):
+        try:
+            payload = json.loads(candidate)
+            break
+        except json.JSONDecodeError as exc:
+            last_exc = exc
+    if payload is None:
+        log.warning(
+            "LLM response was not valid JSON: %s. Body: %.200s",
+            last_exc,
+            raw_text.strip(),
+        )
+        return []
 
-    try:
-        payload = json.loads(cleaned)
-    except json.JSONDecodeError as exc:
-        log.warning("LLM response was not valid JSON: %s. Body: %.200s", exc, cleaned)
+    if not isinstance(payload, dict):
+        log.warning(
+            "LLM response was not a JSON object; got %r", type(payload).__name__
+        )
         return []
 
     proposals_raw = payload.get("proposals", [])

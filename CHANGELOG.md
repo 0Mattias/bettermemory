@@ -101,8 +101,10 @@ correctly-sized memory changes.
   Anthropic and OpenAI clients kept the SDK default `max_retries=2`,
   and since `APITimeoutError` is retryable the `timeout=` bound could
   stack to ~3× against a hung provider. Both clients now set
-  `max_retries=0`, making the timeout a true single-shot deadline
-  (matching the Ollama path).
+  `max_retries=0`, removing that stacking. (The remaining `timeout=`
+  is a bare float httpx applies per phase — connect/read/write each get
+  it — so it bounds each phase rather than total wall time, not a single
+  wall-clock deadline as first described.)
 - **mypy silently type-checked nothing when numpy was installed.**
   With the `[embeddings]` extra present, mypy aborted parsing
   numpy 2.5's `.pyi` stubs (a `type` statement needs 3.12) under

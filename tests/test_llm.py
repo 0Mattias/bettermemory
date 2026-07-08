@@ -177,6 +177,74 @@ def test_parse_collapses_repeated_duplicate_id() -> None:
     assert merge.duplicate_ids == (b.id, c.id)
 
 
+def test_parse_recovers_fenced_json_with_embedded_fence_in_body() -> None:
+    """A provider that wraps the JSON in a ```json fence AND whose new_body
+    itself contains a code fence used to be silently dropped: the old
+    split-at-first-``` truncated the payload mid-string -> JSONDecodeError
+    -> []. Anthropic has no response_format=json_object and is prompted to
+    preserve markdown, so a fenced answer is the expected shape. The
+    brace-span fallback recovers the object. (Mutation-sound: reverting the
+    extraction to the split-at-first-fence code makes this assert [].)"""
+    a = _make_memory("postgres on port 5432")
+    b = _make_memory("the queue uses postgres at 5432")
+    cluster = _make_cluster([a, b])
+    inner = json.dumps(
+        {
+            "proposals": [
+                {
+                    "type": "merge",
+                    "keeper_id": a.id,
+                    "duplicate_ids": [b.id],
+                    "new_body": "postgres on 5432\n```sql\nSELECT 1\n```",
+                    "rationale": "body carries an embedded code fence",
+                }
+            ]
+        }
+    )
+    raw = "```json\n" + inner + "\n```"
+    proposals = parse_and_validate(raw, cluster)
+    assert len(proposals) == 1
+    assert isinstance(proposals[0], MergeProposal)
+    assert proposals[0].keeper_id == a.id
+
+
+def test_parse_recovers_fenced_wrapper_with_trailing_prose() -> None:
+    """A ```json wrapper followed by trailing prose must still parse — do
+    not narrow acceptance to an EOT-anchored closing fence (that would
+    reject a shape providers legitimately return)."""
+    a = _make_memory("real memory")
+    cluster = _make_cluster([a])
+    inner = json.dumps({"proposals": []})
+    raw = "```json\n" + inner + "\n```\n\nHope that helps!"
+    # Empty proposals list parses cleanly to zero accepted proposals (a
+    # successful parse, not a dropped-cluster failure).
+    assert parse_and_validate(raw, cluster) == []
+
+
+def test_parse_bare_json_object_unchanged() -> None:
+    """A bare JSON object (no fence) is parsed as-is — the extraction never
+    alters a payload the plain path already accepted."""
+    a = _make_memory("real memory")
+    b = _make_memory("dup")
+    cluster = _make_cluster([a, b])
+    raw = json.dumps(
+        {
+            "proposals": [
+                {
+                    "type": "merge",
+                    "keeper_id": a.id,
+                    "duplicate_ids": [b.id],
+                    "new_body": "merged",
+                    "rationale": "plain unfenced object",
+                }
+            ]
+        }
+    )
+    proposals = parse_and_validate(raw, cluster)
+    assert len(proposals) == 1
+    assert isinstance(proposals[0], MergeProposal)
+
+
 def test_parse_rejects_resolve_with_same_winner_and_loser() -> None:
     a = _make_memory("memory A")
     b = _make_memory("memory B")
