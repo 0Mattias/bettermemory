@@ -179,3 +179,53 @@ async def test_write_after_restore_uses_active_dedup(server: Any) -> None:
     duplicate = await _call(server, "memory_write", content=body, scopes=["tools"])
     assert duplicate["status"] == "duplicate"
     assert duplicate["matches"][0]["id"] == written["id"]
+
+
+# ---------------------------------------------------------------------------
+# dedup threshold resolution: semantic_dedup=true but model absent
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture
+def server_semantic_no_model(memory_dir: Path, monkeypatch: Any) -> Any:
+    """A server configured with `semantic_dedup = true` but whose model
+    factory returns None — the shape you get when the `embeddings` extra
+    isn't installed. `find_similar` must fall back to the Jaccard scorer
+    *and* its natural 0.75/0.40 thresholds; feeding the COSINE-calibrated
+    0.85/0.65 to Jaccard would silently neuter dedup."""
+    from bettermemory import builder
+    from bettermemory.config import BehaviorConfig
+
+    monkeypatch.setattr(builder, "_semantic_model_or_none", lambda config: None)
+    cfg = Config(
+        storage=StorageConfig(directory=str(memory_dir)),
+        behavior=BehaviorConfig(semantic_dedup=True),
+    )
+    return build_server(
+        config=cfg,
+        store=Store(memory_dir),
+        state=SessionState(),
+    )
+
+
+async def test_dedup_fires_when_semantic_on_but_model_absent(
+    server_semantic_no_model: Any,
+) -> None:
+    """Near-duplicate (Jaccard ~0.82, i.e. in [0.75, 0.85)) must be caught
+    as `duplicate` when semantic_dedup is on but no model loaded.
+
+    Mutation guard: revert `_resolve_dedup_thresholds` to gate on the
+    `semantic_dedup` flag alone and the cosine 0.85 high threshold gets
+    applied to the Jaccard scorer — 0.82 < 0.85 lands as `medium`
+    (advisory `related`), the write commits, and this assertion fails.
+    """
+    server = server_semantic_no_model
+    body = "alpha beta gamma delta epsilon zeta theta kappa lambda sigma"
+    first = await _call(server, "memory_write", content=body, scopes=["tools"])
+    assert first["status"] == "committed"
+
+    # Shares 9 of 11 union tokens with `body` → Jaccard ≈ 0.818.
+    near_dup = "alpha beta gamma delta epsilon zeta theta kappa lambda omega"
+    second = await _call(server, "memory_write", content=near_dup, scopes=["tools"])
+    assert second["status"] == "duplicate"
+    assert second["matches"][0]["id"] == first["id"]
