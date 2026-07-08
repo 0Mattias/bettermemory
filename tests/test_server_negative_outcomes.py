@@ -470,3 +470,66 @@ def test_offsetless_negative_outcome_ts_windowed_as_utc(
     finally:
         monkeypatch.delenv("TZ", raising=False)
         time.tzset()
+
+
+async def test_poison_id_shapes_do_not_crash_search_and_claims_stay_aligned(
+    server_with_rec: tuple[Any, Recorder],
+) -> None:
+    """One malformed `use` event in the plaintext log was a FULL retrieval
+    outage until rotation: `attach_recent_negative_outcomes` runs on every
+    hit-producing memory_search with NO flag gate and iterated `ids` raw —
+    `"ids": 42` raises TypeError, `[[id]]` is unhashable at the hit-set
+    lookup. These are the poison shapes 3.15.0 hardened memory_health
+    against while leaving this walk raw. The shared normalizer must (a)
+    survive the poison and (b) preserve each id's ORIGINAL index, because
+    `claim_excerpts` is recorded parallel to the raw list — compacting
+    dropped elements would silently shift every later claim onto the wrong
+    memory. Reverting to the raw iteration crashes the search; compacting
+    indices mis-attributes the claim; both fail below."""
+    server, _ = server_with_rec
+    mid = await _seed(server, "python list comprehension notes")
+    memory_dir = Path(server_with_rec[1].root)
+    now = datetime.now(timezone.utc)
+    ts = now.replace(microsecond=0).isoformat().replace("+00:00", "Z")
+
+    for poison_ids in (42, [["m-nested"]], {"d": 1}):
+        _append_raw_event(
+            memory_dir,
+            {
+                "ts": ts,
+                "session": "sess_poison",
+                "kind": "use",
+                "ids": poison_ids,
+                "outcome": "ignored",
+            },
+        )
+    # Alignment probe: the real id sits at ORIGINAL index 2, BEHIND a
+    # malformed element; its parallel claim excerpt must stay attached.
+    _append_raw_event(
+        memory_dir,
+        {
+            "ts": ts,
+            "session": "sess_poison",
+            "kind": "use",
+            "ids": ["m-gone", ["malformed"], mid],
+            "outcome": "contradicted",
+            "claim_excerpts": [
+                "claim-for-m-gone",
+                "claim-for-malformed",
+                "the right claim",
+            ],
+        },
+    )
+
+    hits = _unwrap(await _call(server, "memory_search", query="python"))
+    assert hits, "poison events must not abort the search"
+    by_id = {h["id"]: h for h in hits}
+    annotations = by_id[mid].get("recent_negative_outcomes")
+    assert annotations, "the well-formed contradicted event must still surface"
+    contradicted = [a for a in annotations if a["outcome"] == "contradicted"]
+    assert contradicted, "contradicted outcome should be annotated"
+    assert contradicted[0].get("claim_excerpt") == "the right claim", (
+        "claim_excerpts is parallel to the RAW ids list; dropping the "
+        "malformed element must not shift the surviving id onto a "
+        "neighbor's claim"
+    )

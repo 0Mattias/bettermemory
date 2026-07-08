@@ -153,9 +153,11 @@ async def memory_audit_turn(
     # their own narrower cutoff internally — `_count_recent_retrievals`
     # (via `probe_for_miss`, `lookback_seconds=window`) and
     # `is_duplicate_audit` (`REAUDIT_DEDUP_WINDOW_SECONDS`) — so widening
-    # the read can't leak stale events into them. The endorsement tally is
-    # the exception: `_explicit_applied_counts` applies NO cutoff of its
-    # own, so it is fed a separately-scoped read below, NOT this list.
+    # the read can't leak stale events into them. The endorsement tally
+    # (`_explicit_applied_counts`) now enforces its own mandatory
+    # attribution cutoff internally too, so it could safely read this
+    # wide list — it is still fed the separately-scoped read below only
+    # to keep its walk narrow, not for correctness.
     # Mirrors the Stop hook (`hook.run_audit`), which reads
     # `REAUDIT_DEDUP_WINDOW_SECONDS`.
     recent = list(

@@ -112,9 +112,13 @@ _MAX_PATH_LENGTH = 512
 # memory bodies are a couple KB; 32 KiB sits comfortably above the p99 real
 # body while bounding the worst case to a fixed slice. Truncating (rather
 # than rejecting) leaves every normal body untouched and only drops path
-# claims that live past the cap in a pathological paste — the conservative
-# direction this module already prefers (miss a real path over chasing
-# ghosts / burning CPU).
+# claims that live at or past the cap in a pathological paste — the
+# conservative direction this module already prefers (miss a real path over
+# chasing ghosts / burning CPU). The cut lands on the last WHITESPACE inside
+# the cap, never mid-token: a hard byte slice can bisect a citation
+# straddling the boundary, and the surviving prefix — itself a well-formed
+# path — validates, fails the disk check, and FABRICATES drift out of a body
+# whose real path exists.
 _MAX_BODY_SCAN_BYTES = 32 * 1024
 
 
@@ -527,8 +531,22 @@ def _extract_candidates(body: str) -> list[tuple[str, bool, bool]]:
     # pass below is linear in body length at best and runs per search hit;
     # `_MAX_PATHS_PER_BODY` only caps the candidate COUNT, never the bytes
     # scanned, so a pathological multi-MB body would still be walked in full
-    # by `finditer`. Truncate once here (see `_MAX_BODY_SCAN_BYTES`).
-    body = body[:_MAX_BODY_SCAN_BYTES]
+    # by `finditer`. Truncate once here (see `_MAX_BODY_SCAN_BYTES`) — and
+    # cut at the LAST WHITESPACE inside the cap, never mid-token: a hard
+    # slice can bisect a legitimate citation straddling the boundary, and
+    # the surviving prefix — itself a well-formed path — validates, fails
+    # the disk check, and FABRICATES a `path_drift_missing` entry (a false
+    # non-fresh staleness verdict) from a body whose real path exists.
+    # Dropping the partial tail token keeps the cap's contract honest: it
+    # only ever DROPS claims, never invents one. (A capped body with no
+    # whitespace at all keeps the hard slice — a single 32 KiB token is no
+    # valid path claim and dies at the candidate-length gate.)
+    if len(body) > _MAX_BODY_SCAN_BYTES:
+        truncated = body[:_MAX_BODY_SCAN_BYTES]
+        last_ws = max(
+            truncated.rfind(" "), truncated.rfind("\n"), truncated.rfind("\t")
+        )
+        body = truncated[:last_ws] if last_ws > 0 else truncated
 
     route_segments = {m.group(1) for m in _DOMAIN_ROUTE_RE.finditer(body)}
 

@@ -18,6 +18,7 @@ from __future__ import annotations
 from datetime import datetime
 from typing import TYPE_CHECKING, Any, cast
 
+from ..events import _event_id_list
 from ..models import utcnow, validate_scope
 from ..time_utils import parse_event_ts
 from ..search import (
@@ -147,7 +148,13 @@ def _explicit_applied_counts(
         ts = parse_event_ts(ev.get("ts"))
         if ts is None or ts.timestamp() < cutoff_ts:
             continue
-        for mid in ev.get("ids") or ev.get("memory_ids") or []:
+        # Never iterate the raw id field: the event log is plaintext and
+        # hand-editable, and a scalar / nested-list `ids` here failed EVERY
+        # memory_search and memory_audit_turn call (TypeError / unhashable)
+        # under endorsement_boost — the exact poison shapes health.py was
+        # hardened against while this walk still read raw. One shared
+        # normalizer (`events._event_id_list`) for all consumers.
+        for mid in _event_id_list(ev.get("ids") or ev.get("memory_ids")):
             if mid in candidate_ids:
                 counts[mid] = counts.get(mid, 0) + 1
     return counts

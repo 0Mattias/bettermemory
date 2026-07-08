@@ -44,7 +44,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Callable, Iterable
 
-from .events import iter_all_events
+from .events import _event_id_list, iter_all_events
 from .models import Category, Memory, first_summary_line
 from .origin import (
     Origin,
@@ -87,29 +87,12 @@ from .time_utils import (
 _ENDORSEMENT_GRACE_DAYS = 2
 
 
-def _event_id_list(value: Any) -> list[str]:
-    """Normalize an event's id-list field (`returned` / `memory_ids` /
-    `hit_ids` / `ids`) to a list before iteration. A well-formed dict
-    event that carries a scalar where a list is expected must not take
-    down the whole health rollup: a numeric scalar would raise
-    `TypeError` under `for mid in <scalar>`, and a bare string would
-    iterate by CHARACTER (mis-attributing per-char retrieval/apply
-    counts). A lone non-empty string is treated as a single id; every
-    other non-list (int, float, None, dict, …) coerces to empty.
-
-    Element hazard: normalizing the CONTAINER is not enough. A
-    well-formed list whose ELEMENTS are themselves lists/dicts (e.g.
-    ``returned=[[id]]`` / ``ids=[[id]]`` / ``markers=[[x]]``) passes the
-    container check but leaves an unhashable member that raises at
-    ``self._by_id.get(mid)`` or when used as a ``Counter`` / set key —
-    blanking the whole rollup exactly like the scalar-container case. So
-    every non-str element is dropped here, not just coerced at the
-    container level; the return is always a clean ``list[str]``."""
-    if isinstance(value, list):
-        return [v for v in value if isinstance(v, str)]
-    if isinstance(value, str) and value:
-        return [value]
-    return []
+# `_event_id_list` moved to `events.py` (imported above) so memory_health,
+# memory_search's endorsement tally, and the negative-outcomes attach all
+# share ONE normalizer for event id fields — the 3.15.0 audit found the
+# health rollup hardened against poison id shapes while the search-path
+# consumers of the very same events still iterated the raw field and took
+# retrieval down. See `events._event_id_items` for the full rationale.
 
 
 def _freshest_touch_ts(

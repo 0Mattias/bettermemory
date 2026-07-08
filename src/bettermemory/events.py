@@ -493,6 +493,43 @@ class Recorder:
 # ---------------------------------------------------------------------------
 
 
+def _event_id_items(value: Any) -> list[tuple[int, str]]:
+    """Normalize an event's id-list field (`returned` / `memory_ids` /
+    `hit_ids` / `ids`) to `(original_index, id)` pairs before iteration.
+
+    The event log is plaintext, git-synced, and hand-editable, so every
+    consumer must survive a malformed field: a numeric scalar raises
+    `TypeError` under `for mid in <scalar>`, a bare string iterates by
+    CHARACTER (mis-attributing per-char counts), and a well-formed list
+    whose ELEMENTS are lists/dicts (`ids=[[id]]`) passes a container
+    check but blows up at the first hash/lookup of the element. One bad
+    event in the active log would otherwise take down every consumer of
+    the walk — memory_health blanked this way in 3.14.x, and
+    memory_search / memory_audit_turn did in 3.15.0 via their own raw
+    reads. This is the single choke point: consumers never iterate the
+    raw field.
+
+    The ORIGINAL index is preserved so parallel arrays recorded alongside
+    the ids (`claim_excerpts` on `use` events) still attribute to the
+    right slot after malformed elements are dropped — compacting the list
+    would silently shift every claim after a dropped element onto the
+    wrong memory. A lone non-empty string is treated as a single id at
+    slot 0; every other non-list shape coerces to empty.
+    """
+    if isinstance(value, list):
+        return [(i, v) for i, v in enumerate(value) if isinstance(v, str)]
+    if isinstance(value, str) and value:
+        return [(0, value)]
+    return []
+
+
+def _event_id_list(value: Any) -> list[str]:
+    """`_event_id_items` without the indices — for consumers that only
+    tally per-id and carry no parallel arrays. Same normalization, same
+    guarantees; see `_event_id_items` for the rationale."""
+    return [v for _, v in _event_id_items(value)]
+
+
 def _iter_json_lines(f: Any) -> Iterator[dict[str, Any]]:
     """Yield parsed JSON objects from a BINARY line stream, degrading
     per-record instead of aborting the whole stream on corruption.

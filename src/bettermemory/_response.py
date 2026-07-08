@@ -22,6 +22,7 @@ from typing import Any
 
 from .credentials import CredentialMatch
 from .durability import TransientMatch
+from .events import _event_id_items
 from .models import (
     MemoryHit,
     MemorySummary,
@@ -969,8 +970,16 @@ class ResponseBuilder:
                 continue
             # Legacy fallback for `memory_ids` — same class as the
             # 70e41a4 llm.py fix. Old `use` archives have `memory_ids`.
-            ids = event.get("ids") or event.get("memory_ids") or []
-            for i, mid in enumerate(ids):
+            #
+            # Never iterate the raw field: this attach runs on every
+            # hit-producing memory_search with NO flag gate, so one
+            # scalar / nested-list `ids` in the plaintext event log was
+            # a full retrieval outage until rotation. `_event_id_items`
+            # (the shared normalizer) preserves each id's ORIGINAL index
+            # so `claim_excerpts` — recorded parallel to the raw list —
+            # still attributes to the right slot when malformed elements
+            # are dropped.
+            for i, mid in _event_id_items(event.get("ids") or event.get("memory_ids")):
                 if mid not in hit_ids:
                     continue
                 per_id_events.setdefault(mid, []).append(

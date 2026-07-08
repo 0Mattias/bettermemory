@@ -218,3 +218,34 @@ async def test_handler_endorsement_enabled_uses_applied_events(tmp_path: Path) -
 
     # Flag ON: the endorsed underdog climbs to the top.
     assert (await _search_ids(_server(boost=True)))[0] == underdog
+
+
+def test_explicit_applied_counts_survives_malformed_id_fields() -> None:
+    """The tally iterated the event's raw `ids` field, so one malformed event
+    in the plaintext, hand-editable log — `"ids": 42` (TypeError: not
+    iterable) or `"ids": [["m1"]]` (unhashable list at the set lookup) —
+    failed EVERY memory_search and memory_audit_turn call under
+    endorsement_boost. These are the exact poison shapes 3.15.0 hardened
+    health.py's `_event_id_list` against while this walk, reading the very
+    same events, stayed raw. The shared normalizer must drop malformed
+    containers and elements and still count the well-formed ids around them.
+    Reverting the loop to the raw field makes the first poison event raise
+    and this test fail."""
+    now = datetime.now(timezone.utc)
+    ts = now.isoformat().replace("+00:00", "Z")
+    poison_and_real: list[dict[str, Any]] = [
+        {"kind": "use", "outcome": "applied", "ts": ts, "ids": 42},
+        {"kind": "use", "outcome": "applied", "ts": ts, "ids": [["m1"]]},
+        {"kind": "use", "outcome": "applied", "ts": ts, "ids": {"m1": 1}},
+        {"kind": "use", "outcome": "applied", "ts": ts, "ids": ["m1", 7, ["x"]]},
+        {"kind": "use", "outcome": "applied", "ts": ts, "memory_ids": "m2"},
+    ]
+    counts = _explicit_applied_counts(
+        poison_and_real,
+        {"m1", "m2"},
+        now=now,
+        lookback_seconds=600,
+    )
+    # The lone well-formed element and the bare-string legacy shape count;
+    # every malformed container/element is dropped, none of them crash.
+    assert counts == {"m1": 1, "m2": 1}

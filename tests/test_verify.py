@@ -1523,3 +1523,43 @@ def test_domain_route_bound_preserves_route_suppression() -> None:
     report = detect_path_drift(body)
     assert report.checked == ()
     assert report.missing == ()
+
+
+def test_scan_cap_cannot_fabricate_drift_from_straddling_path(
+    tmp_path: Path,
+) -> None:
+    """The input bound sliced at a hard byte offset, so a legitimate citation
+    straddling the 32 KiB boundary was cut MID-TOKEN: the surviving prefix
+    validated as a path, failed the disk check (the end-of-string tail
+    lookahead can't fire), and FABRICATED a `path_drift_missing` entry — a
+    false non-fresh staleness verdict — from a body whose real path exists.
+    Legal bodies run to 1 MB, so >32 KiB is reachable without hostility. The
+    cut must land on the last whitespace inside the cap: the straddling claim
+    is DROPPED, never bisected. Reverting to the hard slice resurrects the
+    phantom prefix and fails the no-missing assertion."""
+    real = tmp_path / "straddle" / "README.md"
+    real.parent.mkdir()
+    real.write_text("present\n", encoding="utf-8")
+    cited = str(real)
+
+    # Place the citation so the cap lands 6 chars before its end — inside
+    # "README.md" — leaving a phantom prefix that exists nowhere on disk.
+    start = _MAX_BODY_SCAN_BYTES - (len(cited) - 6)
+    phantom = cited[: len(cited) - 6]
+    assert not Path(phantom).exists()  # fixture sanity: bisection makes a ghost
+    body = "f" * (start - 1) + " " + cited + " and trailing prose"
+    assert start + len(cited) > _MAX_BODY_SCAN_BYTES  # fixture straddles the cap
+
+    report = detect_path_drift(body)
+    assert not report.missing, (
+        f"the straddling citation must be dropped whole, not bisected into a "
+        f"fabricated missing prefix; got {report.missing!r}"
+    )
+    assert all(not (cited.startswith(p) and p != cited) for p in report.checked)
+
+    # The same citation fully INSIDE the cap is still detected and clean —
+    # the whitespace cut drops only the straddling tail token, never a real
+    # claim that fits.
+    report_inside = detect_path_drift("f" * 100 + " " + cited + " tail")
+    assert cited in tuple(report_inside.checked)
+    assert not report_inside.missing
