@@ -742,6 +742,31 @@ def test_find_similar_comparable_length_distinct_not_over_rejected() -> None:
     assert len(sa2) == 12 and len(sb2) == 12 and len(sa2 & sb2) == 4
     assert not find_similar(a2, [_memory(b2)])
 
+
+def test_find_similar_comparable_pair_widened_related_band_is_deliberate() -> None:
+    """Honest pin of the trade accepted when the size-ratio gate was dropped:
+    the ADVISORY band for comparable-length pairs is WIDER — two equal-size
+    distinct writes sharing 40% of the smaller side's tokens surface as a
+    'medium' related hit via containment (4/10 = 0.40) where raw Jaccard
+    (4/16 = 0.25) kept them silent under the gated scorer. The widening is
+    confined to the advisory surface by the containment ceiling (< every
+    high/block threshold), so nothing is ever REFUSED by it. If this starts
+    failing because the band was re-narrowed, update the honest-scope comment
+    in `search.py`'s containment block alongside — code comment and pin must
+    tell the same story."""
+    from bettermemory.search import _raw_content_token_set, find_similar
+
+    a = " ".join(_POOL_EIGHT[0:4] + _POOL_EXTRA[0:6])  # 10 tokens, 4 shared
+    b = " ".join(_POOL_EIGHT[0:4] + _POOL_EXTRA[6:12])  # 10 tokens, 4 shared
+    sa, sb = _raw_content_token_set(a), _raw_content_token_set(b)
+    assert len(sa) == 10 and len(sb) == 10 and len(sa & sb) == 4
+    hits = find_similar(a, [_memory(b)])
+    assert hits, "the widened related band is deliberate — expected a hit"
+    assert hits[0].relevance == "medium"
+    assert all(h.relevance != "high" for h in hits), (
+        "the widening must stay advisory: never a blocking 'high'"
+    )
+
     # Arm 3: the intended short-in-long containment case still fires.
     short_in_long_short = " ".join(_POOL_EIGHT)  # 8
     short_in_long_long = " ".join(_POOL_EIGHT + _POOL_EXTRA[:14])  # 22

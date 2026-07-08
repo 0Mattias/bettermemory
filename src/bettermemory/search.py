@@ -2270,9 +2270,16 @@ def _pairwise_content_jaccard(raw_a: set[str], raw_b: set[str]) -> float:
     # hence silently ignored. `_CONTAINMENT_MIN_TOKENS` + the MEDIUM floor
     # + the ceiling already fence containment to its target case without
     # the discontinuity; `max(jaccard, containment)` makes containment a
-    # no-op for near-identical pairs (jaccard already dominates there), so
-    # dropping the ratio gate only closes the band, it doesn't widen the
-    # firing set for comparable-length pairs.
+    # no-op for near-identical pairs (jaccard already dominates there).
+    # Honest scope note: dropping the gate DOES widen the firing set for
+    # comparable-length pairs — two equal-size distinct writes sharing
+    # 40-57% of the smaller side's tokens now land in the `related` band
+    # via containment where raw Jaccard (intersection/union) kept them
+    # below it. The widening is confined to the ADVISORY surface: the
+    # ceiling below keeps containment under every high/block threshold,
+    # so no write is ever refused by it — the accepted trade for closing
+    # the (2.5, 3.0) full-containment dead band, pinned by
+    # `test_find_similar_comparable_pair_widened_related_band_is_deliberate`.
     #
     # Ceiling guarantee: containment contributes at most _CONTAINMENT_CEILING
     # (< HIGH_SIMILARITY), so it can never raise a pair to the 'high'/block
