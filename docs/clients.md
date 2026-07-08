@@ -61,13 +61,24 @@ bettermemory init --client cursor --config-path .cursor/mcp.json
 
 Cursor's MCP support is per-window. A window opened before the patch won't see the new server until reloaded (Cmd-Shift-P → "Reload Window").
 
-## Continue
+## Continue (legacy shape — see caveat)
 
 ```sh
 bettermemory init --client continue
 ```
 
-Patches `~/.continue/config.json`. Continue auto-reloads when the config changes.
+Patches `~/.continue/config.json` with an **object-shaped** `mcpServers`.
+
+**Caveat — this shape is not read by current Continue.** As of 2026-07, Continue's released schema reads MCP servers as a **YAML list** in `~/.continue/config.yaml` (or as individual files under `~/.continue/mcpServers/`); the object-in-`config.json` form is a deprecated format current Continue ignores. `init --client continue` therefore prints a warning and writes the entry for backward compatibility with legacy Continue only. On a current install, add the server to `~/.continue/config.yaml` by hand instead:
+
+```yaml
+mcpServers:
+  - name: bettermemory
+    command: bettermemory   # or the absolute path init prints
+    args: []
+```
+
+(Substitute the absolute binary path `bettermemory init` reports for `command` so a later reinstall is detectable — same rationale as the JSON snippet below.) MCP tools in Continue are only available in **agent mode**.
 
 ## Cline
 
@@ -133,5 +144,5 @@ If you find a client whose snippet shape isn't this, please file an issue.
 | Claude Code (manual) | user `~/.claude.json` or project `.mcp.json` | yes |
 | Claude Desktop  | platform-standard `claude_desktop_config.json` | yes |
 | Cursor          | `~/.cursor/mcp.json` or `<repo>/.cursor/mcp.json` | yes |
-| Continue        | `~/.continue/config.json` | yes |
+| Continue        | `~/.continue/config.json` (legacy shape; current Continue wants a YAML list in `config.yaml` — see caveat above) | writes + warns |
 | Cline           | VS Code `globalStorage/saoudrizwan.claude-dev/...` | yes (default VS Code only) |

@@ -986,3 +986,143 @@ def test_patch_aborts_when_config_changes_under_us(
     monkeypatch.setattr(init_mod, "_config_signature", racing_sig)
     with pytest.raises(ValueError, match="changed under us"):
         patch_client_config(target, binary="/x/bm")
+
+
+def test_patch_aborts_on_write_between_read_and_stat(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """TOCTOU (item A): the baseline signature MUST be snapshotted BEFORE
+    `read_text()`, not after. If a non-locking client write lands in the
+    read->stat window — after we read the bytes we're about to overwrite but
+    before the signature is captured — capturing the signature after the read
+    folds that write into the baseline, so the pre-write re-stat matches and
+    the client's update is silently clobbered.
+
+    We simulate the race by mutating the file DURING `read_text()` (returning
+    the pre-mutation bytes, then landing a bigger payload on disk). With the
+    baseline captured before the read, the pre-write re-stat sees the moved
+    signature and aborts loudly.
+
+    Mutation-soundness: revert the fix (snapshot after the read) and the
+    concurrent write is captured into the baseline, no ValueError is raised,
+    and this `pytest.raises` fails.
+    """
+    target = tmp_path / "config.json"
+    original = json.dumps({"mcpServers": {"other": {"command": "y", "args": []}}})
+    target.write_text(original, encoding="utf-8")
+
+    real_read_text = Path.read_text
+    real_write_text = Path.write_text
+    state = {"fired": False}
+
+    def racing_read_text(self: Path, *args: Any, **kwargs: Any) -> str:
+        content = real_read_text(self, *args, **kwargs)
+        if self == target and not state["fired"]:
+            state["fired"] = True
+            # Non-locking client write lands in the read->stat window: we have
+            # the original bytes in hand; the file on disk now grows.
+            bigger = json.dumps(
+                {
+                    "mcpServers": {"other": {"command": "y", "args": []}},
+                    "client_wrote_this_between_read_and_stat": "x" * 40,
+                }
+            )
+            real_write_text(self, bigger, encoding="utf-8")
+        return content
+
+    monkeypatch.setattr(Path, "read_text", racing_read_text)
+    with pytest.raises(ValueError, match="changed under us"):
+        patch_client_config(target, binary="/x/bm")
+
+
+def test_init_via_cli_exits_clean_on_concurrent_write_race(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """CLI exception reconciliation (item B): the concurrent-write-race abort
+    (`patch_client_config` raising ValueError "changed under us") must reach
+    the CLI's `(OSError, ValueError)` catch and exit 2 with a clean
+    `bettermemory init: error: …` message — NOT a raw ValueError traceback /
+    exit 1. Same clean-exit contract the malformed-JSON case already has.
+
+    Mutation-soundness: narrow the CLI catch back to `except OSError` and the
+    ValueError escapes as itself — `pytest.raises(SystemExit)` then fails.
+    """
+    import argparse
+
+    from bettermemory import init as init_mod
+    from bettermemory.cli.init import add_subparser as init_add_subparser
+    from bettermemory.cli.init import run as init_run
+
+    target = tmp_path / "cfg.json"
+    target.write_text(
+        json.dumps({"mcpServers": {"other": {"command": "y", "args": []}}}),
+        encoding="utf-8",
+    )
+
+    real_sig = init_mod._config_signature
+    calls: list[int] = []
+
+    def racing_sig(path: Path) -> tuple[int, int]:
+        calls.append(1)
+        sig = real_sig(path)
+        if len(calls) == 1:
+            # Baseline captured; a concurrent (non-locking) writer lands a
+            # bigger payload, moving the size in the signature.
+            path.write_text(
+                json.dumps(
+                    {
+                        "mcpServers": {"other": {"command": "y", "args": []}},
+                        "grew_under_us": "x" * 40,
+                    }
+                ),
+                encoding="utf-8",
+            )
+        return sig
+
+    monkeypatch.setattr(init_mod, "_config_signature", racing_sig)
+
+    parser = argparse.ArgumentParser(prog="bettermemory")
+    sub = parser.add_subparsers(dest="cmd")
+    init_add_subparser(sub)
+    args = parser.parse_args(
+        ["init", "--client", "claude-code", "--config-path", str(target)]
+    )
+
+    with pytest.raises(SystemExit) as excinfo:
+        init_run(args)
+
+    assert excinfo.value.code == 2
+    err = capsys.readouterr().err
+    assert "error:" in err
+    assert "changed under us" in err
+    assert "Traceback (most recent call last)" not in err
+
+
+def test_cli_init_continue_client_warns_legacy_shape(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Continue schema (item C): current Continue reads `mcpServers` as a YAML
+    LIST in `config.yaml`; the object-in-`config.json` shape this client target
+    writes is a deprecated format current Continue ignores. Rather than
+    silently write a shape that does nothing, `init --client continue` warns to
+    stderr (so `--json` stdout stays clean) and points at the correct YAML list
+    form, while still writing the legacy entry for backward compatibility.
+
+    Mutation-soundness: drop the warning emit and the `config.yaml` assertion
+    below fails.
+    """
+    monkeypatch.setattr("bettermemory.init.find_binary", lambda: "/fake/bm")
+    target = tmp_path / "config.json"
+    cli_init(**_shared_kwargs(client="continue", config_path=target))
+    captured = capsys.readouterr()
+    # Still writes the legacy entry (backward compat for old Continue)…
+    body = json.loads(target.read_text(encoding="utf-8"))
+    assert body["mcpServers"][DEFAULT_SERVER_NAME]["command"] == "/fake/bm"
+    # …but warns that current Continue ignores this shape and points at YAML.
+    assert "config.yaml" in captured.err
+    assert "deprecated" in captured.err.lower()

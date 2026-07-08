@@ -226,6 +226,28 @@ LEGACY_SERVER_NAME = "memory"
 upgrade lands."""
 
 
+CONTINUE_LEGACY_WARNING = (
+    "warning: the `continue` client target writes an OBJECT-shaped "
+    "`mcpServers` into `~/.continue/config.json`, but current Continue "
+    "reads MCP servers as a YAML LIST in `~/.continue/config.yaml` (or "
+    "individual files under `~/.continue/mcpServers/`) — the config.json "
+    "object shape is a DEPRECATED format current Continue ignores. The "
+    "entry below is written for backward compatibility with legacy "
+    "Continue only; on a current install add this instead:\n"
+    "  mcpServers:\n"
+    "    - name: bettermemory\n"
+    "      command: <the binary path printed below>\n"
+    "      args: []\n"
+    "See docs/clients.md (Continue section) for details."
+)
+"""Emitted to stderr when `--client continue` is targeted. Continue's
+current released schema (verified 2026-07 against docs.continue.dev/
+customize/deep-dives/mcp) takes `mcpServers` as a LIST in `config.yaml`;
+`config.json` is documented as deprecated. Rather than silently write a
+shape current Continue drops on the floor, init warns and points at the
+correct YAML list form — see docs/clients.md."""
+
+
 def server_snippet(
     *,
     name: str = DEFAULT_SERVER_NAME,
@@ -299,10 +321,13 @@ def command_launches_bettermemory(
 
 def _config_signature(path: Path) -> tuple[int, int]:
     """Cheap change-detector for the target config: ``(mtime_ns, size)``.
-    Snapshotted right after the read and re-checked right before the
-    atomic write so a concurrent writer (the live client that owns
+    Snapshotted right BEFORE the read (so the baseline describes the exact
+    bytes we are about to read and overwrite) and re-checked right before
+    the atomic write so a concurrent writer (the live client that owns
     ``~/.claude.json``) mutating the file under us aborts loudly instead
-    of being silently clobbered."""
+    of being silently clobbered. Capturing it after the read would leave an
+    unguarded read->stat window: a write landing there folds into the
+    baseline and the pre-write re-stat then matches, clobbering it."""
     st = path.stat()
     return (st.st_mtime_ns, st.st_size)
 
@@ -361,6 +386,15 @@ def patch_client_config(
     with _fsutil.flock_excl(target_path):
         baseline_sig: tuple[int, int] | None = None
         if target_path.exists():
+            # Snapshot the on-disk signature BEFORE the read, not after. The
+            # baseline must describe the exact bytes we are about to read and
+            # overwrite. Capturing it after read_text() leaves an unguarded
+            # read->stat window: a non-locking client write landing between the
+            # read and the stat folds into the baseline, so the pre-write
+            # re-stat matches and we silently clobber the client's update.
+            # Snapshotting first means any write after this point moves the
+            # signature, so the pre-write re-stat mismatches and aborts loudly.
+            baseline_sig = _config_signature(target_path)
             try:
                 text = target_path.read_text(encoding="utf-8")
                 existing = json.loads(text) if text.strip() else {}
@@ -370,7 +404,6 @@ def patch_client_config(
                     f"(line {exc.lineno}, col {exc.colno}). Fix the file by hand "
                     f"or remove it before re-running init."
                 ) from exc
-            baseline_sig = _config_signature(target_path)
             if not isinstance(existing, dict):
                 raise ValueError(
                     f"existing config at {target_path} has a non-object root; "
@@ -603,6 +636,15 @@ def cli_init(
         name = DEFAULT_SERVER_NAME
     binary = find_binary()
     snippet = server_snippet(name=name, binary=binary)
+
+    # Continue's current released schema takes `mcpServers` as a LIST in
+    # `config.yaml`; the object-in-`config.json` shape this client target
+    # writes is a deprecated format current Continue ignores. Warn loudly
+    # (to stderr, so `--json` stdout stays clean) instead of silently
+    # writing a shape that does nothing — see CONTINUE_LEGACY_WARNING and
+    # docs/clients.md.
+    if client == "continue":
+        sys.stderr.write(f"bettermemory init: {CONTINUE_LEGACY_WARNING}\n")
 
     if json_out:
         out: dict[str, Any] = {
