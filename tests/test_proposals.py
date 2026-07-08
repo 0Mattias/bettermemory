@@ -741,6 +741,7 @@ def test_accept_proposal_refuses_credential_body(
     (retry contract) and no `.md` is persisted; the error names the detector
     kind, never the value."""
     from bettermemory.config import Config, StorageConfig
+    from bettermemory.events import Recorder
     from bettermemory.handlers.proposals import accept_proposal
     from bettermemory.store import Store
 
@@ -749,11 +750,13 @@ def test_accept_proposal_refuses_credential_body(
     q.append([_proposal(body, pid="c1")])
     config = Config(storage=StorageConfig(directory=str(tmp_path)))
     store = Store(tmp_path)
+    recorder = Recorder(root=tmp_path, session_id="sess_test")
 
     with pytest.raises(ValueError, match=kind) as excinfo:
         accept_proposal(
             store=store,
             config=config,
+            recorder=recorder,
             proposal_id="c1",
             scopes=["infrastructure"],
         )
@@ -765,6 +768,9 @@ def test_accept_proposal_refuses_credential_body(
     assert [p.id for p in q.load()] == ["c1"]
     # The error names the detector kind but never echoes the raw secret span.
     assert token not in str(excinfo.value)
+    # No event on a refusal — the accept record fires only when the write
+    # actually lands (accept_proposal docstring step 6).
+    assert not (tmp_path / ".events.jsonl").exists()
 
 
 def test_accept_proposal_acknowledge_credential_bypasses_refusal(
@@ -777,6 +783,7 @@ def test_accept_proposal_acknowledge_credential_bypasses_refusal(
     credential pattern). Mutation-sound: drop the parameter (revert the gate to
     an unconditional refuse) and this test fails on the accept half."""
     from bettermemory.config import Config, StorageConfig
+    from bettermemory.events import Recorder, iter_events
     from bettermemory.handlers.proposals import accept_proposal
     from bettermemory.store import Store
 
@@ -786,12 +793,14 @@ def test_accept_proposal_acknowledge_credential_bypasses_refusal(
     q.append([_proposal(body, pid="ack1")])
     config = Config(storage=StorageConfig(directory=str(tmp_path)))
     store = Store(tmp_path)
+    recorder = Recorder(root=tmp_path, session_id="sess_test")
 
     # Default: refused, proposal stays queued, nothing written.
     with pytest.raises(ValueError, match="aws-access-key-id"):
         accept_proposal(
             store=store,
             config=config,
+            recorder=recorder,
             proposal_id="ack1",
             scopes=["infrastructure"],
         )
@@ -803,6 +812,7 @@ def test_accept_proposal_acknowledge_credential_bypasses_refusal(
     result = accept_proposal(
         store=store,
         config=config,
+        recorder=recorder,
         proposal_id="ack1",
         scopes=["infrastructure"],
         acknowledge_credential=True,
@@ -813,7 +823,104 @@ def test_accept_proposal_acknowledge_credential_bypasses_refusal(
     assert written[0].body.strip() == body
     assert q.load() == []
     # The forced override is observable in the result (detector kind only,
-    # never the value) so the MCP handler logs it to the event stream —
-    # auditability parity with memory_write. Mutation-sound: drop the field
-    # and this fails.
+    # never the value) — auditability parity with memory_write.
+    # Mutation-sound: drop the field and this fails.
     assert result["credentials_acknowledged"] == ["aws-access-key-id"]
+    # And the CORE recorded the accept event itself — the single choke point
+    # every surface (MCP tool, CLI) shares, so no entry point can accept with
+    # acknowledged credentials without the override landing in the audit log.
+    # Exactly ONE event (the refusal above recorded nothing); detector kind
+    # only, the secret value never reaches the log. Mutation-sound: move the
+    # recording back out to the MCP handler and this fails — accept_proposal
+    # alone no longer logs.
+    accept_events = [
+        e
+        for e in iter_events(tmp_path)
+        if e["kind"] == "memory_proposals" and e.get("action") == "accept"
+    ]
+    assert len(accept_events) == 1
+    assert accept_events[0]["proposal_id"] == "ack1"
+    assert accept_events[0]["credentials_acknowledged"] == ["aws-access-key-id"]
+    assert token not in (tmp_path / ".events.jsonl").read_text(encoding="utf-8")
+
+
+def test_cli_proposals_accept_acknowledge_credential_flag(
+    capsys: pytest.CaptureFixture[str],
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """`bettermemory proposals accept --acknowledge-credential` — the CLI
+    spelling of the escape hatch, exercised through the REAL argparse
+    boundary (`bettermemory.server.main()` with a mocked argv), not the
+    accept core directly. The escape hatch shipped dead at this surface
+    once: the core supported acknowledge_credential, but the CLI had no
+    flag, and its refusal message told the user to pass a parameter the
+    CLI could not express.
+
+    Pins all three halves: (1) without the flag the accept is refused
+    (clean exit 2, proposal still queued, nothing written, value redacted);
+    (2) with --acknowledge-credential the write lands and the queue is
+    claimed; (3) the forced override is recorded in the audit log from the
+    CLI surface too — exactly once, detector kind only — because
+    `accept_proposal` records it at the shared choke point.
+
+    Storage is seeded via BETTERMEMORY_DIR + `resolved_directory()` (the
+    test_cli_smoke pattern) so the test store and the CLI-resolved store are
+    the same realpath on macOS (/var vs /private/var)."""
+    import sys as _sys
+
+    from bettermemory.config import load_config
+    from bettermemory.events import iter_events
+    from bettermemory.server import main as cli_main
+    from bettermemory.store import Store
+
+    monkeypatch.setenv("BETTERMEMORY_DIR", str(tmp_path))
+    store = Store(load_config().resolved_directory())
+    token = "AKIAIOSFODNN7EXAMPLE"
+    body = f"AWS access-key ids look like {token} — a documented example shape."
+    ProposalQueue(store.root).append([_proposal(body, pid="cliack1")])
+
+    def run_cli(*argv: str) -> None:
+        monkeypatch.setattr(_sys, "argv", ["bettermemory", *argv])
+        cli_main()
+
+    # (1) Without the flag: parser.error -> exit 2; the message names the
+    # detector kind AND the CLI flag spelling, never the secret value; the
+    # proposal stays queued and nothing is written.
+    with pytest.raises(SystemExit) as exc:
+        run_cli("proposals", "accept", "cliack1", "--scope", "infrastructure")
+    assert exc.value.code == 2
+    err = capsys.readouterr().err
+    assert "aws-access-key-id" in err
+    assert "--acknowledge-credential" in err
+    assert token not in err
+    assert [p.id for p in ProposalQueue(store.root).load()] == ["cliack1"]
+    assert store.load_all() == []
+
+    # (2) With the flag: accepted, written, queue claimed.
+    run_cli(
+        "proposals",
+        "accept",
+        "cliack1",
+        "--scope",
+        "infrastructure",
+        "--acknowledge-credential",
+    )
+    assert "Accepted" in capsys.readouterr().out
+    assert ProposalQueue(store.root).load() == []
+    written = store.load_all()
+    assert len(written) == 1
+    assert written[0].body.strip() == body
+
+    # (3) The CLI surface logged the forced override — exactly once, kind
+    # only, value never in the log. Before the recording moved into the
+    # accept core, the CLI path recorded nothing at all.
+    accept_events = [
+        e
+        for e in iter_events(store.root)
+        if e["kind"] == "memory_proposals" and e.get("action") == "accept"
+    ]
+    assert len(accept_events) == 1
+    assert accept_events[0]["proposal_id"] == "cliack1"
+    assert accept_events[0]["credentials_acknowledged"] == ["aws-access-key-id"]
+    assert token not in (store.root / ".events.jsonl").read_text(encoding="utf-8")

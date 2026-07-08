@@ -6200,6 +6200,103 @@ async def test_memory_proposals_accept_claims_before_write(memory_dir: Path) -> 
     assert len(store.load_all()) == 1
 
 
+async def test_memory_proposals_schema_includes_acknowledge_credential(
+    server: Any,
+) -> None:
+    """The REGISTERED memory_proposals tool's input schema must expose
+    `acknowledge_credential` — the same escape hatch memory_write /
+    memory_update carry. FastMCP derives the schema from the
+    `ToolHandlers.memory_proposals` wrapper signature, and its pydantic
+    arg-model silently DROPS any key the signature doesn't declare, so a
+    handler-core parameter the wrapper omits is dead at the tool boundary:
+    a client passing acknowledge_credential=True still gets the refusal.
+    That is exactly how the hatch shipped dead once — this schema-level pin
+    catches the wrapper/handler drift the handler-level tests can't see."""
+    tools = await server.list_tools()
+    by_name = {t.name: t for t in tools}
+    for tool_name in ("memory_proposals", "memory_write", "memory_update"):
+        props = by_name[tool_name].inputSchema["properties"]
+        assert "acknowledge_credential" in props, (
+            f"{tool_name} input schema lost the acknowledge_credential escape hatch"
+        )
+
+
+async def test_memory_proposals_accept_acknowledge_credential_end_to_end(
+    memory_dir: Path,
+) -> None:
+    """The acknowledge_credential escape hatch exercised THROUGH the MCP
+    boundary (`mcp.call_tool`), not the handler function — the boundary is
+    where it died before: the wrapper's signature didn't declare the
+    parameter, so FastMCP dropped the key and the flag never reached the
+    core. A credential-bearing proposal is refused without the flag and
+    accepted WITH acknowledge_credential=True; the forced override lands in
+    the audit log exactly once (the accept core records it — the MCP
+    handler must not double-log), detector kind only, value never."""
+    from bettermemory.events import Recorder, iter_events
+    from bettermemory.proposals import ProposalQueue
+
+    # The documented public AWS example key — fragment-assembled so the
+    # secret-shaped literal never appears in source (push-protection
+    # scanners; see tests/test_server_credentials.py).
+    aws_example = "".join(("AKIA", "IOSFODNN7EXAMPLE"))
+    state = SessionState()
+    server = build_server(
+        config=Config(storage=StorageConfig(directory=str(memory_dir))),
+        store=Store(memory_dir),
+        state=state,
+        recorder=Recorder(root=memory_dir, session_id=state.session_id),
+    )
+    _seed_proposal(
+        memory_dir,
+        pid="ack1",
+        body=f"AWS access-key ids look like {aws_example} — a documented example.",
+    )
+
+    # Without the flag: refused at the tool boundary; the proposal stays
+    # queued, nothing is written, the error names the kind but not the value.
+    with pytest.raises(Exception, match="aws-access-key-id") as excinfo:
+        await _call(
+            server,
+            "memory_proposals",
+            action="accept",
+            proposal_id="ack1",
+            scopes=["infrastructure"],
+        )
+    assert aws_example not in str(excinfo.value)
+    assert [p.id for p in ProposalQueue(memory_dir).load()] == ["ack1"]
+    assert Store(memory_dir).load_all() == []
+
+    # WITH acknowledge_credential=True over the same call path: accepted,
+    # written, queue claimed, override kinds surfaced in the response.
+    res = await _call(
+        server,
+        "memory_proposals",
+        action="accept",
+        proposal_id="ack1",
+        scopes=["infrastructure"],
+        acknowledge_credential=True,
+    )
+    assert res["status"] == "accepted"
+    assert res["credentials_acknowledged"] == ["aws-access-key-id"]
+    assert ProposalQueue(memory_dir).load() == []
+    assert len(Store(memory_dir).load_all()) == 1
+
+    # The forced override is in the event log EXACTLY once — recorded by
+    # the accept core, with no second event layered on by the MCP handler.
+    accept_events = [
+        e
+        for e in iter_events(memory_dir)
+        if e["kind"] == "memory_proposals" and e.get("action") == "accept"
+    ]
+    assert len(accept_events) == 1
+    assert accept_events[0]["proposal_id"] == "ack1"
+    assert accept_events[0]["credentials_acknowledged"] == ["aws-access-key-id"]
+    # Kind only, never the value — the raw secret shape must not be
+    # recoverable from the audit log.
+    raw_log = (memory_dir / ".events.jsonl").read_text(encoding="utf-8")
+    assert aws_example not in raw_log
+
+
 async def test_episode_promote_advances_turn_exactly_once(
     memory_dir: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

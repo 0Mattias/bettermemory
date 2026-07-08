@@ -21,6 +21,7 @@ from ..proposals import ProposalQueue
 if TYPE_CHECKING:
     from .._handlers import ToolHandlers
     from ..config import Config
+    from ..events import Recorder
     from ..store import Store
 
 
@@ -58,6 +59,7 @@ def accept_proposal(
     *,
     store: "Store",
     config: "Config",
+    recorder: "Recorder",
     proposal_id: str,
     scopes: list[str],
     category: str | None = None,
@@ -94,10 +96,18 @@ def accept_proposal(
        still exists under the queue's per-file flock and hands it to the single
        racer that wins, so a concurrent double-accept can't write twice.
     5. Write the durable memory through the normal store path.
+    6. Record the accept event through ``recorder`` — HERE, at the single
+       choke point, not per entry surface. Every caller (the
+       ``memory_proposals`` MCP tool AND the ``bettermemory proposals
+       accept`` CLI) therefore logs an accepted claim exactly once, and a
+       forced ``acknowledge_credential`` override (detector kinds only,
+       never the value) can't slip through an entry point that forgot to
+       layer its own event on top — the CLI did exactly that before the
+       recording moved here. Callers must NOT record a second accept event.
 
-    Returns a result dict (``status`` in ``{"accepted", "not_found"}``) WITHOUT
-    recording an event — the MCP handler layers its ``recorder.record`` on top;
-    the CLI prints the result. Raises ``ValueError`` on a bad payload (it
+    Returns a result dict (``status`` in ``{"accepted", "not_found"}``). No
+    event is recorded on either ``not_found`` path or on a refusal — only
+    when the write actually lands. Raises ``ValueError`` on a bad payload (it
     bubbles to the caller and the proposal stays queued).
     """
     from .. import _handlers as _h
@@ -132,7 +142,8 @@ def accept_proposal(
             f"({', '.join(kinds)}) — this store is plain-text and `sync` "
             "pushes it across hosts via git, so the accept is refused. Edit "
             "the proposal to describe the secret without embedding it, dismiss "
-            "it, or pass acknowledge_credential=True if the value is a "
+            "it, or pass acknowledge_credential=True (the "
+            "--acknowledge-credential flag on the CLI) if the value is a "
             "documented public/example credential (mirrors the memory_write / "
             "memory_update escape hatch). The value is redacted from this "
             "error regardless."
@@ -146,6 +157,28 @@ def accept_proposal(
         return {"status": "not_found", "action": "accept", "proposal_id": proposal_id}
     memory = store.write(**payload, origin=_h.capture_origin())
     cat_written = memory.category.value if memory.category is not None else cat_value
+    # Kind only, never the value: the detector kinds a forced
+    # `acknowledge_credential` override bypassed (empty when none) — a
+    # too-loose detector / high override rate stays observable, mirroring
+    # what `memory_write` records for the same escape hatch.
+    credentials_acknowledged = (
+        [h.kind for h in credential_hits]
+        if credential_hits and acknowledge_credential
+        else []
+    )
+    # Single choke point for the accept audit event (docstring step 6): the
+    # write landed, so record it here for EVERY surface. Callers must not
+    # record a second accept event — the MCP handler double-logged the
+    # forced-override kinds when it layered its own record on top.
+    recorder.record(
+        "memory_proposals",
+        action="accept",
+        proposal_id=proposal_id,
+        id=memory.id,
+        scopes=memory.scopes,
+        category=cat_written,
+        credentials_acknowledged=credentials_acknowledged,
+    )
     return {
         "status": "accepted",
         "action": "accept",
@@ -153,14 +186,7 @@ def accept_proposal(
         "id": memory.id,
         "scopes": memory.scopes,
         "category": cat_written,
-        # Kind only, never the value: the detector kinds a forced
-        # `acknowledge_credential` override bypassed (empty when none), so the
-        # MCP handler can log the override to the event stream.
-        "credentials_acknowledged": (
-            [h.kind for h in credential_hits]
-            if credential_hits and acknowledge_credential
-            else []
-        ),
+        "credentials_acknowledged": credentials_acknowledged,
     }
 
 
@@ -220,13 +246,18 @@ async def memory_proposals(
         # `accept_proposal` so this MCP tool and the `bettermemory proposals
         # accept` CLI share ONE implementation (no policy drift between
         # entry points). A bad scope/category raises ValueError from there
-        # with the proposal still queued; the recorder event is layered on
-        # only when the write actually lands, preserving the prior semantics
-        # (no event on either not_found path).
+        # with the proposal still queued. The accept audit event — including
+        # the forced `acknowledge_credential` override kinds — is recorded
+        # INSIDE `accept_proposal` (its single choke point, step 6 of its
+        # docstring), only when the write actually lands and never on the
+        # not_found paths. Do NOT record another accept event here: that
+        # double-logs the override on the MCP path while the CLI path
+        # relies on the core's record being the only one.
         try:
             result = accept_proposal(
                 store=deps.store,
                 config=deps.config,
+                recorder=deps.recorder,
                 proposal_id=proposal_id,
                 scopes=scopes,
                 category=category,
@@ -248,19 +279,6 @@ async def memory_proposals(
                 "(it may have been removed from the queue — re-check with "
                 'memory_proposals(action="list") before retrying)'
             ) from exc
-        if result["status"] == "accepted":
-            deps.recorder.record(
-                "memory_proposals",
-                action="accept",
-                proposal_id=proposal_id,
-                id=result["id"],
-                scopes=result["scopes"],
-                category=result["category"],
-                # Kind only, never the value — a forced credential override so a
-                # too-loose detector / high override rate is observable, mirroring
-                # what `memory_write` records for the same escape hatch.
-                credentials_acknowledged=result.get("credentials_acknowledged", []),
-            )
         return result
 
     raise ValueError(

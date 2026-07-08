@@ -355,6 +355,67 @@ def test_parse_strips_markdown_fences() -> None:
     assert len(proposals) == 1
 
 
+def test_parse_skips_leading_non_json_fence() -> None:
+    """A leading NON-JSON fence ahead of the real ```json payload must not
+    sink the parse. The old extraction considered only the FIRST fenced
+    block: `print({})` fed json.loads and failed, and the brace-span
+    fallback straddled both blocks (first '{' inside the python fence, last
+    '}' in the payload) so every candidate failed -> LLMParseError for a
+    response that plainly contains the answer. Candidate generation now
+    considers EVERY fenced block, preferring ```json-tagged ones.
+    (Mutation-sound: restoring the first-fence-only extraction makes this
+    raise LLMParseError.)"""
+    a = _make_memory("postgres on port 5432")
+    b = _make_memory("the queue uses postgres at 5432")
+    cluster = _make_cluster([a, b])
+    inner = json.dumps(
+        {
+            "proposals": [
+                {
+                    "type": "merge",
+                    "keeper_id": a.id,
+                    "duplicate_ids": [b.id],
+                    "new_body": "postgres on port 5432 (used by the queue)",
+                    "rationale": "same fact phrased two ways",
+                }
+            ]
+        }
+    )
+    raw = "```python\nprint({})\n```\n```json\n" + inner + "\n```"
+    proposals = parse_and_validate(raw, cluster)
+    assert len(proposals) == 1
+    assert isinstance(proposals[0], MergeProposal)
+    assert proposals[0].keeper_id == a.id
+
+
+def test_parse_prefers_json_tagged_fence_over_earlier_fence() -> None:
+    """Among multiple fenced blocks the ```json-tagged one is tried FIRST,
+    even when an earlier untagged fence also parses as JSON: here the
+    leading fence holds a bare array — valid JSON, wrong shape — so a
+    document-order candidate walk would parse it first and raise
+    LLMParseError (top-level not an object) instead of reading the tagged
+    payload right next to it."""
+    a = _make_memory("real memory")
+    cluster = _make_cluster([a])
+    raw = "```\n[1, 2, 3]\n```\n```json\n" + json.dumps({"proposals": []}) + "\n```"
+    # Parses via the json-tagged fence: a clean zero-proposal result, not a
+    # parse failure.
+    assert parse_and_validate(raw, cluster) == []
+
+
+def test_parse_fenced_garbage_still_raises_parse_error() -> None:
+    """Considering every fenced block must NOT dissolve the parse-failure
+    signal: when NO candidate parses — raw text, any fence body, brace
+    span — the response is still a broken provider response and must raise
+    LLMParseError, never masquerade as a valid zero-proposal result (the
+    parse-failure-vs-zero-proposals distinction `consolidate_llm` relies
+    on)."""
+    cluster = _make_cluster([_make_memory("body")])
+    raw = "```python\nprint('nope')\n```\n```text\nstill not json\n```"
+    with pytest.raises(LLMParseError):
+        parse_and_validate(raw, cluster)
+
+
 def test_parse_invalid_json_raises_parse_error() -> None:
     """A totally-unparseable response is a broken provider, NOT a valid
     "0 proposals" result. `parse_and_validate` must raise `LLMParseError`

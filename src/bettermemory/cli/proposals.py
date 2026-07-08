@@ -59,6 +59,19 @@ def add_subparser(
         ),
     )
     paccept_parser.add_argument(
+        "--acknowledge-credential",
+        action="store_true",
+        help=(
+            "Accept even though the body contains a secret-shaped token — "
+            "only for a documented public/example credential, never a live "
+            "secret (the store is plain-text and `sync` pushes it across "
+            "hosts). Mirrors the acknowledge_credential escape hatch on the "
+            "memory_write / memory_update / memory_proposals MCP tools. The "
+            "forced override is recorded in the audit log (detector kind "
+            "only, never the value)."
+        ),
+    )
+    paccept_parser.add_argument(
         "--json",
         action="store_true",
         help="Emit JSON instead of human-readable text.",
@@ -100,6 +113,7 @@ def run(
             proposal_id=args.id,
             scopes=args.scope or None,
             category=args.category,
+            acknowledge_credential=args.acknowledge_credential,
             json_out=args.json,
             parser=root_parser,
         )
@@ -136,6 +150,7 @@ def _cli_proposals_accept(
     proposal_id: str,
     scopes: list[str] | None,
     category: str | None,
+    acknowledge_credential: bool,
     json_out: bool,
     parser: Any,
 ) -> None:
@@ -143,13 +158,24 @@ def _cli_proposals_accept(
 
     Shares the `accept_proposal` core with the memory_proposals MCP tool, so
     the write-policy + atomic-claim contract is identical across both entry
-    points. A missing --scope or a bad scope/category surfaces through
+    points — including the credential gate and its `--acknowledge-credential`
+    escape hatch (the CLI spelling of the MCP tools' acknowledge_credential
+    flag). A missing --scope or a bad scope/category surfaces through
     `parser.error` (clean exit 2); the `parser is None` fallback re-raises so
     programmatic callers still see the exception.
+
+    The Recorder is constructed the same way the sibling CLI write paths
+    (`ingest`, `consolidate`) build theirs, so the accept event — and above
+    all a forced credential override (detector kind only, never the value) —
+    lands in the SAME audit log the MCP server writes. `accept_proposal`
+    records it at its single choke point; this function records nothing
+    itself.
     """
     import json as _json
 
+    from ..events import Recorder
     from ..handlers.proposals import accept_proposal
+    from ..session import SessionState
 
     if not scopes:
         if parser is not None:
@@ -160,13 +186,22 @@ def _cli_proposals_accept(
         raise ValueError("scopes is required to accept a proposal")
 
     ctx = cli_context()
+    recorder = Recorder(
+        root=ctx.store.root,
+        session_id=SessionState().session_id,
+        enabled=ctx.config.telemetry.enabled,
+        max_bytes=ctx.config.telemetry.max_bytes,
+        log_queries_verbatim=ctx.config.telemetry.log_queries_verbatim,
+    )
     try:
         result = accept_proposal(
             store=ctx.store,
             config=ctx.config,
+            recorder=recorder,
             proposal_id=proposal_id,
             scopes=scopes,
             category=category,
+            acknowledge_credential=acknowledge_credential,
         )
     except ValueError as exc:
         # Bad scope/category — the proposal is still queued; the caller can

@@ -777,11 +777,15 @@ class ProposalValidationError:
     reason: str
 
 
-# Matches the FIRST markdown code fence and captures its inner body. The
-# opening info-string (``` or ```json) is consumed up to the newline; the
-# body is non-greedy so we stop at the first closing fence. Used only as a
-# fallback after a raw parse fails (see `_json_object_candidates`).
-_FENCE_RE = re.compile(r"```[^\n`]*\n(.*?)\n?```", re.DOTALL)
+# Matches ONE markdown code fence, capturing its info-string (group 1: ""
+# for a bare ```, "json" for ```json, …) and its inner body (group 2). The
+# opening info-string is consumed up to the newline; the body is non-greedy
+# so each match stops at the first closing fence. Iterated with `finditer`
+# so EVERY fenced block yields a candidate — a response can legitimately
+# lead with a non-JSON fence (a stray ```python scratch block) before the
+# real ```json payload. Used only as a fallback after a raw parse fails
+# (see `_json_object_candidates`).
+_FENCE_RE = re.compile(r"```([^\n`]*)\n(.*?)\n?```", re.DOTALL)
 
 
 def _json_object_candidates(raw_text: str) -> list[str]:
@@ -795,17 +799,30 @@ def _json_object_candidates(raw_text: str) -> list[str]:
 
       1. the text as-is — a bare JSON object with no fence, and (crucially)
          a valid object whose *string values* happen to contain ``` fences;
-      2. the body of the first ```-fenced block — tolerates a leading
-         ```json wrapper AND trailing prose after the close;
+      2. the body of EVERY ```-fenced block, ```json-tagged blocks first
+         (each group in document order) — tolerates a ```json wrapper,
+         trailing prose after the close, AND a leading non-JSON fence
+         (e.g. a stray ```python block) ahead of the real payload, which
+         the old first-fence-only extraction could not skip;
       3. the substring from the first '{' to the last '}' — last-ditch
          recovery when a fenced wrapper's own body carries an inner fence
-         that would truncate candidate 2.
+         that would truncate its candidate in 2.
     """
     text = raw_text.strip()
     candidates = [text]
-    match = _FENCE_RE.search(text)
-    if match:
-        candidates.append(match.group(1).strip())
+    # Prefer explicitly ```json-tagged fences: when a response carries both
+    # a non-JSON fence and the tagged payload, the tag is the provider
+    # telling us which block is the answer. Untagged/other-tagged fences
+    # keep document order after them, so the single-fence shapes that
+    # parsed before (bare ``` wrappers from Ollama et al.) are unchanged.
+    json_fences: list[str] = []
+    other_fences: list[str] = []
+    for match in _FENCE_RE.finditer(text):
+        info = match.group(1).strip().lower()
+        body = match.group(2).strip()
+        (json_fences if info == "json" else other_fences).append(body)
+    candidates.extend(json_fences)
+    candidates.extend(other_fences)
     lo = text.find("{")
     hi = text.rfind("}")
     if lo != -1 and hi > lo:

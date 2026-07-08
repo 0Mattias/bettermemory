@@ -489,6 +489,7 @@ class ToolHandlers:
         proposal_id: str | None = None,
         scopes: list[str] | None = None,
         category: str | None = None,
+        acknowledge_credential: bool = False,
         ctx: Context | None = None,
     ) -> dict[str, Any]:
         return await _handlers_pkg.memory_proposals(
@@ -497,6 +498,7 @@ class ToolHandlers:
             proposal_id=proposal_id,
             scopes=scopes,
             category=category,
+            acknowledge_credential=acknowledge_credential,
             ctx=ctx,
         )
 
