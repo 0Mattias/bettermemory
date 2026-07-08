@@ -1500,7 +1500,13 @@ def _write_band_memory_file(
         f"fixture must land in the reserved band; got {total}"
     )
     path = memory_dir / f"2025-01-01-band-{memory_id.lower()}.md"
-    path.write_text(text, encoding="utf-8")
+    # Write RAW BYTES, not text: the store persists via
+    # `_fsutil.atomic_write_bytes` (UTF-8 bytes, LF preserved) on every
+    # platform, so a band fixture must too. `write_text` translates `\n` to
+    # `\r\n` on Windows, inflating the on-disk size past the LF `total` this
+    # helper asserts and (near the read cap) risks pushing a band file over
+    # the cap it was sized to sit under.
+    path.write_bytes(text.encode("utf-8"))
     return path
 
 
@@ -1695,7 +1701,9 @@ def test_restore_band_tombstone_round_trips(store: Store) -> None:
     assert len(tomb_text.encode("utf-8")) <= fm._MAX_FILE_BYTES  # readable tombstone
     store.tombstone_dir.mkdir(mode=0o700, exist_ok=True)
     tpath = store.tombstone_dir / f"2025-01-01-legacy.{mid}.tombstone.md"
-    tpath.write_text(tomb_text, encoding="utf-8")
+    # Raw bytes (see `_write_band_memory_file`): match how the store writes,
+    # and keep the on-disk size platform-independent near the cap.
+    tpath.write_bytes(tomb_text.encode("utf-8"))
 
     restored = store.restore(mid)
     assert restored.id == mid
@@ -1845,7 +1853,7 @@ def _write_overflow_on_rename_active(
     text = fm.dumps(post, max_file_bytes=fm._MAX_FILE_BYTES)
     assert len(text.encode("utf-8")) <= fm._MAX_FILE_BYTES  # readable as written
     path = memory_dir / f"2025-01-01-overflow-{memory_id.lower()}.md"
-    path.write_text(text, encoding="utf-8")
+    path.write_bytes(text.encode("utf-8"))  # raw bytes — see _write_band_memory_file
     return path
 
 
@@ -1877,7 +1885,7 @@ def _write_overflow_on_rename_tombstone(
     tpath = (
         store.tombstone_dir / f"2025-01-01-overflow.{memory_id.lower()}.tombstone.md"
     )
-    tpath.write_text(text, encoding="utf-8")
+    tpath.write_bytes(text.encode("utf-8"))  # raw bytes — see _write_band_memory_file
     return tpath
 
 

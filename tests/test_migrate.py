@@ -856,7 +856,10 @@ def test_migration_backfills_band_legacy_record(tmp_path: Path) -> None:
     assert frontmatter._MAX_WRITE_BYTES < total
     assert total < frontmatter._MAX_FILE_BYTES - _REMOVAL_META_BUDGET_BYTES - 200
     band = memory_dir / f"2025-01-01-band-{_LEGACY_IDS[0].lower()}.md"
-    band.write_text(text, encoding="utf-8")
+    # Raw bytes: the store writes UTF-8 bytes (LF) on every platform;
+    # `write_text` would CRLF-translate on Windows and inflate the on-disk
+    # size past the LF `total` the band assertions above are computed on.
+    band.write_bytes(text.encode("utf-8"))
 
     report = migrate_origin_in_directory(
         memory_dir, inferred=Origin(repo="git@github.com:example/foo.git")
@@ -901,7 +904,12 @@ def test_migration_refuses_to_grow_subcap_record_into_band(tmp_path: Path) -> No
     assert total <= frontmatter._MAX_WRITE_BYTES
     assert frontmatter._MAX_WRITE_BYTES - total < 400
     near_cap = memory_dir / f"2025-01-01-nearcap-{_LEGACY_IDS[0].lower()}.md"
-    near_cap.write_text(text, encoding="utf-8")
+    # Raw bytes so the on-disk size equals the LF `total` on every platform:
+    # `write_text` CRLF-translates on Windows (+1 byte per newline), which is
+    # both unfaithful to the store's byte-exact writer AND breaks the
+    # size-unchanged assertion below. This is what failed the 3.15.1 release
+    # on windows-latest.
+    near_cap.write_bytes(text.encode("utf-8"))
 
     long_repo = "https://example.com/" + "r" * 400  # caller-controlled growth
     report = migrate_origin_in_directory(memory_dir, force_repo=long_repo)
