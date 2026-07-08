@@ -103,6 +103,20 @@ from .origin import (
 _MAX_PATHS_PER_BODY = 8
 _MAX_PATH_LENGTH = 512
 
+# Hard cap on how many bytes of a body we scan for path candidates. The
+# whole extraction pipeline (`_DOMAIN_ROUTE_RE.finditer`, the backtick pass,
+# the bare-path pass) is at best O(body length) and runs on every search
+# hit, so an adversarial multi-MB body — arriving via git-sync pull, a
+# hostile write, or a hand-edited .md — could peg the server per retrieval
+# even after the per-regex ReDoS bound (`_DOMAIN_ROUTE_RE`'s `{1,20}`). Real
+# memory bodies are a couple KB; 32 KiB sits comfortably above the p99 real
+# body while bounding the worst case to a fixed slice. Truncating (rather
+# than rejecting) leaves every normal body untouched and only drops path
+# claims that live past the cap in a pathological paste — the conservative
+# direction this module already prefers (miss a real path over chasing
+# ghosts / burning CPU).
+_MAX_BODY_SCAN_BYTES = 32 * 1024
+
 
 # ---------------------------------------------------------------------------
 # Extraction
@@ -509,6 +523,13 @@ def _extract_candidates(body: str) -> list[tuple[str, bool, bool]]:
     if not body:
         return []
 
+    # Bound the scan input up front — before any regex touches it. Every
+    # pass below is linear in body length at best and runs per search hit;
+    # `_MAX_PATHS_PER_BODY` only caps the candidate COUNT, never the bytes
+    # scanned, so a pathological multi-MB body would still be walked in full
+    # by `finditer`. Truncate once here (see `_MAX_BODY_SCAN_BYTES`).
+    body = body[:_MAX_BODY_SCAN_BYTES]
+
     route_segments = {m.group(1) for m in _DOMAIN_ROUTE_RE.finditer(body)}
 
     def _is_route(candidate: str) -> bool:
@@ -519,7 +540,7 @@ def _extract_candidates(body: str) -> list[tuple[str, bool, bool]]:
     candidates: list[tuple[str, bool, bool]] = []
     index_of: dict[str, int] = {}
 
-    masked = body
+    backtick_spans: list[tuple[int, int]] = []
     for match in _BACKTICK_RE.finditer(body):
         raw = match.group(1).strip()
         normalized = _normalize_candidate(raw)
@@ -530,13 +551,27 @@ def _extract_candidates(body: str) -> list[tuple[str, bool, bool]]:
                 candidates.append((normalized, False, False))
                 if len(candidates) >= _MAX_PATHS_PER_BODY:
                     return candidates
-        # Mask the backtick span (including the delimiters) so the bare
-        # scan doesn't see it again. Replace with spaces of the same
-        # length to preserve offsets — the ambiguous-truncation lookahead
-        # below indexes into the masked body, so offset preservation is
-        # load-bearing now, not just debug-friendly.
-        span = match.span()
-        masked = masked[: span[0]] + " " * (span[1] - span[0]) + masked[span[1] :]
+        backtick_spans.append(match.span())
+
+    # Mask the backtick spans (delimiters included) so the bare scan doesn't
+    # see them again, replacing each with spaces of the same length to
+    # preserve offsets — the ambiguous-truncation lookahead below indexes
+    # into the masked body, so offset preservation is load-bearing, not just
+    # debug-friendly. Splice in ONE pass rather than rebuilding the whole
+    # string per span: `masked = masked[:s] + spaces + masked[e:]` in the
+    # loop was O(spans * body length), a second-order DoS on a body packed
+    # with backtick runs. Joining the between-span slices is linear.
+    if backtick_spans:
+        parts: list[str] = []
+        prev = 0
+        for start, end in backtick_spans:
+            parts.append(body[prev:start])
+            parts.append(" " * (end - start))
+            prev = end
+        parts.append(body[prev:])
+        masked = "".join(parts)
+    else:
+        masked = body
 
     for match in _BARE_RE.finditer(masked):
         raw = match.group(1)
@@ -573,7 +608,14 @@ def _normalize_candidate(raw: str) -> str | None:
     syntax beyond shape. The disk check that follows is the source of truth
     for "does this path exist"; the validator's job is to keep prose like
     "I/O" or "yes/no" out of the candidate set."""
-    if not raw:
+    # Length gate FIRST, before the trailing-trim loops below. Those loops
+    # rstrip one char per iteration with a full string copy each time, so a
+    # multi-KB adversarial candidate would pay O(n^2) work only to be
+    # rejected by the `len(s) > _MAX_PATH_LENGTH` check further down — the
+    # very cap meant to bound this work ran AFTER paying it. The `+ 64`
+    # headroom covers the trailing punctuation / slashes those loops strip,
+    # so a real candidate that trims down under the cap still validates.
+    if not raw or len(raw) > _MAX_PATH_LENGTH + 64:
         return None
 
     # Trim leading whitespace just in case (backtick groups can carry it).

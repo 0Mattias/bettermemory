@@ -28,8 +28,11 @@ from bettermemory.verify import (
     CommitDriftStatus,
     PathDriftReport,
     VerificationStatus,
+    _MAX_BODY_SCAN_BYTES,
+    _MAX_PATH_LENGTH,
     _PLACEHOLDER_PATHS,
     _PLACEHOLDER_PREFIXES,
+    _normalize_candidate,
     compute_commit_drift,
     compute_verification_status,
     detect_path_drift,
@@ -536,6 +539,43 @@ def test_extremely_long_path_skipped(tmp_path: Path) -> None:
     body = f"Lives at `{huge}`."
     report = detect_path_drift(body)
     assert huge not in report.checked
+
+
+def test_body_scan_capped_at_max_bytes(tmp_path: Path) -> None:
+    """The scan input is truncated at `_MAX_BODY_SCAN_BYTES` before any
+    regex touches it, so a path claim living past the cap in an adversarial
+    multi-KB body is never extracted — bounding the per-hit work regardless
+    of body length. A path BEFORE the cap is still processed normally, which
+    keeps this mutation-sound: reverting the truncation would surface the
+    beyond-cap path in `missing`."""
+    near = tmp_path / "within-cap.flag"  # does not exist -> missing
+    far = tmp_path / "beyond-cap.flag"  # does not exist, but past the cap
+    # Filler with no path shape, long enough to push `far` past the cap.
+    filler = "x" * (_MAX_BODY_SCAN_BYTES + 4096)
+    body = f"early `{near}` {filler} late `{far}`"
+    report = detect_path_drift(body)
+    # Within-cap claim is checked and flagged (the scan ran).
+    assert str(near) in report.missing
+    # Beyond-cap claim was truncated away entirely — not checked, not missing.
+    assert str(far) not in report.checked
+    assert str(far) not in report.missing
+
+
+def test_normalize_candidate_length_gate_precedes_trim_loops() -> None:
+    """The length gate sits at the very top of `_normalize_candidate`, before
+    the char-at-a-time trailing-trim loops. Constructed so the ONLY thing
+    that rejects the input is that early gate: the raw candidate exceeds
+    `_MAX_PATH_LENGTH + 64`, but its trailing `.` run — which the trim loops
+    would strip — brings it under `_MAX_PATH_LENGTH`. If the gate were left
+    after the loops (the reverted state), the tail would be stripped and the
+    candidate would validate to a non-None path. `is None` therefore fails
+    the moment the gate moves back below the loops."""
+    trimmable_tail = "." * 80
+    core = "/tmp/" + "a" * 500  # 505 chars, well under _MAX_PATH_LENGTH
+    raw = core + trimmable_tail
+    assert len(raw) > _MAX_PATH_LENGTH + 64
+    assert len(core) <= _MAX_PATH_LENGTH
+    assert _normalize_candidate(raw) is None
 
 
 # ---------------------------------------------------------------------------
