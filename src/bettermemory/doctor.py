@@ -761,6 +761,91 @@ def _check_audit_turn_cadence(directory: Path) -> Diagnosis:
     )
 
 
+def _check_auto_memory_stranded(directory: Path, cwd: Path | None = None) -> Diagnosis:
+    """Detect Claude Code auto-memory files for this cwd that never
+    made it into the store.
+
+    Claude Code's filesystem auto-memory
+    (``~/.claude/projects/<sanitized-cwd>/memory/``) accumulates facts
+    bettermemory retrieval never sees — exactly the fragmentation the
+    instructions block warns against. ``bettermemory ingest`` imports
+    them, but discovery of *whether stranded files exist* was manual.
+
+    The verdict reuses ``compute_ingest_plan``'s dedup classification
+    rather than a bare file count: ingest deliberately never mutates
+    the source files, so counting files would keep warning forever
+    after a successful import. Post-ingest every source classifies as
+    ``skip_duplicate``/``skip_tombstone`` and the check goes quiet.
+    """
+    from .ingest import compute_ingest_plan, discover_default_source_root
+
+    source_root = discover_default_source_root(cwd)
+    if source_root is None:
+        return Diagnosis(
+            name="auto_memory_stranded",
+            status="ok",
+            message="No Claude Code auto-memory directory for this cwd.",
+            details={"source_root": None},
+        )
+    # Mirror `_check_memory_parse_health`'s guard: never construct a
+    # Store against a missing path from a read-only probe (its
+    # __post_init__ mkdirs).
+    if not directory.exists():
+        return Diagnosis(
+            name="auto_memory_stranded",
+            status="ok",
+            message="Storage dir does not exist yet — nothing to compare.",
+            details={"source_root": str(source_root)},
+        )
+    try:
+        store = Store(directory)
+        plan = compute_ingest_plan(
+            source_root,
+            existing_memories=store.load_all(),
+            existing_tombstones=store.load_tombstones(),
+        )
+    except FileNotFoundError:
+        # Discovery raced a deletion of the source dir; nothing stranded.
+        return Diagnosis(
+            name="auto_memory_stranded",
+            status="ok",
+            message="No Claude Code auto-memory directory for this cwd.",
+            details={"source_root": None},
+        )
+    would_write = plan.summary.get("write", 0)
+    if would_write == 0:
+        return Diagnosis(
+            name="auto_memory_stranded",
+            status="ok",
+            message=(
+                f"Auto-memory directory present ({source_root}); nothing un-ingested."
+            ),
+            details={
+                "source_root": str(source_root),
+                "summary": plan.summary,
+            },
+        )
+    plural = "" if would_write == 1 else "s"
+    verb = "has" if would_write == 1 else "have"
+    return Diagnosis(
+        name="auto_memory_stranded",
+        status="warn",
+        message=(
+            f"{would_write} Claude Code auto-memory file{plural} under "
+            f"{source_root} {verb} not been ingested — facts stored "
+            "there are invisible to bettermemory retrieval."
+        ),
+        fix_hint=(
+            "Run `bettermemory ingest --dry-run` to preview the import, "
+            "then `bettermemory ingest` to commit it."
+        ),
+        details={
+            "source_root": str(source_root),
+            "summary": plan.summary,
+        },
+    )
+
+
 def _check_embeddings_extra(cfg: Config) -> Diagnosis:
     """If `behavior.semantic_dedup = true`, the embeddings extra has to
     be installed or write-time dedup silently falls back to Jaccard.
@@ -1386,6 +1471,12 @@ def run_diagnostics() -> DoctorReport:
             _safe(
                 "audit_turn_cadence",
                 lambda: _check_audit_turn_cadence(directory),
+            )
+        )
+        checks.append(
+            _safe(
+                "auto_memory_stranded",
+                lambda: _check_auto_memory_stranded(directory),
             )
         )
 

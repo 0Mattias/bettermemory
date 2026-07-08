@@ -23,6 +23,7 @@ from bettermemory.doctor import (
     DoctorReport,
     _binary_dist_version,
     _check_audit_turn_cadence,
+    _check_auto_memory_stranded,
     _check_binary_on_path,
     _check_config_loadable,
     _check_distinfo_metadata,
@@ -1517,3 +1518,141 @@ def test_doctor_flags_stale_config_lockfile(
     stale.mkdir()  # the client's own directory lock — not ours to judge
     diag = _check_stale_config_lockfiles()
     assert diag.status == "ok"
+
+
+# ---------------------------------------------------------------------------
+# auto_memory_stranded
+# ---------------------------------------------------------------------------
+
+
+def _auto_memory_root_for(home: Path, cwd: Path) -> Path:
+    """Mirror `ingest.discover_default_source_root`'s sanitiser so the
+    fixture lands where discovery will look."""
+    resolved = cwd.resolve().as_posix().lstrip("/")
+    sanitized = "-" + resolved.replace("/", "-").replace(".", "-").replace(":", "")
+    return home / ".claude" / "projects" / sanitized / "memory"
+
+
+def _write_auto_memory_file(root: Path, name: str, *, body: str) -> Path:
+    root.mkdir(parents=True, exist_ok=True)
+    path = root / f"{name}.md"
+    path.write_text(
+        "---\n"
+        f"name: {name}\n"
+        f"description: summary of {name}\n"
+        "metadata:\n"
+        "  type: fact\n"
+        "---\n\n"
+        f"{body}\n"
+    )
+    return path
+
+
+def test_auto_memory_stranded_ok_when_no_auto_memory_dir(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    fake_home = tmp_path / "home"
+    fake_home.mkdir()
+    monkeypatch.setattr(Path, "home", lambda: fake_home)
+    storage = tmp_path / "store"
+    storage.mkdir()
+    diag = _check_auto_memory_stranded(storage, cwd=tmp_path / "proj")
+    assert diag.status == "ok"
+    assert "No Claude Code auto-memory" in diag.message
+    assert diag.details["source_root"] is None
+
+
+def test_auto_memory_stranded_warns_on_uningested_files(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    fake_home = tmp_path / "home"
+    fake_home.mkdir()
+    monkeypatch.setattr(Path, "home", lambda: fake_home)
+    cwd = tmp_path / "proj"
+    cwd.mkdir()
+    source = _auto_memory_root_for(fake_home, cwd)
+    _write_auto_memory_file(source, "alpha", body="the alpha fact body")
+    _write_auto_memory_file(source, "beta", body="a wholly different beta body")
+    storage = tmp_path / "store"
+    storage.mkdir()
+
+    diag = _check_auto_memory_stranded(storage, cwd=cwd)
+    assert diag.status == "warn"
+    assert "2 Claude Code auto-memory files" in diag.message
+    assert "invisible to bettermemory retrieval" in diag.message
+    assert diag.fix_hint is not None and "bettermemory ingest" in diag.fix_hint
+    assert diag.details["summary"]["write"] == 2
+
+
+def test_auto_memory_stranded_goes_quiet_after_ingest(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Ingest never mutates source files, so the check must key on the
+    dedup classification, not the file count — a completed import
+    flips the verdict to ok with the sources still on disk."""
+    from bettermemory.ingest import apply_ingest_plan, compute_ingest_plan
+    from bettermemory.store import Store
+
+    fake_home = tmp_path / "home"
+    fake_home.mkdir()
+    monkeypatch.setattr(Path, "home", lambda: fake_home)
+    cwd = tmp_path / "proj"
+    cwd.mkdir()
+    source = _auto_memory_root_for(fake_home, cwd)
+    _write_auto_memory_file(source, "alpha", body="the alpha fact body")
+    storage = tmp_path / "store"
+    storage.mkdir()
+
+    store = Store(storage)
+    plan = compute_ingest_plan(
+        source,
+        existing_memories=store.load_all(),
+        existing_tombstones=store.load_tombstones(),
+    )
+    apply_ingest_plan(plan, store)
+    assert source.exists() and any(source.iterdir())  # sources untouched
+
+    diag = _check_auto_memory_stranded(storage, cwd=cwd)
+    assert diag.status == "ok"
+    assert "nothing un-ingested" in diag.message
+    assert diag.details["summary"]["write"] == 0
+
+
+def test_auto_memory_stranded_ignores_index_files(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """MEMORY.md / INDEX.md / README.md are navigation artefacts, not
+    stored claims — a dir holding only those must not warn."""
+    fake_home = tmp_path / "home"
+    fake_home.mkdir()
+    monkeypatch.setattr(Path, "home", lambda: fake_home)
+    cwd = tmp_path / "proj"
+    cwd.mkdir()
+    source = _auto_memory_root_for(fake_home, cwd)
+    source.mkdir(parents=True)
+    (source / "MEMORY.md").write_text("- [x](x.md) — index line\n")
+    storage = tmp_path / "store"
+    storage.mkdir()
+
+    diag = _check_auto_memory_stranded(storage, cwd=cwd)
+    assert diag.status == "ok"
+    assert diag.details["summary"]["write"] == 0
+
+
+def test_auto_memory_stranded_does_not_create_missing_storage_dir(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A read-only probe must not mkdir the store (mirrors the
+    parse-health guard: Store.__post_init__ creates directories)."""
+    fake_home = tmp_path / "home"
+    fake_home.mkdir()
+    monkeypatch.setattr(Path, "home", lambda: fake_home)
+    cwd = tmp_path / "proj"
+    cwd.mkdir()
+    source = _auto_memory_root_for(fake_home, cwd)
+    _write_auto_memory_file(source, "alpha", body="the alpha fact body")
+    missing = tmp_path / "store-not-created"
+
+    diag = _check_auto_memory_stranded(missing, cwd=cwd)
+    assert diag.status == "ok"
+    assert not missing.exists()
