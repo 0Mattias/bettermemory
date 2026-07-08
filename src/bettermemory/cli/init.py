@@ -96,7 +96,7 @@ def run(args: argparse.Namespace) -> None:
             with_addendum=args.with_addendum,
             config_path=_Path(args.config_path) if args.config_path else None,
         )
-    except OSError as exc:
+    except (OSError, ValueError) as exc:
         # The config-patch write (patch_client_config -> mkdir /
         # atomic_write_bytes) can fail on an unwritable or non-directory
         # --config-path parent (PermissionError / NotADirectoryError /
@@ -105,5 +105,11 @@ def run(args: argparse.Namespace) -> None:
         # `bettermemory ui`. (A plain nonexistent path does NOT reach here
         # — mkdir(parents=True) creates the tree; only a genuinely
         # unwritable or non-directory ancestor raises.)
+        #
+        # patch_client_config also raises ValueError on a malformed existing
+        # config (bad JSON / non-object root / non-object mcpServers) and on
+        # a concurrent-write race — those are equally user-facing "fix and
+        # re-run" conditions, not bugs, so they get the same clean exit 2
+        # rather than escaping as a raw traceback / exit 1.
         sys.stderr.write(f"bettermemory init: error: {exc}\n")
         raise SystemExit(2) from exc

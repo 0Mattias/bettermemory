@@ -252,6 +252,61 @@ def server_snippet(
     }
 
 
+def command_launches_bettermemory(
+    command: object,
+    args: object,
+    binary: str,
+) -> bool:
+    """Recognize whether an ``mcpServers`` entry's ``command``/``args`` pair
+    launches *our* server. Init's legacy-migration gate and doctor's
+    stale-path scan share this ONE definition so the two can't drift into
+    disagreeing about what "a bettermemory entry" is.
+
+    Any one of these shapes matches:
+
+    * ``command`` equals the resolved absolute ``binary`` path we'd write.
+    * a bare (non-absolute) console-script whose basename is
+      ``bettermemory`` — the form ``docs/clients.md`` and
+      ``docs/installation.md`` bless (``"command": "bettermemory"``).
+    * an absolute ``command`` that exists on disk and resolves
+      (symlink-aware) to the same target as ``binary`` — the
+      ``~/.local/bin`` symlink vs. uv-tool canonical-path case.
+    * the ``uvx``/``uv`` runner shape the plugin's ``.mcp.json`` ships:
+      ``"command": "uvx", "args": ["bettermemory"]``.
+
+    A byte-exact ``command == binary`` gate (the pre-fix logic) silently
+    no-ops migration for every blessed shape but the first.
+    """
+    if not isinstance(command, str):
+        return False
+    if command == binary:
+        return True
+    cmd_path = Path(command)
+    if not cmd_path.is_absolute() and cmd_path.name == DEFAULT_SERVER_NAME:
+        return True
+    if cmd_path.name in {"uvx", "uv"} and isinstance(args, list):
+        if any(a == DEFAULT_SERVER_NAME for a in args if isinstance(a, str)):
+            return True
+    if cmd_path.is_absolute() and cmd_path.exists():
+        try:
+            if cmd_path.resolve() == Path(binary).resolve():
+                return True
+        except OSError:
+            # `resolve()` can raise on a broken symlink; treat as no match.
+            pass
+    return False
+
+
+def _config_signature(path: Path) -> tuple[int, int]:
+    """Cheap change-detector for the target config: ``(mtime_ns, size)``.
+    Snapshotted right after the read and re-checked right before the
+    atomic write so a concurrent writer (the live client that owns
+    ``~/.claude.json``) mutating the file under us aborts loudly instead
+    of being silently clobbered."""
+    st = path.stat()
+    return (st.st_mtime_ns, st.st_size)
+
+
 def patch_client_config(
     target_path: Path,
     *,
@@ -265,121 +320,181 @@ def patch_client_config(
     or `"noop"`.
 
     Legacy migration: when writing under the new default name
-    (`bettermemory`) and a stale `memory` entry whose `command` resolves
-    to the same binary already exists, the legacy entry is removed and
-    the result includes `migrated_from_legacy=True`. This keeps users
-    upgrading from 1.0 from ending up with the server registered twice
-    (which would surface every tool twice in the model's tool list).
-    Migration only triggers on exact-binary match — a `memory` entry
-    pointing at a different binary is left alone in case the user is
-    intentionally hosting two memory servers.
+    (`bettermemory`) and a stale `memory` entry that launches our server
+    already exists, the legacy entry's user-set keys are carried forward
+    (env.BETTERMEMORY_DIR, cwd, timeout, transport headers), the legacy
+    entry is removed, and the result includes `migrated_from_legacy=True`.
+    This keeps users upgrading from 1.0 from ending up with the server
+    registered twice (which would surface every tool twice in the model's
+    tool list). Recognition uses `command_launches_bettermemory` (shared
+    with doctor) so the blessed config shapes — bare `command:
+    bettermemory`, the `uvx`+args plugin shape, a `~/.local/bin` symlink —
+    all migrate; a `memory` entry pointing at a DIFFERENT binary is left
+    alone in case the user is intentionally hosting two memory servers.
 
-    Raises ValueError when the existing file is not valid JSON or does
-    not have an object at the root or at `mcpServers`. We deliberately
-    refuse to touch a malformed config rather than overwrite it — fixing
-    the file by hand is the right move."""
+    Concurrency: the whole read-modify-write is held under
+    `_fsutil.flock_excl` (so two bettermemory writers serialise) and the
+    file is re-stat'd immediately before the atomic write — a change by a
+    non-locking writer (the live Claude Code process that RMWs
+    `~/.claude.json`) aborts with a ValueError rather than clobbering the
+    client's update.
+
+    Raises ValueError when the existing file is not valid JSON, does not
+    have an object at the root or at `mcpServers`, or changed on disk
+    mid-write. We deliberately refuse to touch a malformed or racing
+    config rather than overwrite it — fixing the file by hand (or
+    re-running) is the right move."""
     if binary is None:
         binary = find_binary()
 
     target_path.parent.mkdir(parents=True, exist_ok=True)
 
-    if target_path.exists():
-        try:
-            text = target_path.read_text(encoding="utf-8")
-            existing = json.loads(text) if text.strip() else {}
-        except json.JSONDecodeError as exc:
+    # `~/.claude.json` (the Claude Code user-scope target) is owned by a
+    # live Claude Code process that read-modify-writes it on many events.
+    # An UNLOCKED RMW here races that writer: we read a snapshot, the
+    # client rewrites the file, then our atomic rename lands and silently
+    # drops the client's update. Hold the cross-process `flock_excl` for
+    # the whole RMW so two bettermemory writers serialise, AND re-stat the
+    # file immediately before the atomic write so a change by the
+    # NON-locking client aborts loudly instead of clobbering. It's a
+    # single lock, so the lock order is trivial and deadlock-free.
+    with _fsutil.flock_excl(target_path):
+        baseline_sig: tuple[int, int] | None = None
+        if target_path.exists():
+            try:
+                text = target_path.read_text(encoding="utf-8")
+                existing = json.loads(text) if text.strip() else {}
+            except json.JSONDecodeError as exc:
+                raise ValueError(
+                    f"existing config at {target_path} is not valid JSON: {exc.msg} "
+                    f"(line {exc.lineno}, col {exc.colno}). Fix the file by hand "
+                    f"or remove it before re-running init."
+                ) from exc
+            baseline_sig = _config_signature(target_path)
+            if not isinstance(existing, dict):
+                raise ValueError(
+                    f"existing config at {target_path} has a non-object root; "
+                    f"expected `{{...}}`."
+                )
+        else:
+            existing = {}
+
+        mcp_servers = existing.setdefault("mcpServers", {})
+        if not isinstance(mcp_servers, dict):
             raise ValueError(
-                f"existing config at {target_path} is not valid JSON: {exc.msg} "
-                f"(line {exc.lineno}, col {exc.colno}). Fix the file by hand "
-                f"or remove it before re-running init."
-            ) from exc
-        if not isinstance(existing, dict):
-            raise ValueError(
-                f"existing config at {target_path} has a non-object root; "
+                f"existing `mcpServers` field in {target_path} is not an object; "
                 f"expected `{{...}}`."
             )
-    else:
-        existing = {}
 
-    mcp_servers = existing.setdefault("mcpServers", {})
-    if not isinstance(mcp_servers, dict):
-        raise ValueError(
-            f"existing `mcpServers` field in {target_path} is not an object; "
-            f"expected `{{...}}`."
+        # Legacy-name migration: only when writing under the new default
+        # name. A user who explicitly passes `--name memory` (or some other
+        # string) has opinions; don't second-guess. Recognition uses the
+        # shared `command_launches_bettermemory` helper (NOT byte-exact
+        # `command == binary`) so the blessed shapes this project's own docs
+        # ship — bare `command: bettermemory`, the `uvx`+args plugin shape, a
+        # `~/.local/bin` symlink — are migrated instead of silently no-op'd.
+        # A legacy entry pointing at a different binary stays put.
+        legacy_raw = mcp_servers.get(LEGACY_SERVER_NAME)
+        legacy_present = (
+            name == DEFAULT_SERVER_NAME
+            and isinstance(legacy_raw, dict)
+            and command_launches_bettermemory(
+                legacy_raw.get("command"), legacy_raw.get("args"), binary
+            )
         )
 
-    # Legacy-name migration: only when writing under the new default
-    # name. A user who explicitly passes `--name memory` (or some other
-    # string) has opinions; don't second-guess. The match is on `command`
-    # alone — a legacy entry pointing at a different binary stays put.
-    legacy_present = (
-        name == DEFAULT_SERVER_NAME
-        and LEGACY_SERVER_NAME in mcp_servers
-        and isinstance(mcp_servers[LEGACY_SERVER_NAME], dict)
-        and mcp_servers[LEGACY_SERVER_NAME].get("command") == binary
-    )
+        # Build the new-name entry as a UNION that preserves legacy-only keys
+        # while letting an existing new-name entry win on conflicts. A user
+        # may have added keys — notably `env` (BETTERMEMORY_DIR relocates the
+        # whole store), but also `cwd`, `timeout`, transport `headers`, or
+        # `disabled`. On the RENAME path those keys live ONLY under
+        # LEGACY_SERVER_NAME; on a re-run after an upgrade under `name`; in
+        # the both-exist case, under either. The pre-fix code seeded from the
+        # legacy entry ONLY when no new-name entry existed yet deleted the
+        # legacy entry UNCONDITIONALLY — so in the both-exist case legacy-only
+        # keys were silently dropped and a relocated store looked gone from
+        # that client. We own only type/command/args; everything else is kept.
+        legacy_entry: dict[str, Any] = (
+            legacy_raw if legacy_present and isinstance(legacy_raw, dict) else {}
+        )
+        existing_raw = mcp_servers.get(name)
+        existing_entry: dict[str, Any] = (
+            existing_raw if isinstance(existing_raw, dict) else {}
+        )
 
-    # MERGE the canonical keys into any existing entry rather than replacing
-    # it wholesale. A user may have added keys to their bettermemory entry —
-    # notably `env` (BETTERMEMORY_DIR relocates the whole store), but also
-    # `disabled`, `timeout`, or transport overrides. Re-running init after an
-    # upgrade (exactly when the docstring says migration runs) must NOT silently
-    # drop them; clobbering `env.BETTERMEMORY_DIR` makes the server boot against
-    # the default dir and the user's store looks empty/gone from that client.
-    # We own only type/command/args; everything else the user set is preserved,
-    # and `env` defaults to {} only when absent.
-    #
-    # On the RENAME path the user's keys live under LEGACY_SERVER_NAME, not
-    # `name` — so when there's no entry under the new name yet but a legacy
-    # entry is being migrated, seed from the legacy entry so its env/disabled/
-    # timeout/transport keys carry forward before the old entry is deleted.
-    # Otherwise a user who relocated their store via env.BETTERMEMORY_DIR would
-    # boot against the default dir post-migration and their store looks gone.
-    existing_entry = mcp_servers.get(name)
-    seed_entry = existing_entry
-    if not isinstance(seed_entry, dict) and legacy_present:
-        seed_entry = mcp_servers[LEGACY_SERVER_NAME]
-    new_entry: dict[str, Any] = dict(seed_entry) if isinstance(seed_entry, dict) else {}
-    new_entry["type"] = "stdio"
-    new_entry["command"] = binary
-    new_entry["args"] = []
-    new_entry.setdefault("env", {})
+        new_entry: dict[str, Any] = {**legacy_entry, **existing_entry}
+        # Deep-merge `env` so a BETTERMEMORY_DIR set on EITHER side survives;
+        # the new-name entry wins on a per-variable conflict.
+        merged_env: dict[str, Any] = {}
+        if isinstance(legacy_entry.get("env"), dict):
+            merged_env.update(legacy_entry["env"])
+        if isinstance(existing_entry.get("env"), dict):
+            merged_env.update(existing_entry["env"])
 
-    # Idempotency check: same name, same shape, no legacy to migrate →
-    # no rewrite needed.
-    if name in mcp_servers and mcp_servers[name] == new_entry and not legacy_present:
-        return {
-            "action": "noop",
+        new_entry["type"] = "stdio"
+        new_entry["command"] = binary
+        new_entry["args"] = []
+        new_entry["env"] = merged_env
+
+        # Born ENABLED: `disabled` survives only when the user set it on the
+        # SURVIVING (new-name) entry. A stale `disabled: true` inherited from
+        # the legacy entry on the rename path would leave the migrated server
+        # disabled while _print_patch_summary reports unqualified success.
+        if "disabled" in new_entry and "disabled" not in existing_entry:
+            del new_entry["disabled"]
+
+        # Idempotency check: same name, same shape, no legacy to migrate →
+        # no rewrite needed.
+        if (
+            name in mcp_servers
+            and mcp_servers[name] == new_entry
+            and not legacy_present
+        ):
+            return {
+                "action": "noop",
+                "path": str(target_path),
+                "name": name,
+            }
+
+        action = "updated" if name in mcp_servers else "added"
+        mcp_servers[name] = new_entry
+
+        if legacy_present:
+            del mcp_servers[LEGACY_SERVER_NAME]
+
+        # Concurrency guard: a non-locking writer (the live Claude Code
+        # process that owns `~/.claude.json`) may have rewritten the file
+        # after we snapshotted it. Re-stat immediately before the atomic
+        # replace; if mtime/size moved, abort rather than clobber the
+        # client's update. Raised as ValueError so the CLI renders a clean
+        # "re-run" message (exit 2) instead of a traceback.
+        if baseline_sig is not None and _config_signature(target_path) != baseline_sig:
+            raise ValueError(
+                f"config at {target_path} changed under us between read and "
+                f"write (another process, likely the running client, wrote "
+                f"it). Nothing was modified; re-run init."
+            )
+
+        # Atomic + durable write via `_fsutil.atomic_write_bytes`: a plain
+        # `target_path.write_text(...)` here would truncate the file before
+        # writing the new content, so power loss / process kill mid-write
+        # could leave the user with an empty `~/.claude.json` — every MCP
+        # server they had registered (not just bettermemory) gone. The
+        # helper writes to a tmp sibling, fsyncs, atomic-renames into place,
+        # and fsyncs the parent directory.
+        _fsutil.atomic_write_bytes(
+            target_path,
+            (json.dumps(existing, indent=2) + "\n").encode("utf-8"),
+        )
+        result: dict[str, Any] = {
+            "action": action,
             "path": str(target_path),
             "name": name,
+            "binary": binary,
         }
-
-    action = "updated" if name in mcp_servers else "added"
-    mcp_servers[name] = new_entry
-
-    if legacy_present:
-        del mcp_servers[LEGACY_SERVER_NAME]
-
-    # Atomic + durable write via `_fsutil.atomic_write_bytes`: a plain
-    # `target_path.write_text(...)` here would truncate the file before
-    # writing the new content, so power loss / process kill mid-write
-    # could leave the user with an empty `~/.claude.json` — every MCP
-    # server they had registered (not just bettermemory) gone. The
-    # helper writes to a tmp sibling, fsyncs, atomic-renames into place,
-    # and fsyncs the parent directory.
-    _fsutil.atomic_write_bytes(
-        target_path,
-        (json.dumps(existing, indent=2) + "\n").encode("utf-8"),
-    )
-    result: dict[str, Any] = {
-        "action": action,
-        "path": str(target_path),
-        "name": name,
-        "binary": binary,
-    }
-    if legacy_present:
-        result["migrated_from_legacy"] = True
-    return result
+        if legacy_present:
+            result["migrated_from_legacy"] = True
+        return result
 
 
 # ---------------------------------------------------------------------------

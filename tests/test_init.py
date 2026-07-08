@@ -674,6 +674,41 @@ def test_init_via_cli_exits_clean_on_unwritable_config_path(
     assert "Traceback (most recent call last)" not in err
 
 
+def test_init_via_cli_exits_clean_on_malformed_config(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """`bettermemory init --client <c> --config-path <p>` must exit 2 with a
+    clean `bettermemory init: error: …` message — NOT a raw ValueError
+    traceback / exit 1 — when the existing config is malformed JSON.
+    patch_client_config raises ValueError there, and the CLI arm previously
+    caught only OSError (item 12a), so it escaped uncaught. A concurrent-
+    write race raises the same ValueError family and gets the same clean
+    exit."""
+    import argparse
+
+    from bettermemory.cli.init import add_subparser as init_add_subparser
+    from bettermemory.cli.init import run as init_run
+
+    bad_config = tmp_path / "cfg.json"
+    bad_config.write_text("{not valid json,,,", encoding="utf-8")
+
+    parser = argparse.ArgumentParser(prog="bettermemory")
+    sub = parser.add_subparsers(dest="cmd")
+    init_add_subparser(sub)
+    args = parser.parse_args(
+        ["init", "--client", "claude-code", "--config-path", str(bad_config)]
+    )
+
+    with pytest.raises(SystemExit) as excinfo:
+        init_run(args)
+
+    assert excinfo.value.code == 2
+    err = capsys.readouterr().err
+    assert "error:" in err
+    assert "Traceback (most recent call last)" not in err
+
+
 def test_patch_migration_carries_forward_user_keys_on_legacy_entry(
     tmp_path: Path,
 ) -> None:
@@ -717,5 +752,193 @@ def test_patch_migration_carries_forward_user_keys_on_legacy_entry(
     assert entry["args"] == []
     # …and the user's customizations survived the rename.
     assert entry["env"] == {"BETTERMEMORY_DIR": "/custom/store"}
-    assert entry["disabled"] is True
     assert entry["timeout"] == 90
+    # …but a `disabled: true` that lived ONLY on the legacy entry is a
+    # STALE flag, not an opt-in on the surviving entry — the migrated
+    # server must be born ENABLED (item 10c), else it comes up disabled
+    # while the patch summary reports unqualified success.
+    assert "disabled" not in entry
+
+
+def test_patch_migration_both_exist_unions_legacy_only_keys(
+    tmp_path: Path,
+) -> None:
+    """BOTH-EXIST branch: a config that has BOTH a legacy `memory` entry and
+    a `bettermemory` entry must UNION their keys — the legacy entry's
+    legacy-only keys (env.BETTERMEMORY_DIR, cwd, timeout, headers) survive
+    the migration, while the new-name entry wins on conflicts. The pre-fix
+    code only seeded from the legacy entry when NO new-name entry existed,
+    yet deleted the legacy entry unconditionally, so in this branch every
+    legacy-only key was silently discarded (a relocated store looked gone).
+
+    Mutation-soundness: the env assertion pins the seed ORDER (new-name wins
+    the BETTERMEMORY_DIR conflict) — a reversed union would yield
+    `/legacy/store`; and the cwd/timeout/headers assertions catch the
+    key-loss regression."""
+    target = tmp_path / "config.json"
+    target.write_text(
+        json.dumps(
+            {
+                "mcpServers": {
+                    LEGACY_SERVER_NAME: {
+                        "type": "stdio",
+                        "command": "/x/bm",
+                        "args": [],
+                        "env": {
+                            "BETTERMEMORY_DIR": "/legacy/store",
+                            "BM_LEGACY_ONLY": "1",
+                        },
+                        "cwd": "/work",
+                        "timeout": 120,
+                        "headers": {"X-Trace": "on"},
+                        "disabled": True,
+                    },
+                    DEFAULT_SERVER_NAME: {
+                        "type": "stdio",
+                        "command": "/old/bm",
+                        "args": [],
+                        "env": {"BETTERMEMORY_DIR": "/canonical/store"},
+                    },
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+    result = patch_client_config(target, binary="/x/bm")
+    assert result["action"] == "updated"
+    assert result["migrated_from_legacy"] is True
+    body = json.loads(target.read_text(encoding="utf-8"))
+    # Legacy entry gone; only the new-name entry remains.
+    assert LEGACY_SERVER_NAME not in body["mcpServers"]
+    entry = body["mcpServers"][DEFAULT_SERVER_NAME]
+    # Canonical keys owned by us reflect the current binary.
+    assert entry["command"] == "/x/bm"
+    # Legacy-only keys survived the union (item 10a: not silently dropped).
+    assert entry["cwd"] == "/work"
+    assert entry["timeout"] == 120
+    assert entry["headers"] == {"X-Trace": "on"}
+    # env deep-merged: new-name entry wins the BETTERMEMORY_DIR conflict,
+    # the legacy-only var is preserved (pins seed order + no key loss).
+    assert entry["env"] == {
+        "BETTERMEMORY_DIR": "/canonical/store",
+        "BM_LEGACY_ONLY": "1",
+    }
+    # `disabled: true` lived only on the legacy entry → born enabled.
+    assert "disabled" not in entry
+
+
+def test_patch_migrates_legacy_with_bare_command_name(tmp_path: Path) -> None:
+    """Gate recognizer (item 10b): a legacy `memory` entry written as the
+    bare `command: bettermemory` — the form docs/clients.md and
+    docs/installation.md bless — must migrate. The pre-fix byte-exact
+    `command == binary` gate no-op'd it because `"bettermemory"` never
+    equals the resolved absolute binary path."""
+    target = tmp_path / "config.json"
+    target.write_text(
+        json.dumps(
+            {
+                "mcpServers": {
+                    LEGACY_SERVER_NAME: {"command": "bettermemory", "args": []},
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+    result = patch_client_config(target, binary="/x/bm")
+    assert result["action"] == "added"
+    assert result["migrated_from_legacy"] is True
+    body = json.loads(target.read_text(encoding="utf-8"))
+    assert LEGACY_SERVER_NAME not in body["mcpServers"]
+    assert body["mcpServers"][DEFAULT_SERVER_NAME]["command"] == "/x/bm"
+
+
+def test_patch_migrates_legacy_with_uvx_runner_shape(tmp_path: Path) -> None:
+    """Gate recognizer (item 10b): the `uvx` runner shape the plugin's
+    `.mcp.json` ships (`command: uvx, args: [bettermemory]`) must migrate.
+    The pre-fix byte-exact gate no-op'd it — command is `uvx`, not the
+    binary path."""
+    target = tmp_path / "config.json"
+    target.write_text(
+        json.dumps(
+            {
+                "mcpServers": {
+                    LEGACY_SERVER_NAME: {"command": "uvx", "args": ["bettermemory"]},
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+    result = patch_client_config(target, binary="/x/bm")
+    assert result["action"] == "added"
+    assert result["migrated_from_legacy"] is True
+    body = json.loads(target.read_text(encoding="utf-8"))
+    assert LEGACY_SERVER_NAME not in body["mcpServers"]
+
+
+def test_patch_does_not_migrate_uvx_running_a_different_package(
+    tmp_path: Path,
+) -> None:
+    """The `uvx` shape only counts as ours when its args actually launch
+    the bettermemory package — `uvx some-other-mcp` under the `memory` key
+    is a foreign server and must be left alone."""
+    target = tmp_path / "config.json"
+    target.write_text(
+        json.dumps(
+            {
+                "mcpServers": {
+                    LEGACY_SERVER_NAME: {"command": "uvx", "args": ["other-mcp"]},
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+    result = patch_client_config(target, binary="/x/bm")
+    assert result["action"] == "added"
+    assert "migrated_from_legacy" not in result
+    body = json.loads(target.read_text(encoding="utf-8"))
+    # Foreign `memory` server untouched.
+    assert body["mcpServers"][LEGACY_SERVER_NAME]["command"] == "uvx"
+
+
+def test_patch_aborts_when_config_changes_under_us(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Concurrency guard (item 12b): `~/.claude.json` is RMW'd by the live
+    Claude Code process. If the file changes on disk between our read and
+    our atomic write, we must ABORT loudly (ValueError) rather than clobber
+    the client's update. We simulate the race by mutating the file right
+    after the baseline signature is captured.
+
+    Mutation-soundness: drop the re-stat guard and the write proceeds, no
+    ValueError is raised, and this `pytest.raises` fails."""
+    from bettermemory import init as init_mod
+
+    target = tmp_path / "config.json"
+    target.write_text(
+        json.dumps({"mcpServers": {"other": {"command": "y", "args": []}}}),
+        encoding="utf-8",
+    )
+    real_sig = init_mod._config_signature
+    calls: list[int] = []
+
+    def racing_sig(path: Path) -> tuple[int, int]:
+        calls.append(1)
+        sig = real_sig(path)
+        if len(calls) == 1:
+            # Baseline captured; now a concurrent (non-locking) writer lands
+            # a bigger payload, so the size in the signature moves.
+            path.write_text(
+                json.dumps(
+                    {
+                        "mcpServers": {"other": {"command": "y", "args": []}},
+                        "grew_under_us": "xxxxxxxxxxxxxxxxxxxx",
+                    }
+                ),
+                encoding="utf-8",
+            )
+        return sig
+
+    monkeypatch.setattr(init_mod, "_config_signature", racing_sig)
+    with pytest.raises(ValueError, match="changed under us"):
+        patch_client_config(target, binary="/x/bm")
