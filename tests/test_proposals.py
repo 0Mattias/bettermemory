@@ -715,3 +715,53 @@ def test_append_within_cap_empty_candidates_is_noop(tmp_path: Path) -> None:
     q = ProposalQueue(tmp_path)
     assert q.append_within_cap([], max_pending=5) == []
     assert not (tmp_path / ".write_proposals.jsonl").exists()
+
+
+# ---------------------------------------------------------------------------
+# accept_proposal — credential gate (parity with the memory_write path)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    ("token", "kind"),
+    [
+        ("sk-ant-api03-A1bcDefGh2iJkLmNoPqRsTuV", "openai-anthropic-key"),
+        ("AKIAIOSFODNN7EXAMPLE", "aws-access-key-id"),
+        ("ghp_0123456789abcdefghijklmnopqrstuvwxyz", "github-token"),
+    ],
+)
+def test_accept_proposal_refuses_credential_body(
+    tmp_path: Path, token: str, kind: str
+) -> None:
+    """A proposal whose body embeds a secret-shaped token must be REFUSED on
+    accept — the write-reflex captures raw user text, so the accept path is
+    another door onto the plain-text (sync'd) store, and it must run the same
+    `find_credential_markers` gate `CredentialGate` runs FIRST on memory_write.
+    The refusal raises BEFORE the atomic claim, so the proposal stays queued
+    (retry contract) and no `.md` is persisted; the error names the detector
+    kind, never the value."""
+    from bettermemory.config import Config, StorageConfig
+    from bettermemory.handlers.proposals import accept_proposal
+    from bettermemory.store import Store
+
+    body = f"The deploy uses a secret {token} that got pasted into chat."
+    q = ProposalQueue(tmp_path)
+    q.append([_proposal(body, pid="c1")])
+    config = Config(storage=StorageConfig(directory=str(tmp_path)))
+    store = Store(tmp_path)
+
+    with pytest.raises(ValueError, match=kind) as excinfo:
+        accept_proposal(
+            store=store,
+            config=config,
+            proposal_id="c1",
+            scopes=["infrastructure"],
+        )
+
+    # Nothing persisted, and the proposal is still queued for the caller to
+    # edit or dismiss. (No `.md` file — the durable write never ran.)
+    assert list(tmp_path.glob("*.md")) == []
+    assert store.load_all() == []
+    assert [p.id for p in q.load()] == ["c1"]
+    # The error names the detector kind but never echoes the raw secret span.
+    assert token not in str(excinfo.value)

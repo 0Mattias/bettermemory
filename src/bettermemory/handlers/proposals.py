@@ -14,6 +14,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Any
 
 from ._shared import Context, _advance_turn, _validate_write_payload
+from ..credentials import find_credential_markers
 from ..models import Confidence, Source
 from ..proposals import ProposalQueue
 
@@ -71,10 +72,18 @@ def accept_proposal(
        so a bad scope/category raises with the proposal still in the queue
        (the caller fixes the inputs and retries); the only failure that loses
        the entry is an unexpected store error after a successful claim.
-    3. Atomically CLAIM the proposal — ``ProposalQueue.remove`` re-checks it
+    3. Credential-scan the body that would be persisted with the SAME
+       ``find_credential_markers`` the ``CredentialGate`` runs FIRST on the
+       ``memory_write`` path — the write-reflex captures raw user text, so an
+       accepted proposal is another door through which a secret-shaped token
+       could reach the plain-text store WITHOUT ever passing the write-path
+       gate. Runs BEFORE the claim, so a hit refuses with the proposal still
+       queued (raises ``ValueError`` naming the detector kinds only — never
+       the value, exactly as the write/update paths redact it).
+    4. Atomically CLAIM the proposal — ``ProposalQueue.remove`` re-checks it
        still exists under the queue's per-file flock and hands it to the single
        racer that wins, so a concurrent double-accept can't write twice.
-    4. Write the durable memory through the normal store path.
+    5. Write the durable memory through the normal store path.
 
     Returns a result dict (``status`` in ``{"accepted", "not_found"}``) WITHOUT
     recording an event — the MCP handler layers its ``recorder.record`` on top;
@@ -99,6 +108,22 @@ def accept_proposal(
         max_content_bytes=config.behavior.max_content_bytes,
         max_scopes_per_write=config.behavior.max_scopes_per_write,
     )
+    # Credential gate — mirror `CredentialGate`, which the memory_write path
+    # runs FIRST, so a secret-shaped token captured by the write-reflex can't
+    # slip onto the plain-text (sync'd) store by being ACCEPTED rather than
+    # written. Scan the body that would be persisted; a hit refuses BEFORE the
+    # claim so the proposal stays queued, and the error names the detector
+    # `kind`s only — the value is never echoed, same as the write/update paths.
+    credential_hits = find_credential_markers(payload["content"])
+    if credential_hits:
+        kinds = sorted({h.kind for h in credential_hits})
+        raise ValueError(
+            f"proposal {proposal_id} body contains a secret-shaped token "
+            f"({', '.join(kinds)}) — this store is plain-text and `sync` "
+            "pushes it across hosts via git, so the accept is refused. Edit "
+            "the proposal to describe the secret without embedding it, or "
+            "dismiss it. The value is redacted from this error regardless."
+        )
     # Atomically CLAIM under the queue lock before the durable write — the
     # idempotency guard against a concurrent double-accept.
     claimed = queue.remove(proposal_id)
