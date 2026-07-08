@@ -21,14 +21,19 @@ Returns `None`-rich shape so the caller can distinguish:
   in a worktree, or all prior sessions in the event log belong to a
   different worktree.
 - "prior session existed but wrote no episodes" — returns
-  `{"prior_session_id": "sess_xxx", "episodes": []}`. The prior
-  session did work but didn't journal a takeaway. Since queue #28,
-  events carry a `worktree_root` origin, so a zero-episode session's
-  worktree IS known when its events were stamped: a caller in a named
-  worktree adopts such a candidate only when the worktrees match, and
-  falls back to the strict None-only-matches-None rule for legacy
-  (pre-#28) events that lack the field. A caller with no worktree only
-  adopts a candidate that is also worktree-less.
+  `{"prior_session_id": "sess_xxx", "episodes": []}` plus the honest
+  hedged `note`. The prior session did work but didn't journal a
+  takeaway. Since queue #28, events carry a `worktree_root` origin, so
+  a zero-episode session's worktree IS known when its events were
+  stamped: a caller in a named worktree considers such a candidate only
+  when the worktrees match, and falls back to the strict
+  None-only-matches-None rule for legacy (pre-#28) events that lack the
+  field. A caller with no worktree only considers a candidate that is
+  also worktree-less. Like a floor-only session, a worktree-matching
+  zero-episode session does NOT stop the rewind: the walk keeps going
+  to an older real takeaway when one exists (surfacing THAT with the
+  note), and only surfaces the zero-episode session itself (episodes
+  `[]` + note) when none does.
 - "immediately-prior session recorded no takeaway" — the most-recent
   worktree-matching session is floor-only. Because the floor is written
   unconditionally at handoff entry, this is ambiguous: the tick may have
@@ -157,11 +162,17 @@ async def episode_handoff(
     `_worktrees_equal_strict`. Zero-episode candidates (sessions
     that recorded events but never wrote a journal entry) are matched
     on their events' `worktree_root` origin: since queue #28 events
-    carry that field, a caller in a named worktree CAN adopt such a
+    carry that field, a caller in a named worktree considers such a
     candidate when the worktrees match, and skips it otherwise. Legacy
     (pre-#28) events lack the field and fall back to the conservative
     None-only-matches-None rule, so a named-worktree caller never
-    adopts a worktree-less legacy candidate.
+    adopts a worktree-less legacy candidate. A worktree-matching
+    zero-episode candidate is treated exactly like a floor-only one for
+    REWIND purposes: it is remembered as the fallback prior id and the
+    walk keeps going toward an older real takeaway, so a zero-episode
+    session between the caller and an older real-takeaway session no
+    longer severs the chain. It is surfaced (with the honest hedged
+    note) only when no older real session exists.
     An explicit `prior_session_id` is respected verbatim; the
     caller passing one in is explicit consent that they own the
     cross-tree concern.
@@ -335,24 +346,40 @@ async def episode_handoff(
 
             if not candidate_eps:
                 # Zero-episode candidate: a session that recorded events
-                # but never wrote any episode (a search-only tick, or one
-                # that crashed before the entry floor landed, or a legacy
-                # pre-#28 session). Surface `{sid, episodes: []}` so the
-                # caller can distinguish "no prior session" from "prior
-                # existed but is empty". There's no run-state leak — no
-                # episode bodies, only the bare opaque ULID — but the
-                # session_id IS the handle a caller uses to look up the
-                # prior session's events, so we still apply the strict
-                # "this worktree" contract. Recorder.record stamps
-                # `worktree_root` on events (queue #28), read here from
-                # `worktree_by_session`; a legacy/no-checkout candidate
-                # has an unknown (None) worktree and falls back to the
-                # conservative None-only-matches-None rule, so a caller
-                # in a named worktree never inherits it.
+                # but never wrote any episode (a search-only tick, one that
+                # crashed before the entry floor landed, a legacy pre-#28
+                # session, or a session whose only real takeaway was later
+                # promoted out). There's no run-state leak — no episode
+                # bodies, only the bare opaque ULID — but the session_id IS
+                # the handle a caller uses to look up the prior session's
+                # events, so we still apply the strict "this worktree"
+                # contract. Recorder.record stamps `worktree_root` on events
+                # (queue #28), read here from `worktree_by_session`; a
+                # legacy/no-checkout candidate has an unknown (None)
+                # worktree and falls back to the conservative
+                # None-only-matches-None rule, so a caller in a named
+                # worktree never inherits it.
                 candidate_worktree = worktree_by_session.get(sid)
                 if _worktrees_equal_strict(candidate_worktree, caller_worktree):
-                    resolved_session_id = sid
-                    break
+                    # REWIND parity with the floor-only branch below. Like a
+                    # floor-only tick, a zero-episode worktree session has
+                    # NO visible takeaway to surface, so it must NOT
+                    # adopt-and-break AHEAD of an older real takeaway — doing
+                    # so would let a zero-episode session sitting between the
+                    # caller and an older real-takeaway session sever the
+                    # handoff chain (the exact bug the rewind fixed for
+                    # floor-only sessions). Treat it identically: remember it
+                    # as the fallback prior id and, when it is the
+                    # immediately-prior worktree match, flag the honest soft
+                    # note; then KEEP WALKING toward an older visible
+                    # takeaway. It is surfaced (via the for/else fallback
+                    # below) as `{sid, episodes: []}` + note only when no
+                    # older real session exists.
+                    if not seen_worktree_match:
+                        note_floor_only = True
+                        floor_only_fallback_sid = sid
+                    seen_worktree_match = True
+                    continue
                 # Worktree mismatch (or unknown while caller is in a
                 # worktree) — walk past to the next-most-recent candidate.
                 continue

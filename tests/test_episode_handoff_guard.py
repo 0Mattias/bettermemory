@@ -260,3 +260,97 @@ async def test_episode_handoff_rewinds_past_floor_only_to_older_real_takeaway(
     assert "read-only tick" in res["note"], (
         f"note must acknowledge the benign read-only-tick reading; got: {res['note']!r}"
     )
+
+
+async def test_episode_handoff_rewinds_past_zero_episode_to_older_real_takeaway(
+    memory_dir: Path,
+) -> None:
+    """Rewind contract (episode-zero-episode): a ZERO-EPISODE session — one
+    that recorded events but wrote NO episodes at all (not even a floor) —
+    must not sever the handoff chain, exactly like the floor-only case.
+    Sequence:
+
+        S1: writes a REAL takeaway ("from S1")
+        S2: a search-only tick — records an event (memory_search) but never
+            calls episode_handoff (no entry floor) and never episode_write,
+            so it has ZERO episodes on disk while its events carry S2's
+            worktree_root
+        S3: calls episode_handoff at entry
+
+    S2 is S3's immediately-prior worktree session, and it is zero-episode.
+    The pre-fix zero-episode branch adopted-and-broke on the FIRST
+    worktree-matching zero-episode candidate (S2), AHEAD of the rewind,
+    returning `episodes: []` with `prior_session_id == S2` — S1's real
+    takeaway became unreachable, severing the chain (the exact bug the
+    round-120 rewind fixed for floor-only sessions, left unhandled for
+    zero-episode sessions). The fix treats S2 like a floor-only tick:
+    remember it as the fallback and walk PAST it to S1, surfacing S1's
+    takeaway plus the honest soft note.
+
+    Mutation-soundness: reverting the fix (restoring the zero-episode
+    `resolved_session_id = sid; break`) makes the walk stop at S2 and
+    return `episodes: []` with `prior_session_id == S2` — both the
+    `takeaway == "from S1"` and `prior_session_id == S1` assertions below
+    fail. The note assertion fails if the soft note is dropped.
+    """
+    from bettermemory.episodes import EpisodeStore
+
+    cfg = Config(storage=StorageConfig(directory=str(memory_dir)))
+
+    # S1: a real takeaway (no handoff — a single real episode on disk).
+    server_s1 = build_server(config=cfg, store=Store(memory_dir), state=SessionState())
+    await _call(server_s1, "episode_write", body="S1 zero body", takeaway="from S1")
+
+    # Recover S1's session id from disk so we can assert the rewind
+    # resolved to it (not to the zero-episode S2).
+    ep_store = EpisodeStore(memory_dir)
+    s1_session_id: str
+    for sid in ep_store.iter_session_ids():
+        eps = ep_store.list_by_session(sid)
+        if any("S1 zero body" in e.body for e in eps):
+            s1_session_id = sid
+            break
+    else:
+        raise AssertionError("could not locate session S1's id")
+
+    # S2: a search-only tick. `memory_search` records an event (stamped
+    # with S2's worktree_root) but writes NO episode — and crucially S2
+    # never calls episode_handoff, so there is no entry floor either.
+    # S2 is a genuine ZERO-EPISODE session on disk.
+    server_s2 = build_server(config=cfg, store=Store(memory_dir), state=SessionState())
+    await _call(server_s2, "memory_search", query="anything at all")
+
+    # Precondition: S2 truly has zero episodes on disk (distinguishes this
+    # from the floor-only sibling test — no floor exists for S2).
+    s2_ids_with_eps = {
+        sid for sid in ep_store.iter_session_ids() if ep_store.list_by_session(sid)
+    }
+    assert s1_session_id in s2_ids_with_eps
+    assert len(s2_ids_with_eps) == 1, (
+        f"only S1 should have episodes on disk; S2 must be zero-episode. "
+        f"sessions-with-episodes: {s2_ids_with_eps!r}"
+    )
+
+    # S3: handoff. Must rewind PAST the zero-episode S2 to S1's takeaway
+    # rather than adopting-and-breaking on S2 (episodes: []).
+    server_s3 = build_server(config=cfg, store=Store(memory_dir), state=SessionState())
+    res = await _call(server_s3, "episode_handoff")
+
+    # The chain is intact: S1's real takeaway is surfaced, NOT episodes:[].
+    takeaways = [e["takeaway"] for e in res["episodes"]]
+    assert takeaways == ["from S1"], (
+        f"rewind must surface S1's takeaway past the zero-episode S2; got: {res!r}"
+    )
+    # The resolved prior id is S1 (the rewound-to real session), not S2.
+    assert res["prior_session_id"] == s1_session_id, (
+        f"prior_session_id should rewind to S1, not the zero-episode S2; got: {res!r}"
+    )
+    # The honest soft note still fires: the IMMEDIATELY-preceding session
+    # (S2) recorded no takeaway, even though an older one is surfaced.
+    assert "note" in res, (
+        f"zero-episode immediately-prior session should still surface the "
+        f"soft note alongside the rewound takeaway; got: {res!r}"
+    )
+    assert "read-only tick" in res["note"], (
+        f"note must acknowledge the benign read-only-tick reading; got: {res['note']!r}"
+    )
