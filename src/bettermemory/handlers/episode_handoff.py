@@ -51,6 +51,30 @@ Returns `None`-rich shape so the caller can distinguish:
   clean read-only tick — the on-disk shape can't prove which). The
   `note` also distinguishes this shape from the "no prior session at
   all" case. E2 fix + rewind (episode-handoff-chain).
+- "immediately-prior session's takeaway was PROMOTED out" — a third
+  cause of both empty shapes above: `episode_promote` DELETES the
+  source episode when the durable write commits (immediately, or via
+  `memory_write_confirm` on the deferred pending path), so a healthy
+  handoff → episode_write → episode_promote session ends floor-only on
+  disk, and a write → promote session that never called handoff ends
+  zero-episode. Byte-identical on disk to the crash / clean-tick
+  shapes, but the EVENT LOG distinguishes it: the session's
+  `episode_write` event carries the episode id, and a matching
+  `episode_promote` event (any session's) proves the deletion path.
+  When that signal is present the note says the takeaway was promoted
+  into a durable memory (find it via memory_search) instead of hedging
+  crash-or-empty.
+- "prior sessions exist but every takeaway is scope-hidden" — the
+  most-recent worktree-matching session has REAL takeaways that are
+  all hidden by this session's `memory_scope_disable` set, and no
+  older visible takeaway exists either. While a visible takeaway is
+  still reachable, the walk rewinds past fully hidden sessions
+  transparently (no note — the user asked for that scope to be
+  suppressed); but when the walk exhausts with nothing visible it
+  surfaces the hidden immediately-prior session as `prior_session_id`
+  with `episodes: []` plus a note naming the scope-hide cause. It
+  never collapses to the first-ever `{prior_session_id: None}` shape
+  while worktree sessions demonstrably exist.
 - "prior session has takeaways" — `{"prior_session_id": "sess_xxx",
   "episodes": [...]}` with the latest N entries (oldest first within
   the slice). No `note` unless the immediately-prior session (a newer
@@ -75,6 +99,8 @@ from typing import TYPE_CHECKING, Any
 from ._shared import Context, _advance_turn
 
 if TYPE_CHECKING:
+    from pathlib import Path
+
     from .._handlers import ToolHandlers
 
 
@@ -173,6 +199,18 @@ async def episode_handoff(
     session between the caller and an older real-takeaway session no
     longer severs the chain. It is surfaced (with the honest hedged
     note) only when no older real session exists.
+    A worktree-matching session whose REAL episodes are all hidden by
+    the caller's `disabled_scopes` gets the same fallback treatment:
+    the walk rewinds past it toward an older visible takeaway (and
+    stays silent about it when one is found — the transparent-rewind
+    contract for scope_disable'd sessions), but when the walk exhausts
+    with no visible takeaway anywhere the fully hidden session is
+    surfaced as `prior_session_id` with `episodes: []` and a note
+    naming the scope-hide cause. Pre-fix it acted as a match-terminator
+    that suppressed every older fallback while contributing none
+    itself, collapsing the result to the first-ever
+    `{prior_session_id: None}` shape even though worktree sessions
+    demonstrably existed.
     An explicit `prior_session_id` is respected verbatim; the
     caller passing one in is explicit consent that they own the
     cross-tree concern.
@@ -266,6 +304,19 @@ async def episode_handoff(
     # crash before the entry floor landed). It has NO floor, so its note must
     # NOT claim one was written or that episode_handoff was called.
     note_zero_episode = False
+    # Third shape: the walk exhausted with NO visible takeaway anywhere and
+    # the immediately-prior worktree session has real takeaways that are all
+    # hidden by this session's disabled_scopes. Deliberately set only at
+    # fallback-resolution time (for/else below), never eagerly in the walk,
+    # so the transparent-rewind contract holds: while an older VISIBLE
+    # takeaway is reachable, a fully hidden session is skipped silently.
+    note_all_hidden = False
+    # The session each note above describes (the immediately-prior worktree
+    # session for the auto walk, the named session for the explicit path).
+    # Drives the promotion-trace lookup below: a floor-only / zero-episode
+    # shape can also mean "its takeaway was promoted out" (episode_promote
+    # deletes the journal source on commit), and the event log can tell.
+    note_subject_sid: str | None = None
 
     resolved_session_id: str | None = prior_session_id
     if resolved_session_id is None:
@@ -338,8 +389,17 @@ async def episode_handoff(
         # session when it was floor-only, so if NO older real session
         # exists we still surface it (with the note) rather than
         # collapsing to "no prior session at all".
+        # `scope_hidden_fallback_sid` is its sibling for the case where
+        # the immediately-prior session HAS real takeaways but they are
+        # all hidden by disabled_scopes: the walk rewinds past it
+        # (transparently, no note) toward an older visible takeaway,
+        # but if none exists anywhere it is surfaced as the prior id
+        # with the honest scope-hide note — never the first-ever
+        # `{prior_session_id: None}` shape while worktree sessions
+        # demonstrably exist.
         seen_worktree_match = False
         floor_only_fallback_sid: str | None = None
+        scope_hidden_fallback_sid: str | None = None
         for sid, _ts in ordered:
             try:
                 candidate_eps = deps.episode_store.list_by_session(sid)
@@ -383,6 +443,7 @@ async def episode_handoff(
                     if not seen_worktree_match:
                         note_zero_episode = True
                         floor_only_fallback_sid = sid
+                        note_subject_sid = sid
                     seen_worktree_match = True
                     continue
                 # Worktree mismatch (or unknown while caller is in a
@@ -434,22 +495,46 @@ async def episode_handoff(
             #     turns up).
             #   - real episodes all hidden by disabled_scopes: the user
             #     explicitly suppressed that scope, so rewind past it
-            #     transparently — no note (it is not floor-only; the
+            #     toward an older VISIBLE takeaway without a note (the
             #     "rewind past the scope_disable'd session" contract).
+            #     But it is a fallback CANDIDATE, not a match-terminator:
+            #     if it is the immediately-prior worktree match, remember
+            #     it so the for/else below can surface it — with the
+            #     honest scope-hide note — when the walk exhausts with no
+            #     visible takeaway anywhere. Pre-fix this branch set
+            #     `seen_worktree_match` while remembering nothing, which
+            #     both suppressed every OLDER floor-only / zero-episode
+            #     fallback and contributed no fallback itself, collapsing
+            #     the result to the first-ever `{prior_session_id: None}`
+            #     shape despite worktree sessions demonstrably existing.
             has_real_episode = any(not ep.is_floor for ep in candidate_eps)
-            if not has_real_episode and not seen_worktree_match:
-                note_floor_only = True
-                floor_only_fallback_sid = sid
+            if not seen_worktree_match:
+                if not has_real_episode:
+                    note_floor_only = True
+                    floor_only_fallback_sid = sid
+                    note_subject_sid = sid
+                else:
+                    scope_hidden_fallback_sid = sid
             seen_worktree_match = True
             # REWIND: keep walking toward an older visible takeaway.
             continue
         else:
             # Walk exhausted without a visible-takeaway session. If the
-            # immediately-prior session was floor-only, surface it (with
-            # the note) so the chain still reports "prior existed, no
-            # takeaway" rather than "no prior session at all".
-            if resolved_session_id is None and floor_only_fallback_sid is not None:
-                resolved_session_id = floor_only_fallback_sid
+            # immediately-prior session was floor-only / zero-episode,
+            # surface it (with the note) so the chain still reports
+            # "prior existed, no takeaway" rather than "no prior session
+            # at all". Failing that, if the immediately-prior session's
+            # real takeaways were all scope-hidden, surface THAT with the
+            # scope-hide note. The two fallbacks are mutually exclusive —
+            # only the immediately-prior worktree match (gated on
+            # `seen_worktree_match` above) can claim either slot — so the
+            # elif is an either/or, not a priority order.
+            if resolved_session_id is None:
+                if floor_only_fallback_sid is not None:
+                    resolved_session_id = floor_only_fallback_sid
+                elif scope_hidden_fallback_sid is not None:
+                    resolved_session_id = scope_hidden_fallback_sid
+                    note_all_hidden = True
 
     episodes: list[dict[str, Any]] = []
     # `note_floor_only` may already be True from the auto-resolution walk
@@ -485,6 +570,7 @@ async def episode_handoff(
             any_real_takeaway = any(not ep.is_floor for ep in all_eps)
             if all_eps and not any_real_takeaway:
                 note_floor_only = True
+                note_subject_sid = resolved_session_id
         # Filter floors from the emit stream — they carry no takeaway
         # and the marker body is a placeholder, not content the model
         # should reason over as "what the prior session concluded".
@@ -514,6 +600,22 @@ async def episode_handoff(
                 }
             )
 
+    # Promotion trace: the floor-only / zero-episode shapes have a third
+    # cause besides crash / clean-tick — `episode_promote` DELETES the
+    # source episode when the durable write commits (immediately, or via
+    # `memory_write_confirm` on the deferred pending path), so a healthy
+    # handoff → episode_write → episode_promote session ends floor-only on
+    # disk and a write → promote session with no handoff ends zero-episode.
+    # The event log can tell those apart: `episode_write` events carry the
+    # episode id + writer session, `episode_promote` events carry the
+    # episode id + write status. Only consulted when a note is about to
+    # fire (the uncommon path), so the common no-note handoff pays nothing.
+    promoted_out = False
+    if (note_floor_only or note_zero_episode) and note_subject_sid is not None:
+        promoted_out = _episode_promoted_out_of_session(
+            deps.store.root, note_subject_sid
+        )
+
     deps.recorder.record(
         "episode_handoff",
         prior_session_id=resolved_session_id,
@@ -529,38 +631,93 @@ async def episode_handoff(
     # session left no takeaway. A caller that doesn't know about the field sees
     # the same shape as before. `episodes` may be NON-empty here: the walk
     # rewound past the empty session to an older real takeaway, and the note
-    # flags that the most recent session left nothing. The two empty shapes get
+    # flags that the most recent session left nothing. The empty shapes get
     # distinct text because their on-disk cause differs.
     if note_floor_only:
-        # Floor-only: a real `is_floor` marker exists on disk (the session
-        # called episode_handoff, which writes the entry floor). Genuinely
-        # ambiguous between (a) a crash after entry but before episode_write
-        # and (b) a clean read-only tick that ran episode_handoff with no
-        # takeaway — the on-disk shape is identical, so surface both readings
-        # rather than the misleading bare "crashed" claim.
-        result["note"] = (
-            "The immediately-preceding session recorded no takeaway "
-            "before it ended: it called episode_handoff (which wrote "
-            "the session-tag floor that anchored the worktree match) "
-            "but no episode_write followed — either it crashed before "
-            "the takeaway, or it was a clean read-only tick with "
-            "nothing to record. Any takeaways above (if present) come "
-            "from an older session in this worktree that the handoff "
-            "rewound to."
-        )
+        if promoted_out:
+            # Not ambiguous after all: the event log shows this session's
+            # episode_write followed by a matching episode_promote, and
+            # promotion deletes the journal source on commit — that is why
+            # only the floor remains. Say so instead of hedging
+            # crash-or-empty, both of which would be false here.
+            result["note"] = (
+                "The immediately-preceding session recorded a takeaway, "
+                "but it was promoted into a durable memory and the "
+                "journal source deleted on commit (episode_promote) — "
+                "only the session-tag floor remains on disk. The event "
+                "log shows the session's episode_write followed by a "
+                "matching episode_promote, so this is a promotion, not a "
+                "crash or an empty tick; memory_search can surface the "
+                "promoted content. Any takeaways above (if present) come "
+                "from an older session in this worktree that the handoff "
+                "rewound to."
+            )
+        else:
+            # Floor-only: a real `is_floor` marker exists on disk (the session
+            # called episode_handoff, which writes the entry floor). Genuinely
+            # ambiguous between (a) a crash after entry but before
+            # episode_write and (b) a clean read-only tick that ran
+            # episode_handoff with no takeaway — the on-disk shape is
+            # identical, so surface both readings rather than the misleading
+            # bare "crashed" claim.
+            result["note"] = (
+                "The immediately-preceding session recorded no takeaway "
+                "before it ended: it called episode_handoff (which wrote "
+                "the session-tag floor that anchored the worktree match) "
+                "but no episode_write followed — either it crashed before "
+                "the takeaway, or it was a clean read-only tick with "
+                "nothing to record. Any takeaways above (if present) come "
+                "from an older session in this worktree that the handoff "
+                "rewound to."
+            )
     elif note_zero_episode:
-        # Zero-episode: NO floor on disk — the worktree match came from an
-        # event's `worktree_root`, not a floor. So do NOT claim a floor was
-        # written or that episode_handoff was called (it wasn't): the session
-        # recorded activity (e.g. a search-only tick) but journaled nothing,
-        # or crashed before its entry floor landed.
+        if promoted_out:
+            # Same promotion cause, zero-episode flavor: the session wrote a
+            # takeaway WITHOUT ever calling episode_handoff (so no floor),
+            # and the promotion deleted the journal source — nothing remains
+            # on disk even though the session demonstrably journaled.
+            result["note"] = (
+                "The immediately-preceding session in this worktree "
+                "journaled a takeaway, but it was promoted into a durable "
+                "memory and the journal source deleted on commit "
+                "(episode_promote); the session left no handoff floor, so "
+                "nothing remains on disk. The event log shows its "
+                "episode_write followed by a matching episode_promote — a "
+                "promotion, not a crash or a journal-less tick; "
+                "memory_search can surface the promoted content. Any "
+                "takeaways above (if present) come from an older session "
+                "in this worktree that the handoff rewound to."
+            )
+        else:
+            # Zero-episode: NO floor on disk — the worktree match came from an
+            # event's `worktree_root`, not a floor. So do NOT claim a floor
+            # was written or that episode_handoff was called (it wasn't): the
+            # session recorded activity (e.g. a search-only tick) but
+            # journaled nothing, or crashed before its entry floor landed.
+            result["note"] = (
+                "The immediately-preceding session in this worktree recorded "
+                "activity but journaled no takeaway (and left no handoff "
+                "floor) — it may have been a non-handoff tick, or crashed "
+                "before journaling. Any takeaways above (if present) come "
+                "from an older session in this worktree that the handoff "
+                "rewound to."
+            )
+    elif note_all_hidden:
+        # Scope-hidden terminal shape: the immediately-prior worktree session
+        # HAS real takeaways, but every one of them is in a scope this
+        # session disabled, and no older visible takeaway exists either. The
+        # floor-only / zero-episode texts would both be lies here (the
+        # session journaled fine), and returning no note would be
+        # indistinguishable from "prior session wrote nothing". `episodes` is
+        # always [] on this branch — the emit-step scope filter hides the
+        # same episodes the walk could not surface.
         result["note"] = (
             "The immediately-preceding session in this worktree recorded "
-            "activity but journaled no takeaway (and left no handoff "
-            "floor) — it may have been a non-handoff tick, or crashed "
-            "before journaling. Any takeaways above (if present) come "
-            "from an older session in this worktree that the handoff "
-            "rewound to."
+            "takeaways, but every one of them is in a scope this session "
+            "has disabled (memory_scope_disable), so none can be shown. "
+            "The prior session was not empty and this is not the first "
+            "handoff in this worktree — re-enable the relevant scope via "
+            "memory_scope_enable to surface its takeaways."
         )
     return result
 
@@ -620,6 +777,67 @@ def _maybe_write_session_floor(
         session_id=session_id,
         origin=handoff_origin,
     )
+
+
+def _episode_promoted_out_of_session(root: "Path", session_id: str) -> bool:
+    """True when the event log shows an episode WRITTEN BY `session_id`
+    was promoted out of the journal.
+
+    `episode_promote` deletes the source episode when the durable write
+    commits — synchronously on `status="committed"`, or via
+    `memory_write_confirm` when the write staged as `status="pending"`
+    (the user-inference confirmation flow). Either way the session that
+    wrote the episode ends up floor-only (if it had called
+    episode_handoff) or zero-episode (if it hadn't) on disk,
+    byte-identical to the crash / clean-tick shapes the handoff notes
+    hedge about. The event log disambiguates:
+
+      - `episode_write` events carry the episode's ULID (`id`) and the
+        writer's session — collect the ids `session_id` wrote.
+      - `episode_promote` events carry `episode_id` + `write_status` —
+        collect the ids any session promoted. The promoter is
+        deliberately NOT filtered: a later session promoting an older
+        session's takeaway (the documented /loop pattern) still deletes
+        the OLDER session's journal entry.
+
+    A non-empty intersection means one of this session's journal
+    entries went through the promotion delete path.
+
+    `write_status="pending"` is included alongside `"committed"`
+    because the deferred delete happens inside `memory_write_confirm`,
+    whose event records no episode id — the promote event is the only
+    trace. A cancelled/expired pending leaves the episode ON disk, and
+    this helper is only consulted when the subject session demonstrably
+    has no real episode left, so a pending trace corroborated by the
+    on-disk absence means the confirm path ran. (The only other
+    individual-episode deleter in the system IS the promotion path;
+    TTL pruning removes whole session directories, floors included.)
+
+    Cost: one pass over `iter_all_events` (active log + gz archives).
+    Only invoked when a floor-only / zero-episode note is about to
+    fire, which is the uncommon handoff outcome; the healthy adopt-a-
+    takeaway path never pays it.
+    """
+    from ..events import iter_all_events
+
+    written: set[str] = set()
+    promoted: set[str] = set()
+    for ev in iter_all_events(root):
+        kind = ev.get("kind")
+        if kind == "episode_write":
+            # Same session-field fallback discipline as the resolution
+            # walk: current events stamp `session`, tolerate legacy
+            # `session_id`.
+            sid = ev.get("session") or ev.get("session_id")
+            eid = ev.get("id")
+            if sid == session_id and isinstance(eid, str):
+                written.add(eid)
+        elif kind == "episode_promote":
+            if ev.get("write_status") in ("committed", "pending"):
+                eid = ev.get("episode_id")
+                if isinstance(eid, str):
+                    promoted.add(eid)
+    return bool(written & promoted)
 
 
 def _worktrees_equal_strict(

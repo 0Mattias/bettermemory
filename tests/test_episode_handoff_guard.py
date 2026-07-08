@@ -367,3 +367,364 @@ async def test_episode_handoff_rewinds_past_zero_episode_to_older_real_takeaway(
         f"zero-episode note must NOT claim episode_handoff was called; got: "
         f"{res['note']!r}"
     )
+
+
+async def test_episode_handoff_all_hidden_prior_falls_back_instead_of_first_ever(
+    memory_dir: Path,
+) -> None:
+    """Regression (v3.15.0, transparent-rewind suppression): a worktree
+    session whose REAL episodes are ALL hidden by `disabled_scopes` set
+    `seen_worktree_match=True` while remembering NOTHING — so when no
+    visible takeaway existed anywhere, it both suppressed every older
+    floor-only / zero-episode fallback and contributed no fallback
+    itself, and the handoff fell out with `{prior_session_id: None,
+    episodes: []}` — the shape the docstring reserves for "first-ever
+    invocation in a worktree". Sequence (the confirmed repro):
+
+        S2 (older): a clean read-only tick — episode_handoff at entry
+            (unconditional floor), no episode_write → floor-only on disk
+        S3 (newer): writes a REAL takeaway scoped projects:alpha
+        reader: memory_scope_disable("projects:alpha") → episode_handoff
+
+    v3.14.1 surfaced an honest "prior existed, no takeaway" result;
+    v3.15.0 returned the first-ever shape with no note. The fix treats
+    the fully hidden S3 as a fallback CANDIDATE: it keeps its
+    immediately-prior role (an older floor-only session must not
+    masquerade as immediately-prior), the walk still rewinds past it,
+    and when the walk exhausts with nothing visible S3 itself is
+    surfaced as `prior_session_id` with `episodes: []` plus a note
+    naming the scope-hide cause (not the floor-only/zero-episode texts,
+    which would both be lies — S3 journaled fine).
+
+    Mutation-soundness: reverting the fix (restoring the branch that
+    sets `seen_worktree_match` without remembering a scope-hidden
+    fallback) makes `prior_session_id` come back None and drops the
+    note — the first three assertions below all fail.
+    """
+    cfg = Config(storage=StorageConfig(directory=str(memory_dir)))
+
+    # S2 (older): clean read-only tick — floor-only on disk.
+    server_s2 = build_server(config=cfg, store=Store(memory_dir), state=SessionState())
+    await _call(server_s2, "episode_handoff")
+
+    # S3 (newer): a real takeaway in projects:alpha (no handoff — the
+    # repro's minimal shape; the mixed floor+hidden variant is covered
+    # by the transparency test below).
+    server_s3 = build_server(config=cfg, store=Store(memory_dir), state=SessionState())
+    ep_s3 = await _call(
+        server_s3,
+        "episode_write",
+        body="S3 alpha-scoped body",
+        takeaway="S3 on alpha",
+        scopes=["projects:alpha"],
+    )
+    s3_session_id = ep_s3["session_id"]
+
+    # Reader: disables projects:alpha, so S3's only real takeaway is
+    # hidden and S2 is floor-only — NO visible takeaway exists anywhere.
+    server_reader = build_server(
+        config=cfg, store=Store(memory_dir), state=SessionState()
+    )
+    await _call(server_reader, "memory_scope_disable", scope="projects:alpha")
+    res = await _call(server_reader, "episode_handoff")
+
+    # Never the first-ever shape while worktree sessions demonstrably
+    # exist — this is THE regression assertion (v3.15.0 returned None).
+    assert res["prior_session_id"] is not None, (
+        f"fully-hidden prior must not collapse to the first-ever shape; got: {res!r}"
+    )
+    # The fallback is the immediately-prior worktree session (the hidden
+    # S3), not the older floor-only S2 — the note describes the session
+    # that actually sits immediately behind the caller.
+    assert res["prior_session_id"] == s3_session_id, (
+        f"fallback should be the hidden immediately-prior S3; got: {res!r}"
+    )
+    # Hidden bodies stay hidden: the emit-step scope filter applies.
+    assert res["episodes"] == []
+    assert "note" in res, (
+        f"scope-hidden terminal shape must carry an honest note; got: {res!r}"
+    )
+    note = res["note"]
+    # The note names the actual cause (scope disable) and the way out.
+    assert "disabled" in note, f"note must name the scope-disable cause; got: {note!r}"
+    assert "memory_scope_enable" in note, (
+        f"note should point at the re-enable escape hatch; got: {note!r}"
+    )
+    # And it must NOT be either empty-session text — S3 neither crashed
+    # nor skipped journaling, so those hedges would be false claims.
+    assert "crash" not in note.lower(), (
+        f"scope-hidden note must not hedge a crash; got: {note!r}"
+    )
+    assert "no episode_write followed" not in note, (
+        f"scope-hidden note must not claim episode_write never ran; got: {note!r}"
+    )
+
+
+async def test_episode_handoff_rewinds_through_hidden_session_without_note(
+    memory_dir: Path,
+) -> None:
+    """Transparent-rewind contract preserved by the scope-hidden
+    fallback fix: a fully hidden session sitting between the caller and
+    an older VISIBLE takeaway is still rewound past — the older takeaway
+    is adopted, and NO note fires (the user explicitly suppressed that
+    scope; while something visible is reachable the hidden session stays
+    silent). This pins the fix's set-note-at-fallback-resolution shape:
+    an implementation that flags the scope-hidden note eagerly in the
+    walk (like the floor-only note) would attach a note here and fail
+    the final assertion.
+
+        S1 (older): visible real takeaway in `tools`
+        S2 (newer): a /loop-shaped tick — episode_handoff at entry
+            (writes its floor) then a real takeaway in projects:alpha,
+            so on disk it is floor + hidden-real (the mixed shape)
+        reader: memory_scope_disable("projects:alpha") → episode_handoff
+    """
+    cfg = Config(storage=StorageConfig(directory=str(memory_dir)))
+
+    # S1 (older): a visible real takeaway.
+    server_s1 = build_server(config=cfg, store=Store(memory_dir), state=SessionState())
+    ep_s1 = await _call(
+        server_s1,
+        "episode_write",
+        body="S1 tools body",
+        takeaway="from S1",
+        scopes=["tools"],
+    )
+    s1_session_id = ep_s1["session_id"]
+
+    # S2 (newer): handoff (floor) + alpha-scoped takeaway → floor +
+    # hidden-real once the reader disables the scope.
+    server_s2 = build_server(config=cfg, store=Store(memory_dir), state=SessionState())
+    await _call(server_s2, "episode_handoff")
+    await _call(
+        server_s2,
+        "episode_write",
+        body="S2 alpha body",
+        takeaway="S2 on alpha",
+        scopes=["projects:alpha"],
+    )
+
+    server_reader = build_server(
+        config=cfg, store=Store(memory_dir), state=SessionState()
+    )
+    await _call(server_reader, "memory_scope_disable", scope="projects:alpha")
+    res = await _call(server_reader, "episode_handoff")
+
+    # The rewind reaches THROUGH the hidden S2 to S1's visible takeaway.
+    assert res["prior_session_id"] == s1_session_id, (
+        f"walk must rewind through the hidden S2 to S1; got: {res!r}"
+    )
+    assert [e["takeaway"] for e in res["episodes"]] == ["from S1"]
+    # Transparent: no note while a visible takeaway was reachable.
+    assert "note" not in res, (
+        f"rewinding past a scope-hidden session must stay noteless; got: {res!r}"
+    )
+
+
+async def test_episode_handoff_floor_only_note_names_promotion_when_log_shows_it(
+    memory_dir: Path,
+) -> None:
+    """Honesty fix: the floor-only note asserted "no episode_write
+    followed — either it crashed before the takeaway, or it was a clean
+    read-only tick", but `episode_promote` DELETES the source episode on
+    commit, so a perfectly healthy handoff → episode_write →
+    episode_promote session ends floor-only on disk and the note's
+    either/or was false on both horns. The event log disambiguates:
+    the session's `episode_write` event carries the episode id, and a
+    matching `episode_promote` event proves the deletion path. When that
+    trace exists the note must say the takeaway was PROMOTED (and lives
+    on as a durable memory) instead of hedging crash-or-empty.
+
+    Mutation-soundness: reverting the promotion-trace check makes the
+    note fall back to the old either/or text — the "promoted into a
+    durable memory" assertion fails and the two `not in` assertions
+    fail (the false "no episode_write followed" claim reappears).
+    """
+    from bettermemory.episodes import EpisodeStore
+
+    cfg = Config(storage=StorageConfig(directory=str(memory_dir)))
+
+    # Tick T: the healthy /loop shape — handoff (floor), a real
+    # takeaway, then promotion of that takeaway into a durable memory.
+    server_t = build_server(config=cfg, store=Store(memory_dir), state=SessionState())
+    await _call(server_t, "episode_handoff")
+    ep = await _call(
+        server_t,
+        "episode_write",
+        body="iter 1 — tuned GC, gophers cleared",
+        takeaway="GC tuning fixed gopher frame drops",
+    )
+    t_session_id = ep["session_id"]
+    promo = await _call(
+        server_t,
+        "episode_promote",
+        episode_id=ep["id"],
+        scopes=["projects:alpha"],
+    )
+    assert promo["status"] == "committed", (
+        f"test precondition: promotion must commit synchronously; got: {promo!r}"
+    )
+
+    # On-disk precondition: T is floor-only now — the real episode was
+    # deleted by the promotion, only the entry floor survives.
+    eps_on_disk = EpisodeStore(memory_dir).list_by_session(t_session_id)
+    assert eps_on_disk and all(e.is_floor for e in eps_on_disk), (
+        f"T must be floor-only after the promotion; got: {eps_on_disk!r}"
+    )
+
+    # Tick T+1: fresh session resolves the floor-only T.
+    server_t1 = build_server(config=cfg, store=Store(memory_dir), state=SessionState())
+    res = await _call(server_t1, "episode_handoff")
+
+    assert res["prior_session_id"] == t_session_id
+    assert res["episodes"] == []
+    assert "note" in res, f"floor-only prior must carry a note; got: {res!r}"
+    note = res["note"]
+    # The precise cause, not the hedge.
+    assert "promoted into a durable memory" in note, (
+        f"note must name the promotion the event log proves; got: {note!r}"
+    )
+    # The disproven either/or must be gone: episode_write demonstrably
+    # ran, and the tick was neither a crash-victim nor read-only.
+    assert "no episode_write followed" not in note, (
+        f"note must not claim episode_write never ran; got: {note!r}"
+    )
+    assert "read-only tick" not in note, (
+        f"note must not hedge the clean-tick reading when the log shows a "
+        f"promotion; got: {note!r}"
+    )
+
+
+async def test_episode_handoff_zero_episode_note_names_promotion_when_log_shows_it(
+    memory_dir: Path,
+) -> None:
+    """Zero-episode sibling of the promotion-honesty fix: a session that
+    calls episode_write WITHOUT ever calling episode_handoff has no
+    floor, so once its only takeaway is promoted out it is zero-episode
+    on disk. The old note guessed "it may have been a non-handoff tick,
+    or crashed before journaling" — false on both horns: the session
+    journaled fine and the journal entry was deliberately distilled into
+    a durable memory. With the event-log trace present the note must say
+    so.
+
+    Mutation-soundness: reverting the promotion-trace check restores the
+    old zero-episode hedge — the "promoted into a durable memory"
+    assertion fails and the "non-handoff tick" guess reappears.
+    """
+    from bettermemory.episodes import EpisodeStore
+
+    cfg = Config(storage=StorageConfig(directory=str(memory_dir)))
+
+    # S_a: write-then-promote, no handoff → zero-episode on disk.
+    server_a = build_server(config=cfg, store=Store(memory_dir), state=SessionState())
+    ep = await _call(
+        server_a,
+        "episode_write",
+        body="iter 1 — tuned GC, gophers cleared",
+        takeaway="GC tuning fixed gopher frame drops",
+    )
+    a_session_id = ep["session_id"]
+    promo = await _call(
+        server_a,
+        "episode_promote",
+        episode_id=ep["id"],
+        scopes=["projects:alpha"],
+    )
+    assert promo["status"] == "committed", (
+        f"test precondition: promotion must commit synchronously; got: {promo!r}"
+    )
+
+    # On-disk precondition: S_a has ZERO episodes (no floor either).
+    assert EpisodeStore(memory_dir).list_by_session(a_session_id) == [], (
+        "S_a must be zero-episode after the promotion"
+    )
+
+    # Reader: resolves S_a via its events' worktree_root (zero-episode
+    # branch) and must surface the promotion-aware note.
+    server_r = build_server(config=cfg, store=Store(memory_dir), state=SessionState())
+    res = await _call(server_r, "episode_handoff")
+
+    assert res["prior_session_id"] == a_session_id
+    assert res["episodes"] == []
+    assert "note" in res, f"zero-episode prior must carry a note; got: {res!r}"
+    note = res["note"]
+    assert "promoted into a durable memory" in note, (
+        f"note must name the promotion the event log proves; got: {note!r}"
+    )
+    # The disproven guesses must be gone…
+    assert "non-handoff tick" not in note, (
+        f"note must not guess a non-handoff tick when the log shows a "
+        f"promotion; got: {note!r}"
+    )
+    assert "crashed" not in note, (
+        f"note must not hedge a crash when the log shows a promotion; got: {note!r}"
+    )
+    # …while the still-true floor facts stay stated (no floor was ever
+    # written — the session never called episode_handoff).
+    assert "left no handoff floor" in note, (
+        f"zero-episode promotion note must still state no floor exists; got: {note!r}"
+    )
+
+
+async def test_episode_handoff_promotion_note_covers_deferred_confirm_path(
+    memory_dir: Path,
+) -> None:
+    """The promotion delete has TWO triggers: synchronous (promote
+    returns `committed`) and deferred (promote stages `pending` for the
+    user-inference flow; `memory_write_confirm` commits AND deletes the
+    source episode later). The confirm event records no episode id, so
+    the `episode_promote` event with `write_status="pending"` is the
+    only trace of the deferred path — the detection must accept it, and
+    it is safe to: a cancelled/expired pending leaves the episode ON
+    disk, so a session whose episode is demonstrably gone with a pending
+    trace was confirm-deleted.
+
+    Mutation-soundness: narrowing the detection to
+    `write_status == "committed"` alone (or reverting the fix entirely)
+    routes this case back to the old zero-episode hedge and the
+    "promoted into a durable memory" assertion fails.
+    """
+    from bettermemory.episodes import EpisodeStore
+
+    cfg = Config(storage=StorageConfig(directory=str(memory_dir)))
+
+    # S_a: write → promote as user-inference (stages pending) → user
+    # confirms → durable memory commits, source episode deleted. No
+    # handoff, so no floor: S_a ends zero-episode.
+    server_a = build_server(config=cfg, store=Store(memory_dir), state=SessionState())
+    ep = await _call(
+        server_a,
+        "episode_write",
+        body="Iter 2 — observed the user reaching for terse summaries.",
+        takeaway="user prefers terse summaries",
+    )
+    a_session_id = ep["session_id"]
+    pending = await _call(
+        server_a,
+        "episode_promote",
+        episode_id=ep["id"],
+        scopes=["learning-style"],
+        category="user-inference",
+    )
+    assert pending["status"] == "pending", (
+        f"test precondition: user-inference promotion must stage pending; "
+        f"got: {pending!r}"
+    )
+    confirmed = await _call(
+        server_a, "memory_write_confirm", pending_id=pending["pending_id"]
+    )
+    assert confirmed["status"] == "committed"
+    assert EpisodeStore(memory_dir).list_by_session(a_session_id) == [], (
+        "S_a must be zero-episode after the confirmed promotion"
+    )
+
+    server_r = build_server(config=cfg, store=Store(memory_dir), state=SessionState())
+    res = await _call(server_r, "episode_handoff")
+
+    assert res["prior_session_id"] == a_session_id
+    assert res["episodes"] == []
+    assert "note" in res, f"zero-episode prior must carry a note; got: {res!r}"
+    assert "promoted into a durable memory" in res["note"], (
+        f"deferred-confirm promotion must be detected via the pending "
+        f"trace; got: {res['note']!r}"
+    )
