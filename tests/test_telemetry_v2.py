@@ -13,7 +13,8 @@ Covers, in one place, the feature set that ships together:
   and the wall-clock floor that keeps the in-process auto-commit from
   racing the hook;
 - the `pending_writes` count on memory_scope_overview;
-- the eval `--widening-preview` replay lane.
+- the eval `--widening-preview` replay lane and its `--detail`
+  precision-labeling surface (`compute_widening_detail`).
 
 Response-shape guards live here too: the shadow fields must NEVER
 appear in an MCP response — they are event-log-only calibration data.
@@ -42,7 +43,9 @@ from bettermemory.audit import (
 from bettermemory.config import Config, StorageConfig
 from bettermemory.eval import (
     compute_eval,
+    compute_widening_detail,
     compute_widening_preview,
+    render_widening_detail_text,
     render_widening_preview_text,
 )
 from bettermemory.events import Recorder, iter_events, redact_query
@@ -678,19 +681,226 @@ def test_widening_preview_counts_and_deltas() -> None:
     assert report.audits_without_features == 1
     assert report.repeat_audits_skipped == 1
     assert report.v1_baseline_flagged == 1
-    (row,) = report.rows
-    assert row.rule == "w1_top1_v2_high"
-    assert row.would_flag == 2
-    assert row.delta_from_v1 == 1
+    rows_by_rule = {r.rule: r for r in report.rows}
+    assert set(rows_by_rule) == {"w1_top1_v2_high", "w2_top1_v2_high_from_medium"}
+    w1 = rows_by_rule["w1_top1_v2_high"]
+    assert w1.would_flag == 2
+    assert w1.delta_from_v1 == 1
+    # On this stream the medium→high promotion is the only widening,
+    # so w2 (v1 arm + medium promotions) agrees with w1.
+    w2 = rows_by_rule["w2_top1_v2_high_from_medium"]
+    assert w2.would_flag == 2
+    assert w2.delta_from_v1 == 1
     text = render_widening_preview_text(report)
     assert "w1_top1_v2_high" in text
+    assert "w2_top1_v2_high_from_medium" in text
     assert "v1 baseline" in text
+
+
+def test_widening_w2_excludes_low_promotions() -> None:
+    """The four-quadrant contract from the 2026-07-08 labeling pass:
+    w1 flags every v2-high top hit; w2 keeps the v1-high arm and the
+    medium→high promotions but drops the low→high ones (the ~20%%-
+    precision cohort: long messages crossing the matched floor at
+    dilute coverage)."""
+    now = datetime(2026, 5, 20, 12, 0, tzinfo=timezone.utc)
+    events = [
+        # v1-high: both rules flag (w2 via its replayed v1 arm).
+        _ev(
+            "turn_audited",
+            verdict="miss",
+            recent_retrieval_count=0,
+            top_hits=[_hit("high", "high")],
+        ),
+        # medium→high promotion: both rules flag.
+        _ev(
+            "turn_audited",
+            verdict="ok",
+            recent_retrieval_count=0,
+            top_hits=[_hit("medium", "high")],
+        ),
+        # low→high promotion: ONLY w1 flags — the cohort w2 exists to drop.
+        _ev(
+            "turn_audited",
+            verdict="ok",
+            recent_retrieval_count=0,
+            top_hits=[_hit("low", "high")],
+        ),
+        # No promotion anywhere: neither flags.
+        _ev(
+            "turn_audited",
+            verdict="ok",
+            recent_retrieval_count=0,
+            top_hits=[_hit("medium", "medium")],
+        ),
+    ]
+    report = compute_widening_preview(events, now=now)
+    rows_by_rule = {r.rule: r for r in report.rows}
+    assert rows_by_rule["w1_top1_v2_high"].would_flag == 3
+    assert rows_by_rule["w2_top1_v2_high_from_medium"].would_flag == 2
+    assert report.v1_baseline_flagged == 1
 
 
 def test_widening_preview_render_empty_state() -> None:
     report = compute_widening_preview([], now=datetime.now(timezone.utc))
     text = render_widening_preview_text(report)
     assert "No replayable audited turns yet" in text
+
+
+def _hit_for(memory_id: str, relevance: str, relevance_v2: str) -> dict[str, Any]:
+    return {
+        "id": memory_id,
+        "score": 0.25,
+        "relevance": relevance,
+        "relevance_v2": relevance_v2,
+        "matched_unique": 5,
+        "query_unique": 40,
+    }
+
+
+def test_widening_detail_rows_rollup_and_lockstep() -> None:
+    now = datetime(2026, 5, 20, 12, 0, tzinfo=timezone.utc)
+    mem_a = _memory("Alpha memory body line.\n\nMore prose.", ["projects:x"])
+    tombstoned_id = generate_ulid()
+    events = [
+        # Flagged, redacted probe_query shape; v1 does NOT also flag.
+        _ev(
+            "turn_audited",
+            ts="2026-05-15T12:00:00.000+00:00",
+            session_id="s1",
+            verdict="ok",
+            recent_retrieval_count=0,
+            probe_query={
+                "hash": "abcd1234",
+                "preview": "how do I frobnicate the",
+                "len": 90,
+            },
+            top_hits=[_hit_for(mem_a.id, "medium", "high")],
+        ),
+        # Flagged, same memory, different session, verbatim probe_query;
+        # v1 ALSO flags (relevance high).
+        _ev(
+            "turn_audited",
+            ts="2026-05-16T12:00:00.000+00:00",
+            session_id="s2",
+            verdict="miss",
+            recent_retrieval_count=0,
+            probe_query="verbatim logged message",
+            top_hits=[_hit_for(mem_a.id, "high", "high")],
+        ),
+        # Flagged against a tombstoned memory.
+        _ev(
+            "turn_audited",
+            ts="2026-05-17T12:00:00.000+00:00",
+            session_id="s3",
+            verdict="ok",
+            recent_retrieval_count=0,
+            top_hits=[_hit_for(tombstoned_id, "medium", "high")],
+        ),
+        # Not flagged (v2 medium) — must not appear.
+        _ev(
+            "turn_audited",
+            verdict="ok",
+            recent_retrieval_count=0,
+            top_hits=[_hit_for(mem_a.id, "medium", "medium")],
+        ),
+    ]
+    report = compute_widening_detail(
+        events,
+        memories=[mem_a],
+        tombstoned_ids={tombstoned_id},
+        now=now,
+    )
+    preview = compute_widening_preview(events, now=now)
+
+    # Lockstep: the detail lane's counters and flag totals must agree
+    # with the counting lane over the same stream.
+    assert report.audits_with_features == preview.audits_with_features == 4
+    assert report.v1_baseline_flagged == preview.v1_baseline_flagged == 1
+    detail = next(r for r in report.rules if r.rule == "w1_top1_v2_high")
+    row = next(r for r in preview.rows if r.rule == "w1_top1_v2_high")
+    assert detail.flagged_total == row.would_flag == 3
+    assert detail.beyond_v1 == row.delta_from_v1 == 2
+
+    # Turns are newest-first and carry the logged evidence.
+    assert [t.session_id for t in detail.turns] == ["s3", "s2", "s1"]
+    by_session = {t.session_id: t for t in detail.turns}
+    redacted = by_session["s1"]
+    assert redacted.probe_query_preview == "how do I frobnicate the"
+    assert redacted.probe_query_len == 90
+    assert redacted.probe_query_hash == "abcd1234"
+    assert redacted.v1_also_flagged is False
+    assert redacted.memory_status == "active"
+    assert redacted.memory_summary == "Alpha memory body line"
+    assert redacted.memory_scopes == ["projects:x"]
+    assert redacted.matched_unique == 5 and redacted.query_unique == 40
+    verbatim = by_session["s2"]
+    assert verbatim.probe_query_preview == "verbatim logged message"
+    assert verbatim.probe_query_len == len("verbatim logged message")
+    assert verbatim.probe_query_hash is None
+    assert verbatim.v1_also_flagged is True
+    ghost = by_session["s3"]
+    assert ghost.memory_status == "tombstoned"
+    assert ghost.memory_summary is None
+
+    # Rollup: concentration on mem_a (2 flags, 2 sessions) sorts first.
+    assert [r.memory_id for r in detail.by_memory] == [mem_a.id, tombstoned_id]
+    top_row = detail.by_memory[0]
+    assert top_row.count == 2
+    assert top_row.distinct_sessions == 2
+    assert top_row.status == "active"
+    assert top_row.summary == "Alpha memory body line"
+
+
+def test_widening_detail_render_text() -> None:
+    now = datetime(2026, 5, 20, 12, 0, tzinfo=timezone.utc)
+    mem = _memory("Render target memory.", ["tools"])
+    events = [
+        _ev(
+            "turn_audited",
+            session_id="s1",
+            verdict="ok",
+            recent_retrieval_count=0,
+            probe_query={
+                "hash": "beef",
+                "preview": "long query preview text",
+                "len": 200,
+            },
+            top_hits=[_hit_for(mem.id, "medium", "high")],
+        ),
+    ]
+    report = compute_widening_detail(events, memories=[mem], now=now)
+    text = render_widening_detail_text(report)
+    assert "w1_top1_v2_high — 1 flagged, 1 beyond v1" in text
+    assert "by top-hit memory (1 distinct)" in text
+    assert "Render target memory" in text
+    assert "long query preview text" in text
+    assert "(+177 chars)" in text  # 200 - len(preview)
+    assert "cov   5/40" in text
+    assert mem.id in text  # rollup shows the full id
+
+
+def test_widening_detail_render_empty_state() -> None:
+    report = compute_widening_detail([], now=datetime.now(timezone.utc))
+    text = render_widening_detail_text(report)
+    assert "No replayable audited turns yet" in text
+
+
+def test_widening_detail_unknown_memory_without_resolver() -> None:
+    """Omitting memories/tombstones degrades to status="unknown" —
+    the compute layer must not require a store."""
+    events = [
+        _ev(
+            "turn_audited",
+            verdict="ok",
+            recent_retrieval_count=0,
+            top_hits=[_hit_for("01JUNKID000000000000000000", "medium", "high")],
+        ),
+    ]
+    report = compute_widening_detail(events, now=datetime.now(timezone.utc))
+    detail = next(r for r in report.rules if r.rule == "w1_top1_v2_high")
+    assert detail.turns[0].memory_status == "unknown"
+    assert detail.turns[0].probe_query_preview is None  # no probe_query logged
 
 
 # ---------------------------------------------------------------------------

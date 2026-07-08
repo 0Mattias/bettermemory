@@ -1477,6 +1477,36 @@ def _rule_w1_top1_v2_high(
     return top_hits[0].get("relevance_v2") == "high"
 
 
+def _rule_w2_top1_v2_high_from_medium(
+    top_hits: list[dict[str, Any]], recent_retrieval_count: int
+) -> bool:
+    """Tightened widening candidate: v1's own high arm, plus the
+    medium→high promotions of the absolute matched-token floor — but
+    NOT the low→high ones.
+
+    Calibrated on the first live labeling pass over the w1 cohort
+    (2026-07-08; 103 replayable turns, 32 w1 flags, hand-labeled via
+    `--widening-preview --detail`): v1-low turns promoted by the bare
+    floor were almost pure noise — long pasted messages crossing
+    matched_unique >= 4 against any domain-adjacent memory at
+    coverage ~0.2 (charitable precision ~20%) — while v1-medium
+    promotions read ~50% precision and contained every clearly-real
+    catch. That is also the original blind-spot thesis: long
+    natural-language queries landing at MEDIUM on strong matches, not
+    at low. Keeping the replayed v1 arm preserves the strict-superset
+    property that makes Δ v1 interpretable."""
+    if _rule_v1_top1_high(top_hits, recent_retrieval_count):
+        return True
+    if recent_retrieval_count > 0:
+        return False
+    if not top_hits:
+        return False
+    top = top_hits[0]
+    if not isinstance(top, dict):
+        return False
+    return top.get("relevance") == "medium" and top.get("relevance_v2") == "high"
+
+
 # Registry of widening candidates, separate from THRESHOLD_RULES on
 # purpose: mixing looser rules into the strict sweep would render
 # meaningless rows there (over the v1-flagged replay set a widening
@@ -1487,6 +1517,14 @@ WIDENING_RULES: dict[str, ThresholdRule] = {
         description="Top-1 shadow relevance_v2 == 'high' (coverage >= 0.75 "
         "OR matched_unique >= 4) AND no retrieval in window.",
         check=_rule_w1_top1_v2_high,
+    ),
+    "w2_top1_v2_high_from_medium": ThresholdRule(
+        name="w2_top1_v2_high_from_medium",
+        description="v1 high, OR top-1 promoted medium→high by the shadow "
+        "matched-token floor. Excludes w1's low→high promotions (measured "
+        "~20% precision on the 2026-07-08 labeling pass vs ~50% for "
+        "medium→high).",
+        check=_rule_w2_top1_v2_high_from_medium,
     ),
 }
 
@@ -1527,32 +1565,43 @@ class WideningPreviewReport:
         }
 
 
-def compute_widening_preview(
+@dataclass
+class _ReplayableAudits:
+    """Shared walk result for the widening lanes (counting + detail).
+
+    One filter pipeline feeding both `compute_widening_preview` and
+    `compute_widening_detail` keeps the two surfaces in lockstep — a
+    turn the counting lane includes is exactly a turn the detail lane
+    can show, so "N flagged" and the list of N can never disagree.
+    """
+
+    total_events_scanned: int
+    with_features: int
+    without_features: int
+    repeats_skipped: int
+    # One (event, top_hits, recent_retrieval_count) triple per
+    # replayable audit, in stream order.
+    rows: list[tuple[dict[str, Any], list[dict[str, Any]], int]]
+
+
+def _collect_replayable_audits(
     events: Iterable[dict[str, Any]],
     *,
-    rules: dict[str, ThresholdRule] | None = None,
-    since: timedelta | None = None,
-    now: datetime | None = None,
-) -> WideningPreviewReport:
-    """Replay candidate looser rules over the turn_audited stream.
+    since: timedelta | None,
+    now: datetime,
+) -> _ReplayableAudits:
+    """Filter the event stream down to replayable audited turns.
 
-    Walks miss-capable (`verdict != "no_signal"`, non-repeat)
-    `turn_audited` events carrying `top_hits` and counts, per rule in
-    `rules` (default `WIDENING_RULES`), how many turns it would have
-    flagged — alongside the replayed v1 baseline the deltas are
-    measured against. See the section comment above for why the
-    baseline is replayed rather than read off the logged verdict.
+    Miss-capable (`verdict != "no_signal"`), non-repeat
+    `turn_audited` events carrying a non-empty `top_hits` payload.
+    Materialised (not a generator) because both consumers need the
+    skip counters alongside the rows.
     """
-    now = now or datetime.now(timezone.utc)
     cutoff: datetime | None = (now - since) if since is not None else None
-    rules_in_use = rules or WIDENING_RULES
-
     total_events_scanned = 0
-    with_features = 0
     without_features = 0
     repeats_skipped = 0
-    v1_count = 0
-    counts: dict[str, int] = {name: 0 for name in rules_in_use}
+    rows: list[tuple[dict[str, Any], list[dict[str, Any]], int]] = []
     for ev in events:
         if not isinstance(ev, dict):
             continue
@@ -1575,7 +1624,43 @@ def compute_widening_preview(
         # `bool` ⊂ `int` — same caveat as `_silent_miss_from_event`.
         if not isinstance(recent, int) or isinstance(recent, bool):
             recent = 0
-        with_features += 1
+        rows.append((ev, top_hits, recent))
+    return _ReplayableAudits(
+        total_events_scanned=total_events_scanned,
+        with_features=len(rows),
+        without_features=without_features,
+        repeats_skipped=repeats_skipped,
+        rows=rows,
+    )
+
+
+def compute_widening_preview(
+    events: Iterable[dict[str, Any]],
+    *,
+    rules: dict[str, ThresholdRule] | None = None,
+    since: timedelta | None = None,
+    now: datetime | None = None,
+) -> WideningPreviewReport:
+    """Replay candidate looser rules over the turn_audited stream.
+
+    Walks miss-capable (`verdict != "no_signal"`, non-repeat)
+    `turn_audited` events carrying `top_hits` and counts, per rule in
+    `rules` (default `WIDENING_RULES`), how many turns it would have
+    flagged — alongside the replayed v1 baseline the deltas are
+    measured against. See the section comment above for why the
+    baseline is replayed rather than read off the logged verdict.
+    """
+    now = now or datetime.now(timezone.utc)
+    rules_in_use = rules or WIDENING_RULES
+
+    walk = _collect_replayable_audits(events, since=since, now=now)
+    total_events_scanned = walk.total_events_scanned
+    with_features = walk.with_features
+    without_features = walk.without_features
+    repeats_skipped = walk.repeats_skipped
+    v1_count = 0
+    counts: dict[str, int] = {name: 0 for name in rules_in_use}
+    for _, top_hits, recent in walk.rows:
         if _rule_v1_top1_high(top_hits, recent):
             v1_count += 1
         for name, rule in rules_in_use.items():
@@ -1655,6 +1740,432 @@ def render_widening_preview_text(report: WideningPreviewReport) -> str:
     lines.append("blind-spot cohort. Both sides exclude shielded turns but")
     lines.append("not the project-suppression arm (see compute docstring),")
     lines.append("so absolute counts are upper bounds; the delta is the signal.")
+    return "\n".join(lines) + "\n"
+
+
+# ---------------------------------------------------------------------------
+# Widening detail — per-flagged-turn evidence for precision labeling
+# ---------------------------------------------------------------------------
+#
+# The counting lane above answers "how MANY turns would a widened rule
+# flag"; the flip decision the roadmap gates on needs "WHICH turns,
+# against WHICH memories, on what evidence" — without that, a big
+# delta is uninterpretable (it could be one over-matched memory or a
+# genuinely wide blind spot). This lane dumps the flagged cohort so a
+# human (or the model itself) can precision-label it.
+#
+# Evidence per turn is exactly what the `turn_audited` event already
+# carries — no new logging: the redacted `probe_query`
+# ({hash, preview, len} by default; the verbatim string only when
+# `log_queries_verbatim` is on), the top hit's raw coverage pair, both
+# relevance labels, and the hit's memory id joined against the active
+# store + tombstone log for a summary. Rendering never widens
+# exposure beyond what the log already holds.
+
+
+def _probe_query_display(
+    value: Any,
+) -> tuple[str | None, int | None, str | None]:
+    """Normalise the two on-disk `probe_query` shapes for display.
+
+    Returns ``(preview, length, hash_prefix)``. The redacted shape
+    (default since 2.6.8) is ``{hash, preview, len}``; the verbatim
+    shape (opt-in `log_queries_verbatim`) is a plain string, whose
+    "preview" is the string itself — the log already holds it, so the
+    report reveals nothing new.
+    """
+    if isinstance(value, str):
+        return value, len(value), None
+    if isinstance(value, dict):
+        preview = value.get("preview")
+        length = value.get("len")
+        digest = value.get("hash")
+        return (
+            preview if isinstance(preview, str) else None,
+            length
+            if isinstance(length, int) and not isinstance(length, bool)
+            else None,
+            digest if isinstance(digest, str) else None,
+        )
+    return None, None, None
+
+
+@dataclass
+class WideningFlaggedTurn:
+    """One audited turn a widening rule would flag, with its evidence."""
+
+    ts: str | None
+    session_id: str | None
+    client_model: str | None
+    probe_query_preview: str | None
+    probe_query_len: int | None
+    probe_query_hash: str | None
+    top_hit_id: str
+    top_hit_score: float | None
+    relevance_v1: str | None
+    relevance_v2: str | None
+    matched_unique: int | None
+    query_unique: int | None
+    v1_also_flagged: bool
+    memory_status: str  # "active" | "tombstoned" | "unknown"
+    memory_summary: str | None
+    memory_scopes: list[str] | None
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "ts": self.ts,
+            "session_id": self.session_id,
+            "client_model": self.client_model,
+            "probe_query_preview": self.probe_query_preview,
+            "probe_query_len": self.probe_query_len,
+            "probe_query_hash": self.probe_query_hash,
+            "top_hit_id": self.top_hit_id,
+            "top_hit_score": self.top_hit_score,
+            "relevance_v1": self.relevance_v1,
+            "relevance_v2": self.relevance_v2,
+            "matched_unique": self.matched_unique,
+            "query_unique": self.query_unique,
+            "v1_also_flagged": self.v1_also_flagged,
+            "memory_status": self.memory_status,
+            "memory_summary": self.memory_summary,
+            "memory_scopes": self.memory_scopes,
+        }
+
+
+@dataclass
+class WideningMemoryRollup:
+    """Aggregate of one memory's appearances as a flagged top hit.
+
+    Flag concentration is the first diagnostic: N flags across two
+    memories is a ranking problem with those two memories; N flags
+    across N memories is a genuinely wide label change.
+    """
+
+    memory_id: str
+    count: int
+    distinct_sessions: int
+    status: str
+    summary: str | None
+    scopes: list[str] | None
+    score_min: float | None
+    score_max: float | None
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "memory_id": self.memory_id,
+            "count": self.count,
+            "distinct_sessions": self.distinct_sessions,
+            "status": self.status,
+            "summary": self.summary,
+            "scopes": self.scopes,
+            "score_min": self.score_min,
+            "score_max": self.score_max,
+        }
+
+
+@dataclass
+class WideningRuleDetail:
+    """Flagged cohort for one widening rule."""
+
+    rule: str
+    description: str
+    flagged_total: int
+    beyond_v1: int
+    turns: list[WideningFlaggedTurn] = field(default_factory=list)
+    by_memory: list[WideningMemoryRollup] = field(default_factory=list)
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "rule": self.rule,
+            "description": self.description,
+            "flagged_total": self.flagged_total,
+            "beyond_v1": self.beyond_v1,
+            "turns": [t.to_dict() for t in self.turns],
+            "by_memory": [m.to_dict() for m in self.by_memory],
+        }
+
+
+@dataclass
+class WideningDetailReport:
+    """Per-turn evidence behind `WideningPreviewReport`'s counts.
+
+    Header counters are computed from the same
+    `_collect_replayable_audits` walk as the counting lane, so the two
+    reports over the same stream always agree.
+    """
+
+    generated_at: datetime
+    window_seconds: int | None
+    total_events_scanned: int
+    audits_with_features: int
+    audits_without_features: int
+    repeat_audits_skipped: int
+    v1_baseline_flagged: int
+    rules: list[WideningRuleDetail] = field(default_factory=list)
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "generated_at": self.generated_at.isoformat(),
+            "window_seconds": self.window_seconds,
+            "total_events_scanned": self.total_events_scanned,
+            "audits_with_features": self.audits_with_features,
+            "audits_without_features": self.audits_without_features,
+            "repeat_audits_skipped": self.repeat_audits_skipped,
+            "v1_baseline_flagged": self.v1_baseline_flagged,
+            "rules": [r.to_dict() for r in self.rules],
+        }
+
+
+def compute_widening_detail(
+    events: Iterable[dict[str, Any]],
+    *,
+    memories: list[Memory] | None = None,
+    tombstoned_ids: set[str] | None = None,
+    rules: dict[str, ThresholdRule] | None = None,
+    since: timedelta | None = None,
+    now: datetime | None = None,
+) -> WideningDetailReport:
+    """Collect per-turn evidence for every widening-rule flag.
+
+    Same replay semantics as `compute_widening_preview` (shared walk;
+    see `_ReplayableAudits`), but instead of counting it materialises
+    each flagged turn with its logged evidence, plus a per-memory
+    rollup of where the flags concentrate. `memories` /
+    `tombstoned_ids` resolve top-hit ids to summaries the way
+    `compute_eval` does; omitted, every hit reports
+    ``memory_status="unknown"``.
+    """
+    now = now or datetime.now(timezone.utc)
+    rules_in_use = rules or WIDENING_RULES
+    by_id = {m.id: m for m in (memories or [])}
+    tombstones = tombstoned_ids or set()
+
+    def _resolve(memory_id: str) -> tuple[str, str | None, list[str] | None]:
+        mem = by_id.get(memory_id)
+        if mem is not None:
+            return "active", first_summary_line(mem.body), list(mem.scopes)
+        if memory_id in tombstones:
+            return "tombstoned", None, None
+        return "unknown", None, None
+
+    walk = _collect_replayable_audits(events, since=since, now=now)
+    v1_count = 0
+    flagged_by_rule: dict[str, list[WideningFlaggedTurn]] = {
+        name: [] for name in rules_in_use
+    }
+    sessions_by_rule_memory: dict[str, dict[str, set[str | None]]] = {
+        name: {} for name in rules_in_use
+    }
+    for ev, top_hits, recent in walk.rows:
+        v1_flags = _rule_v1_top1_high(top_hits, recent)
+        if v1_flags:
+            v1_count += 1
+        firing = [
+            name for name, rule in rules_in_use.items() if rule.check(top_hits, recent)
+        ]
+        if not firing:
+            continue
+        top = top_hits[0] if isinstance(top_hits[0], dict) else {}
+        preview, length, digest = _probe_query_display(ev.get("probe_query"))
+        raw_score = top.get("score")
+        score = (
+            float(raw_score)
+            if isinstance(raw_score, (int, float)) and not isinstance(raw_score, bool)
+            else None
+        )
+        matched = top.get("matched_unique")
+        q_unique = top.get("query_unique")
+        memory_id = str(top.get("id") or "?")
+        status, summary, scopes = _resolve(memory_id)
+        session = ev.get("session_id") or ev.get("session")
+        turn = WideningFlaggedTurn(
+            ts=ev.get("ts") if isinstance(ev.get("ts"), str) else None,
+            session_id=session if isinstance(session, str) else None,
+            client_model=(
+                ev.get("client_model")
+                if isinstance(ev.get("client_model"), str)
+                else None
+            ),
+            probe_query_preview=preview,
+            probe_query_len=length,
+            probe_query_hash=digest,
+            top_hit_id=memory_id,
+            top_hit_score=score,
+            relevance_v1=(
+                top.get("relevance") if isinstance(top.get("relevance"), str) else None
+            ),
+            relevance_v2=(
+                top.get("relevance_v2")
+                if isinstance(top.get("relevance_v2"), str)
+                else None
+            ),
+            matched_unique=(
+                matched
+                if isinstance(matched, int) and not isinstance(matched, bool)
+                else None
+            ),
+            query_unique=(
+                q_unique
+                if isinstance(q_unique, int) and not isinstance(q_unique, bool)
+                else None
+            ),
+            v1_also_flagged=v1_flags,
+            memory_status=status,
+            memory_summary=summary,
+            memory_scopes=scopes,
+        )
+        for name in firing:
+            flagged_by_rule[name].append(turn)
+            sessions_by_rule_memory[name].setdefault(memory_id, set()).add(
+                turn.session_id
+            )
+
+    rule_details: list[WideningRuleDetail] = []
+    for name, rule in rules_in_use.items():
+        turns = flagged_by_rule[name]
+        # Newest first; undated rows sink to the end in stream order.
+        turns_sorted = sorted(
+            turns,
+            key=lambda t: (0, t.ts) if t.ts is not None else (1, ""),
+            reverse=True,
+        )
+        rollup: dict[str, WideningMemoryRollup] = {}
+        for t in turns:
+            row = rollup.get(t.top_hit_id)
+            if row is None:
+                rollup[t.top_hit_id] = WideningMemoryRollup(
+                    memory_id=t.top_hit_id,
+                    count=1,
+                    distinct_sessions=0,  # filled after the loop
+                    status=t.memory_status,
+                    summary=t.memory_summary,
+                    scopes=t.memory_scopes,
+                    score_min=t.top_hit_score,
+                    score_max=t.top_hit_score,
+                )
+                continue
+            row.count += 1
+            if t.top_hit_score is not None:
+                row.score_min = (
+                    t.top_hit_score
+                    if row.score_min is None
+                    else min(row.score_min, t.top_hit_score)
+                )
+                row.score_max = (
+                    t.top_hit_score
+                    if row.score_max is None
+                    else max(row.score_max, t.top_hit_score)
+                )
+        for memory_id, row in rollup.items():
+            row.distinct_sessions = len(
+                sessions_by_rule_memory[name].get(memory_id, set())
+            )
+        by_memory = sorted(rollup.values(), key=lambda r: (-r.count, r.memory_id))
+        rule_details.append(
+            WideningRuleDetail(
+                rule=name,
+                description=rule.description,
+                flagged_total=len(turns),
+                beyond_v1=sum(1 for t in turns if not t.v1_also_flagged),
+                turns=turns_sorted,
+                by_memory=by_memory,
+            )
+        )
+    rule_details.sort(key=lambda r: (-r.flagged_total, r.rule))
+
+    return WideningDetailReport(
+        generated_at=now,
+        window_seconds=int(since.total_seconds()) if since is not None else None,
+        total_events_scanned=walk.total_events_scanned,
+        audits_with_features=walk.with_features,
+        audits_without_features=walk.without_features,
+        repeat_audits_skipped=walk.repeats_skipped,
+        v1_baseline_flagged=v1_count,
+        rules=rule_details,
+    )
+
+
+def _clip(text: str, limit: int) -> str:
+    return text if len(text) <= limit else text[: limit - 1] + "…"
+
+
+def render_widening_detail_text(report: WideningDetailReport) -> str:
+    """Plain-text rendering: per-memory concentration first (the fast
+    diagnostic), then the flagged turns newest-first."""
+    lines: list[str] = []
+    window = (
+        "all time"
+        if report.window_seconds is None
+        else _humanize_seconds(report.window_seconds)
+    )
+    lines.append(f"bettermemory eval --widening-preview --detail — last {window}")
+    lines.append("─" * 60)
+    lines.append(
+        f"Replayable audited turns {report.audits_with_features:>5d}    "
+        f"v1 baseline (replayed) {report.v1_baseline_flagged:>4d}"
+    )
+    if report.audits_with_features == 0:
+        lines.append("")
+        lines.append(
+            "No replayable audited turns yet. The detail lane needs "
+            "`turn_audited` events carrying `top_hits` (3.14+); let the "
+            "Stop hook run for a while and re-check."
+        )
+        return "\n".join(lines) + "\n"
+    for detail in report.rules:
+        lines.append("")
+        lines.append(
+            f"{detail.rule} — {detail.flagged_total} flagged, "
+            f"{detail.beyond_v1} beyond v1"
+        )
+        lines.append(f"  {detail.description}")
+        if not detail.turns:
+            continue
+        lines.append("")
+        lines.append(f"  by top-hit memory ({len(detail.by_memory)} distinct):")
+        for row in detail.by_memory:
+            scores = (
+                "score —"
+                if row.score_min is None or row.score_max is None
+                else f"score {row.score_min:.3f}–{row.score_max:.3f}"
+            )
+            scopes = ",".join(row.scopes or []) or "—"
+            lines.append(
+                f"  {row.count:>4d}×  {row.memory_id}  {row.status:<10s} "
+                f"{scores}  sessions={row.distinct_sessions}"
+            )
+            lines.append(
+                f"         [{_clip(scopes, 44)}] "
+                f"{_clip(row.summary or '(no summary)', 60)}"
+            )
+        lines.append("")
+        lines.append("  flagged turns (newest first):")
+        for t in detail.turns:
+            ts = (t.ts or "?")[:19]
+            cov = (
+                f"{t.matched_unique}/{t.query_unique}"
+                if t.matched_unique is not None and t.query_unique is not None
+                else "?/?"
+            )
+            marker = "  [v1 too]" if t.v1_also_flagged else ""
+            preview = t.probe_query_preview or "(no probe_query logged)"
+            suffix = (
+                ""
+                if t.probe_query_len is None
+                or t.probe_query_preview is None
+                or t.probe_query_len <= len(t.probe_query_preview)
+                else f" (+{t.probe_query_len - len(t.probe_query_preview)} chars)"
+            )
+            lines.append(
+                f"    {ts}  cov {cov:>6s}  v1={t.relevance_v1 or '?'}"
+                f"{marker}  → {t.top_hit_id[:10]}…"
+            )
+            lines.append(f'      "{_clip(preview, 70)}"{suffix}')
+    lines.append("")
+    lines.append("Label each turn: would inlining the top hit's body have")
+    lines.append("helped this message? Concentration on one memory means a")
+    lines.append("ranking problem, not a label problem — fix the memory or")
+    lines.append("the rule, not the formula.")
     return "\n".join(lines) + "\n"
 
 
@@ -1914,7 +2425,13 @@ __all__ = [
     "ThresholdRule",
     "ThresholdSweepReport",
     "ThresholdSweepRow",
+    "WideningDetailReport",
+    "WideningFlaggedTurn",
+    "WideningMemoryRollup",
+    "WideningPreviewReport",
+    "WideningRuleDetail",
     "THRESHOLD_RULES",
+    "WIDENING_RULES",
     "TOOLS_WITHOUT_TELEMETRY",
     "DEFAULT_SINCE_SPEC",
     "DEFAULT_ENDORSEMENT_MIN_RETRIEVALS",
@@ -1922,8 +2439,12 @@ __all__ = [
     "compute_eval",
     "compute_tool_usage",
     "compute_threshold_sweep",
+    "compute_widening_detail",
+    "compute_widening_preview",
     "parse_since",
     "render_text",
     "render_tool_usage_text",
     "render_threshold_sweep_text",
+    "render_widening_detail_text",
+    "render_widening_preview_text",
 ]

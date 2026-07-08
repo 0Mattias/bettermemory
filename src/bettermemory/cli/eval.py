@@ -97,11 +97,26 @@ def add_subparser(
             "Switch to a replay of candidate LOOSER threshold rules over "
             "the turn_audited stream (3.14+ events carry per-turn "
             "top_hits with the raw coverage features). Reports how many "
-            "audited turns each widening candidate (w1_top1_v2_high — "
-            "the shadow relevance label) would flag beyond the replayed "
-            "v1 baseline. The forward-looking counterpart to "
-            "--threshold-sweep, which can only compare rules at least "
-            "as strict as v1. Honours `--since` and `--json`."
+            "audited turns each widening candidate (w1_top1_v2_high, "
+            "w2_top1_v2_high_from_medium — the shadow relevance label) "
+            "would flag beyond the replayed v1 baseline. The "
+            "forward-looking counterpart to --threshold-sweep, which "
+            "can only compare rules at least as strict as v1. Honours "
+            "`--since` and `--json`; add --detail for the per-turn "
+            "labeling surface."
+        ),
+    )
+    parser.add_argument(
+        "--detail",
+        action="store_true",
+        help=(
+            "With --widening-preview: dump each flagged turn's evidence "
+            "(redacted probe-query preview, top-hit coverage features, "
+            "both relevance labels, the hit's memory summary) plus a "
+            "per-memory concentration rollup, instead of just counts. "
+            "This is the precision-labeling surface the relevance-v2 "
+            "flip decision reads. Errors when used without "
+            "--widening-preview."
         ),
     )
     parser.add_argument(
@@ -132,6 +147,7 @@ def run(
         tool_usage=args.tool_usage,
         threshold_sweep=args.threshold_sweep,
         widening_preview=args.widening_preview,
+        widening_detail=args.detail,
         parser=sub_parser,
     )
 
@@ -146,6 +162,7 @@ def _cli_eval(
     tool_usage: bool,
     threshold_sweep: bool,
     widening_preview: bool,
+    widening_detail: bool = False,
     parser: Any,
 ) -> None:
     """`bettermemory eval` — compute and render the effectiveness report.
@@ -176,11 +193,13 @@ def _cli_eval(
         compute_eval,
         compute_threshold_sweep,
         compute_tool_usage,
+        compute_widening_detail,
         compute_widening_preview,
         parse_since,
         render_text,
         render_threshold_sweep_text,
         render_tool_usage_text,
+        render_widening_detail_text,
         render_widening_preview_text,
     )
     from ..events import iter_all_events
@@ -190,6 +209,10 @@ def _cli_eval(
             "--tool-usage, --threshold-sweep, and --widening-preview "
             "are mutually exclusive"
         )
+        return  # pragma: no cover — parser.error raises SystemExit
+
+    if widening_detail and not widening_preview:
+        parser.error("--detail only applies to --widening-preview")
         return  # pragma: no cover — parser.error raises SystemExit
 
     try:
@@ -233,6 +256,23 @@ def _cli_eval(
         return
 
     if widening_preview:
+        if widening_detail:
+            # The detail lane joins top-hit ids against the store for
+            # summaries the same way rate-mode does (active memories +
+            # tombstone log), so a flagged hit whose memory was since
+            # removed reads "tombstoned" rather than resurfacing.
+            detail_store = ctx.store
+            detail_report = compute_widening_detail(
+                events=iter_all_events(directory),
+                since=since,
+                memories=detail_store.load_all(),
+                tombstoned_ids={t.id for t in detail_store.load_tombstones()},
+            )
+            if json_out:
+                sys.stdout.write(_json.dumps(detail_report.to_dict(), indent=2) + "\n")
+            else:
+                sys.stdout.write(render_widening_detail_text(detail_report))
+            return
         preview_report = compute_widening_preview(
             events=iter_all_events(directory),
             since=since,

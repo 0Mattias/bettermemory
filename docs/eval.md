@@ -146,15 +146,30 @@ Three additional modes:
   candidate LOOSER rules over the `turn_audited` stream, which since
   3.14 carries per-turn `top_hits` with the raw coverage features
   (`matched_unique` / `query_unique` / `score`) plus the shadow
-  `relevance_v2` label. The bundled candidate (`w1_top1_v2_high`) adds
+  `relevance_v2` label. Two bundled candidates: `w1_top1_v2_high` adds
   an absolute matched-token floor to the coverage fraction, targeting
   the documented blind spot where long natural-language queries land at
-  "medium" on strong matches. The v1 baseline is replayed from the same
+  "medium" on strong matches; `w2_top1_v2_high_from_medium` keeps only
+  w1's medium→high promotions after the 2026-07-08 labeling pass
+  (docs/eval/widening-labeling-2026-07-08.md) measured w1's low→high
+  cohort at ~20% precision. The v1 baseline is replayed from the same
   features, so the delta isolates the rule change; both sides slightly
   overcount production (the project-suppression arm isn't replayable
   from the event), so read the delta, not the absolutes. Because
   logging the RAW pair makes the record formula-agnostic, any future
   candidate rule can be back-tested the same way.
+- `--widening-preview --detail`: the precision-labeling surface behind
+  the counts. Dumps each flagged turn's logged evidence — the redacted
+  `probe_query` preview ({hash, 32-char preview, len} by default; the
+  verbatim string only under `log_queries_verbatim`), the top hit's
+  coverage pair and both relevance labels, and the hit's memory id
+  joined against the active store + tombstone log for a summary — plus
+  a per-memory concentration rollup. Concentration is the first
+  diagnostic: N flags on two memories is a ranking problem with those
+  memories; N flags across N memories is a genuinely wide label change.
+  The flip decision on `relevance_v2` reads this lane, not the counts.
+  Both lanes share one event-filter pipeline (`_collect_replayable_
+  audits`), so the counts and the listed turns can never disagree.
 
 All honor `--since` and `--json`. Rules live in
 `eval.THRESHOLD_RULES` / `eval.WIDENING_RULES`; adding one is a checker
