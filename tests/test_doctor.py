@@ -1461,3 +1461,59 @@ def test_check_event_log_uses_canonical_event_log_filename(
         "doctor's log_path constructed a different filename than "
         "events.EVENT_LOG_FILENAME — see doctor.py:_check_event_log_writable"
     )
+
+
+def test_mcp_client_configs_ok_for_pinned_uvx_runner_shape(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A version-pinned `uvx bettermemory@latest` runner entry is a valid
+    install — the exact-arg gate matched only the bare name, so doctor fell
+    through the substring prefilter and reported a healthy pinned install as
+    absent (the false-negative the 3.15.0 changelog claimed eliminated). The
+    shared recognizer must accept it."""
+    real_binary = tmp_path / "bettermemory"
+    real_binary.write_text("#!/bin/sh\n", encoding="utf-8")
+    target = tmp_path / "fake_config.json"
+    target.write_text(
+        json.dumps(
+            {
+                "mcpServers": {
+                    "memory": {"command": "uvx", "args": ["bettermemory@latest"]}
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr("bettermemory.doctor.KNOWN_CLIENTS", _tmp_clients(tmp_path))
+    monkeypatch.setattr("bettermemory.doctor.find_binary", lambda: str(real_binary))
+    diag = _check_mcp_client_configs()
+    assert diag.status == "ok"
+    assert "1 client config(s)" in diag.message
+
+
+def test_doctor_flags_stale_config_lockfile(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The 0-byte `<config>.lock` REGULAR FILE bettermemory 3.15.0 left wedges
+    Claude Code's own mkdir-style config lock; doctor must surface it with the
+    heal path. A DIRECTORY at that name is the client's own lock — not
+    flagged."""
+    from bettermemory.doctor import _check_stale_config_lockfiles
+
+    target = tmp_path / "fake_config.json"
+    target.write_text("{}", encoding="utf-8")
+    monkeypatch.setattr("bettermemory.doctor.KNOWN_CLIENTS", _tmp_clients(tmp_path))
+
+    stale = tmp_path / "fake_config.json.lock"
+    stale.touch()
+    diag = _check_stale_config_lockfiles()
+    assert diag.status == "warn"
+    assert str(stale) in diag.message
+    assert diag.fix_hint is not None and "init" in diag.fix_hint
+
+    stale.unlink()
+    stale.mkdir()  # the client's own directory lock — not ours to judge
+    diag = _check_stale_config_lockfiles()
+    assert diag.status == "ok"

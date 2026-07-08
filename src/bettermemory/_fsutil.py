@@ -335,12 +335,14 @@ _FLOCK_WARNED = False
 
 
 @contextlib.contextmanager
-def flock_excl(path: Path) -> Generator[None, None, None]:
+def flock_excl(
+    path: Path, *, lock_suffix: str = ".lock"
+) -> Generator[None, None, None]:
     """Cross-process exclusive lock on a sidecar lockfile next to ``path``.
 
-    POSIX path: ``fcntl.flock(fd, LOCK_EX)`` on ``<path>.lock``. The
-    lockfile is created (or opened) at ``path.with_suffix(suffix +
-    ".lock")`` and held under ``LOCK_EX`` for the duration of the
+    POSIX path: ``fcntl.flock(fd, LOCK_EX)`` on ``<path><lock_suffix>``.
+    The lockfile is created (or opened) at ``path.with_suffix(suffix +
+    lock_suffix)`` and held under ``LOCK_EX`` for the duration of the
     ``with`` block. The lockfile is NOT unlinked on release — see the
     2.6.3 audit note: ``flock`` identity is per-inode; unlinking on
     release lets a third opener race in between the holder's
@@ -348,6 +350,20 @@ def flock_excl(path: Path) -> Generator[None, None, None]:
     different inodes that both believe they own the lock. Persisting
     the 0-byte lockfile keeps every ``os.open(lock_path, O_CREAT)``
     on the same inode so the flock actually serialises.
+
+    ``lock_suffix`` exists for callers locking a file bettermemory does
+    NOT own. The default ``<path>.lock`` name is a common convention:
+    on a foreign-owned file (a client's ``~/.claude.json``) it can
+    COLLIDE with the owner's own locking protocol — Claude Code takes a
+    proper-lockfile mkdir-style DIRECTORY lock at exactly
+    ``<config>.lock``, so a persistent regular file there wedges the
+    client's lock acquisition (mkdir → EEXIST) and its stale-lock
+    cleanup (rmdir → ENOTDIR) until the file is hand-deleted, while the
+    client's live lock directory makes our ``os.open`` die with EISDIR.
+    Such callers pass a bettermemory-namespaced suffix (e.g.
+    ``".bettermemory.lock"``) so the sidecar can never squat on a name
+    another protocol owns. Files under bettermemory's own directories
+    keep the default.
 
     Windows path (audit H3): ``msvcrt.locking(fd, LK_NBLCK, 1)`` on
     the same sidecar lockfile, with a retry-with-exponential-backoff
@@ -381,7 +397,7 @@ def flock_excl(path: Path) -> Generator[None, None, None]:
     pattern-generalization audit note.
     """
     path.parent.mkdir(parents=True, exist_ok=True)
-    lock_path = path.with_suffix(path.suffix + ".lock")
+    lock_path = path.with_suffix(path.suffix + lock_suffix)
 
     if sys.platform == "win32":  # pragma: no cover - non-unix in CI
         yield from _flock_windows(lock_path)

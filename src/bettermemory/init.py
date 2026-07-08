@@ -306,8 +306,10 @@ def command_launches_bettermemory(
     cmd_path = Path(command)
     if not cmd_path.is_absolute() and cmd_path.name == DEFAULT_SERVER_NAME:
         return True
-    if cmd_path.name in {"uvx", "uv"} and isinstance(args, list):
-        if any(a == DEFAULT_SERVER_NAME for a in args if isinstance(a, str)):
+    # `.stem.lower()` (not `.name`) so the Windows `uvx.exe` / `Uv.exe`
+    # spellings of the same runner are recognized too.
+    if cmd_path.stem.lower() in {"uvx", "uv"} and isinstance(args, list):
+        if _uv_args_run_bettermemory(args):
             return True
     if cmd_path.is_absolute() and cmd_path.exists():
         try:
@@ -316,6 +318,84 @@ def command_launches_bettermemory(
         except OSError:
             # `resolve()` can raise on a broken symlink; treat as no match.
             pass
+    return False
+
+
+# uv/uvx flags that consume the NEXT token as their value. Only the ones that
+# matter for telling "the package uvx runs" apart from its neighbors: a
+# dependency injected via `--with` / `--from` must not make an unrelated
+# server entry look like ours. An unknown value-taking flag degrades to
+# treating its value as the positional — strictly narrower than the any-arg
+# scan this replaces.
+_UV_VALUE_FLAGS = {
+    "--from",
+    "--with",
+    "--with-requirements",
+    "--python",
+    "-p",
+    "--index",
+    "--index-url",
+    "--extra-index-url",
+    "--default-index",
+    "--constraint",
+    "-c",
+    "--exclude-newer",
+    "--directory",
+    "--project",
+    "--config-file",
+}
+
+# uv subcommand words that still mean "run a tool" — `uv tool run X`,
+# `uv run X`, `uv x X` — skipped before the positional walk.
+_UV_RUN_SUBCOMMANDS = {"tool", "run", "x"}
+
+# Version-pin separators uvx/PEP 508 accept directly after a distribution
+# name: `bettermemory@latest`, `bettermemory==3.15.0`, `bettermemory>=3`, …
+_UV_PIN_SEPARATORS = ("@", "==", ">=", "<=", "~=", "!=", ">", "<")
+
+
+def _names_bettermemory_package(token: str) -> bool:
+    """True when `token` names the bettermemory distribution — bare or
+    version-pinned. The separator must follow the name IMMEDIATELY so a
+    different distribution that merely starts with the string
+    (`bettermemory-evil@1.0`) cannot match."""
+    if token == DEFAULT_SERVER_NAME:
+        return True
+    return any(
+        token.startswith(DEFAULT_SERVER_NAME + sep) for sep in _UV_PIN_SEPARATORS
+    )
+
+
+def _uv_args_run_bettermemory(args: list[Any]) -> bool:
+    """True when a uv/uvx arg vector RUNS bettermemory, as opposed to merely
+    depending on it.
+
+    The any-arg scan this replaces matched `bettermemory` in ANY position, so
+    `uv run --with bettermemory other-mcp-server` — bettermemory as a
+    dependency of a FOREIGN server — was recognized as ours (and init would
+    delete and rewrite that entry: the too-broad direction), while the
+    version-pinned shapes uvx documents (`bettermemory@latest`,
+    `bettermemory==3.15.0`) matched nothing and doctor reported a healthy
+    install missing (the too-narrow direction). Walk the vector instead:
+    skip run-ish subcommand words, skip flags (consuming the value token for
+    flags known to take one), and test the FIRST real positional — the
+    package/command uv actually runs."""
+    tokens = [a for a in args if isinstance(a, str)]
+    i = 0
+    while i < len(tokens):
+        tok = tokens[i]
+        if tok in _UV_RUN_SUBCOMMANDS:
+            i += 1
+            continue
+        if tok.startswith("-"):
+            if "=" in tok:
+                i += 1  # `--from=pkg` is self-contained
+            elif tok in _UV_VALUE_FLAGS:
+                i += 2  # flag + its value token
+            else:
+                i += 1  # bare flag (`-q`, `--no-cache`, …)
+            continue
+        return _names_bettermemory_package(tok)
     return False
 
 
@@ -330,6 +410,41 @@ def _config_signature(path: Path) -> tuple[int, int]:
     baseline and the pre-write re-stat then matches, clobbering it."""
     st = path.stat()
     return (st.st_mtime_ns, st.st_size)
+
+
+def _heal_stale_sidecar_lockfile(target_path: Path) -> Path | None:
+    """Remove the 0-byte ``<target>.lock`` REGULAR FILE bettermemory 3.15.0
+    left next to client configs.
+
+    3.15.0's RMW lock used the shared flock sidecar convention — a persistent
+    0-byte regular file at ``<target>.lock``. That name collides with the
+    mkdir-style DIRECTORY lock some clients take on their own config: Claude
+    Code (proper-lockfile) acquires ``~/.claude.json.lock`` via mkdir and
+    clears stale locks via rmdir, so a regular file squatting there reads as
+    "lock held" (mkdir → EEXIST) and the stale-cleanup dies (rmdir → ENOTDIR)
+    forever — the client cannot persist config until the file is hand-deleted.
+    bettermemory now locks a private ``<target>.bettermemory.lock`` sidecar
+    and never touches ``<target>.lock``; this heal removes only the exact
+    artifact 3.15.0 created — a REGULAR (non-directory, non-symlink) EMPTY
+    file — and leaves anything else (a client's live lock directory, a
+    non-empty file some other tool owns) alone. Removing it under a
+    concurrently-held 3.15.0 flock would degrade that older process's
+    serialization for one run — bounded to the mixed-version upgrade window
+    and strictly better than leaving the client's config lock wedged.
+    """
+    legacy_lock = target_path.with_suffix(target_path.suffix + ".lock")
+    try:
+        if (
+            legacy_lock.is_file()
+            and not legacy_lock.is_symlink()
+            and legacy_lock.stat().st_size == 0
+        ):
+            legacy_lock.unlink()
+            return legacy_lock
+    except OSError:
+        # Healing is best-effort; a permission error must not fail init.
+        pass
+    return None
 
 
 def patch_client_config(
@@ -358,11 +473,21 @@ def patch_client_config(
     alone in case the user is intentionally hosting two memory servers.
 
     Concurrency: the whole read-modify-write is held under
-    `_fsutil.flock_excl` (so two bettermemory writers serialise) and the
-    file is re-stat'd immediately before the atomic write — a change by a
-    non-locking writer (the live Claude Code process that RMWs
-    `~/.claude.json`) aborts with a ValueError rather than clobbering the
-    client's update.
+    `_fsutil.flock_excl` on a PRIVATE `<target>.bettermemory.lock` sidecar
+    (so two bettermemory writers serialise without squatting on
+    `<target>.lock`, a name the owning client's own locking protocol may
+    use — Claude Code takes a mkdir-style directory lock there), and the
+    file is re-checked immediately before the atomic write: a change to a
+    pre-existing file (mtime/size signature moved) or a file CREATED under
+    us by a non-locking writer aborts with a ValueError rather than
+    clobbering the client's update. The guard covers the read→pre-write
+    window; the few milliseconds between that re-check and the atomic
+    rename remain unguarded against a non-cooperating writer — with no
+    shared lock protocol between the processes a residual window is
+    irreducible, which is why the re-check sits as late as possible.
+    A leftover 3.15.0 `<target>.lock` regular file (which wedges Claude
+    Code's own config lock) is healed on entry; the result carries
+    `removed_stale_lockfile` when that happened.
 
     Raises ValueError when the existing file is not valid JSON, does not
     have an object at the root or at `mcpServers`, or changed on disk
@@ -374,16 +499,31 @@ def patch_client_config(
 
     target_path.parent.mkdir(parents=True, exist_ok=True)
 
+    # Heal the 3.15.0 artifact BEFORE locking: a poisoned `<target>.lock`
+    # regular file wedges the owning client's own mkdir-style lock until
+    # removed (see `_heal_stale_sidecar_lockfile`). Our lock below lives at
+    # a different, bettermemory-private name, so ordering is free.
+    healed_lock = _heal_stale_sidecar_lockfile(target_path)
+
     # `~/.claude.json` (the Claude Code user-scope target) is owned by a
     # live Claude Code process that read-modify-writes it on many events.
     # An UNLOCKED RMW here races that writer: we read a snapshot, the
     # client rewrites the file, then our atomic rename lands and silently
     # drops the client's update. Hold the cross-process `flock_excl` for
-    # the whole RMW so two bettermemory writers serialise, AND re-stat the
+    # the whole RMW so two bettermemory writers serialise, AND re-check the
     # file immediately before the atomic write so a change by the
     # NON-locking client aborts loudly instead of clobbering. It's a
     # single lock, so the lock order is trivial and deadlock-free.
-    with _fsutil.flock_excl(target_path):
+    #
+    # The sidecar is the PRIVATE `<target>.bettermemory.lock`, never
+    # `<target>.lock`: that default name collides with Claude Code's own
+    # proper-lockfile directory lock on `~/.claude.json.lock` — our
+    # persistent regular file there broke the client's mkdir/rmdir cycle
+    # (EEXIST, then ENOTDIR forever), and the client's live lock DIRECTORY
+    # made our `os.open` die with EISDIR. Distinct names remove the
+    # collision in both directions; interference with the client's
+    # unlocked writes stays covered by the signature guard below.
+    with _fsutil.flock_excl(target_path, lock_suffix=".bettermemory.lock"):
         baseline_sig: tuple[int, int] | None = None
         if target_path.exists():
             # Snapshot the on-disk signature BEFORE the read, not after. The
@@ -507,10 +647,22 @@ def patch_client_config(
 
         # Concurrency guard: a non-locking writer (the live Claude Code
         # process that owns `~/.claude.json`) may have rewritten the file
-        # after we snapshotted it. Re-stat immediately before the atomic
-        # replace; if mtime/size moved, abort rather than clobber the
-        # client's update. Raised as ValueError so the CLI renders a clean
-        # "re-run" message (exit 2) instead of a traceback.
+        # after we snapshotted it. Re-check immediately before the atomic
+        # replace; abort rather than clobber the client's update. Raised as
+        # ValueError so the CLI renders a clean "re-run" message (exit 2)
+        # instead of a traceback. Two shapes:
+        #
+        # 1. The file did not exist at read time but does now — a writer
+        #    CREATED it under us. Without this arm the skeleton doc below
+        #    would silently replace the client's brand-new config: the same
+        #    clobber class the signature guard closes, on the create path.
+        if baseline_sig is None and target_path.exists():
+            raise ValueError(
+                f"config at {target_path} was created under us between read "
+                f"and write (another process, likely the running client, "
+                f"wrote it). Nothing was modified; re-run init."
+            )
+        # 2. The file existed and its mtime/size signature moved.
         if baseline_sig is not None and _config_signature(target_path) != baseline_sig:
             raise ValueError(
                 f"config at {target_path} changed under us between read and "
@@ -537,6 +689,8 @@ def patch_client_config(
         }
         if legacy_present:
             result["migrated_from_legacy"] = True
+        if healed_lock is not None:
+            result["removed_stale_lockfile"] = str(healed_lock)
         return result
 
 

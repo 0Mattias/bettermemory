@@ -39,7 +39,7 @@ from typing import Any, Literal
 
 from .config import Config, load_config
 from .events import EVENT_LOG_FILENAME, iter_all_events
-from .init import KNOWN_CLIENTS, find_binary
+from .init import KNOWN_CLIENTS, command_launches_bettermemory, find_binary
 from .store import Store, count_active_memory_files, count_unparseable_memory_files
 
 
@@ -891,13 +891,17 @@ def _check_mcp_client_configs() -> Diagnosis:
                 # to report a healthy managed install as absent. uvx resolves
                 # the binary dynamically — there is no static path to validate,
                 # and the byte-path checks below assume `command` IS the binary
-                # — so recognize it (mirroring init.command_launches_bettermemory
-                # so the two agree on this shape) and record it healthy.
+                # — so recognize it via the SHARED init recognizer (one
+                # definition, so init and doctor cannot drift on which runner
+                # shapes count as ours: bare, version-pinned
+                # `bettermemory@latest` / `bettermemory==X`, `--from`,
+                # `uv tool run`, and the Windows `uvx.exe` spelling) and
+                # record it healthy.
                 args = entry.get("args")
                 if (
-                    Path(command).name in {"uvx", "uv"}
+                    Path(command).stem.lower() in {"uvx", "uv"}
                     and isinstance(args, list)
-                    and any(a == "bettermemory" for a in args if isinstance(a, str))
+                    and command_launches_bettermemory(command, args, resolved_binary)
                 ):
                     findings.append(
                         {
@@ -1037,6 +1041,61 @@ def _check_mcp_client_configs() -> Diagnosis:
         status="ok",
         message=f"{len(findings)} client config(s) reference bettermemory; all paths match.",
         details={"resolved_binary": resolved_binary, "findings": findings},
+    )
+
+
+def _check_stale_config_lockfiles() -> Diagnosis:
+    """Detect the `<config>.lock` REGULAR FILE bettermemory 3.15.0 left next
+    to client configs.
+
+    Claude Code locks `~/.claude.json` with a proper-lockfile mkdir-style
+    DIRECTORY lock at exactly that name, so the leftover file wedges the
+    client's config persistence (its lock mkdir sees EEXIST; its stale-lock
+    rmdir dies ENOTDIR) until the file is deleted. Doctor stays read-only:
+    report and point at the fix — a re-run of `bettermemory init` heals it
+    automatically. A DIRECTORY at that path is the client's own (live or
+    stale) lock and is not ours to judge; a NON-empty regular file may be
+    some other tool's lock with content; only the 0-byte regular-file
+    artifact 3.15.0 actually produced is flagged.
+    """
+    stale: list[str] = []
+    clients: list[str] = []
+    for client_name, getter in KNOWN_CLIENTS.items():
+        for path in getter().paths:
+            lock = path.with_suffix(path.suffix + ".lock")
+            try:
+                if (
+                    lock.is_file()
+                    and not lock.is_symlink()
+                    and lock.stat().st_size == 0
+                ):
+                    stale.append(str(lock))
+                    clients.append(client_name)
+            except OSError:
+                continue
+    if not stale:
+        return Diagnosis(
+            name="stale_config_lockfiles",
+            status="ok",
+            message="No stale bettermemory lockfiles next to client configs.",
+        )
+    distinct = sorted(set(clients))
+    return Diagnosis(
+        name="stale_config_lockfiles",
+        status="warn",
+        message=(
+            "Stale bettermemory 3.15.0 lockfile(s) next to client config(s): "
+            + ", ".join(stale)
+            + ". A regular file at `<config>.lock` wedges Claude Code's own "
+            "config lock (its stale-lock cleanup fails ENOTDIR), so the "
+            "client cannot persist settings until it is removed."
+        ),
+        fix_hint=(
+            "Re-run "
+            + " / ".join(f"`bettermemory init --client {n}`" for n in distinct)
+            + " (heals it automatically), or delete the file(s) by hand."
+        ),
+        details={"stale_lockfiles": stale},
     )
 
 
@@ -1293,11 +1352,13 @@ def run_diagnostics() -> DoctorReport:
         # Config load failed; we can still run the binary/client checks
         # but storage probes are not meaningful.
         checks.append(_safe("mcp_client_configs", _check_mcp_client_configs))
+        checks.append(_safe("stale_config_lockfiles", _check_stale_config_lockfiles))
         return DoctorReport(checks=[c for c in checks if c is not None])
 
     storage_pair = _safe("storage_directory", lambda: _check_storage_directory(cfg))
     if storage_pair is None:
         checks.append(_safe("mcp_client_configs", _check_mcp_client_configs))
+        checks.append(_safe("stale_config_lockfiles", _check_stale_config_lockfiles))
         return DoctorReport(checks=[c for c in checks if c is not None])
     storage_diag, directory = storage_pair
     checks.append(storage_diag)
@@ -1330,6 +1391,7 @@ def run_diagnostics() -> DoctorReport:
 
     checks.append(_safe("embeddings_extra", lambda: _check_embeddings_extra(cfg)))
     checks.append(_safe("mcp_client_configs", _check_mcp_client_configs))
+    checks.append(_safe("stale_config_lockfiles", _check_stale_config_lockfiles))
     checks.append(_safe("distinfo_metadata", _check_distinfo_metadata))
 
     # Filter out any None entries that snuck through (defensive).

@@ -1126,3 +1126,121 @@ def test_cli_init_continue_client_warns_legacy_shape(
     # …but warns that current Continue ignores this shape and points at YAML.
     assert "config.yaml" in captured.err
     assert "deprecated" in captured.err.lower()
+
+
+def test_patch_locks_private_sidecar_not_client_lock_name(tmp_path: Path) -> None:
+    """The RMW lock must live at the bettermemory-private
+    `<target>.bettermemory.lock`, never at `<target>.lock`. The default name
+    collides with the mkdir-style directory lock Claude Code takes on its own
+    config: the 3.15.0 sidecar file there read as "lock held" to the client's
+    mkdir and made its stale-lock rmdir fail ENOTDIR forever — config saves
+    broken until the file was hand-deleted. Reverting to the default suffix
+    recreates `<target>.lock` and fails both assertions."""
+    from bettermemory.init import patch_client_config
+
+    target = tmp_path / "config.json"
+    patch_client_config(target, binary="/usr/local/bin/bettermemory")
+    assert (tmp_path / "config.json.bettermemory.lock").exists()
+    assert not (tmp_path / "config.json.lock").exists()
+
+
+def test_patch_survives_client_dir_lock_and_leaves_it_alone(tmp_path: Path) -> None:
+    """The reverse collision direction: while the owning client holds (or has
+    crash-leaked) its mkdir-style lock DIRECTORY at `<target>.lock`,
+    bettermemory init must still work — 3.15.0's `os.open` on that exact path
+    died with EISDIR (exit 2) until the client cleaned its own lock — and must
+    not touch the client's directory."""
+    from bettermemory.init import patch_client_config
+
+    target = tmp_path / "config.json"
+    client_lock_dir = tmp_path / "config.json.lock"
+    client_lock_dir.mkdir()
+
+    result = patch_client_config(target, binary="/usr/local/bin/bettermemory")
+    assert result["action"] == "added"
+    # The client's lock directory is not ours to judge — left untouched.
+    assert client_lock_dir.is_dir()
+    assert "removed_stale_lockfile" not in result
+
+
+def test_patch_heals_stale_regular_lockfile(tmp_path: Path) -> None:
+    """A 0-byte REGULAR FILE at `<target>.lock` is the exact artifact 3.15.0
+    left (its persistent flock sidecar) and wedges Claude Code's own config
+    lock; init removes it and reports the healing. A NON-empty file at that
+    name may be some other tool's lock with content — left alone."""
+    from bettermemory.init import patch_client_config
+
+    poisoned = tmp_path / "poisoned" / "config.json"
+    poisoned.parent.mkdir()
+    stale = tmp_path / "poisoned" / "config.json.lock"
+    stale.touch()
+    result = patch_client_config(poisoned, binary="/usr/local/bin/bettermemory")
+    assert not stale.exists()
+    assert result["removed_stale_lockfile"] == str(stale)
+
+    foreign = tmp_path / "foreign" / "config.json"
+    foreign.parent.mkdir()
+    other_tools_lock = tmp_path / "foreign" / "config.json.lock"
+    other_tools_lock.write_text("pid: 4242\n", encoding="utf-8")
+    result = patch_client_config(foreign, binary="/usr/local/bin/bettermemory")
+    assert other_tools_lock.exists()
+    assert "removed_stale_lockfile" not in result
+
+
+def test_patch_aborts_when_target_created_under_us(tmp_path: Path) -> None:
+    """Create-path twin of the signature guard: when the target did not exist
+    at read time, there is no baseline signature — 3.15.0 skipped the pre-write
+    re-check entirely, so a client CREATING its config during init's window was
+    silently replaced by the skeleton doc. The pre-write guard must abort
+    loudly when a file has appeared. Deleting the create-path arm makes the
+    write land and this test fail."""
+    from bettermemory.init import patch_client_config
+
+    calls = {"n": 0}
+
+    class CreatedUnderUs(type(Path())):  # type: ignore[misc]
+        def exists(self, **kwargs: Any) -> bool:
+            # First probe (the read branch): absent. Every later probe (the
+            # pre-write guard): present — as if the client created the file
+            # in between.
+            calls["n"] += 1
+            return calls["n"] > 1
+
+    target = CreatedUnderUs(tmp_path / "created" / "config.json")
+    with pytest.raises(ValueError, match="created under us"):
+        patch_client_config(target, binary="/usr/local/bin/bettermemory")
+    assert calls["n"] >= 2
+    # Nothing was written over the "client's" new file.
+    assert not Path(str(target)).exists()
+
+
+def test_recognizer_accepts_version_pinned_uv_shapes() -> None:
+    """Version-pinned uvx idioms (`bettermemory@latest`, `bettermemory==X`)
+    and the Windows `uvx.exe` spelling are blessed runner shapes; the
+    byte-exact arg gate missed them, so doctor reported a healthy pinned
+    install as absent and init re-registered it (the 1.0→1.1 duplicate).
+    A DIFFERENT distribution that merely starts with the name must not
+    match."""
+    from bettermemory.init import command_launches_bettermemory as launches
+
+    binary = "/usr/local/bin/bettermemory"
+    assert launches("uvx", ["bettermemory@latest"], binary)
+    assert launches("uvx", ["bettermemory==3.15.0"], binary)
+    assert launches("uvx.exe", ["bettermemory"], binary)
+    assert launches("uv", ["tool", "run", "bettermemory"], binary)
+    assert launches("uvx", ["--from", "bettermemory", "bettermemory"], binary)
+    assert not launches("uvx", ["bettermemory-evil@1.0"], binary)
+
+
+def test_recognizer_ignores_with_dependency_position() -> None:
+    """bettermemory appearing as a `--with` DEPENDENCY of a foreign server
+    must not be recognized as ours — the any-arg scan matched it, and init
+    would then delete and rewrite that unrelated entry to launch bettermemory
+    instead of the server the user configured."""
+    from bettermemory.init import command_launches_bettermemory as launches
+
+    binary = "/usr/local/bin/bettermemory"
+    assert not launches(
+        "uv", ["run", "--with", "bettermemory", "other-mcp-server"], binary
+    )
+    assert not launches("uvx", ["--with", "bettermemory", "other-mcp-server"], binary)
