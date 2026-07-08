@@ -655,7 +655,17 @@ class Store:
             if verified_absent_paths is not None:
                 update["verified_absent_paths"] = list(verified_absent_paths)
             new_memory = existing.model_copy(update=update)
-            self._write_path(existing_path, new_memory)
+            # Lifecycle re-dump of an already-admitted, already-readable record:
+            # bumping `last_verified_at` (and the verified_* lists) re-serialises
+            # a record that already lives on disk. Use the full read cap, not the
+            # headroom-reserved write cap, so a record whose serialized size sits
+            # in the reserved band — e.g. a pre-3.14.1 record written before the
+            # total-file cap existed — can still be verified instead of being
+            # frozen (F1: the write-cap guard would reject the re-dump and the
+            # record could never be verified/updated again).
+            self._write_path(
+                existing_path, new_memory, max_file_bytes=frontmatter._MAX_FILE_BYTES
+            )
             # perf: index upsert under lock is intentional — see audit H1.
             _index_upsert_quietly(self.root, new_memory, filename=existing_path.name)
         return new_memory
@@ -919,7 +929,7 @@ class Store:
                 id=str(meta["id"]),
                 created=_as_dt(meta["created"]),
                 updated=_as_dt(meta["updated"]),
-                scopes=list(meta["scopes"]),
+                scopes=_coerce_scopes(meta["scopes"]),
                 confidence=Confidence(meta["confidence"]),
                 source=Source(meta["source"]),
                 body=post.content.strip() + "\n",
@@ -1079,40 +1089,90 @@ class Store:
                 created, f"{slug}-{memory_id.lower()}"
             )
 
-            # Lifecycle re-dump: re-materialises a previously-valid record
-            # (a legacy tombstone may sit near the read cap). Use the full
-            # read cap so restore can't fail on a record that already existed.
-            _atomic_write_post(
-                active_path, post, max_file_bytes=frontmatter._MAX_FILE_BYTES
-            )
-            try:
-                tombstone_path.unlink()
-            except OSError as exc:
-                if exc.errno != errno.ENOENT:
-                    # Active file already written; orphaning the tombstone
-                    # is recoverable but we still want to surface the IO
-                    # error so the caller doesn't think the move was clean.
-                    raise
-            # Symmetric to tombstone(): fsync the tombstone dir so the
-            # unlink is durable. Without this, a crash could resurrect
-            # the tombstone alongside the restored active file.
-            fsync_dir(tombstone_path.parent)
-
-            # Restored memories rejoin the searchable set — keep the FTS5
-            # index in step with the file system. The remove-on-tombstone
-            # call dropped this id; the restore is the symmetric upsert.
+            # F6: hold the ACTIVE-path lock across the active write, the
+            # tombstone unlink, the dir-fsync, the re-load AND the index
+            # upsert — not just the re-load+upsert as before. The active
+            # write below makes `memory_id` resolvable as an ACTIVE record;
+            # a concurrent `tombstone()` / `memory_remove` of the same id
+            # then acquires `_locked(active_path)` to move it away. Pre-fix
+            # that lock was uncontended in the write→upsert window, so the
+            # concurrent tombstone could read the just-written active file,
+            # write its tombstone at the SAME `<stem>.<id>.tombstone.md`
+            # path this restore is about to unlink, and unlink the active
+            # file — after which this restore unlinked that fresh tombstone,
+            # leaving BOTH files gone (the record vanished). Holding the
+            # active-path lock across the whole sequence serialises the
+            # concurrent tombstone entirely before or entirely after the
+            # restore, so it can never interleave into the write→unlink gap.
             #
-            # H1 invariant: every mutator upserts the index UNDER THE
-            # ACTIVE-PATH LOCK, so a concurrent `update()`/`verify()` on
-            # the restored id (which holds `_locked(active_path)`) can't
-            # interleave its SQLite upsert with ours and leave the index
-            # pointing at the deleted body. Pre-fix the upsert ran under
-            # the tombstone-path lock only — a different lockfile — so
-            # that interleaving was possible. The active-path lockfile is
-            # distinct from the tombstone lockfile and no code path takes
-            # them in the reverse order (tombstone→active is restore's
-            # own direction), so nesting here cannot deadlock.
+            # Lock order (deadlock proof): restore is the ONLY multi-lock
+            # region in store.py, and it always takes tombstone-path THEN
+            # active-path. Every other mutator (write / update /
+            # mark_verified / tombstone / rename_scope / prune_tombstones)
+            # holds at most one per-file lock at a time and never nests, so
+            # nothing acquires active-then-tombstone. A concurrent
+            # `tombstone(id)` takes only `_locked(active_path)` (it never
+            # locks the tombstone target it writes), so it can wait on a
+            # lock this restore holds without itself holding anything restore
+            # needs — no cycle is possible. `flock_excl` is NOT re-entrant,
+            # but no callee under either lock re-acquires the same path lock
+            # (`_atomic_write_post`, `Path.unlink`, `fsync_dir`, `_load_path`,
+            # `_index_upsert_quietly` take no per-file flock).
             with _locked(active_path):
+                # Item 1 / F1: restore RE-ADMITS the tombstone as an active
+                # record, so it must satisfy the same headroom-reserving
+                # admission cap a fresh write does — otherwise a tombstone
+                # that grew while active (accumulated verified_* lists) or a
+                # pre-3.14.1 record admitted before the cap existed would mint
+                # an active record above the write cap that could never be
+                # re-tombstoned/renamed. Validate the would-be active record
+                # against the write cap and fail loudly with a shrink-the-body
+                # message rather than silently minting an un-maintainable
+                # record. The tombstone is still on disk (not yet unlinked),
+                # so a rejected restore loses nothing. Serialize once at the
+                # read cap (which rejects only genuinely-unreadable shapes —
+                # alias bombs, > read cap — with their own error), then
+                # require the result to fit the write cap.
+                serialized_bytes = len(
+                    frontmatter.dumps(
+                        post, max_file_bytes=frontmatter._MAX_FILE_BYTES
+                    ).encode("utf-8")
+                )
+                if serialized_bytes > frontmatter._MAX_WRITE_BYTES:
+                    raise ValueError(
+                        f"{tombstone_path}: cannot restore memory {memory_id} "
+                        f"— the restored active record would serialize to "
+                        f"{serialized_bytes} bytes, over the "
+                        f"{frontmatter._MAX_WRITE_BYTES}-byte admission cap; "
+                        f"shrink the body (or its verified_paths / links) "
+                        f"before restoring so the restored record stays "
+                        f"removable and renameable."
+                    )
+                _atomic_write_post(
+                    active_path, post, max_file_bytes=frontmatter._MAX_WRITE_BYTES
+                )
+                try:
+                    tombstone_path.unlink()
+                except OSError as exc:
+                    if exc.errno != errno.ENOENT:
+                        # Active file already written; orphaning the tombstone
+                        # is recoverable but we still want to surface the IO
+                        # error so the caller doesn't think the move was clean.
+                        raise
+                # Symmetric to tombstone(): fsync the tombstone dir so the
+                # unlink is durable. Without this, a crash could resurrect
+                # the tombstone alongside the restored active file.
+                fsync_dir(tombstone_path.parent)
+
+                # Restored memories rejoin the searchable set — keep the FTS5
+                # index in step with the file system. The remove-on-tombstone
+                # call dropped this id; the restore is the symmetric upsert.
+                #
+                # H1 invariant: the index upsert runs UNDER THE ACTIVE-PATH
+                # LOCK, so a concurrent `update()` / `verify()` on the
+                # restored id (which holds `_locked(active_path)`) can't
+                # interleave its SQLite upsert with ours and leave the index
+                # pointing at the deleted body.
                 restored = self._load_path(active_path)
                 _index_upsert_quietly(self.root, restored, filename=active_path.name)
         return restored
@@ -1194,7 +1254,14 @@ class Store:
                 refreshed = memory.model_copy(
                     update={"scopes": new_scopes, "updated": utcnow()}
                 )
-                self._write_path(path, refreshed)
+                # Lifecycle re-dump: relabels a scope on an already-admitted,
+                # already-readable record. Full read cap (not the write cap) so
+                # a record whose serialized size sits in the reserved band (e.g.
+                # a pre-3.14.1 record) can still be renamed instead of frozen —
+                # same rationale as `mark_verified` / `tombstone`.
+                self._write_path(
+                    path, refreshed, max_file_bytes=frontmatter._MAX_FILE_BYTES
+                )
                 # perf: index upsert under lock is intentional — see audit H1.
                 _index_upsert_quietly(self.root, refreshed, filename=path.name)
                 active_changed.append(refreshed.id)
@@ -1397,7 +1464,23 @@ class Store:
                 return path
         return None
 
-    def _write_path(self, path: Path, memory: Memory) -> None:
+    def _write_path(
+        self,
+        path: Path,
+        memory: Memory,
+        *,
+        max_file_bytes: int = frontmatter._MAX_WRITE_BYTES,
+    ) -> None:
+        # `max_file_bytes` defaults to the headroom-reserved write cap, which is
+        # correct for new-content admission (`write`, `update`): a freshly
+        # admitted active record must reserve headroom for its own worst-case
+        # lifecycle growth so it always stays tombstoneable/renameable. The
+        # metadata-only re-dump callers (`mark_verified`, `rename_scope`'s
+        # active branch) pass the full read cap instead — they re-serialise an
+        # already-admitted, already-readable record, so refusing a record whose
+        # serialized size merely sits in the reserved band (e.g. a pre-3.14.1
+        # record written before the total-file cap existed) would freeze it
+        # from ever being verified/renamed (F1).
         post = frontmatter.Post(memory.body.strip() + "\n")
         meta: dict[str, object] = {
             # `schema_version` is the first key so it's visible at the top
@@ -1457,7 +1540,7 @@ class Store:
                 for link in memory.links
             ]
         post.metadata = meta
-        _atomic_write_post(path, post)
+        _atomic_write_post(path, post, max_file_bytes=max_file_bytes)
 
 
 # ---------------------------------------------------------------------------
@@ -1661,7 +1744,7 @@ def _parse_memory_file(path: Path) -> Memory:
             id=str(meta["id"]),
             created=_as_dt(meta["created"]),
             updated=_as_dt(meta["updated"]),
-            scopes=list(meta["scopes"]),
+            scopes=_coerce_scopes(meta["scopes"]),
             confidence=Confidence(meta["confidence"]),
             source=Source(meta["source"]),
             body=post.content.strip() + "\n",
@@ -1891,26 +1974,56 @@ def _index_remove_quietly(root: Path, memory_id: str) -> None:
     _index.remove(root, memory_id)
 
 
-# Cap on a tombstone's removal reason. `_frontmatter` reserves a fixed
-# maintenance headroom below the read cap so a record admitted at the write
-# cap can always be tombstoned and stay readable; the fixed removal keys
-# (`removed` timestamp, `removed_session` id) plus this bounded reason and its
-# YAML-quoting overhead fit comfortably inside that headroom. Without the
-# bound, `removed_reason` is an arbitrary-length caller string and a long one
-# on a near-cap record could push the tombstone re-dump past the read cap,
-# making the record un-removable. A removal reason is an annotation, not
-# memory content, so 1 KiB is generous.
+# Cap on a tombstone's removal reason, measured on its SERIALIZED (YAML-
+# escaped) size — NOT its raw byte length. `_frontmatter` reserves a fixed
+# maintenance headroom below the read cap so a record admitted at the write cap
+# can always be tombstoned and stay readable; the fixed removal keys (`removed`
+# timestamp, `removed_session` id) plus this bounded reason must fit inside that
+# headroom. A raw-length bound does NOT guarantee that: `yaml.dump` renders
+# control / non-printable characters as `\xNN` / `\uNNNN` escapes, so a 1 KiB
+# reason of control bytes serialises to ~4.3 KiB — on its own already past the
+# 4 KiB headroom, which would push a near-write-cap record's tombstone re-dump
+# over the read cap and make the record un-removable (the exact F1 class the
+# headroom exists to prevent). Bounding the SERIALIZED size makes the reason's
+# contribution provably fit regardless of content. A removal reason is an
+# annotation, not memory content, so 1 KiB is generous.
 _MAX_REMOVED_REASON_BYTES = 1024
 
 
+def _serialized_reason_bytes(reason: str) -> int:
+    """Serialized (YAML) byte size of the `removed_reason:` line for `reason`.
+
+    Mirrors how `_frontmatter.dumps` renders the value (`allow_unicode=True`,
+    block style), so the bound in `_cap_removed_reason` reflects the reason's
+    real contribution to the tombstone file — escapes included. `_NoAliasDumper`
+    only overrides alias emission, which is irrelevant for a single scalar, so
+    plain `safe_dump` produces byte-identical output here."""
+    return len(
+        yaml.safe_dump(
+            {"removed_reason": reason}, allow_unicode=True, default_flow_style=False
+        ).encode("utf-8")
+    )
+
+
 def _cap_removed_reason(reason: str) -> str:
-    """Bound a removal reason to `_MAX_REMOVED_REASON_BYTES` (UTF-8), so a
-    near-write-cap record is always tombstoneable. Truncates on a codepoint
-    boundary — silently shortening an over-long reason beats failing removal."""
-    encoded = reason.encode("utf-8")
-    if len(encoded) <= _MAX_REMOVED_REASON_BYTES:
+    """Bound a removal reason so its SERIALIZED YAML contribution stays within
+    `_MAX_REMOVED_REASON_BYTES`, so a near-write-cap record is always
+    tombstoneable even when the reason is escape-heavy. Returns the longest
+    codepoint-prefix that fits — silently shortening an over-long or
+    escape-inflated reason beats failing the removal."""
+    if _serialized_reason_bytes(reason) <= _MAX_REMOVED_REASON_BYTES:
         return reason
-    return encoded[:_MAX_REMOVED_REASON_BYTES].decode("utf-8", errors="ignore")
+    # Binary-search the longest prefix (on codepoint boundaries) whose
+    # serialized form still fits. Serialized size is non-decreasing in prefix
+    # length, so the search is well-defined; the empty reason always fits.
+    lo, hi = 0, len(reason)
+    while lo < hi:
+        mid = (lo + hi + 1) // 2
+        if _serialized_reason_bytes(reason[:mid]) <= _MAX_REMOVED_REASON_BYTES:
+            lo = mid
+        else:
+            hi = mid - 1
+    return reason[:lo]
 
 
 def _atomic_write_post(
@@ -2030,3 +2143,35 @@ def _load_str_list(value: object) -> list[str]:
     if not isinstance(value, list):
         return []
     return [str(item) for item in value if isinstance(item, (str, int, float))]
+
+
+def _coerce_scopes(value: object) -> list[str]:
+    """Coerce a frontmatter `scopes` value to a scope list the way the store
+    readers resolve it, so the migrator and the store agree on which scopes a
+    record carries.
+
+    Shapes, matching the previous `list(meta["scopes"])` resolution:
+
+    - **list** → passthrough (elements as-is; the model validator rejects any
+      non-string element, exactly as `list(meta["scopes"])` did).
+    - **dict / set** → its keys / elements. A hand-edited or torn `scopes:
+      {a: 1}` or a YAML `!!set` resolves under `list(...)` to the real scope
+      list, so we must too.
+    - **scalar string** → single-element list `[value]` (NOT `list("abc")`,
+      which the raw `list(...)` exploded into per-character scopes).
+    - **anything else** (int, float, None, …) → `[]` (unroutable; the model
+      rejects an empty `scopes`, so a memory-file parse still skips it).
+
+    Deliberately NOT `_load_str_list`, which returns `[]` for a dict or set:
+    that made the migrator see no scopes where the store (`list(meta["scopes"])`)
+    saw the real list, so a dict/set-shaped `scopes` never matched a
+    `scope_repo_map` entry and the file was silently stamped with the wrong repo
+    (F4). One shared coercion keeps "which scopes the store sees" identical to
+    "which scopes the migrator routes by"."""
+    if isinstance(value, list):
+        return list(value)
+    if isinstance(value, (dict, set, frozenset)):
+        return list(value)
+    if isinstance(value, str):
+        return [value]
+    return []

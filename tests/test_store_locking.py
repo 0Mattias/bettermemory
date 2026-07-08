@@ -227,3 +227,116 @@ def test_restore_index_upsert_under_active_lock(
         f"_locked({active_name!r}) — H1 active-path-lock invariant "
         f"violated; events={events}"
     )
+
+
+# ---------------------------------------------------------------------------
+# F6: restore's ACTIVE write + tombstone unlink must run UNDER the active-path
+# lock (not just the re-load + index upsert). Pre-fix the active write and the
+# source-tombstone unlink sat in the write->reload gap outside any active-path
+# lock, so a concurrent tombstone()/memory_remove of the same id could acquire
+# _locked(active_path) uncontended, read the just-written active file, write its
+# own tombstone at the SAME `<stem>.<id>.tombstone.md` path this restore is
+# about to unlink, and unlink the active file — after which this restore
+# unlinked that fresh tombstone, leaving BOTH files gone (the record vanished).
+# ---------------------------------------------------------------------------
+
+
+def test_restore_active_write_under_active_lock(
+    store: Store, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Structural: the active-record write in `restore()` runs between a
+    `lock_enter` and `lock_exit` for the ACTIVE path. Pre-fix it ran before any
+    active-path lock_enter, leaving the write->unlink window unguarded."""
+    from bettermemory import _frontmatter as fm
+
+    memory = store.write(content="body", scopes=["tools"])
+    store.tombstone(memory.id, reason="oops")
+
+    events: list[str] = []
+    original_locked = store_module._locked
+    original_write = store_module._atomic_write_post
+
+    @contextlib.contextmanager
+    def traced_locked(path: Path) -> Generator[None, None, None]:
+        events.append(f"lock_enter:{path.name}")
+        with original_locked(path):
+            yield
+        events.append(f"lock_exit:{path.name}")
+
+    def traced_write(
+        path: Path, post: Any, *, max_file_bytes: int = fm._MAX_WRITE_BYTES
+    ):
+        events.append(f"write:{path.name}")
+        return original_write(path, post, max_file_bytes=max_file_bytes)
+
+    monkeypatch.setattr(store_module, "_locked", traced_locked)
+    monkeypatch.setattr(store_module, "_atomic_write_post", traced_write)
+
+    store.restore(memory.id)
+    active_name = next(p.name for p in store._iter_active_paths() if p.is_file())
+    _assert_one_event_inside_lock(events, "write", active_name)
+
+
+def test_restore_concurrent_tombstone_never_loses_record(
+    store: Store, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Race harness for the F6 both-files-deleted bug. We drive a concurrent
+    `tombstone(id)` into restore's critical section right after the active file
+    is written: with the fix, restore holds `_locked(active_path)` across the
+    write + source-tombstone unlink, so the racer BLOCKS on that lock and only
+    tombstones the fully-restored record afterwards — the record survives as
+    exactly one of {active, tombstoned}. Reverting the fix (active write/unlink
+    outside the active lock) lets the racer interleave and delete both files.
+    """
+    import threading
+    import time
+
+    from bettermemory import _frontmatter as fm
+
+    memory = store.write(content="race body", scopes=["tools"])
+    store.tombstone(memory.id, reason="removed once")
+
+    original_write = store_module._atomic_write_post
+    started = threading.Event()
+    racer: dict[str, threading.Thread] = {}
+    result: dict[str, str] = {}
+
+    def concurrent_tombstone() -> None:
+        started.set()
+        try:
+            store.tombstone(memory.id, reason="raced removal")
+            result["outcome"] = "tombstoned"
+        except Exception as exc:  # noqa: BLE001 — a raced removal may lose cleanly
+            result["outcome"] = repr(exc)
+
+    def hook_write(path: Path, post: Any, *, max_file_bytes: int = fm._MAX_WRITE_BYTES):
+        # Restore's active write. Do the real write FIRST so the active file
+        # exists, THEN launch the racer and give it time to find the active
+        # file and reach `_locked(active_path)` — where the fix makes it block
+        # (we still hold that lock) and the revert lets it interleave. Guard so
+        # the racer's own tombstone write (which also routes through this patch)
+        # doesn't relaunch.
+        ret = original_write(path, post, max_file_bytes=max_file_bytes)
+        if not racer:
+            t = threading.Thread(target=concurrent_tombstone)
+            racer["t"] = t
+            t.start()
+            started.wait(2.0)
+            time.sleep(0.5)
+        return ret
+
+    monkeypatch.setattr(store_module, "_atomic_write_post", hook_write)
+
+    try:
+        store.restore(memory.id)
+    except Exception:  # noqa: BLE001 — the reverted code raises; assert survival
+        pass
+    racer["t"].join(5.0)
+
+    active_ids = {m.id for m in store.load_all()}
+    tomb_ids = {t.id for t in store.load_tombstones()}
+    assert (memory.id in active_ids) ^ (memory.id in tomb_ids), (
+        f"record lost or duplicated by the restore/tombstone race — "
+        f"active={memory.id in active_ids}, tombstoned={memory.id in tomb_ids}; "
+        f"racer outcome={result.get('outcome')!r}"
+    )

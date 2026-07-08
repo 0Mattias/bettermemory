@@ -1449,3 +1449,166 @@ def test_near_write_cap_record_tombstoneable_with_overlong_reason(
     assert "why-" in text  # a prefix of the reason survived
     stored_reason_len = len(overlong.encode("utf-8"))
     assert stored_reason_len > _MAX_REMOVED_REASON_BYTES  # test really is over-cap
+
+
+# ---------------------------------------------------------------------------
+# Size-cap axis (item 1): metadata-only re-dumps of an already-admitted record
+# use the FULL read cap so a record whose serialized size sits in the reserved
+# band `(_MAX_WRITE_BYTES, _MAX_FILE_BYTES]` — e.g. a pre-3.14.1 record written
+# before the total-file cap existed — is never frozen from maintenance. New
+# admission (write/update/restore) stays at the write cap so headroom is
+# reserved for the tombstone re-dump.
+# ---------------------------------------------------------------------------
+
+
+def _write_band_memory_file(
+    memory_dir: Path,
+    *,
+    memory_id: str,
+    body_bytes: int,
+    scopes: list[str] | None = None,
+) -> Path:
+    """Hand-write a memory file whose serialized size lands in the reserved
+    band (> _MAX_WRITE_BYTES, <= _MAX_FILE_BYTES). The store's own `write()`
+    caps at the write cap and could never produce one, so we serialize at the
+    read cap directly — the exact shape a pre-3.14.1 record (written before the
+    total-file cap) presents on disk today."""
+    from bettermemory import _frontmatter as fm
+
+    post = fm.Post(
+        content="x" * body_bytes,
+        metadata={
+            "schema_version": 1,
+            "id": memory_id,
+            "created": datetime(2025, 1, 1, tzinfo=timezone.utc),
+            "updated": datetime(2025, 1, 1, tzinfo=timezone.utc),
+            "scopes": scopes or ["tools"],
+            "confidence": "medium",
+            "source": "explicit-statement",
+        },
+    )
+    text = fm.dumps(post, max_file_bytes=fm._MAX_FILE_BYTES)
+    total = len(text.encode("utf-8"))
+    assert fm._MAX_WRITE_BYTES < total <= fm._MAX_FILE_BYTES, (
+        f"fixture must land in the reserved band; got {total}"
+    )
+    path = memory_dir / f"2025-01-01-band-{memory_id.lower()}.md"
+    path.write_text(text, encoding="utf-8")
+    return path
+
+
+def test_mark_verified_rewrites_band_record_at_read_cap(memory_dir: Path) -> None:
+    """F1/item-1b: a record whose serialized size already sits in the reserved
+    band must remain verifiable. `mark_verified` re-dumps an already-admitted,
+    already-readable record, so it uses the full read cap — not the
+    headroom-reserved write cap that `write()` admits at. Reverting the fix
+    (re-dumping at the write cap) freezes the record: the write-side guard
+    rejects the re-dump and it can never be verified again."""
+    mid = generate_ulid()
+    _write_band_memory_file(memory_dir, memory_id=mid, body_bytes=1_047_000)
+
+    store = Store(memory_dir)
+    # ~1.047 MB record — over the write cap, under the read cap.
+    verified = store.mark_verified(mid)
+    assert verified.last_verified_at is not None
+    # And it persisted: a fresh store reads the bumped attestation back.
+    reloaded = Store(memory_dir).load_one(mid)
+    assert reloaded.last_verified_at is not None
+    assert len(reloaded.body) >= 1_047_000  # still a band-sized record
+
+
+def test_rename_scope_rewrites_band_record_at_read_cap(memory_dir: Path) -> None:
+    """Item-1b twin for `rename_scope`'s active branch: a band-sized record
+    must still be renameable. The active-branch re-dump uses the full read cap;
+    reverting to the write cap raises out of `rename_scope`, freezing the
+    record's scopes."""
+    mid = generate_ulid()
+    _write_band_memory_file(
+        memory_dir, memory_id=mid, scopes=["oldscope"], body_bytes=1_047_000
+    )
+
+    store = Store(memory_dir)
+    changed = store.rename_scope("oldscope", "newscope")
+    assert changed["active"] == [mid]
+    reloaded = Store(memory_dir).load_one(mid)
+    assert reloaded.scopes == ["newscope"]
+
+
+def test_restore_oversized_tombstone_raises_shrink_message(store: Store) -> None:
+    """Item-1a: restore RE-ADMITS a tombstone as an active record, so the
+    would-be active record must satisfy the same headroom-reserving admission
+    cap a fresh write does. A tombstone whose stripped active record exceeds the
+    write cap (a pre-3.14.1 record, or one that grew while active) cannot be
+    restored without minting an un-maintainable record; restore must fail LOUDLY
+    with a shrink-the-body message rather than silently admitting it. Reverting
+    the fix (re-dumping at the read cap with no re-validation) makes restore
+    succeed and mint the un-removable record."""
+    from bettermemory import _frontmatter as fm
+
+    mid = generate_ulid()
+    # Body == the write cap: the stripped active record (body + frontmatter)
+    # necessarily exceeds the write cap, while the tombstone (+ removal
+    # metadata) still fits under the read cap so `frontmatter.load` can read it.
+    post = fm.Post(
+        content="x" * fm._MAX_WRITE_BYTES,
+        metadata={
+            "schema_version": 1,
+            "id": mid,
+            "created": datetime(2025, 1, 1, tzinfo=timezone.utc),
+            "updated": datetime(2025, 1, 1, tzinfo=timezone.utc),
+            "scopes": ["tools"],
+            "confidence": "medium",
+            "source": "explicit-statement",
+            "removed": datetime(2025, 1, 2, tzinfo=timezone.utc),
+            "removed_reason": "legacy oversized record",
+        },
+    )
+    tomb_text = fm.dumps(post, max_file_bytes=fm._MAX_FILE_BYTES)
+    assert len(tomb_text.encode("utf-8")) <= fm._MAX_FILE_BYTES  # readable tombstone
+    store.tombstone_dir.mkdir(mode=0o700, exist_ok=True)
+    tpath = store.tombstone_dir / f"2025-01-01-legacy.{mid}.tombstone.md"
+    tpath.write_text(tomb_text, encoding="utf-8")
+
+    with pytest.raises(ValueError, match="(?i)shrink"):
+        store.restore(mid)
+    # Loud failure loses nothing: the tombstone is untouched, no active file.
+    assert tpath.exists()
+    assert not any(p.stem.endswith(mid.lower()) for p in store._iter_active_paths())
+
+
+def test_cap_removed_reason_bounds_serialized_size_not_raw() -> None:
+    """Item-1d: `_cap_removed_reason` bounds the reason on its SERIALIZED
+    (YAML-escaped) size, not its raw byte length. A control-character reason
+    escape-inflates ~4x under `yaml.dump` (`\\xNN`), so a raw-length bound of
+    1 KiB serializes to ~4.3 KiB — past the 4 KiB maintenance headroom, making a
+    near-write-cap record un-removable. Reverting to a raw-length bound leaves
+    the control-char reason at ~4.3 KiB serialized, failing this assertion."""
+    from bettermemory.store import (
+        _MAX_REMOVED_REASON_BYTES,
+        _cap_removed_reason,
+        _serialized_reason_bytes,
+    )
+
+    control_heavy = "\x01" * 4096  # 4 KiB of control bytes, all escaped on dump
+    capped = _cap_removed_reason(control_heavy)
+    assert _serialized_reason_bytes(capped) <= _MAX_REMOVED_REASON_BYTES
+    # A short printable reason is returned verbatim — the bound only bites when
+    # the *serialized* form would overflow.
+    assert _cap_removed_reason("user said so") == "user said so"
+
+
+def test_episode_write_admits_band_body_at_read_cap(memory_dir: Path) -> None:
+    """Item-1 critic gap: episodes are written once and pruned wholesale, never
+    tombstoned/renamed, so they reserve no headroom and admit at the full read
+    cap. The 3.14.1 total-file cap made `frontmatter.dumps` default to the
+    reduced write cap, which silently froze episode bodies in the reserved band.
+    A band-sized episode body must still persist and read back. Reverting the
+    episode fix (write-cap default) raises at write time."""
+    from bettermemory.episodes import EpisodeStore
+
+    est = EpisodeStore(memory_dir)
+    band_body = "e" * 1_046_000  # over the write cap, under the read cap
+    ep = est.write(session_id="sess1", body=band_body, scopes=["tools"])
+    loaded = est.list_by_session("sess1")
+    assert [e.id for e in loaded] == [ep.id]
+    assert len(loaded[0].body) >= 1_046_000

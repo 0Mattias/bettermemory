@@ -293,8 +293,20 @@ class EpisodeStore:
         # guarantee matters — see `_fsutil.atomic_write_bytes` for the
         # closed-window rationale. The caller (`_persist_episode`) owns the
         # episodes_dir/root dirent fsyncs that bracket this write.
+        # Episodes are journal entries: written once and pruned wholesale,
+        # never tombstoned / renamed / re-dumped, so they reserve no maintenance
+        # headroom. Admit at the full read cap (`_MAX_FILE_BYTES`), not `dumps`'
+        # reduced write-cap default — an episode only needs to be re-readable.
+        # The 3.14.1 total-file cap silently tightened this ceiling from the read
+        # cap to the write cap, so an episode body in the (write_cap, read_cap]
+        # band that used to persist now raised at write time; restore the read
+        # cap here (episodes.py was not in that release's diff — critic gap).
         atomic_write_bytes(
-            path, frontmatter.dumps(post).encode("utf-8"), mode_before_rename=0o600
+            path,
+            frontmatter.dumps(post, max_file_bytes=frontmatter._MAX_FILE_BYTES).encode(
+                "utf-8"
+            ),
+            mode_before_rename=0o600,
         )
 
     # ---- read -------------------------------------------------------------

@@ -357,10 +357,17 @@ def test_migration_continues_when_a_write_fails(
         "bettermemory.store", fromlist=["_atomic_write_post"]
     )._atomic_write_post
 
-    def flaky_write(path: Path, post: object) -> None:
+    def flaky_write(
+        path: Path,
+        post: object,
+        *,
+        max_file_bytes: int = frontmatter._MAX_FILE_BYTES,
+    ) -> None:
         if Path(path) == failing:
             raise OSError("simulated ENOSPC")
-        return real_write(path, post)
+        # Forward `max_file_bytes` — migrate now re-dumps the origin append at
+        # the full read cap (lifecycle re-dump of an already-admitted record).
+        return real_write(path, post, max_file_bytes=max_file_bytes)
 
     # `migrate.py` imports the symbol directly
     # (`from .store import ... _atomic_write_post`), so patch it on the
@@ -744,3 +751,111 @@ def test_migration_survives_scalar_scopes_field(tmp_path: Path) -> None:
     assert _read_metadata(good_path)["origin"] == {
         "repo": "git@github.com:example/foo.git",
     }
+
+
+def _write_legacy_scopes_yaml(
+    memory_dir: Path, *, name: str, id_: str, scopes_yaml: str
+) -> Path:
+    """Write a legacy memory file with a raw `scopes` YAML fragment, so a test
+    can exercise dict-/set-shaped `scopes` the block-list helper can't express."""
+    text = (
+        "---\n"
+        f"id: {id_}\n"
+        "created: 2025-01-01T00:00:00+00:00\n"
+        "updated: 2025-01-01T00:00:00+00:00\n"
+        f"{scopes_yaml}"
+        "confidence: medium\n"
+        "source: explicit-statement\n"
+        "---\n"
+        "body\n"
+    )
+    path = memory_dir / f"2025-01-01-{name}.md"
+    path.write_text(text, encoding="utf-8")
+    return path
+
+
+def test_scope_repo_map_routes_dict_shaped_scopes(tmp_path: Path) -> None:
+    """F4/item-6: a `scopes` field that YAML parsed as a MAPPING (`scopes:
+    {tools: 1}`) is resolved by the store (`list(meta["scopes"])`) to its keys
+    — the real scope list — but the old migrator coercion (`_load_str_list`)
+    returned [] for any non-list, so the scope_repo_map never matched and the
+    file was left untagged (or force-tagged with the wrong repo). The shared
+    `_coerce_scopes` makes the migrator see the same scopes the store does.
+    Reverting to `_load_str_list` leaves this record unrouted (updated==0)."""
+    memory_dir = tmp_path / ".claude-memory"
+    memory_dir.mkdir()
+    path = _write_legacy_scopes_yaml(
+        memory_dir,
+        name="dict-scopes",
+        id_=_LEGACY_IDS[0],
+        scopes_yaml="scopes:\n  tools: 1\n",
+    )
+
+    report = migrate_origin_in_directory(
+        memory_dir,
+        scope_repo_map={"tools": "git@github.com:me/tools.git"},
+    )
+
+    assert report.updated == 1
+    assert _read_metadata(path)["origin"]["repo"] == "git@github.com:me/tools.git"
+
+
+def test_scope_repo_map_routes_set_shaped_scopes(tmp_path: Path) -> None:
+    """F4/item-6 twin: a `scopes` field that YAML parsed as a SET (`scopes:
+    !!set {tools: null}`) resolves under `list(meta["scopes"])` to its elements.
+    `_coerce_scopes` must route it the same way; `_load_str_list` returned []
+    and left it unrouted."""
+    memory_dir = tmp_path / ".claude-memory"
+    memory_dir.mkdir()
+    path = _write_legacy_scopes_yaml(
+        memory_dir,
+        name="set-scopes",
+        id_=_LEGACY_IDS[0],
+        scopes_yaml="scopes: !!set {tools: null}\n",
+    )
+
+    report = migrate_origin_in_directory(
+        memory_dir,
+        scope_repo_map={"tools": "git@github.com:me/tools.git"},
+    )
+
+    assert report.updated == 1
+    assert _read_metadata(path)["origin"]["repo"] == "git@github.com:me/tools.git"
+
+
+def test_migration_backfills_band_legacy_record(tmp_path: Path) -> None:
+    """Item-1c: the origin backfill only APPENDS a small `origin` block to an
+    already-admitted, already-readable legacy record, so it re-dumps at the full
+    read cap. A pre-3.14.1 record whose serialized size sits in the reserved
+    band (> write cap, <= read cap) must still get its origin backfilled.
+    Reverting to the write-cap default makes the re-dump raise ValueError, which
+    the loop records as `malformed` — the record silently never gets origin."""
+    from datetime import datetime, timezone
+
+    memory_dir = tmp_path / ".claude-memory"
+    memory_dir.mkdir()
+
+    post = frontmatter.Post(
+        content="x" * 1_047_000,
+        metadata={
+            "id": _LEGACY_IDS[0],
+            "created": datetime(2025, 1, 1, tzinfo=timezone.utc),
+            "updated": datetime(2025, 1, 1, tzinfo=timezone.utc),
+            "scopes": ["tools"],
+            "confidence": "medium",
+            "source": "explicit-statement",
+        },
+    )
+    text = frontmatter.dumps(post, max_file_bytes=frontmatter._MAX_FILE_BYTES)
+    total = len(text.encode("utf-8"))
+    assert frontmatter._MAX_WRITE_BYTES < total <= frontmatter._MAX_FILE_BYTES
+    band = memory_dir / f"2025-01-01-band-{_LEGACY_IDS[0].lower()}.md"
+    band.write_text(text, encoding="utf-8")
+
+    report = migrate_origin_in_directory(
+        memory_dir, inferred=Origin(repo="git@github.com:example/foo.git")
+    )
+
+    assert band not in report.malformed
+    assert report.updated == 1
+    assert _read_metadata(band)["origin"]["repo"] == "git@github.com:example/foo.git"

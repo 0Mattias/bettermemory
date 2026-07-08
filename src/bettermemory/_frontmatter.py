@@ -68,7 +68,11 @@ _MAX_FILE_BYTES = 1024 * 1024
 # right up to the read cap became un-removable AND un-renameable — the
 # tombstone re-dump crossed the cap and the write-side guard rejected it,
 # leaving a fully-visible record that could not be removed. 4 KiB comfortably
-# covers the fixed tombstone metadata plus a multi-KB removal reason.
+# covers the fixed tombstone metadata (`removed` timestamp + `removed_session`
+# id) plus the removal reason, which `store._cap_removed_reason` bounds on its
+# SERIALIZED (YAML-escaped) size — not raw length — so the reason's real
+# contribution provably fits regardless of content (a raw-length bound let a
+# control-char reason escape-inflate ~4x, past this headroom).
 _MAINTENANCE_HEADROOM_BYTES = 4 * 1024
 _MAX_WRITE_BYTES = _MAX_FILE_BYTES - _MAINTENANCE_HEADROOM_BYTES
 

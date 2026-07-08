@@ -28,7 +28,7 @@ from typing import Iterator
 from . import _frontmatter as frontmatter
 from .models import SCHEMA_VERSION
 from .origin import Origin, capture
-from .store import TOMBSTONE_DIR, _atomic_write_post, _load_str_list, _locked
+from .store import TOMBSTONE_DIR, _atomic_write_post, _coerce_scopes, _locked
 
 log = logging.getLogger("bettermemory.migrate")
 
@@ -224,16 +224,19 @@ def migrate_origin_in_directory(
             # insertion order, which is the order the caller passed flags.
             chosen: dict[str, object] | None = None
             if mapped_payloads:
-                # Coerce with the same helper the store readers use: a
-                # hand-edited or malformed file can carry `scopes` as a
-                # scalar (`scopes: 5`) rather than a list, and the bare
-                # `... or []` below would leave the scalar in place — the
-                # membership test `scope in <scalar>` then raises
-                # TypeError. This block is *outside* the per-file
-                # try/except above, so that TypeError would abort the
-                # whole loop and every file after the bad one would go
-                # unmigrated. Normalize a non-list to [] (store.py).
-                memory_scopes = _load_str_list(post.metadata.get("scopes"))
+                # Coerce with the SAME helper the store readers use
+                # (`_coerce_scopes`), so the scopes the migrator routes by are
+                # exactly the scopes the store sees. A hand-edited or torn file
+                # can carry `scopes` as a scalar (`scopes: 5`) — which would
+                # make the membership test `scope in <scalar>` raise TypeError,
+                # aborting the whole loop from *outside* the per-file try/except
+                # above and leaving every later file unmigrated — or as a dict /
+                # YAML set, which the store resolves via `list(meta["scopes"])`
+                # to the real scope list. The old `_load_str_list` returned []
+                # for a dict/set, so the migrator saw no scopes where the store
+                # saw them and silently stamped the wrong repo (F4). Do NOT
+                # revert to `_load_str_list` here.
+                memory_scopes = _coerce_scopes(post.metadata.get("scopes"))
                 for scope, payload in mapped_payloads.items():
                     if scope in memory_scopes:
                         chosen = payload
@@ -273,8 +276,19 @@ def migrate_origin_in_directory(
             # so the rest of the directory still migrates. The migration
             # is idempotent, so a later re-run picks up anything that
             # failed transiently.
+            #
+            # Lifecycle re-dump: this only APPENDS a small `origin` block to an
+            # already-admitted, already-readable legacy record. Use the full
+            # read cap (not `_atomic_write_post`'s headroom-reserved write-cap
+            # default) so a record whose serialized size sits in the reserved
+            # band — e.g. a pre-3.14.1 record written before the total-file cap
+            # existed — still gets its origin backfilled instead of being
+            # rejected and (mis)reported malformed. Same rationale as the store
+            # re-dump paths (`mark_verified` / `rename_scope` / `tombstone`).
             try:
-                _atomic_write_post(path, post)
+                _atomic_write_post(
+                    path, post, max_file_bytes=frontmatter._MAX_FILE_BYTES
+                )
             except (OSError, ValueError) as exc:
                 log.warning("skipping file that failed to write %s: %s", path, exc)
                 report.malformed.append(path)
