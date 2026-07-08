@@ -371,14 +371,30 @@ def run_audit(
     # Endorsement nudge: mirror the production search handler's opt-in
     # tally (`handlers/search.py::_explicit_applied_counts`) so the
     # probe ranks with the same usage signal the model's retrieval
-    # would have seen. Lazy import, gated on the flag — default-config
-    # users pay nothing. `recent` is already in hand, so the tally
-    # costs no extra I/O.
+    # would have seen. It MUST be counted over the same horizon
+    # production uses — `ATTRIBUTION_LOOKBACK_SECONDS` (600s, what
+    # `handlers/search.py` reads) — NOT the dedup-widened `recent`
+    # above (`REAUDIT_DEDUP_WINDOW_SECONDS`, 3600s). `recent` is a
+    # coverage read for the dedup / shield / attribution consumers,
+    # each of which applies its own narrower cutoff; but
+    # `_explicit_applied_counts` applies NO cutoff of its own, so
+    # feeding it the 3600s read would count applies from up to an hour
+    # ago that production's 600s ranker never saw, letting the probe
+    # nudge a near-tie top-1 to "high" and flip a false `search_miss`.
+    # Read a separately-scoped 600s window so the audit ranker matches
+    # production (the same fix `handlers/audit_turn.py` already carries
+    # for the in-process producer). Lazy import, gated on the flag —
+    # default-config users pay nothing.
     applied_by_id: dict[str, int] | None = None
     if cfg.behavior.endorsement_boost and memories:
         from .handlers.search import _explicit_applied_counts
 
-        applied_by_id = _explicit_applied_counts(recent, {m.id for m in memories})
+        endorsement_events = list(
+            iter_events_window(root, ATTRIBUTION_LOOKBACK_SECONDS)
+        )
+        applied_by_id = _explicit_applied_counts(
+            endorsement_events, {m.id for m in memories}
+        )
     report = probe_for_miss(
         memories,
         user_message,

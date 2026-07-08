@@ -1873,6 +1873,104 @@ def test_run_audit_shield_survives_event_log_rotation(tmp_path: Path) -> None:
     )
 
 
+def test_run_audit_endorsement_tally_uses_production_window(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Item 7 regression: the endorsement tally in `hook.run_audit` (the
+    PRIMARY production audit producer) must be counted over the SAME window
+    production search uses (`ATTRIBUTION_LOOKBACK_SECONDS`, 600s) — NOT the
+    dedup-widened `recent` read (`REAUDIT_DEDUP_WINDOW_SECONDS`, 3600s).
+
+    The F7 hardening fixed only the sibling (`handlers/audit_turn.py`); the
+    shipped hook still fed `recent` (the 3600s coverage list) straight into
+    `_explicit_applied_counts`, which applies no cutoff of its own.
+    `iter_events_window` differs between the two windows only in whether it
+    prepends the newest rotated archive (it does when the active log's oldest
+    event is younger than `now - window`), so the 3600s read counts applies
+    from an archive that production's 600s ranker would never have prepended
+    — an endorsement nudge the model's real retrieval never saw, enough to
+    flip a near-tie top-1 into a false `search_miss`.
+
+    Assert the hook issues an `iter_events_window` read at the 600s
+    attribution window when `endorsement_boost` is on (pre-fix it reused the
+    3600s `recent` list and never read the narrower window). Reverting the
+    fix drops the 600s call, so the final assertion fails."""
+    import bettermemory.hook as hook_mod
+    from bettermemory.audit import (
+        ATTRIBUTION_LOOKBACK_SECONDS,
+        REAUDIT_DEDUP_WINDOW_SECONDS,
+    )
+    from bettermemory.config import (
+        BehaviorConfig,
+        Config,
+        StorageConfig,
+        TelemetryConfig,
+    )
+    from bettermemory.events import iter_events_window as real_iew
+    from bettermemory.models import utcnow
+
+    # The two constants must not be accidentally equal — the whole fix rests
+    # on the dedup window being strictly wider than the attribution window.
+    assert ATTRIBUTION_LOOKBACK_SECONDS == 600
+    assert REAUDIT_DEDUP_WINDOW_SECONDS == 3600
+    assert ATTRIBUTION_LOOKBACK_SECONDS != REAUDIT_DEDUP_WINDOW_SECONDS
+
+    windows: list[int] = []
+
+    def spy(root: object, window_seconds: int, **kw: object) -> object:
+        windows.append(window_seconds)
+        return real_iew(root, window_seconds, **kw)  # type: ignore[arg-type]
+
+    monkeypatch.setattr(hook_mod, "iter_events_window", spy)
+
+    mem_dir = tmp_path / "mem"
+    mem_dir.mkdir()
+    mem_id = _write_miss_memory(mem_dir)
+
+    # Seed the endorsement signal the tally reads: an explicit (non-auto)
+    # applied `use` in-window, plus a second one backdated past the 600s
+    # attribution window but inside the 3600s dedup window. Under the buggy
+    # 3600s tally both would be counted; the fix scopes the read to 600s.
+    Recorder(root=mem_dir, session_id="sess_server").record(
+        "use", ids=[mem_id], outcome="applied", auto=False
+    )
+    stale_ts = (utcnow() - timedelta(seconds=1800)).isoformat().replace("+00:00", "Z")
+    with (mem_dir / ".events.jsonl").open("a", encoding="utf-8") as fh:
+        fh.write(
+            json.dumps(
+                {
+                    "ts": stale_ts,
+                    "session": "sess_server",
+                    "kind": "use",
+                    "ids": [mem_id],
+                    "outcome": "applied",
+                    "auto": False,
+                }
+            )
+            + "\n"
+        )
+
+    cfg = Config(
+        storage=StorageConfig(directory=str(mem_dir)),
+        telemetry=TelemetryConfig(enabled=True),
+        behavior=BehaviorConfig(endorsement_boost=True),
+    )
+    run_audit(
+        user_message=_MISS_QUERY,
+        assistant_response=None,
+        session_id="claude-endorsement",
+        config=cfg,
+    )
+
+    # The dedup / shield / attribution consumers still get the full 3600s
+    # coverage read...
+    assert REAUDIT_DEDUP_WINDOW_SECONDS in windows
+    # ...but the endorsement tally is scoped to production's 600s window, so
+    # the audit ranker matches what the model's retrieval actually saw. This
+    # 600s read is absent pre-fix (the tally reused `recent`).
+    assert ATTRIBUTION_LOOKBACK_SECONDS in windows
+
+
 def test_run_audit_semantic_mode_records_no_signal_instead_of_aborting(
     tmp_path: Path,
 ) -> None:
