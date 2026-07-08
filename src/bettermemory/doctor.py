@@ -885,9 +885,38 @@ def _check_mcp_client_configs() -> Diagnosis:
                 command = entry.get("command")
                 if not isinstance(command, str):
                     continue
+                # The `uvx`/`uv bettermemory` runner shape (the plugin's
+                # .mcp.json) names "uvx" as the command with "bettermemory" in
+                # args, so the substring filter below misses it and doctor used
+                # to report a healthy managed install as absent. uvx resolves
+                # the binary dynamically — there is no static path to validate,
+                # and the byte-path checks below assume `command` IS the binary
+                # — so recognize it (mirroring init.command_launches_bettermemory
+                # so the two agree on this shape) and record it healthy.
+                args = entry.get("args")
+                if (
+                    Path(command).name in {"uvx", "uv"}
+                    and isinstance(args, list)
+                    and any(a == "bettermemory" for a in args if isinstance(a, str))
+                ):
+                    findings.append(
+                        {
+                            "client": client_name,
+                            "config_path": str(path),
+                            "entry_name": entry_name,
+                            "command": command,
+                            "binary_exists": True,
+                            "matches_resolved_binary": True,
+                            "runner": Path(command).name,
+                        }
+                    )
+                    continue
+                # Doctor deliberately matches ANY bettermemory-pathed command
+                # (broader than init's exact-launch gate) so it can diagnose
+                # stale / different-install / version-mismatch entries too.
                 if "bettermemory" not in command:
                     continue
-                # Found a bettermemory entry. Check the binary path.
+                # Found a direct-command bettermemory entry. Check the binary path.
                 exists_on_disk = Path(command).is_absolute() and Path(command).exists()
                 matches = command == resolved_binary or (
                     not Path(command).is_absolute() and command == "bettermemory"

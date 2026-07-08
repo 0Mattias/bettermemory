@@ -436,6 +436,16 @@ def patch_client_config(
         new_entry["args"] = []
         new_entry["env"] = merged_env
 
+        # Drop remote-transport-only keys so the forced stdio entry can't
+        # become a hybrid (`url`/`headers` alongside `command` — a strict
+        # client schema can reject the whole file, taking down every OTHER
+        # MCP server in it). This is a DENYLIST, not an allowlist: every
+        # legitimate stdio key the user set (`cwd`, `timeout`, `disabled`,
+        # client-specific `autoApprove`/`alwaysAllow`, …) is preserved by the
+        # union above; only the keys meaningless for a stdio launch are shed.
+        for _remote_only_key in ("url", "headers"):
+            new_entry.pop(_remote_only_key, None)
+
         # Born ENABLED: `disabled` survives only when the user set it on the
         # SURVIVING (new-name) entry. A stale `disabled: true` inherited from
         # the legacy entry on the rename path would leave the migrated server

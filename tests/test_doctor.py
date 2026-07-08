@@ -781,6 +781,31 @@ def test_mcp_client_configs_ok_when_path_matches(
     assert "1 client config(s)" in diag.message
 
 
+def test_mcp_client_configs_ok_for_uvx_runner_shape(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A `uvx bettermemory` runner entry (the plugin .mcp.json shape) is a
+    valid install — uvx resolves the binary dynamically. The old prefilter
+    required "bettermemory" to be IN the command string, but the command is
+    "uvx", so doctor missed the entry entirely and reported a healthy
+    install as absent. It must now be recognized and NOT flagged."""
+    real_binary = tmp_path / "bettermemory"
+    real_binary.write_text("#!/bin/sh\n", encoding="utf-8")
+    target = tmp_path / "fake_config.json"
+    target.write_text(
+        json.dumps(
+            {"mcpServers": {"memory": {"command": "uvx", "args": ["bettermemory"]}}}
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr("bettermemory.doctor.KNOWN_CLIENTS", _tmp_clients(tmp_path))
+    monkeypatch.setattr("bettermemory.doctor.find_binary", lambda: str(real_binary))
+    diag = _check_mcp_client_configs()
+    assert diag.status == "ok"
+    assert "1 client config(s)" in diag.message
+
+
 def test_mcp_client_configs_warns_on_stale_path(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,

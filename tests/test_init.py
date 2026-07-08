@@ -319,6 +319,48 @@ def test_patch_migrates_legacy_memory_entry_with_matching_binary(
     assert LEGACY_SERVER_NAME not in body["mcpServers"]
 
 
+def test_patch_migration_drops_remote_transport_keys_but_keeps_stdio_keys(
+    tmp_path: Path,
+) -> None:
+    """A legacy entry carrying remote-transport keys (`url`/`headers`) must
+    NOT carry them into the forced stdio entry: a hybrid stdio+url+headers
+    entry can be rejected wholesale by a strict client schema, taking down
+    every OTHER MCP server in the file. Legitimate stdio keys (`env` — which
+    relocates the store — and `timeout`) MUST survive. Denylist, not
+    allowlist: we shed only the transport-only keys."""
+    target = tmp_path / "config.json"
+    target.write_text(
+        json.dumps(
+            {
+                "mcpServers": {
+                    LEGACY_SERVER_NAME: {
+                        "command": "/x/bm",
+                        "args": [],
+                        "url": "https://old.example/mcp",
+                        "headers": {"Authorization": "Bearer xyz"},
+                        "env": {"BETTERMEMORY_DIR": "/custom/store"},
+                        "timeout": 45,
+                    },
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+    result = patch_client_config(target, binary="/x/bm")
+    assert result["migrated_from_legacy"] is True
+    entry = json.loads(target.read_text(encoding="utf-8"))["mcpServers"][
+        DEFAULT_SERVER_NAME
+    ]
+    assert entry["type"] == "stdio"
+    assert entry["command"] == "/x/bm"
+    # Remote-transport-only keys are shed…
+    assert "url" not in entry
+    assert "headers" not in entry
+    # …but legitimate stdio keys survive.
+    assert entry["env"] == {"BETTERMEMORY_DIR": "/custom/store"}
+    assert entry["timeout"] == 45
+
+
 def test_patch_does_not_migrate_legacy_memory_with_different_binary(
     tmp_path: Path,
 ) -> None:
@@ -813,10 +855,12 @@ def test_patch_migration_both_exist_unions_legacy_only_keys(
     entry = body["mcpServers"][DEFAULT_SERVER_NAME]
     # Canonical keys owned by us reflect the current binary.
     assert entry["command"] == "/x/bm"
-    # Legacy-only keys survived the union (item 10a: not silently dropped).
+    # Legacy-only stdio keys survived the union (not silently dropped).
     assert entry["cwd"] == "/work"
     assert entry["timeout"] == 120
-    assert entry["headers"] == {"X-Trace": "on"}
+    # …but a remote-transport-only key is shed, so the forced stdio entry
+    # can't become a schema-rejected hybrid stdio+headers entry.
+    assert "headers" not in entry
     # env deep-merged: new-name entry wins the BETTERMEMORY_DIR conflict,
     # the legacy-only var is preserved (pins seed order + no key loss).
     assert entry["env"] == {
