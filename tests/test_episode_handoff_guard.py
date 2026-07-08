@@ -187,3 +187,76 @@ async def test_episode_handoff_floor_only_note_is_not_a_bare_crash_claim(
     assert "crash" in note.lower(), (
         f"note should still name crash as one possible reading; got: {note!r}"
     )
+
+
+async def test_episode_handoff_rewinds_past_floor_only_to_older_real_takeaway(
+    memory_dir: Path,
+) -> None:
+    """Rewind contract (episode-handoff-chain): a floor-only session must
+    not sever the handoff chain. Sequence:
+
+        S1: writes a REAL takeaway ("from S1")
+        S2: a clean read-only /loop tick — episode_handoff at entry
+            (writes the unconditional floor) and NO episode_write, so on
+            disk it is floor-only
+        S3: calls episode_handoff at entry
+
+    S2 is S3's immediately-prior worktree session, and it is floor-only.
+    The pre-fix walk adopted the FIRST worktree-matching session (S2) and
+    stopped, returning `episodes: []` — S1's real takeaway became
+    unreachable, severing the chain. The rewind walks PAST S2 to S1 and
+    surfaces S1's takeaway, while still attaching the honest soft note
+    that the immediately-preceding session (S2) recorded nothing.
+
+    Mutation-soundness: reverting the rewind makes the walk stop at S2
+    and return `episodes: []` with `prior_session_id == S2` — both the
+    `takeaway == "from S1"` and `prior_session_id == S1` assertions
+    below fail. The note assertion fails if the soft note is dropped.
+    """
+    from bettermemory.episodes import EpisodeStore
+
+    cfg = Config(storage=StorageConfig(directory=str(memory_dir)))
+
+    # S1: a real takeaway (no handoff — a single real episode on disk).
+    server_s1 = build_server(config=cfg, store=Store(memory_dir), state=SessionState())
+    await _call(server_s1, "episode_write", body="S1 body", takeaway="from S1")
+
+    # Recover S1's session id from disk so we can assert the rewind
+    # resolved to it (not to the floor-only S2).
+    ep_store = EpisodeStore(memory_dir)
+    s1_session_id: str
+    for sid in ep_store.iter_session_ids():
+        eps = ep_store.list_by_session(sid)
+        if any("S1 body" in e.body for e in eps):
+            s1_session_id = sid
+            break
+    else:
+        raise AssertionError("could not locate session S1's id")
+
+    # S2: a clean read-only tick — handoff writes the entry floor, then
+    # the session ends without an episode_write. Floor-only on disk.
+    server_s2 = build_server(config=cfg, store=Store(memory_dir), state=SessionState())
+    await _call(server_s2, "episode_handoff")
+
+    # S3: handoff. Must rewind past the floor-only S2 to S1's takeaway.
+    server_s3 = build_server(config=cfg, store=Store(memory_dir), state=SessionState())
+    res = await _call(server_s3, "episode_handoff")
+
+    # The chain is intact: S1's real takeaway is surfaced, NOT episodes:[].
+    takeaways = [e["takeaway"] for e in res["episodes"]]
+    assert takeaways == ["from S1"], (
+        f"rewind must surface S1's takeaway past the floor-only S2; got: {res!r}"
+    )
+    # The resolved prior id is S1 (the rewound-to real session), not S2.
+    assert res["prior_session_id"] == s1_session_id, (
+        f"prior_session_id should rewind to S1, not the floor-only S2; got: {res!r}"
+    )
+    # The honest soft note still fires: the IMMEDIATELY-preceding session
+    # (S2) recorded no takeaway, even though an older one is surfaced.
+    assert "note" in res, (
+        f"floor-only immediately-prior session should still surface the "
+        f"soft note alongside the rewound takeaway; got: {res!r}"
+    )
+    assert "read-only tick" in res["note"], (
+        f"note must acknowledge the benign read-only-tick reading; got: {res['note']!r}"
+    )

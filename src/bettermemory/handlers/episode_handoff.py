@@ -29,18 +29,27 @@ Returns `None`-rich shape so the caller can distinguish:
   falls back to the strict None-only-matches-None rule for legacy
   (pre-#28) events that lack the field. A caller with no worktree only
   adopts a candidate that is also worktree-less.
-- "prior session recorded no takeaway" — returns
-  `{"prior_session_id": "sess_xxx", "episodes": [], "note": "..."}`.
-  The prior tick called `episode_handoff` (which wrote a session-tag
-  floor anchoring its worktree on disk) but no `episode_write`
-  followed. Because the floor is written unconditionally at entry,
-  this is ambiguous: the tick may have crashed before its takeaway,
-  or it may have been a clean read-only tick with nothing to record.
-  The `note` key surfaces both readings and distinguishes this
-  floor-only shape from the "no prior session at all" case. E2 fix.
+- "immediately-prior session recorded no takeaway" — the most-recent
+  worktree-matching session is floor-only. Because the floor is written
+  unconditionally at handoff entry, this is ambiguous: the tick may have
+  crashed before its takeaway, or it may have been a clean read-only tick
+  with nothing to record. Two things happen, independently:
+  (1) REWIND — the walk does NOT stop at the floor-only session; it keeps
+  walking back to the most-recent session that has a REAL (non-floor)
+  takeaway and surfaces THAT, so a floor-only tick between two real
+  sessions can no longer sever the handoff chain. If an older real
+  session exists the result is `{"prior_session_id": "<older>",
+  "episodes": [...], "note": "..."}`; if none does it is
+  `{"prior_session_id": "<floor-only>", "episodes": [], "note": "..."}`.
+  (2) NOTE — an honest soft `note` is attached either way, acknowledging
+  that the immediately-preceding session recorded no takeaway (crash OR
+  clean read-only tick — the on-disk shape can't prove which). The
+  `note` also distinguishes this shape from the "no prior session at
+  all" case. E2 fix + rewind (episode-handoff-chain).
 - "prior session has takeaways" — `{"prior_session_id": "sess_xxx",
   "episodes": [...]}` with the latest N entries (oldest first within
-  the slice).
+  the slice). No `note` unless the immediately-prior session (a newer
+  one the walk rewound past) was floor-only.
 
 At handler entry the implementation writes a session-tag FLOOR
 episode for the current session BEFORE doing anything else. The
@@ -115,6 +124,24 @@ async def episode_handoff(
     `prior_session_id` is None. Caps `max_episodes` at 50 to keep the
     response bounded; defaults to 5 to match the rest of the read
     surface (`default_max_results`).
+
+    REWIND contract (episode-handoff-chain fix): the walk does not stop
+    at the most-recent worktree-matching session when that session is
+    FLOOR-ONLY (an entry floor but no `episode_write` takeaway). A
+    floor is written unconditionally at handoff ENTRY, so every clean
+    read-only /loop tick leaves a floor-only session on disk; a naive
+    "adopt the first worktree match" walk would adopt that empty tick
+    and return `episodes: []`, severing the chain and hiding the real
+    takeaways of the session before it. Instead the walk REWINDS past
+    floor-only ticks to the most-recent session that carries a real
+    (non-floor) takeaway and surfaces THAT. Independently, when the
+    immediately-prior session was floor-only, an honest soft `note` is
+    attached to the result. The note deliberately does NOT assert a
+    crash: a floor-only session is byte-identical on disk whether the
+    tick crashed after entry or was a clean read-only tick, so the note
+    hedges both readings. When no older real session exists, the
+    floor-only session itself is surfaced as `prior_session_id` with
+    `episodes: []` plus the note.
 
     Auto-resolution honors caller worktree isolation: a candidate
     session_id is only adopted when the session has at least one
@@ -217,6 +244,13 @@ async def episode_handoff(
     # rule).
     excluded_scopes: set[str] = set(state.disabled_scopes)
 
+    # Note flag: set when the IMMEDIATELY-prior worktree session was
+    # floor-only (a crash-after-entry OR a clean read-only tick — the
+    # on-disk shape can't tell them apart). Drives the honest soft note
+    # on the result; it does NOT gate the rewind (we still surface an
+    # older real takeaway when one exists).
+    note_floor_only = False
+
     resolved_session_id: str | None = prior_session_id
     if resolved_session_id is None:
         from ..events import iter_all_events
@@ -270,113 +304,127 @@ async def episode_handoff(
             key=lambda kv: (kv[1], kv[0]),
             reverse=True,
         )
+        # Walk most-recent-first. The FIRST worktree-matching candidate
+        # is the "immediately-prior" session — the one a naive "adopt
+        # the first match" walk would return. Under the REWIND contract
+        # we do NOT stop there when it has no visible takeaway (a
+        # floor-only tick): we keep walking back to the most-recent
+        # session that actually recorded a real takeaway and surface
+        # THAT. A floor is written UNCONDITIONALLY at handoff entry, so
+        # every clean read-only /loop tick leaves a floor-only session;
+        # the pre-rewind walk adopted that empty tick and severed the
+        # chain, hiding the real takeaways of the session before it.
+        #
+        # `seen_worktree_match` tracks whether we've already passed the
+        # immediately-prior worktree session (so a still-older floor-only
+        # session can't masquerade as "immediately prior" for the note).
+        # `floor_only_fallback_sid` remembers the immediately-prior
+        # session when it was floor-only, so if NO older real session
+        # exists we still surface it (with the note) rather than
+        # collapsing to "no prior session at all".
+        seen_worktree_match = False
+        floor_only_fallback_sid: str | None = None
         for sid, _ts in ordered:
             try:
                 candidate_eps = deps.episode_store.list_by_session(sid)
             except ValueError:
                 # Hostile session_id surfaced in the event log;
-                # `list_by_session` validates the on-disk path
-                # shape. Skip rather than crash the handler.
+                # `list_by_session` validates the on-disk path shape.
+                # Skip rather than crash the handler.
                 continue
-            # A candidate matches when EITHER:
-            #   1. It has at least one episode whose origin's
-            #      worktree_root matches the caller's under the
-            #      strict (None-only-matches-None) rule, OR
-            #   2. It has zero episodes at all AND the caller has
-            #      no worktree (caller_worktree is None). In that
-            #      case we surface `{sid, episodes: []}` so the
-            #      caller can still distinguish "no prior session"
-            #      from "prior session existed but is empty" —
-            #      matching the original docstring contract.
-            #      There's no run-state leak in this branch
-            #      because there are no episode bodies to surface;
-            #      only the bare session_id is exposed, which is
-            #      an opaque ULID. However, the session_id IS the
-            #      handle a caller would use to look up the prior
-            #      session's events / memories — surfacing the
-            #      WRONG worktree's session_id as "this worktree's
-            #      prior session" violates the "this worktree"
-            #      contract tick-2 (2988fff) established for
-            #      episode-bearing sessions, so we extend the same
-            #      isolation to the zero-episode branch.
-            #
-            #      Recorder.record stamps `worktree_root` on events
-            #      (queue item #28, now landed), so we read the
-            #      candidate's worktree from the event log
-            #      (`worktree_by_session`) and apply the strict
-            #      equality rule against it. A same-worktree session
-            #      that wrote events but no episodes (a search-only
-            #      tick, or one that crashed before episode_write) is
-            #      now correctly adopted as `prior_session_id`. When
-            #      the candidate's events predate the stamp (legacy)
-            #      or were written outside a git checkout, its
-            #      worktree is unknown (None) and the rule falls back
-            #      to the conservative None-only-matches-None
-            #      behavior — a caller in a worktree never inherits an
-            #      unknown-worktree session.
-            # The discriminator under (1) is the worktree_root
-            # itself, not the branch — one session can legitimately
-            # span branches inside one worktree, so we don't
-            # require ALL episodes to match.
+
             if not candidate_eps:
-                # Worktree read from the session's events (queue #28);
-                # None when the events predate the stamp or were
-                # written outside a git checkout.
+                # Zero-episode candidate: a session that recorded events
+                # but never wrote any episode (a search-only tick, or one
+                # that crashed before the entry floor landed, or a legacy
+                # pre-#28 session). Surface `{sid, episodes: []}` so the
+                # caller can distinguish "no prior session" from "prior
+                # existed but is empty". There's no run-state leak — no
+                # episode bodies, only the bare opaque ULID — but the
+                # session_id IS the handle a caller uses to look up the
+                # prior session's events, so we still apply the strict
+                # "this worktree" contract. Recorder.record stamps
+                # `worktree_root` on events (queue #28), read here from
+                # `worktree_by_session`; a legacy/no-checkout candidate
+                # has an unknown (None) worktree and falls back to the
+                # conservative None-only-matches-None rule, so a caller
+                # in a named worktree never inherits it.
                 candidate_worktree = worktree_by_session.get(sid)
                 if _worktrees_equal_strict(candidate_worktree, caller_worktree):
                     resolved_session_id = sid
                     break
-                # Zero-episode candidate whose worktree doesn't match
-                # the caller (or is unknown while the caller is in a
-                # worktree) — under the strict "this worktree" contract
-                # we cannot adopt it, so walk past to the next-most-
-                # recent candidate.
+                # Worktree mismatch (or unknown while caller is in a
+                # worktree) — walk past to the next-most-recent candidate.
                 continue
-            # Apply session-disabled-scope filter BEFORE the worktree
-            # match. If every episode in this candidate is in a
-            # suppressed scope, treat the session as having nothing
-            # to surface (per the read-surface contract: hidden ==
-            # not there for this session). The handoff walk then
-            # continues to the next-most-recent candidate, which is
-            # exactly the user's expectation when they `scope_disable`
-            # a project: "rewind past the last X-session and surface
-            # what came before".
-            visible_eps = (
-                [ep for ep in candidate_eps if not (set(ep.scopes) & excluded_scopes)]
-                if excluded_scopes
-                else candidate_eps
-            )
-            if not visible_eps:
-                # Had episodes, but all hidden by disabled_scopes.
-                # Walk past; do NOT surface this as an "empty" prior
-                # session (that branch is reserved for the genuine
-                # zero-episode case caught above).
-                continue
-            if any(
+
+            # A candidate belongs to the caller's worktree when ANY of
+            # its episodes (floor or real) carries a matching origin
+            # under the strict None-only-matches-None rule. The
+            # discriminator is the worktree_root itself, not the branch —
+            # one session can legitimately span branches inside one
+            # worktree, so we don't require ALL episodes to match.
+            worktree_matches = any(
                 _worktrees_equal_strict(
                     ep.origin.worktree_root if ep.origin else None,
                     caller_worktree,
                 )
-                for ep in visible_eps
-            ):
+                for ep in candidate_eps
+            )
+            if not worktree_matches:
+                continue
+
+            # Visible, takeaway-bearing episodes. Floors carry no
+            # takeaway; disabled scopes hide episodes uniformly across
+            # the read surface (list_active.py:46, search.py:226), so a
+            # scope the caller suppressed does not count as a takeaway to
+            # rewind to.
+            visible_real = [
+                ep
+                for ep in candidate_eps
+                if not ep.is_floor
+                and not (excluded_scopes and (set(ep.scopes) & excluded_scopes))
+            ]
+            if visible_real:
+                # Most-recent worktree session that actually surfaces a
+                # takeaway — adopt it. We may have rewound past newer
+                # floor-only ticks to reach it; that's the whole point,
+                # and `note_floor_only` (set below) records whether we
+                # did so the honest soft note still fires.
                 resolved_session_id = sid
                 break
 
+            # No visible takeaway in this worktree session. Two shapes:
+            #   - floor-only (every episode is a floor): the ambiguous
+            #     crash / clean-read-only-tick shape. If this is the
+            #     MOST-recent worktree match it is the immediately-prior
+            #     session → flag the honest soft note and remember it as
+            #     the fallback prior id (used when no older real session
+            #     turns up).
+            #   - real episodes all hidden by disabled_scopes: the user
+            #     explicitly suppressed that scope, so rewind past it
+            #     transparently — no note (it is not floor-only; the
+            #     "rewind past the scope_disable'd session" contract).
+            has_real_episode = any(not ep.is_floor for ep in candidate_eps)
+            if not has_real_episode and not seen_worktree_match:
+                note_floor_only = True
+                floor_only_fallback_sid = sid
+            seen_worktree_match = True
+            # REWIND: keep walking toward an older visible takeaway.
+            continue
+        else:
+            # Walk exhausted without a visible-takeaway session. If the
+            # immediately-prior session was floor-only, surface it (with
+            # the note) so the chain still reports "prior existed, no
+            # takeaway" rather than "no prior session at all".
+            if resolved_session_id is None and floor_only_fallback_sid is not None:
+                resolved_session_id = floor_only_fallback_sid
+
     episodes: list[dict[str, Any]] = []
-    # E2: when the resolved session has ONLY floor episodes (no real
-    # takeaway-bearing entries), surface a marker note so the caller
-    # can render "prior session recorded no takeaway" instead of
-    # treating the empty episodes list as "no prior session at all".
-    # The floor is written UNCONDITIONALLY at handoff entry, so a
-    # floor-only session is ambiguous: it may have crashed before its
-    # episode_write, OR it may have been a clean read-only tick that
-    # ran episode_handoff and had nothing to journal. Both are
-    # observably distinct from "no prior session" (empty list, no
-    # note); the note itself acknowledges both readings rather than
-    # asserting a crash the on-disk shape can't actually prove. The
-    # variable name is historical (advisory-only; nothing branches
-    # on it downstream).
-    prior_crashed_pre_takeaway = False
+    # `note_floor_only` may already be True from the auto-resolution walk
+    # (the immediately-prior worktree session was floor-only, whether or
+    # not we then rewound to an older real session). The explicit-
+    # `prior_session_id` path bypasses that walk, so we derive the
+    # floor-only determination for a named session below.
     if resolved_session_id is not None:
         # An explicit `prior_session_id` flows in verbatim (the
         # auto-resolution branch above only ever assigns a session_id
@@ -394,14 +442,17 @@ async def episode_handoff(
             all_eps = deps.episode_store.list_by_session(resolved_session_id)
         except ValueError:
             all_eps = []
-        # Track whether the session is floor-only BEFORE filtering, so
-        # the scope-disable cascade can't mask a crash signal (a
-        # floor's scopes are always [] so the scope filter never
-        # touches it, but we record the determination here for
-        # downstream clarity).
-        any_real_takeaway = any(not ep.is_floor for ep in all_eps)
-        if all_eps and not any_real_takeaway:
-            prior_crashed_pre_takeaway = True
+        # Explicit-`prior_session_id` path only: the walk never ran, so
+        # if the caller named a floor-only session, surface the same
+        # honest note. (The auto path already set `note_floor_only` when
+        # the immediately-prior session was floor-only, and in the rewind
+        # case `resolved_session_id` is the OLDER real session — deriving
+        # from it here would wrongly clear the flag, so we gate on
+        # `prior_session_id is not None`.)
+        if prior_session_id is not None:
+            any_real_takeaway = any(not ep.is_floor for ep in all_eps)
+            if all_eps and not any_real_takeaway:
+                note_floor_only = True
         # Filter floors from the emit stream — they carry no takeaway
         # and the marker body is a placeholder, not content the model
         # should reason over as "what the prior session concluded".
@@ -436,35 +487,38 @@ async def episode_handoff(
         prior_session_id=resolved_session_id,
         max_episodes=max_episodes,
         returned=len(episodes),
-        prior_crashed_pre_takeaway=prior_crashed_pre_takeaway,
+        prior_crashed_pre_takeaway=note_floor_only,
     )
     result: dict[str, Any] = {
         "prior_session_id": resolved_session_id,
         "episodes": episodes,
     }
-    if prior_crashed_pre_takeaway:
-        # Additive surface key — only present when the floor-only
-        # shape is adopted. A caller that doesn't know about the
-        # field sees the same shape as before; a caller that does
-        # can render the note below rather than silently treating
-        # the empty list as "nothing to surface".
+    if note_floor_only:
+        # Additive surface key — only present when the immediately-prior
+        # worktree session was floor-only. A caller that doesn't know
+        # about the field sees the same shape as before; a caller that
+        # does can render the note below. Note that `episodes` may be
+        # NON-empty here: the walk rewound past the floor-only session
+        # to an older real takeaway, and the note flags that the most
+        # recent session left nothing.
         #
-        # The note deliberately does NOT assert a crash: the floor
-        # is written UNCONDITIONALLY at handoff entry, so a
-        # floor-only prior session is genuinely ambiguous between
-        # (a) a crash after entry but before episode_write and
-        # (b) a clean read-only tick that ran episode_handoff and
-        # simply had no takeaway to journal. The on-disk shape is
-        # identical (a bare `is_floor` marker with no entry-vs-exit
-        # field), so we surface both readings instead of the
-        # misleading bare "crashed" claim.
+        # The note deliberately does NOT assert a crash: the floor is
+        # written UNCONDITIONALLY at handoff entry, so a floor-only
+        # session is genuinely ambiguous between (a) a crash after entry
+        # but before episode_write and (b) a clean read-only tick that
+        # ran episode_handoff and simply had no takeaway to journal. The
+        # on-disk shape is identical (a bare `is_floor` marker with no
+        # entry-vs-exit field), so we surface both readings instead of
+        # the misleading bare "crashed" claim.
         result["note"] = (
-            "Prior session recorded no takeaway before it ended: it "
-            "called episode_handoff (which wrote the session-tag "
-            "floor that anchored the worktree match) but no "
-            "episode_write followed — either it crashed before the "
-            "takeaway, or it was a clean read-only tick with nothing "
-            "to record."
+            "The immediately-preceding session recorded no takeaway "
+            "before it ended: it called episode_handoff (which wrote "
+            "the session-tag floor that anchored the worktree match) "
+            "but no episode_write followed — either it crashed before "
+            "the takeaway, or it was a clean read-only tick with "
+            "nothing to record. Any takeaways above (if present) come "
+            "from an older session in this worktree that the handoff "
+            "rewound to."
         )
     return result
 

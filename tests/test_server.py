@@ -3447,61 +3447,55 @@ async def test_handoff_followed_by_episode_write_yields_floor_plus_real(
 async def test_handoff_crash_recovery_floor_only_session_adopted_as_prior(
     memory_dir: Path,
 ) -> None:
-    """E2 crash-recovery main case: tick T calls `episode_handoff`
-    then crashes BEFORE `episode_write`. T+1 builds a fresh server
-    (new recorder/session_id) and calls `episode_handoff`. T's
-    session_id must be resolved as the prior session — NOT T-1's
-    (which is what would happen without the floor anchor).
+    """Rewind contract (episode-handoff-chain), no-older-real branch:
+    tick T calls `episode_handoff` then crashes BEFORE `episode_write`,
+    and there is NO older real session behind it. T+1 builds a fresh
+    server (new recorder/session_id) and calls `episode_handoff`. T is
+    the immediately-prior worktree session and it is floor-only, so the
+    walk rewinds looking for an older takeaway — finds none — and falls
+    back to surfacing T itself as `prior_session_id` with an EMPTY
+    episodes list plus the honest soft note.
 
-    Pre-E2: T has an event recorded but ZERO episodes on disk. T+1's
-    handoff finds T's session_id in the event log, calls
-    `list_by_session(T)` → []. The zero-episode branch ONLY adopts
-    when caller_worktree is None (strict-filter). In a real worktree
-    T+1 walks past T and silently adopts T-1, dropping T's history.
+    Pre-E2 (historical): T had ZERO episodes on disk; T+1's handoff hit
+    the zero-episode branch and (in a real worktree) walked past T,
+    dropping it. The unconditional entry floor fixed that: T+1's
+    `list_by_session(T)` now returns the floor and the worktree filter
+    matches. The episode-handoff-chain rewind then keeps this test
+    honest — when no older real takeaway exists, the floor-only session
+    IS still adopted as the prior id with `episodes: []` and the note.
 
-    Post-E2: T's handoff entry wrote a floor for T with origin
-    capturing T's worktree. T+1's `list_by_session(T)` returns the
-    floor; the worktree filter matches (both ticks in the same
-    worktree); T is adopted. The crash-signal note surfaces."""
+    (The complementary rewind branch — a floor-only tick sitting on TOP
+    of an older real session, where the walk surfaces that older
+    takeaway — is pinned in
+    tests/test_episode_handoff_guard.py::test_episode_handoff_rewinds_past_floor_only_to_older_real_takeaway.)
+    """
     cfg = Config(storage=StorageConfig(directory=str(memory_dir)))
 
-    # Tick T-1: a fully successful tick — handoff + episode_write.
-    server_t_minus_1 = build_server(
-        config=cfg, store=Store(memory_dir), state=SessionState()
-    )
-    await _call(server_t_minus_1, "episode_handoff")
-    await _call(
-        server_t_minus_1,
-        "episode_write",
-        body="T-1 ran fine",
-        takeaway="T-1 takeaway",
-    )
-
-    # Tick T: handoff runs, then we simulate a crash — no episode_write.
+    # Tick T: handoff runs (writes the entry floor), then we simulate a
+    # crash — no episode_write. There is no older session behind it.
     server_t = build_server(config=cfg, store=Store(memory_dir), state=SessionState())
     await _call(server_t, "episode_handoff")
     # Simulated crash: tick T ends here, never calls episode_write.
 
     # Tick T+1: a fresh server in the same worktree resolves the prior
-    # session. WITHOUT the floor, this would adopt T-1 (because T has
-    # no episodes and the zero-episode branch rejects a worktree-having
-    # caller). WITH the floor, T's session is adopted.
+    # session. T is floor-only; with no older real session to rewind to,
+    # T itself is surfaced as the prior id.
     server_t_plus_1 = build_server(
         config=cfg, store=Store(memory_dir), state=SessionState()
     )
     res = await _call(server_t_plus_1, "episode_handoff")
 
-    # The prior session is T (NOT T-1). T has a floor on disk; the
-    # worktree filter saw it.
+    # The floor-only session T is adopted as the prior id (it anchored
+    # its worktree on disk via the floor).
     assert res["prior_session_id"] is not None
-    # The episodes list is empty — the floor is filtered out of the
-    # takeaway summary.
+    # No older real session exists, so the episodes list is empty — the
+    # floor is filtered out of the takeaway summary and there is nothing
+    # to rewind to.
     assert res["episodes"] == []
-    # The crash-signal note IS surfaced — distinguishes "session
-    # crashed before takeaway" from "session existed but wrote
-    # nothing on purpose".
+    # The honest soft note IS surfaced — distinguishes "immediately-prior
+    # session left no takeaway" from "no prior session existed at all".
     assert "note" in res, (
-        f"floor-only prior session should surface a crash-signal note; got: {res!r}"
+        f"floor-only prior session should surface a soft note; got: {res!r}"
     )
     assert "crashed" in res["note"].lower()
 
