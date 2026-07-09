@@ -7,6 +7,28 @@ breaking changes, minor for additive features, patch for fixes. The
 [compatibility contract](CONTRIBUTING.md#versioning-and-the-compatibility-contract)
 spells out exactly what's stable.
 
+## 3.17.1 - 2026-07-09
+
+Root-anchor fix for claim-anchored commit drift, found by the
+feature's first live curation pass: a memory whose body cites the repo
+root ("the project lives at `~/…/bettermemory/`") had its anchor set
+resolve to the pathspec `.`, which matches every commit. That memory
+read 149 commits of "drift" — exactly the unfiltered count the 3.17.0
+change exists to remove — while its discriminating anchors read zero.
+
+### Fixed
+
+- **`resolve_repo_pathspecs` drops inputs that resolve to the repo
+  root itself.** A root citation is a location claim, not a content
+  claim — its existence is path drift's axis; as a commit anchor it
+  degenerates to match-all. Root-only anchor sets now resolve to the
+  empty result, which the shared drift policy
+  (`resolve_commit_drift_count`) already reads as not-applicable, and
+  memories that also cite discriminating paths keep exactly those.
+  The legacy composition (`commits_since_touching_paths`) keeps its
+  documented contract: an all-dropped result stays "no useful filter,
+  fall back to the unfiltered count".
+
 ## 3.17.0 - 2026-07-08
 
 Claim-anchored commit drift. The commit-drift signal now counts only
