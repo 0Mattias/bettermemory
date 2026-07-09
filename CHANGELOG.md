@@ -7,6 +7,37 @@ breaking changes, minor for additive features, patch for fixes. The
 [compatibility contract](CONTRIBUTING.md#versioning-and-the-compatibility-contract)
 spells out exactly what's stable.
 
+## 3.18.0 - 2026-07-09
+
+`bettermemory ui --tunnel` — the roadmap's one-shot sharing item.
+The design splits responsibility deliberately: the tunnel CLI
+(Tailscale or cloudflared) owns transport and prints its own URL, so
+bettermemory does no output parsing; bettermemory owns POLICY — a
+tunneled UI is always the read-only app, enforced at the app layer
+rather than trusted to the transport, so pointing any other tunnel at
+the port cannot re-expose the mutation.
+
+### Added
+
+- **`bettermemory ui --tunnel [auto|tailnet|funnel|cloudflare]`.**
+  Bare `--tunnel` auto-picks `tailnet` (Tailscale `serve` — your own
+  devices only) when the tailscale CLI is installed, falling back to
+  a cloudflared quick tunnel. `funnel` (Tailscale Funnel) and
+  `cloudflare` are PUBLIC: anyone with the URL can read the store,
+  and the server says so loudly before the tunnel comes up. On macOS
+  the resolver also probes the Tailscale app bundle
+  (`/Applications/Tailscale.app/…/Tailscale`), which ships the CLI
+  without putting it on PATH. `--tunnel` with a non-loopback
+  `--host` is rejected — the tunnel is the front door.
+- **Read-only mode in the web app** (`build_app(read_only=True)`).
+  The verify endpoint answers a policy 403 before any CSRF/origin
+  parsing, the verify form disappears from detail pages, the CSRF
+  meta tag and helper script are not emitted at all (a tunneled page
+  should not hand out a token that names a mutation surface), and
+  the header shows a `read-only` badge so a viewer understands why
+  the buttons are gone. The gate is mutation-tested: removing it
+  flips the regression suite red.
+
 ## 3.17.1 - 2026-07-09
 
 Root-anchor fix for claim-anchored commit drift, found by the
