@@ -1019,3 +1019,68 @@ def test_subparser_registry_matches_main_dispatch() -> None:
         f"dispatch-only={arms - set(subparsers)} (unreachable code, "
         "argparse rejects the subcommand before dispatch sees it)."
     )
+
+
+# ---------------------------------------------------------------------------
+# ui --tunnel — argparse glue + clean-exit contract (serve itself is
+# covered in test_web.py; here we pin what reaches web.serve)
+# ---------------------------------------------------------------------------
+
+
+def test_ui_tunnel_flag_parses_and_dispatches(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Bare `--tunnel` means auto; explicit providers pass through
+    verbatim; no flag stays None (read-write local UI). All three
+    must reach web.serve as the `tunnel` kwarg."""
+    from bettermemory import web
+
+    calls: list[tuple[str, int, str | None]] = []
+
+    def _fake_serve(
+        config: object, *, host: str, port: int, tunnel: str | None = None
+    ) -> None:
+        calls.append((host, port, tunnel))
+
+    monkeypatch.setattr(web, "serve", _fake_serve)
+    _run_main(["ui", "--tunnel"], monkeypatch=monkeypatch, storage=tmp_path)
+    _run_main(["ui", "--tunnel", "funnel"], monkeypatch=monkeypatch, storage=tmp_path)
+    _run_main(["ui"], monkeypatch=monkeypatch, storage=tmp_path)
+    assert calls == [
+        ("127.0.0.1", 8765, "auto"),
+        ("127.0.0.1", 8765, "funnel"),
+        ("127.0.0.1", 8765, None),
+    ]
+
+
+def test_ui_tunnel_error_exits_2_with_hint(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """A TunnelError (missing binary, non-loopback host) must exit 2
+    with the hint on stderr — not a traceback."""
+    from bettermemory import web
+
+    def _boom(
+        config: object, *, host: str, port: int, tunnel: str | None = None
+    ) -> None:
+        raise web.TunnelError("no tunnel CLI found (install hint here)")
+
+    monkeypatch.setattr(web, "serve", _boom)
+    with pytest.raises(SystemExit) as excinfo:
+        _run_main(["ui", "--tunnel"], monkeypatch=monkeypatch, storage=tmp_path)
+    assert excinfo.value.code == 2
+    assert "install hint here" in capsys.readouterr().err
+
+
+def test_ui_tunnel_rejects_unknown_provider(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """argparse choices gate the provider list — a typo'd provider is
+    a usage error (exit 2), never a spawned process."""
+    with pytest.raises(SystemExit) as excinfo:
+        _run_main(
+            ["ui", "--tunnel", "ngrok"], monkeypatch=monkeypatch, storage=tmp_path
+        )
+    assert excinfo.value.code == 2

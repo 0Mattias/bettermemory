@@ -521,3 +521,286 @@ def test_navigation_links_present(client: Any) -> None:
     assert r.status_code == 200
     for path in ("/", "/memories", "/health", "/tombstones"):
         assert f'href="{path}"' in r.text
+
+
+# ---------------------------------------------------------------------------
+# Read-only mode (the --tunnel posture)
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture
+def ro_client(memory_dir: Path, store: Store) -> Any:
+    """App built with read_only=True — what every tunnel serves."""
+    from bettermemory.web import build_app
+
+    cfg = Config(storage=StorageConfig(directory=str(memory_dir)))
+    app = build_app(cfg, store, read_only=True)
+    return TestClient(app)
+
+
+def test_read_only_verify_post_403(ro_client: Any, store: Store) -> None:
+    """The single mutating endpoint must refuse in read-only mode —
+    with a policy 403 that names --tunnel, BEFORE the CSRF/origin
+    machinery runs (no token is ever served in this mode, so a token
+    error would be misleading). The store must be untouched."""
+    m = store.write(content="tunnel visible claim", scopes=["tools"])
+    r = ro_client.post(
+        f"/memories/{m.id}/verify",
+        data={"note": "attempt"},
+        headers={
+            "Origin": "http://127.0.0.1:8765",
+            "X-CSRF-Token": ro_client.app.state.csrf_token,
+        },
+        follow_redirects=False,
+    )
+    assert r.status_code == 403
+    assert "read-only" in r.text
+    assert store.load_one(m.id).last_verified_at is None
+
+
+def test_read_only_detail_hides_verify_form(ro_client: Any, store: Store) -> None:
+    """No verify form on detail pages in read-only mode — a button
+    that always 403s is worse than no button."""
+    m = store.write(content="tunnel visible claim", scopes=["tools"])
+    r = ro_client.get(f"/memories/{m.id}")
+    assert r.status_code == 200
+    assert "tunnel visible claim" in r.text
+    assert "Mark verified now" not in r.text
+    assert "<form" not in r.text.replace('<form method="get"', "")
+
+
+def test_read_only_pages_omit_csrf_plumbing(ro_client: Any) -> None:
+    """Read-only pages must not emit the csrf meta tag or the helper
+    script — a tunneled page should not hand out a token that names a
+    mutation surface."""
+    r = ro_client.get("/")
+    assert r.status_code == 200
+    assert "csrf-token" not in r.text
+    assert "X-CSRF-Token" not in r.text
+
+
+def test_read_only_header_shows_badge(ro_client: Any) -> None:
+    """Viewers need to know WHY the verify buttons are gone."""
+    r = ro_client.get("/")
+    assert r.status_code == 200
+    assert "read-only" in r.text
+
+
+def test_normal_mode_keeps_verify_form_and_csrf(client: Any, store: Store) -> None:
+    """Guard the flip's default: a plain build_app() still renders the
+    verify form and the CSRF plumbing (regression pin so read_only
+    can't accidentally become the default)."""
+    m = store.write(content="local claim", scopes=["tools"])
+    detail = client.get(f"/memories/{m.id}")
+    assert "Mark verified now" in detail.text
+    assert "csrf-token" in detail.text
+    assert client.app.state.read_only is False
+
+
+# ---------------------------------------------------------------------------
+# Tunnel provider resolution + orchestration
+# ---------------------------------------------------------------------------
+
+
+def test_resolve_tunnel_auto_prefers_tailnet(monkeypatch: Any) -> None:
+    """auto picks the tailnet-only provider when tailscale exists,
+    even when cloudflared is ALSO present — private-by-default is the
+    posture for a personal memory store."""
+    from bettermemory import web
+
+    monkeypatch.setattr(web, "_find_tailscale", lambda: "/opt/bin/tailscale")
+    monkeypatch.setattr(web, "_find_cloudflared", lambda: "/opt/bin/cloudflared")
+    assert web.resolve_tunnel_provider("auto") == ("tailnet", "/opt/bin/tailscale")
+
+
+def test_resolve_tunnel_auto_falls_back_to_cloudflare(monkeypatch: Any) -> None:
+    from bettermemory import web
+
+    monkeypatch.setattr(web, "_find_tailscale", lambda: None)
+    monkeypatch.setattr(web, "_find_cloudflared", lambda: "/opt/bin/cloudflared")
+    assert web.resolve_tunnel_provider("auto") == (
+        "cloudflare",
+        "/opt/bin/cloudflared",
+    )
+
+
+def test_resolve_tunnel_auto_errors_when_no_binary(monkeypatch: Any) -> None:
+    """The auto error must name both install options — it's the first
+    thing a user without either CLI sees."""
+    from bettermemory import web
+
+    monkeypatch.setattr(web, "_find_tailscale", lambda: None)
+    monkeypatch.setattr(web, "_find_cloudflared", lambda: None)
+    with pytest.raises(web.TunnelError, match="Tailscale.*cloudflared"):
+        web.resolve_tunnel_provider("auto")
+
+
+@pytest.mark.parametrize("requested", ["tailnet", "funnel"])
+def test_resolve_tunnel_explicit_tailscale_missing(
+    monkeypatch: Any, requested: str
+) -> None:
+    from bettermemory import web
+
+    monkeypatch.setattr(web, "_find_tailscale", lambda: None)
+    with pytest.raises(web.TunnelError, match="tailscale"):
+        web.resolve_tunnel_provider(requested)
+
+
+def test_resolve_tunnel_explicit_cloudflare_missing(monkeypatch: Any) -> None:
+    from bettermemory import web
+
+    monkeypatch.setattr(web, "_find_cloudflared", lambda: None)
+    with pytest.raises(web.TunnelError, match="cloudflared"):
+        web.resolve_tunnel_provider("cloudflare")
+
+
+def test_resolve_tunnel_unknown_provider() -> None:
+    from bettermemory import web
+
+    with pytest.raises(web.TunnelError, match="unknown tunnel provider"):
+        web.resolve_tunnel_provider("ngrok")
+
+
+def test_find_tailscale_darwin_app_bundle_fallback(
+    monkeypatch: Any, tmp_path: Path
+) -> None:
+    """The macOS Tailscale app ships its CLI inside the app bundle
+    without touching PATH; `_find_tailscale` must probe that location
+    so bare --tunnel works on the most common desktop install."""
+    from bettermemory import web
+
+    fake_cli = tmp_path / "Tailscale"
+    fake_cli.write_bytes(b"")
+    monkeypatch.setattr(web.shutil, "which", lambda _name: None)
+    monkeypatch.setattr(web, "_MACOS_TAILSCALE_APP_CLI", str(fake_cli))
+    monkeypatch.setattr(web.sys, "platform", "darwin")
+    assert web._find_tailscale() == str(fake_cli)
+
+
+def test_find_tailscale_prefers_path_over_bundle(monkeypatch: Any) -> None:
+    from bettermemory import web
+
+    monkeypatch.setattr(web.shutil, "which", lambda _name: "/usr/local/bin/tailscale")
+    assert web._find_tailscale() == "/usr/local/bin/tailscale"
+
+
+def test_tunnel_argv_shapes() -> None:
+    """The exact foreground invocations for each provider — all three
+    print their own URL and tear down on exit, which is what lets the
+    orchestration skip output parsing entirely."""
+    from bettermemory import web
+
+    assert web._tunnel_argv("tailnet", "/bin/ts", 8765) == ["/bin/ts", "serve", "8765"]
+    assert web._tunnel_argv("funnel", "/bin/ts", 8765) == ["/bin/ts", "funnel", "8765"]
+    assert web._tunnel_argv("cloudflare", "/bin/cf", 9000) == [
+        "/bin/cf",
+        "tunnel",
+        "--url",
+        "http://127.0.0.1:9000",
+    ]
+    with pytest.raises(web.TunnelError):
+        web._tunnel_argv("ngrok", "/bin/ngrok", 8765)
+
+
+def test_start_tunnel_warns_only_for_public_providers(
+    monkeypatch: Any, caplog: Any
+) -> None:
+    """funnel/cloudflare create PUBLIC unauthenticated URLs to a
+    personal memory store — the warning is load-bearing. The
+    tailnet-only provider must NOT cry wolf."""
+    import logging as _logging
+
+    from bettermemory import web
+
+    spawned: list[list[str]] = []
+
+    class _FakeProc:
+        def __init__(self, argv: list[str]) -> None:
+            spawned.append(argv)
+
+    monkeypatch.setattr(web.subprocess, "Popen", _FakeProc)
+
+    with caplog.at_level(_logging.WARNING, logger="bettermemory.web"):
+        web._start_tunnel("tailnet", "/bin/ts", 8765)
+    assert not any("PUBLIC" in r.message for r in caplog.records)
+
+    for provider, binary in (("funnel", "/bin/ts"), ("cloudflare", "/bin/cf")):
+        caplog.clear()
+        with caplog.at_level(_logging.WARNING, logger="bettermemory.web"):
+            web._start_tunnel(provider, binary, 8765)
+        assert any("PUBLIC" in r.message for r in caplog.records)
+    assert len(spawned) == 3
+
+
+def test_serve_tunnel_rejects_non_loopback_host(monkeypatch: Any) -> None:
+    """--tunnel + a non-loopback bind is a contradiction: the tunnel
+    is the front door. Must fail fast, before any process spawns or
+    port binds."""
+    from bettermemory import web
+
+    pytest.importorskip("uvicorn")
+    spawned: list[list[str]] = []
+    monkeypatch.setattr(web.subprocess, "Popen", lambda argv: spawned.append(argv))
+    cfg = Config(storage=StorageConfig(directory="/tmp/nonexistent-ro"))
+    with pytest.raises(web.TunnelError, match="loopback"):
+        web.serve(cfg, host="0.0.0.0", port=8765, tunnel="auto")
+    assert spawned == []
+
+
+def test_serve_tunnel_spawns_provider_and_terminates(
+    monkeypatch: Any, memory_dir: Path
+) -> None:
+    """End-to-end wiring of serve(tunnel=...): resolves the provider,
+    spawns the right argv, builds the READ-ONLY app, and terminates
+    the tunnel child when uvicorn returns."""
+    import uvicorn
+
+    from bettermemory import web
+
+    events: list[str] = []
+    spawned: list[list[str]] = []
+
+    class _FakeProc:
+        def __init__(self, argv: list[str]) -> None:
+            spawned.append(argv)
+
+        def terminate(self) -> None:
+            events.append("terminate")
+
+        def wait(self, timeout: float | None = None) -> int:
+            events.append("wait")
+            return 0
+
+        def kill(self) -> None:  # pragma: no cover - only on hang
+            events.append("kill")
+
+    served_apps: list[Any] = []
+
+    def _fake_run(app: Any, **kwargs: Any) -> None:
+        served_apps.append(app)
+        events.append("uvicorn")
+
+    monkeypatch.setattr(web, "_find_tailscale", lambda: "/bin/ts")
+    monkeypatch.setattr(web.subprocess, "Popen", _FakeProc)
+    monkeypatch.setattr(uvicorn, "run", _fake_run)
+
+    cfg = Config(storage=StorageConfig(directory=str(memory_dir)))
+    web.serve(cfg, host="127.0.0.1", port=8123, tunnel="auto")
+
+    assert spawned == [["/bin/ts", "serve", "8123"]]
+    assert served_apps and served_apps[0].state.read_only is True
+    assert events == ["uvicorn", "terminate", "wait"]
+
+
+def test_serve_without_tunnel_stays_mutable(monkeypatch: Any, memory_dir: Path) -> None:
+    """Plain serve() must keep building the read-write app — the
+    tunnel posture must never leak into the default path."""
+    import uvicorn
+
+    from bettermemory import web
+
+    served_apps: list[Any] = []
+    monkeypatch.setattr(uvicorn, "run", lambda app, **kwargs: served_apps.append(app))
+    cfg = Config(storage=StorageConfig(directory=str(memory_dir)))
+    web.serve(cfg, host="127.0.0.1", port=8124)
+    assert served_apps and served_apps[0].state.read_only is False

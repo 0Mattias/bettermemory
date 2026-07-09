@@ -8,9 +8,6 @@ Planned work, in rough priority order. Plans change; the
 - **Encryption at rest.** An `[encrypted]` extra with `age`-backed
   per-file envelope encryption, complementing the write-time
   credential check. Not expected in 2026.
-- **Read-only `bettermemory ui --tunnel`.** One-shot Cloudflare or
-  Tailscale Funnel for browsing from another device. No mutations over
-  the tunnel.
 - **Relevance-label v2 default flip — now targeting the tightened
   w2 formula.** The measurement half shipped in 3.14.0; the first
   live calibration read (2026-07-08, 103 replayable turns,

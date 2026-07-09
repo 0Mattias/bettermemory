@@ -30,6 +30,9 @@ from __future__ import annotations
 import html
 import logging
 import secrets
+import shutil
+import subprocess
+import sys
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -191,7 +194,14 @@ _CSRF_JS = """
 """
 
 
-def _layout(title: str, body: str, store_root: Path, csrf_token: str) -> str:
+def _layout(
+    title: str,
+    body: str,
+    store_root: Path,
+    csrf_token: str,
+    *,
+    read_only: bool = False,
+) -> str:
     """Render a full HTML page with the standard chrome.
 
     Title is HTML-escaped for safety; body is trusted (the route
@@ -207,12 +217,25 @@ def _layout(title: str, body: str, store_root: Path, csrf_token: str) -> str:
     don't bother with rotating-per-request tokens because the local
     UI's session lifetime is "user has the tab open" and rotating
     would break submits across tabs without buying real defence.
+
+    In `read_only` mode (the --tunnel posture) the CSRF meta tag and
+    helper script are omitted entirely — there are no mutations to
+    protect, and a page served through a tunnel should not hand out
+    a token that names a mutation surface at all. A header badge
+    tells the viewer why the verify buttons are gone.
     """
+    csrf_meta = (
+        ""
+        if read_only
+        else f'<meta name="csrf-token" content="{html.escape(csrf_token)}"/>'
+    )
+    csrf_script = "" if read_only else f"<script>{_CSRF_JS}</script>"
+    ro_badge = '<span class="tag warn">read-only</span> ' if read_only else ""
     return (
         "<!doctype html>"
         "<html><head>"
         f"<title>{html.escape(title)} · bettermemory</title>"
-        f'<meta name="csrf-token" content="{html.escape(csrf_token)}"/>'
+        f"{csrf_meta}"
         f"<style>{_BASE_STYLE}</style>"
         "</head><body>"
         "<header>"
@@ -220,12 +243,12 @@ def _layout(title: str, body: str, store_root: Path, csrf_token: str) -> str:
         '<a href="/memories">Memories</a>'
         '<a href="/health">Health</a>'
         '<a href="/tombstones">Tombstones</a>'
-        f'<span class="muted" style="float:right">'
+        f'<span class="muted" style="float:right">{ro_badge}'
         f"<strong>{html.escape(str(store_root))}</strong></span>"
         "</header>"
         f"<h1>{html.escape(title)}</h1>"
         f"{body}"
-        f"<script>{_CSRF_JS}</script>"
+        f"{csrf_script}"
         "</body></html>"
     )
 
@@ -335,8 +358,10 @@ def _render_memory_list(
     return "".join(parts)
 
 
-def _render_memory_detail(memory: Any, *, stale_after_days: int) -> str:
-    """Full body + metadata + verify form.
+def _render_memory_detail(
+    memory: Any, *, stale_after_days: int, read_only: bool = False
+) -> str:
+    """Full body + metadata + verify form (form omitted in read-only mode).
 
     `stale_after_days` is the verification freshness window (the
     `behavior.verification_stale_days` config knob). When the memory
@@ -396,6 +421,17 @@ def _render_memory_detail(memory: Any, *, stale_after_days: int) -> str:
         )
         verified_paths_section += f"<h2>Expected-absent paths</h2><ul>{items}</ul>"
 
+    verify_section = (
+        ""
+        if read_only
+        else (
+            f"<h2>Verify</h2>"
+            f'<form method="post" action="/memories/{html.escape(memory.id)}/verify">'
+            f'<input type="text" name="note" placeholder="Optional note (what you checked)"/>'
+            f'<button type="submit">Mark verified now</button>'
+            f"</form>"
+        )
+    )
     return (
         f'<div class="card">'
         f"<div>{scope_tags}</div>"
@@ -408,11 +444,7 @@ def _render_memory_detail(memory: Any, *, stale_after_days: int) -> str:
         f"<pre>{body_html}</pre>"
         f"{links_section}"
         f"{verified_paths_section}"
-        f"<h2>Verify</h2>"
-        f'<form method="post" action="/memories/{html.escape(memory.id)}/verify">'
-        f'<input type="text" name="note" placeholder="Optional note (what you checked)"/>'
-        f'<button type="submit">Mark verified now</button>'
-        f"</form>"
+        f"{verify_section}"
         f"</div>"
     )
 
@@ -530,10 +562,19 @@ def _same_origin(origin: str | None, referer: str | None) -> bool:
     return True
 
 
-def build_app(config: Config, store: Store | None = None) -> "FastAPI":
+def build_app(
+    config: Config, store: Store | None = None, *, read_only: bool = False
+) -> "FastAPI":
     """Build a FastAPI app wired to the given store. The factory
     pattern lets tests inject a hermetic store; production code uses
     the default config-resolved one.
+
+    ``read_only=True`` is the --tunnel posture: the one mutating
+    endpoint (verify) answers 403 before doing anything else, the
+    verify form disappears from detail pages, and the CSRF plumbing
+    is not emitted. The gate lives at the app layer on purpose — a
+    tunnel is a transport, not a policy, and the policy must hold
+    even if the operator points a different tunnel at the port.
 
     Raises ImportError when the ``[ui]`` extra isn't installed — the
     CLI catches this and renders a clean install hint.
@@ -562,6 +603,7 @@ def build_app(config: Config, store: Store | None = None) -> "FastAPI":
     csrf_token = secrets.token_urlsafe(32)
     # Stash on the app so tests can read the value without scraping HTML.
     app.state.csrf_token = csrf_token
+    app.state.read_only = read_only
 
     # Cap the verify note at 500 chars — same discipline as
     # `claim_excerpts` on `memory_record_use`. The UI's note field is a
@@ -570,7 +612,9 @@ def build_app(config: Config, store: Store | None = None) -> "FastAPI":
     _NOTE_MAX_CHARS = 500
 
     def _layout_resp(title: str, body: str) -> HTMLResponse:
-        return HTMLResponse(_layout(title, body, store.root, csrf_token))
+        return HTMLResponse(
+            _layout(title, body, store.root, csrf_token, read_only=read_only)
+        )
 
     def _check_csrf(header_token: str | None, form_token: str | None) -> None:
         """audit H4 — constant-time check against the per-process
@@ -631,6 +675,7 @@ def build_app(config: Config, store: Store | None = None) -> "FastAPI":
             _render_memory_detail(
                 memory,
                 stale_after_days=config.behavior.verification_stale_days,
+                read_only=read_only,
             ),
         )
 
@@ -643,6 +688,17 @@ def build_app(config: Config, store: Store | None = None) -> "FastAPI":
         referer: str | None = Header(default=None),
         x_csrf_token: str | None = Header(default=None, alias="X-CSRF-Token"),
     ) -> RedirectResponse:
+        # Read-only gate first — before CSRF, origin, or any parsing.
+        # The 403 names the posture so a viewer who taps a stale
+        # bookmark understands why the mutation vanished.
+        if read_only:
+            raise HTTPException(
+                status_code=403,
+                detail=(
+                    "this UI is read-only (--tunnel mode); "
+                    "verify from the CLI or a local `bettermemory ui`"
+                ),
+            )
         # audit H4 — primary CSRF defence is the per-process token.
         # Without it the prior `_same_origin` gate was bypassable when
         # the operator passed --host 0.0.0.0: an attacker could forge
@@ -704,11 +760,131 @@ def build_app(config: Config, store: Store | None = None) -> "FastAPI":
     return app
 
 
+# ---------------------------------------------------------------------------
+# Tunnel orchestration (`bettermemory ui --tunnel`)
+# ---------------------------------------------------------------------------
+#
+# The tunnel feature is lifecycle-only: spawn the provider CLI pointed
+# at the loopback port and let its own stdout/stderr flow to the
+# terminal — every provider prints its URL itself, so there is no
+# output parsing to drift out of sync with. What bettermemory owns is
+# the POLICY: a tunneled UI is always the read-only app (see
+# `build_app`), and the bind stays loopback (the tunnel is the only
+# way in).
+
+
+class TunnelError(RuntimeError):
+    """Raised when a tunnel cannot be set up; the message is the
+    user-facing hint (missing binary, conflicting flags)."""
+
+
+# The macOS Tailscale app ships its CLI inside the app bundle and does
+# not put it on PATH; probing this well-known location makes bare
+# `--tunnel` work on the most common desktop install.
+_MACOS_TAILSCALE_APP_CLI = "/Applications/Tailscale.app/Contents/MacOS/Tailscale"
+
+# provider -> is the resulting URL reachable by anyone on the internet?
+_TUNNEL_PROVIDERS: dict[str, bool] = {
+    "tailnet": False,  # tailscale serve — tailnet members only
+    "funnel": True,  # tailscale funnel — public internet
+    "cloudflare": True,  # cloudflared quick tunnel — public internet
+}
+
+
+def _find_tailscale() -> str | None:
+    """Locate the tailscale CLI: PATH first, then the macOS app bundle."""
+    found = shutil.which("tailscale")
+    if found:
+        return found
+    if sys.platform == "darwin" and Path(_MACOS_TAILSCALE_APP_CLI).is_file():
+        return _MACOS_TAILSCALE_APP_CLI
+    return None
+
+
+def _find_cloudflared() -> str | None:
+    return shutil.which("cloudflared")
+
+
+def resolve_tunnel_provider(requested: str) -> tuple[str, str]:
+    """Map a --tunnel value to ``(provider, binary_path)``.
+
+    ``auto`` prefers the tailnet-only provider when tailscale is
+    installed — for a personal memory store, "my own devices can
+    read it" is the sane default exposure — and falls back to a
+    public cloudflared quick tunnel. Explicit providers fail with an
+    install hint when their binary is missing.
+    """
+    if requested == "auto":
+        tailscale = _find_tailscale()
+        if tailscale:
+            return "tailnet", tailscale
+        cloudflared = _find_cloudflared()
+        if cloudflared:
+            return "cloudflare", cloudflared
+        raise TunnelError(
+            "--tunnel needs a tunnel CLI: install Tailscale "
+            "(https://tailscale.com/download) for a tailnet-only URL, "
+            "or cloudflared for a public quick tunnel."
+        )
+    if requested in ("tailnet", "funnel"):
+        tailscale = _find_tailscale()
+        if not tailscale:
+            raise TunnelError(
+                f"--tunnel {requested} requires the tailscale CLI "
+                "(https://tailscale.com/download)."
+            )
+        return requested, tailscale
+    if requested == "cloudflare":
+        cloudflared = _find_cloudflared()
+        if not cloudflared:
+            raise TunnelError(
+                "--tunnel cloudflare requires the cloudflared CLI "
+                "(https://developers.cloudflare.com/cloudflare-one/"
+                "connections/connect-networks/downloads/)."
+            )
+        return "cloudflare", cloudflared
+    raise TunnelError(f"unknown tunnel provider: {requested!r}")
+
+
+def _tunnel_argv(provider: str, binary: str, port: int) -> list[str]:
+    """Foreground invocation for each provider — all three print their
+    URL to the terminal and tear the tunnel down on exit."""
+    if provider == "tailnet":
+        return [binary, "serve", str(port)]
+    if provider == "funnel":
+        return [binary, "funnel", str(port)]
+    if provider == "cloudflare":
+        return [binary, "tunnel", "--url", f"http://127.0.0.1:{port}"]
+    raise TunnelError(f"unknown tunnel provider: {provider!r}")
+
+
+def _start_tunnel(provider: str, binary: str, port: int) -> "subprocess.Popen[bytes]":
+    """Spawn the tunnel process with inherited stdio (it prints its
+    own URL). Emits the exposure warning for public providers before
+    anything is reachable."""
+    if _TUNNEL_PROVIDERS.get(provider, True):
+        log.warning(
+            "--tunnel %s creates a PUBLIC, unauthenticated URL: anyone "
+            "who obtains the link can read this memory store (read-only). "
+            "Use --tunnel tailnet to restrict access to your own devices.",
+            provider,
+        )
+    argv = _tunnel_argv(provider, binary, port)
+    log.info(
+        "starting %s tunnel (%s) — the tunnel prints its URL below; "
+        "Ctrl-C stops both the tunnel and the UI",
+        provider,
+        " ".join(argv),
+    )
+    return subprocess.Popen(argv)
+
+
 def serve(
     config: Config,
     *,
     host: str = "127.0.0.1",
     port: int = 8765,
+    tunnel: str | None = None,
 ) -> None:
     """Run the web UI via uvicorn. Blocking — the caller (CLI) cedes
     control until SIGINT.
@@ -717,6 +893,11 @@ def serve(
     a trusted network, pass a different host like '0.0.0.0' from the
     CLI; the server prints a warning when binding non-loopback so
     operators don't accidentally expose curation surfaces.
+
+    ``tunnel`` (a --tunnel value: auto/tailnet/funnel/cloudflare)
+    spawns the provider CLI against the loopback bind and forces the
+    app into read-only mode for the whole process lifetime. Tunnel
+    mode requires a loopback host — the tunnel is the front door.
     """
     try:
         import uvicorn
@@ -726,10 +907,29 @@ def serve(
             "`pip install bettermemory[ui]`."
         ) from exc
 
-    app = build_app(config)
+    tunnel_proc: subprocess.Popen[bytes] | None = None
+    if tunnel is not None:
+        if not _is_loopback_bind(host):
+            raise TunnelError(
+                "--tunnel requires a loopback --host (the tunnel is the "
+                f"front door); got {host!r}. Drop --host or use 127.0.0.1."
+            )
+        provider, binary = resolve_tunnel_provider(tunnel)
+        log.info("read-only mode: mutations are disabled while tunneling")
+        tunnel_proc = _start_tunnel(provider, binary, port)
+
+    app = build_app(config, read_only=tunnel is not None)
     _warn_if_non_loopback_bind(host)
     log.info("bettermemory ui starting on http://%s:%d", host, port)
-    uvicorn.run(app, host=host, port=port, log_level="warning")
+    try:
+        uvicorn.run(app, host=host, port=port, log_level="warning")
+    finally:
+        if tunnel_proc is not None:
+            tunnel_proc.terminate()
+            try:
+                tunnel_proc.wait(timeout=5)
+            except subprocess.TimeoutExpired:
+                tunnel_proc.kill()
 
 
 def _warn_if_non_loopback_bind(host: str) -> bool:
@@ -787,4 +987,4 @@ def _is_loopback_bind(host: str) -> bool:
     return bool(infos)
 
 
-__all__ = ["build_app", "serve"]
+__all__ = ["TunnelError", "build_app", "resolve_tunnel_provider", "serve"]
