@@ -78,6 +78,7 @@ from __future__ import annotations
 
 import bisect
 import re
+from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
@@ -86,8 +87,9 @@ from typing import Any
 from .origin import (
     Origin,
     commit_author_timestamps,
-    commits_since_touching_paths,
+    commits_touching_pathspecs,
     repos_match,
+    resolve_repo_pathspecs,
 )
 
 
@@ -222,6 +224,65 @@ _WELLKNOWN_ROUTE_SEGMENTS: frozenset[str] = frozenset(
 # a match restart at a later label on the rare longer token, so the bound
 # can't drop a route the suppression logic would otherwise catch.
 _DOMAIN_ROUTE_RE = re.compile(r"\b[\w-]+(?:\.[\w-]+){1,20}/([\w.\-]+)")
+
+# Repo-relative citation: `src/bettermemory/eval.py`, `docs/ROADMAP.md`,
+# `plugin/.claude-plugin/marketplace.json`, `CHANGELOG.md` — the dominant
+# citation style in real memory bodies, which the absolute/`~` extractor
+# above deliberately ignores (a relative path can't be stat'd without
+# knowing its root, so it is useless for PATH drift). For COMMIT drift the
+# root is known — the memory's origin repo — so relative citations are
+# first-class claim anchors there (see `commit_drift_anchor_paths`).
+#
+# Deliberately conservative, with over-match being the cheap direction: a
+# phantom anchor resolves to a repo path no commit ever touched and
+# contributes zero to the filtered count (verdict-neutral), while an
+# UNDER-match can strip a memory of its only anchor and misclassify it as
+# untethered (exempt from commit drift entirely). Shape rules:
+#
+# - Optional dir run (`{0,12}` segments, each ≤64 chars, non-digit-leading
+#   so URL tails like `python.org/3/library/...` never chain) then a
+#   filename with a REQUIRED extension of 2-8 chars starting with a letter.
+#   The two-char extension floor rejects prose abbreviations (`e.g`, `i.e`,
+#   `U.S`) that would otherwise anchor every English-language body; the
+#   letter-first rule rejects version strings (`3.16.0`, `v3.16.0rc1`).
+# - Zero-dir matches make root-file citations work (`CHANGELOG.md`,
+#   `pyproject.toml`) at the cost of occasionally matching a bare domain
+#   (`pypi.org`) — phantom-safe per the above. The `(?![\w/])` lookahead
+#   keeps a domain-with-route (`pypi.org/simple/...`) from anchoring: that
+#   token is a URL, and its route tail is already suppressed for the
+#   absolute extractor via `_DOMAIN_ROUTE_RE`. The `\w` half of the
+#   lookahead is what makes the rejection backtrack-proof: shrinking the
+#   extension (`org` → `or`) always leaves a word character adjacent, so
+#   every re-partition of a URL token fails rather than sneaking through
+#   as a truncated match. The `\.\w` alternative extends the same guard
+#   across label boundaries (`docs.python` inside `docs.python.org` sits
+#   before `.o`) without sacrificing sentence-final citations
+#   (`…docs/ROADMAP.md.` sits before `. ` — dot-then-space passes).
+# - The lookbehind bars `[\w/~.\\]` so mid-path and mid-token starts never
+#   re-match (`src/foo.py` must match once, not once per segment), while
+#   backticks, quotes, parens, and start-of-line all remain valid openers.
+# - Every quantifier is bounded (same ReDoS discipline as
+#   `_DOMAIN_ROUTE_RE`): iterations are separated by a literal `/`, so
+#   backtracking is confined to one bounded segment window per start
+#   offset — linear over the (already `_MAX_BODY_SCAN_BYTES`-truncated)
+#   body.
+#
+# A trailing `:407` / `:407-461` code-citation suffix simply falls outside
+# the captured group, mirroring `_LINE_SUFFIX_RE`'s "the line number is not
+# a filesystem claim; the file is".
+_RELATIVE_CITATION_RE = re.compile(
+    r"(?<![\w/~.\\])"
+    r"((?:[A-Za-z_.][\w.\-]{0,63}/){0,12}"
+    r"[A-Za-z_.][\w.\-]{0,63}\.[A-Za-z][A-Za-z0-9_]{1,7})"
+    r"(?![\w/]|\.\w)"
+)
+
+# Cap on relative-citation anchors folded in per body — layered on top of
+# `_MAX_PATHS_PER_BODY` (which caps the absolute/`~` extractor). Higher
+# than that cap because audit-backlog memories legitimately cite a dozen-
+# plus `file.py:line` locations, and an anchor is one pathspec string in a
+# single `git rev-list` invocation, not a stat() per retrieval.
+_MAX_ANCHOR_CITATIONS = 24
 
 # Trailing punctuation that's almost never part of a real path. We strip
 # these from the right edge of a candidate before validating. `~` is in
@@ -487,6 +548,26 @@ def _normalize_for_compare(raw: str) -> str:
 # ---------------------------------------------------------------------------
 
 
+def _bounded_scan_text(body: str) -> str:
+    """Truncate `body` to `_MAX_BODY_SCAN_BYTES` before any regex scan.
+
+    Cut at the LAST WHITESPACE inside the cap, never mid-token: a hard
+    slice can bisect a legitimate citation straddling the boundary, and
+    the surviving prefix — itself a well-formed path — validates, fails
+    the disk check, and FABRICATES a `path_drift_missing` entry (a false
+    non-fresh staleness verdict) from a body whose real path exists.
+    Dropping the partial tail token keeps the cap's contract honest: it
+    only ever DROPS claims, never invents one. (A capped body with no
+    whitespace at all keeps the hard slice — a single 32 KiB token is no
+    valid path claim and dies at the candidate-length gate.)
+    """
+    if len(body) <= _MAX_BODY_SCAN_BYTES:
+        return body
+    truncated = body[:_MAX_BODY_SCAN_BYTES]
+    last_ws = max(truncated.rfind(" "), truncated.rfind("\n"), truncated.rfind("\t"))
+    return truncated[:last_ws] if last_ws > 0 else truncated
+
+
 def _extract_candidates(body: str) -> list[tuple[str, bool, bool]]:
     """Pull validated, deduplicated path candidates from `body`.
 
@@ -531,22 +612,9 @@ def _extract_candidates(body: str) -> list[tuple[str, bool, bool]]:
     # pass below is linear in body length at best and runs per search hit;
     # `_MAX_PATHS_PER_BODY` only caps the candidate COUNT, never the bytes
     # scanned, so a pathological multi-MB body would still be walked in full
-    # by `finditer`. Truncate once here (see `_MAX_BODY_SCAN_BYTES`) — and
-    # cut at the LAST WHITESPACE inside the cap, never mid-token: a hard
-    # slice can bisect a legitimate citation straddling the boundary, and
-    # the surviving prefix — itself a well-formed path — validates, fails
-    # the disk check, and FABRICATES a `path_drift_missing` entry (a false
-    # non-fresh staleness verdict) from a body whose real path exists.
-    # Dropping the partial tail token keeps the cap's contract honest: it
-    # only ever DROPS claims, never invents one. (A capped body with no
-    # whitespace at all keeps the hard slice — a single 32 KiB token is no
-    # valid path claim and dies at the candidate-length gate.)
-    if len(body) > _MAX_BODY_SCAN_BYTES:
-        truncated = body[:_MAX_BODY_SCAN_BYTES]
-        last_ws = max(
-            truncated.rfind(" "), truncated.rfind("\n"), truncated.rfind("\t")
-        )
-        body = truncated[:last_ws] if last_ws > 0 else truncated
+    # by `finditer`. Truncation lives in `_bounded_scan_text` (shared with
+    # the relative-citation anchor scan).
+    body = _bounded_scan_text(body)
 
     route_segments = {m.group(1) for m in _DOMAIN_ROUTE_RE.finditer(body)}
 
@@ -1096,12 +1164,125 @@ class CommitDriftStatus:
 def _drift_recommendation(count: int) -> str:
     plural = "" if count == 1 else "s"
     return (
-        f"{count} commit{plural} landed in this repo since the last "
-        "memory_verify — calendar verification looks fresh but the "
-        "project has moved. Spot-check at least one verifiable claim "
-        "against the current HEAD; call memory_verify(id, note=...) "
-        "if it still holds, or memory_update first if it has drifted."
+        f"{count} commit{plural} touching this memory's cited or attested "
+        "paths landed since the last memory_verify — calendar verification "
+        "looks fresh but the claims' ground truth has moved. Spot-check at "
+        "least one verifiable claim against the current HEAD; call "
+        "memory_verify(id, note=...) if it still holds, or memory_update "
+        "first if it has drifted."
     )
+
+
+def commit_drift_anchor_paths(
+    body: str,
+    verified_paths: Sequence[str] = (),
+) -> tuple[str, ...]:
+    """The memory's claim anchors for commit-drift purposes.
+
+    Union, in order, of:
+
+    1. `verified_paths` attestations (the caller explicitly named these
+       as the claims they spot-checked — the strongest anchor signal);
+    2. absolute/`~` path candidates cited in the body (the same
+       extractor path drift uses, `_extract_candidates`);
+    3. repo-relative citations (`src/x.py:12`, `docs/y.md`,
+       `CHANGELOG.md`) via `_RELATIVE_CITATION_RE` — the dominant
+       citation style in real bodies, invisible to path drift (nothing
+       to stat without a root) but first-class here (the origin repo IS
+       the root).
+
+    An EMPTY result is the claim-kind signal: the memory cites no
+    path-shaped claims at all — a preference, lesson, strategy note, or
+    reflection — and repo commits cannot invalidate it, so commit drift
+    is not applicable (`compute_commit_drift` returns None rather than
+    counting the whole repo against it). Calendar staleness remains the
+    backstop for that class: `stale_after_days` forces a periodic
+    spot-check regardless.
+
+    Deduplicated on the same `~`-expanded comparison form the path-drift
+    extractor uses; relative citations are capped at
+    `_MAX_ANCHOR_CITATIONS`. Whether an anchor actually resolves INSIDE
+    the caller's repo is deliberately not decided here — that's
+    `resolve_repo_pathspecs`' job at the git boundary
+    (`resolve_commit_drift_count`).
+    """
+    anchors: list[str] = []
+    seen: set[str] = set()
+
+    def _add(candidate: str) -> None:
+        key = _normalize_for_compare(candidate)
+        if not key or key in seen:
+            return
+        seen.add(key)
+        anchors.append(candidate)
+
+    for raw in verified_paths:
+        if isinstance(raw, str) and raw:
+            _add(raw)
+    if body:
+        for path, _, _ in _extract_candidates(body):
+            _add(path)
+        relative_added = 0
+        for match in _RELATIVE_CITATION_RE.finditer(_bounded_scan_text(body)):
+            if relative_added >= _MAX_ANCHOR_CITATIONS:
+                break
+            before = len(seen)
+            _add(match.group(1))
+            if len(seen) > before:
+                relative_added += 1
+    return tuple(anchors)
+
+
+def resolve_commit_drift_count(
+    *,
+    cwd: Path,
+    since: datetime,
+    unfiltered: int,
+    anchors: Sequence[str],
+    toplevel: Path | None = None,
+) -> int | None:
+    """Map a positive repo-wide commit count to the claim-anchored count.
+
+    The shared policy step behind all four commit-drift surfaces
+    (memory_show via `compute_commit_drift`, the memory_search top-hit
+    fold in `_response.attach_commit_drift_counts`, and the two
+    memory_health rollups). Keeping the decision in one function is what
+    keeps the surfaces in lockstep — the historical failure mode here is
+    one surface learning a policy refinement the others didn't.
+
+    Returns:
+
+    - ``None`` — commit drift is NOT APPLICABLE: `anchors` is empty (the
+      memory makes no path-shaped claims) or none of the anchors resolve
+      inside the caller's repo (the claims live elsewhere — a remote
+      host, another checkout, the home directory). A bare repo-wide
+      commit count carries no information about such a memory; counting
+      it anyway is exactly the 100%-false-positive noise the claim-kind
+      calibration measured (12/12 labeled false positives at 3.13.0,
+      24/24 at 3.16.0).
+    - an ``int`` — the count of commits since `since` touching at least
+      one anchor. Falls back to `unfiltered` when git can't answer the
+      path-filtered query (never under-count on infrastructure failure).
+
+    Callers gate on ``unfiltered > 0`` before calling (a caught-up memory
+    pays no git work), and the filtered count may only REDUCE the
+    author-date bisect count — see the committer-date/inclusive-boundary
+    note at the call sites.
+    """
+    if not anchors:
+        return None
+    specs = resolve_repo_pathspecs(cwd, list(anchors), toplevel=toplevel)
+    if specs is None:
+        # Git itself couldn't answer (not a repo from here, git missing).
+        # We can't judge anchoring, so keep the conservative unfiltered
+        # count rather than silently exempting a possibly-drifted memory.
+        return unfiltered
+    if not specs:
+        # Git answered: every anchor escapes this repo. The memory's
+        # claims are real but not about this repo's code.
+        return None
+    filtered = commits_touching_pathspecs(cwd, since, specs, toplevel=toplevel)
+    return unfiltered if filtered is None else filtered
 
 
 def compute_commit_drift(
@@ -1110,6 +1291,7 @@ def compute_commit_drift(
     *,
     caller_origin: Origin | None,
     verified_paths: list[str] | tuple[str, ...] = (),
+    body: str = "",
 ) -> CommitDriftStatus | None:
     """Return a commit-drift verdict, or None when the signal isn't useful.
 
@@ -1124,7 +1306,18 @@ def compute_commit_drift(
       `caller_origin.repo` both set);
     - the caller's repo matches the memory's `origin.repo` via
       `repos_match` (host/owner/name normalisation, not raw URL);
-    - `commit_author_timestamps` returned a list (git was reachable).
+    - `commit_author_timestamps` returned a list (git was reachable);
+    - the memory makes CLAIMS this repo's commits could invalidate —
+      it has at least one claim anchor (`commit_drift_anchor_paths`:
+      attested `verified_paths` or body-cited paths), and when commits
+      have landed, at least one anchor resolves inside the caller's
+      repo. A memory with no path-shaped claims (a preference, lesson,
+      or reflection that merely ORIGINATED here) is exempt: a bare
+      repo-wide commit count carries no information about it, and
+      counting it anyway measured as 100% false positives on the
+      dogfood store (12/12 at 3.13.0, 24/24 at 3.16.0). Calendar
+      staleness (`stale_after_days`) remains the backstop for that
+      class.
 
     Otherwise None — emit nothing rather than a noisy "unknown" branch
     every consumer would have to filter. This mirrors `path_drift`'s
@@ -1140,16 +1333,17 @@ def compute_commit_drift(
     even with zero rebases when `last_verified_at` landed in the same UTC
     second as a commit.
 
-    `verified_paths`, when non-empty, narrows the count to commits
-    that touched at least one of those paths since
-    `last_verified_at`. The path-filtered count subsumes the
-    unfiltered one: a memory verified for ``[/etc/foo]`` reports
-    drift only when commits touched ``/etc/foo``, not when other
-    parts of the repo moved. The narrowing only runs when the
-    unfiltered count is already positive (mirroring the health
-    rollup), and falls back to the unfiltered count when the
-    path-filtered query fails (git error, no paths resolved inside
-    the repo, etc.) so we never under-count drift.
+    The count is CLAIM-ANCHORED: `commit_drift_anchor_paths` derives the
+    memory's anchors from `verified_paths` + `body`, and the count is
+    narrowed to commits that touched at least one anchor since
+    `last_verified_at` (`resolve_commit_drift_count`). A memory anchored
+    to ``[/etc/foo]`` reports drift only when commits touched
+    ``/etc/foo``, not when other parts of the repo moved. The narrowing
+    only runs when the unfiltered count is already positive (mirroring
+    the health rollup), and falls back to the unfiltered count when git
+    can't answer the path-filtered query — but resolves to None (signal
+    not applicable, see above) when the memory has no anchors at all or
+    none land inside this repo.
     """
     if last_verified_at is None:
         return None
@@ -1184,20 +1378,27 @@ def compute_commit_drift(
     timestamps_sorted = sorted(timestamps)
     idx = bisect.bisect_right(timestamps_sorted, last_verified_at)
     count = len(timestamps_sorted) - idx
-    # Narrow to commits that touched an attested path — only when there's
-    # drift to narrow AND paths to narrow by. Guarding on `count > 0`
-    # mirrors `_compute_commit_drift_debt` / the curation rollup so a
-    # caught-up memory never pays the extra `git rev-list` call, and the
-    # path-filtered fallback (committer-date, inclusive) is applied on the
-    # exact same condition across all three surfaces — keeping them in
-    # lockstep on the verified-paths branch too. Falls back to the
-    # unfiltered count when the path filter can't run.
-    if verified_paths and count > 0:
-        filtered = commits_since_touching_paths(
-            cwd_path, last_verified_at, list(verified_paths)
+    # Claim-anchored narrowing. Anchor derivation is pure CPU (bounded
+    # regex over the body) and runs unconditionally so an untethered
+    # memory reads consistently as not-applicable; the git-backed
+    # resolution + rev-list only run when there's drift to narrow
+    # (`count > 0`), mirroring `_compute_commit_drift_debt` / the
+    # curation rollup so a caught-up memory never pays a git call and
+    # the committer-date/inclusive-boundary fallback is applied on the
+    # exact same condition across all four surfaces.
+    anchors = commit_drift_anchor_paths(body, verified_paths)
+    if not anchors:
+        return None
+    if count > 0:
+        resolved = resolve_commit_drift_count(
+            cwd=cwd_path,
+            since=last_verified_at,
+            unfiltered=count,
+            anchors=anchors,
         )
-        if filtered is not None:
-            count = filtered
+        if resolved is None:
+            return None
+        count = resolved
     if count == 0:
         return CommitDriftStatus(
             status="clean",
@@ -1298,8 +1499,10 @@ __all__ = [
     "CommitDriftStatus",
     "PathDriftReport",
     "VerificationStatus",
+    "commit_drift_anchor_paths",
     "compute_commit_drift",
     "compute_staleness_verdict",
     "compute_verification_status",
     "detect_path_drift",
+    "resolve_commit_drift_count",
 ]

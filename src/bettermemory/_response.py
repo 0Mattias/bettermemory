@@ -32,7 +32,7 @@ from .models import (
 from .origin import (
     Origin,
     commit_author_timestamps,
-    commits_since_touching_paths,
+    repo_toplevel,
     repos_match,
     should_include_for_caller,
 )
@@ -44,9 +44,11 @@ from .verify import (
     _VERDICT_RAISE_STATUSES,
     _VERDICT_RECOMMENDED,
     _VERDICT_REQUIRED,
+    commit_drift_anchor_paths,
     compute_staleness_verdict,
     compute_verification_status,
     detect_path_drift,
+    resolve_commit_drift_count,
 )
 
 
@@ -398,7 +400,11 @@ class ResponseBuilder:
         - git was unreachable in the caller's cwd,
         - the hit's memory has no `origin.repo` (legacy / global memory),
         - the hit's memory's repo doesn't match the caller's,
-        - the hit's memory has never been verified (no anchor to count from).
+        - the hit's memory has never been verified (no anchor to count from),
+        - the hit's memory makes no claims this repo's commits could
+          invalidate — no cited/attested path anchors at all, or none
+          that resolve inside the caller's repo (the claim-anchored
+          drift policy; see `verify.resolve_commit_drift_count`).
 
         Absence-as-signal mirrors `path_drift`'s null-when-clean contract
         and keeps the hit shape uniform: a consumer either sees the field
@@ -406,32 +412,47 @@ class ResponseBuilder:
         """
         if caller_origin.repo is None or caller_origin.cwd is None:
             return
-        timestamps = commit_author_timestamps(Path(caller_origin.cwd))
+        cwd_path = Path(caller_origin.cwd)
+        timestamps = commit_author_timestamps(cwd_path)
         if timestamps is None:
             return
         timestamps_sorted = sorted(timestamps)
-        # Build the id → origin.repo side-map from the in-memory `memories`
-        # list (already loaded by the caller for the search itself), avoiding
-        # a second store round-trip per hit.
-        origin_repo_by_id: dict[str, str | None] = {
-            m.id: (m.origin.repo if m.origin else None) for m in memories
-        }
-        # verified_paths per id: when present, the count is narrowed to
-        # commits that touched the attested paths, matching what
-        # memory_show does. Without this, the loud search surface ignored
-        # verified_paths and nagged spot_check_recommended on a memory the
-        # user deliberately attested as stable — defeating the feature on
-        # its highest-traffic surface and disagreeing with memory_show.
-        verified_paths_by_id: dict[str, list[str]] = {
-            m.id: list(m.verified_paths) for m in memories
-        }
+        # Resolve the repo root ONCE for the whole search — the per-hit
+        # anchor resolution below would otherwise pay a `git rev-parse`
+        # fork+exec per hit. None is tolerated (the resolver re-derives),
+        # but with `commit_author_timestamps` having just answered, git
+        # is demonstrably reachable here.
+        toplevel = repo_toplevel(cwd_path)
+        # Build the id → memory side-map from the in-memory `memories`
+        # list (already loaded by the caller for the search itself),
+        # avoiding a second store round-trip per hit. The full record is
+        # needed (not just origin/verified_paths): the claim-anchored
+        # narrowing derives anchors from the BODY's citations too,
+        # matching what memory_show does. Without surface parity here,
+        # the loud search surface would nag spot_check_recommended on a
+        # memory memory_show reads as fresh — defeating the policy on
+        # its highest-traffic surface.
+        memory_by_id = {m.id: m for m in memories}
         for hit_dict, hit in zip(out, hits):
             if hit.last_verified_at is None:
                 continue
-            origin_repo = origin_repo_by_id.get(hit.id)
+            record = memory_by_id.get(hit.id)
+            origin_repo = (
+                record.origin.repo if record is not None and record.origin else None
+            )
             if origin_repo is None:
                 continue
             if not repos_match(origin_repo, caller_origin.repo):
+                continue
+            assert record is not None  # origin_repo non-None implies record
+            # Claim-anchored gate: a memory with no cited/attested path
+            # anchors is exempt — a bare repo-wide commit count carries no
+            # information about a preference or lesson that merely
+            # ORIGINATED in this repo (measured 100% false-positive on the
+            # dogfood store). Derivation is pure CPU (bounded regex),
+            # mirroring `verify.compute_commit_drift`.
+            anchors = commit_drift_anchor_paths(record.body, record.verified_paths)
+            if not anchors:
                 continue
             since = hit.last_verified_at
             if since.tzinfo is None:
@@ -443,32 +464,34 @@ class ResponseBuilder:
             # rollup's semantics.
             idx = bisect.bisect_right(timestamps_sorted, since)
             count = len(timestamps_sorted) - idx
-            # If the memory carries verified_paths, narrow to commits that
-            # touched those paths (mirrors memory_show / the expand_top
-            # block), so an attestation of stable paths suppresses drift
-            # noise here too. Bounded to the few hits with verified_paths;
-            # falls back to the unfiltered count when the path filter can't
-            # run (git unreachable, all paths outside the repo).
+            # Narrow to commits that touched an anchor (mirrors memory_show
+            # / the expand_top block), so stable-claim memories don't nag
+            # here. None means the anchors all escape this repo — the
+            # signal is not applicable; omit the field entirely.
             #
             # The `count > 0` guard is load-bearing and mirrors
             # `verify.compute_commit_drift` + `health._compute_commit_drift_debt`
-            # (the four verified-paths-narrowing sites must gate identically).
+            # (the four anchor-narrowing sites must gate identically).
             # Beyond skipping a needless `git rev-list` when there's no drift
             # to narrow, it keeps the author-date `bisect_right` count
-            # authoritative: `commits_since_touching_paths` filters on
-            # COMMITTER date INCLUSIVELY at whole-second granularity, so
-            # without the guard a same-second commit touching a verified path
+            # authoritative: the path-filtered count runs in COMMITTER-date
+            # space with git's INCLUSIVE whole-second `--since` boundary, so
+            # without the guard a same-second commit touching an anchor
             # could turn a clean (count == 0) author-bisect result into a
             # positive count — resurrecting the exact show/search divergence
             # the commit-drift unification removed. Narrowing may only REDUCE
             # the count, never resurrect drift the bisect said was clean.
-            vpaths = verified_paths_by_id.get(hit.id) or []
-            if vpaths and count > 0:
-                filtered = commits_since_touching_paths(
-                    Path(caller_origin.cwd), since, vpaths
+            if count > 0:
+                resolved = resolve_commit_drift_count(
+                    cwd=cwd_path,
+                    since=since,
+                    unfiltered=count,
+                    anchors=anchors,
+                    toplevel=toplevel,
                 )
-                if filtered is not None:
-                    count = filtered
+                if resolved is None:
+                    continue
+                count = resolved
             hit_dict["commit_drift_count"] = count
             # Recompute the verdict now that we have the commit-drift
             # contribution. `hit_to_dict` initialised it without that

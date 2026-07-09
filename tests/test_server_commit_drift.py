@@ -73,6 +73,34 @@ def _commit_at(path: Path, message: str, *, when: datetime) -> None:
     )
 
 
+def _commit_touching(
+    path: Path, message: str, *, when: datetime, filename: str = "notes.md"
+) -> None:
+    """Commit that TOUCHES a file — the claim-anchored drift policy only
+    counts commits touching a memory's cited/attested paths, so
+    drift-expecting fixtures must move the cited file, not just HEAD
+    (`_commit_at`'s --allow-empty commits are invisible to the filter)."""
+    target = path / filename
+    with target.open("a") as fh:
+        fh.write(f"{message}\n")
+    subprocess.run(["git", "add", filename], cwd=path, check=True, capture_output=True)
+    iso = when.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S+00:00")
+    env = os.environ.copy()
+    env["GIT_AUTHOR_DATE"] = iso
+    env["GIT_COMMITTER_DATE"] = iso
+    env["GIT_AUTHOR_NAME"] = "Test"
+    env["GIT_AUTHOR_EMAIL"] = "test@example.com"
+    env["GIT_COMMITTER_NAME"] = "Test"
+    env["GIT_COMMITTER_EMAIL"] = "test@example.com"
+    subprocess.run(
+        ["git", "commit", "-m", message],
+        cwd=path,
+        check=True,
+        capture_output=True,
+        env=env,
+    )
+
+
 def _commit_split(
     path: Path,
     message: str,
@@ -193,14 +221,22 @@ async def test_memory_show_drift_when_commits_after_verify(
     server = server_with_fake_origin(origin)
 
     written = await _call(
-        server, "memory_write", content="durable memory body", scopes=["tools"]
+        server,
+        "memory_write",
+        content="durable memory body about notes.md",
+        scopes=["tools"],
     )
     await _call(server, "memory_verify", id=written["id"], note="initial check")
 
-    # Now add commits with timestamps in the far future, guaranteed to be
-    # newer than the verify timestamp regardless of when the test runs.
-    _commit_at(repo, "post-verify-1", when=datetime(2099, 1, 1, tzinfo=timezone.utc))
-    _commit_at(repo, "post-verify-2", when=datetime(2099, 2, 1, tzinfo=timezone.utc))
+    # Now add commits touching the cited file, with timestamps in the far
+    # future — guaranteed newer than the verify timestamp regardless of
+    # when the test runs, and visible to the claim-anchored filter.
+    _commit_touching(
+        repo, "post-verify-1", when=datetime(2099, 1, 1, tzinfo=timezone.utc)
+    )
+    _commit_touching(
+        repo, "post-verify-2", when=datetime(2099, 2, 1, tzinfo=timezone.utc)
+    )
 
     shown = await _call(server, "memory_show", id=written["id"])
     assert shown["commit_drift"] is not None
@@ -226,7 +262,10 @@ async def test_memory_show_clean_when_no_commits_after_verify(
     server = server_with_fake_origin(origin)
 
     written = await _call(
-        server, "memory_write", content="durable memory body", scopes=["tools"]
+        server,
+        "memory_write",
+        content="durable memory body about notes.md",
+        scopes=["tools"],
     )
     await _call(server, "memory_verify", id=written["id"])
 
@@ -316,11 +355,11 @@ async def test_memory_search_expand_top_includes_commit_drift_on_drift(
     written = await _call(
         server,
         "memory_write",
-        content="quokka migration ritual gathers attention",
+        content="quokka migration ritual gathers attention in notes.md",
         scopes=["tools"],
     )
     await _call(server, "memory_verify", id=written["id"])
-    _commit_at(repo, "after", when=datetime(2099, 1, 1, tzinfo=timezone.utc))
+    _commit_touching(repo, "after", when=datetime(2099, 1, 1, tzinfo=timezone.utc))
 
     raw = await _call(
         server, "memory_search", query="quokka migration ritual", expand_top=True
@@ -384,12 +423,12 @@ async def test_memory_search_hits_carry_commit_drift_count_when_drifted(
     written = await _call(
         server,
         "memory_write",
-        content="durable thing about widgets",
+        content="durable thing about widgets in notes.md",
         scopes=["tools"],
     )
     await _call(server, "memory_verify", id=written["id"])
-    _commit_at(repo, "post-1", when=datetime(2099, 1, 1, tzinfo=timezone.utc))
-    _commit_at(repo, "post-2", when=datetime(2099, 2, 1, tzinfo=timezone.utc))
+    _commit_touching(repo, "post-1", when=datetime(2099, 1, 1, tzinfo=timezone.utc))
+    _commit_touching(repo, "post-2", when=datetime(2099, 2, 1, tzinfo=timezone.utc))
 
     raw = await _call(
         server, "memory_search", query="widgets durable", expand_top=False
@@ -462,7 +501,7 @@ async def test_memory_search_hits_carry_zero_commit_drift_count_when_clean(
     server = server_with_fake_origin(origin)
 
     written = await _call(
-        server, "memory_write", content="alpha widget", scopes=["tools"]
+        server, "memory_write", content="alpha widget in notes.md", scopes=["tools"]
     )
     await _call(server, "memory_verify", id=written["id"])
 
@@ -560,15 +599,20 @@ async def test_memory_health_commit_drift_debt_lists_drifted_rows(
     origin = Origin(cwd=str(repo), repo=_REMOTE, branch="main")
     server = server_with_fake_origin(origin)
 
-    a = await _call(server, "memory_write", content="alpha widget", scopes=["tools"])
-    b = await _call(server, "memory_write", content="beta widget", scopes=["tools"])
+    a = await _call(
+        server, "memory_write", content="alpha widget in notes.md", scopes=["tools"]
+    )
+    b = await _call(
+        server, "memory_write", content="beta widget in notes.md", scopes=["tools"]
+    )
     await _call(server, "memory_verify", id=a["id"])
     await _call(server, "memory_verify", id=b["id"])
 
-    # Three commits after the verify: both memories should report drift=3.
-    _commit_at(repo, "c1", when=datetime(2099, 1, 1, tzinfo=timezone.utc))
-    _commit_at(repo, "c2", when=datetime(2099, 2, 1, tzinfo=timezone.utc))
-    _commit_at(repo, "c3", when=datetime(2099, 3, 1, tzinfo=timezone.utc))
+    # Three commits touching the cited file after the verify: both
+    # memories should report drift=3.
+    _commit_touching(repo, "c1", when=datetime(2099, 1, 1, tzinfo=timezone.utc))
+    _commit_touching(repo, "c2", when=datetime(2099, 2, 1, tzinfo=timezone.utc))
+    _commit_touching(repo, "c3", when=datetime(2099, 3, 1, tzinfo=timezone.utc))
 
     report = await _call(server, "memory_health")
     cd = report["commit_drift_debt"]
@@ -597,7 +641,7 @@ async def test_memory_health_commit_drift_debt_clean_when_caught_up(
     server = server_with_fake_origin(origin)
 
     written = await _call(
-        server, "memory_write", content="alpha widget", scopes=["tools"]
+        server, "memory_write", content="alpha widget in notes.md", scopes=["tools"]
     )
     await _call(server, "memory_verify", id=written["id"])
 
@@ -819,7 +863,10 @@ async def test_commit_drift_count_agrees_across_surfaces_after_rebase(
     server = server_with_fake_origin(origin)
 
     written = await _call(
-        server, "memory_write", content="durable thing about widgets", scopes=["tools"]
+        server,
+        "memory_write",
+        content="durable thing about widgets in notes.md",
+        scopes=["tools"],
     )
     # Verify stamps "now" (real wall-clock), which is after the 2025 author
     # dates below and before the rewritten-into-the-future committer date.
@@ -867,7 +914,10 @@ async def test_commit_drift_count_agrees_across_surfaces_same_second_boundary(
     server = server_with_fake_origin(origin)
 
     written = await _call(
-        server, "memory_write", content="durable thing about widgets", scopes=["tools"]
+        server,
+        "memory_write",
+        content="durable thing about widgets in notes.md",
+        scopes=["tools"],
     )
     await _call(server, "memory_verify", id=written["id"])
 
@@ -968,3 +1018,160 @@ async def test_memory_search_verified_paths_does_not_resurrect_same_second_commi
     # already excluded — stays 0 / fresh, in lockstep with memory_show.
     assert target["commit_drift_count"] == 0
     assert target["staleness_verdict"] == "fresh"
+
+
+# ---------------------------------------------------------------------------
+# Claim-anchored exemption — a memory citing no paths cannot commit-drift
+# (measured 100% false-positive before the gate: 12/12 at 3.13.0, 24/24 at
+# 3.16.0). The untethered class: preferences, lessons, strategy notes,
+# reflections that merely ORIGINATED in the repo.
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.skipif(not _GIT_AVAILABLE, reason="git not on PATH")
+async def test_memory_show_commit_drift_null_for_untethered_memory(
+    server_with_fake_origin, tmp_path: Path
+) -> None:
+    """Commits landed since verify, but the memory cites no paths — the
+    signal is NOT APPLICABLE (null), not drift. The bare repo-wide count
+    says nothing about a claim-less memory; calendar staleness remains
+    its backstop. Reverting the claim-anchored gate makes this fail with
+    a drift/2 block."""
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    _init_repo(repo)
+    _commit_at(repo, "initial", when=datetime(2025, 1, 1, tzinfo=timezone.utc))
+
+    origin = Origin(cwd=str(repo), repo=_REMOTE, branch="main")
+    server = server_with_fake_origin(origin)
+
+    written = await _call(
+        server,
+        "memory_write",
+        content="workflow preference: keep cost checkpoints on long runs",
+        scopes=["tools"],
+    )
+    await _call(server, "memory_verify", id=written["id"])
+    _commit_at(repo, "post-1", when=datetime(2099, 1, 1, tzinfo=timezone.utc))
+    _commit_at(repo, "post-2", when=datetime(2099, 2, 1, tzinfo=timezone.utc))
+
+    shown = await _call(server, "memory_show", id=written["id"])
+    assert shown["commit_drift"] is None
+    # And the verdict stays fresh — the repo moving is not evidence
+    # against a claim-less memory.
+    assert shown["staleness_verdict"] == "fresh"
+
+
+@pytest.mark.skipif(not _GIT_AVAILABLE, reason="git not on PATH")
+async def test_memory_search_hits_omit_commit_drift_count_for_untethered(
+    server_with_fake_origin, tmp_path: Path
+) -> None:
+    """The per-hit triage integer is omitted for an untethered memory —
+    same absence-as-signal contract as the other not-applicable branches,
+    and the verdict stays fresh on the loud search surface."""
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    _init_repo(repo)
+    _commit_at(repo, "initial", when=datetime(2025, 1, 1, tzinfo=timezone.utc))
+
+    origin = Origin(cwd=str(repo), repo=_REMOTE, branch="main")
+    server = server_with_fake_origin(origin)
+
+    written = await _call(
+        server,
+        "memory_write",
+        content="workflow preference about delta reviews before merging",
+        scopes=["tools"],
+    )
+    await _call(server, "memory_verify", id=written["id"])
+    _commit_at(repo, "post-1", when=datetime(2099, 1, 1, tzinfo=timezone.utc))
+
+    raw = await _call(
+        server, "memory_search", query="delta reviews preference", expand_top=False
+    )
+    hits = _unwrap(raw)
+    target = next(h for h in hits if h["id"] == written["id"])
+    assert "commit_drift_count" not in target
+    assert target["staleness_verdict"] == "fresh"
+
+
+@pytest.mark.skipif(not _GIT_AVAILABLE, reason="git not on PATH")
+async def test_memory_search_hits_omit_count_for_untethered_even_when_caught_up(
+    server_with_fake_origin, tmp_path: Path
+) -> None:
+    """The count == 0 leg is what pins the anchors gate itself: with
+    commits since verify (count > 0), omission is additionally protected
+    by resolve_commit_drift_count's empty-anchors None, so only a
+    caught-up untethered hit can distinguish gate-present (field
+    omitted) from gate-bypassed (a stamped `commit_drift_count: 0`).
+    Untethered means NOT APPLICABLE, never a reassuring zero — a zero
+    would imply the claims were checked against commits, and there are
+    no claims to check."""
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    _init_repo(repo)
+    # Only an ancient commit — the wall-clock verify below lands after
+    # it, so the author-date bisect reads 0 for this memory.
+    _commit_at(repo, "ancient", when=datetime(2020, 1, 1, tzinfo=timezone.utc))
+
+    origin = Origin(cwd=str(repo), repo=_REMOTE, branch="main")
+    server = server_with_fake_origin(origin)
+
+    written = await _call(
+        server,
+        "memory_write",
+        content="workflow preference about epsilon retros after shipping",
+        scopes=["tools"],
+    )
+    await _call(server, "memory_verify", id=written["id"])
+
+    raw = await _call(
+        server, "memory_search", query="epsilon retros preference", expand_top=False
+    )
+    hits = _unwrap(raw)
+    target = next(h for h in hits if h["id"] == written["id"])
+    assert "commit_drift_count" not in target
+    assert target["staleness_verdict"] == "fresh"
+
+
+@pytest.mark.skipif(not _GIT_AVAILABLE, reason="git not on PATH")
+async def test_memory_health_commit_drift_debt_excludes_untethered(
+    server_with_fake_origin, tmp_path: Path
+) -> None:
+    """The rollup counts only claim-anchored memories: an anchored memory
+    whose cited file was touched drifts; an untethered memory verified at
+    the same instant does not appear at all. This is the health-surface
+    half of the claim-kind policy (the dogfood 24-row pile was 100%
+    untethered noise)."""
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    _init_repo(repo)
+    _commit_at(repo, "initial", when=datetime(2025, 1, 1, tzinfo=timezone.utc))
+
+    origin = Origin(cwd=str(repo), repo=_REMOTE, branch="main")
+    server = server_with_fake_origin(origin)
+
+    anchored = await _call(
+        server, "memory_write", content="alpha widget in notes.md", scopes=["tools"]
+    )
+    untethered = await _call(
+        server,
+        "memory_write",
+        content="workflow preference: rotate strategies when audits plateau",
+        scopes=["tools"],
+    )
+    await _call(server, "memory_verify", id=anchored["id"])
+    await _call(server, "memory_verify", id=untethered["id"])
+
+    _commit_touching(repo, "c1", when=datetime(2099, 1, 1, tzinfo=timezone.utc))
+
+    report = await _call(server, "memory_health")
+    cd = report["commit_drift_debt"]
+    assert cd is not None
+    assert cd["total_drifted"] == 1
+    assert [r["id"] for r in cd["rows"]] == [anchored["id"]]
+
+    # The curation rollup agrees — scope_overview's `drifted` counts only
+    # the anchored memory (lockstep between the two health surfaces).
+    overview = await _call(server, "memory_scope_overview")
+    assert overview["curation_pending"]["drifted"] == 1

@@ -28,14 +28,18 @@ from bettermemory.verify import (
     CommitDriftStatus,
     PathDriftReport,
     VerificationStatus,
+    _MAX_ANCHOR_CITATIONS,
     _MAX_BODY_SCAN_BYTES,
     _MAX_PATH_LENGTH,
     _PLACEHOLDER_PATHS,
     _PLACEHOLDER_PREFIXES,
+    _RELATIVE_CITATION_RE,
     _normalize_candidate,
+    commit_drift_anchor_paths,
     compute_commit_drift,
     compute_verification_status,
     detect_path_drift,
+    resolve_commit_drift_count,
 )
 
 
@@ -68,6 +72,35 @@ def _commit_at(path: Path, message: str, *, when: datetime) -> None:
     env["GIT_COMMITTER_EMAIL"] = "test@example.com"
     subprocess.run(
         ["git", "commit", "--allow-empty", "-m", message],
+        cwd=path,
+        check=True,
+        capture_output=True,
+        env=env,
+    )
+
+
+def _commit_touching(
+    path: Path, message: str, *, when: datetime, filename: str = "notes.md"
+) -> None:
+    """Commit that TOUCHES a file — required by the claim-anchored drift
+    policy: only commits touching a memory's cited/attested paths count,
+    so drift-expecting fixtures must move the cited file, not just HEAD
+    (`_commit_at`'s --allow-empty commits are invisible to the filter)."""
+    target = path / filename
+    target.parent.mkdir(parents=True, exist_ok=True)
+    with target.open("a") as fh:
+        fh.write(f"{message}\n")
+    subprocess.run(["git", "add", filename], cwd=path, check=True, capture_output=True)
+    iso = when.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S+00:00")
+    env = os.environ.copy()
+    env["GIT_AUTHOR_DATE"] = iso
+    env["GIT_COMMITTER_DATE"] = iso
+    env["GIT_AUTHOR_NAME"] = "Test"
+    env["GIT_AUTHOR_EMAIL"] = "test@example.com"
+    env["GIT_COMMITTER_NAME"] = "Test"
+    env["GIT_COMMITTER_EMAIL"] = "test@example.com"
+    subprocess.run(
+        ["git", "commit", "-m", message],
         cwd=path,
         check=True,
         capture_output=True,
@@ -1030,6 +1063,7 @@ def test_commit_drift_status_clean_when_no_commits_after_verify(
         last_verified_at=datetime(2026, 6, 1, tzinfo=timezone.utc),
         memory_origin_repo=_REMOTE,
         caller_origin=Origin(cwd=str(tmp_path), repo=_REMOTE, branch="main"),
+        body="claims about notes.md hold",
     )
     assert result is not None
     assert result.status == "clean"
@@ -1041,19 +1075,27 @@ def test_commit_drift_status_clean_when_no_commits_after_verify(
 def test_commit_drift_status_drift_when_commits_after_verify(
     tmp_path: Path,
 ) -> None:
-    """The load-bearing case: commits landed since the last verify, so
-    the calendar may say 'fresh' but the project has moved. Status is
-    'drift', count matches, recommendation includes the count and
-    actionable next steps (memory_verify / memory_update)."""
+    """The load-bearing case: commits touching the memory's cited path
+    landed since the last verify, so the calendar may say 'fresh' but the
+    claims' ground truth has moved. Status is 'drift', count matches,
+    recommendation includes the count and actionable next steps
+    (memory_verify / memory_update)."""
     _init_repo_with_remote(tmp_path, remote=_REMOTE)
     _commit_at(tmp_path, "anchor", when=datetime(2026, 1, 1, tzinfo=timezone.utc))
-    _commit_at(tmp_path, "after-1", when=datetime(2026, 2, 1, tzinfo=timezone.utc))
-    _commit_at(tmp_path, "after-2", when=datetime(2026, 2, 2, tzinfo=timezone.utc))
-    _commit_at(tmp_path, "after-3", when=datetime(2026, 2, 3, tzinfo=timezone.utc))
+    _commit_touching(
+        tmp_path, "after-1", when=datetime(2026, 2, 1, tzinfo=timezone.utc)
+    )
+    _commit_touching(
+        tmp_path, "after-2", when=datetime(2026, 2, 2, tzinfo=timezone.utc)
+    )
+    _commit_touching(
+        tmp_path, "after-3", when=datetime(2026, 2, 3, tzinfo=timezone.utc)
+    )
     result = compute_commit_drift(
         last_verified_at=datetime(2026, 1, 15, tzinfo=timezone.utc),
         memory_origin_repo=_REMOTE,
         caller_origin=Origin(cwd=str(tmp_path), repo=_REMOTE, branch="main"),
+        body="claims about notes.md hold",
     )
     assert result is not None
     assert result.status == "drift"
@@ -1073,16 +1115,17 @@ def test_commit_drift_recommendation_singular_for_one_commit(
     output ('1 commits' would be a tell)."""
     _init_repo_with_remote(tmp_path, remote=_REMOTE)
     _commit_at(tmp_path, "anchor", when=datetime(2026, 1, 1, tzinfo=timezone.utc))
-    _commit_at(tmp_path, "after", when=datetime(2026, 2, 1, tzinfo=timezone.utc))
+    _commit_touching(tmp_path, "after", when=datetime(2026, 2, 1, tzinfo=timezone.utc))
     result = compute_commit_drift(
         last_verified_at=datetime(2026, 1, 15, tzinfo=timezone.utc),
         memory_origin_repo=_REMOTE,
         caller_origin=Origin(cwd=str(tmp_path), repo=_REMOTE, branch="main"),
+        body="claims about notes.md hold",
     )
     assert result is not None
     assert result.commits_since_verify == 1
     assert result.recommendation is not None
-    assert "1 commit landed" in result.recommendation
+    assert "1 commit touching" in result.recommendation
     assert "1 commits" not in result.recommendation
 
 
@@ -1096,6 +1139,7 @@ def test_commit_drift_to_dict_shape_clean(tmp_path: Path) -> None:
         last_verified_at=datetime(2026, 6, 1, tzinfo=timezone.utc),
         memory_origin_repo=_REMOTE,
         caller_origin=Origin(cwd=str(tmp_path), repo=_REMOTE, branch="main"),
+        body="claims about notes.md hold",
     )
     assert result is not None
     payload = result.to_dict()
@@ -1113,7 +1157,7 @@ def test_commit_drift_normalised_repo_url_still_matches(tmp_path: Path) -> None:
     surface form and commit_drift should fire."""
     _init_repo_with_remote(tmp_path, remote="https://github.com/example/foo.git")
     _commit_at(tmp_path, "anchor", when=datetime(2026, 1, 1, tzinfo=timezone.utc))
-    _commit_at(tmp_path, "after", when=datetime(2026, 2, 1, tzinfo=timezone.utc))
+    _commit_touching(tmp_path, "after", when=datetime(2026, 2, 1, tzinfo=timezone.utc))
     result = compute_commit_drift(
         last_verified_at=datetime(2026, 1, 15, tzinfo=timezone.utc),
         memory_origin_repo="git@github.com:example/foo.git",
@@ -1122,10 +1166,181 @@ def test_commit_drift_normalised_repo_url_still_matches(tmp_path: Path) -> None:
             repo="https://github.com/example/foo.git",
             branch="main",
         ),
+        body="claims about notes.md hold",
     )
     assert result is not None
     assert result.status == "drift"
     assert result.commits_since_verify == 1
+
+
+# ---------------------------------------------------------------------------
+# Claim-anchored commit drift — the anchor derivation and the exemption
+# policy (a memory citing no paths cannot commit-drift; measured 100%
+# false-positive on the dogfood store before the gate: 12/12 at 3.13.0,
+# 24/24 at 3.16.0)
+# ---------------------------------------------------------------------------
+
+
+def test_anchor_paths_empty_for_claimless_body() -> None:
+    """A preference/lesson body citing nothing path-shaped has no claim
+    anchors — the claim-kind signal that exempts it from commit drift."""
+    assert (
+        commit_drift_anchor_paths(
+            "prefer cost checkpoints on long autonomous runs; ask before "
+            "burning tokens",
+        )
+        == ()
+    )
+
+
+def test_anchor_paths_union_attested_cited_and_relative() -> None:
+    """Anchors = verified_paths + absolute/~ citations + repo-relative
+    citations, deduplicated, attestations first."""
+    anchors = commit_drift_anchor_paths(
+        "see src/pkg/mod.py:42 and ~/.config/app.toml for the flag",
+        verified_paths=["docs/spec.md", "src/pkg/mod.py"],
+    )
+    assert anchors[0] == "docs/spec.md"
+    assert set(anchors) == {"docs/spec.md", "src/pkg/mod.py", "~/.config/app.toml"}
+
+
+def test_relative_citation_regex_rejects_prose_and_urls() -> None:
+    """The conservative shape rules: acronym pairs, abbreviations,
+    version strings, and URL tokens must not become anchors — a URL
+    anchoring a memory would re-open the exact false-positive class the
+    policy exists to close."""
+    noise = (
+        "CI/CD and TCP/IP pipelines, e.g. the U.S. case, i.e. at 3.16.0 "
+        "or v3.16.0rc1, docs.python.org/3/library/re.html and "
+        "pypi.org/simple/pkg routes"
+    )
+    assert [m.group(1) for m in _RELATIVE_CITATION_RE.finditer(noise)] == []
+
+
+def test_relative_citation_regex_accepts_real_citations() -> None:
+    got = [
+        m.group(1)
+        for m in _RELATIVE_CITATION_RE.finditer(
+            "pinned in `tests/test_server.py`, bump CHANGELOG.md and "
+            "plugin/.claude-plugin/plugin.json; details in "
+            "src/pkg/eval.py:1228."
+        )
+    ]
+    assert got == [
+        "tests/test_server.py",
+        "CHANGELOG.md",
+        "plugin/.claude-plugin/plugin.json",
+        "src/pkg/eval.py",
+    ]
+
+
+def test_anchor_paths_caps_relative_citations() -> None:
+    """A pathological body citing hundreds of files stays bounded — the
+    cap only DROPS anchors (never invents), and the anchor set staying
+    non-empty preserves the memory's anchored classification."""
+    body = " ".join(f"dir{i}/file{i}.py" for i in range(200))
+    anchors = commit_drift_anchor_paths(body)
+    assert len(anchors) == _MAX_ANCHOR_CITATIONS
+
+
+@pytest.mark.skipif(not _GIT_AVAILABLE, reason="git not on PATH")
+def test_commit_drift_none_for_untethered_memory_despite_commits(
+    tmp_path: Path,
+) -> None:
+    """THE policy regression test: commits landed since verify, but the
+    memory cites no paths — the bare repo-wide count must NOT surface as
+    drift (it says nothing about a claim-less memory). Reverting the
+    claim-anchored gate in compute_commit_drift makes this fail with a
+    'drift'/2 result."""
+    _init_repo_with_remote(tmp_path, remote=_REMOTE)
+    _commit_at(tmp_path, "anchor", when=datetime(2026, 1, 1, tzinfo=timezone.utc))
+    _commit_at(tmp_path, "after-1", when=datetime(2026, 2, 1, tzinfo=timezone.utc))
+    _commit_at(tmp_path, "after-2", when=datetime(2026, 2, 2, tzinfo=timezone.utc))
+    result = compute_commit_drift(
+        last_verified_at=datetime(2026, 1, 15, tzinfo=timezone.utc),
+        memory_origin_repo=_REMOTE,
+        caller_origin=Origin(cwd=str(tmp_path), repo=_REMOTE, branch="main"),
+        body="a workflow preference that merely originated in this repo",
+    )
+    assert result is None
+
+
+@pytest.mark.skipif(not _GIT_AVAILABLE, reason="git not on PATH")
+def test_commit_drift_none_when_anchors_all_escape_repo(tmp_path: Path) -> None:
+    """Anchors exist but none resolve inside the caller's repo (remote
+    host paths, home-dir configs): the claims live elsewhere, so this
+    repo's commits still can't invalidate them — None, not the
+    unfiltered-fallback the legacy composition applied."""
+    _init_repo_with_remote(tmp_path, remote=_REMOTE)
+    _commit_at(tmp_path, "anchor", when=datetime(2026, 1, 1, tzinfo=timezone.utc))
+    _commit_at(tmp_path, "after", when=datetime(2026, 2, 1, tzinfo=timezone.utc))
+    result = compute_commit_drift(
+        last_verified_at=datetime(2026, 1, 15, tzinfo=timezone.utc),
+        memory_origin_repo=_REMOTE,
+        caller_origin=Origin(cwd=str(tmp_path), repo=_REMOTE, branch="main"),
+        body="the router config lives at /data/compose/.env on the board",
+        verified_paths=["~/.claude.json"],
+    )
+    assert result is None
+
+
+@pytest.mark.skipif(not _GIT_AVAILABLE, reason="git not on PATH")
+def test_commit_drift_clean_when_cited_path_untouched(tmp_path: Path) -> None:
+    """The claim-anchored discriminator: commits landed, but none touched
+    the cited file — the world the memory checked hasn't moved, so the
+    verdict is clean (0), not drift-by-association."""
+    _init_repo_with_remote(tmp_path, remote=_REMOTE)
+    _commit_at(tmp_path, "anchor", when=datetime(2026, 1, 1, tzinfo=timezone.utc))
+    _commit_touching(
+        tmp_path,
+        "cited-file-baseline",
+        when=datetime(2026, 1, 2, tzinfo=timezone.utc),
+        filename="notes.md",
+    )
+    _commit_touching(
+        tmp_path,
+        "unrelated-churn",
+        when=datetime(2026, 2, 1, tzinfo=timezone.utc),
+        filename="other.md",
+    )
+    result = compute_commit_drift(
+        last_verified_at=datetime(2026, 1, 15, tzinfo=timezone.utc),
+        memory_origin_repo=_REMOTE,
+        caller_origin=Origin(cwd=str(tmp_path), repo=_REMOTE, branch="main"),
+        body="claims about notes.md hold",
+    )
+    assert result is not None
+    assert result.status == "clean"
+    assert result.commits_since_verify == 0
+
+
+def test_resolve_commit_drift_count_falls_back_on_git_failure(
+    tmp_path: Path,
+) -> None:
+    """Git can't answer (cwd is not a repo): keep the conservative
+    unfiltered count rather than silently exempting a possibly-drifted
+    memory — infrastructure failure must never widen the exemption."""
+    assert (
+        resolve_commit_drift_count(
+            cwd=tmp_path,
+            since=datetime(2026, 1, 1, tzinfo=timezone.utc),
+            unfiltered=7,
+            anchors=("notes.md",),
+        )
+        == 7
+    )
+
+
+def test_resolve_commit_drift_count_none_for_empty_anchors(tmp_path: Path) -> None:
+    assert (
+        resolve_commit_drift_count(
+            cwd=tmp_path,
+            since=datetime(2026, 1, 1, tzinfo=timezone.utc),
+            unfiltered=7,
+            anchors=(),
+        )
+        is None
+    )
 
 
 def test_commit_drift_status_is_immutable_dataclass(tmp_path: Path) -> None:

@@ -92,15 +92,18 @@ async def memory_show(
     # memory has no anchor to count from — emitting an "unknown"
     # branch every consumer would have to filter is worse than
     # silence, mirroring path_drift's null-when-clean contract.
-    # Verified paths narrow the count to commits that touched at
-    # least one of those paths — a memory verified for `[/etc/foo]`
-    # reads as `clean` when the project moved but `/etc/foo`
-    # didn't.
+    # The count is claim-anchored: narrowed to commits that touched
+    # the memory's cited/attested paths (a memory anchored to
+    # `[/etc/foo]` reads as `clean` when the project moved but
+    # `/etc/foo` didn't), and not applicable at all — None — for a
+    # memory whose body cites no paths this repo's commits could
+    # invalidate (`body` feeds the anchor derivation).
     commit_drift = compute_commit_drift(
         memory.last_verified_at,
         memory.origin.repo if memory.origin else None,
         caller_origin=_h.capture_origin(),
         verified_paths=memory.verified_paths,
+        body=memory.body,
     )
     commit_drift_count_for_verdict: int | None = (
         commit_drift.commits_since_verify if commit_drift is not None else None

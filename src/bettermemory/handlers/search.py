@@ -527,6 +527,7 @@ async def memory_search(
                 memory.origin.repo if memory.origin else None,
                 caller_origin=current_origin,
                 verified_paths=memory.verified_paths,
+                body=memory.body,
             )
             commit_drift_count_for_verdict: int | None = None
             if commit_drift is not None:

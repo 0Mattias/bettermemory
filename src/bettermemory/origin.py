@@ -602,55 +602,66 @@ def commits_since(cwd: Path | None, since: datetime) -> int | None:
         return None
 
 
-def commits_since_touching_paths(
+def repo_toplevel(cwd: Path | None) -> Path | None:
+    """Resolve the repo root for `cwd` via ``git rev-parse --show-toplevel``.
+
+    Returns the resolved absolute root, or None when git can't answer
+    (cwd is None, git not on PATH, not a repo, unresolvable output).
+    Split out so batch callers (the health rollups walk many memories
+    against ONE repo) can resolve the root once and thread it through
+    `resolve_repo_pathspecs(..., toplevel=...)` instead of paying a
+    ``rev-parse`` fork+exec per memory.
+    """
+    if cwd is None:
+        return None
+    toplevel_raw = _git(cwd, "rev-parse", "--show-toplevel")
+    if toplevel_raw is None:
+        return None
+    try:
+        return Path(toplevel_raw).resolve()
+    except OSError:
+        return None
+
+
+def resolve_repo_pathspecs(
     cwd: Path | None,
-    since: datetime,
     paths: list[str],
-) -> int | None:
-    """Count commits in `cwd`'s repo authored after `since` that touched
-    any of `paths`.
+    *,
+    toplevel: Path | None = None,
+) -> list[str] | None:
+    """Resolve `paths` into repo-root-relative, forward-slash pathspecs.
 
     `paths` may contain absolute paths, ``~/``-prefixed paths, or paths
     relative to the repo root. We expand ``~`` and resolve absolute
     paths against the repo root so git sees a relative pathspec — git
     won't filter on absolute paths that escape the repo. Paths outside
-    the repo (or that don't resolve) are dropped silently; if everything
-    drops, we return None to signal "no useful filter, fall back to the
-    unfiltered count".
+    the repo (or that don't resolve) are dropped silently.
 
-    Returns the integer count when git is reachable and produced a
-    parseable result, None on any failure (cwd is None, git not on
-    PATH, not a repo, all paths filtered out, parse error). The
-    semantics mirror `commits_since` so the verified-paths
-    short-circuit in `verify.compute_commit_drift` can drop in cleanly.
+    The return-shape distinction is load-bearing for claim-anchored
+    commit drift and must not be collapsed:
 
-    Used by the change-7 path-filtered drift downgrade: when a memory
-    was verified for a known set of paths, commits that don't touch any
-    of them shouldn't trip the drift signal — the world the memory was
-    checking against hasn't moved even if the project as a whole has.
+    - ``None`` — git itself couldn't answer (cwd is None, git not on
+      PATH, not a repo). The caller can't judge anchoring at all and
+      should fall back to its conservative default (the unfiltered
+      commit count) rather than under-report drift.
+    - ``[]`` (empty list) — git answered fine, but EVERY input path is
+      unresolvable or escapes this repo. The claims exist, they just
+      don't anchor into the repo the caller is sitting in — commit
+      drift is *not applicable*, not merely unfilterable.
+
+    `toplevel`, when provided, skips the per-call ``rev-parse`` — see
+    `repo_toplevel`.
     """
-    if cwd is None or not paths:
+    if cwd is None:
         return None
-    if since.tzinfo is None:
-        since = since.replace(tzinfo=timezone.utc)
-    iso = since.astimezone(timezone.utc).isoformat()
+    if toplevel is None:
+        toplevel = repo_toplevel(cwd)
+        if toplevel is None:
+            return None
 
-    # Resolve the repo root once. `git rev-parse --show-toplevel` returns
-    # the repo's root absolute path; we compare each pathspec against it
-    # so anything outside the repo is dropped before reaching git (git
-    # would otherwise raise "ambiguous argument" or silently produce no
-    # output, depending on the form).
-    toplevel_raw = _git(cwd, "rev-parse", "--show-toplevel")
-    if toplevel_raw is None:
-        return None
-    try:
-        toplevel = Path(toplevel_raw).resolve()
-    except OSError:
-        return None
-
-    # Build repo-root-relative, FORWARD-SLASH pathspecs and run rev-list FROM
-    # the repo root (`toplevel`), not the caller's `cwd`. The caller's cwd may
-    # be a SUBDIRECTORY of the repo (an MCP server / agent launched from or
+    # Build repo-root-relative, FORWARD-SLASH pathspecs; rev-list later runs
+    # FROM the repo root (`toplevel`), not the caller's `cwd`. The caller's cwd
+    # may be a SUBDIRECTORY of the repo (an MCP server / agent launched from or
     # chdir'd into `src/`, `packages/foo/`, …); git resolves a plain pathspec
     # relative to the invocation cwd, so a root-relative `src/foo.py` would
     # match nothing from a subdir and rev-list would return 0 — silently
@@ -661,8 +672,9 @@ def commits_since_touching_paths(
     # git pathspecs reject). A relative input is resolved against the repo root
     # (its documented meaning); anything that escapes the repo — including a
     # Windows drive-relative path like `\foo` that joins onto a different root
-    # — is dropped so the caller falls back to the unfiltered count rather than
-    # under-reporting.
+    # — is dropped, and the caller decides what an all-dropped (empty) result
+    # means: not-applicable for the claim-anchored policy, unfiltered fallback
+    # for the legacy composition below.
     pathspecs: list[str] = []
     for raw in paths:
         if not isinstance(raw, str) or not raw:
@@ -679,9 +691,34 @@ def commits_since_touching_paths(
             continue
         pathspecs.append(rel.as_posix())
 
-    if not pathspecs:
-        return None
+    return pathspecs
 
+
+def commits_touching_pathspecs(
+    cwd: Path | None,
+    since: datetime,
+    pathspecs: list[str],
+    *,
+    toplevel: Path | None = None,
+) -> int | None:
+    """Count commits authored after `since` touching any of `pathspecs`.
+
+    `pathspecs` must already be repo-root-relative forward-slash specs —
+    the output of `resolve_repo_pathspecs`. Returns the integer count, or
+    None on any git failure (cwd is None, empty pathspecs, git not on
+    PATH, not a repo, parse error). Counted in COMMITTER-date space with
+    git's inclusive `--since` boundary — see the callers' `count > 0`
+    guards for why the author-date bisect count stays authoritative.
+    """
+    if cwd is None or not pathspecs:
+        return None
+    if since.tzinfo is None:
+        since = since.replace(tzinfo=timezone.utc)
+    iso = since.astimezone(timezone.utc).isoformat()
+    if toplevel is None:
+        toplevel = repo_toplevel(cwd)
+        if toplevel is None:
+            return None
     raw_count = _git(
         toplevel,
         "rev-list",
@@ -697,6 +734,38 @@ def commits_since_touching_paths(
         return int(raw_count)
     except ValueError:
         return None
+
+
+def commits_since_touching_paths(
+    cwd: Path | None,
+    since: datetime,
+    paths: list[str],
+) -> int | None:
+    """Count commits in `cwd`'s repo authored after `since` that touched
+    any of `paths`.
+
+    Composition of `resolve_repo_pathspecs` + `commits_touching_pathspecs`
+    with the legacy contract: returns None on any failure — including
+    "every path dropped" — so a caller treats every non-answer as "no
+    useful filter, fall back to the unfiltered count". The claim-anchored
+    drift policy (`verify.resolve_commit_drift_count`) deliberately does
+    NOT use this composition: it needs the []-vs-None distinction the
+    two primitives preserve.
+
+    Used by the change-7 path-filtered drift downgrade: when a memory
+    was verified for a known set of paths, commits that don't touch any
+    of them shouldn't trip the drift signal — the world the memory was
+    checking against hasn't moved even if the project as a whole has.
+    """
+    if cwd is None or not paths:
+        return None
+    toplevel = repo_toplevel(cwd)
+    if toplevel is None:
+        return None
+    pathspecs = resolve_repo_pathspecs(cwd, paths, toplevel=toplevel)
+    if not pathspecs:
+        return None
+    return commits_touching_pathspecs(cwd, since, pathspecs, toplevel=toplevel)
 
 
 def commit_author_timestamps(cwd: Path | None) -> list[datetime] | None:
@@ -920,7 +989,10 @@ __all__ = [
     "commit_author_timestamps",
     "commits_since",
     "commits_since_touching_paths",
+    "commits_touching_pathspecs",
+    "repo_toplevel",
     "repos_match",
+    "resolve_repo_pathspecs",
     "should_include_for_caller",
     "worktrees_match",
 ]

@@ -49,8 +49,12 @@ from .models import Category, Memory, first_summary_line
 from .origin import (
     Origin,
     commit_author_timestamps,
-    commits_since_touching_paths,
+    repo_toplevel,
     repos_match,
+)
+from .verify import (
+    commit_drift_anchor_paths,
+    resolve_commit_drift_count,
 )
 from .time_utils import (
     ensure_utc,
@@ -1422,15 +1426,17 @@ def compute_health(
     tombstoned_ids = tombstoned_ids or set()
 
     by_id: dict[str, MemoryStats] = {}
-    # Parallel mappings of memory id -> origin.repo and id -> verified_paths,
+    # Parallel mappings of memory id -> origin.repo and id -> claim anchors,
     # kept separately so we don't have to add fields to MemoryStats just for
     # the commit-drift rollup. Captured during the same pass that builds
     # `by_id` because `memories` is an Iterable and we don't want to assume
-    # re-iterability. `verified_paths_by_id` lets the rollup narrow drift to
-    # commits that touched attested paths, matching memory_show /
+    # re-iterability. `anchor_paths_by_id` (attested verified_paths plus
+    # body-cited paths, `verify.commit_drift_anchor_paths`) is what lets the
+    # rollup narrow drift to commits touching a memory's actual claims —
+    # and exempt claim-less memories entirely — matching memory_show /
     # memory_search (see _compute_commit_drift_debt).
     origin_repo_by_id: dict[str, str | None] = {}
-    verified_paths_by_id: dict[str, list[str]] = {}
+    anchor_paths_by_id: dict[str, tuple[str, ...]] = {}
     for m in memories:
         by_id[m.id] = MemoryStats(
             id=m.id,
@@ -1442,7 +1448,7 @@ def compute_health(
             category=m.category,
         )
         origin_repo_by_id[m.id] = m.origin.repo if m.origin else None
-        verified_paths_by_id[m.id] = list(m.verified_paths)
+        anchor_paths_by_id[m.id] = commit_drift_anchor_paths(m.body, m.verified_paths)
 
     accumulator = _StatsAccumulator(by_id=by_id, tombstoned_ids=tombstoned_ids)
     for ev in events:
@@ -1632,7 +1638,7 @@ def compute_health(
     commit_drift_debt = _compute_commit_drift_debt(
         by_id=by_id,
         origin_repo_by_id=origin_repo_by_id,
-        verified_paths_by_id=verified_paths_by_id,
+        anchor_paths_by_id=anchor_paths_by_id,
         caller_origin=caller_origin,
     )
 
@@ -1845,7 +1851,7 @@ def _compute_commit_drift_debt(
     *,
     by_id: dict[str, MemoryStats],
     origin_repo_by_id: dict[str, str | None],
-    verified_paths_by_id: dict[str, list[str]],
+    anchor_paths_by_id: dict[str, tuple[str, ...]],
     caller_origin: Origin | None,
 ) -> CommitDriftDebt | None:
     """Build the optional commit-drift rollup, or None when not applicable.
@@ -1872,14 +1878,24 @@ def _compute_commit_drift_debt(
         return None
     if not caller_origin.repo or not caller_origin.cwd:
         return None
-    timestamps = commit_author_timestamps(Path(caller_origin.cwd))
+    cwd_path = Path(caller_origin.cwd)
+    timestamps = commit_author_timestamps(cwd_path)
     if timestamps is None:
         return None
     timestamps_sorted = sorted(timestamps)
+    # Resolve the repo root once for the whole rollup — the per-memory
+    # anchor resolution below would otherwise pay a `git rev-parse`
+    # fork+exec per drifting memory.
+    toplevel = repo_toplevel(cwd_path)
 
     # Two-pass: filter by repo match first, then run the bisect. Lets us
     # short-circuit the "no matching memories" case before any per-row
     # work — keeps the rollup silent when it would have nothing to say.
+    # A memory with no claim anchors is dropped here too: repo commits
+    # cannot invalidate a claim-less memory, so it can never be
+    # "drifted" (the claim-anchored policy — see
+    # `verify.resolve_commit_drift_count`; measured 100% false-positive
+    # on the dogfood store before this gate).
     candidates: list[MemoryStats] = []
     for stats in by_id.values():
         origin_repo = origin_repo_by_id.get(stats.id)
@@ -1888,6 +1904,8 @@ def _compute_commit_drift_debt(
         if not repos_match(origin_repo, caller_origin.repo):
             continue
         if stats.last_verified_at is None:
+            continue
+        if not anchor_paths_by_id.get(stats.id):
             continue
         candidates.append(stats)
     if not candidates:
@@ -1906,21 +1924,26 @@ def _compute_commit_drift_debt(
         # at the same instant as a commit doesn't count as drift.
         idx = bisect.bisect_right(timestamps_sorted, since)
         count = len(timestamps_sorted) - idx
-        # If the memory carries verified_paths, narrow to commits that
-        # actually touched those paths — mirrors memory_show and the
-        # memory_search top-hit surface (_response.py). Without this the
-        # rollup nagged on memories the user deliberately attested as
-        # stable and disagreed with the per-hit verdict. Falls back to the
-        # unfiltered count when the filter can't run (git unreachable, all
-        # paths outside the repo). Guarded on count > 0 so a caught-up
+        # Narrow to commits that actually touched the memory's claim
+        # anchors — mirrors memory_show and the memory_search top-hit
+        # surface (_response.py). Without this the rollup nagged on
+        # memories the user deliberately attested as stable and disagreed
+        # with the per-hit verdict. None means every anchor escapes this
+        # repo: the claims live elsewhere, drift is not applicable, drop
+        # the row. Falls back to the unfiltered count only when git can't
+        # answer the filtered query. Guarded on count > 0 so a caught-up
         # memory never pays the extra git call.
-        vpaths = verified_paths_by_id.get(stats.id) or []
-        if vpaths and count > 0:
-            filtered = commits_since_touching_paths(
-                Path(caller_origin.cwd), since, vpaths
+        if count > 0:
+            resolved = resolve_commit_drift_count(
+                cwd=cwd_path,
+                since=since,
+                unfiltered=count,
+                anchors=anchor_paths_by_id.get(stats.id, ()),
+                toplevel=toplevel,
             )
-            if filtered is not None:
-                count = filtered
+            if resolved is None:
+                continue
+            count = resolved
         if count > 0:
             rows.append(
                 CommitDriftRow(
@@ -2705,9 +2728,13 @@ def curation_counts(
 
     drifted = 0
     if caller_origin is not None and caller_origin.repo and caller_origin.cwd:
-        timestamps = commit_author_timestamps(Path(caller_origin.cwd))
+        cwd_path = Path(caller_origin.cwd)
+        timestamps = commit_author_timestamps(cwd_path)
         if timestamps is not None:
             timestamps_sorted = sorted(timestamps)
+            # One rev-parse for the whole pass; the per-memory anchor
+            # resolution below reuses it.
+            toplevel = repo_toplevel(cwd_path)
             for m in mem_list:
                 if m.last_verified_at is None:
                     continue
@@ -2719,19 +2746,29 @@ def curation_counts(
                 verified_at = _ensure_utc(m.last_verified_at)
                 if verified_at is None:
                     continue
+                # Claim-anchored gate, matching memory_show /
+                # memory_search / commit_drift_debt: a memory citing no
+                # paths at all is exempt (repo commits can't invalidate
+                # a claim-less preference/lesson), and one whose anchors
+                # all escape this repo is exempt too. Anchor derivation
+                # is pure CPU; git work stays behind the count > 0 guard
+                # so a caught-up memory pays no git call.
+                anchors = commit_drift_anchor_paths(m.body, m.verified_paths)
+                if not anchors:
+                    continue
                 idx = bisect.bisect_right(timestamps_sorted, verified_at)
                 count = len(timestamps_sorted) - idx
-                # Narrow to commits touching attested paths, matching
-                # memory_show / memory_search / commit_drift_debt — a
-                # memory whose verified_paths weren't touched isn't drifted.
-                # Guarded on count > 0 so a caught-up memory pays no git call.
-                vpaths = list(m.verified_paths)
-                if vpaths and count > 0:
-                    filtered = commits_since_touching_paths(
-                        Path(caller_origin.cwd), verified_at, vpaths
+                if count > 0:
+                    resolved = resolve_commit_drift_count(
+                        cwd=cwd_path,
+                        since=verified_at,
+                        unfiltered=count,
+                        anchors=anchors,
+                        toplevel=toplevel,
                     )
-                    if filtered is not None:
-                        count = filtered
+                    if resolved is None:
+                        continue
+                    count = resolved
                 if count > 0:
                     drifted += 1
 
