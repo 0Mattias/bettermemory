@@ -17,6 +17,7 @@ from bettermemory.origin import (
     commits_since,
     commits_since_touching_paths,
     repos_match,
+    resolve_repo_pathspecs,
     should_include_for_caller,
     worktrees_match,
 )
@@ -679,6 +680,42 @@ def test_commit_author_timestamps_returns_none_on_empty_repo(tmp_path: Path) -> 
     to parse" edge case that's hard to provoke in real life."""
     _init_repo(tmp_path)
     assert commit_author_timestamps(tmp_path) is None
+
+
+# ---------------------------------------------------------------------------
+# resolve_repo_pathspecs — anchor resolution at the git boundary
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.skipif(not _GIT_AVAILABLE, reason="git not on PATH")
+def test_resolve_repo_pathspecs_drops_repo_root(tmp_path: Path) -> None:
+    """A citation of the repo root itself ("the project lives at X") is a
+    location claim, not a content claim — as a pathspec it would be "."
+    and match every commit, so it must not survive resolution. All
+    spellings of the root collapse to the same drop: absolute, trailing
+    slash, and the bare relative "."."""
+    _init_repo(tmp_path)
+    _make_commit(tmp_path, "first", when=datetime(2026, 1, 1, tzinfo=timezone.utc))
+    resolved = resolve_repo_pathspecs(
+        tmp_path,
+        [str(tmp_path), str(tmp_path) + "/", "."],
+    )
+    assert resolved == []
+
+
+@pytest.mark.skipif(not _GIT_AVAILABLE, reason="git not on PATH")
+def test_resolve_repo_pathspecs_keeps_files_alongside_dropped_root(
+    tmp_path: Path,
+) -> None:
+    """The root drop is surgical: discriminating anchors in the same
+    input list survive resolution untouched."""
+    _init_repo(tmp_path)
+    _make_commit(tmp_path, "first", when=datetime(2026, 1, 1, tzinfo=timezone.utc))
+    resolved = resolve_repo_pathspecs(
+        tmp_path,
+        [str(tmp_path), "src/mod.py"],
+    )
+    assert resolved == ["src/mod.py"]
 
 
 # ---------------------------------------------------------------------------

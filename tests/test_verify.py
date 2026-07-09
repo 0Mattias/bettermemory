@@ -1343,6 +1343,64 @@ def test_resolve_commit_drift_count_none_for_empty_anchors(tmp_path: Path) -> No
     )
 
 
+@pytest.mark.skipif(not _GIT_AVAILABLE, reason="git not on PATH")
+def test_resolve_commit_drift_count_none_for_root_only_anchors(
+    tmp_path: Path,
+) -> None:
+    """A memory whose only path-shaped claim is the repo root ("the
+    project lives at X") anchors nothing discriminating — the root
+    pathspec would match every commit, i.e. the unfiltered count in
+    disguise. Policy: not-applicable, same as anchors that all escape
+    the repo. Regression shape: a live location memory read 149 commits
+    of "drift" — exactly the unfiltered count — through its root cite
+    while its discriminating anchors read 0."""
+    _init_repo_with_remote(tmp_path, remote=_REMOTE)
+    _commit_at(tmp_path, "anchor", when=datetime(2026, 1, 1, tzinfo=timezone.utc))
+    _commit_at(tmp_path, "after", when=datetime(2026, 2, 1, tzinfo=timezone.utc))
+    assert (
+        resolve_commit_drift_count(
+            cwd=tmp_path,
+            since=datetime(2026, 1, 15, tzinfo=timezone.utc),
+            unfiltered=7,
+            anchors=(str(tmp_path),),
+        )
+        is None
+    )
+
+
+@pytest.mark.skipif(not _GIT_AVAILABLE, reason="git not on PATH")
+def test_commit_drift_root_citation_does_not_drag_in_unrelated_churn(
+    tmp_path: Path,
+) -> None:
+    """Body cites the repo root AND a specific file, and unrelated churn
+    landed after the verify. The root cite must not widen the anchor set
+    to the whole repo — only commits touching the discriminating anchor
+    count, so the verdict stays clean."""
+    _init_repo_with_remote(tmp_path, remote=_REMOTE)
+    _commit_at(tmp_path, "anchor", when=datetime(2026, 1, 1, tzinfo=timezone.utc))
+    _commit_touching(
+        tmp_path,
+        "cited-file-baseline",
+        when=datetime(2026, 1, 2, tzinfo=timezone.utc),
+        filename="notes.md",
+    )
+    _commit_touching(
+        tmp_path,
+        "unrelated-churn",
+        when=datetime(2026, 2, 1, tzinfo=timezone.utc),
+        filename="other.md",
+    )
+    result = compute_commit_drift(
+        last_verified_at=datetime(2026, 1, 15, tzinfo=timezone.utc),
+        memory_origin_repo=_REMOTE,
+        caller_origin=Origin(cwd=str(tmp_path), repo=_REMOTE, branch="main"),
+        body=f"the project lives at {tmp_path} and claims about notes.md hold",
+    )
+    assert result is not None
+    assert result.status == "clean"
+    assert result.commits_since_verify == 0
+
+
 def test_commit_drift_status_is_immutable_dataclass(tmp_path: Path) -> None:
     """Frozen — same rationale as VerificationStatus: a consumer that
     mutates the verdict could silently corrupt later reads when the

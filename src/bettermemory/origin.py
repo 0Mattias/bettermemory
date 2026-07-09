@@ -635,7 +635,11 @@ def resolve_repo_pathspecs(
     relative to the repo root. We expand ``~`` and resolve absolute
     paths against the repo root so git sees a relative pathspec — git
     won't filter on absolute paths that escape the repo. Paths outside
-    the repo (or that don't resolve) are dropped silently.
+    the repo (or that don't resolve) are dropped silently, and so is the
+    repo root itself: a root citation ("the project lives at X") is a
+    location claim, not a content claim, and as a pathspec it would be
+    ``.`` — matching every commit, i.e. the unfiltered count in
+    disguise.
 
     The return-shape distinction is load-bearing for claim-anchored
     commit drift and must not be collapsed:
@@ -688,6 +692,15 @@ def resolve_repo_pathspecs(
         except (OSError, ValueError):
             # Unresolvable, or escapes the repo — git can't filter on
             # something outside its working tree.
+            continue
+        if not rel.parts:
+            # The input resolved to the repo root itself. Its existence
+            # is path drift's axis; as a commit anchor the pathspec
+            # would be "." — every commit touches it — silently
+            # reproducing the unfiltered noise claim-anchoring exists
+            # to remove. Drop it like any other non-discriminating
+            # input and let an all-dropped result mean what it always
+            # means: nothing here anchors this repo's history.
             continue
         pathspecs.append(rel.as_posix())
 
