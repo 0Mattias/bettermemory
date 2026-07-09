@@ -7,6 +7,78 @@ breaking changes, minor for additive features, patch for fixes. The
 [compatibility contract](CONTRIBUTING.md#versioning-and-the-compatibility-contract)
 spells out exactly what's stable.
 
+## 3.17.0 - 2026-07-08
+
+Claim-anchored commit drift. The commit-drift signal now counts only
+commits that could actually invalidate a memory's claims, and goes
+silent for memories that make no path-shaped claims at all. The change
+was measured before it was made: two hand-labeled reads of the
+dogfood store's drift queue — 12 flags at 3.13.0, 24 at 3.16.0 —
+found **zero true positives**. Every flagged memory was a preference,
+lesson, or reflection that merely *originated* in the repo; the bare
+repo-wide commit count carried no information about any of them, and
+a signal that is always wrong trains its consumer to ignore it. (The
+residual was known and deliberately deferred in the 3.13.0
+verified-paths pass pending exactly this evidence.)
+
+### Changed
+
+- **Commit drift is claim-anchored on all four surfaces** (`memory_show`,
+  the `memory_search` per-hit fold and `expand_top` block, and both
+  `memory_health` rollups — `commit_drift_debt` and
+  `curation_pending.drifted`). Each memory's *anchors* are its
+  `verified_paths` attestations plus the paths its body cites — the
+  existing absolute/`~` extractor, now joined by repo-relative
+  citations (`src/mod.py:42`, `docs/spec.md`, `CHANGELOG.md`), the
+  dominant citation style path-drift could never check (nothing to
+  stat without a root; the origin repo IS the root here). The drift
+  count is narrowed to commits touching an anchor. A memory with no
+  anchors — or none inside the caller's repo — reads `commit_drift:
+  null` / omits `commit_drift_count` / leaves the health rollups: the
+  signal is *not applicable*, not zero. The calendar staleness window
+  is the deliberate backstop for that class, so nothing is exempt
+  from re-verification forever. Two behavior flips ride along, both
+  intentional: previously a memory with NO attested paths drifted on
+  every repo commit forever (the gap-1 noise this release closes),
+  and a memory whose attested paths all resolved outside the repo
+  fell back to the unfiltered count (now: not applicable). Cited-path
+  anchoring also *catches* drift the old filter missed — a memory
+  whose body cites files it was never path-attested for now flags
+  when those files change (the live store surfaced three such
+  memories on the first read). Infrastructure failures still fall
+  back to the unfiltered count — git being unreachable must never
+  widen the exemption.
+- **The drift recommendation names the anchor semantics** ("commits
+  touching this memory's cited or attested paths landed…") so the
+  re-verify prompt describes what was actually counted.
+
+### Added
+
+- `verify.commit_drift_anchor_paths` / `verify.resolve_commit_drift_count`
+  — the shared anchor derivation and count policy behind all four
+  surfaces (one decision function is what keeps them in lockstep), and
+  `origin.repo_toplevel` / `origin.resolve_repo_pathspecs` /
+  `origin.commits_touching_pathspecs` — the pathspec-resolution split
+  that lets callers distinguish "git can't answer" (conservative
+  unfiltered fallback) from "these claims don't anchor here" (not
+  applicable). `origin.commits_since_touching_paths` survives unchanged
+  as their composition. The relative-citation extractor is bounded and
+  backtrack-proof (same ReDoS discipline as the 3.15.1 domain-route
+  fix; adversarial 200 KB bodies scan in ~2 ms), rejects prose
+  (`CI/CD`, `e.g.`), version strings, and URL tokens, and over-matches
+  only phantom-safely (a phantom anchor resolves to a path no commit
+  touched and contributes zero).
+
+### Attestation guidance
+
+For preference/lesson memories, attest freshness with
+`verified_commits` + `note` rather than paths — a `verified_paths`
+attestation anchors the memory to those files' commit history, which
+for a churn-prone file (`CHANGELOG.md`) re-flags it on every release.
+`memory_verify(id, verified_paths=[])` clears a prior path attestation
+(REPLACE semantics), returning an untethered memory to the exempt
+class. `docs/api.md` carries the same guidance.
+
 ## 3.16.0 - 2026-07-08
 
 A measurement-driven calibration release. The centerpiece: the
