@@ -7,6 +7,7 @@ fastapi docs recommend. Skips when the [ui] extra isn't installed
 
 from __future__ import annotations
 
+import contextlib
 import os
 import signal
 import socket
@@ -935,10 +936,24 @@ def test_watch_tunnel_provider_quiet_on_clean_shutdown(caplog: Any) -> None:
 
 
 _LIFECYCLE_DRIVER = """
+import os
+import signal
 import sys
 
 from bettermemory import web
 from bettermemory.config import Config, StorageConfig
+
+# Pin the driver's SIGHUP disposition BEFORE serve() spawns the shim or
+# installs its handlers, so the lifecycle tests can model both the nohup
+# posture ("ignore" -> SIG_IGN, must survive a hangup) and the default
+# posture ("default" -> SIG_DFL, must still tear down) deterministically,
+# regardless of the disposition the test runner itself inherited.
+_sighup = os.environ.get("BM_TEST_SIGHUP")
+if _sighup and hasattr(signal, "SIGHUP"):
+    signal.signal(
+        signal.SIGHUP,
+        signal.SIG_IGN if _sighup == "ignore" else signal.SIG_DFL,
+    )
 
 web.resolve_tunnel_provider = lambda requested: ("tailnet", sys.executable)
 web._tunnel_argv = lambda provider, binary, port: [
@@ -1009,18 +1024,32 @@ def _provider_pid_under(shim_pid: int) -> int:
 
 def _spawn_lifecycle_driver(
     memory_dir: Path,
+    *,
+    sighup: str | None = None,
 ) -> tuple["subprocess.Popen[bytes]", int, int]:
     """Start serve(tunnel=...) in a real child process and wait until
     uvicorn answers HTTP. The teardown signal handlers are installed
     before uvicorn.run, so an answering server implies armed
-    teardown. Returns (driver, shim pid, provider pid)."""
+    teardown. Returns (driver, shim pid, provider pid).
+
+    ``sighup`` pins the driver's SIGHUP disposition before serve() runs:
+    ``"ignore"`` models the nohup posture (SIG_IGN, must survive a
+    hangup) and ``"default"`` forces SIG_DFL (must still tear down), so
+    the assertion is deterministic regardless of the runner's own
+    disposition. ``None`` leaves it inherited — the SIGTERM/SIGKILL
+    tests never touch SIGHUP."""
     import urllib.request
+
+    env = None
+    if sighup is not None:
+        env = {**os.environ, "BM_TEST_SIGHUP": sighup}
 
     port = _free_port()
     driver = subprocess.Popen(
         [sys.executable, "-c", _LIFECYCLE_DRIVER, str(memory_dir), str(port)],
         stdout=subprocess.PIPE,
         stderr=subprocess.DEVNULL,
+        env=env,
     )
     assert driver.stdout is not None
     line = driver.stdout.readline().decode()
@@ -1079,6 +1108,84 @@ def test_tunnel_child_reaped_on_sigkill(memory_dir: Path) -> None:
         assert _pid_alive(provider_pid)
         driver.send_signal(9)  # SIGKILL — absent from signal stubs on Windows
         assert driver.wait(timeout=10) == -9
+        _wait_pid_gone(shim_pid, timeout=5.0)
+        _wait_pid_gone(provider_pid, timeout=5.0)
+    finally:
+        _cleanup_driver(driver)
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="POSIX signal semantics")
+def test_tunnel_survives_sighup_when_inherited_sig_ign(memory_dir: Path) -> None:
+    """nohup semantics: a server started with SIGHUP already ignored —
+    `nohup bettermemory ui --tunnel tailnet &`, then closing the
+    terminal — must SURVIVE the hangup. Server, shim, AND provider all
+    stay up and the share stays alive.
+
+    The classic POSIX rule is to skip installing a handler for a signal
+    whose inherited disposition is SIG_IGN. That must hold on BOTH the
+    serve() teardown-handler loop and the supervisor shim (which is
+    spawned before serve()'s handlers, so under nohup it inherits the
+    SIG_IGN too). Pre-fix the unconditional installs clobbered SIG_IGN
+    and re-raised SIGHUP under SIG_DFL, so the detached server died on
+    the hangup and the shim reaped the provider — the share vanished.
+
+    SIGHUP is delivered to every process in the tunnel tree
+    individually (as a terminal hangup reaches the whole process
+    group), so a regression in EITHER install site is caught: a live
+    serve() handler kills the driver, a live shim handler kills the
+    shim + provider."""
+    pytest.importorskip("uvicorn")
+    driver, shim_pid, provider_pid = _spawn_lifecycle_driver(
+        memory_dir, sighup="ignore"
+    )
+    try:
+        assert _pid_alive(shim_pid)
+        assert _pid_alive(provider_pid)
+        # Hang up the whole tree. Every process inherited SIG_IGN, so a
+        # convention-respecting build ignores it and nothing tears down.
+        for pid in (driver.pid, shim_pid, provider_pid):
+            os.kill(pid, signal.SIGHUP)
+        # Give a would-be handler ample time to reap + re-raise before
+        # asserting survival: pre-fix the driver is already dead here.
+        time.sleep(2.0)
+        assert driver.poll() is None, (
+            "server died on SIGHUP despite an inherited SIG_IGN — nohup "
+            "detachment is broken (serve() clobbered the ignored signal)"
+        )
+        assert _pid_alive(shim_pid), (
+            "supervisor shim died on SIGHUP despite an inherited SIG_IGN — "
+            "the shim clobbered the ignored signal and tore the share down"
+        )
+        assert _pid_alive(provider_pid), (
+            "tunnel provider was reaped after SIGHUP despite the tree "
+            "inheriting SIG_IGN — the share died under a detached server"
+        )
+    finally:
+        # SIGHUP was ignored, so reap with SIGKILL (uncatchable). Kill
+        # the hour-long sleepers directly too so a slow stdin watchdog
+        # can't leak them, then let _cleanup_driver stop the driver.
+        for pid in (provider_pid, shim_pid):
+            with contextlib.suppress(ProcessLookupError):
+                os.kill(pid, signal.SIGKILL)
+        _cleanup_driver(driver)
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="POSIX signal semantics")
+def test_tunnel_child_reaped_on_sighup_default_disposition(memory_dir: Path) -> None:
+    """The SIG_IGN guard must be NARROW. With SIGHUP at its default
+    disposition (no nohup), a hangup must still take the whole tunnel
+    down — shim AND provider — and the server must still die BY the
+    signal, exactly like the SIGTERM path. Proves the fix disabled only
+    the inherited-SIG_IGN case, not SIGHUP teardown wholesale."""
+    pytest.importorskip("uvicorn")
+    driver, shim_pid, provider_pid = _spawn_lifecycle_driver(
+        memory_dir, sighup="default"
+    )
+    try:
+        assert _pid_alive(shim_pid)
+        assert _pid_alive(provider_pid)
+        driver.send_signal(signal.SIGHUP)
+        assert driver.wait(timeout=10) == -signal.SIGHUP
         _wait_pid_gone(shim_pid, timeout=5.0)
         _wait_pid_gone(provider_pid, timeout=5.0)
     finally:

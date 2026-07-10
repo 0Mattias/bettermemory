@@ -912,6 +912,14 @@ def _on_signal(signum, _frame):
 for _sig in [signal.SIGTERM, signal.SIGINT] + (
     [signal.SIGHUP] if hasattr(signal, "SIGHUP") else []
 ):
+    # Respect an inherited SIG_IGN (classic nohup rule). The shim is
+    # spawned before serve() installs its own handlers, so under
+    # `nohup ... &` it inherits SIG_IGN for SIGHUP. Clobbering that
+    # would reap the provider and re-raise SIGHUP under SIG_DFL,
+    # tearing the share down beneath a server the operator detached.
+    # Parent-death teardown still runs via the stdin watchdog + finally.
+    if signal.getsignal(_sig) is signal.SIG_IGN:
+        continue
     signal.signal(_sig, _on_signal)
 
 
@@ -1037,7 +1045,11 @@ def serve(
     port next: the supervisor shim's stdin watchdog from
     _start_tunnel (survives even SIGKILL of this process), the signal
     handlers installed below (SIGTERM/SIGINT re-raised by uvicorn,
-    plus SIGHUP), and the ``finally`` for exception exits.
+    plus SIGHUP), and the ``finally`` for exception exits. One
+    exception, the classic nohup rule: a signal inherited as SIG_IGN
+    is left ignored rather than clobbered, so a deliberately detached
+    server (`nohup ... &`) survives the hangup — the stdin watchdog and
+    finally still cover its teardown.
 
     The reverse failure — the PROVIDER dying while this process lives
     on — is detected by a daemon watcher (_watch_tunnel_provider): the
@@ -1104,6 +1116,17 @@ def serve(
     # non-main-thread caller keeps the stdin watchdog + finally.
     with contextlib.suppress(ValueError):
         for sig in teardown_signals:
+            # Respect an inherited SIG_IGN (classic nohup rule): a
+            # process deliberately started with a signal ignored — e.g.
+            # `nohup bettermemory ui --tunnel tailnet &`, then closing
+            # the terminal — must keep ignoring it. Installing
+            # _teardown_and_reraise would silently un-ignore it and, on
+            # SIGHUP, reap the tunnel then re-raise under SIG_DFL,
+            # killing a server the operator meant to detach. Teardown
+            # for that exit still runs via the shim's stdin watchdog and
+            # the finally below.
+            if signal.getsignal(sig) is signal.SIG_IGN:
+                continue
             previous[sig] = signal.signal(sig, _teardown_and_reraise)
 
     # Provider-death watchdog: if the shim exits while uvicorn is still
