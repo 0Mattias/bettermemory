@@ -7,6 +7,135 @@ breaking changes, minor for additive features, patch for fixes. The
 [compatibility contract](CONTRIBUTING.md#versioning-and-the-compatibility-contract)
 spells out exactly what's stable.
 
+## 3.19.0 - 2026-07-10
+
+An audit release. Two parallel drain rounds over the 3.15.1–3.18.1
+window, then a set-audit of the drain itself, then a re-audit of the
+repairs. Every fix below carries a regression test that was verified to
+fail against the pre-fix source.
+
+Minor rather than patch: the runtime now writes a new store-root file
+(`.ingest-watermark.json`), `write_confirm` and `episode_promote` events
+carry new fields, and `commit_drift` reports *not applicable* for a
+cohort of memories that previously received an affirmative `clean`.
+Every one of those is additive or a corrected verdict rather than a
+renamed or removed surface, so the compatibility contract holds — but
+software reading those surfaces will see a difference, and a patch bump
+would understate that.
+
+Two findings were security-relevant, and both were reproduced end to end
+before being fixed. The audit's most useful result, though, was
+structural: reading the drain window *across* its commits found eight
+defects that verifying each commit *individually* could not, because
+they lived between the fixes rather than inside any one of them.
+
+### Security
+
+- **`sync push` no longer publishes the write-reflex proposal queue.**
+  `.write_proposals.jsonl` holds raw captured user text that never passed
+  the write-path credential gate. It was absent from sync's gitignore
+  denylist, so `git add -A` staged, committed, and pushed it: a
+  secret-shaped capture reached every clone in plaintext, and git history
+  is permanent. The accept gate refused that same body afterwards, citing
+  cross-host sync — too late to matter. The queue is now gitignored, and
+  `extract_proposals` additionally drops credential-bearing sentences at
+  capture, logging the detector kind and never the value.
+
+- **Three sibling leaks of the same class are closed, and the class is
+  now guarded.** Orphaned `*.tmp` files from atomic writes carry the full
+  payload of the file they were about to become — a memory body, or the
+  proposals queue. The ingest watermark carries absolute host paths. The
+  auto-consolidate clock is host-local debounce state. All three synced.
+  A structural test now walks the package for store-root sidecar
+  constants and fails if any is missing from the denylist, so the next
+  one cannot leak silently.
+
+- **`memory_update` records credential-gate overrides.** Passing
+  `acknowledge_credential=True` on a body edit persisted the secret with
+  no trace in the audit log, so a forensic sweep missed every secret
+  introduced by editing. The update event now carries
+  `credentials_acknowledged` (marker kinds only, never values).
+
+### Fixed
+
+- **Commit drift no longer reports a confident `clean` for citations it
+  cannot see.** Sub-root (`handlers/search.py`), bare-filename,
+  dotted-module, spaced and dash-leading citations resolved lexically to
+  pathspecs no commit ever touched, and the resulting zero count was
+  surfaced as an affirmative "the claims' ground truth has not moved" on
+  `memory_show`, `memory_search`, and both `memory_health` rollups. Those
+  now report not-applicable. The count itself is computed on author dates
+  via a single `git log`, so a rebase can no longer inflate it past the
+  truth or flip a clean memory to drifted.
+
+- **`ui --tunnel` notices when the tunnel dies, and stays quiet when it
+  doesn't.** The supervisor shim mirrors its provider's exit, so a share
+  that never came up (tailscaled down, Funnel not enabled in the tailnet
+  ACLs) or dropped mid-session is reported instead of silently serving
+  loopback forever. A clean `Ctrl-C` or `systemctl stop` no longer prints
+  a false "the shared URL is now DEAD" error — including when a slow
+  request is still draining, which a first attempt at this fix got wrong.
+  A `nohup`-detached tunnel survives terminal hangup: an inherited
+  `SIG_IGN` is no longer clobbered at either install site. And a
+  tunnel-mode bind failure exits non-zero again, so `systemd`'s
+  `Restart=on-failure` still works.
+
+- **`doctor`'s stranded auto-memory check tells the truth.** It mirrored
+  Claude Code's directory sanitizer for only three characters, so any
+  project path containing `_`, `!`, a space, or a parenthesis resolved to
+  nothing while the check asserted no auto-memory directory existed. It
+  also flagged every ingested-then-edited memory as un-ingested forever
+  and advised re-running `ingest`, which resurrected the stale pre-edit
+  body as a near-duplicate. Ingest now records provenance.
+
+- **`eval --widening-preview`, `--detail`, and `--threshold-sweep`
+  survive a poisoned event log.** One hand-edited row with a non-dict
+  `top_hits` element took the whole run down.
+
+- **`consolidate --llm` no longer silently drops a cluster's proposals.**
+  A json-tagged schema echo could outrank the real bare-fenced payload and
+  return zero proposals with no error, and an unhashable `category` value
+  aborted the entire cluster instead of skipping the one malformed entry.
+
+- **A record can be removed after `mark_verified` fills its frontmatter.**
+  `tombstone` budgeted its removal metadata on the file-size axis only, so
+  a record whose YAML sat near the 64 KiB cap became un-removable with a
+  misleading diagnosis. All three lifecycle re-dump callers —
+  `mark_verified`, `rename_scope`, and the `migrate` origin backfill — now
+  reserve room on the YAML axis, and `migrate` surfaces a record it cannot
+  safely grow instead of growing it into the un-removable band.
+
+- **`episode_handoff` stops asserting things it cannot know.** A staged
+  promotion that was cancelled or expired used to read as a committed one.
+  The fix for that then told a genuinely-committed promotion in an older
+  event log that it "journaled no takeaway". Both are gone: an unprovable
+  promotion is reported as staged-but-unconfirmed. `docs/api.md` and the
+  runtime tool description now document the `note` key the handler has
+  been returning all along.
+
+### Changed
+
+- The runtime writes `.ingest-watermark.json` into the store root, mapping
+  ingested source files to their content hashes. Host-local; never synced.
+- `write_confirm` events carry the promoted `episode_id`, and
+  `episode_promote` events carry `pending_id`, so a deferred promotion can
+  be proven rather than inferred. Event logs written before this release
+  carry neither; a promotion recorded there is reported as unconfirmed
+  rather than guessed at.
+
+### Removed
+
+- `origin.any_pathspec_in_history`, introduced and subsumed within this
+  unreleased window — the author-date `git log` answers existence and
+  recency in one call. Its tests were retargeted onto the function that
+  replaced it rather than deleted.
+
+### Internal
+
+- `CONTRIBUTING.md` documents `mypy --platform win32`, which reproduces
+  the Windows type-check leg locally, and no longer claims that a local
+  green implies a green matrix.
+
 ## 3.18.1 - 2026-07-10
 
 Live validation of the tunnel on a real tailnet — the follow-through
