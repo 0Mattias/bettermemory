@@ -33,7 +33,9 @@ from .store import (
     _atomic_write_post,
     _coerce_scopes,
     _lifecycle_redump_cap,
+    _lifecycle_redump_yaml_cap,
     _locked,
+    _serialized_frontmatter_bytes,
 )
 
 log = logging.getLogger("bettermemory.migrate")
@@ -274,8 +276,9 @@ def migrate_origin_in_directory(
             #
             # Mirror the read-side handling one block up: the write can
             # raise OSError (ENOSPC/EACCES/EIO mid-write or on the rename)
-            # or ValueError (the dumps 64 KB YAML cap once `origin` is
-            # appended). Without this guard a single failing file aborts
+            # or ValueError (either dumps size cap — the flat `_MAX_YAML_BYTES`
+            # / read cap, or the tighter lifecycle caps below — once `origin`
+            # is appended). Without this guard a single failing file aborts
             # the whole loop with a traceback and every subsequent memory
             # goes unprocessed. Record the failure, leave the file
             # untouched (the atomic write is all-or-nothing), and continue
@@ -284,29 +287,59 @@ def migrate_origin_in_directory(
             # failed transiently.
             #
             # Lifecycle re-dump: this only APPENDS a small `origin` block to an
-            # already-admitted, already-readable legacy record. Cap it with the
-            # store's shared band-keyed `_lifecycle_redump_cap` — the same
-            # discipline as `mark_verified` / `rename_scope`. The flat read cap
-            # this replaces let the backfill grow a just-under-write-cap record
-            # into the reserved band (the origin URL / cwd are caller- and
-            # environment-controlled, so the appended block is unbounded from
-            # the record's point of view), after which the record's own
-            # tombstone headroom was gone — the exact un-removable /
-            # hard-delete chain the band discipline exists to close. A
-            # band-resident legacy record still gets its origin backfilled
-            # (the band arm reserves only the removal-metadata budget); a
-            # record too close to its cap lands in `report.malformed` below
-            # with the file untouched, and a re-run after shrinking it picks
-            # it up.
+            # already-admitted, already-readable legacy record. Cap it on BOTH
+            # axes with the store's shared band-keyed helpers — the same
+            # dual-axis discipline `mark_verified` / `rename_scope` apply:
+            #
+            #   * file size — `_lifecycle_redump_cap`, keyed on `current_size`;
+            #   * frontmatter YAML — `_lifecycle_redump_yaml_cap`, keyed on the
+            #     record's PRISTINE serialized frontmatter (its `post.metadata`
+            #     WITHOUT the `origin` block just inserted).
+            #
+            # The flat caps this replaces (`_MAX_WRITE_BYTES` on the file axis,
+            # `_MAX_YAML_BYTES` on the YAML axis) let the backfill grow a record
+            # sitting just under a cap into the reserved removal band — the
+            # origin `repo` / `cwd` are caller- and environment-controlled, so
+            # the appended block is unbounded from the record's point of view —
+            # after which the record's own tombstone headroom was gone: the
+            # exact un-removable / hard-delete chain the band discipline exists
+            # to close. The YAML axis has to be capped on its own, not just the
+            # file axis: a densely-`verified_paths` record can have a huge
+            # file-size budget yet almost no YAML-cap room, so a file-axis cap
+            # alone still let the origin block strand the record un-removable on
+            # the YAML axis (its future tombstone's `removed:` line no longer
+            # fits under `_MAX_YAML_BYTES` even after the dual-axis adaptive
+            # trim). A band-resident legacy record still gets its origin
+            # backfilled (the band arms reserve only the removal-metadata
+            # budget); a record too close to either cap lands in
+            # `report.malformed` below with the file untouched, and a re-run
+            # after shrinking it picks it up.
             try:
                 current_size = path.stat().st_size
             except OSError:
                 current_size = 0
             try:
+                # Measure the pristine frontmatter WITHOUT the `origin` key
+                # inserted above, so the YAML cap reserves the removal-metadata
+                # budget against the record's real pre-backfill size — the exact
+                # mirror of `current_size` on the file axis, and of
+                # `_serialized_frontmatter_bytes(_memory_metadata(existing))` in
+                # `mark_verified` / `rename_scope`. Computed inside the write
+                # guard so an alias-bomb frontmatter (a hostile `sync pull` /
+                # hand-edit) that makes `_serialized_frontmatter_bytes` raise
+                # `ValueError` lands in `malformed` exactly as a `dumps` failure
+                # would, rather than aborting the loop.
+                pristine_metadata = {
+                    key: value
+                    for key, value in post.metadata.items()
+                    if key != "origin"
+                }
+                current_yaml = _serialized_frontmatter_bytes(pristine_metadata)
                 _atomic_write_post(
                     path,
                     post,
                     max_file_bytes=_lifecycle_redump_cap(current_size),
+                    max_yaml_bytes=_lifecycle_redump_yaml_cap(current_yaml),
                 )
             except (OSError, ValueError) as exc:
                 log.warning("skipping file that failed to write %s: %s", path, exc)

@@ -362,12 +362,20 @@ def test_migration_continues_when_a_write_fails(
         post: object,
         *,
         max_file_bytes: int = frontmatter._MAX_FILE_BYTES,
+        max_yaml_bytes: int = frontmatter._MAX_YAML_BYTES,
     ) -> None:
         if Path(path) == failing:
             raise OSError("simulated ENOSPC")
-        # Forward `max_file_bytes` — migrate now re-dumps the origin append at
-        # the full read cap (lifecycle re-dump of an already-admitted record).
-        return real_write(path, post, max_file_bytes=max_file_bytes)
+        # Forward BOTH caps — migrate re-dumps the origin append at the
+        # band-keyed file AND frontmatter-YAML lifecycle caps (a lifecycle
+        # re-dump of an already-admitted record). The double must mirror the
+        # real `_atomic_write_post` signature or the call raises `TypeError`.
+        return real_write(
+            path,
+            post,
+            max_file_bytes=max_file_bytes,
+            max_yaml_bytes=max_yaml_bytes,
+        )
 
     # `migrate.py` imports the symbol directly
     # (`from .store import ... _atomic_write_post`), so patch it on the
@@ -919,3 +927,106 @@ def test_migration_refuses_to_grow_subcap_record_into_band(tmp_path: Path) -> No
     assert report.updated == 0
     assert near_cap.stat().st_size == total
     assert "origin" not in _read_metadata(near_cap)
+
+
+def test_migration_refuses_to_grow_record_into_yaml_removal_band(
+    tmp_path: Path,
+) -> None:
+    """YAML-axis twin of ``test_migration_refuses_to_grow_subcap_record_into_band``.
+
+    The file-axis band discipline alone did NOT protect the frontmatter-YAML
+    axis. ``_frontmatter.dumps`` enforces ``_MAX_YAML_BYTES`` on the serialized
+    frontmatter region UNCONDITIONALLY, independent of total file size, so a
+    densely-``verified_paths`` legacy record (a pre-3.15.1 verify, a ``sync
+    pull``, a hand-edit) can have an enormous file-size budget yet sit only a
+    few dozen bytes below the YAML cap. Backfilling ``origin`` against the flat
+    ``_MAX_YAML_BYTES`` — the pre-fix behaviour, where migrate's
+    ``_atomic_write_post`` call omitted ``max_yaml_bytes`` and re-dumped at the
+    flat cap — silently grew such a record INTO the reserved removal band: the
+    write reported ``updated``, but the record's own future tombstone's
+    ``removed:`` line no longer fit under ``_MAX_YAML_BYTES`` even after the
+    dual-axis adaptive trim. An un-removable record, minted silently.
+
+    The fix mirrors ``mark_verified`` / ``rename_scope``: the re-dump caps
+    through ``_lifecycle_redump_yaml_cap`` keyed on the record's PRISTINE
+    frontmatter (its serialized ``post.metadata`` WITHOUT the appended
+    ``origin``), so the backfill is refused loudly — the file lands in
+    ``report.malformed`` untouched and stays removable.
+
+    Mutation witness: reverting only the source (dropping the
+    ``max_yaml_bytes=_lifecycle_redump_yaml_cap(...)`` argument, so the re-dump
+    falls back to the flat ``_MAX_YAML_BYTES``) makes the backfill succeed here
+    — ``report.updated == 1``, ``origin`` on disk — and every assertion below
+    fails.
+    """
+    from datetime import datetime, timezone
+
+    from bettermemory.store import (
+        _REMOVAL_META_BUDGET_BYTES,
+        Store,
+        _serialized_frontmatter_bytes,
+    )
+
+    memory_dir = tmp_path / ".claude-memory"
+    memory_dir.mkdir()
+
+    # 63 verified_paths (<= the model's 64-entry cap) whose serialized
+    # frontmatter lands just below `_MAX_YAML_BYTES` but strictly inside the
+    # reserved removal band once the ~47-byte `origin` block is appended. The
+    # last entry is padded to tune the pristine size deterministically; the
+    # band assertions below fail loudly if the tuning ever drifts (e.g. a cap
+    # constant changes).
+    paths = [f"src/{'p' * 1023}/{i:02d}" for i in range(63)]
+    paths[-1] = paths[-1] + ("q" * 93)
+    metadata: dict = {
+        "id": _LEGACY_IDS[0],
+        "created": datetime(2025, 1, 1, tzinfo=timezone.utc),
+        "updated": datetime(2025, 1, 1, tzinfo=timezone.utc),
+        "scopes": ["tools"],
+        "confidence": "medium",
+        "source": "explicit-statement",
+        "verified_paths": paths,
+    }
+
+    pristine_yaml = _serialized_frontmatter_bytes(metadata)
+    reserved_ceiling = frontmatter._MAX_YAML_BYTES - _REMOVAL_META_BUDGET_BYTES
+    # In the band: above the reserved ceiling (so `_lifecycle_redump_yaml_cap`
+    # freezes AT the pristine size, and — being strictly below the flat cap —
+    # its tighter ceiling actually binds on the re-dump), yet below the flat cap
+    # (so the pristine record is itself admissible and, crucially, still
+    # tombstoneable).
+    assert reserved_ceiling < pristine_yaml < frontmatter._MAX_YAML_BYTES
+
+    # Appending origin keeps the frontmatter <= the flat `_MAX_YAML_BYTES`, so
+    # the PRE-FIX re-dump (flat cap) succeeds silently — the mutation witness.
+    # The fix's lifecycle cap is what turns this silent growth into a refusal.
+    with_origin = dict(metadata)
+    with_origin["origin"] = {"repo": "git@github.com:example/foo.git"}
+    assert _serialized_frontmatter_bytes(with_origin) <= frontmatter._MAX_YAML_BYTES
+
+    post = frontmatter.Post(content="band body\n", metadata=metadata)
+    text = frontmatter.dumps(post, max_file_bytes=frontmatter._MAX_FILE_BYTES)
+    band = memory_dir / f"2025-01-01-yamlband-{_LEGACY_IDS[0].lower()}.md"
+    # Raw bytes (LF) so the on-disk frontmatter size equals the LF measurement
+    # above on every platform — `write_text` CRLF-translates on Windows and
+    # would inflate the YAML region off the tuned band.
+    band.write_bytes(text.encode("utf-8"))
+    before = band.read_bytes()
+
+    report = migrate_origin_in_directory(
+        memory_dir, inferred=Origin(repo="git@github.com:example/foo.git")
+    )
+
+    # (a) Loud refusal: reported malformed, nothing counted updated, and (b) the
+    # file is byte-for-byte untouched (the atomic write never landed).
+    assert band in report.malformed
+    assert report.updated == 0
+    assert band.read_bytes() == before
+    assert "origin" not in _read_metadata(band)
+
+    # (c) The record is STILL removable by the normal path — the property the
+    # silent backfill destroyed. `tombstone` moves the active file into
+    # `.tombstones/`, so it must now exist there and be gone from the active dir.
+    tombstone_path = Store(memory_dir).tombstone(_LEGACY_IDS[0], reason="cleanup")
+    assert tombstone_path.exists()
+    assert not band.exists()
