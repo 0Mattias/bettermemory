@@ -1510,6 +1510,60 @@ def _write_band_memory_file(
     return path
 
 
+def _write_yaml_band_memory_file(
+    memory_dir: Path,
+    *,
+    memory_id: str,
+    verified_paths: list[str],
+    last_verified_at: datetime | None = None,
+) -> Path:
+    """Hand-write a memory whose FRONTMATTER-YAML region lands in the reserved
+    YAML band (`> _MAX_YAML_BYTES - _REMOVAL_META_BUDGET_BYTES`, `<= _MAX_YAML_BYTES`)
+    while the whole file stays well under the file-size band ceiling.
+
+    The frontmatter-YAML twin of `_write_band_memory_file`. Post-fix,
+    `mark_verified` / `rename_scope` reserve the removal-metadata budget on the
+    YAML axis (`_lifecycle_redump_yaml_cap`), so the store can no longer GROW a
+    record into this band — the only shapes that reach it now are a
+    legacy/hand-written file or a record the pre-discipline code minted, which is
+    exactly what this fixture models. We dump at the default (flat) YAML ceiling,
+    which still admits a band-region frontmatter; only the opt-in lifecycle
+    ceiling rejects it.
+    """
+    from bettermemory import _frontmatter as fm
+    from bettermemory.store import (
+        _REMOVAL_META_BUDGET_BYTES,
+        _serialized_frontmatter_bytes,
+    )
+
+    meta: dict[str, Any] = {
+        "schema_version": 1,
+        "id": memory_id,
+        "created": datetime(2025, 1, 1, tzinfo=timezone.utc),
+        "updated": datetime(2025, 1, 1, tzinfo=timezone.utc),
+        "scopes": ["tools"],
+        "confidence": "medium",
+        "source": "explicit-statement",
+        "verified_paths": list(verified_paths),
+    }
+    if last_verified_at is not None:
+        meta["last_verified_at"] = last_verified_at
+    post = fm.Post(content="body to remove", metadata=meta)
+    # Default (flat) YAML ceiling — a first-write-shaped dump still admits a
+    # band-region frontmatter; only the opt-in lifecycle ceiling rejects it.
+    text = fm.dumps(post, max_file_bytes=fm._MAX_FILE_BYTES)
+    yaml_region = _serialized_frontmatter_bytes(meta)
+    assert (
+        fm._MAX_YAML_BYTES - _REMOVAL_META_BUDGET_BYTES
+        < yaml_region
+        <= fm._MAX_YAML_BYTES
+    ), f"fixture must land YAML in the reserved band; got {yaml_region}"
+    path = memory_dir / f"2025-01-01-yamlband-{memory_id.lower()}.md"
+    # Raw bytes, LF preserved — see `_write_band_memory_file` for why.
+    path.write_bytes(text.encode("utf-8"))
+    return path
+
+
 def test_mark_verified_rewrites_band_record_at_current_size(
     memory_dir: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -1757,6 +1811,61 @@ def test_mark_verified_band_arm_reserves_removal_budget(memory_dir: Path) -> Non
     assert tomb.stat().st_size <= fm._MAX_FILE_BYTES
 
 
+def test_mark_verified_rejects_yaml_growth_into_reserved_band(store: Store) -> None:
+    """Frontmatter-YAML-axis twin of
+    `test_mark_verified_band_arm_reserves_removal_budget`.
+
+    `_frontmatter.dumps` enforces `_MAX_YAML_BYTES` on the frontmatter region
+    unconditionally, but the file axis was the only one that reserved tombstone
+    room. So a LEGAL `mark_verified` (dense `verified_paths`, every entry within
+    the handler's 64x1024 bounds) could grow a record's frontmatter to within the
+    removal-metadata budget of the YAML cap — a band in which even the dual-axis
+    adaptive trim can no longer fit the `removed:` line, leaving the record
+    un-removable. `_lifecycle_redump_yaml_cap` closes that: a verify may grow the
+    frontmatter up to the reserved ceiling but no further.
+
+    Mutation-soundness: pre-fix (no YAML band reservation) the SECOND verify below
+    succeeds — its frontmatter still parses under the flat YAML cap — so the
+    `pytest.raises` gets no exception and the test fails. Post-fix it is refused."""
+    from bettermemory import _frontmatter as fm
+    from bettermemory.store import (
+        _REMOVAL_META_BUDGET_BYTES,
+        _serialized_frontmatter_bytes,
+    )
+
+    ceiling = fm._MAX_YAML_BYTES - _REMOVAL_META_BUDGET_BYTES
+    entry = "/repo/" + ("y" * (1019 - len("/repo/")))  # a legal ~1019-char path
+
+    mem = store.write(content="keep me removable", scopes=["tools"])
+
+    # 61 legal paths grow the frontmatter YAML close to — but under — the reserved
+    # ceiling: ADMITTED (growth up to the ceiling is allowed).
+    store.mark_verified(mem.id, verified_paths=[entry for _ in range(61)])
+    path = next(p for p in store._iter_active_paths() if mem.id.lower() in p.name)
+    near_yaml = _serialized_frontmatter_bytes(fm.load(path).metadata)
+    # Fixture sanity: near the ceiling, still under it (the shape the reservation
+    # keeps maintainable).
+    assert ceiling - 2000 < near_yaml < ceiling
+
+    # 63 legal paths (still <= 64 entries, <= 1024 chars each) would push the
+    # frontmatter YAML INTO the reserved band (> ceiling, < the flat YAML cap) —
+    # the exact LEGAL attestation the pre-fix code admitted, minting an
+    # un-removable record. Post-fix it is refused with a shrink-first hint.
+    band_paths = [entry for _ in range(63)]
+    assert len(band_paths) <= 64 and all(len(p) <= 1024 for p in band_paths)
+    with pytest.raises(ValueError, match="(?i)shrink"):
+        store.mark_verified(mem.id, verified_paths=band_paths)
+
+    # The refused verify left the near-ceiling attestation intact …
+    reloaded = store.load_one(mem.id)
+    assert len(reloaded.verified_paths) == 61
+    # … and the record that reached the cap is STILL removable: its tombstone
+    # re-dump fits under the YAML cap (adaptive trim covers the rest).
+    tomb = store.tombstone(mem.id, "still removable", session_id="sess-y")
+    assert _serialized_frontmatter_bytes(fm.load(tomb).metadata) <= fm._MAX_YAML_BYTES
+    assert tomb.stat().st_size <= fm._MAX_FILE_BYTES
+
+
 def test_tombstone_adaptively_trims_removal_metadata_near_read_cap(
     memory_dir: Path,
 ) -> None:
@@ -1797,25 +1906,27 @@ def test_tombstone_adaptively_trims_removal_metadata_near_read_cap(
 
 
 def test_tombstone_adaptively_trims_removal_metadata_near_yaml_cap(
-    store: Store,
+    memory_dir: Path,
 ) -> None:
     """Item 5 — the un-removable class on the frontmatter-YAML axis, the mirror
     of `test_tombstone_adaptively_trims_removal_metadata_near_read_cap` on the
     file-size axis.
 
     `_frontmatter.dumps` enforces `_MAX_YAML_BYTES` on the frontmatter region
-    UNCONDITIONALLY, independent of total file size. A record grown by a LEGAL
-    `mark_verified` (dense `verified_paths`, every entry within the handler's
-    64x1024 bounds) lands its frontmatter just under that YAML cap while the
-    whole file sits ~1 MB below the read cap. The pre-fix removal budget was the
-    file-size axis ONLY, so its adaptive trim never fired here and `tombstone`'s
-    re-dump raised the YAML cap — leaving the record ACTIVE with no tombstone
-    (the stranded-active class reopened with legal inputs and no legacy file).
-    Budgeting on BOTH axes and taking the tighter makes the SAME adaptive trim
-    fire on the YAML axis: the session is dropped, the reason trimmed, the
-    removal completes. Reverting the budget to the file axis alone makes the
-    `store.tombstone` below raise `frontmatter YAML exceeds ...` and this test
-    fail."""
+    UNCONDITIONALLY, independent of total file size. A record whose frontmatter
+    sits just under that YAML cap while the whole file is ~1 MB below the read
+    cap must still be removable: `tombstone` budgets its removal metadata on BOTH
+    axes and takes the tighter, so the adaptive trim fires on the YAML axis (the
+    session is dropped, the reason trimmed) and the removal completes. Reverting
+    the budget to the file axis alone makes the `store.tombstone` below raise
+    `frontmatter YAML exceeds ...` and this test fail.
+
+    The record is HAND-WRITTEN into the YAML band (the frontmatter-YAML twin of
+    `_write_band_memory_file`), NOT grown via `mark_verified`: post-fix the
+    lifecycle YAML band reservation (`_lifecycle_redump_yaml_cap`) forbids a
+    verify from minting such a record, so the only shapes that reach this band
+    are legacy/hand-written files — exactly as the file-axis sibling reaches its
+    doomed sliver via `_write_band_memory_file` rather than a lifecycle grow."""
     from bettermemory import _frontmatter as fm
     from bettermemory.store import (
         _REMOVAL_META_BUDGET_BYTES,
@@ -1823,16 +1934,19 @@ def test_tombstone_adaptively_trims_removal_metadata_near_yaml_cap(
         _serialized_frontmatter_bytes,
     )
 
-    mem = store.write(content="body to remove", scopes=["tools"])
-    # 63 verified paths of 1019 chars each — a wholly LEGAL attestation (<= 64
-    # entries, each <= 1024 chars, well within the handler's per-list bounds) —
-    # grows the frontmatter YAML to a few hundred bytes under `_MAX_YAML_BYTES`
-    # while the file stays ~1 MB under the read cap.
+    mid = generate_ulid()
+    # 63 verified paths of 1019 chars each — a wholly LEGAL attestation shape
+    # (<= 64 entries, each <= 1024 chars) — puts the frontmatter YAML a few
+    # hundred bytes under `_MAX_YAML_BYTES` while the file stays ~1 MB under the
+    # read cap. Hand-written because post-fix `mark_verified` would refuse to grow
+    # a record here (that refusal is what closes the un-removable corner at the
+    # source; this test covers the residual legacy/hand-written shape).
     legal_paths = ["/repo/" + ("y" * (1019 - len("/repo/"))) for _ in range(63)]
     assert len(legal_paths) <= 64 and all(len(p) <= 1024 for p in legal_paths)
-    store.mark_verified(mem.id, verified_paths=legal_paths)
+    _write_yaml_band_memory_file(memory_dir, memory_id=mid, verified_paths=legal_paths)
+    store = Store(memory_dir)
 
-    path = next(p for p in store._iter_active_paths() if mem.id.lower() in p.name)
+    path = next(p for p in store._iter_active_paths() if mid.lower() in p.name)
     file_size = path.stat().st_size
     yaml_region = _serialized_frontmatter_bytes(fm.load(path).metadata)
 
@@ -1852,13 +1966,13 @@ def test_tombstone_adaptively_trims_removal_metadata_near_yaml_cap(
     # Pre-fix (file-axis budget only) this raises `frontmatter YAML exceeds
     # 65536-byte cap` and leaves the record active; post-fix the YAML-axis
     # budget forces the trim and the removal completes.
-    tomb = store.tombstone(mem.id, long_reason, session_id="s" * 100)
+    tomb = store.tombstone(mid, long_reason, session_id="s" * 100)
 
     # The re-dump fits under BOTH caps.
     assert tomb.stat().st_size <= fm._MAX_FILE_BYTES
     assert _serialized_frontmatter_bytes(fm.load(tomb).metadata) <= fm._MAX_YAML_BYTES
 
-    match = next(t for t in store.load_tombstones() if t.id == mem.id)
+    match = next(t for t in store.load_tombstones() if t.id == mid)
     # The trim is what made it fit: the reason survived only as a prefix, trimmed
     # BELOW even the fixed 1 KiB reason cap (proof the ADAPTIVE YAML-axis trim
     # fired, not merely the fixed per-field cap), and the session was dropped
@@ -1869,10 +1983,10 @@ def test_tombstone_adaptively_trims_removal_metadata_near_yaml_cap(
     assert match.removed_session is None
 
     # The record is no longer stranded active — gone from the active set …
-    assert mem.id not in {m.id for m in store.load_all()}
+    assert mid not in {m.id for m in store.load_all()}
     # … and the round-trip back to active still holds.
-    restored = store.restore(mem.id)
-    assert restored.id == mem.id
+    restored = store.restore(mid)
+    assert restored.id == mid
 
 
 def test_cap_removed_reason_bounds_serialized_size_not_raw() -> None:

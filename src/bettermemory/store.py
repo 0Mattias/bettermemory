@@ -685,16 +685,29 @@ class Store:
             except OSError:
                 current_size = 0
             verify_cap = _lifecycle_redump_cap(current_size)
+            # Frontmatter-YAML-axis mirror of the file-axis cap above: measure the
+            # record's CURRENT serialized frontmatter (via the same builder the
+            # re-dump uses) and reserve the removal-metadata budget below the YAML
+            # cap, so a dense `verified_*` attestation can't grow the frontmatter
+            # into the band where the record's own tombstone no longer fits (the
+            # un-removable-record class on the YAML axis).
+            current_yaml = _serialized_frontmatter_bytes(_memory_metadata(existing))
+            verify_yaml_cap = _lifecycle_redump_yaml_cap(current_yaml)
             try:
-                self._write_path(existing_path, new_memory, max_file_bytes=verify_cap)
+                self._write_path(
+                    existing_path,
+                    new_memory,
+                    max_file_bytes=verify_cap,
+                    max_yaml_bytes=verify_yaml_cap,
+                )
             except ValueError as exc:
                 raise ValueError(
                     f"cannot verify memory {memory_id}: the attested "
                     f"verified_paths / verified_commits / verified_versions / "
-                    f"verified_absent_paths would grow the record past its "
-                    f"{verify_cap}-byte size cap. Shrink the attestation lists "
-                    f"before verifying so the record stays removable and "
-                    f"restorable ({exc})."
+                    f"verified_absent_paths would grow the record past its size "
+                    f"cap ({verify_cap}-byte file / {verify_yaml_cap}-byte "
+                    f"frontmatter). Shrink the attestation lists before verifying "
+                    f"so the record stays removable and restorable ({exc})."
                 ) from exc
             # perf: index upsert under lock is intentional — see audit H1.
             _index_upsert_quietly(self.root, new_memory, filename=existing_path.name)
@@ -741,13 +754,17 @@ class Store:
               reachable for a legacy file written within
               `_REMOVED_TIMESTAMP_HEADROOM_BYTES` of the read cap — the
               `_lifecycle_redump_cap` band discipline stops an active record
-              from being GROWN into that zone. On the frontmatter-YAML axis it
-              is reachable when the frontmatter sits within
-              `_REMOVED_TIMESTAMP_HEADROOM_BYTES` of `_MAX_YAML_BYTES`; that axis
-              has no band-reservation discipline, so a legal `mark_verified` (or
-              `rename_scope`) can grow the frontmatter right up to the YAML cap
-              and reach it — not only legacy files. `memory_remove` translates
-              it with a shrink-first remediation hint.
+              from being GROWN into that zone. The frontmatter-YAML axis now
+              mirrors that discipline: `_lifecycle_redump_yaml_cap` reserves
+              `_REMOVAL_META_BUDGET_BYTES` below `_MAX_YAML_BYTES` on every
+              `mark_verified` / `rename_scope` re-dump, so a legal attestation
+              can no longer grow an active record's frontmatter into the fatal
+              zone. It stays reachable only for a record whose frontmatter was
+              ALREADY within `_REMOVED_TIMESTAMP_HEADROOM_BYTES` of the YAML cap
+              before the discipline applied — a legacy/hand-written file, or a
+              first write admitted with pathological frontmatter (first writes
+              are deliberately not subject to the lifecycle YAML reservation).
+              `memory_remove` translates it with a shrink-first remediation hint.
         """
         path = self._find_path_for_id(memory_id)
         if path is None:
@@ -1383,16 +1400,28 @@ class Store:
                 except OSError:
                     current_size = 0
                 rename_cap = _lifecycle_redump_cap(current_size)
+                # YAML-axis mirror (see `mark_verified`): reserve the
+                # removal-metadata budget below the YAML cap so swapping in a
+                # longer `new` scope can't grow the frontmatter into the
+                # un-removable band.
+                current_yaml = _serialized_frontmatter_bytes(_memory_metadata(memory))
+                rename_yaml_cap = _lifecycle_redump_yaml_cap(current_yaml)
                 try:
-                    self._write_path(path, refreshed, max_file_bytes=rename_cap)
+                    self._write_path(
+                        path,
+                        refreshed,
+                        max_file_bytes=rename_cap,
+                        max_yaml_bytes=rename_yaml_cap,
+                    )
                 except ValueError as exc:
                     failed.append(
                         {
                             "id": memory.id,
                             "reason": (
-                                f"rename would grow the record past its "
-                                f"{rename_cap}-byte size cap; shrink its scopes / "
-                                f"verified_paths before renaming ({exc})"
+                                f"rename would grow the record past its size cap "
+                                f"({rename_cap}-byte file / {rename_yaml_cap}-byte "
+                                f"frontmatter); shrink its scopes / verified_paths "
+                                f"before renaming ({exc})"
                             ),
                         }
                     )
@@ -1634,6 +1663,7 @@ class Store:
         memory: Memory,
         *,
         max_file_bytes: int = frontmatter._MAX_WRITE_BYTES,
+        max_yaml_bytes: int = frontmatter._MAX_YAML_BYTES,
     ) -> None:
         # `max_file_bytes` defaults to the headroom-reserved write cap, which is
         # correct for new-content admission (`write`, `update`): a freshly
@@ -1644,67 +1674,16 @@ class Store:
         # already-admitted, already-readable record, so refusing a record whose
         # serialized size merely sits in the reserved band (e.g. a pre-3.14.1
         # record written before the total-file cap existed) would freeze it
-        # from ever being verified/renamed (F1).
+        # from ever being verified/renamed (F1). `max_yaml_bytes` is the
+        # frontmatter-YAML-axis mirror: it defaults to the flat YAML cap for a
+        # first write, and those same re-dump callers pass a reduced ceiling
+        # (`_lifecycle_redump_yaml_cap`) so a legal attestation can't grow the
+        # frontmatter into the removal-metadata budget of the YAML cap either.
         post = frontmatter.Post(memory.body.strip() + "\n")
-        meta: dict[str, object] = {
-            # `schema_version` is the first key so it's visible at the top
-            # of the file and unambiguously associated with the format
-            # rather than the memory's content. Readers that don't know
-            # this field default it to 1; readers that don't *recognize*
-            # the value refuse to load the file.
-            "schema_version": SCHEMA_VERSION,
-            "id": memory.id,
-            "created": memory.created,
-            "updated": memory.updated,
-            "scopes": list(memory.scopes),
-            "confidence": memory.confidence.value,
-            "source": memory.source.value,
-        }
-        # Origin is optional and only written when populated. We emit a
-        # nested mapping with `exclude_none` so we never write
-        # `origin: {cwd: null, repo: null, branch: null}` — that's noise.
-        if memory.origin is not None:
-            origin_dict = memory.origin.model_dump(mode="json", exclude_none=True)
-            if origin_dict:
-                meta["origin"] = origin_dict
-        # `last_verified_at` is omitted from frontmatter when None — keeps
-        # newly-written memories from carrying a `last_verified_at: null`
-        # placeholder, which would be visual noise on every file. Once the
-        # field is populated by `mark_verified`, the key is written.
-        if memory.last_verified_at is not None:
-            meta["last_verified_at"] = memory.last_verified_at
-        # `category` is omitted when None (the legacy default — runtime
-        # treats it as fact). Writing the key only when the caller
-        # explicitly chose a category keeps fact memories visually
-        # identical to legacy ones on disk.
-        if memory.category is not None:
-            meta["category"] = memory.category.value
-        # Verified-claims lists are omitted when empty — same noise-floor
-        # rationale as `last_verified_at`. They populate as a unit on
-        # the `memory_verify` event that captured them.
-        if memory.verified_paths:
-            meta["verified_paths"] = list(memory.verified_paths)
-        if memory.verified_commits:
-            meta["verified_commits"] = list(memory.verified_commits)
-        if memory.verified_versions:
-            meta["verified_versions"] = list(memory.verified_versions)
-        if memory.verified_absent_paths:
-            meta["verified_absent_paths"] = list(memory.verified_absent_paths)
-        # `links` is omitted when empty — same noise-floor rationale as
-        # `verified_paths`. Each link is serialized as a plain dict
-        # (`type` is the enum value, not the Python name) so a hand-
-        # editing user can read and edit the frontmatter directly.
-        if memory.links:
-            meta["links"] = [
-                {
-                    "type": link.type.value,
-                    "target_id": link.target_id,
-                    **({"note": link.note} if link.note is not None else {}),
-                }
-                for link in memory.links
-            ]
-        post.metadata = meta
-        _atomic_write_post(path, post, max_file_bytes=max_file_bytes)
+        post.metadata = _memory_metadata(memory)
+        _atomic_write_post(
+            path, post, max_file_bytes=max_file_bytes, max_yaml_bytes=max_yaml_bytes
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -2221,6 +2200,38 @@ def _lifecycle_redump_cap(current_size: int) -> int:
     return min(max(band_ceiling, current_size), frontmatter._MAX_FILE_BYTES)
 
 
+def _lifecycle_redump_yaml_cap(current_yaml_size: int) -> int:
+    """Frontmatter-YAML-axis twin of `_lifecycle_redump_cap`, keyed on the
+    record's CURRENT serialized frontmatter size. `_frontmatter.dumps` enforces
+    `_MAX_YAML_BYTES` on the frontmatter region unconditionally, independent of
+    total file size, but — unlike the file axis — nothing reserved tombstone room
+    below it: a legal `mark_verified` / `rename_scope` could grow the frontmatter
+    to within `_REMOVED_TIMESTAMP_HEADROOM_BYTES` of the YAML cap, a band in which
+    even the dual-axis adaptive trim (`tombstone`) cannot fit the `removed:` line,
+    leaving the record un-removable. This caps the lifecycle re-dump so that band
+    is reserved, mirroring the file-axis band ceiling.
+
+    - A record whose frontmatter sits at or below the reserved ceiling
+      (`_MAX_YAML_BYTES - _REMOVAL_META_BUDGET_BYTES`) caps AT that ceiling:
+      growth is allowed up to it (a first attestation's `last_verified_at`, more
+      `verified_paths`) but never past it, so the removal-metadata budget always
+      survives.
+    - A record whose frontmatter is ALREADY above the reserved ceiling (a
+      legacy/hand-written file, or a record the pre-discipline code minted)
+      freezes at its current size: a re-dump may shrink or hold it, never grow
+      it — every byte of growth would come straight out of what remains of its
+      removal headroom.
+
+    The result is always `<= _MAX_YAML_BYTES`, so passing it to `dumps` can only
+    bind tighter than the flat cap, never relax it. There is no YAML analog of
+    the file axis's admission reservation (`_MAX_WRITE_BYTES`): a first write is
+    deliberately NOT subject to this ceiling (see `dumps`), so the YAML mirror has
+    only the band-ceiling and freeze arms, not a third sub-write-cap arm.
+    """
+    reserved_ceiling = frontmatter._MAX_YAML_BYTES - _REMOVAL_META_BUDGET_BYTES
+    return min(max(reserved_ceiling, current_yaml_size), frontmatter._MAX_YAML_BYTES)
+
+
 def _serialized_meta_bytes(key: str, value: str) -> int:
     """Serialized (YAML) byte size of the `<key>: <value>` line.
 
@@ -2319,11 +2330,83 @@ def _cap_removed_session(session_id: str) -> str:
     )
 
 
+def _memory_metadata(memory: Memory) -> dict[str, object]:
+    """Build the frontmatter mapping the store persists for `memory`.
+
+    Extracted from `Store._write_path` so the lifecycle re-dump callers
+    (`mark_verified`, `rename_scope`) can measure a record's CURRENT serialized
+    frontmatter size — via `_serialized_frontmatter_bytes(_memory_metadata(...))`
+    — with the exact same key set and ordering the re-dump will produce, without
+    a second read of the file. The block-style YAML `dumps` emits is additive
+    across keys, so this measurement is the faithful baseline for
+    `_lifecycle_redump_yaml_cap`'s freeze arm.
+    """
+    meta: dict[str, object] = {
+        # `schema_version` is the first key so it's visible at the top
+        # of the file and unambiguously associated with the format
+        # rather than the memory's content. Readers that don't know
+        # this field default it to 1; readers that don't *recognize*
+        # the value refuse to load the file.
+        "schema_version": SCHEMA_VERSION,
+        "id": memory.id,
+        "created": memory.created,
+        "updated": memory.updated,
+        "scopes": list(memory.scopes),
+        "confidence": memory.confidence.value,
+        "source": memory.source.value,
+    }
+    # Origin is optional and only written when populated. We emit a
+    # nested mapping with `exclude_none` so we never write
+    # `origin: {cwd: null, repo: null, branch: null}` — that's noise.
+    if memory.origin is not None:
+        origin_dict = memory.origin.model_dump(mode="json", exclude_none=True)
+        if origin_dict:
+            meta["origin"] = origin_dict
+    # `last_verified_at` is omitted from frontmatter when None — keeps
+    # newly-written memories from carrying a `last_verified_at: null`
+    # placeholder, which would be visual noise on every file. Once the
+    # field is populated by `mark_verified`, the key is written.
+    if memory.last_verified_at is not None:
+        meta["last_verified_at"] = memory.last_verified_at
+    # `category` is omitted when None (the legacy default — runtime
+    # treats it as fact). Writing the key only when the caller
+    # explicitly chose a category keeps fact memories visually
+    # identical to legacy ones on disk.
+    if memory.category is not None:
+        meta["category"] = memory.category.value
+    # Verified-claims lists are omitted when empty — same noise-floor
+    # rationale as `last_verified_at`. They populate as a unit on
+    # the `memory_verify` event that captured them.
+    if memory.verified_paths:
+        meta["verified_paths"] = list(memory.verified_paths)
+    if memory.verified_commits:
+        meta["verified_commits"] = list(memory.verified_commits)
+    if memory.verified_versions:
+        meta["verified_versions"] = list(memory.verified_versions)
+    if memory.verified_absent_paths:
+        meta["verified_absent_paths"] = list(memory.verified_absent_paths)
+    # `links` is omitted when empty — same noise-floor rationale as
+    # `verified_paths`. Each link is serialized as a plain dict
+    # (`type` is the enum value, not the Python name) so a hand-
+    # editing user can read and edit the frontmatter directly.
+    if memory.links:
+        meta["links"] = [
+            {
+                "type": link.type.value,
+                "target_id": link.target_id,
+                **({"note": link.note} if link.note is not None else {}),
+            }
+            for link in memory.links
+        ]
+    return meta
+
+
 def _atomic_write_post(
     path: Path,
     post: frontmatter.Post,
     *,
     max_file_bytes: int = frontmatter._MAX_WRITE_BYTES,
+    max_yaml_bytes: int = frontmatter._MAX_YAML_BYTES,
 ) -> None:
     """Atomic, durable, 0o600 write of a frontmatter Post to `path`.
 
@@ -2344,10 +2427,18 @@ def _atomic_write_post(
     writes use the default write cap (headroom reserved), while the
     lifecycle re-dump paths (`tombstone` / `rename_scope`) pass the full
     read cap so appending removal metadata to a near-cap record can't fail.
+
+    `max_yaml_bytes` is likewise forwarded to `dumps`: it defaults to the flat
+    YAML cap, and the metadata-only re-dump callers (`mark_verified` /
+    `rename_scope`'s active branch) pass a reduced ceiling to reserve the
+    removal-metadata budget on the frontmatter-YAML axis (the mirror of the
+    file-axis band ceiling — see `_lifecycle_redump_yaml_cap`).
     """
     atomic_write_bytes(
         path,
-        frontmatter.dumps(post, max_file_bytes=max_file_bytes).encode("utf-8"),
+        frontmatter.dumps(
+            post, max_file_bytes=max_file_bytes, max_yaml_bytes=max_yaml_bytes
+        ).encode("utf-8"),
         mode_before_rename=0o600,
     )
 
