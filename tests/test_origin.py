@@ -12,6 +12,7 @@ import pytest
 
 from bettermemory.origin import (
     Origin,
+    any_pathspec_in_history,
     capture,
     commit_author_timestamps,
     commits_since,
@@ -902,6 +903,83 @@ def test_commits_since_touching_paths_counts_from_repo_subdirectory(
     assert commits_since_touching_paths(subdir, since, [nested_abs]) == 1
     # The relative-input form (treated as repo-root-relative) is subdir-safe too.
     assert commits_since_touching_paths(subdir, since, ["src/tracked.txt"]) == 1
+
+
+# ---------------------------------------------------------------------------
+# any_pathspec_in_history — phantom vs real anchor discrimination
+# ---------------------------------------------------------------------------
+
+
+def test_any_pathspec_in_history_none_for_none_cwd() -> None:
+    assert any_pathspec_in_history(None, ["x.py"]) is None
+
+
+def test_any_pathspec_in_history_none_for_empty_pathspecs(tmp_path: Path) -> None:
+    assert any_pathspec_in_history(tmp_path, []) is None
+
+
+def test_any_pathspec_in_history_none_outside_repo(tmp_path: Path) -> None:
+    """Not a git repo — existence is unknowable, so None (NOT False). The
+    caller must keep its conservative default rather than treat every anchor
+    as phantom on an infrastructure failure."""
+    assert any_pathspec_in_history(tmp_path, ["x.py"]) is None
+
+
+@pytest.mark.skipif(not _GIT_AVAILABLE, reason="git not on PATH")
+def test_any_pathspec_in_history_true_for_touched_file(tmp_path: Path) -> None:
+    _init_repo(tmp_path)
+    _commit_file(
+        tmp_path,
+        "real.py",
+        content="x = 1\n",
+        when=datetime(2026, 1, 1, tzinfo=timezone.utc),
+    )
+    assert any_pathspec_in_history(tmp_path, ["real.py"]) is True
+
+
+@pytest.mark.skipif(not _GIT_AVAILABLE, reason="git not on PATH")
+def test_any_pathspec_in_history_false_for_phantom_pathspec(tmp_path: Path) -> None:
+    """A pathspec no commit ever touched is a CONFIRMED phantom — False,
+    which the caller distinguishes from the None a git failure yields (this
+    is the whole point of using `rev-list --count`, whose literal `0`
+    survives `_git`'s truthiness filter)."""
+    _init_repo(tmp_path)
+    _commit_file(
+        tmp_path,
+        "real.py",
+        content="x = 1\n",
+        when=datetime(2026, 1, 1, tzinfo=timezone.utc),
+    )
+    assert any_pathspec_in_history(tmp_path, ["never/existed.py"]) is False
+
+
+@pytest.mark.skipif(not _GIT_AVAILABLE, reason="git not on PATH")
+def test_any_pathspec_in_history_true_for_deleted_file(tmp_path: Path) -> None:
+    """A since-deleted file is REAL, not phantom: its add and its removal are
+    both commits that touched it, so it stays in history. This is what keeps
+    deleted-file commit drift working under the phantom-anchor guard."""
+    _init_repo(tmp_path)
+    _commit_file(
+        tmp_path,
+        "gone.py",
+        content="x = 1\n",
+        when=datetime(2026, 1, 1, tzinfo=timezone.utc),
+    )
+    (tmp_path / "gone.py").unlink()
+    subprocess.run(["git", "add", "-A"], cwd=tmp_path, check=True, capture_output=True)
+    env = os.environ.copy()
+    env["GIT_AUTHOR_NAME"] = "Test"
+    env["GIT_AUTHOR_EMAIL"] = "test@example.com"
+    env["GIT_COMMITTER_NAME"] = "Test"
+    env["GIT_COMMITTER_EMAIL"] = "test@example.com"
+    subprocess.run(
+        ["git", "commit", "-m", "rm gone.py"],
+        cwd=tmp_path,
+        check=True,
+        capture_output=True,
+        env=env,
+    )
+    assert any_pathspec_in_history(tmp_path, ["gone.py"]) is True
 
 
 # ---------------------------------------------------------------------------

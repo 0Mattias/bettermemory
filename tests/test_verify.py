@@ -108,6 +108,46 @@ def _commit_touching(
     )
 
 
+def _commit_touching_split(
+    path: Path,
+    message: str,
+    *,
+    author_when: datetime,
+    committer_when: datetime,
+    filename: str = "notes.md",
+) -> None:
+    """Commit that TOUCHES a file with DIFFERENT author/committer dates —
+    the on-disk shape a rebase leaves (author date preserved, committer
+    date rewritten). Distinct from `_commit_touching` (author == committer)
+    and `test_server_commit_drift._commit_split` (empty, touches no file, so
+    invisible to the claim-anchored path filter)."""
+    target = path / filename
+    target.parent.mkdir(parents=True, exist_ok=True)
+    with target.open("a") as fh:
+        fh.write(f"{message}\n")
+    subprocess.run(["git", "add", filename], cwd=path, check=True, capture_output=True)
+    author_iso = author_when.astimezone(timezone.utc).strftime(
+        "%Y-%m-%dT%H:%M:%S+00:00"
+    )
+    committer_iso = committer_when.astimezone(timezone.utc).strftime(
+        "%Y-%m-%dT%H:%M:%S+00:00"
+    )
+    env = os.environ.copy()
+    env["GIT_AUTHOR_DATE"] = author_iso
+    env["GIT_COMMITTER_DATE"] = committer_iso
+    env["GIT_AUTHOR_NAME"] = "Test"
+    env["GIT_AUTHOR_EMAIL"] = "test@example.com"
+    env["GIT_COMMITTER_NAME"] = "Test"
+    env["GIT_COMMITTER_EMAIL"] = "test@example.com"
+    subprocess.run(
+        ["git", "commit", "-m", message],
+        cwd=path,
+        check=True,
+        capture_output=True,
+        env=env,
+    )
+
+
 # ---------------------------------------------------------------------------
 # Empty / no-paths cases
 # ---------------------------------------------------------------------------
@@ -1234,6 +1274,35 @@ def test_relative_citation_regex_accepts_real_citations() -> None:
     ]
 
 
+def test_relative_citation_regex_ignores_dash_leading_filename() -> None:
+    """Fix (c): the lookbehind bars a match starting right after a dash, so
+    a leading-dash token spawns no phantom relative anchor, and a dash
+    INSIDE an absolute path spawns no bonus relative anchor. Pre-fix the
+    lookbehind omitted `-`: `-leading-dash.md` truncated to the anchor
+    `leading-dash.md`, and `/opt/claude-code/src/cli.ts` spawned the phantom
+    `code/src/cli.ts`.
+    """
+    assert [
+        m.group(1)
+        for m in _RELATIVE_CITATION_RE.finditer("prefix -leading-dash.md tail")
+    ] == []
+    assert [
+        m.group(1)
+        for m in _RELATIVE_CITATION_RE.finditer("/opt/claude-code/src/cli.ts")
+    ] == []
+
+
+def test_relative_citation_regex_still_matches_internal_dash_filename() -> None:
+    """The dash lookbehind must not break a hyphenated filename cited from a
+    clean opener — the dash lives INSIDE the match, only the START position
+    is guarded. `my-mod.py` still anchors whole."""
+    got = [
+        m.group(1)
+        for m in _RELATIVE_CITATION_RE.finditer("pinned in src/my-mod.py today")
+    ]
+    assert got == ["src/my-mod.py"]
+
+
 def test_anchor_paths_caps_relative_citations() -> None:
     """A pathological body citing hundreds of files stays bounded — the
     cap only DROPS anchors (never invents), and the anchor set staying
@@ -1399,6 +1468,158 @@ def test_commit_drift_root_citation_does_not_drag_in_unrelated_churn(
     assert result is not None
     assert result.status == "clean"
     assert result.commits_since_verify == 0
+
+
+@pytest.mark.skipif(not _GIT_AVAILABLE, reason="git not on PATH")
+def test_resolve_commit_drift_count_clamps_inflated_filtered_to_unfiltered(
+    tmp_path: Path,
+) -> None:
+    """Fix (a): rebase-inflation with a POSITIVE unfiltered count. The
+    committer-date `--since` path filter counts commits a rebase rewrote
+    past the verify instant (author date preserved BEFORE it), so `filtered`
+    can EXCEED the author-date `unfiltered` truth. The documented invariant
+    — narrowing may only REDUCE the count, never resurrect drift — must
+    clamp it back. The existing agrees-across-surfaces-after-rebase test
+    only exercises unfiltered==0; this pins the positive case the clamp
+    actually guards. Pre-fix (`return ... filtered`) returned the inflated
+    2; the clamp returns the unfiltered truth 1.
+    """
+    _init_repo_with_remote(tmp_path, remote=_REMOTE)
+    _commit_touching(
+        tmp_path, "baseline", when=datetime(2020, 1, 1, tzinfo=timezone.utc)
+    )
+    # Two rebased commits touching the cited file: authored in 2020 (before
+    # `since`), committer date rewritten to 2026 (after it) — the exact shape
+    # `git pull --rebase` leaves on disk.
+    _commit_touching_split(
+        tmp_path,
+        "rebased-1",
+        author_when=datetime(2020, 2, 1, tzinfo=timezone.utc),
+        committer_when=datetime(2026, 6, 1, tzinfo=timezone.utc),
+    )
+    _commit_touching_split(
+        tmp_path,
+        "rebased-2",
+        author_when=datetime(2020, 3, 1, tzinfo=timezone.utc),
+        committer_when=datetime(2026, 6, 2, tzinfo=timezone.utc),
+    )
+    # `unfiltered` is the author-date bisect truth the caller computes: one
+    # genuinely-new commit's worth. The committer-date path filter over the
+    # two rebased commits returns 2, so without the clamp the "narrowed"
+    # count (2) EXCEEDS the unfiltered truth (1) — the clean→inflated flip
+    # the invariant forbids.
+    result = resolve_commit_drift_count(
+        cwd=tmp_path,
+        since=datetime(2025, 1, 1, tzinfo=timezone.utc),
+        unfiltered=1,
+        anchors=("notes.md",),
+    )
+    assert result == 1
+
+
+@pytest.mark.skipif(not _GIT_AVAILABLE, reason="git not on PATH")
+def test_commit_drift_none_for_phantom_subroot_citation(tmp_path: Path) -> None:
+    """Fix (b): a body citing an existing file by a SUB-ROOT path
+    (`pkg/search.py`, dropping the real `src/` prefix) anchors a
+    repo-relative pathspec no commit ever touched — `resolve_repo_pathspecs`
+    resolves it lexically, never checking existence. Commits landed after
+    verify (positive unfiltered) but the phantom anchor matches none of
+    them: pre-fix this minted an affirmative clean/0; the phantom probe
+    returns None (not-applicable). Live repro: `handlers/search.py` read
+    clean while `src/bettermemory/handlers/search.py` read drift.
+    """
+    _init_repo_with_remote(tmp_path, remote=_REMOTE)
+    _commit_touching(
+        tmp_path,
+        "add real file",
+        when=datetime(2026, 1, 1, tzinfo=timezone.utc),
+        filename="src/pkg/search.py",
+    )
+    _commit_touching(
+        tmp_path,
+        "churn real file",
+        when=datetime(2026, 2, 1, tzinfo=timezone.utc),
+        filename="src/pkg/search.py",
+    )
+    result = compute_commit_drift(
+        last_verified_at=datetime(2026, 1, 15, tzinfo=timezone.utc),
+        memory_origin_repo=_REMOTE,
+        caller_origin=Origin(cwd=str(tmp_path), repo=_REMOTE, branch="main"),
+        body="the handler logic in pkg/search.py is the hot path",
+    )
+    assert result is None
+
+
+@pytest.mark.skipif(not _GIT_AVAILABLE, reason="git not on PATH")
+def test_commit_drift_none_for_phantom_spaced_filename_citation(
+    tmp_path: Path,
+) -> None:
+    """Fix (b): a spaced filename (`docs/My Notes.md`) can't be matched
+    across the space, so the relative-citation regex anchors only the tail
+    `Notes.md` — a repo-relative pathspec no commit ever touched. With
+    commits landed after verify (positive unfiltered), pre-fix minted a
+    false clean/0 off that phantom tail; the phantom probe returns None.
+    """
+    _init_repo_with_remote(tmp_path, remote=_REMOTE)
+    _commit_touching(
+        tmp_path,
+        "add spaced file",
+        when=datetime(2026, 1, 1, tzinfo=timezone.utc),
+        filename="docs/My Notes.md",
+    )
+    _commit_touching(
+        tmp_path,
+        "churn spaced file",
+        when=datetime(2026, 2, 1, tzinfo=timezone.utc),
+        filename="docs/My Notes.md",
+    )
+    result = compute_commit_drift(
+        last_verified_at=datetime(2026, 1, 15, tzinfo=timezone.utc),
+        memory_origin_repo=_REMOTE,
+        caller_origin=Origin(cwd=str(tmp_path), repo=_REMOTE, branch="main"),
+        body="see docs/My Notes.md for the rationale",
+    )
+    assert result is None
+
+
+@pytest.mark.skipif(not _GIT_AVAILABLE, reason="git not on PATH")
+def test_resolve_commit_drift_count_zero_for_deleted_but_real_anchor(
+    tmp_path: Path,
+) -> None:
+    """Guard on fix (b): the phantom probe must NOT swallow a since-DELETED
+    cited file. A file added then removed BEFORE the verify is untouched
+    afterward (filtered 0) yet is REAL — its add + delete commits keep it in
+    history — so it stays clean/0, never None. This is why the probe uses
+    `rev-list ... HEAD` (history) not `git ls-files` (current tree only),
+    which would have mis-flagged the deleted file as phantom.
+    """
+    _init_repo_with_remote(tmp_path, remote=_REMOTE)
+    _commit_touching(
+        tmp_path,
+        "add gone.py",
+        when=datetime(2026, 1, 1, tzinfo=timezone.utc),
+        filename="gone.py",
+    )
+    # Delete the cited file BEFORE the verify instant.
+    (tmp_path / "gone.py").unlink()
+    subprocess.run(["git", "add", "-A"], cwd=tmp_path, check=True, capture_output=True)
+    _commit_at(
+        tmp_path, "delete gone.py", when=datetime(2026, 1, 10, tzinfo=timezone.utc)
+    )
+    # Post-verify churn on an unrelated file → unfiltered > 0.
+    _commit_touching(
+        tmp_path,
+        "unrelated churn",
+        when=datetime(2026, 3, 1, tzinfo=timezone.utc),
+        filename="other.py",
+    )
+    result = resolve_commit_drift_count(
+        cwd=tmp_path,
+        since=datetime(2026, 2, 1, tzinfo=timezone.utc),
+        unfiltered=1,
+        anchors=("gone.py",),
+    )
+    assert result == 0
 
 
 def test_commit_drift_status_is_immutable_dataclass(tmp_path: Path) -> None:

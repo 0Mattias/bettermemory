@@ -86,6 +86,7 @@ from typing import Any
 
 from .origin import (
     Origin,
+    any_pathspec_in_history,
     commit_author_timestamps,
     commits_touching_pathspecs,
     repos_match,
@@ -258,9 +259,14 @@ _DOMAIN_ROUTE_RE = re.compile(r"\b[\w-]+(?:\.[\w-]+){1,20}/([\w.\-]+)")
 #   across label boundaries (`docs.python` inside `docs.python.org` sits
 #   before `.o`) without sacrificing sentence-final citations
 #   (`…docs/ROADMAP.md.` sits before `. ` — dot-then-space passes).
-# - The lookbehind bars `[\w/~.\\]` so mid-path and mid-token starts never
-#   re-match (`src/foo.py` must match once, not once per segment), while
-#   backticks, quotes, parens, and start-of-line all remain valid openers.
+# - The lookbehind bars `[\w/~.\\-]` so mid-path and mid-token starts
+#   never re-match (`src/foo.py` must match once, not once per segment).
+#   The `-` is load-bearing: without it a match could start right after a
+#   dash, minting a phantom anchor from a leading-dash token
+#   (`-leading-dash.md` → `leading-dash.md`) or from a dash inside an
+#   absolute path (`/opt/claude-code/src/cli.ts` → `code/src/cli.ts`).
+#   Backticks, quotes, parens, and start-of-line stay valid openers, and a
+#   markdown bullet is unaffected (`- ` puts a space before the token).
 # - Every quantifier is bounded (same ReDoS discipline as
 #   `_DOMAIN_ROUTE_RE`): iterations are separated by a literal `/`, so
 #   backtracking is confined to one bounded segment window per start
@@ -271,7 +277,7 @@ _DOMAIN_ROUTE_RE = re.compile(r"\b[\w-]+(?:\.[\w-]+){1,20}/([\w.\-]+)")
 # the captured group, mirroring `_LINE_SUFFIX_RE`'s "the line number is not
 # a filesystem claim; the file is".
 _RELATIVE_CITATION_RE = re.compile(
-    r"(?<![\w/~.\\])"
+    r"(?<![\w/~.\\-])"
     r"((?:[A-Za-z_.][\w.\-]{0,63}/){0,12}"
     r"[A-Za-z_.][\w.\-]{0,63}\.[A-Za-z][A-Za-z0-9_]{1,7})"
     r"(?![\w/]|\.\w)"
@@ -1253,21 +1259,29 @@ def resolve_commit_drift_count(
     Returns:
 
     - ``None`` — commit drift is NOT APPLICABLE: `anchors` is empty (the
-      memory makes no path-shaped claims) or none of the anchors resolve
+      memory makes no path-shaped claims), none of the anchors resolve
       inside the caller's repo (the claims live elsewhere — a remote
-      host, another checkout, the home directory). A bare repo-wide
-      commit count carries no information about such a memory; counting
-      it anyway is exactly the 100%-false-positive noise the claim-kind
-      calibration measured (12/12 labeled false positives at 3.13.0,
-      24/24 at 3.16.0).
+      host, another checkout, the home directory), or every resolved
+      anchor is PHANTOM — it resolves LEXICALLY to a repo-relative
+      pathspec no commit in this repo's history ever touched (a sub-root
+      or bare-filename citation `resolve_repo_pathspecs` mapped without an
+      existence check). A bare repo-wide commit count carries no
+      information about any of these; counting it anyway is exactly the
+      100%-false-positive noise the claim-kind calibration measured
+      (12/12 labeled false positives at 3.13.0, 24/24 at 3.16.0).
     - an ``int`` — the count of commits since `since` touching at least
-      one anchor. Falls back to `unfiltered` when git can't answer the
+      one anchor, CLAMPED so it can never exceed `unfiltered`. The path
+      filter counts on committer date, which a history rewrite can inflate
+      past the author-date truth; the clamp enforces the documented
+      invariant that narrowing may only REDUCE the count, never resurrect
+      drift. Falls back to `unfiltered` when git can't answer the
       path-filtered query (never under-count on infrastructure failure).
 
     Callers gate on ``unfiltered > 0`` before calling (a caught-up memory
-    pays no git work), and the filtered count may only REDUCE the
-    author-date bisect count — see the committer-date/inclusive-boundary
-    note at the call sites.
+    pays no git work). The phantom-anchor probe runs only when the
+    filtered count is 0 — a drift-positive path is never second-guessed —
+    and a since-deleted cited file still resolves as real, since its
+    removal commit keeps it in history.
     """
     if not anchors:
         return None
@@ -1282,7 +1296,36 @@ def resolve_commit_drift_count(
         # claims are real but not about this repo's code.
         return None
     filtered = commits_touching_pathspecs(cwd, since, specs, toplevel=toplevel)
-    return unfiltered if filtered is None else filtered
+    if filtered is None:
+        # Git couldn't run the path-filtered query — never under-count on
+        # infrastructure failure; keep the conservative unfiltered count.
+        return unfiltered
+    if filtered == 0:
+        # A zero filtered count needs one more question before it can mint
+        # an affirmative "clean": did any resolved spec EVER exist here?
+        # `resolve_repo_pathspecs` is purely LEXICAL (no existence check),
+        # so a sub-root / bare-filename / spaced-tail citation
+        # (`handlers/x.py` for a file at `src/pkg/handlers/x.py`, `Notes.md`
+        # sheared off `docs/My Notes.md`) resolves to a repo-relative
+        # pathspec no commit ever touched — a PHANTOM. A phantom is NOT
+        # clean; it is NOT APPLICABLE, exactly like an anchor that escapes
+        # the repo. Only a POSITIVE "no spec ever appeared in history"
+        # flips to None — a since-deleted cited file still counts as real
+        # (its removal keeps it in history), and a git failure on the probe
+        # keeps the conservative clean/0.
+        if any_pathspec_in_history(cwd, specs, toplevel=toplevel) is False:
+            return None
+        return 0
+    # Enforce the documented narrowing invariant: the claim-anchored count
+    # may only REDUCE the repo-wide count, never resurrect drift. The
+    # `--since` path filter counts on COMMITTER date, so a history rewrite
+    # (rebase / amend / cherry-pick — `sync` rebases on every pull) that
+    # bumps a rewritten commit's committer date past `since` while its
+    # author date stayed before it can INFLATE `filtered` past the
+    # author-date `unfiltered` truth. `min` clamps it back so the reported
+    # count satisfies `filtered <= unfiltered` — the invariant every call
+    # site's comment already asserts.
+    return min(unfiltered, filtered)
 
 
 def compute_commit_drift(
