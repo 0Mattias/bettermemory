@@ -848,14 +848,49 @@ def parse_and_validate(
     # split at the first ``` anywhere, which truncated a payload whose body
     # string legitimately contained a fence. Try the raw text first, then
     # progressively looser extractions — never truncating a valid object.
+    # A candidate ENDS the walk only when it parses to a JSON object that
+    # actually carries a "proposals" key — that object is the real payload.
+    # A candidate that parses to a dict with NO "proposals" key is a
+    # schema/example echo, not the answer; the ```json-tag priority in
+    # `_json_object_candidates` can float such an echo ahead of a genuine
+    # bare-fence payload sitting in a LATER candidate, and settling on the
+    # echo here would return 0 proposals with no signal at all — the
+    # `payload.get("proposals", [])` default below makes a keyless dict
+    # indistinguishable from a clean empty verdict, so neither an
+    # LLMParseError nor the line-`missing 'proposals' array` warning fires.
+    # Warn and keep scanning; only a key-carrying object (or exhaustion of
+    # every candidate) stops the walk. The first parsed-but-unusable value
+    # is remembered so exhaustion reproduces the terminal outcome the old
+    # single-break walk had (a keyless dict -> []; a non-object ->
+    # LLMParseError).
     payload: Any = None
     last_exc: json.JSONDecodeError | None = None
+    _unset = object()
+    first_unusable: Any = _unset
     for candidate in _json_object_candidates(raw_text):
         try:
-            payload = json.loads(candidate)
-            break
+            parsed = json.loads(candidate)
         except json.JSONDecodeError as exc:
             last_exc = exc
+            continue
+        if isinstance(parsed, dict) and "proposals" in parsed:
+            payload = parsed
+            break
+        if isinstance(parsed, dict):
+            log.warning(
+                "LLM response candidate parsed to a JSON object with no "
+                "'proposals' key (keys=%r); continuing to the next "
+                "extraction candidate",
+                sorted(parsed.keys()),
+            )
+        if first_unusable is _unset:
+            first_unusable = parsed
+    if payload is None and first_unusable is not _unset:
+        # No candidate carried a "proposals" key. Fall back to the first
+        # parsed-but-unusable value so the terminal branches below preserve
+        # the pre-existing behaviour: a keyless dict is a zero-proposal
+        # result; a non-object is a parse failure.
+        payload = first_unusable
     if payload is None:
         log.warning(
             "LLM response was not valid JSON: %s. Body: %.200s",

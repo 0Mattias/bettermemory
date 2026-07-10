@@ -403,6 +403,84 @@ def test_parse_prefers_json_tagged_fence_over_earlier_fence() -> None:
     assert parse_and_validate(raw, cluster) == []
 
 
+def test_parse_skips_json_tagged_schema_echo_for_bare_fence_payload() -> None:
+    """A bare-fence payload followed by a ```json-tagged schema/example echo
+    (a JSON object with NO top-level 'proposals' key) must return the
+    payload's proposals — not silently drop them.
+
+    The json-tag priority hoist in `_json_object_candidates` floats the
+    ```json-tagged block ahead of the earlier bare fence, so the schema echo
+    is tried FIRST. It parses to a dict, but with no 'proposals' key the
+    `payload.get('proposals', [])` default collapses it to a clean empty
+    verdict and the real bare-fence payload in the next candidate is never
+    tried: 0 proposals, no LLMParseError, no log. The parser must skip a
+    keyless dict and keep scanning.
+
+    Mutation-sound: reverting parse_and_validate to settle on the first
+    parsed object (keyless dict included) makes this return [] and the
+    len == 1 assertion below fail.
+    """
+    a = _make_memory("superseded fact", category=Category.FACT)
+    cluster = _make_cluster([a])
+    payload = json.dumps(
+        {
+            "proposals": [
+                {
+                    "type": "demote_tier",
+                    "memory_id": a.id,
+                    "new_category": "ambient",
+                    "rationale": "verifiable claim superseded; keep for tone",
+                }
+            ]
+        }
+    )
+    # A ```json-tagged JSON-Schema echo: a dict, but 'proposals' appears only
+    # NESTED under 'properties'/'required', never as a top-level key.
+    schema_echo = json.dumps(
+        {
+            "type": "object",
+            "properties": {"proposals": {"type": "array"}},
+            "required": ["proposals"],
+        }
+    )
+    raw = "```\n" + payload + "\n```\n\n```json\n" + schema_echo + "\n```"
+    proposals = parse_and_validate(raw, cluster)
+    assert len(proposals) == 1
+    assert isinstance(proposals[0], DemoteTierProposal)
+    assert proposals[0].memory_id == a.id
+    assert proposals[0].new_category == "ambient"
+
+
+def test_parse_json_tagged_payload_survives_trailing_bare_schema_echo() -> None:
+    """Reverse orientation of the multi-fence case: the ```json-tagged block
+    IS the payload and a trailing BARE-fence schema echo (a keyless dict)
+    follows. The json-tag priority already tries the payload first, so this
+    must return the payload's proposals — a guard that the keyless-dict skip
+    does not regress the already-correct ordering (passes pre- and post-fix)."""
+    a = _make_memory("superseded fact", category=Category.FACT)
+    cluster = _make_cluster([a])
+    payload = json.dumps(
+        {
+            "proposals": [
+                {
+                    "type": "demote_tier",
+                    "memory_id": a.id,
+                    "new_category": "ambient",
+                    "rationale": "verifiable claim superseded; keep for tone",
+                }
+            ]
+        }
+    )
+    schema_echo = json.dumps(
+        {"type": "object", "properties": {"proposals": {"type": "array"}}}
+    )
+    raw = "```json\n" + payload + "\n```\n\n```\n" + schema_echo + "\n```"
+    proposals = parse_and_validate(raw, cluster)
+    assert len(proposals) == 1
+    assert isinstance(proposals[0], DemoteTierProposal)
+    assert proposals[0].new_category == "ambient"
+
+
 def test_parse_fenced_garbage_still_raises_parse_error() -> None:
     """Considering every fenced block must NOT dissolve the parse-failure
     signal: when NO candidate parses — raw text, any fence body, brace
