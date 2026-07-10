@@ -49,6 +49,7 @@ so tests can drive each layer in isolation.
 
 from __future__ import annotations
 
+import hashlib
 import json
 import re
 from dataclasses import dataclass, field
@@ -57,6 +58,8 @@ from pathlib import Path
 from typing import Any, Literal
 
 from . import _frontmatter as fm
+from ._decorators import best_effort
+from ._fsutil import atomic_write_bytes
 from .models import (
     Category,
     Confidence,
@@ -534,6 +537,17 @@ def apply_ingest_plan(
     branch the *ingest* happens to run on would be misinformation —
     the same documented stance `migrate.py` takes for its origin
     backfill.
+
+    Provenance watermark. For every source file actually imported this
+    run, a sidecar under the store dir records the file's current content
+    hash (see ``_persist_ingest_watermark``). ``doctor``'s
+    ``auto_memory_stranded`` check consults it so a source whose bytes
+    are unchanged since import stays classified as ingested even after
+    the *memory* it produced is substantively rewritten by routine
+    curation — the body-Jaccard dedup alone would drift back under the
+    duplicate threshold and re-flag the untouched file as un-ingested
+    forever. Writing it is best-effort: a failure logs a warning but
+    never rolls back the memories already committed above.
     """
     origin: Origin | None = None
     default_root = discover_default_source_root(cwd)
@@ -577,6 +591,7 @@ def apply_ingest_plan(
             # identical per-row failures.
             row.action = "skip_invalid"
             row.reason = f"write failed: {exc}"
+    _persist_ingest_watermark(store.root, plan.rows)
     return plan
 
 
@@ -655,6 +670,152 @@ def _session_cwds(project_dir: Path) -> set[str]:
                 if isinstance(raw, str) and raw:
                     out.add(raw)
     return out
+
+
+# ---------------------------------------------------------------------------
+# Ingest provenance watermark
+# ---------------------------------------------------------------------------
+#
+# Ingest deliberately never mutates the source `.md` files, so there is no
+# on-disk marker on the source side saying "this was imported". Before this
+# watermark the *only* signal `doctor`'s `auto_memory_stranded` check had was
+# body-Jaccard dedup against the live store: a source classified as a
+# duplicate was treated as ingested. That signal is not durable — a routine
+# `memory_update` that substantively rewrites the imported memory (a curated
+# rewrite) drops the similarity back under the duplicate threshold, at which
+# point the UNTOUCHED source re-classifies as a fresh write and the check
+# false-alarms on every run, forever, while its fix_hint ("run ingest")
+# would re-import the stale pre-edit body as a second near-duplicate.
+#
+# The watermark gives the check real provenance instead of inferring it from
+# present similarity: a JSON sidecar under the store dir mapping each imported
+# source file's resolved path to the content hash it had when imported. A
+# source whose current hash matches is INGESTED regardless of how far the
+# memory it produced has since drifted; only genuinely-new or
+# genuinely-changed-since-import sources remain stranded.
+
+INGEST_WATERMARK_FILENAME = ".ingest-watermark.json"
+
+# Bumped only on an incompatible on-disk shape change. Readers tolerate an
+# unknown version by degrading to "no provenance recorded" ({}), never by
+# crashing a read-only doctor probe.
+_INGEST_WATERMARK_VERSION = 1
+
+
+def _hash_source_bytes(data: bytes) -> str:
+    """Content hash for change-detection: SHA-256 over the raw file bytes.
+
+    Prefixed with the algorithm name so a future migration to a different
+    digest can be distinguished from a bare hex string on sight."""
+    return "sha256:" + hashlib.sha256(data).hexdigest()
+
+
+def _watermark_key(source_path: Path) -> str:
+    """Stable dictionary key for a source file: its resolved absolute path.
+
+    Resolving canonicalises the many spellings that reach the same file
+    (symlinked ``/tmp`` on macOS, ``..`` segments, a ``--from`` path given
+    in a different form than discovery produces) so the writer and the
+    doctor reader agree on the key. Falls back to the unresolved string
+    when ``resolve`` can't stat the path — better a slightly-less-canonical
+    key than a crash."""
+    try:
+        return str(source_path.resolve())
+    except OSError:
+        return str(source_path)
+
+
+def _watermark_path(storage_dir: Path) -> Path:
+    return storage_dir / INGEST_WATERMARK_FILENAME
+
+
+def _load_watermark_sources(storage_dir: Path) -> dict[str, dict[str, Any]]:
+    """Full per-source entry map from the sidecar (``key -> {content_hash,
+    memory_id, ...}``); ``{}`` when the file is missing, unreadable,
+    corrupt, or shaped wrong. Never raises — every failure mode collapses
+    to "no provenance recorded" so a read-only caller can't be broken by a
+    hand-mangled sidecar."""
+    try:
+        raw = _watermark_path(storage_dir).read_text(encoding="utf-8")
+    except OSError:
+        return {}
+    try:
+        data = json.loads(raw)
+    except ValueError:
+        return {}
+    if not isinstance(data, dict):
+        return {}
+    sources = data.get("sources")
+    if not isinstance(sources, dict):
+        return {}
+    out: dict[str, dict[str, Any]] = {}
+    for key, entry in sources.items():
+        if isinstance(key, str) and isinstance(entry, dict):
+            out[key] = entry
+    return out
+
+
+def load_ingest_watermark(storage_dir: Path) -> dict[str, str]:
+    """Public reader for `doctor`: resolved-source-path -> content hash
+    recorded by the last successful ingest of that file. Corrupt or
+    missing sidecar reads as ``{}`` (the pre-watermark default)."""
+    out: dict[str, str] = {}
+    for key, entry in _load_watermark_sources(storage_dir).items():
+        digest = entry.get("content_hash")
+        if isinstance(digest, str) and digest:
+            out[key] = digest
+    return out
+
+
+def source_is_ingested(source_path: Path, watermark: dict[str, str]) -> bool:
+    """True when `source_path`'s CURRENT bytes hash to the value the
+    watermark recorded for it — i.e. this exact content was imported and
+    has not changed since. An unreadable source (or one absent from the
+    watermark) is treated as not-ingested: the check can't prove it was
+    imported, so it stays eligible to warn."""
+    recorded = watermark.get(_watermark_key(source_path))
+    if not recorded:
+        return False
+    try:
+        data = source_path.read_bytes()
+    except OSError:
+        return False
+    return _hash_source_bytes(data) == recorded
+
+
+@best_effort("ingest watermark persistence")
+def _persist_ingest_watermark(storage_dir: Path, rows: list[IngestRow]) -> None:
+    """Record the content hash of every source imported this run.
+
+    Merges into any existing sidecar so prior imports of other files (and
+    their memory ids) survive; only rows that actually committed a write
+    (``action == "write"`` with a ``written_id``) are recorded. Best-effort
+    via ``best_effort``: the memories are already durably on disk by the
+    time this runs, so a sidecar write failure must warn, not raise. Skips
+    entirely when nothing was written, so a dry-run-then-apply-nothing pass
+    never materialises an empty sidecar."""
+    written = [r for r in rows if r.action == "write" and r.written_id]
+    if not written:
+        return
+    sources = _load_watermark_sources(storage_dir)
+    for row in written:
+        try:
+            data = row.source_path.read_bytes()
+        except OSError:
+            # The write succeeded moments ago; a read failure now is a
+            # rare race (source deleted mid-run). Skip this one entry
+            # rather than abort the whole watermark update.
+            continue
+        sources[_watermark_key(row.source_path)] = {
+            "content_hash": _hash_source_bytes(data),
+            "memory_id": row.written_id,
+        }
+    payload = {"version": _INGEST_WATERMARK_VERSION, "sources": sources}
+    atomic_write_bytes(
+        _watermark_path(storage_dir),
+        (json.dumps(payload, indent=2, sort_keys=True) + "\n").encode("utf-8"),
+        mode_before_rename=0o600,
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -779,10 +940,13 @@ def discover_default_source_root(cwd: Path | None = None) -> Path | None:
 __all__ = [
     "Action",
     "DEFAULT_PROVENANCE_SCOPE",
+    "INGEST_WATERMARK_FILENAME",
     "IngestPlan",
     "IngestRow",
     "apply_ingest_plan",
     "compute_ingest_plan",
     "discover_default_source_root",
+    "load_ingest_watermark",
     "render_ingest_text",
+    "source_is_ingested",
 ]

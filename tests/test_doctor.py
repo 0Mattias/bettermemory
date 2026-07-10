@@ -1621,6 +1621,85 @@ def test_auto_memory_stranded_goes_quiet_after_ingest(
     assert diag.details["summary"]["write"] == 0
 
 
+def test_auto_memory_stranded_stays_quiet_after_memory_curated(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Ingest, then substantively rewrite the resulting memory (routine
+    curate-loop work), leaving the SOURCE file byte-for-byte untouched.
+
+    The imported memory's body has now drifted far below the dedup
+    threshold, so `compute_ingest_plan` re-classifies the unchanged source
+    as a fresh `write`. The pre-fix check keyed off that classification
+    (`plan.summary["write"]`) and false-alarmed on every run forever, with
+    a fix_hint that would re-import the stale pre-edit body as a second
+    near-duplicate. The provenance watermark ingest now persists keys the
+    verdict on the source's content hash instead: unchanged bytes ==
+    ingested, no matter how far the memory drifted. The check must stay
+    `ok` and must NOT recommend re-ingesting."""
+    from bettermemory.ingest import (
+        INGEST_WATERMARK_FILENAME,
+        apply_ingest_plan,
+        compute_ingest_plan,
+    )
+    from bettermemory.store import Store
+
+    fake_home = tmp_path / "home"
+    fake_home.mkdir()
+    monkeypatch.setattr(Path, "home", lambda: fake_home)
+    cwd = tmp_path / "proj"
+    cwd.mkdir()
+    source = _auto_memory_root_for(fake_home, cwd)
+    source_file = _write_auto_memory_file(
+        source,
+        "alpha",
+        body="the alpha fact body about widget provisioning and tooling defaults",
+    )
+    source_bytes_before = source_file.read_bytes()
+    storage = tmp_path / "store"
+    storage.mkdir()
+
+    store = Store(storage)
+    plan = compute_ingest_plan(
+        source,
+        existing_memories=store.load_all(),
+        existing_tombstones=store.load_tombstones(),
+    )
+    apply_ingest_plan(plan, store)
+    # The watermark sidecar is the mechanism under test — it must exist.
+    assert (storage / INGEST_WATERMARK_FILENAME).is_file()
+
+    # Substantive curated rewrite of the imported memory: the new body
+    # shares almost no tokens with the source, so body-Jaccard drops well
+    # under the duplicate threshold and the source re-classifies as write.
+    [mem] = store.load_all()
+    curated = mem.model_copy(
+        update={
+            "body": (
+                "completely unrelated curated rewrite concerning quantum "
+                "teacup logistics and orbital ballet choreography\n"
+            )
+        }
+    )
+    store.update(curated)
+
+    # Premise pin: the source is untouched but the plan now wants to write
+    # it — exactly the state that made the pre-fix check false-alarm.
+    assert source_file.read_bytes() == source_bytes_before
+    drift_plan = compute_ingest_plan(
+        source,
+        existing_memories=store.load_all(),
+        existing_tombstones=store.load_tombstones(),
+    )
+    assert drift_plan.summary["write"] == 1
+
+    diag = _check_auto_memory_stranded(storage, cwd=cwd)
+    assert diag.status == "ok", f"false stranded alarm after curation: {diag.message}"
+    assert diag.details["stranded"] == 0
+    # The harmful fix_hint (re-run ingest -> resurrects the stale body)
+    # must not appear on an ok verdict.
+    assert diag.fix_hint is None
+
+
 def test_auto_memory_stranded_ignores_index_files(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

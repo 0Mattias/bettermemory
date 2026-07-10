@@ -771,13 +771,27 @@ def _check_auto_memory_stranded(directory: Path, cwd: Path | None = None) -> Dia
     instructions block warns against. ``bettermemory ingest`` imports
     them, but discovery of *whether stranded files exist* was manual.
 
-    The verdict reuses ``compute_ingest_plan``'s dedup classification
-    rather than a bare file count: ingest deliberately never mutates
-    the source files, so counting files would keep warning forever
-    after a successful import. Post-ingest every source classifies as
-    ``skip_duplicate``/``skip_tombstone`` and the check goes quiet.
+    A source counts as stranded only when ``compute_ingest_plan``
+    classifies it as a fresh ``write`` AND ingest's provenance watermark
+    has no matching record for its current content. The watermark is the
+    load-bearing half: ingest never mutates the source files, so a bare
+    file count would warn forever after a successful import, and the
+    dedup classification alone is not durable either — a routine
+    ``memory_update`` that substantively rewrites an imported memory (a
+    curated rewrite) drops the body-Jaccard similarity back under the
+    duplicate threshold, at which point the UNTOUCHED source re-classifies
+    as a fresh write. Keying on the recorded content hash instead means an
+    unchanged source stays "ingested" no matter how far its memory has
+    since drifted; only genuinely-new or genuinely-changed-since-import
+    files remain stranded (for which ``ingest`` is the honest fix, not a
+    stale-body resurrection).
     """
-    from .ingest import compute_ingest_plan, discover_default_source_root
+    from .ingest import (
+        compute_ingest_plan,
+        discover_default_source_root,
+        load_ingest_watermark,
+        source_is_ingested,
+    )
 
     source_root = discover_default_source_root(cwd)
     if source_root is None:
@@ -812,7 +826,24 @@ def _check_auto_memory_stranded(directory: Path, cwd: Path | None = None) -> Dia
             message="No Claude Code auto-memory directory for this cwd.",
             details={"source_root": None},
         )
-    would_write = plan.summary.get("write", 0)
+    # A plan `write` row means "not a current duplicate/tombstone" — but
+    # that classification drifts as imported memories are curated, so it
+    # cannot stand alone. Suppress any write whose source content still
+    # matches the ingest watermark: those bytes were imported and haven't
+    # changed, so the file is not stranded no matter how far its memory
+    # has drifted. Only genuinely-new or genuinely-changed sources survive.
+    watermark = load_ingest_watermark(directory)
+    stranded_rows = [
+        row
+        for row in plan.rows
+        if row.action == "write" and not source_is_ingested(row.source_path, watermark)
+    ]
+    would_write = len(stranded_rows)
+    details = {
+        "source_root": str(source_root),
+        "summary": plan.summary,
+        "stranded": would_write,
+    }
     if would_write == 0:
         return Diagnosis(
             name="auto_memory_stranded",
@@ -820,10 +851,7 @@ def _check_auto_memory_stranded(directory: Path, cwd: Path | None = None) -> Dia
             message=(
                 f"Auto-memory directory present ({source_root}); nothing un-ingested."
             ),
-            details={
-                "source_root": str(source_root),
-                "summary": plan.summary,
-            },
+            details=details,
         )
     plural = "" if would_write == 1 else "s"
     verb = "has" if would_write == 1 else "have"
@@ -832,17 +860,15 @@ def _check_auto_memory_stranded(directory: Path, cwd: Path | None = None) -> Dia
         status="warn",
         message=(
             f"{would_write} Claude Code auto-memory file{plural} under "
-            f"{source_root} {verb} not been ingested — facts stored "
-            "there are invisible to bettermemory retrieval."
+            f"{source_root} {verb} not been ingested (new, or changed since "
+            "the last import) — facts stored there are invisible to "
+            "bettermemory retrieval."
         ),
         fix_hint=(
             "Run `bettermemory ingest --dry-run` to preview the import, "
             "then `bettermemory ingest` to commit it."
         ),
-        details={
-            "source_root": str(source_root),
-            "summary": plan.summary,
-        },
+        details=details,
     )
 
 
