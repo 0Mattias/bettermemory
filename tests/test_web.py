@@ -13,6 +13,7 @@ import signal
 import socket
 import subprocess
 import sys
+import threading
 import time
 from pathlib import Path
 from typing import Any
@@ -793,8 +794,16 @@ def test_serve_tunnel_wires_readonly_app_and_reaps_child(
     spawns a REAL child through the real _start_tunnel (stdin-reader
     stub), builds the READ-ONLY app, and reaps the child when uvicorn
     returns. Only two seams are patched — the argv shape (no real
-    tailscale in CI) and uvicorn.run (so the call returns); process
-    management is real."""
+    tailscale in CI) and the uvicorn server's run (so the call returns);
+    process management is real.
+
+    The tunnel branch now constructs the uvicorn server explicitly and
+    calls ``Server.run()`` (it overrides ``handle_exit`` to mark the
+    shutdown flag at signal delivery), so the seam is ``Server.run`` —
+    NOT ``uvicorn.run``, which the tunnel path no longer uses. The served
+    app is read back off the server's own config, which real Config
+    construction populates from the ``uvicorn.Config(app, ...)`` call —
+    so this also pins that construction against a bad kwarg."""
     import uvicorn
 
     from bettermemory import web
@@ -813,7 +822,11 @@ def test_serve_tunnel_wires_readonly_app_and_reaps_child(
     monkeypatch.setattr(web, "_start_tunnel", _tracking_start)
 
     served_apps: list[Any] = []
-    monkeypatch.setattr(uvicorn, "run", lambda app, **kwargs: served_apps.append(app))
+
+    def _fake_run(self: Any, *args: Any, **kwargs: Any) -> None:
+        served_apps.append(self.config.app)
+
+    monkeypatch.setattr(uvicorn.Server, "run", _fake_run)
 
     cfg = Config(storage=StorageConfig(directory=str(memory_dir)))
     web.serve(cfg, host="127.0.0.1", port=8123, tunnel="auto")
@@ -1010,6 +1023,34 @@ def _traced(provider, binary, port):
 
 web._start_tunnel = _traced
 
+# A deliberately slow route so the busy-shutdown test can hold a request
+# IN FLIGHT across the shutdown signal and stretch uvicorn's graceful drain
+# well past the provider-death grace window. It is inert for every other
+# lifecycle test — they only ever GET "/". Wrapping build_app (a module
+# global serve() looks up at call time) is how the route reaches the served
+# app without a public knob. The handler announces its start on stderr
+# (which the driver redirects to the test's log file) so the test can
+# deliver the signal only once the request is genuinely being served — a
+# deterministic in-flight gate, not a timing guess.
+_orig_build_app = web.build_app
+
+
+def _build_app_with_slow(*a, **k):
+    import time as _t
+
+    app = _orig_build_app(*a, **k)
+
+    @app.get("/slow")
+    def _slow():
+        print("SLOW_REQUEST_STARTED", file=sys.stderr, flush=True)
+        _t.sleep(3.0)
+        return {"slept": True}
+
+    return app
+
+
+web.build_app = _build_app_with_slow
+
 cfg = Config(storage=StorageConfig(directory=sys.argv[1]))
 web.serve(cfg, host="127.0.0.1", port=int(sys.argv[2]), tunnel="tailnet")
 """
@@ -1065,11 +1106,17 @@ def _spawn_lifecycle_driver(
     sighup: str | None = None,
     new_session: bool = False,
     stderr_path: Path | None = None,
+    port: int | None = None,
 ) -> tuple["subprocess.Popen[bytes]", int, int]:
     """Start serve(tunnel=...) in a real child process and wait until
     uvicorn answers HTTP. The teardown signal handlers are installed
     before uvicorn.run, so an answering server implies armed
     teardown. Returns (driver, shim pid, provider pid).
+
+    ``port`` lets a caller pin the bind port it needs to know up front
+    (the busy-shutdown test fires a request at ``/slow`` on it); the
+    default picks a free one internally. Passing a pre-chosen free port
+    has the same TOCTOU characteristics as generating it here.
 
     ``sighup`` pins the driver's SIGHUP disposition before serve() runs:
     ``"ignore"`` models the nohup posture (SIG_IGN, must survive a
@@ -1092,7 +1139,7 @@ def _spawn_lifecycle_driver(
     if sighup is not None:
         env = {**os.environ, "BM_TEST_SIGHUP": sighup}
 
-    port = _free_port()
+    port = port if port is not None else _free_port()
     stderr_target: Any = subprocess.DEVNULL
     stderr_fh = None
     if stderr_path is not None:
@@ -1349,6 +1396,101 @@ def test_clean_group_signal_does_not_log_dead_share(
     assert "DEAD" not in log_text, (
         "a clean group-signalled shutdown logged the spurious dead-share "
         f"error (the b5e5542 false-alarm regression):\n{log_text}"
+    )
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="POSIX process-group signals")
+def test_busy_clean_shutdown_does_not_log_dead_share(
+    memory_dir: Path, tmp_path: Path
+) -> None:
+    """A clean quit with a SLOW request IN FLIGHT must NOT fire the
+    provider-death 'DEAD' alarm — the BUSY companion to
+    test_clean_group_signal_does_not_log_dead_share (which quits idle).
+
+    This is the residual false alarm a pure wall-clock grace window could
+    not close. serve() runs in its own session; a request to /slow (the
+    handler sleeps 3s, far past the 1s grace window) is put in flight and
+    confirmed to be executing, THEN SIGINT is delivered to the whole
+    process group with os.killpg — a terminal Ctrl-C. The supervisor shim
+    (a group member) is reaped within milliseconds, so the watcher's
+    proc.wait() returns while uvicorn is still draining the slow request.
+
+    The fix sets ``shutting_down`` from uvicorn's handle_exit at signal
+    DELIVERY, so the watcher finds it already up and stays quiet. The old
+    design set it only from the restored teardown handler, which runs
+    AFTER the unbounded drain — so the watcher's 1s window lapsed mid-drain
+    and it logged the spurious 'DEAD' error on this, the most common exit.
+
+    Also pins that the exit is genuinely clean: the server still dies BY
+    the signal (die-by-signal etiquette) and the in-flight request drains
+    to a real HTTP 200 — so the suppressed alarm was a false alarm, not a
+    real death the watcher legitimately describes."""
+    pytest.importorskip("uvicorn")
+    import urllib.request
+
+    port = _free_port()
+    stderr_log = tmp_path / "driver-stderr-busy.log"
+    driver, shim_pid, provider_pid = _spawn_lifecycle_driver(
+        memory_dir, new_session=True, stderr_path=stderr_log, port=port
+    )
+
+    result: dict[str, Any] = {}
+
+    def _hit_slow() -> None:
+        try:
+            with urllib.request.urlopen(
+                f"http://127.0.0.1:{port}/slow", timeout=20
+            ) as resp:
+                result["status"] = resp.status
+                resp.read()
+        except Exception as exc:  # recorded for the assertion message
+            result["error"] = repr(exc)
+
+    req_thread = threading.Thread(target=_hit_slow, daemon=True)
+    try:
+        assert _pid_alive(shim_pid)
+        assert _pid_alive(provider_pid)
+        req_thread.start()
+        # Deterministic in-flight gate: wait until the handler has actually
+        # started serving (it prints a marker to the driver's stderr) before
+        # signalling, so the request is provably in flight and holds the
+        # drain open — no fixed-sleep race.
+        deadline = time.monotonic() + 10
+        while time.monotonic() < deadline:
+            started = "SLOW_REQUEST_STARTED" in stderr_log.read_bytes().decode(
+                errors="replace"
+            )
+            if started:
+                break
+            time.sleep(0.05)
+        else:
+            pytest.fail("slow request never reached the handler")
+        # Deliver to the whole tunnel tree, exactly as a terminal Ctrl-C
+        # does; this reaches the shim directly and races serve()'s flag.
+        _killpg(driver.pid, signal.SIGINT)
+        # The drain waits for the ~2s+ remaining slow request, so allow
+        # plenty of time; the server must still die BY the signal.
+        assert driver.wait(timeout=20) == -signal.SIGINT
+        _wait_pid_gone(shim_pid, timeout=5.0)
+        _wait_pid_gone(provider_pid, timeout=5.0)
+    finally:
+        with contextlib.suppress(ProcessLookupError):
+            _killpg(driver.pid, _SIGKILL)
+        _cleanup_driver(driver)
+    req_thread.join(timeout=5)
+
+    # (c) the in-flight request actually drained to a real 200 — the
+    # graceful shutdown served it, so this exit was clean, not a crash.
+    assert result.get("status") == 200, (
+        f"slow in-flight request did not drain to HTTP 200: {result!r}"
+    )
+    # (a) and the clean, BUSY exit must not have logged the dead-share
+    # alarm — the whole point of setting the flag at signal delivery.
+    log_text = stderr_log.read_bytes().decode(errors="replace")
+    assert "DEAD" not in log_text, (
+        "a clean shutdown with a slow in-flight request logged the spurious "
+        "dead-share error — the residual false alarm on a BUSY quit that a "
+        f"pure grace window cannot close:\n{log_text}"
     )
 
 

@@ -987,25 +987,37 @@ def _reap_tunnel(proc: "subprocess.Popen[bytes] | None") -> None:
         proc.kill()
 
 
-# Grace window for the provider-death watcher (`_watch_tunnel_provider`).
+# Backstop grace window for the provider-death watcher
+# (`_watch_tunnel_provider`).
 #
 # When a signal is delivered to serve()'s whole PROCESS GROUP — Ctrl-C at
 # a terminal, `systemctl stop` on a cgroup — the supervisor shim, a member
 # of that group, receives it directly and reaps + exits within
-# milliseconds. The watcher's `proc.wait()` therefore returns BEFORE
-# serve() has marked the shutdown: for SIGINT/SIGTERM the `shutting_down`
-# flag is set by uvicorn's RESTORED handler (_teardown_and_reraise), which
-# only runs AFTER uvicorn's graceful shutdown completes — a couple hundred
-# milliseconds later even on an idle server. A bare `shutting_down.is_set()`
-# check loses that race and fires the loud "shared URL is DEAD" error on
-# every clean group-signalled quit (the b5e5542 regression). Waiting a
-# short bounded window lets the concurrent teardown win: on a real shutdown
-# the flag lands well inside it (idle graceful shutdown is ~0.1-0.2s, so 1s
-# is a comfortable margin), while a genuine mid-session provider death never
-# sets the flag, so the window lapses and the watcher still fires — at most
-# this long late, which is fine for a human-facing "your share died" notice.
-# (SIGHUP is unaffected: serve()'s own handler runs directly and sets the
-# flag before reaping, so the flag is already set when the watcher wakes.)
+# milliseconds, so the watcher's `proc.wait()` returns almost immediately.
+# ``shutting_down`` must already be set by then or the watcher fires the
+# loud "shared URL is DEAD" error on a clean quit (the b5e5542 regression).
+#
+# The flag IS set in time because serve() overrides the uvicorn server's
+# handle_exit hook (see _TunnelServer in serve()) to set it at signal
+# DELIVERY — uvicorn calls handle_exit from its own SIGINT/SIGTERM handler
+# BEFORE the graceful drain begins. Correctness therefore no longer depends
+# on the drain duration at all: it does not matter whether the drain is the
+# ~0.1s of an idle quit or several seconds spent draining a slow in-flight
+# request over the tunnel — the flag is up the instant the signal arrives.
+# (Setting it only from the RESTORED handler _teardown_and_reraise, which
+# runs AFTER uvicorn's unbounded graceful shutdown, was the old design and
+# lost the race on any BUSY quit — a request slower than this window drained
+# while the watcher had already cried wolf.)
+#
+# This window is now only a backstop for the microsecond race between the
+# shim's group-signalled exit and uvicorn's handle_exit running in this
+# process — both are driven by the same signal, so the gap is tiny, but the
+# interleaving is not guaranteed, so a short wait absorbs it. A genuine
+# mid-session provider death signals neither hook, so the flag stays unset,
+# the window lapses, and the watcher still fires — at most this long late,
+# which is fine for a human-facing "your share died" notice. (SIGHUP is
+# handled directly by serve()'s own handler, which likewise sets the flag
+# before reaping, so it is already set when the watcher wakes.)
 _PROVIDER_DEATH_GRACE_SECONDS = 1.0
 
 
@@ -1024,13 +1036,16 @@ def _watch_tunnel_provider(
     the edge) or it dropped mid-session. serve() keeps answering
     read-only on loopback, so nothing else would tell the user the share
     silently no-op'd — this log is the only signal. Runs on a daemon
-    thread. A clean exit stays quiet: every teardown path sets
-    ``shutting_down``, and the watcher waits a bounded grace window
-    (_PROVIDER_DEATH_GRACE_SECONDS) for it before logging, so a
+    thread. A clean exit stays quiet: serve() sets ``shutting_down`` at
+    signal DELIVERY (via the uvicorn server's handle_exit override), so a
     group-delivered Ctrl-C / SIGTERM that reaps the shim before serve()
-    finishes uvicorn's graceful shutdown does not race the flag and cry
-    wolf. A genuine provider death never sets the flag, so the window
-    lapses and the error still fires (at most that long late).
+    finishes uvicorn's graceful drain finds the flag already up — even
+    when a slow in-flight request stretches that drain well past the
+    grace window. The bounded wait (_PROVIDER_DEATH_GRACE_SECONDS) is a
+    backstop for the tiny ordering race between the shim's exit and the
+    handle_exit hook running. A genuine provider death never sets the
+    flag, so the window lapses and the error still fires (at most that
+    long late).
     """
     proc.wait()
     # Give a concurrent teardown its grace window to announce itself
@@ -1128,8 +1143,14 @@ def serve(
     #
     # ``shutting_down`` marks an EXPECTED tunnel_proc exit so the
     # provider-death watcher below stays quiet on a clean Ctrl-C / reap
-    # instead of crying "dead share". Every teardown path sets it before
-    # touching the child.
+    # instead of crying "dead share". The load-bearing setter is the
+    # ``_TunnelServer.handle_exit`` override installed on the uvicorn
+    # server below: uvicorn calls that hook synchronously from its own
+    # SIGINT/SIGTERM handler, BEFORE the graceful drain, so the flag is
+    # up the instant the signal arrives regardless of how long an
+    # in-flight request holds the drain open. _teardown_and_reraise and
+    # the finally set it too, as belt-and-suspenders for the SIGHUP path
+    # (which uvicorn does not capture) and exception exits.
     shutting_down = threading.Event()
 
     def _teardown_and_reraise(signum: int, _frame: "FrameType | None") -> None:
@@ -1169,8 +1190,31 @@ def serve(
         daemon=True,
     ).start()
 
+    # Construct the uvicorn server explicitly instead of calling
+    # uvicorn.run(): for these arguments (no reload, no workers, no uds)
+    # uvicorn.run() reduces to `Server(Config(...)).run()` — verified
+    # against uvicorn 0.46's source. Doing it by hand lets us override
+    # handle_exit, the public hook uvicorn's OWN SIGINT/SIGTERM handler
+    # calls BEFORE the graceful drain. Setting ``shutting_down`` there
+    # closes the provider-death false-alarm race on a BUSY quit: a
+    # group-delivered Ctrl-C reaps the supervisor shim within
+    # milliseconds, so the watcher's proc.wait() returns while uvicorn is
+    # still draining a slow in-flight request. Marking the flag at signal
+    # delivery — not after the unbounded drain, which is where the
+    # restored _teardown_and_reraise runs — means the watcher sees it
+    # immediately, no matter how long the drain takes. handle_exit only
+    # fires for SIGINT/SIGTERM (uvicorn's HANDLED_SIGNALS); SIGHUP still
+    # runs serve()'s own handler, which sets the flag before reaping.
+    class _TunnelServer(uvicorn.Server):
+        def handle_exit(self, sig: int, frame: "FrameType | None") -> None:
+            shutting_down.set()
+            super().handle_exit(sig, frame)
+
+    server = _TunnelServer(
+        uvicorn.Config(app, host=host, port=port, log_level="warning")
+    )
     try:
-        uvicorn.run(app, host=host, port=port, log_level="warning")
+        server.run()
     finally:
         shutting_down.set()
         _reap_tunnel(tunnel_proc)
