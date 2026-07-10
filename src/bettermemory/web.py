@@ -35,6 +35,7 @@ import shutil
 import signal
 import subprocess
 import sys
+import threading
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -873,10 +874,22 @@ def _tunnel_argv(provider: str, binary: str, port: int) -> list[str]:
 # the real CLI, 2026-07-10), and cloudflared ignores stdin too. The
 # shim also mirrors SIGTERM/SIGINT/SIGHUP into a reap so the
 # _reap_tunnel terminate() path stays prompt.
+#
+# A second watchdog covers the OPPOSITE direction: the stdin pipe only
+# signals PARENT death, so if the provider exits first (never came up —
+# tailscaled down or logged out, Funnel not in the tailnet ACLs,
+# cloudflared can't reach the edge — or a mid-session logout) the shim
+# would otherwise block on the stdin read forever while the parent's
+# poll() stays None and the dead share goes unnoticed. A background
+# thread waits on the provider and exits the shim with the provider's
+# own returncode, so shim death mirrors provider death and serve()'s
+# watcher (see _watch_tunnel_provider) can flag the dead URL.
 _TUNNEL_SUPERVISOR = """\
+import os
 import signal
 import subprocess
 import sys
+import threading
 
 child = subprocess.Popen(sys.argv[1:], stdin=subprocess.DEVNULL)
 
@@ -900,6 +913,17 @@ for _sig in [signal.SIGTERM, signal.SIGINT] + (
     [signal.SIGHUP] if hasattr(signal, "SIGHUP") else []
 ):
     signal.signal(_sig, _on_signal)
+
+
+def _mirror_provider_death():
+    # Provider exited on its own => the stdin watchdog never fires
+    # (parent still alive). Exit with the provider's returncode so the
+    # parent observes the shim die exactly as it would on provider death.
+    child.wait()
+    os._exit(child.returncode)
+
+
+threading.Thread(target=_mirror_provider_death, daemon=True).start()
 
 try:
     sys.stdin.buffer.read()  # EOF == the server process died (any cause)
@@ -955,6 +979,39 @@ def _reap_tunnel(proc: "subprocess.Popen[bytes] | None") -> None:
         proc.kill()
 
 
+def _watch_tunnel_provider(
+    proc: "subprocess.Popen[bytes]",
+    provider: str,
+    shutting_down: threading.Event,
+) -> None:
+    """Block until the tunnel shim exits, then — unless we're already
+    tearing down — log LOUDLY that the shared URL is dead.
+
+    The shim mirrors its provider child's exit (see _TUNNEL_SUPERVISOR),
+    so this returning while the server is still up means the provider
+    died on its own: it never came up (tailscaled down or logged out,
+    Funnel not enabled in the tailnet ACLs, cloudflared could not reach
+    the edge) or it dropped mid-session. serve() keeps answering
+    read-only on loopback, so nothing else would tell the user the share
+    silently no-op'd — this log is the only signal. Runs on a daemon
+    thread; ``shutting_down`` is set by serve()'s teardown before it
+    reaps the shim so a clean exit stays quiet instead of crying wolf.
+    """
+    proc.wait()
+    if shutting_down.is_set():
+        return
+    log.error(
+        "tunnel provider %r exited: the shared URL is now DEAD, but the "
+        "local UI is still serving read-only on loopback. Likely cause: "
+        "the tunnel CLI could not start (tailscaled not running or logged "
+        "out, Funnel not enabled in your tailnet ACLs, or cloudflared "
+        "could not reach the edge) or the tunnel dropped mid-session. "
+        "Stop the UI and re-run `bettermemory ui --tunnel` after fixing "
+        "the provider.",
+        provider,
+    )
+
+
 def serve(
     config: Config,
     *,
@@ -981,6 +1038,12 @@ def serve(
     _start_tunnel (survives even SIGKILL of this process), the signal
     handlers installed below (SIGTERM/SIGINT re-raised by uvicorn,
     plus SIGHUP), and the ``finally`` for exception exits.
+
+    The reverse failure — the PROVIDER dying while this process lives
+    on — is detected by a daemon watcher (_watch_tunnel_provider): the
+    shim mirrors its provider's exit, so the watcher notices the shim
+    die early and logs LOUDLY that the shared URL is dead, since the
+    loopback UI would otherwise keep serving as if nothing happened.
     """
     try:
         import uvicorn
@@ -1016,7 +1079,15 @@ def serve(
     # must BE the restored handler: reap the child, restore the
     # default disposition, re-deliver the signal. SIGHUP is not
     # captured by uvicorn, so our handler fires for it directly.
+    #
+    # ``shutting_down`` marks an EXPECTED tunnel_proc exit so the
+    # provider-death watcher below stays quiet on a clean Ctrl-C / reap
+    # instead of crying "dead share". Every teardown path sets it before
+    # touching the child.
+    shutting_down = threading.Event()
+
     def _teardown_and_reraise(signum: int, _frame: "FrameType | None") -> None:
+        shutting_down.set()
         _reap_tunnel(tunnel_proc)
         signal.signal(signum, signal.SIG_DFL)
         signal.raise_signal(signum)
@@ -1030,9 +1101,21 @@ def serve(
     with contextlib.suppress(ValueError):
         for sig in teardown_signals:
             previous[sig] = signal.signal(sig, _teardown_and_reraise)
+
+    # Provider-death watchdog: if the shim exits while uvicorn is still
+    # up, the provider went away on its own (never came up, or a
+    # mid-session logout) and the shared URL is silently dead. Nothing
+    # else notices — poll the shim on a daemon thread and log LOUDLY.
+    threading.Thread(
+        target=_watch_tunnel_provider,
+        args=(tunnel_proc, provider, shutting_down),
+        daemon=True,
+    ).start()
+
     try:
         uvicorn.run(app, host=host, port=port, log_level="warning")
     finally:
+        shutting_down.set()
         _reap_tunnel(tunnel_proc)
         for sig, handler in previous.items():
             with contextlib.suppress(ValueError):

@@ -825,6 +825,100 @@ def test_serve_tunnel_wires_readonly_app_and_reaps_child(
 
 
 # ---------------------------------------------------------------------------
+# Provider-death detection — the reverse of parent-death teardown
+# ---------------------------------------------------------------------------
+#
+# The stdin watchdog only fires on PARENT death. If the provider exits
+# first (tailscaled down or logged out, Funnel not in the tailnet ACLs,
+# cloudflared can't reach the edge, a mid-session logout), the shim used
+# to block on its stdin read forever while the parent's poll() stayed
+# None, so serve() kept serving read-only on loopback and the dead share
+# went unnoticed. The shim now mirrors the provider's exit and serve()'s
+# watcher logs it loudly. Real child processes, no fake Popen.
+
+
+def test_tunnel_shim_exits_when_provider_dies_first(monkeypatch: Any) -> None:
+    """The supervisor shim must exit — mirroring the provider's
+    returncode — when its provider child dies first, so the parent's
+    wait()/poll() goes non-None and serve() can flag the dead share.
+
+    The parent deliberately holds the shim's stdin pipe OPEN, so the
+    stdin-EOF watchdog can't fire: the ONLY exit path exercised here is
+    the new provider-death watchdog. Pre-fix the shim stayed blocked on
+    read() forever and this wait() timed out (rc stays None)."""
+    from bettermemory import web
+
+    monkeypatch.setattr(
+        web,
+        "_tunnel_argv",
+        lambda provider, binary, port: [
+            sys.executable,
+            "-c",
+            "import sys; sys.exit(7)",
+        ],
+    )
+    proc = web._start_tunnel("tailnet", "/bin/ts", 8765)
+    rc: int | None = None
+    try:
+        rc = proc.wait(timeout=10)
+    except subprocess.TimeoutExpired:
+        rc = None  # shim outlived its dead provider — the regression
+    finally:
+        # Close stdin only NOW: doing it earlier would hand the pre-fix
+        # shim a second (EOF) exit path and mask the bug. Reap either way.
+        if proc.stdin is not None:
+            proc.stdin.close()
+        web._reap_tunnel(proc)
+    assert rc == 7, (
+        "shim must exit mirroring the provider's returncode when the "
+        f"provider dies first; got {rc!r} (None == the shim outlived its "
+        "dead provider — the 3-tunnel-provider-death regression)"
+    )
+
+
+def test_watch_tunnel_provider_flags_dead_share(caplog: Any) -> None:
+    """serve()'s provider-death watcher logs a LOUD error naming the
+    provider when the shim exits unexpectedly (shutting_down clear) —
+    the loopback UI keeps serving, so this log is the only signal the
+    shared URL went dead."""
+    import logging as _logging
+    import threading as _threading
+
+    from bettermemory import web
+
+    # Any already-exited process stands in for the dead shim; the watcher
+    # only blocks on proc.wait() and inspects the shutdown flag.
+    proc = subprocess.Popen([sys.executable, "-c", "import sys; sys.exit(1)"])
+    shutting_down = _threading.Event()  # NOT set -> unexpected death
+    with caplog.at_level(_logging.ERROR, logger="bettermemory.web"):
+        web._watch_tunnel_provider(proc, "funnel", shutting_down)
+    errors = [r for r in caplog.records if r.levelno == _logging.ERROR]
+    assert errors, "expected a loud ERROR when the provider dies unexpectedly"
+    msg = errors[0].getMessage()
+    assert "DEAD" in msg
+    assert "funnel" in msg  # names the provider so the user knows which
+
+
+def test_watch_tunnel_provider_quiet_on_clean_shutdown(caplog: Any) -> None:
+    """When serve() is tearing down (shutting_down set before it reaps
+    the shim), the watcher must NOT cry wolf: a clean Ctrl-C reaps the
+    shim on purpose, which is not a dead share."""
+    import logging as _logging
+    import threading as _threading
+
+    from bettermemory import web
+
+    proc = subprocess.Popen([sys.executable, "-c", "import sys; sys.exit(0)"])
+    shutting_down = _threading.Event()
+    shutting_down.set()  # teardown in progress -> expected exit
+    with caplog.at_level(_logging.ERROR, logger="bettermemory.web"):
+        web._watch_tunnel_provider(proc, "tailnet", shutting_down)
+    assert not [r for r in caplog.records if "DEAD" in r.getMessage()], (
+        "a clean-shutdown reap must not log a dead-share error"
+    )
+
+
+# ---------------------------------------------------------------------------
 # Tunnel child lifecycle — real processes, real signals
 # ---------------------------------------------------------------------------
 #
