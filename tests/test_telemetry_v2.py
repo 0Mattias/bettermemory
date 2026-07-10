@@ -903,6 +903,52 @@ def test_widening_detail_unknown_memory_without_resolver() -> None:
     assert detail.turns[0].probe_query_preview is None  # no probe_query logged
 
 
+def test_widening_lanes_survive_poison_top_hit_element() -> None:
+    """One hand-edited `top_hits=["junk"]` row — a non-dict ELEMENT in an
+    otherwise well-formed list — must not take down either widening lane.
+
+    Pre-fix, `_collect_replayable_audits` validated only that `top_hits`
+    was a non-empty list, so the poison row reached `top_hits[0].get(...)`
+    in `_rule_v1_top1_high` / every `WIDENING_RULES` check and in the
+    detail lane's evidence read, killing both `compute_widening_preview`
+    and `compute_widening_detail` with AttributeError even alongside good
+    rows. The choke-point element guard buckets the poison row as
+    feature-less while the good row still replays. The event log is
+    plaintext + hand-editable — the same poison class events.py hardened
+    the always-on paths against."""
+    now = datetime(2026, 5, 20, 12, 0, tzinfo=timezone.utc)
+    events = [
+        # A good v1+w1-flagging audit that must still be replayed.
+        _ev(
+            "turn_audited",
+            verdict="miss",
+            recent_retrieval_count=0,
+            top_hits=[_hit("high", "high")],
+        ),
+        # The poison: a non-empty top_hits list whose first (only) entry
+        # is a bare string, not the expected hit dict.
+        _ev("turn_audited", verdict="miss", top_hits=["junk"]),
+    ]
+
+    # Counting lane: survives, replays the good row, and buckets the
+    # poison row as feature-less rather than crashing.
+    preview = compute_widening_preview(events, now=now)
+    assert preview.audits_with_features == 1
+    assert preview.audits_without_features == 1
+    assert preview.v1_baseline_flagged == 1
+    w1_preview = next(r for r in preview.rows if r.rule == "w1_top1_v2_high")
+    assert w1_preview.would_flag == 1
+
+    # Detail lane: survives with header counters in lockstep with the
+    # counting lane, and materialises exactly the one good flagged turn.
+    detail = compute_widening_detail(events, now=now)
+    assert detail.audits_with_features == 1
+    assert detail.audits_without_features == 1
+    assert detail.v1_baseline_flagged == 1
+    w1_detail = next(r for r in detail.rules if r.rule == "w1_top1_v2_high")
+    assert w1_detail.flagged_total == 1
+
+
 # ---------------------------------------------------------------------------
 # Health: repeat exclusion
 # ---------------------------------------------------------------------------

@@ -1620,6 +1620,21 @@ def _collect_replayable_audits(
         if not isinstance(top_hits, list) or not top_hits:
             without_features += 1
             continue
+        # Element guard, not just the container: the event log is
+        # plaintext + git-synced + hand-editable, so a well-formed list
+        # whose FIRST entry isn't a dict (`top_hits=["junk"]`) clears the
+        # list check above but detonates at `top_hits[0].get(...)` — in
+        # every replay rule (`_rule_v1_top1_high` / the `WIDENING_RULES`)
+        # AND in the detail lane's evidence read. Validating the top hit
+        # at this single choke point fixes preview, detail, and every
+        # rule at once, mirroring `events._event_id_items`'
+        # container-plus-element discipline. The top hit is the only
+        # element any widening consumer reads, so guarding it suffices; a
+        # non-dict top hit means the turn carries no usable features, so
+        # it counts as feature-less alongside the pre-3.14 / no-hit rows.
+        if not isinstance(top_hits[0], dict):
+            without_features += 1
+            continue
         recent = ev.get("recent_retrieval_count")
         # `bool` ⊂ `int` — same caveat as `_silent_miss_from_event`.
         if not isinstance(recent, int) or isinstance(recent, bool):
