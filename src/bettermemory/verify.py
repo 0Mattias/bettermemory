@@ -1434,11 +1434,13 @@ def compute_commit_drift(
     # Claim-anchored narrowing. Anchor derivation is pure CPU (bounded
     # regex over the body) and runs unconditionally so an untethered
     # memory reads consistently as not-applicable; the git-backed
-    # resolution + rev-list only run when there's drift to narrow
+    # resolution + `git log` only run when there's drift to narrow
     # (`count > 0`), mirroring `_compute_commit_drift_debt` / the
     # curation rollup so a caught-up memory never pays a git call and
-    # the committer-date/inclusive-boundary fallback is applied on the
-    # exact same condition across all four surfaces.
+    # all four surfaces gate on the exact same condition. The narrowed
+    # count is measured on AUTHOR date, the same space as the bisect
+    # above, so it is a strict subset of `count` — no clamp, and no
+    # committer-date boundary to fall back from.
     anchors = commit_drift_anchor_paths(body, verified_paths)
     if not anchors:
         return None

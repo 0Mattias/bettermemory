@@ -469,18 +469,20 @@ class ResponseBuilder:
             # here. None means the anchors all escape this repo — the
             # signal is not applicable; omit the field entirely.
             #
-            # The `count > 0` guard is load-bearing and mirrors
-            # `verify.compute_commit_drift` + `health._compute_commit_drift_debt`
-            # (the four anchor-narrowing sites must gate identically).
-            # Beyond skipping a needless `git rev-list` when there's no drift
-            # to narrow, it keeps the author-date `bisect_right` count
-            # authoritative: the path-filtered count runs in COMMITTER-date
-            # space with git's INCLUSIVE whole-second `--since` boundary, so
-            # without the guard a same-second commit touching an anchor
-            # could turn a clean (count == 0) author-bisect result into a
-            # positive count — resurrecting the exact show/search divergence
-            # the commit-drift unification removed. Narrowing may only REDUCE
-            # the count, never resurrect drift the bisect said was clean.
+            # The `count > 0` guard mirrors `verify.compute_commit_drift` +
+            # `health._compute_commit_drift_debt` (the four anchor-narrowing
+            # sites must gate identically). It is no longer a CORRECTNESS
+            # guard: `resolve_commit_drift_count` now counts the path-filtered
+            # commits on AUTHOR date (`git log --format=%aI`) with the same
+            # `bisect_right` boundary as the unfiltered bisect, so the filtered
+            # count is a strict subset and can never exceed `count`. (It once
+            # counted on COMMITTER date via `rev-list --since`, whose inclusive
+            # whole-second boundary could resurrect drift a clean bisect had
+            # ruled out — hence the clamp this guard used to backstop. Both are
+            # gone; the date spaces are unified at the source.)
+            # What the guard still does: skip a needless `git log` for a
+            # caught-up memory, and keep an unmoved repo reading "clean" rather
+            # than routing through the phantom/not-applicable path.
             if count > 0:
                 resolved = resolve_commit_drift_count(
                     cwd=cwd_path,
