@@ -825,6 +825,10 @@ def test_serve_tunnel_wires_readonly_app_and_reaps_child(
 
     def _fake_run(self: Any, *args: Any, **kwargs: Any) -> None:
         served_apps.append(self.config.app)
+        # A real run() sets this once the socket is bound. serve() reads it to
+        # decide whether to exit non-zero on a startup failure, so a fake that
+        # left it False would look like a bind failure.
+        self.started = True
 
     monkeypatch.setattr(uvicorn.Server, "run", _fake_run)
 
@@ -836,6 +840,58 @@ def test_serve_tunnel_wires_readonly_app_and_reaps_child(
     child = spawned[0]
     assert child.stdin is not None  # the parent-death watchdog pipe
     assert child.poll() is not None  # reaped when serve() returned
+
+
+def test_serve_tunnel_exits_nonzero_when_server_never_starts(
+    monkeypatch: Any, memory_dir: Path
+) -> None:
+    """A bind failure in tunnel mode must exit non-zero, and must still reap
+    the tunnel child.
+
+    `uvicorn.run()` ends with `sys.exit(STARTUP_FAILURE)` when the server never
+    started. The tunnel branch builds the Server by hand to override
+    `handle_exit`, which drops that tail — so without an explicit check a
+    `--tunnel` bind failure (port already in use) would return normally and the
+    CLI would exit 0. A systemd unit with `Restart=on-failure` would not
+    restart, and a shell checking `$?` would read success while nothing served.
+
+    Mutation-sound: delete serve()'s `if not server.started: raise SystemExit`
+    and this test fails — serve() returns None instead of raising."""
+    import uvicorn
+
+    from bettermemory import web
+
+    monkeypatch.setattr(web, "_find_tailscale", lambda: "/bin/ts")
+    monkeypatch.setattr(web, "_tunnel_argv", _stub_tunnel_argv)
+
+    spawned: list[Any] = []
+    real_start = web._start_tunnel
+
+    def _tracking_start(provider: str, binary: str, port: int) -> Any:
+        proc = real_start(provider, binary, port)
+        spawned.append(proc)
+        return proc
+
+    monkeypatch.setattr(web, "_start_tunnel", _tracking_start)
+
+    # A real run() that fails to bind returns with `started` still False.
+    def _never_starts(self: Any, *args: Any, **kwargs: Any) -> None:
+        return None
+
+    monkeypatch.setattr(uvicorn.Server, "run", _never_starts)
+
+    cfg = Config(storage=StorageConfig(directory=str(memory_dir)))
+    with pytest.raises(SystemExit) as excinfo:
+        web.serve(cfg, host="127.0.0.1", port=8124, tunnel="auto")
+
+    assert excinfo.value.code == 3, (
+        "a tunnel-mode startup failure must exit with uvicorn's STARTUP_FAILURE "
+        f"code (3), got {excinfo.value.code!r}"
+    )
+    # The child is reaped on the way out regardless — the `finally` runs before
+    # the SystemExit propagates, so a failed bind never leaks a tunnel.
+    assert len(spawned) == 1
+    assert spawned[0].poll() is not None
 
 
 # ---------------------------------------------------------------------------

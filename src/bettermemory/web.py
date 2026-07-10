@@ -1021,6 +1021,13 @@ def _reap_tunnel(proc: "subprocess.Popen[bytes] | None") -> None:
 _PROVIDER_DEATH_GRACE_SECONDS = 1.0
 
 
+# `uvicorn.main.STARTUP_FAILURE`, the exit code `uvicorn.run()` uses when the
+# server never bound. Spelled out rather than imported: `uvicorn.main` is
+# shadowed by a click Command of the same name, so the constant is not
+# reachable as a public attribute.
+_UVICORN_STARTUP_FAILURE = 3
+
+
 def _watch_tunnel_provider(
     proc: "subprocess.Popen[bytes]",
     provider: str,
@@ -1215,12 +1222,24 @@ def serve(
     )
     try:
         server.run()
+    except KeyboardInterrupt:  # pragma: no cover - uvicorn.run() swallows it too
+        pass
     finally:
         shutting_down.set()
         _reap_tunnel(tunnel_proc)
         for sig, handler in previous.items():
             with contextlib.suppress(ValueError):
                 signal.signal(sig, handler)
+
+    # Restore the last tail of `uvicorn.run()` that building the Server by
+    # hand drops: it ends with `sys.exit(STARTUP_FAILURE)` when the server
+    # never started. Without this a `--tunnel` bind failure (the port is
+    # already in use) returns normally and the CLI exits 0 — a systemd unit
+    # with `Restart=on-failure` would not restart, and a shell checking `$?`
+    # would read success while nothing is being served. Only reachable when
+    # run() returns without starting; a signal exit dies inside run().
+    if not server.started:
+        raise SystemExit(_UVICORN_STARTUP_FAILURE)
 
 
 def _warn_if_non_loopback_bind(host: str) -> bool:
