@@ -55,6 +55,7 @@ from ._fsutil import atomic_write_bytes, flock_excl
 from .doctor import DOCTOR_PROBE_FILENAME
 from .events import EVENT_LOG_FILENAME
 from .index import INDEX_FILENAME
+from .ingest import INGEST_WATERMARK_FILENAME
 from .proposals import PROPOSALS_FILENAME
 from .semantic import EMBEDDING_FILENAME_PREFIX, EMBEDDING_FILENAME_SUFFIX
 
@@ -99,6 +100,14 @@ _GITIGNORE_LINES = [
     # sentences at capture as defense-in-depth; this keeps the whole queue —
     # including non-secret captures the user may not want synced — local.)
     PROPOSALS_FILENAME,
+    # Ingest watermark. Maps ABSOLUTE source-file paths on THIS host (e.g.
+    # `~/.claude/projects/<sanitized-cwd>/memory/*.md`) to the content hashes
+    # already imported, so `doctor`'s stranded-auto-memory check can tell
+    # "never ingested" from "ingested, then curated". Both halves are
+    # host-local: the paths do not exist on another machine, and a clone that
+    # inherited them would believe it had already imported sources it has
+    # never seen — suppressing the very check the watermark exists to feed.
+    INGEST_WATERMARK_FILENAME,
     "*.lock",
     # Orphaned atomic-write temp files. `_fsutil.atomic_write_bytes` writes
     # `<target>.<random>.tmp` next to its target and only unlinks it inside a

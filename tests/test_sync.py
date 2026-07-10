@@ -18,6 +18,7 @@ from bettermemory import sync
 from bettermemory.doctor import DOCTOR_PROBE_FILENAME
 from bettermemory.events import EVENT_LOG_FILENAME
 from bettermemory.index import INDEX_FILENAME
+from bettermemory.ingest import INGEST_WATERMARK_FILENAME
 from bettermemory.proposals import PROPOSALS_FILENAME
 from bettermemory.semantic import (
     EMBEDDING_FILENAME_PREFIX,
@@ -359,6 +360,63 @@ def test_push_does_not_stage_proposals_queue(
     remote_history = _git(bare_remote, "log", "-p", "--all")
     assert secret not in remote_history, (
         "secret from the proposals queue reached the remote git history"
+    )
+
+
+def test_push_does_not_stage_ingest_watermark(
+    memory_dir: Path, bare_remote: Path
+) -> None:
+    """The ingest watermark (`.ingest-watermark.json`) is host-local state and
+    must never sync.
+
+    It maps ABSOLUTE source-file paths on the capturing host (under
+    `~/.claude/projects/<sanitized-cwd>/memory/`) to the content hashes already
+    imported, so `doctor`'s stranded-auto-memory check can distinguish "never
+    ingested" from "ingested, then curated". Both halves are host-local: the
+    paths do not exist on another machine, and a clone that inherited them
+    would believe it had already imported sources it has never seen —
+    suppressing the very check the watermark exists to feed. Pushing it also
+    leaks the local filesystem layout to every clone.
+
+    This is a cross-item seam: the watermark and `_GITIGNORE_LINES` were
+    introduced/owned by different fixes in the same parallel drain round, so
+    neither could register the other.
+
+    Mutation-sound: drop `INGEST_WATERMARK_FILENAME` from
+    `sync._GITIGNORE_LINES` and both the committed-tree and check-ignore
+    assertions fail (the watermark is staged, committed, and pushed)."""
+    sync.init(memory_dir, remote=str(bare_remote))
+    Store(memory_dir).write(content="durable fact", scopes=["tools"])
+    # A watermark as apply_ingest_plan would leave it: absolute host paths.
+    watermark = memory_dir / INGEST_WATERMARK_FILENAME
+    host_path = "/Users/someone/.claude/projects/-Users-someone-repo/memory/a.md"
+    watermark.write_text(
+        f'{{"version": 1, "sources": {{"{host_path}": "deadbeef"}}}}\n',
+        encoding="utf-8",
+    )
+
+    result = sync.push(memory_dir)
+    assert result["pushed"] is True
+
+    committed = _git(memory_dir, "ls-tree", "-r", "--name-only", "HEAD").splitlines()
+    assert INGEST_WATERMARK_FILENAME not in committed, (
+        f"ingest watermark leaked into the committed tree: {committed}"
+    )
+    check = subprocess.run(
+        ["git", "check-ignore", INGEST_WATERMARK_FILENAME],
+        cwd=memory_dir,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert check.returncode == 0, (
+        f"{INGEST_WATERMARK_FILENAME} is not gitignored (git check-ignore rc="
+        f"{check.returncode}); `sync push` would stage it"
+    )
+    # And the host-local path never reached the remote's history.
+    remote_history = _git(bare_remote, "log", "-p", "--all")
+    assert host_path not in remote_history, (
+        "host-local ingest path from the watermark reached the remote history"
     )
 
 
