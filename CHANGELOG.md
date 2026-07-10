@@ -7,6 +7,38 @@ breaking changes, minor for additive features, patch for fixes. The
 [compatibility contract](CONTRIBUTING.md#versioning-and-the-compatibility-contract)
 spells out exactly what's stable.
 
+## 3.18.1 - 2026-07-10
+
+Live validation of the tunnel on a real tailnet — the follow-through
+3.18.0 shipped without — caught a real leak: kill the server and the
+tunnel child survived indefinitely, keeping the share URL alive,
+proxying 502s, and pointed at whatever binds the port next. Two
+mechanisms conspired. uvicorn's signal capture re-raises the caught
+signal with default handlers restored *inside* `run()`, so a
+`finally`-based teardown never runs on any signal exit (the old
+mocked test certified exactly the path reality bypasses). And
+`tailscale serve` does not exit on stdin EOF, so nothing reaped it
+once its parent was gone.
+
+### Fixed
+
+- **Tunnel teardown now survives every exit path.** The provider
+  runs under a small supervisor shim whose stdin is a pipe the
+  server holds open and never writes: when the server dies —
+  SIGTERM, SIGINT, SIGHUP, an exception, or SIGKILL, where no
+  userspace teardown can run — the kernel closes the pipe and the
+  shim reaps the provider before exiting. `serve()` additionally
+  installs teardown handlers that compose with uvicorn's re-raise
+  chain (reap, restore the default disposition, re-deliver), so
+  orderly kills tear down synchronously and the process still dies
+  BY its signal, preserving exit-code etiquette for supervisors.
+- **The fake-Popen orchestration test is gone**, replaced by real
+  process-lifecycle regression tests: a subprocess driver runs
+  `serve(tunnel=...)` for real and the suite asserts the shim and
+  the provider both die within seconds of SIGTERM and of SIGKILL.
+  The stub provider deliberately ignores stdin — the worst case,
+  and, per the live run, the real one.
+
 ## 3.18.0 - 2026-07-09
 
 `bettermemory ui --tunnel` — the roadmap's one-shot sharing item.
