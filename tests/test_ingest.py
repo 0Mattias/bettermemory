@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -102,12 +103,13 @@ def _init_git_repo(path: Path, *, remote: str | None = None) -> None:
 def _auto_memory_dir_for(cwd: Path, home: Path) -> Path:
     """The auto-memory path Claude Code would use for `cwd` under `home`.
 
-    Mirrors the production sanitiser in `discover_default_source_root`
-    (`/`, `.` → `-` after stripping the leading `/`; `:` stripped for
-    Windows drive letters — same Windows-aware normalisation as the
-    `TestDiscoverDefaultSourceRoot` cases)."""
+    Mirrors the production sanitiser in `discover_default_source_root`:
+    Claude Code's real scheme folds EVERY non-alphanumeric character to
+    `-` (`path.replace(/[^a-zA-Z0-9]/g, "-")`) after stripping the
+    leading `/`, so a fixture landed here is found by that primary
+    probe."""
     resolved = cwd.resolve().as_posix().lstrip("/")
-    sanitised = "-" + resolved.replace("/", "-").replace(".", "-").replace(":", "")
+    sanitised = "-" + re.sub(r"[^A-Za-z0-9]", "-", resolved)
     return home / ".claude" / "projects" / sanitised / "memory"
 
 
@@ -1023,13 +1025,14 @@ class TestDiscoverDefaultSourceRoot:
         monkeypatch.setattr(Path, "home", lambda: fake_home)
 
         # `/Users/me/projects/foo` → `-Users-me-projects-foo`
-        # On Windows `as_posix()` + `:` strip mirrors the production
-        # sanitiser so `C:\\Users\\...` becomes a valid filename
-        # component instead of one Windows rejects with WinError 123.
+        # Mirrors Claude Code's real scheme (every non-alphanumeric char
+        # folds to `-`), so on Windows the drive-letter colon in
+        # `C:\\Users\\...` becomes a valid filename component instead of
+        # one Windows rejects with WinError 123.
         cwd = tmp_path / "cwd_simple" / "projects" / "foo"
         cwd.mkdir(parents=True)
         resolved = cwd.resolve().as_posix().lstrip("/")
-        sanitised = "-" + resolved.replace("/", "-").replace(".", "-").replace(":", "")
+        sanitised = "-" + re.sub(r"[^A-Za-z0-9]", "-", resolved)
         target = fake_home / ".claude" / "projects" / sanitised / "memory"
         target.mkdir(parents=True)
 
@@ -1054,12 +1057,70 @@ class TestDiscoverDefaultSourceRoot:
         cwd = tmp_path / "repo" / ".claude" / "worktrees" / "feat-branch"
         cwd.mkdir(parents=True)
         resolved = cwd.resolve().as_posix().lstrip("/")
-        sanitised = "-" + resolved.replace("/", "-").replace(".", "-").replace(":", "")
+        sanitised = "-" + re.sub(r"[^A-Za-z0-9]", "-", resolved)
         # The sanitised name must contain `--claude-` (the dot before
         # `claude` mapped to a second `-`); if a refactor produces
         # `-.claude-` instead, this assertion fails fast.
         assert "--claude-" in sanitised
         target = fake_home / ".claude" / "projects" / sanitised / "memory"
+        target.mkdir(parents=True)
+
+        assert discover_default_source_root(cwd) == target
+
+    def test_finds_auto_memory_for_cwd_with_special_chars(
+        self, tmp_path: Path, monkeypatch: Any
+    ) -> None:
+        """Locks in the Claude-Code-correct sanitiser: EVERY
+        non-alphanumeric character folds to `-`
+        (`path.replace(/[^a-zA-Z0-9]/g, "-")`), so a snake_case /
+        punctuation-bearing checkout like `.../my_repo!` lives at
+        `...-my-repo-`. The earlier 3-char sanitiser (`/`, `.`, `:`
+        only) left `_` and `!` intact, resolved to a directory that
+        does not exist, and returned None — invisibly for `ingest`
+        auto-discovery and as a WRONG negative for the doctor's
+        `auto_memory_stranded` check. The fixture dir is created under
+        the fully-folded name; discovery MUST find it. Fails against the
+        pre-fix 3-char sanitiser (which would probe `...-my_repo!`)."""
+        fake_home = tmp_path / "home"
+        fake_home.mkdir()
+        monkeypatch.setattr(Path, "home", lambda: fake_home)
+
+        # `_` and `!` are the load-bearing characters: the legacy
+        # sanitiser preserved both, the real one folds both to `-`.
+        cwd = tmp_path / "code" / "my_repo!"
+        cwd.mkdir(parents=True)
+        resolved = cwd.resolve().as_posix().lstrip("/")
+        sanitised = "-" + re.sub(r"[^A-Za-z0-9]", "-", resolved)
+        assert sanitised.endswith("-my-repo-")
+        assert "_" not in sanitised and "!" not in sanitised
+        target = fake_home / ".claude" / "projects" / sanitised / "memory"
+        target.mkdir(parents=True)
+
+        assert discover_default_source_root(cwd) == target
+
+    def test_legacy_sanitised_layout_still_resolves(
+        self, tmp_path: Path, monkeypatch: Any
+    ) -> None:
+        """Belt-and-suspenders for the dual-probe: a directory named
+        under bettermemory's OLD 3-char sanitiser (which left `_`
+        intact) must keep resolving after the switch to Claude Code's
+        full-fold scheme — discovery probes both candidates and returns
+        whichever exists. Guards the legacy fallback against a future
+        refactor that drops it. (Passes pre- and post-fix — a
+        preservation guard, not the mutation-sound pin above.)"""
+        fake_home = tmp_path / "home"
+        fake_home.mkdir()
+        monkeypatch.setattr(Path, "home", lambda: fake_home)
+
+        cwd = tmp_path / "legacy_named"
+        cwd.mkdir(parents=True)
+        resolved = cwd.resolve().as_posix().lstrip("/")
+        legacy = "-" + resolved.replace("/", "-").replace(".", "-").replace(":", "")
+        new = "-" + re.sub(r"[^A-Za-z0-9]", "-", resolved)
+        # Premise: the `_` makes the two schemes diverge, so only the
+        # legacy-named directory exists on disk here.
+        assert legacy != new
+        target = fake_home / ".claude" / "projects" / legacy / "memory"
         target.mkdir(parents=True)
 
         assert discover_default_source_root(cwd) == target

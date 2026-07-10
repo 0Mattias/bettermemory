@@ -10,6 +10,7 @@ the host environment under test.
 from __future__ import annotations
 
 import json
+import re
 import typing
 from pathlib import Path
 from typing import Any
@@ -1527,9 +1528,11 @@ def test_doctor_flags_stale_config_lockfile(
 
 def _auto_memory_root_for(home: Path, cwd: Path) -> Path:
     """Mirror `ingest.discover_default_source_root`'s sanitiser so the
-    fixture lands where discovery will look."""
+    fixture lands where discovery will look. Claude Code's real scheme
+    folds EVERY non-alphanumeric char to `-`
+    (`path.replace(/[^a-zA-Z0-9]/g, "-")`)."""
     resolved = cwd.resolve().as_posix().lstrip("/")
-    sanitized = "-" + resolved.replace("/", "-").replace(".", "-").replace(":", "")
+    sanitized = "-" + re.sub(r"[^A-Za-z0-9]", "-", resolved)
     return home / ".claude" / "projects" / sanitized / "memory"
 
 

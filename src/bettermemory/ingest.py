@@ -50,6 +50,7 @@ so tests can drive each layer in isolation.
 from __future__ import annotations
 
 import json
+import re
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
@@ -727,28 +728,51 @@ def discover_default_source_root(cwd: Path | None = None) -> Path | None:
     """Best-guess auto-memory dir for the current working tree.
 
     Claude Code's auto-memory layout is
-    ``~/.claude/projects/<sanitized-cwd-path>/memory/``, where the
-    sanitization replaces BOTH ``/`` and ``.`` with ``-`` after
-    stripping a leading ``/`` — so a worktree at
-    ``/Users/x/projects/foo/.claude/worktrees/bar`` lives at
-    ``-Users-x-projects-foo--claude-worktrees-bar``. Replacing only
-    ``/`` silently misses every cwd that contains a dot (worktrees,
-    hidden dirs, version-suffixed paths). Returns the path if it
-    exists; None otherwise. The CLI treats None as "no auto-memory
-    found — pass --from explicitly."
+    ``~/.claude/projects/<sanitized-cwd-path>/memory/``. Claude Code
+    sanitizes the cwd by folding EVERY non-alphanumeric character to
+    ``-`` — its real scheme is ``path.replace(/[^a-zA-Z0-9]/g, "-")``.
+    So a worktree at ``/Users/x/projects/foo/.claude/worktrees/bar``
+    lives at ``-Users-x-projects-foo--claude-worktrees-bar``, and a
+    snake_case or punctuation-bearing checkout like ``/Users/x/my_repo!``
+    lives at ``-Users-x-my-repo-`` (the ``_`` and ``!`` both fold to
+    ``-``). An earlier bettermemory sanitizer folded only ``/``, ``.``
+    and ``:``; any cwd containing ``_``, a space, ``!``, ``(``, ``+``
+    etc. — snake_case repo names are ubiquitous — then resolved to a
+    path that does not exist, so this returned None and both ingest
+    auto-discovery and the doctor ``auto_memory_stranded`` check went
+    silently (or wrongly) negative for those cwds.
+
+    We probe the Claude-Code-correct candidate first, then the legacy
+    3-character candidate, and return whichever exists — so any layout
+    that resolved before this fix keeps resolving, and a directory
+    present under both schemes prefers the correct one. Returns None
+    when neither exists; the CLI treats None as "no auto-memory found —
+    pass --from explicitly."
 
     On Windows, ``cwd.resolve()`` produces backslash-separated paths
     with a drive-letter prefix (``C:\\Users\\...``). ``as_posix()``
-    normalises to forward slashes, and the colon is stripped because
-    it's illegal in Windows filenames — so ``C:/Users/x`` becomes
-    ``-C-Users-x`` rather than the unbuildable ``-C:\\Users\\x``.
+    normalises to forward slashes; the drive-letter colon then folds to
+    ``-`` like any other non-alphanumeric, so ``C:/Users/x`` resolves to
+    a valid filename component instead of the unbuildable
+    ``-C:\\Users\\x`` (the legacy candidate, which stripped the colon
+    instead, is still probed as a fallback).
     """
     cwd = cwd or Path.cwd()
     resolved = cwd.resolve().as_posix().lstrip("/")
-    sanitized = "-" + resolved.replace("/", "-").replace(".", "-").replace(":", "")
-    candidate = Path.home() / ".claude" / "projects" / sanitized / "memory"
-    if candidate.exists() and candidate.is_dir():
-        return candidate
+    projects_dir = Path.home() / ".claude" / "projects"
+    # Claude Code's real sanitizer folds every non-alphanumeric char to
+    # `-`; probe that first, then the legacy 3-char form (`/`, `.`, `:`
+    # only) so any pre-fix layout keeps resolving. The two coincide for
+    # alphanumeric-only paths, in which case the second probe is a
+    # harmless repeat of the same (already-negative) stat.
+    new_sanitized = "-" + re.sub(r"[^A-Za-z0-9]", "-", resolved)
+    legacy_sanitized = "-" + resolved.replace("/", "-").replace(".", "-").replace(
+        ":", ""
+    )
+    for sanitized in (new_sanitized, legacy_sanitized):
+        candidate = projects_dir / sanitized / "memory"
+        if candidate.exists() and candidate.is_dir():
+            return candidate
     return None
 
 
