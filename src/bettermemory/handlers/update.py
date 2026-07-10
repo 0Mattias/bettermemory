@@ -170,6 +170,12 @@ async def memory_update(
         new_category = Category(category)
 
     new_body = existing.body
+    # Default for the metadata-only / clean-body paths; a body edit that
+    # overrides the credential gate below replaces this. Recorded on the
+    # success event so the field is never ABSENT — the too-loose-detector
+    # override-rate signal and a forensic `grep credentials_acknowledged`
+    # sweep both depend on the update surface logging it like write.py does.
+    credentials_acknowledged: list[str] = []
     if content is not None:
         new_body = content.strip() + "\n"
         # Credential gate — mirror CredentialGate on the write path so a
@@ -202,6 +208,16 @@ async def memory_update(
                     "regardless."
                 ),
             }
+        # Passed the gate on a body edit → the body is clean OR the caller
+        # overrode with acknowledge_credential. Capture which detector KINDS
+        # the override waved through (empty otherwise) so the success event
+        # feeds the same override-rate signal as write.py:638 / proposals.py:164.
+        # Kind only, never the value — same redaction contract as the warning.
+        credentials_acknowledged = (
+            [h.kind for h in credential_hits]
+            if credential_hits and acknowledge_credential
+            else []
+        )
 
     # `links` is REPLACE semantics — the caller passes the full new
     # list. Same shape as the `scopes` parameter: simpler than
@@ -333,6 +349,7 @@ async def memory_update(
         scopes=updated.scopes,
         confidence=updated.confidence.value,
         category=updated.category.value if updated.category is not None else None,
+        credentials_acknowledged=credentials_acknowledged,
     )
     return deps.responses.committed(updated)
 

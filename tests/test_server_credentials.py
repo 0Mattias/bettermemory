@@ -324,3 +324,39 @@ async def test_update_acknowledge_credential_commits(
         acknowledge_credential=True,
     )
     assert upd["status"] == "committed"
+
+
+async def test_update_acknowledge_credential_records_kinds(
+    server_with_events: tuple[Any, Path],
+) -> None:
+    """The override marker is auditable on the UPDATE surface too. An
+    acknowledged body edit must record the detector KIND on the update
+    success event (never the value), exactly as the write path does
+    (write.py) and the proposal-accept choke point (proposals.py). Without
+    it the too-loose-detector override-rate signal and a forensic
+    `grep credentials_acknowledged` sweep silently miss every secret
+    introduced by EDIT rather than by write."""
+    server, memory_dir = server_with_events
+    created = await _call(
+        server, "memory_write", content="aws docs notes.", scopes=["reference"]
+    )
+    upd = await _call(
+        server,
+        "memory_update",
+        id=created["id"],
+        content=f"The public AWS tutorial uses {_AWS} as its example.",
+        acknowledge_credential=True,
+    )
+    assert upd["status"] == "committed"
+    # The committed update event (it carries `fields`, unlike the
+    # credential_warning / stale short-circuits) must log the acknowledged
+    # detector kind so override-rate analytics covers the edit surface.
+    committed = [
+        e for e in iter_events(memory_dir) if e["kind"] == "update" and e.get("fields")
+    ]
+    assert committed, "no committed update event recorded"
+    assert "aws-access-key-id" in committed[-1].get("credentials_acknowledged", [])
+    # ...and the raw secret must never reach the event log — kind only.
+    events_file = memory_dir / ".events.jsonl"
+    raw = events_file.read_text(encoding="utf-8") if events_file.exists() else ""
+    assert _AWS not in raw
