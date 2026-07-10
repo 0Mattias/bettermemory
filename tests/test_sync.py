@@ -121,9 +121,21 @@ def _sidecar_filename_constants() -> dict[str, str]:
 
     Discovered by walking the package rather than hand-listed, because the
     whole point of the guard is to catch a sidecar whose author never thought
-    about `sync`. Modules whose optional dependency is absent (`web` without
-    the `[ui]` extra, on the embeddings CI legs) are skipped — none of them
-    own a store-root sidecar.
+    about `sync`.
+
+    `walk_packages`, not `iter_modules`: the latter does not descend into
+    subpackages, so it sees `handlers` and `cli` as opaque names and only ever
+    reads their `__init__` re-exports. A sidecar constant defined in, say,
+    `handlers/write.py` was therefore invisible and the guard passed while the
+    file leaked — the guard advertising complete coverage it did not have.
+    `handlers/` is an actively developed 26-module package and the
+    auto-consolidate clock is precedent for exactly the kind of store-root
+    state file a handler could own.
+
+    A module that cannot be imported is skipped rather than failing the guard;
+    `onerror` swallows package-level import errors the same way. Today every
+    module imports cleanly (optional deps are all lazily imported inside
+    functions), so the skip is defensive, not load-bearing.
     """
     import importlib
     import pkgutil
@@ -131,9 +143,12 @@ def _sidecar_filename_constants() -> dict[str, str]:
     import bettermemory
 
     found: dict[str, str] = {}
-    for mod_info in pkgutil.iter_modules(bettermemory.__path__):
+    walk = pkgutil.walk_packages(
+        bettermemory.__path__, prefix="bettermemory.", onerror=lambda _name: None
+    )
+    for mod_info in walk:
         try:
-            mod = importlib.import_module(f"bettermemory.{mod_info.name}")
+            mod = importlib.import_module(mod_info.name)
         except ImportError:
             continue
         for attr in dir(mod):
@@ -162,7 +177,11 @@ def test_every_store_root_sidecar_is_gitignored() -> None:
     So the guard discovers the constants instead of trusting a hand-list: any
     `*_FILENAME` whose value is a dotfile must be matched by some pattern in
     `_GITIGNORE_LINES` (literal or glob). A new sidecar therefore fails HERE,
-    at the moment it is introduced, rather than on someone's remote."""
+    at the moment it is introduced, rather than on someone's remote.
+
+    `test_sidecar_discovery_descends_into_subpackages` guards the discovery
+    itself — without it this guard is only as good as its walk, and its first
+    version silently skipped every module under `handlers/` and `cli/`."""
     patterns = [
         line for line in sync._GITIGNORE_LINES if not line.lstrip().startswith("#")
     ]
@@ -184,6 +203,35 @@ def test_every_store_root_sidecar_is_gitignored() -> None:
         "Add each constant to _GITIGNORE_LINES (import it from its owning "
         "module), or, if the file is genuinely portable and worth versioning, "
         "add its value to _INTENTIONALLY_SYNCED_SIDECARS with a rationale."
+    )
+
+
+def test_sidecar_discovery_descends_into_subpackages(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The guard above is only as strong as this walk. Its first version used
+    `pkgutil.iter_modules`, which does not recurse, so every module under
+    `handlers/` and `cli/` was invisible: a sidecar declared there leaked while
+    the guard reported success. Plant one in a real subpackage module and
+    require the discovery to see it.
+
+    This is the mutation guard for the discovery itself — revert
+    `_sidecar_filename_constants` to `iter_modules` and this test fails while
+    the guard above still passes, which is exactly the false confidence that
+    made the hole survive review."""
+    from bettermemory.handlers import write as write_handler
+
+    monkeypatch.setattr(
+        write_handler,
+        "PLANTED_SIDECAR_FILENAME",
+        ".planted-sidecar.json",
+        raising=False,
+    )
+    found = _sidecar_filename_constants()
+    assert found.get("PLANTED_SIDECAR_FILENAME") == ".planted-sidecar.json", (
+        "sidecar discovery did not descend into bettermemory.handlers — a "
+        "store-root sidecar declared in a subpackage would leak past the guard. "
+        f"discovered: {sorted(found)}"
     )
 
 
