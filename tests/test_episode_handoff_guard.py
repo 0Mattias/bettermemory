@@ -728,3 +728,103 @@ async def test_episode_handoff_promotion_note_covers_deferred_confirm_path(
         f"deferred-confirm promotion must be detected via the pending "
         f"trace; got: {res['note']!r}"
     )
+
+
+async def test_episode_handoff_pending_promotion_not_named_after_cancel_then_prune(
+    memory_dir: Path,
+) -> None:
+    """False-positive guard (round-131): a `pending` episode_promote that is
+    CANCELLED (or TTL-expired) never commits — `memory_write_cancel` KEEPS the
+    source episode on disk for a retry, so NO durable memory is written. When
+    `prune_old_sessions` later rmtrees the whole session directory (the
+    automatic TTL sweep any shared-root episode_write triggers), the session
+    goes zero-episode on disk while the event log still holds the bare
+    `episode_promote` (write_status="pending") trace. The handoff must NOT read
+    that as a promotion: the affirmative "promoted into a durable memory" note
+    would assert a promotion that never happened and misdirect the reader to
+    memory_search for content that does not exist.
+
+    Every trigger step is a designed flow: unattended /loop ticks promote
+    user-inference takeaways that stage pending and expire/cancel unconfirmed,
+    and the prune is automatic.
+
+    Mutation-soundness: pre-fix `_episode_promoted_out_of_session` counted a
+    bare `pending` promote event as proof of deletion, so this sequence
+    produced the affirmative promotion note — the
+    `"promoted into a durable memory" not in note` assertion FAILS against the
+    pre-fix source (verified by reverting the source change with this test in
+    place). Post-fix the pending trace is ignored (confirm never ran, so no
+    `write_confirm` event carries this episode's id) and the note falls through
+    to the honest hedged zero-episode text, which asserts no promotion.
+    """
+    from datetime import timedelta
+
+    from bettermemory.episodes import EpisodeStore
+    from bettermemory.models import utcnow
+
+    cfg = Config(storage=StorageConfig(directory=str(memory_dir)))
+
+    # S_a: write a takeaway, promote it as user-inference (stages pending),
+    # then CANCEL. Cancel drops the linkage but KEEPS the source episode on
+    # disk so the caller can retry — no promotion ever committed.
+    server_a = build_server(config=cfg, store=Store(memory_dir), state=SessionState())
+    ep = await _call(
+        server_a,
+        "episode_write",
+        body="Iter 3 — user seemed to reach for dark mode in the demo.",
+        takeaway="user prefers dark mode",
+    )
+    a_session_id = ep["session_id"]
+    pending = await _call(
+        server_a,
+        "episode_promote",
+        episode_id=ep["id"],
+        scopes=["learning-style"],
+        category="user-inference",
+    )
+    assert pending["status"] == "pending", (
+        f"test precondition: user-inference promotion must stage pending; "
+        f"got: {pending!r}"
+    )
+    cancelled = await _call(
+        server_a, "memory_write_cancel", pending_id=pending["pending_id"]
+    )
+    assert cancelled["existed"] is True
+    # Cancel keeps the episode: it is still on disk right now.
+    assert EpisodeStore(memory_dir).list_by_session(a_session_id), (
+        "cancel must KEEP the source episode on disk for a retry"
+    )
+
+    # Prune the whole session dir 31 days on — the automatic TTL sweep that
+    # any later shared-root episode_write triggers. S_a is now zero-episode on
+    # disk, but its `episode_write` + pending `episode_promote` events live
+    # forever in the (never-pruned) event log.
+    pruned = EpisodeStore(memory_dir).prune_old_sessions(
+        now=utcnow() + timedelta(days=31)
+    )
+    assert a_session_id in pruned, (
+        f"S_a's session dir must be pruned past the 30d TTL; pruned: {pruned!r}"
+    )
+    assert EpisodeStore(memory_dir).list_by_session(a_session_id) == [], (
+        "S_a must be zero-episode after the prune"
+    )
+
+    # Reader: resolves the pruned S_a via its events' worktree_root
+    # (zero-episode branch). The note must NOT assert a promotion.
+    server_r = build_server(config=cfg, store=Store(memory_dir), state=SessionState())
+    res = await _call(server_r, "episode_handoff")
+
+    assert res["prior_session_id"] == a_session_id
+    assert res["episodes"] == []
+    note = res.get("note", "")
+    # THE regression assertion: no false promotion claim for an unconfirmed
+    # (cancelled) pending that was subsequently pruned.
+    assert "promoted into a durable memory" not in note, (
+        f"a cancelled-then-pruned pending promotion must NOT be reported as a "
+        f"promotion — no durable memory was ever written; got: {note!r}"
+    )
+    # The honest hedged zero-episode note fires instead (its distinctive
+    # phrase, absent from the promotion note).
+    assert "non-handoff tick" in note, (
+        f"note must fall through to the honest hedged zero-episode text; got: {note!r}"
+    )

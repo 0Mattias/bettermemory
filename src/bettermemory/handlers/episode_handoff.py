@@ -60,10 +60,13 @@ Returns `None`-rich shape so the caller can distinguish:
   zero-episode. Byte-identical on disk to the crash / clean-tick
   shapes, but the EVENT LOG distinguishes it: the session's
   `episode_write` event carries the episode id, and a matching
-  `episode_promote` event (any session's) proves the deletion path.
-  When that signal is present the note says the takeaway was promoted
-  into a durable memory (find it via memory_search) instead of hedging
-  crash-or-empty.
+  COMMITTED `episode_promote` (or a `write_confirm` event carrying an
+  `episode_id`, stamped by the deferred confirm path, any session's)
+  proves the deletion path. A bare pending promote is not proof — it
+  may have been cancelled or expired, leaving the episode for a later
+  prune to remove. When the proving signal is present the note says the
+  takeaway was promoted into a durable memory (find it via
+  memory_search) instead of hedging crash-or-empty.
 - "prior sessions exist but every takeaway is scope-hidden" — the
   most-recent worktree-matching session has REAL takeaways that are
   all hidden by this session's `memory_scope_disable` set, and no
@@ -607,9 +610,11 @@ async def episode_handoff(
     # handoff → episode_write → episode_promote session ends floor-only on
     # disk and a write → promote session with no handoff ends zero-episode.
     # The event log can tell those apart: `episode_write` events carry the
-    # episode id + writer session, `episode_promote` events carry the
-    # episode id + write status. Only consulted when a note is about to
-    # fire (the uncommon path), so the common no-note handoff pays nothing.
+    # episode id + writer session, and a COMMITTED `episode_promote` (or a
+    # `write_confirm` event carrying an `episode_id`, stamped by the
+    # deferred confirm path) proves the delete ran — a bare pending promote
+    # does not. Only consulted when a note is about to fire (the uncommon
+    # path), so the common no-note handoff pays nothing.
     promoted_out = False
     if (note_floor_only or note_zero_episode) and note_subject_sid is not None:
         promoted_out = _episode_promoted_out_of_session(
@@ -794,24 +799,34 @@ def _episode_promoted_out_of_session(root: "Path", session_id: str) -> bool:
 
       - `episode_write` events carry the episode's ULID (`id`) and the
         writer's session — collect the ids `session_id` wrote.
-      - `episode_promote` events carry `episode_id` + `write_status` —
-        collect the ids any session promoted. The promoter is
-        deliberately NOT filtered: a later session promoting an older
-        session's takeaway (the documented /loop pattern) still deletes
-        the OLDER session's journal entry.
+      - a SYNCHRONOUS `episode_promote` (`write_status="committed"`)
+        deletes the source episode inline — collect its `episode_id`.
+        The promoter session is deliberately NOT filtered: a later
+        session promoting an older session's takeaway (the documented
+        /loop pattern) still deletes the OLDER session's journal entry.
+      - a `write_confirm` event that carries an `episode_id` is the
+        deferred confirm path's proof: `memory_write_confirm` stamps the
+        deleted source-episode id onto that event only when the confirmed
+        write was a promotion — collect those too.
 
     A non-empty intersection means one of this session's journal
     entries went through the promotion delete path.
 
-    `write_status="pending"` is included alongside `"committed"`
-    because the deferred delete happens inside `memory_write_confirm`,
-    whose event records no episode id — the promote event is the only
-    trace. A cancelled/expired pending leaves the episode ON disk, and
-    this helper is only consulted when the subject session demonstrably
-    has no real episode left, so a pending trace corroborated by the
-    on-disk absence means the confirm path ran. (The only other
-    individual-episode deleter in the system IS the promotion path;
-    TTL pruning removes whole session directories, floors included.)
+    A BARE `episode_promote` event with `write_status="pending"` is
+    deliberately NOT accepted as proof. It is recorded at STAGING time,
+    before the outcome is known; the deferred delete happens later inside
+    `memory_write_confirm`, which stamps the deleted `episode_id` onto its
+    `write_confirm` event — that confirm-time trace, not the pending
+    promote, is what this helper matches for the deferred path. The older
+    reasoning ("a pending trace corroborated by the on-disk absence means
+    the confirm path ran") was unsound: a cancelled (`memory_write_cancel`)
+    or TTL-expired pending leaves the episode ON disk, and
+    `prune_old_sessions` then rmtrees the whole session directory 30 days
+    on — producing the exact zero-episode absence a real promotion would.
+    On-disk absence therefore cannot tell a confirmed promotion apart from
+    a cancelled/expired-then-pruned one; requiring the explicit
+    committed/confirmed trace can, and a bare pending falls through to the
+    honest hedged note.
 
     Cost: one pass over `iter_all_events` (active log + gz archives).
     Only invoked when a floor-only / zero-episode note is about to
@@ -833,10 +848,32 @@ def _episode_promoted_out_of_session(root: "Path", session_id: str) -> bool:
             if sid == session_id and isinstance(eid, str):
                 written.add(eid)
         elif kind == "episode_promote":
-            if ev.get("write_status") in ("committed", "pending"):
+            # Only a SYNCHRONOUS commit proves the source episode was
+            # deleted inline here. A `pending` promote is NOT proof: it is
+            # recorded at STAGING time, before the outcome is known, and the
+            # staged write may be cancelled (memory_write_cancel) or
+            # TTL-expired — both KEEP the episode on disk. A later
+            # `prune_old_sessions` then rmtrees the whole session dir —
+            # the same zero-episode shape as a real promotion, but no
+            # promotion committed. The deferred confirm path stamps its own
+            # proof onto the `write_confirm` event (below), so a bare
+            # `pending` here is deliberately ignored.
+            if ev.get("write_status") == "committed":
                 eid = ev.get("episode_id")
                 if isinstance(eid, str):
                     promoted.add(eid)
+        elif kind == "write_confirm":
+            # A `write_confirm` carrying an `episode_id` is the durable,
+            # confirm-TIME proof that a DEFERRED promotion's delete ran:
+            # `memory_write_confirm` stamps the deleted source-episode id
+            # onto this event only on the promotion path (a normal confirm
+            # records episode_id=None, filtered out by the isinstance check).
+            # This is the only trace that separates a confirmed pending
+            # promotion from a cancelled/expired-then-pruned one, which are
+            # byte-identical on disk.
+            eid = ev.get("episode_id")
+            if isinstance(eid, str):
+                promoted.add(eid)
     return bool(written & promoted)
 
 

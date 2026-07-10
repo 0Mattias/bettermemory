@@ -829,6 +829,7 @@ async def memory_write_confirm(
     # time by the promote handler; consume it (pop) so a redundant
     # later call doesn't try to delete twice.
     promo = state.take_promotion_episode(pending_id)
+    promoted_episode_id: str | None = None
     if promo is not None:
         # Local import to break the cycle (episode_promote also imports
         # `memory_write` from this module).
@@ -836,11 +837,25 @@ async def memory_write_confirm(
 
         ep_session_id, ep_id = promo
         _delete_source_episode(deps, ep_session_id, ep_id)
+        promoted_episode_id = ep_id
+    # Stamp the deleted source-episode id onto the confirm event on the
+    # promotion path (None on a normal confirm). This is the durable,
+    # confirm-TIME proof the deferred promotion delete actually ran, which
+    # `episode_handoff._episode_promoted_out_of_session` requires before it
+    # will name a promotion. A BARE `episode_promote` event with
+    # write_status="pending" is NOT proof on its own: it is recorded at
+    # STAGING time, before the outcome is known, and the staged write may
+    # instead be cancelled (memory_write_cancel) or TTL-expired — both KEEP
+    # the source episode on disk. A later `prune_old_sessions` then rmtrees
+    # the whole session dir, leaving the exact zero-episode shape a real
+    # promotion leaves. This episode_id is the only signal that separates
+    # "confirmed & deleted" from "cancelled/expired then pruned".
     deps.recorder.record(
         "write_confirm",
         pending_id=pending_id,
         id=memory.id,
         scopes=memory.scopes,
+        episode_id=promoted_episode_id,
     )
     response = deps.responses.committed(memory)
     _maybe_attach_curation_hint(response, deps, state)
