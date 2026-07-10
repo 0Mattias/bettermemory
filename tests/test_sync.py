@@ -18,6 +18,7 @@ from bettermemory import sync
 from bettermemory.doctor import DOCTOR_PROBE_FILENAME
 from bettermemory.events import EVENT_LOG_FILENAME
 from bettermemory.index import INDEX_FILENAME
+from bettermemory.proposals import PROPOSALS_FILENAME
 from bettermemory.semantic import (
     EMBEDDING_FILENAME_PREFIX,
     EMBEDDING_FILENAME_SUFFIX,
@@ -295,6 +296,70 @@ def test_push_no_op_when_nothing_changed(memory_dir: Path, bare_remote: Path) ->
     result = sync.push(memory_dir)
     assert result["committed"] is False
     assert result["pushed"] is True
+
+
+def test_push_does_not_stage_proposals_queue(
+    memory_dir: Path, bare_remote: Path
+) -> None:
+    """The write-reflex proposal queue (`.write_proposals.jsonl`) holds RAW
+    captured user text that never passed the write-path credential gate — a
+    secret-shaped capture ("my staging DB password is …") sits there verbatim
+    until the model reviews it. It MUST be gitignored so `sync push`'s
+    `git add -A` never stages, commits, or pushes it. Pre-fix (3.18.1) the
+    queue was absent from `_GITIGNORE_LINES`, so the plaintext capture landed
+    in the committed tree AND on the remote, where git history makes it
+    permanent — the 🔴 leak this test guards.
+
+    Mutation-sound: drop `PROPOSALS_FILENAME` from `sync._GITIGNORE_LINES`
+    and both the committed-tree and check-ignore assertions fail (the queue
+    file is staged, committed, and pushed with the secret intact)."""
+    import json
+
+    sync.init(memory_dir, remote=str(bare_remote))
+    # A real memory gives the push canonical (non-secret) content to commit.
+    Store(memory_dir).write(content="durable fact", scopes=["tools"])
+    # Simulate the Stop hook having queued a secret-bearing proposal.
+    secret = "Xk92mQz7Lp4R9t"  # synthetic test fixture, not a live secret
+    queue_file = memory_dir / PROPOSALS_FILENAME
+    queue_file.write_text(
+        json.dumps(
+            {
+                "id": "c1",
+                "body": f"my staging DB password is {secret}",
+                "source_excerpt": "",
+                "suggested_category": "fact",
+                "created": "",
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    result = sync.push(memory_dir)
+    assert result["pushed"] is True
+
+    # The committed tree (local HEAD) must not contain the queue file.
+    committed = _git(memory_dir, "ls-tree", "-r", "--name-only", "HEAD").splitlines()
+    assert PROPOSALS_FILENAME not in committed, (
+        f"proposals queue leaked into the committed tree: {committed}"
+    )
+    # git itself agrees the path is ignored (rc==0 means "is ignored").
+    check = subprocess.run(
+        ["git", "check-ignore", PROPOSALS_FILENAME],
+        cwd=memory_dir,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert check.returncode == 0, (
+        f"{PROPOSALS_FILENAME} is not gitignored (git check-ignore rc="
+        f"{check.returncode}); `sync push` would stage it"
+    )
+    # And the secret never reached the remote's history.
+    remote_history = _git(bare_remote, "log", "-p", "--all")
+    assert secret not in remote_history, (
+        "secret from the proposals queue reached the remote git history"
+    )
 
 
 def test_push_errors_without_remote(memory_dir: Path) -> None:
@@ -616,6 +681,14 @@ def test_gitignore_lines_include_canonical_filename_constants() -> None:
     assert DOCTOR_PROBE_FILENAME in sync._GITIGNORE_LINES, (
         f"sync._GITIGNORE_LINES missing DOCTOR_PROBE_FILENAME "
         f"({DOCTOR_PROBE_FILENAME!r}); see sync.py:_GITIGNORE_LINES"
+    )
+    # The write-reflex proposal queue is host-local transient state that
+    # carries raw captured user text (possibly a secret that never passed the
+    # write-path credential gate) — it must never sync. A rename of the
+    # constant that misses the gitignore would re-open the 🔴 plaintext leak.
+    assert PROPOSALS_FILENAME in sync._GITIGNORE_LINES, (
+        f"sync._GITIGNORE_LINES missing PROPOSALS_FILENAME "
+        f"({PROPOSALS_FILENAME!r}); see sync.py:_GITIGNORE_LINES"
     )
     # Embedding cache is a glob; assert it was built from the lifted
     # prefix/suffix constants. A rename of either half without

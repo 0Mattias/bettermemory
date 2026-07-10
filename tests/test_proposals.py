@@ -527,6 +527,70 @@ def test_non_explicit_transient_drop_stays_silent(
 
 
 # ---------------------------------------------------------------------------
+# extract_proposals — credential gate at capture
+#
+# The write-reflex mines RAW user text, so a secret-shaped sentence would be
+# captured verbatim into `.write_proposals.jsonl` — a plain-text queue that
+# `sync push` could carry across hosts (the queue is now gitignored, but this
+# is the defense-in-depth layer that keeps the secret off disk in the first
+# place). `extract_proposals` runs `find_credential_markers` and DROPS a
+# matching sentence at capture, WARNING-logged with the detector KIND only —
+# never the sentence or the value.
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "sentence",
+    [
+        # Explicit-marker capture (the exact audit repro).
+        "Remember that my staging DB password is Xk92mQz7Lp4R9t.",
+        # Marker-less first-person setup form — captured via _PREFERENCE_RE.
+        "My staging DB password is Xk92mQz7Lp4R9t.",
+    ],
+)
+def test_extract_drops_credential_bearing_sentence_at_capture(
+    sentence: str, caplog: pytest.LogCaptureFixture
+) -> None:
+    """A secret-shaped sentence must be DROPPED at capture, never queued.
+    Without this gate the write-reflex writes "my staging DB password is
+    <secret>" verbatim into the proposal queue — a plain-text, historically
+    sync-pushed file. The drop is WARNING-logged so a swallowed capture stays
+    observable, but the log names the detector KIND only: neither the sentence
+    nor the raw secret value may reach the logs.
+
+    Mutation-sound: remove the `find_credential_markers` gate from
+    `extract_proposals` and BOTH halves fail — the sentence is captured
+    (`props` non-empty) and no credential WARNING is emitted."""
+    secret = "Xk92mQz7Lp4R9t"  # synthetic test fixture, not a live secret
+    with caplog.at_level(logging.WARNING, logger="bettermemory.proposals"):
+        props = extract_proposals(sentence, now=_NOW)
+    # Dropped — nothing captured.
+    assert props == []
+    # Observable at WARNING, detector kind named.
+    records = [r for r in caplog.records if r.name == "bettermemory.proposals"]
+    assert len(records) == 1
+    assert records[0].levelno == logging.WARNING
+    message = records[0].getMessage()
+    assert "generic-secret-assignment" in message
+    # The secret value never reaches the log record (kind-only discipline) —
+    # not the formatted message, not any interpolated arg in caplog.text.
+    assert secret not in message
+    assert secret not in caplog.text
+
+
+def test_extract_still_captures_clean_preference_alongside_credential_gate() -> None:
+    """Precision guard: the credential gate must not suppress a perfectly
+    durable, secret-free preference. A false positive here would train the
+    model to ignore the capture surface."""
+    props = extract_proposals(
+        "I prefer terse code-driven explanations over long prose paragraphs.",
+        now=_NOW,
+    )
+    assert len(props) == 1
+    assert props[0].suggested_category == "user-inference"
+
+
+# ---------------------------------------------------------------------------
 # ProposalQueue — persistence
 # ---------------------------------------------------------------------------
 

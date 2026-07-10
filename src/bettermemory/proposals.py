@@ -39,6 +39,7 @@ from datetime import datetime
 from pathlib import Path
 
 from ._fsutil import atomic_write_bytes, flock_excl
+from .credentials import find_credential_markers
 from .durability import find_transient_markers
 from .models import generate_ulid, utcnow
 
@@ -431,11 +432,15 @@ def extract_proposals(
     preference/setup pattern, (c) is not a
     question, a hypothetical, or a task-request to the assistant (unless
     an explicit marker overrides — retrieval questions like "Do you
-    remember if…?" are rejected outright), and (d) trips no
+    remember if…?" are rejected outright), (d) carries no credential-shaped
+    token (`credentials.find_credential_markers`) — a secret must never
+    reach the plain-text, `sync`'d store, so a matching sentence is dropped
+    at capture (and never reaches the accept surface), and (e) trips no
     transient-state marker (`durability.find_transient_markers`) —
     run-local state is the episode tier's job, not a durable memory.
-    Explicit markers get no exemption from (d), but their drop is logged
-    at WARNING so the swallowed capture request stays observable.
+    Explicit markers get no exemption from (d) or (e), but the drop is
+    logged at WARNING so the swallowed capture stays observable — the
+    credential-drop log names the detector KIND only, never the value.
 
     `exclude_excerpts`: sentences already queued (matched verbatim) are
     skipped BEFORE they count against `max_proposals`, so a recurring
@@ -475,6 +480,33 @@ def extract_proposals(
                 continue
             if _HYPOTHETICAL_RE.match(sentence):
                 continue
+        # Credential gate — runs BEFORE the transient gate, mirroring the
+        # memory_write path where CredentialGate fires first. The write-reflex
+        # mines RAW user text, so a secret-shaped sentence ("my staging DB
+        # password is …") would otherwise be captured verbatim into
+        # `.write_proposals.jsonl`. That queue is gitignored from `sync` (see
+        # sync._GITIGNORE_LINES), but this is the defense-in-depth layer:
+        # DROP the sentence at capture so a live secret never lands on disk in
+        # the queue at all, and never reaches the accept surface. The drop is
+        # WARNING-logged (like the transient drop below) so a swallowed
+        # capture stays observable — but the log carries the detector KIND
+        # ONLY, never the sentence, because the sentence embeds the secret.
+        # WARNING (not INFO) for the same reason as the transient gate: the
+        # Stop-hook caller chain configures no logging and Python's lastResort
+        # handler only emits WARNING and above. Unlike the transient gate this
+        # fires for explicit AND non-explicit captures: find_credential_markers
+        # is high-precision (it does not trip on prose that merely mentions
+        # "password"/"api_key"), so a hit is rare and high-signal — logging
+        # every drop cannot spam the way the ordinary-prose transient gate can.
+        credential_hits = find_credential_markers(sentence)
+        if credential_hits:
+            log.warning(
+                "proposals: candidate dropped by the credential gate — a "
+                "secret-shaped token would have been captured verbatim "
+                "(kinds=%s). The sentence and value are NOT logged.",
+                ", ".join(sorted({h.kind for h in credential_hits})),
+            )
+            continue
         # Transient run-state belongs in episodes, never durable memory.
         transient_hits = find_transient_markers(sentence)
         if transient_hits:

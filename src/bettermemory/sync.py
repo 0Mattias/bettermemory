@@ -55,6 +55,7 @@ from ._fsutil import atomic_write_bytes, flock_excl
 from .doctor import DOCTOR_PROBE_FILENAME
 from .events import EVENT_LOG_FILENAME
 from .index import INDEX_FILENAME
+from .proposals import PROPOSALS_FILENAME
 from .semantic import EMBEDDING_FILENAME_PREFIX, EMBEDDING_FILENAME_SUFFIX
 
 # Coarse store-wide lock for push/pull. The git operations the sync
@@ -87,6 +88,17 @@ _GITIGNORE_LINES = [
     EVENT_LOG_FILENAME,
     f"{EVENT_LOG_FILENAME}.*.gz",
     f"{EMBEDDING_FILENAME_PREFIX}*{EMBEDDING_FILENAME_SUFFIX}",
+    # Write-reflex proposal queue. Host-local, transient state like the
+    # event log — but with a sharper edge: it holds RAW captured user text
+    # that never passed the write-path credential gate, so a secret-shaped
+    # capture ("my staging DB password is …") sits here verbatim until the
+    # model reviews it. Without this line `sync push`'s `git add -A` would
+    # stage, commit, and push that plaintext secret to every clone, and git
+    # history is permanent. The queue is never meant to leave the host that
+    # captured it. (`extract_proposals` also drops credential-shaped
+    # sentences at capture as defense-in-depth; this keeps the whole queue —
+    # including non-secret captures the user may not want synced — local.)
+    PROPOSALS_FILENAME,
     "*.lock",
     DOCTOR_PROBE_FILENAME,
 ]
@@ -304,6 +316,19 @@ def init(
     else:
         actions.append("repo already initialised")
 
+    # Refreshing `.gitignore` here heals an existing sync repo for FUTURE
+    # writes: a newly-ignored path (e.g. the proposals queue, added to
+    # `_GITIGNORE_LINES`) stops being staged on the next `sync push`. It does
+    # NOT untrack a file that a PRE-fix repo already committed — gitignore is
+    # silent on tracked paths. MIGRATION GAP (deliberately not automated in
+    # this round): a sync repo initialised before the proposals queue was
+    # ignored still has `.write_proposals.jsonl` tracked, and if it was ever
+    # pushed the plaintext capture is in remote history permanently. Evicting
+    # it needs `git rm --cached .write_proposals.jsonl` locally, plus a
+    # history rewrite (git-filter-repo / BFG) + force-push for anything
+    # already on the remote. A later round should add a doctor check that
+    # detects a tracked ignored-path and prints this remediation; that check
+    # is out of scope here (the fix stops the leak going forward).
     gitignore = root / ".gitignore"
     desired = "\n".join(_GITIGNORE_LINES) + "\n"
     current = gitignore.read_text(encoding="utf-8") if gitignore.exists() else ""
