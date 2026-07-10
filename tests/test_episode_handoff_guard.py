@@ -28,6 +28,7 @@ from typing import Any
 import pytest
 
 from bettermemory.config import Config, StorageConfig
+from bettermemory.handlers.episode_handoff import DESC_EPISODE_HANDOFF
 from bettermemory.server import build_server
 from bettermemory.session import SessionState
 from bettermemory.store import Store
@@ -827,4 +828,59 @@ async def test_episode_handoff_pending_promotion_not_named_after_cancel_then_pru
     # phrase, absent from the promotion note).
     assert "non-handoff tick" in note, (
         f"note must fall through to the honest hedged zero-episode text; got: {note!r}"
+    )
+
+
+# --- DESC ↔ docs/api.md `note` contract parity ------------------------------
+#
+# DESC_EPISODE_HANDOFF is the description the MODEL receives at tool-call time,
+# so it is a higher-impact surface than docs/api.md: a model that reads it must
+# reach the SAME understanding of the optional `note` key. docs/api.md was
+# corrected to document that `note` appears when the immediately-prior worktree
+# session left nothing visible (floor-only / zero-episode / promoted-out /
+# all-scope-hidden) and that `episodes` may be non-empty alongside a `note`
+# (rewind). If the DESC omits any of that, a model draws exactly the misreading
+# the correction guards against — e.g. concluding "the prior session wrote no
+# journal" for a session that journaled fine but was scope-hidden or whose
+# takeaway was promoted out into a durable memory.
+#
+# Robust to harmless rewording: each concept passes when ANY of its acceptable
+# load-bearing synonyms is present (case-insensitive). Paraphrasing the prose
+# won't break the guard — only DROPPING a concept will. Every synonym below is
+# ABSENT from the pre-fix DESC (which enumerated only `prior_session_id` and
+# `episodes`), so each parametrization is mutation-sound: it fails against the
+# pre-fix source and passes once the `note` documentation lands.
+_REQUIRED_DESC_NOTE_CONCEPTS: list[tuple[str, tuple[str, ...]]] = [
+    ("note key documented", ("`note`", "note key")),
+    ("floor-only cause", ("floor-only",)),
+    ("zero-episode cause", ("zero-episode",)),
+    ("promoted-out cause", ("promoted", "promotion")),
+    ("all-scope-hidden cause", ("scope-hidden", "scope this session has disabled")),
+    (
+        "rewind: episodes may be non-empty with a note",
+        ("rewind", "rewound", "non-empty"),
+    ),
+]
+
+
+@pytest.mark.parametrize("concept, synonyms", _REQUIRED_DESC_NOTE_CONCEPTS)
+def test_desc_episode_handoff_documents_note_contract(
+    concept: str, synonyms: tuple[str, ...]
+) -> None:
+    """The runtime tool description must document the optional `note` key and
+    each of the four empty-shape causes it can signal, keeping DESC_EPISODE_HANDOFF
+    in parity with the corrected docs/api.md `note` contract.
+
+    Mutation-soundness: the pre-fix DESC enumerated only `prior_session_id` and
+    `episodes` and contained NONE of these synonyms, so every parametrization
+    fails against the pre-fix source. The fix adds the `note` documentation, so
+    all pass post-fix.
+    """
+    desc = DESC_EPISODE_HANDOFF.lower()
+    assert any(syn in desc for syn in synonyms), (
+        f"DESC_EPISODE_HANDOFF must document the {concept!r} concept "
+        f"(any of {synonyms!r}) to stay in parity with docs/api.md's `note` "
+        f"contract; none found. The description the model reads at tool-call "
+        f"time must not drift from the documented empty-shape / rewind "
+        f"semantics."
     )
