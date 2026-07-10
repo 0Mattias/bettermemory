@@ -760,53 +760,6 @@ def commits_touching_pathspecs(
         return None
 
 
-def any_pathspec_in_history(
-    cwd: Path | None,
-    pathspecs: list[str],
-    *,
-    toplevel: Path | None = None,
-) -> bool | None:
-    """Whether at least one of `pathspecs` was ever touched by a commit
-    reachable from HEAD — i.e. it existed in this repo's tree at some
-    point in the project's history.
-
-    `pathspecs` must already be repo-root-relative forward-slash specs
-    (the output of `resolve_repo_pathspecs`). Returns:
-
-    - ``True`` — at least one spec appears somewhere in HEAD's history. A
-      since-DELETED file still counts: its removal is itself a commit that
-      touched it, so it stays discoverable — which is exactly what a
-      commit-drift anchor needs (a cited-then-deleted file is real drift,
-      not a phantom).
-    - ``False`` — git answered cleanly and NO spec ever appeared. Every
-      pathspec is a PHANTOM: a citation that `resolve_repo_pathspecs`
-      mapped LEXICALLY (it does no existence check) onto a repo-relative
-      path no commit in this repo ever touched.
-    - ``None`` — git could not answer (cwd is None, empty pathspecs, not a
-      repo, unparseable output). The caller can't judge phantom-ness and
-      should keep its conservative default.
-
-    Counted with ``rev-list --count HEAD -- <specs>`` (NOT ``--since``):
-    the question is existence-EVER, not recency. ``--count`` emits the
-    literal ``0`` for "no such path in history", which is how a confirmed
-    phantom (``False``) is told apart from a git failure (``_git`` maps a
-    non-zero exit to ``None`` → this returns ``None``).
-    """
-    if cwd is None or not pathspecs:
-        return None
-    if toplevel is None:
-        toplevel = repo_toplevel(cwd)
-        if toplevel is None:
-            return None
-    raw = _git(toplevel, "rev-list", "--count", "HEAD", "--", *pathspecs)
-    if raw is None:
-        return None
-    try:
-        return int(raw) > 0
-    except ValueError:
-        return None
-
-
 def commits_since_touching_paths(
     cwd: Path | None,
     since: datetime,
@@ -902,10 +855,9 @@ def commit_author_timestamps_touching_pathspecs(
     - ``[]`` — git answered cleanly and NO commit reachable from HEAD ever
       touched any spec. Every pathspec is a PHANTOM: a citation
       `resolve_repo_pathspecs` mapped LEXICALLY (no existence check) onto a
-      repo-relative path no commit touched. This SUBSUMES the separate
-      `any_pathspec_in_history` probe — an empty author-date log IS the
-      "no spec ever appeared in history" answer, so one git call now does
-      what two did.
+      repo-relative path no commit touched. No separate existence probe is
+      needed: an empty author-date log IS the "no spec ever appeared in
+      history" answer, so one git call answers both questions.
     - ``[ts, ...]`` — author timestamps (timezone-aware) of the touching
       commits, in git's emit order (newest-first); sort before bisect. A
       since-DELETED cited file still lands here: its removal is itself a
@@ -1129,7 +1081,6 @@ def _canonicalize_azure(
 
 __all__ = [
     "Origin",
-    "any_pathspec_in_history",
     "capture",
     "commit_author_timestamps",
     "commit_author_timestamps_touching_pathspecs",

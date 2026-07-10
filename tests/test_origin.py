@@ -12,9 +12,9 @@ import pytest
 
 from bettermemory.origin import (
     Origin,
-    any_pathspec_in_history,
     capture,
     commit_author_timestamps,
+    commit_author_timestamps_touching_pathspecs,
     commits_since,
     commits_since_touching_paths,
     repos_match,
@@ -906,27 +906,34 @@ def test_commits_since_touching_paths_counts_from_repo_subdirectory(
 
 
 # ---------------------------------------------------------------------------
-# any_pathspec_in_history — phantom vs real anchor discrimination
+# commit_author_timestamps_touching_pathspecs — the three-valued contract
+# `verify.resolve_commit_drift_count` depends on. `None` (git can't answer)
+# must stay distinguishable from `[]` (clean answer: every anchor is a
+# phantom), because the caller maps the first to a conservative count and the
+# second to "not applicable". These pin the primitive directly; the
+# drift-level consequences are pinned in test_verify.py.
 # ---------------------------------------------------------------------------
 
 
-def test_any_pathspec_in_history_none_for_none_cwd() -> None:
-    assert any_pathspec_in_history(None, ["x.py"]) is None
+def test_author_timestamps_touching_none_for_none_cwd() -> None:
+    assert commit_author_timestamps_touching_pathspecs(None, ["x.py"]) is None
 
 
-def test_any_pathspec_in_history_none_for_empty_pathspecs(tmp_path: Path) -> None:
-    assert any_pathspec_in_history(tmp_path, []) is None
+def test_author_timestamps_touching_none_for_empty_pathspecs(tmp_path: Path) -> None:
+    assert commit_author_timestamps_touching_pathspecs(tmp_path, []) is None
 
 
-def test_any_pathspec_in_history_none_outside_repo(tmp_path: Path) -> None:
-    """Not a git repo — existence is unknowable, so None (NOT False). The
-    caller must keep its conservative default rather than treat every anchor
-    as phantom on an infrastructure failure."""
-    assert any_pathspec_in_history(tmp_path, ["x.py"]) is None
+def test_author_timestamps_touching_none_outside_repo(tmp_path: Path) -> None:
+    """Not a git repo — existence is unknowable, so None (NOT []). The caller
+    must keep its conservative count rather than treat every anchor as a
+    phantom on an infrastructure failure."""
+    assert commit_author_timestamps_touching_pathspecs(tmp_path, ["x.py"]) is None
 
 
 @pytest.mark.skipif(not _GIT_AVAILABLE, reason="git not on PATH")
-def test_any_pathspec_in_history_true_for_touched_file(tmp_path: Path) -> None:
+def test_author_timestamps_touching_returns_author_dates_for_touched_file(
+    tmp_path: Path,
+) -> None:
     _init_repo(tmp_path)
     _commit_file(
         tmp_path,
@@ -934,15 +941,19 @@ def test_any_pathspec_in_history_true_for_touched_file(tmp_path: Path) -> None:
         content="x = 1\n",
         when=datetime(2026, 1, 1, tzinfo=timezone.utc),
     )
-    assert any_pathspec_in_history(tmp_path, ["real.py"]) is True
+    stamps = commit_author_timestamps_touching_pathspecs(tmp_path, ["real.py"])
+    assert stamps is not None
+    assert [ts.astimezone(timezone.utc) for ts in stamps] == [
+        datetime(2026, 1, 1, tzinfo=timezone.utc)
+    ]
 
 
 @pytest.mark.skipif(not _GIT_AVAILABLE, reason="git not on PATH")
-def test_any_pathspec_in_history_false_for_phantom_pathspec(tmp_path: Path) -> None:
-    """A pathspec no commit ever touched is a CONFIRMED phantom — False,
-    which the caller distinguishes from the None a git failure yields (this
-    is the whole point of using `rev-list --count`, whose literal `0`
-    survives `_git`'s truthiness filter)."""
+def test_author_timestamps_touching_empty_for_phantom_pathspec(tmp_path: Path) -> None:
+    """A pathspec no commit ever touched yields a CONFIRMED phantom — the
+    empty list, which the caller distinguishes from the None a git failure
+    yields. That split is the whole point of `_git(empty_ok=True)`: `git log`
+    exits 0 with empty stdout here, and non-zero when git itself can't run."""
     _init_repo(tmp_path)
     _commit_file(
         tmp_path,
@@ -950,13 +961,16 @@ def test_any_pathspec_in_history_false_for_phantom_pathspec(tmp_path: Path) -> N
         content="x = 1\n",
         when=datetime(2026, 1, 1, tzinfo=timezone.utc),
     )
-    assert any_pathspec_in_history(tmp_path, ["never/existed.py"]) is False
+    assert (
+        commit_author_timestamps_touching_pathspecs(tmp_path, ["never/existed.py"])
+        == []
+    )
 
 
 @pytest.mark.skipif(not _GIT_AVAILABLE, reason="git not on PATH")
-def test_any_pathspec_in_history_true_for_deleted_file(tmp_path: Path) -> None:
+def test_author_timestamps_touching_nonempty_for_deleted_file(tmp_path: Path) -> None:
     """A since-deleted file is REAL, not phantom: its add and its removal are
-    both commits that touched it, so it stays in history. This is what keeps
+    both commits that touched it, so it stays in the log. This is what keeps
     deleted-file commit drift working under the phantom-anchor guard."""
     _init_repo(tmp_path)
     _commit_file(
@@ -979,7 +993,8 @@ def test_any_pathspec_in_history_true_for_deleted_file(tmp_path: Path) -> None:
         capture_output=True,
         env=env,
     )
-    assert any_pathspec_in_history(tmp_path, ["gone.py"]) is True
+    stamps = commit_author_timestamps_touching_pathspecs(tmp_path, ["gone.py"])
+    assert stamps, "a deleted-but-cited file must stay in history, not read as phantom"
 
 
 # ---------------------------------------------------------------------------

@@ -1318,11 +1318,10 @@ def resolve_commit_drift_count(
         # `src/pkg/handlers/x.py`, `Notes.md` sheared off `docs/My Notes.md`)
         # that `resolve_repo_pathspecs` mapped LEXICALLY onto a repo-relative
         # path no commit touched. A phantom is NOT clean; it is NOT
-        # APPLICABLE, exactly like an anchor that escapes the repo. This is
-        # the old `any_pathspec_in_history` probe folded into the one log
-        # call: an empty author-date log IS "no spec ever appeared in
-        # history". A since-deleted cited file never reaches here — its
-        # removal commit keeps it in the log — so it still counts as real.
+        # APPLICABLE, exactly like an anchor that escapes the repo. No extra
+        # existence probe is needed: an empty author-date log IS "no spec ever
+        # appeared in history". A since-deleted cited file never reaches here —
+        # its removal commit keeps it in the log — so it still counts as real.
         return None
     # EXACT author-date count via the same `bisect_right` boundary the
     # unfiltered count uses (`compute_commit_drift` and the search / health
