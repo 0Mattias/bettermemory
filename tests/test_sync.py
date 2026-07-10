@@ -8,6 +8,7 @@ hermetic.
 
 from __future__ import annotations
 
+import fnmatch
 import shutil
 import subprocess
 from pathlib import Path
@@ -105,6 +106,85 @@ def test_init_is_idempotent(memory_dir: Path) -> None:
     # .gitignore should not be duplicated.
     ignore = (memory_dir / ".gitignore").read_text()
     assert ignore.count(".index.sqlite\n") == 1
+
+
+# Store-root sidecars that are DELIBERATELY tracked by the sync repo. Empty
+# today: everything the runtime writes beside the memories is host-local or
+# regenerable. An entry here is a conscious decision that a sidecar's contents
+# are portable across hosts AND worth versioning — not a place to silence the
+# guard below.
+_INTENTIONALLY_SYNCED_SIDECARS: frozenset[str] = frozenset()
+
+
+def _sidecar_filename_constants() -> dict[str, str]:
+    """Every `*_FILENAME` constant in the package whose value is a dotfile.
+
+    Discovered by walking the package rather than hand-listed, because the
+    whole point of the guard is to catch a sidecar whose author never thought
+    about `sync`. Modules whose optional dependency is absent (`web` without
+    the `[ui]` extra, on the embeddings CI legs) are skipped — none of them
+    own a store-root sidecar.
+    """
+    import importlib
+    import pkgutil
+
+    import bettermemory
+
+    found: dict[str, str] = {}
+    for mod_info in pkgutil.iter_modules(bettermemory.__path__):
+        try:
+            mod = importlib.import_module(f"bettermemory.{mod_info.name}")
+        except ImportError:
+            continue
+        for attr in dir(mod):
+            if not attr.endswith("_FILENAME"):
+                continue
+            value = getattr(mod, attr)
+            if isinstance(value, str) and value.startswith("."):
+                found[attr] = value
+    return found
+
+
+def test_every_store_root_sidecar_is_gitignored() -> None:
+    """STRUCTURAL GUARD. `sync push` runs `git add -A`, so any file the
+    runtime writes into the store root that is absent from `_GITIGNORE_LINES`
+    is staged, committed, and pushed to every clone — permanently, in
+    plaintext. This has now happened three times, each time silently: the
+    write-reflex proposal queue (raw user text that never passed the
+    credential gate), orphaned atomic-write `*.tmp` sidecars (which carry a
+    full memory body), and the ingest watermark (absolute host paths).
+
+    Every leak shared a shape: the sidecar's `*_FILENAME` constant lives in
+    its owning module, `sync.py` must list it by hand, and forgetting to
+    breaks NO test. In a file-disjoint parallel audit the sidecar and the
+    denylist even land in different agents' scopes, so nobody sees the seam.
+
+    So the guard discovers the constants instead of trusting a hand-list: any
+    `*_FILENAME` whose value is a dotfile must be matched by some pattern in
+    `_GITIGNORE_LINES` (literal or glob). A new sidecar therefore fails HERE,
+    at the moment it is introduced, rather than on someone's remote."""
+    patterns = [
+        line for line in sync._GITIGNORE_LINES if not line.lstrip().startswith("#")
+    ]
+    sidecars = _sidecar_filename_constants()
+    # Sanity: discovery works at all. If this trips, the walk broke, not sync.
+    assert "EVENT_LOG_FILENAME" in sidecars, (
+        f"sidecar discovery found nothing recognisable: {sorted(sidecars)}"
+    )
+
+    unignored = {
+        const: value
+        for const, value in sidecars.items()
+        if value not in _INTENTIONALLY_SYNCED_SIDECARS
+        and not any(fnmatch.fnmatch(value, pat) for pat in patterns)
+    }
+    assert not unignored, (
+        "store-root sidecar(s) missing from sync._GITIGNORE_LINES — "
+        f"`sync push` would commit and push them to every clone: {unignored}. "
+        "Add each constant to _GITIGNORE_LINES (import it from its owning "
+        "module), or, if the file is genuinely portable and worth versioning, "
+        "add its value to _INTENTIONALLY_SYNCED_SIDECARS with a rationale."
+    )
 
 
 def test_init_uses_atomic_write_for_gitignore(

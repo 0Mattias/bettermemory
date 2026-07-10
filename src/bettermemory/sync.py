@@ -52,6 +52,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from ._fsutil import atomic_write_bytes, flock_excl
+from .consolidate import AUTO_CONSOLIDATE_CLOCK_FILENAME
 from .doctor import DOCTOR_PROBE_FILENAME
 from .events import EVENT_LOG_FILENAME
 from .index import INDEX_FILENAME
@@ -108,6 +109,13 @@ _GITIGNORE_LINES = [
     # inherited them would believe it had already imported sources it has
     # never seen — suppressing the very check the watermark exists to feed.
     INGEST_WATERMARK_FILENAME,
+    # Auto-consolidate debounce clock: the ISO timestamp of the last
+    # auto-consolidate DECISION on THIS host. Syncing it makes every clone
+    # overwrite the others' debounce state — a pull could mark a host as
+    # "just consolidated" when it never has, or conflict on a file that is
+    # rewritten on every decision. Host-local by construction, like the
+    # event log it was deliberately decoupled from.
+    AUTO_CONSOLIDATE_CLOCK_FILENAME,
     "*.lock",
     # Orphaned atomic-write temp files. `_fsutil.atomic_write_bytes` writes
     # `<target>.<random>.tmp` next to its target and only unlinks it inside a
