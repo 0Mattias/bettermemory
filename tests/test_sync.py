@@ -132,6 +132,12 @@ def _sidecar_filename_constants() -> dict[str, str]:
     auto-consolidate clock is precedent for exactly the kind of store-root
     state file a handler could own.
 
+    Keyed by QUALIFIED name (`module.ATTR`), not by the bare attribute: two
+    modules may legitimately pick the same constant name for different files,
+    and a dict keyed on the attribute alone would silently drop one of them.
+    If the survivor happened to be gitignored, the other would leak past the
+    guard — the precise failure this guard exists to make impossible.
+
     A module that cannot be imported is skipped rather than failing the guard;
     `onerror` swallows package-level import errors the same way. Today every
     module imports cleanly (optional deps are all lazily imported inside
@@ -156,7 +162,7 @@ def _sidecar_filename_constants() -> dict[str, str]:
                 continue
             value = getattr(mod, attr)
             if isinstance(value, str) and value.startswith("."):
-                found[attr] = value
+                found[f"{mod_info.name}.{attr}"] = value
     return found
 
 
@@ -187,13 +193,13 @@ def test_every_store_root_sidecar_is_gitignored() -> None:
     ]
     sidecars = _sidecar_filename_constants()
     # Sanity: discovery works at all. If this trips, the walk broke, not sync.
-    assert "EVENT_LOG_FILENAME" in sidecars, (
+    assert any(name.endswith(".EVENT_LOG_FILENAME") for name in sidecars), (
         f"sidecar discovery found nothing recognisable: {sorted(sidecars)}"
     )
 
     unignored = {
-        const: value
-        for const, value in sidecars.items()
+        qualname: value
+        for qualname, value in sidecars.items()
         if value not in _INTENTIONALLY_SYNCED_SIDECARS
         and not any(fnmatch.fnmatch(value, pat) for pat in patterns)
     }
@@ -228,10 +234,35 @@ def test_sidecar_discovery_descends_into_subpackages(
         raising=False,
     )
     found = _sidecar_filename_constants()
-    assert found.get("PLANTED_SIDECAR_FILENAME") == ".planted-sidecar.json", (
+    assert (
+        found.get("bettermemory.handlers.write.PLANTED_SIDECAR_FILENAME")
+        == ".planted-sidecar.json"
+    ), (
         "sidecar discovery did not descend into bettermemory.handlers — a "
         "store-root sidecar declared in a subpackage would leak past the guard. "
         f"discovered: {sorted(found)}"
+    )
+
+
+def test_sidecar_discovery_does_not_collide_on_shared_constant_names(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Two modules may pick the same constant name for different files. Keyed
+    on the bare attribute, one silently overwrote the other — and if the
+    survivor happened to be gitignored, the loser leaked past the guard while
+    it reported success. Discovery keys by qualified name, so both survive and
+    both get checked."""
+    from bettermemory import store as store_mod
+    from bettermemory.handlers import write as write_handler
+
+    monkeypatch.setattr(store_mod, "DUP_FILENAME", ".alpha-sidecar.json", raising=False)
+    monkeypatch.setattr(
+        write_handler, "DUP_FILENAME", ".beta-sidecar.json", raising=False
+    )
+    values = set(_sidecar_filename_constants().values())
+    assert {".alpha-sidecar.json", ".beta-sidecar.json"} <= values, (
+        "same-named sidecar constants in two modules collided; one was dropped "
+        f"from discovery and would leak past the guard. discovered: {sorted(values)}"
     )
 
 
