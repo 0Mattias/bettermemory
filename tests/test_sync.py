@@ -362,6 +362,86 @@ def test_push_does_not_stage_proposals_queue(
     )
 
 
+def test_push_does_not_stage_atomic_write_tmp_orphans(
+    memory_dir: Path, bare_remote: Path
+) -> None:
+    """Orphaned atomic-write `*.tmp` sidecars must never sync.
+
+    `_fsutil.atomic_write_bytes` writes `<target>.<random>.tmp` next to its
+    target and only unlinks it inside a caught-exception `finally` — a hard
+    crash / SIGKILL / power loss between tmp creation and `os.replace` leaves
+    the orphan behind. That orphan carries the SAME plaintext payload as the
+    file it was about to become: a full memory body (`<mem>.md.<rand>.tmp`) or
+    the raw-capture proposals queue (`.write_proposals.jsonl.<rand>.tmp`, which
+    is host-local by design and never meant to leave the capturing host).
+    Without a `*.tmp` glob in `_GITIGNORE_LINES` the next `sync push`'s
+    `git add -A` stages, commits, and pushes that orphan to every clone, where
+    git history makes it permanent — the same leak class the PROPOSALS_FILENAME
+    line closes for the committed queue, reopened through the tmp sidecar.
+
+    Mutation-sound: drop `"*.tmp"` from `sync._GITIGNORE_LINES` and the
+    committed-tree, check-ignore, and remote-history assertions all fail — both
+    orphans get staged, committed, and pushed with their secrets intact."""
+    sync.init(memory_dir, remote=str(bare_remote))
+    store = Store(memory_dir)
+    # A real memory gives the push canonical content to commit, and its
+    # on-disk path is the faithful base for the tmp-orphan name.
+    memory = store.write(content="durable fact", scopes=["tools"])
+    mem_path = store._find_path_for_id(memory.id)
+    assert mem_path is not None
+
+    # Orphan #1: a crash mid-write of a memory body strands
+    # `<mem>.md.<rand>.tmp` next to the real memory file.
+    mem_secret = "Qw83Zx01Vb52Nm"  # synthetic test fixture, not a live secret
+    mem_tmp = mem_path.with_name(mem_path.name + ".a1b2c3.tmp")
+    mem_tmp.write_text(
+        f"---\nid: {memory.id}\n---\nprivate memory body {mem_secret}\n",
+        encoding="utf-8",
+    )
+    # Orphan #2: a crash mid-write of the proposals queue strands
+    # `.write_proposals.jsonl.<rand>.tmp` holding a raw (never-gated) capture.
+    queue_secret = "Xk92mQz7Lp4R9t"  # synthetic test fixture, not a live secret
+    queue_tmp = memory_dir / f"{PROPOSALS_FILENAME}.d4e5f6.tmp"
+    queue_tmp.write_text(
+        f"my staging DB password is {queue_secret}\n", encoding="utf-8"
+    )
+
+    result = sync.push(memory_dir)
+    assert result["pushed"] is True
+
+    # Neither orphan may appear in the committed tree (local HEAD).
+    committed = _git(memory_dir, "ls-tree", "-r", "--name-only", "HEAD").splitlines()
+    assert mem_tmp.name not in committed, (
+        f"memory-body tmp orphan leaked into the committed tree: {committed}"
+    )
+    assert queue_tmp.name not in committed, (
+        f"proposals-queue tmp orphan leaked into the committed tree: {committed}"
+    )
+
+    # git itself agrees both orphans are ignored (rc==0 means "is ignored").
+    for orphan in (mem_tmp.name, queue_tmp.name):
+        check = subprocess.run(
+            ["git", "check-ignore", orphan],
+            cwd=memory_dir,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        assert check.returncode == 0, (
+            f"{orphan} is not gitignored (git check-ignore rc="
+            f"{check.returncode}); `sync push` would stage it"
+        )
+
+    # And neither secret reached the remote's permanent history.
+    remote_history = _git(bare_remote, "log", "-p", "--all")
+    assert mem_secret not in remote_history, (
+        "memory body from an atomic-write tmp orphan reached the remote history"
+    )
+    assert queue_secret not in remote_history, (
+        "raw capture from a proposals-queue tmp orphan reached the remote history"
+    )
+
+
 def test_push_errors_without_remote(memory_dir: Path) -> None:
     """A push against a repo with no `origin` should raise SyncError
     with an actionable message. The CLI catches this and renders a
@@ -698,4 +778,15 @@ def test_gitignore_lines_include_canonical_filename_constants() -> None:
         f"sync._GITIGNORE_LINES missing embedding-cache glob "
         f"({embedding_glob!r}) built from "
         f"semantic.EMBEDDING_FILENAME_PREFIX / SUFFIX"
+    )
+    # Orphaned atomic-write `*.tmp` sidecars carry the same plaintext payload
+    # as the file they were about to become (a memory body, or the raw-capture
+    # proposals queue). `_fsutil.atomic_write_bytes` strands one when a crash
+    # lands between tmp creation and `os.replace`; without this glob the next
+    # `sync push` stages it. Pin the literal so a refactor of
+    # `_GITIGNORE_LINES` can't silently drop the guard.
+    assert "*.tmp" in sync._GITIGNORE_LINES, (
+        "sync._GITIGNORE_LINES missing the '*.tmp' glob; orphaned "
+        "atomic_write_bytes temp files (which carry raw memory / proposal "
+        "payloads) would be staged, committed, and pushed by `sync push`"
     )

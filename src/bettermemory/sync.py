@@ -100,6 +100,21 @@ _GITIGNORE_LINES = [
     # including non-secret captures the user may not want synced — local.)
     PROPOSALS_FILENAME,
     "*.lock",
+    # Orphaned atomic-write temp files. `_fsutil.atomic_write_bytes` writes
+    # `<target>.<random>.tmp` next to its target and only unlinks it inside a
+    # caught-exception `finally` — a hard crash / SIGKILL / power loss between
+    # tmp creation and `os.replace` leaves the orphan behind. Crucially that
+    # orphan carries the SAME payload as the file it was about to become: a
+    # full memory body (`<id>.md.<rand>.tmp`) or the raw-capture proposals
+    # queue (`.write_proposals.jsonl.<rand>.tmp`, host-local by design, never
+    # to sync). Without this glob the next `sync push`'s `git add -A` stages,
+    # commits, and pushes that plaintext orphan to every clone, where git
+    # history makes it permanent — precisely the leak class the
+    # PROPOSALS_FILENAME line above closes for the committed queue, reopened
+    # through the tmp sidecar. Every atomic writer in the codebase shares this
+    # `.tmp` suffix (`tempfile.NamedTemporaryFile(..., suffix=".tmp")`), so one
+    # glob covers them all.
+    "*.tmp",
     DOCTOR_PROBE_FILENAME,
 ]
 
