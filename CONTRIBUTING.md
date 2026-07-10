@@ -29,13 +29,18 @@ pytest -m "not no_extras"         # skip the embeddings-required slot
 ruff check .
 ruff format --check .
 mypy                              # strict, primary type gate
+mypy --platform win32             # the Windows leg's type errors, locally
 pyright                           # secondary type gate (scoped to src/)
 
 # Bench (not part of the test suite):
 python bench/storage.py --sizes 1000,10000,50000
 ```
 
-CI runs `uv sync --extra dev --extra ui` followed by `ruff check . && ruff format --check . && mypy && pytest -q` on Python 3.11, 3.12, 3.13, and 3.14 (Ubuntu) plus 3.14 macOS and Windows slots, with an 80% coverage floor enforced via `--cov-fail-under`. A separate job runs `pyright` (the secondary type gate, scoped to `src/`) on 3.14. The `[ui]` extra is installed alongside `[dev]` so mypy and pyright can resolve the `fastapi` / `uvicorn` imports in `src/bettermemory/web.py` (strict mode flags missing types on imported decorators) and so `tests/test_web.py` runs as actual coverage. Anything that passes locally with that exact sync command should pass CI; anything that fails CI is blocking on merge.
+CI runs `uv sync --extra dev --extra ui` followed by `ruff check . && ruff format --check . && mypy && pytest -q` on Python 3.11, 3.12, 3.13, and 3.14 (Ubuntu) plus 3.14 macOS and Windows slots, with an 80% coverage floor enforced via `--cov-fail-under`. A separate job runs `pyright` (the secondary type gate, scoped to `src/`) on 3.14. The `[ui]` extra is installed alongside `[dev]` so mypy and pyright can resolve the `fastapi` / `uvicorn` imports in `src/bettermemory/web.py` (strict mode flags missing types on imported decorators) and so `tests/test_web.py` runs as actual coverage. Anything that fails CI is blocking on merge.
+
+Note the scopes differ: `mypy` type-checks `src/` **and** `tests/`, `pyright` only `src/`. So a type error in a test file goes red via mypy, not pyright.
+
+**A local green does not imply a green matrix.** The macOS dev loop cannot see the Windows slot, and POSIX-only attributes (`signal.SIGHUP`, `signal.SIGKILL`, `os.fork`, `fcntl`) sit behind `if sys.platform != "win32"` in typeshed — so a bare reference type-checks here and fails `windows-latest` with `attr-defined`. A `@pytest.mark.skipif(sys.platform == "win32")` marker does not help: mypy checks the whole file regardless of runtime markers. Guard the *reference*, not the execution — bind it once (`_SIGHUP: int = getattr(signal, "SIGHUP", 1)`) or use the raw signal number with a comment. `mypy --platform win32` selects the same conditional stubs and catches this in seconds instead of ~17 minutes of CI. It swaps stubs only, so it will not reproduce Windows *runtime* behavior (path handling, CRLF, the `fcntl` no-op locking fallback) — that still needs the real runner.
 
 ## Pull request conventions
 

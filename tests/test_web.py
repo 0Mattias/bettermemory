@@ -935,6 +935,17 @@ def test_watch_tunnel_provider_quiet_on_clean_shutdown(caplog: Any) -> None:
 # and they track BOTH the shim and the provider under it.
 
 
+# `signal.SIGHUP` / `signal.SIGKILL` do not exist in the Windows `signal`
+# stubs, so mypy's windows-latest leg rejects a bare attribute reference —
+# even inside a test that `skipif`s off Windows at runtime, because mypy type-
+# checks the whole file regardless of the marker. (The `hasattr` guard inside
+# `_LIFECYCLE_DRIVER` below is invisible to mypy: it lives in a string.) Bind
+# the POSIX numbers once, guarded; the fallbacks are the POSIX values and are
+# never reached on a platform where these tests actually run.
+_SIGHUP: int = getattr(signal, "SIGHUP", 1)
+_SIGKILL: int = getattr(signal, "SIGKILL", 9)
+
+
 _LIFECYCLE_DRIVER = """
 import os
 import signal
@@ -1144,7 +1155,7 @@ def test_tunnel_survives_sighup_when_inherited_sig_ign(memory_dir: Path) -> None
         # Hang up the whole tree. Every process inherited SIG_IGN, so a
         # convention-respecting build ignores it and nothing tears down.
         for pid in (driver.pid, shim_pid, provider_pid):
-            os.kill(pid, signal.SIGHUP)
+            os.kill(pid, _SIGHUP)
         # Give a would-be handler ample time to reap + re-raise before
         # asserting survival: pre-fix the driver is already dead here.
         time.sleep(2.0)
@@ -1166,7 +1177,7 @@ def test_tunnel_survives_sighup_when_inherited_sig_ign(memory_dir: Path) -> None
         # can't leak them, then let _cleanup_driver stop the driver.
         for pid in (provider_pid, shim_pid):
             with contextlib.suppress(ProcessLookupError):
-                os.kill(pid, signal.SIGKILL)
+                os.kill(pid, _SIGKILL)
         _cleanup_driver(driver)
 
 
@@ -1184,8 +1195,8 @@ def test_tunnel_child_reaped_on_sighup_default_disposition(memory_dir: Path) -> 
     try:
         assert _pid_alive(shim_pid)
         assert _pid_alive(provider_pid)
-        driver.send_signal(signal.SIGHUP)
-        assert driver.wait(timeout=10) == -signal.SIGHUP
+        driver.send_signal(_SIGHUP)
+        assert driver.wait(timeout=10) == -_SIGHUP
         _wait_pid_gone(shim_pid, timeout=5.0)
         _wait_pid_gone(provider_pid, timeout=5.0)
     finally:
