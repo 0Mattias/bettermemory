@@ -43,6 +43,7 @@ from bettermemory.audit import (
 from bettermemory.config import Config, StorageConfig
 from bettermemory.eval import (
     compute_eval,
+    compute_threshold_sweep,
     compute_widening_detail,
     compute_widening_preview,
     render_widening_detail_text,
@@ -947,6 +948,91 @@ def test_widening_lanes_survive_poison_top_hit_element() -> None:
     assert detail.v1_baseline_flagged == 1
     w1_detail = next(r for r in detail.rules if r.rule == "w1_top1_v2_high")
     assert w1_detail.flagged_total == 1
+
+
+# ---------------------------------------------------------------------------
+# Threshold sweep: same poison-element threat model, separate collection walk
+# ---------------------------------------------------------------------------
+#
+# `eval --threshold-sweep` runs through `compute_threshold_sweep`, a
+# DIFFERENT function from the widening lanes' `_collect_replayable_audits`,
+# with its own collection walk that validated only `isinstance(top_hits,
+# list)`. The same hand-edited-log poison class therefore reached the rule
+# predicates here too — and the v3 dominance rule reads the SECOND hit
+# (`top_hits[1]`), so a single top-hit guard is insufficient for this lane.
+
+
+def _sweep_hit(score: float = 100.0, relevance: str = "high") -> dict[str, Any]:
+    """A canonical `search_miss` top-hit dict the strict-sweep rules read
+    (`relevance` gates v1; `score` gates v2/v3)."""
+    return {"id": "mem-A", "score": score, "relevance": relevance}
+
+
+def test_threshold_sweep_survives_poison_top_hit_element() -> None:
+    """One hand-edited `top_hits=["junk"]` search_miss — a non-dict FIRST
+    element — must not take down `--threshold-sweep`.
+
+    Pre-fix, `compute_threshold_sweep`'s walk validated only that
+    `top_hits` was a list, so the poison row entered the replay set and
+    `_rule_v1_top1_high` detonated at `top_hits[0].get("relevance")` with
+    AttributeError — killing the whole sweep even alongside good rows. The
+    choke-point element guard buckets the poison row into the observable
+    `skipped_legacy_event_count` footnote (mirroring how the widening lane
+    counts a non-dict top hit as feature-less) while the good row replays."""
+    now = datetime(2026, 5, 20, 12, 0, tzinfo=timezone.utc)
+    events = [
+        _ev("search_miss", recent_retrieval_count=0, top_hits=[_sweep_hit()]),
+        # The poison: a non-empty top_hits list whose only entry is a bare
+        # string, not the expected hit dict.
+        _ev("search_miss", recent_retrieval_count=0, top_hits=["junk"]),
+    ]
+
+    report = compute_threshold_sweep(events, now=now)
+
+    # Completed without raising; the good row still replays.
+    assert report.replayable_misses == 1
+    v1 = next(r for r in report.rows if r.rule == "v1_top1_high")
+    assert v1.would_flag == 1
+    # The poison row is accounted for, not silently dropped.
+    assert report.skipped_legacy_event_count == 1
+    assert report.total_events_scanned == 2
+
+
+def test_threshold_sweep_survives_poison_second_top_hit_element() -> None:
+    """A MIXED `top_hits=[{valid high hit}, "junk"]` search_miss — a
+    perfectly valid top hit followed by a non-dict SECOND element — must
+    not take down `--threshold-sweep`.
+
+    This is the case a single `top_hits[0]` guard would MISS: v1/v2 read
+    only the top hit and are fine, but `_rule_v3_top1_high_dominant`
+    reaches `top_hits[1].get("score")` and detonated with AttributeError
+    pre-fix — so the guard has to cover index 0 AND index 1. The good row
+    (which every rule flags) still replays; the poison row is bucketed as
+    a skipped row rather than crashing the run."""
+    now = datetime(2026, 5, 20, 12, 0, tzinfo=timezone.utc)
+    events = [
+        _ev("search_miss", recent_retrieval_count=0, top_hits=[_sweep_hit()]),
+        # The poison: a valid high-scoring top hit, then a bare string as
+        # the second element — only the v3 dominance rule reads it.
+        _ev(
+            "search_miss",
+            recent_retrieval_count=0,
+            top_hits=[_sweep_hit(), "junk"],
+        ),
+    ]
+
+    report = compute_threshold_sweep(events, now=now)
+
+    # Completed without raising; the good row still replays under every
+    # rule, including the v3 lane whose second-hit read was the crash site.
+    assert report.replayable_misses == 1
+    v1 = next(r for r in report.rows if r.rule == "v1_top1_high")
+    assert v1.would_flag == 1
+    v3 = next(r for r in report.rows if r.rule == "v3_top1_high_dominant")
+    assert v3.would_flag == 1
+    # The poison row is accounted for, not silently dropped.
+    assert report.skipped_legacy_event_count == 1
+    assert report.total_events_scanned == 2
 
 
 # ---------------------------------------------------------------------------

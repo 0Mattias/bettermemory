@@ -1317,6 +1317,24 @@ def compute_threshold_sweep(
             if isinstance(ev.get("top_hit_ids"), list):
                 buffered.append((ts, None, 0))
             continue
+        # Element guard, not just the container: the event log is
+        # plaintext + git-synced + hand-editable, so a well-formed list
+        # whose hit at a rule-read position isn't a dict clears the list
+        # check above but detonates at `top_hits[0].get(...)` in
+        # `_rule_v1_top1_high` (`top_hits=["junk"]`) or, for a MIXED
+        # `[{good high hit}, "junk"]`, at `top_hits[1].get(...)` in
+        # `_rule_v3_top1_high_dominant` — which reads the SECOND hit, so
+        # guarding index 0 alone (as the widening lane does, reading only
+        # its top hit) is insufficient here; both index 0 AND index 1 are
+        # checked. A non-dict at a read position leaves no replayable
+        # decision, so the row buckets as legacy — same None sentinel,
+        # same cutoff resolution — the way the widening lane counts a
+        # non-dict top hit as feature-less.
+        if (top_hits and not isinstance(top_hits[0], dict)) or (
+            len(top_hits) >= 2 and not isinstance(top_hits[1], dict)
+        ):
+            buffered.append((ts, None, 0))
+            continue
         recent = ev.get("recent_retrieval_count")
         # `bool` ⊂ `int` — same caveat as `_silent_miss_from_event`.
         if not isinstance(recent, int) or isinstance(recent, bool):
