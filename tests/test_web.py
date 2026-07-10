@@ -667,20 +667,29 @@ def test_find_tailscale_darwin_app_bundle_fallback(
     """The macOS Tailscale app ships its CLI inside the app bundle
     without touching PATH; `_find_tailscale` must probe that location
     so bare --tunnel works on the most common desktop install."""
+    import shutil
+    import sys
+
     from bettermemory import web
 
+    # Patch the stdlib singletons directly (web.py imports the same
+    # module objects), not `web.shutil` / `web.sys` — reaching a
+    # re-imported stdlib module through another module trips mypy's
+    # no_implicit_reexport, and the effect is identical.
     fake_cli = tmp_path / "Tailscale"
     fake_cli.write_bytes(b"")
-    monkeypatch.setattr(web.shutil, "which", lambda _name: None)
+    monkeypatch.setattr(shutil, "which", lambda _name: None)
     monkeypatch.setattr(web, "_MACOS_TAILSCALE_APP_CLI", str(fake_cli))
-    monkeypatch.setattr(web.sys, "platform", "darwin")
+    monkeypatch.setattr(sys, "platform", "darwin")
     assert web._find_tailscale() == str(fake_cli)
 
 
 def test_find_tailscale_prefers_path_over_bundle(monkeypatch: Any) -> None:
+    import shutil
+
     from bettermemory import web
 
-    monkeypatch.setattr(web.shutil, "which", lambda _name: "/usr/local/bin/tailscale")
+    monkeypatch.setattr(shutil, "which", lambda _name: "/usr/local/bin/tailscale")
     assert web._find_tailscale() == "/usr/local/bin/tailscale"
 
 
@@ -709,6 +718,7 @@ def test_start_tunnel_warns_only_for_public_providers(
     personal memory store — the warning is load-bearing. The
     tailnet-only provider must NOT cry wolf."""
     import logging as _logging
+    import subprocess
 
     from bettermemory import web
 
@@ -718,7 +728,7 @@ def test_start_tunnel_warns_only_for_public_providers(
         def __init__(self, argv: list[str]) -> None:
             spawned.append(argv)
 
-    monkeypatch.setattr(web.subprocess, "Popen", _FakeProc)
+    monkeypatch.setattr(subprocess, "Popen", _FakeProc)
 
     with caplog.at_level(_logging.WARNING, logger="bettermemory.web"):
         web._start_tunnel("tailnet", "/bin/ts", 8765)
@@ -736,11 +746,13 @@ def test_serve_tunnel_rejects_non_loopback_host(monkeypatch: Any) -> None:
     """--tunnel + a non-loopback bind is a contradiction: the tunnel
     is the front door. Must fail fast, before any process spawns or
     port binds."""
+    import subprocess
+
     from bettermemory import web
 
     pytest.importorskip("uvicorn")
     spawned: list[list[str]] = []
-    monkeypatch.setattr(web.subprocess, "Popen", lambda argv: spawned.append(argv))
+    monkeypatch.setattr(subprocess, "Popen", lambda argv: spawned.append(argv))
     cfg = Config(storage=StorageConfig(directory="/tmp/nonexistent-ro"))
     with pytest.raises(web.TunnelError, match="loopback"):
         web.serve(cfg, host="0.0.0.0", port=8765, tunnel="auto")
@@ -753,6 +765,8 @@ def test_serve_tunnel_spawns_provider_and_terminates(
     """End-to-end wiring of serve(tunnel=...): resolves the provider,
     spawns the right argv, builds the READ-ONLY app, and terminates
     the tunnel child when uvicorn returns."""
+    import subprocess
+
     import uvicorn
 
     from bettermemory import web
@@ -781,7 +795,7 @@ def test_serve_tunnel_spawns_provider_and_terminates(
         events.append("uvicorn")
 
     monkeypatch.setattr(web, "_find_tailscale", lambda: "/bin/ts")
-    monkeypatch.setattr(web.subprocess, "Popen", _FakeProc)
+    monkeypatch.setattr(subprocess, "Popen", _FakeProc)
     monkeypatch.setattr(uvicorn, "run", _fake_run)
 
     cfg = Config(storage=StorageConfig(directory=str(memory_dir)))
