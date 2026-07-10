@@ -1796,6 +1796,85 @@ def test_tombstone_adaptively_trims_removal_metadata_near_read_cap(
     assert restored.id == mid
 
 
+def test_tombstone_adaptively_trims_removal_metadata_near_yaml_cap(
+    store: Store,
+) -> None:
+    """Item 5 — the un-removable class on the frontmatter-YAML axis, the mirror
+    of `test_tombstone_adaptively_trims_removal_metadata_near_read_cap` on the
+    file-size axis.
+
+    `_frontmatter.dumps` enforces `_MAX_YAML_BYTES` on the frontmatter region
+    UNCONDITIONALLY, independent of total file size. A record grown by a LEGAL
+    `mark_verified` (dense `verified_paths`, every entry within the handler's
+    64x1024 bounds) lands its frontmatter just under that YAML cap while the
+    whole file sits ~1 MB below the read cap. The pre-fix removal budget was the
+    file-size axis ONLY, so its adaptive trim never fired here and `tombstone`'s
+    re-dump raised the YAML cap — leaving the record ACTIVE with no tombstone
+    (the stranded-active class reopened with legal inputs and no legacy file).
+    Budgeting on BOTH axes and taking the tighter makes the SAME adaptive trim
+    fire on the YAML axis: the session is dropped, the reason trimmed, the
+    removal completes. Reverting the budget to the file axis alone makes the
+    `store.tombstone` below raise `frontmatter YAML exceeds ...` and this test
+    fail."""
+    from bettermemory import _frontmatter as fm
+    from bettermemory.store import (
+        _REMOVAL_META_BUDGET_BYTES,
+        _cap_removed_reason,
+        _serialized_frontmatter_bytes,
+    )
+
+    mem = store.write(content="body to remove", scopes=["tools"])
+    # 63 verified paths of 1019 chars each — a wholly LEGAL attestation (<= 64
+    # entries, each <= 1024 chars, well within the handler's per-list bounds) —
+    # grows the frontmatter YAML to a few hundred bytes under `_MAX_YAML_BYTES`
+    # while the file stays ~1 MB under the read cap.
+    legal_paths = ["/repo/" + ("y" * (1019 - len("/repo/"))) for _ in range(63)]
+    assert len(legal_paths) <= 64 and all(len(p) <= 1024 for p in legal_paths)
+    store.mark_verified(mem.id, verified_paths=legal_paths)
+
+    path = next(p for p in store._iter_active_paths() if mem.id.lower() in p.name)
+    file_size = path.stat().st_size
+    yaml_region = _serialized_frontmatter_bytes(fm.load(path).metadata)
+
+    # Two-axis fixture sanity — the exact shape the bug lives in:
+    #  * the file has ~1 MB of headroom, so the pre-fix file-axis budget alone
+    #    dwarfs the removal metadata and would NOT trim, yet
+    assert file_size < fm._MAX_FILE_BYTES - _REMOVAL_META_BUDGET_BYTES
+    #  * the frontmatter YAML sits inside the removal-metadata headroom of the
+    #    YAML cap, so the untrimmed removal metadata cannot fit on THAT axis.
+    assert (
+        fm._MAX_YAML_BYTES - _REMOVAL_META_BUDGET_BYTES
+        < yaml_region
+        < fm._MAX_YAML_BYTES
+    )
+
+    long_reason = "r" * 2000
+    # Pre-fix (file-axis budget only) this raises `frontmatter YAML exceeds
+    # 65536-byte cap` and leaves the record active; post-fix the YAML-axis
+    # budget forces the trim and the removal completes.
+    tomb = store.tombstone(mem.id, long_reason, session_id="s" * 100)
+
+    # The re-dump fits under BOTH caps.
+    assert tomb.stat().st_size <= fm._MAX_FILE_BYTES
+    assert _serialized_frontmatter_bytes(fm.load(tomb).metadata) <= fm._MAX_YAML_BYTES
+
+    match = next(t for t in store.load_tombstones() if t.id == mem.id)
+    # The trim is what made it fit: the reason survived only as a prefix, trimmed
+    # BELOW even the fixed 1 KiB reason cap (proof the ADAPTIVE YAML-axis trim
+    # fired, not merely the fixed per-field cap), and the session was dropped
+    # first — the YAML-axis mirror of the file-axis adaptation.
+    assert match.removed_reason
+    assert long_reason.startswith(match.removed_reason)
+    assert len(match.removed_reason) < len(_cap_removed_reason(long_reason))
+    assert match.removed_session is None
+
+    # The record is no longer stranded active — gone from the active set …
+    assert mem.id not in {m.id for m in store.load_all()}
+    # … and the round-trip back to active still holds.
+    restored = store.restore(mem.id)
+    assert restored.id == mem.id
+
+
 def test_cap_removed_reason_bounds_serialized_size_not_raw() -> None:
     """Item-1d: `_cap_removed_reason` bounds the reason on its SERIALIZED
     (YAML-escaped) size, not its raw byte length. A control-character reason

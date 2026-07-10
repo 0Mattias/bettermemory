@@ -735,12 +735,19 @@ class Store:
               ENOENT-on-unlink race is swallowed; everything else
               propagates. `memory_remove` catches this and translates it
               to a structured `ValueError`.
-            ValueError: the record sits so close to the read cap that even
-              the adaptively-trimmed removal metadata (empty reason, no
-              session) does not fit — only reachable for a legacy file
-              written within `_REMOVED_TIMESTAMP_HEADROOM_BYTES` of the
-              read cap. `memory_remove` translates it with a
-              shrink-first remediation hint.
+            ValueError: even the adaptively-trimmed removal metadata (empty
+              reason, no session) does not fit under one of the two caps
+              `_frontmatter.dumps` enforces. On the file-size axis this is only
+              reachable for a legacy file written within
+              `_REMOVED_TIMESTAMP_HEADROOM_BYTES` of the read cap — the
+              `_lifecycle_redump_cap` band discipline stops an active record
+              from being GROWN into that zone. On the frontmatter-YAML axis it
+              is reachable when the frontmatter sits within
+              `_REMOVED_TIMESTAMP_HEADROOM_BYTES` of `_MAX_YAML_BYTES`; that axis
+              has no band-reservation discipline, so a legal `mark_verified` (or
+              `rename_scope`) can grow the frontmatter right up to the YAML cap
+              and reach it — not only legacy files. `memory_remove` translates
+              it with a shrink-first remediation hint.
         """
         path = self._find_path_for_id(memory_id)
         if path is None:
@@ -805,27 +812,51 @@ class Store:
                     f"(raced with concurrent tombstone)"
                 )
             post = frontmatter.load(path)
+            # Measure the pristine frontmatter YAML size (before any removal
+            # keys) so the removal-metadata budget below can bound the re-dump
+            # on the YAML axis too — the mirror of `current_size` on the file
+            # axis. Block-style YAML is additive across keys, so this is exactly
+            # the pre-existing-key contribution to the final re-dump.
+            current_yaml_bytes = _serialized_frontmatter_bytes(post.metadata)
             post.metadata["removed"] = utcnow()
             # Bound the removal metadata so appending it can't push the
-            # tombstone re-dump past the read cap and make the record
+            # tombstone re-dump past EITHER cap and make the record
             # un-removable. The fixed per-field budgets (`_cap_removed_reason`
             # / `_cap_removed_session`, both SERIALIZED-size bounds — item 7)
             # cover every record the `_lifecycle_redump_cap` discipline
-            # admits; for a legacy record sitting even closer to the read cap
-            # the budgets ADAPT to the room the record actually has left: the
-            # session id is dropped first (it is an optional join key — the
-            # event log remains the canonical session join), then the reason
-            # is trimmed toward empty. Losing annotation bytes beats refusing
-            # the removal and stranding the record active forever.
+            # admits; for a record sitting even closer to a cap the budgets
+            # ADAPT to the room the record actually has left: the session id is
+            # dropped first (it is an optional join key — the event log remains
+            # the canonical session join), then the reason is trimmed toward
+            # empty. Losing annotation bytes beats refusing the removal and
+            # stranding the record active forever.
             try:
                 current_size = path.stat().st_size
             except OSError:
                 current_size = 0
-            removal_budget = (
+            # Budget on BOTH axes and take the tighter, so the adaptive trim
+            # fires on whichever binds. `_frontmatter.dumps` enforces
+            # `_MAX_YAML_BYTES` on the serialized frontmatter region
+            # UNCONDITIONALLY, independent of total file size: a record whose
+            # YAML sits just under that cap (e.g. a legal `mark_verified` with
+            # dense `verified_paths`) has a huge file-axis budget yet almost no
+            # YAML-axis room. Budgeting on the file axis alone let the trim
+            # no-op and the re-dump then raised the YAML cap, leaving the record
+            # ACTIVE with no tombstone — the un-removable-record class, reopened
+            # with legal inputs on the YAML axis (item 5).
+            # `_REMOVED_TIMESTAMP_HEADROOM_BYTES` reserves room for the
+            # `removed:` timestamp line on each axis.
+            file_budget = (
                 frontmatter._MAX_FILE_BYTES
                 - current_size
                 - _REMOVED_TIMESTAMP_HEADROOM_BYTES
             )
+            yaml_budget = (
+                frontmatter._MAX_YAML_BYTES
+                - current_yaml_bytes
+                - _REMOVED_TIMESTAMP_HEADROOM_BYTES
+            )
+            removal_budget = min(file_budget, yaml_budget)
             reason_capped = _cap_removed_reason(reason)
             session_capped = (
                 _cap_removed_session(session_id) if session_id is not None else None
@@ -2214,6 +2245,39 @@ def _serialized_reason_bytes(reason: str) -> int:
 def _serialized_session_bytes(session_id: str) -> int:
     """Serialized (YAML) byte size of the `removed_session:` line."""
     return _serialized_meta_bytes("removed_session", session_id)
+
+
+def _serialized_frontmatter_bytes(metadata: dict[str, Any]) -> int:
+    """Serialized (YAML) byte size of the whole frontmatter region, measured
+    exactly as `_frontmatter.dumps` renders it — the axis `dumps` checks against
+    `_MAX_YAML_BYTES`.
+
+    `tombstone` uses this to compute its removal-metadata budget on the YAML
+    axis, not just the file-size axis: `dumps` enforces the YAML cap on the
+    frontmatter region UNCONDITIONALLY, independent of total file size, so a
+    record whose frontmatter sits just under that cap (e.g. one grown by a legal
+    `mark_verified` with dense `verified_paths`) must have its removal metadata
+    trimmed on THAT axis or the tombstone re-dump raises the YAML cap and strands
+    the record active (item 5).
+
+    Mirrors `dumps`'s `yaml.dump(...).strip()` byte-for-byte — same
+    `_NoAliasDumper`, same flags — so the measured pre-existing-key contribution
+    matches what the re-dump will be bounded against (block-style YAML is
+    additive across keys, so appending the removal keys adds their lines without
+    changing the others'). Guards expansion first, exactly as `dumps` does, so a
+    hostile aliased active record (a hand-edit / `sync pull`) is rejected here
+    rather than materializing a multi-MB blob in the measurement dump."""
+    frontmatter._guard_dump_expansion(metadata)
+    return len(
+        yaml.dump(
+            metadata,
+            Dumper=frontmatter._NoAliasDumper,
+            default_flow_style=False,
+            allow_unicode=True,
+        )
+        .strip()
+        .encode("utf-8")
+    )
 
 
 def _cap_serialized_meta(value: str, *, key: str, max_bytes: int) -> str:

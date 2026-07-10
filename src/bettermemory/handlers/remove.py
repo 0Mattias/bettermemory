@@ -46,18 +46,25 @@ async def memory_remove(
         # structured error rather than letting the bare OSError leak.
         raise ValueError(f"failed to tombstone memory {id}: {exc}") from exc
     except ValueError as exc:
-        # Only reachable for a legacy record written within the removal-
-        # metadata headroom of the absolute read cap: even the adaptively-
-        # trimmed removal metadata (empty reason, dropped session) does not
-        # fit, so `Store.tombstone`'s re-dump refuses. Translate the raw
-        # cap-refusal into a remediation the caller can act on instead of
-        # leaking the dumper's "refusing to write" text with no next step.
+        # Reachable when even the adaptively-trimmed removal metadata (empty
+        # reason, dropped session) does not fit under one of the two caps
+        # `Store.tombstone`'s re-dump enforces: the absolute file cap (only a
+        # legacy record written within the removal-metadata headroom of it) or
+        # the frontmatter-YAML cap (a record whose frontmatter — e.g. dense
+        # verified_* lists grown by a legal memory_verify — sits within that
+        # headroom of `_MAX_YAML_BYTES`; that axis has no band-reservation
+        # discipline). Translate the raw cap-refusal into a remediation the
+        # caller can act on instead of leaking the dumper's "refusing to write"
+        # text with no next step. Note the frontmatter-YAML case is NOT fixed by
+        # a shorter body (the body is outside the YAML region) — shrinking the
+        # frontmatter is what makes room, so lead with that.
         raise ValueError(
-            f"cannot tombstone memory {id}: the record sits within the "
-            f"removal-metadata headroom of the absolute file cap, so even "
-            f"trimmed removal metadata does not fit. Shrink it first — "
-            f"memory_update with a shorter body, or memory_verify with empty "
-            f"verified_* lists — then retry the removal. ({exc})"
+            f"cannot tombstone memory {id}: even trimmed removal metadata does "
+            f"not fit — the record sits within the removal-metadata headroom of "
+            f"the frontmatter-YAML cap or the absolute file cap. Shrink it "
+            f"first — memory_verify with empty verified_* lists to shrink the "
+            f"frontmatter, or memory_update with a shorter body — then retry the "
+            f"removal. ({exc})"
         ) from exc
     deps.recorder.record("remove", id=id, reason=reason)
     return {
