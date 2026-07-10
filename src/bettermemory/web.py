@@ -27,10 +27,12 @@ isn't available.
 
 from __future__ import annotations
 
+import contextlib
 import html
 import logging
 import secrets
 import shutil
+import signal
 import subprocess
 import sys
 from datetime import datetime, timezone
@@ -45,6 +47,8 @@ from .store import MemoryNotFoundError, Store, TombstonedError
 from .verify import compute_verification_status
 
 if TYPE_CHECKING:
+    from types import FrameType
+
     from fastapi import FastAPI
 
 
@@ -858,10 +862,63 @@ def _tunnel_argv(provider: str, binary: str, port: int) -> list[str]:
     raise TunnelError(f"unknown tunnel provider: {provider!r}")
 
 
+# The tunnel provider runs under this supervisor shim (spawned as
+# `python -c _TUNNEL_SUPERVISOR <provider argv...>`). The shim's stdin
+# is a pipe the serving process holds open and never writes: when the
+# server exits for ANY reason — including SIGKILL, where no userspace
+# teardown can run — the kernel closes the pipe, the shim's blocking
+# read returns EOF, and the shim reaps the provider before exiting.
+# Provider CLIs can't be trusted to watch the pipe themselves:
+# `tailscale serve` keeps running after stdin EOF (verified against
+# the real CLI, 2026-07-10), and cloudflared ignores stdin too. The
+# shim also mirrors SIGTERM/SIGINT/SIGHUP into a reap so the
+# _reap_tunnel terminate() path stays prompt.
+_TUNNEL_SUPERVISOR = """\
+import signal
+import subprocess
+import sys
+
+child = subprocess.Popen(sys.argv[1:], stdin=subprocess.DEVNULL)
+
+
+def _reap():
+    if child.poll() is None:
+        child.terminate()
+        try:
+            child.wait(timeout=5)
+        except subprocess.TimeoutExpired:
+            child.kill()
+
+
+def _on_signal(signum, _frame):
+    _reap()
+    signal.signal(signum, signal.SIG_DFL)
+    signal.raise_signal(signum)
+
+
+for _sig in [signal.SIGTERM, signal.SIGINT] + (
+    [signal.SIGHUP] if hasattr(signal, "SIGHUP") else []
+):
+    signal.signal(_sig, _on_signal)
+
+try:
+    sys.stdin.buffer.read()  # EOF == the server process died (any cause)
+finally:
+    _reap()
+"""
+
+
 def _start_tunnel(provider: str, binary: str, port: int) -> "subprocess.Popen[bytes]":
-    """Spawn the tunnel process with inherited stdio (it prints its
-    own URL). Emits the exposure warning for public providers before
-    anything is reachable."""
+    """Spawn the tunnel provider under the _TUNNEL_SUPERVISOR shim
+    with inherited stdout/stderr (the provider prints its own URL
+    through it). Emits the exposure warning for public providers
+    before anything is reachable.
+
+    The returned handle is the shim; its stdin pipe is the
+    parent-death watchdog that guarantees the provider cannot outlive
+    this process (see _TUNNEL_SUPERVISOR). A leaked provider would
+    keep the share URL alive and pointed at whatever binds the port
+    next."""
     if _TUNNEL_PROVIDERS.get(provider, True):
         log.warning(
             "--tunnel %s creates a PUBLIC, unauthenticated URL: anyone "
@@ -876,7 +933,26 @@ def _start_tunnel(provider: str, binary: str, port: int) -> "subprocess.Popen[by
         provider,
         " ".join(argv),
     )
-    return subprocess.Popen(argv)
+    supervised = [sys.executable, "-c", _TUNNEL_SUPERVISOR, *argv]
+    return subprocess.Popen(supervised, stdin=subprocess.PIPE)
+
+
+def _reap_tunnel(proc: "subprocess.Popen[bytes] | None") -> None:
+    """Stop the tunnel child if it is still running. Idempotent.
+
+    Closes stdin first — EOF alone stops providers that watch it
+    (tailscale serve) — then terminate()/kill() as the backstop for
+    providers that don't (cloudflared)."""
+    if proc is None or proc.poll() is not None:
+        return
+    if proc.stdin is not None:
+        with contextlib.suppress(OSError):
+            proc.stdin.close()
+    proc.terminate()
+    try:
+        proc.wait(timeout=5)
+    except subprocess.TimeoutExpired:
+        proc.kill()
 
 
 def serve(
@@ -898,6 +974,13 @@ def serve(
     spawns the provider CLI against the loopback bind and forces the
     app into read-only mode for the whole process lifetime. Tunnel
     mode requires a loopback host — the tunnel is the front door.
+
+    Tunnel teardown is guaranteed three ways, because a leaked tunnel
+    child keeps the share URL alive and pointed at whatever binds the
+    port next: the supervisor shim's stdin watchdog from
+    _start_tunnel (survives even SIGKILL of this process), the signal
+    handlers installed below (SIGTERM/SIGINT re-raised by uvicorn,
+    plus SIGHUP), and the ``finally`` for exception exits.
     """
     try:
         import uvicorn
@@ -921,15 +1004,39 @@ def serve(
     app = build_app(config, read_only=tunnel is not None)
     _warn_if_non_loopback_bind(host)
     log.info("bettermemory ui starting on http://%s:%d", host, port)
+    if tunnel_proc is None:
+        uvicorn.run(app, host=host, port=port, log_level="warning")
+        return
+
+    # uvicorn's capture_signals() swallows SIGINT/SIGTERM for the
+    # graceful shutdown, restores the handlers that were active before
+    # run(), and then RE-RAISES the signal so the process still dies
+    # by it. A ``finally`` around run() therefore never sees a signal
+    # exit — the re-raise kills the process inside run(). The teardown
+    # must BE the restored handler: reap the child, restore the
+    # default disposition, re-deliver the signal. SIGHUP is not
+    # captured by uvicorn, so our handler fires for it directly.
+    def _teardown_and_reraise(signum: int, _frame: "FrameType | None") -> None:
+        _reap_tunnel(tunnel_proc)
+        signal.signal(signum, signal.SIG_DFL)
+        signal.raise_signal(signum)
+
+    teardown_signals = [signal.SIGINT, signal.SIGTERM]
+    if hasattr(signal, "SIGHUP"):  # absent on Windows
+        teardown_signals.append(signal.SIGHUP)
+    previous: dict[signal.Signals, Any] = {}
+    # signal.signal is main-thread-only (ValueError otherwise); a
+    # non-main-thread caller keeps the stdin watchdog + finally.
+    with contextlib.suppress(ValueError):
+        for sig in teardown_signals:
+            previous[sig] = signal.signal(sig, _teardown_and_reraise)
     try:
         uvicorn.run(app, host=host, port=port, log_level="warning")
     finally:
-        if tunnel_proc is not None:
-            tunnel_proc.terminate()
-            try:
-                tunnel_proc.wait(timeout=5)
-            except subprocess.TimeoutExpired:
-                tunnel_proc.kill()
+        _reap_tunnel(tunnel_proc)
+        for sig, handler in previous.items():
+            with contextlib.suppress(ValueError):
+                signal.signal(sig, handler)
 
 
 def _warn_if_non_loopback_bind(host: str) -> bool:

@@ -7,6 +7,12 @@ fastapi docs recommend. Skips when the [ui] extra isn't installed
 
 from __future__ import annotations
 
+import os
+import signal
+import socket
+import subprocess
+import sys
+import time
 from pathlib import Path
 from typing import Any
 
@@ -711,99 +717,278 @@ def test_tunnel_argv_shapes() -> None:
         web._tunnel_argv("ngrok", "/bin/ngrok", 8765)
 
 
+def _stub_tunnel_argv(provider: str, binary: str, port: int) -> list[str]:
+    """A REAL provider stand-in that models the worst case: it sleeps
+    and ignores stdin, exactly like the real `tailscale serve`
+    (verified live — it does NOT exit on stdin EOF). Teardown must
+    therefore come from the supervisor shim, never from provider
+    cooperation. Everything else in the spawn/teardown path (Popen,
+    pipes, signals) runs for real; only the binary differs."""
+    return [sys.executable, "-c", "import time; time.sleep(3600)"]
+
+
 def test_start_tunnel_warns_only_for_public_providers(
     monkeypatch: Any, caplog: Any
 ) -> None:
     """funnel/cloudflare create PUBLIC unauthenticated URLs to a
     personal memory store — the warning is load-bearing. The
-    tailnet-only provider must NOT cry wolf."""
+    tailnet-only provider must NOT cry wolf. Spawns real child
+    processes (the stdin-reader stub) — no fake Popen."""
     import logging as _logging
-    import subprocess
 
     from bettermemory import web
 
-    spawned: list[list[str]] = []
-
-    class _FakeProc:
-        def __init__(self, argv: list[str]) -> None:
-            spawned.append(argv)
-
-    monkeypatch.setattr(subprocess, "Popen", _FakeProc)
+    monkeypatch.setattr(web, "_tunnel_argv", _stub_tunnel_argv)
 
     with caplog.at_level(_logging.WARNING, logger="bettermemory.web"):
-        web._start_tunnel("tailnet", "/bin/ts", 8765)
+        proc = web._start_tunnel("tailnet", "/bin/ts", 8765)
+    web._reap_tunnel(proc)
     assert not any("PUBLIC" in r.message for r in caplog.records)
 
     for provider, binary in (("funnel", "/bin/ts"), ("cloudflare", "/bin/cf")):
         caplog.clear()
         with caplog.at_level(_logging.WARNING, logger="bettermemory.web"):
-            web._start_tunnel(provider, binary, 8765)
+            proc = web._start_tunnel(provider, binary, 8765)
+        web._reap_tunnel(proc)
         assert any("PUBLIC" in r.message for r in caplog.records)
-    assert len(spawned) == 3
+
+
+def test_reap_tunnel_stops_real_child_and_is_idempotent() -> None:
+    """_reap_tunnel must stop a live child (stdin EOF first, then
+    terminate as backstop) and be safe to call again on the dead
+    child and on None."""
+    from bettermemory import web
+
+    proc = subprocess.Popen(
+        [sys.executable, "-c", "import sys; sys.stdin.read()"],
+        stdin=subprocess.PIPE,
+    )
+    assert proc.poll() is None
+    web._reap_tunnel(proc)
+    assert proc.poll() is not None
+    web._reap_tunnel(proc)
+    web._reap_tunnel(None)
 
 
 def test_serve_tunnel_rejects_non_loopback_host(monkeypatch: Any) -> None:
     """--tunnel + a non-loopback bind is a contradiction: the tunnel
     is the front door. Must fail fast, before any process spawns or
     port binds."""
-    import subprocess
-
     from bettermemory import web
 
     pytest.importorskip("uvicorn")
-    spawned: list[list[str]] = []
-    monkeypatch.setattr(subprocess, "Popen", lambda argv: spawned.append(argv))
+    spawned: list[str] = []
+    monkeypatch.setattr(web, "_start_tunnel", lambda *a, **k: spawned.append("spawn"))
     cfg = Config(storage=StorageConfig(directory="/tmp/nonexistent-ro"))
     with pytest.raises(web.TunnelError, match="loopback"):
         web.serve(cfg, host="0.0.0.0", port=8765, tunnel="auto")
     assert spawned == []
 
 
-def test_serve_tunnel_spawns_provider_and_terminates(
+def test_serve_tunnel_wires_readonly_app_and_reaps_child(
     monkeypatch: Any, memory_dir: Path
 ) -> None:
     """End-to-end wiring of serve(tunnel=...): resolves the provider,
-    spawns the right argv, builds the READ-ONLY app, and terminates
-    the tunnel child when uvicorn returns."""
-    import subprocess
-
+    spawns a REAL child through the real _start_tunnel (stdin-reader
+    stub), builds the READ-ONLY app, and reaps the child when uvicorn
+    returns. Only two seams are patched — the argv shape (no real
+    tailscale in CI) and uvicorn.run (so the call returns); process
+    management is real."""
     import uvicorn
 
     from bettermemory import web
 
-    events: list[str] = []
-    spawned: list[list[str]] = []
+    monkeypatch.setattr(web, "_find_tailscale", lambda: "/bin/ts")
+    monkeypatch.setattr(web, "_tunnel_argv", _stub_tunnel_argv)
 
-    class _FakeProc:
-        def __init__(self, argv: list[str]) -> None:
-            spawned.append(argv)
+    spawned: list[Any] = []
+    real_start = web._start_tunnel
 
-        def terminate(self) -> None:
-            events.append("terminate")
+    def _tracking_start(provider: str, binary: str, port: int) -> Any:
+        proc = real_start(provider, binary, port)
+        spawned.append(proc)
+        return proc
 
-        def wait(self, timeout: float | None = None) -> int:
-            events.append("wait")
-            return 0
-
-        def kill(self) -> None:  # pragma: no cover - only on hang
-            events.append("kill")
+    monkeypatch.setattr(web, "_start_tunnel", _tracking_start)
 
     served_apps: list[Any] = []
-
-    def _fake_run(app: Any, **kwargs: Any) -> None:
-        served_apps.append(app)
-        events.append("uvicorn")
-
-    monkeypatch.setattr(web, "_find_tailscale", lambda: "/bin/ts")
-    monkeypatch.setattr(subprocess, "Popen", _FakeProc)
-    monkeypatch.setattr(uvicorn, "run", _fake_run)
+    monkeypatch.setattr(uvicorn, "run", lambda app, **kwargs: served_apps.append(app))
 
     cfg = Config(storage=StorageConfig(directory=str(memory_dir)))
     web.serve(cfg, host="127.0.0.1", port=8123, tunnel="auto")
 
-    assert spawned == [["/bin/ts", "serve", "8123"]]
     assert served_apps and served_apps[0].state.read_only is True
-    assert events == ["uvicorn", "terminate", "wait"]
+    assert len(spawned) == 1
+    child = spawned[0]
+    assert child.stdin is not None  # the parent-death watchdog pipe
+    assert child.poll() is not None  # reaped when serve() returned
+
+
+# ---------------------------------------------------------------------------
+# Tunnel child lifecycle — real processes, real signals
+# ---------------------------------------------------------------------------
+#
+# Regression suite for two live-validation findings on the 3.18.0
+# tunnel feature. (1) uvicorn's capture_signals() re-raises captured
+# signals with the pre-run handlers restored, so a finally-based
+# teardown never runs on signal exits — the tunnel child outlived the
+# server and kept the share URL alive (502) after `kill <pid>`.
+# (2) `tailscale serve` does NOT exit on stdin EOF, so the provider
+# needs the _TUNNEL_SUPERVISOR shim to reap it when the server dies
+# uncleanly. The old fake-Popen test certified exactly the path
+# reality bypasses; these use real child processes and real signals,
+# and they track BOTH the shim and the provider under it.
+
+
+_LIFECYCLE_DRIVER = """
+import sys
+
+from bettermemory import web
+from bettermemory.config import Config, StorageConfig
+
+web.resolve_tunnel_provider = lambda requested: ("tailnet", sys.executable)
+web._tunnel_argv = lambda provider, binary, port: [
+    sys.executable,
+    "-c",
+    "import time; time.sleep(3600)",
+]
+
+_orig_start = web._start_tunnel
+
+
+def _traced(provider, binary, port):
+    proc = _orig_start(provider, binary, port)
+    print(f"TUNNEL_PID={proc.pid}", flush=True)
+    return proc
+
+
+web._start_tunnel = _traced
+
+cfg = Config(storage=StorageConfig(directory=sys.argv[1]))
+web.serve(cfg, host="127.0.0.1", port=int(sys.argv[2]), tunnel="tailnet")
+"""
+
+
+def _free_port() -> int:
+    with socket.socket() as s:
+        s.bind(("127.0.0.1", 0))
+        return int(s.getsockname()[1])
+
+
+def _pid_alive(pid: int) -> bool:
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    except PermissionError:  # pragma: no cover - exists but not ours
+        return True
+    return True
+
+
+def _wait_pid_gone(pid: int, timeout: float) -> None:
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        if not _pid_alive(pid):
+            return
+        time.sleep(0.1)
+    pytest.fail(f"tunnel child {pid} still alive {timeout}s after server death")
+
+
+def _provider_pid_under(shim_pid: int) -> int:
+    """The provider runs as the supervisor shim's only child; find it
+    with `pgrep -P` (macOS and Linux; the suite is skipped on
+    Windows)."""
+    deadline = time.monotonic() + 5
+    while time.monotonic() < deadline:
+        out = subprocess.run(
+            ["pgrep", "-P", str(shim_pid)],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        pids = [int(p) for p in out.stdout.split()]
+        if len(pids) == 1:
+            return pids[0]
+        time.sleep(0.1)
+    pytest.fail(f"shim {shim_pid} never had exactly one provider child")
+
+
+def _spawn_lifecycle_driver(
+    memory_dir: Path,
+) -> tuple["subprocess.Popen[bytes]", int, int]:
+    """Start serve(tunnel=...) in a real child process and wait until
+    uvicorn answers HTTP. The teardown signal handlers are installed
+    before uvicorn.run, so an answering server implies armed
+    teardown. Returns (driver, shim pid, provider pid)."""
+    import urllib.request
+
+    port = _free_port()
+    driver = subprocess.Popen(
+        [sys.executable, "-c", _LIFECYCLE_DRIVER, str(memory_dir), str(port)],
+        stdout=subprocess.PIPE,
+        stderr=subprocess.DEVNULL,
+    )
+    assert driver.stdout is not None
+    line = driver.stdout.readline().decode()
+    if not line.startswith("TUNNEL_PID="):
+        driver.kill()
+        pytest.fail(f"driver did not announce the tunnel child: {line!r}")
+    shim_pid = int(line.strip().split("=", 1)[1])
+    provider_pid = _provider_pid_under(shim_pid)
+    deadline = time.monotonic() + 15
+    while time.monotonic() < deadline:
+        try:
+            urllib.request.urlopen(f"http://127.0.0.1:{port}/", timeout=1).close()
+            return driver, shim_pid, provider_pid
+        except OSError:
+            time.sleep(0.15)
+    driver.kill()
+    pytest.fail("driver server never answered HTTP")
+
+
+def _cleanup_driver(driver: "subprocess.Popen[bytes]") -> None:
+    if driver.poll() is None:  # pragma: no cover - only on test failure
+        driver.kill()
+        driver.wait(timeout=5)
+    if driver.stdout is not None:
+        driver.stdout.close()
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="POSIX signal semantics")
+def test_tunnel_child_reaped_on_sigterm(memory_dir: Path) -> None:
+    """`kill <server pid>` must take the whole tunnel down with it —
+    shim AND provider — and the server must still die BY the signal
+    (exit -SIGTERM), preserving die-by-signal etiquette for
+    supervisors."""
+    pytest.importorskip("uvicorn")
+    driver, shim_pid, provider_pid = _spawn_lifecycle_driver(memory_dir)
+    try:
+        assert _pid_alive(shim_pid)
+        assert _pid_alive(provider_pid)
+        driver.send_signal(signal.SIGTERM)
+        assert driver.wait(timeout=10) == -signal.SIGTERM
+        _wait_pid_gone(shim_pid, timeout=5.0)
+        _wait_pid_gone(provider_pid, timeout=5.0)
+    finally:
+        _cleanup_driver(driver)
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="POSIX signal semantics")
+def test_tunnel_child_reaped_on_sigkill(memory_dir: Path) -> None:
+    """SIGKILL leaves the server no room for userspace teardown — the
+    shim's stdin watchdog is the only thing standing between the
+    provider and a leak. It must reap the provider and exit."""
+    pytest.importorskip("uvicorn")
+    driver, shim_pid, provider_pid = _spawn_lifecycle_driver(memory_dir)
+    try:
+        assert _pid_alive(shim_pid)
+        assert _pid_alive(provider_pid)
+        driver.send_signal(9)  # SIGKILL — absent from signal stubs on Windows
+        assert driver.wait(timeout=10) == -9
+        _wait_pid_gone(shim_pid, timeout=5.0)
+        _wait_pid_gone(provider_pid, timeout=5.0)
+    finally:
+        _cleanup_driver(driver)
 
 
 def test_serve_without_tunnel_stays_mutable(monkeypatch: Any, memory_dir: Path) -> None:
