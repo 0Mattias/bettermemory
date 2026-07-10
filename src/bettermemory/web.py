@@ -1054,6 +1054,7 @@ def serve(
         ) from exc
 
     tunnel_proc: subprocess.Popen[bytes] | None = None
+    provider: str | None = None
     if tunnel is not None:
         if not _is_loopback_bind(host):
             raise TunnelError(
@@ -1067,7 +1068,10 @@ def serve(
     app = build_app(config, read_only=tunnel is not None)
     _warn_if_non_loopback_bind(host)
     log.info("bettermemory ui starting on http://%s:%d", host, port)
-    if tunnel_proc is None:
+    # `provider` is bound exactly when `tunnel_proc` is — the one branch
+    # above sets both. Testing both is what narrows `provider` to `str` for
+    # the type-checker at the watchdog spawn below.
+    if tunnel_proc is None or provider is None:
         uvicorn.run(app, host=host, port=port, log_level="warning")
         return
 
