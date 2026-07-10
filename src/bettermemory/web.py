@@ -987,6 +987,28 @@ def _reap_tunnel(proc: "subprocess.Popen[bytes] | None") -> None:
         proc.kill()
 
 
+# Grace window for the provider-death watcher (`_watch_tunnel_provider`).
+#
+# When a signal is delivered to serve()'s whole PROCESS GROUP — Ctrl-C at
+# a terminal, `systemctl stop` on a cgroup — the supervisor shim, a member
+# of that group, receives it directly and reaps + exits within
+# milliseconds. The watcher's `proc.wait()` therefore returns BEFORE
+# serve() has marked the shutdown: for SIGINT/SIGTERM the `shutting_down`
+# flag is set by uvicorn's RESTORED handler (_teardown_and_reraise), which
+# only runs AFTER uvicorn's graceful shutdown completes — a couple hundred
+# milliseconds later even on an idle server. A bare `shutting_down.is_set()`
+# check loses that race and fires the loud "shared URL is DEAD" error on
+# every clean group-signalled quit (the b5e5542 regression). Waiting a
+# short bounded window lets the concurrent teardown win: on a real shutdown
+# the flag lands well inside it (idle graceful shutdown is ~0.1-0.2s, so 1s
+# is a comfortable margin), while a genuine mid-session provider death never
+# sets the flag, so the window lapses and the watcher still fires — at most
+# this long late, which is fine for a human-facing "your share died" notice.
+# (SIGHUP is unaffected: serve()'s own handler runs directly and sets the
+# flag before reaping, so the flag is already set when the watcher wakes.)
+_PROVIDER_DEATH_GRACE_SECONDS = 1.0
+
+
 def _watch_tunnel_provider(
     proc: "subprocess.Popen[bytes]",
     provider: str,
@@ -1002,11 +1024,19 @@ def _watch_tunnel_provider(
     the edge) or it dropped mid-session. serve() keeps answering
     read-only on loopback, so nothing else would tell the user the share
     silently no-op'd — this log is the only signal. Runs on a daemon
-    thread; ``shutting_down`` is set by serve()'s teardown before it
-    reaps the shim so a clean exit stays quiet instead of crying wolf.
+    thread. A clean exit stays quiet: every teardown path sets
+    ``shutting_down``, and the watcher waits a bounded grace window
+    (_PROVIDER_DEATH_GRACE_SECONDS) for it before logging, so a
+    group-delivered Ctrl-C / SIGTERM that reaps the shim before serve()
+    finishes uvicorn's graceful shutdown does not race the flag and cry
+    wolf. A genuine provider death never sets the flag, so the window
+    lapses and the error still fires (at most that long late).
     """
     proc.wait()
-    if shutting_down.is_set():
+    # Give a concurrent teardown its grace window to announce itself
+    # before crying wolf — a group-delivered signal races serve()'s
+    # not-yet-set flag; see _PROVIDER_DEATH_GRACE_SECONDS.
+    if shutting_down.wait(timeout=_PROVIDER_DEATH_GRACE_SECONDS):
         return
     log.error(
         "tunnel provider %r exited: the shared URL is now DEAD, but the "

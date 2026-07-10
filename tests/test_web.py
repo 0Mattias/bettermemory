@@ -945,8 +945,17 @@ def test_watch_tunnel_provider_quiet_on_clean_shutdown(caplog: Any) -> None:
 _SIGHUP: int = getattr(signal, "SIGHUP", 1)
 _SIGKILL: int = getattr(signal, "SIGKILL", 9)
 
+# `os.killpg` is POSIX-only and absent from the Windows `os` stubs, so a
+# bare `os.killpg(...)` trips mypy's windows-latest leg even inside tests
+# that skipif off Windows (mypy type-checks the whole file regardless of
+# the marker). Bind it once via getattr — typed `Any`, so the win32 leg
+# sees no missing-attribute — and only the POSIX-only group-signal tests
+# below call it.
+_killpg: Any = getattr(os, "killpg", None)
+
 
 _LIFECYCLE_DRIVER = """
+import logging
 import os
 import signal
 import sys
@@ -954,17 +963,34 @@ import sys
 from bettermemory import web
 from bettermemory.config import Config, StorageConfig
 
+# Mirror cli/ui.py: route bettermemory's INFO+ logging to stderr so the
+# provider-death "DEAD" error (and everything else) lands where the
+# operator would see it. The false-alarm / true-positive tests capture
+# this stderr and grep it; the other lifecycle tests DEVNULL stderr, so
+# this is invisible to them.
+logging.basicConfig(level=logging.INFO, stream=sys.stderr)
+
 # Pin the driver's SIGHUP disposition BEFORE serve() spawns the shim or
-# installs its handlers, so the lifecycle tests can model both the nohup
-# posture ("ignore" -> SIG_IGN, must survive a hangup) and the default
-# posture ("default" -> SIG_DFL, must still tear down) deterministically,
-# regardless of the disposition the test runner itself inherited.
+# installs its handlers, so the lifecycle tests can model each posture
+# deterministically regardless of what the test runner itself inherited:
+#   "ignore"  -> SIG_IGN: the nohup posture; the tree must SURVIVE a hangup.
+#   "guard"   -> a non-fatal, non-ignored no-op handler: a test scaffold
+#                that NEUTRALISES the stdin-EOF watchdog backstop. If serve()
+#                fails to install its own SIGHUP teardown handler the no-op
+#                absorbs the hangup, the driver survives, its stdin pipe to
+#                the shim stays open, and the shim/provider are never reaped
+#                — so a reaping assertion can only pass when serve()'s
+#                handler ran. A correct serve() REPLACES this no-op (it is
+#                not SIG_IGN, so the nohup guard does not skip it).
+#   "default" -> SIG_DFL: the real default disposition (terminate).
 _sighup = os.environ.get("BM_TEST_SIGHUP")
 if _sighup and hasattr(signal, "SIGHUP"):
-    signal.signal(
-        signal.SIGHUP,
-        signal.SIG_IGN if _sighup == "ignore" else signal.SIG_DFL,
-    )
+    if _sighup == "ignore":
+        signal.signal(signal.SIGHUP, signal.SIG_IGN)
+    elif _sighup == "guard":
+        signal.signal(signal.SIGHUP, lambda *_a: None)
+    else:
+        signal.signal(signal.SIGHUP, signal.SIG_DFL)
 
 web.resolve_tunnel_provider = lambda requested: ("tailnet", sys.executable)
 web._tunnel_argv = lambda provider, binary, port: [
@@ -1037,6 +1063,8 @@ def _spawn_lifecycle_driver(
     memory_dir: Path,
     *,
     sighup: str | None = None,
+    new_session: bool = False,
+    stderr_path: Path | None = None,
 ) -> tuple["subprocess.Popen[bytes]", int, int]:
     """Start serve(tunnel=...) in a real child process and wait until
     uvicorn answers HTTP. The teardown signal handlers are installed
@@ -1045,10 +1073,19 @@ def _spawn_lifecycle_driver(
 
     ``sighup`` pins the driver's SIGHUP disposition before serve() runs:
     ``"ignore"`` models the nohup posture (SIG_IGN, must survive a
-    hangup) and ``"default"`` forces SIG_DFL (must still tear down), so
-    the assertion is deterministic regardless of the runner's own
-    disposition. ``None`` leaves it inherited — the SIGTERM/SIGKILL
-    tests never touch SIGHUP."""
+    hangup), ``"guard"`` installs a non-fatal no-op handler that
+    neutralises the stdin-EOF watchdog so serve()'s own SIGHUP handler is
+    the only thing that can reap the tunnel, and ``"default"`` forces
+    SIG_DFL. ``None`` leaves it inherited — the SIGTERM/SIGKILL tests
+    never touch SIGHUP.
+
+    ``new_session`` runs the driver in its own session/process group
+    (``setsid``) so a test can ``os.killpg(driver.pid, ...)`` the whole
+    tunnel tree — driver + shim + provider — the way a terminal Ctrl-C or
+    ``systemctl stop`` delivers a signal, without touching the test
+    runner. ``stderr_path`` redirects the driver's stderr (where the
+    bettermemory logger writes) to a file the test can read afterwards;
+    the default DEVNULL keeps the other lifecycle tests quiet."""
     import urllib.request
 
     env = None
@@ -1056,12 +1093,20 @@ def _spawn_lifecycle_driver(
         env = {**os.environ, "BM_TEST_SIGHUP": sighup}
 
     port = _free_port()
+    stderr_target: Any = subprocess.DEVNULL
+    stderr_fh = None
+    if stderr_path is not None:
+        stderr_fh = open(stderr_path, "wb")
+        stderr_target = stderr_fh
     driver = subprocess.Popen(
         [sys.executable, "-c", _LIFECYCLE_DRIVER, str(memory_dir), str(port)],
         stdout=subprocess.PIPE,
-        stderr=subprocess.DEVNULL,
+        stderr=stderr_target,
+        start_new_session=new_session,
         env=env,
     )
+    if stderr_fh is not None:
+        stderr_fh.close()  # the child holds its own dup; drop the parent's
     assert driver.stdout is not None
     line = driver.stdout.readline().decode()
     if not line.startswith("TUNNEL_PID="):
@@ -1182,24 +1227,172 @@ def test_tunnel_survives_sighup_when_inherited_sig_ign(memory_dir: Path) -> None
 
 
 @pytest.mark.skipif(sys.platform == "win32", reason="POSIX signal semantics")
-def test_tunnel_child_reaped_on_sighup_default_disposition(memory_dir: Path) -> None:
-    """The SIG_IGN guard must be NARROW. With SIGHUP at its default
-    disposition (no nohup), a hangup must still take the whole tunnel
-    down — shim AND provider — and the server must still die BY the
-    signal, exactly like the SIGTERM path. Proves the fix disabled only
-    the inherited-SIG_IGN case, not SIGHUP teardown wholesale."""
+def test_serve_installs_narrow_sighup_teardown_handler(memory_dir: Path) -> None:
+    """The SIG_IGN guard must be NARROW: serve() must still INSTALL a
+    SIGHUP teardown handler whenever SIGHUP is not inherited-ignored (the
+    complement of `test_tunnel_survives_sighup_when_inherited_sig_ign`). A
+    hangup must reap the whole tunnel — shim AND provider — and re-raise
+    so the server still dies BY the signal.
+
+    This test depends on serve()'s HANDLER, not the watchdog backstop.
+    Teardown is otherwise guaranteed three ways (the shim's stdin-EOF
+    watchdog reaps the provider on any driver death, the shim's own signal
+    handler, serve()'s handler), and the prior default-disposition test
+    was satisfied by ALL of them — it stayed green even with serve()'s
+    SIGHUP install removed wholesale (`if sig == signal.SIGHUP: continue`),
+    which made it theater.
+
+    To isolate serve()'s handler, the driver pre-installs a NON-fatal,
+    non-ignored SIGHUP disposition (a no-op handler, ``sighup="guard"``)
+    BEFORE serve() runs, and the test signals the driver PID only:
+
+      * Correct serve() REPLACES the no-op with its teardown handler
+        (the no-op is not SIG_IGN, so the nohup guard does not skip it);
+        the hangup reaps the shim + provider and re-raises under SIG_DFL,
+        so the driver dies BY SIGHUP and the tunnel is gone.
+      * Mutated serve() that skips the SIGHUP install leaves the no-op in
+        place. The hangup is absorbed, the driver SURVIVES, its stdin pipe
+        to the shim stays open so the watchdog never sees EOF, and the
+        shim/provider are never reaped — every assertion below fails.
+
+    The no-op is a test scaffold, not the real default disposition
+    (terminate): under a true SIG_DFL the driver dies on SIGHUP no matter
+    what serve() does, its pipe closes, and the watchdog reaps the shim —
+    the very backstop that made the old assertions watchdog-satisfiable."""
     pytest.importorskip("uvicorn")
-    driver, shim_pid, provider_pid = _spawn_lifecycle_driver(
-        memory_dir, sighup="default"
-    )
+    driver, shim_pid, provider_pid = _spawn_lifecycle_driver(memory_dir, sighup="guard")
     try:
         assert _pid_alive(shim_pid)
         assert _pid_alive(provider_pid)
         driver.send_signal(_SIGHUP)
-        assert driver.wait(timeout=10) == -_SIGHUP
+        rc: int | None
+        try:
+            rc = driver.wait(timeout=10)
+        except subprocess.TimeoutExpired:
+            rc = None
+        assert rc == -_SIGHUP, (
+            "serve() did not install a working SIGHUP teardown handler: "
+            "the driver's no-op guard absorbed the hangup and the server "
+            f"survived (rc={rc!r}). With the watchdog backstop neutralised, "
+            "this is the mutation `if sig == signal.SIGHUP: continue`."
+        )
         _wait_pid_gone(shim_pid, timeout=5.0)
         _wait_pid_gone(provider_pid, timeout=5.0)
     finally:
+        # Under the mutation the whole tree survives; SIGKILL the
+        # hour-long sleepers directly so a neutralised watchdog can't leak
+        # them, then let _cleanup_driver stop the driver.
+        for pid in (provider_pid, shim_pid):
+            with contextlib.suppress(ProcessLookupError):
+                os.kill(pid, _SIGKILL)
+        _cleanup_driver(driver)
+
+
+# ---------------------------------------------------------------------------
+# Provider-death false alarm — the b5e5542 regression, driven end-to-end
+# ---------------------------------------------------------------------------
+#
+# The provider-death watcher must stay QUIET on a clean quit and LOUD on a
+# genuine mid-session death. The unit tests above pin the flag-already-set
+# and flag-never-set orderings; these drive the real serve() under a real
+# process-group signal, which is the ordering the unit tests can't model:
+# the supervisor shim shares serve()'s process group, so a Ctrl-C /
+# `systemctl stop` reaches it directly and reaps it BEFORE serve() finishes
+# uvicorn's graceful shutdown and sets `shutting_down`. A bare is_set()
+# check races that and cries "DEAD" on every clean exit (b5e5542); the
+# bounded grace window in _watch_tunnel_provider closes the race.
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="POSIX process-group signals")
+@pytest.mark.parametrize(
+    "sig",
+    [
+        pytest.param(signal.SIGINT, id="sigint-ctrl-c"),
+        pytest.param(signal.SIGTERM, id="sigterm-systemctl-stop"),
+    ],
+)
+def test_clean_group_signal_does_not_log_dead_share(
+    memory_dir: Path, tmp_path: Path, sig: int
+) -> None:
+    """A clean quit must NOT fire the provider-death 'DEAD' alarm.
+
+    Runs serve(tunnel=...) in its own session and delivers the signal to
+    the WHOLE process group with ``os.killpg`` — exactly how a terminal
+    Ctrl-C (SIGINT) or ``systemctl stop`` (SIGTERM) arrives. That reaches
+    the supervisor shim directly, so the watcher's ``proc.wait()`` returns
+    while serve() is still inside uvicorn's graceful shutdown and
+    ``shutting_down`` is not yet set. Pre-fix (a bare ``is_set()`` check)
+    the watcher loses that race and logs the loud 'DEAD' error on this,
+    the most common exit path; the grace window keeps it quiet.
+
+    The server must still die BY the signal (die-by-signal etiquette), so
+    supervisors observing exit status see the real cause."""
+    pytest.importorskip("uvicorn")
+    stderr_log = tmp_path / f"driver-stderr-{int(sig)}.log"
+    driver, shim_pid, provider_pid = _spawn_lifecycle_driver(
+        memory_dir, new_session=True, stderr_path=stderr_log
+    )
+    try:
+        assert _pid_alive(shim_pid)
+        assert _pid_alive(provider_pid)
+        # Deliver to the whole tunnel tree, not just driver.pid — that is
+        # what reaches the shim directly and races serve()'s flag.
+        _killpg(driver.pid, sig)
+        assert driver.wait(timeout=15) == -sig
+        _wait_pid_gone(shim_pid, timeout=5.0)
+        _wait_pid_gone(provider_pid, timeout=5.0)
+    finally:
+        with contextlib.suppress(ProcessLookupError):
+            _killpg(driver.pid, _SIGKILL)
+        _cleanup_driver(driver)
+    log_text = stderr_log.read_bytes().decode(errors="replace")
+    assert "DEAD" not in log_text, (
+        "a clean group-signalled shutdown logged the spurious dead-share "
+        f"error (the b5e5542 false-alarm regression):\n{log_text}"
+    )
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="POSIX signal semantics")
+def test_provider_death_mid_session_logs_dead_share(
+    memory_dir: Path, tmp_path: Path
+) -> None:
+    """True-positive companion to the false-alarm test: a genuine
+    mid-session provider death — while the server keeps serving — MUST
+    still log the 'DEAD' alarm. This is the whole point of the watcher,
+    and it guards the grace-window fix from over-suppressing real deaths.
+
+    Kill ONLY the provider. The driver (server) stays up, so the shim's
+    stdin watchdog never sees EOF; the shim's provider-death mirror is the
+    sole reason it exits, and serve()'s watcher must then flag the dead
+    share after the grace window lapses (the flag is never set here)."""
+    pytest.importorskip("uvicorn")
+    stderr_log = tmp_path / "driver-stderr-provider-death.log"
+    driver, shim_pid, provider_pid = _spawn_lifecycle_driver(
+        memory_dir, stderr_path=stderr_log
+    )
+    try:
+        assert _pid_alive(provider_pid)
+        os.kill(provider_pid, _SIGKILL)
+        # The watcher waits its grace window before logging; poll the
+        # driver's stderr with margin over that window.
+        deadline = time.monotonic() + 10
+        log_text = ""
+        while time.monotonic() < deadline:
+            log_text = stderr_log.read_bytes().decode(errors="replace")
+            if "DEAD" in log_text:
+                break
+            time.sleep(0.1)
+        assert "DEAD" in log_text, (
+            "provider died mid-session but the watcher never logged the "
+            f"dead-share alarm within the window:\n{log_text}"
+        )
+        assert "tailnet" in log_text  # names the provider so the user knows
+        # The loopback server itself must still be serving — that is why
+        # this log is the only signal the share went away.
+        assert driver.poll() is None, "server must keep serving after provider death"
+    finally:
+        with contextlib.suppress(ProcessLookupError):
+            os.kill(shim_pid, _SIGKILL)
         _cleanup_driver(driver)
 
 
