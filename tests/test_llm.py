@@ -15,6 +15,7 @@ here.
 from __future__ import annotations
 
 import json
+import logging
 from dataclasses import dataclass
 from datetime import datetime, timezone
 
@@ -326,6 +327,57 @@ def test_parse_rejects_unknown_demote_category() -> None:
     )
     proposals = parse_and_validate(raw, cluster)
     assert proposals == []
+
+
+def test_parse_skips_demote_with_unhashable_category_and_keeps_sibling(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """audit 🟡 — `_validate_demote` ran ``new_category not in
+    _PROPOSABLE_CATEGORIES`` (a frozenset membership test) directly on the
+    unvalidated LLM value. An array-wrapped enum (``["ambient"]``) is
+    unhashable, so the membership test raised ``TypeError: unhashable type:
+    'list'`` — which escaped ``parse_and_validate`` entirely, discarding
+    every valid sibling proposal parsed from the same response instead of
+    skipping just the one malformed entry. The isinstance guard restores the
+    documented "log every problem rather than stopping at the first"
+    contract.
+
+    Mutation-sound: with the guard reverted to the bare ``in`` test this
+    raises ``TypeError`` (the sibling never returns), so the survival
+    assertions and the no-exception expectation both fail.
+    """
+    target = _make_memory("fact that lost its claim", category=Category.FACT)
+    sibling = _make_memory("another fact that lost its claim", category=Category.FACT)
+    cluster = _make_cluster([target, sibling])
+    raw = json.dumps(
+        {
+            "proposals": [
+                {
+                    "type": "demote_tier",
+                    "memory_id": target.id,
+                    # Unhashable: a weak local model wrapping the enum in an
+                    # array. Must skip-with-warning, not crash the whole call.
+                    "new_category": ["ambient"],
+                    "rationale": "array-wrapped enum from a weak local model",
+                },
+                {
+                    "type": "demote_tier",
+                    "memory_id": sibling.id,
+                    "new_category": "ambient",
+                    "rationale": "valid sibling must survive the malformed peer",
+                },
+            ]
+        }
+    )
+    with caplog.at_level(logging.WARNING, logger="bettermemory.llm"):
+        proposals = parse_and_validate(raw, cluster)
+    assert len(proposals) == 1
+    assert isinstance(proposals[0], DemoteTierProposal)
+    assert proposals[0].memory_id == sibling.id
+    assert proposals[0].new_category == "ambient"
+    assert any("new_category" in rec.getMessage() for rec in caplog.records), (
+        "the malformed demote entry should log a skip warning"
+    )
 
 
 def test_parse_strips_markdown_fences() -> None:
@@ -1354,6 +1406,59 @@ def test_parse_rejects_propose_new_empty_source_excerpt() -> None:
     )
     proposals = parse_and_validate(raw, cluster)
     assert proposals == []
+
+
+def test_parse_skips_propose_new_with_unhashable_category_and_keeps_sibling(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """audit 🟡 sibling site — `_validate_propose_new` carried the same bare
+    ``category not in _PROPOSABLE_CATEGORIES`` membership test on the
+    unvalidated LLM value. An unhashable ``category`` (an object here) raised
+    ``TypeError`` out of ``parse_and_validate``, taking every valid sibling
+    proposal down with it. The isinstance guard skips the malformed entry and
+    keeps the rest.
+
+    Mutation-sound: with the guard reverted to the bare ``in`` test this
+    raises ``TypeError`` (the sibling never returns), failing both the
+    survival assertion and the no-exception expectation.
+    """
+    existing = _make_memory("unrelated existing memory")
+    cluster = _make_transcript_cluster(
+        [existing],
+        "[user] Redis runs on port 6380 here.\n[user] Backups live in b2://mem-cold.",
+    )
+    raw = json.dumps(
+        {
+            "proposals": [
+                {
+                    "type": "propose_new",
+                    "scope": "infrastructure",
+                    # Unhashable: an object-wrapped enum from a weak local
+                    # model. Must skip-with-warning, not crash the whole call.
+                    "category": {"tier": "fact"},
+                    "body": "Redis runs on port 6380, not the default 6379.",
+                    "source_excerpt": "[user] Redis runs on port 6380 here.",
+                    "rationale": "object-wrapped enum from a weak local model",
+                },
+                {
+                    "type": "propose_new",
+                    "scope": "infrastructure",
+                    "category": "fact",
+                    "body": "Cold backups live in the b2://mem-cold bucket.",
+                    "source_excerpt": "[user] Backups live in b2://mem-cold.",
+                    "rationale": "valid sibling must survive the malformed peer",
+                },
+            ]
+        }
+    )
+    with caplog.at_level(logging.WARNING, logger="bettermemory.llm"):
+        proposals = parse_and_validate(raw, cluster)
+    assert len(proposals) == 1
+    assert isinstance(proposals[0], ProposeNewProposal)
+    assert proposals[0].body.startswith("Cold backups live in the b2://mem-cold")
+    assert any("category" in rec.getMessage() for rec in caplog.records), (
+        "the malformed propose_new entry should log a skip warning"
+    )
 
 
 def test_build_prompt_includes_transcript_when_present() -> None:

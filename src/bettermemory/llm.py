@@ -51,7 +51,7 @@ import re
 import secrets
 from dataclasses import dataclass
 from datetime import datetime
-from typing import Any, Literal, Protocol, Union
+from typing import Any, Literal, Protocol, Union, cast
 
 from .models import (
     Memory,
@@ -1061,14 +1061,17 @@ def _validate_demote(
     if not isinstance(memory_id, str) or memory_id not in valid_ids:
         log.warning("demote_tier: memory_id %r not in cluster", memory_id)
         return None
-    if new_category not in _PROPOSABLE_CATEGORIES:
+    if not isinstance(new_category, str) or new_category not in _PROPOSABLE_CATEGORIES:
         log.warning(
             "demote_tier: new_category %r must be 'fact' or 'ambient'", new_category
         )
         return None
     return DemoteTierProposal(
         memory_id=memory_id,
-        new_category=new_category,
+        # Narrowed to `str` by the isinstance guard and confirmed to be a
+        # member of `_PROPOSABLE_CATEGORIES` ({"fact", "ambient"}); the cast
+        # tells the type checker what the runtime check already guarantees.
+        new_category=cast(Literal["fact", "ambient"], new_category),
         rationale=rationale,
     )
 
@@ -1117,7 +1120,7 @@ def _validate_propose_new(
     except ValueError as exc:
         log.warning("propose_new: scope %r failed validation: %s", scope, exc)
         return None
-    if category not in _PROPOSABLE_CATEGORIES:
+    if not isinstance(category, str) or category not in _PROPOSABLE_CATEGORIES:
         log.warning("propose_new: category %r must be 'fact' or 'ambient'", category)
         return None
     if not isinstance(body, str) or not body.strip():
@@ -1132,7 +1135,9 @@ def _validate_propose_new(
         return None
     return ProposeNewProposal(
         scope=scope,
-        category=category,
+        # See `_validate_demote`: isinstance-narrowed to `str` and gated on
+        # membership in `_PROPOSABLE_CATEGORIES`, so the Literal cast is safe.
+        category=cast(Literal["fact", "ambient"], category),
         body=body.strip(),
         source_excerpt=source_excerpt.strip()[:MAX_SOURCE_EXCERPT_CHARS],
         rationale=rationale,
