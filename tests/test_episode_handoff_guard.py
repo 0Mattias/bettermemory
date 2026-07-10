@@ -673,17 +673,22 @@ async def test_episode_handoff_promotion_note_covers_deferred_confirm_path(
     """The promotion delete has TWO triggers: synchronous (promote
     returns `committed`) and deferred (promote stages `pending` for the
     user-inference flow; `memory_write_confirm` commits AND deletes the
-    source episode later). The confirm event records no episode id, so
-    the `episode_promote` event with `write_status="pending"` is the
-    only trace of the deferred path — the detection must accept it, and
-    it is safe to: a cancelled/expired pending leaves the episode ON
-    disk, so a session whose episode is demonstrably gone with a pending
-    trace was confirm-deleted.
+    source episode later). On the deferred path `memory_write_confirm`
+    stamps the deleted source-episode id onto its `write_confirm` event —
+    that confirm-TIME `episode_id` is the durable proof the promotion
+    delete actually ran, and the detector matches it. A bare
+    `episode_promote` with `write_status="pending"` is NOT accepted on
+    its own: a cancelled/expired pending records the same pending trace
+    yet leaves the episode on disk, so on-disk absence alone can't tell a
+    confirmed promotion from a cancelled-then-pruned one. Here the episode
+    is demonstrably gone AND the confirm event carries its id, so it was
+    confirm-deleted.
 
-    Mutation-soundness: narrowing the detection to
-    `write_status == "committed"` alone (or reverting the fix entirely)
-    routes this case back to the old zero-episode hedge and the
-    "promoted into a durable memory" assertion fails.
+    Mutation-soundness: dropping the `write_confirm` episode_id branch
+    from the detector (or reverting the fix entirely) leaves this
+    deferred-confirm case with only a bare pending trace, which routes to
+    the hedged "staged, outcome-unconfirmable" note and the "promoted
+    into a durable memory" assertion fails.
     """
     from bettermemory.episodes import EpisodeStore
 
@@ -828,6 +833,124 @@ async def test_episode_handoff_pending_promotion_not_named_after_cancel_then_pru
     # phrase, absent from the promotion note).
     assert "non-handoff tick" in note, (
         f"note must fall through to the honest hedged zero-episode text; got: {note!r}"
+    )
+
+
+async def test_episode_handoff_pre_window_deferred_confirm_hedges_not_false_empty(
+    memory_dir: Path,
+) -> None:
+    """Back-compat guard (set-audit C1): a deferred-confirm promotion that
+    genuinely COMMITTED in a PRE-WINDOW event log — one written before
+    `memory_write_confirm` began stamping the deleted source-episode id onto
+    its `write_confirm` event — leaves a bare `episode_promote`
+    (write_status="pending") plus a `write_confirm` carrying NO `episode_id`,
+    and a zero-episode session on disk (the source episode was deleted on
+    confirm). Neither the committed-promote proof nor the confirm-episode-id
+    proof matches, so the promotion cannot be proven from this log. The handoff
+    must NOT emit the actively false "recorded activity but journaled no
+    takeaway ... non-handoff tick" note — a takeaway WAS journaled and staged
+    for promotion. It must HEDGE: a promotion was staged and its outcome cannot
+    be confirmed from this log (it may have committed, or been cancelled or
+    expired), so memory_search may or may not surface it.
+
+    Old logs are inherently unrecoverable: the bare pending promote and the
+    unstamped confirm carry no key linking the confirm back to the deleted
+    episode, so no code change can prove the commit — the honest answer is to
+    hedge, never to assert either a promotion or that nothing was journaled.
+
+    We drive the real deferred path (episode_write -> episode_promote(
+    category="user-inference") -> memory_write_confirm), then strip
+    `episode_id` from the `write_confirm` event on disk to reconstruct the
+    pre-window shape (the exact reproduction the audit used).
+
+    Mutation-soundness: against the pre-fix source `_episode_promoted_out_of_session`
+    returns a bare bool — a pending trace with no confirm-episode-id reads as
+    False, so this routes to the old zero-episode hedge ("... journaled no
+    takeaway ... non-handoff tick ..."). The "cannot confirm the outcome"
+    assertion below FAILS pre-fix (verified by reverting the source change with
+    this test in place) and passes once the third "staged-unresolved" verdict
+    lands.
+    """
+    import json as _json
+
+    from bettermemory.episodes import EpisodeStore
+
+    cfg = Config(storage=StorageConfig(directory=str(memory_dir)))
+
+    # S_a: write -> promote user-inference (stages pending) -> confirm. Confirm
+    # commits the durable memory AND deletes the source episode. No handoff, so
+    # no floor: S_a ends zero-episode on disk.
+    server_a = build_server(config=cfg, store=Store(memory_dir), state=SessionState())
+    ep = await _call(
+        server_a,
+        "episode_write",
+        body="Iter 4 — user kept asking for keyboard-first navigation.",
+        takeaway="user prefers keyboard-first navigation",
+    )
+    a_session_id = ep["session_id"]
+    pending = await _call(
+        server_a,
+        "episode_promote",
+        episode_id=ep["id"],
+        scopes=["learning-style"],
+        category="user-inference",
+    )
+    assert pending["status"] == "pending", (
+        f"test precondition: user-inference promotion must stage pending; "
+        f"got: {pending!r}"
+    )
+    confirmed = await _call(
+        server_a, "memory_write_confirm", pending_id=pending["pending_id"]
+    )
+    assert confirmed["status"] == "committed"
+    assert EpisodeStore(memory_dir).list_by_session(a_session_id) == [], (
+        "S_a must be zero-episode after the confirmed promotion"
+    )
+
+    # Reconstruct a PRE-WINDOW log: strip `episode_id` from every
+    # `write_confirm` event so the confirm-time proof is absent, exactly as a
+    # log written before the stamp existed would look. The bare pending
+    # `episode_promote` remains (it never carried the confirm-linking key).
+    log_path = memory_dir / ".events.jsonl"
+    stripped: list[str] = []
+    saw_confirm_with_id = False
+    for line in log_path.read_text().splitlines():
+        if not line.strip():
+            continue
+        event = _json.loads(line)
+        if event.get("kind") == "write_confirm" and event.get("episode_id") is not None:
+            saw_confirm_with_id = True
+            event.pop("episode_id")
+        stripped.append(_json.dumps(event))
+    assert saw_confirm_with_id, (
+        "precondition: the confirm event must have carried an episode_id to "
+        "strip (the post-window stamp); the reconstruction is meaningless "
+        "otherwise"
+    )
+    log_path.write_text("\n".join(stripped) + "\n")
+
+    # Reader: resolves the zero-episode S_a via its events' worktree_root.
+    server_r = build_server(config=cfg, store=Store(memory_dir), state=SessionState())
+    res = await _call(server_r, "episode_handoff")
+
+    assert res["prior_session_id"] == a_session_id
+    assert res["episodes"] == []
+    note = res.get("note", "")
+    # HEDGED on the outcome, not the false empty-tick claim.
+    assert "cannot confirm the outcome" in note, (
+        f"pre-window deferred-confirm promotion must hedge on the outcome, not "
+        f"fall to the false empty-tick note; got: {note!r}"
+    )
+    assert "may have committed" in note, (
+        f"hedged note must acknowledge the promotion may have committed; got: {note!r}"
+    )
+    # THE regression assertions: the actively FALSE claims must both be absent —
+    # a takeaway demonstrably WAS journaled and staged for promotion.
+    assert "journaled no takeaway" not in note, (
+        f"note must not falsely claim nothing was journaled; got: {note!r}"
+    )
+    assert "non-handoff tick" not in note, (
+        f"note must not fall to the non-handoff-tick hedge; got: {note!r}"
     )
 
 

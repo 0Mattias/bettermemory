@@ -63,10 +63,17 @@ Returns `None`-rich shape so the caller can distinguish:
   COMMITTED `episode_promote` (or a `write_confirm` event carrying an
   `episode_id`, stamped by the deferred confirm path, any session's)
   proves the deletion path. A bare pending promote is not proof — it
-  may have been cancelled or expired, leaving the episode for a later
-  prune to remove. When the proving signal is present the note says the
-  takeaway was promoted into a durable memory (find it via
-  memory_search) instead of hedging crash-or-empty.
+  may have been cancelled (a `write_cancel` now stamps the kept episode's
+  id, the negative-proof counterpart) or expired, leaving the episode for
+  a later prune to remove. When the proving signal is present the note
+  says the takeaway was promoted into a durable memory (find it via
+  memory_search) instead of hedging crash-or-empty. When a bare pending
+  trace exists with NEITHER a commit proof NOR a cancel proof — an old
+  log written before those id stamps existed, or a still-open/expired
+  pending — the outcome is genuinely unprovable from the log, and the
+  note HEDGES ("a promotion was staged, its outcome can't be confirmed
+  here") rather than asserting a promotion OR falsely claiming nothing
+  was journaled.
 - "prior sessions exist but every takeaway is scope-hidden" — the
   most-recent worktree-matching session has REAL takeaways that are
   all hidden by this session's `memory_scope_disable` set, and no
@@ -97,7 +104,7 @@ them out of the takeaway summary surface.
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Literal
 
 from ._shared import Context, _advance_turn
 
@@ -105,6 +112,25 @@ if TYPE_CHECKING:
     from pathlib import Path
 
     from .._handlers import ToolHandlers
+
+
+# Three-valued verdict from `_episode_promoted_out_of_session`. A plain
+# bool collapsed the last two: "provably NOT promoted" and "cannot be
+# proven either way" both read as False, and the handoff then emitted the
+# same "journaled no takeaway" note for a real (but unprovable) promotion
+# as for a genuine non-handoff tick.
+#   - "promoted": the event log PROVES a takeaway this session wrote went
+#     through the promotion delete path (committed promote, or a
+#     write_confirm carrying its episode id).
+#   - "staged-unresolved": a bare `pending` promote of one of this
+#     session's episodes exists, but the log carries NO commit proof AND
+#     NO cancel proof — the outcome is genuinely unprovable (an old log
+#     written before the confirm/cancel carried the episode id, or a
+#     still-open/expired pending). The note HEDGES rather than asserting
+#     either a promotion or that nothing was journaled.
+#   - "none": no pending/committed promote trace for this session's
+#     episodes at all — a genuine crash / clean-tick / non-handoff shape.
+_PromotionTrace = Literal["promoted", "staged-unresolved", "none"]
 
 
 DESC_EPISODE_HANDOFF = (
@@ -611,11 +637,15 @@ async def episode_handoff(
     # episode id + writer session, and a COMMITTED `episode_promote` (or a
     # `write_confirm` event carrying an `episode_id`, stamped by the
     # deferred confirm path) proves the delete ran — a bare pending promote
-    # does not. Only consulted when a note is about to fire (the uncommon
-    # path), so the common no-note handoff pays nothing.
-    promoted_out = False
+    # does not. But "not proven promoted" splits two ways: PROVABLY not
+    # (a `write_cancel` stamped with the kept episode id) versus UNPROVABLE
+    # (an old log, or a still-open/expired pending) — the verdict carries
+    # that distinction so the note can hedge instead of falsely claiming
+    # nothing was journaled. Only consulted when a note is about to fire
+    # (the uncommon path), so the common no-note handoff pays nothing.
+    promotion_trace: _PromotionTrace = "none"
     if (note_floor_only or note_zero_episode) and note_subject_sid is not None:
-        promoted_out = _episode_promoted_out_of_session(
+        promotion_trace = _episode_promoted_out_of_session(
             deps.store.root, note_subject_sid
         )
 
@@ -637,7 +667,7 @@ async def episode_handoff(
     # flags that the most recent session left nothing. The empty shapes get
     # distinct text because their on-disk cause differs.
     if note_floor_only:
-        if promoted_out:
+        if promotion_trace == "promoted":
             # Not ambiguous after all: the event log shows this session's
             # episode_write followed by a matching episode_promote, and
             # promotion deletes the journal source on commit — that is why
@@ -654,6 +684,29 @@ async def episode_handoff(
                 "promoted content. Any takeaways above (if present) come "
                 "from an older session in this worktree that the handoff "
                 "rewound to."
+            )
+        elif promotion_trace == "staged-unresolved":
+            # A takeaway WAS journaled and staged for promotion (so the
+            # crash / clean-read-only-tick hedge below would be a lie — it
+            # falsely implies no episode_write ran), but the event log
+            # cannot confirm the promotion's outcome: a bare `pending`
+            # promote with no committed/confirmed proof and no cancel
+            # proof. Hedge honestly on the outcome rather than asserting a
+            # promotion (it may never have committed) OR asserting nothing
+            # was journaled (a takeaway demonstrably was).
+            result["note"] = (
+                "The immediately-preceding session called episode_handoff "
+                "(which wrote the session-tag floor that anchored the "
+                "worktree match) and staged a takeaway for promotion into "
+                "a durable memory, but this event log cannot confirm the "
+                "outcome: the promotion may have committed (for example, a "
+                "log written before the confirm event recorded the "
+                "source-episode id) or it may have been cancelled or "
+                "expired. If it committed, memory_search can surface the "
+                "promoted content; if not, no durable memory was written. "
+                "Only the session-tag floor remains on disk. Any takeaways "
+                "above (if present) come from an older session in this "
+                "worktree that the handoff rewound to."
             )
         else:
             # Floor-only: a real `is_floor` marker exists on disk (the session
@@ -674,7 +727,7 @@ async def episode_handoff(
                 "rewound to."
             )
     elif note_zero_episode:
-        if promoted_out:
+        if promotion_trace == "promoted":
             # Same promotion cause, zero-episode flavor: the session wrote a
             # takeaway WITHOUT ever calling episode_handoff (so no floor),
             # and the promotion deleted the journal source — nothing remains
@@ -690,6 +743,28 @@ async def episode_handoff(
                 "memory_search can surface the promoted content. Any "
                 "takeaways above (if present) come from an older session "
                 "in this worktree that the handoff rewound to."
+            )
+        elif promotion_trace == "staged-unresolved":
+            # Zero-episode flavor of the unprovable-promotion hedge: a
+            # takeaway was journaled and staged for promotion (so the
+            # "journaled no takeaway / non-handoff tick" text below would be
+            # an actively false claim), but the event log cannot confirm the
+            # promotion's outcome — a bare `pending` promote with no
+            # committed/confirmed proof and no cancel proof. State what is
+            # known (a promotion was staged) and hedge the outcome; never
+            # assert nothing was journaled. Still true, and kept: no floor
+            # exists (the session never called episode_handoff).
+            result["note"] = (
+                "The immediately-preceding session in this worktree staged "
+                "a takeaway for promotion into a durable memory (and left "
+                "no handoff floor), but this event log cannot confirm the "
+                "outcome: the promotion may have committed (for example, a "
+                "log written before the confirm event recorded the "
+                "source-episode id) or it may have been cancelled or "
+                "expired. If it committed, memory_search can surface the "
+                "promoted content; if not, no durable memory was written. "
+                "Any takeaways above (if present) come from an older "
+                "session in this worktree that the handoff rewound to."
             )
         else:
             # Zero-episode: NO floor on disk — the worktree match came from an
@@ -782,9 +857,17 @@ def _maybe_write_session_floor(
     )
 
 
-def _episode_promoted_out_of_session(root: "Path", session_id: str) -> bool:
-    """True when the event log shows an episode WRITTEN BY `session_id`
-    was promoted out of the journal.
+def _episode_promoted_out_of_session(root: "Path", session_id: str) -> _PromotionTrace:
+    """Classify what the event log can prove about an episode WRITTEN BY
+    `session_id` that is no longer on disk. Returns one of:
+
+      - "promoted": the log PROVES a takeaway this session wrote went
+        through the promotion delete path.
+      - "staged-unresolved": a bare `pending` promote of one of this
+        session's episodes exists, but the log carries no commit proof
+        AND no cancel proof — the outcome is genuinely unprovable.
+      - "none": no pending/committed promote trace for this session's
+        episodes at all — a genuine crash / clean-tick / non-handoff shape.
 
     `episode_promote` deletes the source episode when the durable write
     commits — synchronously on `status="committed"`, or via
@@ -798,33 +881,52 @@ def _episode_promoted_out_of_session(root: "Path", session_id: str) -> bool:
       - `episode_write` events carry the episode's ULID (`id`) and the
         writer's session — collect the ids `session_id` wrote.
       - a SYNCHRONOUS `episode_promote` (`write_status="committed"`)
-        deletes the source episode inline — collect its `episode_id`.
-        The promoter session is deliberately NOT filtered: a later
-        session promoting an older session's takeaway (the documented
-        /loop pattern) still deletes the OLDER session's journal entry.
+        deletes the source episode inline — POSITIVE proof; collect its
+        `episode_id`. The promoter session is deliberately NOT filtered:
+        a later session promoting an older session's takeaway (the
+        documented /loop pattern) still deletes the OLDER session's entry.
       - a `write_confirm` event that carries an `episode_id` is the
-        deferred confirm path's proof: `memory_write_confirm` stamps the
-        deleted source-episode id onto that event only when the confirmed
-        write was a promotion — collect those too.
+        deferred confirm path's POSITIVE proof: `memory_write_confirm`
+        stamps the deleted source-episode id onto that event only when
+        the confirmed write was a promotion — collect those too.
+      - a `write_cancel` event that carries an `episode_id` is the
+        NEGATIVE-proof counterpart: `memory_write_cancel` stamps the KEPT
+        source-episode id onto that event when a staged promotion is
+        dropped, so the episode was demonstrably NOT promoted. A later
+        prune can still rmtree the whole session dir, producing the same
+        zero-episode absence a real promotion would — this stamp is what
+        tells the two apart.
 
-    A non-empty intersection means one of this session's journal
-    entries went through the promotion delete path.
+    Verdict logic (all sets are episode ids):
+      - `written & promoted` non-empty → "promoted".
+      - else a bare `pending` promote of a written episode that is
+        neither in `promoted` nor in `cancelled` → "staged-unresolved".
+      - else → "none".
 
-    A BARE `episode_promote` event with `write_status="pending"` is
-    deliberately NOT accepted as proof. It is recorded at STAGING time,
-    before the outcome is known; the deferred delete happens later inside
-    `memory_write_confirm`, which stamps the deleted `episode_id` onto its
-    `write_confirm` event — that confirm-time trace, not the pending
-    promote, is what this helper matches for the deferred path. The older
-    reasoning ("a pending trace corroborated by the on-disk absence means
-    the confirm path ran") was unsound: a cancelled (`memory_write_cancel`)
-    or TTL-expired pending leaves the episode ON disk, and
+    Why a bare `pending` promote is NOT read as proof on its own: it is
+    recorded at STAGING time, before the outcome is known. The deferred
+    delete happens later inside `memory_write_confirm` (stamping the
+    confirm event); a cancel drops it (stamping the cancel event); an
+    unconfirmed pending simply TTL-expires with no further event. A
+    cancelled/expired pending leaves the episode ON disk, and
     `prune_old_sessions` then rmtrees the whole session directory 30 days
     on — producing the exact zero-episode absence a real promotion would.
-    On-disk absence therefore cannot tell a confirmed promotion apart from
-    a cancelled/expired-then-pruned one; requiring the explicit
-    committed/confirmed trace can, and a bare pending falls through to the
-    honest hedged note.
+    So on-disk absence + a bare pending cannot, by itself, prove a
+    promotion; the committed/confirmed stamp proves it did, the cancel
+    stamp proves it did not, and a pending with NEITHER is unprovable and
+    hedged (never collapsed into the false "nothing was journaled" note).
+
+    UNRECOVERABLE OLD LOGS: an event log written before these id stamps
+    existed carries neither on its `write_confirm`/`write_cancel` — and
+    the bare `episode_promote(pending)` never carried a linking key to
+    the confirm/cancel either. So for a genuinely-committed pre-stamp
+    promotion NO code change here can recover proof; it lands in
+    "staged-unresolved" and honestly hedges. (A symmetric FORWARD
+    hardening — a `pending_id` on the `episode_promote` event, joinable to
+    the confirm/cancel's `pending_id` — would let a future promoter that
+    somehow lost the episode-id stamp still be joined; it is recorded on
+    the promote event, owned elsewhere, and would not help these old logs
+    regardless, so it is intentionally out of scope here.)
 
     Cost: one pass over `iter_all_events` (active log + gz archives).
     Only invoked when a floor-only / zero-episode note is about to
@@ -835,6 +937,8 @@ def _episode_promoted_out_of_session(root: "Path", session_id: str) -> bool:
 
     written: set[str] = set()
     promoted: set[str] = set()
+    cancelled: set[str] = set()
+    staged_pending: set[str] = set()
     for ev in iter_all_events(root):
         kind = ev.get("kind")
         if kind == "episode_write":
@@ -846,33 +950,47 @@ def _episode_promoted_out_of_session(root: "Path", session_id: str) -> bool:
             if sid == session_id and isinstance(eid, str):
                 written.add(eid)
         elif kind == "episode_promote":
-            # Only a SYNCHRONOUS commit proves the source episode was
-            # deleted inline here. A `pending` promote is NOT proof: it is
-            # recorded at STAGING time, before the outcome is known, and the
-            # staged write may be cancelled (memory_write_cancel) or
-            # TTL-expired — both KEEP the episode on disk. A later
-            # `prune_old_sessions` then rmtrees the whole session dir —
-            # the same zero-episode shape as a real promotion, but no
-            # promotion committed. The deferred confirm path stamps its own
-            # proof onto the `write_confirm` event (below), so a bare
-            # `pending` here is deliberately ignored.
-            if ev.get("write_status") == "committed":
-                eid = ev.get("episode_id")
-                if isinstance(eid, str):
-                    promoted.add(eid)
+            eid = ev.get("episode_id")
+            if not isinstance(eid, str):
+                continue
+            status = ev.get("write_status")
+            if status == "committed":
+                # Synchronous commit deleted the source episode inline —
+                # positive proof.
+                promoted.add(eid)
+            elif status == "pending":
+                # Staged, outcome not yet known at record time. Held aside;
+                # only a later commit/confirm proof (→ promoted) or cancel
+                # proof (→ cancelled) resolves it. A pending left in neither
+                # is the unprovable case.
+                staged_pending.add(eid)
         elif kind == "write_confirm":
             # A `write_confirm` carrying an `episode_id` is the durable,
             # confirm-TIME proof that a DEFERRED promotion's delete ran:
             # `memory_write_confirm` stamps the deleted source-episode id
             # onto this event only on the promotion path (a normal confirm
             # records episode_id=None, filtered out by the isinstance check).
-            # This is the only trace that separates a confirmed pending
-            # promotion from a cancelled/expired-then-pruned one, which are
-            # byte-identical on disk.
             eid = ev.get("episode_id")
             if isinstance(eid, str):
                 promoted.add(eid)
-    return bool(written & promoted)
+        elif kind == "write_cancel":
+            # A `write_cancel` carrying an `episode_id` is the confirm-time
+            # NEGATIVE proof: `memory_write_cancel` stamps the KEPT
+            # source-episode id when a staged promotion is dropped, so this
+            # episode was demonstrably not promoted. Separates a
+            # provably-cancelled pending (→ honest "no takeaway" note) from
+            # an unprovable one (→ hedged note). A normal cancel records
+            # episode_id=None, filtered out by the isinstance check.
+            eid = ev.get("episode_id")
+            if isinstance(eid, str):
+                cancelled.add(eid)
+    if written & promoted:
+        return "promoted"
+    # A bare pending promote of one of THIS session's episodes, with no
+    # positive commit proof and no negative cancel proof: unprovable.
+    if (written & staged_pending) - promoted - cancelled:
+        return "staged-unresolved"
+    return "none"
 
 
 def _worktrees_equal_strict(

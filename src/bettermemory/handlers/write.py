@@ -871,9 +871,30 @@ async def memory_write_cancel(
     # Drop the promotion linkage if there is one, but DON'T delete the
     # source episode — cancel is the user saying "not yet", so the
     # caller should be able to fix the wording and re-promote from the
-    # same journal entry.
-    state.discard_promotion_episode(pending_id)
-    deps.recorder.record("write_cancel", pending_id=pending_id, existed=existed)
+    # same journal entry. `take_promotion_episode` pops the same linkage
+    # `discard_promotion_episode` would (both are a bare dict pop), but
+    # hands back `(session, episode_id)` so we can stamp the KEPT episode's
+    # id onto the write_cancel event below.
+    promo = state.take_promotion_episode(pending_id)
+    cancelled_episode_id = promo[1] if promo is not None else None
+    # Stamp the kept source-episode id onto the write_cancel event (None on
+    # a non-promotion cancel). This is the confirm-time NEGATIVE-proof
+    # counterpart to the episode_id `memory_write_confirm` stamps on
+    # write_confirm: where the confirm stamp proves a deferred promotion's
+    # delete RAN, this cancel stamp proves the staged promotion did NOT
+    # commit (the source episode stays on disk). `episode_handoff`'s
+    # promotion detector reads it to tell a provably-cancelled pending
+    # (→ honest "no takeaway" note) apart from an unresolvable one
+    # (→ hedged note). Old event logs written before this stamp carry
+    # neither key on their promote/confirm/cancel events, so a pre-stamp
+    # cancelled pending stays unprovable and honestly hedges — no code
+    # change can recover a linkage the old log never recorded.
+    deps.recorder.record(
+        "write_cancel",
+        pending_id=pending_id,
+        existed=existed,
+        episode_id=cancelled_episode_id,
+    )
     return {"cancelled": pending_id, "existed": existed}
 
 
