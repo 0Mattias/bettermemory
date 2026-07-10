@@ -86,9 +86,8 @@ from typing import Any
 
 from .origin import (
     Origin,
-    any_pathspec_in_history,
     commit_author_timestamps,
-    commits_touching_pathspecs,
+    commit_author_timestamps_touching_pathspecs,
     repos_match,
     resolve_repo_pathspecs,
 )
@@ -1269,19 +1268,29 @@ def resolve_commit_drift_count(
       information about any of these; counting it anyway is exactly the
       100%-false-positive noise the claim-kind calibration measured
       (12/12 labeled false positives at 3.13.0, 24/24 at 3.16.0).
-    - an ``int`` — the count of commits since `since` touching at least
-      one anchor, CLAMPED so it can never exceed `unfiltered`. The path
-      filter counts on committer date, which a history rewrite can inflate
-      past the author-date truth; the clamp enforces the documented
-      invariant that narrowing may only REDUCE the count, never resurrect
-      drift. Falls back to `unfiltered` when git can't answer the
-      path-filtered query (never under-count on infrastructure failure).
+    - an ``int`` — the EXACT count of commits authored after `since` that
+      touched at least one anchor. Measured in AUTHOR-date space via the
+      same `bisect_right` boundary the `unfiltered` count uses
+      (`commit_author_timestamps_touching_pathspecs` + bisect), so the two
+      counts share one date axis and the filtered count is a strict subset
+      of the unfiltered commits — it can never exceed `unfiltered`, and no
+      min() clamp is needed. (The prior implementation counted the anchor's
+      commits on COMMITTER date via ``git rev-list --since``, whose boundary
+      a rebase could inflate past the author-date truth; a clamp bounded
+      that at `unfiltered` but could not repair it — post-verify churn on
+      OTHER files raised `unfiltered` enough that the inflated committer-date
+      filtered count slipped under the clamp and still over-reported.
+      Author-date counting removes the mismatch at the source.) Falls back
+      to `unfiltered` when git can't run the path-filtered query (never
+      under-count on infrastructure failure).
 
     Callers gate on ``unfiltered > 0`` before calling (a caught-up memory
-    pays no git work). The phantom-anchor probe runs only when the
-    filtered count is 0 — a drift-positive path is never second-guessed —
-    and a since-deleted cited file still resolves as real, since its
-    removal commit keeps it in history.
+    pays no git work). One git call
+    (``git log --format=%aI HEAD -- <specs>``) now serves double duty: its
+    author timestamps give the exact count, and an EMPTY log is itself the
+    phantom signal — no spec ever appeared in history — so the separate
+    existence probe is gone. A since-deleted cited file still resolves as
+    real, since its removal commit keeps it in the log.
     """
     if not anchors:
         return None
@@ -1295,37 +1304,39 @@ def resolve_commit_drift_count(
         # Git answered: every anchor escapes this repo. The memory's
         # claims are real but not about this repo's code.
         return None
-    filtered = commits_touching_pathspecs(cwd, since, specs, toplevel=toplevel)
-    if filtered is None:
-        # Git couldn't run the path-filtered query — never under-count on
+    touching = commit_author_timestamps_touching_pathspecs(
+        cwd, specs, toplevel=toplevel
+    )
+    if touching is None:
+        # Git couldn't run the path-filtered log — never under-count on
         # infrastructure failure; keep the conservative unfiltered count.
         return unfiltered
-    if filtered == 0:
-        # A zero filtered count needs one more question before it can mint
-        # an affirmative "clean": did any resolved spec EVER exist here?
-        # `resolve_repo_pathspecs` is purely LEXICAL (no existence check),
-        # so a sub-root / bare-filename / spaced-tail citation
-        # (`handlers/x.py` for a file at `src/pkg/handlers/x.py`, `Notes.md`
-        # sheared off `docs/My Notes.md`) resolves to a repo-relative
-        # pathspec no commit ever touched — a PHANTOM. A phantom is NOT
-        # clean; it is NOT APPLICABLE, exactly like an anchor that escapes
-        # the repo. Only a POSITIVE "no spec ever appeared in history"
-        # flips to None — a since-deleted cited file still counts as real
-        # (its removal keeps it in history), and a git failure on the probe
-        # keeps the conservative clean/0.
-        if any_pathspec_in_history(cwd, specs, toplevel=toplevel) is False:
-            return None
-        return 0
-    # Enforce the documented narrowing invariant: the claim-anchored count
-    # may only REDUCE the repo-wide count, never resurrect drift. The
-    # `--since` path filter counts on COMMITTER date, so a history rewrite
-    # (rebase / amend / cherry-pick — `sync` rebases on every pull) that
-    # bumps a rewritten commit's committer date past `since` while its
-    # author date stayed before it can INFLATE `filtered` past the
-    # author-date `unfiltered` truth. `min` clamps it back so the reported
-    # count satisfies `filtered <= unfiltered` — the invariant every call
-    # site's comment already asserts.
-    return min(unfiltered, filtered)
+    if not touching:
+        # Clean exit, empty log: no commit reachable from HEAD ever touched
+        # any resolved spec, so every anchor is a PHANTOM — a sub-root /
+        # bare-filename / spaced-tail citation (`handlers/x.py` for a file at
+        # `src/pkg/handlers/x.py`, `Notes.md` sheared off `docs/My Notes.md`)
+        # that `resolve_repo_pathspecs` mapped LEXICALLY onto a repo-relative
+        # path no commit touched. A phantom is NOT clean; it is NOT
+        # APPLICABLE, exactly like an anchor that escapes the repo. This is
+        # the old `any_pathspec_in_history` probe folded into the one log
+        # call: an empty author-date log IS "no spec ever appeared in
+        # history". A since-deleted cited file never reaches here — its
+        # removal commit keeps it in the log — so it still counts as real.
+        return None
+    # EXACT author-date count via the same `bisect_right` boundary the
+    # unfiltered count uses (`compute_commit_drift` and the search / health
+    # rollups all bisect `commit_author_timestamps`). Both counts now live in
+    # author-date space, so the path-filtered count is a strict subset of the
+    # unfiltered commits and can never exceed `unfiltered` — no min() clamp is
+    # needed. The clamp only ever bounded the previous COMMITTER-date filter,
+    # whose `--since` boundary a rebase could inflate past the author-date
+    # truth; counting the anchor's commits on author date removes that
+    # mismatch at the source instead of capping it after the fact.
+    if since.tzinfo is None:
+        since = since.replace(tzinfo=timezone.utc)
+    idx = bisect.bisect_right(sorted(touching), since)
+    return len(touching) - idx
 
 
 def compute_commit_drift(

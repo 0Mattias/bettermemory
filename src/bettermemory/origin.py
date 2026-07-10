@@ -410,11 +410,20 @@ def should_include_for_caller(
 # ---------------------------------------------------------------------------
 
 
-def _git(cwd: Path, *args: str, timeout: float = 1.0) -> str | None:
+def _git(
+    cwd: Path, *args: str, timeout: float = 1.0, empty_ok: bool = False
+) -> str | None:
     """Run a git command from `cwd`. Returns trimmed stdout on success,
     None on any failure. Short timeout so a hanging git never stalls a
     memory_write — the write is the user-facing operation; origin is
     nice-to-have.
+
+    `empty_ok` splits "git ran fine, no output" from "git could not run":
+    with it True a zero-exit call with EMPTY stdout returns ``""`` instead
+    of None, so a caller can tell a clean-but-empty result (`git log --
+    <specs>` listing no commit) apart from an actual failure (non-zero
+    exit, missing binary, timeout — still None). Default False keeps the
+    historical ``out or None`` collapse every other caller relies on.
 
     Failure logging is tiered so the common "not a repo" case stays
     silent while operationally interesting failures (missing binary,
@@ -471,6 +480,8 @@ def _git(cwd: Path, *args: str, timeout: float = 1.0) -> str | None:
         )
         return None
     out = result.stdout.strip()
+    if empty_ok:
+        return out
     return out or None
 
 
@@ -864,6 +875,79 @@ def commit_author_timestamps(cwd: Path | None) -> list[datetime] | None:
     return out if out else None
 
 
+def commit_author_timestamps_touching_pathspecs(
+    cwd: Path | None,
+    pathspecs: list[str],
+    *,
+    toplevel: Path | None = None,
+) -> list[datetime] | None:
+    """Author timestamps of the commits touching any of `pathspecs`.
+
+    `pathspecs` must already be repo-root-relative forward-slash specs (the
+    output of `resolve_repo_pathspecs`). The path-filtered analogue of
+    `commit_author_timestamps`: same ``--format=%aI`` author-date source, so
+    a caller can `bisect_right` the result against a `since` instant and get
+    a count that lives in the SAME date space as the unfiltered bisect — no
+    committer-vs-author mismatch. That is the whole point: `commits_touching_
+    pathspecs` counts on COMMITTER date (git's ``--since``), which a rebase
+    can inflate past the author-date truth, forcing a downstream clamp;
+    reading author dates here removes the mismatch at the source.
+
+    Three-valued return — the distinction the claim-anchored drift policy
+    (`verify.resolve_commit_drift_count`) needs:
+
+    - ``None`` — git could not answer (cwd is None, empty pathspecs, not a
+      repo, non-zero git exit). The caller keeps its conservative default
+      (never under-count on infrastructure failure).
+    - ``[]`` — git answered cleanly and NO commit reachable from HEAD ever
+      touched any spec. Every pathspec is a PHANTOM: a citation
+      `resolve_repo_pathspecs` mapped LEXICALLY (no existence check) onto a
+      repo-relative path no commit touched. This SUBSUMES the separate
+      `any_pathspec_in_history` probe — an empty author-date log IS the
+      "no spec ever appeared in history" answer, so one git call now does
+      what two did.
+    - ``[ts, ...]`` — author timestamps (timezone-aware) of the touching
+      commits, in git's emit order (newest-first); sort before bisect. A
+      since-DELETED cited file still lands here: its removal is itself a
+      commit that touched it, so it stays in the log — the real-not-phantom
+      signal a drift anchor needs.
+
+    The clean-empty (``[]``) vs failure (``None``) split rides on
+    `_git(empty_ok=True)`: ``git log -- <specs>`` exits 0 with empty stdout
+    for a phantom and non-zero when git itself can't run; the default
+    ``out or None`` collapse would merge those two, so ``empty_ok`` keeps
+    them apart. Non-empty stdout that parses to nothing (a git oddity, not a
+    clean phantom) also degrades to ``None`` — stay conservative rather than
+    mint a not-applicable exemption from garbage output.
+    """
+    if cwd is None or not pathspecs:
+        return None
+    if toplevel is None:
+        toplevel = repo_toplevel(cwd)
+        if toplevel is None:
+            return None
+    raw = _git(toplevel, "log", "--format=%aI", "HEAD", "--", *pathspecs, empty_ok=True)
+    if raw is None:
+        # Git could not answer (non-zero exit, missing binary, timeout).
+        return None
+    if not raw:
+        # Clean exit, empty log — no commit touches any spec (phantom).
+        return []
+    out: list[datetime] = []
+    for line in raw.splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            ts = datetime.fromisoformat(line)
+        except ValueError:
+            continue
+        if ts.tzinfo is None:
+            ts = ts.replace(tzinfo=timezone.utc)
+        out.append(ts)
+    return out or None
+
+
 # ---------------------------------------------------------------------------
 # Remote URL parsing
 # ---------------------------------------------------------------------------
@@ -1048,6 +1132,7 @@ __all__ = [
     "any_pathspec_in_history",
     "capture",
     "commit_author_timestamps",
+    "commit_author_timestamps_touching_pathspecs",
     "commits_since",
     "commits_since_touching_paths",
     "commits_touching_pathspecs",

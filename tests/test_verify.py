@@ -1471,18 +1471,20 @@ def test_commit_drift_root_citation_does_not_drag_in_unrelated_churn(
 
 
 @pytest.mark.skipif(not _GIT_AVAILABLE, reason="git not on PATH")
-def test_resolve_commit_drift_count_clamps_inflated_filtered_to_unfiltered(
+def test_resolve_commit_drift_count_author_date_ignores_committer_inflation(
     tmp_path: Path,
 ) -> None:
-    """Fix (a): rebase-inflation with a POSITIVE unfiltered count. The
-    committer-date `--since` path filter counts commits a rebase rewrote
-    past the verify instant (author date preserved BEFORE it), so `filtered`
-    can EXCEED the author-date `unfiltered` truth. The documented invariant
-    — narrowing may only REDUCE the count, never resurrect drift — must
-    clamp it back. The existing agrees-across-surfaces-after-rebase test
-    only exercises unfiltered==0; this pins the positive case the clamp
-    actually guards. Pre-fix (`return ... filtered`) returned the inflated
-    2; the clamp returns the unfiltered truth 1.
+    """Rebase-inflation with a POSITIVE unfiltered count, now counted in
+    AUTHOR-date space. Two rebased commits touch the cited file with author
+    date BEFORE `since` and committer date rewritten AFTER it — the shape
+    `git pull --rebase` leaves on disk. The old implementation counted them
+    on COMMITTER date via `git rev-list --since` (getting 2) and leaned on a
+    `min(unfiltered, filtered)` clamp to bound the inflation (to 1 here). The
+    author-date filter ignores the committer rewrite entirely and reports the
+    exact truth: NONE of the anchor's commits were authored after `since`, so
+    0. This supersedes the former clamp behavior — the clamp is gone because
+    an author-date subset can never exceed the author-date unfiltered count.
+    Pre-fix this returned the clamped 1; the author-date count returns 0.
     """
     _init_repo_with_remote(tmp_path, remote=_REMOTE)
     _commit_touching(
@@ -1503,18 +1505,83 @@ def test_resolve_commit_drift_count_clamps_inflated_filtered_to_unfiltered(
         author_when=datetime(2020, 3, 1, tzinfo=timezone.utc),
         committer_when=datetime(2026, 6, 2, tzinfo=timezone.utc),
     )
-    # `unfiltered` is the author-date bisect truth the caller computes: one
-    # genuinely-new commit's worth. The committer-date path filter over the
-    # two rebased commits returns 2, so without the clamp the "narrowed"
-    # count (2) EXCEEDS the unfiltered truth (1) — the clean→inflated flip
-    # the invariant forbids.
+    # The committer-date path filter over the two rebased commits returned 2
+    # (min-clamped to unfiltered=1 by the old code); the author-date count is
+    # 0 — no notes.md commit was AUTHORED after `since`.
     result = resolve_commit_drift_count(
         cwd=tmp_path,
         since=datetime(2025, 1, 1, tzinfo=timezone.utc),
         unfiltered=1,
         anchors=("notes.md",),
     )
-    assert result == 1
+    assert result == 0
+
+
+@pytest.mark.skipif(not _GIT_AVAILABLE, reason="git not on PATH")
+def test_resolve_commit_drift_count_author_date_exact_under_unrelated_churn(
+    tmp_path: Path,
+) -> None:
+    """The residual the min() clamp could NOT fix, pinned. Post-verify churn
+    on OTHER files raises the author-date `unfiltered` count, while a rebase
+    inflates the ANCHOR file's committer dates past `since` (author dates
+    preserved before it). The old committer-date `--since` filter counted the
+    two rebased anchor commits as 2; because `unfiltered` (3) exceeded that,
+    the `min(unfiltered, filtered)` clamp did NOT bind and 2 was reported —
+    yet the true author-date anchored count is 0 (no anchor commit was
+    authored after `since`). The author-date filter reports the exact 0.
+    Must FAIL against the min-clamped source, which returns 2.
+    """
+    _init_repo_with_remote(tmp_path, remote=_REMOTE)
+    # Anchor-file baseline, authored well before `since`, committer preserved
+    # — makes `notes.md` a REAL anchor (present in history, not a phantom).
+    _commit_touching(
+        tmp_path, "baseline", when=datetime(2020, 1, 1, tzinfo=timezone.utc)
+    )
+    # Two REBASED commits touching the anchor: authored before `since`,
+    # committer date rewritten far after it (the `git pull --rebase` shape).
+    _commit_touching_split(
+        tmp_path,
+        "rebased-1",
+        author_when=datetime(2020, 2, 1, tzinfo=timezone.utc),
+        committer_when=datetime(2026, 6, 1, tzinfo=timezone.utc),
+    )
+    _commit_touching_split(
+        tmp_path,
+        "rebased-2",
+        author_when=datetime(2020, 3, 1, tzinfo=timezone.utc),
+        committer_when=datetime(2026, 6, 2, tzinfo=timezone.utc),
+    )
+    # Post-verify churn on an UNRELATED file — genuinely authored after
+    # `since`. These lift the author-date `unfiltered` count to 3 without
+    # touching the anchor, so the clamp ceiling sits ABOVE the inflated
+    # committer-date filtered count (2) and cannot bind.
+    _commit_touching(
+        tmp_path,
+        "other-1",
+        when=datetime(2025, 6, 1, tzinfo=timezone.utc),
+        filename="other.md",
+    )
+    _commit_touching(
+        tmp_path,
+        "other-2",
+        when=datetime(2025, 7, 1, tzinfo=timezone.utc),
+        filename="other.md",
+    )
+    _commit_touching(
+        tmp_path,
+        "other-3",
+        when=datetime(2025, 8, 1, tzinfo=timezone.utc),
+        filename="other.md",
+    )
+    result = resolve_commit_drift_count(
+        cwd=tmp_path,
+        since=datetime(2025, 1, 1, tzinfo=timezone.utc),
+        # Author-date unfiltered truth: the 3 other.md commits authored after
+        # `since` (the anchor's rebased commits were authored in 2020).
+        unfiltered=3,
+        anchors=("notes.md",),
+    )
+    assert result == 0
 
 
 @pytest.mark.skipif(not _GIT_AVAILABLE, reason="git not on PATH")
