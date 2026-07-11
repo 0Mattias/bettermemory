@@ -720,7 +720,13 @@ def test_resolve_repo_pathspecs_keeps_files_alongside_dropped_root(
 
 
 # ---------------------------------------------------------------------------
-# commits_since_touching_paths — path-filtered count for verified_claims
+# commits_since_touching_paths — DEPRECATED legacy composition (slated for
+# removal in 4.0; superseded by resolve_repo_pathspecs +
+# commit_author_timestamps_touching_pathspecs via
+# verify.resolve_commit_drift_count). The behavior tests below still pin the
+# 3.x contract verbatim; every call is wrapped in pytest.warns so the suite
+# stays green under `-W error` / filterwarnings=error DeprecationWarning
+# filters.
 # ---------------------------------------------------------------------------
 
 
@@ -758,15 +764,30 @@ def _commit_file(
     )
 
 
-def test_commits_since_touching_paths_returns_none_for_none_cwd() -> None:
-    assert (
+def test_commits_since_touching_paths_is_deprecated() -> None:
+    """Every call — even one that early-returns None — must announce the
+    deprecation, so a future reader can't silently wire the committer-date
+    `--since` semantics (rebase-inflatable) and the None-on-all-dropped
+    contract back into the drift path that deliberately abandoned them."""
+    with pytest.warns(
+        DeprecationWarning,
+        match=r"commits_since_touching_paths is deprecated.*removed in.*4\.0",
+    ):
         commits_since_touching_paths(
+            None,
+            datetime(2026, 1, 1, tzinfo=timezone.utc),
+            ["x.py"],
+        )
+
+
+def test_commits_since_touching_paths_returns_none_for_none_cwd() -> None:
+    with pytest.warns(DeprecationWarning, match="commits_since_touching_paths"):
+        out = commits_since_touching_paths(
             None,
             datetime(2026, 1, 1, tzinfo=timezone.utc),
             ["/tmp/x"],
         )
-        is None
-    )
+    assert out is None
 
 
 def test_commits_since_touching_paths_returns_none_for_empty_paths(
@@ -774,14 +795,13 @@ def test_commits_since_touching_paths_returns_none_for_empty_paths(
 ) -> None:
     """No paths means no useful filter — the caller falls back to the
     unfiltered count via the verify.py wrapper."""
-    assert (
-        commits_since_touching_paths(
+    with pytest.warns(DeprecationWarning, match="commits_since_touching_paths"):
+        out = commits_since_touching_paths(
             tmp_path,
             datetime(2026, 1, 1, tzinfo=timezone.utc),
             [],
         )
-        is None
-    )
+    assert out is None
 
 
 @pytest.mark.skipif(not _GIT_AVAILABLE, reason="git not on PATH")
@@ -804,11 +824,12 @@ def test_commits_since_touching_paths_zero_when_unrelated_files_changed(
         when=datetime(2026, 2, 1, tzinfo=timezone.utc),
     )
     target_path = str(tmp_path / "tracked.txt")
-    out = commits_since_touching_paths(
-        tmp_path,
-        datetime(2026, 1, 15, tzinfo=timezone.utc),
-        [target_path],
-    )
+    with pytest.warns(DeprecationWarning, match="commits_since_touching_paths"):
+        out = commits_since_touching_paths(
+            tmp_path,
+            datetime(2026, 1, 15, tzinfo=timezone.utc),
+            [target_path],
+        )
     assert out == 0
 
 
@@ -836,11 +857,12 @@ def test_commits_since_touching_paths_counts_relevant_commits(
         content="updated",
         when=datetime(2026, 3, 1, tzinfo=timezone.utc),
     )
-    out = commits_since_touching_paths(
-        tmp_path,
-        datetime(2026, 1, 15, tzinfo=timezone.utc),
-        [str(tmp_path / "tracked.txt")],
-    )
+    with pytest.warns(DeprecationWarning, match="commits_since_touching_paths"):
+        out = commits_since_touching_paths(
+            tmp_path,
+            datetime(2026, 1, 15, tzinfo=timezone.utc),
+            [str(tmp_path / "tracked.txt")],
+        )
     assert out == 1
 
 
@@ -859,11 +881,12 @@ def test_commits_since_touching_paths_drops_paths_outside_repo(
         when=datetime(2026, 1, 1, tzinfo=timezone.utc),
     )
     # Path outside the repo.
-    out = commits_since_touching_paths(
-        tmp_path,
-        datetime(2025, 12, 1, tzinfo=timezone.utc),
-        ["/nonexistent/outside-repo.txt"],
-    )
+    with pytest.warns(DeprecationWarning, match="commits_since_touching_paths"):
+        out = commits_since_touching_paths(
+            tmp_path,
+            datetime(2025, 12, 1, tzinfo=timezone.utc),
+            ["/nonexistent/outside-repo.txt"],
+        )
     assert out is None
 
 
@@ -898,11 +921,14 @@ def test_commits_since_touching_paths_counts_from_repo_subdirectory(
     since = datetime(2026, 1, 15, tzinfo=timezone.utc)
 
     # Baseline from the repo root: one post-`since` commit touched the path.
-    assert commits_since_touching_paths(tmp_path, since, [nested_abs]) == 1
+    with pytest.warns(DeprecationWarning, match="commits_since_touching_paths"):
+        assert commits_since_touching_paths(tmp_path, since, [nested_abs]) == 1
     # From a SUBDIRECTORY with an absolute verified path — the bug returned 0.
-    assert commits_since_touching_paths(subdir, since, [nested_abs]) == 1
+    with pytest.warns(DeprecationWarning, match="commits_since_touching_paths"):
+        assert commits_since_touching_paths(subdir, since, [nested_abs]) == 1
     # The relative-input form (treated as repo-root-relative) is subdir-safe too.
-    assert commits_since_touching_paths(subdir, since, ["src/tracked.txt"]) == 1
+    with pytest.warns(DeprecationWarning, match="commits_since_touching_paths"):
+        assert commits_since_touching_paths(subdir, since, ["src/tracked.txt"]) == 1
 
 
 # ---------------------------------------------------------------------------

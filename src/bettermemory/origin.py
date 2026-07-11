@@ -37,6 +37,7 @@ from __future__ import annotations
 import logging
 import re
 import subprocess
+import warnings
 from datetime import datetime, timezone
 from functools import lru_cache
 from pathlib import Path
@@ -765,22 +766,46 @@ def commits_since_touching_paths(
     since: datetime,
     paths: list[str],
 ) -> int | None:
-    """Count commits in `cwd`'s repo authored after `since` that touched
-    any of `paths`.
+    """DEPRECATED — slated for removal in 4.0; every call emits a
+    ``DeprecationWarning``. Count commits in `cwd`'s repo after `since`
+    (COMMITTER-date space, git's inclusive ``--since``) that touched any
+    of `paths`.
 
-    Composition of `resolve_repo_pathspecs` + `commits_touching_pathspecs`
-    with the legacy contract: returns None on any failure — including
-    "every path dropped" — so a caller treats every non-answer as "no
-    useful filter, fall back to the unfiltered count". The claim-anchored
-    drift policy (`verify.resolve_commit_drift_count`) deliberately does
-    NOT use this composition: it needs the []-vs-None distinction the
-    two primitives preserve.
+    Retained through the 3.x line only because it is shipped public API
+    (`__all__`) and removal would be a semver break — NO production code
+    path calls it anymore. The commit-drift surfaces replaced this
+    composition with `resolve_repo_pathspecs` +
+    `commit_author_timestamps_touching_pathspecs` (the author-date
+    ``git log`` behind `verify.resolve_commit_drift_count`) because BOTH
+    of its defining semantics were deliberately abandoned — do NOT wire
+    it back into the drift path:
 
-    Used by the change-7 path-filtered drift downgrade: when a memory
-    was verified for a known set of paths, commits that don't touch any
-    of them shouldn't trip the drift signal — the world the memory was
-    checking against hasn't moved even if the project as a whole has.
+    - **Committer-date inflation.** ``git rev-list --since`` filters on
+      COMMITTER date, which a rebase rewrites while preserving author
+      date (`sync` rebases on every pull), so counts inflate past the
+      author-date truth all three drift surfaces (memory_show,
+      memory_search, the health rollup) now agree on.
+    - **None-on-all-dropped ambiguity.** The legacy contract collapses
+      "every path dropped" (the claims don't anchor this repo — drift
+      *not applicable*) into the same ``None`` as "git couldn't answer"
+      (fall back to the unfiltered count), erasing the ``[]``-vs-``None``
+      distinction the claim-anchored policy depends on.
+
+    Legacy contract, unchanged until removal: composition of
+    `resolve_repo_pathspecs` + `commits_touching_pathspecs` returning
+    None on ANY failure — cwd is None, no paths, not a repo, every path
+    dropped — so a caller treats every non-answer as "no useful filter,
+    fall back to the unfiltered count".
     """
+    warnings.warn(
+        "commits_since_touching_paths is deprecated and will be removed in "
+        "bettermemory 4.0; use resolve_repo_pathspecs + "
+        "commit_author_timestamps_touching_pathspecs (the author-date source "
+        "behind verify.resolve_commit_drift_count) instead of this "
+        "committer-date composition",
+        DeprecationWarning,
+        stacklevel=2,
+    )
     if cwd is None or not paths:
         return None
     toplevel = repo_toplevel(cwd)
