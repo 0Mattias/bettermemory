@@ -1019,8 +1019,9 @@ def test_subprocess_version_pins_packaging(tmp_path: Path) -> None:
 # Other coverage doesn't catch either drift: the per-subcommand
 # `test_subcommand_help_works` parametrise above derives from the
 # registry dict (so it follows registry drift rather than detecting it),
-# `test_help_lists_all_subcommands` only asserts a 6-name subset, and
-# the direct-import smoke tests don't cross-check the two enumerations.
+# `test_help_lists_all_subcommands` only asserts a fixed hand-picked
+# subset of the names, and the direct-import smoke tests don't
+# cross-check the two enumerations.
 # Hazard tier: medium-high (user-visible CLI fallback on the
 # registry-drift side; silent unreachable code on the dispatch-only
 # side).
