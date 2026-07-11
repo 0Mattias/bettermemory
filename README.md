@@ -17,7 +17,7 @@ here is a claim that has to keep earning belief. It is checked
 against the filesystem and git before the model relies on it,
 attributed down to the sentence it shaped when it gets used,
 measured for whether it actually helped, curated when the evidence
-says it rotted, and given a public postmortem when a verdict was
+says it rotted, and owed a public postmortem when a verdict was
 wrong. An episode tier gives session run-state a home outside
 durable memory.
 

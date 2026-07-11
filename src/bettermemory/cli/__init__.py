@@ -82,8 +82,9 @@ def _build_parser() -> tuple[
     parser = argparse.ArgumentParser(
         prog="bettermemory",
         description=(
-            "Persistent memory for Claude Code, retrieved on demand. "
-            "Run with no arguments to start the MCP server over stdio."
+            "Memory you can verify — a trust layer between a coding agent "
+            "and its own past. Run with no arguments to start the MCP "
+            "server over stdio."
         ),
     )
     parser.add_argument(

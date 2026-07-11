@@ -78,9 +78,10 @@ def test_help_lists_all_subcommands(
     # Pin the load-bearing positioning phrase from the argparse
     # description so an accidental shorten-pass loses the regression,
     # not the line "memory MCP server" that used to be the marker —
-    # the description was retuned in 1.4.2 to lead with "Persistent
-    # memory" instead of "Local file-backed memory MCP server".
-    assert "Persistent memory" in out
+    # retuned in 1.4.2 to lead with "Persistent memory", and again
+    # post-3.20.0 to the trust-layer framing every other identity
+    # surface adopted ("Memory you can verify").
+    assert "Memory you can verify" in out
 
 
 def test_version_flag_exits_zero_and_prints_program_name(
@@ -980,10 +981,10 @@ def test_subprocess_help_pins_packaging(tmp_path: Path) -> None:
     the wheel."""
     out = _run_subprocess("--help", env_extra={"BETTERMEMORY_DIR": str(tmp_path)})
     assert "bettermemory" in out
-    # Same pin update as the in-process smoke test above — the 1.4.2
-    # description leads with "Persistent memory" rather than "memory
-    # MCP server".
-    assert "Persistent memory" in out
+    # Same pin as the in-process smoke test above — post-3.20.0 the
+    # description leads with the trust-layer framing ("Memory you can
+    # verify") shared by every other identity surface.
+    assert "Memory you can verify" in out
 
 
 @_skip_without_install
