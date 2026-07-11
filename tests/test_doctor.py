@@ -9,6 +9,7 @@ the host environment under test.
 
 from __future__ import annotations
 
+import fnmatch
 import json
 import os
 import re
@@ -44,6 +45,7 @@ from bettermemory.doctor import (
     _check_store_nested_in_parent_repo,
     _check_sync_tracked_ignored,
     _discover_site_packages,
+    _pattern_matches_tracked_path,
     _probe_index_integrity,
     _EXIT_CODE_BY_STATUS,
     _STATUS_GLYPH,
@@ -1910,6 +1912,142 @@ def test_sync_tracked_ignored_passes_when_untracked_and_ignored(
     assert diag.fix_hint is None
 
 
+@_needs_git
+def test_sidecar_pattern_matcher_agrees_with_git_check_ignore(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """PARITY ORACLE for `_pattern_matches_tracked_path`, the one
+    matcher both `_check_sync_tracked_ignored` and
+    `_scan_parent_index_for_sidecars` run tracked paths through: git
+    itself is the referee. A scratch repo's .gitignore holds exactly
+    `sync._GITIGNORE_LINES`, and for a matrix of path shapes derived
+    from every live pattern (root basename, nested basename, ignored
+    directory at the root, ignored directory mid-path, and a
+    cross-slash `*` span for each glob pattern) the matcher's verdict
+    must agree with `git check-ignore -q` (rc 0 = ignored, 1 = not)
+    cell for cell.
+
+    The pre-fix spelling — `fnmatch` over the WHOLE path plus its
+    basename — fails this matrix in both directions: `*` crossed `/`
+    (`.embeddings.*.npz` claimed `.embeddings.cache/model.npz`, which
+    git does NOT ignore — the destructive-advice false positive the
+    sibling end-to-end test records), and a path nested under an
+    ignored DIRECTORY (`hostA.tmp/deep/leaf.bin`) matched nothing — a
+    silently missed leak. Per-component matching is exactly gitignore's
+    rule for the positive, slash-free shape the structural guard in
+    test_sync.py pins the list to; this matrix keeps that equivalence
+    honest as the pattern list evolves."""
+    repo = _store_repo(tmp_path, monkeypatch)
+    (repo / ".gitignore").write_text(
+        "\n".join(sync._GITIGNORE_LINES) + "\n", encoding="utf-8"
+    )
+    # Same comment/blank filter both doctor call sites apply.
+    patterns = [
+        line
+        for line in sync._GITIGNORE_LINES
+        if line and not line.lstrip().startswith("#")
+    ]
+    # Fixed control cells: the recorded regression shape (a tracked
+    # path git legitimately keeps), plus plain and near-miss
+    # non-matches.
+    candidates: list[str] = [
+        ".embeddings.cache/model.npz",
+        ".embeddings.cache",
+        "notes/2024-plan.md",
+        f"sub/{PROPOSALS_FILENAME}.bak",
+    ]
+    for pattern in patterns:
+        instance = pattern.replace("*", "hostA")
+        # Self-check the materialiser: every generated instance must
+        # actually match its source pattern, or the matrix quietly
+        # degenerates. Extend the replacement if a glob character other
+        # than `*` ever joins `sync._GITIGNORE_LINES`.
+        assert fnmatch.fnmatch(instance, pattern), (
+            f"matrix materialiser cannot instantiate {pattern!r}"
+        )
+        candidates += [
+            instance,
+            f"sub/dir/{instance}",
+            f"{instance}/deep/leaf.bin",
+            f"top/{instance}/inner.txt",
+        ]
+        if "*" in pattern:
+            # The cross-slash `*` span. For internal-wildcard patterns
+            # (`.embeddings.*.npz`) neither resulting component matches
+            # — the false-positive shape; for prefix-`*` patterns
+            # (`*.lock`) the second component still matches, so git
+            # ignores it — either way the cell must agree with git.
+            candidates.append(pattern.replace("*", "spanA/spanB"))
+    verdicts: dict[str, tuple[bool, bool]] = {}
+    for path in dict.fromkeys(candidates):
+        probe = subprocess.run(
+            ["git", "check-ignore", "-q", "--", path],
+            cwd=repo,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        # 0 = ignored, 1 = not ignored; anything else is a probe bug.
+        assert probe.returncode in (0, 1), (path, probe.returncode, probe.stderr)
+        matcher_says = any(
+            _pattern_matches_tracked_path(path, pattern) for pattern in patterns
+        )
+        verdicts[path] = (matcher_says, probe.returncode == 0)
+    # Matrix sanity: both verdicts are represented, so a degenerate
+    # matrix cannot pass vacuously.
+    assert any(git_says for _, git_says in verdicts.values())
+    assert any(not git_says for _, git_says in verdicts.values())
+    # The regression shape is a git-legitimate tracked path and the
+    # matcher must leave it alone.
+    assert verdicts[".embeddings.cache/model.npz"] == (False, False)
+    disagreements = {
+        path: {"matcher": matcher_says, "git": git_says}
+        for path, (matcher_says, git_says) in verdicts.items()
+        if matcher_says != git_says
+    }
+    assert not disagreements, (
+        f"doctor's sidecar matcher diverges from git check-ignore: {disagreements}"
+    )
+
+
+@_needs_git
+def test_sync_tracked_ignored_no_fail_on_cross_slash_wildcard_lookalike(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """`.embeddings.cache/model.npz` fnmatches `.embeddings.*.npz` when
+    `*` is allowed to cross `/` — but git does NOT ignore it (no single
+    path component matches), so the store legitimately tracks it. The
+    pre-fix whole-path match FAILed this store and handed its owner the
+    `git rm --cached` + history-rewrite + secret-rotation walkthrough
+    for a file that is supposed to be in the repo — the destructive
+    false positive the per-component matcher exists to prevent. The
+    check must stay ok."""
+    store = _store_repo(tmp_path, monkeypatch)
+    sync.init(store)  # writes the canonical .gitignore
+    target = store / ".embeddings.cache" / "model.npz"
+    target.parent.mkdir()
+    target.write_bytes(b"legitimately tracked artefact")
+    _git_in(store, "add", "-A")
+    _git_in(store, "commit", "-m", "track a wildcard lookalike")
+    tracked_rel = ".embeddings.cache/model.npz"
+    # Premise pins: the store really tracks the path (`git add -A`
+    # staged it under the canonical .gitignore), and git itself does
+    # not ignore it (check-ignore rc=1).
+    assert tracked_rel in _git_in(store, "ls-files")
+    probe = subprocess.run(
+        ["git", "check-ignore", "-q", "--", tracked_rel],
+        cwd=store,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert probe.returncode == 1, (probe.returncode, probe.stderr)
+
+    diag = _check_sync_tracked_ignored(store)
+    assert diag.status == "ok"
+    assert diag.fix_hint is None
+
+
 def test_sync_tracked_ignored_ok_on_non_git_store(tmp_path: Path) -> None:
     """A store that never ran `sync init` has no repo and nothing
     syncing — the check must pass (and must not demand git ceremony;
@@ -2304,6 +2442,79 @@ def test_store_nested_in_parent_repo_scans_glob_metachar_store_path_literally(
     remaining = _git_in(parent, "ls-files")
     assert tracked_rel not in remaining
     assert sibling_rel in remaining
+    assert _check_store_nested_in_parent_repo(store).status == "ok"
+
+
+@_needs_git
+def test_store_nested_in_parent_repo_quote_in_store_path_hint_executes(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A store path with an embedded single quote (`o'brien-store` is a
+    legal directory name on APFS, ext4 AND NTFS) lands verbatim in the
+    emitted `git rm --cached` hint. The pre-fix fixed `'…'` wrap could
+    not represent it: the path's own `'` terminated the quoted span
+    early and left the command quote-imbalanced, so `shlex.split`
+    raises "No closing quotation" and a real POSIX shell dies with
+    "unexpected EOF while looking for matching `'`" (rc=2) — a dead
+    command handed to someone remediating a plaintext leak, the loud
+    sibling of the metachar test's silent wrong-target. Post-fix
+    `shlex.quote` escapes the quote, so the command splits cleanly,
+    EXECUTES, and untracks only the sidecar."""
+    parent, store = _parent_repo_with_nested_store(
+        tmp_path, monkeypatch, store_name="o'brien-store"
+    )
+    (store / PROPOSALS_FILENAME).write_text(
+        '{"content": "my staging DB password is hunter2"}\n', encoding="utf-8"
+    )
+    (store / "a-memory.md").write_text("---\n---\nbody\n", encoding="utf-8")
+    _git_in(parent, "add", "-A")
+    _git_in(parent, "commit", "-m", "dotfiles: add everything")
+    tracked_rel = f"o'brien-store/{PROPOSALS_FILENAME}"
+    memory_rel = "o'brien-store/a-memory.md"
+    tracked_before = _git_in(parent, "ls-files")
+    assert tracked_rel in tracked_before
+    assert memory_rel in tracked_before
+
+    diag = _check_store_nested_in_parent_repo(store)
+    assert diag.status == "warn"
+    assert str(parent.resolve()) in diag.message
+    assert diag.details["tracked_sidecars"] == [tracked_rel]
+    match = re.search(r"run `(git rm --cached [^`]*)`", diag.fix_hint or "")
+    assert match is not None
+    command = match.group(1)
+    # POSIX splitting must round-trip the command to the one literal
+    # pathspec — the pre-fix hint dies right here with "No closing
+    # quotation".
+    assert shlex.split(command) == [
+        "git",
+        "rm",
+        "--cached",
+        f":(literal){tracked_rel}",
+    ]
+    # Execute the emitted remediation: through a real POSIX shell where
+    # there is one (the paste target the hint is written for); on
+    # Windows, split exactly as that shell would.
+    if sys.platform == "win32":
+        rm = subprocess.run(
+            shlex.split(command),
+            cwd=parent,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+    else:
+        rm = subprocess.run(
+            command,
+            shell=True,
+            cwd=parent,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+    assert rm.returncode == 0, rm.stderr
+    remaining = _git_in(parent, "ls-files")
+    assert tracked_rel not in remaining
+    assert memory_rel in remaining
     assert _check_store_nested_in_parent_repo(store).status == "ok"
 
 

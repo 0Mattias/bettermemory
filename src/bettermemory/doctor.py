@@ -29,13 +29,14 @@ import fnmatch
 import json
 import os
 import re
+import shlex
 import shutil
 import subprocess
 import sys
 import sysconfig
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 from typing import Any, Literal
 
 from .config import Config, load_config
@@ -874,7 +875,7 @@ def _check_auto_memory_stranded(directory: Path, cwd: Path | None = None) -> Dia
 
 
 def _quoted_literal_pathspecs(paths: list[str]) -> str:
-    """Render tracked paths as single-quoted ``:(literal)`` pathspecs
+    """Render tracked paths as shell-quoted ``:(literal)`` pathspecs
     for a copy-pasteable ``git rm --cached`` remediation hint.
 
     Joining the raw paths hands the user's shell and git's pathspec
@@ -885,11 +886,51 @@ def _quoted_literal_pathspecs(paths: list[str]) -> str:
     pathspecs, and a glob metacharacter silently untracks a DIFFERENT
     tracked path (``st[a]re/…`` matches the innocent sibling
     ``stare/…`` and exits 0) — a command that fails or damages the
-    wrong entries, handed to someone remediating a secret leak. Same
-    quoting the ``git ls-files`` investigate hint in
-    ``_scan_parent_index_for_sidecars``'s error path already uses.
+    wrong entries, handed to someone remediating a secret leak.
+    ``shlex.quote`` on the composite ``:(literal)<path>`` string closes
+    the one hole a fixed ``'…'`` wrap left open: a path with an
+    embedded ``'`` terminated the quoted span early and left the
+    command quote-imbalanced, so pasting it into a POSIX shell died on
+    a syntax error ("unexpected EOF while looking for matching `'`")
+    without untracking anything. Quote-free paths keep the exact
+    single-quoted form the wrap produced — the ``(`` in the magic
+    prefix is never in ``shlex.quote``'s safe set, so the surrounding
+    quotes are always emitted — and only a quote-bearing path switches
+    to the ``'"'"'`` escape idiom.
     """
-    return " ".join(f"':(literal){path}'" for path in paths)
+    return " ".join(shlex.quote(f":(literal){path}") for path in paths)
+
+
+def _pattern_matches_tracked_path(path: str, pattern: str) -> bool:
+    """Does one ``sync._GITIGNORE_LINES`` pattern ignore this tracked
+    path, by gitignore's rules?
+
+    For the shape the structural guard in test_sync.py pins the list to
+    (positive, slash-free lines), a gitignore pattern matches a file or
+    directory NAME at any depth, and a matching DIRECTORY name ignores
+    everything beneath it — so the pattern matches ``path`` iff ANY
+    ``/``-separated component fnmatches it. That per-component walk is
+    complete as well as correct for this pattern shape: with no
+    ``/``-anchored or ``!``-negated lines possible, there is nothing
+    else gitignore semantics could consult. Fnmatching the WHOLE path
+    instead (the pre-fix spelling at both call sites) diverged in both
+    directions: ``*`` crossed ``/`` (``.embeddings.*.npz`` matched the
+    legitimately tracked ``.embeddings.cache/model.npz``, which git
+    does NOT ignore, so the caller handed its owner the untrack +
+    history-rewrite + secret-rotation hint — a destructive false
+    positive), and paths UNDER an ignored directory matched nothing
+    (``snapshots.tmp/file.md`` — a real leak git ignores wholesale —
+    was silently missed). The parity test in test_doctor.py holds this
+    helper against ``git check-ignore`` as the oracle for both
+    directions. Case handling stays ``fnmatch.fnmatch``'s platform
+    default, exactly as both call sites always had it (git's own ignore
+    matching honours ``core.ignorecase``, so a tracked path whose CASE
+    alone diverges from a pattern on a case-insensitive filesystem
+    keeps its established verdict rather than silently changing here).
+    """
+    return any(
+        fnmatch.fnmatch(component, pattern) for component in PurePosixPath(path).parts
+    )
 
 
 def _check_sync_tracked_ignored(directory: Path) -> Diagnosis:
@@ -955,13 +996,11 @@ def _check_sync_tracked_ignored(directory: Path) -> Diagnosis:
     for path in listing.stdout.split("\0"):
         if not path:
             continue
-        # A slash-free gitignore pattern matches at any depth; fnmatch
-        # treats the pattern as one flat string, so try the basename too.
-        basename = path.rsplit("/", 1)[-1]
-        if any(
-            fnmatch.fnmatch(path, pattern) or fnmatch.fnmatch(basename, pattern)
-            for pattern in patterns
-        ):
+        # A slash-free gitignore pattern matches a NAME at any depth —
+        # per path component, never whole-path fnmatch (see
+        # `_pattern_matches_tracked_path` for why that distinction is
+        # load-bearing in both directions).
+        if any(_pattern_matches_tracked_path(path, pattern) for pattern in patterns):
             tracked.append(path)
     if not tracked:
         return Diagnosis(
@@ -1066,7 +1105,8 @@ def _scan_parent_index_for_sidecars(
     """Shared tail of ``_check_store_nested_in_parent_repo``: for each
     enclosing-repo level ``(parent_top, prefix, leak_route)`` —
     innermost first, non-empty — list what the repo at ``parent_top``
-    tracks under the store's ``prefix`` and fnmatch it against
+    tracks under the store's ``prefix`` and match it per path component
+    (``_pattern_matches_tracked_path``) against
     ``sync._GITIGNORE_LINES``. The prefix is passed with git's
     ``:(literal)`` pathspec magic: a raw pathspec hands glob
     metacharacters and the leading-``:`` magic marker in a legal store
@@ -1096,10 +1136,10 @@ def _scan_parent_index_for_sidecars(
     from .sync import _GITIGNORE_LINES, _run_git
 
     # Same pattern handling as `_check_sync_tracked_ignored`: comment
-    # lines out, positive slash-free glob/literal patterns in, and a
-    # slash-free gitignore pattern matches at any depth so the basename
-    # is fnmatched too (paths here are toplevel-relative, e.g.
-    # `memory-store/.write_proposals.jsonl`).
+    # lines out, positive slash-free glob/literal patterns in, matched
+    # per path component (paths here are toplevel-relative, e.g.
+    # `memory-store/.write_proposals.jsonl`, so the sidecar name is one
+    # component of a longer path).
     patterns = [
         line for line in _GITIGNORE_LINES if line and not line.lstrip().startswith("#")
     ]
@@ -1135,10 +1175,8 @@ def _scan_parent_index_for_sidecars(
         for path in listing.stdout.split("\0"):
             if not path:
                 continue
-            basename = path.rsplit("/", 1)[-1]
             if any(
-                fnmatch.fnmatch(path, pattern) or fnmatch.fnmatch(basename, pattern)
-                for pattern in patterns
+                _pattern_matches_tracked_path(path, pattern) for pattern in patterns
             ):
                 tracked.append(path)
         if tracked:
