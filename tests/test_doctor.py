@@ -601,6 +601,52 @@ def test_event_log_unwritable_fails(tmp_path: Path) -> None:
     assert diag.status == "fail"
 
 
+def test_event_log_unwritable_hint_executes_on_space_and_quote_path(
+    tmp_path: Path,
+) -> None:
+    """The unwritable-log fix_hint interpolated the storage path into
+    `chmod u+w {log_path}` RAW — the last unquoted command surface in
+    doctor (32e2862 quoted the pathspec hints but missed this one). A
+    space-bearing storage dir (the macOS `Application Support`
+    neighbourhood is the DEFAULT config location) shell-splits the
+    pasted command into two bogus operands, and a quote-bearing one
+    additionally leaves it quote-imbalanced — so pin the hardest legal
+    shape: a dir with BOTH. The emitted command must round-trip
+    `shlex.split` to exactly ['chmod', 'u+w', <path>] and, through a
+    real POSIX shell (the paste target the hint is written for),
+    EXECUTE and actually restore writability."""
+    from bettermemory.events import EVENT_LOG_FILENAME
+
+    storage = tmp_path / "Application Support o'brien"
+    storage.mkdir()
+    log = storage / EVENT_LOG_FILENAME
+    log.write_text("", encoding="utf-8")
+    log.chmod(0o400)
+    try:
+        diag = _check_event_log_writable(storage)
+        if diag.status == "ok":
+            pytest.skip("filesystem ignored chmod; cannot exercise unwritable file")
+        assert diag.status == "fail"
+        match = re.search(r"`(chmod u\+w [^`]*)`", diag.fix_hint or "")
+        assert match is not None
+        command = match.group(1)
+        # POSIX splitting must round-trip to the one path operand — the
+        # raw interpolation dies right here: the space splits the path
+        # in two and the quote raises "No closing quotation".
+        assert shlex.split(command) == ["chmod", "u+w", str(log)]
+        if sys.platform != "win32":
+            # Execute the emitted remediation verbatim: rc=0, and the
+            # prescribed fix genuinely clears the failing check.
+            ran = subprocess.run(
+                command, shell=True, capture_output=True, text=True, check=False
+            )
+            assert ran.returncode == 0, ran.stderr
+            assert os.access(log, os.W_OK)
+            assert _check_event_log_writable(storage).status == "ok"
+    finally:
+        log.chmod(0o644)
+
+
 # ---------------------------------------------------------------------------
 # audit_turn_cadence (M-doctor-hook)
 # ---------------------------------------------------------------------------
@@ -2516,6 +2562,246 @@ def test_store_nested_in_parent_repo_quote_in_store_path_hint_executes(
     assert tracked_rel not in remaining
     assert memory_rel in remaining
     assert _check_store_nested_in_parent_repo(store).status == "ok"
+
+
+@_needs_git
+def test_store_nested_in_parent_repo_pattern_matching_store_dirname_stays_ok(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """REGRESSION: the sidecar patterns' authoritative frame is the
+    STORE root, but the parent scan matched every component of the
+    TOPLEVEL-relative ls-files row — the store prefix included. A store
+    directory literally named `state.tmp` (legal everywhere) then made
+    EVERY tracked file beneath it — plain memory .md bodies included —
+    fnmatch `*.tmp`, so doctor reported the user's legitimate memories
+    as 'transient sidecar files' and handed them the untrack +
+    history-rewrite + secret-rotation walkthrough; worse, that
+    remediation never converges (the parent re-tracks the memories on
+    its next `git add -A`). In the store frame — the one the store's
+    own .gitignore and the check-ignore parity oracle speak — nothing
+    ignores `a-memory.md`, so the check must stay ok. At EVERY walk
+    level: the intermediate `cache.tmp` repo directory between the
+    grandparent toplevel and the store puts a second pattern-matching
+    component into the OUTER level's rows."""
+    grand = tmp_path / "grand"
+    parent = grand / "cache.tmp"  # repo A: its own dirname fnmatches *.tmp
+    store = parent / "state.tmp"  # the store: dirname fnmatches *.tmp
+    store.mkdir(parents=True)
+    global_config = tmp_path / "test.gitconfig"
+    global_config.touch()
+    monkeypatch.setenv("GIT_CONFIG_GLOBAL", str(global_config))
+    _set_git_discovery_ceiling(tmp_path, monkeypatch)
+    _git_in(grand, "init", "--initial-branch", "main")
+    _git_in(grand, "config", "--global", "user.email", "test@example.com")
+    _git_in(grand, "config", "--global", "user.name", "Test")
+    (store / "a-memory.md").write_text("---\n---\nbody\n", encoding="utf-8")
+    _git_in(grand, "add", "-A")
+    _git_in(grand, "commit", "-m", "grand: add everything")
+    # The intermediate dir becomes repo A only AFTER B tracked the
+    # memory, mirroring the established doubly-nested upgrade shape.
+    _git_in(parent, "init", "--initial-branch", "main")
+    _git_in(parent, "add", "-A")
+    _git_in(parent, "commit", "-m", "cache.tmp: add everything")
+    # Premise pins: both enclosing indexes hold ONLY the memory body,
+    # under prefixes whose components fnmatch a live pattern, while the
+    # store-relative remainder matches nothing (the parity oracle pins
+    # this matcher to `git check-ignore`, so this IS the store-frame
+    # not-ignored verdict).
+    assert _git_in(parent, "ls-files").splitlines() == ["state.tmp/a-memory.md"]
+    assert _git_in(grand, "ls-files").splitlines() == [
+        "cache.tmp/state.tmp/a-memory.md"
+    ]
+    patterns = [
+        line
+        for line in sync._GITIGNORE_LINES
+        if line and not line.lstrip().startswith("#")
+    ]
+    assert any(_pattern_matches_tracked_path("state.tmp", p) for p in patterns)
+    assert not any(_pattern_matches_tracked_path("a-memory.md", p) for p in patterns)
+
+    diag = _check_store_nested_in_parent_repo(store)
+    assert diag.status == "ok", (
+        f"legitimate memories misreported as sidecars: {diag.message}"
+    )
+    assert diag.fix_hint is None
+    # Both walk levels were really scanned and BOTH came back clean —
+    # the ok is a full-depth verdict, not an early bail.
+    assert diag.details["parent_toplevel"] == str(parent.resolve())
+    assert diag.details["store_prefix"] == "state.tmp"
+    assert diag.details["scanned_parent_toplevels"] == [
+        str(parent.resolve()),
+        str(grand.resolve()),
+    ]
+
+
+@_needs_git
+def test_store_nested_in_parent_repo_sidecar_under_pattern_named_store_still_warns(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The other direction of the store-frame fix: a REAL leak nested
+    under a pattern-named store must still surface. In the store frame
+    `snapshots.tmp/file.md` IS ignored (a matching DIRECTORY component
+    ignores everything beneath it — the silent-miss shape 6167cd3
+    closed), so under a store named `state.tmp` the scan must warn
+    about exactly that path, leave the sibling memory body alone, and
+    the emitted remediation must CONVERGE: after untracking the one
+    sidecar the re-check is ok even though the parent still tracks the
+    memory under the pattern-named store dir (pre-fix the memory itself
+    re-warned, so the walkthrough could never clear)."""
+    parent, store = _parent_repo_with_nested_store(
+        tmp_path, monkeypatch, store_name="state.tmp"
+    )
+    (store / "a-memory.md").write_text("---\n---\nbody\n", encoding="utf-8")
+    (store / "snapshots.tmp").mkdir()
+    (store / "snapshots.tmp" / "file.md").write_text(
+        "---\n---\nleaked snapshot body\n", encoding="utf-8"
+    )
+    _git_in(parent, "add", "-A")
+    _git_in(parent, "commit", "-m", "dotfiles: add everything")
+    sidecar_rel = "state.tmp/snapshots.tmp/file.md"
+    memory_rel = "state.tmp/a-memory.md"
+    tracked_before = _git_in(parent, "ls-files")
+    assert sidecar_rel in tracked_before
+    assert memory_rel in tracked_before
+
+    diag = _check_store_nested_in_parent_repo(store)
+    assert diag.status == "warn"
+    assert diag.details["tracked_sidecars"] == [sidecar_rel]
+    assert f"git rm --cached ':(literal){sidecar_rel}'" in (diag.fix_hint or "")
+    # The legitimate memory body never enters the diagnosis.
+    assert memory_rel not in diag.message
+    assert memory_rel not in (diag.fix_hint or "")
+
+    # The prescribed untracking converges: the memory stays tracked
+    # under the pattern-named store dir and the re-check is ok.
+    _git_in(parent, "rm", "--cached", sidecar_rel)
+    _git_in(parent, "commit", "-m", "untrack the leaked snapshot")
+    assert memory_rel in _git_in(parent, "ls-files")
+    assert _check_store_nested_in_parent_repo(store).status == "ok"
+
+
+@_needs_git
+def test_store_nested_in_parent_repo_skips_store_gitlink_row(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A store absorbed into the parent index as a SUBMODULE-style
+    gitlink (`git add <store>` on an embedded repo records ONE
+    mode-160000 row whose path EQUALS the store prefix — no files
+    beneath). That row is the store itself, not a sidecar under it, and
+    it has no store-relative remainder to match; with a
+    pattern-matching store dirname the pre-fix whole-row match claimed
+    it and told the user to `git rm --cached` their own submodule
+    registration. The scan must skip the row — without crashing — and
+    stay ok."""
+    parent, store = _parent_repo_with_nested_store(
+        tmp_path, monkeypatch, store_name="state.tmp"
+    )
+    _git_in(store, "init", "--initial-branch", "main")
+    (store / "a-memory.md").write_text("---\n---\nbody\n", encoding="utf-8")
+    _git_in(store, "add", "-A")
+    _git_in(store, "commit", "-m", "store: memories")
+    _git_in(parent, "add", "state.tmp")  # records the gitlink, not the files
+    _git_in(parent, "commit", "-m", "dotfiles: absorb the store as a gitlink")
+    # Premise pins: the parent's only row under the literal prefix IS
+    # the prefix itself, at gitlink mode 160000.
+    rows = [
+        row
+        for row in _git_in(parent, "ls-files", "-z", "--", ":(literal)state.tmp").split(
+            "\0"
+        )
+        if row
+    ]
+    assert rows == ["state.tmp"]
+    assert "160000" in _git_in(parent, "ls-files", "-s", "--", ":(literal)state.tmp")
+
+    diag = _check_store_nested_in_parent_repo(store)
+    assert diag.status == "ok"
+    assert diag.fix_hint is None
+    assert str(parent.resolve()) in diag.message
+
+
+@_needs_git
+def test_store_nested_in_parent_repo_listing_failure_warns_and_hint_round_trips(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The `listing.returncode != 0` arm: a parent whose repo DISCOVERY
+    resolves (rev-parse reads no index) but whose index cannot be read
+    (corrupt `.git/index` — a crashed writer, a partial restore) makes
+    the ls-files scan fail rc=128. The check must degrade to a WARN
+    carrying git's own error — never a silent ok over a leak it could
+    not rule out — and the investigate hint must carry the store prefix
+    as a shell-safe `:(literal)` pathspec: with a quote-bearing store
+    dirname (`o'brien-store`) a raw interpolation dies in the shell
+    ("unexpected EOF") before git ever runs. The emitted command must
+    round-trip `shlex.split` to the exact argv and, executed from the
+    parent, reproduce the same git failure the check degraded on (git's
+    own exit code, not a shell syntax-error death)."""
+    parent, store = _parent_repo_with_nested_store(
+        tmp_path, monkeypatch, store_name="o'brien-store"
+    )
+    (store / PROPOSALS_FILENAME).write_text(
+        '{"content": "my staging DB password is hunter2"}\n', encoding="utf-8"
+    )
+    _git_in(parent, "add", "-A")
+    _git_in(parent, "commit", "-m", "dotfiles: add everything")
+    # Corrupt the parent's index AFTER the commit: repo discovery still
+    # resolves, every index read fails.
+    (parent / ".git" / "index").write_bytes(b"garbage, not a git index")
+    # Premise pins: discovery from the store still names the parent
+    # (the walk reaches the scan), and the listing really fails there.
+    probe = subprocess.run(
+        ["git", "rev-parse", "--show-toplevel"],
+        cwd=store,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert probe.returncode == 0
+    assert Path(probe.stdout.strip()).resolve() == parent.resolve()
+    direct = subprocess.run(
+        ["git", "ls-files"], cwd=parent, capture_output=True, text=True, check=False
+    )
+    assert direct.returncode != 0
+
+    diag = _check_store_nested_in_parent_repo(store)
+    assert diag.status == "warn"
+    assert "listing what that repo tracks under the store failed" in diag.message
+    assert str(parent.resolve()) in diag.message
+    assert diag.details["store_prefix"] == "o'brien-store"
+    match = re.search(r"Run `(git ls-files -- [^`]*)` from", diag.fix_hint or "")
+    assert match is not None
+    command = match.group(1)
+    # POSIX splitting must round-trip to the one literal pathspec — a
+    # raw spelling dies right here with "No closing quotation".
+    assert shlex.split(command) == [
+        "git",
+        "ls-files",
+        "--",
+        ":(literal)o'brien-store",
+    ]
+    # Execute the investigate command from the parent (real POSIX shell
+    # where there is one; on Windows, split exactly as that shell
+    # would): it must reach git and reproduce the failure the check
+    # degraded on.
+    if sys.platform == "win32":
+        ran = subprocess.run(
+            shlex.split(command),
+            cwd=parent,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+    else:
+        ran = subprocess.run(
+            command,
+            shell=True,
+            cwd=parent,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+    assert ran.returncode == direct.returncode
+    assert ran.stderr.strip()
 
 
 @_needs_git

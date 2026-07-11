@@ -620,7 +620,13 @@ def _check_event_log_writable(directory: Path) -> Diagnosis:
             name="event_log",
             status="fail",
             message=f"Event log at {log_path} is not writable.",
-            fix_hint=f"`chmod u+w {log_path}`.",
+            # shlex.quote: a raw interpolation shell-splits on a
+            # space-bearing storage path (the macOS `Application
+            # Support` neighbourhood) and can chmod an innocent sibling
+            # on a glob-bearing one — the same executes-verbatim
+            # contract `_quoted_literal_pathspecs` holds for the
+            # pathspec hints.
+            fix_hint=f"`chmod u+w {shlex.quote(str(log_path))}`.",
         )
     size = log_path.stat().st_size
     return Diagnosis(
@@ -1105,7 +1111,8 @@ def _scan_parent_index_for_sidecars(
     """Shared tail of ``_check_store_nested_in_parent_repo``: for each
     enclosing-repo level ``(parent_top, prefix, leak_route)`` —
     innermost first, non-empty — list what the repo at ``parent_top``
-    tracks under the store's ``prefix`` and match it per path component
+    tracks under the store's ``prefix`` and match each row's
+    STORE-relative remainder per path component
     (``_pattern_matches_tracked_path``) against
     ``sync._GITIGNORE_LINES``. The prefix is passed with git's
     ``:(literal)`` pathspec magic: a raw pathspec hands glob
@@ -1137,9 +1144,11 @@ def _scan_parent_index_for_sidecars(
 
     # Same pattern handling as `_check_sync_tracked_ignored`: comment
     # lines out, positive slash-free glob/literal patterns in, matched
-    # per path component (paths here are toplevel-relative, e.g.
-    # `memory-store/.write_proposals.jsonl`, so the sidecar name is one
-    # component of a longer path).
+    # per path component — but the ls-files rows here are
+    # TOPLEVEL-relative (e.g. `memory-store/.write_proposals.jsonl`),
+    # so each row is re-framed to its store-relative remainder before
+    # matching (see the loop below for why the prefix components must
+    # stay out of the match).
     patterns = [
         line for line in _GITIGNORE_LINES if line and not line.lstrip().startswith("#")
     ]
@@ -1176,8 +1185,30 @@ def _scan_parent_index_for_sidecars(
         for path in listing.stdout.split("\0"):
             if not path:
                 continue
+            # The patterns' authoritative frame is the STORE root, but
+            # ls-files rows are TOPLEVEL-relative — matching the row
+            # verbatim let the store PREFIX components trip a pattern:
+            # a store directory literally named `state.tmp` (or any
+            # intermediate component between the parent toplevel and
+            # the store) made every tracked file beneath it —
+            # legitimate memory bodies included — report as a transient
+            # sidecar, with an untrack + history-rewrite hint that
+            # never converges (the parent re-tracks the memories on its
+            # next `git add -A`). Match only the store-relative
+            # remainder — the same frame the store's own .gitignore
+            # (and the check-ignore parity oracle in test_doctor.py)
+            # speaks.
+            if not path.startswith(prefix + "/"):
+                # Inside this pathspec the only row NOT under
+                # `prefix + "/"` is one EQUAL to the prefix: the
+                # store-absorbed-as-submodule gitlink shape (a single
+                # mode-160000 index entry for the store itself, no
+                # files beneath). That entry IS the store, not a
+                # sidecar under it — skip.
+                continue
             if any(
-                _pattern_matches_tracked_path(path, pattern) for pattern in patterns
+                _pattern_matches_tracked_path(path[len(prefix) + 1 :], pattern)
+                for pattern in patterns
             ):
                 tracked.append(path)
         if tracked:
