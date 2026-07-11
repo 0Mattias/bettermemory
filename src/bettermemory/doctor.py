@@ -986,77 +986,33 @@ def _check_sync_tracked_ignored(directory: Path) -> Diagnosis:
     )
 
 
-def _check_store_nested_in_parent_repo(directory: Path) -> Diagnosis:
-    """Detect a store directory nested INSIDE a foreign parent git repo.
-
-    ``sync._is_repo`` is deliberately top-of-worktree-only, so a store
-    that merely sits inside some parent repo's worktree (e.g. a home
-    directory managed as a dotfiles repo) is "not a sync repo" to the
-    sync wrapper — and therefore invisible to ``sync_tracked_ignored``,
-    which owns the store-IS-the-repo case. But the PARENT repo's own
-    ``git add -A`` / commit / push flows can track and ship the exact
-    same plaintext sidecars (the raw-capture proposals queue, the
-    ingest watermark, the consolidate clock, orphaned ``*.tmp``
-    atomic-write bodies) with no bettermemory-written ``.gitignore`` in
-    the way — the one sidecar-leak route neither sync nor the sibling
-    check can see. This check names the parent worktree's toplevel and
-    lists any paths under the store that the parent actually TRACKS
-    matching ``sync._GITIGNORE_LINES``. It never fails: a nested store
-    inside a local-only parent repo is a legitimate setup, so a tracked
-    sidecar is a WARN with the parent-side remediation, and a clean
-    nested store is ok with the nesting noted.
+def _scan_parent_index_for_sidecars(
+    directory: Path,
+    *,
+    parent_top: Path,
+    prefix: str,
+    clean_message: str,
+    leak_route: str,
+) -> Diagnosis:
+    """Shared tail of ``_check_store_nested_in_parent_repo``: list what
+    the enclosing repo at ``parent_top`` tracks under the store's
+    ``prefix`` and fnmatch it against ``sync._GITIGNORE_LINES``. Zero
+    matching hits returns the caller's ``clean_message`` ok — the WARN
+    keys strictly on actually-tracked sidecar paths, never on mere
+    nesting, because both caller shapes (a plain nested subdir, and a
+    store-as-own-repo inside a monorepo / home repo) are legitimate
+    setups when the parent index is clean. ``leak_route`` is the one
+    warn sentence explaining WHY the parent still ships the files: for
+    the plain-nested shape no bettermemory ``.gitignore`` applies in
+    the parent; for the combined shape the parent tracked the paths
+    before the store became its own repo and git does not auto-untrack.
     """
     # Same lazy-import rationale as `_check_sync_tracked_ignored`:
     # `sync` imports `DOCTOR_PROBE_FILENAME` from this module at import
     # time, so a top-level `from .sync import …` would be circular, and
     # `_GITIGNORE_LINES` must stay the single canonical pattern list.
-    from .sync import _GITIGNORE_LINES, SyncError, _run_git
+    from .sync import _GITIGNORE_LINES, _run_git
 
-    if not directory.exists():
-        return Diagnosis(
-            name="store_nested_in_parent_repo",
-            status="ok",
-            message="Storage dir does not exist yet — no nesting to check.",
-        )
-    try:
-        toplevel_probe = _run_git(
-            directory, ["rev-parse", "--show-toplevel"], check=False
-        )
-    except SyncError:
-        # git itself is missing — degrade to "nothing to check", the
-        # same SyncError-to-False shape as `sync._is_repo`: without git
-        # there is no parent repo committing anything.
-        toplevel_probe = None
-    if toplevel_probe is None or toplevel_probe.returncode != 0:
-        return Diagnosis(
-            name="store_nested_in_parent_repo",
-            status="ok",
-            message="Store is not inside any git worktree — nothing to check.",
-        )
-    store_root = directory.resolve()
-    parent_top = Path(toplevel_probe.stdout.strip()).resolve()
-    if parent_top == store_root:
-        return Diagnosis(
-            name="store_nested_in_parent_repo",
-            status="ok",
-            message=(
-                "Store is the top of its own git worktree — tracked "
-                "sidecars there are sync_tracked_ignored's finding."
-            ),
-        )
-    try:
-        prefix = store_root.relative_to(parent_top).as_posix()
-    except ValueError:
-        # `--show-toplevel` answered from somewhere the resolved store
-        # path is not actually under (GIT_DIR / GIT_WORK_TREE overrides
-        # in the environment); there is no path-nesting to report.
-        return Diagnosis(
-            name="store_nested_in_parent_repo",
-            status="ok",
-            message=(
-                "Store is not path-nested under any git worktree — nothing to check."
-            ),
-        )
     listing = _run_git(parent_top, ["ls-files", "-z", "--", prefix], check=False)
     if listing.returncode != 0:
         return Diagnosis(
@@ -1094,11 +1050,7 @@ def _check_store_nested_in_parent_repo(directory: Path) -> Diagnosis:
         return Diagnosis(
             name="store_nested_in_parent_repo",
             status="ok",
-            message=(
-                f"Store is nested inside the git repo at {parent_top} (not "
-                "itself a sync repo); that parent repo tracks no transient "
-                "sidecar files under the store."
-            ),
+            message=clean_message,
             details={
                 "parent_toplevel": str(parent_top),
                 "store_prefix": prefix,
@@ -1122,11 +1074,10 @@ def _check_store_nested_in_parent_repo(directory: Path) -> Diagnosis:
         message=(
             f"{len(tracked)} transient sidecar file{plural} ({shown}) under "
             f"the store at {directory} {verb} git-TRACKED by the PARENT "
-            f"repo at {parent_top}. The store only sits inside that repo's "
-            f"worktree — bettermemory's sync .gitignore does not apply "
-            f"there — so the parent's own `git add -A` / commit / push "
-            f"flows keep shipping these files (which can carry plaintext "
-            f"captures) to wherever that repo pushes."
+            f"repo at {parent_top}. {leak_route} the parent's own "
+            f"`git add -A` / commit / push flows keep shipping these files "
+            f"(which can carry plaintext captures) to wherever that repo "
+            f"pushes."
         ),
         fix_hint=(
             f"In {parent_top}/.gitignore ignore the store's transient "
@@ -1143,6 +1094,154 @@ def _check_store_nested_in_parent_repo(directory: Path) -> Diagnosis:
             "store_prefix": prefix,
             "tracked_sidecars": tracked,
         },
+    )
+
+
+def _check_store_nested_in_parent_repo(directory: Path) -> Diagnosis:
+    """Detect a store directory nested INSIDE a foreign parent git repo.
+
+    ``sync._is_repo`` is deliberately top-of-worktree-only, so a store
+    that merely sits inside some parent repo's worktree (e.g. a home
+    directory managed as a dotfiles repo) is "not a sync repo" to the
+    sync wrapper — and therefore invisible to ``sync_tracked_ignored``,
+    which owns the store-IS-the-repo case. But the PARENT repo's own
+    ``git add -A`` / commit / push flows can track and ship the exact
+    same plaintext sidecars (the raw-capture proposals queue, the
+    ingest watermark, the consolidate clock, orphaned ``*.tmp``
+    atomic-write bodies) with no bettermemory-written ``.gitignore`` in
+    the way — the one sidecar-leak route neither sync nor the sibling
+    check can see. This check names the parent worktree's toplevel and
+    lists any paths under the store that the parent actually TRACKS
+    matching ``sync._GITIGNORE_LINES``. It never fails: a nested store
+    inside a local-only parent repo is a legitimate setup, so a tracked
+    sidecar is a WARN with the parent-side remediation, and a clean
+    nested store is ok with the nesting noted.
+
+    The COMBINED shape is covered too: a store that began as a plain
+    subdirectory of such a parent — whose index tracked the store's
+    sidecars — and only LATER ran ``bettermemory sync init``, becoming
+    its own worktree toplevel. ``rev-parse --show-toplevel`` from
+    inside the store then answers with the store itself, so the upward
+    probe restarts from the store's parent DIRECTORY; the parent's
+    stale index entries survive the nested ``git init`` (git does not
+    auto-untrack), so the parent keeps shipping those blobs while
+    ``sync_tracked_ignored`` — which reads only the STORE repo's index
+    — sees nothing. Because a store-as-own-repo nested inside a
+    monorepo / home repo with ZERO tracked sidecars is a perfectly
+    normal sync setup, that branch WARNs strictly on actually-tracked
+    matching paths in the PARENT index — mere nesting never alarms.
+    """
+    # Same lazy-import rationale as `_check_sync_tracked_ignored` (and
+    # the `_scan_parent_index_for_sidecars` helper): a top-level `sync`
+    # import would be circular.
+    from .sync import SyncError, _run_git
+
+    if not directory.exists():
+        return Diagnosis(
+            name="store_nested_in_parent_repo",
+            status="ok",
+            message="Storage dir does not exist yet — no nesting to check.",
+        )
+    try:
+        toplevel_probe = _run_git(
+            directory, ["rev-parse", "--show-toplevel"], check=False
+        )
+    except SyncError:
+        # git itself is missing — degrade to "nothing to check", the
+        # same SyncError-to-False shape as `sync._is_repo`: without git
+        # there is no parent repo committing anything.
+        toplevel_probe = None
+    if toplevel_probe is None or toplevel_probe.returncode != 0:
+        return Diagnosis(
+            name="store_nested_in_parent_repo",
+            status="ok",
+            message="Store is not inside any git worktree — nothing to check.",
+        )
+    store_root = directory.resolve()
+    parent_top = Path(toplevel_probe.stdout.strip()).resolve()
+    if parent_top == store_root:
+        # The store is the top of its own worktree, so sidecars tracked
+        # in the STORE repo are `sync_tracked_ignored`'s finding — but
+        # an ENCLOSING repo can still exist (the combined shape in the
+        # docstring), and `rev-parse` from inside the store can only
+        # ever answer with the store itself. Restart the probe from the
+        # store's parent directory; anything short of a resolving,
+        # store-containing enclosing worktree stands down exactly as
+        # before the upward probe existed.
+        stand_down = Diagnosis(
+            name="store_nested_in_parent_repo",
+            status="ok",
+            message=(
+                "Store is the top of its own git worktree — tracked "
+                "sidecars there are sync_tracked_ignored's finding."
+            ),
+        )
+        if store_root.parent == store_root:
+            # Filesystem root: no parent directory to probe from.
+            return stand_down
+        try:
+            enclosing_probe = _run_git(
+                store_root.parent, ["rev-parse", "--show-toplevel"], check=False
+            )
+        except SyncError:
+            enclosing_probe = None
+        if enclosing_probe is None or enclosing_probe.returncode != 0:
+            return stand_down
+        enclosing_top = Path(enclosing_probe.stdout.strip()).resolve()
+        if enclosing_top == store_root:
+            # GIT_DIR / GIT_WORK_TREE overrides can make the parent-dir
+            # probe answer with the store itself — not an enclosing repo.
+            return stand_down
+        try:
+            prefix = store_root.relative_to(enclosing_top).as_posix()
+        except ValueError:
+            # The answered worktree does not path-contain the store
+            # (same env-override shape as the not-own-toplevel branch).
+            return stand_down
+        return _scan_parent_index_for_sidecars(
+            directory,
+            parent_top=enclosing_top,
+            prefix=prefix,
+            clean_message=(
+                f"Store is the top of its own git worktree (tracked "
+                f"sidecars there are sync_tracked_ignored's finding), "
+                f"nested inside the git repo at {enclosing_top}; that "
+                f"parent repo tracks no transient sidecar files under "
+                f"the store."
+            ),
+            leak_route=(
+                "The store is now the top of its own git worktree, but "
+                "the PARENT repo's index still tracks these paths from "
+                "before the store became its own repo — git does not "
+                "auto-untrack — so"
+            ),
+        )
+    try:
+        prefix = store_root.relative_to(parent_top).as_posix()
+    except ValueError:
+        # `--show-toplevel` answered from somewhere the resolved store
+        # path is not actually under (GIT_DIR / GIT_WORK_TREE overrides
+        # in the environment); there is no path-nesting to report.
+        return Diagnosis(
+            name="store_nested_in_parent_repo",
+            status="ok",
+            message=(
+                "Store is not path-nested under any git worktree — nothing to check."
+            ),
+        )
+    return _scan_parent_index_for_sidecars(
+        directory,
+        parent_top=parent_top,
+        prefix=prefix,
+        clean_message=(
+            f"Store is nested inside the git repo at {parent_top} (not "
+            "itself a sync repo); that parent repo tracks no transient "
+            "sidecar files under the store."
+        ),
+        leak_route=(
+            "The store only sits inside that repo's worktree — "
+            "bettermemory's sync .gitignore does not apply there — so"
+        ),
     )
 
 

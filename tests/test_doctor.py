@@ -2040,3 +2040,93 @@ def test_store_nested_in_parent_repo_missing_dir_does_not_create_it(
     diag = _check_store_nested_in_parent_repo(ghost)
     assert diag.status == "ok"
     assert not ghost.exists()
+
+
+@_needs_git
+def test_store_nested_in_parent_repo_warns_on_combined_nesting(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Combined nesting: the store began as a plain subdirectory of a
+    dotfiles-style parent repo — whose `git add -A` tracked the
+    plaintext raw-capture queue — and only LATER ran `bettermemory
+    sync init`, becoming its own worktree toplevel. That shape evaded
+    BOTH checks: `rev-parse --show-toplevel` from inside the store now
+    answers with the store itself (so the pre-fix nested check stood
+    down), while `sync_tracked_ignored` reads only the STORE repo's
+    index — but the PARENT's stale index entries survive the nested
+    `git init` (git does not auto-untrack) and keep shipping the
+    sidecar blobs with every parent push. The check must probe upward
+    from the store's parent DIRECTORY and WARN, naming the parent
+    toplevel and the tracked paths with the same parent-side
+    remediation — and the prescribed untracking must clear it."""
+    parent, store = _parent_repo_with_nested_store(tmp_path, monkeypatch)
+    (store / PROPOSALS_FILENAME).write_text(
+        '{"content": "my staging DB password is hunter2"}\n', encoding="utf-8"
+    )
+    (store / "a-memory.md").write_text("---\n---\nbody\n", encoding="utf-8")
+    _git_in(parent, "add", "-A")
+    _git_in(parent, "commit", "-m", "dotfiles: add everything")
+    # The store becomes its own repo only AFTER the parent tracked it —
+    # the real `sync init` path, so the fixture is the true upgrade shape.
+    sync.init(store)
+    tracked_rel = f"memory-store/{PROPOSALS_FILENAME}"
+    # Premise pins: the store IS its own toplevel now (the shape the
+    # pre-fix check stood down on), the sibling check sees only the
+    # store's clean index, and the PARENT still tracks the pre-init
+    # sidecar — the exact blind spot under test.
+    assert sync._is_repo(store)
+    assert _check_sync_tracked_ignored(store).status == "ok"
+    assert tracked_rel in _git_in(parent, "ls-files")
+
+    diag = _check_store_nested_in_parent_repo(store)
+    assert diag.status == "warn"
+    assert diag.name == "store_nested_in_parent_repo"
+    assert str(parent.resolve()) in diag.message
+    assert PROPOSALS_FILENAME in diag.message
+    assert f"git rm --cached {tracked_rel}" in (diag.fix_hint or "")
+    assert ".gitignore" in (diag.fix_hint or "")
+    assert "git-filter-repo" in (diag.fix_hint or "")
+    assert "rotate" in (diag.fix_hint or "")
+    assert diag.details["parent_toplevel"] == str(parent.resolve())
+    assert diag.details["tracked_sidecars"] == [tracked_rel]
+
+    # The prescribed parent-side untracking clears the warn (the file
+    # stays on disk inside the store's own repo, merely untracked by
+    # the parent).
+    _git_in(parent, "rm", "--cached", tracked_rel)
+    _git_in(parent, "commit", "-m", "untrack the store capture queue")
+    assert (store / PROPOSALS_FILENAME).exists()
+    assert _check_store_nested_in_parent_repo(store).status == "ok"
+
+
+@_needs_git
+def test_store_nested_in_parent_repo_own_toplevel_in_clean_parent_stays_ok(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The legitimate monorepo / home-repo shape: a store that is its
+    own worktree toplevel sits nested inside a parent repo that tracks
+    NOTHING under it — a normal `sync init` inside a git-managed $HOME
+    looks exactly like this. The upward probe must key strictly on
+    actually-tracked matching paths in the parent index; mere nesting
+    never alarms."""
+    parent, store = _parent_repo_with_nested_store(tmp_path, monkeypatch)
+    (parent / "README.md").write_text("# dotfiles\n", encoding="utf-8")
+    _git_in(parent, "add", "README.md")
+    _git_in(parent, "commit", "-m", "dotfiles: nothing under the store")
+    sync.init(store)
+    (store / PROPOSALS_FILENAME).write_text(
+        '{"content": "captured text that must stay host-local"}\n', encoding="utf-8"
+    )
+    # Premise pins: own toplevel, and the parent tracks nothing under it.
+    assert sync._is_repo(store)
+    assert not _git_in(parent, "ls-files", "--", "memory-store").strip()
+
+    diag = _check_store_nested_in_parent_repo(store)
+    assert diag.status == "ok"
+    assert diag.fix_hint is None
+    # The nesting is still noted with the parent named, and the
+    # store-repo shape still deflects store-index sidecars to the
+    # sibling check.
+    assert str(parent.resolve()) in diag.message
+    assert "sync_tracked_ignored" in diag.message
+    assert diag.details["parent_toplevel"] == str(parent.resolve())
