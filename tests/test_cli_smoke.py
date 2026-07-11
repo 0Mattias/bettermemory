@@ -496,23 +496,17 @@ def test_unknown_subcommand_exits_nonzero(
     assert exc.value.code != 0
 
 
-@pytest.mark.parametrize(
-    "subcmd",
-    [
-        "health",
-        "doctor",
-        "init",
-        "migrate",
-        "export",
-        "tombstones",
-        "episodes",
-        "sync",
-        "reindex",
-        "consolidate",
-        "ui",
-        "audit-turn",
-    ],
-)
+def _all_registered_subcommands() -> list[str]:
+    """Every subcommand in `_build_parser`'s registry, so the `--help`
+    smoke sweep below can never drift out of sync with the CLI again (a
+    hardcoded list here sat at 12 of 17 entries for several releases)."""
+    from bettermemory.cli import _build_parser
+
+    _, subparsers = _build_parser()
+    return sorted(subparsers)
+
+
+@pytest.mark.parametrize("subcmd", _all_registered_subcommands())
 def test_subcommand_help_works(
     subcmd: str,
     monkeypatch: pytest.MonkeyPatch,
@@ -1022,12 +1016,13 @@ def test_subprocess_version_pins_packaging(tmp_path: Path) -> None:
 #   - Dispatch-only (arm without dict key): unreachable code; argparse
 #     rejects the subcommand before dispatch ever sees it.
 #
-# Existing coverage doesn't catch either drift: the per-subcommand
-# `test_subcommand_help_works` parametrise above iterates a hardcoded
-# tuple, `test_help_lists_all_subcommands` only asserts a 6-name subset,
-# and the direct-import smoke tests don't cross-check the two
-# enumerations. Hazard tier: medium-high (user-visible CLI fallback on
-# the registry-drift side; silent unreachable code on the dispatch-only
+# Other coverage doesn't catch either drift: the per-subcommand
+# `test_subcommand_help_works` parametrise above derives from the
+# registry dict (so it follows registry drift rather than detecting it),
+# `test_help_lists_all_subcommands` only asserts a 6-name subset, and
+# the direct-import smoke tests don't cross-check the two enumerations.
+# Hazard tier: medium-high (user-visible CLI fallback on the
+# registry-drift side; silent unreachable code on the dispatch-only
 # side).
 #
 # Implementation note: the test AST-walks `main()`'s source rather than

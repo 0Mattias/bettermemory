@@ -1162,7 +1162,8 @@ def _scan_parent_index_for_sidecars(
                         f"{listing.stderr.strip() or listing.stdout.strip() or 'unknown error'}."
                     ),
                     fix_hint=(
-                        f"Run `git ls-files -- ':(literal){prefix}'` from "
+                        f"Run `git ls-files -- "
+                        f"{shlex.quote(f':(literal){prefix}')}` from "
                         f"{parent_top} to investigate."
                     ),
                     details={
