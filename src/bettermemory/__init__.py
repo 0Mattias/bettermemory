@@ -1,9 +1,10 @@
-"""bettermemory: a memory system for coding agents, served over MCP.
+"""bettermemory: a trust layer between a coding agent and its own past.
 
-A local file-backed MCP server covering the lifecycle around recall —
-per-hit staleness verdicts, gated writes, usage telemetry and eval,
-curation, and an episode tier for session run-state. Memory is opt-in
-retrieval, not forced context. See the module-level docs and
+A local file-backed MCP server where a stored fact is a claim that
+keeps earning belief — per-hit staleness verdicts, gated writes,
+claim-level use attribution, measured effectiveness, curation, and an
+episode tier for session run-state. Memory is opt-in retrieval, not
+forced context. See the module-level docs and
 `prompts.SYSTEM_PROMPT_ADDENDUM` for the consumer-side instructions.
 """
 

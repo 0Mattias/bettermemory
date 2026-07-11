@@ -1,7 +1,7 @@
 {
   "name": "bettermemory",
   "version": "3.20.0",
-  "description": "A memory system for Claude Code: recall with per-hit staleness verdicts, usage telemetry, curation, and episodic run-state. Retrieval is opt-in, never auto-injected context.",
+  "description": "A trust layer between Claude Code and its own past: memory with per-hit staleness verdicts, claim-level use attribution, measured effectiveness, and episodic run-state. Retrieval is opt-in, never auto-injected context.",
   "author": {
     "name": "Mattias Rask",
     "url": "https://github.com/0Mattias"
