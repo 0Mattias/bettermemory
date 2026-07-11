@@ -1074,6 +1074,39 @@ def test_ui_tunnel_error_exits_2_with_hint(
     assert "install hint here" in capsys.readouterr().err
 
 
+def test_ui_startup_failure_exit_code_3_propagates(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """`web.serve` raises SystemExit(3) when uvicorn never bound — its
+    STARTUP_FAILURE parity, restored for --tunnel in 3.19.0 (the plain
+    path gets the same code from `uvicorn.run` itself). The operational
+    value (systemd `Restart=on-failure`, shell `$?`) only survives if
+    the CLI layer lets that BaseException sail through untouched:
+    `_cli_ui`'s ImportError/TunnelError handlers catch Exception
+    subclasses only, and no frame up the chain (ui.run -> cli.main ->
+    server.main) wraps the call. A future wrapper that swallows or
+    remaps SystemExit (a bare `except:`/`except BaseException:` around
+    the serve call, or a "friendly" re-raise as exit 1) would kill the
+    fix silently; this pins the end-to-end exit-code contract for both
+    the --tunnel and plain invocations."""
+    from bettermemory import web
+
+    def _startup_failure(
+        config: object, *, host: str, port: int, tunnel: str | None = None
+    ) -> None:
+        raise SystemExit(3)
+
+    monkeypatch.setattr(web, "serve", _startup_failure)
+    for argv in (["ui", "--tunnel"], ["ui"]):
+        with pytest.raises(SystemExit) as excinfo:
+            _run_main(argv, monkeypatch=monkeypatch, storage=tmp_path)
+        assert excinfo.value.code == 3, (
+            f"{argv}: SystemExit(3) from web.serve must reach the process "
+            f"boundary unchanged, got {excinfo.value.code!r}"
+        )
+
+
 def test_ui_tunnel_rejects_unknown_provider(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
