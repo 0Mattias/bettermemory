@@ -91,12 +91,12 @@ verification policy:
 bettermemory doctor
 ```
 
-Checks binary on PATH, config loadable, storage writable, memories
-parse cleanly, search index healthy and in sync with disk, event log
-writable, embeddings extras present (when enabled), and client
-configs referencing a stale binary path. Each failed check has a
-one-line fix hint. `--json` for machine-readable;
-exit codes 0/1/2 for ok/warn/fail.
+Runs the full diagnostic suite — install wiring (binary path, config,
+client configs), store integrity (parse, index, storage), and
+sync-repo leak surfaces (tracked-despite-gitignore sidecars, parent
+repos tracking store files) — each failed check has a one-line fix
+hint. `--json` for machine-readable; exit codes 0/1/2 for
+ok/warn/fail.
 
 Common failures:
 
