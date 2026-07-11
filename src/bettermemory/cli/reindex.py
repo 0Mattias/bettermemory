@@ -16,18 +16,16 @@ def add_subparser(
     sub: "argparse._SubParsersAction[argparse.ArgumentParser]",
 ) -> argparse.ArgumentParser:
     """Register the ``reindex`` subparser on the parent parser."""
-    parser = sub.add_parser(
-        "reindex",
-        help=(
-            "Rebuild the SQLite FTS5 index from the on-disk memories. "
-            "The index is normally kept live by Store hooks on every "
-            "write / update / tombstone; rerun this when the memory "
-            "directory was edited outside the runtime (hand-edits, "
-            "external sync, restored backup) so the index catches up. "
-            "Safe to run anytime — atomic, transactional, leaves the "
-            "prior index intact on partial failure."
-        ),
+    help_text = (
+        "Rebuild the SQLite FTS5 index from the on-disk memories. "
+        "The index is normally kept live by Store hooks on every "
+        "write / update / tombstone; rerun this when the memory "
+        "directory was edited outside the runtime (hand-edits, "
+        "external sync, restored backup) so the index catches up. "
+        "Safe to run anytime — atomic, transactional, leaves the "
+        "prior index intact on partial failure."
     )
+    parser = sub.add_parser("reindex", help=help_text, description=help_text)
     parser.add_argument(
         "--json",
         action="store_true",

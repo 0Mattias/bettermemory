@@ -13,15 +13,13 @@ def add_subparser(
     sub: "argparse._SubParsersAction[argparse.ArgumentParser]",
 ) -> argparse.ArgumentParser:
     """Register the ``eval`` subparser on the parent parser."""
-    parser = sub.add_parser(
-        "eval",
-        help=(
-            "Compute the three memory-effectiveness rates "
-            "(memory_helped_rate, endorsement_rate, silent_miss_rate) "
-            "from the event log + active store. Methodology in "
-            "docs/eval.md."
-        ),
+    help_text = (
+        "Compute the three memory-effectiveness rates "
+        "(memory_helped_rate, endorsement_rate, silent_miss_rate) "
+        "from the event log + active store. Methodology in "
+        "docs/eval.md."
     )
+    parser = sub.add_parser("eval", help=help_text, description=help_text)
     parser.add_argument(
         "--since",
         type=str,

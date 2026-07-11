@@ -14,16 +14,14 @@ def add_subparser(
     sub: "argparse._SubParsersAction[argparse.ArgumentParser]",
 ) -> argparse.ArgumentParser:
     """Register the ``rename-scope`` subparser."""
-    parser = sub.add_parser(
-        "rename-scope",
-        help=(
-            "Replace OLD with NEW across every memory's scope list — the cheap "
-            "fix for a typo'd or deprecated scope (e.g. `infra` -> "
-            "`infrastructure`). The CLI counterpart of the memory_rename_scope "
-            "tool. Bumps `updated` but preserves `last_verified_at`; tombstones "
-            "are renamed too unless --no-tombstones."
-        ),
+    help_text = (
+        "Replace OLD with NEW across every memory's scope list — the cheap "
+        "fix for a typo'd or deprecated scope (e.g. `infra` -> "
+        "`infrastructure`). The CLI counterpart of the memory_rename_scope "
+        "tool. Bumps `updated` but preserves `last_verified_at`; tombstones "
+        "are renamed too unless --no-tombstones."
     )
+    parser = sub.add_parser("rename-scope", help=help_text, description=help_text)
     parser.add_argument("old", metavar="OLD", help="The scope to rename.")
     parser.add_argument("new", metavar="NEW", help="The replacement scope.")
     parser.add_argument(

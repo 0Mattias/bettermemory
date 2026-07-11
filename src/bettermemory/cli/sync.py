@@ -12,20 +12,19 @@ def add_subparser(
     sub: "argparse._SubParsersAction[argparse.ArgumentParser]",
 ) -> argparse.ArgumentParser:
     """Register the ``sync`` subparser (with init/status/push/pull/auto)."""
-    parser = sub.add_parser(
-        "sync",
-        help=(
-            "Sync the memory directory across hosts via git. Subcommands: "
-            "init (set up the dir as a git repo + sensible .gitignore), "
-            "status (show pending changes and remote tracking), "
-            "push (commit + push), pull (rebase-pull + rebuild the index), "
-            "auto (pull then push — the shell-alias / cron one-shot)."
-        ),
+    help_text = (
+        "Sync the memory directory across hosts via git. Subcommands: "
+        "init (set up the dir as a git repo + sensible .gitignore), "
+        "status (show pending changes and remote tracking), "
+        "push (commit + push), pull (rebase-pull + rebuild the index), "
+        "auto (pull then push — the shell-alias / cron one-shot)."
     )
+    parser = sub.add_parser("sync", help=help_text, description=help_text)
     sync_sub = parser.add_subparsers(dest="sync_cmd")
 
+    sync_init_help = "Initialise the memory dir as a git repo."
     sync_init_parser = sync_sub.add_parser(
-        "init", help="Initialise the memory dir as a git repo."
+        "init", help=sync_init_help, description=sync_init_help
     )
     sync_init_parser.add_argument(
         "--remote",
@@ -50,8 +49,9 @@ def add_subparser(
         help="Emit JSON instead of human-readable text.",
     )
 
+    sync_status_help = "Show pending changes and remote tracking."
     sync_status_parser = sync_sub.add_parser(
-        "status", help="Show pending changes and remote tracking."
+        "status", help=sync_status_help, description=sync_status_help
     )
     sync_status_parser.add_argument(
         "--json",
@@ -59,8 +59,9 @@ def add_subparser(
         help="Emit JSON instead of human-readable text.",
     )
 
+    sync_push_help = "Stage everything, commit (if changes), push."
     sync_push_parser = sync_sub.add_parser(
-        "push", help="Stage everything, commit (if changes), push."
+        "push", help=sync_push_help, description=sync_push_help
     )
     sync_push_parser.add_argument(
         "--remote",
@@ -84,8 +85,9 @@ def add_subparser(
         help="Emit JSON instead of human-readable text.",
     )
 
+    sync_pull_help = "Rebase-pull + rebuild the FTS5 index."
     sync_pull_parser = sync_sub.add_parser(
-        "pull", help="Rebase-pull + rebuild the FTS5 index."
+        "pull", help=sync_pull_help, description=sync_pull_help
     )
     sync_pull_parser.add_argument(
         "--remote",
@@ -108,8 +110,9 @@ def add_subparser(
         help="Emit JSON instead of human-readable text.",
     )
 
+    sync_auto_help = "Pull-rebase, then push. The shell-alias one-shot."
     sync_auto_parser = sync_sub.add_parser(
-        "auto", help="Pull-rebase, then push. The shell-alias one-shot."
+        "auto", help=sync_auto_help, description=sync_auto_help
     )
     sync_auto_parser.add_argument(
         "--remote",

@@ -26,23 +26,19 @@ def add_subparser(
     sub: "argparse._SubParsersAction[argparse.ArgumentParser]",
 ) -> argparse.ArgumentParser:
     """Register the ``episodes`` subparser (with list/prune sub-subparsers)."""
-    parser = sub.add_parser(
-        "episodes",
-        help=(
-            "Inspect and prune the episode (journal) store — the "
-            "sibling-to-memory tier for loop-iteration takeaways. "
-            "Subcommands: list, prune."
-        ),
+    help_text = (
+        "Inspect and prune the episode (journal) store — the "
+        "sibling-to-memory tier for loop-iteration takeaways. "
+        "Subcommands: list, prune."
     )
+    parser = sub.add_parser("episodes", help=help_text, description=help_text)
     ep_sub = parser.add_subparsers(dest="episodes_cmd")
 
-    elist_parser = ep_sub.add_parser(
-        "list",
-        help=(
-            "Print episodes. Without arguments, prints every session's "
-            "episodes oldest-first within each session."
-        ),
+    elist_help = (
+        "Print episodes. Without arguments, prints every session's "
+        "episodes oldest-first within each session."
     )
+    elist_parser = ep_sub.add_parser("list", help=elist_help, description=elist_help)
     elist_parser.add_argument(
         "session_id",
         nargs="?",
@@ -55,14 +51,14 @@ def add_subparser(
         help="Emit JSON instead of human-readable text.",
     )
 
+    eprune_help = (
+        "Hard-delete episode session directories whose newest file is "
+        f"older than --ttl-days (default {DEFAULT_EPISODE_TTL_DAYS}). "
+        "Episodes are normally pruned on each `episode_write` call; "
+        "this is the manual surface for an offline cleanup pass."
+    )
     eprune_parser = ep_sub.add_parser(
-        "prune",
-        help=(
-            "Hard-delete episode session directories whose newest file is "
-            f"older than --ttl-days (default {DEFAULT_EPISODE_TTL_DAYS}). "
-            "Episodes are normally pruned on each `episode_write` call; "
-            "this is the manual surface for an offline cleanup pass."
-        ),
+        "prune", help=eprune_help, description=eprune_help
     )
     eprune_parser.add_argument(
         "--ttl-days",

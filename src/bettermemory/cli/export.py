@@ -18,16 +18,14 @@ def add_subparser(
     sub: "argparse._SubParsersAction[argparse.ArgumentParser]",
 ) -> argparse.ArgumentParser:
     """Register the ``export`` subparser on the parent parser."""
-    parser = sub.add_parser(
-        "export",
-        help=(
-            "Dump all active memories (and tombstones, by default) to a "
-            "self-describing JSON document. The format is round-trippable "
-            "and intended for backup, migration between machines, or "
-            "feeding an external indexer. Writes to stdout unless "
-            "--output is given."
-        ),
+    help_text = (
+        "Dump all active memories (and tombstones, by default) to a "
+        "self-describing JSON document. The format is round-trippable "
+        "and intended for backup, migration between machines, or "
+        "feeding an external indexer. Writes to stdout unless "
+        "--output is given."
     )
+    parser = sub.add_parser("export", help=help_text, description=help_text)
     parser.add_argument(
         "--output",
         "-o",

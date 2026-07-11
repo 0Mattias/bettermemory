@@ -529,6 +529,74 @@ def test_subcommand_help_works(
 
 
 # ---------------------------------------------------------------------------
+# Subcommand --help must SAY WHAT THE COMMAND DOES. argparse renders a
+# subparser's `help=` string only in the top-level `bettermemory -h`
+# listing; the subparser's own `--help` prints `description=` — which
+# every registration used to omit, so e.g. `bettermemory doctor --help`
+# (the natural probe for the 3.19.0 sidecar-leak migration surface)
+# showed usage + options with no statement of what doctor covers. Each
+# add_parser call now passes the same string as both `help=` and
+# `description=`; these tests pin the user-visible half of that contract.
+#
+# argparse wraps the description to the terminal width (COLUMNS-
+# dependent), so assertions collapse whitespace first — a substring that
+# happens to span a wrap point must not flake with the environment.
+# ---------------------------------------------------------------------------
+
+
+def _flat_help(
+    argv: list[str],
+    *,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    storage: Path,
+) -> str:
+    """Run `bettermemory <argv> --help`, return stdout with whitespace
+    collapsed (wrap-point-immune) after asserting exit 0."""
+    with pytest.raises(SystemExit) as exc:
+        _run_main([*argv, "--help"], monkeypatch=monkeypatch, storage=storage)
+    assert exc.value.code == 0
+    return " ".join(capsys.readouterr().out.split())
+
+
+def test_doctor_help_describes_the_check_suite(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """`bettermemory doctor --help` must carry doctor's category summary
+    (install wiring / store integrity / sync-repo leak surfaces) — not
+    just usage + options. Doctor is the surface users probe first when
+    chasing the sync-secret leak, so the summary the top-level listing
+    shows has to be visible here too."""
+    out = _flat_help(
+        ["doctor"], monkeypatch=monkeypatch, capsys=capsys, storage=tmp_path
+    )
+    assert "Diagnose install state." in out
+    assert "install wiring" in out
+    assert "store integrity" in out
+    assert "sync-repo leak surfaces" in out
+
+
+def test_sync_help_describes_the_command_repo_wide_pattern(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """The description= fix is repo-wide, not doctor-special: `sync
+    --help` states what sync does, and the NESTED `sync init --help`
+    states what init does (nested registrations share the same
+    help=/description= convention)."""
+    out = _flat_help(["sync"], monkeypatch=monkeypatch, capsys=capsys, storage=tmp_path)
+    assert "Sync the memory directory across hosts via git." in out
+
+    out = _flat_help(
+        ["sync", "init"], monkeypatch=monkeypatch, capsys=capsys, storage=tmp_path
+    )
+    assert "Initialise the memory dir as a git repo." in out
+
+
+# ---------------------------------------------------------------------------
 # In-process coverage for CLI dispatch branches that the subprocess tests
 # previously protected but didn't reach when the local checkout has no
 # editable install. The argparse setup + the `_cli_*` dispatch functions

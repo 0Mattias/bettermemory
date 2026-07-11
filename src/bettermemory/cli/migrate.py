@@ -11,21 +11,19 @@ def add_subparser(
     sub: "argparse._SubParsersAction[argparse.ArgumentParser]",
 ) -> argparse.ArgumentParser:
     """Register the ``migrate`` subparser (with ``origin`` sub-subparser)."""
-    parser = sub.add_parser(
-        "migrate",
-        help=(
-            "One-shot data migrations. Use `migrate origin` to backfill "
-            "the origin field on memories written before that field "
-            "existed."
-        ),
+    help_text = (
+        "One-shot data migrations. Use `migrate origin` to backfill "
+        "the origin field on memories written before that field "
+        "existed."
     )
+    parser = sub.add_parser("migrate", help=help_text, description=help_text)
     migrate_sub = parser.add_subparsers(dest="migrate_cmd")
+    origin_help = (
+        "Backfill origin frontmatter on legacy memories. Idempotent: "
+        "memories that already have an origin field are skipped."
+    )
     origin_parser = migrate_sub.add_parser(
-        "origin",
-        help=(
-            "Backfill origin frontmatter on legacy memories. Idempotent: "
-            "memories that already have an origin field are skipped."
-        ),
+        "origin", help=origin_help, description=origin_help
     )
     origin_parser.add_argument(
         "--dry-run",

@@ -15,30 +15,31 @@ def add_subparser(
     sub: "argparse._SubParsersAction[argparse.ArgumentParser]",
 ) -> argparse.ArgumentParser:
     """Register the ``proposals`` subparser (with list/accept/dismiss)."""
-    parser = sub.add_parser(
-        "proposals",
-        help=(
-            "Review the write-reflex proposal queue — durable statements the "
-            "Stop hook captured but never saved (opt-in [proposals] "
-            "auto_propose). The CLI counterpart of the memory_proposals tool. "
-            "Subcommands: list, accept, dismiss."
-        ),
+    help_text = (
+        "Review the write-reflex proposal queue — durable statements the "
+        "Stop hook captured but never saved (opt-in [proposals] "
+        "auto_propose). The CLI counterpart of the memory_proposals tool. "
+        "Subcommands: list, accept, dismiss."
     )
+    parser = sub.add_parser("proposals", help=help_text, description=help_text)
     proposals_sub = parser.add_subparsers(dest="proposals_cmd")
 
-    plist_parser = proposals_sub.add_parser("list", help="Print every queued proposal.")
+    plist_help = "Print every queued proposal."
+    plist_parser = proposals_sub.add_parser(
+        "list", help=plist_help, description=plist_help
+    )
     plist_parser.add_argument(
         "--json",
         action="store_true",
         help="Emit JSON instead of human-readable text.",
     )
 
+    paccept_help = (
+        "Write a queued proposal as a real memory and remove it from the "
+        "queue. Requires --scope (a memory needs at least one scope)."
+    )
     paccept_parser = proposals_sub.add_parser(
-        "accept",
-        help=(
-            "Write a queued proposal as a real memory and remove it from the "
-            "queue. Requires --scope (a memory needs at least one scope)."
-        ),
+        "accept", help=paccept_help, description=paccept_help
     )
     paccept_parser.add_argument(
         "id", metavar="ID", help="Id of the proposal to accept."
@@ -77,9 +78,9 @@ def add_subparser(
         help="Emit JSON instead of human-readable text.",
     )
 
+    pdismiss_help = "Drop a proposal from the queue without writing it."
     pdismiss_parser = proposals_sub.add_parser(
-        "dismiss",
-        help="Drop a proposal from the queue without writing it.",
+        "dismiss", help=pdismiss_help, description=pdismiss_help
     )
     pdismiss_parser.add_argument(
         "id", metavar="ID", help="Id of the proposal to dismiss."

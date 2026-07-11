@@ -10,6 +10,13 @@ The exact order of ``sub.add_parser`` calls is load-bearing — it
 determines the order subcommands appear in ``bettermemory --help``.
 Preserve it when adding or removing modules.
 
+Every ``add_parser`` call passes the same string as both ``help=``
+and ``description=``: argparse renders ``help=`` only in the parent
+parser's subcommand listing, while ``description=`` is the only
+statement of what the command does that ``bettermemory <cmd>
+--help`` itself prints. Bind the string to one variable and pass it
+twice so the two surfaces can't drift.
+
 MCP wiring (``build_server`` plus ``_register_tools`` and the
 FastMCP ``instructions`` block, neither re-exported through
 ``server.py``) lives in ``bettermemory.builder``; ``server.py``

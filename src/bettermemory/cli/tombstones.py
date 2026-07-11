@@ -15,17 +15,16 @@ def add_subparser(
     sub: "argparse._SubParsersAction[argparse.ArgumentParser]",
 ) -> argparse.ArgumentParser:
     """Register the ``tombstones`` subparser (with list/prune sub-subparsers)."""
-    parser = sub.add_parser(
-        "tombstones",
-        help=(
-            "Inspect, restore, and prune the tombstone (removed-memory) "
-            "audit log. Subcommands: list, restore, prune."
-        ),
+    help_text = (
+        "Inspect, restore, and prune the tombstone (removed-memory) "
+        "audit log. Subcommands: list, restore, prune."
     )
+    parser = sub.add_parser("tombstones", help=help_text, description=help_text)
     tombstones_sub = parser.add_subparsers(dest="tombstones_cmd")
 
+    tlist_help = "Print all tombstones with removal metadata."
     tlist_parser = tombstones_sub.add_parser(
-        "list", help="Print all tombstones with removal metadata."
+        "list", help=tlist_help, description=tlist_help
     )
     tlist_parser.add_argument(
         "--json",
@@ -43,14 +42,14 @@ def add_subparser(
         ),
     )
 
+    trestore_help = (
+        "Bring a tombstoned memory back to the active set by id. Strips "
+        "removal frontmatter and preserves original timestamps. The CLI "
+        "counterpart of the memory_restore tool, for the lean default "
+        "surface where that tool isn't registered."
+    )
     trestore_parser = tombstones_sub.add_parser(
-        "restore",
-        help=(
-            "Bring a tombstoned memory back to the active set by id. Strips "
-            "removal frontmatter and preserves original timestamps. The CLI "
-            "counterpart of the memory_restore tool, for the lean default "
-            "surface where that tool isn't registered."
-        ),
+        "restore", help=trestore_help, description=trestore_help
     )
     trestore_parser.add_argument(
         "id",
@@ -63,14 +62,14 @@ def add_subparser(
         help="Emit JSON instead of human-readable text.",
     )
 
+    tprune_help = (
+        "Hard-delete tombstones older than --older-than days. "
+        "Active memories are unaffected. Default value comes from "
+        "config.toml `behavior.tombstone_retention_days`; if that's 0 "
+        "(the default), --older-than is required."
+    )
     tprune_parser = tombstones_sub.add_parser(
-        "prune",
-        help=(
-            "Hard-delete tombstones older than --older-than days. "
-            "Active memories are unaffected. Default value comes from "
-            "config.toml `behavior.tombstone_retention_days`; if that's 0 "
-            "(the default), --older-than is required."
-        ),
+        "prune", help=tprune_help, description=tprune_help
     )
     tprune_parser.add_argument(
         "--older-than",

@@ -15,16 +15,14 @@ def add_subparser(
     sub: "argparse._SubParsersAction[argparse.ArgumentParser]",
 ) -> argparse.ArgumentParser:
     """Register the ``consolidate`` subparser on the parent parser."""
-    parser = sub.add_parser(
-        "consolidate",
-        help=(
-            "Offline consolidation: dedup near-duplicates, demote "
-            "never-applied memories to ambient, suggest cold-scope "
-            "archival and scope-typo renames. Dry-run by default; "
-            "--apply commits dedup tombstones and demotions. Cold-"
-            "scope and scope-typo passes stay suggest-only."
-        ),
+    help_text = (
+        "Offline consolidation: dedup near-duplicates, demote "
+        "never-applied memories to ambient, suggest cold-scope "
+        "archival and scope-typo renames. Dry-run by default; "
+        "--apply commits dedup tombstones and demotions. Cold-"
+        "scope and scope-typo passes stay suggest-only."
     )
+    parser = sub.add_parser("consolidate", help=help_text, description=help_text)
     parser.add_argument(
         "--apply",
         action="store_true",

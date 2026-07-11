@@ -21,10 +21,10 @@ from typing import Any
 def add_subparser(
     sub: argparse._SubParsersAction[argparse.ArgumentParser],
 ) -> argparse.ArgumentParser:
-    parser = sub.add_parser(
-        "try",
-        help="60-second offline demo: watch a memory go stale when a file it cites moves.",
+    help_text = (
+        "60-second offline demo: watch a memory go stale when a file it cites moves."
     )
+    parser = sub.add_parser("try", help=help_text, description=help_text)
     parser.add_argument(
         "--json",
         action="store_true",

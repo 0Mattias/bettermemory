@@ -13,20 +13,18 @@ def add_subparser(
     sub: "argparse._SubParsersAction[argparse.ArgumentParser]",
 ) -> argparse.ArgumentParser:
     """Register the ``ingest`` subparser on the parent parser."""
-    parser = sub.add_parser(
-        "ingest",
-        help=(
-            "Import Claude Code's auto-memory directory "
-            "(~/.claude/projects/<sanitized-cwd>/memory/) into the "
-            "bettermemory store. Maps the auto-memory `type` to a "
-            "bettermemory category, dedups against the active store "
-            "and tombstone log, and writes survivors as ordinary "
-            "records carrying an `imported-from-claude-code` scope. "
-            "The framing is 'consume rather than fight' the auto-"
-            "memory feature: the user keeps the ergonomic capture and "
-            "gains the verification surface."
-        ),
+    help_text = (
+        "Import Claude Code's auto-memory directory "
+        "(~/.claude/projects/<sanitized-cwd>/memory/) into the "
+        "bettermemory store. Maps the auto-memory `type` to a "
+        "bettermemory category, dedups against the active store "
+        "and tombstone log, and writes survivors as ordinary "
+        "records carrying an `imported-from-claude-code` scope. "
+        "The framing is 'consume rather than fight' the auto-"
+        "memory feature: the user keeps the ergonomic capture and "
+        "gains the verification surface."
     )
+    parser = sub.add_parser("ingest", help=help_text, description=help_text)
     parser.add_argument(
         "--from",
         dest="source",

@@ -9,21 +9,23 @@ def add_subparser(
     sub: "argparse._SubParsersAction[argparse.ArgumentParser]",
 ) -> argparse.ArgumentParser:
     """Register the ``doctor`` subparser on the parent parser."""
-    parser = sub.add_parser(
-        "doctor",
-        # Category summary, deliberately NOT a check-by-check list: the
-        # old enumeration went stale every time the suite grew (it never
-        # gained the sync-leak checks). Categories absorb new checks —
-        # don't reintroduce a list or a hardcoded count here.
-        help=(
-            "Diagnose install state. Runs the full check suite — install "
-            "wiring (binary path, config, MCP client configs), store "
-            "integrity (parse, search index, storage), and sync-repo leak "
-            "surfaces (tracked-despite-gitignore sidecars, parent repos "
-            "tracking store files) — each failure prints a one-line fix "
-            "hint. Exits 0/1/2 for ok/warn/fail."
-        ),
+    # Category summary, deliberately NOT a check-by-check list: the
+    # old enumeration went stale every time the suite grew (it never
+    # gained the sync-leak checks). Categories absorb new checks —
+    # don't reintroduce a list or a hardcoded count here.
+    #
+    # One string, two argparse surfaces: help= renders only in the
+    # top-level `bettermemory -h` listing; description= is the only
+    # thing `bettermemory doctor --help` prints about the command.
+    help_text = (
+        "Diagnose install state. Runs the full check suite — install "
+        "wiring (binary path, config, MCP client configs), store "
+        "integrity (parse, search index, storage), and sync-repo leak "
+        "surfaces (tracked-despite-gitignore sidecars, parent repos "
+        "tracking store files) — each failure prints a one-line fix "
+        "hint. Exits 0/1/2 for ok/warn/fail."
     )
+    parser = sub.add_parser("doctor", help=help_text, description=help_text)
     parser.add_argument(
         "--json",
         action="store_true",

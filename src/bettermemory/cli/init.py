@@ -10,13 +10,11 @@ def add_subparser(
     sub: "argparse._SubParsersAction[argparse.ArgumentParser]",
 ) -> argparse.ArgumentParser:
     """Register the ``init`` subparser on the parent parser."""
-    parser = sub.add_parser(
-        "init",
-        help=(
-            "Onboard a fresh install: print the MCP config snippet, or "
-            "auto-patch a known client's config. Idempotent."
-        ),
+    help_text = (
+        "Onboard a fresh install: print the MCP config snippet, or "
+        "auto-patch a known client's config. Idempotent."
     )
+    parser = sub.add_parser("init", help=help_text, description=help_text)
     parser.add_argument(
         "--client",
         type=str,
