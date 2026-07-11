@@ -10,7 +10,9 @@ the host environment under test.
 from __future__ import annotations
 
 import json
+import os
 import re
+import shlex
 import shutil
 import subprocess
 import sys
@@ -1774,16 +1776,55 @@ def _git_in(cwd: Path, *args: str) -> str:
     return result.stdout
 
 
+def _set_git_discovery_ceiling(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Pin git's upward repo discovery inside the pytest sandbox.
+
+    The nested-store checks walk from the store toward the filesystem
+    root, so whenever pytest's tmp_path sits under ANY real git repo
+    (a TMPDIR redirected into a checkout, `--basetemp` inside one, …)
+    an unpinned walk escapes the fixture and finds that real repo —
+    flipping "not inside any git worktree" verdicts and appending
+    phantom levels to `scanned_parent_toplevels`. Removing this
+    ceiling reintroduces exactly those failures (verified by running
+    the nested-store tests with `--basetemp` inside a scratch git
+    repo: they fail without the ceiling and pass with it).
+
+    `GIT_CEILING_DIRECTORIES` stops the walk, but git only honours a
+    ceiling that is a STRICT ancestor of the probe directory
+    (`longest_ancestor_length` requires `path[len] == '/'`; verified
+    on git 2.50.1: a probe launched FROM the ceiling directory itself
+    escapes upward unhindered). Every fixture walk terminates with a
+    probe launched from `tmp_path` exactly, and the store-IS-tmp_path
+    tests probe from `tmp_path.parent`, so a ceiling AT `tmp_path`
+    would be inert for precisely the probes that matter. The two
+    entries below are strict ancestors of every probe directory these
+    checks can launch, while every fixture repo lives at or below
+    `tmp_path` — strictly below both ceilings — so in-sandbox
+    discovery (including the multi-level grandparent walks) still
+    resolves normally.
+
+    Test-side control ONLY: production code never sets this variable —
+    a real user's own `GIT_CEILING_DIRECTORIES` is their configuration
+    to keep.
+    """
+    monkeypatch.setenv(
+        "GIT_CEILING_DIRECTORIES",
+        os.pathsep.join([str(tmp_path.parent), str(tmp_path.parent.parent)]),
+    )
+
+
 def _store_repo(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     """A git-inited store dir with a hermetic global git config. The
     `GIT_CONFIG_GLOBAL` redirect mirrors tests/test_sync.py's
     `memory_dir` fixture — without it the identity writes below would
-    land in the developer's real ~/.gitconfig."""
+    land in the developer's real ~/.gitconfig. The discovery ceiling
+    keeps the nested-store checks' upward walk inside the sandbox."""
     store = tmp_path / "store"
     store.mkdir()
     global_config = tmp_path / "test.gitconfig"
     global_config.touch()
     monkeypatch.setenv("GIT_CONFIG_GLOBAL", str(global_config))
+    _set_git_discovery_ceiling(tmp_path, monkeypatch)
     _git_in(store, "init", "--initial-branch", "main")
     _git_in(store, "config", "--global", "user.email", "test@example.com")
     _git_in(store, "config", "--global", "user.name", "Test")
@@ -1821,7 +1862,12 @@ def test_sync_tracked_ignored_fails_on_tracked_proposals_queue(
     assert diag.status == "fail"
     assert diag.name == "sync_tracked_ignored"
     assert PROPOSALS_FILENAME in diag.message
-    assert f"git rm --cached {PROPOSALS_FILENAME}" in (diag.fix_hint or "")
+    # The path is emitted as a single-quoted `:(literal)` pathspec so
+    # the copy-pasted command survives shell splitting and never feeds
+    # pathspec magic / globbing (a raw join fails rc=128 on a
+    # leading-`:` path and silently untracks the wrong sibling on a
+    # bracketed one).
+    assert f"git rm --cached ':(literal){PROPOSALS_FILENAME}'" in (diag.fix_hint or "")
     assert "git-filter-repo" in (diag.fix_hint or "")
     assert "rotate" in (diag.fix_hint or "")
     assert diag.details["tracked_ignored"] == [PROPOSALS_FILENAME]
@@ -1902,7 +1948,8 @@ def _parent_repo_with_nested_store(
     wrapper and to `sync_tracked_ignored` — only the parent-side check
     can see what the parent tracks. ``store_name`` lets the pathspec
     tests pick a directory name containing glob / pathspec-magic
-    characters. Hermetic global git config, mirroring `_store_repo`.
+    characters. Hermetic global git config and discovery ceiling,
+    mirroring `_store_repo`.
     Returns ``(parent, store)``."""
     parent = tmp_path / "home"
     store = parent / store_name
@@ -1910,6 +1957,7 @@ def _parent_repo_with_nested_store(
     global_config = tmp_path / "test.gitconfig"
     global_config.touch()
     monkeypatch.setenv("GIT_CONFIG_GLOBAL", str(global_config))
+    _set_git_discovery_ceiling(tmp_path, monkeypatch)
     _git_in(parent, "init", "--initial-branch", "main")
     _git_in(parent, "config", "--global", "user.email", "test@example.com")
     _git_in(parent, "config", "--global", "user.name", "Test")
@@ -1927,8 +1975,10 @@ def _grandparent_repo_with_doubly_nested_store(
     innermost enclosing worktree can see the leak. The store
     (``grand/home/memory-store/``) is left a plain directory so callers
     pick its final shape (plain, or `sync.init` for the
-    store-as-own-repo chain). Hermetic global git config, mirroring
-    `_store_repo`. Returns ``(grand, parent, store)``."""
+    store-as-own-repo chain). Hermetic global git config and discovery
+    ceiling, mirroring `_store_repo` — the ceiling sits ABOVE tmp_path,
+    so the walk still has to discover BOTH in-sandbox levels itself.
+    Returns ``(grand, parent, store)``."""
     grand = tmp_path / "grand"
     parent = grand / "home"
     store = parent / "memory-store"
@@ -1936,6 +1986,7 @@ def _grandparent_repo_with_doubly_nested_store(
     global_config = tmp_path / "test.gitconfig"
     global_config.touch()
     monkeypatch.setenv("GIT_CONFIG_GLOBAL", str(global_config))
+    _set_git_discovery_ceiling(tmp_path, monkeypatch)
     _git_in(grand, "init", "--initial-branch", "main")
     _git_in(grand, "config", "--global", "user.email", "test@example.com")
     _git_in(grand, "config", "--global", "user.name", "Test")
@@ -1987,7 +2038,7 @@ def test_store_nested_in_parent_repo_warns_on_parent_tracked_sidecar(
     assert diag.name == "store_nested_in_parent_repo"
     assert str(parent.resolve()) in diag.message
     assert PROPOSALS_FILENAME in diag.message
-    assert f"git rm --cached {tracked_rel}" in (diag.fix_hint or "")
+    assert f"git rm --cached ':(literal){tracked_rel}'" in (diag.fix_hint or "")
     assert ".gitignore" in (diag.fix_hint or "")
     assert "git-filter-repo" in (diag.fix_hint or "")
     assert "rotate" in (diag.fix_hint or "")
@@ -2062,11 +2113,17 @@ def test_store_nested_in_parent_repo_stands_down_when_store_is_own_repo(
     assert _check_sync_tracked_ignored(store).status == "fail"
 
 
-def test_store_nested_in_parent_repo_ok_on_non_git_store(tmp_path: Path) -> None:
+def test_store_nested_in_parent_repo_ok_on_non_git_store(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     """A store outside any git worktree has no parent repo to leak
     through — the check must pass without demanding git ceremony (and
     when git itself is absent the probe degrades to the same verdict,
-    mirroring `_is_repo`'s SyncError-to-False)."""
+    mirroring `_is_repo`'s SyncError-to-False). The discovery ceiling
+    keeps "outside any git worktree" true even when pytest's own
+    basetemp sits under a real repo — without it the upward walk finds
+    that repo and the verdict flips."""
+    _set_git_discovery_ceiling(tmp_path, monkeypatch)
     (tmp_path / PROPOSALS_FILENAME).write_text(
         '{"content": "local only"}\n', encoding="utf-8"
     )
@@ -2127,7 +2184,7 @@ def test_store_nested_in_parent_repo_warns_on_combined_nesting(
     assert diag.name == "store_nested_in_parent_repo"
     assert str(parent.resolve()) in diag.message
     assert PROPOSALS_FILENAME in diag.message
-    assert f"git rm --cached {tracked_rel}" in (diag.fix_hint or "")
+    assert f"git rm --cached ':(literal){tracked_rel}'" in (diag.fix_hint or "")
     assert ".gitignore" in (diag.fix_hint or "")
     assert "git-filter-repo" in (diag.fix_hint or "")
     assert "rotate" in (diag.fix_hint or "")
@@ -2189,32 +2246,65 @@ def test_store_nested_in_parent_repo_scans_glob_metachar_store_path_literally(
     undocumented implementation detail, not a contract — the sibling
     magic-prefix / trailing-glob tests show the raw spelling really
     does miss and over-match on other legal names. This test is the
-    Windows-runnable guard that metachar store paths stay detected."""
+    Windows-runnable guard that metachar store paths stay detected —
+    and that the emitted `git rm --cached` remediation, split exactly
+    as a POSIX shell would split it, EXECUTES and untracks ONLY the
+    bracketed target: `[0]` globs to `0`, so a raw spelling of this
+    path silently untracks the innocent sibling `mem0ry-store/…`
+    instead (rc=0) — the one outcome worse than failing."""
     parent, store = _parent_repo_with_nested_store(
         tmp_path, monkeypatch, store_name="mem[0]ry-store"
     )
     (store / PROPOSALS_FILENAME).write_text(
         '{"content": "my staging DB password is hunter2"}\n', encoding="utf-8"
     )
+    sibling = parent / "mem0ry-store"
+    sibling.mkdir()
+    (sibling / PROPOSALS_FILENAME).write_text(
+        '{"content": "the innocent sibling the glob would hit"}\n', encoding="utf-8"
+    )
     _git_in(parent, "add", "-A")
     _git_in(parent, "commit", "-m", "dotfiles: add everything")
     tracked_rel = f"mem[0]ry-store/{PROPOSALS_FILENAME}"
-    # Premise pin: the parent really tracks the sidecar under the
-    # bracketed store path.
-    assert tracked_rel in _git_in(parent, "ls-files")
+    sibling_rel = f"mem0ry-store/{PROPOSALS_FILENAME}"
+    # Premise pins: the parent really tracks the sidecar under the
+    # bracketed store path, and the glob-shaped sibling is tracked too.
+    tracked_before = _git_in(parent, "ls-files")
+    assert tracked_rel in tracked_before
+    assert sibling_rel in tracked_before
 
     diag = _check_store_nested_in_parent_repo(store)
     assert diag.status == "warn"
     assert str(parent.resolve()) in diag.message
     assert PROPOSALS_FILENAME in diag.message
-    assert f"git rm --cached {tracked_rel}" in (diag.fix_hint or "")
+    assert f"git rm --cached ':(literal){tracked_rel}'" in (diag.fix_hint or "")
     assert diag.details["parent_toplevel"] == str(parent.resolve())
     assert diag.details["store_prefix"] == "mem[0]ry-store"
+    # The literal scan confines itself to the store: the sibling the
+    # glob would match never enters the diagnosis.
     assert diag.details["tracked_sidecars"] == [tracked_rel]
     # Single-nesting diagnoses keep their established shape: the
     # multi-level rollup key only appears when the walk found more
     # than one enclosing repo.
     assert "scanned_parent_toplevels" not in diag.details
+
+    # Execute the emitted remediation verbatim: rc=0, the bracketed
+    # target is untracked, the innocent sibling stays tracked, and the
+    # cleared index passes the re-check.
+    match = re.search(r"run `(git rm --cached [^`]*)`", diag.fix_hint or "")
+    assert match is not None
+    rm = subprocess.run(
+        shlex.split(match.group(1)),
+        cwd=parent,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert rm.returncode == 0, rm.stderr
+    remaining = _git_in(parent, "ls-files")
+    assert tracked_rel not in remaining
+    assert sibling_rel in remaining
+    assert _check_store_nested_in_parent_repo(store).status == "ok"
 
 
 @_needs_git
@@ -2231,7 +2321,11 @@ def test_store_nested_in_parent_repo_magic_prefix_store_path_not_silently_missed
     parent while the plaintext capture queue kept shipping with every
     parent push: a false negative in the exact leak class this check
     exists to close. The `:(literal)` magic pins the prefix to the
-    real directory and the sidecar must surface as a WARN."""
+    real directory and the sidecar must surface as a WARN — and the
+    emitted `git rm --cached` remediation must EXECUTE: quoting the
+    raw path produced `git rm --cached :memory-store/…`, which aborts
+    rc=128 on the same leading-`:` magic, a dead command handed to
+    someone remediating a plaintext leak."""
     parent, store = _parent_repo_with_nested_store(
         tmp_path, monkeypatch, store_name=":memory-store"
     )
@@ -2252,9 +2346,25 @@ def test_store_nested_in_parent_repo_magic_prefix_store_path_not_silently_missed
     assert diag.status == "warn"
     assert str(parent.resolve()) in diag.message
     assert PROPOSALS_FILENAME in diag.message
-    assert f"git rm --cached {tracked_rel}" in (diag.fix_hint or "")
+    assert f"git rm --cached ':(literal){tracked_rel}'" in (diag.fix_hint or "")
     assert diag.details["parent_toplevel"] == str(parent.resolve())
     assert diag.details["tracked_sidecars"] == [tracked_rel]
+
+    # Execute the emitted remediation verbatim (split exactly as a
+    # POSIX shell would): it must succeed and clear the re-check — the
+    # raw spelling of this same path is a hard rc=128.
+    match = re.search(r"run `(git rm --cached [^`]*)`", diag.fix_hint or "")
+    assert match is not None
+    rm = subprocess.run(
+        shlex.split(match.group(1)),
+        cwd=parent,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert rm.returncode == 0, rm.stderr
+    assert tracked_rel not in _git_in(parent, "ls-files")
+    assert _check_store_nested_in_parent_repo(store).status == "ok"
 
 
 @_needs_git
@@ -2328,7 +2438,7 @@ def test_store_nested_in_parent_repo_warns_on_doubly_nested_grandparent(
     assert diag.name == "store_nested_in_parent_repo"
     assert str(grand.resolve()) in diag.message
     assert PROPOSALS_FILENAME in diag.message
-    assert f"git rm --cached {tracked_rel}" in (diag.fix_hint or "")
+    assert f"git rm --cached ':(literal){tracked_rel}'" in (diag.fix_hint or "")
     assert ".gitignore" in (diag.fix_hint or "")
     assert "git-filter-repo" in (diag.fix_hint or "")
     assert "rotate" in (diag.fix_hint or "")
@@ -2363,6 +2473,17 @@ def test_store_nested_in_parent_repo_warns_on_plain_doubly_nested_grandparent(
         tmp_path, monkeypatch
     )
     tracked_rel = f"home/memory-store/{PROPOSALS_FILENAME}"
+    # Hermeticity premise: the discovery ceiling is pinned ABOVE
+    # tmp_path (a ceiling AT tmp_path would be inert for the walk's
+    # final probe, which launches from tmp_path itself), and the
+    # `scanned_parent_toplevels` assertion below doubles as the proof
+    # that both fixture repos BELOW the ceiling are still discovered —
+    # the walk under test is real, not neutered. Without this env var
+    # the walk escapes the sandbox and this test fails whenever
+    # pytest's basetemp sits under any real git repo.
+    assert os.environ["GIT_CEILING_DIRECTORIES"] == os.pathsep.join(
+        [str(tmp_path.parent), str(tmp_path.parent.parent)]
+    )
     # Premise pins: plain store (not a repo), clean innermost parent,
     # tracking grandparent.
     assert not sync._is_repo(store)
@@ -2373,7 +2494,7 @@ def test_store_nested_in_parent_repo_warns_on_plain_doubly_nested_grandparent(
     assert diag.status == "warn"
     assert str(grand.resolve()) in diag.message
     assert "auto-untrack" in diag.message
-    assert f"git rm --cached {tracked_rel}" in (diag.fix_hint or "")
+    assert f"git rm --cached ':(literal){tracked_rel}'" in (diag.fix_hint or "")
     assert diag.details["parent_toplevel"] == str(grand.resolve())
     assert diag.details["tracked_sidecars"] == [tracked_rel]
     assert diag.details["scanned_parent_toplevels"] == [
@@ -2410,10 +2531,10 @@ def test_store_nested_in_parent_repo_aggregates_hits_across_enclosing_repos(
     assert str(parent.resolve()) in diag.message
     assert str(grand.resolve()) in diag.message
     assert outer_rel in diag.message
-    assert f"from {parent.resolve()} run `git rm --cached {inner_rel}`" in (
+    assert f"from {parent.resolve()} run `git rm --cached ':(literal){inner_rel}'`" in (
         diag.fix_hint or ""
     )
-    assert f"from {grand.resolve()} run `git rm --cached {outer_rel}`" in (
+    assert f"from {grand.resolve()} run `git rm --cached ':(literal){outer_rel}'`" in (
         diag.fix_hint or ""
     )
     assert "git-filter-repo" in (diag.fix_hint or "")
@@ -2437,3 +2558,93 @@ def test_store_nested_in_parent_repo_aggregates_hits_across_enclosing_repos(
     _git_in(grand, "rm", "--cached", outer_rel)
     _git_in(grand, "commit", "-m", "untrack outer")
     assert _check_store_nested_in_parent_repo(store).status == "ok"
+
+
+@_needs_git
+@pytest.mark.parametrize(
+    "gitfile_content",
+    ["gitdir: /nonexistent/path\n", "not a gitfile\n"],
+    ids=["dangling-gitdir", "garbage-content"],
+)
+def test_store_nested_in_parent_repo_warns_through_broken_store_gitfile(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, gitfile_content: str
+) -> None:
+    """A broken `.git` gitfile in the store — a dangling `gitdir:`
+    target after the linked worktree's main repo was deleted or moved,
+    or garbage content from a backup tool that restored the store
+    without the worktree admin dir — makes `rev-parse --show-toplevel`
+    from inside the store abort rc=128 WITHOUT continuing upward. The
+    pre-fix check read ANY failed probe as "not inside any git
+    worktree" and stood down, and `sync_tracked_ignored` stands down
+    on the same broken probe (`_is_repo` False — correct behavior, the
+    nested check owns this shape), so a healthy enclosing parent kept
+    tracking the plaintext queue AND its `git add -A` kept staging NEW
+    sidecars under the store (git only honours a nested-repo boundary
+    whose `.git` validates; a broken one is traversed like any plain
+    directory): an ACTIVE leak with zero warnings from either check.
+    The probe-failure branch must restart discovery from the store's
+    parent directory and WARN naming the parent and the tracked path.
+    Mutation proof: reverting the fallback (standing down on any
+    failed probe, the pre-fix shape) fails this test with ok != warn.
+    """
+    parent, store = _parent_repo_with_nested_store(tmp_path, monkeypatch)
+    (store / PROPOSALS_FILENAME).write_text(
+        '{"content": "my staging DB password is hunter2"}\n', encoding="utf-8"
+    )
+    _git_in(parent, "add", "-A")
+    _git_in(parent, "commit", "-m", "dotfiles: add everything")
+    (store / ".git").write_text(gitfile_content, encoding="utf-8")
+    tracked_rel = f"memory-store/{PROPOSALS_FILENAME}"
+    # Premise pins: discovery from inside the store really aborts (the
+    # false-negative trigger), the parent still tracks the sidecar, and
+    # a NEW plaintext file under the store still gets staged by the
+    # parent's `git add -A` — active leakage, not just a stale index.
+    probe = subprocess.run(
+        ["git", "rev-parse", "--show-toplevel"],
+        cwd=store,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert probe.returncode != 0
+    assert tracked_rel in _git_in(parent, "ls-files")
+    (store / "orphan.tmp").write_text("new plaintext capture", encoding="utf-8")
+    assert "memory-store/orphan.tmp" in _git_in(parent, "add", "-A", "--dry-run")
+    # The sibling check stands down cleanly on the same fixture — one
+    # leak, one owner: this shape belongs to the nested check.
+    sibling = _check_sync_tracked_ignored(store)
+    assert sibling.status == "ok"
+    assert "not a git sync repo" in sibling.message
+
+    diag = _check_store_nested_in_parent_repo(store)
+    assert diag.status == "warn"
+    assert diag.name == "store_nested_in_parent_repo"
+    assert str(parent.resolve()) in diag.message
+    assert PROPOSALS_FILENAME in diag.message
+    assert f"git rm --cached ':(literal){tracked_rel}'" in (diag.fix_hint or "")
+    assert diag.details["parent_toplevel"] == str(parent.resolve())
+    assert diag.details["tracked_sidecars"] == [tracked_rel]
+
+
+@_needs_git
+def test_store_nested_in_parent_repo_broken_gitfile_without_parent_stays_ok(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The probe-failure fallback keys on an ACTUAL enclosing repo: a
+    store with the same broken `.git` gitfile but genuinely under no
+    git repo walks to nothing and keeps the quiet "not inside any git
+    worktree" ok — a failed probe alone must never manufacture a
+    parent. The discovery ceiling pins the fallback walk inside the
+    pytest sandbox so this verdict cannot flip when basetemp itself
+    sits under a real repo."""
+    _set_git_discovery_ceiling(tmp_path, monkeypatch)
+    store = tmp_path / "store"
+    store.mkdir()
+    (store / PROPOSALS_FILENAME).write_text(
+        '{"content": "local only"}\n', encoding="utf-8"
+    )
+    (store / ".git").write_text("gitdir: /nonexistent/path\n", encoding="utf-8")
+
+    diag = _check_store_nested_in_parent_repo(store)
+    assert diag.status == "ok"
+    assert "not inside any git worktree" in diag.message

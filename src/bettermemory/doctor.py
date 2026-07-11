@@ -873,6 +873,25 @@ def _check_auto_memory_stranded(directory: Path, cwd: Path | None = None) -> Dia
     )
 
 
+def _quoted_literal_pathspecs(paths: list[str]) -> str:
+    """Render tracked paths as single-quoted ``:(literal)`` pathspecs
+    for a copy-pasteable ``git rm --cached`` remediation hint.
+
+    Joining the raw paths hands the user's shell and git's pathspec
+    engine exactly the hazards the index scan itself guards against
+    (verified on git 2.50.1): a leading-``:`` path parses as the
+    pathspec-magic marker and ``git rm`` aborts rc=128 without
+    untracking anything, an embedded space shell-splits into two bogus
+    pathspecs, and a glob metacharacter silently untracks a DIFFERENT
+    tracked path (``st[a]re/…`` matches the innocent sibling
+    ``stare/…`` and exits 0) — a command that fails or damages the
+    wrong entries, handed to someone remediating a secret leak. Same
+    quoting the ``git ls-files`` investigate hint in
+    ``_scan_parent_index_for_sidecars``'s error path already uses.
+    """
+    return " ".join(f"':(literal){path}'" for path in paths)
+
+
 def _check_sync_tracked_ignored(directory: Path) -> Diagnosis:
     """Detect transient sidecar files a store sync repo still TRACKS.
 
@@ -958,7 +977,7 @@ def _check_sync_tracked_ignored(directory: Path) -> Diagnosis:
         shown += f", … (+{len(tracked) - 3} more)"
     plural = "" if len(tracked) == 1 else "s"
     verb = "is" if len(tracked) == 1 else "are"
-    cmd_paths = " ".join(tracked[:5])
+    cmd_paths = _quoted_literal_pathspecs(tracked[:5])
     more_note = (
         f" (+{len(tracked) - 5} more — full list in `bettermemory doctor --json`)"
         if len(tracked) > 5
@@ -1153,7 +1172,7 @@ def _scan_parent_index_for_sidecars(
             shown += f", … (+{len(tracked) - 3} more)"
         plural = "" if len(tracked) == 1 else "s"
         verb = "is" if len(tracked) == 1 else "are"
-        cmd_paths = " ".join(tracked[:5])
+        cmd_paths = _quoted_literal_pathspecs(tracked[:5])
         more_note = (
             f" (+{len(tracked) - 5} more — full list in `bettermemory doctor --json`)"
             if len(tracked) > 5
@@ -1197,7 +1216,7 @@ def _scan_parent_index_for_sidecars(
         if len(tracked) > 3:
             shown += f", … (+{len(tracked) - 3} more)"
         per_repo_msgs.append(f"{parent_top} tracks {shown}")
-        cmd_paths = " ".join(tracked[:5])
+        cmd_paths = _quoted_literal_pathspecs(tracked[:5])
         more_note = (
             f" (+{len(tracked) - 5} more — full list in `bettermemory doctor --json`)"
             if len(tracked) > 5
@@ -1280,6 +1299,23 @@ def _check_store_nested_in_parent_repo(directory: Path) -> Diagnosis:
     each discovered toplevel toward the filesystem root, scans every
     enclosing repo's index, and aggregates per-repo hits into the one
     WARN.
+
+    A FAILED initial probe does not stand down either: git discovery
+    aborts rc=128 at a broken ``.git`` gitfile in the store (a
+    dangling ``gitdir:`` target after the linked worktree's main repo
+    was deleted or moved, or garbage content from a backup tool that
+    restored the store without the admin dir) WITHOUT continuing
+    upward, so "probe failed" does not mean "no enclosing repo".
+    ``sync_tracked_ignored`` stands down on the same broken probe
+    (``_is_repo`` is False — correct, the store is not a working sync
+    repo), while a healthy enclosing parent still tracks the store's
+    sidecars and its ``git add -A`` still stages NEW ones (git only
+    treats the subdirectory as a foreign-repo boundary when its
+    ``.git`` VALIDATES — a broken one is traversed like any plain
+    directory). The probe-failure branch therefore restarts discovery
+    from the store's parent directory — which never enters the store's
+    broken ``.git`` — and only returns the quiet
+    "not inside any git worktree" ok when that walk finds nothing.
     """
     # Same lazy-import rationale as `_check_sync_tracked_ignored` (and
     # the `_scan_parent_index_for_sidecars` helper): a top-level `sync`
@@ -1301,14 +1337,14 @@ def _check_store_nested_in_parent_repo(directory: Path) -> Diagnosis:
         # same SyncError-to-False shape as `sync._is_repo`: without git
         # there is no parent repo committing anything.
         toplevel_probe = None
-    if toplevel_probe is None or toplevel_probe.returncode != 0:
-        return Diagnosis(
-            name="store_nested_in_parent_repo",
-            status="ok",
-            message="Store is not inside any git worktree — nothing to check.",
-        )
+    not_inside = Diagnosis(
+        name="store_nested_in_parent_repo",
+        status="ok",
+        message="Store is not inside any git worktree — nothing to check.",
+    )
+    if toplevel_probe is None:
+        return not_inside
     store_root = directory.resolve()
-    parent_top = Path(toplevel_probe.stdout.strip()).resolve()
     # Every level past the innermost shares one leak route: an outer
     # repo's index holds paths under the store from before the repo
     # nesting below it arose, and git does not auto-untrack them.
@@ -1316,6 +1352,45 @@ def _check_store_nested_in_parent_repo(directory: Path) -> Diagnosis:
         "The PARENT repo's index still tracks these paths from before "
         "the repo nesting below it arose — git does not auto-untrack — so"
     )
+    if toplevel_probe.returncode != 0:
+        # The probe failing from INSIDE the store proves nothing about
+        # enclosing repos: discovery aborts at a broken `.git` gitfile
+        # without ever probing upward (the docstring's dangling-worktree
+        # / partial-restore shapes), so standing down here left a
+        # healthy tracking parent invisible while its `git add -A` kept
+        # staging NEW plaintext sidecars under the store. Restart
+        # discovery from the store's parent DIRECTORY, exactly like the
+        # own-toplevel branch below — the walk re-probes from above the
+        # store, so it is safe for BOTH failure meanings: a store that
+        # truly sits under no repo (a clean rc=128 at a plain
+        # directory) finds nothing and keeps the quiet ok.
+        if store_root.parent == store_root:
+            # Filesystem root: no parent directory to probe from.
+            return not_inside
+        found = _enclosing_worktree_levels(store_root.parent, store_root, seen=set())
+        if not found:
+            return not_inside
+        broken_probe_route = (
+            "Git discovery from inside the store fails (typically a "
+            "broken .git entry — e.g. a dangling worktree gitdir) "
+            "without ever reaching that parent, whose index still "
+            "tracks these paths, so"
+        )
+        levels = [
+            (top, prefix, broken_probe_route if depth == 0 else outer_leak_route)
+            for depth, (top, prefix) in enumerate(found)
+        ]
+        return _scan_parent_index_for_sidecars(
+            directory,
+            levels=levels,
+            clean_message=(
+                f"Store's own git discovery fails (broken .git entry?) "
+                f"but it is nested inside the git repo at {found[0][0]}; "
+                f"that parent repo tracks no transient sidecar files "
+                f"under the store."
+            ),
+        )
+    parent_top = Path(toplevel_probe.stdout.strip()).resolve()
     if parent_top == store_root:
         # The store is the top of its own worktree, so sidecars tracked
         # in the STORE repo are `sync_tracked_ignored`'s finding — but
