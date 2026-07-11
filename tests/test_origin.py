@@ -3,8 +3,12 @@
 from __future__ import annotations
 
 import os
+import re
 import shutil
 import subprocess
+import sys
+import tomllib
+import warnings
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -1035,6 +1039,175 @@ def test_commits_since_touching_paths_warns_once_per_call(tmp_path: Path) -> Non
     deprecations = [w for w in record if issubclass(w.category, DeprecationWarning)]
     assert len(deprecations) == 1
     assert "commits_since_touching_paths is deprecated" in str(deprecations[0].message)
+
+
+# ---------------------------------------------------------------------------
+# Deprecation fence — the pyproject.toml filterwarnings gate itself.
+#
+# The module-scoped filter line ("error::DeprecationWarning:bettermemory")
+# keys on the module the warning is ATTRIBUTED to, and our deprecations warn
+# with stacklevel=2 — attribution lands on the CALLER's frame. So that line
+# only escalates deprecated-API use from bettermemory's own frames; an
+# unwrapped deprecated call made from a TEST module is attributed to
+# `tests.test_*`, never matches, and sailed through green ("1 passed,
+# 1 warning") — the pytest.warns wrapper discipline in this file rested on
+# review, not on the gate. The message-scoped twin line escalates by TEXT
+# (every bettermemory deprecation message names the package), caller-frame
+# agnostic. These tests pin the fence mechanically: the config line literals,
+# the regex-vs-emitted-messages match (a reworded warn text can't silently
+# slip outside the fence), third-party immunity, and — end to end — a
+# subprocess pytest run proving an unwrapped test-frame call ERRORS under
+# this exact pyproject config.
+# ---------------------------------------------------------------------------
+
+_PYPROJECT = Path(__file__).resolve().parents[1] / "pyproject.toml"
+
+# Literal twins of the two pyproject filterwarnings entries. Kept as literals
+# — and asserted verbatim-present in the parsed config below — so the regex
+# assertions here can never drift from what pytest actually applies.
+_MODULE_FENCE_LINE = "error::DeprecationWarning:bettermemory"
+_MESSAGE_FENCE_LINE = (
+    "error:.*deprecated and will be removed in bettermemory:DeprecationWarning"
+)
+
+# Probe executed by the subprocess fence test: one unwrapped deprecated call
+# (must ERROR under the fence) and one pytest.warns-wrapped call (must PASS —
+# pytest.warns swallows the warning before the ini filters see it, which is
+# exactly the sanctioned idiom the rest of this file uses).
+_FENCE_PROBE = '''\
+"""Throwaway probe run in a pytest subprocess by the fence test."""
+
+from datetime import datetime, timezone
+
+import pytest
+
+from bettermemory.origin import commits_since
+
+
+def test_unwrapped_deprecated_call() -> None:
+    commits_since(None, datetime(2026, 1, 1, tzinfo=timezone.utc))
+
+
+def test_wrapped_deprecated_call() -> None:
+    with pytest.warns(DeprecationWarning, match="commits_since is deprecated"):
+        commits_since(None, datetime(2026, 1, 1, tzinfo=timezone.utc))
+'''
+
+
+def _pyproject_filterwarnings() -> list[str]:
+    with _PYPROJECT.open("rb") as fh:
+        filters = tomllib.load(fh)["tool"]["pytest"]["ini_options"]["filterwarnings"]
+    assert isinstance(filters, list)
+    return filters
+
+
+def _fence_message_regex() -> re.Pattern[str]:
+    """The message field of the fence line, compiled exactly the way the
+    warnings machinery will: pytest parses ini filterwarnings entries as
+    `action:message:category:module:lineno` with message kept as a RAW regex
+    (`parse_warning_filter(..., escape=False)`), and `warnings.warn_explicit`
+    applies it via `re.compile(message).match(str(warning_message))`."""
+    return re.compile(_MESSAGE_FENCE_LINE.split(":")[1])
+
+
+def test_deprecation_fence_lines_present_in_pyproject() -> None:
+    """Both fence lines, verbatim. The module-scoped line covers deprecated
+    calls made FROM bettermemory frames (whatever their message); the
+    message-scoped line covers bettermemory-authored deprecation messages
+    whatever the calling frame. Removing either reopens a gap, so this pins
+    the pair — and anchors the in-process regex tests below to the literal
+    pytest actually loads."""
+    filters = _pyproject_filterwarnings()
+    assert _MODULE_FENCE_LINE in filters
+    assert _MESSAGE_FENCE_LINE in filters
+
+
+def test_deprecation_fence_regex_matches_every_emitted_deprecation() -> None:
+    """Every DeprecationWarning origin.py emits must fall inside the fence.
+    This is the anti-drift pin for the WARN TEXTS: reword a deprecation
+    message so it stops saying "deprecated and will be removed in
+    bettermemory" and the message-scoped filter silently stops escalating
+    unwrapped test-frame calls of it — this test turns that silence into a
+    failure."""
+    fence = _fence_message_regex()
+    anchor = datetime(2026, 1, 1, tzinfo=timezone.utc)
+    with warnings.catch_warnings(record=True) as record:
+        warnings.simplefilter("always")
+        commits_since(None, anchor)
+        commits_touching_pathspecs(None, anchor, ["x.py"])
+        commits_since_touching_paths(None, anchor, ["x.py"])
+    deprecations = [w for w in record if issubclass(w.category, DeprecationWarning)]
+    assert len(deprecations) == 3
+    for w in deprecations:
+        assert fence.match(str(w.message)), str(w.message)
+
+
+def test_deprecation_fence_regex_ignores_third_party_texts() -> None:
+    """The discriminator is the package name INSIDE the message — "removed in
+    bettermemory" — not the word "deprecated". Representative third-party
+    shapes (including one with the full "deprecated and will be removed in"
+    prefix but another package's name) must NOT match, so adding the
+    message-scoped error line cannot escalate dependencies' deprecation
+    warnings and break the suite on an unrelated upgrade."""
+    fence = _fence_message_regex()
+    third_party_texts = [
+        "ham() is deprecated and will be removed in spam 5.0; use eggs()",
+        "np.float_ is deprecated and will be removed in NumPy 2.0",
+        "datetime.datetime.utcnow() is deprecated and scheduled for removal "
+        "in a future version",
+        "pkg_resources is deprecated as an API",
+        "the imp module is deprecated in favour of importlib",
+    ]
+    for text in third_party_texts:
+        assert fence.match(text) is None, text
+
+
+def test_deprecation_fence_escalates_unwrapped_calls_from_test_frames(
+    tmp_path: Path,
+) -> None:
+    """End-to-end fence proof, through pytest's real config parsing: a test
+    module calling deprecated API unwrapped must FAIL the run, while the
+    pytest.warns-wrapped twin in the same probe still passes. Before the
+    message-scoped line landed, this exact probe was '1 passed, 1 warning' —
+    warnings.warn(..., stacklevel=2) attributes the warning to the probe's
+    own module, which the module-scoped filter never matches. The probe runs
+    against THIS repo's pyproject.toml (`-c`), so the pin exercises the real
+    line, not a re-simulation that could drift from the config."""
+    probe = tmp_path / "test_fence_probe.py"
+    probe.write_text(_FENCE_PROBE, encoding="utf-8")
+    env = os.environ.copy()
+    env.pop("PYTEST_ADDOPTS", None)  # keep the probe run hermetic
+    src = Path(__file__).resolve().parents[1] / "src"
+    existing = env.get("PYTHONPATH")
+    env["PYTHONPATH"] = str(src) if not existing else str(src) + os.pathsep + existing
+    out = subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "pytest",
+            "-c",
+            str(_PYPROJECT),
+            "-p",
+            "no:cacheprovider",
+            str(probe),
+        ],
+        capture_output=True,
+        text=True,
+        env=env,
+        cwd=tmp_path,
+        timeout=120,
+        check=False,
+    )
+    # Exit 1 is "tests ran, some failed" — a collection/usage error (2/4)
+    # would mean the probe never exercised the fence at all.
+    assert out.returncode == 1, out.stdout + out.stderr
+    assert "1 failed, 1 passed" in out.stdout, out.stdout
+    # The failure is the UNWRAPPED call, failed BY the escalated warning.
+    assert "test_unwrapped_deprecated_call" in out.stdout
+    assert (
+        "DeprecationWarning: commits_since is deprecated and will be removed "
+        "in bettermemory" in out.stdout
+    ), out.stdout
 
 
 # ---------------------------------------------------------------------------

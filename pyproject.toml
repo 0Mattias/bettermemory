@@ -201,8 +201,27 @@ testpaths = ["tests"]
 # Surface DeprecationWarnings from our own code as errors. We do NOT silence
 # the python-frontmatter codecs.open() deprecation — instead we vendored our
 # own frontmatter handling in store.py to drop the dependency entirely.
+#
+# Two lines, two axes — both are needed:
+#
+# - The module-scoped line keys on the module the warning is ATTRIBUTED to.
+#   Our deprecations warn with stacklevel=2, attributing the warning to the
+#   CALLER's frame — so it escalates deprecated-API use inside bettermemory
+#   itself (src/-frame callers), but an unwrapped deprecated call made from a
+#   TEST module is attributed to `tests.test_*`, never matches, and sails
+#   through as a plain warning ("1 passed, 1 warning").
+# - The message-scoped line closes that gap: every bettermemory deprecation
+#   message contains "deprecated and will be removed in bettermemory", so it
+#   escalates regardless of the caller's frame. The message field is a regex
+#   matched (re.match) against str(warning) — third-party deprecation texts
+#   don't name bettermemory, so they stay untouched.
+#
+# The fence is pinned in tests/test_origin.py ("Deprecation fence" section):
+# both line literals, the regex-vs-emitted-messages match, and a subprocess
+# probe proving an unwrapped test-frame call errors under this exact config.
 filterwarnings = [
     "error::DeprecationWarning:bettermemory",
+    "error:.*deprecated and will be removed in bettermemory:DeprecationWarning",
 ]
 markers = [
     # Tests that assert behavior when the `embeddings` extra is *not*
