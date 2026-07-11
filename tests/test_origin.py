@@ -28,15 +28,21 @@ from bettermemory.origin import (
     worktrees_match,
 )
 
+from .conftest import set_git_discovery_ceiling
+
 
 # ---------------------------------------------------------------------------
 # capture() — non-git directory
 # ---------------------------------------------------------------------------
 
 
-def test_capture_in_non_repo_directory(tmp_path: Path) -> None:
+def test_capture_in_non_repo_directory(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     """A directory that isn't inside any git repo gets cwd populated and
-    repo/branch null."""
+    repo/branch null. The discovery ceiling keeps the premise honest when
+    tmp_path itself sits under a real checkout (poisoned basetemp/TMPDIR)."""
+    set_git_discovery_ceiling(tmp_path, monkeypatch)
     origin = capture(cwd=tmp_path)
     assert origin.cwd == str(tmp_path.resolve())
     assert origin.repo is None
@@ -644,8 +650,11 @@ def test_commits_since_returns_none_for_none_cwd() -> None:
     assert out is None
 
 
-def test_commits_since_returns_none_outside_repo(tmp_path: Path) -> None:
+def test_commits_since_returns_none_outside_repo(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     """A directory with no `.git` is not a repo — count is None, not 0."""
+    set_git_discovery_ceiling(tmp_path, monkeypatch)
     with pytest.warns(DeprecationWarning, match="commits_since is deprecated"):
         out = commits_since(tmp_path, datetime(2026, 1, 1, tzinfo=timezone.utc))
     assert out is None
@@ -689,7 +698,10 @@ def test_commit_author_timestamps_returns_none_for_none_cwd() -> None:
     assert commit_author_timestamps(None) is None
 
 
-def test_commit_author_timestamps_returns_none_outside_repo(tmp_path: Path) -> None:
+def test_commit_author_timestamps_returns_none_outside_repo(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    set_git_discovery_ceiling(tmp_path, monkeypatch)
     assert commit_author_timestamps(tmp_path) is None
 
 
@@ -1236,10 +1248,13 @@ def test_author_timestamps_touching_none_for_empty_pathspecs(tmp_path: Path) -> 
     assert commit_author_timestamps_touching_pathspecs(tmp_path, []) is None
 
 
-def test_author_timestamps_touching_none_outside_repo(tmp_path: Path) -> None:
+def test_author_timestamps_touching_none_outside_repo(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     """Not a git repo — existence is unknowable, so None (NOT []). The caller
     must keep its conservative count rather than treat every anchor as a
     phantom on an infrastructure failure."""
+    set_git_discovery_ceiling(tmp_path, monkeypatch)
     assert commit_author_timestamps_touching_pathspecs(tmp_path, ["x.py"]) is None
 
 
@@ -1327,11 +1342,14 @@ def test_capture_populates_worktree_root_in_repo(tmp_path: Path) -> None:
 
 
 @pytest.mark.skipif(not _GIT_AVAILABLE, reason="git not on PATH")
-def test_capture_worktree_null_outside_repo(tmp_path: Path) -> None:
+def test_capture_worktree_null_outside_repo(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     """Without a repo there's no worktree to capture — keeps the field
     null instead of falling back to cwd, so the auto-scope filter's
     "both sides set → strict-equal" gate stays a no-op for non-repo
     callers."""
+    set_git_discovery_ceiling(tmp_path, monkeypatch)
     origin = capture(cwd=tmp_path)
     assert origin.worktree_root is None
 

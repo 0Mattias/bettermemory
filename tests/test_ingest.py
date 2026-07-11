@@ -34,6 +34,8 @@ from bettermemory.ingest import (
 from bettermemory.models import Category
 from bettermemory.store import Store
 
+from .conftest import set_git_discovery_ceiling
+
 
 # ---------------------------------------------------------------------------
 # Fixtures
@@ -832,7 +834,10 @@ class TestApplyIngestPlanOrigin:
         """A matching auto-memory root under a NON-repo cwd still gets
         `origin.cwd` (honest: the dir is keyed to this cwd) with
         repo/worktree_root null — same degrade `capture` itself uses
-        outside a checkout."""
+        outside a checkout. The discovery ceiling keeps the non-repo
+        premise honest when tmp_path itself sits under a real checkout
+        (poisoned basetemp/TMPDIR)."""
+        set_git_discovery_ceiling(tmp_path, monkeypatch)
         fake_home = tmp_path / "home"
         fake_home.mkdir()
         monkeypatch.setattr(Path, "home", lambda: fake_home)

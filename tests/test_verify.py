@@ -43,6 +43,8 @@ from bettermemory.verify import (
     resolve_commit_drift_count,
 )
 
+from .conftest import set_git_discovery_ceiling
+
 
 _GIT_AVAILABLE = shutil.which("git") is not None
 
@@ -1385,11 +1387,16 @@ def test_commit_drift_clean_when_cited_path_untouched(tmp_path: Path) -> None:
 
 
 def test_resolve_commit_drift_count_falls_back_on_git_failure(
-    tmp_path: Path,
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """Git can't answer (cwd is not a repo): keep the conservative
     unfiltered count rather than silently exempting a possibly-drifted
-    memory — infrastructure failure must never widen the exemption."""
+    memory — infrastructure failure must never widen the exemption.
+    The discovery ceiling is what MAKES cwd not-a-repo when basetemp
+    itself sits under a checkout — without it, git resolves the
+    enclosing repo, `notes.md` reads as a confirmed phantom ([]), and
+    the fallback collapses into a None exemption."""
+    set_git_discovery_ceiling(tmp_path, monkeypatch)
     assert (
         resolve_commit_drift_count(
             cwd=tmp_path,
