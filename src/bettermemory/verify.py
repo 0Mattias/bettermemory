@@ -88,6 +88,7 @@ from .origin import (
     Origin,
     commit_author_timestamps,
     commit_author_timestamps_touching_pathspecs,
+    repo_toplevel,
     repos_match,
     resolve_repo_pathspecs,
 )
@@ -1445,11 +1446,24 @@ def compute_commit_drift(
     if not anchors:
         return None
     if count > 0:
+        # Resolve the repo root ONCE for this call and thread it through —
+        # anchor resolution (`resolve_repo_pathspecs`) and the path-filtered
+        # log (`commit_author_timestamps_touching_pathspecs`) would otherwise
+        # EACH pay a `git rev-parse --show-toplevel` fork+exec on the hottest
+        # read path (every memory_show). Mirrors the batch surfaces
+        # (`health._compute_commit_drift_debt`,
+        # `_response.attach_commit_drift_counts`), which already thread a
+        # once-resolved toplevel. None is tolerated (the resolvers re-derive,
+        # preserving the exact conservative fallback), but with
+        # `commit_author_timestamps` having just answered, git is
+        # demonstrably reachable here.
+        toplevel = repo_toplevel(cwd_path)
         resolved = resolve_commit_drift_count(
             cwd=cwd_path,
             since=last_verified_at,
             unfiltered=count,
             anchors=anchors,
+            toplevel=toplevel,
         )
         if resolved is None:
             return None

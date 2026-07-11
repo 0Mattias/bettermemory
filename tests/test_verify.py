@@ -18,6 +18,7 @@ import shutil
 import subprocess
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
+from typing import Any
 from unittest.mock import patch
 
 import pytest
@@ -1687,6 +1688,53 @@ def test_resolve_commit_drift_count_zero_for_deleted_but_real_anchor(
         anchors=("gone.py",),
     )
     assert result == 0
+
+
+@pytest.mark.skipif(not _GIT_AVAILABLE, reason="git not on PATH")
+def test_commit_drift_resolves_repo_toplevel_exactly_once(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Perf pin on the memory_show hot path: one `compute_commit_drift`
+    call that reaches the claim-anchored narrowing forks
+    ``git rev-parse --show-toplevel`` exactly ONCE. The repo root is
+    resolved up front and threaded into `resolve_commit_drift_count`
+    (mirroring the batch surfaces — `health._compute_commit_drift_debt`
+    and `_response.attach_commit_drift_counts`); pre-fix the call left
+    ``toplevel`` unset, so `resolve_repo_pathspecs` and
+    `commit_author_timestamps_touching_pathspecs` EACH re-derived it —
+    two rev-parse forks per retrieval. Counted at the ``origin._git``
+    seam (the module git runner): every git helper resolves ``_git``
+    from origin's module globals at call time, so the count survives
+    verify.py's from-imports and covers all resolution paths."""
+    _init_repo_with_remote(tmp_path, remote=_REMOTE)
+    _commit_at(tmp_path, "anchor", when=datetime(2026, 1, 1, tzinfo=timezone.utc))
+    _commit_touching(tmp_path, "after", when=datetime(2026, 2, 1, tzinfo=timezone.utc))
+
+    from bettermemory import origin as origin_module
+
+    real_git = origin_module._git
+    toplevel_forks = 0
+
+    def counting_git(cwd: Path, *args: str, **kwargs: Any) -> str | None:
+        nonlocal toplevel_forks
+        if args == ("rev-parse", "--show-toplevel"):
+            toplevel_forks += 1
+        return real_git(cwd, *args, **kwargs)
+
+    monkeypatch.setattr(origin_module, "_git", counting_git)
+
+    result = compute_commit_drift(
+        last_verified_at=datetime(2026, 1, 15, tzinfo=timezone.utc),
+        memory_origin_repo=_REMOTE,
+        caller_origin=Origin(cwd=str(tmp_path), repo=_REMOTE, branch="main"),
+        body="claims about notes.md hold",
+    )
+    # The narrowing path must have actually run (drift on the cited file),
+    # otherwise a skipped narrowing would trivially satisfy the fork count.
+    assert result is not None
+    assert result.status == "drift"
+    assert result.commits_since_verify == 1
+    assert toplevel_forks == 1
 
 
 def test_commit_drift_status_is_immutable_dataclass(tmp_path: Path) -> None:
