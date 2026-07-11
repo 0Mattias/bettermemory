@@ -144,9 +144,9 @@ def server_with_fake_origin(memory_dir: Path, monkeypatch: pytest.MonkeyPatch):
     can simulate "caller is in repo X" without altering the process cwd.
 
     The fake origin's `cwd` is a real tmp path the test sets up as a git
-    repo — `commits_since` and friends actually shell out against it, so
-    the integration covers the real subprocess code path even though the
-    capture step is mocked.
+    repo — `commit_author_timestamps` and friends actually shell out
+    against it, so the integration covers the real subprocess code path
+    even though the capture step is mocked.
 
     Patching goes through `monkeypatch` (not bare `setattr`) so the mock is
     RESTORED at teardown. A bare setattr leaks the patched `capture_origin`
@@ -949,16 +949,23 @@ async def test_memory_search_verified_paths_does_not_resurrect_same_second_commi
     server_with_fake_origin, memory_dir: Path, tmp_path: Path
 ) -> None:
     """The verified-paths narrowing must NEVER turn a clean author-bisect
-    count (0) back into drift. `attach_commit_drift_counts` narrows via
-    `commits_since_touching_paths`, which filters on COMMITTER date
-    INCLUSIVELY at whole-second granularity — so a commit that TOUCHES a
-    verified path in the same UTC second as `last_verified_at` would be
-    counted by the narrowing even though the strictly-greater author-date
-    bisect (the authoritative unfiltered count) excludes it. The `count > 0`
-    guard (mirroring memory_show / the health rollup — the four narrowing
-    sites must gate identically) skips the narrowing when the bisect already
-    said clean. Pre-guard this hit read commit_drift_count=1; with the guard
-    it reads 0 / fresh, in lockstep with memory_show.
+    count (0) back into drift. `attach_commit_drift_counts` narrows through
+    `verify.resolve_commit_drift_count`, which maps the anchors to
+    repo-relative pathspecs (`resolve_repo_pathspecs`) and bisects the
+    touching commits' AUTHOR timestamps
+    (`commit_author_timestamps_touching_pathspecs`) on the same
+    strictly-greater boundary as the unfiltered bisect — a commit that
+    TOUCHES a verified path in the same UTC second as `last_verified_at`
+    is excluded by the narrowing exactly as the authoritative unfiltered
+    count excludes it. On top of that, the `count > 0` guard (mirroring
+    memory_show / the health rollups — the four narrowing sites must gate
+    identically) skips the narrowing entirely when the bisect already said
+    clean. Historically the narrowing ran through the committer-date
+    INCLUSIVE whole-second `commits_since_touching_paths` (now deprecated,
+    zero production callers), which DID count exactly this commit:
+    pre-guard this hit read commit_drift_count=1. With the guard — and the
+    author-date unification beneath it — it reads 0 / fresh, in lockstep
+    with memory_show.
     """
     repo = tmp_path / "repo"
     repo.mkdir()
@@ -980,8 +987,8 @@ async def test_memory_search_verified_paths_does_not_resurrect_same_second_commi
 
     # A commit that TOUCHES the verified path, placed at the whole-second
     # FLOOR of last_verified_at (<= the verify instant). The author-date
-    # bisect excludes it (unfiltered count 0); the committer-date INCLUSIVE
-    # path-narrowing would otherwise count it and resurrect phantom drift.
+    # bisect excludes it (unfiltered count 0); the deprecated committer-date
+    # INCLUSIVE narrowing counted exactly this shape as phantom drift.
     stored = Store(memory_dir).load_one(written["id"])
     assert stored.last_verified_at is not None
     floor_second = stored.last_verified_at.replace(microsecond=0)
