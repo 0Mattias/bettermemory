@@ -1,6 +1,6 @@
 {
   "name": "bettermemory",
-  "version": "3.19.0",
+  "version": "3.20.0",
   "description": "Persistent memory for Claude Code, retrieved on demand. Memory is opt-in retrieval, not auto-injected context.",
   "author": {
     "name": "Mattias Rask",

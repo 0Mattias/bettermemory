@@ -7,6 +7,138 @@ breaking changes, minor for additive features, patch for fixes. The
 [compatibility contract](CONTRIBUTING.md#versioning-and-the-compatibility-contract)
 spells out exactly what's stable.
 
+## 3.20.0 - 2026-07-11
+
+An audit release over the 3.19.0 follow-up queue: four parallel drain
+rounds, a set-audit of the whole window as one range, a repair round, a
+re-audit of the repairs, and one repair-of-repairs. Every fix carries a
+regression test that was verified to fail against the pre-fix source.
+
+Minor rather than patch: `bettermemory doctor --json` gains two check
+names (`sync_tracked_ignored`, which can fail with a `tracked_ignored`
+details key, and `store_nested_in_parent_repo`, warn-only, with
+`parent_toplevel(s)` / `store_prefix` / `tracked_sidecars` /
+`tracked_by_parent` / `scanned_parent_toplevels` / `patterns_checked`
+details); doctor gains a new exit-code outcome (a store whose sync repo
+still tracks a pre-denylist sidecar now exits 2 — deliberate, it flags a
+real plaintext leak); and three functions now emit `DeprecationWarning`,
+which `-W error` consumers will see. Tooling that branches on doctor's
+exit code or parses its JSON sees new values; nothing was renamed or
+removed.
+
+### Security
+
+- **`doctor` now finds the sidecar leaks that 3.19.0's gitignore fixes
+  could not stop retroactively.** A sync repo initialised before the
+  denylist landed keeps already-tracked sidecars tracked — gitignore only
+  stops future staging — so the proposals queue and friends kept pushing
+  in plaintext. The new `sync_tracked_ignored` check detects any tracked
+  path matching the denylist and prints the full remediation (`git rm
+  --cached`, history rewrite for anything already pushed, secret
+  rotation). This is the designated migration surface for the 3.19.0
+  leak class: run `bettermemory doctor` once after upgrading.
+
+- **`doctor` also looks outward: a foreign parent repo tracking files
+  under a nested store is now detected.** A store living inside a
+  dotfiles-managed home directory (or any enclosing repo) leaks the same
+  sidecars through the parent's `git add -A`, invisibly to sync. The new
+  `store_nested_in_parent_repo` check walks every enclosing worktree —
+  plain nesting, a store that became its own repo after the parent had
+  already tracked its files, doubly-nested chains, and stores whose
+  `.git` gitfile is broken or dangling (a shape that previously made
+  every check stand down while the parent kept staging new captures) —
+  and warns with per-repo tracked paths and remediation.
+
+### Fixed
+
+- **Doctor's sidecar matching now agrees with `git check-ignore`.** The
+  original translation let `*` cross `/` when matching full paths, so
+  `.embeddings.*.npz` could flag `.embeddings.cache/model.npz` — a file
+  git legitimately tracks — for destructive remediation, and files under
+  ignored directories were missed entirely. Matching is now
+  per-component in the store's own frame, pinned by an oracle test that
+  compares doctor's verdict against real `git check-ignore` across a
+  56-cell matrix. The store-frame part matters: an intermediate fix
+  matched the store's *own path components* too, so a store directory
+  named `state.tmp` had every legitimate memory inside it reported as a
+  leak, with remediation that could never converge. The re-audit caught
+  that regression before it shipped.
+
+- **Every command `doctor` tells a user to paste is now shell-safe.**
+  Remediation hints interpolated raw paths into `git rm --cached` and
+  `chmod u+w` commands: a `:`-leading store name made the command fail
+  outright, a space-bearing path shell-split, and a bracket path could
+  silently untrack an innocent sibling file. All hint sites emit
+  `':(literal)…'` pathspecs through `shlex.quote`, and tests execute the
+  emitted commands verbatim and assert they touch only their target.
+
+- **The deprecation fence is mechanical, not review-dependent.**
+  `error::DeprecationWarning:bettermemory` never escalated unwrapped
+  deprecated calls made *from test files* — `stacklevel=2` attributes
+  the warning to the caller's frame — so a future test could silently
+  exercise deprecated API. A message-scoped filter line now escalates
+  bettermemory-emitted deprecations from any frame, proven both
+  directions by a subprocess probe.
+
+- **`bettermemory ui --tunnel` exit-code contract is pinned end to
+  end.** A bind failure exits 3 through click to the OS boundary —
+  propagation was already correct; it is now tested against both
+  remap and swallow mutations, so `systemd`'s `Restart=on-failure`
+  behavior can't regress silently.
+
+- **The test suite is hermetic against repo-rooted temp directories.**
+  Running with `TMPDIR`/`--basetemp` inside any git checkout used to
+  false-fail eleven outside-repo-premise tests (git discovery escaped
+  the sandbox and found the enclosing repo) and color-forcing shells
+  (`PY_COLORS=1`) false-failed the fence probe. Both closed, with the
+  git-discovery ceiling documented and shared in `conftest.py`.
+
+### Deprecated
+
+- **`origin.commits_since`, `origin.commits_touching_pathspecs`, and
+  `origin.commits_since_touching_paths`** now emit `DeprecationWarning`
+  and will be removed in bettermemory 4.0. All three count commits on
+  committer dates with `--since`, semantics the commit-drift path
+  deliberately abandoned (a rebase moves committer dates, inflating
+  counts; `None`-on-all-dropped erased the empty-vs-unresolvable
+  distinction). The author-date mechanism behind
+  `verify.resolve_commit_drift_count` is the replacement, and each
+  warning names it. They had no production callers — the deprecation
+  exists so nobody wires the inflatable semantics back in.
+  `CONTRIBUTING.md` now documents two explicit deprecation lanes:
+  `warnings.warn(DeprecationWarning)` for Python API, log-once for
+  config keys.
+
+### Changed
+
+- Every subcommand's `--help` now states what the command does —
+  previously argparse rendered the descriptions only in the top-level
+  `bettermemory -h` listing, so `bettermemory doctor --help` printed
+  usage and options with no statement of what doctor covers. The
+  `--help` smoke sweep derives from the parser registry, so new
+  subcommands can't ship without it.
+- `doctor`'s user-facing summaries (`--help`, the installation guide)
+  describe check categories instead of enumerating check names; the
+  previous enumerations had silently gone stale twice.
+- The `episode_handoff` tool description was compressed to the
+  model-facing minimum, restoring MCP description-budget headroom from
+  24 to 318 characters of the 27,250 ceiling — canonical detail lives in
+  `docs/api.md` and the module docstring.
+
+### Performance
+
+- `memory_show`'s commit-drift computation resolves the repo toplevel
+  once per call instead of forking `git rev-parse --show-toplevel` in
+  each helper — one fewer subprocess on the interactive read path.
+
+The structural lesson repeats from 3.19.0, with sharper numbers: all 24
+individually-verified fixes came back clean from their own reviews, yet
+reading the window across its commits found ten more defects, the
+re-audit of the repairs found six, and one of those was a regression a
+repair itself introduced. Four driver-side claims (item premises and a
+commit message) were falsified by agents or audits along the way. The
+between-commits reads stay mandatory.
+
 ## 3.19.0 - 2026-07-10
 
 An audit release. Two parallel drain rounds over the 3.15.1–3.18.1
