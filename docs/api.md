@@ -231,7 +231,7 @@ Resets when the server process restarts. Disabled scopes are filtered from `memo
 
 ## Episodes (sibling tier for journal-shaped run-state)
 
-Episodes are NOT memories. They live in a sibling subtree (`<root>/episodes/<session_id>/<ulid>.md`), are excluded from `memory_search` / `memory_health` / `memory_list`, and have no durability gate. Use them for loop-iteration takeaways, "what we tried", and any content `memory_write` would (correctly) reject as transient. A 30-day TTL on session directories runs on each `episode_write` so the directory stays bounded.
+Episodes are NOT memories. They live in a sibling subtree (`<root>/episodes/<session_id>/<ulid>.md`), are excluded from `memory_search` / `memory_health` / `memory_list`, and have no durability gate. Use them for loop-iteration takeaways, "what we tried", and any content `memory_write` would (correctly) reject as transient. A 30-day TTL on session directories runs on each `episode_write` so the directory stays bounded. Episodes are also host-local by design: `sync` excludes `episodes/` from the store repo — run-state bodies carry host-absolute worktree paths, the TTL prune keys on mtimes a `git checkout` would reset, and `episode_handoff` adoption is worktree-strict, so a synced episode would be filtered on arrival anyway.
 
 The optional `swarm_id` on `episode_write` / `episode_search` is the multi-agent fan-in primitive (since 3.3.0): a coordinator fans out parallel sub-agents, each sub-agent tags its episodes with the coordinator's session id, and the coordinator gathers every sub-agent's takeaways with one `episode_search(swarm_id=…)`. It is a cross-cutting cohort label, orthogonal to the single-chain predecessor link `episode_handoff` resolves.
 

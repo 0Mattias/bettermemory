@@ -54,6 +54,7 @@ from pathlib import Path
 from ._fsutil import atomic_write_bytes, flock_excl
 from .consolidate import AUTO_CONSOLIDATE_CLOCK_FILENAME
 from .doctor import DOCTOR_PROBE_FILENAME
+from .episodes import EPISODES_DIR
 from .events import EVENT_LOG_FILENAME
 from .index import INDEX_FILENAME
 from .ingest import INGEST_WATERMARK_FILENAME
@@ -116,6 +117,19 @@ _GITIGNORE_LINES = [
     # rewritten on every decision. Host-local by construction, like the
     # event log it was deliberately decoupled from.
     AUTO_CONSOLIDATE_CLOCK_FILENAME,
+    # Episode tier — host-local BY DESIGN (decided 2026-07-11; before this
+    # line it synced only by omission). Episodes are the transient sibling of
+    # memory: session run-state whose bodies carry host-absolute
+    # `origin.worktree_root` paths, pruned by an mtime-based TTL that a
+    # clone's `git checkout` would silently defeat (checkout rewrites mtimes,
+    # so a pulled session dir looks freshly written and never ages out on
+    # schedule). Cross-host continuity wouldn't even work: `episode_handoff`
+    # adoption is worktree-strict on those absolute paths, so a synced
+    # episode is filtered on arrival. The slash-free name matches the
+    # directory at any depth and gitignore ignores everything beneath it.
+    # `.tombstones/`, by contrast, is canonical store data and stays synced —
+    # a removal on one host must remain restorable from every clone.
+    EPISODES_DIR,
     "*.lock",
     # Orphaned atomic-write temp files. `_fsutil.atomic_write_bytes` writes
     # `<target>.<random>.tmp` next to its target and only unlinks it inside a

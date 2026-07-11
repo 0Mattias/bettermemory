@@ -17,6 +17,7 @@ import pytest
 
 from bettermemory import sync
 from bettermemory.doctor import DOCTOR_PROBE_FILENAME
+from bettermemory.episodes import EPISODES_DIR
 from bettermemory.events import EVENT_LOG_FILENAME
 from bettermemory.index import INDEX_FILENAME
 from bettermemory.ingest import INGEST_WATERMARK_FILENAME
@@ -25,7 +26,7 @@ from bettermemory.semantic import (
     EMBEDDING_FILENAME_PREFIX,
     EMBEDDING_FILENAME_SUFFIX,
 )
-from bettermemory.store import Store
+from bettermemory.store import TOMBSTONE_DIR, Store
 
 
 pytestmark = pytest.mark.skipif(
@@ -578,6 +579,152 @@ def test_push_does_not_stage_proposals_queue(
     remote_history = _git(bare_remote, "log", "-p", "--all")
     assert secret not in remote_history, (
         "secret from the proposals queue reached the remote git history"
+    )
+
+
+# Store-root DIRECTORIES that are DELIBERATELY tracked by the sync repo.
+# `.tombstones/` holds the bodies of removed memories: canonical store data,
+# not host-local runtime state — a removal made on one host must stay
+# restorable (`memory_restore`) from every clone, and the sync module's own
+# docstring reserves a conflict-detection pass over the tombstone audit
+# trail. An entry here is a conscious decision that a directory's contents
+# are portable across hosts AND worth versioning — not a place to silence
+# the guard below.
+_INTENTIONALLY_SYNCED_DIRS: frozenset[str] = frozenset({TOMBSTONE_DIR})
+
+
+def _store_root_dir_constants() -> dict[str, str]:
+    """Every `*_DIR` / `*_DIRNAME` constant in the package naming a
+    store-root directory.
+
+    Same walk, same keying, and same rationale as
+    `_sidecar_filename_constants`: the guard discovers constants rather than
+    trusting a hand-list. The value filter differs — directories are not
+    dotfile-shaped, so a store-root directory constant is recognised by
+    being a BARE RELATIVE dirname (a non-empty string with no path
+    separator). As with `*_FILENAME`, the naming convention is the
+    contract: a `*_DIR` constant that does not name a store-root directory
+    shouldn't wear that suffix. Today exactly two exist
+    (`store.TOMBSTONE_DIR`, `episodes.EPISODES_DIR`) and both are decided
+    below.
+    """
+    import importlib
+    import pkgutil
+
+    import bettermemory
+
+    found: dict[str, str] = {}
+    walk = pkgutil.walk_packages(
+        bettermemory.__path__, prefix="bettermemory.", onerror=lambda _name: None
+    )
+    for mod_info in walk:
+        try:
+            mod = importlib.import_module(mod_info.name)
+        except ImportError:
+            continue
+        for attr in dir(mod):
+            if not (attr.endswith("_DIR") or attr.endswith("_DIRNAME")):
+                continue
+            value = getattr(mod, attr)
+            if (
+                isinstance(value, str)
+                and value
+                and "/" not in value
+                and "\\" not in value
+            ):
+                found[f"{mod_info.name}.{attr}"] = value
+    return found
+
+
+def test_every_store_root_directory_is_sync_decided() -> None:
+    """STRUCTURAL GUARD, directory edition. The `*_FILENAME` guard above
+    cannot see directories: `episodes/` shipped for weeks silently INCLUDED
+    in `sync push` — never decided, just absent from `_GITIGNORE_LINES` in a
+    shape the dotfile-oriented discovery never surfaced. Whole-directory
+    payloads are the largest single thing `git add -A` can stage, so an
+    undecided directory is the sidecar leak class at its widest.
+
+    Every `*_DIR`/`*_DIRNAME` constant must therefore be either matched by a
+    line in `_GITIGNORE_LINES` (slash-free by the pattern-shape fence above,
+    so a bare name ignores the directory and everything beneath it) or
+    listed in `_INTENTIONALLY_SYNCED_DIRS` with a rationale.
+
+    Mutation-sound both ways: dropping `EPISODES_DIR` from
+    `sync._GITIGNORE_LINES` fails this naming `episodes.EPISODES_DIR`;
+    dropping `TOMBSTONE_DIR` from the allowlist fails it naming
+    `store.TOMBSTONE_DIR`."""
+    patterns = [
+        line for line in sync._GITIGNORE_LINES if not line.lstrip().startswith("#")
+    ]
+    dirs = _store_root_dir_constants()
+    # Sanity: discovery works at all. If this trips, the walk broke.
+    assert any(name.endswith(".EPISODES_DIR") for name in dirs), (
+        f"directory discovery found nothing recognisable: {sorted(dirs)}"
+    )
+    undecided = {
+        qualname: value
+        for qualname, value in dirs.items()
+        if value not in _INTENTIONALLY_SYNCED_DIRS
+        and not any(fnmatch.fnmatch(value, pat) for pat in patterns)
+    }
+    assert not undecided, (
+        "store-root director(ies) with no sync decision — `sync push` would "
+        f"commit and push their contents to every clone: {undecided}. Add "
+        "the constant to sync._GITIGNORE_LINES (import it from its owning "
+        "module), or, if the directory is canonical store data worth "
+        "versioning on every clone, add it to _INTENTIONALLY_SYNCED_DIRS "
+        "with a rationale."
+    )
+
+
+def test_push_excludes_episodes_and_keeps_tombstones(
+    memory_dir: Path, bare_remote: Path
+) -> None:
+    """Episodes are host-local BY DESIGN (decided 2026-07-11; previously
+    included only by omission): run-state bodies carry host-absolute
+    `origin.worktree_root` paths, the TTL prune keys on mtimes that a
+    clone's `git checkout` would reset, and `episode_handoff` adoption is
+    worktree-strict, so a synced episode would be filtered on arrival
+    anyway. `.tombstones/`, by contrast, is canonical store data: a removal
+    made on one host must stay restorable from every clone.
+
+    Mutation-sound: drop `EPISODES_DIR` from `sync._GITIGNORE_LINES` and the
+    committed-tree assertion fails; the tombstone assertion pins the
+    allowlist side so the directory guard's exemption stays real, not
+    vestigial."""
+    sync.init(memory_dir, remote=str(bare_remote))
+    # A real memory gives the push canonical content to commit.
+    Store(memory_dir).write(content="durable fact", scopes=["tools"])
+    # Simulate a prior session's journal and a removed memory's tombstone.
+    episode = memory_dir / EPISODES_DIR / "sess_testcafe" / "01EPISODETEST.md"
+    episode.parent.mkdir(parents=True)
+    episode.write_text(
+        "run-state: tried X in /Users/nobody/worktree\n", encoding="utf-8"
+    )
+    tombstone = memory_dir / TOMBSTONE_DIR / "01TOMBSTONETEST.md"
+    tombstone.parent.mkdir(exist_ok=True)
+    tombstone.write_text("removed body\n", encoding="utf-8")
+
+    result = sync.push(memory_dir)
+    assert result["pushed"] is True
+
+    committed = _git(memory_dir, "ls-tree", "-r", "--name-only", "HEAD").splitlines()
+    assert not any(p.startswith(f"{EPISODES_DIR}/") for p in committed), (
+        f"episodes leaked into the committed tree: {committed}"
+    )
+    assert f"{TOMBSTONE_DIR}/01TOMBSTONETEST.md" in committed, (
+        f".tombstones/ should sync (canonical store data): {committed}"
+    )
+    # git itself agrees the episode path is ignored (rc==0 means "ignored").
+    check = subprocess.run(
+        ["git", "check-ignore", f"{EPISODES_DIR}/sess_testcafe/01EPISODETEST.md"],
+        cwd=memory_dir,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert check.returncode == 0, (
+        "episodes/ is not gitignored; `sync push` would stage session journals"
     )
 
 
