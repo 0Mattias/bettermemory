@@ -936,8 +936,11 @@ def test_commits_since_touching_paths_counts_from_repo_subdirectory(
     root-relative pathspec (``src/foo.py``) relative to the invocation cwd,
     so from a subdir it matched nothing and rev-list returned 0 — silently
     reporting a genuinely-drifted verified path as clean (the unsafe
-    direction). The ``:/`` (``:(top)``) magic prefix anchors at the top of
-    the working tree. Before the fix the subdir cases below returned 0.
+    direction). The fix: `resolve_repo_pathspecs` builds plain
+    repo-root-relative forward-slash pathspecs and the count runs ``git
+    rev-list`` FROM the resolved toplevel, not the caller's cwd — with none
+    of git's pathspec-magic. Before the fix the subdir cases below
+    returned 0.
     """
     _init_repo(tmp_path)
     _commit_file(
@@ -1189,6 +1192,11 @@ def test_deprecation_fence_escalates_unwrapped_calls_from_test_frames(
             str(_PYPROJECT),
             "-p",
             "no:cacheprovider",
+            # CLI beats PY_COLORS / FORCE_COLOR inherited from the invoking
+            # shell: without this, a color-forcing env ANSI-wraps the
+            # subprocess summary line and the literal "1 failed, 1 passed"
+            # match below false-fails a perfectly healthy fence.
+            "--color=no",
             str(probe),
         ],
         capture_output=True,
