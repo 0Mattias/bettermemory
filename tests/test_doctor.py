@@ -11,12 +11,15 @@ from __future__ import annotations
 
 import json
 import re
+import shutil
+import subprocess
 import typing
 from pathlib import Path
 from typing import Any
 
 import pytest
 
+from bettermemory import sync
 from bettermemory.config import BehaviorConfig, Config, StorageConfig
 from bettermemory.doctor import (
     CheckStatus,
@@ -35,6 +38,7 @@ from bettermemory.doctor import (
     _check_memory_parse_health,
     _check_python_version,
     _check_storage_directory,
+    _check_sync_tracked_ignored,
     _discover_site_packages,
     _probe_index_integrity,
     _EXIT_CODE_BY_STATUS,
@@ -45,6 +49,7 @@ from bettermemory.doctor import (
     run_diagnostics,
 )
 from bettermemory.init import ClientPaths
+from bettermemory.proposals import PROPOSALS_FILENAME
 
 
 # ---------------------------------------------------------------------------
@@ -1738,3 +1743,137 @@ def test_auto_memory_stranded_does_not_create_missing_storage_dir(
     diag = _check_auto_memory_stranded(missing, cwd=cwd)
     assert diag.status == "ok"
     assert not missing.exists()
+
+
+# ---------------------------------------------------------------------------
+# sync_tracked_ignored
+# ---------------------------------------------------------------------------
+
+
+_needs_git = pytest.mark.skipif(
+    shutil.which("git") is None,
+    reason="git binary not on PATH — sync-repo doctor checks need git",
+)
+
+
+def _git_in(cwd: Path, *args: str) -> str:
+    """Ad-hoc git for fixtures — raises with stderr on failure (mirrors
+    tests/test_sync.py's `_git`)."""
+    result = subprocess.run(
+        ["git", *args], cwd=cwd, capture_output=True, text=True, check=False
+    )
+    if result.returncode != 0:
+        raise RuntimeError(f"`git {' '.join(args)}` failed: {result.stderr.strip()}")
+    return result.stdout
+
+
+def _store_repo(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
+    """A git-inited store dir with a hermetic global git config. The
+    `GIT_CONFIG_GLOBAL` redirect mirrors tests/test_sync.py's
+    `memory_dir` fixture — without it the identity writes below would
+    land in the developer's real ~/.gitconfig."""
+    store = tmp_path / "store"
+    store.mkdir()
+    global_config = tmp_path / "test.gitconfig"
+    global_config.touch()
+    monkeypatch.setenv("GIT_CONFIG_GLOBAL", str(global_config))
+    _git_in(store, "init", "--initial-branch", "main")
+    _git_in(store, "config", "--global", "user.email", "test@example.com")
+    _git_in(store, "config", "--global", "user.name", "Test")
+    return store
+
+
+@_needs_git
+def test_sync_tracked_ignored_fails_on_tracked_proposals_queue(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A store repo initialised BEFORE `PROPOSALS_FILENAME` joined
+    `sync._GITIGNORE_LINES` committed the raw-capture queue. The
+    init()-time gitignore refresh only stops FUTURE staging, so the
+    file stays tracked and every `sync push` keeps shipping its
+    plaintext captures to the remote. The check must FAIL with the
+    concrete `git rm --cached` remediation plus the history-rewrite /
+    secret-rotation note — and the prescribed local remediation must
+    actually clear the check."""
+    store = _store_repo(tmp_path, monkeypatch)
+    # Pre-fix repo shape: the queue was committed before its ignore
+    # line existed (no .gitignore at commit time).
+    (store / PROPOSALS_FILENAME).write_text(
+        '{"content": "my staging DB password is hunter2"}\n', encoding="utf-8"
+    )
+    _git_in(store, "add", PROPOSALS_FILENAME)
+    _git_in(store, "commit", "-m", "pre-fix sync commit")
+    # The upgrade path: init() refreshes .gitignore to canonical shape…
+    sync.init(store)
+    # …but gitignore is silent on already-tracked paths (premise pin —
+    # if this ever unsticks, git learned to untrack and the check may
+    # be obsolete).
+    assert PROPOSALS_FILENAME in _git_in(store, "ls-files")
+
+    diag = _check_sync_tracked_ignored(store)
+    assert diag.status == "fail"
+    assert diag.name == "sync_tracked_ignored"
+    assert PROPOSALS_FILENAME in diag.message
+    assert f"git rm --cached {PROPOSALS_FILENAME}" in (diag.fix_hint or "")
+    assert "git-filter-repo" in (diag.fix_hint or "")
+    assert "rotate" in (diag.fix_hint or "")
+    assert diag.details["tracked_ignored"] == [PROPOSALS_FILENAME]
+    # The rendered doctor output carries the check name and remediation.
+    out = render_text(DoctorReport(checks=[diag]))
+    assert "sync_tracked_ignored" in out
+    assert "git rm --cached" in out
+
+    # The prescribed local remediation clears the check (file stays on
+    # disk, now untracked-and-ignored).
+    _git_in(store, "rm", "--cached", PROPOSALS_FILENAME)
+    _git_in(store, "commit", "-m", "untrack raw-capture queue")
+    assert (store / PROPOSALS_FILENAME).exists()
+    assert _check_sync_tracked_ignored(store).status == "ok"
+
+
+@_needs_git
+def test_sync_tracked_ignored_passes_when_untracked_and_ignored(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The healthy post-fix shape: the queue exists on disk but the
+    canonical .gitignore keeps it out of the index — `git add -A`
+    stages nothing for it, so nothing matching `_GITIGNORE_LINES` is
+    tracked and the check passes."""
+    store = _store_repo(tmp_path, monkeypatch)
+    sync.init(store)  # writes the canonical .gitignore
+    (store / PROPOSALS_FILENAME).write_text(
+        '{"content": "captured text that must stay host-local"}\n', encoding="utf-8"
+    )
+    (store / "a-memory.md").write_text("---\n---\nbody\n", encoding="utf-8")
+    _git_in(store, "add", "-A")
+    _git_in(store, "commit", "-m", "memories only")
+    # Premise pin: on disk but not tracked (the gitignore did its job).
+    tracked = _git_in(store, "ls-files")
+    assert PROPOSALS_FILENAME not in tracked
+    assert "a-memory.md" in tracked
+
+    diag = _check_sync_tracked_ignored(store)
+    assert diag.status == "ok"
+    assert diag.fix_hint is None
+
+
+def test_sync_tracked_ignored_ok_on_non_git_store(tmp_path: Path) -> None:
+    """A store that never ran `sync init` has no repo and nothing
+    syncing — the check must pass (and must not demand git ceremony;
+    it also passes when git itself is absent, via `_is_repo`'s
+    SyncError-to-False degradation)."""
+    (tmp_path / PROPOSALS_FILENAME).write_text(
+        '{"content": "local only"}\n', encoding="utf-8"
+    )
+    diag = _check_sync_tracked_ignored(tmp_path)
+    assert diag.status == "ok"
+    assert "not a git sync repo" in diag.message
+
+
+def test_sync_tracked_ignored_missing_dir_does_not_create_it(tmp_path: Path) -> None:
+    """Read-only probe contract shared with the sibling checks: a
+    never-created storage dir is reported ok and left uncreated."""
+    ghost = tmp_path / "ghost"
+    diag = _check_sync_tracked_ignored(ghost)
+    assert diag.status == "ok"
+    assert not ghost.exists()

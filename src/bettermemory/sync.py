@@ -352,15 +352,16 @@ def init(
     # writes: a newly-ignored path (e.g. the proposals queue, added to
     # `_GITIGNORE_LINES`) stops being staged on the next `sync push`. It does
     # NOT untrack a file that a PRE-fix repo already committed — gitignore is
-    # silent on tracked paths. MIGRATION GAP (deliberately not automated in
-    # this round): a sync repo initialised before the proposals queue was
-    # ignored still has `.write_proposals.jsonl` tracked, and if it was ever
-    # pushed the plaintext capture is in remote history permanently. Evicting
-    # it needs `git rm --cached .write_proposals.jsonl` locally, plus a
-    # history rewrite (git-filter-repo / BFG) + force-push for anything
-    # already on the remote. A later round should add a doctor check that
-    # detects a tracked ignored-path and prints this remediation; that check
-    # is out of scope here (the fix stops the leak going forward).
+    # silent on tracked paths, so a repo initialised before a pattern joined
+    # `_GITIGNORE_LINES` keeps pushing that sidecar (e.g. the plaintext
+    # `.write_proposals.jsonl` capture queue) until it is untracked. That
+    # migration gap is doctor's `sync_tracked_ignored` check
+    # (`doctor._check_sync_tracked_ignored`): it fnmatches `git ls-files`
+    # output against `_GITIGNORE_LINES` and prints the `git rm --cached` +
+    # history-rewrite (git-filter-repo / BFG) remediation for any sidecar a
+    # pre-fix repo still tracks. Untracking is deliberately NOT automated
+    # here — rewriting the user's index (let alone pushed history) is an
+    # operator decision, not an init() side effect.
     gitignore = root / ".gitignore"
     desired = "\n".join(_GITIGNORE_LINES) + "\n"
     current = gitignore.read_text(encoding="utf-8") if gitignore.exists() else ""

@@ -25,6 +25,7 @@ section):
 
 from __future__ import annotations
 
+import fnmatch
 import json
 import os
 import re
@@ -872,6 +873,117 @@ def _check_auto_memory_stranded(directory: Path, cwd: Path | None = None) -> Dia
     )
 
 
+def _check_sync_tracked_ignored(directory: Path) -> Diagnosis:
+    """Detect transient sidecar files a store sync repo still TRACKS.
+
+    ``sync.init()`` refreshes the store's ``.gitignore`` on every run,
+    but gitignore only stops FUTURE staging — a repo initialised before
+    a pattern joined ``sync._GITIGNORE_LINES`` keeps the matching files
+    tracked, so every later ``sync push`` (``git add -A``) commits and
+    pushes their current contents to the remote. For the plaintext
+    payloads in that list (the raw-capture proposals queue, the ingest
+    watermark, the consolidate clock, orphaned ``*.tmp`` atomic-write
+    bodies) that is an ongoing leak, not a one-off: the gitignore
+    refresh cannot untrack a file, so only ``git rm --cached`` stops
+    it, and anything already pushed sits in remote history until a
+    rewrite. This check is the migration surface the ``sync.init()``
+    comment points at; a non-repo store (or a repo with zero tracked
+    matches) passes.
+    """
+    # Lazy import — `sync` imports `DOCTOR_PROBE_FILENAME` from this
+    # module at import time, so a top-level `from .sync import …` here
+    # would be circular. Same pattern as `_check_index_health`'s `index`
+    # import. `_GITIGNORE_LINES` stays the single canonical pattern
+    # list; duplicating it here would let the two drift.
+    from .sync import _GITIGNORE_LINES, _is_repo, _run_git
+
+    if not directory.exists():
+        return Diagnosis(
+            name="sync_tracked_ignored",
+            status="ok",
+            message="Storage dir does not exist yet — no sync repo to check.",
+        )
+    # `_is_repo` is top-of-worktree-only (a store nested inside some
+    # parent repo is not a sync repo) and returns False when git itself
+    # is missing — both degrade to "nothing to check", matching the
+    # sync wrapper's own notion of an initialised store.
+    if not _is_repo(directory):
+        return Diagnosis(
+            name="sync_tracked_ignored",
+            status="ok",
+            message="Store is not a git sync repo — nothing to check.",
+        )
+    listing = _run_git(directory, ["ls-files", "-z"], check=False)
+    if listing.returncode != 0:
+        return Diagnosis(
+            name="sync_tracked_ignored",
+            status="warn",
+            message=(
+                "Could not list git-tracked files in the store repo: "
+                f"{listing.stderr.strip() or listing.stdout.strip() or 'unknown error'}."
+            ),
+            fix_hint=f"Run `git ls-files` in {directory} to investigate.",
+        )
+    # `_GITIGNORE_LINES` is comment lines + positive glob/literal
+    # patterns (no `!` negations, no `/`-anchored paths — the structural
+    # guard in test_sync.py keeps it that way).
+    patterns = [
+        line for line in _GITIGNORE_LINES if line and not line.lstrip().startswith("#")
+    ]
+    tracked: list[str] = []
+    for path in listing.stdout.split("\0"):
+        if not path:
+            continue
+        # A slash-free gitignore pattern matches at any depth; fnmatch
+        # treats the pattern as one flat string, so try the basename too.
+        basename = path.rsplit("/", 1)[-1]
+        if any(
+            fnmatch.fnmatch(path, pattern) or fnmatch.fnmatch(basename, pattern)
+            for pattern in patterns
+        ):
+            tracked.append(path)
+    if not tracked:
+        return Diagnosis(
+            name="sync_tracked_ignored",
+            status="ok",
+            message=(
+                "No transient sidecar files are git-tracked in the store sync repo."
+            ),
+            details={"patterns_checked": len(patterns)},
+        )
+    shown = ", ".join(tracked[:3])
+    if len(tracked) > 3:
+        shown += f", … (+{len(tracked) - 3} more)"
+    plural = "" if len(tracked) == 1 else "s"
+    verb = "is" if len(tracked) == 1 else "are"
+    cmd_paths = " ".join(tracked[:5])
+    more_note = (
+        f" (+{len(tracked) - 5} more — full list in `bettermemory doctor --json`)"
+        if len(tracked) > 5
+        else ""
+    )
+    return Diagnosis(
+        name="sync_tracked_ignored",
+        status="fail",
+        message=(
+            f"{len(tracked)} transient sidecar file{plural} ({shown}) {verb} "
+            f"git-TRACKED in the store sync repo at {directory}. The "
+            f".gitignore refresh only stops future staging — every "
+            f"`sync push` keeps committing and pushing these files (which "
+            f"can carry plaintext captures) until they are untracked."
+        ),
+        fix_hint=(
+            f"From {directory} run `git rm --cached {cmd_paths}`{more_note} "
+            "and commit, so the next `sync push` stops shipping them. If "
+            "the repo was ever pushed, the contents are already in remote "
+            "history: rewrite it with git-filter-repo (or BFG) and "
+            "force-push, then rotate any secrets those files may have "
+            "captured."
+        ),
+        details={"tracked_ignored": tracked},
+    )
+
+
 def _check_embeddings_extra(cfg: Config) -> Diagnosis:
     """If `behavior.semantic_dedup = true`, the embeddings extra has to
     be installed or write-time dedup silently falls back to Jaccard.
@@ -1503,6 +1615,12 @@ def run_diagnostics() -> DoctorReport:
             _safe(
                 "auto_memory_stranded",
                 lambda: _check_auto_memory_stranded(directory),
+            )
+        )
+        checks.append(
+            _safe(
+                "sync_tracked_ignored",
+                lambda: _check_sync_tracked_ignored(directory),
             )
         )
 
