@@ -569,37 +569,51 @@ def _git_worktree_root(cwd: Path) -> str | None:
 
 
 def commits_since(cwd: Path | None, since: datetime) -> int | None:
-    """Count commits in `cwd`'s repo authored at-or-after `since`.
+    """DEPRECATED — slated for removal in 4.0; every call emits a
+    ``DeprecationWarning``. Count commits in `cwd`'s repo at-or-after
+    `since` (COMMITTER-date space, git's inclusive ``--since``).
 
-    Returns the integer count when the directory is a git repo we can
-    read, None on any failure (cwd is None, git not on PATH, not a repo,
-    no commits, git timed out, output not parseable as an int). Zero is
-    a real value — the repo is fine, nothing has landed since.
+    Retained through the 3.x line only because it is shipped public API
+    (`__all__`) and removal would be a semver break — NO production code
+    path calls it anymore. The prior retention rationale ("any caller
+    that explicitly wants committer-date inclusive semantics") never
+    materialized into a concrete caller, and BOTH of its defining
+    semantics are exactly what the commit-drift surfaces deliberately
+    abandoned — do NOT wire it back into the drift path:
 
-    `since` is normalised to UTC ISO-8601 before being handed to git so
-    the comparison matches the timestamp semantics elsewhere in the store.
-    A naive `since` is treated as UTC.
+    - **Committer-date inflation.** ``git rev-list --since`` filters on
+      COMMITTER date, which a rebase rewrites while preserving author
+      date (`sync` rebases on every pull), so counts inflate past the
+      author-date truth all three drift surfaces (memory_show,
+      memory_search, the health rollup) now agree on.
+    - **Inclusive-whole-second boundary.** git's ``--since`` is
+      INCLUSIVE and ignores sub-second precision, while the shared
+      bisect path is strictly-greater at microsecond precision — a
+      commit landing in the same UTC second as the anchor counted here
+      but on no other surface (the historical memory_show divergence
+      `compute_commit_drift` closed by dropping this function).
 
-    Counted in COMMITTER-date space: `git rev-list --since` filters on
-    committer date, NOT author date. Boundary semantics are git's:
-    `--since` is INCLUSIVE and ignores sub-second precision.
+    Use `commit_author_timestamps` + ``bisect_right`` instead — the
+    author-date source behind `verify.compute_commit_drift` and the
+    batch drift surfaces (one git call amortizes across many `since`
+    values instead of a fork+exec per count).
 
-    NOTE — no longer on the commit-drift hot path. `compute_commit_drift`
-    in `verify.py` (the memory_show signal) used to call this, which made
-    memory_show diverge from memory_search / the health rollup on TWO axes:
-    committer-vs-author date (a rebase rewrites committer date but preserves
-    author date — `sync` rebases on every pull) AND inclusive-whole-second
-    vs strictly-greater-microsecond boundary (a commit in the same UTC
-    second as `last_verified_at` counted on memory_show but not on the
-    bisect path). memory_show now shares the `commit_author_timestamps`
-    + `bisect_right` path, so all three surfaces agree. This function is
-    retained as a standalone single-`since` author/committer-agnostic count
-    (still unit-tested) and for any caller that explicitly wants committer-
-    date inclusive semantics; the commit-drift surfaces deliberately do not.
-
-    For batch use against many `since` values from the same repo, prefer
-    `commit_author_timestamps` + bisect — one git call instead of N.
+    Legacy contract, unchanged until removal: returns the integer count
+    when the directory is a git repo we can read, None on any failure
+    (cwd is None, git not on PATH, not a repo, no commits, git timed
+    out, output not parseable as an int). Zero is a real value — the
+    repo is fine, nothing has landed since. A naive `since` is treated
+    as UTC; the anchor is normalised to UTC ISO-8601 before being
+    handed to git.
     """
+    warnings.warn(
+        "commits_since is deprecated and will be removed in bettermemory "
+        "4.0; use commit_author_timestamps + bisect_right (the author-date "
+        "source behind verify.compute_commit_drift) instead of this "
+        "committer-date --since count",
+        DeprecationWarning,
+        stacklevel=2,
+    )
     if cwd is None:
         return None
     if since.tzinfo is None:
@@ -726,14 +740,62 @@ def commits_touching_pathspecs(
     *,
     toplevel: Path | None = None,
 ) -> int | None:
-    """Count commits authored after `since` touching any of `pathspecs`.
+    """DEPRECATED — slated for removal in 4.0; every call emits a
+    ``DeprecationWarning``. Count commits after `since` (COMMITTER-date
+    space, git's inclusive ``--since``) touching any of `pathspecs`.
 
-    `pathspecs` must already be repo-root-relative forward-slash specs —
-    the output of `resolve_repo_pathspecs`. Returns the integer count, or
-    None on any git failure (cwd is None, empty pathspecs, git not on
-    PATH, not a repo, parse error). Counted in COMMITTER-date space with
-    git's inclusive `--since` boundary — see the callers' `count > 0`
-    guards for why the author-date bisect count stays authoritative.
+    Retained through the 3.x line only because it is shipped public API
+    (`__all__`) and removal would be a semver break — its ONLY remaining
+    caller is `commits_since_touching_paths`, which is itself deprecated
+    with the same 4.0 horizon (and routes through the module-private
+    `_commits_touching_pathspecs_impl`, so each deprecated entry point
+    warns exactly once). The commit-drift surfaces replaced this count
+    with `commit_author_timestamps_touching_pathspecs` (the author-date
+    ``git log`` behind `verify.resolve_commit_drift_count`) because
+    committer-date semantics were deliberately abandoned — do NOT wire
+    it back into the drift path: ``git rev-list --since`` filters on
+    COMMITTER date, which a rebase rewrites while preserving author date
+    (`sync` rebases on every pull), so counts inflate past the
+    author-date truth all three drift surfaces (memory_show,
+    memory_search, the health rollup) now agree on — the mismatch that
+    used to force a downstream clamp.
+
+    Legacy contract, unchanged until removal: `pathspecs` must already
+    be repo-root-relative forward-slash specs — the output of
+    `resolve_repo_pathspecs`. Returns the integer count, or None on any
+    git failure (cwd is None, empty pathspecs, git not on PATH, not a
+    repo, parse error).
+    """
+    warnings.warn(
+        "commits_touching_pathspecs is deprecated and will be removed in "
+        "bettermemory 4.0; use commit_author_timestamps_touching_pathspecs "
+        "(the author-date source behind verify.resolve_commit_drift_count) "
+        "instead of this committer-date --since count",
+        DeprecationWarning,
+        stacklevel=2,
+    )
+    return _commits_touching_pathspecs_impl(cwd, since, pathspecs, toplevel=toplevel)
+
+
+def _commits_touching_pathspecs_impl(
+    cwd: Path | None,
+    since: datetime,
+    pathspecs: list[str],
+    *,
+    toplevel: Path | None = None,
+) -> int | None:
+    """Body of `commits_touching_pathspecs`, split out so the (equally
+    deprecated) `commits_since_touching_paths` composition can reuse it
+    WITHOUT routing through the deprecated public wrapper. Deliberate
+    single-warn seam: one deprecated entry point emits exactly ONE
+    ``DeprecationWarning``, attributed (``stacklevel=2``) to the
+    external caller's line. Chaining through the public wrapper would
+    double-warn, with the inner warning pointing at origin.py's own
+    internals as the offending caller — and, because that inner frame
+    lives in ``bettermemory.origin``, an ``error::DeprecationWarning:
+    bettermemory`` filter (this repo's own test config) would escalate
+    it to a hard error inside library code. Removed in 4.0 together
+    with its public wrappers.
     """
     if cwd is None or not pathspecs:
         return None
@@ -814,7 +876,12 @@ def commits_since_touching_paths(
     pathspecs = resolve_repo_pathspecs(cwd, paths, toplevel=toplevel)
     if not pathspecs:
         return None
-    return commits_touching_pathspecs(cwd, since, pathspecs, toplevel=toplevel)
+    # Module-private impl, NOT the deprecated public wrapper: this entry
+    # point already warned above, and chaining through the wrapper would
+    # emit a second DeprecationWarning attributed to THIS frame — see
+    # `_commits_touching_pathspecs_impl` for the full single-warn seam
+    # rationale.
+    return _commits_touching_pathspecs_impl(cwd, since, pathspecs, toplevel=toplevel)
 
 
 def commit_author_timestamps(cwd: Path | None) -> list[datetime] | None:

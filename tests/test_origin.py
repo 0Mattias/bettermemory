@@ -17,6 +17,7 @@ from bettermemory.origin import (
     commit_author_timestamps_touching_pathspecs,
     commits_since,
     commits_since_touching_paths,
+    commits_touching_pathspecs,
     repos_match,
     resolve_repo_pathspecs,
     should_include_for_caller,
@@ -576,6 +577,13 @@ def test_origin_excludes_none_fields_when_serialized() -> None:
 
 # ---------------------------------------------------------------------------
 # commits_since() / commit_author_timestamps() — git plumbing
+#
+# commits_since is DEPRECATED (slated for removal in 4.0; superseded by
+# commit_author_timestamps + bisect_right, the author-date source all three
+# commit-drift surfaces share). The behavior tests below still pin the 3.x
+# contract verbatim; every commits_since call is wrapped in pytest.warns so
+# the suite stays green under `-W error` / filterwarnings=error
+# DeprecationWarning filters.
 # ---------------------------------------------------------------------------
 #
 # Both shell out to git. Tests use real temp repos with controlled author
@@ -614,13 +622,29 @@ def _make_commit(
     )
 
 
+def test_commits_since_is_deprecated() -> None:
+    """Every call — even one that early-returns None — must announce the
+    deprecation, so a future reader can't silently wire the committer-date
+    `--since` semantics (rebase-inflatable, inclusive-whole-second boundary)
+    back into the drift path that deliberately abandoned them."""
+    with pytest.warns(
+        DeprecationWarning,
+        match=r"commits_since is deprecated.*removed in.*4\.0",
+    ):
+        commits_since(None, datetime(2026, 1, 1, tzinfo=timezone.utc))
+
+
 def test_commits_since_returns_none_for_none_cwd() -> None:
-    assert commits_since(None, datetime(2026, 1, 1, tzinfo=timezone.utc)) is None
+    with pytest.warns(DeprecationWarning, match="commits_since is deprecated"):
+        out = commits_since(None, datetime(2026, 1, 1, tzinfo=timezone.utc))
+    assert out is None
 
 
 def test_commits_since_returns_none_outside_repo(tmp_path: Path) -> None:
     """A directory with no `.git` is not a repo — count is None, not 0."""
-    assert commits_since(tmp_path, datetime(2026, 1, 1, tzinfo=timezone.utc)) is None
+    with pytest.warns(DeprecationWarning, match="commits_since is deprecated"):
+        out = commits_since(tmp_path, datetime(2026, 1, 1, tzinfo=timezone.utc))
+    assert out is None
 
 
 @pytest.mark.skipif(not _GIT_AVAILABLE, reason="git not on PATH")
@@ -628,7 +652,9 @@ def test_commits_since_zero_when_no_commits_after_anchor(tmp_path: Path) -> None
     _init_repo(tmp_path)
     _make_commit(tmp_path, "first", when=datetime(2026, 1, 1, tzinfo=timezone.utc))
     # Anchor strictly after the only commit.
-    assert commits_since(tmp_path, datetime(2026, 1, 2, tzinfo=timezone.utc)) == 0
+    with pytest.warns(DeprecationWarning, match="commits_since is deprecated"):
+        out = commits_since(tmp_path, datetime(2026, 1, 2, tzinfo=timezone.utc))
+    assert out == 0
 
 
 @pytest.mark.skipif(not _GIT_AVAILABLE, reason="git not on PATH")
@@ -637,7 +663,9 @@ def test_commits_since_counts_commits_after_anchor(tmp_path: Path) -> None:
     _make_commit(tmp_path, "old", when=datetime(2026, 1, 1, tzinfo=timezone.utc))
     _make_commit(tmp_path, "new1", when=datetime(2026, 2, 1, tzinfo=timezone.utc))
     _make_commit(tmp_path, "new2", when=datetime(2026, 2, 2, tzinfo=timezone.utc))
-    assert commits_since(tmp_path, datetime(2026, 1, 15, tzinfo=timezone.utc)) == 2
+    with pytest.warns(DeprecationWarning, match="commits_since is deprecated"):
+        out = commits_since(tmp_path, datetime(2026, 1, 15, tzinfo=timezone.utc))
+    assert out == 2
 
 
 @pytest.mark.skipif(not _GIT_AVAILABLE, reason="git not on PATH")
@@ -648,7 +676,9 @@ def test_commits_since_naive_datetime_treated_as_utc(tmp_path: Path) -> None:
     _make_commit(tmp_path, "old", when=datetime(2026, 1, 1, tzinfo=timezone.utc))
     _make_commit(tmp_path, "new", when=datetime(2026, 2, 1, tzinfo=timezone.utc))
     naive_anchor = datetime(2026, 1, 15)  # no tzinfo
-    assert commits_since(tmp_path, naive_anchor) == 1
+    with pytest.warns(DeprecationWarning, match="commits_since is deprecated"):
+        out = commits_since(tmp_path, naive_anchor)
+    assert out == 1
 
 
 def test_commit_author_timestamps_returns_none_for_none_cwd() -> None:
@@ -720,13 +750,15 @@ def test_resolve_repo_pathspecs_keeps_files_alongside_dropped_root(
 
 
 # ---------------------------------------------------------------------------
-# commits_since_touching_paths — DEPRECATED legacy composition (slated for
-# removal in 4.0; superseded by resolve_repo_pathspecs +
-# commit_author_timestamps_touching_pathspecs via
+# commits_since_touching_paths / commits_touching_pathspecs — DEPRECATED
+# committer-date family (slated for removal in 4.0; superseded by
+# resolve_repo_pathspecs + commit_author_timestamps_touching_pathspecs via
 # verify.resolve_commit_drift_count). The behavior tests below still pin the
 # 3.x contract verbatim; every call is wrapped in pytest.warns so the suite
 # stays green under `-W error` / filterwarnings=error DeprecationWarning
-# filters.
+# filters. The composition warns exactly ONCE per call — it routes through
+# the module-private impl, not the deprecated public primitive (the
+# single-warn seam pinned at the end of this section).
 # ---------------------------------------------------------------------------
 
 
@@ -929,6 +961,80 @@ def test_commits_since_touching_paths_counts_from_repo_subdirectory(
     # The relative-input form (treated as repo-root-relative) is subdir-safe too.
     with pytest.warns(DeprecationWarning, match="commits_since_touching_paths"):
         assert commits_since_touching_paths(subdir, since, ["src/tracked.txt"]) == 1
+
+
+def test_commits_touching_pathspecs_is_deprecated() -> None:
+    """Every call — even one that early-returns None — must announce the
+    deprecation. Same fence as `commits_since_touching_paths`: at 4.0 its
+    only production caller (that deprecated composition) disappears, and an
+    exported committer-date `--since` counter left warning-free would invite
+    a future reader to re-wire the rebase-inflatable semantics the
+    author-date drift path deliberately abandoned."""
+    with pytest.warns(
+        DeprecationWarning,
+        match=r"commits_touching_pathspecs is deprecated.*removed in.*4\.0",
+    ):
+        commits_touching_pathspecs(
+            None,
+            datetime(2026, 1, 1, tzinfo=timezone.utc),
+            ["x.py"],
+        )
+
+
+@pytest.mark.skipif(not _GIT_AVAILABLE, reason="git not on PATH")
+def test_commits_touching_pathspecs_behavior_unchanged_while_deprecated(
+    tmp_path: Path,
+) -> None:
+    """The deprecation is announce-only for the 3.x line: the public wrapper
+    still delegates to the real count (a warn-and-forget-to-return refactor
+    would pass the announce test above but break this pin)."""
+    _init_repo(tmp_path)
+    _commit_file(
+        tmp_path,
+        "tracked.txt",
+        content="initial",
+        when=datetime(2026, 1, 1, tzinfo=timezone.utc),
+    )
+    _commit_file(
+        tmp_path,
+        "tracked.txt",
+        content="updated",
+        when=datetime(2026, 2, 1, tzinfo=timezone.utc),
+    )
+    with pytest.warns(DeprecationWarning, match="commits_touching_pathspecs"):
+        out = commits_touching_pathspecs(
+            tmp_path,
+            datetime(2026, 1, 15, tzinfo=timezone.utc),
+            ["tracked.txt"],
+        )
+    assert out == 1
+
+
+@pytest.mark.skipif(not _GIT_AVAILABLE, reason="git not on PATH")
+def test_commits_since_touching_paths_warns_once_per_call(tmp_path: Path) -> None:
+    """The single-warn seam: the deprecated composition routes through the
+    module-private `_commits_touching_pathspecs_impl`, NOT the deprecated
+    public `commits_touching_pathspecs` wrapper — one entry point, exactly
+    one DeprecationWarning, attributed to the caller's line. The fixture
+    must reach the inner count (successful full composition), otherwise an
+    early return would trivially satisfy the once-only assertion."""
+    _init_repo(tmp_path)
+    _commit_file(
+        tmp_path,
+        "tracked.txt",
+        content="initial",
+        when=datetime(2026, 2, 1, tzinfo=timezone.utc),
+    )
+    with pytest.warns(DeprecationWarning) as record:
+        out = commits_since_touching_paths(
+            tmp_path,
+            datetime(2026, 1, 15, tzinfo=timezone.utc),
+            [str(tmp_path / "tracked.txt")],
+        )
+    assert out == 1  # inner count reached — the seam was actually exercised
+    deprecations = [w for w in record if issubclass(w.category, DeprecationWarning)]
+    assert len(deprecations) == 1
+    assert "commits_since_touching_paths is deprecated" in str(deprecations[0].message)
 
 
 # ---------------------------------------------------------------------------
