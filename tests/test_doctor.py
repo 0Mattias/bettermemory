@@ -38,6 +38,7 @@ from bettermemory.doctor import (
     _check_memory_parse_health,
     _check_python_version,
     _check_storage_directory,
+    _check_store_nested_in_parent_repo,
     _check_sync_tracked_ignored,
     _discover_site_packages,
     _probe_index_integrity,
@@ -1875,5 +1876,167 @@ def test_sync_tracked_ignored_missing_dir_does_not_create_it(tmp_path: Path) -> 
     never-created storage dir is reported ok and left uncreated."""
     ghost = tmp_path / "ghost"
     diag = _check_sync_tracked_ignored(ghost)
+    assert diag.status == "ok"
+    assert not ghost.exists()
+
+
+# ---------------------------------------------------------------------------
+# store_nested_in_parent_repo
+# ---------------------------------------------------------------------------
+
+
+def _parent_repo_with_nested_store(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> tuple[Path, Path]:
+    """A parent git repo (the dotfiles-managed-$HOME shape) with the
+    store as a PLAIN SUBDIRECTORY of its worktree. `sync._is_repo` is
+    top-of-worktree-only, so this store is "not a sync repo" to the
+    wrapper and to `sync_tracked_ignored` — only the parent-side check
+    can see what the parent tracks. Hermetic global git config,
+    mirroring `_store_repo`. Returns ``(parent, store)``."""
+    parent = tmp_path / "home"
+    store = parent / "memory-store"
+    store.mkdir(parents=True)
+    global_config = tmp_path / "test.gitconfig"
+    global_config.touch()
+    monkeypatch.setenv("GIT_CONFIG_GLOBAL", str(global_config))
+    _git_in(parent, "init", "--initial-branch", "main")
+    _git_in(parent, "config", "--global", "user.email", "test@example.com")
+    _git_in(parent, "config", "--global", "user.name", "Test")
+    return parent, store
+
+
+@_needs_git
+def test_store_nested_in_parent_repo_warns_on_parent_tracked_sidecar(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A dotfiles-style parent repo `git add -A`s everything under its
+    worktree — including the plaintext raw-capture queue inside the
+    nested store. The sync wrapper deliberately does not consider the
+    nested store a repo, so `sync_tracked_ignored` stays silent and
+    this leak route was previously undetected on the bettermemory
+    side. The check must WARN (never FAIL — a nested store in a
+    local-only parent repo is a legitimate setup), name the parent
+    toplevel and the tracked path, and print the parent-side gitignore
+    + `git rm --cached` + history-rewrite / secret-rotation
+    remediation — and the prescribed untracking must actually clear
+    the warn."""
+    parent, store = _parent_repo_with_nested_store(tmp_path, monkeypatch)
+    (store / PROPOSALS_FILENAME).write_text(
+        '{"content": "my staging DB password is hunter2"}\n', encoding="utf-8"
+    )
+    (store / "a-memory.md").write_text("---\n---\nbody\n", encoding="utf-8")
+    _git_in(parent, "add", "-A")
+    _git_in(parent, "commit", "-m", "dotfiles: add everything")
+    tracked_rel = f"memory-store/{PROPOSALS_FILENAME}"
+    # Premise pins: the parent tracks the sidecar, while the sync
+    # wrapper (and therefore the sibling check) does not read the
+    # nested store as a repo at all — the exact blind spot under test.
+    assert tracked_rel in _git_in(parent, "ls-files")
+    assert not sync._is_repo(store)
+    sibling = _check_sync_tracked_ignored(store)
+    assert sibling.status == "ok"
+    assert "not a git sync repo" in sibling.message
+
+    diag = _check_store_nested_in_parent_repo(store)
+    assert diag.status == "warn"
+    assert diag.name == "store_nested_in_parent_repo"
+    assert str(parent.resolve()) in diag.message
+    assert PROPOSALS_FILENAME in diag.message
+    assert f"git rm --cached {tracked_rel}" in (diag.fix_hint or "")
+    assert ".gitignore" in (diag.fix_hint or "")
+    assert "git-filter-repo" in (diag.fix_hint or "")
+    assert "rotate" in (diag.fix_hint or "")
+    assert diag.details["parent_toplevel"] == str(parent.resolve())
+    assert diag.details["tracked_sidecars"] == [tracked_rel]
+    # The rendered doctor output carries the check name and remediation.
+    out = render_text(DoctorReport(checks=[diag]))
+    assert "store_nested_in_parent_repo" in out
+    assert "git rm --cached" in out
+
+    # The prescribed parent-side untracking clears the warn (the file
+    # stays on disk, now merely untracked).
+    _git_in(parent, "rm", "--cached", tracked_rel)
+    _git_in(parent, "commit", "-m", "untrack the store capture queue")
+    assert (store / PROPOSALS_FILENAME).exists()
+    assert _check_store_nested_in_parent_repo(store).status == "ok"
+
+
+@_needs_git
+def test_store_nested_in_parent_repo_clean_nested_store_stays_ok(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The healthy nested setup: the parent repo's own .gitignore keeps
+    the store's transient sidecars out of its index (while versioning
+    the memory bodies is the user's own arrangement, not ours to
+    judge). Nothing sidecar-shaped is tracked, so the check must not
+    alarm — benign-but-notable states surface as an ok with the
+    nesting noted (the `audit_turn_cadence` single-session shape), not
+    a warn."""
+    parent, store = _parent_repo_with_nested_store(tmp_path, monkeypatch)
+    (parent / ".gitignore").write_text(
+        f"memory-store/{PROPOSALS_FILENAME}\n*.tmp\n", encoding="utf-8"
+    )
+    (store / PROPOSALS_FILENAME).write_text(
+        '{"content": "captured text that must stay host-local"}\n', encoding="utf-8"
+    )
+    (store / "a-memory.md").write_text("---\n---\nbody\n", encoding="utf-8")
+    _git_in(parent, "add", "-A")
+    _git_in(parent, "commit", "-m", "dotfiles: memories only")
+    # Premise pin: the sidecar is on disk but the parent ignores it.
+    tracked = _git_in(parent, "ls-files")
+    assert PROPOSALS_FILENAME not in tracked
+    assert "a-memory.md" in tracked
+
+    diag = _check_store_nested_in_parent_repo(store)
+    assert diag.status == "ok"
+    assert diag.fix_hint is None
+    assert str(parent.resolve()) in diag.message  # nesting still noted
+    assert diag.details["parent_toplevel"] == str(parent.resolve())
+
+
+@_needs_git
+def test_store_nested_in_parent_repo_stands_down_when_store_is_own_repo(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A store that IS the top of its own git worktree is exactly the
+    shape `sync_tracked_ignored` owns — the nested check must return
+    ok and point at the owner, even with a sidecar tracked, so one
+    leak never double-reports across two checks."""
+    store = _store_repo(tmp_path, monkeypatch)
+    (store / PROPOSALS_FILENAME).write_text(
+        '{"content": "tracked in the store own repo"}\n', encoding="utf-8"
+    )
+    _git_in(store, "add", PROPOSALS_FILENAME)
+    _git_in(store, "commit", "-m", "pre-fix sync commit")
+
+    diag = _check_store_nested_in_parent_repo(store)
+    assert diag.status == "ok"
+    assert "sync_tracked_ignored" in diag.message
+    # The owner check still fires on the same fixture — the boundary
+    # between the two checks moved nothing.
+    assert _check_sync_tracked_ignored(store).status == "fail"
+
+
+def test_store_nested_in_parent_repo_ok_on_non_git_store(tmp_path: Path) -> None:
+    """A store outside any git worktree has no parent repo to leak
+    through — the check must pass without demanding git ceremony (and
+    when git itself is absent the probe degrades to the same verdict,
+    mirroring `_is_repo`'s SyncError-to-False)."""
+    (tmp_path / PROPOSALS_FILENAME).write_text(
+        '{"content": "local only"}\n', encoding="utf-8"
+    )
+    diag = _check_store_nested_in_parent_repo(tmp_path)
+    assert diag.status == "ok"
+    assert "not inside any git worktree" in diag.message
+
+
+def test_store_nested_in_parent_repo_missing_dir_does_not_create_it(
+    tmp_path: Path,
+) -> None:
+    """Read-only probe contract shared with the sibling checks: a
+    never-created storage dir is reported ok and left uncreated."""
+    ghost = tmp_path / "ghost"
+    diag = _check_store_nested_in_parent_repo(ghost)
     assert diag.status == "ok"
     assert not ghost.exists()

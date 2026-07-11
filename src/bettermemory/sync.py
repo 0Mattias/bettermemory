@@ -299,7 +299,11 @@ def _is_repo(root: Path) -> bool:
     """True iff `root` is the top of a git working tree. Avoids the
     edge case where `root` is *inside* a parent repo but not itself a
     repo — that's a different setup the wrapper shouldn't conflate
-    with an initialised store."""
+    with an initialised store. The nested shape isn't unwatched,
+    though: doctor's `store_nested_in_parent_repo` check flags any
+    `_GITIGNORE_LINES` sidecar the PARENT repo tracks under the store
+    (a leak surface this top-of-worktree gate deliberately makes
+    invisible to sync itself)."""
     try:
         result = _run_git(
             root,
