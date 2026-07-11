@@ -13,6 +13,7 @@ import json
 import re
 import shutil
 import subprocess
+import sys
 import typing
 from pathlib import Path
 from typing import Any
@@ -1756,6 +1757,11 @@ _needs_git = pytest.mark.skipif(
     reason="git binary not on PATH — sync-repo doctor checks need git",
 )
 
+_needs_posix_store_names = pytest.mark.skipif(
+    sys.platform == "win32",
+    reason="store names containing ':' or '*' are illegal in Windows filenames",
+)
+
 
 def _git_in(cwd: Path, *args: str) -> str:
     """Ad-hoc git for fixtures — raises with stderr on failure (mirrors
@@ -1886,16 +1892,20 @@ def test_sync_tracked_ignored_missing_dir_does_not_create_it(tmp_path: Path) -> 
 
 
 def _parent_repo_with_nested_store(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    store_name: str = "memory-store",
 ) -> tuple[Path, Path]:
     """A parent git repo (the dotfiles-managed-$HOME shape) with the
     store as a PLAIN SUBDIRECTORY of its worktree. `sync._is_repo` is
     top-of-worktree-only, so this store is "not a sync repo" to the
     wrapper and to `sync_tracked_ignored` — only the parent-side check
-    can see what the parent tracks. Hermetic global git config,
-    mirroring `_store_repo`. Returns ``(parent, store)``."""
+    can see what the parent tracks. ``store_name`` lets the pathspec
+    tests pick a directory name containing glob / pathspec-magic
+    characters. Hermetic global git config, mirroring `_store_repo`.
+    Returns ``(parent, store)``."""
     parent = tmp_path / "home"
-    store = parent / "memory-store"
+    store = parent / store_name
     store.mkdir(parents=True)
     global_config = tmp_path / "test.gitconfig"
     global_config.touch()
@@ -1904,6 +1914,40 @@ def _parent_repo_with_nested_store(
     _git_in(parent, "config", "--global", "user.email", "test@example.com")
     _git_in(parent, "config", "--global", "user.name", "Test")
     return parent, store
+
+
+def _grandparent_repo_with_doubly_nested_store(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> tuple[Path, Path, Path]:
+    """A doubly-nested chain: grandparent repo B (``grand/``) whose
+    index tracked the store's plaintext sidecar BEFORE the intermediate
+    directory (``grand/home/``) became repo A. B's stale entries
+    survive A's later ``git init`` (git does not auto-untrack), while
+    A's own index is clean — the shape where only a walk PAST the
+    innermost enclosing worktree can see the leak. The store
+    (``grand/home/memory-store/``) is left a plain directory so callers
+    pick its final shape (plain, or `sync.init` for the
+    store-as-own-repo chain). Hermetic global git config, mirroring
+    `_store_repo`. Returns ``(grand, parent, store)``."""
+    grand = tmp_path / "grand"
+    parent = grand / "home"
+    store = parent / "memory-store"
+    store.mkdir(parents=True)
+    global_config = tmp_path / "test.gitconfig"
+    global_config.touch()
+    monkeypatch.setenv("GIT_CONFIG_GLOBAL", str(global_config))
+    _git_in(grand, "init", "--initial-branch", "main")
+    _git_in(grand, "config", "--global", "user.email", "test@example.com")
+    _git_in(grand, "config", "--global", "user.name", "Test")
+    (store / PROPOSALS_FILENAME).write_text(
+        '{"content": "my staging DB password is hunter2"}\n', encoding="utf-8"
+    )
+    _git_in(grand, "add", "-A")
+    _git_in(grand, "commit", "-m", "grand: add everything")
+    # A becomes a repo only AFTER B tracked the sidecar — the true
+    # upgrade shape, one level further out than the combined fixture.
+    _git_in(parent, "init", "--initial-branch", "main")
+    return grand, parent, store
 
 
 @_needs_git
@@ -2130,3 +2174,266 @@ def test_store_nested_in_parent_repo_own_toplevel_in_clean_parent_stays_ok(
     assert str(parent.resolve()) in diag.message
     assert "sync_tracked_ignored" in diag.message
     assert diag.details["parent_toplevel"] == str(parent.resolve())
+
+
+@_needs_git
+def test_store_nested_in_parent_repo_scans_glob_metachar_store_path_literally(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A store path with glob metacharacters (`mem[0]ry-store` is a
+    legal directory name on APFS, ext4 AND NTFS) must be scanned as a
+    LITERAL path — the `:(literal)` pathspec magic pins that down. A
+    raw pathspec hands `[0]` to git's pathspec engine as a character
+    class; current git happens to rescue this exact shape through
+    `match_pathspec_item`'s literal-prefix fast path, but that is an
+    undocumented implementation detail, not a contract — the sibling
+    magic-prefix / trailing-glob tests show the raw spelling really
+    does miss and over-match on other legal names. This test is the
+    Windows-runnable guard that metachar store paths stay detected."""
+    parent, store = _parent_repo_with_nested_store(
+        tmp_path, monkeypatch, store_name="mem[0]ry-store"
+    )
+    (store / PROPOSALS_FILENAME).write_text(
+        '{"content": "my staging DB password is hunter2"}\n', encoding="utf-8"
+    )
+    _git_in(parent, "add", "-A")
+    _git_in(parent, "commit", "-m", "dotfiles: add everything")
+    tracked_rel = f"mem[0]ry-store/{PROPOSALS_FILENAME}"
+    # Premise pin: the parent really tracks the sidecar under the
+    # bracketed store path.
+    assert tracked_rel in _git_in(parent, "ls-files")
+
+    diag = _check_store_nested_in_parent_repo(store)
+    assert diag.status == "warn"
+    assert str(parent.resolve()) in diag.message
+    assert PROPOSALS_FILENAME in diag.message
+    assert f"git rm --cached {tracked_rel}" in (diag.fix_hint or "")
+    assert diag.details["parent_toplevel"] == str(parent.resolve())
+    assert diag.details["store_prefix"] == "mem[0]ry-store"
+    assert diag.details["tracked_sidecars"] == [tracked_rel]
+    # Single-nesting diagnoses keep their established shape: the
+    # multi-level rollup key only appears when the walk found more
+    # than one enclosing repo.
+    assert "scanned_parent_toplevels" not in diag.details
+
+
+@_needs_git
+@_needs_posix_store_names
+def test_store_nested_in_parent_repo_magic_prefix_store_path_not_silently_missed(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A store directory whose name starts with `:` (legal on POSIX
+    filesystems) is the reproducible SILENT-MISS shape for a raw
+    pathspec: git parses a leading `:` as the pathspec-magic marker,
+    strips it, and matches the remainder — `git ls-files --
+    ':memory-store'` lists NOTHING (exit 0) for a repo that tracks
+    `:memory-store/<sidecar>`, so the pre-fix scan reported a clean
+    parent while the plaintext capture queue kept shipping with every
+    parent push: a false negative in the exact leak class this check
+    exists to close. The `:(literal)` magic pins the prefix to the
+    real directory and the sidecar must surface as a WARN."""
+    parent, store = _parent_repo_with_nested_store(
+        tmp_path, monkeypatch, store_name=":memory-store"
+    )
+    (store / PROPOSALS_FILENAME).write_text(
+        '{"content": "my staging DB password is hunter2"}\n', encoding="utf-8"
+    )
+    _git_in(parent, "add", "-A")
+    _git_in(parent, "commit", "-m", "dotfiles: add everything")
+    tracked_rel = f":memory-store/{PROPOSALS_FILENAME}"
+    # Premise pins: the parent tracks the sidecar, yet the RAW pathspec
+    # spelling of the pre-fix scan lists NOTHING and exits 0 — the
+    # silent miss captured verbatim (`_git_in` raises on failure, so
+    # emptiness here really is silence, not an error).
+    assert tracked_rel in _git_in(parent, "ls-files")
+    assert _git_in(parent, "ls-files", "-z", "--", ":memory-store") == ""
+
+    diag = _check_store_nested_in_parent_repo(store)
+    assert diag.status == "warn"
+    assert str(parent.resolve()) in diag.message
+    assert PROPOSALS_FILENAME in diag.message
+    assert f"git rm --cached {tracked_rel}" in (diag.fix_hint or "")
+    assert diag.details["parent_toplevel"] == str(parent.resolve())
+    assert diag.details["tracked_sidecars"] == [tracked_rel]
+
+
+@_needs_git
+@_needs_posix_store_names
+def test_store_nested_in_parent_repo_glob_store_path_cannot_hit_outside_store(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The other half of the raw-pathspec defect: a trailing-`*` store
+    name fnmatches ACROSS `/` into sibling directories (`fnmatch` with
+    no FNM_PATHNAME), so the pre-fix scan of a store named
+    `memory-store-*` listed the parent's `memory-store-old/orphan.tmp`
+    — a tracked path OUTSIDE the store — and warned about a leak the
+    store does not have. Post-fix the `:(literal)` prefix confines the
+    scan to the actual store directory: the sibling stays invisible
+    and a clean store stays ok."""
+    parent, store = _parent_repo_with_nested_store(
+        tmp_path, monkeypatch, store_name="memory-store-*"
+    )
+    sibling = parent / "memory-store-old"
+    sibling.mkdir()
+    (sibling / "orphan.tmp").write_text("not the store's file", encoding="utf-8")
+    _git_in(parent, "add", "-A")
+    _git_in(parent, "commit", "-m", "dotfiles: add everything")
+    # Premise pins: the sibling's sidecar-shaped file is tracked, the
+    # store itself has nothing tracked under it, and the RAW pathspec
+    # really does over-match into the sibling directory.
+    assert "memory-store-old/orphan.tmp" in _git_in(parent, "ls-files")
+    assert "memory-store-old/orphan.tmp" in _git_in(
+        parent, "ls-files", "-z", "--", "memory-store-*"
+    )
+
+    diag = _check_store_nested_in_parent_repo(store)
+    assert diag.status == "ok"
+    assert diag.fix_hint is None
+    assert str(parent.resolve()) in diag.message
+    assert diag.details["parent_toplevel"] == str(parent.resolve())
+    assert diag.details["store_prefix"] == "memory-store-*"
+
+
+@_needs_git
+def test_store_nested_in_parent_repo_warns_on_doubly_nested_grandparent(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Doubly-nested chain: the store is its own worktree toplevel
+    inside repo A (clean index), and A is nested inside grandparent B
+    whose index tracked the store's sidecar BEFORE either nested repo
+    existed. git never auto-untracks, so B keeps shipping the
+    plaintext blob while both the store repo and A look clean — the
+    pre-fix probe stopped at the innermost enclosing worktree (A) and
+    reported ok, an arbitrary cut in the exact stale-index mechanism
+    the combined-nesting fix closed. The upward walk must continue
+    past A, scan B's index, and WARN naming B with the tracked path —
+    and the prescribed grandparent-side untracking must clear it."""
+    grand, parent, store = _grandparent_repo_with_doubly_nested_store(
+        tmp_path, monkeypatch
+    )
+    # The store becomes its own repo only AFTER B tracked the sidecar.
+    sync.init(store)
+    tracked_rel = f"home/memory-store/{PROPOSALS_FILENAME}"
+    # Premise pins: the store IS its own toplevel, the innermost
+    # enclosing repo A tracks nothing, the sibling check sees only the
+    # store's clean index, and B still tracks the pre-init sidecar —
+    # the exact blind spot under test.
+    assert sync._is_repo(store)
+    assert not _git_in(parent, "ls-files").strip()
+    assert _check_sync_tracked_ignored(store).status == "ok"
+    assert tracked_rel in _git_in(grand, "ls-files")
+
+    diag = _check_store_nested_in_parent_repo(store)
+    assert diag.status == "warn"
+    assert diag.name == "store_nested_in_parent_repo"
+    assert str(grand.resolve()) in diag.message
+    assert PROPOSALS_FILENAME in diag.message
+    assert f"git rm --cached {tracked_rel}" in (diag.fix_hint or "")
+    assert ".gitignore" in (diag.fix_hint or "")
+    assert "git-filter-repo" in (diag.fix_hint or "")
+    assert "rotate" in (diag.fix_hint or "")
+    assert diag.details["parent_toplevel"] == str(grand.resolve())
+    assert diag.details["tracked_sidecars"] == [tracked_rel]
+    # Both enclosing repos were scanned, innermost first.
+    assert diag.details["scanned_parent_toplevels"] == [
+        str(parent.resolve()),
+        str(grand.resolve()),
+    ]
+
+    # The prescribed grandparent-side untracking clears the warn (the
+    # file stays on disk inside the store's own repo).
+    _git_in(grand, "rm", "--cached", tracked_rel)
+    _git_in(grand, "commit", "-m", "untrack the store capture queue")
+    assert (store / PROPOSALS_FILENAME).exists()
+    assert _check_store_nested_in_parent_repo(store).status == "ok"
+
+
+@_needs_git
+def test_store_nested_in_parent_repo_warns_on_plain_doubly_nested_grandparent(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Same doubly-nested chain as the combined test but with the store
+    left a PLAIN subdirectory (never `sync init`ed): the innermost
+    enclosing worktree is repo A with a clean index, and grandparent
+    B's stale entries are the only copy of the leak. The pre-fix scan
+    stopped at A and reported the chain clean; the walk must reach B
+    and WARN with the outer-level leak route (stale index entries that
+    git never auto-untracked)."""
+    grand, parent, store = _grandparent_repo_with_doubly_nested_store(
+        tmp_path, monkeypatch
+    )
+    tracked_rel = f"home/memory-store/{PROPOSALS_FILENAME}"
+    # Premise pins: plain store (not a repo), clean innermost parent,
+    # tracking grandparent.
+    assert not sync._is_repo(store)
+    assert not _git_in(parent, "ls-files").strip()
+    assert tracked_rel in _git_in(grand, "ls-files")
+
+    diag = _check_store_nested_in_parent_repo(store)
+    assert diag.status == "warn"
+    assert str(grand.resolve()) in diag.message
+    assert "auto-untrack" in diag.message
+    assert f"git rm --cached {tracked_rel}" in (diag.fix_hint or "")
+    assert diag.details["parent_toplevel"] == str(grand.resolve())
+    assert diag.details["tracked_sidecars"] == [tracked_rel]
+    assert diag.details["scanned_parent_toplevels"] == [
+        str(parent.resolve()),
+        str(grand.resolve()),
+    ]
+
+
+@_needs_git
+def test_store_nested_in_parent_repo_aggregates_hits_across_enclosing_repos(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """When SEVERAL enclosing repos track sidecars under the store
+    (innermost parent A via its own `git add -A`, grandparent B via
+    pre-nesting stale entries), the walk must aggregate every level
+    into ONE warn that names each offending parent toplevel with its
+    tracked paths and per-parent remediation — and untracking in BOTH
+    parents must clear it."""
+    grand, parent, store = _grandparent_repo_with_doubly_nested_store(
+        tmp_path, monkeypatch
+    )
+    # A tracks the (plain-subdirectory) store's sidecar itself.
+    _git_in(parent, "add", "-A")
+    _git_in(parent, "commit", "-m", "home: add everything")
+    inner_rel = f"memory-store/{PROPOSALS_FILENAME}"
+    outer_rel = f"home/memory-store/{PROPOSALS_FILENAME}"
+    # Premise pins: both indexes hold the sidecar independently.
+    assert inner_rel in _git_in(parent, "ls-files")
+    assert outer_rel in _git_in(grand, "ls-files")
+
+    diag = _check_store_nested_in_parent_repo(store)
+    assert diag.status == "warn"
+    assert diag.name == "store_nested_in_parent_repo"
+    assert str(parent.resolve()) in diag.message
+    assert str(grand.resolve()) in diag.message
+    assert outer_rel in diag.message
+    assert f"from {parent.resolve()} run `git rm --cached {inner_rel}`" in (
+        diag.fix_hint or ""
+    )
+    assert f"from {grand.resolve()} run `git rm --cached {outer_rel}`" in (
+        diag.fix_hint or ""
+    )
+    assert "git-filter-repo" in (diag.fix_hint or "")
+    assert "rotate" in (diag.fix_hint or "")
+    assert diag.details["parent_toplevels"] == [
+        str(parent.resolve()),
+        str(grand.resolve()),
+    ]
+    assert diag.details["tracked_by_parent"] == {
+        str(parent.resolve()): [inner_rel],
+        str(grand.resolve()): [outer_rel],
+    }
+    # The aggregate diagnosis renders and JSON-serialises cleanly.
+    report = DoctorReport(checks=[diag])
+    assert "store_nested_in_parent_repo" in render_text(report)
+    assert json.loads(render_json(report))["overall"] == "warn"
+
+    # Untracking in BOTH parents clears the aggregate warn.
+    _git_in(parent, "rm", "--cached", inner_rel)
+    _git_in(parent, "commit", "-m", "untrack inner")
+    _git_in(grand, "rm", "--cached", outer_rel)
+    _git_in(grand, "commit", "-m", "untrack outer")
+    assert _check_store_nested_in_parent_repo(store).status == "ok"

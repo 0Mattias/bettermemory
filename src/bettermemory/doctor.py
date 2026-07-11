@@ -986,26 +986,89 @@ def _check_sync_tracked_ignored(directory: Path) -> Diagnosis:
     )
 
 
+def _enclosing_worktree_levels(
+    start_dir: Path, store_root: Path, *, seen: set[Path]
+) -> list[tuple[Path, str]]:
+    """Walk upward from ``start_dir`` toward the filesystem root and
+    collect EVERY enclosing git worktree that path-contains
+    ``store_root``, innermost first, as ``(toplevel, prefix)`` pairs.
+
+    One ``rev-parse --show-toplevel`` probe discovers the innermost
+    repo at or above the probe directory; the walk then restarts from
+    that toplevel's parent directory, so a doubly-nested chain (store
+    inside repo A inside grandparent B) yields BOTH A and B — git never
+    auto-untracks, so the stale-index sidecar leak the innermost scan
+    catches exists at every additional nesting level. Termination is
+    bounded by path depth: every accepted toplevel must be a strict
+    ancestor of ``store_root`` (there are finitely many), ``seen``
+    rejects re-discovering a toplevel (GIT_DIR / GIT_WORK_TREE
+    overrides can make a probe answer somewhere it did not come from),
+    and the walk stops cleanly at the filesystem root, on the first
+    probe that finds no repo, or on an answer that does not
+    path-contain the store.
+    """
+    # Same lazy-import rationale as `_check_sync_tracked_ignored`: a
+    # top-level `from .sync import …` here would be circular.
+    from .sync import SyncError, _run_git
+
+    levels: list[tuple[Path, str]] = []
+    probe_dir = start_dir
+    while True:
+        try:
+            probe = _run_git(probe_dir, ["rev-parse", "--show-toplevel"], check=False)
+        except (SyncError, OSError):
+            # git itself missing, or the probe directory vanished /
+            # unreadable mid-walk — no further enclosing repo to scan.
+            break
+        if probe.returncode != 0:
+            break
+        top = Path(probe.stdout.strip()).resolve()
+        if top == store_root or top in seen:
+            break
+        try:
+            prefix = store_root.relative_to(top).as_posix()
+        except ValueError:
+            break
+        seen.add(top)
+        levels.append((top, prefix))
+        if top.parent == top:
+            # Filesystem root: nowhere further up to probe from.
+            break
+        probe_dir = top.parent
+    return levels
+
+
 def _scan_parent_index_for_sidecars(
     directory: Path,
     *,
-    parent_top: Path,
-    prefix: str,
+    levels: list[tuple[Path, str, str]],
     clean_message: str,
-    leak_route: str,
 ) -> Diagnosis:
-    """Shared tail of ``_check_store_nested_in_parent_repo``: list what
-    the enclosing repo at ``parent_top`` tracks under the store's
-    ``prefix`` and fnmatch it against ``sync._GITIGNORE_LINES``. Zero
-    matching hits returns the caller's ``clean_message`` ok — the WARN
+    """Shared tail of ``_check_store_nested_in_parent_repo``: for each
+    enclosing-repo level ``(parent_top, prefix, leak_route)`` —
+    innermost first, non-empty — list what the repo at ``parent_top``
+    tracks under the store's ``prefix`` and fnmatch it against
+    ``sync._GITIGNORE_LINES``. The prefix is passed with git's
+    ``:(literal)`` pathspec magic: a raw pathspec hands glob
+    metacharacters and the leading-``:`` magic marker in a legal store
+    path straight to git's pathspec engine, which can silently list
+    nothing (a false negative in the exact leak class this check
+    closes — a store under ``:dir`` parses as magic-prefixed) or match
+    entries OUTSIDE the store (a trailing-``*`` segment fnmatches
+    across ``/`` into sibling directories). Zero matching hits across
+    every level returns the caller's ``clean_message`` ok — the WARN
     keys strictly on actually-tracked sidecar paths, never on mere
-    nesting, because both caller shapes (a plain nested subdir, and a
-    store-as-own-repo inside a monorepo / home repo) are legitimate
-    setups when the parent index is clean. ``leak_route`` is the one
-    warn sentence explaining WHY the parent still ships the files: for
-    the plain-nested shape no bettermemory ``.gitignore`` applies in
-    the parent; for the combined shape the parent tracked the paths
-    before the store became its own repo and git does not auto-untrack.
+    nesting, because every caller shape (a plain nested subdir, and a
+    store-as-own-repo inside a monorepo / home repo, at any nesting
+    depth) is a legitimate setup when the enclosing indexes are clean.
+    Hits aggregate into ONE warn: a single offending parent keeps the
+    established single-repo message shape, several offending parents
+    are each named with their tracked paths. Each level's
+    ``leak_route`` is the one warn sentence explaining WHY that parent
+    still ships the files: for the plain-nested shape no bettermemory
+    ``.gitignore`` applies in the parent; for the combined shape (and
+    every outer level) the parent tracked the paths before the nesting
+    below it arose and git does not auto-untrack.
     """
     # Same lazy-import rationale as `_check_sync_tracked_ignored`:
     # `sync` imports `DOCTOR_PROBE_FILENAME` from this module at import
@@ -1013,21 +1076,6 @@ def _scan_parent_index_for_sidecars(
     # `_GITIGNORE_LINES` must stay the single canonical pattern list.
     from .sync import _GITIGNORE_LINES, _run_git
 
-    listing = _run_git(parent_top, ["ls-files", "-z", "--", prefix], check=False)
-    if listing.returncode != 0:
-        return Diagnosis(
-            name="store_nested_in_parent_repo",
-            status="warn",
-            message=(
-                f"Store is nested inside the git repo at {parent_top}, but "
-                "listing what that repo tracks under the store failed: "
-                f"{listing.stderr.strip() or listing.stdout.strip() or 'unknown error'}."
-            ),
-            fix_hint=(
-                f"Run `git ls-files -- {prefix}` from {parent_top} to investigate."
-            ),
-            details={"parent_toplevel": str(parent_top), "store_prefix": prefix},
-        )
     # Same pattern handling as `_check_sync_tracked_ignored`: comment
     # lines out, positive slash-free glob/literal patterns in, and a
     # slash-free gitignore pattern matches at any depth so the basename
@@ -1036,17 +1084,57 @@ def _scan_parent_index_for_sidecars(
     patterns = [
         line for line in _GITIGNORE_LINES if line and not line.lstrip().startswith("#")
     ]
-    tracked: list[str] = []
-    for path in listing.stdout.split("\0"):
-        if not path:
+    hits: list[tuple[Path, str, str, list[str]]] = []
+    first_error: Diagnosis | None = None
+    for parent_top, prefix, leak_route in levels:
+        listing = _run_git(
+            parent_top,
+            ["ls-files", "-z", "--", f":(literal){prefix}"],
+            check=False,
+        )
+        if listing.returncode != 0:
+            if first_error is None:
+                first_error = Diagnosis(
+                    name="store_nested_in_parent_repo",
+                    status="warn",
+                    message=(
+                        f"Store is nested inside the git repo at {parent_top}, but "
+                        "listing what that repo tracks under the store failed: "
+                        f"{listing.stderr.strip() or listing.stdout.strip() or 'unknown error'}."
+                    ),
+                    fix_hint=(
+                        f"Run `git ls-files -- ':(literal){prefix}'` from "
+                        f"{parent_top} to investigate."
+                    ),
+                    details={
+                        "parent_toplevel": str(parent_top),
+                        "store_prefix": prefix,
+                    },
+                )
             continue
-        basename = path.rsplit("/", 1)[-1]
-        if any(
-            fnmatch.fnmatch(path, pattern) or fnmatch.fnmatch(basename, pattern)
-            for pattern in patterns
-        ):
-            tracked.append(path)
-    if not tracked:
+        tracked: list[str] = []
+        for path in listing.stdout.split("\0"):
+            if not path:
+                continue
+            basename = path.rsplit("/", 1)[-1]
+            if any(
+                fnmatch.fnmatch(path, pattern) or fnmatch.fnmatch(basename, pattern)
+                for pattern in patterns
+            ):
+                tracked.append(path)
+        if tracked:
+            hits.append((parent_top, prefix, leak_route, tracked))
+    # Only noted when the walk actually found more than one enclosing
+    # repo, so single-nesting diagnoses keep their established shape.
+    scanned_note: dict[str, Any] = (
+        {"scanned_parent_toplevels": [str(top) for top, _, _ in levels]}
+        if len(levels) > 1
+        else {}
+    )
+    if not hits:
+        if first_error is not None:
+            return first_error
+        parent_top, prefix, _ = levels[0]
         return Diagnosis(
             name="store_nested_in_parent_repo",
             status="ok",
@@ -1055,44 +1143,97 @@ def _scan_parent_index_for_sidecars(
                 "parent_toplevel": str(parent_top),
                 "store_prefix": prefix,
                 "patterns_checked": len(patterns),
+                **scanned_note,
             },
         )
-    shown = ", ".join(tracked[:3])
-    if len(tracked) > 3:
-        shown += f", … (+{len(tracked) - 3} more)"
-    plural = "" if len(tracked) == 1 else "s"
-    verb = "is" if len(tracked) == 1 else "are"
-    cmd_paths = " ".join(tracked[:5])
-    more_note = (
-        f" (+{len(tracked) - 5} more — full list in `bettermemory doctor --json`)"
-        if len(tracked) > 5
-        else ""
-    )
+    if len(hits) == 1:
+        parent_top, prefix, leak_route, tracked = hits[0]
+        shown = ", ".join(tracked[:3])
+        if len(tracked) > 3:
+            shown += f", … (+{len(tracked) - 3} more)"
+        plural = "" if len(tracked) == 1 else "s"
+        verb = "is" if len(tracked) == 1 else "are"
+        cmd_paths = " ".join(tracked[:5])
+        more_note = (
+            f" (+{len(tracked) - 5} more — full list in `bettermemory doctor --json`)"
+            if len(tracked) > 5
+            else ""
+        )
+        return Diagnosis(
+            name="store_nested_in_parent_repo",
+            status="warn",
+            message=(
+                f"{len(tracked)} transient sidecar file{plural} ({shown}) under "
+                f"the store at {directory} {verb} git-TRACKED by the PARENT "
+                f"repo at {parent_top}. {leak_route} the parent's own "
+                f"`git add -A` / commit / push flows keep shipping these files "
+                f"(which can carry plaintext captures) to wherever that repo "
+                f"pushes."
+            ),
+            fix_hint=(
+                f"In {parent_top}/.gitignore ignore the store's transient "
+                f"sidecars (the patterns `bettermemory sync init` writes to a "
+                f"store .gitignore, scoped under `{prefix}/`), then from "
+                f"{parent_top} run `git rm --cached {cmd_paths}`{more_note} and "
+                "commit so the parent stops tracking them. If the parent repo "
+                "was ever pushed, the contents are already in remote history: "
+                "rewrite it with git-filter-repo (or BFG) and force-push, then "
+                "rotate any secrets those files may have captured."
+            ),
+            details={
+                "parent_toplevel": str(parent_top),
+                "store_prefix": prefix,
+                "tracked_sidecars": tracked,
+                **scanned_note,
+            },
+        )
+    # Two or more enclosing repos track sidecars — ONE aggregated WARN
+    # naming each offending parent toplevel with its tracked paths.
+    total = sum(len(tracked) for _, _, _, tracked in hits)
+    per_repo_msgs: list[str] = []
+    per_repo_cmds: list[str] = []
+    for parent_top, _prefix, _leak_route, tracked in hits:
+        shown = ", ".join(tracked[:3])
+        if len(tracked) > 3:
+            shown += f", … (+{len(tracked) - 3} more)"
+        per_repo_msgs.append(f"{parent_top} tracks {shown}")
+        cmd_paths = " ".join(tracked[:5])
+        more_note = (
+            f" (+{len(tracked) - 5} more — full list in `bettermemory doctor --json`)"
+            if len(tracked) > 5
+            else ""
+        )
+        per_repo_cmds.append(
+            f"from {parent_top} run `git rm --cached {cmd_paths}`{more_note}"
+        )
     return Diagnosis(
         name="store_nested_in_parent_repo",
         status="warn",
         message=(
-            f"{len(tracked)} transient sidecar file{plural} ({shown}) under "
-            f"the store at {directory} {verb} git-TRACKED by the PARENT "
-            f"repo at {parent_top}. {leak_route} the parent's own "
-            f"`git add -A` / commit / push flows keep shipping these files "
-            f"(which can carry plaintext captures) to wherever that repo "
-            f"pushes."
+            f"{total} transient sidecar files under the store at {directory} "
+            f"are git-TRACKED by {len(hits)} enclosing PARENT repos: "
+            + "; ".join(per_repo_msgs)
+            + ". Git does not auto-untrack at any nesting level, so each "
+            "parent's own `git add -A` / commit / push flows keep shipping "
+            "these files (which can carry plaintext captures) to wherever "
+            "that repo pushes."
         ),
         fix_hint=(
-            f"In {parent_top}/.gitignore ignore the store's transient "
-            f"sidecars (the patterns `bettermemory sync init` writes to a "
-            f"store .gitignore, scoped under `{prefix}/`), then from "
-            f"{parent_top} run `git rm --cached {cmd_paths}`{more_note} and "
-            "commit so the parent stops tracking them. If the parent repo "
-            "was ever pushed, the contents are already in remote history: "
-            "rewrite it with git-filter-repo (or BFG) and force-push, then "
-            "rotate any secrets those files may have captured."
+            "In each parent repo's .gitignore ignore the store's transient "
+            "sidecars (the patterns `bettermemory sync init` writes to a "
+            "store .gitignore, scoped under the store's path within that "
+            "repo), then untrack them: "
+            + "; ".join(per_repo_cmds)
+            + "; commit in each parent so they stop tracking the files. If "
+            "a parent repo was ever pushed, the contents are already in "
+            "remote history: rewrite it with git-filter-repo (or BFG) and "
+            "force-push, then rotate any secrets those files may have "
+            "captured."
         ),
         details={
-            "parent_toplevel": str(parent_top),
-            "store_prefix": prefix,
-            "tracked_sidecars": tracked,
+            "parent_toplevels": [str(top) for top, _, _, _ in hits],
+            "tracked_by_parent": {str(top): tracked for top, _, _, tracked in hits},
+            **scanned_note,
         },
     )
 
@@ -1130,6 +1271,15 @@ def _check_store_nested_in_parent_repo(directory: Path) -> Diagnosis:
     monorepo / home repo with ZERO tracked sidecars is a perfectly
     normal sync setup, that branch WARNs strictly on actually-tracked
     matching paths in the PARENT index — mere nesting never alarms.
+
+    Neither probe stops at the innermost enclosing repo: the same
+    stale-index mechanism exists at EVERY additional nesting level
+    (store inside repo A inside grandparent B whose index tracked
+    pre-init paths under the store — B keeps shipping them while both
+    the store repo and A look clean). The upward walk continues past
+    each discovered toplevel toward the filesystem root, scans every
+    enclosing repo's index, and aggregates per-repo hits into the one
+    WARN.
     """
     # Same lazy-import rationale as `_check_sync_tracked_ignored` (and
     # the `_scan_parent_index_for_sidecars` helper): a top-level `sync`
@@ -1159,10 +1309,17 @@ def _check_store_nested_in_parent_repo(directory: Path) -> Diagnosis:
         )
     store_root = directory.resolve()
     parent_top = Path(toplevel_probe.stdout.strip()).resolve()
+    # Every level past the innermost shares one leak route: an outer
+    # repo's index holds paths under the store from before the repo
+    # nesting below it arose, and git does not auto-untrack them.
+    outer_leak_route = (
+        "The PARENT repo's index still tracks these paths from before "
+        "the repo nesting below it arose — git does not auto-untrack — so"
+    )
     if parent_top == store_root:
         # The store is the top of its own worktree, so sidecars tracked
         # in the STORE repo are `sync_tracked_ignored`'s finding — but
-        # an ENCLOSING repo can still exist (the combined shape in the
+        # ENCLOSING repos can still exist (the combined shape in the
         # docstring), and `rev-parse` from inside the store can only
         # ever answer with the store itself. Restart the probe from the
         # store's parent directory; anything short of a resolving,
@@ -1179,41 +1336,28 @@ def _check_store_nested_in_parent_repo(directory: Path) -> Diagnosis:
         if store_root.parent == store_root:
             # Filesystem root: no parent directory to probe from.
             return stand_down
-        try:
-            enclosing_probe = _run_git(
-                store_root.parent, ["rev-parse", "--show-toplevel"], check=False
-            )
-        except SyncError:
-            enclosing_probe = None
-        if enclosing_probe is None or enclosing_probe.returncode != 0:
+        found = _enclosing_worktree_levels(store_root.parent, store_root, seen=set())
+        if not found:
             return stand_down
-        enclosing_top = Path(enclosing_probe.stdout.strip()).resolve()
-        if enclosing_top == store_root:
-            # GIT_DIR / GIT_WORK_TREE overrides can make the parent-dir
-            # probe answer with the store itself — not an enclosing repo.
-            return stand_down
-        try:
-            prefix = store_root.relative_to(enclosing_top).as_posix()
-        except ValueError:
-            # The answered worktree does not path-contain the store
-            # (same env-override shape as the not-own-toplevel branch).
-            return stand_down
+        own_top_route = (
+            "The store is now the top of its own git worktree, but "
+            "the PARENT repo's index still tracks these paths from "
+            "before the store became its own repo — git does not "
+            "auto-untrack — so"
+        )
+        levels = [
+            (top, prefix, own_top_route if depth == 0 else outer_leak_route)
+            for depth, (top, prefix) in enumerate(found)
+        ]
         return _scan_parent_index_for_sidecars(
             directory,
-            parent_top=enclosing_top,
-            prefix=prefix,
+            levels=levels,
             clean_message=(
                 f"Store is the top of its own git worktree (tracked "
                 f"sidecars there are sync_tracked_ignored's finding), "
-                f"nested inside the git repo at {enclosing_top}; that "
+                f"nested inside the git repo at {found[0][0]}; that "
                 f"parent repo tracks no transient sidecar files under "
                 f"the store."
-            ),
-            leak_route=(
-                "The store is now the top of its own git worktree, but "
-                "the PARENT repo's index still tracks these paths from "
-                "before the store became its own repo — git does not "
-                "auto-untrack — so"
             ),
         )
     try:
@@ -1229,18 +1373,28 @@ def _check_store_nested_in_parent_repo(directory: Path) -> Diagnosis:
                 "Store is not path-nested under any git worktree — nothing to check."
             ),
         )
+    levels = [
+        (
+            parent_top,
+            prefix,
+            "The store only sits inside that repo's worktree — "
+            "bettermemory's sync .gitignore does not apply there — so",
+        )
+    ]
+    if parent_top.parent != parent_top:
+        levels.extend(
+            (top, top_prefix, outer_leak_route)
+            for top, top_prefix in _enclosing_worktree_levels(
+                parent_top.parent, store_root, seen={parent_top}
+            )
+        )
     return _scan_parent_index_for_sidecars(
         directory,
-        parent_top=parent_top,
-        prefix=prefix,
+        levels=levels,
         clean_message=(
             f"Store is nested inside the git repo at {parent_top} (not "
             "itself a sync repo); that parent repo tracks no transient "
             "sidecar files under the store."
-        ),
-        leak_route=(
-            "The store only sits inside that repo's worktree — "
-            "bettermemory's sync .gitignore does not apply there — so"
         ),
     )
 
