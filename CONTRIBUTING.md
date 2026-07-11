@@ -92,14 +92,19 @@ Within a major, all changes to the on-disk format are **additive only**: new opt
 
 ### Deprecation cycle
 
-When a tool, parameter, or field is destined for removal at the next major bump:
+When a tool, Python API, config key, parameter, or field is destined for removal at the next major bump:
 
 1. The deprecation lands in a minor of the current major with a `Deprecated` entry in the changelog. The entry names the deprecated surface, the replacement (if any), and the planned-removal target version.
-2. The implementation logs a one-time WARNING per process when the deprecated surface is used, with the same replacement pointer.
+2. The implementation emits a runtime warning when the deprecated surface is used, with the same replacement pointer. Which channel carries the warning depends on who consumes the surface — two lanes, described below.
 3. The deprecated surface continues to function, since semver says so, until the next major bump (4.0).
 4. At 4.0, the surface is removed. The 4.0 release notes reiterate every removed item.
 
-Patches and bug fixes do not count as "uses" of the deprecated surface for the WARNING; the warning fires when *callers* use the surface. The implementation may continue to call into the deprecated path internally for compatibility.
+The two warning lanes, keyed on who the consumer is:
+
+- **Python-API deprecations** (functions, methods, parameters — surfaces *code* imports and calls) use `warnings.warn(..., DeprecationWarning, stacklevel=2)`: raised per call, on Python's standard warnings channel. That channel is the one downstream tooling already hooks — this repo's message-pattern `filterwarnings` line escalates our own deprecations to test errors, and consumers get `-W` policy flags and their own pytest fences for free; display policy belongs to the consumer's filters, not to us. `stacklevel=2` attributes the warning to the caller's frame, so each call site is the one pointed at. The canonical example is the 4.0-removal trio in `src/bettermemory/origin.py` (`commits_since`, `commits_touching_pathspecs`, `commits_since_touching_paths`), whose messages follow the shape `<name> is deprecated and will be removed in bettermemory <version>; <replacement guidance>`. The phrase `deprecated and will be removed in bettermemory` is **load-bearing**: the message-scoped `filterwarnings` regex in `pyproject.toml` keys on exactly that text, and the "Deprecation fence" tests in `tests/test_origin.py` pin the regex against the emitted messages — a reworded message would silently escape the fence. Do not also log from API deprecations: production log readers are not the audience, and the warnings channel already carries it.
+- **Config-key and other runtime-operational deprecations** (TOML keys — anything an operator *sets* rather than code calls) log a one-time WARNING per process via `log.warning`, guarded by a module-level seen-set — the pattern `_apply_legacy_endorsement_debt_alias` in `src/bettermemory/config.py` established for the 3.2.0 `endorsement_debt_ratio_threshold` rename. Their consumers read server logs, not the Python warnings channel: a `DeprecationWarning` is default-invisible in production (Python's default filters silence it outside `__main__`, and it lands on stderr rather than the log stream), and per-call logging would spam a long-lived server that rereads config on signal.
+
+Patches and bug fixes do not count as "uses" of the deprecated surface for the warning; the warning fires when *callers* use the surface. The implementation may continue to call into the deprecated path internally for compatibility — in the API lane that means routing internal callers through a non-deprecated seam (see `_commits_touching_pathspecs_impl` in `origin.py`) rather than letting internal frames trip the warning.
 
 ### Major bumps (4.0 and beyond)
 
