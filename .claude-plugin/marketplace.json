@@ -5,7 +5,7 @@
     "url": "https://github.com/0Mattias"
   },
   "metadata": {
-    "description": "Memory you can verify — MCP-native memory with per-hit staleness verdicts and claim-level audit trails. Local-first, no cloud.",
+    "description": "Memory you can verify — an MCP-native memory system: recall with per-hit staleness verdicts, claim-level usage telemetry, curation, and episodic run-state. Local-first, no cloud.",
     "version": "3.20.0"
   },
   "plugins": [

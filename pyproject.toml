@@ -1,7 +1,7 @@
 [project]
 name = "bettermemory"
 version = "3.20.0"
-description = "Memory you can verify — MCP-native memory for AI coding agents, with per-hit staleness verdicts and claim-level audit trails. Local-first, MIT, no cloud."
+description = "Memory you can verify — an MCP-native memory system for AI coding agents: recall with per-hit staleness verdicts, claim-level usage telemetry, curation, and episodic run-state. Local-first, MIT, no cloud."
 readme = "README.md"
 requires-python = ">=3.11"
 license = { text = "MIT" }

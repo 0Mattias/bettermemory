@@ -1,8 +1,10 @@
 # bettermemory: Claude Code plugin
 
 The Claude Code plugin wrapper for
-[bettermemory](https://github.com/0Mattias/bettermemory) — persistent
-memory over MCP where every retrieved fact carries a staleness verdict.
+[bettermemory](https://github.com/0Mattias/bettermemory) — a memory
+system over MCP: recall where every retrieved fact carries a staleness
+verdict, usage telemetry, curation, and an episode tier for session
+run-state.
 
 The plugin bundles three things:
 

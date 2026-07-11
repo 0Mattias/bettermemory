@@ -1,8 +1,10 @@
-"""bettermemory: persistent memory for Claude Code, retrieved on demand.
+"""bettermemory: a memory system for coding agents, served over MCP.
 
-A local file-backed MCP server. Memory is opt-in retrieval, not forced
-context. See the module-level docs and `prompts.SYSTEM_PROMPT_ADDENDUM`
-for the consumer-side instructions.
+A local file-backed MCP server covering the lifecycle around recall —
+per-hit staleness verdicts, gated writes, usage telemetry and eval,
+curation, and an episode tier for session run-state. Memory is opt-in
+retrieval, not forced context. See the module-level docs and
+`prompts.SYSTEM_PROMPT_ADDENDUM` for the consumer-side instructions.
 """
 
 from importlib.metadata import PackageNotFoundError, version as _pkg_version

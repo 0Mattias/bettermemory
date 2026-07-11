@@ -10,11 +10,16 @@ explained yesterday, the deploy quirk you debugged last week, the "we
 use uv, not pip" you have now said eleven times.
 
 bettermemory gives Claude Code — or any MCP client — memory that
-survives the session. And it handles the part every memory layer
-skips: memories go stale, and a confidently remembered stale fact is
-worse than no memory at all. So every recall here comes with a
-verdict on whether the fact still holds, and the model checks before
-it trusts.
+survives the session. Storing facts turned out to be the smallest
+part of that job, so despite the name, most of bettermemory is the
+machinery that keeps a stored memory trustworthy: a verification
+layer, usage telemetry and an eval, a curation engine, and a sibling
+episode tier for run-state that belongs to a session rather than to
+durable memory. All of it starts from the part every memory layer
+skips — memories go stale, and a confidently remembered stale fact
+is worse than no memory at all. So every recall comes with a verdict
+on whether the fact still holds, and the model checks before it
+trusts.
 
 ## What that feels like
 
