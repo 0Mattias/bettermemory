@@ -266,6 +266,55 @@ def test_sidecar_discovery_does_not_collide_on_shared_constant_names(
     )
 
 
+def test_gitignore_lines_are_positive_and_slash_free() -> None:
+    """STRUCTURAL SHAPE GUARD. Doctor's `_check_sync_tracked_ignored` and
+    `_scan_parent_index_for_sidecars` translate `_GITIGNORE_LINES` into flat
+    `fnmatch` patterns (each non-comment line fnmatched against every tracked
+    path and its basename). That translation is only equivalent to git's
+    .gitignore semantics for POSITIVE, SLASH-FREE lines — and doctor's
+    comments cite THIS test as what keeps the list that shape:
+
+    - A `!` negation line un-ignores a file for git (it is DELIBERATELY
+      tracked), but doctor's fnmatch translation has no negation semantics:
+      the kept file still matches some positive glob, so doctor FAILs and
+      its fix_hint walks the user through `git rm --cached`, a history
+      rewrite, and secret rotation — a DESTRUCTIVE false positive against a
+      file the gitignore intentionally keeps.
+    - A `/`-anchored (or any slash-containing) line matches path segments
+      relative to the .gitignore for git, but fnmatch sees one flat string:
+      store-relative tracked paths never start with `/`, and the basename
+      fallback never contains `/`, so the line silently matches nothing — a
+      false NEGATIVE in the exact leak guard meant to catch tracked secrets.
+
+    `sync.init()` writes any future line verbatim into every store
+    .gitignore, so the constraint must hold at the list itself, not at the
+    call sites. Mutation-sound: append `"!keep.tmp"` or `"store/x"` to
+    `sync._GITIGNORE_LINES` and this test fails naming the offending line."""
+    # Same comment/blank filter doctor applies when building its patterns.
+    for line in sync._GITIGNORE_LINES:
+        if not line or line.lstrip().startswith("#"):
+            continue
+        assert not line.startswith("!"), (
+            f"sync._GITIGNORE_LINES contains a `!` negation line: {line!r}. "
+            "doctor's fnmatch translation (_check_sync_tracked_ignored / "
+            "_scan_parent_index_for_sidecars) drops negation semantics, so "
+            "the deliberately-kept file would still match a positive glob "
+            "and doctor would FAIL with a destructive fix_hint (`git rm "
+            "--cached` + history rewrite + secret rotation) for a file the "
+            "gitignore keeps on purpose. Restructure the patterns so no "
+            "negation is needed."
+        )
+        assert "/" not in line, (
+            f"sync._GITIGNORE_LINES contains a slash-anchored line: {line!r}. "
+            "doctor's fnmatch translation (_check_sync_tracked_ignored / "
+            "_scan_parent_index_for_sidecars) matches each line as one flat "
+            "pattern against store-relative paths and basenames, so a "
+            "`/`-containing line silently matches nothing — a false negative "
+            "in the tracked-sidecar leak guard. Use a slash-free filename or "
+            "glob instead."
+        )
+
+
 def test_init_uses_atomic_write_for_gitignore(
     memory_dir: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
