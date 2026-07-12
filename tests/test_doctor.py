@@ -3184,7 +3184,15 @@ def test_fix_event_log_chmods_unwritable_file(tmp_path: Path) -> None:
     assert [f.action for f in fixes] == ["chmod_event_log"]
     assert fixes[0].applied is True
     assert fixes[0].after_status == "ok"
-    assert stat.S_IMODE(log.stat().st_mode) == 0o600
+    if os.name == "nt":
+        # Windows models only the write bit: chmod(0o600) clears the
+        # read-only attribute and st_mode reads back 0o666, never the
+        # POSIX owner-only mode. The functional contract — writable
+        # again, check green — is what the fixer promises everywhere;
+        # the exact 0o600 is a POSIX detail asserted only there.
+        assert os.access(log, os.W_OK)
+    else:
+        assert stat.S_IMODE(log.stat().st_mode) == 0o600
     assert _check_event_log_writable(tmp_path).status == "ok"
 
 
