@@ -682,12 +682,29 @@ def _check_event_log_writable(directory: Path) -> Diagnosis:
     # chmod(0o600) clears), so an ACL-denied log passes it while every
     # real append still fails; on POSIX a directory squatting at the
     # path passes W_OK too. Probe-append for real, per this check's
-    # own contract: 'ab' + zero bytes exercises the exact permission
-    # the Recorder's append needs without mutating the log.
+    # own contract: a zero-byte write through an append-mode fd
+    # exercises the exact permission the Recorder's append needs
+    # without mutating the log. O_CREAT is deliberately absent —
+    # `open("ab")` implies it, so a log that vanished between the
+    # exists() gate above and this probe would be CONJURED back as an
+    # empty file, a mutation this read-only diagnostic must never
+    # make.
     try:
-        with log_path.open("ab") as f:
-            f.write(b"")
+        fd = os.open(str(log_path), os.O_WRONLY | os.O_APPEND)
+        try:
+            os.write(fd, b"")
+        finally:
+            os.close(fd)
         size = log_path.stat().st_size
+    except FileNotFoundError:
+        # The log legitimately vanished mid-run (concurrent tidy-up,
+        # rotation) — the same shape the exists() gate reports: it
+        # will be recreated on first server start, nothing to fix.
+        return Diagnosis(
+            name="event_log",
+            status="ok",
+            message="Event log not yet created (will appear on first server start).",
+        )
     except OSError as exc:
         return Diagnosis(
             name="event_log",

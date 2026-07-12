@@ -632,6 +632,53 @@ def test_event_log_probe_append_catches_access_false_green(tmp_path: Path) -> No
     assert "chmod u+w" not in diag.fix_hint  # a chmod cannot fix this class
 
 
+def test_event_log_probe_vanished_mid_run_is_ok_and_conjures_nothing(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The log vanishing between the exists() gate and the probe-append
+    (concurrent tidy-up, rotation) must land in the same not-yet-created
+    ok shape the gate itself reports — and the probe must NOT conjure
+    the log back: `open("ab")` implies O_CREAT, so the pre-fix probe
+    recreated the vanished file as a 0-byte log and reported it
+    "writable (0 bytes)", a filesystem mutation from a read-only
+    diagnostic. The vanish is injected inside the window by wrapping
+    the os.access pre-guard, the last gate the check consults before
+    the probe."""
+    from bettermemory.events import EVENT_LOG_FILENAME
+
+    log = tmp_path / EVENT_LOG_FILENAME
+    log.write_text('{"ts":"x","kind":"search"}\n', encoding="utf-8")
+
+    real_access = os.access
+
+    def _vanish_inside_window(path: Any, mode: int, **kwargs: Any) -> bool:
+        result = real_access(path, mode, **kwargs)
+        if str(path) == str(log) and log.exists():
+            log.unlink()  # vanishes AFTER the gate consulted it
+        return result
+
+    monkeypatch.setattr("bettermemory.doctor.os.access", _vanish_inside_window)
+    diag = _check_event_log_writable(tmp_path)
+    assert diag.status == "ok"
+    assert "will appear on first server start" in diag.message
+    assert not log.exists()  # the probe never conjured it back
+
+
+def test_event_log_probe_never_creates_on_absent_log(tmp_path: Path) -> None:
+    """Creation-free by construction: on a store whose log never
+    existed the check reports the not-yet-created ok shape and leaves
+    the directory exactly as it found it — pin the filesystem alongside
+    the return so a future probe reorder (or an O_CREAT regression)
+    cannot silently start scaffolding logs from a diagnostic."""
+    from bettermemory.events import EVENT_LOG_FILENAME
+
+    diag = _check_event_log_writable(tmp_path)
+    assert diag.status == "ok"
+    assert "will appear on first server start" in diag.message
+    assert not (tmp_path / EVENT_LOG_FILENAME).exists()
+    assert list(tmp_path.iterdir()) == []  # nothing else conjured either
+
+
 def test_event_log_unwritable_hint_executes_on_space_and_quote_path(
     tmp_path: Path,
 ) -> None:
