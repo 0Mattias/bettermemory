@@ -96,7 +96,11 @@ client configs), store integrity (parse, index, storage), and
 sync-repo leak surfaces (tracked-despite-gitignore sidecars, parent
 repos tracking store files) — each failed check has a one-line fix
 hint. `--json` for machine-readable; exit codes 0/1/2 for
-ok/warn/fail.
+ok/warn/fail. `--fix` applies the safe subset of the remediations —
+store/event-log permissions, search-index rebuild, stale-lockfile
+removal, sync `.gitignore` refresh — re-runs the affected checks,
+and exits on the post-fix state; destructive remediations stay
+hints. Plain `doctor` remains the dry run.
 
 Common failures:
 
