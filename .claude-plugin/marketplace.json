@@ -6,7 +6,7 @@
   },
   "metadata": {
     "description": "Memory you can verify — a trust layer between an agent and its own past: per-hit staleness verdicts, claim-level use attribution, measured effectiveness, episodic run-state. Local-first, no cloud.",
-    "version": "3.21.0"
+    "version": "3.22.0"
   },
   "plugins": [
     {

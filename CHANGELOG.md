@@ -7,7 +7,13 @@ breaking changes, minor for additive features, patch for fixes. The
 [compatibility contract](CONTRIBUTING.md#versioning-and-the-compatibility-contract)
 spells out exactly what's stable.
 
-## Unreleased
+## 3.22.0 - 2026-07-12
+
+One additive feature: doctor grows the repair half of its contract.
+Minor rather than patch because `doctor --fix` is a new CLI surface
+(and `--json` with `--fix` a new payload shape); nothing renamed or
+removed — plain `doctor`, its 0/1/2 exit codes, and the bare `--json`
+shape are byte-compatible.
 
 ### Added
 
