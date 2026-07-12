@@ -2721,11 +2721,20 @@ def render_text(report: DoctorReport) -> str:
     return "\n".join(out)
 
 
-def render_fixes_text(fixes: list[FixResult], pre: DoctorReport) -> str:
+def render_fixes_text(
+    fixes: list[FixResult], pre: DoctorReport, post: DoctorReport
+) -> str:
     """The `--fix` tail of the text report. `pre` is the PRE-fix report
-    — the "before" half of the before/after story (the caller renders
-    the post-fix check list above this section). Says so explicitly
-    when there was nothing to fix, per the no-op contract."""
+    — the "before" half of the before/after story — and `post` is the
+    re-run whose check list the caller renders above this section (the
+    same report as `pre` when nothing was applied). The manual-only
+    list is computed against POST state, not just "had no FixResult":
+    a fix can heal a NEIGHBOUR check's cause (the storage chmod
+    unblocks event-log creation), and a pre-fix red the post re-run
+    shows green has no hint left to point at — listing it as
+    manual-only right under its own green check line would be a
+    self-contradiction. Says so explicitly when there was nothing to
+    fix, per the no-op contract."""
     out: list[str] = ["--fix:"]
     red = [c.name for c in pre.checks if c.status != "ok"]
     if not red:
@@ -2747,7 +2756,19 @@ def render_fixes_text(fixes: list[FixResult], pre: DoctorReport) -> str:
                 )
             else:
                 out.append(f"  ✗ {f.check}: not applied — {f.error or f.message}")
-        manual = [n for n in red if n not in {f.check for f in fixes}]
+        pre_status = {c.name: c.status for c in pre.checks}
+        post_status = {c.name: c.status for c in post.checks}
+        attempted = {f.check for f in fixes}
+        rest = [n for n in red if n not in attempted]
+        # A pre-fix red with no FixResult of its own that the post
+        # re-run shows green was healed by another fix; a name the
+        # post report dropped entirely stays manual (conservative).
+        healed = [n for n in rest if post_status.get(n) == "ok"]
+        manual = [n for n in rest if post_status.get(n) != "ok"]
+        for name in healed:
+            out.append(
+                f"  ✓ {name}: healed by another fix above (was {pre_status[name]})"
+            )
         if manual:
             out.append(
                 "  manual-only finding(s), see hints above: " + ", ".join(manual)
@@ -2819,7 +2840,7 @@ def cli_doctor(*, json_out: bool, fix: bool = False) -> int:
             sys.stdout.write(render_json(post, fixes=fixes))
         else:
             sys.stdout.write(render_text(post))
-            sys.stdout.write(render_fixes_text(fixes, report))
+            sys.stdout.write(render_fixes_text(fixes, report, post))
         return _EXIT_CODE_BY_STATUS[post.overall]
     if json_out:
         sys.stdout.write(render_json(report))

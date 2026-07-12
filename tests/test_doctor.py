@@ -3579,6 +3579,46 @@ def test_cli_doctor_fix_does_not_corrupt_cadence_exit_code(
     assert statuses == {"index_health": "ok", "audit_turn_cadence": "ok"}
 
 
+def test_cli_doctor_fix_no_manual_contradiction_when_neighbor_heals(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The flagship neighbour-heal shape: an unwritable store dir with
+    NO event log yet reds BOTH storage_directory and event_log, and
+    only storage has an applicable fixer (the event_log fixer declines
+    — there is no file to chmod). The storage chmod unblocks event-log
+    creation, so the post re-run shows event_log green with no hint —
+    the old pre-only manual list still named it "manual-only, see
+    hints above", contradicting the green check line it sat under and
+    pointing at hints that no longer exist. The tail must render it as
+    healed-by-another-fix instead; the exit code stays the post
+    verdict (0)."""
+    from bettermemory import doctor as doctor_mod
+
+    cfg = _config_for(tmp_path)
+
+    def _diagnose() -> DoctorReport:
+        storage_diag, _resolved = _check_storage_directory(cfg)
+        return DoctorReport(checks=[storage_diag, _check_event_log_writable(tmp_path)])
+
+    monkeypatch.setattr(doctor_mod, "run_diagnostics", _diagnose)
+    monkeypatch.setattr(doctor_mod, "load_config", lambda: cfg)
+    tmp_path.chmod(0o555)
+    try:
+        if _diagnose().overall == "ok":
+            pytest.skip("filesystem ignored chmod; cannot exercise unwritable dir")
+        code = cli_doctor(json_out=False, fix=True)
+        out = capsys.readouterr().out
+    finally:
+        tmp_path.chmod(0o755)
+    assert code == 0
+    assert "manual-only" not in out
+    assert "healed by another fix" in out
+    assert "✓ event_log" in out  # the post check list agrees
+    assert "fixed (was fail)" in out  # storage_directory's own line
+
+
 def test_cli_doctor_fix_json_carries_fixes_array(
     tmp_path: Path,
     capsys: pytest.CaptureFixture[str],
