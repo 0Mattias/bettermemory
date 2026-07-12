@@ -1014,3 +1014,116 @@ def test_two_recorders_one_dir_no_corruption(tmp_path: Path) -> None:
     assert sessions == {"sess_a", "sess_b"}
     ids = {e["id"] for e in events}
     assert ids == {"A1", "B1", "A2"}
+
+
+# ---------------------------------------------------------------------------
+# Construction-site class check — the telemetry opt-out must thread
+# through EVERY Recorder built in production code
+# ---------------------------------------------------------------------------
+
+
+# Deliberate exceptions to the enabled=-from-config rule, as paths
+# relative to src/ (e.g. "bettermemory/foo.py"). EMPTY BY DESIGN: the
+# Stop hook (2.6.x) and `bettermemory ingest` (3.22.x) both shipped
+# this exact omission — a new construction site defaulted
+# `enabled=True` and kept writing events for users who had set
+# `[telemetry] enabled = false`. An entry here is a REVIEWED decision
+# that a site may ignore the user's telemetry opt-out; today there is
+# no such site.
+_ENABLED_KWARG_ALLOWLIST: frozenset[str] = frozenset()
+
+
+def test_every_recorder_site_threads_config_enabled() -> None:
+    """Every ``Recorder(...)`` construction under src/ must pass an
+    ``enabled=`` keyword sourced from telemetry config — a
+    ``<...>.telemetry.enabled`` attribute chain — so `[telemetry]
+    enabled = false` turns the event log off EVERYWHERE (the doctor
+    module docstring's contract), not just in the MCP server.
+
+    Implementation: AST-walk the source tree and inspect every call
+    whose callee is named ``Recorder`` (bare name or attribute access
+    like ``events.Recorder``). For each non-allowlisted site, require
+    the ``enabled=`` keyword and require its value to be a dotted
+    chain ending ``.telemetry.enabled`` (matching every live site:
+    ``config.telemetry.enabled``, ``cfg.telemetry.enabled``,
+    ``ctx.config.telemetry.enabled``, and doctor's ``telemetry.enabled``
+    where ``telemetry`` is the resolved TelemetryConfig).
+
+    Deliberately conservative: a site passing ``enabled`` positionally,
+    via ``**kwargs``, or computed through a helper fails this check —
+    convert it to the explicit keyword chain (or, after review, add
+    the file to the allowlist) rather than broadening the extractor. A
+    site constructed through an ALIAS of the class (``R = Recorder``)
+    is the one shape the sweep cannot see; none exists today."""
+    import ast
+
+    src_root = Path(__file__).resolve().parents[1] / "src" / "bettermemory"
+
+    def _dotted_segments(expr: ast.expr) -> list[str]:
+        """Leaf-first attribute chain: `ctx.config.telemetry.enabled`
+        -> ["enabled", "telemetry", "config", "ctx"]. Empty when the
+        expression is not a plain Name/Attribute chain."""
+        segs: list[str] = []
+        while isinstance(expr, ast.Attribute):
+            segs.append(expr.attr)
+            expr = expr.value
+        if isinstance(expr, ast.Name):
+            segs.append(expr.id)
+            return segs
+        return []
+
+    sites: list[tuple[str, int, ast.Call]] = []
+    for py_file in sorted(src_root.rglob("*.py")):
+        rel = py_file.relative_to(src_root.parent).as_posix()
+        tree = ast.parse(py_file.read_text(encoding="utf-8"))
+        for node in ast.walk(tree):
+            if not isinstance(node, ast.Call):
+                continue
+            func = node.func
+            callee = (
+                func.id
+                if isinstance(func, ast.Name)
+                else func.attr
+                if isinstance(func, ast.Attribute)
+                else None
+            )
+            if callee == "Recorder":
+                sites.append((rel, node.lineno, node))
+
+    # The sweep finding nothing means the extractor broke (module move,
+    # class rename), not that the invariant holds — fail loudly.
+    assert sites, "AST sweep found no Recorder(...) construction site under src/"
+
+    violations: list[str] = []
+    for rel, lineno, call in sites:
+        if rel in _ENABLED_KWARG_ALLOWLIST:
+            continue
+        enabled_kw = next((kw for kw in call.keywords if kw.arg == "enabled"), None)
+        if enabled_kw is None:
+            violations.append(
+                f"{rel}:{lineno} — Recorder(...) without an enabled= keyword: "
+                f"the site defaults enabled=True and ignores "
+                f"[telemetry] enabled = false"
+            )
+            continue
+        segs = _dotted_segments(enabled_kw.value)
+        if len(segs) < 2 or segs[0] != "enabled" or segs[1] != "telemetry":
+            violations.append(
+                f"{rel}:{lineno} — enabled= is not sourced from telemetry "
+                f"config (need a `<...>.telemetry.enabled` chain, got "
+                f"{ast.unparse(enabled_kw.value)!r})"
+            )
+    assert not violations, (
+        "Recorder construction site(s) that do not thread the user's "
+        "telemetry opt-out:\n  "
+        + "\n  ".join(violations)
+        + "\nWire enabled=<config>.telemetry.enabled (see builder.py), or — "
+        "only as a reviewed decision — add the file to "
+        "_ENABLED_KWARG_ALLOWLIST in this test."
+    )
+
+    stale = set(_ENABLED_KWARG_ALLOWLIST) - {rel for rel, _, _ in sites}
+    assert not stale, (
+        f"_ENABLED_KWARG_ALLOWLIST entries {sorted(stale)} match no "
+        f"Recorder construction site under src/ — remove the stale entries."
+    )

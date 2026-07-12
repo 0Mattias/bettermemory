@@ -1215,3 +1215,80 @@ class TestCLI:
         )
         with pytest.raises(SystemExit):
             server_main()
+
+    def test_ingest_honours_telemetry_opt_out(
+        self, tmp_path: Path, capsys: Any, monkeypatch: Any
+    ) -> None:
+        """`[telemetry] enabled = false` + a committing ingest run: the
+        memories land, but no `.events.jsonl` is created and nothing is
+        appended to a pre-existing one. Third instance of the
+        enabled=-omission class (the Stop hook shipped the same bug —
+        see test_hook's telemetry-disabled regression): the recorder in
+        cli/ingest.py must thread `ctx.config.telemetry` like every
+        other construction site. The whole class is pinned statically
+        by the AST sweep in test_events.py; this is the behavioural
+        half for the lane that regressed."""
+        import argparse
+
+        from bettermemory.cli.ingest import _cli_ingest
+        from bettermemory.config import Config, StorageConfig, TelemetryConfig
+        from bettermemory.events import EVENT_LOG_FILENAME
+
+        store_dir = tmp_path / "store"
+        store_dir.mkdir()
+        cfg = Config(
+            storage=StorageConfig(directory=str(store_dir)),
+            telemetry=TelemetryConfig(enabled=False),
+        )
+        monkeypatch.setattr("bettermemory.cli._common.load_config", lambda: cfg)
+
+        def _ingest(source: Path) -> None:
+            _cli_ingest(
+                source=str(source),
+                dry_run=False,
+                extra_scopes=[],
+                force=False,
+                json_out=False,
+                parser=argparse.ArgumentParser(),
+            )
+            capsys.readouterr()
+
+        # Lane 1 — no log exists: the opted-out run must not create one.
+        source_a = tmp_path / "source-a"
+        _write_auto_memory(source_a, "opt-out-a", body="lane one body prose")
+        _ingest(source_a)
+        log = store_dir / EVENT_LOG_FILENAME
+        assert len(Store(store_dir).load_all()) == 1  # the ingest committed
+        assert not log.exists()  # ...but conjured no event log
+        assert not list(store_dir.glob(".events-*.jsonl.gz"))  # nor rotation residue
+
+        # Lane 2 — a log already exists (written while telemetry was
+        # on): the opted-out run must not append to it either.
+        sentinel = '{"ts":"2026-01-01T00:00:00Z","session":"old","kind":"search"}\n'
+        log.write_text(sentinel, encoding="utf-8")
+        source_b = tmp_path / "source-b"
+        _write_auto_memory(source_b, "opt-out-b", body="lane two body prose")
+        _ingest(source_b)
+        assert len(Store(store_dir).load_all()) == 2
+        assert log.read_text(encoding="utf-8") == sentinel  # byte-identical
+
+        # Contrast lane — telemetry on: the same run shape DOES record
+        # the ingest `write` event, so the opt-out pins above cannot
+        # pass vacuously (e.g. if apply_ingest_plan stopped recording).
+        store_dir2 = tmp_path / "store2"
+        store_dir2.mkdir()
+        cfg2 = Config(
+            storage=StorageConfig(directory=str(store_dir2)),
+            telemetry=TelemetryConfig(enabled=True),
+        )
+        monkeypatch.setattr("bettermemory.cli._common.load_config", lambda: cfg2)
+        source_c = tmp_path / "source-c"
+        _write_auto_memory(source_c, "opt-in-c")
+        _ingest(source_c)
+        log2 = store_dir2 / EVENT_LOG_FILENAME
+        assert log2.exists()
+        events = [
+            json.loads(line) for line in log2.read_text(encoding="utf-8").splitlines()
+        ]
+        assert [e["kind"] for e in events] == ["write"]
+        assert events[0]["triggered_from"] == "cli_ingest"
