@@ -53,6 +53,7 @@ from bettermemory.doctor import (
     _fix_context,
     _pattern_matches_tracked_path,
     _probe_index_integrity,
+    _ADMIN_EVENT_KINDS,
     _EXIT_CODE_BY_STATUS,
     _FIXERS,
     _STATUS_GLYPH,
@@ -826,6 +827,89 @@ def test_audit_turn_cadence_census_excludes_admin_event_kinds(
     assert diag.status == "ok"
     assert diag.details["sessions"] == 1
     assert diag.details["total_events"] == 1
+
+
+def test_audit_turn_cadence_census_excludes_silent_miss_cutoff(
+    tmp_path: Path,
+) -> None:
+    """`consolidate --acknowledge-misses-before` records its bulk
+    `silent_miss_cutoff` marker under a fresh throwaway session id
+    (`_SessionState().session_id` minted per CLI invocation) — the
+    same outside-any-client-session shape as `doctor_fix`. One real
+    session (the "not enough cadence data" ok shape) plus one cutoff
+    row must stay ok: counting the marker's phantom session trips the
+    ≥2-session floor and warns about a Stop hook that never had a
+    turn end to fire on."""
+    from datetime import datetime, timezone
+
+    now_iso = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+    _write_event(tmp_path, "search", ts=now_iso, session="the-real-one")
+    _write_event(tmp_path, "silent_miss_cutoff", ts=now_iso, session="cli-ack-run")
+    diag = _check_audit_turn_cadence(tmp_path)
+    assert diag.status == "ok"
+    assert diag.details["sessions"] == 1
+    assert diag.details["total_events"] == 1
+
+
+def test_admin_event_kinds_parity_with_eval_registry() -> None:
+    """`_ADMIN_EVENT_KINDS` must never fall behind eval.py's roster.
+
+    eval's `_KNOWN_SIDE_EFFECT_KINDS` is the canonical registry of
+    every event kind the recorder emits outside a tool invocation —
+    its own AST parity test (tests/test_eval.py) keeps it complete
+    against the actual `recorder.record()` call sites under src/. The
+    subset of that roster recorded by admin CLI surfaces — outside any
+    client session, under a throwaway session id — is exactly what the
+    cadence census must exclude. Derive that subset from the eval
+    registry (never a hardcoded copy) and pin doctor's set as a
+    superset of it.
+
+    `in_session` names the complement: side-effect kinds recorded
+    WITHIN a live client session under the client's own session id,
+    which the census must keep counting. Verified at their call sites:
+
+    * ``search_miss`` / ``proposals_enqueued`` — the Stop hook's
+      recorder (hook.py), the same recorder that writes that session's
+      ``turn_audited`` rows.
+    * ``pending_expired`` — drained handler-side through the live
+      session's recorder (handlers/_shared.py).
+
+    A NEW kind added to the eval registry lands in the derived admin
+    subset and fails here until a human classifies it — into
+    `_ADMIN_EVENT_KINDS` (throwaway session id) or into `in_session`
+    (client session id). That forced classification is the point: the
+    two registries cannot silently drift apart."""
+    from bettermemory.eval import _KNOWN_SIDE_EFFECT_KINDS
+
+    in_session = {"search_miss", "pending_expired", "proposals_enqueued"}
+    unclassified = in_session - _KNOWN_SIDE_EFFECT_KINDS
+    assert not unclassified, (
+        f"the in-session exclusion list names kind(s) "
+        f"{sorted(unclassified)} that eval.py's registry no longer "
+        f"carries — prune this list."
+    )
+
+    eval_admin_kinds = _KNOWN_SIDE_EFFECT_KINDS - in_session
+    missing = eval_admin_kinds - _ADMIN_EVENT_KINDS
+    assert not missing, (
+        f"eval.py's _KNOWN_SIDE_EFFECT_KINDS carries kind(s) "
+        f"{sorted(missing)} that doctor's _ADMIN_EVENT_KINDS census "
+        f"exclusion does not. If the kind is recorded by an admin CLI "
+        f"under a throwaway session id, add it to _ADMIN_EVENT_KINDS; "
+        f"if it is recorded inside a live client session, add it to "
+        f"this test's in_session list."
+    )
+
+    # Reverse direction: an admin/CLI kind is by definition not a tool
+    # invocation, so eval's parity test forces it into
+    # _KNOWN_SIDE_EFFECT_KINDS — a doctor entry absent there is either
+    # stale or never recorded anywhere.
+    stale = _ADMIN_EVENT_KINDS - _KNOWN_SIDE_EFFECT_KINDS
+    assert not stale, (
+        f"_ADMIN_EVENT_KINDS carries kind(s) {sorted(stale)} that "
+        f"eval.py's _KNOWN_SIDE_EFFECT_KINDS does not know — stale "
+        f"entry, or a kind eval's own registry is missing."
+    )
 
 
 def test_audit_turn_cadence_only_old_events_skips_warn(tmp_path: Path) -> None:

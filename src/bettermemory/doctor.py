@@ -712,8 +712,9 @@ def _check_event_log_writable(directory: Path) -> Diagnosis:
     )
 
 
-# Event kinds emitted by admin/CLI surfaces (today: `doctor --fix`'s
-# audit trail) rather than by an MCP server session serving a client.
+# Event kinds emitted by admin/CLI surfaces (`doctor --fix`'s audit
+# trail; `consolidate --acknowledge-misses-before`'s bulk cutoff
+# marker) rather than by an MCP server session serving a client.
 # INVARIANT: every kind in this set is recorded outside any client
 # session, under a fresh throwaway session id, so a "session" observed
 # only through these kinds never had a Stop hook that could produce
@@ -722,8 +723,11 @@ def _check_event_log_writable(directory: Path) -> Diagnosis:
 # `doctor --fix` on a store with one real session would manufacture the
 # second "session" whose missing `turn_audited` its own post-fix re-run
 # then warns about, flipping a fully-healed run's exit code to 1. Grow
-# this set whenever a new admin/CLI-recorded event kind is added.
-_ADMIN_EVENT_KINDS: frozenset[str] = frozenset({"doctor_fix"})
+# this set whenever a new admin/CLI-recorded event kind is added — the
+# parity pin in tests/test_doctor.py derives the admin-CLI subset from
+# eval.py's `_KNOWN_SIDE_EFFECT_KINDS` roster and fails when this set
+# falls behind it.
+_ADMIN_EVENT_KINDS: frozenset[str] = frozenset({"doctor_fix", "silent_miss_cutoff"})
 
 
 def _check_audit_turn_cadence(directory: Path) -> Diagnosis:
