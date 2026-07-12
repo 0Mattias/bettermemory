@@ -24,6 +24,8 @@ from typing import Any
 import pytest
 
 from bettermemory import sync
+
+from .conftest import set_git_discovery_ceiling
 from bettermemory.config import BehaviorConfig, Config, StorageConfig
 from bettermemory.doctor import (
     CheckStatus,
@@ -1824,43 +1826,6 @@ def _git_in(cwd: Path, *args: str) -> str:
     return result.stdout
 
 
-def _set_git_discovery_ceiling(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    """Pin git's upward repo discovery inside the pytest sandbox.
-
-    The nested-store checks walk from the store toward the filesystem
-    root, so whenever pytest's tmp_path sits under ANY real git repo
-    (a TMPDIR redirected into a checkout, `--basetemp` inside one, …)
-    an unpinned walk escapes the fixture and finds that real repo —
-    flipping "not inside any git worktree" verdicts and appending
-    phantom levels to `scanned_parent_toplevels`. Removing this
-    ceiling reintroduces exactly those failures (verified by running
-    the nested-store tests with `--basetemp` inside a scratch git
-    repo: they fail without the ceiling and pass with it).
-
-    `GIT_CEILING_DIRECTORIES` stops the walk, but git only honours a
-    ceiling that is a STRICT ancestor of the probe directory
-    (`longest_ancestor_length` requires `path[len] == '/'`; verified
-    on git 2.50.1: a probe launched FROM the ceiling directory itself
-    escapes upward unhindered). Every fixture walk terminates with a
-    probe launched from `tmp_path` exactly, and the store-IS-tmp_path
-    tests probe from `tmp_path.parent`, so a ceiling AT `tmp_path`
-    would be inert for precisely the probes that matter. The two
-    entries below are strict ancestors of every probe directory these
-    checks can launch, while every fixture repo lives at or below
-    `tmp_path` — strictly below both ceilings — so in-sandbox
-    discovery (including the multi-level grandparent walks) still
-    resolves normally.
-
-    Test-side control ONLY: production code never sets this variable —
-    a real user's own `GIT_CEILING_DIRECTORIES` is their configuration
-    to keep.
-    """
-    monkeypatch.setenv(
-        "GIT_CEILING_DIRECTORIES",
-        os.pathsep.join([str(tmp_path.parent), str(tmp_path.parent.parent)]),
-    )
-
-
 def _store_repo(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     """A git-inited store dir with a hermetic global git config. The
     `GIT_CONFIG_GLOBAL` redirect mirrors tests/test_sync.py's
@@ -1872,7 +1837,7 @@ def _store_repo(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     global_config = tmp_path / "test.gitconfig"
     global_config.touch()
     monkeypatch.setenv("GIT_CONFIG_GLOBAL", str(global_config))
-    _set_git_discovery_ceiling(tmp_path, monkeypatch)
+    set_git_discovery_ceiling(tmp_path, monkeypatch)
     _git_in(store, "init", "--initial-branch", "main")
     _git_in(store, "config", "--global", "user.email", "test@example.com")
     _git_in(store, "config", "--global", "user.name", "Test")
@@ -2141,7 +2106,7 @@ def _parent_repo_with_nested_store(
     global_config = tmp_path / "test.gitconfig"
     global_config.touch()
     monkeypatch.setenv("GIT_CONFIG_GLOBAL", str(global_config))
-    _set_git_discovery_ceiling(tmp_path, monkeypatch)
+    set_git_discovery_ceiling(tmp_path, monkeypatch)
     _git_in(parent, "init", "--initial-branch", "main")
     _git_in(parent, "config", "--global", "user.email", "test@example.com")
     _git_in(parent, "config", "--global", "user.name", "Test")
@@ -2170,7 +2135,7 @@ def _grandparent_repo_with_doubly_nested_store(
     global_config = tmp_path / "test.gitconfig"
     global_config.touch()
     monkeypatch.setenv("GIT_CONFIG_GLOBAL", str(global_config))
-    _set_git_discovery_ceiling(tmp_path, monkeypatch)
+    set_git_discovery_ceiling(tmp_path, monkeypatch)
     _git_in(grand, "init", "--initial-branch", "main")
     _git_in(grand, "config", "--global", "user.email", "test@example.com")
     _git_in(grand, "config", "--global", "user.name", "Test")
@@ -2307,7 +2272,7 @@ def test_store_nested_in_parent_repo_ok_on_non_git_store(
     keeps "outside any git worktree" true even when pytest's own
     basetemp sits under a real repo — without it the upward walk finds
     that repo and the verdict flips."""
-    _set_git_discovery_ceiling(tmp_path, monkeypatch)
+    set_git_discovery_ceiling(tmp_path, monkeypatch)
     (tmp_path / PROPOSALS_FILENAME).write_text(
         '{"content": "local only"}\n', encoding="utf-8"
     )
@@ -2590,7 +2555,7 @@ def test_store_nested_in_parent_repo_pattern_matching_store_dirname_stays_ok(
     global_config = tmp_path / "test.gitconfig"
     global_config.touch()
     monkeypatch.setenv("GIT_CONFIG_GLOBAL", str(global_config))
-    _set_git_discovery_ceiling(tmp_path, monkeypatch)
+    set_git_discovery_ceiling(tmp_path, monkeypatch)
     _git_in(grand, "init", "--initial-branch", "main")
     _git_in(grand, "config", "--global", "user.email", "test@example.com")
     _git_in(grand, "config", "--global", "user.name", "Test")
@@ -3134,7 +3099,7 @@ def test_store_nested_in_parent_repo_broken_gitfile_without_parent_stays_ok(
     parent. The discovery ceiling pins the fallback walk inside the
     pytest sandbox so this verdict cannot flip when basetemp itself
     sits under a real repo."""
-    _set_git_discovery_ceiling(tmp_path, monkeypatch)
+    set_git_discovery_ceiling(tmp_path, monkeypatch)
     store = tmp_path / "store"
     store.mkdir()
     (store / PROPOSALS_FILENAME).write_text(

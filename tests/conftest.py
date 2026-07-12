@@ -97,10 +97,12 @@ def set_git_discovery_ceiling(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -
     a real user's own ``GIT_CEILING_DIRECTORIES`` is their
     configuration to keep.
 
-    Pending dedup: ``tests/test_doctor.py`` carries a local
-    ``_set_git_discovery_ceiling`` with identical semantics (it opened
-    this hermeticity class and is owned by a parallel change this
-    round); fold it into this helper once that work settles.
+    The doctor nested-store checks opened this hermeticity class and
+    carried the original local twin of this helper (since folded in
+    here): their upward walks append phantom levels to
+    ``scanned_parent_toplevels`` when unpinned — removing the ceiling
+    while pointing ``--basetemp`` inside a scratch git repo
+    reintroduces exactly those failures.
     """
     monkeypatch.setenv(
         "GIT_CEILING_DIRECTORIES",
