@@ -2458,10 +2458,426 @@ def render_tool_usage_text(report: ToolUsageReport) -> str:
     return "\n".join(lines) + "\n"
 
 
+# ---------------------------------------------------------------------------
+# Publishable markdown report — every rollup above, one self-contained doc
+# ---------------------------------------------------------------------------
+#
+# `bettermemory eval --report` renders the store's dogfood telemetry as
+# ONE markdown artifact a maintainer can paste into a README, a blog
+# post, or docs/eval-results.md without a redaction pass. That safety
+# property is the feature, and it is a *tested contract*, not a hope
+# (see the canary test in tests/test_eval.py): the renderer emits
+# rates, counts, CIs, model names, and the static tool/rule registry
+# names ONLY. It never touches the leak-capable fields the sub-reports
+# carry for the interactive modes — `cold_endorsement_memories_rows`
+# (memory summaries + scope names), `silent_miss_recent` (session ids
+# + memory ids), `scope_filter`, or the log-derived `threshold_rule`
+# string (rule names in the report come from the static
+# `THRESHOLD_RULES` registry, so a hand-edited event can't inject
+# text). No memory bodies, no probe queries (not even the redacted
+# previews), no filesystem paths, no scope names, no session ids.
+#
+# The composition is deliberately NOT new measurement: `compute_report`
+# only re-runs the existing computations (`compute_eval` twice — the
+# `--since` window and all-time side by side, because the trend between
+# the two windows is the story eval-results.md tells — plus
+# `compute_threshold_sweep` and `compute_tool_usage` over the full
+# log) and counts distinct sessions. The renderer is the only new
+# logic.
+
+
+@dataclass
+class ReportDocument:
+    """Output of ``compute_report`` — the sub-reports the markdown
+    renderer composes, so tests can drive the renderer with synthetic
+    parts.
+
+    No ``to_dict``: report mode is markdown-only by contract (the CLI
+    hard-errors on ``--report --json``), and each part is individually
+    serialisable already.
+
+    ``window_eval`` and ``alltime_eval`` are the SAME object when the
+    caller asked for ``--since all`` — the renderer collapses to a
+    single column rather than printing two identical ones.
+    """
+
+    generated_at: datetime
+    window_seconds: int | None  # None = the window IS all-time
+    version: str
+    active_memory_count: int
+    total_events: int
+    distinct_session_count: int
+    window_eval: EvalReport
+    alltime_eval: EvalReport
+    sweep: ThresholdSweepReport
+    tool_usage: ToolUsageReport
+
+
+def _package_version() -> str:
+    """Installed package version for the methodology footer.
+
+    Same fallback contract as ``bettermemory.__version__`` (kept local
+    so the eval module never imports the package root — that import
+    direction is what caused the historical load-time cycle in the CLI
+    package).
+    """
+    from importlib.metadata import PackageNotFoundError, version
+
+    try:
+        return version("bettermemory")
+    except PackageNotFoundError:  # pragma: no cover — dev checkouts only
+        return "0+unknown"
+
+
+def compute_report(
+    memories: Iterable[Memory],
+    events: Iterable[dict[str, Any]],
+    *,
+    now: datetime | None = None,
+    since: timedelta | None = None,
+    tombstoned_ids: set[str] | None = None,
+    version: str | None = None,
+) -> ReportDocument:
+    """Compose the existing rollups into one report document.
+
+    ``events`` may be a one-shot iterator (``iter_all_events`` is); it
+    is materialised once here because four computations re-walk it.
+    ``since`` is the window column of the rate trio; the all-time
+    column, the threshold sweep, the tool-usage rollup, and the
+    aggregate store-shape counters always cover the full log — the
+    report is a distribution artifact, and all-time is the canonical
+    denominator for everything except the trend comparison. ``None``
+    means the window is all-time and the renderer shows one column.
+
+    Distinct sessions are COUNTED via the same ``session_id`` /
+    ``session`` fallback chain ``_silent_miss_from_event`` reads; the
+    ids themselves never land on the document.
+    """
+    now = now or datetime.now(timezone.utc)
+    memory_list = list(memories)
+    event_list = list(events)
+
+    alltime_eval = compute_eval(
+        memory_list,
+        event_list,
+        now=now,
+        since=None,
+        tombstoned_ids=tombstoned_ids,
+    )
+    if since is None:
+        window_eval = alltime_eval
+    else:
+        window_eval = compute_eval(
+            memory_list,
+            event_list,
+            now=now,
+            since=since,
+            tombstoned_ids=tombstoned_ids,
+        )
+    sweep = compute_threshold_sweep(event_list, since=None, now=now)
+    usage = compute_tool_usage(event_list, since=None, now=now)
+
+    sessions: set[str] = set()
+    for ev in event_list:
+        if not isinstance(ev, dict):
+            continue
+        sid = ev.get("session_id") or ev.get("session")
+        if isinstance(sid, str) and sid:
+            sessions.add(sid)
+
+    return ReportDocument(
+        generated_at=now,
+        window_seconds=int(since.total_seconds()) if since is not None else None,
+        version=version if version is not None else _package_version(),
+        active_memory_count=len(memory_list),
+        total_events=alltime_eval.total_events_scanned,
+        distinct_session_count=len(sessions),
+        window_eval=window_eval,
+        alltime_eval=alltime_eval,
+        sweep=sweep,
+        tool_usage=usage,
+    )
+
+
+def _md_escape_cell(text: str) -> str:
+    """Escape the one character that breaks a hand-rolled markdown
+    table cell. Applied to the only non-static string the renderer
+    emits (model names, which come off logged `client_model` stamps —
+    the log is plaintext and hand-editable, so a stray ``|`` must not
+    be able to shift columns)."""
+    return text.replace("|", "\\|")
+
+
+def _md_rate_cell(rate: RateCI, *, bold: bool = False) -> str:
+    """One rate-trio table cell: ``k/n = 0.07 [0.05, 0.09]``.
+
+    Mirrors docs/eval-results.md's published shape. ``n/a`` keeps the
+    raw counts visible so the reader sees *why* the rate is undefined.
+    """
+    if rate.rate is None or rate.lower is None or rate.upper is None:
+        return f"n/a (k={rate.numerator}, n={rate.denominator})"
+    value = f"{rate.rate:0.2f}"
+    if bold:
+        value = f"**{value}**"
+    return (
+        f"{rate.numerator}/{rate.denominator} = {value} "
+        f"[{rate.lower:0.2f}, {rate.upper:0.2f}]"
+    )
+
+
+def _count_phrase(n: int, singular: str, plural: str) -> str:
+    """``1 turn audited`` / ``3 turns audited`` — number-agreement for
+    the report's counted nouns. The plural is explicit at every call
+    site (the phrases pluralise in different positions: "turns
+    audited" vs "repeat audits deduped"), so a lazy ``+s`` rule can't
+    quietly publish bad grammar."""
+    return f"{n} {singular if n == 1 else plural}"
+
+
+def _md_denominator_note(label: str, report: EvalReport) -> str:
+    """One-line counts context under the rate table — window shape a
+    reader needs to judge the CIs. Counts only."""
+    parts = [
+        _count_phrase(report.total_events_scanned, "event scanned", "events scanned"),
+        _count_phrase(
+            report.retrieval_occurrences,
+            "retrieval occurrence",
+            "retrieval occurrences",
+        ),
+        _count_phrase(report.applied_total, "applied use event", "applied use events"),
+        _count_phrase(report.turns_audited, "turn audited", "turns audited"),
+    ]
+    if report.turns_no_signal:
+        parts.append(
+            _count_phrase(
+                report.turns_no_signal,
+                "no-signal turn excluded",
+                "no-signal turns excluded",
+            )
+        )
+    if report.repeat_audits:
+        parts.append(
+            _count_phrase(
+                report.repeat_audits, "repeat audit deduped", "repeat audits deduped"
+            )
+        )
+    return f"- {label}: " + " · ".join(parts) + "."
+
+
+def render_report_markdown(doc: ReportDocument) -> str:
+    """Render the composed document as publishable markdown.
+
+    Content contract (the canary test pins it): rates, counts, CIs,
+    model names, and static registry names only. Sections, top to
+    bottom: header, rate trio (window vs all-time), reading guide,
+    per-model table, threshold sweep, tool-usage top 10, methodology
+    footer.
+    """
+    single_window = doc.window_seconds is None
+    window_label = (
+        "all time"
+        if doc.window_seconds is None
+        else f"last {_humanize_seconds(doc.window_seconds)}"
+    )
+    lines: list[str] = []
+
+    # 1. Title + header — aggregate store shape, counts only.
+    lines.append("# bettermemory eval report")
+    lines.append("")
+    if single_window:
+        lines.append(f"Generated {doc.generated_at.isoformat()} · window: all time")
+    else:
+        lines.append(
+            f"Generated {doc.generated_at.isoformat()} · "
+            f"window: {window_label} vs all time"
+        )
+    lines.append("")
+    active_noun = "active memory" if doc.active_memory_count == 1 else "active memories"
+    event_noun = "logged event" if doc.total_events == 1 else "logged events"
+    session_noun = (
+        "distinct session" if doc.distinct_session_count == 1 else "distinct sessions"
+    )
+    lines.append(
+        f"Store shape: **{doc.active_memory_count}** {active_noun} · "
+        f"**{doc.total_events}** {event_noun} · "
+        f"**{doc.distinct_session_count}** {session_noun}. "
+        "Counts only — memory bodies, queries, scopes, paths, and session "
+        "ids never appear in this report."
+    )
+    lines.append("")
+
+    # 2. Rate trio, window vs all-time columns.
+    lines.append("## Rates")
+    lines.append("")
+    if single_window:
+        lines.append("| rate | all time |")
+        lines.append("|---|---|")
+        for name, rate in (
+            ("memory_helped_rate", doc.alltime_eval.memory_helped_rate),
+            ("endorsement_rate", doc.alltime_eval.endorsement_rate),
+            ("silent_miss_rate", doc.alltime_eval.silent_miss_rate),
+        ):
+            lines.append(f"| `{name}` | {_md_rate_cell(rate, bold=True)} |")
+    else:
+        lines.append(f"| rate | {window_label} | all time |")
+        lines.append("|---|---|---|")
+        for name, window_rate, alltime_rate in (
+            (
+                "memory_helped_rate",
+                doc.window_eval.memory_helped_rate,
+                doc.alltime_eval.memory_helped_rate,
+            ),
+            (
+                "endorsement_rate",
+                doc.window_eval.endorsement_rate,
+                doc.alltime_eval.endorsement_rate,
+            ),
+            (
+                "silent_miss_rate",
+                doc.window_eval.silent_miss_rate,
+                doc.alltime_eval.silent_miss_rate,
+            ),
+        ):
+            lines.append(
+                f"| `{name}` | {_md_rate_cell(window_rate, bold=True)} | "
+                f"{_md_rate_cell(alltime_rate)} |"
+            )
+    lines.append("")
+    lines.append("Wilson 95% confidence intervals in brackets.")
+    lines.append("")
+    if not single_window:
+        lines.append(_md_denominator_note(window_label, doc.window_eval))
+    lines.append(_md_denominator_note("all time", doc.alltime_eval))
+    torn = (
+        doc.window_eval.memory_helped_rate.torn_read
+        or doc.window_eval.endorsement_rate.torn_read
+        or doc.window_eval.silent_miss_rate.torn_read
+        or doc.alltime_eval.memory_helped_rate.torn_read
+        or doc.alltime_eval.endorsement_rate.torn_read
+        or doc.alltime_eval.silent_miss_rate.torn_read
+    )
+    if torn:
+        lines.append("")
+        lines.append(
+            "> Note: a numerator exceeded its denominator (rate clamped to "
+            "1.0). Usually a windowing artifact under a `--since` window — "
+            "a use event lands in-window while its retrieval aged out — or, "
+            "less often, a log read mid-rotation."
+        )
+    lines.append("")
+
+    # 3. Reading guide — static prose adapted from docs/eval-results.md.
+    lines.append("## Reading these numbers honestly")
+    lines.append("")
+    lines.append(
+        "- `memory_helped_rate` is a deliberate floor: the numerator counts "
+        "only explicit, claim-excerpt-backed endorsements, while the "
+        "denominator counts every retrieval occurrence. Retrievals that "
+        "quietly helped don't count."
+    )
+    if not single_window:
+        lines.append(
+            "- The window column vs the all-time column is the story: the "
+            "attestation tooling matures over a store's history, so early "
+            "events couldn't carry signals that now exist. Read the trend, "
+            "not either column alone."
+        )
+    lines.append(
+        "- A low or zero `silent_miss_rate` is a claim about the loosest "
+        "evaluable rule (`v1_top1_high`), not about misses in general — "
+        "strictly looser rules can't be replayed from the log alone. The "
+        "threshold-sweep table below replays the flagged misses against "
+        "stricter rules."
+    )
+    lines.append(
+        "- n=1: this measures one deployment's store, workload, and "
+        "retrieval discipline. Treat it as telemetry, not a benchmark."
+    )
+    lines.append("")
+
+    # 4. Per-model audit telemetry.
+    lines.append("## Per-model audit telemetry (all time)")
+    lines.append("")
+    by_model = doc.alltime_eval.by_model
+    if by_model:
+        lines.append("| model | audited | no_signal | misses |")
+        lines.append("|---|---|---|---|")
+        for model in sorted(by_model):
+            counts = by_model[model]
+            lines.append(
+                f"| {_md_escape_cell(model)} | {counts.get('audited', 0)} | "
+                f"{counts.get('no_signal', 0)} | {counts.get('misses', 0)} |"
+            )
+    else:
+        lines.append(
+            "No per-model telemetry in the log yet (the `client_model` "
+            "stamp arrived with 3.14 events)."
+        )
+    lines.append("")
+
+    # 5. Threshold-sweep counterfactual. Rule names/descriptions come
+    # from the rows compute_threshold_sweep built off the static
+    # registry — never from log-derived strings.
+    lines.append("## Threshold sweep (counterfactual, all time)")
+    lines.append("")
+    if doc.sweep.replayable_misses == 0:
+        lines.append(
+            "No replayable misses in the log — the counterfactual needs "
+            "`search_miss` events carrying `top_hits` (2.6.4+)."
+        )
+    else:
+        lines.append("| rule | would flag | Δ v1 | % of v1 |")
+        lines.append("|---|---|---|---|")
+        for row in doc.sweep.rows:
+            delta = f"{row.delta_from_v1:+d}" if row.rule != "v1_top1_high" else "—"
+            pct = f"{row.delta_pct * 100:.1f}%" if row.delta_pct is not None else "—"
+            lines.append(f"| `{row.rule}` | {row.would_flag} | {delta} | {pct} |")
+        lines.append("")
+        replayable = _count_phrase(
+            doc.sweep.replayable_misses, "replayable miss", "replayable misses"
+        )
+        lines.append(
+            f"{replayable}. Stricter rules replay over misses v1 already "
+            'flagged, so this table answers "is v1 over-firing?" — not '
+            '"what does v1 miss?".'
+        )
+        if doc.sweep.skipped_legacy_event_count:
+            skipped = _count_phrase(
+                doc.sweep.skipped_legacy_event_count, "legacy event", "legacy events"
+            )
+            lines.append(f"Skipped {skipped} carrying no replayable relevance label.")
+    lines.append("")
+
+    # 6. Tool-usage top 10.
+    lines.append("## Tool usage (top 10, all time)")
+    lines.append("")
+    lines.append("| tool | calls | share |")
+    lines.append("|---|---|---|")
+    for usage_row in doc.tool_usage.rows[:10]:
+        share = f"{usage_row.share * 100:.1f}%" if usage_row.share is not None else "—"
+        lines.append(f"| `{usage_row.tool}` | {usage_row.count} | {share} |")
+    lines.append("")
+    lines.append(
+        f"{_count_phrase(doc.tool_usage.total_tool_calls, 'tool call', 'tool calls')} "
+        f"total across {len(doc.tool_usage.rows)} known tools."
+    )
+    lines.append("")
+
+    # 7. Methodology footer.
+    lines.append("---")
+    lines.append("")
+    lines.append(
+        f"Generated by `bettermemory eval --report` v{doc.version} "
+        "(metric definitions: docs/eval.md)."
+    )
+    return "\n".join(lines) + "\n"
+
+
 __all__ = [
     "EvalReport",
     "RateCI",
     "ColdEndorsementMemoriesRow",
+    "ReportDocument",
     "SilentMissCandidate",
     "ToolUsageReport",
     "ToolUsageRow",
@@ -2480,11 +2896,13 @@ __all__ = [
     "DEFAULT_ENDORSEMENT_MIN_RETRIEVALS",
     "DEFAULT_SILENT_MISS_LIMIT",
     "compute_eval",
+    "compute_report",
     "compute_tool_usage",
     "compute_threshold_sweep",
     "compute_widening_detail",
     "compute_widening_preview",
     "parse_since",
+    "render_report_markdown",
     "render_text",
     "render_tool_usage_text",
     "render_threshold_sweep_text",

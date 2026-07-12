@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import sys
+from pathlib import Path
 from typing import Any
 
 from ._common import cli_context
@@ -118,6 +119,32 @@ def add_subparser(
         ),
     )
     parser.add_argument(
+        "--report",
+        action="store_true",
+        help=(
+            "Switch to a publishable, self-contained markdown report: the "
+            "rate trio over the `--since` window AND all time side by side "
+            "(Wilson 95%% CIs), per-model audit telemetry, the "
+            "threshold-sweep counterfactual, and the tool-usage top 10, "
+            "plus a reading guide and methodology footer. Aggregates only "
+            "by tested contract — no memory bodies, queries, scopes, "
+            "paths, or session ids ever land in the output, so it is safe "
+            "to publish as-is. Honours `--since` (the window column); "
+            "errors when combined with `--json` or any other mode flag. "
+            "`--output FILE` writes it to a file instead of stdout."
+        ),
+    )
+    parser.add_argument(
+        "--output",
+        type=str,
+        default=None,
+        metavar="FILE",
+        help=(
+            "With --report: write the markdown to FILE instead of stdout. "
+            "Errors when used without --report."
+        ),
+    )
+    parser.add_argument(
         "--json",
         action="store_true",
         help="Emit JSON instead of human-readable text.",
@@ -146,6 +173,8 @@ def run(
         threshold_sweep=args.threshold_sweep,
         widening_preview=args.widening_preview,
         widening_detail=args.detail,
+        report=args.report,
+        output=args.output,
         parser=sub_parser,
     )
 
@@ -161,12 +190,14 @@ def _cli_eval(
     threshold_sweep: bool,
     widening_preview: bool,
     widening_detail: bool = False,
+    report: bool = False,
+    output: str | None = None,
     parser: Any,
 ) -> None:
     """`bettermemory eval` — compute and render the effectiveness report.
 
     Default mode reports the three effectiveness rates
-    (memory_helped_rate, endorsement_rate, silent_miss_rate). Three
+    (memory_helped_rate, endorsement_rate, silent_miss_rate). Four
     alternative modes:
 
     - ``--tool-usage``: per-MCP-tool call-count rollup. Answers
@@ -177,6 +208,12 @@ def _cli_eval(
     - ``--widening-preview``: replay of candidate LOOSER rules over
       the `turn_audited` stream (needs 3.14+ per-turn top_hits).
       Answers "what would a widened rule flag that v1 misses?".
+    - ``--report``: one publishable markdown document composing the
+      rate trio (window vs all-time), per-model telemetry, the
+      threshold sweep, and the tool-usage top 10. Aggregates only —
+      the leak-free property is a tested contract. Markdown-only
+      (``--json`` errors) and exclusive with every other mode flag;
+      ``--output FILE`` redirects it to a file.
 
     The pure compute layer lives in ``bettermemory.eval`` so tests
     can drive every mode directly with synthetic events. The
@@ -189,11 +226,13 @@ def _cli_eval(
     from ..eval import (
         DEFAULT_ENDORSEMENT_MIN_RETRIEVALS,
         compute_eval,
+        compute_report,
         compute_threshold_sweep,
         compute_tool_usage,
         compute_widening_detail,
         compute_widening_preview,
         parse_since,
+        render_report_markdown,
         render_text,
         render_threshold_sweep_text,
         render_tool_usage_text,
@@ -201,6 +240,31 @@ def _cli_eval(
         render_widening_preview_text,
     )
     from ..events import iter_all_events
+
+    if report and (
+        tool_usage or threshold_sweep or widening_preview or widening_detail
+    ):
+        # Same clean-exit style as the --detail guard below: message +
+        # SystemExit(2) via parser.error. The report already composes
+        # the rate trio, the threshold sweep, and the tool-usage rollup,
+        # so combining it with a single-rollup mode flag is a conflict,
+        # not a refinement.
+        parser.error(
+            "--report cannot be combined with --tool-usage, "
+            "--threshold-sweep, --widening-preview, or --detail "
+            "(the report already composes the relevant rollups)"
+        )
+        return  # pragma: no cover — parser.error raises SystemExit
+
+    if report and json_out:
+        parser.error(
+            "--report emits markdown, not JSON; --json only applies to the other modes"
+        )
+        return  # pragma: no cover — parser.error raises SystemExit
+
+    if output is not None and not report:
+        parser.error("--output only applies to --report")
+        return  # pragma: no cover — parser.error raises SystemExit
 
     if sum((tool_usage, threshold_sweep, widening_preview)) > 1:
         parser.error(
@@ -225,6 +289,35 @@ def _cli_eval(
 
     ctx = cli_context()
     directory = ctx.directory
+
+    if report:
+        # Report mode ignores the rate-mode knobs (`--scope`,
+        # `--min-retrievals`, `--silent-miss-limit`) the same way the
+        # other alternative modes do — no parser.error, so shell loops
+        # don't have to strip them per invocation. Scope filtering in
+        # particular is deliberately unsupported: the report never
+        # prints scope names, and a scoped rate column would be
+        # unlabelable without leaking the scope.
+        report_store = ctx.store
+        doc = compute_report(
+            memories=report_store.load_all(),
+            events=iter_all_events(directory),
+            since=since,
+            # Same tombstone enumeration rate-mode uses, so the report's
+            # silent-miss numbers agree with `bettermemory eval` and
+            # `memory_health` over the same log.
+            tombstoned_ids={t.id for t in report_store.load_tombstones()},
+        )
+        markdown = render_report_markdown(doc)
+        if output is not None:
+            try:
+                Path(output).write_text(markdown, encoding="utf-8")
+            except OSError as exc:
+                parser.error(f"--output: cannot write {output!r}: {exc}")
+                return  # pragma: no cover — parser.error raises SystemExit
+        else:
+            sys.stdout.write(markdown)
+        return
 
     if tool_usage:
         # Tool-usage mode ignores `--scope`, `--min-retrievals`, and
@@ -289,7 +382,9 @@ def _cli_eval(
         else DEFAULT_ENDORSEMENT_MIN_RETRIEVALS
     )
 
-    report = compute_eval(
+    # `rate_report`, not `report` — that name is taken by the --report
+    # mode flag in this scope since the report mode landed.
+    rate_report = compute_eval(
         memories=store.load_all(),
         events=iter_all_events(directory),
         since=since,
@@ -305,6 +400,6 @@ def _cli_eval(
         tombstoned_ids={t.id for t in store.load_tombstones()},
     )
     if json_out:
-        sys.stdout.write(_json.dumps(report.to_dict(), indent=2) + "\n")
+        sys.stdout.write(_json.dumps(rate_report.to_dict(), indent=2) + "\n")
     else:
-        sys.stdout.write(render_text(report))
+        sys.stdout.write(render_text(rate_report))
