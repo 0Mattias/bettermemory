@@ -3292,6 +3292,50 @@ def test_fix_storage_directory_reports_chmod_failure(
     assert mode_after == 0o555  # nothing mutated
 
 
+def test_fix_storage_directory_stands_down_without_context(tmp_path: Path) -> None:
+    """The cfg/directory-None guard: a red storage_directory finding
+    reaching the fixer through one of `_fix_context`'s degraded pairs
+    (config failed to load, or the directory is unresolvable) is
+    declined outright — no FixResult, and the directory on disk keeps
+    its mode. An inverted guard would chmod the cfg-None arm's real,
+    unwritable directory to 0o700; the mode pin catches that."""
+    diag = Diagnosis(name="storage_directory", status="fail", message="unwritable")
+    cfg = _config_for(tmp_path)
+    tmp_path.chmod(0o555)
+    try:
+        mode_before = stat.S_IMODE(tmp_path.stat().st_mode)
+        report = DoctorReport(checks=[diag])
+        # cfg-None arm — a real potential victim directory is present.
+        assert run_fixes(report, cfg=None, directory=tmp_path) == []
+        mode_after_cfg_arm = stat.S_IMODE(tmp_path.stat().st_mode)
+        # directory-None arm.
+        assert run_fixes(report, cfg=cfg, directory=None) == []
+        mode_after_dir_arm = stat.S_IMODE(tmp_path.stat().st_mode)
+    finally:
+        tmp_path.chmod(0o755)  # restore so pytest can clean up
+    assert mode_after_cfg_arm == mode_before
+    assert mode_after_dir_arm == mode_before
+
+
+def test_fix_storage_directory_stands_down_when_already_writable(
+    tmp_path: Path,
+) -> None:
+    """The already-writable short-circuit: a storage_directory red
+    whose cause survives W_OK (probe-write failures — ENOSPC, a
+    read-only mount) is not the chmod-able branch. The fixer declines
+    and the directory keeps its healthy mode — an inverted guard would
+    'heal' a correctly-permissioned directory to 0o700."""
+    cfg = _config_for(tmp_path)
+    tmp_path.chmod(0o755)
+    assert os.access(tmp_path, os.W_OK)
+    mode_before = stat.S_IMODE(tmp_path.stat().st_mode)
+    diag = Diagnosis(
+        name="storage_directory", status="fail", message="probe write failed"
+    )
+    assert run_fixes(DoctorReport(checks=[diag]), cfg=cfg, directory=tmp_path) == []
+    assert stat.S_IMODE(tmp_path.stat().st_mode) == mode_before
+
+
 def test_fix_event_log_chmods_unwritable_file(tmp_path: Path) -> None:
     """break→fix→green: an unwritable event log is chmod'd to the 0600
     the Recorder itself sets on first write."""
@@ -3380,6 +3424,39 @@ def test_fix_event_log_reports_chmod_failure(
     assert stat.S_IMODE(log.stat().st_mode) == mode_before  # nothing mutated
 
 
+def test_fix_event_log_stands_down_without_directory(tmp_path: Path) -> None:
+    """The directory guard: a red event_log finding with no resolved
+    directory — None, or a store that vanished between diagnosis and
+    fix — is declined: no FixResult, and nothing materialises on
+    disk at the vanished path."""
+    diag = Diagnosis(name="event_log", status="fail", message="unwritable")
+    report = DoctorReport(checks=[diag])
+    assert run_fixes(report, cfg=None, directory=None) == []
+    gone = tmp_path / "vanished-store"
+    assert run_fixes(report, cfg=None, directory=gone) == []
+    assert not gone.exists()  # nothing created at the vanished path
+
+
+def test_fix_event_log_stands_down_when_already_writable(tmp_path: Path) -> None:
+    """The already-writable short-circuit: an event_log red whose
+    cause survives W_OK (the append-fails-anyway ACL/mount class the
+    check's probe-append catches) is not the chmod branch. The fixer
+    declines and the log keeps its mode and bytes — an inverted guard
+    would chmod a correctly-permissioned log to 0o600."""
+    from bettermemory.events import EVENT_LOG_FILENAME
+
+    log = tmp_path / EVENT_LOG_FILENAME
+    payload = '{"ts":"x","kind":"search"}\n'
+    log.write_text(payload, encoding="utf-8")
+    log.chmod(0o644)
+    assert os.access(log, os.W_OK)
+    mode_before = stat.S_IMODE(log.stat().st_mode)
+    diag = Diagnosis(name="event_log", status="fail", message="append failed")
+    assert run_fixes(DoctorReport(checks=[diag]), cfg=None, directory=tmp_path) == []
+    assert stat.S_IMODE(log.stat().st_mode) == mode_before
+    assert log.read_text(encoding="utf-8") == payload
+
+
 def test_fix_index_health_rebuilds_corrupt_index(tmp_path: Path) -> None:
     """break→fix→green: a garbage .index.sqlite is dropped and rebuilt
     through `index.rebuild` — the exact function `reindex` runs."""
@@ -3453,6 +3530,21 @@ def test_fix_index_health_reports_rebuild_failure(
         assert fix.after_status == "warn"
         assert exc.__class__.__name__ in (fix.error or "")
         assert fix.details["path"] == str(index_path(tmp_path))
+
+
+def test_fix_index_health_stands_down_without_directory(tmp_path: Path) -> None:
+    """The directory guard: with no resolved directory (None) or a
+    store that vanished between diagnosis and fix, the index fixer
+    declines — crucially WITHOUT instantiating Store, whose __init__
+    scaffolds the root (mkdir + .tombstones/). An inverted guard would
+    conjure a brand-new store directory at the vanished path; the
+    not-exists pin catches exactly that."""
+    diag = Diagnosis(name="index_health", status="warn", message="out of sync")
+    report = DoctorReport(checks=[diag])
+    assert run_fixes(report, cfg=None, directory=None) == []
+    gone = tmp_path / "vanished-store"
+    assert run_fixes(report, cfg=None, directory=gone) == []
+    assert not gone.exists()  # no store scaffolded, no index created
 
 
 def test_fix_stale_config_lockfiles_removes_artifact_leaves_live_locks(
@@ -3584,6 +3676,72 @@ def test_fix_sync_gitignore_nothing_to_apply_when_canonical(
     assert diag.status == "fail"
     assert run_fixes(DoctorReport(checks=[diag]), cfg=None, directory=store) == []
     assert PROPOSALS_FILENAME in _git_in(store, "ls-files")
+
+
+def test_fix_sync_gitignore_stands_down_without_directory(tmp_path: Path) -> None:
+    """The directory guard: a red sync_tracked_ignored finding with no
+    resolved directory (None) or a vanished store declines — no
+    FixResult, and no .gitignore materialises anywhere."""
+    diag = Diagnosis(name="sync_tracked_ignored", status="fail", message="tracked")
+    report = DoctorReport(checks=[diag])
+    assert run_fixes(report, cfg=None, directory=None) == []
+    gone = tmp_path / "vanished-store"
+    assert run_fixes(report, cfg=None, directory=gone) == []
+    assert not gone.exists()
+
+
+def test_fix_sync_gitignore_stands_down_outside_a_repo(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The not-a-repo decline: a store directory that is not (or is no
+    longer) the top of a git sync repo gets NO .gitignore planted in
+    it, whatever the diagnosis claims — writing one would drop a sync
+    artifact into a directory sync doesn't own. The fixer declines and
+    the directory's contents are untouched."""
+    set_git_discovery_ceiling(tmp_path, monkeypatch)
+    store = tmp_path / "store"
+    store.mkdir()
+    (store / "2026-01-01-note.md").write_text("body\n", encoding="utf-8")
+    diag = Diagnosis(name="sync_tracked_ignored", status="fail", message="tracked")
+    assert run_fixes(DoctorReport(checks=[diag]), cfg=None, directory=store) == []
+    assert not (store / ".gitignore").exists()
+    assert sorted(p.name for p in store.iterdir()) == ["2026-01-01-note.md"]
+
+
+@_needs_git
+def test_fix_sync_gitignore_unreadable_gitignore_counts_as_stale(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The unreadable-gitignore fallback: a .gitignore that exists but
+    cannot be read (mode 0o000) counts as STALE rather than raising —
+    the refresh proceeds and atomically replaces it with the canonical
+    list (os.replace needs the writable parent dir, not the unreadable
+    file), healing the unreadable artifact in the same stroke. The git
+    index stays untouched: the untrack half is manual forever."""
+    store = _store_repo(tmp_path, monkeypatch)
+    (store / PROPOSALS_FILENAME).write_text("x\n", encoding="utf-8")
+    _git_in(store, "add", PROPOSALS_FILENAME)
+    _git_in(store, "commit", "-m", "pre-fix sync commit")
+    gitignore = store / ".gitignore"
+    gitignore.write_text("# stale and unreadable\n", encoding="utf-8")
+    gitignore.chmod(0o000)
+    try:
+        gitignore.read_text(encoding="utf-8")
+    except OSError:
+        pass
+    else:
+        gitignore.chmod(0o644)
+        pytest.skip("filesystem ignored chmod; cannot exercise unreadable file")
+    diag = _check_sync_tracked_ignored(store)
+    assert diag.status == "fail"
+    fixes = run_fixes(DoctorReport(checks=[diag]), cfg=None, directory=store)
+    assert [f.action for f in fixes] == ["refresh_gitignore"]
+    fix = fixes[0]
+    assert fix.applied is True
+    assert fix.after_status == "fail"  # honest: the untrack is manual
+    desired = "\n".join(sync._GITIGNORE_LINES) + "\n"
+    assert gitignore.read_text(encoding="utf-8") == desired  # readable again
+    assert PROPOSALS_FILENAME in _git_in(store, "ls-files")  # index untouched
 
 
 @_needs_git
