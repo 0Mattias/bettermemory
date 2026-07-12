@@ -124,8 +124,19 @@ transcript — absent on pre-3.14 events) and shows how many repeat
 audits the re-audit dedup absorbed (`repeat_audits`, excluded from
 every denominator).
 
-Three additional modes:
+Four additional modes:
 
+- `--report`: renders the telemetry as one publishable, self-contained
+  markdown document — the rate trio over the `--since` window and all
+  time side by side (the trend between windows is the story), per-model
+  audit telemetry, the threshold-sweep counterfactual, and the
+  tool-usage top 10, with a reading guide and a methodology footer.
+  Aggregates only, by tested contract: rates, counts, CIs, and
+  model/tool/rule names — never memory bodies, queries (not even the
+  redacted previews), scopes, paths, or session ids, so the output is
+  safe to publish as-is. `--output FILE` writes it to a file instead
+  of stdout; combining `--report` with `--json` or any other mode flag
+  is a hard error.
 - `--tool-usage`: per-MCP-tool call counts from the event log — the
   empirical input for trimming the default tool surface. Tools without
   telemetry surface as "no telemetry" rather than a silent zero;
@@ -171,9 +182,10 @@ Three additional modes:
   Both lanes share one event-filter pipeline (`_collect_replayable_
   audits`), so the counts and the listed turns can never disagree.
 
-All honor `--since` and `--json`. Rules live in
-`eval.THRESHOLD_RULES` / `eval.WIDENING_RULES`; adding one is a checker
-function plus a registry entry.
+All honor `--since`; all but `--report` honor `--json` (the report is
+markdown by construction). Rules live in `eval.THRESHOLD_RULES` /
+`eval.WIDENING_RULES`; adding one is a checker function plus a registry
+entry.
 
 ## Comparative harness
 

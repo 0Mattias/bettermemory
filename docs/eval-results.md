@@ -14,6 +14,10 @@ two months of daily agent use (measured 2026-07-03, `v1_top1_high`
 rule, Wilson 95% CIs). Rates only; the raw event log is personal and
 stays local.
 
+Future refreshes of this section are generated with `bettermemory
+eval --report`, which emits exactly this rates-and-counts shape with
+the leak-free property enforced by a tested contract.
+
 | rate | last 30 days | all time |
 |---|---|---|
 | `memory_helped_rate` | 45/644 = **0.07** [0.05, 0.09] | 49/1,774 = 0.03 [0.02, 0.04] |

@@ -206,6 +206,7 @@ bettermemory doctor           # diagnose install state (--fix: safe repairs)
 bettermemory health           # curation rollup
 bettermemory consolidate      # dedup/demote pass (dry-run; --llm for more)
 bettermemory eval             # the three metrics, with CIs
+bettermemory eval --report    # same telemetry as publishable markdown
 bettermemory sync push|pull   # git-based cross-host sync
 bettermemory ui               # local curation UI ([ui] extra)
 bettermemory ui --tunnel      # share it read-only (tailnet by default)
