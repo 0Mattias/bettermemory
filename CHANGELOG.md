@@ -7,6 +7,34 @@ breaking changes, minor for additive features, patch for fixes. The
 [compatibility contract](CONTRIBUTING.md#versioning-and-the-compatibility-contract)
 spells out exactly what's stable.
 
+## 3.23.0 - 2026-07-12
+
+One additive feature. Minor rather than patch because `eval --report`
+is a new CLI mode (and `--output` a new option); nothing renamed or
+removed — every existing eval mode and its `--json` shape are
+byte-compatible.
+
+### Added
+
+- **`eval --report` — the telemetry as a publishable artifact.** One
+  flag renders what `bettermemory eval` already computes into a
+  self-contained markdown document: store shape (counts only), the
+  three effectiveness rates with Wilson 95% CIs for the `--since`
+  window and all-time side by side, a reading-the-numbers-honestly
+  section, the per-model audit slices, the v1–v4 threshold-sweep
+  counterfactual, the tool-usage top ten, and a versioned methodology
+  footer. `--output FILE` writes it to disk. The safety property is
+  the point and is a tested contract, not a hope: the report carries
+  rates, counts, CIs, model names, and static registry names ONLY —
+  a canary test seeds a store whose memory bodies, summaries, scope
+  names, logged queries, session ids, and directory name all carry a
+  token and asserts it appears nowhere while the seeded counts still
+  land as numbers. So the output is publishable as-is: share your
+  distribution (the docs/eval-results.md refreshes are generated this
+  way from now on) without sharing your store. `--report` combined
+  with `--json` or any other mode flag is a hard error; everything
+  else about `eval` is unchanged.
+
 ## 3.22.1 - 2026-07-12
 
 Patch release: repairs from the multi-agent post-ship audit of the
