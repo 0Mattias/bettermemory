@@ -607,6 +607,27 @@ def test_event_log_unwritable_fails(tmp_path: Path) -> None:
     assert diag.status == "fail"
 
 
+def test_event_log_probe_append_catches_access_false_green(tmp_path: Path) -> None:
+    """os.access alone false-greens when the permission bits look
+    writable but a real append fails — the Windows-ACL shape: on nt,
+    os.access consults only FILE_ATTRIBUTE_READONLY, the exact bit
+    `--fix`'s chmod(0o600) clears, so without a real probe the fixer's
+    after re-run would verify its own chmod circularly. A directory
+    squatting at the log path reproduces the divergence
+    deterministically on every platform: W_OK passes, open('ab')
+    raises."""
+    from bettermemory.events import EVENT_LOG_FILENAME
+
+    log = tmp_path / EVENT_LOG_FILENAME
+    log.mkdir()
+    assert os.access(log, os.W_OK)  # the cheap pre-guard passes...
+    diag = _check_event_log_writable(tmp_path)
+    assert diag.status == "fail"  # ...but the probe-append tells the truth
+    assert "append" in diag.message
+    assert diag.fix_hint is not None
+    assert "chmod u+w" not in diag.fix_hint  # a chmod cannot fix this class
+
+
 def test_event_log_unwritable_hint_executes_on_space_and_quote_path(
     tmp_path: Path,
 ) -> None:
@@ -3215,6 +3236,34 @@ def test_fix_event_log_chmods_unwritable_file(tmp_path: Path) -> None:
     else:
         assert stat.S_IMODE(log.stat().st_mode) == 0o600
     assert _check_event_log_writable(tmp_path).status == "ok"
+
+
+def test_fix_event_log_declines_symlinked_log(tmp_path: Path) -> None:
+    """A symlink at `.events.jsonl` is never chmod'd through: chmod
+    follows symlinks, so 'fixing' it would mutate the TARGET's
+    permissions — a file that may not be ours at all (the same
+    refuse-on-symlink standard `_check_stale_config_lockfiles` and
+    `init._heal_stale_sidecar_lockfile` hold). The fixer declines and
+    the finding stays manual; the victim keeps its mode and contents."""
+    if sys.platform == "win32":
+        pytest.skip("symlink semantics differ on Windows; POSIX-only test")
+    from bettermemory.events import EVENT_LOG_FILENAME
+
+    victim = tmp_path / "victim.txt"
+    victim.write_text("precious target content\n", encoding="utf-8")
+    victim.chmod(0o400)
+    store = tmp_path / "store"
+    store.mkdir()
+    (store / EVENT_LOG_FILENAME).symlink_to(victim)
+
+    diag = _check_event_log_writable(store)
+    if diag.status == "ok":
+        pytest.skip("filesystem ignored chmod; cannot exercise unwritable path")
+    assert diag.status == "fail"
+    fixes = run_fixes(DoctorReport(checks=[diag]), cfg=None, directory=store)
+    assert fixes == []  # declined → manual-only, with the hint
+    assert stat.S_IMODE(victim.stat().st_mode) == 0o400
+    assert victim.read_text(encoding="utf-8") == "precious target content\n"
 
 
 def test_fix_index_health_rebuilds_corrupt_index(tmp_path: Path) -> None:

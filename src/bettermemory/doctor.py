@@ -664,7 +664,33 @@ def _check_event_log_writable(directory: Path) -> Diagnosis:
             # pathspec hints.
             fix_hint=f"`chmod u+w {shlex.quote(str(log_path))}`.",
         )
-    size = log_path.stat().st_size
+    # os.access is only the cheap pre-guard — on Windows it consults
+    # nothing but FILE_ATTRIBUTE_READONLY (the exact bit `--fix`'s
+    # chmod(0o600) clears), so an ACL-denied log passes it while every
+    # real append still fails; on POSIX a directory squatting at the
+    # path passes W_OK too. Probe-append for real, per this check's
+    # own contract: 'ab' + zero bytes exercises the exact permission
+    # the Recorder's append needs without mutating the log.
+    try:
+        with log_path.open("ab") as f:
+            f.write(b"")
+        size = log_path.stat().st_size
+    except OSError as exc:
+        return Diagnosis(
+            name="event_log",
+            status="fail",
+            message=(
+                f"Event log at {log_path} passed the permission-bit "
+                f"check but a real append failed "
+                f"({exc.__class__.__name__}: {exc})."
+            ),
+            fix_hint=(
+                "Inspect what blocks appends despite writable permission "
+                "bits — an ACL, a read-only mount, or a non-file "
+                "squatting at the log path; a plain chmod cannot fix "
+                "this class."
+            ),
+        )
     return Diagnosis(
         name="event_log",
         status="ok",
@@ -2340,11 +2366,21 @@ def _fix_event_log(
     storage_directory fixer's cause, not this one's — when that fix
     lands first, the final full re-run reports this check healed too.
     0600 matches the mode the Recorder itself sets on first write.
+    A symlink at the log path is DECLINED, never chmod'd through.
     """
     if directory is None or not directory.exists():
         return None
     log_path = directory / EVENT_LOG_FILENAME
     if not log_path.exists():
+        return None
+    if log_path.is_symlink():
+        # Refuse-on-symlink — the same standard
+        # `_check_stale_config_lockfiles` and
+        # `init._heal_stale_sidecar_lockfile` hold for the lockfile
+        # artifact. chmod follows symlinks, so "fixing" a symlinked
+        # .events.jsonl would mutate the permissions of whatever file
+        # the link points at — possibly not ours at all. Decline; the
+        # finding stays manual with its hint.
         return None
     if os.access(log_path, os.W_OK):
         return None
