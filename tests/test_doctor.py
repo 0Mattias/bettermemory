@@ -1883,6 +1883,11 @@ def test_sync_tracked_ignored_fails_on_tracked_proposals_queue(
     assert f"git rm --cached ':(literal){PROPOSALS_FILENAME}'" in (diag.fix_hint or "")
     assert "git-filter-repo" in (diag.fix_hint or "")
     assert "rotate" in (diag.fix_hint or "")
+    # Multi-host migration warning: pulling another host's untrack commit
+    # deletes THIS host's tracked working copies (verified empirically in a
+    # two-clone simulation during the 3.21.0 set-audit) — the hint must say
+    # to untrack on every host BEFORE its next pull.
+    assert "before its next `sync pull`" in (diag.fix_hint or "")
     assert diag.details["tracked_ignored"] == [PROPOSALS_FILENAME]
     # The rendered doctor output carries the check name and remediation.
     out = render_text(DoctorReport(checks=[diag]))

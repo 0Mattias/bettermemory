@@ -1044,7 +1044,10 @@ def _check_sync_tracked_ignored(directory: Path) -> Diagnosis:
             "the repo was ever pushed, the contents are already in remote "
             "history: rewrite it with git-filter-repo (or BFG) and "
             "force-push, then rotate any secrets those files may have "
-            "captured."
+            "captured. On a multi-host store, untrack on EVERY host before "
+            "its next `sync pull` — pulling another host's untrack commit "
+            "deletes your tracked working copies of these paths from disk "
+            "(copy them aside first if in doubt)."
         ),
         details={"tracked_ignored": tracked},
     )

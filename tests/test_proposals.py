@@ -999,3 +999,60 @@ def test_cli_proposals_accept_acknowledge_credential_flag(
     assert accept_events[0]["proposal_id"] == "cliack1"
     assert accept_events[0]["credentials_acknowledged"] == ["aws-access-key-id"]
     assert token not in (store.root / ".events.jsonl").read_text(encoding="utf-8")
+
+
+def test_cli_proposals_accept_json_credential_refusal_is_data_exit_zero(
+    capsys: pytest.CaptureFixture[str],
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """`proposals accept --json` on a credential-bearing body: the refusal
+    is DATA on the integration surface — the structured credential_warning
+    payload on stdout and a normal exit 0, matching the not_found-under-
+    --json precedent — while the human lane keeps parser.error + exit 2
+    (pinned by test_cli_proposals_accept_acknowledge_credential_flag above).
+
+    Pinned because the change that harmonized the refusal shape flipped
+    this lane's exit code from 2 to 0 with no coverage: reordering the
+    json_out early-return below the credential_warning branch in
+    `_cli_proposals_accept` would silently restore exit-2-plus-stderr-text
+    under --json and nothing else would fail."""
+    import json as _json
+    import sys as _sys
+
+    from bettermemory.config import load_config
+    from bettermemory.server import main as cli_main
+    from bettermemory.store import Store
+
+    monkeypatch.setenv("BETTERMEMORY_DIR", str(tmp_path))
+    store = Store(load_config().resolved_directory())
+    token = "AKIAIOSFODNN7EXAMPLE"
+    body = f"AWS access-key ids look like {token} — a documented example shape."
+    ProposalQueue(store.root).append([_proposal(body, pid="clijson1")])
+
+    monkeypatch.setattr(
+        _sys,
+        "argv",
+        [
+            "bettermemory",
+            "proposals",
+            "accept",
+            "clijson1",
+            "--scope",
+            "infrastructure",
+            "--json",
+        ],
+    )
+    cli_main()  # returns normally — no SystemExit means exit 0
+
+    out = capsys.readouterr().out
+    payload = _json.loads(out)
+    assert payload["status"] == "credential_warning"
+    assert payload["action"] == "accept"
+    assert payload["proposal_id"] == "clijson1"
+    assert "aws-access-key-id" in {m["kind"] for m in payload["markers"]}
+    assert "--acknowledge-credential" in payload["hint"]
+    assert token not in out
+    # Refusal is non-destructive: still queued, nothing written.
+    assert [p.id for p in ProposalQueue(store.root).load()] == ["clijson1"]
+    assert store.load_all() == []
