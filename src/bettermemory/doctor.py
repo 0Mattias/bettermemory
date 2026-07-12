@@ -31,7 +31,9 @@ affected check, and reports before/after. Plain `doctor` remains the
 dry run; destructive remediations (untracking, history rewrites, MCP
 client config edits, anything that could delete possibly-unique user
 content, anything on another host) stay hints forever. Every applied
-fix lands one `doctor_fix` event in the store's event log.
+fix lands one `doctor_fix` event in the store's event log — unless
+`[telemetry] enabled = false`, which turns the event log off everywhere
+(doctor included); the CLI/JSON output is then the only record.
 """
 
 from __future__ import annotations
@@ -51,7 +53,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path, PurePosixPath
 from typing import Any, Literal
 
-from .config import Config, load_config
+from .config import Config, TelemetryConfig, load_config
 from .events import EVENT_LOG_FILENAME, iter_all_events
 from .init import KNOWN_CLIENTS, command_launches_bettermemory, find_binary
 from .store import Store, count_active_memory_files, count_unparseable_memory_files
@@ -671,6 +673,20 @@ def _check_event_log_writable(directory: Path) -> Diagnosis:
     )
 
 
+# Event kinds emitted by admin/CLI surfaces (today: `doctor --fix`'s
+# audit trail) rather than by an MCP server session serving a client.
+# INVARIANT: every kind in this set is recorded outside any client
+# session, under a fresh throwaway session id, so a "session" observed
+# only through these kinds never had a Stop hook that could produce
+# `turn_audited`. `_check_audit_turn_cadence` excludes them from its
+# census entirely — counting them corrupts the ≥2-sessions denominator:
+# `doctor --fix` on a store with one real session would manufacture the
+# second "session" whose missing `turn_audited` its own post-fix re-run
+# then warns about, flipping a fully-healed run's exit code to 1. Grow
+# this set whenever a new admin/CLI-recorded event kind is added.
+_ADMIN_EVENT_KINDS: frozenset[str] = frozenset({"doctor_fix"})
+
+
 def _check_audit_turn_cadence(directory: Path) -> Diagnosis:
     """Detect a silently no-opping Stop hook.
 
@@ -697,6 +713,11 @@ def _check_audit_turn_cadence(directory: Path) -> Diagnosis:
     means we've seen at least one session END (the Stop hook's
     trigger) without the corresponding turn_audited row, which is
     the real signal.
+
+    Admin/CLI event kinds (`_ADMIN_EVENT_KINDS`) are excluded from
+    the census entirely: they're recorded outside any client session
+    and can never produce `turn_audited`, so counting their sessions
+    (or events) would corrupt the denominator this heuristic rests on.
     """
     if not directory.exists():
         return Diagnosis(
@@ -710,6 +731,9 @@ def _check_audit_turn_cadence(directory: Path) -> Diagnosis:
     total_events = 0
     try:
         for event in iter_all_events(directory):
+            if event.get("kind") in _ADMIN_EVENT_KINDS:
+                # Not client-session activity — see _ADMIN_EVENT_KINDS.
+                continue
             ts_raw = event.get("ts")
             if not isinstance(ts_raw, str):
                 continue
@@ -2550,19 +2574,34 @@ def _fix_context() -> tuple[Config | None, Path | None]:
     return cfg, directory
 
 
-def _record_fix_events(directory: Path | None, applied: list[FixResult]) -> None:
+def _record_fix_events(
+    cfg: Config | None, directory: Path | None, applied: list[FixResult]
+) -> None:
     """One `doctor_fix` event per applied fix — the same observability
-    bar as every other mutating surface. Best-effort like the Recorder
-    itself: a logging hiccup must never fail a fix that already landed.
-    Skipped when no store directory exists to host the log (then the
-    CLI/JSON output is the only record, which is still honest)."""
+    bar as every other mutating surface, under the same telemetry
+    settings: `[telemetry] enabled = false` disables the event log for
+    doctor exactly like it does for the server, so an opted-out user
+    gets NO event (the CLI/JSON output is then the only record, which
+    is still honest). Best-effort like the Recorder itself: a logging
+    hiccup must never fail a fix that already landed. Skipped when no
+    store directory exists to host the log. A None `cfg` (programmatic
+    callers only — `_fix_context` never pairs a real directory with a
+    None config) falls back to the default telemetry posture, matching
+    the Recorder's own defaults."""
     if not applied or directory is None or not directory.exists():
         return
     try:
         from .events import Recorder
         from .session import SessionState
 
-        recorder = Recorder(root=directory, session_id=SessionState().session_id)
+        telemetry = cfg.telemetry if cfg is not None else TelemetryConfig()
+        recorder = Recorder(
+            root=directory,
+            session_id=SessionState().session_id,
+            enabled=telemetry.enabled,
+            max_bytes=telemetry.max_bytes,
+            log_queries_verbatim=telemetry.log_queries_verbatim,
+        )
         for f in applied:
             recorder.record(
                 "doctor_fix",
@@ -2607,7 +2646,7 @@ def run_fixes(
             )
         if result is not None:
             fixes.append(result)
-    _record_fix_events(directory, [f for f in fixes if f.applied])
+    _record_fix_events(cfg, directory, [f for f in fixes if f.applied])
     return fixes
 
 

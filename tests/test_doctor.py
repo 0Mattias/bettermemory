@@ -737,6 +737,27 @@ def test_audit_turn_cadence_single_session_does_not_warn(tmp_path: Path) -> None
     assert "1 session" in diag.message or "one session" in diag.message.lower()
 
 
+def test_audit_turn_cadence_census_excludes_admin_event_kinds(
+    tmp_path: Path,
+) -> None:
+    """`doctor --fix` records its `doctor_fix` audit rows under a fresh
+    throwaway session id, outside any client session — a "session" that
+    can never produce `turn_audited`. The census must skip admin/CLI
+    kinds entirely: counting them lets a 1-real-session store (the "not
+    enough cadence data" ok shape) trip the ≥2-session floor purely
+    because doctor ran, corrupting the denominator the heuristic rests
+    on."""
+    from datetime import datetime, timezone
+
+    now_iso = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+    _write_event(tmp_path, "search", ts=now_iso, session="the-real-one")
+    _write_event(tmp_path, "doctor_fix", ts=now_iso, session="cli-run")
+    diag = _check_audit_turn_cadence(tmp_path)
+    assert diag.status == "ok"
+    assert diag.details["sessions"] == 1
+    assert diag.details["total_events"] == 1
+
+
 def test_audit_turn_cadence_only_old_events_skips_warn(tmp_path: Path) -> None:
     """Events outside the 7-day window don't count — old activity from
     last month shouldn't trigger a warning today."""
@@ -3375,6 +3396,43 @@ def test_run_fixes_records_doctor_fix_event(tmp_path: Path) -> None:
     assert event["detail"]["indexed"] == 1
 
 
+def test_run_fixes_telemetry_opt_out_records_nothing(tmp_path: Path) -> None:
+    """`[telemetry] enabled = false` must disable doctor's audit trail
+    exactly like it disables the server's: an applied fix neither
+    creates `.events.jsonl` nor appends to an existing one. Before the
+    cfg threading, `_record_fix_events` built a Recorder with the
+    default `enabled=True` and wrote to the log the user had opted out
+    of."""
+    from bettermemory.config import TelemetryConfig
+    from bettermemory.events import EVENT_LOG_FILENAME
+    from bettermemory.index import index_path
+    from bettermemory.store import Store
+
+    cfg = Config(
+        storage=StorageConfig(directory=str(tmp_path)),
+        telemetry=TelemetryConfig(enabled=False),
+    )
+    store = Store(tmp_path)
+    store.write(content="opt-out audit body", scopes=["tools"])
+    index_path(tmp_path).write_bytes(b"garbage " * 8)
+    diag = _check_index_health(tmp_path)
+    assert diag.status == "warn"
+    fixes = run_fixes(DoctorReport(checks=[diag]), cfg=cfg, directory=tmp_path)
+    assert fixes[0].applied is True
+    assert fixes[0].after_status == "ok"
+    assert not (tmp_path / EVENT_LOG_FILENAME).exists()
+
+    # Same with a pre-existing log: nothing may be appended either.
+    log = tmp_path / EVENT_LOG_FILENAME
+    log.write_text("", encoding="utf-8")
+    index_path(tmp_path).write_bytes(b"garbage " * 8)
+    diag2 = _check_index_health(tmp_path)
+    assert diag2.status == "warn"
+    fixes2 = run_fixes(DoctorReport(checks=[diag2]), cfg=cfg, directory=tmp_path)
+    assert fixes2[0].applied is True
+    assert log.read_bytes() == b""
+
+
 def test_run_fixes_wraps_fixer_exception(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -3425,6 +3483,51 @@ def test_cli_doctor_fix_exit_code_reflects_post_fix_state(
     assert "--fix:" in out
     assert "fixed (was warn)" in out
     assert _check_index_health(tmp_path).status == "ok"
+
+
+def test_cli_doctor_fix_does_not_corrupt_cadence_exit_code(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The live-repro shape of the self-observation bug: a store with
+    ONE real in-window session, zero `turn_audited` (the "not enough
+    cadence data" ok shape) and one fixable red. `--fix` heals the red
+    and records its `doctor_fix` audit row under a fresh session id;
+    the post re-run then reads the log doctor just appended to. Without
+    the admin-kind census exclusion that row's throwaway session trips
+    the ≥2-session floor, and the fully-healed run exits 1 on a cadence
+    warn doctor itself manufactured."""
+    from datetime import datetime, timezone
+
+    from bettermemory import doctor as doctor_mod
+    from bettermemory.index import index_path
+    from bettermemory.store import Store
+
+    cfg = _config_for(tmp_path)
+    store = Store(tmp_path)
+    store.write(content="cadence exit body", scopes=["tools"])
+    index_path(tmp_path).write_bytes(b"garbage " * 8)  # the fixable red
+    now_iso = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+    _write_event(tmp_path, "search", ts=now_iso, session="the-real-one")
+    monkeypatch.setattr(
+        doctor_mod,
+        "run_diagnostics",
+        lambda: DoctorReport(
+            checks=[
+                _check_index_health(tmp_path),
+                _check_audit_turn_cadence(tmp_path),
+            ]
+        ),
+    )
+    monkeypatch.setattr(doctor_mod, "load_config", lambda: cfg)
+    code = cli_doctor(json_out=True, fix=True)
+    parsed = json.loads(capsys.readouterr().out)
+    assert code == 0
+    assert parsed["overall"] == "ok"
+    assert parsed["fixes_applied"] == 1
+    statuses = {c["name"]: c["status"] for c in parsed["checks"]}
+    assert statuses == {"index_health": "ok", "audit_turn_cadence": "ok"}
 
 
 def test_cli_doctor_fix_json_carries_fixes_array(
