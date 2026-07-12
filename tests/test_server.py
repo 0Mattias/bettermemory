@@ -6252,17 +6252,20 @@ async def test_memory_proposals_accept_acknowledge_credential_end_to_end(
         body=f"AWS access-key ids look like {aws_example} — a documented example.",
     )
 
-    # Without the flag: refused at the tool boundary; the proposal stays
-    # queued, nothing is written, the error names the kind but not the value.
-    with pytest.raises(Exception, match="aws-access-key-id") as excinfo:
-        await _call(
-            server,
-            "memory_proposals",
-            action="accept",
-            proposal_id="ack1",
-            scopes=["infrastructure"],
-        )
-    assert aws_example not in str(excinfo.value)
+    # Without the flag: refused with the SAME structured credential_warning
+    # status memory_write rejects with (harmonized post-3.20.0 — the refusal
+    # used to raise at the tool boundary); the proposal stays queued, nothing
+    # is written, the markers name the kind but never the value.
+    refused = await _call(
+        server,
+        "memory_proposals",
+        action="accept",
+        proposal_id="ack1",
+        scopes=["infrastructure"],
+    )
+    assert refused["status"] == "credential_warning"
+    assert "aws-access-key-id" in {m["kind"] for m in refused["markers"]}
+    assert aws_example not in str(refused)
     assert [p.id for p in ProposalQueue(memory_dir).load()] == ["ack1"]
     assert Store(memory_dir).load_all() == []
 

@@ -210,7 +210,7 @@ Emits an `acknowledge_miss` event so the miss drops out of the actionable silent
 
 Returns `{old_scope, new_scope, active: [ids], tombstoned: [ids]}` — the normalized scopes echoed back, plus the ids of the records actually touched.
 
-### `memory_proposals(action?, proposal_id?, scopes?, category?)`
+### `memory_proposals(action?, proposal_id?, scopes?, category?, acknowledge_credential?)`
 
 Review the write-reflex proposal queue — durable statements the Stop hook captured from the user's messages that were never written as memories (the capture half of the self-improving loop; opt-in via `[proposals] auto_propose`). Proposals are inert until accepted, so nothing is ever written without an explicit accept.
 
@@ -218,8 +218,9 @@ Review the write-reflex proposal queue — durable statements the Stop hook capt
 - `proposal_id: str | None = None`. Required for `accept` / `dismiss`; the `id` from a `list` row.
 - `scopes: list[str] | None = None`. Required for `accept` — a memory needs at least one scope and the queue does not guess them.
 - `category: str | None = None`. Optional override for `accept`; defaults to the proposal's `suggested_category` (`fact` / `user-inference` / `ambient`).
+- `acknowledge_credential: bool = False`. `accept` runs the same secret-shaped-token check as `memory_write` on the body it would persist; this is the identically-named escape hatch (CLI spelling: `--acknowledge-credential`). Overrides are logged by detector `kind` only, never the value.
 
-`list` returns `{status: "ok", action: "list", count, proposals: [{id, body, source_excerpt, suggested_category, created}]}`. `accept` writes the proposal as a normal memory (source=`inferred`), removes it from the queue, and returns `{status: "accepted", id, proposal_id, scopes, category}`. `dismiss` drops it and returns `{status: "dismissed", proposal_id}`. A missing id returns `{status: "not_found", ...}`. Surfaced for discovery via `memory_scope_overview`'s `proposals_pending` count.
+`list` returns `{status: "ok", action: "list", count, proposals: [{id, body, source_excerpt, suggested_category, created}]}`. `accept` writes the proposal as a normal memory (source=`inferred`), removes it from the queue, and returns `{status: "accepted", id, proposal_id, scopes, category, credentials_acknowledged}`. A credential-bearing body is refused with the same shape `memory_write` rejects with — `{status: "credential_warning", markers: [{kind, snippet}], hint}` (snippets pre-redacted, proposal still queued). `dismiss` drops it and returns `{status: "dismissed", proposal_id}`. A missing id returns `{status: "not_found", ...}`. Surfaced for discovery via `memory_scope_overview`'s `proposals_pending` count.
 
 ## Session-local
 

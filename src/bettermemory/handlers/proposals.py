@@ -43,15 +43,16 @@ DESC_MEMORY_PROPOSALS = (
     "to the proposal's `suggested_category` — override if wrong "
     "(`fact` / `user-inference` / `ambient`). The write goes through the "
     "normal store path (source=inferred) and is indexed immediately. A "
-    "proposal whose body contains a secret-shaped token is refused (the "
-    "store is plain-text and `sync`'d across hosts); pass "
+    "proposal whose body contains a secret-shaped token is refused with "
+    "the same `credential_warning` status memory_write rejects with "
+    "(`markers` + `hint`, proposal still queued); pass "
     "`acknowledge_credential=True` to accept anyway when the value is a "
     "documented public/example credential, mirroring the memory_write / "
     "memory_update escape hatch.\n"
     "- `dismiss`: drop the proposal from the queue without writing it. "
     "Requires `proposal_id`. Use for anything not worth remembering.\n\n"
     "Returns `{status, action, ...}`; `status` is one of `ok` (list), "
-    "`accepted`, `dismissed`, or `not_found`."
+    "`accepted`, `dismissed`, `not_found`, or `credential_warning`."
 )
 
 
@@ -86,8 +87,9 @@ def accept_proposal(
        accepted proposal is another door through which a secret-shaped token
        could reach the plain-text store WITHOUT ever passing the write-path
        gate. Runs BEFORE the claim, so a hit refuses with the proposal still
-       queued (raises ``ValueError`` naming the detector kinds only — never
-       the value, exactly as the write/update paths redact it). Passing
+       queued — returning the SAME structured ``credential_warning`` status
+       the write/update paths reject with (detector kinds + pre-redacted
+       snippets only, never the value). Passing
        ``acknowledge_credential=True`` bypasses this refusal, mirroring the
        identically-named escape hatch on ``memory_write`` / ``memory_update``
        for the rare legitimate case (a proposal that DESCRIBES a documented
@@ -105,10 +107,11 @@ def accept_proposal(
        layer its own event on top — the CLI did exactly that before the
        recording moved here. Callers must NOT record a second accept event.
 
-    Returns a result dict (``status`` in ``{"accepted", "not_found"}``). No
-    event is recorded on either ``not_found`` path or on a refusal — only
-    when the write actually lands. Raises ``ValueError`` on a bad payload (it
-    bubbles to the caller and the proposal stays queued).
+    Returns a result dict (``status`` in ``{"accepted", "not_found",
+    "credential_warning"}``). No event is recorded on the ``not_found``
+    paths or on a credential refusal — only when the write actually lands.
+    Raises ``ValueError`` on a bad payload (it bubbles to the caller and the
+    proposal stays queued).
     """
     from .. import _handlers as _h
 
@@ -132,22 +135,33 @@ def accept_proposal(
     # runs FIRST, so a secret-shaped token captured by the write-reflex can't
     # slip onto the plain-text (sync'd) store by being ACCEPTED rather than
     # written. Scan the body that would be persisted; a hit refuses BEFORE the
-    # claim so the proposal stays queued, and the error names the detector
-    # `kind`s only — the value is never echoed, same as the write/update paths.
+    # claim so the proposal stays queued, returning the SAME structured
+    # `credential_warning` status memory_write / memory_update reject with —
+    # one shape for the escape hatch on every surface. The markers carry the
+    # detector `kind` and the detector's pre-redacted snippet only, never the
+    # value (row shape matches `Responses.credential_to_dict`).
     credential_hits = find_credential_markers(payload["content"])
     if credential_hits and not acknowledge_credential:
-        kinds = sorted({h.kind for h in credential_hits})
-        raise ValueError(
-            f"proposal {proposal_id} body contains a secret-shaped token "
-            f"({', '.join(kinds)}) — this store is plain-text and `sync` "
-            "pushes it across hosts via git, so the accept is refused. Edit "
-            "the proposal to describe the secret without embedding it, dismiss "
-            "it, or pass acknowledge_credential=True (the "
-            "--acknowledge-credential flag on the CLI) if the value is a "
-            "documented public/example credential (mirrors the memory_write / "
-            "memory_update escape hatch). The value is redacted from this "
-            "error regardless."
-        )
+        return {
+            "status": "credential_warning",
+            "action": "accept",
+            "proposal_id": proposal_id,
+            "markers": [
+                {"kind": h.kind, "snippet": h.snippet} for h in credential_hits
+            ],
+            "hint": (
+                "The proposal body contains a secret-shaped token — this "
+                "store is plain-text and `sync` pushes it across hosts via "
+                "git, so the accept was refused and the proposal stays "
+                "queued. Edit the proposal to describe the secret without "
+                "embedding it, dismiss it, or pass "
+                "acknowledge_credential=True (--acknowledge-credential on "
+                "the CLI) if the value is a documented public/example "
+                "credential — mirroring the memory_write / memory_update "
+                "escape hatch. The value is redacted from this warning "
+                "regardless."
+            ),
+        }
     # Atomically CLAIM under the queue lock before the durable write — the
     # idempotency guard against a concurrent double-accept.
     claimed = queue.remove(proposal_id)

@@ -231,6 +231,20 @@ def _cli_proposals_accept(
     if result["status"] == "not_found":
         sys.stdout.write(f"No proposal with id {proposal_id}.\n")
         return
+    if result["status"] == "credential_warning":
+        # Same structured refusal the MCP surface returns (one shape across
+        # entry points, mirroring memory_write); the human rendering keeps
+        # the old contract — exit 2, detector kinds + the CLI flag spelling
+        # in the message, value never echoed.
+        kinds = ", ".join(sorted({m["kind"] for m in result["markers"]}))
+        message = (
+            f"proposal {proposal_id} body contains a secret-shaped token "
+            f"({kinds}) — accept refused, proposal still queued. "
+            f"{result['hint']}"
+        )
+        if parser is not None:
+            parser.error(message)
+        raise ValueError(message)
     sys.stdout.write(
         f"Accepted {proposal_id} -> memory {result['id']} "
         f"[{','.join(result['scopes'])}] ({result['category']}).\n"

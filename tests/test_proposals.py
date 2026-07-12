@@ -816,22 +816,31 @@ def test_accept_proposal_refuses_credential_body(
     store = Store(tmp_path)
     recorder = Recorder(root=tmp_path, session_id="sess_test")
 
-    with pytest.raises(ValueError, match=kind) as excinfo:
-        accept_proposal(
-            store=store,
-            config=config,
-            recorder=recorder,
-            proposal_id="c1",
-            scopes=["infrastructure"],
-        )
+    result = accept_proposal(
+        store=store,
+        config=config,
+        recorder=recorder,
+        proposal_id="c1",
+        scopes=["infrastructure"],
+    )
 
+    # The refusal is the SAME structured status memory_write rejects with —
+    # not an exception — so the MCP dict-through, the CLI, and programmatic
+    # callers all see one shape for the escape hatch (harmonized
+    # post-3.20.0; the raise-shaped refusal predates it).
+    assert result["status"] == "credential_warning"
+    assert result["action"] == "accept"
+    assert result["proposal_id"] == "c1"
+    assert kind in {m["kind"] for m in result["markers"]}
+    assert "--acknowledge-credential" in result["hint"]
     # Nothing persisted, and the proposal is still queued for the caller to
     # edit or dismiss. (No `.md` file — the durable write never ran.)
     assert list(tmp_path.glob("*.md")) == []
     assert store.load_all() == []
     assert [p.id for p in q.load()] == ["c1"]
-    # The error names the detector kind but never echoes the raw secret span.
-    assert token not in str(excinfo.value)
+    # The warning names the detector kind but never echoes the raw secret
+    # span — marker snippets are pre-redacted by the detector itself.
+    assert token not in str(result)
     # No event on a refusal — the accept record fires only when the write
     # actually lands (accept_proposal docstring step 6).
     assert not (tmp_path / ".events.jsonl").exists()
@@ -859,15 +868,17 @@ def test_accept_proposal_acknowledge_credential_bypasses_refusal(
     store = Store(tmp_path)
     recorder = Recorder(root=tmp_path, session_id="sess_test")
 
-    # Default: refused, proposal stays queued, nothing written.
-    with pytest.raises(ValueError, match="aws-access-key-id"):
-        accept_proposal(
-            store=store,
-            config=config,
-            recorder=recorder,
-            proposal_id="ack1",
-            scopes=["infrastructure"],
-        )
+    # Default: refused (structured credential_warning), proposal stays
+    # queued, nothing written.
+    refused = accept_proposal(
+        store=store,
+        config=config,
+        recorder=recorder,
+        proposal_id="ack1",
+        scopes=["infrastructure"],
+    )
+    assert refused["status"] == "credential_warning"
+    assert "aws-access-key-id" in {m["kind"] for m in refused["markers"]}
     assert store.load_all() == []
     assert [p.id for p in q.load()] == ["ack1"]
 
