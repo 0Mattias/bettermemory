@@ -3727,13 +3727,19 @@ def test_fix_stale_config_lockfiles_removes_artifact_leaves_live_locks(
 
 
 def test_fix_stale_config_lockfiles_vanished_artifact_is_honest_noop(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """The artifact vanishing between diagnosis and fix (the user
     deleted it, the client cleaned up) yields the asymmetric shape:
-    applied is False — no unlink actually happened — while the re-run
-    reports ok, so the exit code still heals and nothing is claimed
-    that didn't happen."""
+    applied is False — no unlink actually happened, so nothing is
+    claimed that didn't — while after_status carries the truth the
+    fixer's own re-check saw (ok). Through `cli_doctor --fix` the
+    post re-run is gated on ATTEMPTED (fixes non-empty), not applied,
+    so this race exits 0 on the now-healthy machine instead of
+    freezing the stale pre report into an exit-1 payload that
+    contradicts its own fixes array."""
     config_a = tmp_path / "a_config.json"
     monkeypatch.setattr(
         "bettermemory.doctor.KNOWN_CLIENTS",
@@ -3756,6 +3762,37 @@ def test_fix_stale_config_lockfiles_vanished_artifact_is_honest_noop(
     assert fix.before_status == "warn"
     assert fix.after_status == "ok"
     assert "no 0-byte lockfile artifact matched at fix time" in fix.message
+
+    # End-to-end through `doctor --fix --json`: the pre-run diagnoses
+    # the artifact, the fixer finds it vanished (attempted,
+    # applied=False), and the post re-run reports the healthy machine —
+    # exit 0, overall ok. Under the old any(applied) gate this exited 1
+    # carrying the stale warn next to after_status="ok".
+    from bettermemory import doctor as doctor_mod
+
+    cfg = _config_for(tmp_path)
+    artifact.touch()  # re-arm the race
+    diagnostics_runs = {"n": 0}
+
+    def _diagnose() -> DoctorReport:
+        diagnostics_runs["n"] += 1
+        report = DoctorReport(checks=[_check_stale_config_lockfiles()])
+        if diagnostics_runs["n"] == 1:
+            artifact.unlink()  # vanishes right after the pre-run saw it
+        return report
+
+    monkeypatch.setattr(doctor_mod, "run_diagnostics", _diagnose)
+    monkeypatch.setattr(doctor_mod, "load_config", lambda: cfg)
+    code = cli_doctor(json_out=True, fix=True)
+    parsed = json.loads(capsys.readouterr().out)
+    assert code == 0
+    assert parsed["overall"] == "ok"
+    assert parsed["fixes_applied"] == 0
+    (fix_row,) = parsed["fixes"]
+    assert fix_row["applied"] is False
+    assert fix_row["after_status"] == "ok"
+    assert [c["status"] for c in parsed["checks"]] == ["ok"]
+    assert diagnostics_runs["n"] == 2  # the attempted gate re-ran diagnostics
 
 
 @_needs_git

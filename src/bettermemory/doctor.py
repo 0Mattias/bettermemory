@@ -2867,9 +2867,16 @@ def cli_doctor(*, json_out: bool, fix: bool = False) -> int:
         # Full re-run rather than patching the per-fix re-runs into the
         # pre report: a fix can heal a NEIGHBOUR check's cause (the
         # storage chmod unblocks event-log creation), and only a fresh
-        # pass reports that honestly. Skipped when nothing mutated —
-        # the pre report is still current.
-        post = run_diagnostics() if any(f.applied for f in fixes) else report
+        # pass reports that honestly. Gated on ATTEMPTED (fixes
+        # non-empty), not applied: the vanished-artifact race yields an
+        # applied=False fix whose red cause is already gone, and an
+        # any(applied) gate would freeze the stale pre report — exit 1
+        # on a healthy machine, with a payload contradicting the fix's
+        # own after_status="ok". Attempted-but-genuinely-failed shapes
+        # re-report still-red (same exit as pre; one extra diagnostics
+        # pass is the honest price). Nothing attempted skips the
+        # re-run — the pre report is still current.
+        post = run_diagnostics() if fixes else report
         if json_out:
             sys.stdout.write(render_json(post, fixes=fixes))
         else:
