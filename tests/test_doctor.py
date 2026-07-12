@@ -15,6 +15,7 @@ import os
 import re
 import shlex
 import shutil
+import stat
 import subprocess
 import sys
 import typing
@@ -43,6 +44,7 @@ from bettermemory.doctor import (
     _check_mcp_client_configs,
     _check_memory_parse_health,
     _check_python_version,
+    _check_stale_config_lockfiles,
     _check_storage_directory,
     _check_store_nested_in_parent_repo,
     _check_sync_tracked_ignored,
@@ -50,11 +52,13 @@ from bettermemory.doctor import (
     _pattern_matches_tracked_path,
     _probe_index_integrity,
     _EXIT_CODE_BY_STATUS,
+    _FIXERS,
     _STATUS_GLYPH,
     cli_doctor,
     render_json,
     render_text,
     run_diagnostics,
+    run_fixes,
 )
 from bettermemory.init import ClientPaths
 from bettermemory.proposals import PROPOSALS_FILENAME
@@ -3115,3 +3119,434 @@ def test_store_nested_in_parent_repo_broken_gitfile_without_parent_stays_ok(
     diag = _check_store_nested_in_parent_repo(store)
     assert diag.status == "ok"
     assert "not inside any git worktree" in diag.message
+
+
+# ---------------------------------------------------------------------------
+# `doctor --fix`
+#
+# One break→fix→green pair per AUTO-fixable check, the no-op contract,
+# the manual/auto boundary (fixes never touch git indexes or client
+# configs), the per-applied-fix event record, and the post-fix exit
+# code. Fixers are exercised through `run_fixes` so the registry
+# dispatch, the exception wrapper, and the event recording run on every
+# pair — not just the fixer body.
+# ---------------------------------------------------------------------------
+
+
+def test_fix_storage_directory_chmods_unwritable_dir(tmp_path: Path) -> None:
+    """break→fix→green: an existing-but-unwritable store dir is
+    chmod'd to the private 0700 posture, and the re-run turns green."""
+    cfg = _config_for(tmp_path)
+    tmp_path.chmod(0o555)
+    try:
+        diag, _resolved = _check_storage_directory(cfg)
+        if diag.status == "ok":
+            pytest.skip("filesystem ignored chmod; cannot exercise unwritable path")
+        fixes = run_fixes(DoctorReport(checks=[diag]), cfg=cfg, directory=tmp_path)
+        mode_after = stat.S_IMODE(tmp_path.stat().st_mode)
+    finally:
+        tmp_path.chmod(0o755)  # restore so pytest can clean up
+    assert [f.action for f in fixes] == ["chmod_storage_dir"]
+    fix = fixes[0]
+    assert fix.applied is True
+    assert fix.before_status == "fail"
+    assert fix.after_status == "ok"
+    assert fix.details["new_mode"] == "0o700"
+    assert mode_after == 0o700
+
+
+def test_fix_storage_directory_ignores_non_perms_failures(tmp_path: Path) -> None:
+    """A storage failure that ISN'T the unwritable branch (here: the
+    resolved path is a FILE) has no auto fix — the fixer's ground-truth
+    guard declines and the finding stays manual with its hint."""
+    target = tmp_path / "store-as-file"
+    target.write_text("not a dir", encoding="utf-8")
+    cfg = _config_for(target)
+    diag, _resolved = _check_storage_directory(cfg)
+    assert diag.status == "fail"
+    assert run_fixes(DoctorReport(checks=[diag]), cfg=cfg, directory=target) == []
+    assert target.read_text(encoding="utf-8") == "not a dir"
+
+
+def test_fix_event_log_chmods_unwritable_file(tmp_path: Path) -> None:
+    """break→fix→green: an unwritable event log is chmod'd to the 0600
+    the Recorder itself sets on first write."""
+    from bettermemory.events import EVENT_LOG_FILENAME
+
+    log = tmp_path / EVENT_LOG_FILENAME
+    log.write_text("", encoding="utf-8")
+    log.chmod(0o400)
+    diag = _check_event_log_writable(tmp_path)
+    if diag.status == "ok":
+        pytest.skip("filesystem ignored chmod; cannot exercise unwritable path")
+    assert diag.status == "fail"
+    fixes = run_fixes(DoctorReport(checks=[diag]), cfg=None, directory=tmp_path)
+    assert [f.action for f in fixes] == ["chmod_event_log"]
+    assert fixes[0].applied is True
+    assert fixes[0].after_status == "ok"
+    assert stat.S_IMODE(log.stat().st_mode) == 0o600
+    assert _check_event_log_writable(tmp_path).status == "ok"
+
+
+def test_fix_index_health_rebuilds_corrupt_index(tmp_path: Path) -> None:
+    """break→fix→green: a garbage .index.sqlite is dropped and rebuilt
+    through `index.rebuild` — the exact function `reindex` runs."""
+    from bettermemory.index import index_path
+    from bettermemory.store import Store
+
+    store = Store(tmp_path)
+    store.write(content="alpha indexer note", scopes=["tools"])
+    index_path(tmp_path).write_bytes(b"not a sqlite database at all " * 16)
+    diag = _check_index_health(tmp_path)
+    assert diag.status == "warn"
+    fixes = run_fixes(DoctorReport(checks=[diag]), cfg=None, directory=tmp_path)
+    assert [f.action for f in fixes] == ["rebuild_index"]
+    fix = fixes[0]
+    assert fix.applied is True
+    assert fix.before_status == "warn"
+    assert fix.after_status == "ok"
+    assert fix.details["indexed"] == 1
+    assert _check_index_health(tmp_path).status == "ok"
+
+
+def test_fix_index_health_rebuilds_missing_index(tmp_path: Path) -> None:
+    """The after-a-sync-pull shape: memory files on disk, no index —
+    the same rebuild greens it."""
+    from bettermemory.index import index_path
+    from bettermemory.store import Store
+
+    store = Store(tmp_path)
+    store.write(content="pulled memory body", scopes=["tools"])
+    index_path(tmp_path).unlink()
+    diag = _check_index_health(tmp_path)
+    assert diag.status == "warn"
+    fixes = run_fixes(DoctorReport(checks=[diag]), cfg=None, directory=tmp_path)
+    assert fixes[0].applied is True
+    assert fixes[0].after_status == "ok"
+
+
+def test_fix_stale_config_lockfiles_removes_artifact_leaves_live_locks(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """break→fix→green for the 0-byte 3.15.0 artifact, PLUS the
+    boundary: a directory at `<config>.lock` (a client's own
+    mkdir-style lock) and a non-empty file (some other tool's lock with
+    content) are never touched — the heal re-checks the artifact shape
+    at unlink time."""
+    config_a = tmp_path / "a_config.json"
+    config_b = tmp_path / "b_config.json"
+    config_c = tmp_path / "c_config.json"
+    monkeypatch.setattr(
+        "bettermemory.doctor.KNOWN_CLIENTS",
+        {
+            "clienta": lambda: ClientPaths(
+                name="clienta", description="", paths=(config_a,)
+            ),
+            "clientb": lambda: ClientPaths(
+                name="clientb", description="", paths=(config_b,)
+            ),
+            "clientc": lambda: ClientPaths(
+                name="clientc", description="", paths=(config_c,)
+            ),
+        },
+    )
+    artifact = config_a.with_suffix(".json.lock")
+    artifact.touch()  # 0-byte regular file — the 3.15.0 artifact shape
+    live_dir_lock = config_b.with_suffix(".json.lock")
+    live_dir_lock.mkdir()  # the client's own mkdir-style lock
+    foreign = config_c.with_suffix(".json.lock")
+    foreign.write_text("pid: 1234\n", encoding="utf-8")
+
+    diag = _check_stale_config_lockfiles()
+    assert diag.status == "warn"
+    assert diag.details["stale_lockfiles"] == [str(artifact)]
+
+    fixes = run_fixes(DoctorReport(checks=[diag]), cfg=None, directory=None)
+    assert [f.action for f in fixes] == ["remove_stale_lockfiles"]
+    fix = fixes[0]
+    assert fix.applied is True
+    assert fix.after_status == "ok"
+    assert fix.details["removed"] == [str(artifact)]
+    assert not artifact.exists()
+    assert live_dir_lock.is_dir()
+    assert foreign.read_text(encoding="utf-8") == "pid: 1234\n"
+    assert _check_stale_config_lockfiles().status == "ok"
+
+
+@_needs_git
+def test_fix_sync_gitignore_refreshes_but_never_untracks(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The PARTIAL fix: a stale-gitignore store repo with a tracked
+    sidecar gets its .gitignore refreshed to canonical (so the manual
+    untrack will stick — `sync push` never refreshes it), but the git
+    index is NOT touched: the check stays red and the fix says so."""
+    store = _store_repo(tmp_path, monkeypatch)
+    (store / PROPOSALS_FILENAME).write_text(
+        '{"content": "captured plaintext"}\n', encoding="utf-8"
+    )
+    _git_in(store, "add", PROPOSALS_FILENAME)
+    _git_in(store, "commit", "-m", "pre-fix sync commit")
+    assert not (store / ".gitignore").exists()  # the stalest shape
+
+    diag = _check_sync_tracked_ignored(store)
+    assert diag.status == "fail"
+    fixes = run_fixes(DoctorReport(checks=[diag]), cfg=None, directory=store)
+    assert [f.action for f in fixes] == ["refresh_gitignore"]
+    fix = fixes[0]
+    assert fix.applied is True
+    assert fix.after_status == "fail"  # honest: the untrack is manual
+    assert "git rm --cached" in fix.message
+    desired = "\n".join(sync._GITIGNORE_LINES) + "\n"
+    assert (store / ".gitignore").read_text(encoding="utf-8") == desired
+    assert PROPOSALS_FILENAME in _git_in(store, "ls-files")
+    # With the refreshed gitignore, the manual remediation now sticks.
+    _git_in(store, "rm", "--cached", PROPOSALS_FILENAME)
+    _git_in(store, "commit", "-m", "untrack")
+    assert _check_sync_tracked_ignored(store).status == "ok"
+
+
+@_needs_git
+def test_fix_sync_gitignore_nothing_to_apply_when_canonical(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A tracked sidecar behind an already-canonical gitignore has no
+    auto-applicable half — the finding stays purely manual and the git
+    index is untouched."""
+    store = _store_repo(tmp_path, monkeypatch)
+    (store / PROPOSALS_FILENAME).write_text("x\n", encoding="utf-8")
+    _git_in(store, "add", PROPOSALS_FILENAME)
+    _git_in(store, "commit", "-m", "pre-fix sync commit")
+    sync.init(store)  # writes the canonical .gitignore
+    diag = _check_sync_tracked_ignored(store)
+    assert diag.status == "fail"
+    assert run_fixes(DoctorReport(checks=[diag]), cfg=None, directory=store) == []
+    assert PROPOSALS_FILENAME in _git_in(store, "ls-files")
+
+
+def test_run_fixes_leaves_manual_findings_alone(tmp_path: Path) -> None:
+    """Red checks with no registered fixer contribute nothing — the
+    registry IS the manual/auto boundary, so client configs, parse
+    health, stranded auto-memory, parent-repo tracking etc. are never
+    mutated by --fix."""
+    report = DoctorReport(
+        checks=[
+            Diagnosis(name="mcp_client_configs", status="warn", message="stale"),
+            Diagnosis(name="memory_parse_health", status="warn", message="skipped"),
+            Diagnosis(name="auto_memory_stranded", status="warn", message="stranded"),
+            Diagnosis(
+                name="store_nested_in_parent_repo", status="warn", message="tracked"
+            ),
+            Diagnosis(name="embeddings_extra", status="fail", message="missing"),
+        ]
+    )
+    assert run_fixes(report, cfg=None, directory=tmp_path) == []
+
+
+def test_run_fixes_records_doctor_fix_event(tmp_path: Path) -> None:
+    """One `doctor_fix` event per APPLIED fix — check name, action, and
+    the before/after statuses land in the store's event log."""
+    from bettermemory.events import iter_all_events
+    from bettermemory.index import index_path
+    from bettermemory.store import Store
+
+    store = Store(tmp_path)
+    store.write(content="event audit body", scopes=["tools"])
+    index_path(tmp_path).write_bytes(b"garbage " * 8)
+    diag = _check_index_health(tmp_path)
+    assert diag.status == "warn"
+    fixes = run_fixes(DoctorReport(checks=[diag]), cfg=None, directory=tmp_path)
+    assert fixes[0].applied is True
+    events = [e for e in iter_all_events(tmp_path) if e.get("kind") == "doctor_fix"]
+    assert len(events) == 1
+    event = events[0]
+    assert event["check"] == "index_health"
+    assert event["action"] == "rebuild_index"
+    assert event["before_status"] == "warn"
+    assert event["after_status"] == "ok"
+    assert event["detail"]["indexed"] == 1
+
+
+def test_run_fixes_wraps_fixer_exception(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A fixer that raises becomes a failed FixResult — the same
+    never-take-down-the-report tolerance `_safe` gives checks."""
+
+    def _boom(**_kwargs: Any) -> None:
+        raise RuntimeError("kaboom")
+
+    monkeypatch.setitem(_FIXERS, "index_health", _boom)
+    report = DoctorReport(
+        checks=[Diagnosis(name="index_health", status="warn", message="bad")]
+    )
+    fixes = run_fixes(report, cfg=None, directory=tmp_path)
+    assert len(fixes) == 1
+    assert fixes[0].applied is False
+    assert "RuntimeError" in (fixes[0].error or "")
+    assert fixes[0].after_status == "warn"
+
+
+def test_cli_doctor_fix_exit_code_reflects_post_fix_state(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A red-then-healed run exits 0 (the post-fix state) where the dry
+    run exits 1 — the `doctor --fix && …` contract scripts rely on."""
+    from bettermemory import doctor as doctor_mod
+    from bettermemory.index import index_path
+    from bettermemory.store import Store
+
+    cfg = _config_for(tmp_path)
+    store = Store(tmp_path)
+    store.write(content="cli exit body", scopes=["tools"])
+    index_path(tmp_path).write_bytes(b"garbage " * 8)
+    monkeypatch.setattr(
+        doctor_mod,
+        "run_diagnostics",
+        lambda: DoctorReport(checks=[_check_index_health(tmp_path)]),
+    )
+    monkeypatch.setattr(doctor_mod, "load_config", lambda: cfg)
+
+    assert cli_doctor(json_out=False) == 1  # dry run: the warn stays
+    capsys.readouterr()
+    code = cli_doctor(json_out=False, fix=True)
+    out = capsys.readouterr().out
+    assert code == 0
+    assert "--fix:" in out
+    assert "fixed (was warn)" in out
+    assert _check_index_health(tmp_path).status == "ok"
+
+
+def test_cli_doctor_fix_json_carries_fixes_array(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from bettermemory import doctor as doctor_mod
+    from bettermemory.index import index_path
+    from bettermemory.store import Store
+
+    cfg = _config_for(tmp_path)
+    store = Store(tmp_path)
+    store.write(content="json lane body", scopes=["tools"])
+    index_path(tmp_path).write_bytes(b"garbage " * 8)
+    monkeypatch.setattr(
+        doctor_mod,
+        "run_diagnostics",
+        lambda: DoctorReport(checks=[_check_index_health(tmp_path)]),
+    )
+    monkeypatch.setattr(doctor_mod, "load_config", lambda: cfg)
+    code = cli_doctor(json_out=True, fix=True)
+    parsed = json.loads(capsys.readouterr().out)
+    assert code == 0
+    assert parsed["overall"] == "ok"
+    assert parsed["fixes_applied"] == 1
+    (fix,) = parsed["fixes"]
+    assert fix["check"] == "index_health"
+    assert fix["applied"] is True
+    assert fix["before_status"] == "warn"
+    assert fix["after_status"] == "ok"
+    assert [c["status"] for c in parsed["checks"]] == ["ok"]
+
+
+def test_render_json_without_fixes_keeps_pre_fix_shape() -> None:
+    """Non---fix runs must not grow a `fixes` key — existing `doctor
+    --json` consumers parse the exact prior shape. A --fix run that
+    applied nothing still carries the array (empty), so ITS consumers
+    can branch on presence rather than sniffing."""
+    report = DoctorReport(checks=[Diagnosis(name="x", status="ok", message="")])
+    parsed = json.loads(render_json(report))
+    assert "fixes" not in parsed
+    assert "fixes_applied" not in parsed
+    parsed_fix = json.loads(render_json(report, fixes=[]))
+    assert parsed_fix["fixes"] == []
+    assert parsed_fix["fixes_applied"] == 0
+
+
+def test_cli_doctor_fix_noop_says_so(
+    capsys: pytest.CaptureFixture[str],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The no-op contract: an all-green run applies nothing and says
+    so, exit 0."""
+    from bettermemory import doctor as doctor_mod
+
+    fake = DoctorReport(checks=[Diagnosis(name="x", status="ok", message="")])
+    monkeypatch.setattr(doctor_mod, "run_diagnostics", lambda: fake)
+    monkeypatch.setattr(doctor_mod, "_fix_context", lambda: (None, None))
+    code = cli_doctor(json_out=False, fix=True)
+    out = capsys.readouterr().out
+    assert code == 0
+    assert "nothing to fix" in out
+
+
+def test_cli_doctor_fix_all_manual_says_so(
+    capsys: pytest.CaptureFixture[str],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Red findings that are all manual-only: --fix applies nothing,
+    says so, and the exit code keeps the pre-fix verdict."""
+    from bettermemory import doctor as doctor_mod
+
+    fake = DoctorReport(
+        checks=[Diagnosis(name="mcp_client_configs", status="warn", message="stale")]
+    )
+    monkeypatch.setattr(doctor_mod, "run_diagnostics", lambda: fake)
+    monkeypatch.setattr(doctor_mod, "_fix_context", lambda: (None, None))
+    code = cli_doctor(json_out=False, fix=True)
+    out = capsys.readouterr().out
+    assert code == 1
+    assert "no auto-fixable findings" in out
+
+
+# Hardcoded alphabetised, NOT derived from `_FIXERS` — derivation would
+# silently shrink the expectation when an entry is deleted, defeating the
+# deletion guard. Same shape as `_EXPECTED_CHECK_STATUSES` above.
+_EXPECTED_FIXABLE_CHECKS: tuple[str, ...] = (
+    "event_log",
+    "index_health",
+    "stale_config_lockfiles",
+    "storage_directory",
+    "sync_tracked_ignored",
+)
+
+
+def test_fixers_registry_matches_expected_fixable_checks() -> None:
+    """Pin `_FIXERS` membership both ways. A new auto-fixable check is
+    a deliberate safety decision (idempotent + reversible +
+    target-regenerable, per the doctor module docstring); this pin
+    makes it a REVIEWED one rather than a drive-by registry insert —
+    and a deleted fixer trips it too."""
+    assert set(_FIXERS) == set(_EXPECTED_FIXABLE_CHECKS)
+
+
+def test_cli_doctor_subparser_wires_fix_flag(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """`doctor --fix` parses, defaults to False, and dispatches
+    `fix=True` through to `cli_doctor`."""
+    import argparse
+
+    from bettermemory.cli import doctor as cli_doctor_mod
+
+    parser = argparse.ArgumentParser()
+    sub = parser.add_subparsers(dest="cmd")
+    cli_doctor_mod.add_subparser(sub)
+    assert parser.parse_args(["doctor"]).fix is False
+    args = parser.parse_args(["doctor", "--fix", "--json"])
+    assert args.fix is True
+    assert args.json is True
+
+    seen: dict[str, Any] = {}
+
+    def _fake_cli_doctor(*, json_out: bool, fix: bool = False) -> int:
+        seen.update(json_out=json_out, fix=fix)
+        return 0
+
+    monkeypatch.setattr("bettermemory.doctor.cli_doctor", _fake_cli_doctor)
+    with pytest.raises(SystemExit) as excinfo:
+        cli_doctor_mod.run(args)
+    assert excinfo.value.code == 0
+    assert seen == {"json_out": True, "fix": True}

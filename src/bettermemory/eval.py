@@ -2279,8 +2279,18 @@ TOOLS_WITHOUT_TELEMETRY: tuple[str, ...] = ("memory_health",)
 # string literal, so the AST parity scan never sees it — it is
 # deliberately omitted here rather than tripping the "stale entry" half
 # of the parity assertion.
+#
+# ``doctor_fix`` is `bettermemory doctor --fix`'s per-applied-fix audit
+# record — an admin CLI operation like ``silent_miss_cutoff``, never a
+# tool invocation, so counting it in the rollup would invent a tool.
 _KNOWN_SIDE_EFFECT_KINDS: frozenset[str] = frozenset(
-    {"search_miss", "pending_expired", "silent_miss_cutoff", "proposals_enqueued"}
+    {
+        "search_miss",
+        "pending_expired",
+        "silent_miss_cutoff",
+        "proposals_enqueued",
+        "doctor_fix",
+    }
 )
 
 

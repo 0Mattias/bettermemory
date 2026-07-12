@@ -5,14 +5,6 @@ Planned work, in rough priority order. Plans change; the
 
 ## Planned
 
-- **`doctor --fix`.** Doctor's checks already print pasteable,
-  shell-safe remediation hints; `--fix` will execute the reversible
-  subset (permissions, gitignore refresh, index rebuild, stale-lock
-  cleanup) through the underlying functions, re-run each check, and
-  report before/after. Destructive remediations — history rewrites,
-  untracking, anything that deletes user content — stay hints, and
-  plain `doctor` remains the dry run. Every applied fix lands in the
-  event log.
 - **Encryption at rest.** An `[encrypted]` extra with `age`-backed
   per-file envelope encryption, complementing the write-time
   credential check. Not expected in 2026.

@@ -23,13 +23,27 @@ def add_subparser(
         "integrity (parse, search index, storage), and sync-repo leak "
         "surfaces (tracked-despite-gitignore sidecars, parent repos "
         "tracking store files) — each failure prints a one-line fix "
-        "hint. Exits 0/1/2 for ok/warn/fail."
+        "hint. Exits 0/1/2 for ok/warn/fail. `--fix` applies the safe "
+        "subset of the remediations."
     )
     parser = sub.add_parser("doctor", help=help_text, description=help_text)
     parser.add_argument(
         "--json",
         action="store_true",
         help="Emit JSON (machine-readable) instead of human-readable text.",
+    )
+    parser.add_argument(
+        "--fix",
+        action="store_true",
+        help=(
+            "Apply the safe subset of remediations — store/event-log "
+            "permissions, search-index rebuild, stale-lockfile removal, "
+            "sync .gitignore refresh — by calling the same functions the "
+            "fix hints point at, re-run each affected check, and report "
+            "before/after. Destructive remediations (untracking, history "
+            "rewrites, client-config edits) stay hints. Plain `doctor` "
+            "is the dry run; the exit code reflects the post-fix state."
+        ),
     )
     return parser
 
@@ -38,4 +52,4 @@ def run(args: argparse.Namespace) -> None:
     """Dispatch handler for ``bettermemory doctor``."""
     from ..doctor import cli_doctor
 
-    raise SystemExit(cli_doctor(json_out=args.json))
+    raise SystemExit(cli_doctor(json_out=args.json, fix=args.fix))

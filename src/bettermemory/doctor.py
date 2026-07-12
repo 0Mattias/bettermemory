@@ -21,6 +21,17 @@ section):
   installed
 - frontmatter parse errors on memory bodies that have been hand-edited
   into invalid YAML
+
+`--fix` applies the SAFE subset of the remediations the hints describe
+— store/event-log permissions, index rebuild, stale-lockfile removal,
+the sync repo's `.gitignore` refresh — by calling the same underlying
+functions the hints point at (never by re-parsing hint strings, which
+would reopen the quoting class the hint hardening closed), re-runs each
+affected check, and reports before/after. Plain `doctor` remains the
+dry run; destructive remediations (untracking, history rewrites, MCP
+client config edits, anything that could delete possibly-unique user
+content, anything on another host) stay hints forever. Every applied
+fix lands one `doctor_fix` event in the store's event log.
 """
 
 from __future__ import annotations
@@ -31,6 +42,7 @@ import os
 import re
 import shlex
 import shutil
+import stat
 import subprocess
 import sys
 import sysconfig
@@ -87,6 +99,28 @@ class DoctorReport:
         if any(c.status == "warn" for c in self.checks):
             return "warn"
         return "ok"
+
+
+@dataclass
+class FixResult:
+    """One attempted `--fix` remediation's outcome.
+
+    `applied` means a mutation actually happened (a chmod landed, files
+    were removed, the index was rebuilt) — a fixer that raised, or found
+    nothing matching its guard at fix time, reports `applied=False`.
+    `after_status` is the re-run of the SAME check immediately after the
+    attempt; "fixed" in the rendered output means `applied and
+    after_status == "ok"`, never "we ran something".
+    """
+
+    check: str
+    action: str
+    applied: bool
+    before_status: CheckStatus
+    after_status: CheckStatus
+    message: str
+    error: str | None = None
+    details: dict[str, Any] = field(default_factory=dict)
 
 
 # ---------------------------------------------------------------------------
@@ -2203,6 +2237,381 @@ def run_diagnostics() -> DoctorReport:
 
 
 # ---------------------------------------------------------------------------
+# Fixes (`doctor --fix`)
+#
+# Fixer contract: each fixer re-probes GROUND TRUTH under its own guard
+# (never parses the diagnosis message — messages are for humans), mutates
+# only through the same underlying functions the fix hints point at, and
+# re-runs its own check so "fixed" is a verified claim, not an attempted
+# one. A fixer returns None when the red diagnosis is not its
+# auto-fixable branch (e.g. storage_directory failing because the path is
+# a FILE) — the finding then stays manual with its hint. AUTO-fixable is
+# deliberately narrow: idempotent + reversible + target-regenerable.
+# Anything touching git history (untracking, filter-repo, secret
+# rotation), anything that could delete possibly-unique user content,
+# MCP client config edits, and anything on another host stay hints
+# forever.
+# ---------------------------------------------------------------------------
+
+
+def _fix_storage_directory(
+    *, cfg: Config | None, directory: Path | None, diagnosis: Diagnosis
+) -> FixResult | None:
+    """chmod 0700 an existing-but-unwritable store directory.
+
+    Only the not-writable branch is auto-fixable: missing-parent,
+    path-is-a-file, and probe-write failures (ENOSPC, read-only mounts)
+    all need decisions or resources a chmod cannot supply. 0700 rather
+    than a minimal `u+w` is deliberate — the store carries private user
+    data, so the heal converges on the private posture the event-log
+    writer already enforces for its own file; the prior mode is recorded
+    in the result (and the event log) so the change is reversible from
+    the audit trail.
+    """
+    if cfg is None or directory is None:
+        return None
+    if not directory.exists() or not directory.is_dir():
+        return None
+    if os.access(directory, os.W_OK):
+        # Already writable (or running as root, where os.access is blind
+        # to modes) — whatever made the check red, it isn't the
+        # chmod-able branch.
+        return None
+    old_mode = stat.S_IMODE(directory.stat().st_mode)
+    try:
+        directory.chmod(0o700)
+    except OSError as exc:
+        return FixResult(
+            check="storage_directory",
+            action="chmod_storage_dir",
+            applied=False,
+            before_status=diagnosis.status,
+            after_status=diagnosis.status,
+            message=f"chmod 0700 on {directory} failed",
+            error=f"{exc.__class__.__name__}: {exc}",
+            details={"path": str(directory), "old_mode": oct(old_mode)},
+        )
+    after, _redirectory = _check_storage_directory(cfg)
+    return FixResult(
+        check="storage_directory",
+        action="chmod_storage_dir",
+        applied=True,
+        before_status=diagnosis.status,
+        after_status=after.status,
+        message=f"chmod {oct(old_mode)} → 0o700 on {directory}",
+        details={
+            "path": str(directory),
+            "old_mode": oct(old_mode),
+            "new_mode": "0o700",
+        },
+    )
+
+
+def _fix_event_log(
+    *, cfg: Config | None, directory: Path | None, diagnosis: Diagnosis
+) -> FixResult | None:
+    """chmod 0600 an existing-but-unwritable event log file.
+
+    The cannot-be-created branch (directory not writable) is the
+    storage_directory fixer's cause, not this one's — when that fix
+    lands first, the final full re-run reports this check healed too.
+    0600 matches the mode the Recorder itself sets on first write.
+    """
+    if directory is None or not directory.exists():
+        return None
+    log_path = directory / EVENT_LOG_FILENAME
+    if not log_path.exists():
+        return None
+    if os.access(log_path, os.W_OK):
+        return None
+    old_mode = stat.S_IMODE(log_path.stat().st_mode)
+    try:
+        log_path.chmod(0o600)
+    except OSError as exc:
+        return FixResult(
+            check="event_log",
+            action="chmod_event_log",
+            applied=False,
+            before_status=diagnosis.status,
+            after_status=diagnosis.status,
+            message=f"chmod 0600 on {log_path} failed",
+            error=f"{exc.__class__.__name__}: {exc}",
+            details={"path": str(log_path), "old_mode": oct(old_mode)},
+        )
+    after = _check_event_log_writable(directory)
+    return FixResult(
+        check="event_log",
+        action="chmod_event_log",
+        applied=True,
+        before_status=diagnosis.status,
+        after_status=after.status,
+        message=f"chmod {oct(old_mode)} → 0o600 on {log_path}",
+        details={
+            "path": str(log_path),
+            "old_mode": oct(old_mode),
+            "new_mode": "0o600",
+        },
+    )
+
+
+def _fix_index_health(
+    *, cfg: Config | None, directory: Path | None, diagnosis: Diagnosis
+) -> FixResult | None:
+    """Rebuild the FTS5 index through `index.rebuild` — the exact
+    function `bettermemory reindex` runs. Every red index_health state
+    (missing-with-files, corrupt meta, torn pages, a rebuild-pending
+    that survived Store's auto-heal, count divergence) shares this one
+    repair, and the index is derived state — the .md files stay
+    canonical throughout, so the rebuild is regenerable-by-definition
+    safe. `rebuild` itself is the documented recovery primitive and
+    tolerates ANY prior on-disk index state.
+    """
+    if directory is None or not directory.exists():
+        return None
+    # Lazy for the same no-sqlite3-interpreter reason as
+    # `_check_index_health`'s `index` import.
+    import sqlite3
+
+    from . import index
+
+    try:
+        store = Store(directory)
+        count = index.rebuild(directory, store.iter_active())
+    except (OSError, sqlite3.Error) as exc:
+        # The same failure surface `reindex` routes through
+        # parser.error: read-only dir, ENOSPC, a SQLite I/O error.
+        return FixResult(
+            check="index_health",
+            action="rebuild_index",
+            applied=False,
+            before_status=diagnosis.status,
+            after_status=diagnosis.status,
+            message="index rebuild failed",
+            error=f"{exc.__class__.__name__}: {exc}",
+            details={"path": str(index.index_path(directory))},
+        )
+    after = _check_index_health(directory)
+    return FixResult(
+        check="index_health",
+        action="rebuild_index",
+        applied=True,
+        before_status=diagnosis.status,
+        after_status=after.status,
+        message=f"rebuilt the search index from disk ({count} memories indexed)",
+        details={"indexed": count, "path": str(index.index_path(directory))},
+    )
+
+
+def _fix_sync_gitignore(
+    *, cfg: Config | None, directory: Path | None, diagnosis: Diagnosis
+) -> FixResult | None:
+    """Refresh the store sync repo's `.gitignore` to the canonical
+    pattern list — `sync.init()`'s own idempotent, atomic refresh,
+    applied without the user having to remember that init is also the
+    refresher.
+
+    This is a PARTIAL fix by design: gitignore cannot untrack, so the
+    check stays red until the user runs the `git rm --cached`
+    remediation from the hint — but without the refresh, that manual
+    step silently un-does itself on a stale-gitignore store: `sync
+    push` does NOT refresh the gitignore, so its next `git add -A`
+    would re-stage the just-untracked file. The untrack itself — and
+    the history rewrite / secret rotation behind it — stays manual
+    forever.
+    """
+    if directory is None or not directory.exists():
+        return None
+    # Same lazy-import rationale as `_check_sync_tracked_ignored`: a
+    # top-level `from .sync import …` here would be circular.
+    from ._fsutil import atomic_write_bytes
+    from .sync import _GITIGNORE_LINES, _is_repo
+
+    if not _is_repo(directory):
+        return None
+    gitignore = directory / ".gitignore"
+    desired = "\n".join(_GITIGNORE_LINES) + "\n"
+    try:
+        current = gitignore.read_text(encoding="utf-8") if gitignore.exists() else ""
+    except OSError:
+        # Unreadable counts as stale — the write below either heals it
+        # or reports the failure honestly.
+        current = ""
+    if current == desired:
+        # Gitignore already canonical — the remaining remediation is
+        # the manual untrack; nothing auto-applicable here.
+        return None
+    try:
+        atomic_write_bytes(gitignore, desired.encode("utf-8"))
+    except OSError as exc:
+        return FixResult(
+            check="sync_tracked_ignored",
+            action="refresh_gitignore",
+            applied=False,
+            before_status=diagnosis.status,
+            after_status=diagnosis.status,
+            message=f"refreshing {gitignore} failed",
+            error=f"{exc.__class__.__name__}: {exc}",
+            details={"gitignore": str(gitignore)},
+        )
+    after = _check_sync_tracked_ignored(directory)
+    return FixResult(
+        check="sync_tracked_ignored",
+        action="refresh_gitignore",
+        applied=True,
+        before_status=diagnosis.status,
+        after_status=after.status,
+        message=(
+            ".gitignore refreshed to the canonical pattern list (stops "
+            "future staging); the already-tracked files still need the "
+            "manual `git rm --cached` remediation in the hint"
+        ),
+        details={"gitignore": str(gitignore)},
+    )
+
+
+def _fix_stale_config_lockfiles(
+    *, cfg: Config | None, directory: Path | None, diagnosis: Diagnosis
+) -> FixResult | None:
+    """Remove the 0-byte `<config>.lock` artifacts through
+    `init._heal_stale_sidecar_lockfile` — the same heal `bettermemory
+    init` applies. The heal's own guard re-checks the artifact shape at
+    unlink time (regular file, not a symlink, exactly 0 bytes), so a
+    client's live mkdir-style DIRECTORY lock, or a non-empty file some
+    other tool owns, is never touched even if the path changed shape
+    between the diagnosis and the fix.
+    """
+    from .init import _heal_stale_sidecar_lockfile
+
+    removed: list[str] = []
+    for _client_name, getter in KNOWN_CLIENTS.items():
+        for path in getter().paths:
+            healed = _heal_stale_sidecar_lockfile(path)
+            if healed is not None:
+                removed.append(str(healed))
+    after = _check_stale_config_lockfiles()
+    if not removed:
+        # The heal is best-effort (it swallows unlink errors, mirroring
+        # init's never-fail contract) — the re-run above is what tells
+        # the truth about whether the artifact is actually gone.
+        return FixResult(
+            check="stale_config_lockfiles",
+            action="remove_stale_lockfiles",
+            applied=False,
+            before_status=diagnosis.status,
+            after_status=after.status,
+            message=(
+                "no 0-byte lockfile artifact matched at fix time "
+                "(vanished, changed shape, or unlink was denied)"
+            ),
+        )
+    plural = "" if len(removed) == 1 else "s"
+    return FixResult(
+        check="stale_config_lockfiles",
+        action="remove_stale_lockfiles",
+        applied=True,
+        before_status=diagnosis.status,
+        after_status=after.status,
+        message=(
+            f"removed {len(removed)} stale 3.15.0 lockfile{plural}: "
+            + ", ".join(removed)
+        ),
+        details={"removed": removed},
+    )
+
+
+# Check name → fixer. Every red check WITHOUT an entry here is
+# manual-only by construction — the safe default for any new check. Keys
+# are pinned against the check inventory by the registry parity test in
+# test_doctor.py; a fourth kind of entry (a fixer for a check that
+# cannot exist) would be dead code the pin catches.
+_FIXERS: dict[str, Any] = {
+    "storage_directory": _fix_storage_directory,
+    "index_health": _fix_index_health,
+    "event_log": _fix_event_log,
+    "sync_tracked_ignored": _fix_sync_gitignore,
+    "stale_config_lockfiles": _fix_stale_config_lockfiles,
+}
+
+
+def _fix_context() -> tuple[Config | None, Path | None]:
+    """The (config, storage directory) pair the fixers need, derived
+    with the same tolerance `run_diagnostics` applies: a config that
+    fails to load (config_loadable's fail) leaves only the
+    directory-independent fixers reachable; an unresolvable directory
+    (storage_directory's first fail branch) the same."""
+    try:
+        cfg = load_config()
+    except Exception:  # noqa: BLE001 — mirrors _check_config_loadable
+        return None, None
+    try:
+        directory = cfg.resolved_directory()
+    except Exception:  # noqa: BLE001 — mirrors _check_storage_directory
+        return cfg, None
+    return cfg, directory
+
+
+def _record_fix_events(directory: Path | None, applied: list[FixResult]) -> None:
+    """One `doctor_fix` event per applied fix — the same observability
+    bar as every other mutating surface. Best-effort like the Recorder
+    itself: a logging hiccup must never fail a fix that already landed.
+    Skipped when no store directory exists to host the log (then the
+    CLI/JSON output is the only record, which is still honest)."""
+    if not applied or directory is None or not directory.exists():
+        return
+    try:
+        from .events import Recorder
+        from .session import SessionState
+
+        recorder = Recorder(root=directory, session_id=SessionState().session_id)
+        for f in applied:
+            recorder.record(
+                "doctor_fix",
+                check=f.check,
+                action=f.action,
+                before_status=f.before_status,
+                after_status=f.after_status,
+                detail=f.details,
+            )
+    except Exception:  # noqa: BLE001 — audit trail is best-effort
+        pass
+
+
+def run_fixes(
+    report: DoctorReport, *, cfg: Config | None, directory: Path | None
+) -> list[FixResult]:
+    """Apply the auto-fixable subset of `report`'s red findings, in
+    report order (so the storage fix lands before checks that depend on
+    a writable store re-run). Returns one FixResult per ATTEMPTED fix;
+    red checks with no registered fixer — or whose fixer's guard says
+    the red state isn't its branch — contribute nothing and stay
+    manual. A fixer that raises is wrapped into a failed FixResult, the
+    same never-take-down-the-report tolerance `_safe` gives checks."""
+    fixes: list[FixResult] = []
+    for diag in report.checks:
+        if diag.status == "ok":
+            continue
+        fixer = _FIXERS.get(diag.name)
+        if fixer is None:
+            continue
+        try:
+            result = fixer(cfg=cfg, directory=directory, diagnosis=diag)
+        except Exception as exc:  # noqa: BLE001 — mirror _safe
+            result = FixResult(
+                check=diag.name,
+                action=f"fix_{diag.name}",
+                applied=False,
+                before_status=diag.status,
+                after_status=diag.status,
+                message=f"fixer raised {exc.__class__.__name__}: {exc}",
+                error=f"{exc.__class__.__name__}: {exc}",
+            )
+        if result is not None:
+            fixes.append(result)
+    _record_fix_events(directory, [f for f in fixes if f.applied])
+    return fixes
+
+
+# ---------------------------------------------------------------------------
 # Rendering
 # ---------------------------------------------------------------------------
 
@@ -2237,26 +2646,76 @@ def render_text(report: DoctorReport) -> str:
     return "\n".join(out)
 
 
-def render_json(report: DoctorReport) -> str:
-    return (
-        json.dumps(
-            {
-                "overall": report.overall,
-                "checks": [
-                    {
-                        "name": c.name,
-                        "status": c.status,
-                        "message": c.message,
-                        "fix_hint": c.fix_hint,
-                        "details": c.details,
-                    }
-                    for c in report.checks
-                ],
-            },
-            indent=2,
+def render_fixes_text(fixes: list[FixResult], pre: DoctorReport) -> str:
+    """The `--fix` tail of the text report. `pre` is the PRE-fix report
+    — the "before" half of the before/after story (the caller renders
+    the post-fix check list above this section). Says so explicitly
+    when there was nothing to fix, per the no-op contract."""
+    out: list[str] = ["--fix:"]
+    red = [c.name for c in pre.checks if c.status != "ok"]
+    if not red:
+        out.append("  all checks passed — nothing to fix.")
+    elif not fixes:
+        out.append(
+            "  no auto-fixable findings — every finding is manual-only; "
+            "see the fix hints above."
         )
-        + "\n"
-    )
+    else:
+        for f in fixes:
+            if f.applied and f.after_status == "ok":
+                out.append(
+                    f"  ✓ {f.check}: fixed (was {f.before_status}) — {f.message}"
+                )
+            elif f.applied:
+                out.append(
+                    f"  ⚠ {f.check}: applied (still {f.after_status}) — {f.message}"
+                )
+            else:
+                out.append(f"  ✗ {f.check}: not applied — {f.error or f.message}")
+        manual = [n for n in red if n not in {f.check for f in fixes}]
+        if manual:
+            out.append(
+                "  manual-only finding(s), see hints above: " + ", ".join(manual)
+            )
+    out.append("")
+    return "\n".join(out)
+
+
+def render_json(report: DoctorReport, fixes: list[FixResult] | None = None) -> str:
+    """`fixes is None` means "not a --fix run" — the payload keeps its
+    pre---fix shape exactly (no `fixes` key), so existing `doctor
+    --json` consumers see zero drift. A --fix run always carries the
+    `fixes` array, empty included, so its consumers can branch on
+    presence rather than sniffing."""
+    payload: dict[str, Any] = {
+        "overall": report.overall,
+        "checks": [
+            {
+                "name": c.name,
+                "status": c.status,
+                "message": c.message,
+                "fix_hint": c.fix_hint,
+                "details": c.details,
+            }
+            for c in report.checks
+        ],
+    }
+    if fixes is not None:
+        payload["fixes"] = [
+            {
+                "check": f.check,
+                "action": f.action,
+                "applied": f.applied,
+                "before_status": f.before_status,
+                "after_status": f.after_status,
+                "message": f.message,
+                "error": f.error,
+                "details": f.details,
+            }
+            for f in fixes
+        ]
+        payload["fixes_applied"] = sum(1 for f in fixes if f.applied)
+    return json.dumps(payload, indent=2) + "\n"
 
 
 # ---------------------------------------------------------------------------
@@ -2264,11 +2723,29 @@ def render_json(report: DoctorReport) -> str:
 # ---------------------------------------------------------------------------
 
 
-def cli_doctor(*, json_out: bool) -> int:
+def cli_doctor(*, json_out: bool, fix: bool = False) -> int:
     """`bettermemory doctor` entry point. Returns the exit code:
     0 = ok, 1 = warn, 2 = fail. Tooling can branch on this without
-    parsing output."""
+    parsing output. With `fix=True` the safe remediations are applied
+    first and the code reflects the POST-fix state — `doctor --fix &&
+    …` means "healthy, possibly after healing", the same contract
+    scripts already rely on."""
     report = run_diagnostics()
+    if fix:
+        cfg, directory = _fix_context()
+        fixes = run_fixes(report, cfg=cfg, directory=directory)
+        # Full re-run rather than patching the per-fix re-runs into the
+        # pre report: a fix can heal a NEIGHBOUR check's cause (the
+        # storage chmod unblocks event-log creation), and only a fresh
+        # pass reports that honestly. Skipped when nothing mutated —
+        # the pre report is still current.
+        post = run_diagnostics() if any(f.applied for f in fixes) else report
+        if json_out:
+            sys.stdout.write(render_json(post, fixes=fixes))
+        else:
+            sys.stdout.write(render_text(post))
+            sys.stdout.write(render_fixes_text(fixes, report))
+        return _EXIT_CODE_BY_STATUS[post.overall]
     if json_out:
         sys.stdout.write(render_json(report))
     else:

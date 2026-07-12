@@ -7,6 +7,33 @@ breaking changes, minor for additive features, patch for fixes. The
 [compatibility contract](CONTRIBUTING.md#versioning-and-the-compatibility-contract)
 spells out exactly what's stable.
 
+## Unreleased
+
+### Added
+
+- **`doctor --fix` — the safe repairs, applied.** Doctor's checks
+  already print pasteable, shell-safe remediation hints; `--fix`
+  executes the safe subset by calling the same underlying functions
+  the hints point at (never by re-parsing hint strings): store /
+  event-log permission heals (`chmod 0700`/`0600`), search-index
+  rebuild (the exact `reindex` code path — the index is derived
+  state), removal of the 0-byte 3.15.0 `<config>.lock` artifacts (the
+  same heal `init` applies; a client's live directory lock is never
+  touched), and the sync repo's `.gitignore` refresh (`sync init`'s
+  own idempotent write — a partial fix reported honestly as
+  still-red, since gitignore cannot untrack, but without it the
+  manual `git rm --cached` remediation silently un-does itself on the
+  next `sync push`). Each fix re-runs its check and is reported
+  "fixed" only when the re-run is green; the exit code reflects the
+  POST-fix state, so `doctor --fix && …` keeps the existing 0/1/2
+  contract. Plain `doctor` remains the dry run. Destructive
+  remediations — untracking, history rewrites, MCP client config
+  edits, anything that could delete possibly-unique user content,
+  anything on another host — stay hints forever. Every applied fix
+  lands one `doctor_fix` event in the store's event log. `doctor
+  --json` without `--fix` keeps its exact prior shape; with `--fix`
+  it gains a `fixes` array and a `fixes_applied` count.
+
 ## 3.21.0 - 2026-07-12
 
 Two small features that close long-open design questions, plus the

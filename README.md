@@ -202,7 +202,7 @@ provides:
 ```text
 bettermemory try              # offline staleness demo
 bettermemory init --client X  # register with a client (idempotent)
-bettermemory doctor           # diagnose install state
+bettermemory doctor           # diagnose install state (--fix: safe repairs)
 bettermemory health           # curation rollup
 bettermemory consolidate      # dedup/demote pass (dry-run; --llm for more)
 bettermemory eval             # the three metrics, with CIs
