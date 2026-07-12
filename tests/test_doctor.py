@@ -4028,6 +4028,50 @@ def test_cli_doctor_fix_json_carries_fixes_array(
     assert [c["status"] for c in parsed["checks"]] == ["ok"]
 
 
+def test_cli_doctor_plain_json_dispatch_shape_and_exit_code(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The non---fix `--json` lane of `cli_doctor` (the dispatch every
+    `doctor --json` consumer hits): stdout is exactly the parseable
+    report payload — `overall` plus the documented per-check entries,
+    and NO fix-related keys (that absence IS the pre---fix contract) —
+    and the exit code mirrors the report status."""
+    from bettermemory import doctor as doctor_mod
+    from bettermemory.store import Store
+
+    store = Store(tmp_path)
+    store.write(content="plain json lane body", scopes=["tools"])
+    healthy = DoctorReport(
+        checks=[
+            _check_index_health(tmp_path),
+            _check_event_log_writable(tmp_path),
+        ]
+    )
+    assert healthy.overall == "ok"  # premise: a healthy-enough store
+    monkeypatch.setattr(doctor_mod, "run_diagnostics", lambda: healthy)
+    code = cli_doctor(json_out=True, fix=False)
+    parsed = json.loads(capsys.readouterr().out)
+    assert code == _EXIT_CODE_BY_STATUS["ok"] == 0
+    assert parsed["overall"] == "ok"
+    assert [c["name"] for c in parsed["checks"]] == ["index_health", "event_log"]
+    for check in parsed["checks"]:
+        assert set(check) == {"name", "status", "message", "fix_hint", "details"}
+    assert "fixes" not in parsed
+    assert "fixes_applied" not in parsed
+
+    # The exit code tracks the report status, not a hardcoded 0 — and
+    # a red plain-json run still carries no fix keys.
+    warn = DoctorReport(checks=[Diagnosis(name="x", status="warn", message="w")])
+    monkeypatch.setattr(doctor_mod, "run_diagnostics", lambda: warn)
+    assert cli_doctor(json_out=True, fix=False) == _EXIT_CODE_BY_STATUS["warn"] == 1
+    parsed_warn = json.loads(capsys.readouterr().out)
+    assert parsed_warn["overall"] == "warn"
+    assert "fixes" not in parsed_warn
+    assert "fixes_applied" not in parsed_warn
+
+
 def test_render_json_without_fixes_keeps_pre_fix_shape() -> None:
     """Non---fix runs must not grow a `fixes` key — existing `doctor
     --json` consumers parse the exact prior shape. A --fix run that
