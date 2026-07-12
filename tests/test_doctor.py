@@ -677,6 +677,52 @@ def test_event_log_unwritable_hint_executes_on_space_and_quote_path(
         log.chmod(0o644)
 
 
+def test_event_log_unwritable_hint_is_shape_aware_symlink_vs_regular(
+    tmp_path: Path,
+) -> None:
+    """The unwritable-log fix_hint must match the path's shape. For a
+    SYMLINKED log a verbatim `chmod u+w <log_path>` is the victim
+    mutation `_fix_event_log` itself declines (f3ac191): chmod follows
+    symlinks, so a user pasting the hint chmods the TARGET through the
+    link. The symlink branch therefore emits a non-executable steer —
+    no chmod command anywhere in it — while a regular file keeps the
+    pasteable quoted chmod."""
+    if sys.platform == "win32":
+        pytest.skip("symlink semantics differ on Windows; POSIX-only test")
+    from bettermemory.events import EVENT_LOG_FILENAME
+
+    victim = tmp_path / "victim.txt"
+    victim.write_text("precious target content\n", encoding="utf-8")
+    victim.chmod(0o400)
+    store = tmp_path / "store"
+    store.mkdir()
+    (store / EVENT_LOG_FILENAME).symlink_to(victim)
+    diag = _check_event_log_writable(store)
+    if diag.status == "ok":
+        pytest.skip("filesystem ignored chmod; cannot exercise unwritable path")
+    assert diag.status == "fail"
+    assert diag.fix_hint is not None
+    assert "symlink" in diag.fix_hint
+    assert "inspect its target" in diag.fix_hint
+    # The steer is non-executable: no chmod command to paste at all.
+    assert "chmod" not in diag.fix_hint
+
+    # A regular unwritable file keeps the executable quoted chmod hint.
+    regular = tmp_path / "regular-store"
+    regular.mkdir()
+    log = regular / EVENT_LOG_FILENAME
+    log.write_text("", encoding="utf-8")
+    log.chmod(0o400)
+    try:
+        regular_diag = _check_event_log_writable(regular)
+    finally:
+        log.chmod(0o644)
+    if regular_diag.status == "ok":
+        pytest.skip("filesystem ignored chmod; cannot exercise unwritable path")
+    assert regular_diag.status == "fail"
+    assert regular_diag.fix_hint == f"`chmod u+w {shlex.quote(str(log))}`."
+
+
 # ---------------------------------------------------------------------------
 # audit_turn_cadence (M-doctor-hook)
 # ---------------------------------------------------------------------------

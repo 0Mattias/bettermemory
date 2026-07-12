@@ -652,17 +652,30 @@ def _check_event_log_writable(directory: Path) -> Diagnosis:
         )
 
     if not os.access(log_path, os.W_OK):
-        return Diagnosis(
-            name="event_log",
-            status="fail",
-            message=f"Event log at {log_path} is not writable.",
+        if log_path.is_symlink():
+            # A symlinked log gets a NON-executable steer, never a
+            # pasteable command: chmod follows symlinks, so the verbatim
+            # `chmod u+w <log_path>` hint would have the user mutate the
+            # TARGET's permissions by hand — the exact victim mutation
+            # `_fix_event_log` declines for the same shape.
+            hint = (
+                "The event log is a symlink — inspect its target before "
+                "changing permissions; a permission change through the "
+                "link lands on the target file, which may not be ours."
+            )
+        else:
             # shlex.quote: a raw interpolation shell-splits on a
             # space-bearing storage path (the macOS `Application
             # Support` neighbourhood) and can chmod an innocent sibling
             # on a glob-bearing one — the same executes-verbatim
             # contract `_quoted_literal_pathspecs` holds for the
             # pathspec hints.
-            fix_hint=f"`chmod u+w {shlex.quote(str(log_path))}`.",
+            hint = f"`chmod u+w {shlex.quote(str(log_path))}`."
+        return Diagnosis(
+            name="event_log",
+            status="fail",
+            message=f"Event log at {log_path} is not writable.",
+            fix_hint=hint,
         )
     # os.access is only the cheap pre-guard — on Windows it consults
     # nothing but FILE_ATTRIBUTE_READONLY (the exact bit `--fix`'s
