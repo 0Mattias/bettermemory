@@ -33,6 +33,8 @@ import pytest
 
 import bettermemory
 
+from .conftest import shielded_child_env
+
 
 _REPO_ROOT = Path(__file__).resolve().parents[1]
 
@@ -68,15 +70,19 @@ def test_dunder_version_looks_like_a_pep440_version() -> None:
     assert re.match(r"^\d", v), f"__version__ should start with a digit: {v!r}"
 
 
-# `python -m bettermemory` only resolves when the package is installed
-# in the subprocess Python — `pip install -e .` or a wheel install. CI
-# does this via `uv sync --extra dev`; a fresh local clone without the
-# editable install would otherwise see this fail with "No module named
-# bettermemory". Skip when the subprocess can't import.
+# `python -m bettermemory` only resolves when the package is importable
+# in the subprocess Python. The probe and the actual invocations run
+# under `shielded_child_env()` (the child-process leg of the conftest
+# import shield), so a hidden editable `.pth` alone can no longer make
+# them skip. The skip-guard stays as a fallback for genuinely broken
+# installs (e.g. runtime deps missing in the subprocess Python) — a
+# fresh local clone without `uv sync` would otherwise fail with
+# "No module named ..."; CI always passes the probe.
 _PACKAGE_IMPORTABLE_IN_SUBPROCESS = (
     subprocess.run(
         [sys.executable, "-c", "import bettermemory"],
         capture_output=True,
+        env=shielded_child_env(),
     ).returncode
     == 0
 )
@@ -98,6 +104,7 @@ def test_version_flag_prints_dunder_version() -> None:
         capture_output=True,
         text=True,
         check=True,
+        env=shielded_child_env(),
     )
     # argparse `action="version"` writes to stdout and exits 0.
     out = (result.stdout + result.stderr).strip()
@@ -152,6 +159,7 @@ def test_cli_version_flag_matches_pyproject() -> None:
         capture_output=True,
         text=True,
         check=True,
+        env=shielded_child_env(),
     )
     out = (result.stdout + result.stderr).strip()
     assert pyproject_v in out, (

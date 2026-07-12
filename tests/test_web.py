@@ -23,6 +23,8 @@ import pytest
 from bettermemory.config import Config, StorageConfig
 from bettermemory.store import Store
 
+from .conftest import shielded_child_env
+
 
 # Skip the whole module when the ui extra isn't available.
 fastapi = pytest.importorskip("fastapi")
@@ -729,30 +731,6 @@ def _stub_tunnel_argv(provider: str, binary: str, port: int) -> list[str]:
     return [sys.executable, "-c", "import time; time.sleep(3600)"]
 
 
-def _child_env() -> dict[str, str]:
-    """``os.environ`` with the repo's ``src/`` prepended to ``PYTHONPATH``
-    (existing entries preserved) — the child-process leg of the import
-    shield documented at the top of ``tests/conftest.py``.
-
-    That conftest shield patches only THIS interpreter's ``sys.path``, so
-    a bare ``sys.executable -c`` child still depends on the venv's
-    editable ``.pth`` hook — which Python 3.13's ``site`` skips when the
-    file carries the hidden flag, and on iCloud-synced checkouts macOS
-    fileproviderd asynchronously re-stamps ``UF_HIDDEN`` on freshly
-    written ``.pth`` files. An unshielded child then loses the editable
-    install and dies on ``from bettermemory import web`` before printing
-    anything ("driver did not announce the tunnel child"). Every direct
-    ``sys.executable`` spawn in this file passes this env — uniformly,
-    so stdlib-only children can't silently drift out from under the
-    shield when someone extends them. Belt-and-suspenders like the
-    parent shield: inert when the ``.pth`` is healthy."""
-    env = os.environ.copy()
-    src = str(Path(__file__).resolve().parents[1] / "src")
-    existing = env.get("PYTHONPATH")
-    env["PYTHONPATH"] = src if not existing else src + os.pathsep + existing
-    return env
-
-
 def test_start_tunnel_warns_only_for_public_providers(
     monkeypatch: Any, caplog: Any
 ) -> None:
@@ -788,7 +766,7 @@ def test_reap_tunnel_stops_real_child_and_is_idempotent() -> None:
     proc = subprocess.Popen(
         [sys.executable, "-c", "import sys; sys.stdin.read()"],
         stdin=subprocess.PIPE,
-        env=_child_env(),
+        env=shielded_child_env(),
     )
     assert proc.poll() is None
     web._reap_tunnel(proc)
@@ -984,7 +962,7 @@ def test_watch_tunnel_provider_flags_dead_share(caplog: Any) -> None:
     # Any already-exited process stands in for the dead shim; the watcher
     # only blocks on proc.wait() and inspects the shutdown flag.
     proc = subprocess.Popen(
-        [sys.executable, "-c", "import sys; sys.exit(1)"], env=_child_env()
+        [sys.executable, "-c", "import sys; sys.exit(1)"], env=shielded_child_env()
     )
     shutting_down = _threading.Event()  # NOT set -> unexpected death
     with caplog.at_level(_logging.ERROR, logger="bettermemory.web"):
@@ -1006,7 +984,7 @@ def test_watch_tunnel_provider_quiet_on_clean_shutdown(caplog: Any) -> None:
     from bettermemory import web
 
     proc = subprocess.Popen(
-        [sys.executable, "-c", "import sys; sys.exit(0)"], env=_child_env()
+        [sys.executable, "-c", "import sys; sys.exit(0)"], env=shielded_child_env()
     )
     shutting_down = _threading.Event()
     shutting_down.set()  # teardown in progress -> expected exit
@@ -1220,7 +1198,7 @@ def _spawn_lifecycle_driver(
     the default DEVNULL keeps the other lifecycle tests quiet."""
     import urllib.request
 
-    env = _child_env()
+    env = shielded_child_env()
     if sighup is not None:
         env["BM_TEST_SIGHUP"] = sighup
 

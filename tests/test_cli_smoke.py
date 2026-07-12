@@ -21,7 +21,6 @@ tests; the subprocess tests pass it through `env=`.
 from __future__ import annotations
 
 import json
-import os
 import subprocess
 import sys
 from pathlib import Path
@@ -32,6 +31,8 @@ from bettermemory.config import load_config
 from bettermemory.proposals import Proposal, ProposalQueue
 from bettermemory.server import main as cli_main
 from bettermemory.store import Store
+
+from .conftest import shielded_child_env
 
 
 def _run_main(
@@ -937,7 +938,7 @@ def test_migrate_origin_subcommand_runs(
 
 
 def _run_subprocess(*args: str, env_extra: dict[str, str] | None = None) -> str:
-    env = os.environ.copy()
+    env = shielded_child_env()
     if env_extra:
         env.update(env_extra)
     result = subprocess.run(
@@ -951,15 +952,18 @@ def _run_subprocess(*args: str, env_extra: dict[str, str] | None = None) -> str:
 
 
 # `python -m bettermemory` only resolves when the package is importable
-# in the subprocess Python — which requires `pip install -e .` (or a
-# wheel install). The conftest sys.path hack handles in-process imports
-# but doesn't propagate to subprocesses. Skip when the subprocess can't
-# import the package; CI always can (it runs `uv sync` first), local
-# fresh clones may not.
+# in the subprocess Python. The probe and the actual invocations run
+# under `shielded_child_env()` (the child-process leg of the conftest
+# import shield), so a hidden editable `.pth` alone can no longer make
+# them skip. The skip-guard stays as a fallback for genuinely broken
+# installs (e.g. runtime deps missing in the subprocess Python); CI
+# always passes the probe (it runs `uv sync` first), local fresh clones
+# may not.
 _PACKAGE_IMPORTABLE_IN_SUBPROCESS = (
     subprocess.run(
         [sys.executable, "-c", "import bettermemory"],
         capture_output=True,
+        env=shielded_child_env(),
     ).returncode
     == 0
 )

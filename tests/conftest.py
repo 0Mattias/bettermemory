@@ -13,7 +13,9 @@ from pathlib import Path
 # Make `src/` importable without depending on the editable install. This is
 # belt-and-suspenders: if the venv's editable .pth file is unreadable for any
 # reason (macOS UF_HIDDEN propagation in iCloud-synced dirs, a stale env, a
-# tooling bug), tests still pass.
+# tooling bug), tests still pass. Child processes spawned with
+# `sys.executable` need the same shield via their environment — see
+# `shielded_child_env` below.
 _SRC = Path(__file__).resolve().parents[1] / "src"
 if str(_SRC) not in sys.path:
     sys.path.insert(0, str(_SRC))
@@ -108,6 +110,30 @@ def set_git_discovery_ceiling(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -
         "GIT_CEILING_DIRECTORIES",
         os.pathsep.join([str(tmp_path.parent), str(tmp_path.parent.parent)]),
     )
+
+
+def shielded_child_env() -> dict[str, str]:
+    """``os.environ`` with the repo's ``src/`` prepended to ``PYTHONPATH``
+    (existing entries preserved) — the child-process leg of the import
+    shield documented at the top of this module.
+
+    That shield patches only THIS interpreter's ``sys.path``, so a bare
+    ``sys.executable`` child still depends on the venv's editable
+    ``.pth`` hook — which Python 3.13's ``site`` skips when the file
+    carries the hidden flag, and on iCloud-synced checkouts macOS
+    fileproviderd asynchronously re-stamps ``UF_HIDDEN`` on freshly
+    written ``.pth`` files. An unshielded child then loses the editable
+    install and dies on ``import bettermemory`` before exercising
+    whatever the test actually asserts (or, worse, trips an
+    importability skip-guard and silently drops subprocess coverage).
+    Every direct ``sys.executable`` spawn in the suite passes this env —
+    uniformly, so stdlib-only children can't silently drift out from
+    under the shield when someone extends them. Belt-and-suspenders like
+    the in-process shield: inert when the ``.pth`` is healthy."""
+    env = os.environ.copy()
+    existing = env.get("PYTHONPATH")
+    env["PYTHONPATH"] = str(_SRC) if not existing else str(_SRC) + os.pathsep + existing
+    return env
 
 
 @pytest.fixture
