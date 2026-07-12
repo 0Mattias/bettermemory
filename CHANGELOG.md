@@ -7,6 +7,78 @@ breaking changes, minor for additive features, patch for fixes. The
 [compatibility contract](CONTRIBUTING.md#versioning-and-the-compatibility-contract)
 spells out exactly what's stable.
 
+## 3.22.1 - 2026-07-12
+
+Patch release: repairs from the multi-agent post-ship audit of the
+3.22.0 window and the re-audit of the repairs themselves (14 confirmed
+findings, every one verified with a live reproduction; one
+release-blocker). No new surfaces; `--json` shapes unchanged except
+where noted.
+
+### Fixed
+
+- **`doctor --fix` no longer corrupts its own verdict.** The
+  `doctor_fix` audit event was counted by the audit-turn-cadence
+  check's session census, so a fully-healed low-cadence store (one
+  real session, zero `turn_audited` — hookless, CI, or programmatic
+  installs) exited 1 after a successful fix, with a false Stop-hook
+  warning persisting for the 7-day window. Admin/CLI event kinds
+  (`doctor_fix`, and `silent_miss_cutoff` from `consolidate
+  --acknowledge-misses-before`, which had the same phantom-session
+  effect) are now excluded from the census, and the exclusion set is
+  parity-pinned against eval's side-effect registry so the two can't
+  drift.
+- **The telemetry opt-out now really means everywhere.** `doctor
+  --fix` and `bettermemory ingest` both constructed bare Recorders,
+  so an applied fix or an ingest run on a store with `[telemetry]
+  enabled = false` created and appended to the event log the user had
+  turned off. Both thread the config now — so the 3.22.0 sentence
+  "every applied fix lands one `doctor_fix` event" holds only with
+  telemetry on — and a class-check test enumerates every Recorder
+  construction site under `src/` and fails if any omits
+  config-sourced `enabled=`.
+- **Symlinked event logs are refused, not chmod'd through.** The
+  event-log permission fixer declined nothing before: on a store
+  whose `.events.jsonl` was a symlink it chmod'd the link's target
+  and appended audit bytes into it. It now declines (mirroring the
+  lockfile fixers' refuse-on-symlink standard), and the check's fix
+  hint for a symlinked log is a non-executable steer instead of a
+  pasteable `chmod` that would hit the target.
+- **The event-log writability check now probe-appends for real**, as
+  its docstring always claimed — closing a Windows false-green where
+  `os.access` consults only the readonly attribute the fixer itself
+  just cleared. The probe opens without `O_CREAT`, so a log that
+  vanishes mid-run is reported, never silently recreated as a
+  umask-mode file outside the Recorder's 0600-on-first-write path.
+- **`doctor --fix` re-runs diagnostics when any fix was attempted,
+  not only when one applied.** The vanished-artifact race (a stale
+  lockfile disappearing between diagnosis and fix) previously exited
+  1 on a healthy store beside a payload whose fix result already said
+  the check healed; it now exits on the honest post-fix state.
+- **`--fix` text output tells the neighbour-heal story straight.**
+  Checks healed as a side effect of another fix were listed as
+  "manual-only finding(s)" pointing at hints that don't exist; they
+  now render as healed-by-another-fix, and the manual list is
+  computed against post-fix state.
+
+### Tests
+
+- The `--fix` contract is now mutation-hardened: a CLI-level
+  mixed-outcome exit pin (applied fix + still-red post → exit 2)
+  kills two mutants that previously survived the full suite; the
+  audit trail is pinned from both sides (no `doctor_fix` event for a
+  non-applied fix; mixed `fixes_applied` counts); every per-fixer
+  real failure branch and every decline-guard stand-down path is
+  covered with no-mutation pins; the plain `doctor --json` dispatch
+  is pinned (shape, no fix keys, exit code).
+- Child-interpreter spawns across the test suite share one shielded
+  environment helper, so macOS iCloud-synced checkouts stop silently
+  skipping the subprocess CLI tests.
+
+### Docs
+
+- `docs/installation.md` §Troubleshooting documents `--fix`.
+
 ## 3.22.0 - 2026-07-12
 
 One additive feature: doctor grows the repair half of its contract.
