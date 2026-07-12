@@ -7,6 +7,59 @@ breaking changes, minor for additive features, patch for fixes. The
 [compatibility contract](CONTRIBUTING.md#versioning-and-the-compatibility-contract)
 spells out exactly what's stable.
 
+## 3.21.0 - 2026-07-12
+
+Two small features that close long-open design questions, plus the
+finish of the trust-layer copy retune. Minor rather than patch: `sync`
+stops staging a directory it previously pushed (`episodes/` — a new
+line in every store sync repo's refreshed `.gitignore`), and
+`memory_proposals` gains a `credential_warning` status that
+tool-response readers parse. Nothing renamed or removed.
+
+### Changed
+
+- **Episodes are host-local by design — `sync` now excludes
+  `episodes/`.** The transient tier synced only by omission: session
+  run-state carries host-absolute worktree paths, the 30-day TTL prune
+  keys on mtimes a clone's `git checkout` would reset, and
+  `episode_handoff` adoption is worktree-strict, so a synced episode
+  was filtered on arrival anyway. A structural guard now forces the
+  sync decision for every store-root directory constant the way the
+  sidecar guard forces it for dotfiles — `.tombstones/` takes the
+  deliberate stays-synced seat, because a removal made on one host
+  must stay restorable from every clone. Migrating a pre-3.21.0
+  multi-host sync repo: untrack on every host before its next
+  `sync pull` — the `sync_tracked_ignored` hint now spells out that
+  pulling another host's untrack commit deletes your tracked working
+  copies of those paths.
+- **`memory_proposals` accept refuses credential-bearing bodies with
+  the same structured shape `memory_write` uses.** Previously a raised
+  error, which reached MCP clients as an opaque tool error; now
+  `{status: "credential_warning", markers, hint}` with the proposal
+  still queued and nothing persisted. The CLI human lane keeps exit 2
+  with the detector kinds and the `--acknowledge-credential` spelling
+  in the message; under `--json` the refusal is data on stdout with
+  exit 0 (the `not_found` precedent), now test-pinned. `docs/api.md`'s
+  contract line also gains the `acknowledge_credential` parameter it
+  had been missing since the flag shipped.
+
+### Fixed
+
+- **The CLI `--help` description joins the trust-layer framing.** The
+  argparse lead still opened with the retired 1.4.2 tagline after the
+  positioning pass moved every other identity surface; both smoke-test
+  pins retuned with it. The README now says a wrong verdict is *owed*
+  a public postmortem — with zero incidents on file, present-tense
+  "given" overclaimed.
+
+### Internal
+
+- `tests/test_doctor.py`'s local git-discovery-ceiling helper folded
+  into the shared `tests/conftest.py` helper its docstring already
+  sanctioned; six call sites repointed, the doctor-specific provenance
+  kept in the shared docstring. `doctor --fix` promoted to the ROADMAP
+  as the next planned feature.
+
 ## 3.20.0 - 2026-07-11
 
 An audit release over the 3.19.0 follow-up queue: four parallel drain
