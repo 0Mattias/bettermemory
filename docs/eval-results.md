@@ -8,41 +8,91 @@ Metric definitions live in [eval.md](eval.md).
 
 ## Production telemetry
 
-`bettermemory eval` over the author's live store — 58 active
-memories, 3,492 logged events, 288 distinct sessions across roughly
-two months of daily agent use (measured 2026-07-03, `v1_top1_high`
+`bettermemory eval` over the author's live store — 134 active
+memories, 4,967 logged events, 422 distinct sessions across just over
+two months of daily agent use (measured 2026-07-16, `v1_top1_high`
 rule, Wilson 95% CIs). Rates only; the raw event log is personal and
 stays local.
 
-Future refreshes of this section are generated with `bettermemory
-eval --report`, which emits exactly this rates-and-counts shape with
-the leak-free property enforced by a tested contract.
+The numbers in this section are generated with `bettermemory eval
+--report`, which emits exactly this rates-and-counts shape with the
+leak-free property enforced by a tested contract.
 
 | rate | last 30 days | all time |
 |---|---|---|
-| `memory_helped_rate` | 45/644 = **0.07** [0.05, 0.09] | 49/1,774 = 0.03 [0.02, 0.04] |
-| `endorsement_rate` | 57/425 = **0.13** [0.10, 0.17] | 97/1,043 = 0.09 [0.08, 0.11] |
-| `silent_miss_rate` | 0/167 = **0.00** [0.00, 0.02] | 0/237 = 0.00 [0.00, 0.02] |
+| `memory_helped_rate` | 91/1,282 = **0.07** [0.06, 0.09] | 99/2,768 = 0.04 [0.03, 0.04] |
+| `endorsement_rate` | 99/808 = **0.12** [0.10, 0.15] | 149/1,652 = 0.09 [0.08, 0.10] |
+| `silent_miss_rate` | 2/244 = **0.01** [0.00, 0.03] | 2/403 = 0.00 [0.00, 0.02] |
+
+Scan detail — last 30d: 1,282 retrieval occurrences · 808 applied-use
+events · 244 turns audited (32 no-signal excluded, 59 repeat audits
+deduped). All time: 2,768 · 1,652 · 403 (38 no-signal, 59 deduped).
 
 Reading it honestly:
 
 - `memory_helped_rate` is a deliberate floor: the numerator counts
   only *explicit, claim-excerpt-backed* endorsements, while the
-  denominator counts every retrieval occurrence. One in fourteen
-  retrievals in the last month left a verifiable "this memory shaped
-  this sentence" record.
-- The 30-day rates beat the all-time rates roughly two-to-one because
-  the attestation tooling matured mid-history — early events couldn't
-  carry signals that now exist. The trend is the point.
-- Zero silent misses across 237 audited turns is a claim about the
-  *loosest evaluable rule*: a counterfactual sweep
-  (`bettermemory eval --threshold-sweep`) replays the 4 historical
-  v1-flagged misses against the stricter v2/v3/v4 rules, which flag
-  none of them — and strictly looser rules can't be evaluated from
-  the log at all (`turn_audited` doesn't carry `top_hits`).
+  denominator counts every retrieval occurrence. Roughly one in
+  fourteen retrievals in the last month left a verifiable "this
+  memory shaped this sentence" record.
+- The 30-day rates beat the all-time rates — `memory_helped` by
+  roughly two to one — because the attestation tooling matured
+  mid-history: early events couldn't carry signals that now exist.
+  Read the trend, not either column alone.
+- The log has now recorded its **first silent misses**: 2 all-time,
+  both inside the 30-day window — one each on `claude-sonnet-5` and
+  `claude-opus-4-8`; see the per-model table. A third probe flag was
+  reviewed and acknowledged as a false positive
+  (`memory_acknowledge_miss`, reason persisted in the log), which the
+  retraction contract excludes from these rates. The 30-day rate is
+  a real non-zero 0.01 now, and these are exactly the calibration
+  data the threshold rule wants. A counterfactual sweep
+  (`bettermemory eval --threshold-sweep`) replays the 15 v1-flagged
+  misses against the stricter v2/v3/v4 rules, which flag none of them
+  — so v1 isn't over-firing. (Strictly looser rules can't be
+  evaluated from the log at all; `turn_audited` doesn't carry
+  `top_hits`.)
 - n=1. This measures one user's store, workload, and retrieval
   discipline. Run `bettermemory eval` on your own log — anomalies are
   exactly the calibration data the threshold rule needs.
+
+### Per-model audit telemetry (all time)
+
+| model | audited | no-signal | misses |
+|---|---|---|---|
+| `claude-fable-5` | 40 | 7 | 0 |
+| `claude-opus-4-8` | 70 | 10 | 1 |
+| `claude-sonnet-5` | 36 | 13 | 1 |
+
+### Threshold sweep (counterfactual, all time)
+
+| rule | would flag | Δ v1 | % of v1 |
+|---|---|---|---|
+| `v1_top1_high` | 15 | — | 100.0% |
+| `v2_top1_high_score_50` | 0 | -15 | 0.0% |
+| `v3_top1_high_dominant` | 0 | -15 | 0.0% |
+| `v4_top1_high_strict_combined` | 0 | -15 | 0.0% |
+
+Stricter rules replay over misses v1 already flagged, so this answers
+"is v1 over-firing?" — not "what does v1 miss?".
+
+### Tool usage (top 10, all time)
+
+| tool | calls | share |
+|---|---|---|
+| `memory_audit_turn` | 1,185 | 24.2% |
+| `memory_show` | 758 | 15.5% |
+| `memory_record_use` | 713 | 14.6% |
+| `memory_verify` | 547 | 11.2% |
+| `memory_update` | 489 | 10.0% |
+| `memory_search` | 277 | 5.7% |
+| `memory_scope_overview` | 270 | 5.5% |
+| `memory_write` | 244 | 5.0% |
+| `episode_write` | 243 | 5.0% |
+| `episode_handoff` | 50 | 1.0% |
+
+4,891 tool calls across 25 known tools — retrieval (`memory_search`,
+5.7%) is dwarfed by upkeep (audit, verify, update, record_use).
 
 ## Comparative harness
 
