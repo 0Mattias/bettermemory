@@ -333,7 +333,7 @@ repairs. Every fix below carries a regression test that was verified to
 fail against the pre-fix source.
 
 Minor rather than patch: the runtime now writes a new store-root file
-(`.ingest-watermark.json`), `write_confirm` and `episode_promote` events
+(`.ingest-watermark.json`), `write_confirm` and `write_cancel` events
 carry new fields, and `commit_drift` reports *not applicable* for a
 cohort of memories that previously received an affirmative `clean`.
 Every one of those is additive or a corrected verdict rather than a
@@ -435,11 +435,11 @@ they lived between the fixes rather than inside any one of them.
 
 - The runtime writes `.ingest-watermark.json` into the store root, mapping
   ingested source files to their content hashes. Host-local; never synced.
-- `write_confirm` events carry the promoted `episode_id`, and
-  `episode_promote` events carry `pending_id`, so a deferred promotion can
-  be proven rather than inferred. Event logs written before this release
-  carry neither; a promotion recorded there is reported as unconfirmed
-  rather than guessed at.
+- `write_confirm` and `write_cancel` events carry the linked
+  `episode_id`, so a deferred promotion can be proven rather than
+  inferred. Event logs written before this release carry neither; a
+  promotion recorded there is reported as unconfirmed rather than
+  guessed at.
 
 ### Removed
 
