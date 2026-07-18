@@ -457,7 +457,10 @@ def test_docs_state_semantic_config_optin_gate() -> None:
         "semantic leg; the config-level opt-in is also required."
     )
     # Direction 2: both surfaces name the config-level opt-in knobs.
-    for name, text in (("docs/api.md", api_text), ("docs/internals.md", internals_text)):
+    for name, text in (
+        ("docs/api.md", api_text),
+        ("docs/internals.md", internals_text),
+    ):
         assert 'search_mode = "semantic"' in text, (
             f"{name} no longer names the `search_mode` config opt-in "
             "that gates semantic participation."
