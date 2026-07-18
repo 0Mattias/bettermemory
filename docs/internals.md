@@ -1,0 +1,122 @@
+# Under the hood
+
+Mechanics reference. None of this is required to use bettermemory —
+the agent operates all of it. It's here for the curious, and for
+agents that want the full picture beyond [api.md](api.md).
+
+## The staleness verdict
+
+What the model acts on, as it appears on a search hit:
+
+```jsonc
+{
+  "snippet": "Auth middleware lives in src/auth/middleware.py …",
+  "relevance": "high",
+  "staleness_verdict": "spot_check_recommended",
+  "path_drift": { "missing": ["src/auth/middleware.py"] },  // file moved
+  "commit_drift_count": 12   // commits since the fact was last verified
+}
+```
+
+The model repoints the path with `memory_update`, attests the rest
+with `memory_verify`, and answers from the corrected memory.
+
+- Retrieval is opt-in. `memory_search` is a deliberate tool call;
+  nothing is auto-injected into context.
+- Claims about the user always stage for confirmation before commit.
+- Write gates instead of trust: durability check (rejects transient
+  state), credential check (rejects secret-shaped tokens), duplicate
+  and tombstone dedup, scope-mismatch check, optional groundedness
+  check against the source transcript.
+- Usage telemetry: `memory_record_use` logs which sentence of a reply
+  each memory shaped; a turn-end probe flags retrievals the model
+  should have made but didn't; `memory_health` and `memory_curate`
+  report and act on the resulting rot.
+- Hybrid search (keyword + BM25), with plural-folding and CJK-capable
+  tokenization. An optional semantic leg needs the `embeddings` extra
+  plus a config opt-in: `[behavior] search_mode = "semantic"` or
+  `semantic_dedup = true`.
+- Typed inter-memory links (`supersedes`, `contradicts`, `extends`,
+  `depends_on`), surfaced as trust signals at retrieval.
+- Auto-scoping by repo and worktree; explicit cross-project queries.
+- Episodes: a sibling journal tier for run-state that never pollutes
+  durable search, with promotion when a takeaway hardens into a fact.
+- Tombstones instead of deletes; everything is restorable.
+- Scales past ~500 memories via a derived SQLite FTS5 index. The
+  markdown files stay canonical; upgrades rebuild it automatically,
+  and `bettermemory reindex` rebuilds on demand.
+- Cross-machine sync over your own git remote, a local web UI, and an
+  eval CLI (`memory_helped_rate` / `endorsement_rate` /
+  `silent_miss_rate`, see [eval.md](eval.md)).
+
+## Storage
+
+One file per memory, grep-able and hand-editable:
+
+```markdown
+---
+schema_version: 1
+id: 01HXYZ123ABCDEFGHJKMNPQRST
+created: 2025-03-14T10:23:00+00:00
+updated: 2025-03-14T10:23:00+00:00
+scopes: [projects:acme, infrastructure]
+confidence: high
+source: explicit-statement
+---
+Staging deploys via `fly deploy --config fly.staging.toml`; the old
+Render service is decommissioned.
+```
+
+Verification attestations, origin (repo/branch/worktree), and typed
+links are optional frontmatter, added only when populated. Removed
+memories move to `.tombstones/` with their `removed_reason`; episodes
+live under `episodes/<session_id>/` with a 30-day TTL.
+
+The store resolves to `$BETTERMEMORY_DIR` if set, else `./.claude-memory/`
+if it exists, else `~/.claude-memory/`.
+
+## Tools
+
+25 MCP tools; 18 register by default. Seven curation/power-user tools
+sit behind `[behavior] full_tool_surface = true`, and most of those
+have a CLI counterpart, so the default per-turn tool context stays
+small. Grouped: retrieval, writing (with a staged-confirm flow),
+lifecycle, verification, curation, session-local scope toggles, and
+episodes. Signatures, defaults, and return shapes: [api.md](api.md).
+
+## CLI
+
+`bettermemory` with no arguments is the MCP server (stdio). It also
+provides:
+
+```text
+bettermemory try              # offline staleness demo
+bettermemory init --client X  # register with a client (idempotent)
+bettermemory doctor           # diagnose install state (--fix: safe repairs)
+bettermemory health           # curation rollup
+bettermemory consolidate      # dedup/demote pass (dry-run; --llm for more)
+bettermemory eval             # the three metrics, with CIs
+bettermemory eval --report    # same telemetry as publishable markdown
+bettermemory sync push|pull   # git-based cross-host sync
+bettermemory ui               # local curation UI ([ui] extra)
+bettermemory ui --tunnel      # share it read-only (tailnet by default)
+```
+
+`bettermemory <command> --help` for flags; `reindex`, `ingest`,
+`tombstones`, `proposals`, `rename-scope`, `episodes`, and `export`
+also exist.
+
+## Configuration
+
+`config.toml` lives under platformdirs (`~/Library/Application
+Support/bettermemory/` on macOS, `~/.config/bettermemory/` on Linux).
+Defaults are sensible; most installs never edit it. See
+[api.md](api.md) and the file's own comments for the knobs.
+
+## Limitations
+
+- No encryption at rest. Don't store secrets (a write-time check
+  refuses secret-shaped tokens); use disk encryption if you need it.
+- Sync conflicts are git merge conflicts; there is no auto-resolution.
+- The web UI is read-mostly; writes happen in-conversation.
+- Multi-process file locking is a no-op on Windows.

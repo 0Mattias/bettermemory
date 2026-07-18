@@ -438,7 +438,7 @@ def test_docs_state_semantic_config_optin_gate() -> None:
     """
     root = Path(__file__).resolve().parents[1]
     api_text = (root / "docs" / "api.md").read_text(encoding="utf-8")
-    readme_text = (root / "README.md").read_text(encoding="utf-8")
+    internals_text = (root / "docs" / "internals.md").read_text(encoding="utf-8")
     # Direction 1: the stale extra-is-sufficient claims are gone.
     assert "+ semantic when the `[embeddings]` extra is installed" not in api_text, (
         "docs/api.md hybrid bullet has drifted back to claiming the "
@@ -451,13 +451,13 @@ def test_docs_state_semantic_config_optin_gate() -> None:
         "extra-is-sufficient claim; per-call mode='semantic' under "
         "the default config errors even with the extra installed."
     )
-    assert "plus semantic when the embeddings extra is installed)" not in readme_text
-    assert "add the semantic third leg with one extra" not in readme_text, (
-        "README.md has drifted back to claiming one extra adds the "
+    assert "plus semantic when the embeddings extra is installed)" not in internals_text
+    assert "add the semantic third leg with one extra" not in internals_text, (
+        "docs/internals.md has drifted back to claiming one extra adds the "
         "semantic leg; the config-level opt-in is also required."
     )
     # Direction 2: both surfaces name the config-level opt-in knobs.
-    for name, text in (("docs/api.md", api_text), ("README.md", readme_text)):
+    for name, text in (("docs/api.md", api_text), ("docs/internals.md", internals_text)):
         assert 'search_mode = "semantic"' in text, (
             f"{name} no longer names the `search_mode` config opt-in "
             "that gates semantic participation."

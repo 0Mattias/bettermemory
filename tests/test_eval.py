@@ -1633,8 +1633,8 @@ async def test_tool_count_matches_registered_count(tmp_path: Path) -> None:
     assert len(registered) == _EXPECTED_TOOL_COUNT, (
         f"Runtime tool count is {len(registered)} but _EXPECTED_TOOL_COUNT "
         f"is {_EXPECTED_TOOL_COUNT}. Either a tool was added/removed and "
-        "the constant + prose ('25 MCP tools' in README / api.md / "
-        "marketplace / plugin README) needs to track it, or the "
+        "the constant + prose ('25 MCP tools' in docs/internals.md / "
+        "api.md / marketplace / plugin README) needs to track it, or the "
         "registration list grew without the docs catching up."
     )
 
