@@ -31,8 +31,8 @@ def icosphere_levels(max_level):
     """Return [(verts, edges)] per subdivision level, verts on unit sphere."""
     phi = (1 + 5 ** 0.5) / 2
     def norm(v):
-        l = math.sqrt(v[0] * v[0] + v[1] * v[1] + v[2] * v[2])
-        return (v[0] / l, v[1] / l, v[2] / l)
+        n = math.sqrt(v[0] * v[0] + v[1] * v[1] + v[2] * v[2])
+        return (v[0] / n, v[1] / n, v[2] / n)
     vs = [norm(v) for v in [
         (-1, phi, 0), (1, phi, 0), (-1, -phi, 0), (1, -phi, 0),
         (0, -1, phi), (0, 1, phi), (0, -1, -phi), (0, 1, -phi),
