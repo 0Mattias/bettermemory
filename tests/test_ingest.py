@@ -1220,7 +1220,7 @@ class TestCLI:
         self, tmp_path: Path, capsys: Any, monkeypatch: Any
     ) -> None:
         """`[telemetry] enabled = false` + a committing ingest run: the
-        memories land, but no `.events.jsonl` is created and nothing is
+        memories land, but no event segment is created and nothing is
         appended to a pre-existing one. Third instance of the
         enabled=-omission class (the Stop hook shipped the same bug —
         see test_hook's telemetry-disabled regression): the recorder in
@@ -1232,7 +1232,11 @@ class TestCLI:
 
         from bettermemory.cli.ingest import _cli_ingest
         from bettermemory.config import Config, StorageConfig, TelemetryConfig
-        from bettermemory.events import EVENT_LOG_FILENAME
+        from bettermemory.events import (
+            _SEGMENT_TEMPLATE,
+            EVENT_LOG_FILENAME,
+            SHARD_COUNT,
+        )
 
         store_dir = tmp_path / "store"
         store_dir.mkdir()
@@ -1263,15 +1267,54 @@ class TestCLI:
         assert not list(store_dir.glob(".events*.jsonl"))
         assert not list(store_dir.glob(".events-*.jsonl.gz"))  # nor rotation residue
 
-        # Lane 2 — a log already exists (written while telemetry was
-        # on): the opted-out run must not append to it either.
-        sentinel = '{"ts":"2026-01-01T00:00:00Z","session":"old","kind":"search"}\n'
-        log.write_text(sentinel, encoding="utf-8")
+        # Lane 2 — segments already exist (written while telemetry was
+        # on): the opted-out run must not append to any of them.
+        #
+        # Since 3.24.0 the active log is sharded: a Recorder appends to
+        # `.events.NN.jsonl` for NN = crc32(session_id) % SHARD_COUNT,
+        # and `_cli_ingest` mints a fresh random `SessionState()` per
+        # run — so the shard this run would pick is not knowable from
+        # here. Seed EVERY shard and require all of them back
+        # byte-identical; whichever one the run would have chosen, the
+        # append shows up. (Pinning only the legacy `.events.jsonl`,
+        # as this lane did before 3.24.0, is now vacuous: no code path
+        # writes there any more — it is read-only merge input.)
+        def _seed_segments(root: Path) -> dict[Path, str]:
+            """Seed the legacy log plus all `SHARD_COUNT` shards with a
+            per-file sentinel; return {path: expected bytes}. Distinct
+            per file so a cross-shard mixup can't hide behind equality."""
+            seeded = {
+                root / _SEGMENT_TEMPLATE.format(shard): (
+                    f'{{"ts":"2026-01-01T00:00:{shard:02d}Z",'
+                    f'"session":"old-{shard:02d}","kind":"search"}}\n'
+                )
+                for shard in range(SHARD_COUNT)
+            }
+            seeded[root / EVENT_LOG_FILENAME] = (
+                '{"ts":"2026-01-01T00:00:00Z","session":"legacy","kind":"search"}\n'
+            )
+            for path, text in seeded.items():
+                path.write_text(text, encoding="utf-8")
+            return seeded
+
+        def _grown(seeded: dict[Path, str]) -> list[str]:
+            """Names of seeded segments whose bytes changed."""
+            return sorted(
+                path.name
+                for path, text in seeded.items()
+                if path.read_text(encoding="utf-8") != text
+            )
+
+        segments = _seed_segments(store_dir)
         source_b = tmp_path / "source-b"
         _write_auto_memory(source_b, "opt-out-b", body="lane two body prose")
         _ingest(source_b)
         assert len(Store(store_dir).load_all()) == 2
-        assert log.read_text(encoding="utf-8") == sentinel  # byte-identical
+        assert _grown(segments) == []  # every segment byte-identical
+        # ...and no segment outside the seeded set was conjured either.
+        assert set(store_dir.glob(".events*.jsonl")) == set(segments)
+        assert not list(store_dir.glob(".events-*.jsonl.gz"))
+        assert log.read_text(encoding="utf-8") == segments[log]  # legacy intact
 
         # Contrast lane — telemetry on: the same run shape DOES record
         # the ingest `write` event, so the opt-out pins above cannot
@@ -1292,3 +1335,26 @@ class TestCLI:
         events = list(iter_events(store_dir2))
         assert [e["kind"] for e in events] == ["write"]
         assert events[0]["triggered_from"] == "cli_ingest"
+
+        # Proof lane — telemetry on, segments pre-seeded exactly as in
+        # lane 2. Demonstrates in-band that lane 2's "all segments
+        # byte-identical" pin is *able* to fail: with the opt-out off,
+        # precisely one seeded segment grows. It also pins the separate
+        # (and still true) sharding-layout invariant that the grown
+        # segment is always a shard, never the legacy `.events.jsonl`.
+        store_dir3 = tmp_path / "store3"
+        store_dir3.mkdir()
+        seeded3 = _seed_segments(store_dir3)
+        cfg3 = Config(
+            storage=StorageConfig(directory=str(store_dir3)),
+            telemetry=TelemetryConfig(enabled=True),
+        )
+        monkeypatch.setattr("bettermemory.cli._common.load_config", lambda: cfg3)
+        source_d = tmp_path / "source-d"
+        _write_auto_memory(source_d, "opt-in-d", body="proof lane body prose")
+        _ingest(source_d)
+        assert len(Store(store_dir3).load_all()) == 1
+        grown = _grown(seeded3)
+        assert len(grown) == 1, grown
+        assert grown[0] != EVENT_LOG_FILENAME  # a shard, not the legacy log
+        assert re.fullmatch(r"\.events\.\d{2}\.jsonl", grown[0])
