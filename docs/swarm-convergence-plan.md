@@ -382,8 +382,11 @@ shard stability, cross-shard merge order, and legacy backward-compat:
 functions and its other test edits are helper refactors. The "9"
 appears to have been carried over from the *other* commit in the
 `v3.24.0` tag, `096218e`, whose message likewise claims nine for
-`tests/test_indexed_lookup.py` — a file that contains eight test
-functions and no parametrisation. The CHANGELOG's 3.24.0 erratum
+`tests/test_indexed_lookup.py` — a file that held eight test functions
+at that commit, with no parametrisation. (The count is stated as of
+`096218e` deliberately: the file has grown since, so a present-tense
+total would be a claim that rots on the next test added to it. Anchor
+counts to a commit or omit them.) The CHANGELOG's 3.24.0 erratum
 corrected the same overcount in the release entry; this instance was
 missed at the time.
 

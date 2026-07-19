@@ -356,18 +356,12 @@ _ALLOWLIST: dict[tuple[str, str, str], str] = {
         "when this entry shipped; the Round-3 wiring extraction moved it "
         "to builder.py. Accurate release note, since-refactored code."
     ),
-    (
-        "docs/swarm-convergence-plan.md",
-        "line-ref",
-        "events.py:237",
-    ): (
-        "Genuinely false and queued for repair: the paragraph cites this "
-        "line for the crc32 shard assignment, which actually lives at "
-        "events.py:320 — line 237 is inside a redaction docstring. The "
-        "doc is owned by concurrent work this round, so it is exempt "
-        "here rather than fixed here."
-    ),
 }
+# NOTE: the `events.py:237` entry that sat here was REMOVED, not fixed —
+# the repair it was waiting on landed, `test_allowlist_has_no_stale_entries`
+# went red on the now-stale exemption, and deleting it is the ratchet
+# working exactly as intended. That is the whole design: an exemption
+# cannot outlive the defect it excuses.
 
 
 # --------------------------------------------------------------------------
@@ -926,15 +920,47 @@ def test_detects_out_of_range_line_reference() -> None:
     assert "cites line 999999" in fails[0].detail
 
 
-def test_detects_line_reference_pointing_at_the_wrong_place() -> None:
-    """The real defect: events.py:237 cited for the crc32 shard assignment.
+def _crc32_shard_line() -> int:
+    """1-indexed line of the crc32 shard assignment in events.py.
 
-    Line 237 is inside a redaction docstring; the assignment is at 320.
-    A pure line-count check passes this — only anchor proximity catches it.
+    DERIVED, never hardcoded. These two self-tests originally cited
+    `events.py:320` and `events.py:237` as literals, and the 320 one went
+    red the moment unrelated work shifted the assignment down the file —
+    a checker whose own fixtures rot on a line number, while the rule it
+    enforces exists to catch exactly that. (The 237 case was no sounder;
+    it passed only because that line happened to stay far from any
+    `crc32`.) Resolving both at runtime keeps the tests exercising the
+    real anchor-proximity logic against real source without inheriting
+    the brittleness they are meant to police.
     """
+    src = Path("src/bettermemory/events.py").read_text(encoding="utf-8")
+    for i, line in enumerate(src.splitlines(), start=1):
+        if "crc32(" in line and not line.lstrip().startswith("#"):
+            return i
+    raise AssertionError(
+        "no crc32( call found in events.py — this fixture's anchor is gone; "
+        "repoint it at whatever now identifies the shard assignment"
+    )
+
+
+def test_detects_line_reference_pointing_at_the_wrong_place() -> None:
+    """A line-ref cited for `crc32` that lands nowhere near the assignment.
+
+    A pure in-range line-count check passes this — only anchor proximity
+    catches it. The decoy line is derived as "far from the real anchor"
+    rather than hardcoded, so it cannot silently become a TRUE citation
+    when the file shifts.
+    """
+    anchor = _crc32_shard_line()
+    decoy = anchor + 200 if anchor > 200 else anchor + 200
+    total = len(
+        Path("src/bettermemory/events.py").read_text(encoding="utf-8").splitlines()
+    )
+    if decoy > total:  # pragma: no cover - only if events.py shrinks sharply
+        decoy = max(1, anchor - 200)
     text = (
         "a recorder picks its shard by `crc32(session_id)` "
-        "([events.py:237](../src/bettermemory/events.py)), so writers differ"
+        f"([events.py:{decoy}](../src/bettermemory/events.py)), so writers differ"
     )
     fails = check_line_refs("docs/fake.md", text)
     assert len(fails) == 1
@@ -942,9 +968,10 @@ def test_detects_line_reference_pointing_at_the_wrong_place() -> None:
 
 
 def test_accepts_line_reference_that_lands_on_its_anchor() -> None:
+    anchor = _crc32_shard_line()
     text = (
         "a recorder picks its shard by `crc32(session_id)` "
-        "([events.py:320](../src/bettermemory/events.py)), so writers differ"
+        f"([events.py:{anchor}](../src/bettermemory/events.py)), so writers differ"
     )
     assert check_line_refs("docs/fake.md", text) == []
 
