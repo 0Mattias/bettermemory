@@ -1957,12 +1957,40 @@ def count_unparseable_memory_files(root: Path) -> int:
     for it only after the cheap raw-count comparison has already
     diverged. Per-file failures match the readers' shared skip set
     (`PARSE_SKIP_EXCEPTIONS`) and count as unparseable; OSError from
-    the `iterdir` itself propagates."""
-    count = 0
+    the `iterdir` itself propagates.
+
+    Delegates to `scan_active_memory_ids` so there is exactly ONE
+    definition of "what a rebuild can parse" — the divergence check
+    needs the id set from that same walk, and two walks that could
+    disagree about a file is precisely the drift this helper exists to
+    prevent."""
+    return scan_active_memory_ids(root)[1]
+
+
+def scan_active_memory_ids(root: Path) -> tuple[set[str], int]:
+    """One walk of the active `.md` files returning
+    ``(parseable_ids, unparseable_count)``.
+
+    The identity-level view of the store root: which memory ids a
+    rebuild would actually feed the index (`index.rebuild` consumes
+    `iter_active()`), plus how many files it would skip. Same Store-free
+    contract, same filter, and the same `PARSE_SKIP_EXCEPTIONS` skip
+    width as `iter_active()` — "in `parseable_ids` here" == "yielded
+    there", "counted unparseable here" == "skipped there".
+
+    Duplicate ids across two files collapse into one set entry, so
+    `len(ids) + unparseable` can be less than the raw file count. That
+    is faithful: the index keys on `id`, so two files carrying one id
+    can only ever produce one row.
+
+    OSError from the `iterdir` propagates; callers pick their own
+    degraded answer."""
+    ids: set[str] = set()
+    unparseable = 0
     for entry in root.iterdir():
         if entry.is_file() and not entry.is_symlink() and entry.suffix == ".md":
             try:
-                _parse_memory_file(entry)
+                ids.add(_parse_memory_file(entry).id)
             except PARSE_SKIP_EXCEPTIONS:
                 # Any parse failure counts as unparseable — never a
                 # crash: this walk runs at every Store construction
@@ -1970,15 +1998,86 @@ def count_unparseable_memory_files(root: Path) -> int:
                 # would brick server boot on one weird file. The
                 # readers skip on the same width, keeping "counted
                 # here" == "skipped there".
-                count += 1
-    return count
+                unparseable += 1
+    return ids, unparseable
+
+
+# Settle budget for the divergence check's identity re-poll. A raw
+# count gap is NOT evidence of a desync on a concurrently-used store:
+# every Store mutator updates the two counters at two different
+# instants — `write`/`update` land the .md via `_write_path` and only
+# then commit the index row (`_index_upsert_quietly`); `tombstone`
+# unlinks the active file and only then drops the row
+# (`_index_remove_quietly`). Both steps sit inside the per-file flock,
+# but the divergence check takes no lock at all, so any concurrent
+# reader sampling in between sees `disk = index + k` (in-flight writes)
+# or `index = disk + k` (in-flight tombstones) for a gap that closes on
+# its own. The fleet benchmark reproduced this in 8/8 runs at 2-4
+# agents, always as an off-by-one that the post-run state showed fully
+# reconciled.
+#
+# So the discrepant IDS get re-checked until they settle rather than
+# the counts getting believed on sight. The budget is bounded and paid
+# only on the already-diverged path (which already pays a full parse
+# walk), and each attempt short-circuits the moment the gap clears —
+# the common transient case costs one sleep. A genuinely out-of-band
+# file never resolves, so it still warns, just ~a tenth of a second
+# later at construction.
+_DIVERGENCE_SETTLE_ATTEMPTS = 4
+_DIVERGENCE_SETTLE_SLEEP_S = 0.05
+
+
+def _settled_index_gap(root: Path, disk_ids: set[str]) -> tuple[set[str], set[str]]:
+    """Resolve the apparent disk-vs-index gap down to the ids that are
+    genuinely diverged, returning ``(missing, orphaned)``:
+
+    - `missing`: parseable on-disk ids with no index row. Re-polled up
+      to `_DIVERGENCE_SETTLE_ATTEMPTS` times; an id whose row shows up
+      in a later read was an in-flight write, not a desync, and drops
+      out. The set only ever shrinks, so the poll is monotonic and
+      terminates.
+    - `orphaned`: index rows whose id is not on disk. An in-flight
+      tombstone's row disappears from a later read (`&= indexed`); a
+      restore that re-landed the file is caught by the final
+      `_indexed_path_for_id` pass, which returns a path exactly when
+      the indexed filename still carries the id.
+
+    Both empty means the raw count gap was a snapshot artifact (or is
+    fully explained by unparseable files) and there is nothing
+    `bettermemory reindex` could repair.
+
+    Errors propagate: an index this cannot read is one whose gap this
+    cannot prove transient, and the caller's right answer there is to
+    warn, not to swallow."""
+    import time
+
+    from . import index as _index
+
+    missing = set(disk_ids)
+    orphaned: set[str] = set()
+    for attempt in range(_DIVERGENCE_SETTLE_ATTEMPTS):
+        if attempt:
+            time.sleep(_DIVERGENCE_SETTLE_SLEEP_S)
+        indexed = _index.indexed_ids(root)
+        missing -= indexed
+        # The orphan candidates are fixed by the FIRST read: a row that
+        # appears later belongs to a memory written after our disk
+        # snapshot, which is not an orphan and must not be treated as
+        # one. Subsequent reads can only retire candidates.
+        orphaned = (indexed - disk_ids) if attempt == 0 else (orphaned & indexed)
+        if not missing and not orphaned:
+            break
+    # A surviving orphan whose indexed filename still carries the id is
+    # a file our disk snapshot simply predated (a restore landing mid
+    # check), not a dangling row.
+    return missing, {oid for oid in orphaned if _indexed_path_for_id(root, oid) is None}
 
 
 def _warn_on_index_divergence(root: Path) -> None:
-    """Compare the on-disk active-memory count to the FTS5 index's
-    `indexed_count` and emit a one-shot WARNING per root if they
-    diverge. See ``Store.__post_init__`` for the motivating audit note
-    (S4: out-of-band ``.md`` writes silently desync the FTS5 index).
+    """Compare the on-disk active memories to the FTS5 index and emit a
+    one-shot WARNING per root when they genuinely diverge. See
+    ``Store.__post_init__`` for the motivating audit note (S4:
+    out-of-band ``.md`` writes silently desync the FTS5 index).
 
     Three divergence shapes are surfaced:
 
@@ -1987,14 +2086,27 @@ def _warn_on_index_divergence(root: Path) -> None:
     - Corrupt index file (a `status()["corrupt"]` flag); the indexed
       count is unknowable and the surface to fix it is the same:
       `bettermemory reindex`.
-    - Mismatched counts on an otherwise healthy index.
+    - A genuine identity gap on an otherwise healthy index: a
+      parseable on-disk memory with no index row, or an index row for
+      an id no longer on disk.
 
-    The count comparison is parse-aware: `index.rebuild` consumes
-    `iter_active()`, which skips unparseable files, so the highest
-    count a rebuild can reach is `disk - unparseable`. A gap fully
-    explained by unparseable files gets a fix-the-files warning
-    instead — recommending reindex there would send the user to a
-    repair that can never clear the warning.
+    The raw count comparison is only the cheap TRIGGER, never the
+    verdict. Counts alone cannot distinguish a desync from a
+    concurrent write caught mid-flight (see `_settled_index_gap` for
+    the two-step window every mutator has), and a store shared by a
+    fleet of agents is mid-flight most of the time — so a diverging
+    count is re-resolved down to the specific ids that are genuinely
+    unindexed / dangling, and only those warn. A gap that settles is
+    not a gap; it also must not burn the one-shot per-root budget,
+    or the first false positive would silence the real desync that
+    follows it.
+
+    The check is also parse-aware: `index.rebuild` consumes
+    `iter_active()`, which skips unparseable files, so a memory a
+    rebuild could never parse is not a hole the index can fill. That
+    gap gets a fix-the-files warning instead — recommending reindex
+    there would send the user to a repair that can never clear the
+    warning.
 
     Best-effort: failures inside the check (a transient OSError on
     `iterdir`, a sqlite issue inside `status`) are swallowed. The
@@ -2050,28 +2162,50 @@ def _warn_on_index_divergence(root: Path) -> None:
     # iterdir). `disk - unparseable` is the highest count a rebuild
     # can reach.
     try:
-        unparseable_count = count_unparseable_memory_files(root)
+        disk_ids, unparseable_count = scan_active_memory_ids(root)
     except OSError:
         return
     indexable_count = disk_count - unparseable_count
 
-    _DIVERGENCE_WARNED_ROOTS.add(root)
-    if indexed_count == indexable_count:
-        # Not an index problem: the index already holds every file a
-        # rebuild could parse. Point at the actual defect — the files.
-        _INDEX_LOG.warning(
-            "bettermemory: %d of %d memory file(s) at %s cannot be parsed "
-            "and are invisible to memory_search (the FTS5 index already "
-            "holds all %d parseable memories). `bettermemory reindex` will "
-            "not change this — run `bettermemory doctor` to identify the "
-            "files, then fix their frontmatter or remove them.",
-            unparseable_count,
-            disk_count,
-            root,
-            indexed_count,
-        )
+    # Counts diverging is not evidence. Resolve the gap to the ids that
+    # are genuinely unindexed / dangling, letting in-flight writes and
+    # tombstones settle out first. On an index we can't read, the gap
+    # stays unconfirmed and we warn — `status()` already reported this
+    # one healthy, so a failure here is itself worth surfacing.
+    try:
+        missing, orphaned = _settled_index_gap(root, disk_ids)
+    except Exception:  # noqa: BLE001 — unprovable gap warns, never crashes boot
+        missing, orphaned = set(disk_ids), set()
+
+    if not missing and not orphaned:
+        # Every parseable memory on disk has a row and every row has a
+        # file: the index is intact and `bettermemory reindex` has
+        # nothing to repair. Either the count gap was a concurrent
+        # write/tombstone sampled mid-flight — stay silent AND keep the
+        # one-shot budget for a real desync — or it is unparseable
+        # files, which is a fix-the-files problem, not an index one.
+        if unparseable_count:
+            _DIVERGENCE_WARNED_ROOTS.add(root)
+            _INDEX_LOG.warning(
+                "bettermemory: %d of %d memory file(s) at %s cannot be parsed "
+                "and are invisible to memory_search (the FTS5 index already "
+                "holds all %d parseable memories). `bettermemory reindex` will "
+                "not change this — run `bettermemory doctor` to identify the "
+                "files, then fix their frontmatter or remove them.",
+                unparseable_count,
+                disk_count,
+                root,
+                indexed_count,
+            )
         return
 
+    # A confirmed identity gap: at least one parseable memory has no
+    # row, or at least one row has no file. Both are exactly what
+    # `bettermemory reindex` repairs, INCLUDING the shape the old
+    # count-only arithmetic misfiled as a fix-the-files problem (one
+    # unindexed memory plus one dangling row balances the counts while
+    # the identities stay wrong).
+    _DIVERGENCE_WARNED_ROOTS.add(root)
     unparseable_note = (
         f" {unparseable_count} of the disk files cannot be parsed and will "
         f"never index; a rebuild reaches index={indexable_count}, "
