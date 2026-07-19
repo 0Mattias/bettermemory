@@ -73,6 +73,14 @@ code, not in docstrings.** Every rule here now applies to this file's
 own prose, and the extractors do not know that a quoted counter-example
 is only being discussed.
 
+The mirror-image trap is the ``#`` comment. Only docstrings are read from
+``.py`` sources, so a false example parked in a comment is invisible to
+every rule here — and an example is exactly where a reader's scepticism
+slides off. **Illustrative prose in this file is held to the same
+standard as its assertions:** an example is either an obvious shape
+(``N``, ``x.py``) or a fact checked against the tree, never a
+plausible-looking number nobody counted.
+
 Scanning ``tests/`` matters because this file is itself shipped prose,
 and its first commit miscounted the files carrying the name
 ``verify.py`` — asserting three where the repo holds two. Excluding
@@ -265,9 +273,12 @@ _TESTCOUNT_SUBJECT = re.compile(
 # A restrictive relative clause makes "has N tests that ..." a subset.
 _RESTRICTIVE = re.compile(r"^\s*(that|which|covering|pinning|exercising)\b", re.I)
 
-# "three files are named `verify.py`" / the elided "two are named
-# `init.py`". Deliberately one phrasing (plus its elision) rather than a
-# net for every English way of counting files — see the module docstring.
+# Matches "N files are named `x.py`" and the elided "N are named `x.py`",
+# where N is one to four digits or a word from `_NUMBER_WORDS`. Those are
+# regex shapes, not counts about this repo — a comment is invisible to every
+# rule in this file, so an example parked here must not read as a claim.
+# Deliberately one phrasing (plus its elision) rather than a net for every
+# English way of counting files — see the module docstring.
 _FILECOUNT = re.compile(
     rf"\b(?P<n>{_NUM})\s+(?:files?\s+|modules?\s+)?are\s+named\s+"
     rf"`{{1,2}}(?P<name>[\w/]+\.py)`{{1,2}}",
@@ -941,10 +952,12 @@ def test_accepts_line_reference_that_lands_on_its_anchor() -> None:
 def test_ambiguous_module_reference_accepts_any_plausible_reading() -> None:
     """Two files are named ``verify.py``; the claim holds if either satisfies it.
 
-    ``memory_verify`` is defined only in ``handlers/verify.py``, never in
-    the top-level ``verify.py``. Guessing "shallowest wins" would report
-    this true statement as false — the exact false positive that gets a
-    checker switched off.
+    Of those two candidates, only ``handlers/verify.py`` binds
+    ``memory_verify``; the top-level ``verify.py`` does not bind the name
+    at all. (It is bound in modules outside both candidates as well — the
+    point here is just that one of the two resolves it.) Guessing
+    "shallowest wins" would report this true statement as false — the
+    exact false positive that gets a checker switched off.
 
     The count above is in the phrasing ``_FILECOUNT`` matches, so this
     docstring is itself checked by ``check_file_counts``.
