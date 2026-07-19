@@ -543,7 +543,7 @@ def flush_persistent_cache() -> None:
     # rename — that's OK because the cache is fully recomputable —
     # but with a shared `.tmp` they'd corrupt each other's writes.
     tmp = _PERSISTENT_PATH.with_suffix(f"{_PERSISTENT_PATH.suffix}.tmp.{os.getpid()}")
-    from ._fsutil import flock_excl, fsync_dir, fsync_file
+    from ._fsutil import flock_excl, fsync_dir, fsync_file, replace_atomic
 
     try:
         # Serialize the rename against concurrent flushes. flock_excl
@@ -586,7 +586,19 @@ def flush_persistent_cache() -> None:
                         os.fchmod(f.fileno(), 0o600)
                 f.flush()
                 fsync_file(f.fileno())
-            tmp.replace(_PERSISTENT_PATH)
+            # `replace_atomic`, not a bare `tmp.replace(...)`. `flock_excl`
+            # above serialises this rename against other *flushers*, but
+            # NOT against *readers*: `_hydrate_persistent_cache` opens the
+            # destination with `np.load(...)` and takes no lock, so a
+            # second MCP server in the same memory dir can hold an open
+            # handle on `_PERSISTENT_PATH` at exactly this moment. On
+            # Windows that makes the rename fail with PermissionError
+            # (ERROR_ACCESS_DENIED / ERROR_SHARING_VIOLATION) — the same
+            # transient open-destination race 3.25.1 closed for the store
+            # write path. The enclosing `except Exception` would swallow
+            # it into a log warning, so the symptom is not a crash but a
+            # cache that silently never persists on Windows.
+            replace_atomic(tmp, _PERSISTENT_PATH)
             # Defensive post-rename chmod (belt-and-suspenders): if
             # the filesystem squashed the mode on rename (rare — most
             # POSIX filesystems preserve it) we can still recover.

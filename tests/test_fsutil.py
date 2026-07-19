@@ -16,6 +16,7 @@ symmetry, and env-var-timeout discipline of that path.
 
 from __future__ import annotations
 
+import ast
 import contextlib
 import io
 import os
@@ -26,6 +27,7 @@ from pathlib import Path
 
 import pytest
 
+import bettermemory
 from bettermemory import _fsutil
 from bettermemory._fsutil import (
     atomic_write_bytes,
@@ -1088,3 +1090,286 @@ class TestReplaceAtomicRetry:
         assert target.read_bytes() == b"new"
         # The orphan-tmp cleanup must not have fired on the successful path.
         assert not list(tmp_path.glob("*.tmp"))
+
+
+# ---------------------------------------------------------------------------
+# Structural guard — close the CLASS, not the instance.
+#
+# 3.25.1 added the Windows retry and wired up three rename sites
+# (`atomic_write_bytes` plus the two in `events.py`). A FOURTH site was
+# missed: `semantic.flush_persistent_cache` renamed the embedding-cache
+# `.npz` into place with a bare `tmp.replace(dst)`. Nothing caught it,
+# because a grep for `os.replace` cannot see a `Path.replace` — the
+# rename primitive has four spellings and the earlier reasoning only
+# considered one of them.
+#
+# So the guard below does NOT look for a string. It parses every module
+# under the package with `ast` and flags every *call* that renames a
+# file, in any spelling, anywhere except inside `replace_atomic` itself.
+# Two prior guards in this repo rotted by being too literal (a substring
+# grep counting the wrong thing; a structural check that could only see
+# module constants and therefore missed a runtime-composed name), so
+# `TestRenameSiteDetector` below separately pins that the *detector*
+# still fires — a structural guard whose matcher silently stops matching
+# passes vacuously, which is worse than no guard at all.
+# ---------------------------------------------------------------------------
+
+#: (module filename, enclosing function) pairs permitted to rename a file
+#: directly. `replace_atomic` IS the retry, so it is the one exemption.
+_RENAME_EXEMPTIONS = {("_fsutil.py", "replace_atomic")}
+
+
+def _rename_call_kind(
+    call: ast.Call, os_aliases: set[str], bare_names: set[str]
+) -> str | None:
+    """Classify ``call`` as a file-rename primitive, or ``None``.
+
+    Covers all four spellings of "move a file over a destination":
+    ``os.replace``, ``os.rename``, ``Path.replace``, ``Path.rename`` —
+    including ``import os as _os`` aliases and ``from os import
+    replace`` bare-name imports, so the guard cannot be evaded (or
+    accidentally sidestepped) by an import style.
+
+    Disambiguating ``Path.replace`` from the far more common
+    ``str.replace`` / ``datetime.replace`` is done by ARITY, which is
+    exact rather than heuristic: ``str.replace``/``bytes.replace``
+    require at least two positional arguments, and ``datetime.replace``
+    takes keyword arguments only. Exactly one positional argument and no
+    keywords is uniquely the ``Path.replace(target)`` rename shape.
+    """
+    func = call.func
+    if isinstance(func, ast.Name) and func.id in bare_names:
+        return f"{func.id}() imported bare from os"
+    if not isinstance(func, ast.Attribute) or func.attr not in {"replace", "rename"}:
+        return None
+    if isinstance(func.value, ast.Name) and func.value.id in os_aliases:
+        return f"os.{func.attr}()"
+    if func.attr == "rename":
+        # No str/bytes/datetime method is named `rename`, so any
+        # attribute call of that name is a path rename.
+        return "Path.rename()"
+    if len(call.args) == 1 and not call.keywords:
+        return "Path.replace()"
+    return None
+
+
+def _rename_sites(source: str, filename: str) -> list[tuple[int, str, str, str]]:
+    """Return ``(lineno, kind, enclosing_scope, snippet)`` for every
+    file-rename call in ``source``."""
+    tree = ast.parse(source, filename)
+
+    os_aliases: set[str] = set()
+    bare_names: set[str] = set()
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import):
+            for alias in node.names:
+                if alias.name == "os":
+                    os_aliases.add(alias.asname or "os")
+        elif isinstance(node, ast.ImportFrom) and node.module == "os":
+            for alias in node.names:
+                if alias.name in {"replace", "rename"}:
+                    bare_names.add(alias.asname or alias.name)
+
+    found: list[tuple[int, str, str, str]] = []
+    scoped = (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)
+
+    def walk(node: ast.AST, scope: tuple[str, ...]) -> None:
+        for child in ast.iter_child_nodes(node):
+            if isinstance(child, scoped):
+                walk(child, (*scope, child.name))
+                continue
+            if isinstance(child, ast.Call):
+                kind = _rename_call_kind(child, os_aliases, bare_names)
+                if kind is not None:
+                    found.append(
+                        (child.lineno, kind, ".".join(scope), ast.unparse(child))
+                    )
+            walk(child, scope)
+
+    walk(tree, ())
+    return found
+
+
+class TestEveryRenameRoutesThroughReplaceAtomic:
+    def test_no_bare_rename_sites_under_src(self) -> None:
+        """Every file rename in the package must go through
+        `_fsutil.replace_atomic`, which carries the bounded Windows-only
+        retry for the rename-over-open-destination race.
+
+        A new rename site added ANYWHERE else turns this red. That is
+        the entire point: the Windows failure mode is invisible on the
+        POSIX dev box and on the POSIX CI legs, so nothing else in the
+        suite would notice a fifth site being introduced.
+        """
+        package_root = Path(bettermemory.__file__).parent
+        modules = sorted(package_root.rglob("*.py"))
+        assert modules, f"found no modules under {package_root}"
+
+        offenders: list[str] = []
+        for module in modules:
+            for lineno, kind, scope, snippet in _rename_sites(
+                module.read_text(encoding="utf-8"), str(module)
+            ):
+                if (module.name, scope) in _RENAME_EXEMPTIONS:
+                    continue
+                rel = module.relative_to(package_root)
+                offenders.append(
+                    f"{rel}:{lineno} in {scope or '<module>'}(): {kind} -> {snippet}"
+                )
+
+        assert not offenders, (
+            "these call sites rename a file without the Windows retry:\n  "
+            + "\n  ".join(offenders)
+            + "\n\nRoute them through `_fsutil.replace_atomic(src, dst)`. On "
+            "Windows a rename over a destination another process still has "
+            "open fails with PermissionError (ERROR_ACCESS_DENIED / "
+            "ERROR_SHARING_VIOLATION); POSIX allows it, so this failure mode "
+            "is invisible on the POSIX CI legs. Do NOT widen the retry to a "
+            "blanket `except OSError` — that would mask ENOSPC."
+        )
+
+    def test_replace_atomic_is_the_only_exemption(self) -> None:
+        """The exemption list must not quietly grow. Adding an entry is
+        how this guard would be neutered, so the shape of the allowlist
+        is itself pinned."""
+        assert _RENAME_EXEMPTIONS == {("_fsutil.py", "replace_atomic")}
+
+
+class TestRenameSiteDetector:
+    """The detector must actually fire. A structural guard whose matcher
+    stops matching passes vacuously — this repo has shipped exactly that
+    failure twice (a substring grep counting the wrong thing; a guard
+    that could only see module constants). These cases are the proof
+    that `test_no_bare_rename_sites_under_src` can go red."""
+
+    @pytest.mark.parametrize(
+        ("source", "expected_kind"),
+        [
+            ("import os\ndef f(a, b):\n    os.replace(a, b)\n", "os.replace()"),
+            ("import os\ndef f(a, b):\n    os.rename(a, b)\n", "os.rename()"),
+            ("def f(tmp, dst):\n    tmp.replace(dst)\n", "Path.replace()"),
+            ("def f(tmp, dst):\n    tmp.rename(dst)\n", "Path.rename()"),
+            (
+                "import os as _o\ndef f(a, b):\n    _o.replace(a, b)\n",
+                "os.replace()",
+            ),
+            (
+                "from os import replace\ndef f(a, b):\n    replace(a, b)\n",
+                "replace() imported bare from os",
+            ),
+            (
+                "from os import replace as mv\ndef f(a, b):\n    mv(a, b)\n",
+                "mv() imported bare from os",
+            ),
+        ],
+    )
+    def test_detects_every_rename_spelling(
+        self, source: str, expected_kind: str
+    ) -> None:
+        sites = _rename_sites(source, "<synthetic>")
+        assert len(sites) == 1, f"expected one site, got {sites!r}"
+        assert sites[0][1] == expected_kind
+        assert sites[0][2] == "f", "enclosing scope must be reported"
+
+    @pytest.mark.parametrize(
+        "source",
+        [
+            # str.replace — two positional args. The overwhelmingly common
+            # `.replace` in this codebase; a guard that flagged these would
+            # be turned off within a day.
+            "def f(s):\n    return s.replace('a', 'b')\n",
+            "def f(s):\n    return s.replace('+00:00', 'Z')\n",
+            # datetime.replace — keyword-only.
+            "def f(dt, tz):\n    return dt.replace(tzinfo=tz)\n",
+            # str.replace with the optional count.
+            "def f(s):\n    return s.replace('a', 'b', 1)\n",
+        ],
+    )
+    def test_does_not_flag_string_or_datetime_replace(self, source: str) -> None:
+        assert _rename_sites(source, "<synthetic>") == []
+
+    def test_finds_sites_at_module_scope_and_in_nested_functions(self) -> None:
+        """Scope tracking must not be fooled by nesting — an exemption
+        keys on (file, function), so a rename hidden inside a nested
+        helper must report the nested name, not the outer one."""
+        source = (
+            "import os\n"
+            "os.replace('a', 'b')\n"
+            "class C:\n"
+            "    def outer(self):\n"
+            "        def inner(a, b):\n"
+            "            os.replace(a, b)\n"
+        )
+        sites = _rename_sites(source, "<synthetic>")
+        assert [(s[0], s[2]) for s in sites] == [(2, ""), (6, "C.outer.inner")]
+
+    def test_real_replace_atomic_is_seen_and_exempted(self) -> None:
+        """Anchor the exemption against the real file: `replace_atomic`
+        genuinely contains rename calls, and they are genuinely the ones
+        the allowlist pardons. If `replace_atomic` were renamed or its
+        `os.replace` calls refactored away, this fails loudly rather
+        than leaving a stale exemption behind."""
+        fsutil_path = Path(_fsutil.__file__)
+        sites = _rename_sites(fsutil_path.read_text(encoding="utf-8"), "_fsutil.py")
+        scopes = {scope for _, _, scope, _ in sites}
+        assert scopes == {"replace_atomic"}, (
+            f"_fsutil.py renames outside replace_atomic: {sites!r}"
+        )
+        assert len(sites) >= 1
+
+
+class TestSemanticCacheFlushRoutesThroughTheRetry:
+    def test_flush_persistent_cache_retries_on_windows(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """The embedding-cache flush is the fourth rename site. Its
+        destination can genuinely be open: `_hydrate_persistent_cache`
+        holds the `.npz` open via `np.load` and takes NO lock, while
+        `flush_persistent_cache`'s `flock_excl` only serialises against
+        other flushers. So a second MCP server in the same memory dir is
+        exactly the open handle Windows refuses to rename over.
+
+        Numpy-gated: this is the only way to drive the real flush path,
+        which returns early without numpy. The AST guard above covers
+        the same regression with no optional dependency.
+        """
+        pytest.importorskip("numpy")
+
+        from bettermemory import semantic
+
+        cache = tmp_path / "cache.npz"
+        monkeypatch.setattr(semantic, "_PERSISTENT_PATH", cache)
+        monkeypatch.setattr(semantic, "_DIRTY", True)
+        monkeypatch.setattr(
+            semantic,
+            "_EMBEDDING_CACHE",
+            {
+                "id1": semantic._CachedEmbedding(
+                    memory_id="id1", updated_key="k1", vector=[0.1, 0.2]
+                )
+            },
+        )
+        monkeypatch.setattr(sys, "platform", "win32")
+        monkeypatch.setattr(time, "sleep", lambda _s: None)
+
+        calls: list[int] = []
+        real_replace = os.replace
+
+        def flaky(a: object, b: object) -> None:
+            calls.append(1)
+            if len(calls) < 2:
+                raise PermissionError(32, "The process cannot access the file")
+            real_replace(a, b)  # type: ignore[arg-type]
+
+        monkeypatch.setattr(os, "replace", flaky)
+        semantic.flush_persistent_cache()
+
+        assert len(calls) == 2, (
+            "the transient PermissionError was not retried — the flush "
+            "is not routed through `_fsutil.replace_atomic`"
+        )
+        assert cache.exists(), "cache did not land at the visible path"
+        # The flush's own except-branch unlinks the tmp and logs a warning
+        # rather than raising, so a missed retry shows up as a silently
+        # absent cache. Pin that no orphan tmp is left behind either.
+        assert not list(tmp_path.glob("*.tmp.*"))
