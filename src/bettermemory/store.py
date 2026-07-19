@@ -2028,11 +2028,10 @@ def _has_confirmed_index_gap(root: Path, disk_paths: dict[str, Path]) -> bool:
     call sites the file step and the index step sit inside the SAME
     `_locked(<that memory's active .md path>)` block — five carry the
     audit-H1 "index upsert under lock is intentional" note verbatim,
-    `restore` spells the same H1 invariant out longhand. So the
-    memory's own file lock
-    is a happens-after edge on the writer, and taking it is a
-    synchronization with the actual writer rather than a guess about
-    how long that writer will take:
+    `restore` spells the same H1 invariant out longhand. So the memory's
+    own file lock is a happens-after edge on the writer, and taking it
+    is a synchronization with the actual writer rather than a guess
+    about how long that writer will take:
 
     - A candidate whose row is merely in flight is owned by a mutator
       holding that lock; acquiring it BLOCKS until the mutator's second
@@ -2148,7 +2147,9 @@ def _warn_on_index_divergence(root: Path) -> None:
     reading of the store there is nothing to report but noise. Once the
     inputs are in hand a failure to EVALUATE them is different: a gap
     we cannot resolve is a gap we cannot call transient, so it warns.
-    Neither path raises; this runs at every Store construction.
+    Both of those paths return normally rather than propagating — this
+    runs at every Store construction, so neither is allowed to turn a
+    diagnostic into a boot failure.
 
     Lazy import on `index` to keep the Store module loadable in the
     pure-file-store scenarios (`tests/test_store.py` runs without
