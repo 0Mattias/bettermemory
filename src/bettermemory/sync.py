@@ -55,7 +55,7 @@ from ._fsutil import atomic_write_bytes, flock_excl
 from .consolidate import AUTO_CONSOLIDATE_CLOCK_FILENAME
 from .doctor import DOCTOR_PROBE_FILENAME
 from .episodes import EPISODES_DIR
-from .events import EVENT_LOG_FILENAME
+from .events import ARCHIVE_PREFIX, EVENT_LOG_FILENAME
 from .index import INDEX_FILENAME
 from .ingest import INGEST_WATERMARK_FILENAME
 from .proposals import PROPOSALS_FILENAME
@@ -89,7 +89,16 @@ _GITIGNORE_LINES = [
     f"{INDEX_FILENAME}-shm",
     f"{INDEX_FILENAME}-wal",
     EVENT_LOG_FILENAME,
-    f"{EVENT_LOG_FILENAME}.*.gz",
+    # Rotated event-log archives AND crashed-rotation `.rotating` holding
+    # files — every `.events-*` sibling. Both carry the same session ids
+    # and (verbatim mode) raw query text as the active log, so both are
+    # host-local. The prior pattern `.events.jsonl.*.gz` matched NOTHING
+    # real (archives are `.events-{ts}.jsonl.gz`, dash not dot), so
+    # rotated archives were silently pushed to every clone — the
+    # structural sidecar guard missed it because the archive name is
+    # composed from ARCHIVE_PREFIX at runtime, not a `*_FILENAME`
+    # constant. `.events-*` covers both suffixes.
+    f"{ARCHIVE_PREFIX}*",
     # Per-shard active event segments (`.events.00.jsonl` …). Same
     # host-local, regenerable status as the legacy single log above —
     # and the same privacy stake: they carry session ids and (verbatim

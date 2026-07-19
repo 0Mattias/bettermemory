@@ -625,6 +625,22 @@ def _check_index_health(directory: Path) -> Diagnosis:
     )
 
 
+def _event_log_files(directory: Path) -> list[Path]:
+    """Existing ACTIVE event-log files: the sharded `.events.NN.jsonl`
+    segments (since v3.24.0) plus a legacy pre-sharding `.events.jsonl`
+    if present. Rotated `.events-*.jsonl.gz` archives are excluded —
+    they are immutable and read-only by contract, so neither the
+    writability probe nor the 0600 healer applies to them. The
+    `.events.*.jsonl` glob matches the sharded names but not the legacy
+    `.events.jsonl` (no segment between the dots), which is appended
+    explicitly."""
+    files = sorted(directory.glob(".events.*.jsonl"))
+    legacy = directory / EVENT_LOG_FILENAME
+    if legacy.exists():
+        files.append(legacy)
+    return files
+
+
 def _check_event_log_writable(directory: Path) -> Diagnosis:
     """The event log writer creates the file lazily; we probe-append
     to confirm we'd be allowed to."""
@@ -634,7 +650,12 @@ def _check_event_log_writable(directory: Path) -> Diagnosis:
             status="ok",
             message="Event log not yet created (storage dir is brand new).",
         )
-    log_path = directory / EVENT_LOG_FILENAME
+    # The active log is sharded; probe a real existing segment when one
+    # exists, else the legacy path (whose absence routes to the
+    # directory-writability probe below — creating a new shard needs
+    # exactly that directory write permission).
+    log_files = _event_log_files(directory)
+    log_path = log_files[0] if log_files else directory / EVENT_LOG_FILENAME
     if not log_path.exists():
         # Probe writability of the directory itself; the log file will
         # be created on first server start.
@@ -2394,55 +2415,55 @@ def _fix_storage_directory(
 def _fix_event_log(
     *, cfg: Config | None, directory: Path | None, diagnosis: Diagnosis
 ) -> FixResult | None:
-    """chmod 0600 an existing-but-unwritable event log file.
+    """chmod 0600 every existing-but-unwritable event-log segment.
 
-    The cannot-be-created branch (directory not writable) is the
+    The active log is sharded (v3.24.0), so more than one segment can
+    end up mispermissioned; heal them all in one pass. The
+    cannot-be-created branch (directory not writable) is the
     storage_directory fixer's cause, not this one's — when that fix
     lands first, the final full re-run reports this check healed too.
-    0600 matches the mode the Recorder itself sets on first write.
-    A symlink at the log path is DECLINED, never chmod'd through.
+    0600 matches the mode the Recorder itself sets on first write. A
+    symlinked segment is DECLINED, never chmod'd through (chmod follows
+    symlinks, so 'fixing' it would mutate whatever the link points at —
+    the same refuse-on-symlink standard `_check_stale_config_lockfiles`
+    and `init._heal_stale_sidecar_lockfile` hold).
     """
     if directory is None or not directory.exists():
         return None
-    log_path = directory / EVENT_LOG_FILENAME
-    if not log_path.exists():
+    healed: list[tuple[Path, int]] = []
+    for log_path in _event_log_files(directory):
+        if log_path.is_symlink() or os.access(log_path, os.W_OK):
+            continue  # decline symlinks; skip already-writable segments
+        old_mode = stat.S_IMODE(log_path.stat().st_mode)
+        try:
+            log_path.chmod(0o600)
+        except OSError as exc:
+            return FixResult(
+                check="event_log",
+                action="chmod_event_log",
+                applied=False,
+                before_status=diagnosis.status,
+                after_status=diagnosis.status,
+                message=f"chmod 0600 on {log_path} failed",
+                error=f"{exc.__class__.__name__}: {exc}",
+                details={"path": str(log_path), "old_mode": oct(old_mode)},
+            )
+        healed.append((log_path, old_mode))
+    if not healed:
         return None
-    if log_path.is_symlink():
-        # Refuse-on-symlink — the same standard
-        # `_check_stale_config_lockfiles` and
-        # `init._heal_stale_sidecar_lockfile` hold for the lockfile
-        # artifact. chmod follows symlinks, so "fixing" a symlinked
-        # .events.jsonl would mutate the permissions of whatever file
-        # the link points at — possibly not ours at all. Decline; the
-        # finding stays manual with its hint.
-        return None
-    if os.access(log_path, os.W_OK):
-        return None
-    old_mode = stat.S_IMODE(log_path.stat().st_mode)
-    try:
-        log_path.chmod(0o600)
-    except OSError as exc:
-        return FixResult(
-            check="event_log",
-            action="chmod_event_log",
-            applied=False,
-            before_status=diagnosis.status,
-            after_status=diagnosis.status,
-            message=f"chmod 0600 on {log_path} failed",
-            error=f"{exc.__class__.__name__}: {exc}",
-            details={"path": str(log_path), "old_mode": oct(old_mode)},
-        )
     after = _check_event_log_writable(directory)
+    paths = [str(p) for p, _ in healed]
     return FixResult(
         check="event_log",
         action="chmod_event_log",
         applied=True,
         before_status=diagnosis.status,
         after_status=after.status,
-        message=f"chmod {oct(old_mode)} → 0o600 on {log_path}",
+        message=f"chmod → 0o600 on {len(healed)} event-log segment(s): "
+        + ", ".join(paths),
         details={
-            "path": str(log_path),
-            "old_mode": oct(old_mode),
+            "paths": paths,
+            "old_modes": {p: oct(m) for p, m in ((str(x), y) for x, y in healed)},
             "new_mode": "0o600",
         },
     )

@@ -213,6 +213,40 @@ def test_every_store_root_sidecar_is_gitignored() -> None:
     )
 
 
+def test_event_log_archives_shards_and_rotating_are_gitignored() -> None:
+    """Regression: every event-log file the runtime writes into the
+    store root must be excluded from sync — the legacy active log, the
+    sharded active segments (`.events.NN.jsonl`, v3.24.0), the rotated
+    `.events-{ts}.jsonl.gz` archives, AND the crashed-rotation
+    `.rotating` holding files. All carry session ids and, in verbatim
+    mode, raw query text.
+
+    The archives were silently leaking: the pattern was
+    `.events.jsonl.*.gz`, which matches NONE of the real archive names
+    (they are `.events-{ts}.jsonl.gz` — a dash after "events", not a
+    dot). The structural `test_every_store_root_sidecar_is_gitignored`
+    guard couldn't catch it because an archive name is composed from
+    `ARCHIVE_PREFIX` at runtime, not a single `*_FILENAME` constant it
+    can discover. This pins the composed names directly."""
+    patterns = [
+        line for line in sync._GITIGNORE_LINES if not line.lstrip().startswith("#")
+    ]
+    must_ignore = [
+        ".events.jsonl",  # legacy active log
+        ".events.00.jsonl",  # sharded active segment
+        ".events.15.jsonl",  # highest shard
+        ".events-20260101T000000Z.jsonl.gz",  # rotated archive
+        ".events-20260101T000000Z-sess-1.jsonl.gz",  # collision-suffixed archive
+        ".events-20260101T000000Z.jsonl.rotating",  # crashed-rotation holding file
+    ]
+    for name in must_ignore:
+        assert any(fnmatch.fnmatch(name, pat) for pat in patterns), (
+            f"{name} is not excluded by any sync gitignore pattern — "
+            "event-log data (session ids, query text) would be committed and "
+            "pushed to every clone by `sync push`"
+        )
+
+
 def test_sidecar_discovery_descends_into_subpackages(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

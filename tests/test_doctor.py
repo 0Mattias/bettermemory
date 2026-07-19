@@ -3495,6 +3495,28 @@ def test_fix_event_log_chmods_unwritable_file(tmp_path: Path) -> None:
     assert _check_event_log_writable(tmp_path).status == "ok"
 
 
+def test_fix_event_log_chmods_unwritable_shard(tmp_path: Path) -> None:
+    """The active log is sharded (v3.24.0): a mispermissioned
+    `.events.NN.jsonl` segment (not the legacy single file) must be
+    flagged by the writability check and healed to 0600 the same way.
+    The Recorder sets 0600 on each shard's first write, so this is the
+    safety net for a segment that somehow lost it."""
+    shard = tmp_path / ".events.00.jsonl"
+    shard.write_text("", encoding="utf-8")
+    shard.chmod(0o400)
+    diag = _check_event_log_writable(tmp_path)
+    if diag.status == "ok":
+        pytest.skip("filesystem ignored chmod; cannot exercise unwritable path")
+    assert diag.status == "fail"
+    fixes = run_fixes(DoctorReport(checks=[diag]), cfg=None, directory=tmp_path)
+    assert [f.action for f in fixes] == ["chmod_event_log"]
+    assert fixes[0].applied is True
+    assert fixes[0].after_status == "ok"
+    if os.name != "nt":
+        assert stat.S_IMODE(shard.stat().st_mode) == 0o600
+    assert _check_event_log_writable(tmp_path).status == "ok"
+
+
 def test_fix_event_log_declines_symlinked_log(tmp_path: Path) -> None:
     """A symlink at `.events.jsonl` is never chmod'd through: chmod
     follows symlinks, so 'fixing' it would mutate the TARGET's

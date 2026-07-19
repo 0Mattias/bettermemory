@@ -7,6 +7,39 @@ breaking changes, minor for additive features, patch for fixes. The
 [compatibility contract](CONTRIBUTING.md#versioning-and-the-compatibility-contract)
 spells out exactly what's stable.
 
+## 3.24.1 - 2026-07-19
+
+Two fixes on top of 3.24.0's event-log sharding — one a pre-existing
+privacy leak, one a shard-awareness gap in `doctor`.
+
+### Fixed
+
+- **Rotated event-log archives were being pushed to sync clones.** The
+  `sync` gitignore carried `.events.jsonl.*.gz` for the event-log
+  archives, but rotated archives are named `.events-{ts}.jsonl.gz`
+  (dash after "events", not dot), so the pattern matched *nothing
+  real*: every gzipped archive — and every crashed-rotation
+  `.rotating` holding file — was staged by `sync push`'s `git add -A`
+  and committed to every clone, in plaintext, carrying session ids and
+  (in verbatim mode) raw query text. Pre-existing since archives were
+  introduced; the structural sidecar-coverage guard could not catch it
+  because an archive name is composed from `ARCHIVE_PREFIX` at runtime,
+  not a discoverable `*_FILENAME` constant. The pattern is now
+  `.events-*`, which covers both the `.gz` archives and the `.rotating`
+  holding files, and a test pins the composed names directly. (Note:
+  gitignore only stops *future* staging — a clone that already
+  committed archives must `git rm --cached` them; run `bettermemory
+  doctor`.)
+
+### Changed
+
+- **`doctor` event-log checks are shard-aware.** The writability probe
+  and the 0600 permission healer looked only at the legacy single
+  `.events.jsonl`; on a sharded store (3.24.0) they now probe a real
+  active segment and heal every mispermissioned `.events.NN.jsonl`
+  segment in one pass. Shards are created 0600 by the Recorder, so
+  this is the safety net for a segment that somehow lost it.
+
 ## 3.24.0 - 2026-07-19
 
 One additive feature. Minor rather than patch because the event log's
