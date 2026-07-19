@@ -57,13 +57,35 @@ def test_record_multiple_events_one_line_each(tmp_path: Path) -> None:
     assert [e["kind"] for e in events] == ["write", "show", "search"]
 
 
+def _live_segment(rec: Recorder) -> Path:
+    """The segment `rec` ACTUALLY appends to, asserted to be the sharded
+    one rather than the legacy `.events.jsonl`.
+
+    Corruption-injection tests must target this. Both tests below used to
+    hand-inject into `tmp_path / EVENT_LOG_FILENAME` while the recorder
+    wrote to its shard — the corrupt bytes landed in a file the run never
+    touched, so they asserted nothing about the live write path (the
+    legacy file is merged in read-only, so the assertions still passed).
+    Same defect the ingest lane carried, repaired the same way: derive
+    the target from the product's own accessor (`Recorder.path`, built
+    from `_SEGMENT_TEMPLATE`), never from a hardcoded legacy name. The
+    inner assert is what stops a future edit from silently reverting to
+    the vacuous shape.
+    """
+    live = rec.path
+    assert live != rec.root / EVENT_LOG_FILENAME, (
+        "Recorder.path resolved to the legacy `.events.jsonl`; a corruption "
+        "test targeting it would exercise a file the writer never touches"
+    )
+    return live
+
+
 def test_iter_events_skips_malformed_lines(tmp_path: Path) -> None:
     """An external editor or a partial write shouldn't crash the reader."""
     rec = Recorder(root=tmp_path, session_id="sess_test")
     rec.record("write", id="01HXYZ", scopes=["tools"])
-    # Append a malformed line by hand.
-    log_path = tmp_path / EVENT_LOG_FILENAME
-    with log_path.open("a", encoding="utf-8") as f:
+    # Append a malformed line by hand — into the SHARD this run writes to.
+    with _live_segment(rec).open("a", encoding="utf-8") as f:
         f.write("not json at all\n")
     rec.record("show", id="01HXYZ")
 
@@ -79,10 +101,14 @@ def test_iter_events_skips_invalid_utf8_in_active_log(tmp_path: Path) -> None:
     JSONDecodeError guard never fired, and the exception (a ValueError, not
     OSError) propagated up and took down memory_health / scope_overview /
     eval / doctor, which all read through here.
+
+    The bad byte goes into the recorder's OWN shard segment; injecting it
+    into the legacy `.events.jsonl` tested a file no sharded writer
+    touches.
     """
     rec = Recorder(root=tmp_path, session_id="sess_test")
     rec.record("write", id="01HXYZ", scopes=["tools"])
-    with (tmp_path / EVENT_LOG_FILENAME).open("ab") as f:
+    with _live_segment(rec).open("ab") as f:
         f.write(b"\xff\xfe not valid utf-8 or json\n")
     rec.record("show", id="01HXYZ")
 
@@ -1138,6 +1164,195 @@ def test_iter_events_window_per_segment_coverage_across_shards(
     assert ids == ["COLD", "ROTATED", "FRESH"]
 
 
+def test_iter_events_window_upgrade_path_sharded_active_untagged_archives(
+    tmp_path: Path,
+) -> None:
+    """UPGRADE PATH: sharded active segments + UNTAGGED archives.
+
+    Regression (introduced by the 3.26 shard-partitioned rotation
+    namespace, eace517). `_newest_rotated_segment_for_shard` matched
+    only candidates whose parsed shard EQUALLED the segment's, and
+    deliberately refused an untagged fallback on the grounds that an
+    untagged archive's shard is unknown. But that is exactly the shape
+    of every store upgrading from 3.24.0/3.25.x: the active log was
+    already sharded (`.events.NN.jsonl`) while rotation had not yet
+    learned the `-s{NN}` tag, so every archive in the store is
+    untagged. A sharded active segment could therefore never find its
+    own pre-upgrade archive, and the windowed reader silently stopped
+    seeing rotated history — the precise miss `iter_events_window`
+    exists to prevent (the retrieval shield re-fires a turn as a false
+    `search_miss`). It persisted until every pre-upgrade archive aged
+    out of the store.
+
+    Verified against the pre-eace517 module on identical on-disk state:
+    it returned both ids, so this is a regression, not a pre-existing
+    gap.
+    """
+    now = _window_now()
+    # Untagged archive — the pre-upgrade rotation shape.
+    _write_window_archive(
+        tmp_path,
+        ".events-20260601T115500Z.jsonl.gz",
+        [{"ts": _window_ts(now, seconds_ago=300), "kind": "search", "id": "LEGACY"}],
+    )
+    # Sharded active segment — the post-upgrade write shape. No legacy
+    # `.events.jsonl` exists: 3.24.0 already wrote to shards.
+    (tmp_path / ".events.07.jsonl").write_text(
+        json.dumps(
+            {"ts": _window_ts(now, seconds_ago=5), "kind": "write", "id": "FRESH"}
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    ids = [e["id"] for e in iter_events_window(tmp_path, 600, now=now)]
+    assert ids == ["LEGACY", "FRESH"], (
+        "a sharded active segment must fall back to UNTAGGED archives when no "
+        "shard-tagged archive exists for it — otherwise a store upgrading "
+        f"from 3.24.0/3.25.x loses all rotated history from the window: {ids}"
+    )
+
+
+def test_iter_events_window_prefers_tagged_archive_over_untagged(
+    tmp_path: Path,
+) -> None:
+    """The untagged fallback must stay a FALLBACK. When a shard-tagged
+    archive exists for the segment's own shard it is unambiguously that
+    shard's history and must win, even when an untagged archive is
+    newer by rotation timestamp — otherwise the fix for the upgrade
+    path would splice another shard's events in ahead of the shard's
+    own, re-introducing the ambiguity the tag was added to remove."""
+    now = _window_now()
+    _write_window_archive(
+        tmp_path,
+        ".events-20260601T115500Z-s07.jsonl.gz",
+        [{"ts": _window_ts(now, seconds_ago=300), "kind": "search", "id": "TAGGED"}],
+    )
+    # Untagged AND newer by filename ts — must still lose to the tagged one.
+    _write_window_archive(
+        tmp_path,
+        ".events-20260601T115800Z.jsonl.gz",
+        [{"ts": _window_ts(now, seconds_ago=120), "kind": "search", "id": "UNTAGGED"}],
+    )
+    (tmp_path / ".events.07.jsonl").write_text(
+        json.dumps(
+            {"ts": _window_ts(now, seconds_ago=5), "kind": "write", "id": "FRESH"}
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    ids = [e["id"] for e in iter_events_window(tmp_path, 600, now=now)]
+    assert "TAGGED" in ids, "shard 07's own tagged archive must be prepended"
+    assert "UNTAGGED" not in ids, (
+        "an untagged archive must not displace the shard's OWN tagged "
+        f"archive — the fallback is for when no tagged one exists: {ids}"
+    )
+
+
+def test_iter_events_window_covers_shard_with_no_active_segment(
+    tmp_path: Path,
+) -> None:
+    """A shard with rotated history but NO active segment on disk must
+    still be attributed.
+
+    Coverage used to be derived purely from `_active_segments(root)`, so
+    a shard absent from disk was never considered and its rotated
+    segment never prepended. The store-wide `if not segments:` fallback
+    did NOT save it: that branch requires EVERY shard to be absent, and
+    a single surviving cold shard defeats it.
+
+    Reachable transiently — `record()` recreates a shard file only AFTER
+    the rotation's gzip completes (~20ms at the 10MB default) — and
+    durably after a crash mid-rotation. Pre-existing rather than
+    introduced by eace517 (the pre-fix module returns the same result on
+    identical state) and lossless (`iter_all_events` still reads it, and
+    the gap self-heals on the shard's next write), which is why it is
+    🟡 — but the windowed reader is wrong for as long as it lasts.
+
+    The empty-file case was already covered by
+    `test_iter_events_window_missing_or_empty_active_includes_archive`;
+    absent-with-a-present-sibling was the untested asymmetry.
+    """
+    now = _window_now()
+    # Cold shard 05 SURVIVES on disk with one ancient event. Its presence
+    # is what makes `if not segments:` unreachable.
+    (tmp_path / ".events.05.jsonl").write_text(
+        json.dumps(
+            {"ts": _window_ts(now, seconds_ago=100_000), "kind": "write", "id": "COLD"}
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    # Shard 03 just rotated and its active file does not exist yet, so
+    # the window's `search` lives ONLY in its archive.
+    _write_window_archive(
+        tmp_path,
+        ".events-20260601T115930Z-s03.jsonl.gz",
+        [{"ts": _window_ts(now, seconds_ago=30), "kind": "search", "id": "ROTATED"}],
+    )
+    assert not (tmp_path / ".events.03.jsonl").exists()
+
+    ids = [e["id"] for e in iter_events_window(tmp_path, 600, now=now)]
+    assert "ROTATED" in ids, (
+        "a shard with a rotated segment but no active segment has NO window "
+        "coverage by definition and must prepend; deriving the shard set from "
+        f"active segments alone drops it entirely: {ids}"
+    )
+    assert ids == ["COLD", "ROTATED"]
+
+
+def test_iter_events_window_ranks_archives_by_rotation_ts_not_mtime(
+    tmp_path: Path,
+) -> None:
+    """`_archive_sort_key` must rank by the `{ts}` in the FILENAME, not
+    by mtime.
+
+    A `.gz` archive's mtime is when COMPRESSION finished, which is not
+    when rotation happened. A rotation that crashed before compression
+    leaves a `.rotating` holding file; when a later rotation reclaims it
+    (`_recover_orphan_rotations`) days afterwards, the resulting archive
+    gets a recovery-time mtime and ranks as the NEWEST segment in the
+    store. The window reader then prepends ancient history in place of
+    the events that actually rotated out of the window. The filename
+    `{ts}` is stamped at rotation step 1, before any crash window opens,
+    and `_parse_rotated_name` already returns it — the old key parsed it
+    and threw it away.
+    """
+    import os
+
+    now = _window_now()
+    ancient = _write_window_archive(
+        tmp_path,
+        ".events-20200101T000000Z-s03.jsonl.gz",
+        [{"ts": "2020-01-01T00:00:00Z", "kind": "search", "id": "ANCIENT"}],
+    )
+    recent = _write_window_archive(
+        tmp_path,
+        ".events-20260601T115500Z-s03.jsonl.gz",
+        [{"ts": _window_ts(now, seconds_ago=300), "kind": "search", "id": "RECENT"}],
+    )
+    # The 2020 rotation crashed pre-compression and was recovered only
+    # now, so its mtime is the NEWEST in the store while its true
+    # rotation time is the oldest.
+    os.utime(recent, (1_000_000_000, 1_000_000_000))
+    os.utime(ancient, (2_000_000_000, 2_000_000_000))
+    (tmp_path / ".events.03.jsonl").write_text(
+        json.dumps(
+            {"ts": _window_ts(now, seconds_ago=5), "kind": "write", "id": "FRESH"}
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    ids = [e["id"] for e in iter_events_window(tmp_path, 600, now=now)]
+    assert ids == ["RECENT", "FRESH"], (
+        "the newest rotated segment must be chosen by the rotation timestamp "
+        "in the filename; ranking by mtime lets a late-recovered ancient "
+        f"archive masquerade as the newest and displace real history: {ids}"
+    )
+
+
 def test_iter_all_events_is_chronological_across_shards(tmp_path: Path) -> None:
     """`iter_all_events` must be sorted by event `ts`, not "all archives
     then all active segments".
@@ -1361,6 +1576,160 @@ def test_concurrent_cross_shard_rotation_loses_no_events(tmp_path: Path) -> None
     assert not missing, (
         f"{len(missing)} of {len(expected)} events were destroyed by a "
         f"cross-shard rotation collision (sample: {sorted(missing)[:5]})"
+    )
+
+
+def test_orphan_sweep_is_scoped_to_its_own_shard(tmp_path: Path) -> None:
+    """The orphan sweep must skip `.rotating` files tagged with ANOTHER
+    shard, and still reclaim its own and untagged ones.
+
+    Pre-3.25 `_recover_orphan_rotations` swept EVERY `.rotating` file in
+    the store root. Once the active log was sharded that became unsafe:
+    the sweep can no longer tell a crash orphan from another shard's
+    LIVE in-flight rotation, so it could compress a segment out from
+    under a concurrently-rotating writer. A shard's own live rotation is
+    never visible to its own sweep because the caller holds that shard's
+    append lock for the whole rotation — the cross-shard case has no
+    such interlock.
+
+    The shard scoping shipped with only a simulation behind it, so a
+    refactor could silently restore store-wide sweeping. This is the
+    executable pin: the sweep runs for real, through `record()`.
+    """
+    from bettermemory.events import ROTATING_SUFFIX, SHARD_COUNT
+
+    rec = Recorder(root=tmp_path, session_id="sess_sweep", max_bytes=200)
+    own = rec._shard
+    other = (own + 1) % SHARD_COUNT
+
+    def _orphan(stem: str, event_id: str) -> Path:
+        path = tmp_path / f"{stem}{ROTATING_SUFFIX}"
+        path.write_text(
+            json.dumps({"ts": "2020-01-01T00:00:00Z", "kind": "write", "id": event_id})
+            + "\n",
+            encoding="utf-8",
+        )
+        return path
+
+    foreign = _orphan(f".events-20200101T000000Z-s{other:02d}", "FOREIGN")
+    mine = _orphan(f".events-20200101T000001Z-s{own:02d}", "MINE")
+    untagged = _orphan(".events-20200101T000002Z", "UNTAGGED")
+
+    # Drive a real rotation, which runs the sweep at its top.
+    for i in range(20):
+        rec.record("write", id=f"NEW{i:03d}", note="filler to cross the threshold")
+
+    assert foreign.exists(), (
+        "the sweep reclaimed ANOTHER shard's `.rotating` file — that file may "
+        "be a live in-flight rotation, not a crash orphan, and compressing it "
+        "races the writer that owns it"
+    )
+    assert not mine.exists(), "own-shard orphan must still be reclaimed"
+    assert not untagged.exists(), (
+        "an untagged (pre-3.25) orphan belongs to no shard and must still be "
+        "reclaimed — refusing it would strand pre-upgrade crash remnants"
+    )
+    # Reclaiming is not deleting: the reclaimed events survive as archives,
+    # and the untouched foreign orphan is still readable.
+    ids = {e["id"] for e in iter_all_events(tmp_path)}
+    assert {"MINE", "UNTAGGED", "FOREIGN"} <= ids
+
+
+def test_safe_stem_component_neutralises_path_traversal() -> None:
+    """The session id is interpolated into a FILENAME by the rotation
+    collision fallback, so separators and `..` must not survive into the
+    stem. `.` is stripped too — that alone kills `..` and stops an id
+    from forging an archive/holding suffix the segment scanners key on.
+    """
+    from bettermemory.events import _safe_stem_component
+
+    for hostile in (
+        "../../outside/pwned",
+        "..\\..\\outside\\pwned",
+        "/etc/passwd",
+        "a/../../b",
+        "..",
+    ):
+        out = _safe_stem_component(hostile)
+        assert "/" not in out and "\\" not in out and "." not in out, (
+            f"{hostile!r} -> {out!r} still carries a path-traversal character"
+        )
+
+    # Well-formed ids (Claude Code stamps UUIDs) pass through untouched.
+    assert _safe_stem_component("sess_collision") == "sess_collision"
+    assert (
+        _safe_stem_component("0b3f6d2a-1c4e-4f8b-9a77-2d5e6f7a8b90")
+        == "0b3f6d2a-1c4e-4f8b-9a77-2d5e6f7a8b90"
+    )
+    # Never empty — an all-hostile id must still yield a usable component.
+    assert _safe_stem_component("../..") != ""
+    assert _safe_stem_component("") != ""
+    # Bounded, so a pathological id can't blow the 255-byte name limit.
+    assert len(_safe_stem_component("x" * 5000)) <= 64
+
+
+def test_rotation_collision_fallback_cannot_escape_store_root(
+    tmp_path: Path,
+) -> None:
+    """End-to-end: a session id carrying path separators must not steer
+    rotation outside the store root, and must not break rotation.
+
+    The collision fallback builds its stem as
+    `f"{base}-{self.session_id}"`. Unsanitised, an id like
+    `../../outside/pwned` turns the derived archive/holding pair into a
+    multi-component relative path — `replace_atomic` then targets a
+    directory that does not exist, `_rotate_if_needed` swallows the
+    OSError as a WARNING, and rotation silently stops working for that
+    session: the active log grows without bound past `max_bytes`. Where
+    a same-named directory DOES exist in the store, the `..` components
+    resolve upward and the rotation lands outside the root entirely.
+
+    Not attacker-controlled today (the id is process-supplied), which is
+    why this is hardening — but the failure mode is real and silent.
+    """
+    from bettermemory import events as events_mod
+
+    store = tmp_path / "store"
+    store.mkdir()
+    outside = tmp_path / "outside"
+    outside.mkdir()
+
+    frozen = datetime(2030, 1, 1, 0, 0, 0, tzinfo=timezone.utc)
+
+    class _FrozenClock(datetime):
+        @classmethod
+        def now(cls, tz: timezone | None = None) -> datetime:  # type: ignore[override]
+            return frozen
+
+    # Freezing the clock pins every rotation to ONE UTC second, so the
+    # base stem is taken from the second rotation onward and the
+    # SESSION-TAGGED collision fallback — the only path that
+    # interpolates the id — is forced deterministically.
+    with patch.object(events_mod, "datetime", _FrozenClock):
+        rec = Recorder(root=store, session_id="../../outside/pwned", max_bytes=120)
+        for i in range(24):
+            rec.record("write", id=f"E{i:03d}", note="filler to force rotations")
+
+    assert list(outside.iterdir()) == [], (
+        "rotation wrote outside the store root — the session id escaped via "
+        "the collision-fallback stem"
+    )
+    assert [p.name for p in tmp_path.iterdir() if p.is_file()] == [], (
+        "rotation leaked a file into the store root's PARENT"
+    )
+    names = [p.name for p in store.iterdir()]
+    assert any("pwned" in n for n in names), (
+        f"the session-tagged collision fallback never fired, so this test "
+        f"would not exercise the interpolation it pins: {names}"
+    )
+    for name in names:
+        assert ".." not in name, f"traversal survived into a filename: {name}"
+
+    # Rotation kept working: every event is still readable exactly once.
+    ids = sorted(e["id"] for e in iter_all_events(store))
+    assert ids == [f"E{i:03d}" for i in range(24)], (
+        "events were lost — an unsanitised stem makes replace_atomic target a "
+        "nonexistent directory and `record()` swallows the failure"
     )
 
 

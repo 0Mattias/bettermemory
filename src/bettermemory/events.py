@@ -13,8 +13,10 @@ when it crosses `max_bytes`. Rotation is partitioned by the SAME key
 the append lock is: the shard index is part of the archive stem, so
 two shards crossing `max_bytes` in the same UTC second cannot derive
 the same holding/archive name, and crash recovery only ever sweeps its
-own shard's orphans (plus untagged pre-sharding ones, which have no
-live producer). Uniform crc32 striping makes shards fill IN PHASE, so
+own shard's orphans (plus untagged pre-sharding ones — see
+`_recover_orphan_rotations` for the precondition that makes reclaiming
+those safe, and the mixed-version case where it does not hold).
+Uniform crc32 striping makes shards fill IN PHASE, so
 same-second cross-shard rotation is the correlated case under the
 swarm workload sharding was built for — not a rare interleaving. The
 log lives next to the memories so it shares the same trust boundary —
@@ -212,6 +214,37 @@ def _parse_rotated_name(name: str) -> tuple[str, int | None, int]:
     if counter is not None:
         return (ts, shard, 1 + int(counter.group(1)))
     return (ts, shard, 1)
+
+
+# Characters allowed in the session component of a rotation stem.
+# Everything else is folded to `_`. The session id is interpolated into
+# a FILENAME (`_next_rotation_paths`' collision fallback), so an id
+# carrying `/`, `\` or `..` would resolve the derived path outside the
+# store root — `replace_atomic` would then rename an active segment to
+# an attacker-chosen location, or fail and strand the rotation. Today
+# the id is process-supplied (Claude Code stamps a UUID), so this is
+# hardening, not an open hole: it costs nothing on well-formed ids and
+# removes the class outright. `.` is deliberately NOT allowed — that
+# alone kills `..` traversal and stops an id from forging an
+# `ARCHIVE_SUFFIX`/`ROTATING_SUFFIX` tail that the segment scanners
+# key on.
+_UNSAFE_STEM_CHARS_RE = re.compile(r"[^A-Za-z0-9_-]")
+# Bound the component so a pathological id cannot push the derived name
+# past the filesystem's per-component limit (255 bytes on ext4/APFS) and
+# turn every rotation into an ENAMETOOLONG failure.
+_MAX_SESSION_STEM_CHARS = 64
+
+
+def _safe_stem_component(value: str) -> str:
+    """Fold a session id into a filename-safe rotation-stem component.
+
+    Collisions between two ids that differ only in stripped characters
+    are fine: the caller probes the derived names for existence and
+    falls through to a numeric counter, so a collision costs one extra
+    probe, never an overwrite.
+    """
+    cleaned = _UNSAFE_STEM_CHARS_RE.sub("_", value)[:_MAX_SESSION_STEM_CHARS]
+    return cleaned or "session"
 
 
 def _rotated_segment_shard(path: Path) -> int | None:
@@ -527,6 +560,11 @@ class Recorder:
         because the (now removed) global append lock made rotations
         mutually exclusive; the derived holding path was never
         existence-checked at all.
+
+        The session component is passed through `_safe_stem_component`
+        before interpolation — it lands in a FILENAME, and a separator
+        or `..` in an id would resolve the derived path outside the
+        store root.
         """
         ts = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
         base = f"{ARCHIVE_PREFIX}{ts}-s{self._shard:02d}"
@@ -543,7 +581,10 @@ class Recorder:
 
         if not _taken(base):
             return _paths(base)
-        tagged = f"{base}-{self.session_id}"
+        # Sanitised: the raw id is interpolated into a filename, so a
+        # separator or `..` in it would escape the store root. See
+        # `_safe_stem_component`.
+        tagged = f"{base}-{_safe_stem_component(self.session_id)}"
         if not _taken(tagged):
             return _paths(tagged)
         # Bounded by the number of bytes we've actually written, so the
@@ -649,9 +690,18 @@ class Recorder:
 
         Untagged orphans (`.events-{ts}.jsonl.rotating`, written by a
         pre-3.25 rotation) belong to no shard, so any shard may reclaim
-        them — no live producer creates that shape anymore. Concurrent
-        reclaim of the same untagged orphan by two shards is what the
-        store-wide rotate lock the caller holds exists to prevent.
+        them. The precondition that makes that safe is NOT "nothing
+        produces that shape anymore" — it is narrower: no process
+        running THIS code version produces it. A pre-3.25 process still
+        running against the same store IS a live producer of untagged
+        `.rotating` files, and it predates `ROTATE_LOCK_STEM`, so it
+        does not take the store-wide rotate lock either — reclaiming
+        its in-flight rotation would race it. Concurrent access to one
+        store from mixed versions is therefore unsupported; within a
+        single version generation an untagged orphan is always a
+        pre-upgrade crash remnant. The rotate lock the caller holds
+        covers the remaining case: two CURRENT-version shards racing to
+        reclaim the same untagged orphan into one `.jsonl.gz.tmp`.
         """
         try:
             entries = list(self.root.iterdir())
@@ -850,16 +900,35 @@ def iter_events(root: Path) -> Iterator[dict[str, Any]]:
                 pass
 
 
-def _archive_sort_key(path: Path) -> tuple[int, int]:
-    """Sort key for rotated-segment ordering.
+def _archive_sort_key(path: Path) -> tuple[str, int, str]:
+    """Sort key for rotated-segment ordering: `(ts, write-order, name)`.
 
-    Primary: mtime_ns. Secondary: write-order index parsed from the
-    filename (`_parse_rotated_name`). The secondary tiebreak only
-    matters when the filesystem timestamp resolution is too coarse to
-    separate rapid rotations within a single UTC second — Windows in
-    particular records mtime at ~10ms granularity, so a test that calls
-    `record()` 15 times in a row with `max_bytes=120` can produce
-    multiple archives sharing one `mtime_ns`.
+    Primary is the `{ts}` STAMPED IN THE FILENAME — the moment rotation
+    actually happened — not the file's mtime. mtime was the primary key
+    through 3.25 and is wrong for the case rotation recovery exists to
+    handle: a rotation that crashed before compression leaves a
+    `.rotating` holding file, and when a later rotation reclaims it
+    (`_recover_orphan_rotations`) the resulting `.gz` gets a mtime of
+    when COMPRESSION finished. Recover a days-old crash and its ancient
+    archive ranks as the NEWEST segment in the store — so
+    `iter_events_window` would prepend days-old history in place of the
+    events that just rotated out, and `iter_all_events`' untagged chain
+    would replay out of order. The filename `{ts}` is immune: it is
+    written at step 1, before any crash window opens, and
+    `_parse_rotated_name` already returns it.
+
+    Lexicographic comparison on the timestamp is chronological because
+    the stamp is fixed-width `%Y%m%dT%H%M%SZ`. Secondary is the
+    in-second write-order index from `_parse_rotated_name` — several
+    rotations of one shard can land in the same UTC second (tests with
+    a tiny `max_bytes` hit it immediately). Tertiary is the filename
+    itself, so two DIFFERENT sessions rotating in the same second (both
+    parse to write-order 1) still get a total, deterministic order
+    instead of relying on sort stability.
+
+    No `stat()` — the ordering is derived entirely from names. That
+    also removes a per-candidate syscall from `iter_events_window`,
+    which ranks candidates on every call.
 
     Tolerates `.rotating` holding files alongside `.gz` archives: both
     share the same stem structure, differing only in suffix.
@@ -868,11 +937,8 @@ def _archive_sort_key(path: Path) -> tuple[int, int]:
     rotated segment, so the key must accept whichever suffix the
     candidate carries.
     """
-    try:
-        mtime = path.stat().st_mtime_ns
-    except OSError:
-        mtime = 0
-    return (mtime, _parse_rotated_name(path.name)[2])
+    ts, _, order = _parse_rotated_name(path.name)
+    return (ts, order, path.name)
 
 
 def _rotated_segments(root: Path) -> list[Path]:
@@ -883,26 +949,27 @@ def _rotated_segments(root: Path) -> list[Path]:
     compression — the events' only copy). A `.rotating` file WITH a
     matching archive is a stale duplicate that the next rotation will
     unlink; including it would double-count those events.
+
+    Cost note: `root` is the SHARED store directory — every memory
+    `.md`, every episode, every archive — and `iter_events_window`
+    calls this on every read (`hook.run_audit` up to twice per turn).
+    The name test therefore runs BEFORE `is_file()`, so the scan pays
+    one `iterdir()` plus a stat only for entries already known to be
+    `.events-*` segments, rather than a stat per directory entry.
     """
     try:
         entries = list(root.iterdir())
     except OSError:  # pragma: no cover — unreadable root, nothing to read.
         return []
-    archives = [
-        p
-        for p in entries
-        if p.is_file()
-        and p.name.startswith(ARCHIVE_PREFIX)
-        and p.name.endswith(ARCHIVE_SUFFIX)
-    ]
+    segments = [p for p in entries if p.name.startswith(ARCHIVE_PREFIX)]
+    archives = [p for p in segments if p.name.endswith(ARCHIVE_SUFFIX) and p.is_file()]
     archive_stems = {p.name[: -len(ARCHIVE_SUFFIX)] for p in archives}
     return archives + [
         p
-        for p in entries
-        if p.is_file()
-        and p.name.startswith(ARCHIVE_PREFIX)
-        and p.name.endswith(ROTATING_SUFFIX)
+        for p in segments
+        if p.name.endswith(ROTATING_SUFFIX)
         and p.name[: -len(ROTATING_SUFFIX)] not in archive_stems
+        and p.is_file()
     ]
 
 
@@ -937,9 +1004,11 @@ def iter_all_events(root: Path) -> Iterator[dict[str, Any]]:
 
     The untagged-archive chain is the one approximate stream: those
     names predate the shard tag, so archives cut by DIFFERENT shards
-    land in one chain ordered by mtime. Ordering within that chain is
-    therefore best-effort rather than exact — no events are lost, and
-    it degrades to exact as pre-3.25 archives age out of a store.
+    land in one chain ordered by their filename rotation timestamp.
+    Ordering within that chain is therefore best-effort rather than
+    exact — two shards that rotated in the same UTC second have no
+    real order between them — but no events are lost, and it degrades
+    to exact as pre-3.25 archives age out of a store.
 
     Orphan `.rotating` holding files (produced when a rotation crashed
     after the active-log rename but before compression finished) are
@@ -977,32 +1046,51 @@ def iter_all_events(root: Path) -> Iterator[dict[str, Any]]:
     yield from heapq.merge(*streams, key=_event_ts_key)
 
 
-def _newest_rotated_segment(root: Path) -> Path | None:
-    """Most recent rotated segment across every shard, or None when
-    nothing has rotated. Ranking uses `_archive_sort_key` — (mtime,
-    in-second write counter)."""
-    candidates = _rotated_segments(root)
-    if not candidates:
-        return None
-    return max(candidates, key=_archive_sort_key)
-
-
 def _newest_rotated_segment_for_shard(
     candidates: list[Path], shard: int | None
 ) -> Path | None:
     """Newest rotated segment attributable to `shard`, or None.
 
-    `shard=None` selects the untagged pre-3.25 segments — that is the
-    right answer for a legacy `.events.jsonl` active log, whose
-    rotations were untagged too. A sharded segment deliberately does
-    NOT fall back to untagged candidates: an untagged archive's shard is
-    unknown, so prepending it could splice a different shard's history
-    into the window.
+    Tagged candidates win: a `-s{NN}` archive states its shard, so when
+    one exists for `shard` it is unambiguously the right history to
+    prepend. `shard=None` selects the untagged segments directly —
+    the right answer for a legacy `.events.jsonl` active log, whose
+    rotations were untagged too.
+
+    UNTAGGED FALLBACK (restored — its removal was a 3.26 regression).
+    When no TAGGED candidate exists for a sharded segment, untagged
+    candidates are eligible. This is exactly the shape of a store
+    upgrading from 3.24.0/3.25.x: the active log was already sharded
+    (`.events.NN.jsonl`) but rotation had not yet learned the `-s{NN}`
+    tag, so every archive in the store is untagged. Refusing the
+    fallback meant such a store's windowed reader could never reach its
+    own rotated history — the reader silently stopped seeing anything
+    that rotated out, which is precisely the miss `iter_events_window`
+    exists to prevent, and it persisted until every pre-upgrade archive
+    aged out.
+
+    Why the ambiguity is acceptable: an untagged archive's shard is
+    genuinely unknown, so prepending it to shard N may splice in events
+    another shard wrote. That is over-inclusion of events from THIS
+    store, and the caller merges everything on `ts` and its consumers
+    filter by the window — a few extra in-window events from a sibling
+    shard are harmless. The alternative is under-inclusion: dropping
+    real in-window events entirely, which is data the caller cannot
+    recover. `iter_all_events` already merges untagged archives
+    store-wide for the same reason. Tagged-first ordering means a store
+    that has rotated even once since upgrading stops relying on the
+    fallback for that shard.
     """
-    matching = [p for p in candidates if _rotated_segment_shard(p) == shard]
-    if not matching:
+    tagged = [p for p in candidates if _rotated_segment_shard(p) == shard]
+    if tagged:
+        return max(tagged, key=_archive_sort_key)
+    if shard is None:
+        # `shard=None` IS the untagged bucket — nothing to fall back to.
         return None
-    return max(matching, key=_archive_sort_key)
+    untagged = [p for p in candidates if _rotated_segment_shard(p) is None]
+    if not untagged:
+        return None
+    return max(untagged, key=_archive_sort_key)
 
 
 def _iter_segment(path: Path) -> Iterator[dict[str, Any]]:
@@ -1070,9 +1158,7 @@ def iter_events_window(
     than ``now - window_seconds`` (or the log is empty/missing), the
     newest rotated segment — latest archive by `_archive_sort_key`, or
     an orphan `.rotating` holding file with no matching archive — is
-    prepended. When the active log already covers the whole window, no
-    archive is touched, so the common no-recent-rotation path costs
-    exactly one extra timestamp parse over `iter_events`.
+    prepended.
 
     Coverage is decided PER ACTIVE SEGMENT, not globally. Since 3.24.0
     sharded the active log there is no single "oldest active event" to
@@ -1087,7 +1173,7 @@ def iter_events_window(
     invisible, the turn re-fired as a false `search_miss`, and the
     published silent_miss_rate inflated.
 
-    So: for each active segment, compare THAT segment's own oldest `ts`
+    So: for each shard, compare THAT shard's own oldest active `ts`
     against `cutoff`, and when it does not cover the window prepend the
     newest rotated segment attributable to the same shard. At most one
     rotated segment per shard — deeper history per shard would need
@@ -1097,14 +1183,47 @@ def iter_events_window(
     rotate inside one window, so up to N segments may be prepended; the
     old "at most two files" bound was a pre-sharding statement.
 
+    The shard set is the UNION of the shards with an active segment and
+    the TAGGED shards present in `candidates` — NOT just the active
+    ones. A shard with rotated history but NO active segment on disk
+    covers no part of the window by definition, so it always prepends.
+    Deriving the set from `_active_segments` alone left that shard
+    unattributed and its rotated segment unread; the store-wide
+    "nothing active" fallback did not save it, because that branch
+    requires EVERY shard to be absent and one surviving cold shard
+    defeats it. The window is reachable transiently — `record()`
+    recreates a shard file only after the rotation's gzip completes —
+    and durably after a crash mid-rotation.
+
+    The union does NOT subsume the "nothing active at all" fallback,
+    which is why that branch survives. Untagged (pre-3.25) candidates
+    are excluded from the union on purpose — see the comment at the
+    exclusion — so a store whose ONLY rotated history is untagged and
+    whose active segments are all gone would otherwise read as empty.
+    The fallback covers exactly that residue.
+
     Everything is merged on event `ts` (`heapq.merge`, as
     `iter_all_events` does), so the yield is chronological rather than
-    merely oldest-segment-first. The no-recent-rotation path costs one
-    extra head-read per active segment over `iter_events` and opens no
-    archive.
+    merely oldest-segment-first.
+
+    COST. Two directory-level costs, both unconditional:
+    `_active_segments` probes `SHARD_COUNT + 1` fixed names, and
+    `_rotated_segments` does one `iterdir()` of the store root. The
+    latter cannot be made lazy: deciding which shards have rotated
+    history but no active segment requires enumerating the archive
+    names up front, so there is no path through this function that
+    skips it. What it does NOT cost is a stat per directory entry —
+    `_rotated_segments` name-filters before `is_file()`, so a store
+    whose root holds thousands of memory `.md` files and episodes pays
+    for their dirents only, and `_archive_sort_key` stats nothing.
+    Beyond that, the no-recent-rotation path costs one head-read per
+    active segment over `iter_events` and opens no archive. (An earlier
+    revision of this docstring also claimed the no-rotation path cost
+    "exactly one extra timestamp parse" — that was carried over from
+    the pre-sharding single-active-log implementation and contradicted
+    the per-segment statement below it. It is gone.)
     """
     cutoff = (now or datetime.now(timezone.utc)) - timedelta(seconds=window_seconds)
-    segments = _active_segments(root)
     candidates = _rotated_segments(root)
 
     prepend: list[Path] = []
@@ -1115,16 +1234,51 @@ def iter_events_window(
             seen.add(segment)
             prepend.append(segment)
 
-    if not segments:
+    # `_active_segments` yields at most one entry per shard (plus the
+    # legacy file under shard `None`), so this mapping is lossless.
+    active_by_shard: dict[int | None, Path] = {
+        shard: path for path, shard in _active_segments(root)
+    }
+    # Only REAL (tagged) shards join the union from the candidate side.
+    # The untagged `None` bucket is deliberately excluded: `None` is not
+    # a shard, it is "shard unknown". An untagged archive is evidence
+    # that some shard rotated pre-upgrade, not that a writer named
+    # `None` exists and lacks coverage — its events are reached through
+    # the untagged fallback in `_newest_rotated_segment_for_shard`, on
+    # behalf of whichever real shard is actually uncovered. Including
+    # `None` here would prepend (and gzip-decode) the newest untagged
+    # archive on EVERY call forever in any store that still holds
+    # pre-3.25 archives, even when every active segment fully covers the
+    # window — exactly the wasted read the coverage check exists to
+    # avoid.
+    rotated_shards = {
+        shard
+        for shard in (_rotated_segment_shard(p) for p in candidates)
+        if shard is not None
+    }
+
+    def _shard_order(shard: int | None) -> tuple[int, int]:
+        """Deterministic iteration order over a set mixing `int` and the
+        untagged `None` bucket, which are not mutually comparable."""
+        return (1, 0) if shard is None else (0, shard)
+
+    for shard in sorted(active_by_shard.keys() | rotated_shards, key=_shard_order):
+        active = active_by_shard.get(shard)
+        if active is None:
+            # Rotated history but no active segment: no coverage at all.
+            _consider(_newest_rotated_segment_for_shard(candidates, shard))
+            continue
+        oldest_ts = _first_event_ts(active)
+        if oldest_ts is None or oldest_ts > cutoff:
+            _consider(_newest_rotated_segment_for_shard(candidates, shard))
+
+    if not active_by_shard:
         # Nothing active at all (a just-rotated store, or telemetry that
-        # has never written here). No shard to attribute, so fall back
-        # to the newest rotated segment store-wide.
-        _consider(_newest_rotated_segment(root))
-    else:
-        for path, shard in segments:
-            oldest_ts = _first_event_ts(path)
-            if oldest_ts is None or oldest_ts > cutoff:
-                _consider(_newest_rotated_segment_for_shard(candidates, shard))
+        # has never written here). The loop above already handled every
+        # TAGGED shard; this covers the untagged bucket, which no real
+        # shard claims and which the exclusion above skips. Without it a
+        # store holding only pre-3.25 archives would read as empty.
+        _consider(_newest_rotated_segment_for_shard(candidates, None))
 
     streams: list[Iterator[dict[str, Any]]] = [
         _iter_segment(path) for path in sorted(prepend, key=_archive_sort_key)
