@@ -2624,7 +2624,14 @@ def test_home_exemption_follows_the_filesystem_on_case(
     monkeypatch.setenv("HOME", str(home))
     monkeypatch.setenv("USERPROFILE", str(home))
 
-    tail = "/bm-audit-case-fold/src/handlers"
+    # Built with `os.sep`, not a literal "/": `_is_under_home` compares
+    # against `home + os.sep`, so on Windows a forward-slash tail makes
+    # the prefix check miss and the exemption returns False for reasons
+    # that have nothing to do with case folding — which is all this test
+    # is about. (That miss is a real, separate gap: Windows accepts "/"
+    # as a separator, so a body citing `C:/Users/me/x` is not recognised
+    # as home-rooted. Queued as its own item; do not conflate it here.)
+    tail = os.sep + os.sep.join(("bm-audit-case-fold", "src", "handlers"))
     exact = str(home) + tail
     reskinned = str(home).swapcase() + tail
     assert reskinned != exact, "fixture assumption: the home prefix must be cased"
