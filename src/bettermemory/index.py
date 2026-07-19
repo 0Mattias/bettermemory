@@ -68,7 +68,7 @@ import logging
 import os
 import sqlite3
 import time
-from collections.abc import Iterable
+from collections.abc import Iterable, Sequence
 from datetime import datetime
 from pathlib import Path
 from typing import Any
@@ -855,8 +855,8 @@ def filenames_for_ids(root: Path, ids: list[str]) -> dict[str, str]:
         conn.close()
 
 
-def indexed_ids(root: Path) -> set[str]:
-    """Every memory id that currently has a row in the index.
+def indexed_ids(root: Path, ids: Sequence[str] | None = None) -> set[str]:
+    """Memory ids that currently have a row in the index.
 
     The identity-level counterpart to `meta.indexed_count`: the count
     answers "how many", this answers "which". The startup divergence
@@ -866,21 +866,42 @@ def indexed_ids(root: Path) -> set[str]:
     on disk and commits the index row as two separate steps, so a
     concurrent reader sampling the two counters between them sees a gap
     that does not exist a millisecond later. Comparing id SETS makes the
-    gap addressable: the specific ids can be re-checked until they
-    settle, instead of blaming the index for a snapshot artifact.
+    gap addressable: the specific ids can be re-checked once the writer
+    that owns them has actually finished, instead of blaming the index
+    for a snapshot artifact.
+
+    `ids=None` reads every row. Passing a sequence restricts the read to
+    that subset (`WHERE id IN (…)`, the same shape `filenames_for_ids`
+    uses) and returns the members that have a row — which is what the
+    divergence check's per-id recheck wants, since it re-reads one id at
+    a time under that memory's file lock and has no use for the rest of
+    the table. Unlike `filenames_for_ids` this keeps rows whose
+    `filename` column is empty (a pre-v2 row): the question here is
+    "does a row exist", not "where does it point".
 
     Returns an empty set when the index file is absent — the same
     best-effort no-index answer `filenames_for_ids` / `links_for` give.
     SQLite errors propagate; the caller decides how to degrade (the
     divergence check treats an unreadable index as "gap unconfirmed"
-    and keeps warning, since it cannot prove the gap is transient)."""
+    and warns, since it cannot prove the gap is transient)."""
+    if ids is not None and not ids:
+        return set()
     path = index_path(root)
     if not path.exists():
         return set()
     conn = _connect(path)
     try:
         _ensure_schema(conn, path)
-        return {row[0] for row in conn.execute("SELECT id FROM memories")}
+        if ids is None:
+            return {row[0] for row in conn.execute("SELECT id FROM memories")}
+        placeholders = ",".join("?" * len(ids))
+        return {
+            row[0]
+            for row in conn.execute(
+                f"SELECT id FROM memories WHERE id IN ({placeholders})",
+                list(ids),
+            )
+        }
     finally:
         conn.close()
 

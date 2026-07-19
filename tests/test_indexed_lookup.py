@@ -13,7 +13,9 @@ reached. These tests pin both halves.
 
 from __future__ import annotations
 
+import sqlite3
 import threading
+import time
 from pathlib import Path
 
 import pytest
@@ -195,11 +197,32 @@ def test_missing_id_still_raises_not_found(tmp_path: Path) -> None:
 # one-shot-per-root warning budget, so the process could never report a
 # REAL desync afterwards.
 #
+# The first fix re-polled the discrepant ids up to 4 times with a 50ms
+# sleep between attempts (~150ms), which only suppressed windows
+# shorter than that budget. Re-measured on a 12-core box, it still
+# warned in 3 of 5 runs at `--agents 12,24 --ops 60 --seed-corpus 20`
+# and in 3 of 3 runs of the DEFAULT sweep (no arguments — which is
+# `1,2,4,8,<cores>,<2x cores>`), on stores that reconciled exactly
+# afterwards: 158/158 and 272/272 parseable disk ids vs index rows,
+# zero unindexed, zero dangling. The budget is gone:
+# `_has_confirmed_index_gap` takes the candidate memory's own
+# `_locked(path)` — the same lock each mutator holds ACROSS both of its
+# steps — so it synchronizes with the actual writer instead of guessing
+# how long the writer will take. Same measurements after the change:
+# 0 of 10 and 0 of 3.
+#
 # These tests hold that window open deterministically (the index commit
 # is delayed, which is what SQLite write contention does in production)
-# and pin both halves: an in-flight mutation stays silent and keeps the
-# budget; an out-of-band file still warns.
+# and pin the halves: an in-flight mutation stays silent and keeps the
+# budget REGARDLESS of how long it is held, an out-of-band file or
+# deletion still warns, and an index the check cannot read warns rather
+# than going quiet.
 # ---------------------------------------------------------------------------
+
+# Comfortably longer than the ~150ms the superseded time-boxed settle
+# could wait. A wall-clock re-poll cannot stay silent across this; a
+# lock-aware one does not care what the number is.
+_HELD_LONGER_THAN_ANY_BUDGET_S = 1.0
 
 
 def test_inflight_write_does_not_report_the_index_as_out_of_sync(
@@ -356,13 +379,123 @@ def test_inflight_tombstone_does_not_report_the_index_as_out_of_sync(
     )
 
 
-def test_out_of_band_file_still_warns_despite_the_settle_poll(
+def test_inflight_write_stays_silent_however_long_the_writer_holds_it(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    """The blocker the reviewer found in the first fix: a time-boxed
+    settle only narrows the false-positive window to the size of its own
+    budget, so the warning comes back as soon as a writer is slower than
+    that. Here the in-flight write holds its index commit for
+    `_HELD_LONGER_THAN_ANY_BUDGET_S` — far past the ~150ms the
+    superseded time-boxed settle could wait — and the construction check
+    must STILL stay silent, because it blocks on the writer's own
+    `_locked(path)` rather than sleeping a fixed amount and guessing.
+
+    The elapsed-time assertion is the other half: `Store(root)` must not
+    return before the held commit lands. A check that merely happened to
+    stay quiet (say, by skipping the recheck) would return promptly and
+    fail that assertion, so "silent" here really does mean "waited for
+    the writer"."""
+    root = tmp_path / "held"
+    store = Store(root)
+    store.write(content="already indexed claim about ports", scopes=["t"])
+    resolved = root.expanduser().resolve()
+
+    real_upsert = _store._index_upsert_quietly
+    file_on_disk = threading.Event()
+    release_upsert = threading.Event()
+
+    def _held_upsert(idx_root: Path, memory: object, *, filename: str) -> None:
+        file_on_disk.set()
+        # Released by the timer below, NOT by the check giving up.
+        assert release_upsert.wait(30)
+        real_upsert(idx_root, memory, filename=filename)
+
+    monkeypatch.setattr(_store, "_index_upsert_quietly", _held_upsert)
+    writer = threading.Thread(
+        target=lambda: store.write(content="held claim about ports", scopes=["t"])
+    )
+    writer.start()
+    try:
+        assert file_on_disk.wait(10), "writer never reached the index upsert"
+        assert len(list(root.glob("*.md"))) == 2
+        assert len(_index.indexed_ids(resolved)) == 1
+
+        _store._DIVERGENCE_WARNED_ROOTS.discard(resolved)
+        # `started` is taken BEFORE the timer so the elapsed assertion
+        # can never trip on the gap between arming and timing.
+        started = time.monotonic()
+        timer = threading.Timer(_HELD_LONGER_THAN_ANY_BUDGET_S, release_upsert.set)
+        timer.start()
+        caplog.clear()
+        with caplog.at_level("WARNING", logger="bettermemory.store"):
+            Store(root)
+        elapsed = time.monotonic() - started
+        timer.cancel()
+    finally:
+        release_upsert.set()
+        writer.join(10)
+
+    assert not _divergence_warnings(caplog), (
+        "a slow in-flight write is still a healthy store; a settle whose "
+        "correctness depends on the writer finishing inside a fixed "
+        f"budget breaks here. got: {_divergence_warnings(caplog)!r}"
+    )
+    assert elapsed >= _HELD_LONGER_THAN_ANY_BUDGET_S, (
+        "the check returned before the writer committed its row, so it "
+        "did not actually synchronize on the writer's lock "
+        f"(elapsed={elapsed:.3f}s)"
+    )
+    assert resolved not in _store._DIVERGENCE_WARNED_ROOTS
+
+
+def test_unreadable_index_warns_even_with_an_empty_disk(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    """The gap-evaluation fallback must warn on its own, not by routing
+    through the confirmed-gap branch.
+
+    The superseded fallback was `missing, orphaned = set(disk_ids),
+    set()`, which is `(set(), set())` whenever the store has no
+    parseable `.md` files — landing in the "no gap, stay silent" branch.
+    So the loudest possible divergence (every index row dangling,
+    nothing on disk) plus an index too broken to read produced no
+    warning at all."""
+    root = tmp_path / "unreadable"
+    store = Store(root)
+    store.write(content="one claim about ports", scopes=["t"])
+    store.write(content="two claim about ports", scopes=["t"])
+    resolved = root.expanduser().resolve()
+    for path in root.glob("*.md"):
+        path.unlink()
+    assert list(root.glob("*.md")) == []
+    assert len(_index.indexed_ids(resolved)) == 2
+
+    def _unreadable(_root: Path, ids: object = None) -> set[str]:
+        raise sqlite3.DatabaseError("index unreadable")
+
+    monkeypatch.setattr(_index, "indexed_ids", _unreadable)
+    _store._DIVERGENCE_WARNED_ROOTS.discard(resolved)
+    caplog.clear()
+    with caplog.at_level("WARNING", logger="bettermemory.store"):
+        Store(root)
+
+    warnings = _divergence_warnings(caplog)
+    assert len(warnings) == 1, (
+        f"a gap the check cannot evaluate must warn, not go quiet; got: {warnings!r}"
+    )
+    assert "index=2" in warnings[0] and "disk=0" in warnings[0]
+    assert "bettermemory reindex" in warnings[0]
+    assert resolved in _store._DIVERGENCE_WARNED_ROOTS
+
+
+def test_out_of_band_file_still_warns_despite_the_lock_aware_recheck(
     tmp_path: Path, caplog: pytest.LogCaptureFixture
 ) -> None:
-    """The settle poll must not become a blanket mute. A `.md` dropped
-    in by an external editor / `sync pull` never acquires an index row,
-    so it survives every re-poll and still produces the actionable
-    warning with the real counts."""
+    """The lock-aware recheck must not become a blanket mute. A `.md`
+    dropped in by an external editor / `sync pull` has no writer holding
+    its lock, so the recheck acquires immediately, finds no row, and
+    still produces the actionable warning with the real counts."""
     root = tmp_path / "genuine"
     store = Store(root)
     store.write(content="indexed via store", scopes=["t"])
@@ -380,20 +513,88 @@ def test_out_of_band_file_still_warns_despite_the_settle_poll(
     assert "index=1" in warnings[0] and "disk=2" in warnings[0]
 
 
+def test_out_of_band_deletion_leaves_a_dangling_row_that_still_warns(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    """The orphan half of the same property. A `.md` removed by hand
+    (or by a `sync pull` that dropped it) leaves its index row behind
+    with nothing to point at. No writer holds that path's lock, so the
+    recheck acquires it immediately and confirms the row is dangling
+    rather than mid-tombstone."""
+    root = tmp_path / "dangling"
+    store = Store(root)
+    store.write(content="kept claim about ports", scopes=["t"])
+    doomed = store.write(content="deleted claim about ports", scopes=["t"])
+    doomed_path = store._find_path_for_id(doomed.id)
+    assert doomed_path is not None
+    doomed_path.unlink()  # out of band: the index row survives
+    resolved = root.expanduser().resolve()
+    assert doomed.id in _index.indexed_ids(resolved)
+    _store._DIVERGENCE_WARNED_ROOTS.discard(resolved)
+
+    caplog.clear()
+    with caplog.at_level("WARNING", logger="bettermemory.store"):
+        Store(root)
+    warnings = _divergence_warnings(caplog)
+    assert len(warnings) == 1, f"expected one warning, got {warnings!r}"
+    assert "index=2" in warnings[0] and "disk=1" in warnings[0]
+
+
+def test_row_whose_filename_escapes_the_root_is_confirmed_not_locked(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    """The orphan recheck takes a lock at the path the INDEX names, and
+    `flock_excl` creates its sidecar there. A row whose filename escapes
+    the store root is already a broken row, so it is confirmed on sight
+    instead of causing a `.lock` file to be created outside the store."""
+    root = tmp_path / "escaping"
+    store = Store(root)
+    store.write(content="kept claim about ports", scopes=["t"])
+    doomed = store.write(content="deleted claim about ports", scopes=["t"])
+    doomed_path = store._find_path_for_id(doomed.id)
+    assert doomed_path is not None
+    doomed_path.unlink()
+    resolved = root.expanduser().resolve()
+
+    monkeypatch.setattr(
+        _index,
+        "filenames_for_ids",
+        lambda idx_root, ids: {doomed.id: "../outside.md"},
+    )
+    _store._DIVERGENCE_WARNED_ROOTS.discard(resolved)
+    caplog.clear()
+    with caplog.at_level("WARNING", logger="bettermemory.store"):
+        Store(root)
+
+    assert len(_divergence_warnings(caplog)) == 1
+    assert not (tmp_path / "outside.md.lock").exists()
+
+
 def test_indexed_ids_mirrors_the_rows_the_store_actually_wrote(
     tmp_path: Path,
 ) -> None:
     """`index.indexed_ids` is the identity counterpart to
     `meta.indexed_count` the divergence check reasons over. It reports
     exactly the ids with rows — tombstoning retires one — and answers
-    the empty set (not an error) when the index file is absent."""
+    the empty set (not an error) when the index file is absent.
+
+    The optional `ids` filter is what the divergence check's per-id
+    recheck uses under the memory's file lock, so it must answer the
+    same membership question restricted to the subset."""
     store = Store(tmp_path)
     kept = store.write(content="kept claim about ports", scopes=["t"])
     dropped = store.write(content="dropped claim about ports", scopes=["t"])
     assert _index.indexed_ids(store.root) == {kept.id, dropped.id}
+    assert _index.indexed_ids(store.root, [kept.id]) == {kept.id}
+    assert _index.indexed_ids(store.root, [kept.id, "01HXYZCCCCCCCCCCCCCCCCCCCC"]) == {
+        kept.id
+    }
+    assert _index.indexed_ids(store.root, []) == set()
 
     store.tombstone(dropped.id, reason="gone")
     assert _index.indexed_ids(store.root) == {kept.id}
+    assert _index.indexed_ids(store.root, [dropped.id]) == set()
 
     _index.index_path(store.root).unlink()
     assert _index.indexed_ids(store.root) == set()
+    assert _index.indexed_ids(store.root, [kept.id]) == set()
