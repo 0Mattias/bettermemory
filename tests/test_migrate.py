@@ -1316,3 +1316,218 @@ def test_legacy_backfill_still_anchors_without_keep_global(tmp_path: Path) -> No
 
     assert report.updated == 1
     assert _read_metadata(legacy)["origin"]["repo"] == _REPO_A
+
+
+# ---------------------------------------------------------------------------
+# `--repair` rough edges: a bulk mutation's reported action list is the
+# thing a user decides on, so it has to survive one torn record and it has
+# to mean "persisted".
+# ---------------------------------------------------------------------------
+
+
+# `scopes` whose single element is itself a LIST — unhashable. A hand-edit
+# or a torn `sync pull` produces this; `_coerce_scopes` passes list elements
+# through verbatim, so it reaches the routing lookups as-is.
+_UNHASHABLE_SCOPES_RECORD = """\
+---
+id: {id}
+created: 2025-01-01T00:00:00+00:00
+updated: 2025-01-01T00:00:00+00:00
+scopes:
+- ["projects:alpha"]
+origin:
+  cwd: /Users/me/Documents
+confidence: medium
+source: explicit-statement
+---
+torn scopes
+"""
+
+
+def test_repair_reports_unhashable_scopes_instead_of_aborting(tmp_path: Path) -> None:
+    """Regression (repair rough edge a): `plan_repair` routes with `scope
+    in scope_repo_map`, a dict lookup that HASHES every element of the
+    memory's scopes. `_coerce_scopes` returns a list value's elements
+    as-is, so a record carrying `scopes: [["projects:alpha"]]` handed the
+    planner an unhashable element and raised `TypeError` from *outside*
+    the per-file try/except around the read — aborting the whole plan.
+    `migrate_origin_in_directory` never returned a report and every other
+    memory in the store went unrepaired.
+
+    One malformed record must cost one record. It is reported as a
+    skipped item (`report.malformed`, which the CLI prints as 'Malformed
+    (skipped)') and left byte-for-byte alone, and the rest of the
+    directory still plans and applies.
+
+    Scan order is `iterdir()`-dependent, so this test does not rely on
+    it: pre-fix the loop raises whenever it reaches the torn file, so the
+    call raises and the test errors before any assertion regardless of
+    order."""
+    memory_dir = tmp_path / ".claude-memory"
+    memory_dir.mkdir()
+
+    torn = memory_dir / "2025-01-01-torn.md"
+    torn.write_text(
+        _UNHASHABLE_SCOPES_RECORD.format(id=_LEGACY_IDS[0]), encoding="utf-8"
+    )
+    torn_before = torn.read_text(encoding="utf-8")
+
+    healthy = _write_with_origin(
+        memory_dir,
+        name="stray",
+        id_=_LEGACY_IDS[1],
+        scopes=["projects:alpha"],
+        origin={"cwd": "/Users/me/Documents"},
+    )
+
+    report = migrate_origin_in_directory(memory_dir, scope_repo_map=_MAP, repair=True)
+
+    # Pre-fix the call above raised and produced no report at all.
+    assert report.scanned == 2
+    # The ACTION SET, not just counts: exactly one skip, exactly one anchor.
+    assert report.malformed == [torn]
+    assert (report.repaired_anchored, report.repaired_demoted) == (1, 0)
+    assert (report.updated, report.already_had_origin) == (1, 0)
+    # The torn record is skipped outright — never half-routed by whichever
+    # of its scopes happened to be readable.
+    assert torn.read_text(encoding="utf-8") == torn_before
+    # ...and the healthy record still got its repair.
+    assert _read_metadata(healthy)["origin"]["repo"] == _REPO_A
+
+
+def test_repair_counters_count_only_writes_that_landed(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Regression (repair rough edge b): `repaired_anchored` /
+    `repaired_demoted` were incremented BEFORE `_write_repaired` was
+    attempted. On a write failure they stayed bumped while
+    `report.updated` — correctly — did not, so the printed summary
+    overstated what actually reached disk. On a bulk mutation over the
+    whole store, that summary is exactly what a user eyeballs to decide
+    whether the run did what the dry run promised.
+
+    Three repairable records (two anchors, one demote), one of whose
+    writes fails. Asserts the EXACT counters both ways: the dry run plans
+    all three, and the apply counts only the two that landed — so the
+    breakdown still sums to `report.updated`."""
+    memory_dir = tmp_path / ".claude-memory"
+    memory_dir.mkdir()
+    anchored = _write_with_origin(
+        memory_dir,
+        name="aaa-anchored",
+        id_=_LEGACY_IDS[0],
+        scopes=["projects:alpha"],
+        origin={"cwd": "/Users/me/Documents"},
+    )
+    failing = _write_with_origin(
+        memory_dir,
+        name="bbb-fails",
+        id_=_LEGACY_IDS[1],
+        scopes=["projects:alpha"],
+        origin={"cwd": "/Users/me/Documents"},
+    )
+    demoted = _write_with_origin(
+        memory_dir,
+        name="ccc-demoted",
+        id_=_LEGACY_IDS[2],
+        scopes=["projects:alpha", "projects:beta"],
+        origin={"cwd": "/w/beta", "repo": _REPO_B, "worktree_root": "/w/beta"},
+    )
+    failing_before = failing.read_text(encoding="utf-8")
+
+    # The dry-run plan, with nothing failing: all three actions.
+    planned = migrate_origin_in_directory(
+        memory_dir, scope_repo_map=_MAP, repair=True, dry_run=True
+    )
+    assert (
+        planned.updated,
+        planned.repaired_anchored,
+        planned.repaired_demoted,
+    ) == (3, 2, 1)
+
+    real_write = __import__(
+        "bettermemory.store", fromlist=["_atomic_write_post"]
+    )._atomic_write_post
+
+    def flaky_write(
+        path: Path,
+        post: object,
+        *,
+        max_file_bytes: int = frontmatter._MAX_FILE_BYTES,
+        max_yaml_bytes: int = frontmatter._MAX_YAML_BYTES,
+    ) -> None:
+        if Path(path) == failing:
+            raise OSError("simulated ENOSPC")
+        return real_write(
+            path,
+            post,
+            max_file_bytes=max_file_bytes,
+            max_yaml_bytes=max_yaml_bytes,
+        )
+
+    # `migrate.py` imports the symbol directly, so patch it on the
+    # `migrate` namespace where `_write_repaired` resolves it.
+    monkeypatch.setattr("bettermemory.migrate._atomic_write_post", flaky_write)
+
+    report = migrate_origin_in_directory(memory_dir, scope_repo_map=_MAP, repair=True)
+
+    # The loop didn't abort, and the failed record is reported.
+    assert report.scanned == 3
+    assert report.malformed == [failing]
+    # EXACT counters: the anchor that never landed is counted nowhere.
+    # Pre-fix this was (2, 2, 1) — `repaired_anchored` counted the failure.
+    assert (
+        report.updated,
+        report.repaired_anchored,
+        report.repaired_demoted,
+    ) == (2, 1, 1)
+    # The invariant the summary is read through: the repair breakdown sums
+    # to what actually persisted.
+    assert report.repaired_anchored + report.repaired_demoted == report.updated
+    # And disk agrees with the counters — the action set, not just totals.
+    assert _read_metadata(anchored)["origin"]["repo"] == _REPO_A
+    assert "repo" not in _read_metadata(demoted)["origin"]
+    assert "worktree_root" not in _read_metadata(demoted)["origin"]
+    # The failed record is untouched: the atomic write is all-or-nothing,
+    # and the dry run above persisted nothing either.
+    assert failing.read_text(encoding="utf-8") == failing_before
+
+
+def test_keep_global_docstring_matches_its_actual_gating(tmp_path: Path) -> None:
+    """Regression (repair rough edge c): the docstring asserted of
+    `repair` and `keep_global` that "Both are inert when `repair=False`,
+    so the default path is byte-for-byte the old behaviour". `keep_global`
+    is NOT inert — the legacy-backfill anchor guard applies it on exactly
+    that `repair=False` path. A reader trusting the sentence would believe
+    passing `keep_global` alone could not change a run.
+
+    Pins both halves: the behaviour, and the docstring no longer claiming
+    the opposite of it. (`--keep-global` without `--repair` is refused by
+    the CLI, but that is a CLI pairing rule — the library API applies the
+    flag either way, which is what the corrected docstring now says.)"""
+    memory_dir = tmp_path / ".claude-memory"
+    memory_dir.mkdir()
+    legacy = _write_legacy(memory_dir, name="span", body="x", id_=_LEGACY_IDS[0])
+    post = frontmatter.load(legacy)
+    post.metadata["scopes"] = ["projects:alpha", "infrastructure"]
+    legacy.write_text(frontmatter.dumps(post), encoding="utf-8")
+
+    # `repair=False` — the path the old docstring called byte-for-byte
+    # unchanged. A non-empty `keep_global` demonstrably changes it: without
+    # it this record IS backfilled (see
+    # `test_legacy_backfill_still_anchors_without_keep_global`).
+    report = migrate_origin_in_directory(
+        memory_dir,
+        scope_repo_map=_MAP,
+        keep_global=frozenset({"infrastructure"}),
+    )
+    assert report.updated == 0
+    assert "origin" not in _read_metadata(legacy)
+
+    doc = " ".join((migrate_origin_in_directory.__doc__ or "").split())
+    # The false claim is gone...
+    assert "Both are inert when `repair=False`" not in doc
+    # ...replaced by what the code actually does: `keep_global` is gated on
+    # being empty, not on `repair`.
+    assert "`keep_global` is NOT gated on `repair`" in doc
+    assert "It is inert only when EMPTY" in doc

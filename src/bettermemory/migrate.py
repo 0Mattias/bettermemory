@@ -145,21 +145,67 @@ def plan_repair(
     """
     if not scope_repo_map:
         return None
-    implied = {
-        scope_repo_map[scope] for scope in memory_scopes if scope in scope_repo_map
-    }
+    # Route by the STRING scopes only. Both lookups below hash their
+    # operand (`scope in <dict>`, `set(...) & keep_global`), and
+    # `_coerce_scopes` passes list elements through verbatim — so a torn
+    # record whose `scopes` list holds an unhashable element (`scopes: [[a]]`)
+    # would raise TypeError from inside the plan. `migrate_origin_in_directory`
+    # already screens those out via `_routable_scopes` and reports them as
+    # skipped; this filter is the same guarantee for direct callers of the
+    # exported `plan_repair`, so planning can never abort on one bad record.
+    routable = [scope for scope in memory_scopes if isinstance(scope, str)]
+    implied = {scope_repo_map[scope] for scope in routable if scope in scope_repo_map}
     if not implied:
         return None
 
     recorded = existing_origin.get("repo")
     if not recorded or not isinstance(recorded, str):
-        if len(implied) == 1 and not (set(memory_scopes) & keep_global):
+        if len(implied) == 1 and not (set(routable) & keep_global):
             return ("anchor", next(iter(implied)))
         return None
 
     if any(not repos_match(recorded, candidate) for candidate in implied):
         return ("demote", None)
     return None
+
+
+def _routable_scopes(
+    post: "frontmatter.Post", path: Path, report: MigrationReport
+) -> list[str] | None:
+    """Resolve a record's `scopes` to the scope STRINGS the migrator may
+    route by. Returns None — after recording `path` in `report.malformed`
+    — when the value carries an element the store itself would refuse.
+
+    `_coerce_scopes` is deliberately shape-tolerant, and for a list value
+    it passes the elements through verbatim (its docstring: "elements
+    as-is"; the model validator is what rejects a non-string element).
+    So a hand-edited or torn record can hand the migrator
+    `scopes: [[projects:alpha]]` — a list whose element is itself a list.
+    Every anchoring site downstream HASHES those elements
+    (`scope in scope_repo_map` inside `plan_repair`, `set(scopes) &
+    keep_global` in the guards), and an unhashable element raises
+    TypeError from OUTSIDE the per-file try/except around the read —
+    aborting the entire run mid-plan. For a bulk mutation whose safety
+    story is "enumerate every action, then apply", one malformed record
+    must cost one record, not the plan.
+
+    Returning None rather than silently dropping the bad elements is
+    deliberate: a non-string scope makes the record unloadable by the
+    store, so it is malformed — not partially routable. Reporting it
+    keeps the printed summary honest instead of quietly routing a record
+    by half its scopes.
+    """
+    scopes = _coerce_scopes(post.metadata.get("scopes"))
+    if any(not isinstance(scope, str) for scope in scopes):
+        log.warning(
+            "skipping %s (id=%s): `scopes` carries a non-string element — "
+            "the record cannot be routed",
+            path,
+            post.metadata.get("id"),
+        )
+        report.malformed.append(path)
+        return None
+    return scopes
 
 
 def migrate_origin_in_directory(
@@ -203,10 +249,27 @@ def migrate_origin_in_directory(
     that was captured wrong (typically `repo=None` from a write made
     outside any checkout) rather than one that was never captured at
     all. `keep_global` is the set of cross-cutting scopes that must
-    never be anchored to a single repo. Both are inert when
-    `repair=False`, so the default path is byte-for-byte the old
-    behaviour. Repair still only ever rewrites the `origin` block — the
-    body, id, and every other frontmatter key are untouched.
+    never be anchored to a single repo.
+
+    The two flags take effect at DIFFERENT points, and only `repair` is
+    gated on itself:
+
+    * `repair` is inert when False: a memory that already carries an
+      origin is skipped exactly as before, `plan_repair` is never
+      consulted, and the default path is byte-for-byte the old
+      behaviour.
+    * `keep_global` is NOT gated on `repair`. It guards every route that
+      can anchor a memory to one repo — including the legacy backfill of
+      memories with NO origin block, which is precisely the
+      `repair=False` path. It is inert only when EMPTY, which is its
+      default. Passing a non-empty `keep_global` with `repair=False`
+      does change the run: a legacy memory carrying one of those scopes
+      is left un-backfilled rather than anchored. (The CLI additionally
+      refuses `--keep-global` without `--repair`; that is a CLI-level
+      pairing rule, not a property of this function.)
+
+    Repair still only ever rewrites the `origin` block — the body, id,
+    and every other frontmatter key are untouched.
     """
     if force_repo is not None:
         # `force_repo` is a coarse override — the caller is asserting "all
@@ -309,9 +372,18 @@ def migrate_origin_in_directory(
                 if not repair or not isinstance(existing_origin, dict):
                     report.already_had_origin += 1
                     continue
+                # Screen the scopes BEFORE handing them to `plan_repair`,
+                # whose routing hashes every element. A record whose
+                # `scopes` list carries an unhashable element is reported
+                # as skipped (with its id, via the helper's log line) and
+                # the run keeps planning the rest — one bad record must
+                # not abort a bulk mutation mid-plan.
+                memory_scopes = _routable_scopes(post, path, report)
+                if memory_scopes is None:
+                    continue
                 plan = plan_repair(
                     existing_origin,
-                    _coerce_scopes(post.metadata.get("scopes")),
+                    memory_scopes,
                     scope_repo_map or {},
                     keep_global or frozenset(),
                 )
@@ -326,20 +398,34 @@ def migrate_origin_in_directory(
                 repaired = dict(existing_origin)
                 if action == "anchor":
                     repaired["repo"] = repaired_repo
-                    report.repaired_anchored += 1
                 else:
                     # Drop rather than null out: `Origin` serializes with
                     # `exclude_none`, so a null key would be a shape the
                     # rest of the store never writes.
                     repaired.pop("repo", None)
                     repaired.pop("worktree_root", None)
-                    report.repaired_demoted += 1
                 post.metadata["origin"] = repaired
-                if dry_run:
-                    report.updated += 1
+                # Attempt the write BEFORE touching any counter. These two
+                # breakdown counters used to be bumped up in the branches
+                # above, so a failed write left them inflated while
+                # `report.updated` (correctly) did not move — the printed
+                # summary then overstated what actually landed. The counts
+                # are what a user eyeballs to decide whether a bulk
+                # mutation over their whole store did what the dry run
+                # promised, so they have to mean "persisted", exactly like
+                # `updated` and like the backfill route below.
+                #
+                # Dry run persists nothing, so there is no write that can
+                # fail and the planned action IS the outcome; it falls
+                # through to the same three increments. That is what keeps
+                # "the dry-run action list equals what apply does" true on
+                # the success path — one increment site, both modes.
+                if not dry_run and not _write_repaired(path, post, report):
                     continue
-                if not _write_repaired(path, post, report):
-                    continue
+                if action == "anchor":
+                    report.repaired_anchored += 1
+                else:
+                    report.repaired_demoted += 1
                 report.updated += 1
                 continue
 
@@ -352,10 +438,18 @@ def migrate_origin_in_directory(
             # hold wherever an anchor can be applied. Inert by default:
             # `keep_global` is empty unless the caller passed it, and the CLI
             # only accepts it alongside `--repair`.
-            if keep_global and (
-                set(_coerce_scopes(post.metadata.get("scopes"))) & keep_global
-            ):
-                continue
+            #
+            # `set(...)` hashes every scope element, so this guard has the
+            # same unhashable-element abort the repair route had — screen
+            # through `_routable_scopes` first. Only reached when the caller
+            # passed a non-empty `keep_global`, so the default backfill run
+            # neither calls the helper nor gains a new `malformed` entry.
+            if keep_global:
+                guard_scopes = _routable_scopes(post, path, report)
+                if guard_scopes is None:
+                    continue
+                if set(guard_scopes) & keep_global:
+                    continue
 
             # Route this memory: scope-map first, then fallback. The first
             # matching scope wins — order is determined by Python dict
