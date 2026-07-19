@@ -1768,6 +1768,164 @@ def test_auto_refuses_to_commit_conflict_markers_mid_rebase(
         )
 
 
+def _assert_no_commit_carries_conflict_markers(repo: Path) -> None:
+    """Every `.md` blob in every commit reachable from ANY ref is marker-free.
+
+    `--all`, not `HEAD`, and that distinction is load-bearing: when `auto`
+    committed the markers and then hit a conflicted rebase, the failed
+    rebase left HEAD DETACHED at the upstream commit, so the corrupt commit
+    — sitting at the tip of `main`, and the thing the next push would ship —
+    was invisible to a HEAD-only scan. Verified empirically while building
+    this test: the HEAD-based version passed against the very commit whose
+    `main` tip carried `<<<<<<< HEAD`."""
+    for rev in _git(repo, "rev-list", "--all").split():
+        for name in _git(repo, "ls-tree", "-r", "--name-only", rev).splitlines():
+            if not name.endswith(".md"):
+                continue
+            body = _git(repo, "show", f"{rev}:{name}")
+            assert "<<<<<<<" not in body, (
+                f"commit {rev} carries conflict markers in {name} — the "
+                "corruption is now permanent in history"
+            )
+
+
+def _wedge_a_conflicted_merge(
+    memory_dir: Path, bare_remote: Path, tmp_path: Path
+) -> Path:
+    """Leave a SECOND clone parked mid-MERGE after a conflicted `git merge`.
+
+    Deliberately NOT a rebase. The porcelain output is indistinguishable
+    from the mid-rebase fixture above — same `UU` entry on the same file —
+    but no `rebase-merge`/`rebase-apply` directory exists, so a guard that
+    probes only for rebase sentinels sees a perfectly ordinary dirty
+    worktree. Returns the wedged clone."""
+    sync.init(memory_dir, remote=str(bare_remote))
+    store = Store(memory_dir)
+    memory = store.write(content="shared fact", scopes=["tools"])
+    sync.push(memory_dir)
+
+    other = tmp_path / "merge_clone"
+    subprocess.run(
+        ["git", "clone", str(bare_remote), str(other)],
+        check=True,
+        capture_output=True,
+    )
+
+    origin_path = store._find_path_for_id(memory.id)
+    assert origin_path is not None
+    origin_path.write_text(
+        origin_path.read_text(encoding="utf-8") + "\nfrom the first host\n",
+        encoding="utf-8",
+    )
+    sync.push(memory_dir)
+
+    clone_path = other / origin_path.name
+    clone_path.write_text(
+        clone_path.read_text(encoding="utf-8") + "\nfrom the second host\n",
+        encoding="utf-8",
+    )
+    _git(other, "add", "-A")
+    _git(other, "commit", "-m", "second host edit")
+
+    _git(other, "fetch", "origin")
+    # Expected to fail: that failure IS the wedged state under test.
+    subprocess.run(
+        ["git", "merge", "origin/main"], cwd=other, capture_output=True, check=False
+    )
+
+    porcelain = _git(other, "status", "--porcelain")
+    assert any(line.startswith("UU") for line in porcelain.splitlines()), (
+        f"fixture did not wedge a conflicted merge; porcelain was: {porcelain!r}"
+    )
+    assert not sync._rebase_in_progress(other), (
+        "fixture wedged a REBASE, not a merge — it would not exercise the "
+        "gap this test exists to pin"
+    )
+    return other
+
+
+def test_auto_refuses_to_commit_conflict_markers_mid_merge(
+    memory_dir: Path, bare_remote: Path, tmp_path: Path
+) -> None:
+    """🔴 DATA CORRUPTION. The commit-before-pull reordering put a
+    `git add -A` ahead of `pull`'s own guard, and that guard asked the wrong
+    question: it probed for `rebase-merge`/`rebase-apply` sentinel files. A
+    repo left mid-MERGE (`MERGE_HEAD`), mid-cherry-pick, mid-revert, or
+    holding a conflicted `git stash pop` (which leaves NO sentinel file at
+    all) produces IDENTICAL `UU` porcelain entries and was NOT caught — so
+    `auto` staged the `<<<<<<<` markers as if they were resolved content and
+    committed them permanently into history, destined for every clone.
+
+    The predicate is the porcelain status code now, not a sentinel-file
+    enumeration: any unmerged entry refuses. That subsumes rebase, merge,
+    cherry-pick, revert and stash-pop without having to enumerate the
+    states, which is the point — the sentinel approach can only see the
+    states someone remembered to list.
+
+    Mutation-sound: restore the guard to `_rebase_in_progress` alone and
+    this fails — a two-parent merge commit lands at the tip of `main` whose
+    memory body contains `<<<<<<< HEAD`, verified empirically against the
+    pre-remediation commit."""
+    other = _wedge_a_conflicted_merge(memory_dir, bare_remote, tmp_path)
+    before = _git(other, "rev-parse", "main").strip()
+
+    with pytest.raises(sync.SyncError) as excinfo:
+        sync.auto(other)
+
+    # `main`, not `HEAD`: a conflicted rebase inside `auto`'s pull step
+    # detaches HEAD, so the branch tip is where a corrupt commit actually
+    # lands and what the next push would ship.
+    after = _git(other, "rev-parse", "main").strip()
+    assert before == after, (
+        f"auto committed onto main with unmerged files present ({before} -> {after})"
+    )
+    _assert_no_commit_carries_conflict_markers(other)
+
+    message = str(excinfo.value)
+    # The message must not send the user to the one command that would
+    # `git add -A` the markers in. Pre-remediation this state fell through
+    # to the dirty-worktree branch, whose text is "Run `bettermemory sync
+    # push` to commit and send them first".
+    assert "Run `bettermemory sync push`" not in message, (
+        "the unmerged-worktree error recommends `sync push`, which would "
+        f"commit the conflict markers it just refused to commit: {message}"
+    )
+    assert "Do NOT run `bettermemory sync push`" in message, (
+        f"the error does not warn against the destructive command: {message}"
+    )
+    assert "resolve" in message.lower(), (
+        f"the error does not tell the user to resolve the conflict: {message}"
+    )
+
+
+def test_pull_refuses_and_advises_resolution_on_a_conflicted_merge(
+    memory_dir: Path, bare_remote: Path, tmp_path: Path
+) -> None:
+    """The same gap on the `pull` side. Pre-remediation a mid-merge repo
+    fell through to the dirty-worktree branch, whose message tells the user
+    to "Run `bettermemory sync push`" — the single command that would stage
+    the conflict markers. `pull` must instead recognise the unmerged state
+    and tell them to resolve the conflict.
+
+    Mutation-sound: restore `pull`'s guard to `_rebase_in_progress` alone
+    and this fails on the `sync push` assertion."""
+    other = _wedge_a_conflicted_merge(memory_dir, bare_remote, tmp_path)
+
+    with pytest.raises(sync.SyncError) as excinfo:
+        sync.pull(other)
+    message = str(excinfo.value)
+
+    assert "conflict" in message.lower(), message
+    assert "Run `bettermemory sync push`" not in message, (
+        f"the unmerged-worktree error still recommends `sync push`: {message}"
+    )
+    # …and it must not hand out `git rebase --continue`, which simply
+    # errors in a repo where no rebase is in progress.
+    assert "git rebase --continue" not in message, (
+        f"a mid-MERGE repo was given inapplicable rebase advice: {message}"
+    )
+
+
 def test_pull_still_works_on_a_clean_worktree(
     memory_dir: Path, bare_remote: Path, tmp_path: Path
 ) -> None:

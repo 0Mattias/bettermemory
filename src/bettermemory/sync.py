@@ -505,8 +505,20 @@ def _redact_text(text: str) -> str:
     )
 
 
-def _parse_porcelain(porcelain: str) -> tuple[list[str], list[str]]:
-    """Split `git status --porcelain` (v1) output into (untracked, modified).
+# The unmerged `git status --porcelain` v1 codes, as listed in
+# git-status(1)'s "Short Format" section. This IS still an enumeration —
+# a code git introduced later would not be matched — but it enumerates
+# the RIGHT axis. There are exactly seven ways git spells "unresolved
+# conflict" and the list is documented and stable, whereas the ways to
+# ARRIVE at one are open-ended: rebase, merge, cherry-pick, revert and a
+# conflicted `git stash pop` all produce codes from this set, and the
+# stash-pop case leaves no sentinel file at all, so an operation-shaped
+# guard could never have covered it however many operations it listed.
+_UNMERGED_CODES = frozenset({"DD", "AU", "UD", "UA", "DU", "AA", "UU"})
+
+
+def _porcelain_entries(porcelain: str) -> list[tuple[str, str]]:
+    """Parse `git status --porcelain` (v1) into (XY code, path) pairs.
 
     Porcelain v1 is fixed-width: chars 0-1 are the XY status code, char 2
     is a separator space, the rest is the path. Splitting on the first
@@ -514,13 +526,14 @@ def _parse_porcelain(porcelain: str) -> tuple[list[str], list[str]]:
     first char is itself a space — that drops the leading status char
     into the path. Slice by position instead.
 
-    Shared by `status()` and `_dirty_tracked_paths()` so the two cannot
-    drift: `pull`'s dirty-worktree pre-check and the `sync status` the
-    user runs to diagnose it must agree on what counts as modified, or
-    the error message names files `status` does not show.
+    THE ONE PARSER. `status()`, `_dirty_tracked_paths()` and
+    `_unmerged_paths()` all go through here so they cannot drift: the
+    conflict guard, `pull`'s dirty-worktree pre-check and the `sync
+    status` the user runs to diagnose either one must agree on what a
+    given line means, or the error message names files `status` does not
+    show.
     """
-    untracked: list[str] = []
-    modified: list[str] = []
+    entries: list[tuple[str, str]] = []
     for line in porcelain.splitlines():
         if len(line) < 4:
             continue
@@ -528,6 +541,15 @@ def _parse_porcelain(porcelain: str) -> tuple[list[str], list[str]]:
         path = line[3:].strip()
         if not path:
             continue
+        entries.append((code, path))
+    return entries
+
+
+def _parse_porcelain(porcelain: str) -> tuple[list[str], list[str]]:
+    """Split porcelain output into (untracked, modified)."""
+    untracked: list[str] = []
+    modified: list[str] = []
+    for code, path in _porcelain_entries(porcelain):
         if code == "??":
             untracked.append(path)
         else:
@@ -549,15 +571,42 @@ def _dirty_tracked_paths(root: Path) -> list[str]:
     return modified
 
 
+def _unmerged_paths(root: Path) -> list[str]:
+    """Tracked paths with an unresolved merge conflict.
+
+    THE CONFLICT PREDICATE, and it asks about STATE rather than CAUSE.
+    An earlier version of this guard probed for `rebase-merge` /
+    `rebase-apply` sentinel directories, which answers "is a rebase
+    unfinished" — a strictly narrower question than "does the worktree
+    hold conflict markers". A repo left mid-merge (`MERGE_HEAD`),
+    mid-cherry-pick (`CHERRY_PICK_HEAD`) or mid-revert (`REVERT_HEAD`)
+    produces IDENTICAL `UU` porcelain entries and slipped straight
+    through; a conflicted `git stash pop` leaves conflicts with NO
+    sentinel file at all, so no amount of probing would ever have caught
+    it. Verified empirically: on a two-clone conflicted `git merge`,
+    `_rebase_in_progress` returns False while porcelain reports `UU`.
+
+    Why it matters: everything that stages runs `git add -A`, which
+    marks conflicts RESOLVED without resolving them and commits
+    `<<<<<<<` into the user's memories — permanently, and onward to
+    every clone on the next push.
+    """
+    porcelain = _run_git(root, ["status", "--porcelain"], check=False).stdout
+    return [
+        path for code, path in _porcelain_entries(porcelain) if code in _UNMERGED_CODES
+    ]
+
+
 def _rebase_in_progress(root: Path) -> bool:
     """True while an interrupted `git rebase` is still unfinished.
 
-    A conflicted `sync pull` leaves the repo mid-rebase with `UU` entries
-    in porcelain output. Those look exactly like "dirty tracked files" to
-    `_dirty_tracked_paths`, but the remedy is the OPPOSITE one: the user
-    must finish or abort the rebase, and must NOT let anything run
-    `git add -A` over the conflict markers. Callers check this FIRST so
-    the more specific state wins.
+    NOT the conflict guard — `_unmerged_paths` is. This narrower probe
+    survives for two jobs the porcelain codes cannot do: tailoring the
+    error message to say `git rebase --continue` rather than `git
+    commit`, and catching a rebase that is stopped with NOTHING unmerged
+    (an interactive `edit` stop, or conflicts the user already staged but
+    has not continued past) — a state with no `U` codes where a commit
+    would still land somewhere the user does not expect.
 
     `git rev-parse --git-path` rather than `root / ".git" / …` because
     `.git` is a FILE, not a directory, in a linked worktree or a
@@ -576,24 +625,68 @@ def _rebase_in_progress(root: Path) -> bool:
     return False
 
 
-def _rebase_in_progress_error(root: Path) -> SyncError:
-    """The one message for "finish your rebase first".
+def _unresolved_conflict_error(
+    root: Path, unmerged: list[str], rebasing: bool
+) -> SyncError:
+    """The one message for "resolve your conflict first".
 
-    Deliberately tells the user NOT to reach for `sync push`: that path
-    runs `git add -A`, which would stage the conflict markers as if they
-    were resolved content and commit `<<<<<<<`/`>>>>>>>` into their
-    memories.
+    Deliberately tells the user NOT to reach for `sync push` — and never
+    RECOMMENDS it, which the dirty-worktree branch used to do on exactly
+    this state. `push` runs `git add -A`, which would stage the conflict
+    markers as if they were resolved content and commit
+    `<<<<<<<`/`>>>>>>>` into their memories.
+
+    The "finish it" half is tailored by `rebasing` because the commands
+    genuinely differ: a stopped rebase wants `git rebase --continue`,
+    while a merge / cherry-pick / revert / stash-pop conflict wants a
+    plain `git commit`. Getting this wrong is not cosmetic — `git rebase
+    --continue` in a repo with no rebase in progress just errors.
     """
+    if rebasing:
+        what = f"an unfinished rebase is in progress in {root}"
+        finish = (
+            "`git rebase --continue` from the memory directory; or "
+            "`git rebase --abort` to recover the pre-pull state"
+        )
+    else:
+        what = f"{root} has an unfinished merge, cherry-pick, revert or stash pop"
+        finish = (
+            "`git commit` to conclude it; or `git merge --abort` "
+            "(`git cherry-pick --abort` / `git revert --abort`) to back out"
+        )
+
+    if unmerged:
+        shown = ", ".join(unmerged[:10])
+        if len(unmerged) > 10:
+            shown += f", and {len(unmerged) - 10} more"
+        conflicted = (
+            f" {len(unmerged)} file(s) still have unresolved merge conflicts: {shown}."
+        )
+    else:
+        conflicted = ""
+
     return SyncError(
-        f"an unfinished rebase is in progress in {root} — a previous "
-        f"`bettermemory sync pull` hit a merge conflict. Resolve the "
-        f"conflicted file(s) by hand, `git add` them, then run "
-        f"`git rebase --continue` from the memory directory; or "
-        f"`git rebase --abort` to recover the pre-pull state. Do NOT run "
-        f"`bettermemory sync push` while the rebase is unfinished: it runs "
-        f"`git add -A` and would commit the conflict markers into your "
-        f"memories."
+        f"{what}.{conflicted} Resolve the conflicted file(s) by hand "
+        f"(remove the `<<<<<<<` / `=======` / `>>>>>>>` markers), "
+        f"`git add` them, then finish with {finish}. Do NOT run "
+        f"`bettermemory sync push` or `bettermemory sync auto` first: they "
+        f"run `git add -A`, which would mark the conflicts resolved without "
+        f"resolving them and commit the markers into your memories."
     )
+
+
+def _require_no_unresolved_conflict(root: Path) -> None:
+    """Raise unless `root` is free of conflicts and half-finished rebases.
+
+    Called by every path that is about to `git add -A` or `git pull
+    --rebase`. Gates on `_unmerged_paths` FIRST (state, complete) and
+    keeps `_rebase_in_progress` as a second condition only to catch the
+    rebase-stopped-with-nothing-unmerged case that carries no `U` codes.
+    """
+    unmerged = _unmerged_paths(root)
+    rebasing = _rebase_in_progress(root)
+    if unmerged or rebasing:
+        raise _unresolved_conflict_error(root, unmerged, rebasing)
 
 
 def _is_repo(root: Path) -> bool:
@@ -836,18 +929,27 @@ def _commit_local_changes(root: Path, message: str) -> bool:
     git op is its own atomic boundary, and nesting the same lock in one
     process would deadlock (see `_stage_and_commit`).
 
-    Refuses while a rebase is unfinished. `auto` commits BEFORE it pulls,
-    which newly puts a `git add -A` ahead of the pull's own guard: on a
-    repo left mid-rebase by an earlier conflicted pull, that would stage
-    the conflict markers as resolved content and commit `<<<<<<<` into
-    the user's memories. The guard sits here because that is where the
-    commit-first reordering made the path reachable. `push` has always
-    had the same exposure when run directly on a mid-rebase repo and is
-    deliberately left alone here — a separate defect, reported rather
-    than silently widened into this change.
+    Refuses while ANY conflict is unresolved. `auto` commits BEFORE it
+    pulls, which newly puts a `git add -A` ahead of the pull's own guard:
+    on a repo holding conflict markers, that would stage them as resolved
+    content and commit `<<<<<<<` into the user's memories. The guard sits
+    here because that is where the commit-first reordering made the path
+    reachable.
+
+    It gates on `_require_no_unresolved_conflict`, NOT on
+    `_rebase_in_progress`. The narrower probe missed every non-rebase way
+    to hold a conflict — a plain `git merge`, a cherry-pick, a revert, a
+    conflicted `git stash pop` — each of which produces the same `UU`
+    porcelain entry. Demonstrated with a two-clone conflicted merge: the
+    rebase-only guard let `auto` commit `<<<<<<< HEAD` onto the tip of
+    `main`, where the next push would ship it to every clone.
+
+    `push` runs `_stage_and_commit` WITHOUT this guard and still has that
+    exposure when invoked directly on a conflicted repo. That is a
+    pre-existing defect (its `git add -A` predates this change), left
+    alone here and reported rather than silently widened into this fix.
     """
-    if _rebase_in_progress(root):
-        raise _rebase_in_progress_error(root)
+    _require_no_unresolved_conflict(root)
     with flock_excl(root / _SYNC_LOCK_NAME):
         return _stage_and_commit(root, message)
 
@@ -999,13 +1101,12 @@ def pull(
                 f"`bettermemory sync init --remote <url>` or add it manually."
             )
 
-        # An unfinished rebase FIRST: its `UU` entries are indistinguishable
+        # UNRESOLVED CONFLICTS FIRST: their `UU` entries are indistinguishable
         # from ordinary dirty files in porcelain output, but the remedy is
         # the opposite one. Without this ordering the dirty-worktree branch
-        # below would tell a mid-rebase user to run `sync push`, which would
+        # below would tell the user to run `sync push`, which would
         # `git add -A` the conflict markers straight into their memories.
-        if _rebase_in_progress(root):
-            raise _rebase_in_progress_error(root)
+        _require_no_unresolved_conflict(root)
 
         # Dirty-worktree pre-check. `git pull --rebase` hard-refuses when a
         # tracked file has uncommitted changes, and that is the NORMAL state
