@@ -2179,3 +2179,74 @@ def test_scan_cap_cannot_fabricate_drift_from_straddling_path(
     report_inside = detect_path_drift("f" * 100 + " " + cited + " tail")
     assert cited in tuple(report_inside.checked)
     assert not report_inside.missing
+
+
+# ---------------------------------------------------------------------------
+# Multi-segment route suppression.
+#
+# `_is_route` can only suppress a route when the SAME body also carries a
+# domain-qualified URL for `_DOMAIN_ROUTE_RE` to harvest a vocabulary from.
+# A memory citing only bare app routes got an empty vocabulary, so every
+# route was stat'd and reported as a missing FILE — inflating
+# staleness_verdict on a healthy record. Found by a sweep over web-app
+# memories, which cite routes constantly and rarely write the host.
+# ---------------------------------------------------------------------------
+
+
+def test_bare_multi_segment_routes_are_not_missing_files() -> None:
+    """The reported bug: no domain sibling, so no vocabulary to learn."""
+    report = detect_path_drift(
+        "Routes `/api/v1/events/presence` and `/admin/macros` are registered."
+    )
+    assert report.missing == ()
+    # Dropped entirely — "we looked and it wasn't there" is a meaningless
+    # statement about a URL path, so it must not even appear in `checked`.
+    assert report.checked == ()
+
+
+def test_route_suppression_no_longer_needs_a_domain_sibling() -> None:
+    """Same routes, with and without a domain-qualified URL, agree."""
+    routes = "Route `/portal/incidents/new` is live."
+    with_domain = "See https://x.example.com/portal/health. Route `/portal/incidents/new` is live."
+    assert detect_path_drift(routes).missing == ()
+    assert detect_path_drift(with_domain).missing == ()
+
+
+def test_existing_parent_directory_still_reports_real_drift(tmp_path: Path) -> None:
+    """The escape that keeps path drift useful: a deleted file whose
+    neighbourhood still exists is GENUINE drift, not a route. This is the
+    exact case the feature exists to catch — it must survive the fix."""
+    gone = tmp_path / "gone-xyz"
+    body = f"The store lived at `{gone}`."
+    report = detect_path_drift(body)
+    assert str(gone) in report.missing
+
+
+def test_extensioned_candidate_still_reports_missing() -> None:
+    """A terminal extension reads as a file even when the parent is
+    absent — `/srv/app/config.yaml` is a config path, not a route."""
+    report = detect_path_drift("Config at `/srv/app/config.yaml` on the box.")
+    assert "/srv/app/config.yaml" in report.missing
+
+
+def test_single_segment_remote_path_limitation_preserved() -> None:
+    """`/opt/gophish`-style single-segment citations keep flowing to
+    `missing` until attested via verified_absent_paths — the documented
+    remote-host behaviour, deliberately unchanged."""
+    body = "Gophish lives at `/opt/gophish` on the homelab board."
+    assert "/opt/gophish" in detect_path_drift(body).missing
+    attested = detect_path_drift(body, absent_paths=["/opt/gophish"])
+    assert attested.missing == ()
+    assert "/opt/gophish" in attested.expected_absent
+
+
+def test_attested_route_is_never_dropped() -> None:
+    """Attestations pin a citation: a caller who explicitly named a path
+    must still get its drift signal, so the route drop must sit behind
+    the `not attested` guard."""
+    report = detect_path_drift(
+        "Route `/api/v1/events/presence` is registered.",
+        absent_paths=["/api/v1/events/presence"],
+    )
+    assert "/api/v1/events/presence" in report.expected_absent
+    assert report.missing == ()

@@ -294,10 +294,18 @@ async def test_memory_search_expand_top_recomputes_verdict_on_drift(
     """The expanded top hit re-runs path_drift against the actual body
     and updates the verdict — a fresh-verified memory citing a missing
     path is `spot_check_recommended`, not `fresh`."""
+    # The cited path carries an EXTENSION on purpose. Since 3.25.2 a
+    # non-existent leading-slash candidate with no extension and no
+    # existing parent directory reads as an application route rather than
+    # a deleted file (`_is_multi_segment_routelike`), so the old
+    # extensionless `/this/path/does/not/exist-xyz` fixture no longer
+    # produces a drift signal at all. That narrowing is deliberate; what
+    # this test guards is the verdict RECOMPUTATION mechanism, so the
+    # fixture just has to be a candidate that still reads as a file.
     written = await _call(
         server,
         "memory_write",
-        content="The script lives at `/this/path/does/not/exist-xyz`.",
+        content="The script lives at `/this/path/does/not/exist-xyz.py`.",
         scopes=["tools"],
     )
     await _call(server, "memory_verify", id=written["id"])

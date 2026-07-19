@@ -77,6 +77,7 @@ Excluded by design:
 from __future__ import annotations
 
 import bisect
+import os
 import re
 from collections.abc import Sequence
 from dataclasses import dataclass
@@ -481,6 +482,24 @@ def detect_path_drift(
                 # manufactured by our own truncation, not by drift.
                 # An existing candidate is kept: existence proves the
                 # prefix is a real path regardless of the prose after it.
+                continue
+            if _is_multi_segment_routelike(path):
+                # An application route, not a deleted file. `_is_route`
+                # upstream can only suppress routes when the SAME body
+                # also happens to carry a domain-qualified URL to learn a
+                # vocabulary from, so a memory citing bare routes
+                # (`/api/v1/events/presence`, `/admin/macros`) had every
+                # one of them stat'd and reported missing. Dropped
+                # entirely — not even `checked` — because "we looked and
+                # it wasn't there" is a meaningless statement about a URL
+                # path.
+                #
+                # Deliberately LAST in this block: the spaced-bare and
+                # ambiguous-truncation arms above must arbitrate first,
+                # or a prose-glued candidate (`/tmp/real-dir TCP/IP`)
+                # would read as a route on its manufactured tail and skip
+                # the prefix-existence fallback that recovers the real
+                # path.
                 continue
         if path in checked:
             continue
@@ -896,6 +915,51 @@ def _is_single_segment_routelike(s: str) -> bool:
     if segment.lower() in _WELLKNOWN_ROUTE_SEGMENTS:
         return True
     return "." not in segment
+
+
+def _is_multi_segment_routelike(s: str) -> bool:
+    """True when a NON-EXISTENT leading-slash candidate is far more likely
+    an application route than a file that went missing.
+
+    Only ever consulted for candidates that already failed the existence
+    check and carry no attestation, so a real path that still exists is
+    never affected, and an attested path is never reached.
+
+    `_is_single_segment_routelike` covers the one-segment case
+    (`/healthz`). This covers the multi-segment case — `/api/v1/events/
+    presence`, `/admin/macros`, `/portal/incidents/new` — which was
+    previously suppressed ONLY when the same body happened to contain a
+    domain-qualified URL for `_DOMAIN_ROUTE_RE` to harvest a vocabulary
+    from. A memory that cited bare routes got an empty vocabulary and
+    every route reported as a missing file, which then inflated
+    `staleness_verdict` on an otherwise healthy record.
+
+    Two escapes keep real filesystem drift reportable:
+
+    * **An extension on the terminal segment** (`/srv/app/config.yaml`)
+      reads as a file, not a route.
+    * **An existing parent directory** (`/Users/me/gone`, `/etc/nope`)
+      means the neighbourhood is real, so absence is genuine drift worth
+      reporting. This is what keeps a deleted-or-renamed local path — the
+      exact case path drift exists to catch — from being written off as a
+      route.
+
+    Single-segment candidates are excluded (`s.count("/") < 2`), which
+    preserves the documented remote-host limitation for `/opt/gophish`
+    -style citations: those keep flowing to `missing` until attested via
+    `memory_verify(verified_absent_paths=[...])`.
+    """
+    if not s.startswith("/") or s.count("/") < 2:
+        return False
+    parent, _, last = s.rpartition("/")
+    if "." in last:
+        return False
+    # `os.path.isdir` rather than `Path(...).is_dir()`: it swallows OSError
+    # and ValueError internally and simply returns False, so an unstattable
+    # parent can never raise out of a read-only drift check. It also keeps
+    # this helper independent of the module-level `Path` symbol, which the
+    # suite patches wholesale when exercising the stat-failure path.
+    return not os.path.isdir(os.path.expanduser(parent))
 
 
 def _is_placeholder_path(s: str) -> bool:
