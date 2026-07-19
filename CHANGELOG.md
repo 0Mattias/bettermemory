@@ -7,6 +7,48 @@ breaking changes, minor for additive features, patch for fixes. The
 [compatibility contract](CONTRIBUTING.md#versioning-and-the-compatibility-contract)
 spells out exactly what's stable.
 
+## 3.25.2 - 2026-07-19
+
+A path-drift false positive that made healthy web-app memories look stale.
+Found by dogfooding — a verification sweep over a Go+React project's
+memories, where four independent agents flagged the same phantom drift.
+
+### Fixed
+
+- **Bare application routes were reported as missing files.** Route
+  suppression (`_is_route`) learns its vocabulary from
+  `_DOMAIN_ROUTE_RE`, which only matches domain-qualified URLs like
+  `example.com/api`. A memory citing bare routes — `/api/v1/events/
+  presence`, `/admin/macros`, `/portal/incidents/new` — produced an
+  *empty* vocabulary, so every route fell through to the filesystem check
+  and landed in `path_drift.missing`. Identical citations were suppressed
+  correctly if the body happened to contain any fully-qualified URL, and
+  reported as drift if it didn't.
+
+  Because `path_drift_missing` feeds `staleness_verdict`, this pushed
+  healthy memories to `spot_check_recommended`/`required`, spending
+  verification attention on records whose only "drift" was imaginary and
+  diluting the signal that is supposed to mean *this memory's cited
+  ground truth moved*. Web-app memories were worst affected: they cite
+  routes constantly and rarely write the host.
+
+  New `_is_multi_segment_routelike` drops a non-existent leading-slash
+  candidate that looks like a route. Two escapes keep genuine filesystem
+  drift reportable: an **extension** on the terminal segment
+  (`/srv/app/config.yaml` reads as a file), and an **existing parent
+  directory** (`/Users/me/gone`, `/etc/nope` — the neighbourhood is real,
+  so absence is real drift). Single-segment candidates are excluded, so
+  the documented remote-host behaviour for `/opt/gophish`-style citations
+  is unchanged: those still flow to `missing` until attested via
+  `memory_verify(verified_absent_paths=[...])`.
+
+  The check sits **last** in the not-exists block, after the spaced-bare
+  and ambiguous-truncation arms, so a prose-glued candidate
+  (`/tmp/real-dir TCP/IP`) still reaches the prefix-existence fallback
+  that recovers the real path rather than being written off as a route on
+  its manufactured tail. It is also behind the `not attested` guard, so
+  an explicitly-named path always keeps its drift signal.
+
 ## 3.25.1 - 2026-07-19
 
 A Windows-only durability gap in the atomic write path, found by a flaky
