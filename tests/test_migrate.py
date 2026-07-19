@@ -1030,3 +1030,289 @@ def test_migration_refuses_to_grow_record_into_yaml_removal_band(
     tombstone_path = Store(memory_dir).tombstone(_LEGACY_IDS[0], reason="cleanup")
     assert tombstone_path.exists()
     assert not band.exists()
+
+
+# ---------------------------------------------------------------------------
+# `--repair`: fixing an origin that was CAPTURED, but captured wrong.
+#
+# The backfill above only ever fires on memories with no origin at all.
+# The damage seen in the wild is different: a write made from a parent
+# directory or $HOME sits outside any checkout, so `capture()` records a
+# cwd with `repo=None` — and per `repos_match` a null repo matches every
+# caller, so the memory silently goes global and leaks into every
+# project's auto-scoped search.
+# ---------------------------------------------------------------------------
+
+_REPO_A = "https://github.com/me/alpha.git"
+_REPO_B = "https://github.com/me/beta.git"
+_MAP = {"projects:alpha": _REPO_A, "projects:beta": _REPO_B}
+
+
+def _write_with_origin(
+    memory_dir: Path,
+    *,
+    name: str,
+    id_: str,
+    scopes: list[str],
+    origin: dict,
+) -> Path:
+    path = _write_legacy(memory_dir, name=name, body="x", id_=id_)
+    post = frontmatter.load(path)
+    post.metadata["scopes"] = list(scopes)
+    post.metadata["origin"] = dict(origin)
+    path.write_text(frontmatter.dumps(post), encoding="utf-8")
+    return path
+
+
+def test_repair_anchors_null_repo_to_its_only_mapped_scope(tmp_path: Path) -> None:
+    """The core case: written from `~/Documents`, so cwd is set but repo
+    is null. Exactly one mapped scope names the owning repo — adopt it."""
+    memory_dir = tmp_path / ".claude-memory"
+    memory_dir.mkdir()
+    path = _write_with_origin(
+        memory_dir,
+        name="stray",
+        id_=_LEGACY_IDS[0],
+        scopes=["projects:alpha"],
+        origin={"cwd": "/Users/me/Documents"},
+    )
+
+    report = migrate_origin_in_directory(memory_dir, scope_repo_map=_MAP, repair=True)
+
+    assert (report.repaired_anchored, report.repaired_demoted) == (1, 0)
+    assert report.updated == 1
+    meta = _read_metadata(path)
+    assert meta["origin"]["repo"] == _REPO_A
+    # The captured cwd is history — repair rewrites the repo, not the record.
+    assert meta["origin"]["cwd"] == "/Users/me/Documents"
+
+
+def test_repair_demotes_memory_dark_in_a_scope_it_claims(tmp_path: Path) -> None:
+    """Scoped `projects:alpha` but anchored to beta — invisible from
+    alpha. No single repo satisfies both, so global is the honest origin.
+    `worktree_root` must go too: it is the second auto-scope
+    discriminator, and leaving it would keep the memory dark."""
+    memory_dir = tmp_path / ".claude-memory"
+    memory_dir.mkdir()
+    path = _write_with_origin(
+        memory_dir,
+        name="dark",
+        id_=_LEGACY_IDS[0],
+        scopes=["projects:alpha", "projects:beta"],
+        origin={"cwd": "/w/beta", "repo": _REPO_B, "worktree_root": "/w/beta"},
+    )
+
+    report = migrate_origin_in_directory(memory_dir, scope_repo_map=_MAP, repair=True)
+
+    assert (report.repaired_anchored, report.repaired_demoted) == (0, 1)
+    meta = _read_metadata(path)
+    assert "repo" not in meta["origin"]
+    assert "worktree_root" not in meta["origin"]
+    assert meta["origin"]["cwd"] == "/w/beta"
+
+
+def test_repair_leaves_correctly_anchored_memory_alone(tmp_path: Path) -> None:
+    """A memory carrying a cross-cutting scope alongside its project
+    scope is still correctly anchored — repair must not touch it. This is
+    the regression that matters most: treating `keep_global` as a demote
+    trigger would strip the anchor off every `projects:x`+`tools` memory
+    in the store and make the leak dramatically worse."""
+    memory_dir = tmp_path / ".claude-memory"
+    memory_dir.mkdir()
+    path = _write_with_origin(
+        memory_dir,
+        name="fine",
+        id_=_LEGACY_IDS[0],
+        scopes=["projects:alpha", "tools"],
+        origin={"cwd": "/w/alpha", "repo": _REPO_A, "worktree_root": "/w/alpha"},
+    )
+
+    report = migrate_origin_in_directory(
+        memory_dir,
+        scope_repo_map=_MAP,
+        repair=True,
+        keep_global=frozenset({"tools"}),
+    )
+
+    assert report.updated == 0
+    assert report.already_had_origin == 1
+    assert _read_metadata(path)["origin"]["repo"] == _REPO_A
+
+
+def test_repair_keep_global_suppresses_anchoring(tmp_path: Path) -> None:
+    """Null repo + a cross-cutting scope: anchoring would hide a
+    genuinely project-spanning memory everywhere else, so leave it
+    global."""
+    memory_dir = tmp_path / ".claude-memory"
+    memory_dir.mkdir()
+    path = _write_with_origin(
+        memory_dir,
+        name="spanning",
+        id_=_LEGACY_IDS[0],
+        scopes=["projects:alpha", "infrastructure"],
+        origin={"cwd": "/Users/me"},
+    )
+
+    report = migrate_origin_in_directory(
+        memory_dir,
+        scope_repo_map=_MAP,
+        repair=True,
+        keep_global=frozenset({"infrastructure"}),
+    )
+
+    assert report.updated == 0
+    assert "repo" not in _read_metadata(path)["origin"]
+
+
+def test_repair_will_not_anchor_an_ambiguous_memory(tmp_path: Path) -> None:
+    """Two mapped scopes, null repo: no single repo is right, so
+    anchoring would be a guess. Stay global."""
+    memory_dir = tmp_path / ".claude-memory"
+    memory_dir.mkdir()
+    path = _write_with_origin(
+        memory_dir,
+        name="ambiguous",
+        id_=_LEGACY_IDS[0],
+        scopes=["projects:alpha", "projects:beta"],
+        origin={"cwd": "/Users/me/Documents"},
+    )
+
+    report = migrate_origin_in_directory(memory_dir, scope_repo_map=_MAP, repair=True)
+
+    assert report.updated == 0
+    assert "repo" not in _read_metadata(path)["origin"]
+
+
+def test_repair_is_off_by_default(tmp_path: Path) -> None:
+    """Without `repair=True` an existing origin is skipped, exactly as
+    before — the flag is strictly additive."""
+    memory_dir = tmp_path / ".claude-memory"
+    memory_dir.mkdir()
+    path = _write_with_origin(
+        memory_dir,
+        name="stray",
+        id_=_LEGACY_IDS[0],
+        scopes=["projects:alpha"],
+        origin={"cwd": "/Users/me/Documents"},
+    )
+
+    report = migrate_origin_in_directory(memory_dir, scope_repo_map=_MAP)
+
+    assert (report.already_had_origin, report.updated) == (1, 0)
+    assert "repo" not in _read_metadata(path)["origin"]
+
+
+def test_repair_dry_run_writes_nothing(tmp_path: Path) -> None:
+    memory_dir = tmp_path / ".claude-memory"
+    memory_dir.mkdir()
+    path = _write_with_origin(
+        memory_dir,
+        name="stray",
+        id_=_LEGACY_IDS[0],
+        scopes=["projects:alpha"],
+        origin={"cwd": "/Users/me/Documents"},
+    )
+    before = path.read_text(encoding="utf-8")
+
+    report = migrate_origin_in_directory(
+        memory_dir, scope_repo_map=_MAP, repair=True, dry_run=True
+    )
+
+    assert (report.updated, report.repaired_anchored) == (1, 1)
+    assert path.read_text(encoding="utf-8") == before
+
+
+def test_repair_is_idempotent(tmp_path: Path) -> None:
+    """Second pass finds nothing left to do — anchored memories now match
+    their scope, so neither rule fires."""
+    memory_dir = tmp_path / ".claude-memory"
+    memory_dir.mkdir()
+    _write_with_origin(
+        memory_dir,
+        name="stray",
+        id_=_LEGACY_IDS[0],
+        scopes=["projects:alpha"],
+        origin={"cwd": "/Users/me/Documents"},
+    )
+
+    first = migrate_origin_in_directory(memory_dir, scope_repo_map=_MAP, repair=True)
+    second = migrate_origin_in_directory(memory_dir, scope_repo_map=_MAP, repair=True)
+
+    assert first.updated == 1
+    assert second.updated == 0
+
+
+def test_repair_ignores_memories_with_no_mapped_scope(tmp_path: Path) -> None:
+    """No routing evidence at all — never touch it."""
+    memory_dir = tmp_path / ".claude-memory"
+    memory_dir.mkdir()
+    path = _write_with_origin(
+        memory_dir,
+        name="unmapped",
+        id_=_LEGACY_IDS[0],
+        scopes=["career"],
+        origin={"cwd": "/Users/me"},
+    )
+
+    report = migrate_origin_in_directory(memory_dir, scope_repo_map=_MAP, repair=True)
+
+    assert report.updated == 0
+    assert "repo" not in _read_metadata(path)["origin"]
+
+
+def test_repair_matches_equivalent_repo_spellings(tmp_path: Path) -> None:
+    """ssh vs https spelling of the same remote is NOT a mismatch —
+    demoting on a spelling difference would un-anchor a correct memory."""
+    memory_dir = tmp_path / ".claude-memory"
+    memory_dir.mkdir()
+    path = _write_with_origin(
+        memory_dir,
+        name="ssh-spelled",
+        id_=_LEGACY_IDS[0],
+        scopes=["projects:alpha"],
+        origin={"cwd": "/w/alpha", "repo": "git@github.com:me/alpha.git"},
+    )
+
+    report = migrate_origin_in_directory(memory_dir, scope_repo_map=_MAP, repair=True)
+
+    assert report.updated == 0
+    assert _read_metadata(path)["origin"]["repo"] == "git@github.com:me/alpha.git"
+
+
+def test_keep_global_also_guards_the_legacy_backfill_route(tmp_path: Path) -> None:
+    """A legacy memory (no origin at all) carrying a cross-cutting scope
+    must not be anchored either. `keep_global` promises "never anchored to
+    one repo"; honouring it only on the repair route would let the older
+    backfill path quietly hide a project-spanning memory."""
+    memory_dir = tmp_path / ".claude-memory"
+    memory_dir.mkdir()
+    legacy = _write_legacy(memory_dir, name="span", body="x", id_=_LEGACY_IDS[0])
+    post = frontmatter.load(legacy)
+    post.metadata["scopes"] = ["projects:alpha", "infrastructure"]
+    legacy.write_text(frontmatter.dumps(post), encoding="utf-8")
+
+    report = migrate_origin_in_directory(
+        memory_dir,
+        scope_repo_map=_MAP,
+        repair=True,
+        keep_global=frozenset({"infrastructure"}),
+    )
+
+    assert report.updated == 0
+    assert "origin" not in _read_metadata(legacy)
+
+
+def test_legacy_backfill_still_anchors_without_keep_global(tmp_path: Path) -> None:
+    """Guard the guard: the same memory IS backfilled when the caller
+    hasn't declared that scope cross-cutting."""
+    memory_dir = tmp_path / ".claude-memory"
+    memory_dir.mkdir()
+    legacy = _write_legacy(memory_dir, name="span", body="x", id_=_LEGACY_IDS[0])
+    post = frontmatter.load(legacy)
+    post.metadata["scopes"] = ["projects:alpha", "infrastructure"]
+    legacy.write_text(frontmatter.dumps(post), encoding="utf-8")
+
+    report = migrate_origin_in_directory(memory_dir, scope_repo_map=_MAP)
+
+    assert report.updated == 1
+    assert _read_metadata(legacy)["origin"]["repo"] == _REPO_A

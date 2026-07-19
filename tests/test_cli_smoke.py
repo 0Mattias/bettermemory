@@ -1186,3 +1186,53 @@ def test_ui_tunnel_rejects_unknown_provider(
             ["ui", "--tunnel", "ngrok"], monkeypatch=monkeypatch, storage=tmp_path
         )
     assert excinfo.value.code == 2
+
+
+def test_migrate_origin_repair_requires_scope_repo(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """`--repair` with no map has nothing to check an existing origin
+    against — fail loudly rather than silently scanning and doing
+    nothing."""
+    with pytest.raises(SystemExit):
+        _run_main(
+            ["migrate", "origin", "--repair"], monkeypatch=monkeypatch, storage=tmp_path
+        )
+
+
+def test_migrate_origin_keep_global_requires_repair(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """`--keep-global` only guards the repair anchor rule; accepting it
+    without `--repair` would imply a protection that never runs."""
+    with pytest.raises(SystemExit):
+        _run_main(
+            ["migrate", "origin", "--keep-global", "tools"],
+            monkeypatch=monkeypatch,
+            storage=tmp_path,
+        )
+
+
+def test_migrate_origin_repair_reports_breakdown(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """Repair mode prints the anchor/demote split, so a dry run is
+    reviewable before it is applied."""
+    _run_main(
+        [
+            "migrate",
+            "origin",
+            "--repair",
+            "--dry-run",
+            "--scope-repo",
+            "projects:alpha=https://github.com/me/alpha.git",
+        ],
+        monkeypatch=monkeypatch,
+        storage=tmp_path,
+    )
+    out = capsys.readouterr().out
+    assert "Repair: ON" in out
+    assert "Would anchor" in out
+    assert "Would demote" in out

@@ -57,6 +57,36 @@ def add_subparser(
             "projects:<name> tags."
         ),
     )
+    origin_parser.add_argument(
+        "--repair",
+        action="store_true",
+        help=(
+            "Also fix memories that ALREADY have an origin block but "
+            "whose repo was captured wrong — the usual cause is writing "
+            "from a parent directory or $HOME, outside any checkout, "
+            "which records repo=null and silently makes the memory "
+            "global. Requires --scope-repo. Two rules: a null repo whose "
+            "scopes name exactly one mapped repo is anchored to it; a "
+            "repo that contradicts one of the memory's own mapped scopes "
+            "(scoped projects:a, anchored to repo b — invisible from a) "
+            "is cleared back to global. Only the origin block is "
+            "rewritten. Pair with --dry-run first."
+        ),
+    )
+    origin_parser.add_argument(
+        "--keep-global",
+        action="append",
+        default=[],
+        metavar="SCOPE",
+        help=(
+            "Cross-cutting scope that must never be anchored to one repo "
+            "(e.g. --keep-global infrastructure --keep-global tools). A "
+            "memory carrying SCOPE is left global by --repair's anchor "
+            "rule, since anchoring a genuinely project-spanning memory "
+            "would hide it from every other project. Never causes a "
+            "demote. No effect without --repair."
+        ),
+    )
     return parser
 
 
@@ -87,10 +117,20 @@ def run(
                     f"--scope-repo expects non-empty SCOPE and URL, got: {entry!r}"
                 )
             scope_repo_map[scope] = url
+        if args.repair and not scope_repo_map:
+            root_parser.error(
+                "--repair needs --scope-repo to know which scope maps to "
+                "which repo; with no map there is nothing to check an "
+                "existing origin against."
+            )
+        if args.keep_global and not args.repair:
+            root_parser.error("--keep-global has no effect without --repair.")
         _cli_migrate_origin(
             dry_run=args.dry_run,
             force_repo=args.repo,
             scope_repo_map=scope_repo_map,
+            repair=args.repair,
+            keep_global=frozenset(s.strip() for s in args.keep_global if s.strip()),
         )
         return
     sub_parser.print_help()
@@ -101,6 +141,8 @@ def _cli_migrate_origin(
     dry_run: bool,
     force_repo: str | None,
     scope_repo_map: dict[str, str],
+    repair: bool = False,
+    keep_global: frozenset[str] = frozenset(),
 ) -> None:
     """`bettermemory migrate origin` — backfill origin on legacy memories."""
     from ..migrate import (
@@ -152,10 +194,18 @@ def _cli_migrate_origin(
             print("  branch:          (left null — original branch unknown)")
 
     print()
+    if repair:
+        print("Repair: ON — existing origin blocks are checked, not skipped.")
+        if keep_global:
+            print(f"  Never anchored: {', '.join(sorted(keep_global))}")
+        print()
+
     report = migrate_origin_in_directory(
         memory_dir,
         force_repo=force_repo,
         scope_repo_map=scope_repo_map or None,
+        repair=repair,
+        keep_global=keep_global,
         dry_run=dry_run,
     )
 
@@ -163,6 +213,11 @@ def _cli_migrate_origin(
     print(f"  Scanned:           {report.scanned}")
     print(f"  Already had origin: {report.already_had_origin}")
     print(f"  {'Would update' if dry_run else 'Updated':<18} {report.updated}")
+    if repair:
+        verb = "Would anchor" if dry_run else "Anchored"
+        print(f"    {verb:<16} {report.repaired_anchored}  (null repo -> repo)")
+        verb = "Would demote" if dry_run else "Demoted"
+        print(f"    {verb:<16} {report.repaired_demoted}  (wrong repo -> global)")
     if report.malformed:
         print(f"  Malformed (skipped): {len(report.malformed)}")
         for path in report.malformed[:5]:

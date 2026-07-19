@@ -27,7 +27,7 @@ from typing import Iterator
 
 from . import _frontmatter as frontmatter
 from .models import SCHEMA_VERSION
-from .origin import Origin, capture
+from .origin import Origin, capture, repos_match
 from .store import (
     TOMBSTONE_DIR,
     _atomic_write_post,
@@ -92,6 +92,74 @@ class MigrationReport:
     already_had_origin: int = 0
     updated: int = 0
     malformed: list[Path] = field(default_factory=list)
+    # Repair-mode counters (`repair=True` only). `updated` stays the
+    # total of everything written, so these two are a breakdown of the
+    # subset that came from repairing an EXISTING origin block rather
+    # than backfilling a missing one.
+    repaired_anchored: int = 0
+    repaired_demoted: int = 0
+
+
+def plan_repair(
+    existing_origin: dict[str, object],
+    memory_scopes: list[str],
+    scope_repo_map: dict[str, str],
+    keep_global: frozenset[str],
+) -> tuple[str, str | None] | None:
+    """Decide how to repair an EXISTING origin block. Returns
+    ``("anchor", url)``, ``("demote", None)``, or None for "leave alone".
+
+    Repair exists because the original backfill only ever ran on
+    memories with NO origin block at all. The far more common real-world
+    damage is an origin that was *captured*, but captured wrong: writes
+    made from a parent directory (`~/Documents`) or `$HOME` sit outside
+    any git checkout, so `capture()` records a cwd with `repo=None`. Per
+    `repos_match`, a null repo matches EVERY caller — the memory silently
+    becomes global and leaks into every project's auto-scoped search.
+
+    Two rules, and they move in opposite directions on purpose:
+
+    **anchor** (tightening) — `repo` is null and the memory's scopes name
+    exactly one repo in `scope_repo_map`. Evidence is unambiguous, so
+    adopt it. Guarded by `keep_global`: a memory that also carries a
+    cross-cutting scope (`infrastructure`, `tools`, …) is genuinely
+    project-spanning, and anchoring it would HIDE it everywhere else.
+    `keep_global` only ever suppresses anchoring — it must never trigger
+    a demote, or every correctly-anchored `projects:x`+`workflow` memory
+    in the store would be stripped back to global, which is the exact
+    opposite of the leak this repairs.
+
+    **demote** (loosening) — `repo` is set, but the memory carries a
+    mapped scope whose repo does NOT match it. The memory claims to
+    belong to a project it is invisible from: scoped `projects:homelab`
+    yet anchored to the Verendo checkout it happened to be written in.
+    No single repo can satisfy a memory spanning two projects, so the
+    honest origin is global. Clears `worktree_root` alongside `repo`
+    because the worktree filter is the second auto-scope discriminator —
+    leaving a stale root behind would keep the memory dark.
+
+    Note the asymmetry in confidence: anchoring makes a memory *less*
+    visible and so demands unambiguous evidence (exactly one repo, no
+    cross-cutting scope), while demoting makes it *more* visible and is
+    safe on any genuine mismatch.
+    """
+    if not scope_repo_map:
+        return None
+    implied = {
+        scope_repo_map[scope] for scope in memory_scopes if scope in scope_repo_map
+    }
+    if not implied:
+        return None
+
+    recorded = existing_origin.get("repo")
+    if not recorded or not isinstance(recorded, str):
+        if len(implied) == 1 and not (set(memory_scopes) & keep_global):
+            return ("anchor", next(iter(implied)))
+        return None
+
+    if any(not repos_match(recorded, candidate) for candidate in implied):
+        return ("demote", None)
+    return None
 
 
 def migrate_origin_in_directory(
@@ -100,6 +168,8 @@ def migrate_origin_in_directory(
     inferred: Origin | None = None,
     force_repo: str | None = None,
     scope_repo_map: dict[str, str] | None = None,
+    repair: bool = False,
+    keep_global: frozenset[str] | None = None,
     dry_run: bool = False,
 ) -> MigrationReport:
     """Backfill `origin` frontmatter on legacy memories.
@@ -127,6 +197,16 @@ def migrate_origin_in_directory(
     Idempotent: memories that already have an `origin` field are
     skipped. Atomic per-file: each write goes via `.tmp` + rename so a
     crash mid-migration leaves no corrupt files.
+
+    `repair=True` lifts exactly that skip: memories WITH an origin block
+    are additionally run through `plan_repair`, which fixes an origin
+    that was captured wrong (typically `repo=None` from a write made
+    outside any checkout) rather than one that was never captured at
+    all. `keep_global` is the set of cross-cutting scopes that must
+    never be anchored to a single repo. Both are inert when
+    `repair=False`, so the default path is byte-for-byte the old
+    behaviour. Repair still only ever rewrites the `origin` block — the
+    body, id, and every other frontmatter key are untouched.
     """
     if force_repo is not None:
         # `force_repo` is a coarse override — the caller is asserting "all
@@ -223,8 +303,58 @@ def migrate_origin_in_directory(
             if on_disk_version > SCHEMA_VERSION:
                 continue
 
-            if "origin" in post.metadata and post.metadata["origin"]:
-                report.already_had_origin += 1
+            existing_origin = post.metadata.get("origin")
+            if existing_origin:
+                # Default path: an origin block means this memory is done.
+                if not repair or not isinstance(existing_origin, dict):
+                    report.already_had_origin += 1
+                    continue
+                plan = plan_repair(
+                    existing_origin,
+                    _coerce_scopes(post.metadata.get("scopes")),
+                    scope_repo_map or {},
+                    keep_global or frozenset(),
+                )
+                if plan is None:
+                    report.already_had_origin += 1
+                    continue
+                action, repaired_repo = plan
+                # Mutate a COPY: on the dry-run branch below we must not
+                # leave the caller's parsed metadata altered, and on the
+                # write branch `pristine_metadata` re-reads `post.metadata`
+                # to size the YAML cap against the pre-repair record.
+                repaired = dict(existing_origin)
+                if action == "anchor":
+                    repaired["repo"] = repaired_repo
+                    report.repaired_anchored += 1
+                else:
+                    # Drop rather than null out: `Origin` serializes with
+                    # `exclude_none`, so a null key would be a shape the
+                    # rest of the store never writes.
+                    repaired.pop("repo", None)
+                    repaired.pop("worktree_root", None)
+                    report.repaired_demoted += 1
+                post.metadata["origin"] = repaired
+                if dry_run:
+                    report.updated += 1
+                    continue
+                if not _write_repaired(path, post, report):
+                    continue
+                report.updated += 1
+                continue
+
+            # `keep_global` guards BOTH anchoring routes, not just repair's.
+            # A legacy memory carrying a cross-cutting scope is exactly as
+            # project-spanning as a repaired one, and tagging it here would
+            # hide it from every other project — the same damage the repair
+            # rule refuses to do, arrived at down a different code path. The
+            # flag's contract is "never anchored to one repo", so it has to
+            # hold wherever an anchor can be applied. Inert by default:
+            # `keep_global` is empty unless the caller passed it, and the CLI
+            # only accepts it alongside `--repair`.
+            if keep_global and (
+                set(_coerce_scopes(post.metadata.get("scopes"))) & keep_global
+            ):
                 continue
 
             # Route this memory: scope-map first, then fallback. The first
@@ -354,6 +484,44 @@ def migrate_origin_in_directory(
     return report
 
 
+def _write_repaired(
+    path: Path, post: "frontmatter.Post", report: MigrationReport
+) -> bool:
+    """Persist a repaired record. True on success; on failure records
+    `path` in `report.malformed` and returns False so the caller skips it
+    and the rest of the directory still migrates.
+
+    Mirrors the backfill write below it — same atomic tmp+fsync+rename,
+    same 0o600, same dual-axis lifecycle caps measured against the
+    record's frontmatter WITHOUT `origin`. Sizing against the pristine
+    frontmatter is deliberately conservative here: a repair rewrites an
+    origin block that already existed, so the true pre-write baseline is
+    slightly larger than what we measure, and a tighter cap can only
+    refuse a borderline record — never let one through into the reserved
+    removal band.
+    """
+    try:
+        current_size = path.stat().st_size
+    except OSError:
+        current_size = 0
+    try:
+        pristine_metadata = {
+            key: value for key, value in post.metadata.items() if key != "origin"
+        }
+        current_yaml = _serialized_frontmatter_bytes(pristine_metadata)
+        _atomic_write_post(
+            path,
+            post,
+            max_file_bytes=_lifecycle_redump_cap(current_size),
+            max_yaml_bytes=_lifecycle_redump_yaml_cap(current_yaml),
+        )
+    except (OSError, ValueError) as exc:
+        log.warning("skipping file that failed to write %s: %s", path, exc)
+        report.malformed.append(path)
+        return False
+    return True
+
+
 def _iter_active_memory_files(memory_dir: Path) -> Iterator[Path]:
     """Yield active (non-tombstoned) `.md` files. Tombstones live in a
     sibling directory and are skipped — backfilling origin into a
@@ -384,4 +552,5 @@ __all__ = [
     "MigrationReport",
     "infer_origin_for_memory_dir",
     "migrate_origin_in_directory",
+    "plan_repair",
 ]
