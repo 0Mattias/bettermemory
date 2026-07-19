@@ -59,7 +59,11 @@ if str(_SRC) not in sys.path:
 
 
 from bettermemory import index as _index  # noqa: E402
-from bettermemory.events import SHARD_COUNT, Recorder  # noqa: E402
+from bettermemory.events import (  # noqa: E402
+    SHARD_COUNT,
+    Recorder,
+    _active_segment_paths,
+)
 from bettermemory.search import search as run_search  # noqa: E402
 from bettermemory.store import (  # noqa: E402
     ConcurrentUpdateError,
@@ -230,10 +234,16 @@ def _seed_corpus(root: Path, n: int, seed: int) -> None:
         store.write(content=_body(rng, -1), scopes=["seed"])
 
 
-def _check_invariants(root: Path, results: list[dict[str, Any]]) -> dict[str, Any]:
+def _check_invariants(
+    root: Path, results: list[dict[str, Any]], *, expect_events: bool
+) -> dict[str, Any]:
     """Post-run corruption check: every .md parses, every event-log
     line is valid JSON, no agent crashed. Returns a report dict with a
     boolean `ok`.
+
+    `expect_events` is the run's own `events` flag. When it is set the
+    check is required to have READ something — see `_check_event_log`
+    for why a corruption gate that reads nothing is worse than no gate.
     """
     problems: list[str] = []
 
@@ -263,20 +273,82 @@ def _check_invariants(root: Path, results: list[dict[str, Any]]) -> dict[str, An
                 problems.append(f"tombstone {tpath.name} missing `removed`")
                 break
 
-    # Event log is fully-parseable JSONL (no torn append lines). The
-    # single active log is `.events.jsonl`; rotated segments are gz.
-    log_path = root / ".events.jsonl"
-    if log_path.exists():
-        for raw in log_path.read_text(encoding="utf-8").splitlines():
+    # Event log is fully-parseable JSONL (no torn append lines).
+    log = _check_event_log(root, expect_events=expect_events)
+    problems.extend(log["problems"])
+
+    return {
+        "ok": not problems,
+        "problems": problems,
+        "segments": log["segments"],
+        "event_bytes": log["event_bytes"],
+        "event_lines": log["event_lines"],
+    }
+
+
+def _check_event_log(root: Path, *, expect_events: bool) -> dict[str, Any]:
+    """Verify every active event segment is fully-parseable JSONL, and
+    that we actually read something.
+
+    Segments are enumerated through `events._active_segment_paths` —
+    the SAME helper the product's readers use — never a hard-coded
+    filename. This gate used to open a literal `root / ".events.jsonl"`,
+    which stopped existing in 3.24.0 when the active log became the
+    sharded `.events.NN.jsonl` set. `Path.exists()` was simply False on
+    every store the benchmark creates, so the loop body never ran and
+    the check reported "no corruption" without having opened a byte.
+    Going through the product's own helper means the benchmark cannot
+    drift away from the layout again.
+
+    The vacuity guard below is the other half: a run that recorded
+    events MUST have found segments and read a positive number of bytes
+    and lines. A silent pass on zero input is treated as a failure of
+    the gate, not a clean bill of health — the numbers in
+    docs/swarm-convergence-plan.md rest on this check having run.
+    """
+    problems: list[str] = []
+    segments = _active_segment_paths(root)
+    event_bytes = 0
+    event_lines = 0
+
+    for seg in segments:
+        try:
+            event_bytes += seg.stat().st_size
+            raw_text = seg.read_text(encoding="utf-8")
+        except (OSError, UnicodeDecodeError) as exc:
+            problems.append(f"event segment {seg.name} is unreadable: {exc}")
+            continue
+        for raw in raw_text.splitlines():
             if not raw.strip():
                 continue
             try:
                 json.loads(raw)
             except json.JSONDecodeError:
-                problems.append("event log has a malformed (torn) JSON line")
+                problems.append(
+                    f"event log has a malformed (torn) JSON line in {seg.name}"
+                )
                 break
+            event_lines += 1
 
-    return {"ok": not problems, "problems": problems}
+    if expect_events:
+        if not segments:
+            problems.append(
+                "event-log check found NO active segments — the corruption "
+                "gate read nothing, so its verdict is meaningless"
+            )
+        elif event_bytes <= 0 or event_lines <= 0:
+            problems.append(
+                f"event-log check read {event_bytes} bytes / {event_lines} "
+                f"events from {len(segments)} segment(s) — the corruption "
+                "gate had no input to check"
+            )
+
+    return {
+        "problems": problems,
+        "segments": len(segments),
+        "event_bytes": event_bytes,
+        "event_lines": event_lines,
+    }
 
 
 def _aggregate(
@@ -335,7 +407,7 @@ def _run_one(
 
     metrics = _aggregate(n_agents, ops, wall, results)
     metrics["events"] = events
-    metrics["corruption"] = _check_invariants(root, results)
+    metrics["corruption"] = _check_invariants(root, results, expect_events=events)
     return metrics
 
 
@@ -363,11 +435,23 @@ def _format_text(sweep: list[dict[str, Any]], ab: dict[str, Any]) -> str:
     # Peak + honest one-liner.
     peak = max(sweep, key=lambda m: m["throughput_ops_s"])
     all_ok = all(m["corruption"]["ok"] for m in sweep)
+    # The corruption verdict carries its own evidence: how many event
+    # lines it actually parsed. A "zero corruption" claim next to
+    # `0 events` is a gate that read nothing, and should read as such.
+    checked = sum(m["corruption"]["event_lines"] for m in sweep)
     lines.append(
         f"Peak sustained: {peak['throughput_ops_s']:.0f} ops/s at "
         f"{peak['agents']} agents"
-        + (", zero corruption across the sweep." if all_ok else ".")
+        + (
+            f", zero corruption across the sweep ({checked} event lines verified)."
+            if all_ok
+            else "."
+        )
     )
+    if not all_ok:
+        for m in sweep:
+            for problem in m["corruption"]["problems"]:
+                lines.append(f"  corruption [{m['agents']} agents]: {problem}")
 
     # Event-log tax.
     on, off = ab["on"], ab["off"]
