@@ -945,9 +945,18 @@ def _is_multi_segment_routelike(s: str) -> bool:
       route.
 
     Single-segment candidates are excluded (`s.count("/") < 2`), which
-    preserves the documented remote-host limitation for `/opt/gophish`
-    -style citations: those keep flowing to `missing` until attested via
+    preserves the documented remote-host limitation for `/opt`-style
+    citations: those keep flowing to `missing` until attested via
     `memory_verify(verified_absent_paths=[...])`.
+
+    PLATFORM NOTE: the parent test makes this environment-sensitive by
+    construction. On Windows no POSIX root exists, so a memory citing
+    `/etc/hosts` or `/opt/gophish` reads as a route there while the same
+    citation reports drift on the POSIX host that wrote it. That is the
+    intended trade — a POSIX path cannot be meaningfully stat'd from
+    Windows, so staying silent beats manufacturing a missing-file claim
+    the host could never confirm. Tests that assert the unattested
+    `missing` half must gate on the root existing.
     """
     if not s.startswith("/") or s.count("/") < 2:
         return False

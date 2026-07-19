@@ -684,9 +684,19 @@ def test_backtick_takes_precedence_over_bare(tmp_path: Path) -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_oserror_during_exists_treated_as_missing() -> None:
-    """If `Path.exists()` raises (permission denied, ELOOP), we don't crash."""
-    body = "See `/tmp/some-real-looking-path` for the thing."
+def test_oserror_during_exists_treated_as_missing(tmp_path: Path) -> None:
+    """If `Path.exists()` raises (permission denied, ELOOP), we don't crash.
+
+    The cited path is built from `tmp_path` rather than a hardcoded
+    `/tmp/...` so its PARENT genuinely exists on every platform. Since
+    3.25.2 an extensionless leading-slash candidate whose parent is
+    absent reads as an application route
+    (`_is_multi_segment_routelike`), and `/tmp` does not exist on
+    Windows — the old fixture passed on POSIX and silently changed what
+    this test exercised on the windows-latest leg.
+    """
+    target = tmp_path / "some-real-looking-path"
+    body = f"See `{target}` for the thing."
 
     class _Boom:
         def expanduser(self) -> "_Boom":
@@ -698,8 +708,8 @@ def test_oserror_during_exists_treated_as_missing() -> None:
     with patch("bettermemory.verify.Path", lambda _x: _Boom()):
         report = detect_path_drift(body)
     # The candidate was checked; PermissionError -> missing bucket.
-    assert "/tmp/some-real-looking-path" in report.checked
-    assert "/tmp/some-real-looking-path" in report.missing
+    assert str(target) in report.checked
+    assert str(target) in report.missing
 
 
 # ---------------------------------------------------------------------------
@@ -2229,12 +2239,22 @@ def test_extensioned_candidate_still_reports_missing() -> None:
     assert "/srv/app/config.yaml" in report.missing
 
 
-def test_single_segment_remote_path_limitation_preserved() -> None:
-    """`/opt/gophish`-style single-segment citations keep flowing to
-    `missing` until attested via verified_absent_paths — the documented
-    remote-host behaviour, deliberately unchanged."""
+def test_remote_path_under_an_existing_root_still_reports_missing() -> None:
+    """A remote-host citation whose ROOT exists locally (`/opt/gophish`
+    where `/opt` is present) keeps flowing to `missing` until attested —
+    the documented remote-host behaviour, deliberately unchanged.
+
+    Gated on the root actually existing: the rule is parent-sensitive by
+    design, so on a host without `/opt` (notably Windows, where no POSIX
+    root exists) the same citation legitimately reads as a route. That
+    platform difference is intended — a POSIX path cannot be
+    meaningfully stat'd from Windows, so dropping beats manufacturing
+    drift — but it makes the unattested half of this assertion
+    environment-dependent.
+    """
     body = "Gophish lives at `/opt/gophish` on the homelab board."
-    assert "/opt/gophish" in detect_path_drift(body).missing
+    if os.path.isdir("/opt"):
+        assert "/opt/gophish" in detect_path_drift(body).missing
     attested = detect_path_drift(body, absent_paths=["/opt/gophish"])
     assert attested.missing == ()
     assert "/opt/gophish" in attested.expected_absent
