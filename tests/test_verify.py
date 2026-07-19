@@ -35,7 +35,9 @@ from bettermemory.verify import (
     _PLACEHOLDER_PATHS,
     _PLACEHOLDER_PREFIXES,
     _RELATIVE_CITATION_RE,
+    _is_multi_segment_routelike,
     _normalize_candidate,
+    _normalize_for_compare,
     commit_drift_anchor_paths,
     compute_commit_drift,
     compute_verification_status,
@@ -2270,3 +2272,151 @@ def test_attested_route_is_never_dropped() -> None:
     )
     assert "/api/v1/events/presence" in report.expected_absent
     assert report.missing == ()
+
+
+# ---------------------------------------------------------------------------
+# Route suppression must not overshoot into FALSE-NEGATIVE drift.
+#
+# 3.25.2's `_is_multi_segment_routelike` gated on the RAW spelling
+# (`s.startswith("/")`), so `~/x/y/z` and its expanded twin
+# `/Users/me/x/y/z` — one and the same path, which the rest of the module
+# treats as equivalent — got OPPOSITE verdicts: drift reported for the
+# tilde form, silently dropped as a "route" for the absolute form. A tool
+# that reports "clean" about a genuinely-deleted path is worse than one
+# that over-reports, because silence is indistinguishable from health.
+# ---------------------------------------------------------------------------
+
+
+def _home_path(*segments: str) -> Path:
+    """A guaranteed-nonexistent path under the REAL home directory.
+
+    Deliberately not a `monkeypatch`-ed `$HOME`: `expanduser` reads
+    different env vars per platform (`HOME` on POSIX, `USERPROFILE` on
+    Windows), and a fake home that failed to take would silently turn
+    these into no-op tests. Building from `Path.home()` makes the
+    under-home relationship true by construction everywhere. Nothing is
+    created or removed — the citation is a string and the check is a
+    stat.
+    """
+    return Path.home().joinpath(*segments)
+
+
+def test_deep_home_path_under_vanished_parent_still_reports_missing() -> None:
+    """A renamed/deleted project directory is THE case path drift exists
+    to catch, and it defeats the parent-exists escape: when the whole
+    repo directory goes, the cited path's parent went with it.
+
+    Pre-fix this landed in neither `checked` nor `missing` — silently
+    dropped as an application route.
+    """
+    gone = _home_path("bm-audit-vanished-repo", "src", "handlers")
+    assert not gone.exists(), "fixture assumption: the cited path must be absent"
+    report = detect_path_drift(f"The handlers live at `{gone}` now.")
+    assert str(gone) in report.missing
+
+
+def test_both_spellings_of_one_home_path_agree(tmp_path: Path) -> None:
+    """`~/x/y/z` and `/Users/<user>/x/y/z` are the same path — the module
+    normalises them together (`_normalize_for_compare`), so the drift
+    verdict must not depend on which spelling the author typed.
+
+    Pre-fix the tilde form reported drift and the absolute form was
+    dropped entirely: opposite verdicts for one path.
+    """
+    tail = ("bm-audit-two-spellings", "src", "handlers")
+    absolute = _home_path(*tail)
+    assert not absolute.exists(), "fixture assumption: the cited path must be absent"
+    tilde = "~/" + "/".join(tail)
+    # Same path, two spellings — this is what makes the divergence a bug.
+    assert _normalize_for_compare(tilde) == _normalize_for_compare(str(absolute))
+
+    for template in ("cited at `{}` today", "cited at {} today"):
+        tilde_report = detect_path_drift(template.format(tilde))
+        abs_report = detect_path_drift(template.format(absolute))
+        assert tilde_report.missing == (tilde,), template
+        assert abs_report.missing == (str(absolute),), template
+        assert tilde_report.has_drift == abs_report.has_drift, template
+
+    # And the attested escape hatch still pins the absolute spelling.
+    attested = detect_path_drift(
+        f"cited at `{absolute}` today", absent_paths=[str(absolute)]
+    )
+    assert attested.missing == ()
+    assert str(absolute) in attested.expected_absent
+
+    # Sanity: the home exemption is about HOME, not about "any absolute
+    # path" — a candidate outside home under a vanished parent is still
+    # dropped, which is the documented remaining bound.
+    outside = tmp_path / "bm-audit-gone-parent" / "child"
+    assert _is_multi_segment_routelike(outside.as_posix()) or os.name == "nt"
+
+
+def test_bare_app_routes_are_still_suppressed() -> None:
+    """The false positive 3.25.2 shipped for must survive the fix: bare
+    application routes are not files and must not be reported missing —
+    nor even `checked`, since "we looked and it wasn't there" is a
+    meaningless statement about a URL path."""
+    report = detect_path_drift(
+        "Routes `/api/v1/events/presence` and `/admin/macros` are registered."
+    )
+    assert report.missing == ()
+    assert report.checked == ()
+    assert _is_multi_segment_routelike("/api/v1/events/presence") is True
+    assert _is_multi_segment_routelike("/admin/macros") is True
+
+
+def test_route_check_stays_last_in_the_not_exists_block(tmp_path: Path) -> None:
+    """ORDERING CONSTRAINT, load-bearing.
+
+    The bare-scan continuation rule can glue a prose acronym pair onto a
+    real path (`<dir> TCP/IP keepalive`). The manufactured tail reads as
+    a route, so if the route drop ran BEFORE the spaced-bare
+    arbitration, the real directory would be dropped instead of
+    recovered via the prefix-existence fallback.
+    """
+    cited = tmp_path.as_posix()
+    glued = f"{cited} TCP/IP"
+    if glued.startswith("/"):
+        # The hazard itself: the glued form IS route-shaped. (On Windows
+        # `tmp_path` is drive-rooted and never enters the route branch,
+        # so there is nothing to pin there.)
+        assert _is_multi_segment_routelike(glued) is True
+    report = detect_path_drift(f"tuned {cited} TCP/IP keepalive overrides today")
+    assert cited in report.checked
+    assert report.missing == ()
+
+
+def test_route_check_is_structurally_last_in_the_not_exists_block() -> None:
+    """Pins the ordering structurally, so a refactor that reorders the
+    block fails here even on a platform where the behavioural fixture
+    above cannot construct the hazard.
+
+    Asserts `_is_multi_segment_routelike` is the FINAL guard inside
+    `detect_path_drift`'s `not exists and not attested` block.
+    """
+    import ast
+    import inspect
+    import textwrap
+
+    from bettermemory import verify as verify_module
+
+    tree = ast.parse(
+        textwrap.dedent(inspect.getsource(verify_module.detect_path_drift))
+    )
+    blocks = [
+        node
+        for node in ast.walk(tree)
+        if isinstance(node, ast.If) and "_is_multi_segment_routelike" in ast.dump(node)
+    ]
+    # The innermost match is the route guard itself; its parent block is
+    # the one whose ordering matters.
+    enclosing = [b for b in blocks if len(b.body) > 1]
+    assert enclosing, "could not locate the not-exists block"
+    not_exists_block = min(enclosing, key=lambda b: len(ast.dump(b)))
+    last_stmt = not_exists_block.body[-1]
+    assert isinstance(last_stmt, ast.If), "final guard is not an `if`"
+    assert "_is_multi_segment_routelike" in ast.dump(last_stmt.test), (
+        "the route check must stay LAST in the not-exists block — moved "
+        "earlier, a prose-glued candidate reads as a route on its "
+        "manufactured tail and skips the prefix-existence fallback"
+    )

@@ -510,15 +510,28 @@ def detect_path_drift(
             else:
                 # Known limitation: a bare absolute path that legitimately
                 # lives on a REMOTE host (`/opt/gophish`, `/data/compose/.env`
-                # on a homelab board) is stat'd against the LOCAL filesystem
-                # and so reads as `missing` here — a perpetual drift signal
-                # until the caller attests it via
-                # `memory_verify(verified_absent_paths=[...])`, which routes it
-                # to `expected_absent` above. That attestation is the intended
-                # escape hatch: there is no local-only heuristic that can tell
-                # a legitimately-remote path from a genuinely-deleted local one
-                # without also suppressing real local drift, so absence stays
-                # `missing` until proven expected.
+                # on a homelab board) is stat'd against the LOCAL filesystem,
+                # so absence here says nothing about the host that owns it.
+                # Two outcomes, split by the route rule above:
+                #
+                #   * Reaches this line and reads `missing` — a perpetual
+                #     drift signal — when the citation carries an extension
+                #     (`/data/compose/.env`) or its parent happens to exist
+                #     locally (`/opt/gophish`, on a host that has `/opt`).
+                #   * Never reaches this line at all, since 3.25.2: an
+                #     extensionless remote citation whose parent is absent
+                #     locally (`/srv/docker/gitea`, `/mnt/tank/media`) reads
+                #     as an application route and is DROPPED — not reported
+                #     missing, not even `checked`.
+                #
+                # Either way `memory_verify(verified_absent_paths=[...])` is
+                # the intended escape hatch: it routes the citation to
+                # `expected_absent` above and pins it against BOTH outcomes
+                # (attested candidates skip the route drop entirely). There
+                # is no local-only heuristic that can tell a legitimately-
+                # remote path from a genuinely-deleted local one without
+                # also suppressing real local drift, so an unattested
+                # absence that gets this far stays `missing`.
                 missing.append(path)
             continue
         if norm in verified_set:
@@ -917,6 +930,36 @@ def _is_single_segment_routelike(s: str) -> bool:
     return "." not in segment
 
 
+def _is_under_home(s: str) -> bool:
+    """True when `s` expands to the user's home directory or something
+    inside it.
+
+    Used to exempt home-rooted candidates from the route rule so the two
+    spellings of one path (`~/x/y/z` and `/Users/me/x/y/z`) get the SAME
+    verdict — matching how `_normalize_for_compare` already treats them
+    everywhere else in this module.
+
+    `os.path` rather than `Path`, deliberately: `os.path.expanduser`
+    cannot raise for these inputs, and it keeps the route rule
+    independent of the module-level `Path` symbol, which the suite
+    patches wholesale when exercising the stat-failure path (a
+    `Path.home()` here would blow up under that patch).
+
+    A home that can't be resolved (`expanduser` echoes `~` back when
+    `$HOME` is unset) or that IS the filesystem root (`HOME=/`, seen in
+    some container images) disables the exemption: treating every
+    absolute path as home-rooted would nullify the route rule wholesale.
+    """
+    home = os.path.expanduser("~")
+    if not home or home == "~" or home == os.sep:
+        return False
+    expanded = os.path.expanduser(s)
+    if expanded == home:
+        return True
+    prefix = home if home.endswith(os.sep) else home + os.sep
+    return expanded.startswith(prefix)
+
+
 def _is_multi_segment_routelike(s: str) -> bool:
     """True when a NON-EXISTENT leading-slash candidate is far more likely
     an application route than a file that went missing.
@@ -934,20 +977,44 @@ def _is_multi_segment_routelike(s: str) -> bool:
     every route reported as a missing file, which then inflated
     `staleness_verdict` on an otherwise healthy record.
 
-    Two escapes keep real filesystem drift reportable:
+    Three escapes keep real filesystem drift reportable:
 
     * **An extension on the terminal segment** (`/srv/app/config.yaml`)
       reads as a file, not a route.
-    * **An existing parent directory** (`/Users/me/gone`, `/etc/nope`)
-      means the neighbourhood is real, so absence is genuine drift worth
-      reporting. This is what keeps a deleted-or-renamed local path — the
-      exact case path drift exists to catch — from being written off as a
-      route.
+    * **A home-rooted candidate** (`~/projects/old/src`, and its expanded
+      twin `/Users/me/projects/old/src`) is never a route: application
+      routes are not served out of a user's home directory. Without this
+      the rule gated on the RAW spelling, so `~/x/y/z` reported drift
+      while the byte-identical `/Users/me/x/y/z` was dropped as a route —
+      opposite verdicts for the one path the rest of this module
+      deliberately treats as equivalent (`_normalize_for_compare`).
+      FALSE-NEGATIVE drift is worse than the false positive this rule was
+      built to kill: silence reads as "clean".
+    * **An existing parent directory** (`/etc/nope`) means the
+      neighbourhood is real, so absence is genuine drift worth reporting.
 
-    Single-segment candidates are excluded (`s.count("/") < 2`), which
-    preserves the documented remote-host limitation for `/opt`-style
-    citations: those keep flowing to `missing` until attested via
-    `memory_verify(verified_absent_paths=[...])`.
+    BOUND ON THE PARENT ESCAPE (know this before relying on it): it tests
+    only the IMMEDIATE parent, so it survives a ONE-LEVEL deletion and
+    nothing deeper. Delete or rename a whole project directory and the
+    cited path's parent is gone too, so every extensionless citation
+    under it is silently dropped. Outside home — say `/srv/docker/gitea`
+    once `/srv/docker` is gone — that drop still stands. Walking up to
+    the nearest EXISTING ancestor was considered and rejected: the walk
+    terminates at `/`, which always exists, so it would nullify the rule
+    for every candidate (`/api/v1/events/presence` included) and hand
+    back the pre-3.25.2 false positives. The home escape above is the
+    targeted fix for the common real-world case (a renamed repo under
+    `~`); the remote-host residue is the accepted remainder.
+
+    NOT preserved: an extensionless remote-host citation whose parent is
+    absent locally (`/srv/docker/gitea`, `/data/compose/stacks`,
+    `/mnt/tank/media`). Those are DROPPED as routes. `/opt/gophish`-style
+    citations survive only via the parent escape — because `/opt` happens
+    to exist on this host, NOT because of any single-segment exclusion:
+    `"/opt/gophish".count("/") == 2`, so the `< 2` guard below never fires
+    for that shape. Either way the escape hatch is
+    `memory_verify(verified_absent_paths=[...])`, which routes the
+    citation to `expected_absent` before this rule is ever consulted.
 
     PLATFORM NOTE: the parent test makes this environment-sensitive by
     construction. On Windows no POSIX root exists, so a memory citing
@@ -962,6 +1029,8 @@ def _is_multi_segment_routelike(s: str) -> bool:
         return False
     parent, _, last = s.rpartition("/")
     if "." in last:
+        return False
+    if _is_under_home(s):
         return False
     # `os.path.isdir` rather than `Path(...).is_dir()`: it swallows OSError
     # and ValueError internally and simply returns False, so an unstattable
