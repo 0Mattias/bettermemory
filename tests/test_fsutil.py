@@ -18,8 +18,11 @@ from __future__ import annotations
 
 import ast
 import contextlib
+import inspect
 import io
 import os
+import shutil
+import subprocess
 import sys
 import time
 import types
@@ -1139,6 +1142,41 @@ _MODULE_RENAME_FUNCS: dict[str, frozenset[str]] = {
 _PATH_RENAME_METHODS_UNIQUE = frozenset({"rename", "move_into"})
 _PATH_RENAME_METHODS_SHARED = frozenset({"replace", "move"})
 
+#: Keyword spelling of the single target argument on the shared-name
+#: `Path` renames. `Path.replace(self, target)` and `Path.move(self,
+#: target)` both accept it, so `p.replace(target=dst)` is a real rename
+#: that a positional-only arity rule misses. Keying on the name adds no
+#: false-positive surface for the three types the arity rule exists to
+#: exclude: `str`, `bytes` and `datetime` all raise `TypeError` when
+#: handed `target=`, asserted against the running interpreter in
+#: `test_keyword_target_is_a_rename_and_the_excluded_types_reject_it`.
+_PATH_TARGET_KEYWORD = "target"
+
+#: Receiver names that make an attribute call an UNBOUND / explicit-receiver
+#: one — `Path.replace(src, dst)`, `pathlib.Path.replace(src, dst)`. The
+#: receiver type is spelled out there, so the arity rule does not need to
+#: guess and must not be applied: before this was added, `Path.replace(a,
+#: b)` evaded the guard while the identical `Path.rename(a, b)` was
+#: caught, purely because `rename` sits in the UNIQUE table (no arity
+#: check) and `replace` in the SHARED one.
+#:
+#: The two concrete subclasses are listed alongside `Path` because they
+#: inherit all four rename methods and are directly instantiable, so
+#: `PosixPath.replace(a, b)` is the same call written differently.
+#: `PurePath` is deliberately absent — it carries none of them.
+_PATH_CLASS_NAMES = frozenset({"Path", "PosixPath", "WindowsPath"})
+
+
+def _receiver_name(node: ast.expr) -> str | None:
+    """Terminal name of an attribute receiver — ``Path`` for both
+    ``Path.replace`` and ``pathlib.Path.replace``. ``None`` when the
+    receiver is not a plain name or attribute chain."""
+    if isinstance(node, ast.Name):
+        return node.id
+    if isinstance(node, ast.Attribute):
+        return node.attr
+    return None
+
 
 def _rename_call_kind(
     call: ast.Call,
@@ -1152,17 +1190,47 @@ def _rename_call_kind(
     ``Path.replace``, ``Path.rename``, ``Path.move``, ``Path.move_into``
     — including ``import os as _os`` / ``import shutil as sh`` aliases
     and ``from os import replace`` / ``from shutil import move``
-    bare-name imports, so the guard cannot be evaded (or accidentally
-    sidestepped) by an import style.
+    bare-name imports.
+
+    **One import style is NOT covered, and is backstopped rather than
+    closed.** ``from os import *`` followed by a bare ``replace(a, b)``
+    evades this function: the bare-name table is built from the explicit
+    names in an ``ImportFrom``, and a star import lists only ``"*"``, so
+    nothing is registered. Closing it here would mean resolving the
+    imported module's real exports at parse time, which this detector
+    does not do. What keeps it from being exploitable today is a
+    different tool: this repo sets no ``select`` under
+    ``[tool.ruff.lint]``, so ruff's default rule set (pyflakes included)
+    is active and reports ``F403`` on the star import itself plus
+    ``F405`` on each name used through it, and ``ruff check .`` runs in
+    the gate. That is ruff holding the line, not this detector — and it
+    holds only as far as ruff does: an explicit ``# noqa: F403`` silences
+    it (verified). The claim here is "defended in depth", not
+    "impossible".
 
     **Why arity, and what it actually buys.** For the two names shared
-    with non-path types (``replace``, ``move``) the receiver is unknown
-    at parse time, so the call is accepted only at exactly one
+    with non-path types (``replace``, ``move``) the receiver is usually
+    unknown at parse time, so such a call is accepted at exactly one
     positional argument and no keywords. What that rules out with
     certainty is ``str.replace`` / ``bytes.replace``: those require at
     least TWO positional arguments (one is a ``TypeError``), and they
     are the overwhelmingly common ``.replace`` in this codebase — a
     guard that flagged them would be switched off within a day.
+
+    Two shapes the positional rule alone let through are now closed
+    rather than tolerated, because both are ordinary Python that a real
+    rename could be written in:
+
+    * ``p.replace(target=dst)`` / ``p.move(target=dst)`` — the keyword
+      form of the same one-argument call. Admitted via
+      ``_PATH_TARGET_KEYWORD``; ``str``, ``bytes`` and ``datetime`` all
+      reject that keyword with ``TypeError``, so admitting it costs
+      nothing against the types the arity rule exists to exclude.
+    * ``Path.replace(a, b)`` — the unbound / explicit-receiver form.
+      Admitted via ``_PATH_CLASS_NAMES``, which closes an asymmetry that
+      had no justification: the identical ``Path.rename(a, b)`` was
+      already caught, only because ``rename`` happens to live in the
+      UNIQUE table where no arity check runs.
 
     It does NOT rule out ``datetime.replace``. Contrary to the note this
     docstring used to carry, ``datetime.replace`` is not keyword-only:
@@ -1177,16 +1245,28 @@ def _rename_call_kind(
     **Known bound: this matches Call nodes, so indirection evades it.**
     ``f = os.replace`` followed by ``f(a, b)``, ``getattr(os,
     "replace")(a, b)``, or a rename reached through a dispatch table are
-    all invisible here. Closing that needs dataflow analysis, which
-    would add substantial false-positive surface to a guard whose entire
-    value depends on staying enabled. Also invisible by construction: a
-    rename performed inside a third-party callee, or shelled out to
-    (``subprocess.run(["mv", ...])``). The one blind spot that IS
-    mitigated is "a spelling nobody thought of" — see
+    all invisible here. So is the rebound-class form ``P = Path`` then
+    ``P.replace(a, b)``, which is the residual left by the
+    explicit-receiver rule above — ``_PATH_CLASS_NAMES`` matches the name
+    as written, not the object it resolves to. All of these are the same
+    class: closing them needs dataflow analysis, which would add
+    substantial false-positive surface to a guard whose entire value
+    depends on staying enabled. They are left open knowingly, and what
+    they have in common is the reason: the call site's own syntax does
+    not say what is being called, and syntax is all an AST matcher has.
+    Also invisible by construction — a rename performed inside a
+    third-party callee, or shelled out to (``subprocess.run(["mv",
+    ...])``).
+
+    **What IS mitigated** is the pair of blind spots that syntax can
+    reach: "a rename NAME nobody thought of" and "a call FORM nobody
+    thought of". See
     ``TestRenameSiteDetector.test_covers_every_stdlib_rename_spelling``,
-    which derives the expected coverage from the live stdlib instead of
-    from this hand-written list, so a name we forgot (or one a future
-    Python adds) turns the guard red rather than passing vacuously.
+    which derives both the names and the ``Path`` call forms (bound
+    positional, bound keyword, unbound) from the live stdlib rather than
+    from these hand-written tables — so a name we forgot, a form we
+    forgot, or one a future Python adds turns the guard red rather than
+    passing vacuously.
     """
     func = call.func
     if isinstance(func, ast.Name) and func.id in bare_names:
@@ -1202,7 +1282,17 @@ def _rename_call_kind(
         # so any attribute call of that name is a path rename.
         return f"Path.{func.attr}()"
     if func.attr in _PATH_RENAME_METHODS_SHARED:
+        if _receiver_name(func.value) in _PATH_CLASS_NAMES:
+            # Explicit receiver: the type is written down, so the arity
+            # rule has nothing to disambiguate and must not gate this.
+            return f"Path.{func.attr}()"
         if len(call.args) == 1 and not call.keywords:
+            return f"Path.{func.attr}()"
+        if (
+            not call.args
+            and len(call.keywords) == 1
+            and call.keywords[0].arg == _PATH_TARGET_KEYWORD
+        ):
             return f"Path.{func.attr}()"
     return None
 
@@ -1376,6 +1466,17 @@ class TestRenameSiteDetector:
                 "from os import renames\ndef f(a, b):\n    renames(a, b)\n",
                 "renames() imported bare from os",
             ),
+            # Call FORMS the positional-arity rule alone let through.
+            # Each matches a real `Path` signature (`replace(self,
+            # target)`, `move(self, target)`), so each was a live way to
+            # spell a rename that the guard reported as clean.
+            ("def f(p, dst):\n    p.replace(target=dst)\n", "Path.replace()"),
+            ("def f(p, dst):\n    p.move(target=dst)\n", "Path.move()"),
+            ("def f(a, b):\n    Path.replace(a, b)\n", "Path.replace()"),
+            # ...the unbound form also reached through the module, and
+            # via a concrete subclass.
+            ("def f(a, b):\n    pathlib.Path.move(a, b)\n", "Path.move()"),
+            ("def f(a, b):\n    PosixPath.replace(a, b)\n", "Path.replace()"),
         ],
     )
     def test_detects_every_rename_spelling(
@@ -1396,12 +1497,18 @@ class TestRenameSiteDetector:
         derived spelling to confirm it is caught. A name we forgot, or
         one a future Python adds (`Path.move` / `Path.move_into` landed
         in 3.14 and are already covered), turns this red rather than
-        passing vacuously. This cannot catch a rename primitive whose
-        NAME is outside the vocabulary below — that residual is
+        passing vacuously.
+
+        For the `Path` methods this now derives every CALL FORM the real
+        signature admits — bound positional, bound keyword, unbound —
+        not just the bound positional one. Deriving only that one form is
+        why `p.replace(target=dst)` and `Path.replace(a, b)` could evade
+        the detector while this test stayed green.
+
+        Still not caught: a rename primitive whose NAME is outside the
+        vocabulary below, and the indirection forms — both residuals are
         documented in `_rename_call_kind`.
         """
-        import shutil
-
         vocab = {"rename", "renames", "replace", "move", "move_into"}
         uncovered: list[str] = []
 
@@ -1414,17 +1521,29 @@ class TestRenameSiteDetector:
                     uncovered.append(f"{modname}.{name}")
 
         for name in sorted(vocab & set(dir(Path))):
-            # Path rename methods all take exactly one positional target.
-            source = f"def f(p, dst):\n    p.{name}(dst)\n"
-            if not _rename_sites(source, "<derived>"):
-                uncovered.append(f"Path.{name}")
+            # Every CALL FORM the real signature admits, derived from the
+            # live signature rather than assumed. The bound-positional
+            # form was all this test used to check, which is why the
+            # keyword and unbound forms could evade the detector while
+            # this test stayed green.
+            param = list(inspect.signature(getattr(Path, name)).parameters)[1]
+            forms = {
+                "bound positional": f"def f(p, dst):\n    p.{name}(dst)\n",
+                "bound keyword": f"def f(p, dst):\n    p.{name}({param}=dst)\n",
+                "unbound": f"def f(a, b):\n    Path.{name}(a, b)\n",
+            }
+            for form, source in forms.items():
+                if not _rename_sites(source, "<derived>"):
+                    uncovered.append(f"Path.{name} ({form})")
 
         assert not uncovered, (
             "the rename detector does not cover these stdlib spellings: "
             f"{uncovered}. Each one moves a file over a destination and "
             "therefore carries the Windows open-destination exposure "
             "`replace_atomic` exists to absorb. Add them to "
-            "`_MODULE_RENAME_FUNCS` / `_PATH_RENAME_METHODS_*`."
+            "`_MODULE_RENAME_FUNCS` / `_PATH_RENAME_METHODS_*`, or widen "
+            "`_PATH_TARGET_KEYWORD` / `_PATH_CLASS_NAMES` if it is a call "
+            "FORM rather than a name that is missing."
         )
 
     @pytest.mark.parametrize(
@@ -1471,6 +1590,102 @@ class TestRenameSiteDetector:
             "def f(dt):\n    return dt.replace(2021)\n", "<synthetic>"
         ) == [(2, "Path.replace()", "f", "dt.replace(2021)")]
 
+    def test_keyword_target_is_a_rename_and_the_excluded_types_reject_it(
+        self,
+    ) -> None:
+        """Pin the premise behind `_PATH_TARGET_KEYWORD` against the real
+        interpreter: `target=` is the genuine parameter name on the
+        shared-name `Path` renames, and the three types the arity rule
+        exists to exclude — `str`, `bytes`, `datetime` — all reject it.
+        So admitting the keyword form costs no false positives against
+        those. It says nothing about arbitrary third-party objects that
+        might define `.replace(target=...)`; none exist in this package,
+        and a false positive there would be a red build on a reviewable
+        line rather than a silent miss.
+        """
+        import datetime
+
+        assert list(inspect.signature(Path.replace).parameters)[1] == (
+            _PATH_TARGET_KEYWORD
+        )
+
+        with pytest.raises(TypeError):
+            "abc".replace(target="a")  # type: ignore[call-arg]
+        with pytest.raises(TypeError):
+            b"abc".replace(target=b"a")  # type: ignore[call-arg]
+        with pytest.raises(TypeError):
+            datetime.datetime(2020, 1, 1).replace(target=2021)  # type: ignore[call-arg]
+
+        # Some other keyword is not a rename, so `dt.replace(year=...)`
+        # style calls stay clean.
+        assert _rename_sites("def f(dt):\n    dt.replace(year=2021)\n", "<x>") == []
+
+    def test_unbound_coverage_is_symmetric_between_the_two_tables(self) -> None:
+        """`Path.rename(a, b)` was caught and `Path.replace(a, b)` was
+        not — not by design, but because `rename` sits in the UNIQUE
+        table (no arity check) and `replace` in the SHARED one. Pin that
+        the explicit-receiver form is now recognised for BOTH tables, so
+        the asymmetry cannot silently come back.
+        """
+        for name in sorted(_PATH_RENAME_METHODS_UNIQUE | _PATH_RENAME_METHODS_SHARED):
+            sites = _rename_sites(f"def f(a, b):\n    Path.{name}(a, b)\n", "<x>")
+            assert [s[1] for s in sites] == [f"Path.{name}()"], (
+                f"the unbound form `Path.{name}(a, b)` is not detected; the "
+                "UNIQUE and SHARED tables have diverged in coverage again"
+            )
+
+    def test_star_import_residual_is_real_and_ruff_is_what_backstops_it(
+        self, tmp_path: Path
+    ) -> None:
+        """The docstring claims two things about `from os import *`: that
+        this detector misses it, and that ruff refuses it under this
+        repo's config. Both are claims, so both get checked — the first
+        so the docstring cannot outlive the hole it describes, the second
+        so "backstopped by ruff" is not taken on faith.
+
+        The probe is linted out-of-tree with `--config` pointing at the
+        repo's own pyproject, so this exercises the real configuration
+        without ever writing a file into the package.
+        """
+        star = "from os import *\n\n\ndef f(a, b):\n    replace(a, b)\n"
+        assert _rename_sites(star, "<synthetic>") == [], (
+            "the star-import form is now detected — good, but the "
+            "`_rename_call_kind` docstring still documents it as an open "
+            "residual backstopped by ruff. Update the docstring."
+        )
+
+        ruff = shutil.which("ruff")
+        if ruff is None:  # pragma: no cover - ruff is a dev dependency
+            pytest.skip("ruff not on PATH")
+
+        repo_root = Path(__file__).resolve().parent.parent
+        config = repo_root / "pyproject.toml"
+        assert config.is_file(), "repo pyproject.toml not found next to tests/"
+        probe = tmp_path / "star_import_probe.py"
+        probe.write_text(star, encoding="utf-8")
+
+        result = subprocess.run(
+            [
+                ruff,
+                "check",
+                "--config",
+                str(config),
+                "--output-format",
+                "concise",
+                str(probe),
+            ],
+            capture_output=True,
+            text=True,
+            timeout=120,
+        )
+
+        assert "F403" in result.stdout, (
+            "ruff did not report F403 on a star import under this repo's "
+            "config, so the star-import residual documented in "
+            "`_rename_call_kind` is NOT backstopped and that docstring is "
+            f"wrong. ruff said: {result.stdout!r} {result.stderr!r}"
+        )
+
     def test_planting_each_spelling_in_a_real_module_goes_red(self) -> None:
         """The end-to-end proof: take a REAL package module, append one
         planted rename in each covered spelling, and confirm the guard's
@@ -1503,13 +1718,34 @@ class TestRenameSiteDetector:
                 "from shutil import move\ndef _planted(a, b):\n    move(a, b)\n"
             ),
         }
-        for expected_kind, snippet in plants.items():
+        # The three call FORMS that evaded the positional-arity rule.
+        # Same adversarial move one level down: the NAME was known, the
+        # spelling of the call was not. Keyed by form because several
+        # share a reported kind.
+        form_plants = {
+            "Path.replace() via target= keyword": (
+                "Path.replace()",
+                "def _planted(a, b):\n    a.replace(target=b)\n",
+            ),
+            "Path.move() via target= keyword": (
+                "Path.move()",
+                "def _planted(a, b):\n    a.move(target=b)\n",
+            ),
+            "Path.replace() unbound": (
+                "Path.replace()",
+                "def _planted(a, b):\n    Path.replace(a, b)\n",
+            ),
+        }
+        cases = [(k, k, v) for k, v in plants.items()]
+        cases += [(label, kind, src) for label, (kind, src) in form_plants.items()]
+
+        for label, expected_kind, snippet in cases:
             sites = _rename_sites(f"{store_source}\n\n{snippet}", "store.py")
             offenders = [
                 s for s in sites if ("store.py", s[2]) not in _RENAME_EXEMPTIONS
             ]
             assert offenders, (
-                f"planting {expected_kind} in store.py did NOT turn the "
+                f"planting {label} in store.py did NOT turn the "
                 "rename guard red — this spelling evades the detector, "
                 "exactly the hole `shutil.move` occupied"
             )
