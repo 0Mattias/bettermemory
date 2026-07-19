@@ -166,6 +166,106 @@ _GITIGNORE_LINES = [
 ]
 
 
+# Header for lines APPENDED to an existing `.gitignore` by
+# `_reconcile_gitignore` (as opposed to the canonical block a fresh store
+# gets). Marks the appended block as ours so a user reading their own
+# gitignore can tell which lines they wrote and which the upgrade added.
+_GITIGNORE_UPGRADE_HEADER = (
+    "# bettermemory: added on sync — newly-excluded regenerable / transient"
+)
+
+
+def _missing_gitignore_patterns(current: str) -> list[str]:
+    """Which `_GITIGNORE_LINES` patterns are absent from `current`.
+
+    Comment lines are not patterns, so they are never "missing" — only
+    the real ignore rules have to be present for the store to be safe.
+    Existing lines are compared stripped, so a hand-edited file with
+    trailing whitespace or indentation still counts as covering a
+    pattern (git strips trailing whitespace too) and we don't append a
+    near-duplicate of a line the user already has.
+    """
+    existing = {line.strip() for line in current.splitlines()}
+    return [
+        line
+        for line in _GITIGNORE_LINES
+        if line.strip()
+        and not line.lstrip().startswith("#")
+        and line.strip() not in existing
+    ]
+
+
+def _reconcile_gitignore(root: Path) -> list[str]:
+    """Make the store's on-disk `.gitignore` cover every pattern in
+    `_GITIGNORE_LINES`, and return the lines that had to be added.
+
+    THE UPGRADE PATH. `_GITIGNORE_LINES` grows over releases (the
+    sharded event segments `.events.*.jsonl` joined it in 3.24.0), but
+    for years the only writer of a store's `.gitignore` was `init` — so
+    every store initialised before a line was added kept its old file
+    and the newly-excluded sidecar stayed UNIGNORED. `sync push` runs
+    `git add -A`, so those stores committed and pushed the sidecar to
+    their remote: raw event telemetry (search queries, session ids,
+    memory ids) landing permanently in the user's git history. Six
+    sidecar leaks in this class have now been closed by adding a line to
+    `_GITIGNORE_LINES`; this reconcile is what makes the SEVENTH line
+    actually reach the stores that already exist.
+
+    Append-only, never a wholesale rewrite: a `.gitignore` in a memory
+    store is a file users legitimately edit (their own machine-local
+    exclusions live there too), and rewriting it to the canonical block
+    would silently delete their lines. So we only ever add what is
+    missing, which also makes the operation idempotent — a second sync
+    finds nothing missing and does not touch the file, so repeated syncs
+    cannot duplicate a line or churn the diff.
+
+    Ordering is not load-bearing here and appending is therefore safe:
+    `test_gitignore_lines_are_positive_and_slash_free` fences
+    `_GITIGNORE_LINES` to positive, slash-free patterns, and for those
+    git's semantics are order-independent (order only matters when a
+    later `!` negation has to re-include what an earlier line excluded).
+
+    An empty / whitespace-only / absent file is written as the canonical
+    block instead, header comment included — that is the fresh-store
+    shape `init` has always produced, and there is no user content to
+    preserve. An UNREADABLE file is left alone with a warning: we cannot
+    know what is in it, and clobbering a user's gitignore is a worse
+    outcome than the caller's next `git add -A` behaving as it does
+    today (`doctor`'s `sync_tracked_ignored` check still reports it).
+    """
+    gitignore = root / ".gitignore"
+    try:
+        current = gitignore.read_text(encoding="utf-8") if gitignore.exists() else ""
+    except OSError as exc:
+        log.warning(
+            "could not read %s (%s: %s) — leaving it untouched; regenerable "
+            "sidecars may not be excluded from this sync",
+            gitignore,
+            exc.__class__.__name__,
+            exc,
+        )
+        return []
+
+    if not current.strip():
+        # No usable gitignore (absent, empty, whitespace-only). Nothing
+        # to preserve, so write the canonical block verbatim — comments
+        # and all. This is the shape a fresh `init` has always left.
+        desired = "\n".join(_GITIGNORE_LINES) + "\n"
+        atomic_write_bytes(gitignore, desired.encode("utf-8"))
+        return _missing_gitignore_patterns(current)
+
+    missing = _missing_gitignore_patterns(current)
+    if not missing:
+        return []
+    # Preserve the file byte-for-byte and append. A file whose last line
+    # has no trailing newline would otherwise get our first pattern glued
+    # onto it, silently corrupting BOTH rules.
+    prefix = current if current.endswith("\n") else current + "\n"
+    block = "\n".join([_GITIGNORE_UPGRADE_HEADER, *missing]) + "\n"
+    atomic_write_bytes(gitignore, (prefix + block).encode("utf-8"))
+    return missing
+
+
 # Default commit message when push is run without a custom one. The
 # format is deliberately mechanical — the per-memory commit history
 # isn't meaningful (writes are batched), so the wrapper commit just
@@ -396,16 +496,16 @@ def init(
     # pre-fix repo still tracks. Untracking is deliberately NOT automated
     # here — rewriting the user's index (let alone pushed history) is an
     # operator decision, not an init() side effect.
-    gitignore = root / ".gitignore"
-    desired = "\n".join(_GITIGNORE_LINES) + "\n"
-    current = gitignore.read_text(encoding="utf-8") if gitignore.exists() else ""
-    if current != desired:
-        # Atomic + durable write: a plain `gitignore.write_text(...)`
-        # truncates the file before writing the new content, so power
-        # loss / process kill mid-write can leave a half-written
-        # `.gitignore` — and a stale or truncated gitignore lets the
-        # next `sync push` commit event logs / lockfiles to the remote.
-        atomic_write_bytes(gitignore, desired.encode("utf-8"))
+    # `_reconcile_gitignore` is append-only and routes through
+    # `atomic_write_bytes`: a plain `gitignore.write_text(...)` truncates
+    # the file before writing the new content, so power loss / process
+    # kill mid-write can leave a half-written `.gitignore` — and a stale
+    # or truncated gitignore lets the next `sync push` commit event logs
+    # / lockfiles to the remote. init is no longer the ONLY caller: every
+    # `push` reconciles too, which is what carries a newly-added pattern
+    # to stores that were initialised before it existed.
+    added = _reconcile_gitignore(root)
+    if added:
         actions.append(".gitignore written")
     else:
         actions.append(".gitignore already in canonical shape")
@@ -546,6 +646,28 @@ def push(
     # deliberate, separate decision. On Windows `flock_excl` is a
     # no-op (MVP single-process there).
     with flock_excl(root / _SYNC_LOCK_NAME):
+        # Reconcile the on-disk `.gitignore` with `_GITIGNORE_LINES`
+        # BEFORE `git add -A` reads the tree, so a pattern added in a
+        # release AFTER this store was initialised takes effect on this
+        # very push rather than never (see `_reconcile_gitignore`). This
+        # is the only sync operation that stages anything, so it is the
+        # only one where a stale gitignore can leak a sidecar.
+        #
+        # `pull` deliberately does NOT reconcile: `git pull --rebase`
+        # refuses to run against a dirty worktree ("cannot pull with
+        # rebase: You have unstaged changes", verified empirically), so
+        # writing an uncommitted `.gitignore` change from inside pull
+        # would break the NEXT pull of a pull-only clone — while fixing
+        # no leak, because pull stages nothing. `auto` (pull + push)
+        # and any push therefore carry the healing.
+        added = _reconcile_gitignore(root)
+        if added:
+            log.info(
+                "%s: added %d missing ignore rule(s) before staging: %s",
+                root / ".gitignore",
+                len(added),
+                ", ".join(added),
+            )
         _run_git(root, ["add", "-A"])
         diff = _run_git(root, ["diff", "--cached", "--quiet"], check=False)
         has_staged = diff.returncode != 0

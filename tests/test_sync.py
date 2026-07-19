@@ -18,7 +18,7 @@ import pytest
 from bettermemory import sync
 from bettermemory.doctor import DOCTOR_PROBE_FILENAME
 from bettermemory.episodes import EPISODES_DIR
-from bettermemory.events import EVENT_LOG_FILENAME
+from bettermemory.events import EVENT_LOG_FILENAME, _SEGMENT_TEMPLATE
 from bettermemory.index import INDEX_FILENAME
 from bettermemory.ingest import INGEST_WATERMARK_FILENAME
 from bettermemory.proposals import PROPOSALS_FILENAME
@@ -245,6 +245,164 @@ def test_event_log_archives_shards_and_rotating_are_gitignored() -> None:
             "event-log data (session ids, query text) would be committed and "
             "pushed to every clone by `sync push`"
         )
+
+
+# Sample tokens substituted into a `*_TEMPLATE` placeholder / appended to a
+# `*_PREFIX` when reconstructing the names the runtime composes at run time.
+# Three shapes because a template field can be numeric-padded (`{:02d}` →
+# `00`), plain numeric, or free text (a timestamp, a session id), and a
+# pattern that only covers one of those is a hole.
+_SAMPLE_TOKENS = ("00", "0", "X")
+
+
+def _composed_sidecar_names() -> dict[str, str]:
+    """Every store-root filename the runtime COMPOSES at run time, keyed by
+    the constant(s) it is composed from.
+
+    The `*_FILENAME` guard above can only see names that exist as a whole
+    string in some constant. The names that actually leaked came from
+    fragments assembled at run time — `.events-{ts}.jsonl.gz` from
+    `ARCHIVE_PREFIX`/`ARCHIVE_SUFFIX` (5th instance of the sidecar leak
+    class), `.events.{shard:02d}.jsonl` from `_SEGMENT_TEMPLATE` (6th) — and
+    both were invisible to it BY CONSTRUCTION, which is why each was closed
+    by hand-writing one more literal test after the leak had already shipped.
+
+    So reconstruct them. Fragment constants are recognised by suffix:
+
+    * `*_TEMPLATE` with a dotfile value → rendered by substituting each
+      `{...}` field with each sample token.
+    * `*_PREFIX` with a dotfile value → joined with a sample token and, when
+      its module also declares `*_SUFFIX` constants, with each of those
+      (that pairing is exactly how `events` / `semantic` build their names:
+      ``f"{ARCHIVE_PREFIX}{ts}{ARCHIVE_SUFFIX}"``). A module with no suffix
+      constant yields the bare `prefix + token` form instead.
+    * `*_SUFFIX` alone is never a filename, so it is only ever used as the
+      tail of a composition.
+
+    `*_FILENAME` is deliberately NOT re-checked here — that is the other
+    guard's job, allowlist and all; this one owns the composed shapes.
+
+    Over-generation is the intended failure mode: a prefix paired with an
+    unrelated suffix yields a name nothing writes, and the worst that costs
+    is one more (harmless, positive) glob in `_GITIGNORE_LINES` or an
+    allowlist entry. Under-generation is what ships a leak.
+    """
+    import importlib
+    import pkgutil
+    import re
+
+    import bettermemory
+
+    found: dict[str, str] = {}
+    walk = pkgutil.walk_packages(
+        bettermemory.__path__, prefix="bettermemory.", onerror=lambda _name: None
+    )
+    for mod_info in walk:
+        try:
+            mod = importlib.import_module(mod_info.name)
+        except ImportError:
+            continue
+        fragments: dict[str, str] = {}
+        for attr in dir(mod):
+            if not attr.endswith(("_TEMPLATE", "_PREFIX", "_SUFFIX")):
+                continue
+            value = getattr(mod, attr)
+            if isinstance(value, str) and value:
+                fragments[attr] = value
+        suffixes = {a: v for a, v in fragments.items() if a.endswith("_SUFFIX")}
+        for attr, value in fragments.items():
+            if not value.startswith("."):
+                continue
+            qual = f"{mod_info.name}.{attr}"
+            if attr.endswith("_TEMPLATE"):
+                for token in _SAMPLE_TOKENS:
+                    found[f"{qual}[{token}]"] = re.sub(r"\{[^{}]*\}", token, value)
+            elif attr.endswith("_PREFIX"):
+                if suffixes:
+                    for suffix_attr, suffix in suffixes.items():
+                        found[f"{qual}+{suffix_attr}"] = f"{value}X{suffix}"
+                else:
+                    found[f"{qual}[X]"] = f"{value}X"
+    return found
+
+
+def test_every_runtime_composed_sidecar_name_is_gitignored() -> None:
+    """STRUCTURAL GUARD, composed-name edition. Six store-root sidecar leaks
+    have now been closed by adding one literal to `_GITIGNORE_LINES`, and the
+    CLASS stayed open every time — in part because the structural guard walks
+    `*_FILENAME` module constants and cannot see a name assembled at run
+    time. The two most recent leaks were exactly that shape: the rotated
+    archives (`ARCHIVE_PREFIX` + timestamp + `ARCHIVE_SUFFIX`) and the
+    sharded active segments (`_SEGMENT_TEMPLATE.format(shard)`).
+
+    This guard reconstructs those names from their fragments, so the NEXT
+    template / prefix a contributor adds is checked at the moment it lands
+    rather than after it has been pushed to somebody's remote.
+
+    Mutation-sound, and specifically sound where the older guard is BLIND:
+    delete `".events.*.jsonl"` from `sync._GITIGNORE_LINES` and this test
+    fails naming `events._SEGMENT_TEMPLATE` while
+    `test_every_store_root_sidecar_is_gitignored` stays green; delete
+    `f"{ARCHIVE_PREFIX}*"` and it fails naming the
+    `ARCHIVE_PREFIX+ARCHIVE_SUFFIX` / `+ROTATING_SUFFIX` compositions. Both
+    verified at commit time."""
+    patterns = [
+        line for line in sync._GITIGNORE_LINES if not line.lstrip().startswith("#")
+    ]
+    composed = _composed_sidecar_names()
+    # Sanity: reconstruction works at all. If this trips, the walk or the
+    # rendering broke, not sync.
+    assert any("._SEGMENT_TEMPLATE" in origin for origin in composed), (
+        f"composed-name discovery found no event segment: {sorted(composed)}"
+    )
+    assert ".events.00.jsonl" in composed.values(), (
+        f"template rendering did not reproduce a real shard name: {composed}"
+    )
+
+    unignored = {
+        origin: name
+        for origin, name in composed.items()
+        if name not in _INTENTIONALLY_SYNCED_SIDECARS
+        and not any(fnmatch.fnmatch(name, pat) for pat in patterns)
+    }
+    assert not unignored, (
+        "runtime-composed store-root sidecar name(s) missing from "
+        f"sync._GITIGNORE_LINES — `sync push` would commit and push them to "
+        f"every clone: {unignored}. Add a glob covering the composed shape "
+        "(build it from the same fragment constants, e.g. "
+        "f'{ARCHIVE_PREFIX}*'), or, if the file is genuinely portable and "
+        "worth versioning, add its value to _INTENTIONALLY_SYNCED_SIDECARS "
+        "with a rationale."
+    )
+
+
+def test_composed_sidecar_discovery_sees_a_new_template(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Mutation guard for the reconstruction itself — without it the guard
+    above is only as good as its fragment discovery, and a guard that
+    quietly discovers nothing is worse than no guard (it reports success).
+
+    Plant a template and a prefix/suffix pair in a real subpackage module
+    and require both composed shapes to surface, exactly as a future
+    contributor's new sidecar would."""
+    from bettermemory.handlers import write as write_handler
+
+    monkeypatch.setattr(
+        write_handler, "PLANTED_TEMPLATE", ".planted.{:02d}.log", raising=False
+    )
+    monkeypatch.setattr(write_handler, "PLANTED_PREFIX", ".planted-", raising=False)
+    monkeypatch.setattr(write_handler, "PLANTED_SUFFIX", ".log.gz", raising=False)
+
+    names = set(_composed_sidecar_names().values())
+    assert ".planted.00.log" in names, (
+        "composed-name discovery did not render a planted `*_TEMPLATE` — a "
+        f"runtime-composed sidecar would leak past the guard: {sorted(names)}"
+    )
+    assert ".planted-X.log.gz" in names, (
+        "composed-name discovery did not join a planted `*_PREFIX` with its "
+        f"module's `*_SUFFIX`: {sorted(names)}"
+    )
 
 
 def test_sidecar_discovery_descends_into_subpackages(
@@ -896,6 +1054,239 @@ def test_push_does_not_stage_atomic_write_tmp_orphans(
     )
     assert queue_secret not in remote_history, (
         "raw capture from a proposals-queue tmp orphan reached the remote history"
+    )
+
+
+# ---------------------------------------------------------------------------
+# The UPGRADE PATH: `_GITIGNORE_LINES` reaching an ALREADY-INITIALISED store.
+#
+# Six store-root sidecar leaks have been closed by adding a line to
+# `_GITIGNORE_LINES` — and until this commit that constant only ever reached a
+# store's on-disk `.gitignore` through `sync.init`. Every store initialised
+# before a given line existed therefore kept its old file forever, so each
+# "fix" was inert exactly where the data already lived. `sync push` now
+# reconciles the two on every run, so the seventh line lands everywhere.
+# ---------------------------------------------------------------------------
+
+
+def _gitignore_patterns() -> list[str]:
+    """The non-comment lines of `_GITIGNORE_LINES` — the rules that must
+    actually be present in a store's on-disk `.gitignore`."""
+    return [
+        line
+        for line in sync._GITIGNORE_LINES
+        if line.strip() and not line.lstrip().startswith("#")
+    ]
+
+
+def _pre_shard_gitignore_text() -> str:
+    """The `.gitignore` a store initialised before 3.24.0 carries: today's
+    canonical block minus the `.events.*.jsonl` line 3.24.0 added for the
+    sharded active event segments."""
+    return (
+        "\n".join(line for line in sync._GITIGNORE_LINES if line != ".events.*.jsonl")
+        + "\n"
+    )
+
+
+def test_push_heals_pre_shard_gitignore_and_excludes_event_segments(
+    memory_dir: Path, bare_remote: Path
+) -> None:
+    """🔴 PRIVACY REGRESSION (6th instance of the store-root-sidecar leak
+    class). 3.24.0 added `.events.*.jsonl` to `_GITIGNORE_LINES` for the 16
+    sharded active event segments, but only `sync.init` ever wrote that
+    constant into a store's `.gitignore`. A store initialised BEFORE 3.24.0
+    keeps its old file, so its segments stay UNIGNORED and the next
+    `sync push`'s `git add -A` commits and pushes them to the user's remote:
+    raw event telemetry — search queries, session ids, memory ids — landing
+    permanently in a git history.
+
+    The write path was narrower than the read path, which is the shape every
+    instance of this class has had. `push` now reconciles the on-disk file
+    against `_GITIGNORE_LINES` before staging, and this test pins the
+    reconcile GENERICALLY: every current pattern must be present after the
+    push, so the next line to join the list is carried to pre-existing
+    stores by the same mechanism rather than needing its own new test.
+
+    Mutation-sound: revert `sync.py` and this fails on the committed-tree
+    assertion with `.events.03.jsonl` staged, committed, and pushed, session
+    id and query text intact (verified by stashing the source change)."""
+    import json
+
+    sync.init(memory_dir, remote=str(bare_remote))
+    gitignore = memory_dir / ".gitignore"
+    # Roll the store back to the pre-3.24.0 on-disk shape and commit it, so
+    # the repo is indistinguishable from one initialised before the line
+    # existed.
+    gitignore.write_text(_pre_shard_gitignore_text(), encoding="utf-8")
+    assert ".events.*.jsonl" not in gitignore.read_text(encoding="utf-8")
+    Store(memory_dir).write(content="durable fact", scopes=["tools"])
+    _git(memory_dir, "add", "-A")
+    _git(memory_dir, "commit", "-m", "pre-3.24.0 store")
+
+    # The upgraded runtime now writes a sharded active segment. Its payload
+    # is the real thing: a session id and (verbatim mode) the raw query text
+    # the user typed.
+    segment = memory_dir / _SEGMENT_TEMPLATE.format(3)
+    query = "how do I rotate the prod signing key"
+    segment.write_text(
+        json.dumps(
+            {
+                "ts": "2026-07-19T00:00:00Z",
+                "event": "search",
+                "session_id": "sess-abc123",
+                "query": query,
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    result = sync.push(memory_dir)
+    assert result["pushed"] is True
+
+    # The leak itself first: the segment must reach neither the commit nor
+    # the remote.
+    committed = _git(memory_dir, "ls-tree", "-r", "--name-only", "HEAD").splitlines()
+    assert segment.name not in committed, (
+        f"sharded event segment leaked into the committed tree: {committed}"
+    )
+    check = subprocess.run(
+        ["git", "check-ignore", segment.name],
+        cwd=memory_dir,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert check.returncode == 0, (
+        f"{segment.name} is not gitignored (git check-ignore rc="
+        f"{check.returncode}); `sync push` would stage it"
+    )
+    remote_history = _git(bare_remote, "log", "-p", "--all")
+    assert query not in remote_history, (
+        "raw query text from a sharded event segment reached the remote history"
+    )
+    assert "sess-abc123" not in remote_history, (
+        "session id from a sharded event segment reached the remote history"
+    )
+
+    # …and the mechanism that prevented it: the reconcile healed the file,
+    # GENERICALLY, for every pattern in the list.
+    healed = gitignore.read_text(encoding="utf-8")
+    missing = [pat for pat in _gitignore_patterns() if pat not in healed.splitlines()]
+    assert not missing, (
+        f"`sync push` left {missing} out of the store's .gitignore; a store "
+        "initialised before those lines existed keeps leaking the files they "
+        "cover"
+    )
+
+
+def test_push_gitignore_reconcile_is_idempotent(
+    memory_dir: Path, bare_remote: Path
+) -> None:
+    """Reconciling on EVERY push only works if it is a no-op once the file
+    is complete: an append that re-ran unconditionally would grow the
+    `.gitignore` by a full copy of `_GITIGNORE_LINES` on every sync and
+    dirty the tree on every run (an endless stream of gitignore-only sync
+    commits). Each pattern must appear exactly once, and the file must be
+    byte-identical across the second and third push."""
+    sync.init(memory_dir, remote=str(bare_remote))
+    gitignore = memory_dir / ".gitignore"
+    gitignore.write_text(_pre_shard_gitignore_text(), encoding="utf-8")
+
+    Store(memory_dir).write(content="durable fact", scopes=["tools"])
+    sync.push(memory_dir)
+    after_first = gitignore.read_text(encoding="utf-8")
+
+    Store(memory_dir).write(content="another fact", scopes=["tools"])
+    sync.push(memory_dir)
+    after_second = gitignore.read_text(encoding="utf-8")
+    sync.push(memory_dir)
+    after_third = gitignore.read_text(encoding="utf-8")
+
+    assert after_first == after_second == after_third, (
+        "repeated syncs rewrote the .gitignore; the reconcile must be a "
+        f"no-op once complete:\n{after_first!r}\nvs\n{after_second!r}"
+    )
+    lines = after_third.splitlines()
+    counts = {pat: lines.count(pat) for pat in _gitignore_patterns()}
+    assert all(count == 1 for count in counts.values()), (
+        "repeated syncs duplicated ignore rules: "
+        f"{ {p: c for p, c in counts.items() if c != 1} }"
+    )
+    # The upgrade header is a one-time marker, not a per-sync stamp.
+    assert lines.count(sync._GITIGNORE_UPGRADE_HEADER) <= 1
+
+
+def test_push_gitignore_reconcile_preserves_user_edits(
+    memory_dir: Path, bare_remote: Path
+) -> None:
+    """A store's `.gitignore` is a file users legitimately edit — their own
+    machine-local exclusions live there too. The reconcile is append-only
+    for exactly that reason: rewriting the canonical block wholesale (what
+    `init` used to do) silently deletes those lines, and the user finds out
+    when their excluded file shows up on the remote.
+
+    Also pins the no-trailing-newline case: a hand-edited file whose last
+    line has no `\\n` must not get the first appended pattern glued onto it,
+    which would corrupt BOTH rules."""
+    sync.init(memory_dir, remote=str(bare_remote))
+    gitignore = memory_dir / ".gitignore"
+    # Pre-3.24.0 body + the user's own lines, deliberately without a
+    # trailing newline on the last one.
+    user_lines = ["# my own exclusions", "scratch-notes.txt", "*.bak"]
+    gitignore.write_text(
+        _pre_shard_gitignore_text() + "\n".join(user_lines),
+        encoding="utf-8",
+    )
+
+    Store(memory_dir).write(content="durable fact", scopes=["tools"])
+    (memory_dir / "scratch-notes.txt").write_text("private\n", encoding="utf-8")
+    result = sync.push(memory_dir)
+    assert result["pushed"] is True
+
+    healed = gitignore.read_text(encoding="utf-8").splitlines()
+    for line in user_lines:
+        assert line in healed, (
+            f"user-added .gitignore line {line!r} was destroyed by the sync "
+            f"reconcile: {healed}"
+        )
+    assert ".events.*.jsonl" in healed  # …and the missing rule still landed.
+    # The user's rule is still EFFECTIVE, not merely present as text — the
+    # glued-line failure mode leaves the text visible but the rule broken.
+    check = subprocess.run(
+        ["git", "check-ignore", "scratch-notes.txt"],
+        cwd=memory_dir,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert check.returncode == 0, (
+        "the user's own ignore rule stopped working after the sync reconcile"
+    )
+    committed = _git(memory_dir, "ls-tree", "-r", "--name-only", "HEAD").splitlines()
+    assert "scratch-notes.txt" not in committed
+
+
+def test_push_leaves_an_unreadable_gitignore_alone(
+    memory_dir: Path, bare_remote: Path
+) -> None:
+    """If the `.gitignore` cannot be read, the reconcile stands down rather
+    than clobbering it: we cannot know what is in it, and destroying a
+    user's exclusions is worse than staging behaving as it does today
+    (doctor's `sync_tracked_ignored` check still reports the store). A
+    directory at the `.gitignore` path is the portable way to make the read
+    fail; the push must survive it and leave the path as it found it."""
+    sync.init(memory_dir, remote=str(bare_remote))
+    gitignore = memory_dir / ".gitignore"
+    gitignore.unlink()
+    gitignore.mkdir()
+
+    Store(memory_dir).write(content="durable fact", scopes=["tools"])
+    result = sync.push(memory_dir)
+    assert result["pushed"] is True
+    assert gitignore.is_dir(), (
+        "the reconcile overwrote an unreadable .gitignore instead of standing down"
     )
 
 
