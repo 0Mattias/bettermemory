@@ -1118,38 +1118,92 @@ class TestReplaceAtomicRetry:
 #: directly. `replace_atomic` IS the retry, so it is the one exemption.
 _RENAME_EXEMPTIONS = {("_fsutil.py", "replace_atomic")}
 
+#: Module-qualified rename primitives, keyed by the canonical module name.
+#: `shutil.move` belongs here and NOT because it is exotic: on a
+#: same-filesystem move it degrades to `os.rename`, so it carries the
+#: identical Windows open-destination exposure as `os.replace` while
+#: being invisible to a guard that only knows the `os`/`pathlib`
+#: spellings. `os.renames` is `os.rename` plus makedirs/removedirs — the
+#: rename hop inside it is exactly the exposed one.
+_MODULE_RENAME_FUNCS: dict[str, frozenset[str]] = {
+    "os": frozenset({"replace", "rename", "renames"}),
+    "shutil": frozenset({"move"}),
+}
+
+#: Bare-attribute (unknown-receiver) rename methods on `pathlib.Path`.
+#: `move`/`move_into` are new in Python 3.14; they are listed
+#: unconditionally because the detector parses SOURCE, not the running
+#: interpreter — a 3.14-only spelling committed here must be caught even
+#: when the guard runs on 3.11. Split by whether the name is shared with
+#: a non-path type (see `_rename_call_kind` for the arity rule).
+_PATH_RENAME_METHODS_UNIQUE = frozenset({"rename", "move_into"})
+_PATH_RENAME_METHODS_SHARED = frozenset({"replace", "move"})
+
 
 def _rename_call_kind(
-    call: ast.Call, os_aliases: set[str], bare_names: set[str]
+    call: ast.Call,
+    module_aliases: dict[str, str],
+    bare_names: dict[str, str],
 ) -> str | None:
     """Classify ``call`` as a file-rename primitive, or ``None``.
 
-    Covers all four spellings of "move a file over a destination":
-    ``os.replace``, ``os.rename``, ``Path.replace``, ``Path.rename`` —
-    including ``import os as _os`` aliases and ``from os import
-    replace`` bare-name imports, so the guard cannot be evaded (or
-    accidentally sidestepped) by an import style.
+    Covers every stdlib spelling of "move a file over a destination":
+    ``os.replace``, ``os.rename``, ``os.renames``, ``shutil.move``,
+    ``Path.replace``, ``Path.rename``, ``Path.move``, ``Path.move_into``
+    — including ``import os as _os`` / ``import shutil as sh`` aliases
+    and ``from os import replace`` / ``from shutil import move``
+    bare-name imports, so the guard cannot be evaded (or accidentally
+    sidestepped) by an import style.
 
-    Disambiguating ``Path.replace`` from the far more common
-    ``str.replace`` / ``datetime.replace`` is done by ARITY, which is
-    exact rather than heuristic: ``str.replace``/``bytes.replace``
-    require at least two positional arguments, and ``datetime.replace``
-    takes keyword arguments only. Exactly one positional argument and no
-    keywords is uniquely the ``Path.replace(target)`` rename shape.
+    **Why arity, and what it actually buys.** For the two names shared
+    with non-path types (``replace``, ``move``) the receiver is unknown
+    at parse time, so the call is accepted only at exactly one
+    positional argument and no keywords. What that rules out with
+    certainty is ``str.replace`` / ``bytes.replace``: those require at
+    least TWO positional arguments (one is a ``TypeError``), and they
+    are the overwhelmingly common ``.replace`` in this codebase — a
+    guard that flagged them would be switched off within a day.
+
+    It does NOT rule out ``datetime.replace``. Contrary to the note this
+    docstring used to carry, ``datetime.replace`` is not keyword-only:
+    ``dt.replace(2021)`` is legal and returns a datetime, so it would be
+    reported as a rename. That is an accepted residual, and the
+    asymmetry is deliberate — a false positive is a red build on a
+    reviewable line, whereas a false negative is the silent class-left-
+    open failure this guard exists to prevent. Nobody writes positional
+    ``datetime.replace``; if someone does, the fix is to make it
+    keyword, which is better code anyway.
+
+    **Known bound: this matches Call nodes, so indirection evades it.**
+    ``f = os.replace`` followed by ``f(a, b)``, ``getattr(os,
+    "replace")(a, b)``, or a rename reached through a dispatch table are
+    all invisible here. Closing that needs dataflow analysis, which
+    would add substantial false-positive surface to a guard whose entire
+    value depends on staying enabled. Also invisible by construction: a
+    rename performed inside a third-party callee, or shelled out to
+    (``subprocess.run(["mv", ...])``). The one blind spot that IS
+    mitigated is "a spelling nobody thought of" — see
+    ``TestRenameSiteDetector.test_covers_every_stdlib_rename_spelling``,
+    which derives the expected coverage from the live stdlib instead of
+    from this hand-written list, so a name we forgot (or one a future
+    Python adds) turns the guard red rather than passing vacuously.
     """
     func = call.func
     if isinstance(func, ast.Name) and func.id in bare_names:
-        return f"{func.id}() imported bare from os"
-    if not isinstance(func, ast.Attribute) or func.attr not in {"replace", "rename"}:
+        return f"{func.id}() imported bare from {bare_names[func.id]}"
+    if not isinstance(func, ast.Attribute):
         return None
-    if isinstance(func.value, ast.Name) and func.value.id in os_aliases:
-        return f"os.{func.attr}()"
-    if func.attr == "rename":
-        # No str/bytes/datetime method is named `rename`, so any
-        # attribute call of that name is a path rename.
-        return "Path.rename()"
-    if len(call.args) == 1 and not call.keywords:
-        return "Path.replace()"
+    if isinstance(func.value, ast.Name) and func.value.id in module_aliases:
+        origin = module_aliases[func.value.id]
+        if func.attr in _MODULE_RENAME_FUNCS[origin]:
+            return f"{origin}.{func.attr}()"
+    if func.attr in _PATH_RENAME_METHODS_UNIQUE:
+        # No str/bytes/datetime method is named `rename` or `move_into`,
+        # so any attribute call of that name is a path rename.
+        return f"Path.{func.attr}()"
+    if func.attr in _PATH_RENAME_METHODS_SHARED:
+        if len(call.args) == 1 and not call.keywords:
+            return f"Path.{func.attr}()"
     return None
 
 
@@ -1158,17 +1212,25 @@ def _rename_sites(source: str, filename: str) -> list[tuple[int, str, str, str]]
     file-rename call in ``source``."""
     tree = ast.parse(source, filename)
 
-    os_aliases: set[str] = set()
-    bare_names: set[str] = set()
+    # local name -> canonical module name, for `import os` / `import
+    # shutil as sh` / `import os.path` (which binds the top-level `os`).
+    module_aliases: dict[str, str] = {}
+    # local name -> canonical module name, for `from os import replace`.
+    bare_names: dict[str, str] = {}
     for node in ast.walk(tree):
         if isinstance(node, ast.Import):
             for alias in node.names:
-                if alias.name == "os":
-                    os_aliases.add(alias.asname or "os")
-        elif isinstance(node, ast.ImportFrom) and node.module == "os":
+                if alias.asname is None:
+                    # `import os.path` binds `os`, not `os.path`.
+                    bound = alias.name.split(".")[0]
+                    if bound in _MODULE_RENAME_FUNCS:
+                        module_aliases[bound] = bound
+                elif alias.name in _MODULE_RENAME_FUNCS:
+                    module_aliases[alias.asname] = alias.name
+        elif isinstance(node, ast.ImportFrom) and node.module in _MODULE_RENAME_FUNCS:
             for alias in node.names:
-                if alias.name in {"replace", "rename"}:
-                    bare_names.add(alias.asname or alias.name)
+                if alias.name in _MODULE_RENAME_FUNCS[node.module]:
+                    bare_names[alias.asname or alias.name] = node.module
 
     found: list[tuple[int, str, str, str]] = []
     scoped = (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)
@@ -1179,7 +1241,7 @@ def _rename_sites(source: str, filename: str) -> list[tuple[int, str, str, str]]
                 walk(child, (*scope, child.name))
                 continue
             if isinstance(child, ast.Call):
-                kind = _rename_call_kind(child, os_aliases, bare_names)
+                kind = _rename_call_kind(child, module_aliases, bare_names)
                 if kind is not None:
                     found.append(
                         (child.lineno, kind, ".".join(scope), ast.unparse(child))
@@ -1228,6 +1290,22 @@ class TestEveryRenameRoutesThroughReplaceAtomic:
             "blanket `except OSError` — that would mask ENOSPC."
         )
 
+    def test_replace_atomic_is_exported(self) -> None:
+        """`replace_atomic` is the designated helper for this entire
+        class and already has importers in `store.py`, `events.py` and
+        `semantic.py`, but it was missing from `_fsutil.__all__` — so
+        the module's own declared public surface disagreed with the
+        guard above, which requires every rename in the package to route
+        through it. A helper you are REQUIRED to use must be exported.
+        """
+        assert "replace_atomic" in _fsutil.__all__, (
+            "`replace_atomic` is absent from `_fsutil.__all__` despite "
+            "being the mandatory rename helper for the whole package"
+        )
+        assert sorted(_fsutil.__all__) == list(_fsutil.__all__), (
+            "`_fsutil.__all__` is no longer sorted"
+        )
+
     def test_replace_atomic_is_the_only_exemption(self) -> None:
         """The exemption list must not quietly grow. Adding an entry is
         how this guard would be neutered, so the shape of the allowlist
@@ -1247,10 +1325,43 @@ class TestRenameSiteDetector:
         [
             ("import os\ndef f(a, b):\n    os.replace(a, b)\n", "os.replace()"),
             ("import os\ndef f(a, b):\n    os.rename(a, b)\n", "os.rename()"),
+            ("import os\ndef f(a, b):\n    os.renames(a, b)\n", "os.renames()"),
             ("def f(tmp, dst):\n    tmp.replace(dst)\n", "Path.replace()"),
             ("def f(tmp, dst):\n    tmp.rename(dst)\n", "Path.rename()"),
+            # Python 3.14 pathlib additions. Parsed from source, so these
+            # are detected on 3.11 too — the guard must not depend on the
+            # spelling existing in the interpreter running the tests.
+            ("def f(tmp, dst):\n    tmp.move(dst)\n", "Path.move()"),
+            ("def f(tmp, d):\n    tmp.move_into(d)\n", "Path.move_into()"),
+            # `shutil.move` degrades to `os.rename` on a same-filesystem
+            # move, so it carries the identical Windows open-destination
+            # exposure. An adversarial verifier planted exactly this call
+            # in store.py and the pre-fix guard passed GREEN.
+            (
+                "import shutil\ndef f(a, b):\n    shutil.move(a, b)\n",
+                "shutil.move()",
+            ),
+            (
+                "import shutil as sh\ndef f(a, b):\n    sh.move(a, b)\n",
+                "shutil.move()",
+            ),
+            (
+                "from shutil import move\ndef f(a, b):\n    move(a, b)\n",
+                "move() imported bare from shutil",
+            ),
+            (
+                "from shutil import move as mv\ndef f(a, b):\n    mv(a, b)\n",
+                "mv() imported bare from shutil",
+            ),
             (
                 "import os as _o\ndef f(a, b):\n    _o.replace(a, b)\n",
+                "os.replace()",
+            ),
+            # `import os.path` binds the top-level `os` name, so the
+            # module-qualified spelling is reachable without a bare
+            # `import os` anywhere in the file.
+            (
+                "import os.path\ndef f(a, b):\n    os.replace(a, b)\n",
                 "os.replace()",
             ),
             (
@@ -1260,6 +1371,10 @@ class TestRenameSiteDetector:
             (
                 "from os import replace as mv\ndef f(a, b):\n    mv(a, b)\n",
                 "mv() imported bare from os",
+            ),
+            (
+                "from os import renames\ndef f(a, b):\n    renames(a, b)\n",
+                "renames() imported bare from os",
             ),
         ],
     )
@@ -1271,6 +1386,47 @@ class TestRenameSiteDetector:
         assert sites[0][1] == expected_kind
         assert sites[0][2] == "f", "enclosing scope must be reported"
 
+    def test_covers_every_stdlib_rename_spelling(self) -> None:
+        """The enumeration's real blind spot is "a spelling nobody
+        thought of" — which is exactly how `shutil.move` slipped past
+        the first version of this guard.
+
+        So derive the expected coverage from the LIVE stdlib instead of
+        from the detector's own hand-written list, and plant each
+        derived spelling to confirm it is caught. A name we forgot, or
+        one a future Python adds (`Path.move` / `Path.move_into` landed
+        in 3.14 and are already covered), turns this red rather than
+        passing vacuously. This cannot catch a rename primitive whose
+        NAME is outside the vocabulary below — that residual is
+        documented in `_rename_call_kind`.
+        """
+        import shutil
+
+        vocab = {"rename", "renames", "replace", "move", "move_into"}
+        uncovered: list[str] = []
+
+        for modname, mod in (("os", os), ("shutil", shutil)):
+            for name in sorted(vocab & set(dir(mod))):
+                if not callable(getattr(mod, name)):
+                    continue
+                source = f"import {modname}\ndef f(a, b):\n    {modname}.{name}(a, b)\n"
+                if not _rename_sites(source, "<derived>"):
+                    uncovered.append(f"{modname}.{name}")
+
+        for name in sorted(vocab & set(dir(Path))):
+            # Path rename methods all take exactly one positional target.
+            source = f"def f(p, dst):\n    p.{name}(dst)\n"
+            if not _rename_sites(source, "<derived>"):
+                uncovered.append(f"Path.{name}")
+
+        assert not uncovered, (
+            "the rename detector does not cover these stdlib spellings: "
+            f"{uncovered}. Each one moves a file over a destination and "
+            "therefore carries the Windows open-destination exposure "
+            "`replace_atomic` exists to absorb. Add them to "
+            "`_MODULE_RENAME_FUNCS` / `_PATH_RENAME_METHODS_*`."
+        )
+
     @pytest.mark.parametrize(
         "source",
         [
@@ -1279,7 +1435,10 @@ class TestRenameSiteDetector:
             # be turned off within a day.
             "def f(s):\n    return s.replace('a', 'b')\n",
             "def f(s):\n    return s.replace('+00:00', 'Z')\n",
-            # datetime.replace — keyword-only.
+            # datetime.replace in its keyword form — the only form this
+            # codebase uses. NOTE the positional form `dt.replace(2021)`
+            # IS legal Python and WOULD be flagged; see the accepted-
+            # residual note in `_rename_call_kind`.
             "def f(dt, tz):\n    return dt.replace(tzinfo=tz)\n",
             # str.replace with the optional count.
             "def f(s):\n    return s.replace('a', 'b', 1)\n",
@@ -1287,6 +1446,75 @@ class TestRenameSiteDetector:
     )
     def test_does_not_flag_string_or_datetime_replace(self, source: str) -> None:
         assert _rename_sites(source, "<synthetic>") == []
+
+    def test_arity_rule_is_what_excludes_str_replace_not_a_type_guess(self) -> None:
+        """Pin the documented basis of the arity rule against the real
+        interpreter, so the docstring cannot drift back into the false
+        premise it used to carry.
+
+        The rule only claims to exclude `str`/`bytes`.replace, which
+        genuinely REQUIRE two positional arguments. It does NOT claim
+        `datetime.replace` is keyword-only — it isn't, and the accepted
+        consequence is a false positive on the positional form.
+        """
+        import datetime
+
+        with pytest.raises(TypeError):
+            "abc".replace("a")  # type: ignore[call-arg]
+        with pytest.raises(TypeError):
+            b"abc".replace(b"a")  # type: ignore[call-arg]
+
+        # The premise the old docstring asserted, falsified: a single
+        # positional argument is accepted by datetime.replace.
+        assert datetime.datetime(2020, 1, 1).replace(2021).year == 2021
+        assert _rename_sites(
+            "def f(dt):\n    return dt.replace(2021)\n", "<synthetic>"
+        ) == [(2, "Path.replace()", "f", "dt.replace(2021)")]
+
+    def test_planting_each_spelling_in_a_real_module_goes_red(self) -> None:
+        """The end-to-end proof: take a REAL package module, append one
+        planted rename in each covered spelling, and confirm the guard's
+        own offender filter reports it.
+
+        This is the adversarial verifier's exact move. It planted
+        `shutil.move(a, b)` in store.py and the pre-fix guard passed
+        GREEN, because the detector only knew the `os`/`pathlib`
+        spellings. The plants below are appended to store.py's genuine
+        source, which currently contains no rename sites at all, so any
+        site reported is unambiguously the plant.
+        """
+        package_root = Path(bettermemory.__file__).parent
+        store_source = (package_root / "store.py").read_text(encoding="utf-8")
+        assert _rename_sites(store_source, "store.py") == [], (
+            "store.py already contains a rename site; this test's premise "
+            "(a clean host module) no longer holds"
+        )
+
+        plants = {
+            "shutil.move()": "import shutil\ndef _planted(a, b):\n    shutil.move(a, b)\n",
+            "os.replace()": "import os\ndef _planted(a, b):\n    os.replace(a, b)\n",
+            "os.rename()": "import os\ndef _planted(a, b):\n    os.rename(a, b)\n",
+            "os.renames()": "import os\ndef _planted(a, b):\n    os.renames(a, b)\n",
+            "Path.replace()": "def _planted(a, b):\n    a.replace(b)\n",
+            "Path.rename()": "def _planted(a, b):\n    a.rename(b)\n",
+            "Path.move()": "def _planted(a, b):\n    a.move(b)\n",
+            "Path.move_into()": "def _planted(a, d):\n    a.move_into(d)\n",
+            "move() imported bare from shutil": (
+                "from shutil import move\ndef _planted(a, b):\n    move(a, b)\n"
+            ),
+        }
+        for expected_kind, snippet in plants.items():
+            sites = _rename_sites(f"{store_source}\n\n{snippet}", "store.py")
+            offenders = [
+                s for s in sites if ("store.py", s[2]) not in _RENAME_EXEMPTIONS
+            ]
+            assert offenders, (
+                f"planting {expected_kind} in store.py did NOT turn the "
+                "rename guard red — this spelling evades the detector, "
+                "exactly the hole `shutil.move` occupied"
+            )
+            assert [s[1] for s in offenders] == [expected_kind]
+            assert [s[2] for s in offenders] == ["_planted"]
 
     def test_finds_sites_at_module_scope_and_in_nested_functions(self) -> None:
         """Scope tracking must not be fooled by nesting — an exemption
@@ -1373,3 +1601,116 @@ class TestSemanticCacheFlushRoutesThroughTheRetry:
         # rather than raising, so a missed retry shows up as a silently
         # absent cache. Pin that no orphan tmp is left behind either.
         assert not list(tmp_path.glob("*.tmp.*"))
+
+
+class TestSemanticCacheFlushFailureIsObservable:
+    """A rename that outlives `replace_atomic`'s retry budget lands in
+    `flush_persistent_cache`'s blanket `except Exception -> log.warning`.
+    That is correct — the dedup path must never break over a
+    recomputable cache — but before this fix it made a PERMANENT failure
+    indistinguishable from a transient one: one WARNING line per flush,
+    forever, no counter, nothing an operator could act on.
+
+    These tests pin the two halves of the fix: the streak counter, and
+    the WARNING -> ERROR escalation once the streak says "this is not
+    recovering". Numpy-gated because the flush returns early without it
+    — run them via the isolated numpy lane, not just the two embeddings
+    CI legs.
+    """
+
+    @staticmethod
+    def _arm_flush(
+        semantic: types.ModuleType, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Point the flush at `tmp_path` with one dirty entry and a
+        zeroed streak counter."""
+        monkeypatch.setattr(semantic, "_PERSISTENT_PATH", tmp_path / "cache.npz")
+        monkeypatch.setattr(semantic, "_FLUSH_FAILURES", 0)
+        monkeypatch.setattr(
+            semantic,
+            "_EMBEDDING_CACHE",
+            {
+                "id1": semantic._CachedEmbedding(
+                    memory_id="id1", updated_key="k1", vector=[0.1, 0.2]
+                )
+            },
+        )
+
+    @staticmethod
+    def _deny_renames(monkeypatch: pytest.MonkeyPatch) -> None:
+        """Make every rename fail the way an unrecoverable Windows
+        open-handle (or a read-only directory) does — i.e. a failure
+        that has already outlived `replace_atomic`'s retry budget."""
+
+        def always_denied(a: object, b: object) -> None:
+            raise PermissionError(32, "The process cannot access the file")
+
+        monkeypatch.setattr(os, "replace", always_denied)
+
+    def test_persistent_failure_increments_a_counter_and_escalates(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        pytest.importorskip("numpy")
+        import logging
+
+        from bettermemory import semantic
+
+        self._arm_flush(semantic, tmp_path, monkeypatch)
+        self._deny_renames(monkeypatch)
+        caplog.set_level(logging.WARNING, logger="bettermemory.semantic")
+
+        # Below the escalation threshold: counted, logged at WARNING.
+        for expected in (1, 2):
+            monkeypatch.setattr(semantic, "_DIRTY", True)
+            semantic.flush_persistent_cache()
+            assert semantic.persistent_cache_flush_failures() == expected, (
+                "a flush failure was not counted — a persistent inability "
+                "to write the embedding cache is invisible again"
+            )
+        assert [r.levelno for r in caplog.records] == [logging.WARNING] * 2
+
+        # Third consecutive failure: the streak is a standing condition,
+        # so the severity rises and the message reports the count.
+        caplog.clear()
+        monkeypatch.setattr(semantic, "_DIRTY", True)
+        semantic.flush_persistent_cache()
+        assert semantic.persistent_cache_flush_failures() == 3
+        errors = [r for r in caplog.records if r.levelno >= logging.ERROR]
+        assert errors, (
+            "three consecutive flush failures still logged at WARNING — "
+            "a permanently unwritable cache is indistinguishable from a "
+            "one-off race in the operator's log"
+        )
+        assert "3 consecutive" in errors[0].message
+
+    def test_a_successful_flush_resets_the_streak(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """The counter must mean CONSECUTIVE failures. A counter that
+        only ever grows would escalate on an unrelated old failure and
+        train the operator to ignore the ERROR line."""
+        pytest.importorskip("numpy")
+
+        from bettermemory import semantic
+
+        real_replace = os.replace
+        self._arm_flush(semantic, tmp_path, monkeypatch)
+        self._deny_renames(monkeypatch)
+
+        monkeypatch.setattr(semantic, "_DIRTY", True)
+        semantic.flush_persistent_cache()
+        assert semantic.persistent_cache_flush_failures() == 1
+
+        # Restore the real rename and let the next flush succeed.
+        monkeypatch.setattr(os, "replace", real_replace)
+        monkeypatch.setattr(semantic, "_DIRTY", True)
+        semantic.flush_persistent_cache()
+        assert (tmp_path / "cache.npz").exists()
+        assert semantic.persistent_cache_flush_failures() == 0, (
+            "a successful flush did not clear the streak — the counter "
+            "would escalate on stale history and train the operator to "
+            "ignore the ERROR line"
+        )

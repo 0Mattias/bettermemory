@@ -603,4 +603,5 @@ __all__ = [
     "flock_excl",
     "fsync_dir",
     "fsync_file",
+    "replace_atomic",
 ]

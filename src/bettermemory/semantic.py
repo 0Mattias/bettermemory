@@ -353,6 +353,73 @@ _DIRTY: bool = False
 # changes. See `_note_model_dimension`.
 _MODEL_DIM: int | None = None
 
+# Consecutive `flush_persistent_cache` failures. Every failure path in
+# the flush is caught and logged at WARNING so a broken cache can never
+# break the dedup path — correct, but it made a PERMANENT failure
+# indistinguishable from a transient one. A Windows operator whose
+# `.npz` genuinely cannot be renamed into place (a reader holding the
+# destination open for longer than `replace_atomic`'s ~150ms retry
+# budget, a read-only memory dir, a full disk) got one warning line per
+# flush, forever, and nothing that says "this is not recovering".
+#
+# The counter is what makes the persistent case observable, and it lives
+# in-process ON PURPOSE: `doctor` runs as a separate CLI invocation and
+# structurally cannot read the MCP server process's flush history, so a
+# doctor check could only re-probe the filesystem and would miss exactly
+# the transient-looking-but-permanent case this is about. An in-process
+# counter plus a severity escalation is the signal that actually reaches
+# the operator whose server is failing.
+_FLUSH_FAILURES: int = 0
+
+# After this many CONSECUTIVE failures the log line escalates from
+# WARNING to ERROR and starts reporting the streak. Three is chosen to
+# sit just past `replace_atomic`'s own retry budget: one flush can lose
+# a genuine race, and a second is bad luck, but three in a row is a
+# standing condition an operator has to act on.
+_FLUSH_FAILURE_ESCALATION = 3
+
+
+def persistent_cache_flush_failures() -> int:
+    """Consecutive `flush_persistent_cache` failures in this process.
+
+    Zero after any successful flush. Non-zero means the on-disk
+    embedding cache is not being maintained — recomputable, so never a
+    correctness problem, but a silent and unbounded performance cliff
+    (every restart re-embeds everything) that used to leave no trace
+    beyond repeated WARNING lines.
+    """
+    return _FLUSH_FAILURES
+
+
+def _note_flush_outcome(exc: BaseException | None, detail: str) -> None:
+    """Record a flush outcome and log the failure case at a severity
+    that reflects whether it is transient or standing.
+
+    ``exc is None`` resets the streak. Otherwise the streak increments
+    and the message is logged at WARNING below the escalation threshold
+    and at ERROR (with the streak count) at or above it, so a persistent
+    failure is distinguishable in the operator's log from the one-off
+    race that the first warning represents.
+    """
+    global _FLUSH_FAILURES
+    if exc is None:
+        _FLUSH_FAILURES = 0
+        return
+    _FLUSH_FAILURES += 1
+    if _FLUSH_FAILURES >= _FLUSH_FAILURE_ESCALATION:
+        log.error(
+            "%s: %s — %d consecutive embedding-cache flush failures; the "
+            "on-disk cache at %s is not being maintained and every restart "
+            "will re-embed from scratch. Check the directory's writability "
+            "and free space.",
+            detail,
+            exc,
+            _FLUSH_FAILURES,
+            _PERSISTENT_PATH,
+        )
+    else:
+        log.warning("%s: %s", detail, exc)
+
 
 def configure_persistent_cache(
     root: Path | None,
@@ -519,11 +586,11 @@ def flush_persistent_cache() -> None:
                 with contextlib.suppress(OSError):
                     fsync_dir(_PERSISTENT_PATH.parent)
         except Exception as exc:  # noqa: BLE001 — never break the dedup path
-            log.warning(
-                "failed to clear stale embedding cache at %s: %s",
-                _PERSISTENT_PATH,
-                exc,
+            _note_flush_outcome(
+                exc, f"failed to clear stale embedding cache at {_PERSISTENT_PATH}"
             )
+        else:
+            _note_flush_outcome(None, "")
         _DIRTY = False
         return
     ids = []
@@ -616,11 +683,16 @@ def flush_persistent_cache() -> None:
         # happened before the file was created (or after the rename).
         with contextlib.suppress(OSError):
             tmp.unlink(missing_ok=True)
-        log.warning(
-            "failed to persist embedding cache to %s: %s",
-            _PERSISTENT_PATH,
-            exc,
+        # Counted and escalated, not just logged. `replace_atomic`'s
+        # Windows retry absorbs the millisecond-scale open-destination
+        # race; a failure that reaches here has already outlived that
+        # budget, and repeating it means the cache is permanently not
+        # being written. See `_note_flush_outcome`.
+        _note_flush_outcome(
+            exc, f"failed to persist embedding cache to {_PERSISTENT_PATH}"
         )
+    else:
+        _note_flush_outcome(None, "")
 
 
 def _note_model_dimension(dim: int) -> None:
@@ -733,7 +805,7 @@ def reset_caches() -> None:
     needs to reconfigure persistence explicitly. Doesn't touch the
     on-disk file; that's a deliberate filesystem effect that survives.
     """
-    global _PERSISTENT_PATH, _HYDRATED, _DIRTY, _MODEL_DIM
+    global _PERSISTENT_PATH, _HYDRATED, _DIRTY, _MODEL_DIM, _FLUSH_FAILURES
     _MODEL_CACHE.clear()
     _LOAD_FAILED.clear()
     _LOAD_FAILED_LOGGED.clear()
@@ -742,6 +814,7 @@ def reset_caches() -> None:
     _HYDRATED = False
     _DIRTY = False
     _MODEL_DIM = None
+    _FLUSH_FAILURES = 0
 
 
 __all__ = [
@@ -753,6 +826,7 @@ __all__ = [
     "get_model",
     "cached_embed",
     "cosine_similarity_normalized",
+    "persistent_cache_flush_failures",
     "resolve_provider",
     "reset_caches",
 ]
