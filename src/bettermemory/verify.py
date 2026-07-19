@@ -365,16 +365,57 @@ class PathDriftReport:
     their own bucket so the report stays honest about what it skipped.
     An attested-absent path that EXISTS again is treated as a normal
     healthy candidate — presence never raises a flag.
+
+    `dropped_as_route` is the SUPPRESSED set: candidates the scanner
+    extracted, found absent, and then declined to stat-report because
+    `_is_multi_segment_routelike` judged them application routes rather
+    than filesystem citations. They are deliberately NOT in `checked`
+    ("we looked and it wasn't there" is a meaningless statement about a
+    URL path) and NOT in `missing` (no drift signal). Before this bucket
+    existed they were invisible in every direction, which is precisely
+    how 3.25.2's over-broad route rule swallowed real missing paths for
+    two releases without anyone noticing. A suppression rule you cannot
+    see is a suppression rule you cannot audit — so the rule now shows
+    its work, and a caller that disagrees with a particular suppression
+    can pin the citation with
+    `memory_verify(verified_absent_paths=[...])` or spot the over-reach
+    directly in the report.
     """
 
     checked: tuple[str, ...]
     missing: tuple[str, ...]
     verified: tuple[str, ...] = ()
     expected_absent: tuple[str, ...] = ()
+    dropped_as_route: tuple[str, ...] = ()
 
     @property
     def has_drift(self) -> bool:
+        """True when a candidate failed its disk check unattested.
+
+        Strictly `missing`-only, and deliberately so: it is the input to
+        the staleness verdict, and a suppressed route is by definition
+        NOT drift. Use `has_findings` for the "is there anything worth
+        showing the caller" question.
+        """
         return bool(self.missing)
+
+    @property
+    def has_findings(self) -> bool:
+        """True when the report carries anything a caller should see.
+
+        The retrieval surfaces (`memory_show`, `memory_search`'s
+        expanded top hit) only emit the `path_drift` block when the
+        report is non-trivial; this is that predicate, kept next to the
+        buckets it quantifies so a new bucket cannot be added without
+        the gate noticing. `checked` alone is excluded on purpose — an
+        all-healthy scan is the null result the surfaces suppress.
+        """
+        return bool(
+            self.missing
+            or self.verified
+            or self.expected_absent
+            or self.dropped_as_route
+        )
 
     def to_dict(self) -> dict[str, list[str]]:
         return {
@@ -382,6 +423,7 @@ class PathDriftReport:
             "missing": list(self.missing),
             "verified": list(self.verified),
             "expected_absent": list(self.expected_absent),
+            "dropped_as_route": list(self.dropped_as_route),
         }
 
 
@@ -421,6 +463,10 @@ def detect_path_drift(
     *intentionally* not present on this machine. A candidate in that
     set that fails the disk check lands in `report.expected_absent`
     instead of `missing` — no drift signal, but the skip stays visible.
+
+    A candidate the route rule suppresses lands in
+    `report.dropped_as_route` — not `checked`, not `missing`, but not
+    invisible either. See `PathDriftReport` for why that bucket exists.
     """
     candidates = _extract_candidates(body)
     if not candidates:
@@ -445,6 +491,7 @@ def detect_path_drift(
     missing: list[str] = []
     verified: list[str] = []
     expected_absent: list[str] = []
+    dropped_as_route: list[str] = []
     for path, drop_if_missing, bare_spaced in candidates:
         exists = _path_exists(path)
         norm = _normalize_for_compare(path)
@@ -489,10 +536,13 @@ def detect_path_drift(
                 # also happens to carry a domain-qualified URL to learn a
                 # vocabulary from, so a memory citing bare routes
                 # (`/api/v1/events/presence`, `/admin/macros`) had every
-                # one of them stat'd and reported missing. Dropped
-                # entirely — not even `checked` — because "we looked and
-                # it wasn't there" is a meaningless statement about a URL
-                # path.
+                # one of them stat'd and reported missing. Kept out of
+                # `checked` and `missing` — "we looked and it wasn't
+                # there" is a meaningless statement about a URL path —
+                # but recorded in `dropped_as_route` so the suppression
+                # is auditable instead of silent. (Invisibility here is
+                # what let 3.25.2's over-broad rule swallow real missing
+                # paths for two releases.)
                 #
                 # Deliberately LAST in this block: the spaced-bare and
                 # ambiguous-truncation arms above must arbitrate first,
@@ -500,6 +550,8 @@ def detect_path_drift(
                 # would read as a route on its manufactured tail and skip
                 # the prefix-existence fallback that recovers the real
                 # path.
+                if path not in dropped_as_route:
+                    dropped_as_route.append(path)
                 continue
         if path in checked:
             continue
@@ -518,11 +570,12 @@ def detect_path_drift(
                 #     drift signal — when the citation carries an extension
                 #     (`/data/compose/.env`) or its parent happens to exist
                 #     locally (`/opt/gophish`, on a host that has `/opt`).
-                #   * Never reaches this line at all, since 3.25.2: an
-                #     extensionless remote citation whose parent is absent
+                #   * Never reaches this line at all, since 3.25.2: any
+                #     extensionless non-home citation whose parent is absent
                 #     locally (`/srv/docker/gitea`, `/mnt/tank/media`) reads
                 #     as an application route and is DROPPED — not reported
-                #     missing, not even `checked`.
+                #     missing, not even `checked`. It IS recorded in
+                #     `dropped_as_route`, so the suppression is auditable.
                 #
                 # Either way `memory_verify(verified_absent_paths=[...])` is
                 # the intended escape hatch: it routes the citation to
@@ -541,6 +594,7 @@ def detect_path_drift(
         missing=tuple(missing),
         verified=tuple(verified),
         expected_absent=tuple(expected_absent),
+        dropped_as_route=tuple(dropped_as_route),
     )
 
 
@@ -949,15 +1003,69 @@ def _is_under_home(s: str) -> bool:
     `$HOME` is unset) or that IS the filesystem root (`HOME=/`, seen in
     some container images) disables the exemption: treating every
     absolute path as home-rooted would nullify the route rule wholesale.
+
+    CASE: the byte comparison runs first and settles every candidate on
+    a case-sensitive filesystem. Only when it MISSES do we ask the
+    filesystem whether it folds case (`_home_ignores_case`) and retry
+    case-insensitively — because on a default macOS APFS volume
+    `/users/me/x/y/z` and `/Users/me/x/y/z` are literally the same
+    directory, and a byte comparison would exempt one spelling and drop
+    the other as a route. That is the same false-negative divergence the
+    home escape was added to kill, just one layer down. The probe is
+    gated behind the miss so the common path stays two string
+    comparisons, and it is only consulted for candidates that already
+    failed their existence check.
     """
     home = os.path.expanduser("~")
     if not home or home == "~" or home == os.sep:
         return False
     expanded = os.path.expanduser(s)
-    if expanded == home:
-        return True
     prefix = home if home.endswith(os.sep) else home + os.sep
-    return expanded.startswith(prefix)
+    if expanded == home or expanded.startswith(prefix):
+        return True
+    lowered = expanded.lower()
+    if lowered != home.lower() and not lowered.startswith(prefix.lower()):
+        # Not the same path under ANY casing — no filesystem probe needed.
+        return False
+    return _home_ignores_case(home)
+
+
+def _home_ignores_case(home: str) -> bool:
+    """True when the filesystem backing `home` resolves paths
+    case-insensitively (macOS APFS/HFS+ in their default configuration,
+    Windows NTFS, exFAT volumes).
+
+    Probed rather than inferred from `sys.platform`: case sensitivity is
+    a per-VOLUME property, not a per-OS one. macOS ships case-insensitive
+    by default but case-sensitive APFS is a supported format, Linux
+    mounts exFAT/NTFS/SMB shares that fold case, and `os.path.normcase`
+    is a no-op on POSIX so it cannot answer this. Asking the actual
+    filesystem is the only correct answer.
+
+    The probe is `samefile` against the case-flipped spelling of `home`
+    itself: on a folding volume both names stat to one inode; on a
+    case-sensitive one the flipped name simply does not exist and
+    `samefile` raises, which we read as "case matters here". A home with
+    no cased characters at all cannot be probed this way (the flip is a
+    no-op and `samefile` would trivially succeed), so it reports False —
+    the conservative direction, since without cased characters no
+    candidate could have differed by case in the home prefix anyway.
+
+    Read-only and allocation-free: two `stat` calls, no file is created.
+    Deliberately NOT memoised — `$HOME` is read fresh on every call
+    upstream (the suite monkeypatches it), and the probe only runs for a
+    candidate that already matched home modulo case, which is rare
+    enough that a cache would buy nothing but an invalidation hazard.
+    """
+    flipped = home.swapcase()
+    if flipped == home:
+        return False
+    try:
+        return os.path.samefile(home, flipped)
+    except (OSError, ValueError):
+        # Flipped spelling does not resolve (case-sensitive volume), or
+        # home itself is unstattable. Either way: no case folding.
+        return False
 
 
 def _is_multi_segment_routelike(s: str) -> bool:
@@ -1004,15 +1112,41 @@ def _is_multi_segment_routelike(s: str) -> bool:
     for every candidate (`/api/v1/events/presence` included) and hand
     back the pre-3.25.2 false positives. The home escape above is the
     targeted fix for the common real-world case (a renamed repo under
-    `~`); the remote-host residue is the accepted remainder.
+    `~`); everything below is the accepted remainder.
 
-    NOT preserved: an extensionless remote-host citation whose parent is
-    absent locally (`/srv/docker/gitea`, `/data/compose/stacks`,
-    `/mnt/tank/media`). Those are DROPPED as routes. `/opt/gophish`-style
-    citations survive only via the parent escape — because `/opt` happens
-    to exist on this host, NOT because of any single-segment exclusion:
-    `"/opt/gophish".count("/") == 2`, so the `< 2` guard below never fires
-    for that shape. Either way the escape hatch is
+    THE ACCEPTED FALSE NEGATIVE, BY SHAPE (not by story). Every
+    candidate matching ALL FOUR of these is dropped as a route no matter
+    what it actually is:
+
+      1. leading `/`, at least two segments;
+      2. no `.` in the TERMINAL segment;
+      3. not under `$HOME` on this machine;
+      4. its IMMEDIATE parent is not a directory on this machine.
+
+    Say it that way because the shape is all this rule can see. An
+    earlier revision of this docstring described the residue as "an
+    extensionless remote-host citation", which reads as a promise that
+    local paths are safe — they are not, and the difference bites:
+
+      * `/srv/docker/gitea`, `/data/compose/stacks`, `/mnt/tank/media` —
+        genuinely another host's filesystem;
+      * `/Volumes/My Book/archive/2024` — an entirely LOCAL macOS
+        volume that merely happens to be unmounted right now, so its
+        parent is absent and it drops;
+      * `/home/mattias/scripts/backup` — a home path, but a FOREIGN-OS
+        one. Escape (2) keys on this machine's `$HOME` (`/Users/…` on
+        macOS), so a Linux-spelled home matches nothing and drops.
+
+    Absence of `/foo/bar` is indistinguishable from absence of
+    `/api/v1/thing` using only a local stat, so no local-only heuristic
+    can separate these from real routes without handing back the false
+    positives. What HAS changed: every one of them now lands in
+    `PathDriftReport.dropped_as_route`, so the suppression is
+    inspectable rather than silent. `/opt/gophish`-style citations
+    survive to `missing` only via the parent escape — because `/opt`
+    happens to exist on this host, NOT because of any single-segment
+    exclusion: `"/opt/gophish".count("/") == 2`, so the `< 2` guard
+    below never fires for that shape. The pinning escape hatch remains
     `memory_verify(verified_absent_paths=[...])`, which routes the
     citation to `expected_absent` before this rule is ever consulted.
 

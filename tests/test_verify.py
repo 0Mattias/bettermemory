@@ -35,7 +35,9 @@ from bettermemory.verify import (
     _PLACEHOLDER_PATHS,
     _PLACEHOLDER_PREFIXES,
     _RELATIVE_CITATION_RE,
+    _home_ignores_case,
     _is_multi_segment_routelike,
+    _is_under_home,
     _normalize_candidate,
     _normalize_for_compare,
     commit_drift_anchor_paths,
@@ -727,6 +729,7 @@ def test_report_to_dict_round_trips() -> None:
         "missing": ["/b"],
         "verified": [],
         "expected_absent": [],
+        "dropped_as_route": [],
     }
 
 
@@ -738,6 +741,7 @@ def test_report_to_dict_includes_verified_paths() -> None:
         "missing": ["/b"],
         "verified": ["/a"],
         "expected_absent": [],
+        "dropped_as_route": [],
     }
 
 
@@ -749,6 +753,22 @@ def test_report_to_dict_includes_expected_absent() -> None:
         "missing": [],
         "verified": [],
         "expected_absent": ["/b"],
+        "dropped_as_route": [],
+    }
+
+
+def test_report_to_dict_includes_dropped_as_route() -> None:
+    """The suppressed set has to survive serialisation, or the bucket is
+    observable in-process and invisible to every actual consumer — which
+    is the same blindness it was added to remove."""
+    r = PathDriftReport(checked=(), missing=(), dropped_as_route=("/admin/macros",))
+    d = r.to_dict()
+    assert d == {
+        "checked": [],
+        "missing": [],
+        "verified": [],
+        "expected_absent": [],
+        "dropped_as_route": ["/admin/macros"],
     }
 
 
@@ -757,6 +777,46 @@ def test_has_drift_only_when_missing_nonempty() -> None:
     drifted = PathDriftReport(checked=("/a",), missing=("/a",))
     assert healthy.has_drift is False
     assert drifted.has_drift is True
+
+
+def test_has_drift_stays_missing_only_when_routes_were_dropped() -> None:
+    """A suppressed route is explicitly NOT drift: `has_drift` feeds the
+    staleness verdict, so folding the new bucket into it would inflate
+    `spot_check_recommended` on every memory that merely cites a URL
+    route. Pinned so a future "make it visible" patch can't take the
+    lazy route of widening `has_drift`."""
+    routes_only = PathDriftReport(
+        checked=(), missing=(), dropped_as_route=("/api/v1/events/presence",)
+    )
+    assert routes_only.has_drift is False
+
+
+def test_has_findings_covers_every_non_checked_bucket() -> None:
+    """`has_findings` is the predicate the retrieval surfaces use to
+    decide whether to emit a `path_drift` block at all. It must cover
+    the suppressed set too — otherwise a body whose ONLY interesting
+    result is a dropped route serialises to nothing and the suppression
+    stays invisible at exactly the surface that matters."""
+    assert PathDriftReport(checked=(), missing=()).has_findings is False
+    # A clean scan is the null result the surfaces suppress.
+    assert PathDriftReport(checked=("/a",), missing=()).has_findings is False
+    assert PathDriftReport(checked=("/a",), missing=("/a",)).has_findings is True
+    assert (
+        PathDriftReport(checked=("/a",), missing=(), verified=("/a",)).has_findings
+        is True
+    )
+    assert (
+        PathDriftReport(
+            checked=("/a",), missing=(), expected_absent=("/a",)
+        ).has_findings
+        is True
+    )
+    assert (
+        PathDriftReport(
+            checked=(), missing=(), dropped_as_route=("/admin/macros",)
+        ).has_findings
+        is True
+    )
 
 
 def test_verified_paths_match_after_extractor_normalises_body_candidate(
@@ -2262,6 +2322,79 @@ def test_remote_path_under_an_existing_root_still_reports_missing() -> None:
     assert "/opt/gophish" in attested.expected_absent
 
 
+def test_suppressed_routes_land_in_dropped_as_route() -> None:
+    """THE OBSERVABILITY CONTRACT.
+
+    A route-dropped candidate used to appear in NO bucket at all —
+    absent from `checked`, `missing` and `expected_absent` alike, with
+    nowhere on `PathDriftReport` to look. That total invisibility is why
+    3.25.2's over-broad rule silently swallowed real missing paths for
+    two releases before anyone noticed. The suppressed set must now be
+    readable off the report.
+    """
+    report = detect_path_drift(
+        "Routes `/api/v1/events/presence` and `/admin/macros` are registered."
+    )
+    # Unchanged: a route is neither a checked file nor drift.
+    assert report.checked == ()
+    assert report.missing == ()
+    assert report.has_drift is False
+    # New: but the caller can now SEE what the rule ate.
+    assert report.dropped_as_route == (
+        "/api/v1/events/presence",
+        "/admin/macros",
+    )
+    assert report.to_dict()["dropped_as_route"] == [
+        "/api/v1/events/presence",
+        "/admin/macros",
+    ]
+    # And the surfaces' emit-gate fires, so the block actually ships.
+    assert report.has_findings is True
+
+
+def test_dropped_as_route_dedupes_a_repeated_citation() -> None:
+    """`checked` dedupes; the suppressed bucket must too, or a body that
+    names one route twice reports it twice and the set stops being a
+    set."""
+    report = detect_path_drift(
+        "Route `/admin/macros` is registered; see `/admin/macros` in the router."
+    )
+    assert report.dropped_as_route == ("/admin/macros",)
+
+
+def test_accepted_false_negative_shapes_are_all_visible_now() -> None:
+    """The residue documented on `_is_multi_segment_routelike`, pinned by
+    SHAPE rather than by a story about where the path came from.
+
+    The docstring used to call this residue "an extensionless remote-host
+    citation", which reads as a promise that LOCAL paths are safe. They
+    are not: an unmounted local volume (`/Volumes/...`) and a foreign-OS
+    home path (`/home/...`, while this machine's `$HOME` is `/Users/...`)
+    drop for exactly the same four structural reasons a genuinely remote
+    path does. This test is the executable version of that correction —
+    it fails the moment the residue's real extent stops matching the
+    documented extent.
+    """
+    residue = (
+        "/srv/docker/gitea",
+        "/data/compose/stacks",
+        "/mnt/tank/media",
+        "/home/mattias/scripts/backup",
+        "/Volumes/My Book/archive/2024",
+    )
+    for cited in residue:
+        # Fixture assumption: the shape only holds while the parent is
+        # genuinely absent here. If a host really has `/srv/docker`, the
+        # parent escape fires and the candidate is honest drift instead.
+        if os.path.isdir(os.path.dirname(cited)):
+            continue
+        report = detect_path_drift(f"the store lives at `{cited}` these days")
+        assert report.missing == (), cited
+        assert report.checked == (), cited
+        # The mitigation: no longer a silent drop.
+        assert cited in report.dropped_as_route, cited
+
+
 def test_attested_route_is_never_dropped() -> None:
     """Attestations pin a citation: a caller who explicitly named a path
     must still get its drift signal, so the route drop must sit behind
@@ -2301,6 +2434,30 @@ def _home_path(*segments: str) -> Path:
     return Path.home().joinpath(*segments)
 
 
+def _outside_home_citation() -> str:
+    """A POSIX citation whose parent is absent AND which cannot sit under
+    `$HOME` on any platform.
+
+    Deliberately NOT built from `tmp_path`. pytest's temp dir follows
+    `$TMPDIR`, which routinely lands under the user's home
+    (`TMPDIR=$HOME/tmp`, a redirected per-user temp dir, a CI image that
+    sets it), and the home exemption then unshapes the hazard: the route
+    rule never runs and an assertion written to pin the rule's BOUND
+    quietly inverts instead. The CI matrix happening to be safe today is
+    not a property worth depending on.
+
+    Root-anchored is outside home by construction — `_is_under_home`
+    already refuses to treat `HOME=/` as a home — and it is route-shaped
+    on Windows too, where a drive-rooted `tmp_path` never even enters the
+    route branch.
+    """
+    citation = "/bm-audit-no-such-root-dir/child"
+    assert not os.path.exists(os.path.dirname(citation)), (
+        "fixture assumption: the parent must be absent or the parent escape fires"
+    )
+    return citation
+
+
 def test_deep_home_path_under_vanished_parent_still_reports_missing() -> None:
     """A renamed/deleted project directory is THE case path drift exists
     to catch, and it defeats the parent-exists escape: when the whole
@@ -2315,7 +2472,7 @@ def test_deep_home_path_under_vanished_parent_still_reports_missing() -> None:
     assert str(gone) in report.missing
 
 
-def test_both_spellings_of_one_home_path_agree(tmp_path: Path) -> None:
+def test_both_spellings_of_one_home_path_agree() -> None:
     """`~/x/y/z` and `/Users/<user>/x/y/z` are the same path — the module
     normalises them together (`_normalize_for_compare`), so the drift
     verdict must not depend on which spelling the author typed.
@@ -2346,9 +2503,80 @@ def test_both_spellings_of_one_home_path_agree(tmp_path: Path) -> None:
 
     # Sanity: the home exemption is about HOME, not about "any absolute
     # path" — a candidate outside home under a vanished parent is still
-    # dropped, which is the documented remaining bound.
-    outside = tmp_path / "bm-audit-gone-parent" / "child"
-    assert _is_multi_segment_routelike(outside.as_posix()) or os.name == "nt"
+    # dropped, which is the documented remaining bound. Built root-anchored
+    # rather than from `tmp_path` so the bound is pinned on every host
+    # (see `_outside_home_citation`); the previous `tmp_path` construction
+    # inverted under `TMPDIR=$HOME/...` and needed an `or os.name == "nt"`
+    # escape that swallowed the failure on Windows too.
+    outside = _outside_home_citation()
+    assert _is_multi_segment_routelike(outside) is True
+    # ...and it is observable rather than silently swallowed.
+    assert detect_path_drift(f"the tree lived at `{outside}`").dropped_as_route == (
+        outside,
+    )
+
+
+def test_home_exemption_follows_the_filesystem_on_case(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The home exemption compared byte-for-byte, so on a default
+    case-insensitive macOS APFS volume a citation spelled
+    `/users/me/x/y/z` missed it and was dropped as a route — while
+    `/Users/me/x/y/z`, the SAME directory as far as the kernel is
+    concerned, reported drift. Two spellings of one path, opposite
+    verdicts: precisely the divergence the home exemption exists to
+    kill, one layer down.
+
+    Asserted against what the filesystem actually DOES rather than
+    against `sys.platform`, because case sensitivity is a per-volume
+    property (case-sensitive APFS exists; so do case-folding exFAT/SMB
+    mounts on Linux). Both directions are pinned — on a folding volume
+    the differently-cased citation must be exempt and report drift; on a
+    case-sensitive one it must NOT be, since `/users/...` really is a
+    different path there and exempting it would resurrect the false
+    positives the route rule was built to kill.
+    """
+    home = tmp_path / "AuditHome"
+    home.mkdir()
+    monkeypatch.setenv("HOME", str(home))
+    monkeypatch.setenv("USERPROFILE", str(home))
+
+    tail = "/bm-audit-case-fold/src/handlers"
+    exact = str(home) + tail
+    reskinned = str(home).swapcase() + tail
+    assert reskinned != exact, "fixture assumption: the home prefix must be cased"
+    assert not os.path.exists(exact), "fixture assumption: the citation must be absent"
+
+    # The exact spelling is exempt on every filesystem — that is the
+    # pre-existing contract and it must not regress.
+    assert _is_under_home(exact) is True
+    assert str(Path(exact)) in detect_path_drift(f"cited at `{exact}` today").missing
+
+    folds_case = _home_ignores_case(str(home))
+    report = detect_path_drift(f"cited at `{reskinned}` today")
+    if folds_case:
+        assert _is_under_home(reskinned) is True
+        assert _is_multi_segment_routelike(reskinned) is False
+        assert reskinned in report.missing
+        assert report.dropped_as_route == ()
+    else:
+        # A genuinely different path on this volume: no exemption, and
+        # the route rule legitimately swallows it — visibly, now.
+        assert _is_under_home(reskinned) is False
+        assert _is_multi_segment_routelike(reskinned) is True
+        assert report.missing == ()
+        assert reskinned in report.dropped_as_route
+
+
+def test_home_case_probe_is_conservative_when_it_cannot_probe() -> None:
+    """The probe must fail CLOSED. An uncased home makes the case-flip a
+    no-op, which would make `samefile(home, home)` trivially true and
+    report every volume as case-folding; an unresolvable home makes it
+    raise. Both have to read as "case matters here", or the exemption
+    widens on hosts where nothing justified widening it.
+    """
+    assert _home_ignores_case("/1234") is False
+    assert _home_ignores_case("/bm-audit-no-such-Home/nested") is False
 
 
 def test_bare_app_routes_are_still_suppressed() -> None:
@@ -2365,7 +2593,9 @@ def test_bare_app_routes_are_still_suppressed() -> None:
     assert _is_multi_segment_routelike("/admin/macros") is True
 
 
-def test_route_check_stays_last_in_the_not_exists_block(tmp_path: Path) -> None:
+def test_route_check_stays_last_in_the_not_exists_block(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     """ORDERING CONSTRAINT, load-bearing.
 
     The bare-scan continuation rule can glue a prose acronym pair onto a
@@ -2373,7 +2603,24 @@ def test_route_check_stays_last_in_the_not_exists_block(tmp_path: Path) -> None:
     a route, so if the route drop ran BEFORE the spaced-bare
     arbitration, the real directory would be dropped instead of
     recovered via the prefix-existence fallback.
+
+    `$HOME` is pinned away from `tmp_path` for the duration because the
+    hazard only EXISTS while the glued candidate is route-shaped, and
+    the home exemption unshapes it whenever `$TMPDIR` sits under the real
+    home — `TMPDIR=$HOME/tmp` reproduces it, and the hazard assertion
+    then fails outright. The pin makes the construction independent of
+    where the runner puts its temp dir, which is not a property this
+    test should ever have depended on. The two ordering assertions below
+    are untouched and stay the point of the test.
     """
+    fake_home = tmp_path / "bm-audit-fake-home"
+    fake_home.mkdir()
+    # Both spellings: `expanduser` reads HOME on POSIX and USERPROFILE
+    # first on Windows, and a pin that failed to take would silently
+    # restore the fragility this fixture exists to remove.
+    monkeypatch.setenv("HOME", str(fake_home))
+    monkeypatch.setenv("USERPROFILE", str(fake_home))
+
     cited = tmp_path.as_posix()
     glued = f"{cited} TCP/IP"
     if glued.startswith("/"):
@@ -2393,6 +2640,18 @@ def test_route_check_is_structurally_last_in_the_not_exists_block() -> None:
 
     Asserts `_is_multi_segment_routelike` is the FINAL guard inside
     `detect_path_drift`'s `not exists and not attested` block.
+
+    The guard is located by its TEST expression and the enclosing block
+    by physical containment, then the ordering is pinned by identity.
+    The earlier locator picked "the smallest `ast.If` mentioning the
+    predicate anywhere that has more than one statement in its body",
+    which silently re-targeted onto the route guard ITSELF the moment
+    the guard grew a body (recording the suppressed candidate did
+    exactly that) — and then reported the guard's own `continue` as a
+    misordered block. Same class of fragility as the `tmp_path` hazards
+    above: a locator that depends on an incidental property of the code
+    it is inspecting. The ordering constraint being pinned is unchanged
+    and now strictly harder to satisfy by accident.
     """
     import ast
     import inspect
@@ -2403,19 +2662,26 @@ def test_route_check_is_structurally_last_in_the_not_exists_block() -> None:
     tree = ast.parse(
         textwrap.dedent(inspect.getsource(verify_module.detect_path_drift))
     )
-    blocks = [
+    guards = [
         node
         for node in ast.walk(tree)
-        if isinstance(node, ast.If) and "_is_multi_segment_routelike" in ast.dump(node)
+        if isinstance(node, ast.If)
+        and "_is_multi_segment_routelike" in ast.dump(node.test)
     ]
-    # The innermost match is the route guard itself; its parent block is
-    # the one whose ordering matters.
-    enclosing = [b for b in blocks if len(b.body) > 1]
+    assert len(guards) == 1, f"expected exactly one route guard, found {len(guards)}"
+    guard = guards[0]
+    enclosing = [
+        node
+        for node in ast.walk(tree)
+        if isinstance(node, ast.If) and any(stmt is guard for stmt in node.body)
+    ]
     assert enclosing, "could not locate the not-exists block"
-    not_exists_block = min(enclosing, key=lambda b: len(ast.dump(b)))
-    last_stmt = not_exists_block.body[-1]
-    assert isinstance(last_stmt, ast.If), "final guard is not an `if`"
-    assert "_is_multi_segment_routelike" in ast.dump(last_stmt.test), (
+    not_exists_block = enclosing[0]
+    assert len(not_exists_block.body) > 1, (
+        "the not-exists block collapsed to the route guard alone — the "
+        "spaced-bare and ambiguous-truncation arms must still precede it"
+    )
+    assert not_exists_block.body[-1] is guard, (
         "the route check must stay LAST in the not-exists block — moved "
         "earlier, a prose-glued candidate reads as a route on its "
         "manufactured tail and skips the prefix-existence fallback"
