@@ -9,87 +9,41 @@
   <a href="LICENSE"><img src="https://img.shields.io/badge/License-MIT-yellow.svg" alt="MIT"></a>
 </p>
 
-Claude forgets you. Every session starts from zero: the stack you
-explained yesterday, the deploy quirk you debugged last week, the "we
-use uv, not pip" you have now said eleven times.
+<!-- mcp-name: io.github.0Mattias/bettermemory -->
 
-bettermemory gives Claude Code — or any MCP client — memory that
-survives the session and distrusts itself on your behalf. Every stored
-fact is a claim that has to keep earning belief: checked against the
-filesystem and git before the model relies on it, tracked when it
-shapes an answer, curated when the evidence says it rotted. You
-operate none of it. The agent does.
+An MCP memory server for coding agents. Stored facts get checked against
+the filesystem and git *before* the model relies on them, so a memory
+that has rotted is flagged instead of quoted back at you.
 
 ## Install
 
-Paste this into your agent:
-
-> Install bettermemory as my memory server: read
-> https://github.com/0Mattias/bettermemory and follow the
-> "For agents" section of the README.
-
-That's the whole install. Prefer to do it yourself? Two commands:
-
 ```sh
 uv tool install bettermemory
-bettermemory init --client claude-code   # or claude-desktop / cursor / continue / cline
+bettermemory init --client claude-code   # or claude-desktop / cursor / cline
 ```
 
-Restart the client and you're done. Want proof before wiring anything
-up? `uvx bettermemory try` runs a 60-second offline demo in a
-throwaway store: it writes a memory citing a file, deletes the file,
-and shows the next search flag the memory as stale.
+Restart the client. `bettermemory doctor` exits 0 when it's wired
+correctly and prints a one-line fix for anything that isn't.
 
-## What that feels like
+Kick the tyres without installing: `uvx bettermemory try` writes a
+memory citing a file, deletes the file, and shows the next search
+flagging it. Offline, throwaway store.
 
-Three weeks ago, mid-session:
+## What it does
 
-```text
-> for the record: staging deploys go through Fly now, the Render
-  setup is dead
-
-⏺ Stored: "Staging deploys via fly deploy --config fly.staging.toml;
-  the old Render service is decommissioned." (projects:acme)
-```
-
-Today, brand-new session, no context given:
-
-```text
-> staging is 404ing after every deploy. ideas?
-
-⏺ You have a stored note that staging deploys through Fly and Render
-  is gone — last verified 3 weeks and 41 commits ago, so checking it
-  before relying on it… fly.staging.toml still exists, but its
-  internal_port changed on Monday. That's the 404: the app listens
-  on 8080, the config still says 3000.
-
-> fix it
-
-⏺ Fixed. Re-verified the memory too, so the next session inherits it
-  fresh instead of re-checking.
-```
-
-(Illustrative transcript.) Two things happened that a raw session
-cannot do: it remembered across a three-week gap, and it distrusted
-itself exactly enough to catch that the world had moved since.
-
-## Why this one
-
-- **It knows when it might be wrong.** Every hit carries a staleness
-  verdict built from calendar age, the file paths it cites, and the
-  commits landed since it was last confirmed.
-- **It stays out of your context.** Nothing is auto-injected;
-  retrieval is a deliberate tool call, announced when it shapes an
-  answer.
-- **It refuses to hoard.** Transient state, secret-shaped tokens, and
-  near-duplicates bounce at write time; claims about *you* stage for
-  your confirmation.
-- **It's your data, on your disk.** One markdown file per memory —
-  greppable, hand-editable, git-syncable. No database, no cloud, no
-  account. MIT.
-- **It proves it's helping.** A built-in eval reports how often memory
-  actually shaped a reply. Numbers, not vibes —
-  [published](docs/eval-results.md).
+- Every hit carries a staleness verdict — calendar age, the paths it
+  cites, commits landed since it was last confirmed.
+- Nothing is auto-injected; retrieval is a deliberate tool call. The 18
+  default tools do cost ~35 KB of schema per turn either way; the
+  description half of that is capped in CI.
+- Write gates: transient state, secret-shaped tokens and near-duplicates
+  bounce; claims about *you* stage for confirmation.
+- One markdown file per memory. Greppable, git-syncable. Markdown is
+  canonical; the SQLite index next to it is a derived cache you can
+  delete. No cloud, no account.
+- `bettermemory eval` measures whether memory actually helped, against
+  your own log. [Ours is published][eval-results] — a floor, from one
+  user's store, caveats and misses included.
 
 ## For agents
 
@@ -99,16 +53,17 @@ idempotent and safe to re-run:
 1. `uv tool install bettermemory` — or `pipx install bettermemory`,
    or `pip install bettermemory` into a venv. Python 3.11–3.14.
 2. `bettermemory init --client claude-code` — likewise
-   `claude-desktop`, `cursor`, `continue`, `cline`. For any other MCP
-   host, plain `bettermemory init` prints the canonical `mcpServers`
-   JSON snippet plus known config locations.
+   `claude-desktop`, `cursor`, `cline`. For any other MCP host, plain
+   `bettermemory init` prints the canonical `mcpServers` JSON snippet
+   plus known config locations. (Continue needs a hand-written YAML
+   entry — see [docs/clients.md][clients-continue].)
 3. `bettermemory doctor` — exit 0 means correctly wired; every failed
    check prints a one-line fix.
 4. Have the user restart the client so the server loads, then confirm
    by asking the model *"what memory tools do you have?"*
 
 Your operating contract — tool signatures, retrieval discipline,
-write gates — is [docs/api.md](docs/api.md); the server's
+write gates — is [docs/api.md][api]; the server's
 `instructions` block delivers the core policy automatically. For the
 long-form policy in your system prompt: `bettermemory init
 --with-addendum`. Migrating from Claude Code's built-in auto-memory:
@@ -117,13 +72,23 @@ long-form policy in your system prompt: `bettermemory init
 ## Everything else
 
 You shouldn't need it, but it's all written down: mechanics, storage
-format, the full tool surface, CLI, configuration, and limitations in
-[docs/internals.md](docs/internals.md); per-client setup in
-[docs/clients.md](docs/clients.md) and
-[docs/installation.md](docs/installation.md); eval methodology in
-[docs/eval.md](docs/eval.md); postmortems in
-[docs/incidents/](docs/incidents/); release history in
-[CHANGELOG.md](CHANGELOG.md); dev setup and the compatibility
-contract in [CONTRIBUTING.md](CONTRIBUTING.md).
+format, the full tool surface, CLI, configuration and limitations in
+[internals][internals]; per-client setup in [clients][clients] and
+[installation][installation]; eval methodology in [eval][eval];
+postmortems in [incidents][incidents]; release history in
+[CHANGELOG][changelog]; dev setup and the compatibility contract in
+[CONTRIBUTING][contributing].
 
-MIT licensed — see [LICENSE](LICENSE).
+MIT licensed — see [LICENSE][license].
+
+[api]: https://github.com/0Mattias/bettermemory/blob/main/docs/api.md
+[changelog]: https://github.com/0Mattias/bettermemory/blob/main/CHANGELOG.md
+[clients]: https://github.com/0Mattias/bettermemory/blob/main/docs/clients.md
+[clients-continue]: https://github.com/0Mattias/bettermemory/blob/main/docs/clients.md#continue-legacy-shape--see-caveat
+[contributing]: https://github.com/0Mattias/bettermemory/blob/main/CONTRIBUTING.md
+[eval]: https://github.com/0Mattias/bettermemory/blob/main/docs/eval.md
+[eval-results]: https://github.com/0Mattias/bettermemory/blob/main/docs/eval-results.md
+[incidents]: https://github.com/0Mattias/bettermemory/blob/main/docs/incidents/
+[installation]: https://github.com/0Mattias/bettermemory/blob/main/docs/installation.md
+[internals]: https://github.com/0Mattias/bettermemory/blob/main/docs/internals.md
+[license]: https://github.com/0Mattias/bettermemory/blob/main/LICENSE

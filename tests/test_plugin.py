@@ -336,3 +336,76 @@ def test_stop_hook_has_reasonable_timeout() -> None:
             f"Stop hook timeout {timeout!r} is outside the 1..60s window "
             f"— hooks must not visibly block turn completion"
         )
+
+
+# ---------------------------------------------------------------------------
+# server.json — the MCP registry publish manifest.
+#
+# Three separate copies of the same facts (two version fields, the server
+# name, and the `mcp-name:` ownership token in README.md) have to agree, and
+# each disagreement fails in its own way at publish time rather than here:
+#   - a stale version  -> the registry validates ownership against
+#     pypi.org/pypi/bettermemory/<version>/json and 404s or reads a README
+#     without the token;
+#   - a name/token mismatch -> ownership validation fails outright;
+#   - the wrong namespace case -> 403 before ownership is even checked, since
+#     the GitHub grant is built from the login verbatim (`0Mattias`) and
+#     matched with a case-sensitive prefix.
+# The repo already learned the version-drift lesson once with
+# marketplace.json; this is the same guard for the same reason.
+# ---------------------------------------------------------------------------
+
+SERVER_JSON_PATH = REPO_ROOT / "server.json"
+README_PATH = REPO_ROOT / "README.md"
+
+
+def test_server_json_versions_match_pyproject() -> None:
+    """Both version fields track the release version. The release flow bumps
+    pyproject; without this guard server.json silently advertises a stale
+    version to the registry."""
+    pyproject_v = _load_pyproject_version()
+    server = json.loads(SERVER_JSON_PATH.read_text(encoding="utf-8"))
+    assert server.get("version") == pyproject_v, (
+        f"server.json version ({server.get('version')!r}) does not match "
+        f"pyproject.toml ({pyproject_v!r}). Bump both at release time."
+    )
+    pkg_v = server["packages"][0].get("version")
+    assert pkg_v == pyproject_v, (
+        f"server.json packages[0].version ({pkg_v!r}) does not match "
+        f"pyproject.toml ({pyproject_v!r}). Bump both at release time."
+    )
+
+
+def test_server_json_name_matches_readme_ownership_token() -> None:
+    """The registry proves PyPI ownership by finding `mcp-name: <name>` in the
+    published long description (README.md). The two must be byte-identical,
+    including namespace case."""
+    server = json.loads(SERVER_JSON_PATH.read_text(encoding="utf-8"))
+    name = server["name"]
+    readme = README_PATH.read_text(encoding="utf-8")
+    token = f"mcp-name: {name}"
+    assert token in readme, (
+        f"README.md is missing the ownership token {token!r}. The MCP registry "
+        f"reads it out of the PyPI long description; without it, publish fails "
+        f"ownership validation."
+    )
+    # The token must not be glued to a trailing server-name character, or the
+    # registry's boundary check rejects it. `-->` is explicitly allowed.
+    rest = readme.split(token, 1)[1]
+    assert (
+        rest[:1] == ""
+        or not (rest[0].isalnum() or rest[0] in "._-/")
+        or rest.startswith(("-->", "--!>"))
+    ), f"the {token!r} token is glued to {rest[:6]!r}; it needs a boundary"
+
+
+def test_server_json_description_fits_registry_schema() -> None:
+    """The published server.schema.json caps `description` at 100 chars. A
+    longer one is rejected by the registry API before auth or ownership runs,
+    so keep the prose in the README."""
+    server = json.loads(SERVER_JSON_PATH.read_text(encoding="utf-8"))
+    desc = server.get("description", "")
+    assert 1 <= len(desc) <= 100, (
+        f"server.json description is {len(desc)} chars; the registry schema "
+        f"allows 1..100. Shorten it — the README carries the long form."
+    )

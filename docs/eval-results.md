@@ -1,6 +1,6 @@
 # Eval results
 
-The numbers behind the README's "numbers, not vibes" claim. Two
+What `bettermemory eval` reports on the author's live store. Two
 sources, kept separate on purpose: **production telemetry** (real
 usage, one user, the full trio) and the **comparative harness** (a
 synthetic corpus, several systems, recall plus a capability matrix).
@@ -18,6 +18,13 @@ The numbers in this section are generated with `bettermemory eval
 --report`, which emits exactly this rates-and-counts shape with the
 leak-free property enforced by a tested contract.
 
+Read `memory_helped_rate` as a deliberate floor, not as an estimate of
+usefulness: the numerator counts only *explicit, claim-excerpt-backed*
+endorsements, while the denominator counts every retrieval occurrence.
+A retrieval that genuinely helped but left no attestation still counts
+against it. Roughly one in fourteen retrievals in the last month left a
+verifiable "this memory shaped this sentence" record.
+
 | rate | last 30 days | all time |
 |---|---|---|
 | `memory_helped_rate` | 91/1,282 = **0.07** [0.06, 0.09] | 99/2,768 = 0.04 [0.03, 0.04] |
@@ -30,11 +37,6 @@ deduped). All time: 2,768 · 1,652 · 403 (38 no-signal, 59 deduped).
 
 Reading it honestly:
 
-- `memory_helped_rate` is a deliberate floor: the numerator counts
-  only *explicit, claim-excerpt-backed* endorsements, while the
-  denominator counts every retrieval occurrence. Roughly one in
-  fourteen retrievals in the last month left a verifiable "this
-  memory shaped this sentence" record.
 - The 30-day rates beat the all-time rates — `memory_helped` by
   roughly two to one — because the attestation tooling matured
   mid-history: early events couldn't carry signals that now exist.

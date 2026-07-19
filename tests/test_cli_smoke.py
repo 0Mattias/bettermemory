@@ -23,6 +23,7 @@ from __future__ import annotations
 import json
 import subprocess
 import sys
+import tempfile
 from pathlib import Path
 
 import pytest
@@ -386,6 +387,18 @@ def test_try_subcommand_reproduces_path_drift_offline(
     assert "path_drift.missing" in out
     # The demo store is isolated — the BETTERMEMORY_DIR storage stays empty.
     assert not list(tmp_path.glob("*.md"))
+
+    # Narrated paths are rendered RELATIVE to the throwaway root. This is the
+    # readability half of the demo: a raw
+    # /var/folders/vn/…/bettermemory-try-3qjzln9f/src/auth/session.py buries
+    # the one thing the output exists to show. Asserting the absence of the
+    # tempdir prefix is what makes the rendering portable — the first
+    # implementation stripped with a hardcoded "/" and was a silent no-op on
+    # Windows, printing absolute paths under a line claiming they were
+    # relative, and the matrix stayed green because nothing checked.
+    assert "src/auth/session.py" in out
+    assert tempfile.gettempdir() not in out
+    assert "\\src\\auth" not in out  # no half-stripped Windows path either
 
 
 def test_try_json_emits_the_raw_hit(

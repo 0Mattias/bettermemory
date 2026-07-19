@@ -41,8 +41,15 @@ The bare auto-fallback (`attribution="auto"`, no excerpt) is excluded.
 The CLI's `applied_explicit` count is everything non-auto; recompute
 from the raw events' `attribution` field for a stricter model-only cut.
 
-A low rate means the ranker is firing on noise the model silently
-ignores.
+A low rate is **ambiguous by construction**, and this metric cannot
+disambiguate it. Either the ranker is firing on noise the model
+silently ignores, or the retrievals did help and simply left no
+attestation behind — the numerator counts only explicit,
+claim-excerpt-backed endorsements while the denominator counts every
+retrieval occurrence, so the rate is a floor, not an estimate. Read it
+against `endorsement_rate` (which isolates the attestation half) and
+against the trend rather than either column alone. Do not read a low
+rate, on its own, as "retrieval isn't working."
 
 ### `endorsement_rate`
 

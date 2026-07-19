@@ -1,4 +1,4 @@
-"""`bettermemory try` — a 60-second, zero-network demo of the staleness verdict.
+"""`bettermemory try` — an instant, zero-network demo of the staleness verdict.
 
 bettermemory's headline differentiator — every retrieved fact carries a
 freshness signal (path drift / commit drift / calendar age) — is invisible on
@@ -15,14 +15,17 @@ touched, and nothing hits the network.
 from __future__ import annotations
 
 import argparse
-from typing import Any
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    from pathlib import Path
 
 
 def add_subparser(
     sub: argparse._SubParsersAction[argparse.ArgumentParser],
 ) -> argparse.ArgumentParser:
     help_text = (
-        "60-second offline demo: watch a memory go stale when a file it cites moves."
+        "Instant offline demo: watch a memory go stale when a file it cites moves."
     )
     parser = sub.add_parser("try", help=help_text, description=help_text)
     parser.add_argument(
@@ -89,27 +92,44 @@ def run(args: argparse.Namespace) -> None:
         if args.json:
             sys.stdout.write(json.dumps(row, indent=2, default=str) + "\n")
         else:
-            sys.stdout.write(_narrate(str(target), row))
+            # The memory cites — and drift-checks — the absolute path, but a
+            # raw /var/folders/… tempdir buries the one thing the demo is
+            # showing. Narrate paths relative to the throwaway root. The
+            # narration says so, and never presents a rewritten path as a
+            # verbatim quote of the stored body: `--json` shows the real
+            # absolute paths, and the two must not appear to disagree.
+            sys.stdout.write(_narrate(target, root, row))
 
         # Exit non-zero if the demo somehow failed to reproduce the drift —
         # that doubles as a self-test of the whole verify→drift→verdict path.
         raise SystemExit(0 if reproduced else 1)
 
 
-def _narrate(target: str, row: dict[str, Any] | None) -> str:
+def _narrate(target: Path, root: Path, row: dict[str, Any] | None) -> str:
     if row is None:
         return (
             "bettermemory try: the demo search returned no hit — that's a bug, "
             "please report it.\n"
         )
+    from pathlib import Path
+
     verification = row.get("verification", {}).get("status", "?")
     verdict = row.get("staleness_verdict", "?")
-    missing = row.get("path_drift", {}).get("missing", [])
+
+    def _rel(p: str) -> str:
+        """Path-aware, so Windows' backslashes strip as cleanly as POSIX's.
+        Anything outside the throwaway root is left exactly as it came."""
+        try:
+            return Path(p).relative_to(root).as_posix()
+        except ValueError:
+            return p
+
+    missing = [_rel(p) for p in row.get("path_drift", {}).get("missing", [])]
     lines = [
-        "bettermemory try — verification-grade memory in 60 seconds (offline)",
+        "bettermemory try — a memory going stale, live. Offline, instant.",
         "",
         "1. Stored a memory that cites a file, and attested it while the file existed:",
-        f'     "The session-auth token validator lives at `{target}` …"',
+        f"     cites: {_rel(str(target))}",
         f"     verification.status: {verification}",
         "",
         "2. The code got refactored — that file moved / was deleted.",
@@ -121,8 +141,10 @@ def _narrate(target: str, row: dict[str, Any] | None) -> str:
         "That's the difference: the model is TOLD a memory may have rotted (a path",
         "it cited is gone) before it relies on it — instead of quoting a stale fact.",
         "",
-        "Run `bettermemory try --json` to see the raw hit. Nothing was written to",
-        "your real store, and nothing hit the network.",
+        "Paths above are shown relative to the throwaway store root; the memory",
+        "itself cites absolute paths, which is what `bettermemory try --json`",
+        "prints. Nothing was written to your real store, and nothing hit the",
+        "network.",
         "",
     ]
     return "\n".join(lines)
