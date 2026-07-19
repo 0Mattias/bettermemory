@@ -257,8 +257,20 @@ class EvalReport:
     # window-scoped twin of `total_events_scanned` (which counts the
     # WHOLE log, because the invalidation markers are resolved before
     # the window filter). Equal to `total_events_scanned` when the
-    # window is all-time. Every per-window denominator surface must
-    # read this one, never the all-time count.
+    # window is all-time.
+    #
+    # Scope of the claim, stated exactly rather than aspirationally:
+    # every surface on THIS report that prints an event count under a
+    # window label reads this field — `render_text`'s "Events scanned"
+    # row and `_md_denominator_note`'s per-column line. The three
+    # sibling rollups (`ThresholdSweepReport`, `WideningPreviewReport`,
+    # `ToolUsageReport`) each carry their own `events_in_window` for
+    # the same reason; they are separate dataclasses, so this field
+    # governs only its own. `WideningDetailReport` publishes no event
+    # count at all and therefore carries no twin.
+    # `tests/test_eval.py::TestWindowedEventCounts` pins all four
+    # renderers so a window header can't drift back over an all-time
+    # denominator.
     events_in_window: int
 
     retrieval_occurrences: int  # denominator for memory_helped_rate
@@ -803,9 +815,11 @@ def render_text(report: EvalReport) -> str:
     scope_part = f" · scope={report.scope_filter}" if report.scope_filter else ""
     lines.append(f"bettermemory eval — last {window}{scope_part}")
     lines.append("─" * 60)
-    lines.append(
-        f"Events scanned                      {report.total_events_scanned:>5d}"
-    )
+    # Window-scoped, matching the "— last {window}" header above.
+    # `total_events_scanned` counts the WHOLE log (marker resolution
+    # runs ahead of the window filter), so printing it here published
+    # an all-time figure under a windowed label.
+    lines.append(f"Events scanned                      {report.events_in_window:>5d}")
     lines.append(
         f"Retrieval occurrences               {report.retrieval_occurrences:>5d}"
     )
@@ -1228,6 +1242,12 @@ class ThresholdSweepReport:
     generated_at: datetime
     window_seconds: int | None
     total_events_scanned: int
+    # Window-scoped twin of `total_events_scanned` — see the identically
+    # named field on `EvalReport`. `total_events_scanned` counts the
+    # whole log here too (the `silent_miss_cutoff` marker is resolved
+    # ahead of the window filter), so the renderer's "Events scanned"
+    # row under a "— last {window}" header must read THIS one.
+    events_in_window: int
     replayable_misses: int
     skipped_legacy_event_count: int
     v1_drift: int = 0
@@ -1238,6 +1258,7 @@ class ThresholdSweepReport:
             "generated_at": self.generated_at.isoformat(),
             "window_seconds": self.window_seconds,
             "total_events_scanned": self.total_events_scanned,
+            "events_in_window": self.events_in_window,
             "replayable_misses": self.replayable_misses,
             "skipped_legacy_event_count": self.skipped_legacy_event_count,
             "v1_drift": self.v1_drift,
@@ -1304,11 +1325,24 @@ def compute_threshold_sweep(
     # footnote with a row that was never valid telemetry.
     buffered: list[tuple[datetime | None, list[dict[str, Any]] | None, int]] = []
     total_events_scanned = 0
+    events_in_window = 0
     latest_miss_cutoff: datetime | None = None
     for ev in events:
         if not isinstance(ev, dict):
             continue
         total_events_scanned += 1
+        # Window membership decided up front — BEFORE the marker
+        # short-circuit and the kind dispatch below, both of which
+        # `continue` — so `events_in_window` covers exactly the
+        # population `total_events_scanned` does, only window-scoped.
+        # Same predicate (and same missing/unparseable-ts-is-out-of-
+        # window read) as the per-event filter further down.
+        if cutoff is None:
+            events_in_window += 1
+        else:
+            ev_ts = _parse_ts(ev.get("ts"))
+            if ev_ts is not None and ev_ts >= cutoff:
+                events_in_window += 1
         kind = ev.get("kind")
         # Marker resolution BEFORE the `since` window filter — global
         # semantics, mirroring `compute_eval`: a cutoff whose own ts
@@ -1419,6 +1453,7 @@ def compute_threshold_sweep(
         generated_at=now,
         window_seconds=int(since.total_seconds()) if since is not None else None,
         total_events_scanned=total_events_scanned,
+        events_in_window=events_in_window,
         replayable_misses=len(replayable),
         skipped_legacy_event_count=legacy_skipped,
         v1_drift=len(replayable) - v1_count,
@@ -1438,7 +1473,8 @@ def render_threshold_sweep_text(report: ThresholdSweepReport) -> str:
     )
     lines.append(f"bettermemory eval --threshold-sweep — last {window}")
     lines.append("─" * 60)
-    lines.append(f"Events scanned         {report.total_events_scanned:>5d}")
+    # Window-scoped, matching the header — see `EvalReport.events_in_window`.
+    lines.append(f"Events scanned         {report.events_in_window:>5d}")
     lines.append(f"Replayable misses      {report.replayable_misses:>5d}")
     if report.skipped_legacy_event_count > 0:
         lines.append(
@@ -1584,6 +1620,10 @@ class WideningPreviewReport:
     generated_at: datetime
     window_seconds: int | None
     total_events_scanned: int
+    # Window-scoped twin of `total_events_scanned` — see the identically
+    # named field on `EvalReport`. The renderer's "Events scanned" row
+    # sits under a "— last {window}" header and must read THIS one.
+    events_in_window: int
     audits_with_features: int
     audits_without_features: int
     repeat_audits_skipped: int
@@ -1595,6 +1635,7 @@ class WideningPreviewReport:
             "generated_at": self.generated_at.isoformat(),
             "window_seconds": self.window_seconds,
             "total_events_scanned": self.total_events_scanned,
+            "events_in_window": self.events_in_window,
             "audits_with_features": self.audits_with_features,
             "audits_without_features": self.audits_without_features,
             "repeat_audits_skipped": self.repeat_audits_skipped,
@@ -1614,6 +1655,10 @@ class _ReplayableAudits:
     """
 
     total_events_scanned: int
+    # Window-scoped twin — the widening renderers label their counts
+    # "— last {window}", so the preview report reads this, not the
+    # all-time tally.
+    events_in_window: int
     with_features: int
     without_features: int
     repeats_skipped: int
@@ -1637,6 +1682,7 @@ def _collect_replayable_audits(
     """
     cutoff: datetime | None = (now - since) if since is not None else None
     total_events_scanned = 0
+    events_in_window = 0
     without_features = 0
     repeats_skipped = 0
     rows: list[tuple[dict[str, Any], list[dict[str, Any]], int]] = []
@@ -1644,6 +1690,16 @@ def _collect_replayable_audits(
         if not isinstance(ev, dict):
             continue
         total_events_scanned += 1
+        # Window membership decided up front — BEFORE the kind dispatch
+        # below `continue`s — so `events_in_window` covers exactly the
+        # population `total_events_scanned` does, only window-scoped.
+        # Same predicate as the per-event filter a few lines down.
+        if cutoff is None:
+            events_in_window += 1
+        else:
+            window_ts = _parse_ts(ev.get("ts"))
+            if window_ts is not None and window_ts >= cutoff:
+                events_in_window += 1
         if ev.get("kind") != "turn_audited":
             continue
         ts = _parse_ts(ev.get("ts"))
@@ -1680,6 +1736,7 @@ def _collect_replayable_audits(
         rows.append((ev, top_hits, recent))
     return _ReplayableAudits(
         total_events_scanned=total_events_scanned,
+        events_in_window=events_in_window,
         with_features=len(rows),
         without_features=without_features,
         repeats_skipped=repeats_skipped,
@@ -1736,6 +1793,7 @@ def compute_widening_preview(
         generated_at=now,
         window_seconds=int(since.total_seconds()) if since is not None else None,
         total_events_scanned=total_events_scanned,
+        events_in_window=walk.events_in_window,
         audits_with_features=with_features,
         audits_without_features=without_features,
         repeat_audits_skipped=repeats_skipped,
@@ -1754,7 +1812,8 @@ def render_widening_preview_text(report: WideningPreviewReport) -> str:
     )
     lines.append(f"bettermemory eval --widening-preview — last {window}")
     lines.append("─" * 60)
-    lines.append(f"Events scanned              {report.total_events_scanned:>5d}")
+    # Window-scoped, matching the header — see `EvalReport.events_in_window`.
+    lines.append(f"Events scanned              {report.events_in_window:>5d}")
     lines.append(f"Replayable audited turns    {report.audits_with_features:>5d}")
     if report.audits_without_features:
         lines.append(
@@ -2332,15 +2391,72 @@ _IN_SESSION_SIDE_EFFECT_KINDS: frozenset[str] = frozenset(
 #
 # INVARIANT: a "session" observed only through these kinds never
 # existed as a client session. Every consumer that counts sessions must
-# exclude them, and they must all read THIS constant so they cannot
-# drift apart: ``compute_report``'s published distinct-session tally
-# (counting them publishes phantom sessions in the store-shape line)
-# and doctor's ``_check_audit_turn_cadence`` census (whose
-# ``_ADMIN_EVENT_KINDS`` is pinned as a superset of this derivation by
-# the parity test in tests/test_doctor.py).
+# exclude them, and none of them may keep a hand-written copy of the
+# roster — a fork drifts the moment a new admin kind lands here.
+# ``tests/test_eval.py::TestAdminRecordedParity`` enforces both halves
+# mechanically: it AST-scans ``src/`` and ``tests/`` for any literal
+# set of event kinds that looks like a fork of this roster and asserts
+# each one equals this constant exactly, and it re-checks the same
+# equality against every admin-kind attribute reachable in
+# ``bettermemory.doctor``'s namespace. A future consumer that copies
+# the two names into its own frozenset trips the scan the moment its
+# copy diverges.
+#
+# Known consumers today: ``compute_report``'s published
+# distinct-session tally (counting them publishes phantom sessions in
+# the store-shape line) and doctor's ``_check_audit_turn_cadence``
+# census.
 ADMIN_RECORDED_EVENT_KINDS: frozenset[str] = (
     _KNOWN_SIDE_EFFECT_KINDS - _IN_SESSION_SIDE_EFFECT_KINDS
 )
+
+# The SECOND exclusion axis, and the one kind-based exclusion
+# structurally cannot cover: an admin CLI operation that records under
+# a kind which is ALSO a legitimate in-session kind.
+#
+# ``bettermemory consolidate --acknowledge-debt`` is the live instance.
+# It writes ``kind="use", outcome="applied", auto=False`` rows — the
+# exact shape a model's ``memory_record_use`` call produces — under a
+# fresh throwaway ``SessionState()`` id, so excluding by kind would
+# have to exclude ``use`` wholesale and blind the tally to every real
+# client session. What separates the two is ATTRIBUTION: every admin
+# CLI writer stamps ``attribution="cli_<operation>"``
+# (``cli_acknowledge_debt`` on the use rows,
+# ``cli_acknowledge_misses`` on the cutoff marker), while every
+# in-session producer stamps ``"model"``, ``"hook"``, or ``"auto"``
+# (see the module docstring's attribution tier). A prefix rule rather
+# than a hand-listed roster, deliberately: a new admin CLI operation
+# lands on the correct side by construction instead of quietly
+# inflating the count until someone notices.
+#
+# Scope of the exclusion is the SESSION TALLY ONLY. The acknowledge-debt
+# rows are genuine endorsements — that is the whole point of the
+# subcommand — so they keep counting toward ``applied_total`` and the
+# endorsement rate. What they must not do is publish a session that
+# never had a client attached to it.
+ADMIN_RECORDED_ATTRIBUTION_PREFIX = "cli_"
+
+
+def is_admin_recorded_event(ev: dict[str, Any]) -> bool:
+    """True when ``ev`` was written by an admin/CLI surface rather than
+    from inside a live client session.
+
+    THE predicate for session counting — both exclusion axes in one
+    place so a consumer can't wire up half of it. Kind-based
+    (``ADMIN_RECORDED_EVENT_KINDS``) catches the kinds only an admin
+    surface ever emits; attribution-based
+    (``ADMIN_RECORDED_ATTRIBUTION_PREFIX``) catches admin operations
+    riding a kind that is also legitimately in-session. A
+    non-string/absent ``attribution`` reads as in-session, which is the
+    correct back-compat fall-through: every pre-attribution event came
+    off a real client.
+    """
+    if ev.get("kind") in ADMIN_RECORDED_EVENT_KINDS:
+        return True
+    attribution = ev.get("attribution")
+    return isinstance(attribution, str) and attribution.startswith(
+        ADMIN_RECORDED_ATTRIBUTION_PREFIX
+    )
 
 
 @dataclass
@@ -2380,6 +2496,10 @@ class ToolUsageReport:
     generated_at: datetime
     window_seconds: int | None
     total_events_scanned: int
+    # Window-scoped twin of `total_events_scanned` — see the identically
+    # named field on `EvalReport`. The renderer's "Events scanned" row
+    # sits under a "— last {window}" header and must read THIS one.
+    events_in_window: int
     total_tool_calls: int
     rows: list[ToolUsageRow] = field(default_factory=list)
     unmapped_event_kinds: dict[str, int] = field(default_factory=dict)
@@ -2389,6 +2509,7 @@ class ToolUsageReport:
             "generated_at": self.generated_at.isoformat(),
             "window_seconds": self.window_seconds,
             "total_events_scanned": self.total_events_scanned,
+            "events_in_window": self.events_in_window,
             "total_tool_calls": self.total_tool_calls,
             "rows": [r.to_dict() for r in self.rows],
             "unmapped_event_kinds": dict(self.unmapped_event_kinds),
@@ -2418,6 +2539,7 @@ def compute_tool_usage(
         per_tool[tool] = 0
     unmapped: dict[str, int] = {}
     total_events_scanned = 0
+    events_in_window = 0
     total_tool_calls = 0
 
     for ev in events:
@@ -2428,6 +2550,7 @@ def compute_tool_usage(
             ts = _parse_ts(ev.get("ts"))
             if ts is None or ts < cutoff:
                 continue
+        events_in_window += 1
         kind = ev.get("kind")
         if not isinstance(kind, str):
             continue
@@ -2459,6 +2582,7 @@ def compute_tool_usage(
         generated_at=now,
         window_seconds=int(since.total_seconds()) if since is not None else None,
         total_events_scanned=total_events_scanned,
+        events_in_window=events_in_window,
         total_tool_calls=total_tool_calls,
         rows=rows,
         unmapped_event_kinds=unmapped,
@@ -2478,7 +2602,8 @@ def render_tool_usage_text(report: ToolUsageReport) -> str:
     )
     lines.append(f"bettermemory eval --tool-usage — last {window}")
     lines.append("─" * 60)
-    lines.append(f"Events scanned     {report.total_events_scanned:>5d}")
+    # Window-scoped, matching the header — see `EvalReport.events_in_window`.
+    lines.append(f"Events scanned     {report.events_in_window:>5d}")
     lines.append(f"Tool calls         {report.total_tool_calls:>5d}")
     lines.append("")
     lines.append(f"{'tool':<32s} {'count':>7s}  share")
@@ -2599,8 +2724,10 @@ def compute_report(
     means the window is all-time and the renderer shows one column.
 
     Distinct sessions are COUNTED via the same ``session_id`` /
-    ``session`` fallback chain ``_silent_miss_from_event`` reads; the
-    ids themselves never land on the document.
+    ``session`` fallback chain ``_silent_miss_from_event`` reads,
+    minus every event ``is_admin_recorded_event`` rejects (admin/CLI
+    writers run under a throwaway session id and would each publish a
+    phantom session); the ids themselves never land on the document.
     """
     now = now or datetime.now(timezone.utc)
     memory_list = list(memories)
@@ -2630,9 +2757,11 @@ def compute_report(
     for ev in event_list:
         if not isinstance(ev, dict):
             continue
-        if ev.get("kind") in ADMIN_RECORDED_EVENT_KINDS:
+        if is_admin_recorded_event(ev):
             # Recorded outside any client session under a throwaway
-            # session id — see ADMIN_RECORDED_EVENT_KINDS. Counting one
+            # session id — by kind (doctor --fix, the cutoff marker) or
+            # by `cli_*` attribution (acknowledge-debt's `use` rows,
+            # which wear a kind real sessions also use). Counting one
             # would publish a session that never existed.
             continue
         sid = ev.get("session_id") or ev.get("session")
@@ -2961,6 +3090,8 @@ __all__ = [
     "WIDENING_RULES",
     "TOOLS_WITHOUT_TELEMETRY",
     "ADMIN_RECORDED_EVENT_KINDS",
+    "ADMIN_RECORDED_ATTRIBUTION_PREFIX",
+    "is_admin_recorded_event",
     "DEFAULT_SINCE_SPEC",
     "DEFAULT_ENDORSEMENT_MIN_RETRIEVALS",
     "DEFAULT_SILENT_MISS_LIMIT",

@@ -9,6 +9,7 @@ end-to-end CLI smoke through ``main()``.
 
 from __future__ import annotations
 
+import ast
 import json
 import os
 import sys
@@ -19,6 +20,7 @@ from typing import Any
 import pytest
 
 from bettermemory.eval import (
+    ADMIN_RECORDED_ATTRIBUTION_PREFIX,
     ADMIN_RECORDED_EVENT_KINDS,
     DEFAULT_ENDORSEMENT_MIN_RETRIEVALS,
     THRESHOLD_RULES,
@@ -32,11 +34,14 @@ from bettermemory.eval import (
     compute_report,
     compute_threshold_sweep,
     compute_tool_usage,
+    compute_widening_preview,
+    is_admin_recorded_event,
     parse_since,
     render_report_markdown,
     render_text,
     render_threshold_sweep_text,
     render_tool_usage_text,
+    render_widening_preview_text,
 )
 from bettermemory.events import Recorder
 from bettermemory.models import (
@@ -2595,3 +2600,436 @@ class TestReportCLI:
             _run_eval_cli(tmp_path / "memdir", "--output", str(tmp_path / "x.md"))
         assert excinfo.value.code == 2
         assert "--output only applies to --report" in capsys.readouterr().err
+
+
+# ---------------------------------------------------------------------------
+# Windowed "Events scanned" denominators
+# ---------------------------------------------------------------------------
+#
+# Every text renderer stamps a `— last {window}` header and then prints an
+# "Events scanned" row underneath it. The rollups each keep TWO event
+# tallies: `total_events_scanned` walks the WHOLE log (the invalidation
+# markers are resolved ahead of the window filter, so the walk cannot stop
+# at the window edge) and `events_in_window` is its window-scoped twin.
+# Printing the all-time figure under a windowed header publishes a number
+# that is simply not what the label says it is — the same defect
+# `_md_denominator_note` was fixed for. These pin all four renderers.
+
+_WINDOW_NOW = datetime(2026, 5, 20, 12, 0, tzinfo=timezone.utc)
+_WINDOW_SINCE = timedelta(days=7)
+# Aged out of the 7d window — counted all-time, never in-window.
+_AGED_TS = "2026-01-01T00:00:00.000+00:00"
+_FRESH_TS = "2026-05-19T00:00:00.000+00:00"
+
+
+def _events_scanned_row(text: str) -> int:
+    """The integer on the renderer's ``Events scanned`` row."""
+    for line in text.splitlines():
+        if line.startswith("Events scanned"):
+            return int(line.split()[-1])
+    raise AssertionError(f"no 'Events scanned' row in rendering:\n{text}")
+
+
+def _audit_event(ts: str) -> dict[str, Any]:
+    """A replayable (3.14+, miss-capable, non-repeat) ``turn_audited``."""
+    return _ev(
+        "turn_audited",
+        ts=ts,
+        verdict="ok",
+        recent_retrieval_count=0,
+        top_hits=[_hit(relevance="high", score=100.0)],
+    )
+
+
+class TestWindowedEventCounts:
+    """One aged-out event + one in-window event through each renderer:
+    the printed count must be 1 (the window), never 2 (the log)."""
+
+    def test_render_text_events_scanned_is_window_scoped(self) -> None:
+        mem = _mem()
+        events = [
+            _ev("search", ts=_AGED_TS, returned=[mem.id]),
+            _ev("search", ts=_FRESH_TS, returned=[mem.id]),
+        ]
+        report = compute_eval(
+            memories=[mem], events=events, now=_WINDOW_NOW, since=_WINDOW_SINCE
+        )
+        # Non-vacuity: the two tallies genuinely disagree on this stream,
+        # so the assertion below can distinguish them.
+        assert report.total_events_scanned == 2
+        assert report.events_in_window == 1
+        text = render_text(report)
+        assert "— last 7d" in text
+        assert _events_scanned_row(text) == 1
+
+    def test_threshold_sweep_events_scanned_is_window_scoped(self) -> None:
+        events = [
+            _miss_event(top_hits=[_hit()], ts=_AGED_TS),
+            _miss_event(top_hits=[_hit()], ts=_FRESH_TS),
+        ]
+        report = compute_threshold_sweep(events, now=_WINDOW_NOW, since=_WINDOW_SINCE)
+        assert report.total_events_scanned == 2
+        assert report.events_in_window == 1
+        text = render_threshold_sweep_text(report)
+        assert "— last 7d" in text
+        assert _events_scanned_row(text) == 1
+
+    def test_widening_preview_events_scanned_is_window_scoped(self) -> None:
+        events = [_audit_event(_AGED_TS), _audit_event(_FRESH_TS)]
+        report = compute_widening_preview(events, now=_WINDOW_NOW, since=_WINDOW_SINCE)
+        assert report.total_events_scanned == 2
+        assert report.events_in_window == 1
+        # The aged-out audit is dropped by the window filter, not
+        # miscounted as feature-less.
+        assert report.audits_with_features == 1
+        assert report.audits_without_features == 0
+        text = render_widening_preview_text(report)
+        assert "— last 7d" in text
+        assert _events_scanned_row(text) == 1
+
+    def test_tool_usage_events_scanned_is_window_scoped(self) -> None:
+        events = [
+            _ev("search", ts=_AGED_TS),
+            _ev("search", ts=_FRESH_TS),
+        ]
+        report = compute_tool_usage(events, now=_WINDOW_NOW, since=_WINDOW_SINCE)
+        assert report.total_events_scanned == 2
+        assert report.events_in_window == 1
+        assert report.total_tool_calls == 1
+        text = render_tool_usage_text(report)
+        assert "— last 7d" in text
+        assert _events_scanned_row(text) == 1
+
+    def test_all_time_window_collapses_the_two_tallies(self) -> None:
+        """The complement: with no `--since`, the window IS the log, so
+        every rollup's twin equals its all-time tally. Guards against a
+        "fix" that makes the window count structurally smaller."""
+        events = [_ev("search", ts=_AGED_TS), _ev("search", ts=_FRESH_TS)]
+        for report in (
+            compute_eval(memories=[], events=events, now=_WINDOW_NOW),
+            compute_threshold_sweep(events, now=_WINDOW_NOW),
+            compute_widening_preview(events, now=_WINDOW_NOW),
+            compute_tool_usage(events, now=_WINDOW_NOW),
+        ):
+            assert report.events_in_window == report.total_events_scanned == 2
+
+    def test_unparseable_ts_counts_as_out_of_window_everywhere(self) -> None:
+        """An event with a broken `ts` is out-of-window under the same
+        conservative read the per-event filters apply — the twin must not
+        drift from the filter it mirrors."""
+        events = [_ev("search", ts="not-a-timestamp"), _ev("search", ts=_FRESH_TS)]
+        for report in (
+            compute_eval(
+                memories=[], events=events, now=_WINDOW_NOW, since=_WINDOW_SINCE
+            ),
+            compute_threshold_sweep(events, now=_WINDOW_NOW, since=_WINDOW_SINCE),
+            compute_widening_preview(events, now=_WINDOW_NOW, since=_WINDOW_SINCE),
+            compute_tool_usage(events, now=_WINDOW_NOW, since=_WINDOW_SINCE),
+        ):
+            assert report.total_events_scanned == 2
+            assert report.events_in_window == 1
+
+
+# ---------------------------------------------------------------------------
+# ADMIN_RECORDED_EVENT_KINDS — parity pin against forked copies
+# ---------------------------------------------------------------------------
+#
+# The constant's INVARIANT comment claims every session-counting consumer
+# reads THAT constant and none keeps its own copy. A comment cannot
+# enforce that, and the claim was false at its own introduction (doctor
+# carried a hand-written frozenset of the same two names). These tests
+# make the claim mechanical: any literal set of event kinds anywhere in
+# `src/` or `tests/` that looks like a fork of the admin roster must equal
+# it exactly, so a copy that drifts — or a new consumer that forks one —
+# fails CI instead of silently disagreeing about which sessions are real.
+
+
+def _literal_str_set(node: ast.AST) -> frozenset[str] | None:
+    """The string members of a literal ``{...}`` / ``frozenset({...})`` /
+    ``set([...])`` expression, or ``None`` when the node isn't one (or
+    carries a non-literal member, which we can't evaluate statically)."""
+    elts: list[ast.expr]
+    if isinstance(node, ast.Set):
+        elts = list(node.elts)
+    elif (
+        isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id in ("frozenset", "set")
+        and len(node.args) == 1
+        and isinstance(node.args[0], (ast.Set, ast.List, ast.Tuple))
+    ):
+        elts = list(node.args[0].elts)
+    else:
+        return None
+    members: list[str] = []
+    for elt in elts:
+        if not (isinstance(elt, ast.Constant) and isinstance(elt.value, str)):
+            return None
+        members.append(elt.value)
+    return frozenset(members)
+
+
+def _admin_roster_forks(
+    source: str, label: str
+) -> list[tuple[str, str, frozenset[str]]]:
+    """Every assignment in ``source`` whose value is a literal string set
+    that reads as a copy of the admin roster.
+
+    The predicate — names at least one admin-only kind AND no in-session
+    kind — is what separates a fork from the two legitimate rosters in
+    eval.py: `_KNOWN_SIDE_EFFECT_KINDS` is the superset (it carries
+    `search_miss`, an in-session kind, so it fails the second clause) and
+    `ADMIN_RECORDED_EVENT_KINDS` itself is a set-difference expression,
+    not a literal, so it is never a candidate.
+    """
+    found: list[tuple[str, str, frozenset[str]]] = []
+    for node in ast.walk(ast.parse(source)):
+        targets: list[ast.expr]
+        if isinstance(node, ast.Assign):
+            targets = list(node.targets)
+            value: ast.expr | None = node.value
+        elif isinstance(node, ast.AnnAssign) and node.value is not None:
+            targets = [node.target]
+            value = node.value
+        else:
+            continue
+        if value is None:
+            continue
+        members = _literal_str_set(value)
+        if members is None:
+            continue
+        if not (members & ADMIN_RECORDED_EVENT_KINDS):
+            continue
+        if members & _IN_SESSION_SIDE_EFFECT_KINDS:
+            continue
+        name = next(
+            (t.id for t in targets if isinstance(t, ast.Name)),
+            "<unnamed>",
+        )
+        found.append((label, name, members))
+    return found
+
+
+class TestAdminRecordedParity:
+    def test_fork_detector_catches_a_drifted_copy(self) -> None:
+        """Pin the pin. The scan below is only worth anything if its
+        extractor actually fires; run it over a synthetic module that
+        forks the roster and drops a kind, and confirm it is reported.
+        Without this the real-tree scan could pass vacuously the day the
+        last literal copy disappears."""
+        drifted = sorted(ADMIN_RECORDED_EVENT_KINDS)[:1]
+        synthetic = f"_MY_ADMIN_KINDS = frozenset({{{drifted[0]!r}}})\n"
+        forks = _admin_roster_forks(synthetic, "<synthetic>")
+        assert [(name, members) for _, name, members in forks] == [
+            ("_MY_ADMIN_KINDS", frozenset(drifted))
+        ]
+        # ...and the drifted copy is exactly what the real assertion
+        # rejects: it is not equal to the canonical roster.
+        assert frozenset(drifted) != ADMIN_RECORDED_EVENT_KINDS
+
+    def test_no_module_forks_the_admin_roster(self) -> None:
+        """The invariant, mechanically. Every literal admin-kind set in
+        the repo must equal ``ADMIN_RECORDED_EVENT_KINDS`` — a consumer
+        may spell its own alias, but it may not disagree about the
+        contents, and the day eval.py grows a third admin kind every
+        surviving copy fails until it is reconciled (or, better, deleted
+        in favour of importing the constant)."""
+        repo_root = Path(__file__).resolve().parents[1]
+        forks: list[tuple[str, str, frozenset[str]]] = []
+        for tree_dir in (repo_root / "src", repo_root / "tests"):
+            for py_file in sorted(tree_dir.rglob("*.py")):
+                forks.extend(
+                    _admin_roster_forks(
+                        py_file.read_text(encoding="utf-8"),
+                        str(py_file.relative_to(repo_root)),
+                    )
+                )
+        drifted = [
+            (label, name, sorted(members))
+            for label, name, members in forks
+            if members != ADMIN_RECORDED_EVENT_KINDS
+        ]
+        assert not drifted, (
+            f"admin-kind roster forked and drifted: {drifted}. Every "
+            f"session-counting consumer must read "
+            f"eval.ADMIN_RECORDED_EVENT_KINDS "
+            f"({sorted(ADMIN_RECORDED_EVENT_KINDS)}) rather than keeping a "
+            f"hand-written copy — a copy that disagrees means two surfaces "
+            f"disagree about which sessions ever existed."
+        )
+
+    def test_doctor_admin_kind_attributes_equal_the_canonical_roster(self) -> None:
+        """The one consumer outside eval.py, checked by value rather than
+        by name so it survives the constant being imported, aliased, or
+        renamed on doctor's side. Any module attribute of doctor whose
+        name mentions ADMIN and whose value is a set of strings must be
+        this roster."""
+        from bettermemory import doctor
+
+        candidates = {
+            name: value
+            for name, value in vars(doctor).items()
+            if "ADMIN" in name.upper()
+            and isinstance(value, (set, frozenset))
+            and all(isinstance(x, str) for x in value)
+        }
+        mismatched = {
+            name: sorted(value)
+            for name, value in candidates.items()
+            if frozenset(value) != ADMIN_RECORDED_EVENT_KINDS
+        }
+        assert not mismatched, (
+            f"doctor's admin-kind set(s) {mismatched} disagree with "
+            f"eval.ADMIN_RECORDED_EVENT_KINDS "
+            f"({sorted(ADMIN_RECORDED_EVENT_KINDS)}). The cadence census and "
+            f"the published session tally would then exclude different "
+            f"events from 'is this a real client session?'."
+        )
+
+
+# ---------------------------------------------------------------------------
+# Attribution-based admin exclusion — the axis kinds cannot cover
+# ---------------------------------------------------------------------------
+
+
+class TestAdminRecordedAttribution:
+    def test_acknowledge_debt_row_does_not_invent_a_session(self) -> None:
+        """`bettermemory consolidate --acknowledge-debt` records
+        ``kind="use"`` — a kind real client sessions also emit — under a
+        fresh throwaway ``SessionState()`` id. Kind-based exclusion
+        structurally cannot catch it without blinding the tally to every
+        genuine session, so the exclusion runs off ``attribution``. Left
+        unexcluded, one acknowledge-debt run publishes a phantom session
+        in the report's store-shape line."""
+        events = [
+            _ev("search", session="s-real"),
+            _ev(
+                "use",
+                session="01JCLI0000000000000000000A",
+                ids=["mem-1"],
+                outcome="applied",
+                auto=False,
+                attribution="cli_acknowledge_debt",
+                note="bettermemory consolidate --acknowledge-debt",
+            ),
+        ]
+        doc = compute_report([], events, version="0-test")
+        assert doc.distinct_session_count == 1
+
+    def test_in_session_use_events_still_count(self) -> None:
+        """The complement — over-excluding would under-report the store
+        shape just as badly. Every in-session attribution tier (and the
+        pre-attribution back-compat shape) keeps its session."""
+        events = [
+            _ev("use", session="s-model", attribution="model"),
+            _ev("use", session="s-hook", attribution="hook"),
+            _ev("use", session="s-auto", auto=True, attribution="auto"),
+            _ev("use", session="s-legacy"),  # pre-attribution event
+        ]
+        doc = compute_report([], events, version="0-test")
+        assert doc.distinct_session_count == 4
+
+    def test_exclusion_is_scoped_to_the_session_tally(self) -> None:
+        """acknowledge-debt rows ARE genuine endorsements — recording
+        them is the entire point of the subcommand — so they must keep
+        counting toward the applied/endorsement denominators. Only the
+        session tally rejects them."""
+        mem = _mem()
+        events = [
+            _ev(
+                "use",
+                session="01JCLI0000000000000000000A",
+                ids=[mem.id],
+                outcome="applied",
+                auto=False,
+                attribution="cli_acknowledge_debt",
+            )
+        ]
+        doc = compute_report([mem], events, version="0-test")
+        assert doc.distinct_session_count == 0
+        assert doc.alltime_eval.applied_total == 1
+        assert doc.alltime_eval.applied_explicit == 1
+
+    def test_predicate_reads_both_axes(self) -> None:
+        events_and_expected: list[tuple[dict[str, Any], bool]] = [
+            ({"kind": "doctor_fix"}, True),
+            ({"kind": "silent_miss_cutoff"}, True),
+            ({"kind": "use", "attribution": "cli_acknowledge_debt"}, True),
+            (
+                {"kind": "silent_miss_cutoff", "attribution": "cli_acknowledge_misses"},
+                True,
+            ),
+            ({"kind": "search_miss"}, False),
+            ({"kind": "use", "attribution": "hook"}, False),
+            ({"kind": "search"}, False),
+            # Non-string attribution can't be a prefix match and must not
+            # raise — the log is plaintext and hand-editable.
+            ({"kind": "use", "attribution": 7}, False),
+        ]
+        for ev, expected in events_and_expected:
+            assert is_admin_recorded_event(ev) is expected, ev
+
+    def test_recorded_events_actually_carry_the_attribution_field(
+        self, tmp_path: Path
+    ) -> None:
+        """The exclusion is built on a field that must survive the real
+        write path — `Recorder.record` merges arbitrary kwargs but also
+        runs a redaction pass, and a redacted-away `attribution` would
+        make the whole mechanism a no-op on production logs. Round-trip
+        the acknowledge-debt shape through the real recorder."""
+        from bettermemory.events import iter_all_events
+
+        recorder = Recorder(root=tmp_path, session_id="01JCLI0000000000000000000A")
+        recorder.record(
+            "use",
+            ids=["mem-1"],
+            outcome="applied",
+            auto=False,
+            attribution="cli_acknowledge_debt",
+            note="bettermemory consolidate --acknowledge-debt",
+        )
+        written = [e for e in iter_all_events(tmp_path) if e.get("kind") == "use"]
+        assert len(written) == 1
+        assert written[0]["attribution"] == "cli_acknowledge_debt"
+        assert is_admin_recorded_event(written[0]) is True
+        # And end to end: the real on-disk shape publishes no session.
+        doc = compute_report([], written, version="0-test")
+        assert doc.distinct_session_count == 0
+
+    def test_every_literal_attribution_in_src_picks_a_side(self) -> None:
+        """The prefix rule only works if admin CLI writers keep stamping
+        ``cli_*``. AST-scan every literal ``attribution=`` keyword in
+        ``src/`` and assert each is either an in-session tier value or
+        prefixed — a new admin CLI op that invents
+        ``attribution="acknowledge_foo"`` trips here rather than quietly
+        inflating the published session count."""
+        in_session_tiers = {"model", "hook", "auto"}
+        src_root = Path(__file__).resolve().parents[1] / "src" / "bettermemory"
+        discovered: set[str] = set()
+        for py_file in sorted(src_root.rglob("*.py")):
+            for node in ast.walk(ast.parse(py_file.read_text(encoding="utf-8"))):
+                if not isinstance(node, ast.Call):
+                    continue
+                for kw in node.keywords:
+                    if (
+                        kw.arg == "attribution"
+                        and isinstance(kw.value, ast.Constant)
+                        and isinstance(kw.value.value, str)
+                    ):
+                        discovered.add(kw.value.value)
+        # Non-vacuity: the CLI writers this mechanism targets are present.
+        assert "cli_acknowledge_debt" in discovered
+        stray = {
+            value
+            for value in discovered
+            if value not in in_session_tiers
+            and not value.startswith(ADMIN_RECORDED_ATTRIBUTION_PREFIX)
+        }
+        assert not stray, (
+            f"attribution value(s) {sorted(stray)} are neither an in-session "
+            f"tier {sorted(in_session_tiers)} nor prefixed "
+            f"{ADMIN_RECORDED_ATTRIBUTION_PREFIX!r}. If they come from an "
+            f"admin/CLI surface running under a throwaway session id, "
+            f"rename them to the prefix so `is_admin_recorded_event` "
+            f"excludes them from the published session tally."
+        )
