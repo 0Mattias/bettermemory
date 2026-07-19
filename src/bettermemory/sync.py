@@ -217,10 +217,31 @@ class _GitignoreReconcile:
     `error` is a human-readable reason the reconcile stood down (`None`
     on success). When it is set, `added` is always empty: a stand-down
     changes nothing on disk.
+
+    `failed_stage` names WHICH half stood down — `"read"` or `"write"`,
+    and `None` on success. The two are not interchangeable to every
+    caller, so collapsing them onto `error` alone loses information a
+    caller legitimately needs:
+
+    * A READ stand-down means we never learned what the file contains,
+      so we cannot enumerate what an overwrite would destroy. Declining
+      is the CORRECT outcome, not a failure to do the job.
+    * A WRITE stand-down means we knew exactly what to append and could
+      not. The job was attempted and did not happen.
+
+    `push`/`init` treat both the same (never fail the sync for a healing
+    side-effect), which is why the distinction lives here rather than in
+    two return types. `doctor --fix` does not: it reports an honest
+    not-applied FixResult for the write case and stays silent for the
+    read case, pinned by
+    `test_fix_sync_gitignore_reports_write_failure` and
+    `test_fix_sync_gitignore_leaves_an_unreadable_gitignore_alone`
+    respectively.
     """
 
     added: list[str]
     error: str | None = None
+    failed_stage: str | None = None
 
 
 def _write_gitignore_or_stand_down(
@@ -261,7 +282,7 @@ def _write_gitignore_or_stand_down(
             f"unenforced: {', '.join(missing)}"
         )
         log.warning("%s", reason)
-        return _GitignoreReconcile(added=[], error=reason)
+        return _GitignoreReconcile(added=[], error=reason, failed_stage="write")
     return _GitignoreReconcile(added=missing)
 
 
@@ -320,7 +341,7 @@ def _reconcile_gitignore(root: Path) -> _GitignoreReconcile:
             f"from this sync"
         )
         log.warning("%s", reason)
-        return _GitignoreReconcile(added=[], error=reason)
+        return _GitignoreReconcile(added=[], error=reason, failed_stage="read")
 
     if not current.strip():
         # No usable gitignore (absent, empty, whitespace-only). Nothing

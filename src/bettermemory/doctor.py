@@ -2708,7 +2708,7 @@ def _fix_sync_gitignore(
         return None
     gitignore = directory / ".gitignore"
     try:
-        added = _reconcile_gitignore(directory)
+        outcome = _reconcile_gitignore(directory)
     except OSError as exc:
         return FixResult(
             check="sync_tracked_ignored",
@@ -2720,10 +2720,41 @@ def _fix_sync_gitignore(
             error=f"{exc.__class__.__name__}: {exc}",
             details={"gitignore": str(gitignore)},
         )
+    # `_reconcile_gitignore` returns a `_GitignoreReconcile`, not the bare
+    # `list[str]` it once did, and it no longer RAISES on a write failure
+    # — it stands down and reports, so the `except OSError` above no
+    # longer sees that case. The two stand-down halves are not equivalent
+    # to this fixer, so branch on `failed_stage` rather than on `error`:
+    #
+    # * WRITE — we knew exactly what to append and could not (ENOSPC,
+    #   read-only mount, a directory at the path). The user asked --fix
+    #   to do a thing, it was attempted, it did not happen. Report an
+    #   honest not-applied FixResult carrying the reason.
+    # * READ — we never learned what the file contains, so we cannot
+    #   enumerate what an overwrite would destroy. Declining is the
+    #   CORRECT outcome rather than a failed job: the finding stays
+    #   manual with its hint, the bytes are untouched, and sync logs
+    #   why. Manufacturing a FixResult here would report a refusal we
+    #   are right to make as a failure.
+    #
+    # Pinned by `test_fix_sync_gitignore_reports_write_failure` and
+    # `test_fix_sync_gitignore_leaves_an_unreadable_gitignore_alone`.
+    if outcome.failed_stage == "write":
+        return FixResult(
+            check="sync_tracked_ignored",
+            action="refresh_gitignore",
+            applied=False,
+            before_status=diagnosis.status,
+            after_status=diagnosis.status,
+            message=f"refreshing {gitignore} failed",
+            error=outcome.error,
+            details={"gitignore": str(gitignore)},
+        )
+    added = outcome.added
     if not added:
-        # Every canonical pattern is already covered (or the file is
-        # unreadable and was deliberately left alone) — the remaining
-        # remediation is the manual untrack; nothing auto-applicable.
+        # Either every canonical pattern is already covered, or the read
+        # half stood down. The remaining remediation is the manual
+        # untrack; nothing auto-applicable.
         return None
     after = _check_sync_tracked_ignored(directory)
     plural = "" if len(added) == 1 else "s"
