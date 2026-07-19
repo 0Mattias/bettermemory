@@ -27,6 +27,8 @@ What is checked
 4. ``line-ref`` — a ``file.py:NNN`` citation must land in range, and for
    the markdown-linked form the cited region must actually contain one of
    the code identifiers named in the surrounding paragraph.
+5. ``file-count`` — "N files are named ``x.py``" must match how many files
+   the repo scan actually resolves for that name.
 
 Sources are scoped by *rot rate*, which is the core design decision
 -------------------------------------------------------------------
@@ -46,9 +48,13 @@ fast each claim shape decays:
   rot mechanically with every refactor — pinning them against frozen
   release notes would generate permanent allowlist churn and teach
   everyone to ignore this file.
+* ``file-count`` claims are checked everywhere **except** the changelog,
+  for the same reason: the count is a property of the tree as it stands
+  now, so a frozen release note that was right when written would drift
+  into permanent allowlist churn.
 
-On src/ docstrings: INCLUDED, for ``path`` and ``symbol`` claims only
----------------------------------------------------------------------
+On src/ and tests/ docstrings: INCLUDED
+---------------------------------------
 This was decided by measurement, not taste. Across all 812 docstrings in
 ``src/``: 11 checked path claims, 3 symbol claims, 0 line-refs, 0
 test-counts. Including them adds real coverage at zero allowlist cost —
@@ -56,11 +62,34 @@ both misfires found there (an illustrative ``docs/y.md``, and
 builder.py's past-tense "``_register_tools`` lived in ``server.py``")
 are handled by extractor rules, not exemptions.
 
-The honest caveat: the docstring instances that actually shipped false
-were *semantic* ("this returns X", "the lock is held here"). No regex
-decides those, so scanning docstrings would not have caught them. The
-claims gained here are prospective coverage, not a retrofit — which is
-also why src/ is scanned for these two shapes only.
+``tests/`` docstrings were added for the same reason, and after the same
+measurement: scanning all 2483 of them for ``path`` and ``symbol``
+claims produces zero failures, so the coverage is free. Only
+docstrings are read, never statement bodies — the self-tests below are
+built from deliberately invalid paths and symbols that exist precisely
+to be rejected, so scanning bodies would misfire by construction.
+**Corollary for anyone editing this file: keep synthetic examples in
+code, not in docstrings.** Every rule here now applies to this file's
+own prose, and the extractors do not know that a quoted counter-example
+is only being discussed.
+
+Scanning ``tests/`` matters because this file is itself shipped prose,
+and its first commit miscounted the files carrying the name
+``verify.py`` — asserting three where the repo holds two. Excluding
+``tests/`` had made the guard structurally unable to audit its own
+docstrings.
+
+The honest caveat, in two parts:
+
+* Extending the corpus to ``tests/`` would *not* by itself have caught
+  that defect — "N files are named X" was not a checked shape in any
+  source. That is why the ``file-count`` rule exists; the corpus fix and
+  the shape fix each close half of it. Verified: the rule fires on the
+  original wording and passes the corrected wording.
+* The docstring instances that actually shipped false elsewhere were
+  *semantic* ("this returns X", "the lock is held here"). No regex
+  decides those, so scanning docstrings would not have caught them.
+  Those claims remain uncovered, here as everywhere.
 
 What is deliberately NOT checked
 --------------------------------
@@ -71,7 +100,7 @@ What is deliberately NOT checked
   ``server.py``" is a true statement about history. Tense markers near a
   symbol claim suppress it (``_RELOCATION_PROSE``).
 * **Ambiguous module references, when any reading satisfies them.**
-  Three files are named ``verify.py``. A claim is reported only when it
+  Two files are named ``verify.py``. A claim is reported only when it
   fails against *every* candidate — see ``_resolve_modules``.
 * **Bare "N tests in `x.py`" without a total-marking determiner.**
   English does not distinguish "the N tests in X" (total, checkable)
@@ -91,6 +120,14 @@ What is deliberately NOT checked
   ``_PLACEHOLDER_STEMS`` are skipped. This is an extractor rule, not an
   allowlist entry, because these are permanent by intent and an allowlist
   entry could never be retired.
+* **Statement bodies in ``src/`` and ``tests/``.** Only docstrings are
+  read from Python sources. Comments and string literals are not prose
+  the project ships, and test bodies are synthetic by design.
+* **Counting prose outside the pinned phrasings.** ``file-count`` matches
+  "N files are named ``x.py``" and the elided "N are named ``x.py``".
+  "``x.py`` names three files" says the same thing and is *not* matched.
+  Rather than chase English, prefer the pinned phrasing when writing a
+  count about this repo — an unmatched sentence is an unchecked claim.
 
 How the ratchet works
 ---------------------
@@ -228,6 +265,15 @@ _TESTCOUNT_SUBJECT = re.compile(
 # A restrictive relative clause makes "has N tests that ..." a subset.
 _RESTRICTIVE = re.compile(r"^\s*(that|which|covering|pinning|exercising)\b", re.I)
 
+# "three files are named `verify.py`" / the elided "two are named
+# `init.py`". Deliberately one phrasing (plus its elision) rather than a
+# net for every English way of counting files — see the module docstring.
+_FILECOUNT = re.compile(
+    rf"\b(?P<n>{_NUM})\s+(?:files?\s+|modules?\s+)?are\s+named\s+"
+    rf"`{{1,2}}(?P<name>[\w/]+\.py)`{{1,2}}",
+    re.I,
+)
+
 _LINEREF_LINKED = re.compile(
     r"\[(?P<name>[\w./]+\.py):(?P<start>\d+)(?:-(?P<end>\d+))?\]\((?P<target>[^)]+)\)"
 )
@@ -334,10 +380,15 @@ def _prose_sources() -> list[tuple[str, str]]:
     return out
 
 
-def _src_docstrings() -> list[tuple[str, int, str]]:
-    """``(relpath, first_line_of_literal, text)`` for every src/ docstring."""
+def _docstrings_under(pattern: str) -> list[tuple[str, int, str]]:
+    """``(relpath, first_line_of_literal, text)`` for each matched docstring.
+
+    Docstrings only — never statement bodies. Test modules are full of
+    synthetic strings that exist precisely to be invalid, so scanning
+    their bodies would misfire by construction.
+    """
     out: list[tuple[str, int, str]] = []
-    for path in sorted(_REPO_ROOT.glob("src/**/*.py")):
+    for path in sorted(_REPO_ROOT.glob(pattern)):
         rel = path.relative_to(_REPO_ROOT).as_posix()
         tree = ast.parse(path.read_text(encoding="utf-8"))
         for node in ast.walk(tree):
@@ -352,6 +403,16 @@ def _src_docstrings() -> list[tuple[str, int, str]]:
             first = node.body[0]
             out.append((rel, getattr(first, "lineno", 1), text))
     return out
+
+
+def _code_docstrings() -> list[tuple[str, int, str]]:
+    """Docstrings from both shipped source and the test suite.
+
+    ``tests/`` is included so that this module — itself shipped prose,
+    and the origin of a false claim on its first commit — falls inside
+    the corpus it polices.
+    """
+    return _docstrings_under("src/**/*.py") + _docstrings_under("tests/**/*.py")
 
 
 # --------------------------------------------------------------------------
@@ -375,7 +436,7 @@ def _all_py_files() -> tuple[str, ...]:
 def _resolve_modules(name: str) -> tuple[str, ...]:
     """Every file a bare-ish module reference could plausibly mean.
 
-    Bare references are genuinely ambiguous — three files are named
+    Bare references are genuinely ambiguous — two files are named
     ``verify.py`` and two are named ``init.py``. Rather than guess (a
     wrong guess is a false positive, the one outcome that gets this
     checker disabled) or skip (which would drop most of the corpus),
@@ -487,6 +548,35 @@ def check_symbols(source: str, text: str, line_offset: int = 0) -> list[Failure]
         line = _line_of(text, match.start()) + line_offset
         claim = Claim(source, line, "symbol", f"{sym} in {mod}")
         out.append(Failure(claim, f"not bound anywhere in {mod} (checked by AST)"))
+    return out
+
+
+def check_file_counts(source: str, text: str, line_offset: int = 0) -> list[Failure]:
+    """ "N files are named ``x.py``" must match what the repo scan resolves.
+
+    This shape exists because the first version of this module miscounted
+    the files carrying the name ``verify.py`` — asserting three where the
+    repo holds two. That was a false claim in the very file built to stop
+    false claims, in a shape no other rule covered.
+    """
+    out: list[Failure] = []
+    for match in _FILECOUNT.finditer(text):
+        name = match.group("name")
+        if _is_placeholder(name):
+            continue
+        claimed = _parse_number(match.group("n"))
+        if claimed < 0:
+            continue
+        actual = len(_resolve_modules(name))
+        if actual == claimed:
+            continue
+        line = _line_of(text, match.start()) + line_offset
+        claim = Claim(source, line, "file-count", name)
+        out.append(
+            Failure(
+                claim, f"prose claims {claimed} file(s) so named; repo has {actual}"
+            )
+        )
     return out
 
 
@@ -635,9 +725,11 @@ def collect_failures() -> list[Failure]:
     for source, text in _living_docs():
         out.extend(check_test_counts(source, text))
         out.extend(check_line_refs(source, text))
-    for rel, lineno, text in _src_docstrings():
+        out.extend(check_file_counts(source, text))
+    for rel, lineno, text in _code_docstrings():
         out.extend(check_paths(rel, text, line_offset=lineno - 1))
         out.extend(check_symbols(rel, text, line_offset=lineno - 1))
+        out.extend(check_file_counts(rel, text, line_offset=lineno - 1))
     return out
 
 
@@ -847,12 +939,15 @@ def test_accepts_line_reference_that_lands_on_its_anchor() -> None:
 
 
 def test_ambiguous_module_reference_accepts_any_plausible_reading() -> None:
-    """`verify.py` names three files; the claim holds if any one satisfies it.
+    """Two files are named ``verify.py``; the claim holds if either satisfies it.
 
     ``memory_verify`` is defined only in ``handlers/verify.py``, never in
     the top-level ``verify.py``. Guessing "shallowest wins" would report
     this true statement as false — the exact false positive that gets a
     checker switched off.
+
+    The count above is in the phrasing ``_FILECOUNT`` matches, so this
+    docstring is itself checked by ``check_file_counts``.
     """
     assert len(_resolve_modules("verify.py")) > 1
     assert check_symbols("docs/fake.md", "`memory_verify` in `verify.py` runs it") == []
@@ -862,6 +957,62 @@ def test_ambiguous_module_reference_still_reports_a_claim_false_everywhere() -> 
     """Ambiguity is not a free pass: absent from all candidates is false."""
     fails = check_symbols("docs/fake.md", "`absent_everywhere_xyz` in `verify.py`")
     assert len(fails) == 1
+
+
+def test_detects_wrong_file_count() -> None:
+    """The exact false claim this file shipped on its first commit.
+
+    The original prose put the count at three; the repo holds two.
+    The offending wording is kept in the body, not this docstring,
+    because ``tests/`` docstrings are now part of the scanned corpus —
+    quoting it here would make this docstring a false claim in its own
+    right.
+    """
+    text = "three files are named `verify.py` so the reference is ambiguous"
+    fails = check_file_counts("tests/fake.py", text)
+    assert len(fails) == 1
+    assert fails[0].claim.kind == "file-count"
+    assert "claims 3 file(s) so named; repo has 2" in fails[0].detail
+
+
+def test_accepts_correct_file_count() -> None:
+    actual = len(_resolve_modules("verify.py"))
+    text = f"{actual} files are named `verify.py` so the reference is ambiguous"
+    assert check_file_counts("tests/fake.py", text) == []
+
+
+def test_file_count_accepts_the_elided_form() -> None:
+    """ "two are named `init.py`" elides the noun and is still a claim."""
+    assert check_file_counts("tests/fake.py", "two are named `init.py`") == []
+    assert len(check_file_counts("tests/fake.py", "nine are named `init.py`")) == 1
+
+
+def test_file_count_ignores_placeholder_names() -> None:
+    assert check_file_counts("tests/fake.py", "three files are named `mod.py`") == []
+
+
+def test_this_module_is_inside_the_scanned_corpus() -> None:
+    """The guard must be able to audit its own docstrings.
+
+    Excluding ``tests/`` is what let the original miscount of
+    ``verify.py`` ship: no rule could ever have read it.
+    """
+    scanned = {rel for rel, _, _ in _code_docstrings()}
+    assert "tests/test_doc_claims.py" in scanned
+    assert any(rel.startswith("src/") for rel in scanned)
+
+
+def test_corpus_extension_alone_would_not_have_caught_the_defect() -> None:
+    """Pins the honest limit claimed in the module docstring.
+
+    Scanning ``tests/`` was necessary but not sufficient — the original
+    wording is invisible to every rule that predates ``file-count``, so
+    the corpus fix and the shape fix each close half of the hole.
+    """
+    text = "three files are named `verify.py` and two are named `init.py`"
+    assert check_paths("tests/fake.py", text) == []
+    assert check_symbols("tests/fake.py", text) == []
+    assert len(check_file_counts("tests/fake.py", text)) == 1
 
 
 def test_line_ref_uses_the_largest_plausible_candidate() -> None:
