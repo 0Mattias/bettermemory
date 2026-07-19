@@ -641,63 +641,14 @@ def _event_log_files(directory: Path) -> list[Path]:
     return files
 
 
-def _check_event_log_writable(directory: Path) -> Diagnosis:
-    """The event log writer creates the file lazily; we probe-append
-    to confirm we'd be allowed to."""
-    if not directory.exists():
-        return Diagnosis(
-            name="event_log",
-            status="ok",
-            message="Event log not yet created (storage dir is brand new).",
-        )
-    # The active log is sharded; probe a real existing segment when one
-    # exists, else the legacy path (whose absence routes to the
-    # directory-writability probe below — creating a new shard needs
-    # exactly that directory write permission).
-    log_files = _event_log_files(directory)
-    log_path = log_files[0] if log_files else directory / EVENT_LOG_FILENAME
-    if not log_path.exists():
-        # Probe writability of the directory itself; the log file will
-        # be created on first server start.
-        if os.access(directory, os.W_OK):
-            return Diagnosis(
-                name="event_log",
-                status="ok",
-                message="Event log not yet created (will appear on first server start).",
-            )
-        return Diagnosis(
-            name="event_log",
-            status="fail",
-            message=f"Event log at {log_path} cannot be created (directory not writable).",
-            fix_hint="Fix the storage directory permissions.",
-        )
-
+def _probe_event_log_segment(log_path: Path) -> tuple[str, str, int]:
+    """Probe ONE active event-log segment. Returns
+    `(outcome, detail, size)` where outcome is "ok" (appendable,
+    `size` bytes), "vanished" (gone mid-run — not a finding),
+    "not_writable" or "append_failed" (`detail` is the human sentence
+    naming the cause)."""
     if not os.access(log_path, os.W_OK):
-        if log_path.is_symlink():
-            # A symlinked log gets a NON-executable steer, never a
-            # pasteable command: chmod follows symlinks, so the verbatim
-            # `chmod u+w <log_path>` hint would have the user mutate the
-            # TARGET's permissions by hand — the exact victim mutation
-            # `_fix_event_log` declines for the same shape.
-            hint = (
-                "The event log is a symlink — inspect its target before "
-                "changing permissions; a permission change through the "
-                "link lands on the target file, which may not be ours."
-            )
-        else:
-            # shlex.quote: a raw interpolation shell-splits on a
-            # space-bearing storage path (the macOS `Application
-            # Support` neighbourhood) and can chmod an innocent sibling
-            # on a glob-bearing one — the same executes-verbatim
-            # contract `_quoted_literal_pathspecs` holds for the
-            # pathspec hints.
-            hint = f"`chmod u+w {shlex.quote(str(log_path))}`."
-        return Diagnosis(
-            name="event_log",
-            status="fail",
-            message=f"Event log at {log_path} is not writable.",
-            fix_hint=hint,
-        )
+        return "not_writable", f"{log_path} is not writable", 0
     # os.access is only the cheap pre-guard — on Windows it consults
     # nothing but FILE_ATTRIBUTE_READONLY (the exact bit `--fix`'s
     # chmod(0o600) clears), so an ACL-denied log passes it while every
@@ -718,35 +669,151 @@ def _check_event_log_writable(directory: Path) -> Diagnosis:
             os.close(fd)
         size = log_path.stat().st_size
     except FileNotFoundError:
-        # The log legitimately vanished mid-run (concurrent tidy-up,
-        # rotation) — the same shape the exists() gate reports: it
-        # will be recreated on first server start, nothing to fix.
+        # The segment legitimately vanished mid-run (concurrent
+        # tidy-up, rotation) — nothing to fix, and nothing to report.
+        return "vanished", "", 0
+    except OSError as exc:
+        return (
+            "append_failed",
+            (
+                f"{log_path} passed the permission-bit check but a real "
+                f"append failed ({exc.__class__.__name__}: {exc})"
+            ),
+            0,
+        )
+    return "ok", "", size
+
+
+def _unwritable_segment_hint(log_path: Path, *, append_failed: bool) -> str:
+    """The remediation prompt for one unappendable segment."""
+    if append_failed:
+        return (
+            "Inspect what blocks appends despite writable permission "
+            "bits — an ACL, a read-only mount, or a non-file "
+            "squatting at the log path; a plain chmod cannot fix "
+            "this class."
+        )
+    if log_path.is_symlink():
+        # A symlinked log gets a NON-executable steer, never a
+        # pasteable command: chmod follows symlinks, so the verbatim
+        # `chmod u+w <log_path>` hint would have the user mutate the
+        # TARGET's permissions by hand — the exact victim mutation
+        # `_fix_event_log` declines for the same shape.
+        return (
+            "The event log is a symlink — inspect its target before "
+            "changing permissions; a permission change through the "
+            "link lands on the target file, which may not be ours."
+        )
+    # shlex.quote: a raw interpolation shell-splits on a
+    # space-bearing storage path (the macOS `Application
+    # Support` neighbourhood) and can chmod an innocent sibling
+    # on a glob-bearing one — the same executes-verbatim
+    # contract `_quoted_literal_pathspecs` holds for the
+    # pathspec hints.
+    return f"`chmod u+w {shlex.quote(str(log_path))}`."
+
+
+def _check_event_log_writable(directory: Path) -> Diagnosis:
+    """The event log writer creates the file lazily; we probe-append
+    to confirm we'd be allowed to.
+
+    The active log is SHARDED (v3.24.0), so "the event log" is a SET of
+    `.events.NN.jsonl` segments plus any legacy `.events.jsonl`. EVERY
+    segment is probed. Probing only the lexicographically first one
+    (the pre-fix shape) returned a green `event_log` verdict covering a
+    surface it never looked at: a mispermissioned `.events.07.jsonl`
+    was invisible, and `_fix_event_log`'s heal-every-segment loop was
+    unreachable because the check that gates it could not go red for
+    any N>0. The reported byte count is likewise the whole log's, not
+    the first shard's."""
+    if not directory.exists():
+        return Diagnosis(
+            name="event_log",
+            status="ok",
+            message="Event log not yet created (storage dir is brand new).",
+        )
+    log_files = _event_log_files(directory)
+    if not log_files:
+        # Nothing on disk yet: probe writability of the directory
+        # itself; the first segment will be created on first server
+        # start, which needs exactly that directory write permission.
+        log_path = directory / EVENT_LOG_FILENAME
+        if os.access(directory, os.W_OK):
+            return Diagnosis(
+                name="event_log",
+                status="ok",
+                message="Event log not yet created (will appear on first server start).",
+            )
+        return Diagnosis(
+            name="event_log",
+            status="fail",
+            message=f"Event log at {log_path} cannot be created (directory not writable).",
+            fix_hint="Fix the storage directory permissions.",
+        )
+
+    unwritable: list[str] = []
+    failures: list[str] = []
+    hints: list[str] = []
+    probed_paths: list[str] = []
+    total_bytes = 0
+    for log_path in log_files:
+        outcome, detail, size = _probe_event_log_segment(log_path)
+        if outcome == "vanished":
+            continue
+        probed_paths.append(str(log_path))
+        if outcome != "ok":
+            unwritable.append(str(log_path))
+            failures.append(detail)
+            hints.append(
+                _unwritable_segment_hint(
+                    log_path, append_failed=outcome == "append_failed"
+                )
+            )
+            continue
+        total_bytes += size
+
+    if unwritable:
+        if len(unwritable) == 1:
+            message = f"Event log at {failures[0]}."
+            hint = hints[0]
+        else:
+            message = (
+                f"{len(unwritable)} of {len(probed_paths)} event-log segments "
+                f"are not appendable: " + "; ".join(failures) + "."
+            )
+            # Dedupe while preserving order: the per-path chmod hints
+            # are distinct, the shape-level steers repeat.
+            hint = " ".join(dict.fromkeys(hints))
+        return Diagnosis(
+            name="event_log",
+            status="fail",
+            message=message,
+            fix_hint=hint,
+            details={
+                "unwritable": unwritable,
+                "probed": len(probed_paths),
+                "bytes": total_bytes,
+            },
+        )
+    if not probed_paths:
+        # Every segment vanished between the glob and its probe — the
+        # same not-yet-created shape the empty-directory branch reports.
         return Diagnosis(
             name="event_log",
             status="ok",
             message="Event log not yet created (will appear on first server start).",
         )
-    except OSError as exc:
-        return Diagnosis(
-            name="event_log",
-            status="fail",
-            message=(
-                f"Event log at {log_path} passed the permission-bit "
-                f"check but a real append failed "
-                f"({exc.__class__.__name__}: {exc})."
-            ),
-            fix_hint=(
-                "Inspect what blocks appends despite writable permission "
-                "bits — an ACL, a read-only mount, or a non-file "
-                "squatting at the log path; a plain chmod cannot fix "
-                "this class."
-            ),
-        )
     return Diagnosis(
         name="event_log",
         status="ok",
-        message=f"Event log writable ({size} bytes).",
-        details={"path": str(log_path), "bytes": size},
+        message=(
+            f"Event log writable ({len(probed_paths)} segment(s), {total_bytes} bytes)."
+        ),
+        details={
+            "paths": probed_paths,
+            "probed": len(probed_paths),
+            "bytes": total_bytes,
+        },
     )
 
 
@@ -2418,8 +2485,17 @@ def _fix_event_log(
     """chmod 0600 every existing-but-unwritable event-log segment.
 
     The active log is sharded (v3.24.0), so more than one segment can
-    end up mispermissioned; heal them all in one pass. The
-    cannot-be-created branch (directory not writable) is the
+    end up mispermissioned; heal them all in one pass. A chmod that
+    fails does NOT abort the pass and does NOT erase the segments
+    already healed: the loop continues and the FixResult reports the
+    real split — `applied` is True whenever at least one chmod landed,
+    `details["healed"]`/`details["failed"]` name which, and `error`
+    carries every failure. Reporting `applied=False` after mutating
+    earlier segments (the pre-fix shape) told the caller nothing had
+    changed while the store was in fact partially mutated — the same
+    "attempted is not applied" honesty 3.22.1 established.
+
+    The cannot-be-created branch (directory not writable) is the
     storage_directory fixer's cause, not this one's — when that fix
     lands first, the final full re-run reports this check healed too.
     0600 matches the mode the Recorder itself sets on first write. A
@@ -2431,6 +2507,8 @@ def _fix_event_log(
     if directory is None or not directory.exists():
         return None
     healed: list[tuple[Path, int]] = []
+    failed: list[tuple[Path, int]] = []
+    errors: list[str] = []
     for log_path in _event_log_files(directory):
         if log_path.is_symlink() or os.access(log_path, os.W_OK):
             continue  # decline symlinks; skip already-writable segments
@@ -2438,32 +2516,44 @@ def _fix_event_log(
         try:
             log_path.chmod(0o600)
         except OSError as exc:
-            return FixResult(
-                check="event_log",
-                action="chmod_event_log",
-                applied=False,
-                before_status=diagnosis.status,
-                after_status=diagnosis.status,
-                message=f"chmod 0600 on {log_path} failed",
-                error=f"{exc.__class__.__name__}: {exc}",
-                details={"path": str(log_path), "old_mode": oct(old_mode)},
-            )
+            failed.append((log_path, old_mode))
+            errors.append(f"{log_path}: {exc.__class__.__name__}: {exc}")
+            continue
         healed.append((log_path, old_mode))
-    if not healed:
+    if not healed and not failed:
         return None
+    healed_paths = [str(p) for p, _ in healed]
+    failed_paths = [str(p) for p, _ in failed]
+    old_modes = {str(p): oct(m) for p, m in healed + failed}
+    # Re-run the check whichever way the pass went: after_status must
+    # describe the store as it now IS, and a partial heal leaves it red.
     after = _check_event_log_writable(directory)
-    paths = [str(p) for p, _ in healed]
+    if healed and failed:
+        message = (
+            f"chmod → 0o600 on {len(healed)} of {len(healed) + len(failed)} "
+            f"event-log segment(s): healed "
+            + ", ".join(healed_paths)
+            + "; failed "
+            + ", ".join(failed_paths)
+        )
+    elif healed:
+        message = f"chmod → 0o600 on {len(healed)} event-log segment(s): " + ", ".join(
+            healed_paths
+        )
+    else:
+        message = "chmod 0600 on " + ", ".join(failed_paths) + " failed"
     return FixResult(
         check="event_log",
         action="chmod_event_log",
-        applied=True,
+        applied=bool(healed),
         before_status=diagnosis.status,
         after_status=after.status,
-        message=f"chmod → 0o600 on {len(healed)} event-log segment(s): "
-        + ", ".join(paths),
+        message=message,
+        error="; ".join(errors) if errors else None,
         details={
-            "paths": paths,
-            "old_modes": {p: oct(m) for p, m in ((str(x), y) for x, y in healed)},
+            "healed": healed_paths,
+            "failed": failed_paths,
+            "old_modes": old_modes,
             "new_mode": "0o600",
         },
     )

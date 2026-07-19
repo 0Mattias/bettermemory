@@ -725,6 +725,54 @@ def test_event_log_unwritable_hint_executes_on_space_and_quote_path(
         log.chmod(0o644)
 
 
+def test_event_log_probes_every_shard_not_just_the_first(tmp_path: Path) -> None:
+    """FALSE GREEN: the check probed only `_event_log_files()[0]` — the
+    lexicographically first shard — yet returned an `ok` verdict named
+    "event_log", covering the whole sharded surface it never looked at.
+    A store whose `.events.00.jsonl` is fine but whose `.events.07.jsonl`
+    is mode 0400 was reported green (and its byte count reported as the
+    log's), so `_fix_event_log`'s heal-every-segment loop could never be
+    reached: the gate that triggers it never went red for any N>0.
+
+    The verdict must be RED and must NAME the unwritable segment."""
+    good = tmp_path / ".events.00.jsonl"
+    good.write_text('{"ts":"x","kind":"search"}\n', encoding="utf-8")
+    bad = tmp_path / ".events.07.jsonl"
+    bad.write_text('{"ts":"y","kind":"search"}\n', encoding="utf-8")
+    bad.chmod(0o400)
+    try:
+        # The skip guard interrogates the FILESYSTEM, never the verdict:
+        # `if diag.status == "ok": skip` would swallow the very false
+        # green this test exists to catch.
+        if os.access(bad, os.W_OK):
+            pytest.skip("filesystem ignored chmod; cannot exercise unwritable file")
+        diag = _check_event_log_writable(tmp_path)
+    finally:
+        bad.chmod(0o644)
+    assert diag.status == "fail"
+    assert str(bad) in diag.message
+    assert diag.details["unwritable"] == [str(bad)]
+    assert diag.details["probed"] == 2  # every segment, not just the first
+    assert diag.fix_hint is not None
+    assert str(bad) in diag.fix_hint
+
+
+def test_event_log_green_verdict_covers_every_shard(tmp_path: Path) -> None:
+    """The green side of the same contract: an all-healthy sharded log
+    reports how many segments it actually probed and the TOTAL bytes
+    across them — the pre-fix message reported shard 0's byte count as
+    if it were the whole log."""
+    first = tmp_path / ".events.00.jsonl"
+    first.write_text("a" * 10, encoding="utf-8")
+    second = tmp_path / ".events.01.jsonl"
+    second.write_text("b" * 15, encoding="utf-8")
+    diag = _check_event_log_writable(tmp_path)
+    assert diag.status == "ok"
+    assert diag.details["probed"] == 2
+    assert diag.details["bytes"] == 25
+    assert diag.details["paths"] == [str(first), str(second)]
+
+
 def test_event_log_unwritable_hint_is_shape_aware_symlink_vs_regular(
     tmp_path: Path,
 ) -> None:
@@ -3573,8 +3621,70 @@ def test_fix_event_log_reports_chmod_failure(
     assert fix.before_status == "fail"
     assert fix.after_status == "fail"
     assert "PermissionError" in (fix.error or "")
-    assert fix.details["old_mode"] == oct(mode_before)
+    # Per-segment details: the denied segment is named under `failed`
+    # (never `healed`) and keeps its pre-fix mode on record.
+    assert fix.details["healed"] == []
+    assert fix.details["failed"] == [str(log)]
+    assert fix.details["old_modes"][str(log)] == oct(mode_before)
     assert stat.S_IMODE(log.stat().st_mode) == mode_before  # nothing mutated
+
+
+def test_fix_event_log_reports_partial_application_honestly(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Five unwritable segments, the third chmod denied. The pre-fix
+    fixer `return`ed `FixResult(applied=False)` on the first OSError,
+    discarding the fact that segments 0 and 1 had ALREADY been chmod'd
+    — a caller reading applied=False believed nothing changed while the
+    store was partially mutated (and segments 3-4 were silently left
+    unattempted, contradicting the docstring's "heal them all").
+
+    The pass now continues across every segment and reports the real
+    split: applied=True (mutations DID land), the healed and failed
+    segments named separately, and after_status still red because the
+    store is not actually healed."""
+    segments = []
+    for n in range(5):
+        seg = tmp_path / f".events.0{n}.jsonl"
+        seg.write_text("", encoding="utf-8")
+        seg.chmod(0o400)
+        segments.append(seg)
+    doomed = segments[2]
+    diag = _check_event_log_writable(tmp_path)
+    if diag.status == "ok":
+        pytest.skip("filesystem ignored chmod; cannot exercise unwritable path")
+    assert diag.status == "fail"
+
+    real_chmod = Path.chmod
+
+    def _deny_third(self: Path, mode: int, **kwargs: Any) -> None:
+        if self == doomed:
+            raise PermissionError(f"chmod denied on {self}")
+        real_chmod(self, mode, **kwargs)
+
+    monkeypatch.setattr(Path, "chmod", _deny_third)
+    try:
+        fixes = run_fixes(DoctorReport(checks=[diag]), cfg=None, directory=tmp_path)
+    finally:
+        monkeypatch.undo()
+    assert [f.action for f in fixes] == ["chmod_event_log"]
+    fix = fixes[0]
+    # The four that landed are reported as applied — not swallowed.
+    assert fix.applied is True
+    assert fix.details["healed"] == [
+        str(s) for s in segments if s != doomed
+    ]  # every other segment was still attempted
+    assert fix.details["failed"] == [str(doomed)]
+    assert "PermissionError" in (fix.error or "")
+    assert str(doomed) in (fix.error or "")
+    # ...and the store is genuinely NOT healed, so the verdict stays red.
+    assert fix.after_status == "fail"
+    if os.name != "nt":
+        assert stat.S_IMODE(doomed.stat().st_mode) == 0o400
+        for seg in segments:
+            if seg != doomed:
+                assert stat.S_IMODE(seg.stat().st_mode) == 0o600
+    doomed.chmod(0o644)
 
 
 def test_fix_event_log_stands_down_without_directory(tmp_path: Path) -> None:
