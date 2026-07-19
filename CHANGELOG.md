@@ -7,6 +7,54 @@ breaking changes, minor for additive features, patch for fixes. The
 [compatibility contract](CONTRIBUTING.md#versioning-and-the-compatibility-contract)
 spells out exactly what's stable.
 
+## 3.25.1 - 2026-07-19
+
+A Windows-only durability gap in the atomic write path, found by a flaky
+release-gate job rather than by a user report.
+
+### Fixed
+
+- **Concurrent `os.replace` could fail hard on Windows.** The store's
+  write discipline is tmp → fsync → rename. POSIX allows renaming over a
+  destination another process still holds open; Windows does not, and
+  fails with `ERROR_ACCESS_DENIED` (5) or `ERROR_SHARING_VIOLATION` (32)
+  — both surfaced by Python as `PermissionError`. That window is
+  milliseconds wide and purely transient, but the rename had no retry,
+  so it became a hard failure mid-write. Two consequences: a concurrent
+  store mutation on Windows could raise `PermissionError` instead of the
+  documented `ConcurrentUpdateError`, breaking callers written against
+  the documented contract; and
+  `test_mark_verified_cas_threaded_one_winner` flaked on the
+  `windows-latest` leg, red-lighting the v3.25.0 release run while the
+  identical job passed on that commit's CI run.
+
+  New `_fsutil.replace_atomic` wraps the rename in a bounded retry — 5
+  attempts, doubling 10ms backoff, ~150ms ceiling. It is deliberately
+  **Windows-only** (on POSIX a `PermissionError` from `os.replace` is
+  never this race; it means the directory genuinely is not writable, and
+  retrying would only delay a real diagnosis) and deliberately **narrow**
+  (only `PermissionError` retries — ENOSPC, EXDEV and friends propagate
+  on the first attempt, because a blanket `except OSError` would disguise
+  a full disk as a slow rename). After the budget the original error
+  propagates unchanged, with its true type and errno.
+
+  Applied at all three rename sites: `atomic_write_bytes` (every memory,
+  episode and index write) plus the event-log rotation and archive
+  renames in `events.py` — the latter two matter more since 3.24.0, as
+  sharding multiplied the number of concurrent segment readers.
+
+### Changed
+
+- `test_mark_verified_cas_threaded_one_winner` now records an `errored`
+  outcome for a worker that dies in any way other than a clean
+  `ConcurrentUpdateError`, and inlines the exception text into the
+  assertion message. Previously such a thread appended nothing at all,
+  so the failure read "expected exactly one stale-CAS loser, got 0" —
+  naming the symptom while hiding the cause, which is precisely why this
+  bug took a release-gate failure to surface. The arm does not paper
+  over the defect: an `errored` outcome satisfies neither assertion, so
+  the test still fails — it just fails while naming the exception.
+
 ## 3.25.0 - 2026-07-19
 
 `migrate origin` can now repair an origin that was captured *wrong*,
