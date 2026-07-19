@@ -53,7 +53,6 @@ from bettermemory.doctor import (
     _fix_context,
     _pattern_matches_tracked_path,
     _probe_index_integrity,
-    _ADMIN_EVENT_KINDS,
     _EXIT_CODE_BY_STATUS,
     _FIXERS,
     _STATUS_GLYPH,
@@ -585,6 +584,27 @@ def test_index_health_real_divergence_annotated_with_unparseable_count(
 # ---------------------------------------------------------------------------
 
 
+def _require_unwritable(path: Path) -> None:
+    """Precondition guard for every chmod-driven event-log test.
+
+    Skips ONLY when the filesystem ignored the `chmod` — a fact read
+    from the FILESYSTEM (`os.access`), never from the verdict under
+    test. The guards this replaces read `if diag.status == "ok":
+    pytest.skip("filesystem ignored chmod")`, i.e. they asked the very
+    answer under test whether to run: any regression that false-greened
+    `event_log` made exactly the tests that would have caught it skip
+    themselves, and blamed the filesystem for a chmod that had in fact
+    worked perfectly. A whole block of tests could go silently
+    self-disabling in the one commit that broke the check.
+
+    The skip stays real where it is genuinely needed: FAT/exFAT and
+    Windows shares ignore the owner-write bit, and root sees every file
+    as writable — `os.access` reports all three truthfully.
+    """
+    if os.access(path, os.W_OK):
+        pytest.skip(f"filesystem ignored chmod; {path} is still writable")
+
+
 def test_event_log_brand_new_dir_is_ok(tmp_path: Path) -> None:
     diag = _check_event_log_writable(tmp_path)
     assert diag.status == "ok"
@@ -603,11 +623,10 @@ def test_event_log_unwritable_fails(tmp_path: Path) -> None:
     log.write_text("", encoding="utf-8")
     log.chmod(0o400)
     try:
+        _require_unwritable(log)
         diag = _check_event_log_writable(tmp_path)
     finally:
         log.chmod(0o644)
-    if diag.status == "ok":
-        pytest.skip("filesystem ignored chmod; cannot exercise unwritable file")
     assert diag.status == "fail"
 
 
@@ -664,6 +683,79 @@ def test_event_log_probe_vanished_mid_run_is_ok_and_conjures_nothing(
     assert not log.exists()  # the probe never conjured it back
 
 
+def test_event_log_segment_vanishing_before_the_probe_is_not_a_finding(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The COMMON vanish timing, and the one the probe got WRONG.
+
+    `_check_event_log_writable` globs the segments, then probes each
+    one. A segment rotated or tidied away in that gap is already gone
+    before the probe's FIRST syscall — and `os.access` answers False
+    for a path that does not exist, so the pre-fix probe filed the
+    ghost as "not writable" and the check went RED naming a file that
+    is not there. The "vanished" outcome, and the `if not probed_paths`
+    not-yet-created ok branch built on top of it, were therefore DEAD
+    for this window; the FileNotFoundError branch only ever covered the
+    far narrower gap between `os.access` and the `open`, which is why a
+    monkeypatched-`os.access` test could pass over a broken probe.
+
+    Empirically before the fix: an all-ghost segment list yielded
+    `status == "fail"`. It must yield the not-yet-created ok shape —
+    and the surviving segments in a MIXED list must still be probed
+    normally, so the ghost is excused without excusing its neighbours.
+    """
+    from bettermemory import doctor as doctor_mod
+
+    ghost = tmp_path / ".events.00.jsonl"
+    ghost.write_text('{"ts":"x","kind":"search"}\n', encoding="utf-8")
+    real_event_log_files = doctor_mod._event_log_files
+
+    def _vanish_after_the_glob(directory: Path) -> list[Path]:
+        files = real_event_log_files(directory)
+        if ghost.exists():
+            ghost.unlink()  # rotated away between the glob and the probe
+        return files
+
+    monkeypatch.setattr(doctor_mod, "_event_log_files", _vanish_after_the_glob)
+    diag = _check_event_log_writable(tmp_path)
+    assert diag.status == "ok"
+    assert "will appear on first server start" in diag.message
+    assert not ghost.exists()  # and the probe never conjured it back
+
+    # Mixed list: the ghost is excused, the survivor is still probed.
+    survivor = tmp_path / ".events.01.jsonl"
+    survivor.write_text("b" * 12, encoding="utf-8")
+    ghost.write_text('{"ts":"x","kind":"search"}\n', encoding="utf-8")
+    diag = _check_event_log_writable(tmp_path)
+    assert diag.status == "ok"
+    assert diag.details["paths"] == [str(survivor)]
+    assert diag.details["probed"] == 1
+    assert diag.details["bytes"] == 12
+
+
+def test_event_log_dangling_symlink_segment_is_a_finding_not_a_vanish(
+    tmp_path: Path,
+) -> None:
+    """The existence pre-gate must not launder a BROKEN SYMLINK into
+    the vanished shape. A dangling link at a segment path is an entry
+    that really is there — the Recorder's append would create the
+    target somewhere the user never intended — so it stays a red
+    finding with the symlink steer. `os.path.lexists` (not `exists`) is
+    what draws that line: `exists()` follows the link, reports False,
+    and would excuse it as "vanished"."""
+    if sys.platform == "win32":
+        pytest.skip("symlink semantics differ on Windows; POSIX-only test")
+    segment = tmp_path / ".events.00.jsonl"
+    segment.symlink_to(tmp_path / "nowhere.jsonl")
+    assert not segment.exists()  # the target is gone...
+    assert os.path.lexists(segment)  # ...but the entry is really there
+    diag = _check_event_log_writable(tmp_path)
+    assert diag.status == "fail"
+    assert str(segment) in diag.message
+    assert diag.fix_hint is not None
+    assert "symlink" in diag.fix_hint
+
+
 def test_event_log_probe_never_creates_on_absent_log(tmp_path: Path) -> None:
     """Creation-free by construction: on a store whose log never
     existed the check reports the not-yet-created ok shape and leaves
@@ -701,9 +793,8 @@ def test_event_log_unwritable_hint_executes_on_space_and_quote_path(
     log.write_text("", encoding="utf-8")
     log.chmod(0o400)
     try:
+        _require_unwritable(log)
         diag = _check_event_log_writable(storage)
-        if diag.status == "ok":
-            pytest.skip("filesystem ignored chmod; cannot exercise unwritable file")
         assert diag.status == "fail"
         match = re.search(r"`(chmod u\+w [^`]*)`", diag.fix_hint or "")
         assert match is not None
@@ -741,11 +832,10 @@ def test_event_log_probes_every_shard_not_just_the_first(tmp_path: Path) -> None
     bad.write_text('{"ts":"y","kind":"search"}\n', encoding="utf-8")
     bad.chmod(0o400)
     try:
-        # The skip guard interrogates the FILESYSTEM, never the verdict:
-        # `if diag.status == "ok": skip` would swallow the very false
-        # green this test exists to catch.
-        if os.access(bad, os.W_OK):
-            pytest.skip("filesystem ignored chmod; cannot exercise unwritable file")
+        # The skip guard interrogates the FILESYSTEM, never the verdict
+        # (see `_require_unwritable`): `if diag.status == "ok": skip`
+        # would swallow the very false green this test exists to catch.
+        _require_unwritable(bad)
         diag = _check_event_log_writable(tmp_path)
     finally:
         bad.chmod(0o644)
@@ -793,9 +883,8 @@ def test_event_log_unwritable_hint_is_shape_aware_symlink_vs_regular(
     store = tmp_path / "store"
     store.mkdir()
     (store / EVENT_LOG_FILENAME).symlink_to(victim)
+    _require_unwritable(victim)
     diag = _check_event_log_writable(store)
-    if diag.status == "ok":
-        pytest.skip("filesystem ignored chmod; cannot exercise unwritable path")
     assert diag.status == "fail"
     assert diag.fix_hint is not None
     assert "symlink" in diag.fix_hint
@@ -810,11 +899,10 @@ def test_event_log_unwritable_hint_is_shape_aware_symlink_vs_regular(
     log.write_text("", encoding="utf-8")
     log.chmod(0o400)
     try:
+        _require_unwritable(log)
         regular_diag = _check_event_log_writable(regular)
     finally:
         log.chmod(0o644)
-    if regular_diag.status == "ok":
-        pytest.skip("filesystem ignored chmod; cannot exercise unwritable path")
     assert regular_diag.status == "fail"
     assert regular_diag.fix_hint == f"`chmod u+w {shlex.quote(str(log))}`."
 
@@ -946,65 +1034,78 @@ def test_audit_turn_cadence_census_excludes_silent_miss_cutoff(
     assert diag.details["total_events"] == 1
 
 
-def test_admin_event_kinds_parity_with_eval_registry() -> None:
-    """`_ADMIN_EVENT_KINDS` must never fall behind eval.py's roster.
+def test_admin_event_kinds_is_evals_constant_not_a_copy() -> None:
+    """doctor's cadence census must READ eval's shared constant.
 
-    eval's `_KNOWN_SIDE_EFFECT_KINDS` is the canonical registry of
-    every event kind the recorder emits outside a tool invocation —
-    its own AST parity test (tests/test_eval.py) keeps it complete
-    against the actual `recorder.record()` call sites under src/. The
-    subset of that roster recorded by admin CLI surfaces — outside any
-    client session, under a throwaway session id — is exactly what the
-    cadence census must exclude. Derive that subset from the eval
-    registry (never a hardcoded copy) and pin doctor's set as a
-    superset of it.
+    `eval.ADMIN_RECORDED_EVENT_KINDS` was introduced with an invariant
+    comment stating that every consumer must read THAT constant so they
+    cannot drift apart — an invariant that was FALSE at its own
+    introduction, because doctor went on carrying its own hand-written
+    `frozenset({"doctor_fix", "silent_miss_cutoff"})` and this test
+    re-declared a third literal (`in_session`) of its own. Three copies
+    of one classification, all equal on the day they were written.
 
-    `in_session` names the complement: side-effect kinds recorded
-    WITHIN a live client session under the client's own session id,
-    which the census must keep counting. Verified at their call sites:
+    IDENTITY, not equality, is the pin: a re-hardcoded literal with
+    today's contents compares equal and drifts on the next kind added
+    — which is exactly how the drift happened. `is` catches it the
+    moment the import is replaced by a copy.
 
-    * ``search_miss`` / ``proposals_enqueued`` — the Stop hook's
-      recorder (hook.py), the same recorder that writes that session's
-      ``turn_audited`` rows.
-    * ``pending_expired`` — drained handler-side through the live
-      session's recorder (handlers/_shared.py).
-
-    A NEW kind added to the eval registry lands in the derived admin
-    subset and fails here until a human classifies it — into
-    `_ADMIN_EVENT_KINDS` (throwaway session id) or into `in_session`
-    (client session id). That forced classification is the point: the
-    two registries cannot silently drift apart."""
-    from bettermemory.eval import _KNOWN_SIDE_EFFECT_KINDS
-
-    in_session = {"search_miss", "pending_expired", "proposals_enqueued"}
-    unclassified = in_session - _KNOWN_SIDE_EFFECT_KINDS
-    assert not unclassified, (
-        f"the in-session exclusion list names kind(s) "
-        f"{sorted(unclassified)} that eval.py's registry no longer "
-        f"carries — prune this list."
+    eval derives the constant as the complement of the in-session
+    subset over `_KNOWN_SIDE_EFFECT_KINDS`, so a NEW kind is classified
+    once, in eval, and lands in doctor's census automatically. Nothing
+    here re-states that classification; the partition assertions below
+    pin the derivation itself rather than duplicating its output."""
+    from bettermemory import doctor as doctor_mod
+    from bettermemory.eval import (
+        ADMIN_RECORDED_EVENT_KINDS,
+        _IN_SESSION_SIDE_EFFECT_KINDS,
+        _KNOWN_SIDE_EFFECT_KINDS,
     )
 
-    eval_admin_kinds = _KNOWN_SIDE_EFFECT_KINDS - in_session
-    missing = eval_admin_kinds - _ADMIN_EVENT_KINDS
-    assert not missing, (
-        f"eval.py's _KNOWN_SIDE_EFFECT_KINDS carries kind(s) "
-        f"{sorted(missing)} that doctor's _ADMIN_EVENT_KINDS census "
-        f"exclusion does not. If the kind is recorded by an admin CLI "
-        f"under a throwaway session id, add it to _ADMIN_EVENT_KINDS; "
-        f"if it is recorded inside a live client session, add it to "
-        f"this test's in_session list."
+    assert doctor_mod._ADMIN_EVENT_KINDS is ADMIN_RECORDED_EVENT_KINDS, (
+        "doctor's census exclusion is no longer eval's "
+        "ADMIN_RECORDED_EVENT_KINDS but a copy of it — copies compare "
+        "equal today and drift on the next admin kind added. Import "
+        "the constant instead of re-declaring its contents."
     )
 
-    # Reverse direction: an admin/CLI kind is by definition not a tool
-    # invocation, so eval's parity test forces it into
-    # _KNOWN_SIDE_EFFECT_KINDS — a doctor entry absent there is either
-    # stale or never recorded anywhere.
-    stale = _ADMIN_EVENT_KINDS - _KNOWN_SIDE_EFFECT_KINDS
-    assert not stale, (
-        f"_ADMIN_EVENT_KINDS carries kind(s) {sorted(stale)} that "
-        f"eval.py's _KNOWN_SIDE_EFFECT_KINDS does not know — stale "
-        f"entry, or a kind eval's own registry is missing."
+    # The derivation is a real partition of eval's roster: nothing is
+    # both admin-recorded and in-session, and nothing is neither.
+    assert not (ADMIN_RECORDED_EVENT_KINDS & _IN_SESSION_SIDE_EFFECT_KINDS)
+    assert (
+        ADMIN_RECORDED_EVENT_KINDS | _IN_SESSION_SIDE_EFFECT_KINDS
+        == _KNOWN_SIDE_EFFECT_KINDS
     )
+
+
+def test_audit_turn_cadence_excludes_every_admin_recorded_kind(
+    tmp_path: Path,
+) -> None:
+    """The behavioural half of the invariant, driven off the shared
+    constant so a newly-classified admin kind is covered the day it is
+    added — no third literal to update.
+
+    For each admin-recorded kind: one real client session plus one
+    admin row under a throwaway session id must stay `ok` with
+    `sessions == 1`. Counting the admin row's phantom session trips the
+    ≥2-session floor and warns about a Stop hook that never had a turn
+    end to fire on — on a store where `doctor --fix` itself wrote the
+    phantom, that flips a fully-healed run's exit code to 1."""
+    from datetime import datetime, timezone
+
+    from bettermemory.eval import ADMIN_RECORDED_EVENT_KINDS
+
+    assert ADMIN_RECORDED_EVENT_KINDS  # a vacuous loop would pin nothing
+    now_iso = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+    for kind in sorted(ADMIN_RECORDED_EVENT_KINDS):
+        store = tmp_path / kind
+        store.mkdir()
+        _write_event(store, "search", ts=now_iso, session="the-real-one")
+        _write_event(store, kind, ts=now_iso, session=f"cli-run-{kind}")
+        diag = _check_audit_turn_cadence(store)
+        assert diag.status == "ok", f"{kind} manufactured a phantom session"
+        assert diag.details["sessions"] == 1
+        assert diag.details["total_events"] == 1
 
 
 def test_audit_turn_cadence_only_old_events_skips_warn(tmp_path: Path) -> None:
@@ -1767,35 +1868,68 @@ def test_exit_code_by_status_keys_match_check_status_literal() -> None:
 
 
 # ---------------------------------------------------------------------------
-# Cross-module parity: the event-log path probed by
-# `_check_event_log_writable` (`doctor.py`) MUST resolve to the same
-# filename the `Recorder` actually writes — `events.EVENT_LOG_FILENAME`.
-# A rename of the canonical constant would, prior to this commit, have
-# updated the writer but left the doctor's probe path pointing at a
-# stale literal — silently passing the writability check against a file
-# that the runtime never creates. Closes the doctor side of Class 6.
+# Cross-module parity: the event-log paths probed by
+# `_check_event_log_writable` (`doctor.py`) MUST cover the file the
+# `Recorder` actually writes. Since 3.24.0 that is a SHARDED segment —
+# `events._SEGMENT_TEMPLATE` (`.events.NN.jsonl`), picked from the
+# session id — and NOT `events.EVENT_LOG_FILENAME`, which has been the
+# legacy pre-sharding name ever since.
+#
+# This banner and its test went on asserting the probe resolved to "the
+# same filename the Recorder actually writes — events.EVENT_LOG_FILENAME"
+# for every release after the writer stopped writing it. The pin passed
+# the whole time (doctor probes the legacy name too, for old stores),
+# while describing a writer that no longer existed: a rename of the
+# SEGMENT template — the constant that actually matters now — would have
+# sailed straight through the guard that exists to catch exactly that.
+#
+# So the pin is taken against the writer itself: run a real `Recorder`
+# and assert doctor probes the file IT produced, with the legacy name
+# kept as the second covered source. Closes the doctor side of Class 6.
 # ---------------------------------------------------------------------------
 
 
-def test_check_event_log_uses_canonical_event_log_filename(
+def test_check_event_log_covers_the_filename_the_recorder_writes(
     tmp_path: Path,
 ) -> None:
-    """Pin `doctor.py:_check_event_log_writable` to the canonical
-    `events.EVENT_LOG_FILENAME`. Drop a file at `<dir>/EVENT_LOG_FILENAME`
-    and confirm the probe finds it (i.e. takes the existing-file branch,
-    not the "not yet created" branch a hardcoded literal would fall
-    through to after a rename of the constant)."""
-    from bettermemory.events import EVENT_LOG_FILENAME
+    """Pin `doctor.py:_check_event_log_writable` against the path the
+    `Recorder` really appends to, derived by RUNNING one rather than by
+    naming a constant — a test that names the constant cannot notice
+    when the writer stops using it, which is precisely what happened
+    here across the 3.24.0 sharding.
 
-    log_path = tmp_path / EVENT_LOG_FILENAME
-    log_path.write_text('{"kind": "test"}\n', encoding="utf-8")
-    diag = _check_event_log_writable(tmp_path)
-    # Doctor saw the file (status is `ok` or `warn`, not the
-    # "not yet created" message that fires when the path is missing).
-    assert "not yet created" not in diag.message, (
-        "doctor's log_path constructed a different filename than "
-        "events.EVENT_LOG_FILENAME — see doctor.py:_check_event_log_writable"
+    Both sources are covered: the active shard the Recorder created,
+    and the legacy pre-sharding `.events.jsonl` that stores predating
+    3.24.0 still carry."""
+    from bettermemory import doctor as doctor_mod
+    from bettermemory.events import EVENT_LOG_FILENAME, Recorder
+
+    recorder = Recorder(root=tmp_path, session_id="parity-probe")
+    recorder.record("search")
+    written = recorder.path
+    assert written.exists(), "the Recorder wrote nothing to assert against"
+    # Guard the premise: if the writer ever goes back to the legacy
+    # single log, the sharded arm below stops testing anything.
+    assert written.name != EVENT_LOG_FILENAME, (
+        "the Recorder writes the legacy filename again — collapse this "
+        "test back to the single-log shape rather than leaving a "
+        "sharded assertion that no longer describes the writer."
     )
+
+    assert written in doctor_mod._event_log_files(tmp_path)
+    diag = _check_event_log_writable(tmp_path)
+    assert "not yet created" not in diag.message, (
+        "doctor's probe missed the segment the Recorder actually wrote "
+        "— see doctor.py:_event_log_files vs events._SEGMENT_TEMPLATE"
+    )
+    assert diag.details["paths"] == [str(written)]
+
+    # The legacy pre-sharding name stays a probed source alongside it.
+    legacy = tmp_path / EVENT_LOG_FILENAME
+    legacy.write_text('{"kind": "test"}\n', encoding="utf-8")
+    diag = _check_event_log_writable(tmp_path)
+    assert str(legacy) in diag.details["paths"]
+    assert str(written) in diag.details["paths"]
 
 
 def test_mcp_client_configs_ok_for_pinned_uvx_runner_shape(
@@ -3523,9 +3657,8 @@ def test_fix_event_log_chmods_unwritable_file(tmp_path: Path) -> None:
     log = tmp_path / EVENT_LOG_FILENAME
     log.write_text("", encoding="utf-8")
     log.chmod(0o400)
+    _require_unwritable(log)
     diag = _check_event_log_writable(tmp_path)
-    if diag.status == "ok":
-        pytest.skip("filesystem ignored chmod; cannot exercise unwritable path")
     assert diag.status == "fail"
     fixes = run_fixes(DoctorReport(checks=[diag]), cfg=None, directory=tmp_path)
     assert [f.action for f in fixes] == ["chmod_event_log"]
@@ -3552,9 +3685,8 @@ def test_fix_event_log_chmods_unwritable_shard(tmp_path: Path) -> None:
     shard = tmp_path / ".events.00.jsonl"
     shard.write_text("", encoding="utf-8")
     shard.chmod(0o400)
+    _require_unwritable(shard)
     diag = _check_event_log_writable(tmp_path)
-    if diag.status == "ok":
-        pytest.skip("filesystem ignored chmod; cannot exercise unwritable path")
     assert diag.status == "fail"
     fixes = run_fixes(DoctorReport(checks=[diag]), cfg=None, directory=tmp_path)
     assert [f.action for f in fixes] == ["chmod_event_log"]
@@ -3583,9 +3715,8 @@ def test_fix_event_log_declines_symlinked_log(tmp_path: Path) -> None:
     store.mkdir()
     (store / EVENT_LOG_FILENAME).symlink_to(victim)
 
+    _require_unwritable(victim)
     diag = _check_event_log_writable(store)
-    if diag.status == "ok":
-        pytest.skip("filesystem ignored chmod; cannot exercise unwritable path")
     assert diag.status == "fail"
     fixes = run_fixes(DoctorReport(checks=[diag]), cfg=None, directory=store)
     assert fixes == []  # declined → manual-only, with the hint
@@ -3604,9 +3735,8 @@ def test_fix_event_log_reports_chmod_failure(
     log = tmp_path / EVENT_LOG_FILENAME
     log.write_text("", encoding="utf-8")
     log.chmod(0o400)
+    _require_unwritable(log)
     diag = _check_event_log_writable(tmp_path)
-    if diag.status == "ok":
-        pytest.skip("filesystem ignored chmod; cannot exercise unwritable path")
     assert diag.status == "fail"
     mode_before = stat.S_IMODE(log.stat().st_mode)
 
@@ -3650,9 +3780,9 @@ def test_fix_event_log_reports_partial_application_honestly(
         seg.chmod(0o400)
         segments.append(seg)
     doomed = segments[2]
+    for seg in segments:
+        _require_unwritable(seg)
     diag = _check_event_log_writable(tmp_path)
-    if diag.status == "ok":
-        pytest.skip("filesystem ignored chmod; cannot exercise unwritable path")
     assert diag.status == "fail"
 
     real_chmod = Path.chmod
@@ -3685,6 +3815,60 @@ def test_fix_event_log_reports_partial_application_honestly(
             if seg != doomed:
                 assert stat.S_IMODE(seg.stat().st_mode) == 0o600
     doomed.chmod(0o644)
+
+
+def test_fix_event_log_survives_a_segment_vanishing_before_its_stat(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """`old_mode = stat.S_IMODE(log_path.stat().st_mode)` sat OUTSIDE
+    the try/except: a segment rotated or tidied away between the
+    fixer's glob and its stat raised an uncaught FileNotFoundError out
+    of `_fix_event_log`. `doctor --fix` heals every segment in ONE
+    pass, so a single racing ghost aborted the loop — the segments
+    after it were never attempted, and `run_fixes`' catch-all turned
+    the whole thing into a bogus "fixer raised" FixResult instead of
+    the repair the user asked for.
+
+    The ghost must be skipped silently (a segment that no longer exists
+    cannot be mispermissioned) and the healthy segment behind it must
+    still be healed.
+    """
+    from bettermemory import doctor as doctor_mod
+    from bettermemory.doctor import _fix_event_log
+
+    ghost = tmp_path / ".events.00.jsonl"
+    ghost.write_text("", encoding="utf-8")
+    ghost.chmod(0o400)
+    real = tmp_path / ".events.01.jsonl"
+    real.write_text("", encoding="utf-8")
+    real.chmod(0o400)
+    _require_unwritable(ghost)
+    _require_unwritable(real)
+
+    diag = _check_event_log_writable(tmp_path)
+    assert diag.status == "fail"
+
+    real_event_log_files = doctor_mod._event_log_files
+
+    def _vanish_after_the_glob(directory: Path) -> list[Path]:
+        files = real_event_log_files(directory)
+        if ghost.exists():
+            ghost.unlink()  # rotated away between the glob and the stat
+        return files
+
+    monkeypatch.setattr(doctor_mod, "_event_log_files", _vanish_after_the_glob)
+    # Called directly, NOT through `run_fixes`: its catch-all would
+    # convert the pre-fix FileNotFoundError into a FixResult and hide
+    # the raise this test exists to pin.
+    fix = _fix_event_log(cfg=None, directory=tmp_path, diagnosis=diag)
+    assert fix is not None
+    assert fix.details["healed"] == [str(real)]  # the survivor still healed
+    assert fix.details["failed"] == []  # the ghost is not a failure
+    assert fix.error is None
+    assert fix.applied is True
+    assert fix.after_status == "ok"
+    if os.name != "nt":
+        assert stat.S_IMODE(real.stat().st_mode) == 0o600
 
 
 def test_fix_event_log_stands_down_without_directory(tmp_path: Path) -> None:
@@ -3961,6 +4145,79 @@ def test_fix_sync_gitignore_refreshes_but_never_untracks(
 
 
 @_needs_git
+def test_fix_sync_gitignore_preserves_user_authored_lines(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """DATA LOSS: `doctor --fix` deleted the user's own gitignore lines.
+
+    The fixer rewrote the store's `.gitignore` WHOLESALE — `desired =
+    "\\n".join(_GITIGNORE_LINES)` — whenever the on-disk text differed
+    from the canonical block, which on a store with any hand-added line
+    is always. So a user who had excluded their own scratch files from
+    the sync repo lost those exclusions the first time they ran
+    `doctor --fix`, silently, with the fix reporting success.
+
+    `sync._reconcile_gitignore` was made APPEND-ONLY for exactly this
+    reason, leaving two writers on one file with OPPOSITE policies:
+    whichever ran last decided whether the user's lines survived. The
+    fixer now delegates to that reconciler, so there is one writer and
+    one policy.
+
+    Pinned here: the user's lines survive VERBATIM and in place, the
+    missing canonical patterns are appended, and the append is
+    idempotent (a second `--fix` finds nothing to do rather than
+    duplicating the block).
+    """
+    from bettermemory.index import INDEX_FILENAME
+
+    store = _store_repo(tmp_path, monkeypatch)
+    (store / PROPOSALS_FILENAME).write_text("x\n", encoding="utf-8")
+    _git_in(store, "add", PROPOSALS_FILENAME)
+    _git_in(store, "commit", "-m", "pre-fix sync commit")
+    # A partial, hand-edited gitignore: one canonical line already
+    # present, plus exclusions only this user knows about.
+    user_lines = [
+        "# my own machine-local exclusions",
+        "scratch/",
+        "*.bak",
+        "NOTES-to-self.md",
+    ]
+    gitignore = store / ".gitignore"
+    gitignore.write_text(
+        "\n".join([INDEX_FILENAME, *user_lines]) + "\n", encoding="utf-8"
+    )
+
+    diag = _check_sync_tracked_ignored(store)
+    assert diag.status == "fail"
+    fixes = run_fixes(DoctorReport(checks=[diag]), cfg=None, directory=store)
+    assert [f.action for f in fixes] == ["refresh_gitignore"]
+    assert fixes[0].applied is True
+
+    after = gitignore.read_text(encoding="utf-8")
+    written = after.splitlines()
+    # Every user-authored line survived, in its original order, ahead
+    # of anything we appended.
+    for line in user_lines:
+        assert line in written, f"doctor --fix deleted the user's line {line!r}"
+    assert written[: 1 + len(user_lines)] == [INDEX_FILENAME, *user_lines]
+    # ...and the store is genuinely covered now: every canonical
+    # pattern is present exactly once.
+    for pattern in sync._GITIGNORE_LINES:
+        if not pattern.strip() or pattern.lstrip().startswith("#"):
+            continue
+        assert written.count(pattern) == 1, f"{pattern!r} missing or duplicated"
+
+    # Idempotent: a second --fix has nothing to add and does not churn.
+    second = run_fixes(
+        DoctorReport(checks=[_check_sync_tracked_ignored(store)]),
+        cfg=None,
+        directory=store,
+    )
+    assert second == []
+    assert gitignore.read_text(encoding="utf-8") == after
+
+
+@_needs_git
 def test_fix_sync_gitignore_nothing_to_apply_when_canonical(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -4009,38 +4266,48 @@ def test_fix_sync_gitignore_stands_down_outside_a_repo(
 
 
 @_needs_git
-def test_fix_sync_gitignore_unreadable_gitignore_counts_as_stale(
+def test_fix_sync_gitignore_leaves_an_unreadable_gitignore_alone(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """The unreadable-gitignore fallback: a .gitignore that exists but
-    cannot be read (mode 0o000) counts as STALE rather than raising —
-    the refresh proceeds and atomically replaces it with the canonical
-    list (os.replace needs the writable parent dir, not the unreadable
-    file), healing the unreadable artifact in the same stroke. The git
-    index stays untouched: the untrack half is manual forever."""
+    """An UNREADABLE .gitignore (mode 0o000) is left exactly as found.
+
+    This pin is INVERTED from its pre-fix form, deliberately. The old
+    fixer treated unreadable as "stale" and atomically replaced the
+    file with the canonical block — a wholesale overwrite of content it
+    had, by definition, never read. That is the destructive half of the
+    two-writers bug: `sync._reconcile_gitignore` had already been made
+    append-only precisely because a store's .gitignore carries user
+    lines, and an unreadable one is the case where preserving them
+    matters MOST (we cannot even enumerate what we would be deleting).
+
+    Now doctor routes through that same reconciler, which declines with
+    a log warning. Nothing is auto-applicable, so no FixResult is
+    produced, the finding stays manual with its hint, and the bytes on
+    disk are untouched — a strictly better outcome than a silent
+    clobber, and the `sync_tracked_ignored` check still reports it.
+    """
     store = _store_repo(tmp_path, monkeypatch)
     (store / PROPOSALS_FILENAME).write_text("x\n", encoding="utf-8")
     _git_in(store, "add", PROPOSALS_FILENAME)
     _git_in(store, "commit", "-m", "pre-fix sync commit")
     gitignore = store / ".gitignore"
-    gitignore.write_text("# stale and unreadable\n", encoding="utf-8")
+    original = "# stale and unreadable\n"
+    gitignore.write_text(original, encoding="utf-8")
     gitignore.chmod(0o000)
     try:
-        gitignore.read_text(encoding="utf-8")
-    except OSError:
-        pass
-    else:
+        try:
+            gitignore.read_text(encoding="utf-8")
+        except OSError:
+            pass
+        else:
+            pytest.skip("filesystem ignored chmod; cannot exercise unreadable file")
+        diag = _check_sync_tracked_ignored(store)
+        assert diag.status == "fail"
+        fixes = run_fixes(DoctorReport(checks=[diag]), cfg=None, directory=store)
+        assert fixes == []  # declined → manual-only, with the hint
+    finally:
         gitignore.chmod(0o644)
-        pytest.skip("filesystem ignored chmod; cannot exercise unreadable file")
-    diag = _check_sync_tracked_ignored(store)
-    assert diag.status == "fail"
-    fixes = run_fixes(DoctorReport(checks=[diag]), cfg=None, directory=store)
-    assert [f.action for f in fixes] == ["refresh_gitignore"]
-    fix = fixes[0]
-    assert fix.applied is True
-    assert fix.after_status == "fail"  # honest: the untrack is manual
-    desired = "\n".join(sync._GITIGNORE_LINES) + "\n"
-    assert gitignore.read_text(encoding="utf-8") == desired  # readable again
+    assert gitignore.read_text(encoding="utf-8") == original  # byte-for-byte
     assert PROPOSALS_FILENAME in _git_in(store, "ls-files")  # index untouched
 
 
@@ -4062,7 +4329,9 @@ def test_fix_sync_gitignore_reports_write_failure(
     def _deny(*_args: Any, **_kwargs: Any) -> None:
         raise PermissionError("read-only store")
 
-    monkeypatch.setattr("bettermemory._fsutil.atomic_write_bytes", _deny)
+    # Patched on `sync`, which is where the write now happens (and which
+    # binds the name at import, so patching `_fsutil` would miss it).
+    monkeypatch.setattr("bettermemory.sync.atomic_write_bytes", _deny)
     fixes = run_fixes(DoctorReport(checks=[diag]), cfg=None, directory=store)
     assert [f.action for f in fixes] == ["refresh_gitignore"]
     fix = fixes[0]

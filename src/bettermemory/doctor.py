@@ -54,6 +54,7 @@ from pathlib import Path, PurePosixPath
 from typing import Any, Literal
 
 from .config import Config, TelemetryConfig, load_config
+from .eval import ADMIN_RECORDED_EVENT_KINDS
 from .events import EVENT_LOG_FILENAME, iter_all_events
 from .init import KNOWN_CLIENTS, command_launches_bettermemory, find_binary
 from .store import Store, count_active_memory_files, count_unparseable_memory_files
@@ -646,7 +647,23 @@ def _probe_event_log_segment(log_path: Path) -> tuple[str, str, int]:
     `(outcome, detail, size)` where outcome is "ok" (appendable,
     `size` bytes), "vanished" (gone mid-run — not a finding),
     "not_writable" or "append_failed" (`detail` is the human sentence
-    naming the cause)."""
+    naming the cause).
+
+    The existence gate runs FIRST and that ordering is load-bearing:
+    `os.access` answers False for a path that is not there, so probing
+    permission first misfiled a segment that vanished between
+    `_event_log_files`' glob and this call as "not writable" — a red
+    verdict naming a file that no longer exists, and a dead
+    "vanished"/not-yet-created shape for the COMMON vanish timing (the
+    FileNotFoundError branch below only catches the far narrower window
+    between this gate and the open)."""
+    if not os.path.lexists(log_path):
+        # Gone between the glob and this probe (concurrent tidy-up,
+        # rotation, the user deleting the log). `lexists`, not
+        # `exists`: a DANGLING symlink at the log path is an entry that
+        # really is there and really is not appendable on our terms, so
+        # it must stay a finding rather than be excused as a vanish.
+        return "vanished", "", 0
     if not os.access(log_path, os.W_OK):
         return "not_writable", f"{log_path} is not writable", 0
     # os.access is only the cheap pre-guard — on Windows it consults
@@ -817,22 +834,34 @@ def _check_event_log_writable(directory: Path) -> Diagnosis:
     )
 
 
-# Event kinds emitted by admin/CLI surfaces (`doctor --fix`'s audit
-# trail; `consolidate --acknowledge-misses-before`'s bulk cutoff
+# `_ADMIN_EVENT_KINDS` is an ALIAS, imported at the top of this module,
+# for `eval.ADMIN_RECORDED_EVENT_KINDS` — never a local copy of its
+# contents. Event kinds emitted by admin/CLI surfaces (`doctor --fix`'s
+# audit trail; `consolidate --acknowledge-misses-before`'s bulk cutoff
 # marker) rather than by an MCP server session serving a client.
-# INVARIANT: every kind in this set is recorded outside any client
+#
+# INVARIANT: every kind in that set is recorded outside any client
 # session, under a fresh throwaway session id, so a "session" observed
 # only through these kinds never had a Stop hook that could produce
 # `turn_audited`. `_check_audit_turn_cadence` excludes them from its
 # census entirely — counting them corrupts the ≥2-sessions denominator:
 # `doctor --fix` on a store with one real session would manufacture the
 # second "session" whose missing `turn_audited` its own post-fix re-run
-# then warns about, flipping a fully-healed run's exit code to 1. Grow
-# this set whenever a new admin/CLI-recorded event kind is added — the
-# parity pin in tests/test_doctor.py derives the admin-CLI subset from
-# eval.py's `_KNOWN_SIDE_EFFECT_KINDS` roster and fails when this set
-# falls behind it.
-_ADMIN_EVENT_KINDS: frozenset[str] = frozenset({"doctor_fix", "silent_miss_cutoff"})
+# then warns about, flipping a fully-healed run's exit code to 1.
+#
+# The constant is DERIVED in eval.py (the complement of the in-session
+# subset over `_KNOWN_SIDE_EFFECT_KINDS`), so a newly-added admin kind
+# lands here automatically and this census cannot fall behind. That is
+# only true while this stays an import: the hand-written
+# `frozenset({"doctor_fix", "silent_miss_cutoff"})` that used to live
+# here compared EQUAL to the derivation on the day it was written and
+# would have silently drifted on the next kind. The parity pin in
+# tests/test_doctor.py asserts object IDENTITY with eval's constant for
+# exactly that reason — equality would not catch a re-hardcoded copy.
+#
+# Bound by assignment rather than `import … as` so the alias is an
+# explicit export mypy can see through from the parity test.
+_ADMIN_EVENT_KINDS: frozenset[str] = ADMIN_RECORDED_EVENT_KINDS
 
 
 def _check_audit_turn_cadence(directory: Path) -> Diagnosis:
@@ -2503,20 +2532,48 @@ def _fix_event_log(
     symlinks, so 'fixing' it would mutate whatever the link points at —
     the same refuse-on-symlink standard `_check_stale_config_lockfiles`
     and `init._heal_stale_sidecar_lockfile` hold).
+
+    A segment that VANISHES between the glob and its stat/chmod is
+    skipped, not raised: `doctor --fix` runs every fixer in one pass, so
+    an uncaught FileNotFoundError from a concurrently-rotated segment
+    took the whole run down — including the fixes that had nothing to
+    do with the event log.
     """
     if directory is None or not directory.exists():
         return None
     healed: list[tuple[Path, int]] = []
-    failed: list[tuple[Path, int]] = []
+    # Failed segments carry their pre-fix mode ALREADY RENDERED, so the
+    # unstattable arm below can say "unknown" instead of inventing a
+    # numeric mode it never read.
+    failed: list[tuple[Path, str]] = []
     errors: list[str] = []
     for log_path in _event_log_files(directory):
         if log_path.is_symlink() or os.access(log_path, os.W_OK):
             continue  # decline symlinks; skip already-writable segments
-        old_mode = stat.S_IMODE(log_path.stat().st_mode)
+        try:
+            old_mode = stat.S_IMODE(log_path.stat().st_mode)
+        except FileNotFoundError:
+            # The segment vanished between `_event_log_files`' glob and
+            # this stat (concurrent rotation, a tidy-up, the user
+            # deleting the log). Nothing left to heal and nothing to
+            # report — the same not-a-finding shape
+            # `_probe_event_log_segment` gives a vanished segment. This
+            # guard is why the stat is INSIDE a try: uncaught, it
+            # aborted the whole `doctor --fix` run with a traceback,
+            # taking every not-yet-run fixer down with it.
+            continue
+        except OSError as exc:
+            # Unstattable for any other reason (a denied parent
+            # directory). Report rather than swallow: the chmod below
+            # could not have worked either, and silence would leave the
+            # user with a red check and no explanation.
+            failed.append((log_path, "unknown"))
+            errors.append(f"{log_path}: {exc.__class__.__name__}: {exc}")
+            continue
         try:
             log_path.chmod(0o600)
         except OSError as exc:
-            failed.append((log_path, old_mode))
+            failed.append((log_path, oct(old_mode)))
             errors.append(f"{log_path}: {exc.__class__.__name__}: {exc}")
             continue
         healed.append((log_path, old_mode))
@@ -2524,7 +2581,8 @@ def _fix_event_log(
         return None
     healed_paths = [str(p) for p, _ in healed]
     failed_paths = [str(p) for p, _ in failed]
-    old_modes = {str(p): oct(m) for p, m in healed + failed}
+    old_modes = {str(p): oct(m) for p, m in healed}
+    old_modes.update({str(p): m for p, m in failed})
     # Re-run the check whichever way the pass went: after_status must
     # describe the store as it now IS, and a partial heal leaves it red.
     after = _check_event_log_writable(directory)
@@ -2610,43 +2668,47 @@ def _fix_index_health(
 def _fix_sync_gitignore(
     *, cfg: Config | None, directory: Path | None, diagnosis: Diagnosis
 ) -> FixResult | None:
-    """Refresh the store sync repo's `.gitignore` to the canonical
-    pattern list — `sync.init()`'s own idempotent, atomic refresh,
-    applied without the user having to remember that init is also the
-    refresher.
+    """Reconcile the store sync repo's `.gitignore` with the canonical
+    pattern list through `sync._reconcile_gitignore` — the SAME writer
+    `sync push` runs — applied without the user having to remember that
+    a sync is also what refreshes it.
+
+    ONE WRITER, ONE POLICY. This fixer used to rewrite the file
+    WHOLESALE (`"\\n".join(_GITIGNORE_LINES)`) whenever the on-disk text
+    differed from the canonical block, so `doctor --fix` silently
+    deleted every line the user had added to their own store's
+    `.gitignore` — a store's gitignore is a file users legitimately
+    edit (machine-local exclusions live there too). `sync` had already
+    been made deliberately APPEND-ONLY for exactly that reason, which
+    left two writers on one file with OPPOSITE policies: whichever ran
+    last decided whether the user's lines survived. Delegating here
+    rather than re-implementing the policy is the point — a second
+    implementation is how the two drifted apart in the first place.
 
     This is a PARTIAL fix by design: gitignore cannot untrack, so the
     check stays red until the user runs the `git rm --cached`
-    remediation from the hint — but without the refresh, that manual
-    step silently un-does itself on a stale-gitignore store: `sync
-    push` does NOT refresh the gitignore, so its next `git add -A`
-    would re-stage the just-untracked file. The untrack itself — and
-    the history rewrite / secret rotation behind it — stays manual
-    forever.
+    remediation from the hint. `sync push` now reconciles the gitignore
+    on its own push path, so the manual untrack does stick afterwards —
+    but the untrack itself, and the history rewrite / secret rotation
+    behind it, stays manual forever.
+
+    Nothing missing (including the already-canonical shape, and the
+    UNREADABLE file `_reconcile_gitignore` declines to clobber) means
+    nothing auto-applicable: the fixer returns None and the finding
+    stays purely manual.
     """
     if directory is None or not directory.exists():
         return None
     # Same lazy-import rationale as `_check_sync_tracked_ignored`: a
-    # top-level `from .sync import …` here would be circular.
-    from ._fsutil import atomic_write_bytes
-    from .sync import _GITIGNORE_LINES, _is_repo
+    # top-level `from .sync import …` here would be circular (sync
+    # imports `DOCTOR_PROBE_FILENAME` from this module).
+    from .sync import _is_repo, _reconcile_gitignore
 
     if not _is_repo(directory):
         return None
     gitignore = directory / ".gitignore"
-    desired = "\n".join(_GITIGNORE_LINES) + "\n"
     try:
-        current = gitignore.read_text(encoding="utf-8") if gitignore.exists() else ""
-    except OSError:
-        # Unreadable counts as stale — the write below either heals it
-        # or reports the failure honestly.
-        current = ""
-    if current == desired:
-        # Gitignore already canonical — the remaining remediation is
-        # the manual untrack; nothing auto-applicable here.
-        return None
-    try:
-        atomic_write_bytes(gitignore, desired.encode("utf-8"))
+        added = _reconcile_gitignore(directory)
     except OSError as exc:
         return FixResult(
             check="sync_tracked_ignored",
@@ -2658,7 +2720,13 @@ def _fix_sync_gitignore(
             error=f"{exc.__class__.__name__}: {exc}",
             details={"gitignore": str(gitignore)},
         )
+    if not added:
+        # Every canonical pattern is already covered (or the file is
+        # unreadable and was deliberately left alone) — the remaining
+        # remediation is the manual untrack; nothing auto-applicable.
+        return None
     after = _check_sync_tracked_ignored(directory)
+    plural = "" if len(added) == 1 else "s"
     return FixResult(
         check="sync_tracked_ignored",
         action="refresh_gitignore",
@@ -2666,11 +2734,12 @@ def _fix_sync_gitignore(
         before_status=diagnosis.status,
         after_status=after.status,
         message=(
-            ".gitignore refreshed to the canonical pattern list (stops "
-            "future staging); the already-tracked files still need the "
-            "manual `git rm --cached` remediation in the hint"
+            f".gitignore reconciled with the canonical pattern list — "
+            f"added {len(added)} missing pattern{plural} (stops future "
+            f"staging); the already-tracked files still need the manual "
+            f"`git rm --cached` remediation in the hint"
         ),
-        details={"gitignore": str(gitignore)},
+        details={"gitignore": str(gitignore), "added": added},
     )
 
 
