@@ -7,6 +7,54 @@ breaking changes, minor for additive features, patch for fixes. The
 [compatibility contract](CONTRIBUTING.md#versioning-and-the-compatibility-contract)
 spells out exactly what's stable.
 
+## 3.25.0 - 2026-07-19
+
+`migrate origin` can now repair an origin that was captured *wrong*,
+not just backfill one that was never captured at all.
+
+### Added
+
+- **`migrate origin --repair`.** The original backfill only ever fired
+  on memories with no `origin` block, which turns out to be the rarer
+  failure. The common one: a write made from a parent directory
+  (`~/Documents`) or `$HOME` sits outside any git checkout, so
+  `capture()` records a cwd with `repo=None` — and `repos_match` treats
+  a null repo as matching *every* caller. The memory silently becomes
+  global and leaks into every project's auto-scoped search. Worse, a
+  memory written while sitting in project B but scoped to project A ends
+  up anchored to B and goes **dark** in A: still listed under
+  `projects:a`, never retrievable from it.
+
+  `--repair` lifts the skip and applies two rules to an existing origin:
+
+  | rule | condition | action |
+  |---|---|---|
+  | anchor | `repo` null, scopes name exactly one mapped repo | adopt that repo |
+  | demote | `repo` contradicts one of the memory's own mapped scopes | clear `repo` + `worktree_root` |
+
+  The rules move in opposite directions deliberately. Anchoring makes a
+  memory *less* visible, so it demands unambiguous evidence; demoting
+  makes it *more* visible, so it is safe on any genuine mismatch. A
+  memory spanning two projects cannot be represented by a single-repo
+  origin at all, so global is the honest answer for it.
+
+- **`migrate origin --keep-global SCOPE`** (repeatable, requires
+  `--repair`). Names a cross-cutting scope — `infrastructure`, `tools`,
+  `workflow` — that must never be anchored to one repo, since anchoring
+  a genuinely project-spanning memory hides it from everywhere else. It
+  guards both the repair and the legacy-backfill routes: honouring it on
+  only one would let the older path quietly do the damage the newer one
+  refuses to. It never triggers a demote — treating it as one would
+  strip the anchor off every `projects:x`+`workflow` memory in a store
+  and make the leak dramatically worse.
+
+Both flags are inert unless passed: without `--repair` the migration
+path is byte-for-byte unchanged, and still skips any memory that already
+has an origin. Only the `origin` block is ever rewritten — body, id, and
+every other frontmatter key are untouched. Pair with `--dry-run` first;
+repair prints the anchor/demote split so a run is reviewable before it
+is applied.
+
 ## 3.24.1 - 2026-07-19
 
 Two fixes on top of 3.24.0's event-log sharding — one a pre-existing
