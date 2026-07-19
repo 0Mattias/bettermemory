@@ -8,11 +8,17 @@ one global append lock — the Phase-0 fleet benchmark measured that
 lock at ~7-17% of throughput. Fixed striping (not one file per
 session) bounds both the file count and a reader's open-fd count.
 Readers merge the shards plus any pre-sharding legacy `.events.jsonl`
-by event `ts`; a shard rotates to `.events-<timestamp>.jsonl.gz` when
-it crosses `max_bytes` (rotation, archives, and crash recovery are
-unchanged and shared across shards). The log lives next to the
-memories so it shares the same trust boundary — no separate
-permissions story, no separate gitignore decisions.
+by event `ts`; a shard rotates to `.events-<timestamp>-s<NN>.jsonl.gz`
+when it crosses `max_bytes`. Rotation is partitioned by the SAME key
+the append lock is: the shard index is part of the archive stem, so
+two shards crossing `max_bytes` in the same UTC second cannot derive
+the same holding/archive name, and crash recovery only ever sweeps its
+own shard's orphans (plus untagged pre-sharding ones, which have no
+live producer). Uniform crc32 striping makes shards fill IN PHASE, so
+same-second cross-shard rotation is the correlated case under the
+swarm workload sharding was built for — not a rare interleaving. The
+log lives next to the memories so it shares the same trust boundary —
+no separate permissions story, no separate gitignore decisions.
 
 Events are append-only by design. They're the substrate that downstream
 tooling reads from:
@@ -132,9 +138,86 @@ ROTATING_SUFFIX = ".jsonl.rotating"
 ROTATING_GZ_TMP_SUFFIX = ".jsonl.gz.tmp"
 DEFAULT_MAX_BYTES = 10_000_000  # 10 MB before rotation.
 
+# Store-wide rotation-recovery lock. Held ONLY around the orphan sweep
+# (`_recover_orphan_rotations`), never around name selection or the
+# step-1 rename — those are already mutually exclusive by construction
+# (names are shard-partitioned; same-shard rotations serialise on the
+# shard's own append lock), and taking a global lock across them would
+# re-introduce exactly the store-wide rotation serialisation that
+# sharding removed. What the sweep genuinely needs it for: an UNTAGGED
+# `.rotating` orphan (written by a pre-3.25 rotation) carries no shard
+# and so is recoverable by any shard; without this lock two shards
+# rotating at once could both gzip the same orphan into the same
+# `.jsonl.gz.tmp` and interleave their output. The lockfile name is
+# deliberately `.events-`-prefixed so `sync.py`'s `.events-*` ignore
+# rule already covers it, and it ends in neither ARCHIVE_SUFFIX nor
+# ROTATING_SUFFIX so no scanner mistakes it for a segment.
+ROTATE_LOCK_STEM = ARCHIVE_PREFIX + "rotate"
+
 
 def _utcnow_iso() -> str:
     return datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+
+
+# Trailing `-N` collision counter on a rotated-segment stem.
+_TRAILING_COUNTER_RE = re.compile(r"-(\d+)$")
+# Shard tag on a rotated-segment stem: `s{NN}` immediately after the
+# timestamp. Absent on pre-3.25 archives, which is why the parse
+# returns `None` rather than a default shard — an untagged archive's
+# shard is genuinely unknown, and pretending it is shard 0 would let
+# `iter_events_window` prepend some other shard's history.
+_SHARD_TAG_RE = re.compile(r"^s(\d{2})(?:-(.*))?$")
+
+
+def _rotated_stem(name: str) -> str:
+    """The `{ts}[-s{NN}][-{session}[-{counter}]]` body of a rotated
+    segment's filename, with the `.events-` prefix and whichever of
+    `.jsonl.gz` / `.jsonl.rotating` it carries stripped."""
+    suffix = ROTATING_SUFFIX if name.endswith(ROTATING_SUFFIX) else ARCHIVE_SUFFIX
+    return name[len(ARCHIVE_PREFIX) : -len(suffix)]
+
+
+def _parse_rotated_name(name: str) -> tuple[str, int | None, int]:
+    """`(ts, shard, in-second write order)` for a rotated segment name.
+
+    Shapes produced since 3.25 (shard-partitioned rotation namespace):
+
+        .events-{ts}-s{NN}.jsonl.gz                  -> (ts, NN, 0)
+        .events-{ts}-s{NN}-{session}.jsonl.gz        -> (ts, NN, 1)
+        .events-{ts}-s{NN}-{session}-{k}.jsonl.gz    -> (ts, NN, 1+k)
+
+    Legacy shapes (pre-sharding, and the untagged 3.24.x archives) keep
+    parsing with `shard = None`:
+
+        .events-{ts}.jsonl.gz                        -> (ts, None, 0)
+        .events-{ts}-{session}.jsonl.gz              -> (ts, None, 1)
+        .events-{ts}-{session}-{k}.jsonl.gz          -> (ts, None, 1+k)
+
+    Session ids carry arbitrary internal dashes — Claude Code stamps
+    full UUIDs — so the counter is detected with an end-anchored regex
+    rather than `split("-")[-1]`, and the shard tag is matched as an
+    exact `s\\d\\d` token so a session id that merely starts with an
+    `s` is not mistaken for one.
+    """
+    ts, _, remainder = _rotated_stem(name).partition("-")
+    shard: int | None = None
+    if remainder:
+        tag = _SHARD_TAG_RE.match(remainder)
+        if tag is not None:
+            shard = int(tag.group(1))
+            remainder = tag.group(2) or ""
+    if not remainder:
+        return (ts, shard, 0)
+    counter = _TRAILING_COUNTER_RE.search(remainder)
+    if counter is not None:
+        return (ts, shard, 1 + int(counter.group(1)))
+    return (ts, shard, 1)
+
+
+def _rotated_segment_shard(path: Path) -> int | None:
+    """Shard a rotated segment came from, or None when it predates the
+    shard-tagged naming (pre-3.25 archives / holding files)."""
+    return _parse_rotated_name(path.name)[1]
 
 
 def redact_query(text: str) -> dict[str, Any]:
@@ -350,6 +433,12 @@ class Recorder:
         Before any of this, sweep for orphan `.rotating` files from prior
         crashed rotations and either complete them (no matching `.gz`)
         or unlink them (matching `.gz` exists — the gz is canonical).
+
+        Every name derived here carries this recorder's SHARD index, so
+        the rotation namespace is partitioned by the same key the append
+        lock is. That is what makes step 1 safe: two shards crossing
+        `max_bytes` in the same UTC second derive different `.rotating`
+        paths and cannot `replace_atomic` over each other.
         """
         try:
             size = self.path.stat().st_size
@@ -379,31 +468,22 @@ class Recorder:
         # producer of a new orphan is a rotation — so sweeping here, right
         # before we start one, recovers any prior crash without taxing the
         # common no-rotation append path.
-        self._recover_orphan_rotations()
+        #
+        # Held under the store-wide rotate lock: an untagged (pre-3.25)
+        # orphan belongs to no shard, so two shards rotating at once
+        # could otherwise both try to compress it into the same
+        # `.jsonl.gz.tmp`. Name selection and the step-1 rename below
+        # deliberately stay OUTSIDE that lock — they are already
+        # mutually exclusive (shard-partitioned names; same-shard
+        # rotations serialise on the shard append lock we're inside) and
+        # globalising them would undo the point of sharding.
+        try:
+            with _locked(self.root / ROTATE_LOCK_STEM):
+                self._recover_orphan_rotations()
+        except OSError as exc:  # pragma: no cover — lockfile unavailable.
+            log.warning("event log rotation recovery lock failed: %s", exc)
 
-        ts = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
-        archive = self.root / f"{ARCHIVE_PREFIX}{ts}{ARCHIVE_SUFFIX}"
-        # Multiple rotations in the same UTC second collide on the timestamp
-        # (real-world pathological — tests with tiny `max_bytes` hit it
-        # immediately). First fall back to a session-tagged name; then a
-        # numeric counter until we find an unused path. Bounded by the
-        # number of bytes we've actually written, so the loop terminates.
-        # The .rotating holding file uses the same stem as the eventual
-        # archive so recovery can pair them by name.
-        if archive.exists():
-            archive = self.root / (
-                f"{ARCHIVE_PREFIX}{ts}-{self.session_id}{ARCHIVE_SUFFIX}"
-            )
-        counter = 1
-        while archive.exists():
-            archive = self.root / (
-                f"{ARCHIVE_PREFIX}{ts}-{self.session_id}-{counter}{ARCHIVE_SUFFIX}"
-            )
-            counter += 1
-
-        rotating = archive.with_name(
-            archive.name[: -len(ARCHIVE_SUFFIX)] + ROTATING_SUFFIX
-        )
+        archive, rotating = self._next_rotation_paths()
         try:
             # Step 1: atomic rename. After this the active log is gone.
             # `replace_atomic` so a Windows reader holding the active
@@ -423,6 +503,55 @@ class Recorder:
             # holds all the data; the next rotation will pick it up via
             # the recovery sweep. Don't unlink it — that would lose data.
             log.warning("event log rotation compress failed: %s", exc)
+
+    def _next_rotation_paths(self) -> tuple[Path, Path]:
+        """Pick an unused `(archive, rotating)` pair for this rotation.
+
+        The stem is `{ARCHIVE_PREFIX}{ts}-s{shard:02d}`. The shard tag is
+        load-bearing, not cosmetic: pre-3.25 the stem was
+        `{ARCHIVE_PREFIX}{ts}` with no shard component, so two shards
+        crossing `max_bytes` in the same UTC second derived the IDENTICAL
+        `.rotating` path and the second `replace_atomic` silently
+        unlinked the first shard's entire renamed segment (up to
+        `max_bytes` of events, surfacing only as a WARNING from the
+        follow-on compress). Tagging by shard makes the collision
+        structurally impossible across shards; within one shard,
+        rotations are serialised by that shard's append lock, which the
+        caller already holds.
+
+        Within a shard, several rotations can still land in the same UTC
+        second (tests with a tiny `max_bytes` hit it immediately), so we
+        fall back to a session-tagged stem and then a numeric counter.
+        BOTH the archive and the `.rotating` holding path are probed —
+        the old code checked only the archive, which was safe merely
+        because the (now removed) global append lock made rotations
+        mutually exclusive; the derived holding path was never
+        existence-checked at all.
+        """
+        ts = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+        base = f"{ARCHIVE_PREFIX}{ts}-s{self._shard:02d}"
+
+        def _paths(stem: str) -> tuple[Path, Path]:
+            return (
+                self.root / f"{stem}{ARCHIVE_SUFFIX}",
+                self.root / f"{stem}{ROTATING_SUFFIX}",
+            )
+
+        def _taken(stem: str) -> bool:
+            archive, rotating = _paths(stem)
+            return archive.exists() or rotating.exists()
+
+        if not _taken(base):
+            return _paths(base)
+        tagged = f"{base}-{self.session_id}"
+        if not _taken(tagged):
+            return _paths(tagged)
+        # Bounded by the number of bytes we've actually written, so the
+        # loop terminates.
+        counter = 1
+        while _taken(f"{tagged}-{counter}"):
+            counter += 1
+        return _paths(f"{tagged}-{counter}")
 
     def _compress_rotating(self, rotating: Path, archive: Path) -> None:
         """Steps 3-5: compress a `.rotating` holding file into its archive.
@@ -500,15 +629,29 @@ class Recorder:
             log.warning(".rotating unlink failed: %s", exc)
 
     def _recover_orphan_rotations(self) -> None:
-        """Bring any prior crashed rotation to a clean state.
+        """Bring any prior crashed rotation OF THIS SHARD to a clean state.
 
-        Called at the top of `_rotate_if_needed`. Each `.rotating`
-        file represents a rotation that started but didn't finish. If
-        a matching `.gz` exists, the compression completed before the
-        crash — unlink the `.rotating`. Otherwise the data only lives
-        in the `.rotating` file — re-run compression to produce the
-        archive. Cheap when nothing's orphaned (no iterdir cost beyond
-        the existing one in `_rotate_if_needed`'s caller path).
+        Called at the top of `_rotate_if_needed` under the store-wide
+        rotate lock. A `.rotating` file represents a rotation that
+        started but didn't finish. If a matching `.gz` exists, the
+        compression completed before the crash — unlink the
+        `.rotating`. Otherwise the data only lives in the `.rotating`
+        file — re-run compression to produce the archive.
+
+        Scoping is the correctness bit. Pre-3.25 this swept EVERY
+        `.rotating` file in the store root, and once the active log was
+        sharded it could no longer tell a crash orphan from another
+        shard's LIVE in-flight rotation — the docstring premise ("each
+        `.rotating` file represents a crashed rotation") was simply
+        false. We now skip any orphan tagged with a different shard. A
+        shard's own live rotation is never visible here because the
+        caller holds that shard's append lock for the whole rotation.
+
+        Untagged orphans (`.events-{ts}.jsonl.rotating`, written by a
+        pre-3.25 rotation) belong to no shard, so any shard may reclaim
+        them — no live producer creates that shape anymore. Concurrent
+        reclaim of the same untagged orphan by two shards is what the
+        store-wide rotate lock the caller holds exists to prevent.
         """
         try:
             entries = list(self.root.iterdir())
@@ -520,6 +663,12 @@ class Recorder:
                 and path.name.startswith(ARCHIVE_PREFIX)
                 and path.name.endswith(ROTATING_SUFFIX)
             ):
+                continue
+            shard = _rotated_segment_shard(path)
+            if shard is not None and shard != self._shard:
+                # Another shard's rotation — either live in-flight (its
+                # own append lock is held) or its own crash to recover.
+                # Not ours to touch.
                 continue
             archive_name = path.name[: -len(ROTATING_SUFFIX)] + ARCHIVE_SUFFIX
             archive = path.with_name(archive_name)
@@ -638,21 +787,31 @@ def _event_ts_key(event: dict[str, Any]) -> datetime:
     return ts if ts is not None else _TS_MIN
 
 
-def _active_segment_paths(root: Path) -> list[Path]:
-    """Every active event segment on disk: each per-shard
-    `.events.NN.jsonl` that exists, plus a legacy pre-sharding
-    `.events.jsonl` if present. Post-upgrade writes only ever go to
-    shards, so the legacy file is read-only from here on — it merges in
-    as one more ts-ordered source, no migration required."""
-    paths: list[Path] = []
+def _active_segments(root: Path) -> list[tuple[Path, int | None]]:
+    """Every active event segment on disk, paired with its shard index:
+    each per-shard `.events.NN.jsonl` that exists, plus a legacy
+    pre-sharding `.events.jsonl` (shard `None`) if present. Post-upgrade
+    writes only ever go to shards, so the legacy file is read-only from
+    here on — it merges in as one more ts-ordered source, no migration
+    required.
+
+    The shard index is what lets `iter_events_window` decide window
+    coverage PER SEGMENT and pair a segment with rotations from its own
+    shard."""
+    segments: list[tuple[Path, int | None]] = []
     legacy = root / EVENT_LOG_FILENAME
     if legacy.exists():
-        paths.append(legacy)
+        segments.append((legacy, None))
     for shard in range(SHARD_COUNT):
         seg = root / _SEGMENT_TEMPLATE.format(shard)
         if seg.exists():
-            paths.append(seg)
-    return paths
+            segments.append((seg, shard))
+    return segments
+
+
+def _active_segment_paths(root: Path) -> list[Path]:
+    """`_active_segments` without the shard indices."""
+    return [path for path, _ in _active_segments(root)]
 
 
 def iter_events(root: Path) -> Iterator[dict[str, Any]]:
@@ -691,64 +850,96 @@ def iter_events(root: Path) -> Iterator[dict[str, Any]]:
                 pass
 
 
-_TRAILING_COUNTER_RE = re.compile(r"-(\d+)$")
-
-
 def _archive_sort_key(path: Path) -> tuple[int, int]:
-    """Sort key for `iter_all_events` archive ordering.
+    """Sort key for rotated-segment ordering.
 
     Primary: mtime_ns. Secondary: write-order index parsed from the
-    filename. The secondary tiebreak only matters when the filesystem
-    timestamp resolution is too coarse to separate rapid rotations
-    within a single UTC second — Windows in particular records mtime
-    at ~10ms granularity, so a test that calls `record()` 15 times in
-    a row with `max_bytes=120` can produce multiple archives sharing
-    one `mtime_ns`.
+    filename (`_parse_rotated_name`). The secondary tiebreak only
+    matters when the filesystem timestamp resolution is too coarse to
+    separate rapid rotations within a single UTC second — Windows in
+    particular records mtime at ~10ms granularity, so a test that calls
+    `record()` 15 times in a row with `max_bytes=120` can produce
+    multiple archives sharing one `mtime_ns`.
 
-    The index is derived from the filename suffix structure; see the
-    `_rotate_if_needed` collision-handling for the producer side.
-    Bare `{ts}` -> 0, `{ts}-{session}` -> 1, `{ts}-{session}-N` -> 1+N.
-
-    Session ids carry arbitrary internal dashes — Claude Code stamps
-    full UUIDs (e.g. `0c69b1b2-cb4e-4cea-…`) — so a naive
-    `inner.split("-")[-1]` trips on a UUID's trailing hex segment.
-    We strip the timestamp prefix (no dashes by construction) and
-    detect the optional `-N` counter via a regex anchored to end-of-
-    string; the remaining body is treated as the session id wholesale.
+    Tolerates `.rotating` holding files alongside `.gz` archives: both
+    share the same stem structure, differing only in suffix.
+    `iter_events_window` ranks an orphan holding file (a rotation that
+    crashed before compression) against the archives to find the newest
+    rotated segment, so the key must accept whichever suffix the
+    candidate carries.
     """
     try:
         mtime = path.stat().st_mtime_ns
     except OSError:
         mtime = 0
-    # Tolerate `.rotating` holding files alongside `.gz` archives: both
-    # share the `{ts}[-{session}[-N]]` stem structure, differing only in
-    # suffix. `iter_events_window` ranks an orphan holding file (a
-    # rotation that crashed before compression) against the archives to
-    # find the newest rotated segment, so the key function must strip
-    # whichever suffix the candidate carries.
-    suffix = ROTATING_SUFFIX if path.name.endswith(ROTATING_SUFFIX) else ARCHIVE_SUFFIX
-    inner = path.name[len(ARCHIVE_PREFIX) : -len(suffix)]
-    ts_split = inner.split("-", 1)
-    if len(ts_split) == 1:
-        # Bare `.events-{ts}.jsonl.gz` — first-write-of-second.
-        return (mtime, 0)
-    remainder = ts_split[1]
-    match = _TRAILING_COUNTER_RE.search(remainder)
-    if match is not None:
-        # `.events-{ts}-{session}-N.jsonl.gz` — third or later. The
-        # regex is end-anchored, so it only matches a `-\d+` suffix
-        # rather than any digit substring inside the session id.
-        return (mtime, 1 + int(match.group(1)))
-    # `.events-{ts}-{session}.jsonl.gz` — second-write-of-second.
-    return (mtime, 1)
+    return (mtime, _parse_rotated_name(path.name)[2])
+
+
+def _rotated_segments(root: Path) -> list[Path]:
+    """Every rotated segment worth reading, unordered.
+
+    The `.jsonl.gz` archives plus orphan `.rotating` holding files (a
+    rotation that crashed after the active-log rename but before
+    compression — the events' only copy). A `.rotating` file WITH a
+    matching archive is a stale duplicate that the next rotation will
+    unlink; including it would double-count those events.
+    """
+    try:
+        entries = list(root.iterdir())
+    except OSError:  # pragma: no cover — unreadable root, nothing to read.
+        return []
+    archives = [
+        p
+        for p in entries
+        if p.is_file()
+        and p.name.startswith(ARCHIVE_PREFIX)
+        and p.name.endswith(ARCHIVE_SUFFIX)
+    ]
+    archive_stems = {p.name[: -len(ARCHIVE_SUFFIX)] for p in archives}
+    return archives + [
+        p
+        for p in entries
+        if p.is_file()
+        and p.name.startswith(ARCHIVE_PREFIX)
+        and p.name.endswith(ROTATING_SUFFIX)
+        and p.name[: -len(ROTATING_SUFFIX)] not in archive_stems
+    ]
+
+
+def _iter_segment_chain(paths: list[Path]) -> Iterator[dict[str, Any]]:
+    """Yield events from an ordered run of rotated segments, opening one
+    at a time so the merge's open-fd count stays bounded by the number
+    of chains rather than the number of archives in the store."""
+    for path in paths:
+        yield from _iter_segment(path)
 
 
 def iter_all_events(root: Path) -> Iterator[dict[str, Any]]:
     """Yield events from rotated archives + active log, in chronological order.
 
-    Archive filenames embed a UTC timestamp, so lexicographic sort is
-    chronological. The active log is yielded last. Used by `memory_health`
-    in Phase 5 and by anything that wants the full history.
+    Chronological is a real guarantee, produced by a `heapq.merge` on
+    `_event_ts_key` — the same merge `iter_events` performs across the
+    active shards. It has to be: since 3.24.0 sharded the active log,
+    "all archives, then all active segments" is NOT chronological. A
+    quiet shard's active segment routinely holds events far older than
+    a busy shard's freshly-cut archive, and the reverse-walking
+    consumers (`compute_health`'s `last_*` timestamps, consolidate's
+    fact demotion, eval, doctor) all read order as meaning.
+
+    Streams merged, in tie-break priority order: one chain per shard
+    over that shard's rotated archives (chronological within a shard by
+    construction — a shard rotates its own segment wholesale), one
+    chain for untagged pre-3.25 archives, one stream per orphan
+    `.rotating` holding file, and finally `iter_events(root)` for the
+    active segments. Equal timestamps resolve toward the earlier
+    stream, so a rotated segment still precedes the active tail it was
+    cut from.
+
+    The untagged-archive chain is the one approximate stream: those
+    names predate the shard tag, so archives cut by DIFFERENT shards
+    land in one chain ordered by mtime. Ordering within that chain is
+    therefore best-effort rather than exact — no events are lost, and
+    it degrades to exact as pre-3.25 archives age out of a store.
 
     Orphan `.rotating` holding files (produced when a rotation crashed
     after the active-log rename but before compression finished) are
@@ -759,104 +950,59 @@ def iter_all_events(root: Path) -> Iterator[dict[str, Any]]:
     """
     if not root.exists():
         return
-    try:
-        entries = list(root.iterdir())
-    except OSError:  # pragma: no cover
-        return
 
-    archives = [
-        p
-        for p in entries
-        if p.is_file()
-        and p.name.startswith(ARCHIVE_PREFIX)
-        and p.name.endswith(ARCHIVE_SUFFIX)
-    ]
-    rotating_files = [
-        p
-        for p in entries
-        if p.is_file()
-        and p.name.startswith(ARCHIVE_PREFIX)
-        and p.name.endswith(ROTATING_SUFFIX)
-    ]
-    archive_stems = {p.name[: -len(ARCHIVE_SUFFIX)] for p in archives}
-    # Sort by (mtime, in-second-counter). Naive filename sort is wrong
-    # because collision-handling produces names like
-    # `.events-{ts}-N.jsonl.gz` that lex-sort *before* the bare
-    # `.events-{ts}.jsonl.gz` (since `-` < `.`). And mtime alone is
-    # unreliable on Windows, where the filesystem timestamp resolution is
-    # coarse enough that several rapid rotations land on the same
-    # mtime_ns and the secondary sort is undefined. Parsing the suffix
-    # counter out of the filename gives the right write-order tiebreak
-    # within a single UTC second:
-    #   .events-{ts}.jsonl.gz                  -> 0
-    #   .events-{ts}-{session}.jsonl.gz        -> 1
-    #   .events-{ts}-{session}-1.jsonl.gz      -> 2
-    #   .events-{ts}-{session}-N.jsonl.gz      -> 1+N
-    archives.sort(key=_archive_sort_key)
-    for archive in archives:
-        try:
-            with gzip.open(archive, "rb") as f:
-                yield from _iter_json_lines(f)
-        except (OSError, EOFError, zlib.error):
-            # A truncated/CRC-corrupt/non-gzip archive (external copy
-            # interrupted mid-sync, bit rot on a never-rewritten append-only
-            # log). Skip this archive and keep reading the rest + the active
-            # log — one bad file must not blank the whole telemetry surface.
-            log.warning("events: skipping unreadable archive %s", archive.name)
+    by_shard: dict[int, list[Path]] = {}
+    untagged: list[Path] = []
+    orphans: list[Path] = []
+    for path in _rotated_segments(root):
+        if path.name.endswith(ROTATING_SUFFIX):
+            orphans.append(path)
             continue
+        shard = _rotated_segment_shard(path)
+        if shard is None:
+            untagged.append(path)
+        else:
+            by_shard.setdefault(shard, []).append(path)
 
-    # Crash-recovery yield: orphan .rotating files whose archive never
-    # landed. These represent a real rotation in-flight when the process
-    # died; their events would be otherwise lost to the reader until
-    # the next rotation's recovery sweep produces the archive.
-    for rotating in rotating_files:
-        stem = rotating.name[: -len(ROTATING_SUFFIX)]
-        if stem in archive_stems:
-            continue
-        try:
-            rf = rotating.open("rb")
-        except OSError:  # pragma: no cover
-            continue
-        with rf:
-            yield from _iter_json_lines(rf)
-
-    yield from iter_events(root)
+    streams: list[Iterator[dict[str, Any]]] = []
+    for shard in sorted(by_shard):
+        streams.append(
+            _iter_segment_chain(sorted(by_shard[shard], key=_archive_sort_key))
+        )
+    if untagged:
+        streams.append(_iter_segment_chain(sorted(untagged, key=_archive_sort_key)))
+    for orphan in sorted(orphans, key=_archive_sort_key):
+        streams.append(_iter_segment(orphan))
+    streams.append(iter_events(root))
+    yield from heapq.merge(*streams, key=_event_ts_key)
 
 
 def _newest_rotated_segment(root: Path) -> Path | None:
-    """Most recent rotated segment, or None when nothing has rotated.
-
-    Candidates are the `.jsonl.gz` archives plus orphan `.rotating`
-    holding files (a rotation that crashed after the active-log rename
-    but before compression — the events' only copy). A `.rotating` file
-    WITH a matching archive is a stale duplicate (the archive is
-    canonical) and is excluded, mirroring `iter_all_events`. Ranking
-    uses `_archive_sort_key` — (mtime, in-second write counter) — the
-    same order `iter_all_events` replays archives in.
-    """
-    try:
-        entries = list(root.iterdir())
-    except OSError:  # pragma: no cover — unreadable root, nothing to read.
-        return None
-    archives = [
-        p
-        for p in entries
-        if p.is_file()
-        and p.name.startswith(ARCHIVE_PREFIX)
-        and p.name.endswith(ARCHIVE_SUFFIX)
-    ]
-    archive_stems = {p.name[: -len(ARCHIVE_SUFFIX)] for p in archives}
-    candidates = archives + [
-        p
-        for p in entries
-        if p.is_file()
-        and p.name.startswith(ARCHIVE_PREFIX)
-        and p.name.endswith(ROTATING_SUFFIX)
-        and p.name[: -len(ROTATING_SUFFIX)] not in archive_stems
-    ]
+    """Most recent rotated segment across every shard, or None when
+    nothing has rotated. Ranking uses `_archive_sort_key` — (mtime,
+    in-second write counter)."""
+    candidates = _rotated_segments(root)
     if not candidates:
         return None
     return max(candidates, key=_archive_sort_key)
+
+
+def _newest_rotated_segment_for_shard(
+    candidates: list[Path], shard: int | None
+) -> Path | None:
+    """Newest rotated segment attributable to `shard`, or None.
+
+    `shard=None` selects the untagged pre-3.25 segments — that is the
+    right answer for a legacy `.events.jsonl` active log, whose
+    rotations were untagged too. A sharded segment deliberately does
+    NOT fall back to untagged candidates: an untagged archive's shard is
+    unknown, so prepending it could splice a different shard's history
+    into the window.
+    """
+    matching = [p for p in candidates if _rotated_segment_shard(p) == shard]
+    if not matching:
+        return None
+    return max(matching, key=_archive_sort_key)
 
 
 def _iter_segment(path: Path) -> Iterator[dict[str, Any]]:
@@ -879,6 +1025,28 @@ def _iter_segment(path: Path) -> Iterator[dict[str, Any]]:
         return
     with rf:
         yield from _iter_json_lines(rf)
+
+
+def _first_event_ts(path: Path) -> datetime | None:
+    """Parsed `ts` of the OLDEST event in one active segment, or None
+    when the segment is missing, empty, or holds nothing with a
+    readable timestamp.
+
+    Reads only as far as the first parseable record — a segment is
+    append-only and ts-ordered, so its head IS its oldest event. This
+    is the per-segment coverage probe `iter_events_window` replaced its
+    materialise-the-whole-active-log scan with.
+    """
+    try:
+        f = path.open("rb")
+    except OSError:  # pragma: no cover — segment vanished mid-read.
+        return None
+    with f:
+        for event in _iter_json_lines(f):
+            ts = parse_event_ts(event.get("ts"))
+            if ts is not None:
+                return ts
+    return None
 
 
 def iter_events_window(
@@ -906,28 +1074,63 @@ def iter_events_window(
     archive is touched, so the common no-recent-rotation path costs
     exactly one extra timestamp parse over `iter_events`.
 
-    One segment is deliberately the bound: a single rotation event can
-    split a window across at most two files (the freshly-cut archive +
-    the new active log). Two rotations *within one window* would need
-    deeper history — that requires writing `window_seconds`' worth of
-    events past `max_bytes` twice over, a rotation cadence pathological
-    enough that the right fix is the rotation config, not a deeper read.
-    Events are yielded oldest-segment-first, matching `iter_all_events`'
-    chronological contract.
+    Coverage is decided PER ACTIVE SEGMENT, not globally. Since 3.24.0
+    sharded the active log there is no single "oldest active event" to
+    test: taking the globally-oldest one (across all 16 shards) made
+    this shield DEAD on any store older than a session, because one
+    cold shard holding a single stale event pins that timestamp below
+    `cutoff` and the prepend never fires — even when a *different*
+    shard just rotated the window's events out. Shard files are never
+    deleted, so after a handful of sessions nearly every shard holds
+    ancient events. The concrete victim was the retrieval shield in
+    `handlers/audit_turn` / `hook`: a session's own `search` event went
+    invisible, the turn re-fired as a false `search_miss`, and the
+    published silent_miss_rate inflated.
+
+    So: for each active segment, compare THAT segment's own oldest `ts`
+    against `cutoff`, and when it does not cover the window prepend the
+    newest rotated segment attributable to the same shard. At most one
+    rotated segment per shard — deeper history per shard would need
+    `window_seconds`' worth of events past `max_bytes` twice over in one
+    shard, a rotation cadence pathological enough that the right fix is
+    the rotation config, not a deeper read. Note that N shards CAN each
+    rotate inside one window, so up to N segments may be prepended; the
+    old "at most two files" bound was a pre-sharding statement.
+
+    Everything is merged on event `ts` (`heapq.merge`, as
+    `iter_all_events` does), so the yield is chronological rather than
+    merely oldest-segment-first. The no-recent-rotation path costs one
+    extra head-read per active segment over `iter_events` and opens no
+    archive.
     """
     cutoff = (now or datetime.now(timezone.utc)) - timedelta(seconds=window_seconds)
-    active = list(iter_events(root))
-    oldest_ts: datetime | None = None
-    for ev in active:
-        ts = parse_event_ts(ev.get("ts"))
-        if ts is not None:
-            oldest_ts = ts
-            break
-    if oldest_ts is None or oldest_ts > cutoff:
-        segment = _newest_rotated_segment(root)
-        if segment is not None:
-            yield from _iter_segment(segment)
-    yield from active
+    segments = _active_segments(root)
+    candidates = _rotated_segments(root)
+
+    prepend: list[Path] = []
+    seen: set[Path] = set()
+
+    def _consider(segment: Path | None) -> None:
+        if segment is not None and segment not in seen:
+            seen.add(segment)
+            prepend.append(segment)
+
+    if not segments:
+        # Nothing active at all (a just-rotated store, or telemetry that
+        # has never written here). No shard to attribute, so fall back
+        # to the newest rotated segment store-wide.
+        _consider(_newest_rotated_segment(root))
+    else:
+        for path, shard in segments:
+            oldest_ts = _first_event_ts(path)
+            if oldest_ts is None or oldest_ts > cutoff:
+                _consider(_newest_rotated_segment_for_shard(candidates, shard))
+
+    streams: list[Iterator[dict[str, Any]]] = [
+        _iter_segment(path) for path in sorted(prepend, key=_archive_sort_key)
+    ]
+    streams.append(iter_events(root))
+    yield from heapq.merge(*streams, key=_event_ts_key)
 
 
 __all__ = [

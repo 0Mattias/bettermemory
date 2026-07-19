@@ -1382,7 +1382,13 @@ def compute_health(
     `events` is expected to be in chronological order — the function
     relies on that for "last_*" timestamps. `iter_all_events` returns
     archives + active log in chronological order; production callers
-    should pass that directly.
+    should pass that directly. That ordering is a `heapq.merge` on
+    event `ts` across the per-shard archive chains and the active
+    segments, NOT "all archives, then the active log" — since 3.24.0
+    sharded the active log a quiet shard's active segment can hold
+    events older than a busy shard's freshly-cut archive, so the
+    concatenated form this docstring used to describe would have fed
+    `last_*` timestamps out of order.
 
     `window_days` controls the dead-weight cutoff: a memory is dead-weight
     when its latest maintenance touch (created / updated / last-verified)

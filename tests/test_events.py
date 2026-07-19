@@ -1081,6 +1081,289 @@ def test_iter_events_window_sees_events_across_a_real_rotation(
     assert ids == ["BEFORE", "AFTER"]
 
 
+def test_iter_events_window_per_segment_coverage_across_shards(
+    tmp_path: Path,
+) -> None:
+    """A busy shard's rotated-out event must still reach the window read
+    even when a COLD shard holds an older event in its active segment.
+
+    Regression (3.24.0 sharding): the rotation shield derived ONE
+    `oldest_ts` from the first event of the merged active read — post-
+    sharding that is the globally-oldest event across all 16 shards, not
+    the oldest event of the shard that rotated. A single cold shard
+    holding one stale event pins it below `cutoff`, so `oldest_ts >
+    cutoff` is False and the rotated-segment prepend never fires. Shard
+    files are never deleted, so after a handful of sessions nearly every
+    store has such a shard and the branch is effectively DEAD. The
+    victim is the retrieval shield in `handlers/audit_turn` / `hook`:
+    the session's own `search` event goes invisible, the turn re-fires
+    as a false `search_miss`, and the published silent_miss_rate
+    inflates.
+
+    The fix decides coverage PER SEGMENT and pairs a segment with
+    rotations from its OWN shard — which is what the shard-tagged
+    archive stem exists to make possible.
+    """
+    now = _window_now()
+    # Cold shard 01: one ancient event, never rotated. Its ts is what the
+    # old global `oldest_ts` latched onto.
+    (tmp_path / ".events.01.jsonl").write_text(
+        json.dumps(
+            {"ts": _window_ts(now, seconds_ago=100_000), "kind": "write", "id": "COLD"}
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    # Busy shard 07: just rotated, so the window's `search` lives only in
+    # shard 07's archive.
+    _write_window_archive(
+        tmp_path,
+        ".events-20260601T115500Z-s07.jsonl.gz",
+        [{"ts": _window_ts(now, seconds_ago=300), "kind": "search", "id": "ROTATED"}],
+    )
+    (tmp_path / ".events.07.jsonl").write_text(
+        json.dumps(
+            {"ts": _window_ts(now, seconds_ago=5), "kind": "write", "id": "FRESH"}
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    ids = [e["id"] for e in iter_events_window(tmp_path, 600, now=now)]
+    assert "ROTATED" in ids, (
+        "the rotated segment of the shard that actually rotated must be "
+        "prepended; a cold shard's stale event must not suppress it"
+    )
+    # And the yield is chronological across all sources.
+    assert ids == ["COLD", "ROTATED", "FRESH"]
+
+
+def test_iter_all_events_is_chronological_across_shards(tmp_path: Path) -> None:
+    """`iter_all_events` must be sorted by event `ts`, not "all archives
+    then all active segments".
+
+    Regression (3.24.0 sharding): the old implementation replayed every
+    archive (mtime-sorted) and only then the active segments. That was
+    sound while ONE active file rotated wholesale into strictly-older
+    archives; once shards rotate independently a quiet shard's active
+    segment can hold events far older than a busy shard's archive. The
+    function's own docstring, `compute_health` ("relies on that" for
+    `last_*` timestamps), consolidate's fact demotion, doctor and eval
+    all read the order as meaning.
+    """
+    from bettermemory.events import _event_ts_key
+
+    # Quiet shard 02: its ACTIVE segment holds the oldest event in the store.
+    (tmp_path / ".events.02.jsonl").write_text(
+        json.dumps({"ts": "2020-01-01T00:00:00Z", "kind": "write", "id": "OLD_ACTIVE"})
+        + "\n",
+        encoding="utf-8",
+    )
+    # Busy shard 09: an archive strictly NEWER than shard 02's active segment.
+    _write_window_archive(
+        tmp_path,
+        ".events-20260601T115500Z-s09.jsonl.gz",
+        [{"ts": "2026-06-01T11:55:00Z", "kind": "write", "id": "NEW_ARCHIVE"}],
+    )
+    (tmp_path / ".events.09.jsonl").write_text(
+        json.dumps(
+            {"ts": "2026-06-01T12:00:00Z", "kind": "write", "id": "NEWEST_ACTIVE"}
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    events = list(iter_all_events(tmp_path))
+    assert [e["id"] for e in events] == [
+        "OLD_ACTIVE",
+        "NEW_ARCHIVE",
+        "NEWEST_ACTIVE",
+    ], "iter_all_events must merge on ts, not concatenate archives before active"
+    keys = [_event_ts_key(e) for e in events]
+    assert keys == sorted(keys)
+
+
+# ---------------------------------------------------------------------------
+# Cross-shard rotation collision — SEPARATE OS PROCESSES.
+#
+# Threads under-exercise this: the damage is a cross-PROCESS
+# check-then-act on a filesystem name, and the pre-3.25 code was safe
+# only while a single global append lock made rotations mutually
+# exclusive. Sharding removed that lock but left the rotation namespace
+# global, so two shards crossing `max_bytes` in the same UTC second both
+# derived `.events-{ts}.jsonl.rotating` and the second
+# `replace_atomic` — a bare `os.replace` on POSIX — unlinked the first
+# shard's entire renamed segment. `record()` swallows the follow-on
+# error, so the only trace was a WARNING.
+# ---------------------------------------------------------------------------
+
+
+_CROSS_SHARD_ROTATION_CHILD = """
+import json
+import sys
+import time
+from datetime import datetime, timedelta, timezone
+from pathlib import Path
+
+sys.path.insert(0, sys.argv[1])
+
+root = Path(sys.argv[2])
+session = sys.argv[3]
+ready = Path(sys.argv[4])
+count = int(sys.argv[5])
+max_bytes = int(sys.argv[6])
+peers = [Path(p) for p in sys.argv[7:]]
+
+from bettermemory import events as ev
+
+# Freeze the wall clock to ONE UTC second. The rotation stem is
+# formatted at second resolution, so every process derives the same
+# `{ts}` -- the same-second cross-shard rotation that uniform crc32
+# striping makes the CORRELATED case, made deterministic. Microseconds
+# still advance so each segment stays ts-ordered internally.
+_FROZEN = datetime(2030, 1, 1, 0, 0, 0, tzinfo=timezone.utc)
+_tick = [0]
+
+
+class _FrozenClock(datetime):
+    @classmethod
+    def now(cls, tz=None):
+        _tick[0] += 1
+        return _FROZEN + timedelta(microseconds=_tick[0])
+
+
+ev.datetime = _FrozenClock
+
+# Rendezvous INSIDE the rotation, between name selection and step-1's
+# rename: every process has finished its orphan sweep and chosen its
+# archive/.rotating pair, and none has renamed yet. That is precisely
+# the window the pre-3.25 check-then-act name selection left open
+# across processes. This only widens a real window -- it changes no
+# naming, locking or ordering decision.
+_real_replace = ev.replace_atomic
+_state = {"rotated": False, "met": False}
+
+
+def _barrier_replace(src, dst):
+    if not _state["rotated"]:
+        _state["rotated"] = True
+        ready.write_text("1", encoding="utf-8")
+        deadline = time.time() + 120
+        while time.time() < deadline:
+            if all(p.exists() for p in peers):
+                _state["met"] = True
+                break
+            time.sleep(0.005)
+    _real_replace(src, dst)
+
+
+ev.replace_atomic = _barrier_replace
+
+rec = ev.Recorder(root=root, session_id=session, enabled=True, max_bytes=max_bytes)
+for i in range(count):
+    rec.record("write", id=session + "-" + str(i).zfill(3))
+
+sys.stdout.write(
+    json.dumps(
+        {"shard": rec._shard, "rotated": _state["rotated"], "met": _state["met"]}
+    )
+)
+"""
+
+
+def _sessions_on_distinct_shards(count: int) -> list[str]:
+    """`count` session ids that crc32-stripe onto `count` DIFFERENT shards."""
+    import zlib
+
+    from bettermemory.events import SHARD_COUNT
+
+    picked: dict[int, str] = {}
+    i = 0
+    while len(picked) < count:
+        sid = f"cross-shard-{i}"
+        shard = zlib.crc32(sid.encode("utf-8")) % SHARD_COUNT
+        picked.setdefault(shard, sid)
+        i += 1
+    return [picked[shard] for shard in sorted(picked)]
+
+
+def test_concurrent_cross_shard_rotation_loses_no_events(tmp_path: Path) -> None:
+    """Four SEPARATE OS PROCESSES on four different shards, all rotating
+    inside the same frozen UTC second, must lose nothing.
+
+    Pre-3.25 the archive/`.rotating` stem was `.events-{ts}` with NO
+    shard component; the collision probe checked only whether the `.gz`
+    archive existed (check-then-act, safe only while the removed global
+    append lock made rotations mutually exclusive) and the derived
+    `.rotating` path was never existence-checked at all. All four
+    processes therefore renamed their active segment onto the SAME
+    holding path and three whole segments — up to `max_bytes` of events
+    each, 10 MB at the default — were silently unlinked.
+
+    The barrier in the child script makes that race deterministic rather
+    than probabilistic: it parks every process between name selection
+    and the step-1 rename.
+    """
+    import subprocess
+
+    import bettermemory
+
+    src_root = str(Path(bettermemory.__file__).resolve().parent.parent)
+    script = tmp_path / "cross_shard_rotation_child.py"
+    script.write_text(_CROSS_SHARD_ROTATION_CHILD, encoding="utf-8")
+    store = tmp_path / "store"
+    store.mkdir()
+
+    count, max_bytes = 24, 400
+    sessions = _sessions_on_distinct_shards(4)
+    flags = {sid: tmp_path / f"ready-{n}" for n, sid in enumerate(sessions)}
+
+    procs = []
+    for sid in sessions:
+        peers = [str(p) for other, p in flags.items() if other != sid]
+        procs.append(
+            subprocess.Popen(
+                [
+                    sys.executable,
+                    str(script),
+                    src_root,
+                    str(store),
+                    sid,
+                    str(flags[sid]),
+                    str(count),
+                    str(max_bytes),
+                    *peers,
+                ],
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True,
+            )
+        )
+
+    reports = []
+    for proc in procs:
+        out, err = proc.communicate(timeout=300)
+        assert proc.returncode == 0, f"child failed: {err}"
+        reports.append(json.loads(out))
+
+    # The test is only meaningful if every process actually rotated AND
+    # met the others at the barrier — otherwise a green result would be
+    # a scheduling accident, not evidence.
+    assert all(r["rotated"] for r in reports), f"a child never rotated: {reports}"
+    assert all(r["met"] for r in reports), f"barrier rendezvous missed: {reports}"
+    assert len({r["shard"] for r in reports}) == len(sessions), (
+        f"children must occupy distinct shards: {reports}"
+    )
+
+    survived = {e["id"] for e in iter_all_events(store)}
+    expected = {f"{sid}-{i:03d}" for sid in sessions for i in range(count)}
+    missing = expected - survived
+    assert not missing, (
+        f"{len(missing)} of {len(expected)} events were destroyed by a "
+        f"cross-shard rotation collision (sample: {sorted(missing)[:5]})"
+    )
+
+
 def test_two_recorders_one_dir_no_corruption(tmp_path: Path) -> None:
     """A second Recorder pointed at the same dir appends cleanly."""
     a = Recorder(root=tmp_path, session_id="sess_a")
