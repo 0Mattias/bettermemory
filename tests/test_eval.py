@@ -34,6 +34,7 @@ from bettermemory.eval import (
     compute_report,
     compute_threshold_sweep,
     compute_tool_usage,
+    compute_widening_detail,
     compute_widening_preview,
     is_admin_recorded_event,
     parse_since,
@@ -2728,6 +2729,184 @@ class TestWindowedEventCounts:
         ):
             assert report.total_events_scanned == 2
             assert report.events_in_window == 1
+
+    def test_widening_detail_json_carries_the_window_scoped_twin(self) -> None:
+        """The fifth surface, and the one with no text row to catch it:
+        `WideningDetailReport` has no "Events scanned" line, but its
+        `to_dict` is dumped verbatim by
+        `eval --widening-preview --detail --json` (cli/eval.py), so the
+        all-time tally sat next to `window_seconds` with nothing
+        window-scoped beside it. Both keys must now be present and must
+        disagree on a stream where the window genuinely bites."""
+        events = [_audit_event(_AGED_TS), _audit_event(_FRESH_TS)]
+        report = compute_widening_detail(events, now=_WINDOW_NOW, since=_WINDOW_SINCE)
+        assert report.total_events_scanned == 2
+        assert report.events_in_window == 1
+        payload = report.to_dict()
+        assert payload["window_seconds"] == int(_WINDOW_SINCE.total_seconds())
+        assert payload["total_events_scanned"] == 2
+        assert payload["events_in_window"] == 1
+        # And the counting lane agrees with the detail lane over the same
+        # stream — the two share `_collect_replayable_audits`.
+        preview = compute_widening_preview(events, now=_WINDOW_NOW, since=_WINDOW_SINCE)
+        assert preview.events_in_window == report.events_in_window
+
+    def test_widening_detail_all_time_collapses_the_two_tallies(self) -> None:
+        """Complement of the above: with no `--since`, the window IS the
+        log, so the detail JSON's twin equals its all-time tally."""
+        events = [_audit_event(_AGED_TS), _audit_event(_FRESH_TS)]
+        payload = compute_widening_detail(events, now=_WINDOW_NOW).to_dict()
+        assert payload["window_seconds"] is None
+        assert payload["events_in_window"] == payload["total_events_scanned"] == 2
+
+
+# ---------------------------------------------------------------------------
+# Event-count twin enumeration — so a sixth surface can't land silently
+# ---------------------------------------------------------------------------
+#
+# The twin has now been wired up piecemeal twice, and both times a surface
+# was missed: first three of the four text renderers, then
+# `WideningDetailReport`'s JSON. Reviewing by eye clearly does not scale
+# over a 3k-line module, so pin the convention mechanically instead.
+#
+# The convention: in eval.py, `total_events_scanned` is the all-time tally
+# and `events_in_window` is its window-scoped twin. Anything that declares
+# or publishes the former must declare or publish the latter beside it, so
+# a reader (or a JSON consumer) can tell which number they are holding.
+#
+# Scope, stated no more strongly than it is enforced: these scans key off
+# those two exact names inside src/bettermemory/eval.py. A future surface
+# that invents a differently-named event tally is NOT caught — the scans
+# pin the convention, they do not prove the absence of every possible
+# all-time-under-a-window-label bug. `ReportDocument.total_events` is one
+# such differently-named field, and deliberately so: it is fed from the
+# all-time sub-report and printed on the markdown "Store shape" line,
+# which is an all-time statement rather than a windowed one.
+
+_ALLTIME_FIELD = "total_events_scanned"
+_WINDOW_FIELD = "events_in_window"
+
+
+def _eval_module_ast() -> ast.Module:
+    src = Path(__file__).resolve().parents[1] / "src" / "bettermemory" / "eval.py"
+    return ast.parse(src.read_text(encoding="utf-8"))
+
+
+def _annotated_field_names(cls: ast.ClassDef) -> set[str]:
+    return {
+        node.target.id
+        for node in cls.body
+        if isinstance(node, ast.AnnAssign) and isinstance(node.target, ast.Name)
+    }
+
+
+def _dict_string_keys(node: ast.Dict) -> set[str]:
+    return {
+        k.value
+        for k in node.keys
+        if isinstance(k, ast.Constant) and isinstance(k.value, str)
+    }
+
+
+class TestEventCountTwinEnumeration:
+    def test_every_class_declaring_the_alltime_tally_declares_the_twin(self) -> None:
+        """Structural pin on the dataclasses. Enumerated at the time of
+        writing: EvalReport, ThresholdSweepReport, WideningPreviewReport,
+        WideningDetailReport, ToolUsageReport, and the internal
+        _ReplayableAudits walk result — but the assertion is derived from
+        the AST, not from that list, so a seventh class inherits the rule
+        automatically."""
+        missing: list[str] = []
+        declaring: list[str] = []
+        for node in ast.walk(_eval_module_ast()):
+            if not isinstance(node, ast.ClassDef):
+                continue
+            fields = _annotated_field_names(node)
+            if _ALLTIME_FIELD not in fields:
+                continue
+            declaring.append(node.name)
+            if _WINDOW_FIELD not in fields:
+                missing.append(node.name)
+        # Non-vacuity: the scan actually finds the known surfaces. Kept as
+        # a floor rather than an exact list so adding a rollup doesn't
+        # force an unrelated test edit.
+        assert {
+            "EvalReport",
+            "ThresholdSweepReport",
+            "WideningPreviewReport",
+            "WideningDetailReport",
+            "ToolUsageReport",
+        } <= set(declaring)
+        assert not missing, (
+            f"class(es) {sorted(missing)} in eval.py declare "
+            f"{_ALLTIME_FIELD!r} (an all-time tally: the invalidation "
+            f"markers resolve ahead of the window filter, so the walk "
+            f"cannot stop at the window edge) without the window-scoped "
+            f"twin {_WINDOW_FIELD!r}. Any surface rendering the all-time "
+            f"figure under a '— last {{window}}' header, or publishing it "
+            f"next to `window_seconds`, mislabels it."
+        )
+
+    def test_every_to_dict_publishing_the_alltime_tally_publishes_the_twin(
+        self,
+    ) -> None:
+        """The serialisation pin, separate from the field pin because
+        that is exactly the gap that shipped: `WideningDetailReport` was
+        the only published rollup whose `to_dict` emitted the all-time key
+        alone, and it has no text renderer row that would have shown it."""
+        missing: list[str] = []
+        publishing: list[str] = []
+        for cls in ast.walk(_eval_module_ast()):
+            if not isinstance(cls, ast.ClassDef):
+                continue
+            for fn in cls.body:
+                if not (isinstance(fn, ast.FunctionDef) and fn.name == "to_dict"):
+                    continue
+                for node in ast.walk(fn):
+                    if not isinstance(node, ast.Dict):
+                        continue
+                    keys = _dict_string_keys(node)
+                    if _ALLTIME_FIELD not in keys:
+                        continue
+                    publishing.append(cls.name)
+                    if _WINDOW_FIELD not in keys:
+                        missing.append(cls.name)
+        assert {
+            "EvalReport",
+            "ThresholdSweepReport",
+            "WideningPreviewReport",
+            "WideningDetailReport",
+            "ToolUsageReport",
+        } <= set(publishing)
+        assert not missing, (
+            f"`to_dict` on {sorted(missing)} emits {_ALLTIME_FIELD!r} "
+            f"without {_WINDOW_FIELD!r}. JSON consumers read these "
+            f"alongside `window_seconds` and would take the all-time "
+            f"figure for the windowed one."
+        )
+
+    def test_the_enumeration_scans_detect_a_missing_twin(self) -> None:
+        """Pin the pins. Both scans above assert `not missing`, which a
+        broken extractor satisfies vacuously. Run each over a synthetic
+        module that omits the twin and confirm it is actually reported."""
+        synthetic = ast.parse(
+            "from dataclasses import dataclass\n"
+            "@dataclass\n"
+            "class SixthReport:\n"
+            "    window_seconds: int | None\n"
+            f"    {_ALLTIME_FIELD}: int\n"
+            "    def to_dict(self):\n"
+            "        return {\n"
+            '            "window_seconds": self.window_seconds,\n'
+            f'            "{_ALLTIME_FIELD}": self.{_ALLTIME_FIELD},\n'
+            "        }\n"
+        )
+        cls = next(n for n in ast.walk(synthetic) if isinstance(n, ast.ClassDef))
+        fields = _annotated_field_names(cls)
+        assert _ALLTIME_FIELD in fields and _WINDOW_FIELD not in fields
+        dicts = [n for n in ast.walk(cls) if isinstance(n, ast.Dict)]
+        keys = _dict_string_keys(dicts[0])
+        assert _ALLTIME_FIELD in keys and _WINDOW_FIELD not in keys
 
 
 # ---------------------------------------------------------------------------

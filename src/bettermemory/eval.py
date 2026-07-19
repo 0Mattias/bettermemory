@@ -259,18 +259,38 @@ class EvalReport:
     # the window filter). Equal to `total_events_scanned` when the
     # window is all-time.
     #
-    # Scope of the claim, stated exactly rather than aspirationally:
-    # every surface on THIS report that prints an event count under a
-    # window label reads this field — `render_text`'s "Events scanned"
-    # row and `_md_denominator_note`'s per-column line. The three
-    # sibling rollups (`ThresholdSweepReport`, `WideningPreviewReport`,
-    # `ToolUsageReport`) each carry their own `events_in_window` for
-    # the same reason; they are separate dataclasses, so this field
-    # governs only its own. `WideningDetailReport` publishes no event
-    # count at all and therefore carries no twin.
-    # `tests/test_eval.py::TestWindowedEventCounts` pins all four
-    # renderers so a window header can't drift back over an all-time
-    # denominator.
+    # Scope of the claim, from an enumeration of the module rather than
+    # from memory (an earlier version of this comment guessed, and was
+    # wrong about which surfaces publish a count).
+    #
+    # Dataclasses in this module declaring `total_events_scanned`, all
+    # six of which now also declare `events_in_window`: `EvalReport`,
+    # `ThresholdSweepReport`, `WideningPreviewReport`,
+    # `WideningDetailReport`, `ToolUsageReport`, and the internal
+    # `_ReplayableAudits` walk result. They are separate dataclasses, so
+    # THIS field governs only this report; the twins move together by
+    # convention, pinned below.
+    #
+    # Surfaces that publish an event count, and which tally each reads:
+    #   - the four "Events scanned" text rows, each under a
+    #     "— last {window}" header — `render_text`,
+    #     `render_threshold_sweep_text`, `render_widening_preview_text`,
+    #     `render_tool_usage_text` — all read `events_in_window`.
+    #   - `_md_denominator_note`'s per-column line — `events_in_window`.
+    #   - the five published `to_dict`s (the four above plus
+    #     `WideningDetailReport`, which has no text event-count row but
+    #     is dumped verbatim by `--widening-preview --detail --json`) —
+    #     each emits BOTH keys, so a JSON consumer picks the one it
+    #     means instead of being handed an all-time figure next to
+    #     `window_seconds`.
+    #   - `ReportDocument.total_events` is deliberately NOT windowed: it
+    #     is fed from the all-time sub-report and printed on the
+    #     markdown "Store shape" line, which is an all-time statement.
+    #
+    # `tests/test_eval.py::TestWindowedEventCounts` pins the four text
+    # renderers and the detail JSON; `TestEventCountTwinEnumeration`
+    # AST-scans this module so a sixth surface cannot be added without
+    # its twin.
     events_in_window: int
 
     retrieval_occurrences: int  # denominator for memory_helped_rate
@@ -2009,6 +2029,13 @@ class WideningDetailReport:
     generated_at: datetime
     window_seconds: int | None
     total_events_scanned: int
+    # Window-scoped twin of `total_events_scanned` — see the identically
+    # named field on `EvalReport`. This report has no "Events scanned"
+    # text row, but `to_dict` publishes the count next to
+    # `window_seconds` and is dumped verbatim by
+    # `eval --widening-preview --detail --json`, so the JSON consumer
+    # needs the window-scoped figure just as much as a text reader does.
+    events_in_window: int
     audits_with_features: int
     audits_without_features: int
     repeat_audits_skipped: int
@@ -2020,6 +2047,7 @@ class WideningDetailReport:
             "generated_at": self.generated_at.isoformat(),
             "window_seconds": self.window_seconds,
             "total_events_scanned": self.total_events_scanned,
+            "events_in_window": self.events_in_window,
             "audits_with_features": self.audits_with_features,
             "audits_without_features": self.audits_without_features,
             "repeat_audits_skipped": self.repeat_audits_skipped,
@@ -2189,6 +2217,7 @@ def compute_widening_detail(
         generated_at=now,
         window_seconds=int(since.total_seconds()) if since is not None else None,
         total_events_scanned=walk.total_events_scanned,
+        events_in_window=walk.events_in_window,
         audits_with_features=walk.with_features,
         audits_without_features=walk.without_features,
         repeat_audits_skipped=walk.repeats_skipped,
