@@ -10,13 +10,14 @@ surfaces in one go.
 
 The H12 audit pass (2.7.x) caught a stale local install where
 `bettermemory --version` reported 2.7.2 while pyproject said 2.7.3.
-The CI gate added at the bottom of this file pins all FOUR version
-sources together so the same drift can't slip through to a release
+The CI gate added at the bottom of this file pins every version
+source together so the same drift can't slip through to a release
 wheel: `pyproject.toml`, `bettermemory.__version__`, the CLI
-subprocess output, and the plugin/marketplace manifests (the
-plugin pair is already pinned in `test_plugin.py` /
+subprocess output, the plugin/marketplace manifests, `server.json`
+(both of its version fields), and uv.lock's self-entry. The plugin
+pair and `server.json` are also pinned in `test_plugin.py` /
 `test_changelog.py` — re-asserting here in one consolidated test
-makes the version-skew failure mode legible from a single grep).
+makes the version-skew failure mode legible from a single grep.
 """
 
 from __future__ import annotations
@@ -193,6 +194,42 @@ def test_pyproject_matches_plugin_and_marketplace_manifests() -> None:
     assert market_v == pyproject_v, (
         f"marketplace.json metadata.version {market_v!r} != "
         f"pyproject.toml {pyproject_v!r} — bump both at release."
+    )
+
+
+def test_pyproject_matches_server_json_manifest() -> None:
+    """`server.json` (the MCP registry publish manifest, added at the root
+    in a032057) carries the release version in TWO places: the top-level
+    `.version` and the nested package version the registry validates
+    against `pypi.org/pypi/bettermemory/<version>/json`. The release
+    runbook used to enumerate only the two plugin manifests, so a
+    runbook-following release could half-bump or skip this file
+    entirely. Pin BOTH fields here alongside the other surfaces so the
+    consolidated version-sync run names the offender directly.
+
+    Scoped to the `bettermemory` package entry rather than
+    `packages[0]` so adding a second registry target (npm, oci) doesn't
+    silently move which entry is being checked."""
+    pyproject_v = _pyproject_version()
+    server = json.loads((_REPO_ROOT / "server.json").read_text(encoding="utf-8"))
+    assert server.get("version") == pyproject_v, (
+        f"server.json .version {server.get('version')!r} != pyproject.toml "
+        f"{pyproject_v!r} — bump both at release."
+    )
+    own = [
+        pkg
+        for pkg in server.get("packages") or []
+        if pkg.get("identifier") == "bettermemory"
+    ]
+    assert len(own) == 1, (
+        f"expected exactly one bettermemory package entry in server.json, "
+        f"found {len(own)}"
+    )
+    pkg_v = own[0].get("version")
+    assert pkg_v == pyproject_v, (
+        f"server.json bettermemory package version {pkg_v!r} != "
+        f"pyproject.toml {pyproject_v!r} — server.json carries the version "
+        f"TWICE; bump the nested package version too."
     )
 
 

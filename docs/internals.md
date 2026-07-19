@@ -119,4 +119,17 @@ Defaults are sensible; most installs never edit it. See
   refuses secret-shaped tokens); use disk encryption if you need it.
 - Sync conflicts are git merge conflicts; there is no auto-resolution.
 - The web UI is read-mostly; writes happen in-conversation.
-- Multi-process file locking is a no-op on Windows.
+- Multi-process file locking works on Windows, but not identically to
+  POSIX. Both platforms lock a persistent sidecar lockfile next to the
+  target; POSIX takes a blocking whole-file `fcntl.flock(LOCK_EX)`,
+  Windows takes `msvcrt.locking(LK_NBLCK, 1)` on one byte (offset 0) of
+  that lockfile. Two consequences: the byte range is a convention, so
+  exclusion holds only between callers that go through `flock_excl`
+  (true for every bettermemory writer, and the same cooperative model
+  POSIX advisory locks use); and the Windows acquire is non-blocking
+  plus retried with capped backoff, so it gives up with `TimeoutError`
+  after `BETTERMEMORY_FLOCK_TIMEOUT` seconds (default 30) where POSIX
+  would wait indefinitely. Windows also has two degradation paths POSIX
+  lacks — if `msvcrt` won't import or the lockfile can't be opened, the
+  helper falls back to no cross-process lock and emits a one-shot
+  warning rather than failing the write.

@@ -117,7 +117,10 @@ bettermemory eval [--since 30d] [--scope SCOPE] [--min-retrievals N]
                   [--silent-miss-limit N] [--json]
 ```
 
-Reads `<store>/.events.jsonl` plus rotated `.events-*.jsonl.gz`
+Reads the active event log — the sharded `<store>/.events.00.jsonl` …
+`.events.15.jsonl` segments, plus a pre-3.24 `<store>/.events.jsonl` on
+stores that predate sharding (read-only legacy input, merged in by
+event `ts`) — together with the rotated `.events-*.jsonl.gz`
 archives, joins against the active store, and reports the three rates
 with Wilson 95% confidence intervals, plus the cold-endorsement list
 and recent silent-miss candidates. `--json` for machine-readable

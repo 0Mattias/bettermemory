@@ -30,7 +30,21 @@ The `pypi` and `testpypi` environment names match the `environment:` blocks in `
 
 ## Cutting a release
 
-Working tree clean, on `main`, all CI green:
+Working tree clean, on `main`, all CI green.
+
+A release version has to land on **seven fields across six files**.
+Miss one and the version-sync suite in step 5 fails rather than the
+release shipping skewed — but you still have to know the file is on
+the list to bump it:
+
+| Surface | Field |
+| --- | --- |
+| `pyproject.toml` | `[project] version` (source of truth) |
+| `plugin/.claude-plugin/plugin.json` | `.version` |
+| `.claude-plugin/marketplace.json` | `.metadata.version` |
+| `server.json` | `.version` **and** `.packages[0].version` — two places |
+| `uv.lock` | the `bettermemory` self-entry (`uv lock` rewrites it) |
+| `CHANGELOG.md` | the `## <X.Y.Z> - <date>` heading |
 
 ```sh
 # 1. Bump the version in pyproject.toml. Edit by hand. Do not invoke
@@ -38,11 +52,16 @@ Working tree clean, on `main`, all CI green:
 #    surfaces noise in the diff.
 $EDITOR pyproject.toml
 
-# 2. Bump the SAME version in the two plugin manifests. The
-#    version-sync tests in tests/test_plugin.py will fail if these
-#    drift apart. They are the guardrail for the release ritual.
+# 2. Bump the SAME version in the three manifests. server.json carries
+#    it TWICE — the top-level `.version` and the nested package version
+#    the registry validates against pypi.org — so it is the easiest one
+#    to half-bump. The version-sync tests in tests/test_plugin.py and
+#    tests/test_version.py fail if any of these drift apart. They are
+#    the guardrail for the release ritual.
 $EDITOR plugin/.claude-plugin/plugin.json    # `.version`
 $EDITOR .claude-plugin/marketplace.json      # `.metadata.version`
+$EDITOR server.json                          # `.version` AND
+                                             # `.packages[0].version`
 
 # 3. Move the relevant entries from the "Unreleased" section of
 #    CHANGELOG.md into a new `## <X.Y.Z> - <date>` heading.
@@ -56,9 +75,10 @@ uv lock
 
 # 5. Run the suite locally. The version-sync tests are the cheapest
 #    check that all version surfaces agree (pyproject.toml is the source
-#    of truth for `bettermemory.__version__`, which the plugin manifests
-#    and uv.lock's self-entry must match). test_changelog.py is included
-#    because it pins the `## <X.Y.Z> - <date>` heading from step 3 — a
+#    of truth for `bettermemory.__version__`, which the plugin
+#    manifests, both server.json fields, and uv.lock's self-entry must
+#    match). test_changelog.py is included because it pins the
+#    `## <X.Y.Z> - <date>` heading from step 3 — a
 #    forgotten heading otherwise passes here and only trips in the full
 #    release-workflow suite.
 pytest tests/test_plugin.py tests/test_version.py tests/test_changelog.py -q
