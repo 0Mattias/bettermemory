@@ -548,7 +548,15 @@ its benchmark number is recorded in this doc.
   `.events-rotate.lock` to sweep crash orphans (deliberately kept off
   the common append path). And "throughput climbs with agents" is a
   shape, not a rate — this doc no longer stands behind any particular
-  ops/s figure. Say which lock you removed, or say nothing.
+  ops/s figure. Even "up to about core count" is softer than it looks:
+  two consecutive HEAD sweeps on the same 12-core box peaked at 12 and
+  at 24 agents respectively, so the fall-off past core count that the
+  Phase 0 table shows reproduced in only one of the two. The monotone
+  climb up to core count did reproduce in both; where it turns over did
+  not. Note also that the sweep always runs agent counts in ascending
+  order on a machine whose condition drifts, which confounds "more
+  agents" with "later in the run". Say which lock you removed, or say
+  nothing.
 - **+ Phases 2-3:** "a fleet converges: independent agents collapse
   onto shared memories with provenance, instead of multiplying them."
 - **+ Phase 4:** "agents enrich the same memory concurrently and both
