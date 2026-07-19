@@ -372,14 +372,37 @@ class PathDriftReport:
     than filesystem citations. They are deliberately NOT in `checked`
     ("we looked and it wasn't there" is a meaningless statement about a
     URL path) and NOT in `missing` (no drift signal). Before this bucket
-    existed they were invisible in every direction, which is precisely
-    how 3.25.2's over-broad route rule swallowed real missing paths for
-    two releases without anyone noticing. A suppression rule you cannot
-    see is a suppression rule you cannot audit — so the rule now shows
-    its work, and a caller that disagrees with a particular suppression
-    can pin the citation with
-    `memory_verify(verified_absent_paths=[...])` or spot the over-reach
-    directly in the report.
+    existed they were readable from nowhere on this object at all, which
+    is how 3.25.2's over-broad route rule swallowed real missing paths
+    without the report showing a trace.
+
+    HOW FAR THIS REACHES TODAY — read before relying on it. The bucket
+    is populated by `detect_path_drift` and serialised by `to_dict()`,
+    so an IN-PROCESS caller holding a `PathDriftReport` can always
+    inspect the suppression. A TOOL caller sees it only when the report
+    has some OTHER reason to be emitted; a report whose ONLY non-empty
+    bucket is `dropped_as_route` — which is what a body citing nothing
+    but suppressed paths produces, the case this bucket was added for —
+    stays invisible to it, because:
+
+      * `memory_show` and `memory_search`'s expanded top hit gate the
+        `path_drift` block on `has_drift or verified or expected_absent`
+        (`handlers/show.py`, `handlers/search.py`). A route-only report
+        fails all three, so no block is emitted. Both gates do call
+        `to_dict()` once they fire, so widening the expression is all
+        those two surfaces need.
+      * per-hit `path_drift` on non-top-ranked search hits is rebuilt
+        from `MemoryHit` fields rather than from `to_dict()`
+        (`_response.py`), and `MemoryHit` has no `dropped_as_route`
+        counterpart to rebuild from — so that surface cannot carry the
+        bucket even after the two gates are widened.
+
+    Until those are done, the escape hatch for a citation you believe is
+    wrongly suppressed remains
+    `memory_verify(verified_absent_paths=[...])`, which routes it to
+    `expected_absent` before the route rule is consulted — and which a
+    caller must reach for without being shown that the suppression
+    happened.
     """
 
     checked: tuple[str, ...]
@@ -394,28 +417,17 @@ class PathDriftReport:
 
         Strictly `missing`-only, and deliberately so: it is the input to
         the staleness verdict, and a suppressed route is by definition
-        NOT drift. Use `has_findings` for the "is there anything worth
-        showing the caller" question.
+        NOT drift.
+
+        NOT the emit gate. `memory_show` and `memory_search`'s expanded
+        top hit decide whether to emit a `path_drift` block with their
+        own inline expression, `has_drift or verified or expected_absent`
+        (`handlers/show.py`, `handlers/search.py`) — which this property
+        is only one term of. Adding a bucket here therefore does NOT
+        widen those gates; see the `dropped_as_route` note above for what
+        that currently costs.
         """
         return bool(self.missing)
-
-    @property
-    def has_findings(self) -> bool:
-        """True when the report carries anything a caller should see.
-
-        The retrieval surfaces (`memory_show`, `memory_search`'s
-        expanded top hit) only emit the `path_drift` block when the
-        report is non-trivial; this is that predicate, kept next to the
-        buckets it quantifies so a new bucket cannot be added without
-        the gate noticing. `checked` alone is excluded on purpose — an
-        all-healthy scan is the null result the surfaces suppress.
-        """
-        return bool(
-            self.missing
-            or self.verified
-            or self.expected_absent
-            or self.dropped_as_route
-        )
 
     def to_dict(self) -> dict[str, list[str]]:
         return {
@@ -465,8 +477,10 @@ def detect_path_drift(
     instead of `missing` — no drift signal, but the skip stays visible.
 
     A candidate the route rule suppresses lands in
-    `report.dropped_as_route` — not `checked`, not `missing`, but not
-    invisible either. See `PathDriftReport` for why that bucket exists.
+    `report.dropped_as_route` — not `checked`, not `missing`, but
+    readable off the returned report instead of nowhere at all. That
+    reach stops at this function's return value: see `PathDriftReport`
+    for why the bucket exists and which surfaces do not carry it yet.
     """
     candidates = _extract_candidates(body)
     if not candidates:
@@ -540,9 +554,12 @@ def detect_path_drift(
                 # `checked` and `missing` — "we looked and it wasn't
                 # there" is a meaningless statement about a URL path —
                 # but recorded in `dropped_as_route` so the suppression
-                # is auditable instead of silent. (Invisibility here is
-                # what let 3.25.2's over-broad rule swallow real missing
-                # paths for two releases.)
+                # is at least readable off the returned report instead of
+                # leaving no trace anywhere. (Leaving no trace is what let
+                # 3.25.2's over-broad rule swallow real missing paths.)
+                # NOTE: a report whose ONLY non-empty bucket is this one
+                # still reaches no MCP surface — see the reach note on
+                # `PathDriftReport`.
                 #
                 # Deliberately LAST in this block: the spaced-bare and
                 # ambiguous-truncation arms above must arbitrate first,
@@ -575,7 +592,10 @@ def detect_path_drift(
                 #     locally (`/srv/docker/gitea`, `/mnt/tank/media`) reads
                 #     as an application route and is DROPPED — not reported
                 #     missing, not even `checked`. It IS recorded in
-                #     `dropped_as_route`, so the suppression is auditable.
+                #     `dropped_as_route`, which an in-process caller can
+                #     read. These shapes produce a route-ONLY report, so
+                #     no MCP surface emits them (a report that also
+                #     carries drift does ship the bucket via `to_dict()`).
                 #
                 # Either way `memory_verify(verified_absent_paths=[...])` is
                 # the intended escape hatch: it routes the citation to
@@ -1140,9 +1160,15 @@ def _is_multi_segment_routelike(s: str) -> bool:
     Absence of `/foo/bar` is indistinguishable from absence of
     `/api/v1/thing` using only a local stat, so no local-only heuristic
     can separate these from real routes without handing back the false
-    positives. What HAS changed: every one of them now lands in
-    `PathDriftReport.dropped_as_route`, so the suppression is
-    inspectable rather than silent. `/opt/gophish`-style citations
+    positives. What HAS changed: each of them now lands in
+    `PathDriftReport.dropped_as_route`, so an in-process caller holding
+    the report can see the suppression. A tool caller usually still
+    cannot: cited alone, each of these yields a report whose only
+    non-empty bucket is `dropped_as_route`, which no MCP surface emits —
+    so for that (common) case they stay as silent as in 3.25.2. Cited in
+    a body that ALSO drifts, the bucket rides along on the emitted
+    block. See the reach note on `PathDriftReport`.
+    `/opt/gophish`-style citations
     survive to `missing` only via the parent escape — because `/opt`
     happens to exist on this host, NOT because of any single-segment
     exclusion: `"/opt/gophish".count("/") == 2`, so the `< 2` guard

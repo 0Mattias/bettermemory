@@ -758,9 +758,9 @@ def test_report_to_dict_includes_expected_absent() -> None:
 
 
 def test_report_to_dict_includes_dropped_as_route() -> None:
-    """The suppressed set has to survive serialisation, or the bucket is
-    observable in-process and invisible to every actual consumer — which
-    is the same blindness it was added to remove."""
+    """The suppressed set has to survive serialisation. Both handler
+    gates emit `to_dict()` wholesale, so this key is what makes widening
+    those gates a one-line change rather than a new plumbing job."""
     r = PathDriftReport(checked=(), missing=(), dropped_as_route=("/admin/macros",))
     d = r.to_dict()
     assert d == {
@@ -791,32 +791,43 @@ def test_has_drift_stays_missing_only_when_routes_were_dropped() -> None:
     assert routes_only.has_drift is False
 
 
-def test_has_findings_covers_every_non_checked_bucket() -> None:
-    """`has_findings` is the predicate the retrieval surfaces use to
-    decide whether to emit a `path_drift` block at all. It must cover
-    the suppressed set too — otherwise a body whose ONLY interesting
-    result is a dropped route serialises to nothing and the suppression
-    stays invisible at exactly the surface that matters."""
-    assert PathDriftReport(checked=(), missing=()).has_findings is False
-    # A clean scan is the null result the surfaces suppress.
-    assert PathDriftReport(checked=("/a",), missing=()).has_findings is False
-    assert PathDriftReport(checked=("/a",), missing=("/a",)).has_findings is True
-    assert (
-        PathDriftReport(checked=("/a",), missing=(), verified=("/a",)).has_findings
-        is True
+def test_dropped_as_route_ships_whenever_the_surface_gate_fires() -> None:
+    """The half of the observability that DOES reach a tool caller.
+
+    `memory_show` and `memory_search`'s expanded top hit gate the
+    `path_drift` block on `has_drift or verified or expected_absent` and
+    then emit `to_dict()` wholesale (`handlers/show.py`,
+    `handlers/search.py`). So a memory that has any OTHER reason to emit
+    the block carries the suppressed set along with it for free — the
+    gap is confined to reports whose ONLY non-empty bucket is
+    `dropped_as_route`, which no surface emits today.
+
+    Pinned because the free half is exactly what a later gate-widening
+    patch could break: rebuild the block field-by-field instead of from
+    `to_dict()` and this silently drops back to zero reach.
+    """
+    mixed = PathDriftReport(
+        checked=("/a",),
+        missing=("/a",),
+        dropped_as_route=("/admin/macros",),
+    )
+    # Verbatim the gate expression both handlers use.
+    assert bool(mixed.has_drift or mixed.verified or mixed.expected_absent) is True
+    assert mixed.to_dict()["dropped_as_route"] == ["/admin/macros"]
+
+    # ...and the confined gap, stated as the gate sees it. This asserts
+    # the GATE's arithmetic, not that the gap is desirable: it is the
+    # defect the reach note on `PathDriftReport` documents.
+    routes_only = PathDriftReport(
+        checked=(), missing=(), dropped_as_route=("/admin/macros",)
     )
     assert (
-        PathDriftReport(
-            checked=("/a",), missing=(), expected_absent=("/a",)
-        ).has_findings
-        is True
+        bool(
+            routes_only.has_drift or routes_only.verified or routes_only.expected_absent
+        )
+        is False
     )
-    assert (
-        PathDriftReport(
-            checked=(), missing=(), dropped_as_route=("/admin/macros",)
-        ).has_findings
-        is True
-    )
+    assert routes_only.to_dict()["dropped_as_route"] == ["/admin/macros"]
 
 
 def test_verified_paths_match_after_extractor_normalises_body_candidate(
@@ -2323,14 +2334,19 @@ def test_remote_path_under_an_existing_root_still_reports_missing() -> None:
 
 
 def test_suppressed_routes_land_in_dropped_as_route() -> None:
-    """THE OBSERVABILITY CONTRACT.
+    """THE IN-PROCESS OBSERVABILITY CONTRACT.
 
     A route-dropped candidate used to appear in NO bucket at all —
     absent from `checked`, `missing` and `expected_absent` alike, with
-    nowhere on `PathDriftReport` to look. That total invisibility is why
-    3.25.2's over-broad rule silently swallowed real missing paths for
-    two releases before anyone noticed. The suppressed set must now be
-    readable off the report.
+    nowhere on `PathDriftReport` to look. Leaving no trace is why
+    3.25.2's over-broad rule swallowed real missing paths without anyone
+    noticing. The suppressed set must now be readable off the report.
+
+    SCOPE: this pins the report object only. A route-ONLY report like
+    this one still emits nothing at the MCP surface — both handler gates
+    are `has_drift or verified or expected_absent`, which it fails. See
+    `test_dropped_as_route_ships_whenever_the_surface_gate_fires` and
+    the reach note on `PathDriftReport`.
     """
     report = detect_path_drift(
         "Routes `/api/v1/events/presence` and `/admin/macros` are registered."
@@ -2339,7 +2355,9 @@ def test_suppressed_routes_land_in_dropped_as_route() -> None:
     assert report.checked == ()
     assert report.missing == ()
     assert report.has_drift is False
-    # New: but the caller can now SEE what the rule ate.
+    # New: an in-process caller holding the report can SEE what the rule
+    # ate, and it survives serialisation — so the two handler gates ship
+    # it the moment their expression is widened to include the bucket.
     assert report.dropped_as_route == (
         "/api/v1/events/presence",
         "/admin/macros",
@@ -2348,8 +2366,6 @@ def test_suppressed_routes_land_in_dropped_as_route() -> None:
         "/api/v1/events/presence",
         "/admin/macros",
     ]
-    # And the surfaces' emit-gate fires, so the block actually ships.
-    assert report.has_findings is True
 
 
 def test_dropped_as_route_dedupes_a_repeated_citation() -> None:
@@ -2362,9 +2378,16 @@ def test_dropped_as_route_dedupes_a_repeated_citation() -> None:
     assert report.dropped_as_route == ("/admin/macros",)
 
 
-def test_accepted_false_negative_shapes_are_all_visible_now() -> None:
+def test_accepted_false_negative_shapes_all_reach_the_report() -> None:
     """The residue documented on `_is_multi_segment_routelike`, pinned by
     SHAPE rather than by a story about where the path came from.
+
+    "Reach the report" is the whole claim: every shape below lands in
+    `dropped_as_route` on the returned object. None of them reaches a
+    tool caller, because each produces a route-ONLY report and both
+    handler gates are `has_drift or verified or expected_absent`. Named
+    for what it verifies rather than "visible now", which would promise
+    a surface this does not exercise.
 
     The docstring used to call this residue "an extensionless remote-host
     citation", which reads as a promise that LOCAL paths are safe. They
@@ -2391,8 +2414,12 @@ def test_accepted_false_negative_shapes_are_all_visible_now() -> None:
         report = detect_path_drift(f"the store lives at `{cited}` these days")
         assert report.missing == (), cited
         assert report.checked == (), cited
-        # The mitigation: no longer a silent drop.
+        # The partial mitigation: recorded on the report rather than
+        # nowhere. Still emitted by no MCP surface — route-only.
         assert cited in report.dropped_as_route, cited
+        assert (
+            bool(report.has_drift or report.verified or report.expected_absent) is False
+        ), cited
 
 
 def test_attested_route_is_never_dropped() -> None:
@@ -2510,7 +2537,8 @@ def test_both_spellings_of_one_home_path_agree() -> None:
     # escape that swallowed the failure on Windows too.
     outside = _outside_home_citation()
     assert _is_multi_segment_routelike(outside) is True
-    # ...and it is observable rather than silently swallowed.
+    # ...and the drop is recorded on the report rather than leaving no
+    # trace (report-level only; no MCP surface emits a route-only report).
     assert detect_path_drift(f"the tree lived at `{outside}`").dropped_as_route == (
         outside,
     )
@@ -2561,7 +2589,8 @@ def test_home_exemption_follows_the_filesystem_on_case(
         assert report.dropped_as_route == ()
     else:
         # A genuinely different path on this volume: no exemption, and
-        # the route rule legitimately swallows it — visibly, now.
+        # the route rule legitimately swallows it — recorded on the
+        # report now, though still not emitted at any MCP surface.
         assert _is_under_home(reskinned) is False
         assert _is_multi_segment_routelike(reskinned) is True
         assert report.missing == ()
