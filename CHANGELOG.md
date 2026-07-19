@@ -49,6 +49,38 @@ memories, where four independent agents flagged the same phantom drift.
   its manufactured tail. It is also behind the `not attested` guard, so
   an explicitly-named path always keeps its drift signal.
 
+### Erratum (2026-07-19)
+
+The entry above is left as it shipped. One of its claims does not
+survive checking against the code.
+
+- **The `/opt/gophish` paragraph is wrong on both halves.** It shipped
+  saying *"Single-segment candidates are excluded, so the documented
+  remote-host behaviour for `/opt/gophish`-style citations is
+  unchanged."*
+
+  Wrong on the mechanism: the single-segment exclusion is
+  `s.count("/") < 2`, and `"/opt/gophish".count("/") == 2`, so that arm
+  never fires for such a citation. What actually preserves it is the
+  **existing-parent escape** — `/opt` is a real directory on a POSIX
+  host, so the neighbourhood reads as real and the candidate keeps
+  flowing to `missing` until attested. The preservation is therefore a
+  property of the *local filesystem*, not of the path's shape: on a
+  host with no `/opt`, the identical citation is dropped. (This is the
+  same environment-sensitivity `_is_multi_segment_routelike`'s own
+  platform note already records for Windows.)
+
+  Wrong on the blast radius: "unchanged" is not true of the wider
+  class. Multi-segment extensionless paths whose parent is absent
+  locally are now **dropped rather than reported** — `/srv/docker/
+  gitea`, `/data/compose/stacks`, `/mnt/tank/media` and the rest of the
+  remote-host, NAS and deploy-target vocabulary that infrastructure
+  memories cite constantly. Those used to reach `path_drift.missing`
+  and no longer do. Anyone who wants the drift signal back on such a
+  path must attest it (`memory_verify(verified_paths=[...])` or
+  `verified_absent_paths=[...]`), which puts it behind the `not
+  attested` guard and past the route check entirely.
+
 ## 3.25.1 - 2026-07-19
 
 A Windows-only durability gap in the atomic write path, found by a flaky
@@ -96,6 +128,32 @@ release-gate job rather than by a user report.
   bug took a release-gate failure to surface. The arm does not paper
   over the defect: an `errored` outcome satisfies neither assertion, so
   the test still fails — it just fails while naming the exception.
+
+### Erratum (2026-07-19)
+
+The entry above is left as it shipped. Its coverage claim was too
+strong.
+
+- **"all three rename sites" was four.** The entry says the retry is
+  *"Applied at all three rename sites: `atomic_write_bytes` (every
+  memory, episode and index write) plus the event-log rotation and
+  archive renames in `events.py`."* Those three are real and are
+  covered (`_fsutil.py` `atomic_write_bytes`, `events.py` rotation,
+  `events.py` archive). But they are not all of them: the embedding
+  cache's persistent flush in `semantic.py` performs a fourth
+  tmp → fsync → rename, and it calls `Path.replace` directly rather
+  than `_fsutil.replace_atomic`, so it never had the Windows retry.
+  It is therefore still exposed to the exact `PermissionError` race
+  3.25.1 set out to close — two flushes against one memory dir on
+  Windows can still fail the rename hard.
+
+  The consequence is milder than for the store proper: the embedding
+  cache is a fully recomputable derived artifact, and the flush already
+  swallows its own exceptions, so a lost rename costs a cache rebuild
+  rather than data. It is a durability gap, not a correctness one — but
+  the entry's "all three" asserted a completeness that did not hold.
+  The site is being brought onto `replace_atomic` in a follow-up
+  release.
 
 ## 3.25.0 - 2026-07-19
 
@@ -212,6 +270,83 @@ every read/consumer contract is byte-identical.
   fsync, not the lock). Nine tests pin the new behaviour: striping,
   per-session shard stability, cross-shard chronological merge with
   per-session order preserved, and legacy `.events.jsonl` merge-in.
+
+### Erratum (2026-07-19)
+
+The entry above is left as it shipped. Four of its claims do not
+survive checking against the code and the tag.
+
+- **Not "the last global write lock".** The title claims the event-log
+  shard killed the last one. It did not. Every memory mutation still
+  serialises store-globally on the FTS5 index: `write`, `update`,
+  `mark_verified`, `tombstone`, `restore` and `rename_scope` all call
+  `_index_upsert_quietly` / `_index_remove_quietly`, which open the
+  single `<root>/.index.sqlite` and write it. SQLite in WAL mode admits
+  concurrent readers but still admits exactly one writer at a time
+  (contenders wait out the 5-second busy timeout), so the fleet-wide
+  write serialisation point moved from the event log to the index
+  rather than disappearing. Accurate title: *sharded to remove the
+  event-log global write lock*. The index write path is the remaining
+  one. `docs/swarm-convergence-plan.md` carried the same overclaim in
+  its Phase 1b note ("The one true global serialization point.
+  Removed.") and is corrected alongside this erratum.
+
+- **Not "one additive feature" — a second change shipped
+  undocumented.** Tag `v3.24.0` also carries commit `096218e`, which
+  rerouted `load_one` and `_find_path_for_id` — and therefore
+  `memory_show`, `memory_update`, `memory_verify` and `memory_remove`
+  — through the FTS5 index. It received no entry anywhere in this file.
+  Stated now as the `### Changed` bullet the release should have
+  carried:
+
+  - **By-id lookup is index-backed — O(corpus) walk → O(1) resolve
+    (swarm-convergence Phase 1).** `load_one` and `_find_path_for_id`
+    used to resolve an id by walking the active directory and
+    reparsing every file's frontmatter until one matched. New
+    `_indexed_path_for_id` resolves id → filename through
+    `index.filenames_for_ids` in one indexed query instead. **The walk
+    is retained as the authoritative fallback**, not replaced: the
+    index is consulted first and the walk runs whenever it does not
+    produce a usable answer. The safety property is that a wrong index
+    can only cost time, never correctness — `_indexed_path_for_id`
+    returns a path only when `_id_still_at_path` re-reads the named
+    file and confirms it *still* carries that id, so a row pointing at
+    a moved, renamed or tombstoned file yields `None` and the caller
+    falls through to the walk, which finds the true path. A stale index
+    row therefore degrades the lookup to slow, never to wrong. Two
+    observable consequences: (1) the resolver is wrapped in
+    `@best_effort`, so a corrupt, locked or unreadable index logs a
+    warning **per lookup** (previously such a store simply walked in
+    silence) — the message names the id and carries the `bettermemory
+    reindex` repair hint; (2) `memory_show` now opens the index
+    **twice** rather than once — one purposeful open for the id → path
+    resolve plus the existing `links_for_with_status` open — which is
+    what `test_no_inbound_show_opens_index_twice` pins, a third open
+    still failing it.
+
+- **"Nine tests" was four.** The release commit (`59a1e08`) adds four
+  new test functions, all in `tests/test_events.py`:
+  `test_same_session_maps_to_a_stable_shard`,
+  `test_sessions_stripe_across_multiple_shard_files`,
+  `test_iter_events_merges_shards_preserving_per_session_order` and
+  `test_legacy_events_jsonl_merges_in_after_sharding`. Its other test
+  edits are helper refactors, not additions. The "nine" appears to have
+  been carried over from the *other* commit in the tag, `096218e`,
+  whose message likewise claims nine for
+  `tests/test_indexed_lookup.py` — that file contains eight test
+  functions and no parametrisation.
+
+- **"every read/consumer contract is byte-identical" was false as
+  shipped.** The preamble's backward-compatibility claim, and the
+  Changed bullet's "cross-shard chronological merge", both assert a
+  read contract that sharding did not in fact preserve:
+  `iter_all_events` is not chronological post-sharding. The bullet's
+  per-session ordering claim does hold (a session maps to a fixed shard
+  by `crc32(session_id) % SHARD_COUNT`, so its own events stay in
+  append order within one file); the *global* cross-consumer ordering
+  claim does not. This is a code defect, not just a documentation one,
+  and is corrected in a follow-up release — this file is newest-first,
+  so look above this entry for the one that lands the fix.
 
 ## 3.23.0 - 2026-07-12
 

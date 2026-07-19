@@ -3,9 +3,13 @@
 Making "a fleet of agents converges on one memory store" a true,
 benchmarked claim instead of a marketing line.
 
-Status: spec / not started. This is a design doc, not a shipped
-feature. The [CHANGELOG](../CHANGELOG.md) is the source of truth for
-what actually exists.
+Status: partly shipped. **Phase 0** (fleet benchmark, `bench/swarm.py`),
+**Phase 1** (index-backed by-id lookup) and **Phase 1b** (sharded
+event-log active file, v3.24.0) have shipped; **Phases 2-5 remain
+spec.** So this is a plan doc with a shipped prefix, not a pure design
+doc — read each phase's own heading for its state. The
+[CHANGELOG](../CHANGELOG.md) is the source of truth for what actually
+exists, including the errata correcting what the 3.24.0 entry claimed.
 
 ## Scope, and the line we do not cross
 
@@ -67,15 +71,28 @@ Not starting from zero. The correctness floor is genuinely built:
 
 ### Where the gaps are
 
-- **Liveness: NO.** Every operation, including reads, appends one line
-  to a single `<root>/.events.jsonl` under one global lock
-  ([events.py:235-245](../src/bettermemory/events.py)). At 4 agents
-  this is free. At 200 agents doing frequent ops it is *the* ceiling:
-  the whole fleet funnels through one flock. Current concurrency
-  coverage is 4 workers x 50 ops
-  ([tests/test_concurrency.py](../tests/test_concurrency.py)) — a
-  correctness test, never a throughput one. We have no measured agent
-  ceiling at all.
+- **Liveness: PARTIAL.** Every operation, including reads, appends one
+  line to the event log — but since 3.24.0 (Phase 1b) that log is no
+  longer a single global file. The active log is 16 shards,
+  `.events.NN.jsonl`, and a recorder picks its shard by
+  `crc32(session_id) % SHARD_COUNT`
+  ([events.py:237](../src/bettermemory/events.py)), so writers from
+  different sessions append to different files and no longer contend on
+  one flock. The Phase-0 measurement below put that lock at 7-17% of
+  throughput; post-sharding the event-log tax is ~1%, and the residual
+  is per-event redaction + fsync rather than lock wait.
+
+  What remains is a *different* global write serialisation point: the
+  FTS5 index. Every memory mutation (`write`, `update`,
+  `mark_verified`, `tombstone`, `restore`, `rename_scope`) writes the
+  single `<root>/.index.sqlite`, and SQLite admits one writer at a time
+  even in WAL mode. Phase 1b below was billed as removing "the one true
+  global serialization point" — it was not the only one; the index
+  outlived it, and closing that is unclaimed work.
+
+  Test coverage is still the weak half: 4 workers x 50 ops
+  ([tests/test_concurrency.py](../tests/test_concurrency.py)) is a
+  correctness test, never a throughput one.
 - **Non-duplication: NO.** The write-dedup gate checks the *committed*
   store. Two agents discovering the same fact in the same second never
   see each other's in-flight write, so a swarm produces N copies of
@@ -86,11 +103,14 @@ Not starting from zero. The correctness floor is genuinely built:
   land.
 - **Provenance: NO** (for durable memory — see PARTIAL above).
 - **Cross-host: NO.** `sync` is git; conflicts are git merge
-  conflicts with "no auto-resolution" (README limitation).
+  conflicts with "no auto-resolution"
+  ([internals.md](internals.md#limitations) limitation — moved there
+  from the README by `e2d43b4`).
 
 The honest one-line summary of today: *multiple agents can safely
-share one store at small scale; it does not yet converge and its
-ceiling is unmeasured.* The plan below closes exactly that sentence.
+share one store at small scale, and its ceiling is now measured (see
+Phase 0 below) rather than guessed at — but it does not yet converge.*
+The plan below closes exactly that sentence.
 
 ## Phase 0 results (measured 2026-07-18)
 
@@ -161,7 +181,7 @@ still carries the id (`_id_still_at_path`); a stale / absent / lying
 index yields `None` and the caller falls back to the authoritative
 walk, so the index can only make the lookup faster, never wrong.
 `load_one` and `_find_path_for_id` (which backs `update` / `verify` /
-`tombstone` / `show`) both use it. Nine tests in
+`tombstone` / `show`) both use it. Eight tests in
 `tests/test_indexed_lookup.py` pin the safety property (absent, stale,
 wrong-file, unindexed, tombstoned all stay correct). Measured effect:
 
@@ -201,7 +221,10 @@ category of claim from marketing to fact.
 
 ### Phase 1b — Shard the event log — SHIPPED 2026-07-19 (v3.24.0)
 
-The one true global serialization point. Removed.
+The event log's global write lock. Removed. (It was billed at the time
+as "the one true global serialization point" — it was not. Every memory
+mutation still serialises on the single `.index.sqlite`; see the
+Liveness bullet above and the 3.24.0 erratum in the CHANGELOG.)
 
 Shipped as fixed-K striping rather than the per-session files sketched
 below — one file per session proliferates unboundedly and blows a
