@@ -54,13 +54,23 @@ six hold:
 Not starting from zero. The correctness floor is genuinely built:
 
 *Citations here and below name **symbols**, not line numbers. This doc
-shipped six `file.py:NNN` references; checked against HEAD, five of
-the six pointed somewhere other than the code they claimed — two of
-them into a docstring (`index.py:32-45` into the module docstring,
-`events.py:237` into `_redact_query`'s), one at the wrong symbol
-entirely, two at ranges that had drifted. Only `store.py:298`
-(`Store.load_one`) still landed. A symbol survives the next edit; a
-line number does not.*
+shipped six `file.py:NNN` references; resolved against HEAD with an
+AST walk, four of the six no longer point at the code they claimed:
+`index.py:32-45` and `events.py:237` land in prose rather than code
+(the module docstring's "Concurrency" paragraph, and `redact_query`'s
+docstring — the function is `redact_query`, module-level and public,
+not `_redact_query`, which matches no symbol defined anywhere under
+`src/`); `store.py:393-478` straddles two
+functions, opening inside `Store.write` and closing inside the
+`Store.update` it meant to cite; and `store.py:1648` lands in
+`Store._path_for`, 14 lines short of the `Store._find_path_for_id` it
+names. Two still land: `store.py:298` is exactly `Store.load_one`, and
+`episodes.py:92-114` brackets the `swarm_id` plumbing inside
+`EpisodeStore.write` (its parameter and its assignment), though not
+the `list_by_swarm` the same bullet also names. A symbol survives the next edit;
+a line number does not — and note that the earlier revision of this
+very paragraph got its own tally wrong, claiming five misses and a
+single survivor.*
 
 - **Safety: DONE.** Per-memory-file `fcntl`/`msvcrt` locking
   (`_fsutil.flock_excl`), so disjoint memories never contend. The
@@ -92,10 +102,13 @@ line number does not.*
   [events.py](../src/bettermemory/events.py)), so writers from
   different sessions append to different files and no longer contend on
   one flock. The Phase-0 measurement below put that lock at 7-17% of
-  throughput; post-sharding the event-log tax is single-digit percent
-  (~1% on the 3.24.0 A/B, 2.5% on the HEAD re-run recorded under
-  Phase 0 below — a two-sample A/B, so treat the spread as noise), and
-  the residual is per-event redaction + fsync rather than lock wait.
+  throughput. **What the tax is post-sharding is not currently a
+  number this project can defend** — the `~1%` that used to sit here
+  came from a single unreplicated A/B, and an attempt to replicate it
+  produced a spread that swamps it and does not even fix its sign. See
+  the event-log tax bullet under Phase 0 results for the data. The
+  residual cost is per-event redaction + fsync rather than lock wait,
+  which is a statement about *where* the work goes, not how much.
 
   What remains is a *different* global write serialisation point: the
   FTS5 index. Every memory mutation (`write`, `update`,
@@ -163,7 +176,8 @@ Fleet scaling, one shared store:
   so as measured, "every .md parsed, every event-log line valid JSON,
   no agent crashed" was founded.
 
-  It stopped being founded four hours later. `59a1e08` (3.24.0)
+  It stopped being founded about seventy minutes later. `59a1e08`
+  (3.24.0, authored 2026-07-18 22:22 — 1 h 10 m after `90d10b9`)
   sharded the active log into `.events.NN.jsonl` and the gate kept
   opening the hard-coded `.events.jsonl`, which no longer exists on
   any store the benchmark creates: `exists()` was False, the parse
@@ -188,6 +202,37 @@ Fleet scaling, one shared store:
   many-core box.
 - **The event-log lock is real but modest.** Logging on vs off cost
   7–17% of throughput across runs — worth removing, not the headline.
+  (That figure is pre-sharding, 2026-07-18.)
+- **The post-sharding event-log tax is below what this benchmark can
+  resolve.** `bench/swarm.py` reports `tax = 100 * (1 - on/off)`, so a
+  negative tax means the logging-on arm measured *faster*. Twelve A/B
+  pairs at HEAD on one 12-core box (2026-07-19):
+
+  | agents | pairs | tax range | mean |
+  |-------:|------:|:----------|-----:|
+  |     24 |     7 | -41.5% … +15.0% | -5.1% |
+  |      8 |     5 | +6.6% … +56.5%  | +27.8% |
+
+  At 24 agents the sign is not determined; at 8 agents the magnitude
+  spans nearly an order of magnitude. Either way the run-to-run spread
+  is far larger than the ~1% this doc used to claim, so **that figure
+  is retracted rather than replaced** — no honest single number is
+  available from this instrument as it stands.
+
+  Two caveats, both cutting against over-reading the table. First, the
+  box was **not quiesced** (load average ~18 on 12 cores, sibling
+  processes competing), which inflates the spread; these runs are
+  evidence that the A/B is not robust to background load, *not* proof
+  that a quiet box would also fail to resolve the effect, and they do
+  not establish that the original ~1% was wrong at the time it was
+  taken. Second, the throughput drift is itself the tell: the identical
+  8-agent logging-on configuration ranged 197→532 ops/s across five
+  sequential runs (2.7x). An instrument in which one arm moves 2.7x
+  between repetitions of the identical configuration cannot certify a
+  single-digit difference between arms. Resolving
+  this needs a quiesced box and enough repetitions to put an interval
+  around the estimate — neither has been done, and until it is, "we
+  cannot measure this reliably" is the finding.
 
 The headline was somewhere else. A single-process corpus-scaling probe
 (update = load-by-id + write, timed across store sizes):
@@ -214,7 +259,8 @@ Honest one-liner from Phase 0: *one store sustained ~300 ops/s across
 up to ~a-dozen agents on a 12-core box with zero corruption; the first
 thing that will actually stop a growing fleet is O(corpus) by-id
 lookup, not the event-log lock.* (Past tense throughout: this is the
-pre-Phase-1 store. On HEAD the same sweep peaks at ~811 ops/s.)
+pre-Phase-1 store. HEAD is faster, but by how much is not a settled
+number — see the peak-throughput caveat under Phase 1.)
 
 ## Phases
 
@@ -247,19 +293,37 @@ wrong-file, unindexed, tombstoned all stay correct). Measured effect:
 Flat across corpus size — O(corpus) became O(1). At the fleet level
 (same `bench/swarm.py`, 12-core box), peak throughput went **318 →
 970 ops/s** and p99 latency at 24 agents **739 → 96 ms**, still zero
-corruption. The event-log tax dropped to ~1% now that ops are faster,
-confirming it is the right *next* (smaller) target, not the first one.
+corruption. The event-log tax was recorded here as ~1% now that ops
+are faster, and read as confirmation that it is the right *next*
+(smaller) target rather than the first one. **The ordering conclusion
+survives; the number does not** — it was one A/B pair, and the
+replication attempt under Phase 0 above could not recover it or even
+pin its sign. What actually orders the phases is the corpus-scaling
+table immediately above, which does not depend on any throughput
+figure: by-id update p50 at 3200 memories went from 320.6 ms to
+2.7 ms, and stopped growing with corpus size. An O(corpus) term that reaches
+hundreds of milliseconds outranks an event-log tax whose *pre-sharding*
+measurement was 7-17% of throughput, whatever the post-sharding
+residual turns out to be.
 
 Two caveats on those fleet numbers, both found by re-running the
 benchmark rather than by re-reading it. First, they were taken at
 `096218e`, before the event log was sharded, so the corruption clause
 was founded when written — but see the Phase 0 safety bullet for the
-window in which it stopped being. Second, **970 is a single
-unreplicated sample.** The HEAD re-run (2026-07-19, same 12-core box)
-peaks at **811 ops/s** with p99 **117 ms** at 24 agents. Different day,
-differently-loaded box, one sample each — not a contradiction, but
-"970" should not be quoted as *the* number without a deliberate
-re-measurement.
+window in which it stopped being. Second, **no peak-throughput figure
+in this doc has been replicated.** 970 was one sample; a later HEAD
+re-run recorded 811 ops/s with p99 117 ms at 24 agents, also one
+sample; two further default sweeps at HEAD peaked at **410 and 464
+ops/s** (2026-07-19, 12-core box under concurrent load — see the
+quiescence caveat in the Phase 0 event-log tax bullet). Those last two
+are depressed by background load and are *not* offered as refutations
+of 811 or 970. Taken together the four numbers say only that this
+benchmark's absolute throughput is dominated by machine conditions
+that none of the runs controlled for. **Do not quote any of them as
+"the" number.** The reproducible part of the sweep is the structural
+evidence, not the rate: both HEAD sweeps emitted exactly 7,650
+event-log lines across exactly 43 active segments with zero
+corruption, byte-identical totals, because the workload is seeded.
 
 Ordered by leverage-over-risk. Each phase is independently shippable
 and moves the honest claim forward (see the claim ladder at the end).
@@ -298,9 +362,15 @@ active log splits into `.events.NN.jsonl` (NN = `crc32(session_id) %
 no longer contend on one flock. `iter_events` merges the shards plus
 any pre-sharding legacy `.events.jsonl` by event `ts` (a
 `heapq.merge`, open fds bounded by the shard count). `sync` excludes
-the shard files (they carry query text); measured event-log tax
-dropped from ~7-17% to ~1% (the residual is per-event fsync, not the
-lock).
+the shard files (they carry query text). The event-log tax was
+recorded at the time as dropping from ~7-17% to ~1%; **the ~1% has
+since been retracted as unreplicable** — see the event-log tax bullet
+under Phase 0 results. Note also that the lock did not go away, it was
+striped: `Recorder.record` still appends under `_locked(self.path)`,
+now per shard. Two sessions whose `crc32` lands on the same shard —
+guaranteed once more than 16 are live — still serialise against each
+other. So "the residual is redaction + fsync, not lock wait" is a
+claim about the uncontended case, and it too is unquantified.
 
 **Four** new tests in `tests/test_events.py` pin striping, per-session
 shard stability, cross-shard merge order, and legacy backward-compat:
@@ -370,9 +440,15 @@ on Phase 0."*
 
 Phase 0 falsified the last sentence before it was built, which is what
 gating on a benchmark is for: the event-log lock measured 7-17% of
-throughput, so removing it could not have been worth an order of
-magnitude, and the shipped result was ~1%. The order of magnitude came
-from Phase 1 (by-id lookup) instead. The "low risk" half did not hold
+throughput, and removing a cost of at most 17% cannot yield a 10x
+speedup no matter how completely it is removed — that is arithmetic,
+and it does not depend on the shipped tax, which is just as well since
+the ~1% once quoted here has been retracted as unreplicable (see the
+Phase 0 event-log tax bullet). The order of magnitude came from Phase 1
+(by-id lookup) instead: by-id update p50 at 3200 memories went
+320.6 ms → 2.7 ms, which is the one place in this doc a 10x-plus claim
+is carried by a latency measurement rather than a single throughput
+sample. The "low risk" half did not hold
 either — see the two falsified claims above; sharding the writes
 without also partitioning the rotation namespace cost a data-loss
 defect that took until `eace517` to close.
@@ -461,12 +537,18 @@ its benchmark number is recorded in this doc.
 - **+ Phase 0:** "benchmarked at N agents, X ops/sec, zero
   corruption." (A number, not a guess.)
 - **+ Phases 1 and 1b (both shipped):** "scales to a fleet — no global
-  *event-log* lock; by-id work is O(1); throughput climbs with agents
-  up to about core count." (The 200 becomes real, whatever the real N
-  is.) The unqualified "no global lock" this rung used to license is
-  **not** sayable and never was: every memory mutation still
-  serialises on the single `.index.sqlite`. Say which lock you
-  removed, or say nothing.
+  *event-log append* lock; by-id work is O(1); throughput climbs with
+  agents up to about core count." (The 200 becomes real, whatever the
+  real N is.) Three qualifications, all load-bearing. The unqualified
+  "no global lock" this rung used to license is **not** sayable and
+  never was: every memory mutation still serialises on the single
+  `.index.sqlite`. "Append" is not decoration either — appends take a
+  per-shard flock, so sessions colliding on one of the 16 shards still
+  serialise, and rotation briefly takes a store-wide
+  `.events-rotate.lock` to sweep crash orphans (deliberately kept off
+  the common append path). And "throughput climbs with agents" is a
+  shape, not a rate — this doc no longer stands behind any particular
+  ops/s figure. Say which lock you removed, or say nothing.
 - **+ Phases 2-3:** "a fleet converges: independent agents collapse
   onto shared memories with provenance, instead of multiplying them."
 - **+ Phase 4:** "agents enrich the same memory concurrently and both
@@ -480,13 +562,16 @@ Phases **0-2** are the high-leverage, low-risk core. They make this
 claim fully true and defensible:
 
 > Built for agent fleets: multiple agents share one store with no
-> global event-log lock, benchmarked at N agents with zero
+> global event-log append lock, benchmarked at N agents with zero
 > corruption, every memory attributed to the agent that wrote it.
 
 (The qualifier is load-bearing. This blurb previously read "with no
 global lock" — false while the FTS5 index still admits one writer at a
 time store-wide. Closing that is unclaimed work, not a shipped
-property; do not post the unqualified version until it is.)
+property; do not post the unqualified version until it is. Note also
+what this blurb does *not* say: it claims zero corruption at N agents,
+which the benchmark does evidence reproducibly, and it claims no ops/s
+figure, which the benchmark currently cannot.)
 
 Phase 3 makes "converge" a strong word. Phase 4 makes it a strong
 demo. Phase 5 is the cross-machine stretch. Recommendation: land 0-2
