@@ -155,6 +155,28 @@ exist), and it's the difference between a fleet's shared store staying
 usable past a few thousand memories or not. Event-log sharding stays in
 the plan, demoted to after it.
 
+**Phase 1 — SHIPPED 2026-07-18.** `_indexed_path_for_id` resolves an
+id to its path via the index and returns it only when the named file
+still carries the id (`_id_still_at_path`); a stale / absent / lying
+index yields `None` and the caller falls back to the authoritative
+walk, so the index can only make the lookup faster, never wrong.
+`load_one` and `_find_path_for_id` (which backs `update` / `verify` /
+`tombstone` / `show`) both use it. Nine tests in
+`tests/test_indexed_lookup.py` pin the safety property (absent, stale,
+wrong-file, unindexed, tombstoned all stay correct). Measured effect:
+
+| corpus | update p50 before | after | by-id read before | after |
+|-------:|------------------:|------:|------------------:|------:|
+|     50 |            8.6 ms | 2.4 ms |          5.8 ms | 0.9 ms |
+|    800 |           75.9 ms | 2.5 ms |        126.8 ms | 0.9 ms |
+|   3200 |          320.6 ms | 2.7 ms |        521.0 ms | 0.9 ms |
+
+Flat across corpus size — O(corpus) became O(1). At the fleet level
+(same `bench/swarm.py`, 12-core box), peak throughput went **318 →
+970 ops/s** and p99 latency at 24 agents **739 → 96 ms**, still zero
+corruption. The event-log tax dropped to ~1% now that ops are faster,
+confirming it is the right *next* (smaller) target, not the first one.
+
 Ordered by leverage-over-risk. Each phase is independently shippable
 and moves the honest claim forward (see the claim ladder at the end).
 

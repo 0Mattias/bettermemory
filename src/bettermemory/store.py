@@ -300,6 +300,20 @@ class Store:
         if not is_valid_ulid(memory_id):
             raise MemoryNotFoundError(f"invalid id: {memory_id!r}")
 
+        # Fast path: resolve id -> path through the index in O(1)
+        # instead of walking + reparsing the whole active directory.
+        # A concurrent move between resolve and load is still possible,
+        # so a failed or mismatched load falls through to the
+        # authoritative walk below rather than being trusted blindly.
+        hit = _indexed_path_for_id(self.root, memory_id)
+        if hit is not None:
+            try:
+                fast = self._load_path(hit)
+            except PARSE_SKIP_EXCEPTIONS:
+                fast = None
+            if fast is not None and fast.id == memory_id:
+                return fast
+
         for path in self._iter_active_paths():
             try:
                 memory = self._load_path(path)
@@ -1648,6 +1662,13 @@ class Store:
     def _find_path_for_id(self, memory_id: str) -> Path | None:
         if not is_valid_ulid(memory_id):
             return None
+        # Fast path: the index resolves id -> path in O(1). Returns a
+        # path only when it still carries the id, so a stale hint can't
+        # make us return the wrong file — it just yields None and we
+        # walk. Callers re-verify under the file lock regardless.
+        hit = _indexed_path_for_id(self.root, memory_id)
+        if hit is not None:
+            return hit
         for path in self._iter_active_paths():
             try:
                 post = frontmatter.load(path)
@@ -2115,6 +2136,42 @@ def _index_remove_quietly(root: Path, memory_id: str) -> None:
     from . import index as _index
 
     _index.remove(root, memory_id)
+
+
+@best_effort(
+    "index-backed id lookup",
+    logger=_INDEX_LOG,
+    repair_hint=_INDEX_REPAIR_HINT,
+    id_getter=lambda root, memory_id: memory_id,
+)
+def _indexed_path_for_id(root: Path, memory_id: str) -> Path | None:
+    """Resolve one ACTIVE memory id to its on-disk path via the FTS5
+    index in O(1), instead of the O(corpus) directory walk that
+    ``_find_path_for_id`` / ``load_one`` fall back to — those reparse
+    every file's frontmatter to find one id. The Phase-0 fleet
+    benchmark measured that walk taking a single ``update`` from ~9 ms
+    at 50 memories to ~320 ms at 3200; on an accumulating multi-agent
+    store it dominates everything.
+
+    The index is a hint that can only make the lookup FASTER, never
+    wrong. A path is returned only when the named file *still* carries
+    the id (``_id_still_at_path``), so a stale row pointing at a
+    moved / renamed / tombstoned file yields ``None`` and the caller
+    falls back to the authoritative walk (which finds the true path).
+    ``None`` is likewise the answer on an index miss (a recent write
+    not yet indexed, or a tombstoned id whose row was removed) and —
+    via ``@best_effort`` — on any index error (absent, corrupt,
+    locked). Files stay canonical; ``bettermemory reindex`` repairs
+    drift. Lazy import so the module loads without the index for
+    pure-file-store callers.
+    """
+    from . import index as _index
+
+    fname = _index.filenames_for_ids(root, [memory_id]).get(memory_id)
+    if fname is None:
+        return None
+    candidate = root / fname
+    return candidate if _id_still_at_path(candidate, memory_id) else None
 
 
 # Cap on a tombstone's removal reason, measured on its SERIALIZED (YAML-

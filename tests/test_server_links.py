@@ -398,25 +398,31 @@ async def test_show_survives_unwritable_root_during_index_migration(
     assert rev["source_id"] == b_id
 
 
-async def test_no_inbound_show_opens_index_once(
+async def test_no_inbound_show_opens_index_twice(
     server: Any, memory_dir: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """Perf regression guard: a `memory_show` of a memory with NO
     inbound links, against a HEALTHY POPULATED index, must open the
-    index connection EXACTLY ONCE.
+    index connection EXACTLY TWICE — one purposeful open each for two
+    distinct jobs, and no more.
 
-    Most memories are not link targets, so the no-inbound branch is the
-    common `memory_show` path. The reverse-link fallback once read the
-    inbound links via `links_for` (one open) and then — on this same
-    common branch — called `index.status(...)` to check `indexed_count`
-    (a SECOND full open: `_connect` + PRAGMAs + `_ensure_schema`'s
-    `executescript`). Folding the count into the single `links_for`
-    open (`links_for_with_status`) removes that second connection.
+    1. **id -> path resolve** (swarm-convergence Phase 1). `load_one`
+       resolves the id through the index (`filenames_for_ids`) instead
+       of walking + reparsing the whole active directory. That is the
+       whole point of the change: one O(1) index open replaces an
+       O(corpus) walk (the Phase-0 benchmark measured that walk at
+       ~320 ms for a single lookup at 3200 memories).
+    2. **links + status** via `links_for_with_status`. This branch once
+       split into two opens — `links_for` for inbound links, then a
+       separate `index.status(...)` for `indexed_count` — until they
+       were folded into one connection. That fold is still guarded
+       here: a THIRD open means either the `status()` split came back
+       OR the Phase 1 resolve regressed into a double-open.
 
     We count every `index._connect` call during the show. The store's
     seed writes happen BEFORE the counter is installed, so the only
-    opens measured are the read-path ones. This asserts 1; it FAILS at
-    2 on the pre-fix code (links_for + status).
+    opens measured are the read-path ones. Asserts 2; FAILS at 3 on
+    either regression above.
     """
     from bettermemory import index as _index
 
@@ -446,9 +452,11 @@ async def test_no_inbound_show_opens_index_once(
     # load_all fallback (which would itself add no index opens, but the
     # absence confirms we're on the populated-no-inbound branch).
     assert "reverse_links" not in shown
-    assert opens["count"] == 1, (
+    assert opens["count"] == 2, (
         f"no-inbound memory_show opened the index {opens['count']} times; "
-        "expected exactly 1 (a second open is the status() regression)"
+        "expected exactly 2 (one id->path resolve + one links_for_with_status). "
+        "A third open means the status() split regressed or the Phase 1 "
+        "id resolve double-opened."
     )
 
 
