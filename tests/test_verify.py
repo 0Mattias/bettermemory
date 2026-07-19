@@ -35,6 +35,7 @@ from bettermemory.verify import (
     _PLACEHOLDER_PATHS,
     _PLACEHOLDER_PREFIXES,
     _RELATIVE_CITATION_RE,
+    _extract_candidates,
     _home_ignores_case,
     _is_multi_segment_routelike,
     _is_under_home,
@@ -2368,14 +2369,68 @@ def test_suppressed_routes_land_in_dropped_as_route() -> None:
     ]
 
 
-def test_dropped_as_route_dedupes_a_repeated_citation() -> None:
-    """`checked` dedupes; the suppressed bucket must too, or a body that
-    names one route twice reports it twice and the set stops being a
-    set."""
-    report = detect_path_drift(
-        "Route `/admin/macros` is registered; see `/admin/macros` in the router."
+def test_extractor_dedupes_so_the_per_candidate_buckets_cannot_double_count() -> None:
+    """THE REAL INVARIANT behind every "bucket X doesn't double-count"
+    claim: `_extract_candidates` yields pairwise-distinct paths.
+
+    This replaces a test that asserted `dropped_as_route` dedupes a
+    doubled route citation. That test could not fail. The extractor
+    already collapses the repeat, so `detect_path_drift` was handed ONE
+    candidate either way — the assertion held identically with the
+    bucket's `not in dropped_as_route` guard deleted, which is how the
+    guard was found to be unreachable and removed. A test that passes
+    whether or not the code it names exists is negative coverage: it
+    advertises protection that is not there.
+
+    So pin the property that actually does the work, at the layer that
+    actually implements it. Asserted on the extractor's own output rather
+    than through a bucket, because reading it through a bucket is exactly
+    what made the old test unfalsifiable — break the `index_of` dedupe in
+    `_extract_candidates` and this fails.
+    """
+    body = (
+        "Route `/admin/macros` is registered; see `/admin/macros` in the router. "
+        "Config at `/etc/bm-audit-nope.conf`, again at /etc/bm-audit-nope.conf."
     )
-    assert report.dropped_as_route == ("/admin/macros",)
+    candidates = _extract_candidates(body)
+    paths = [path for path, _, _ in candidates]
+    assert len(paths) == len(set(paths)), paths
+    # Both repeats really were repeats — otherwise the assertion above is
+    # vacuously true on a body that never duplicated anything.
+    assert sorted(paths) == ["/admin/macros", "/etc/bm-audit-nope.conf"]
+
+    # The consequence the removed guard was trying to buy, now a property
+    # of the input rather than of a defensive branch.
+    assert detect_path_drift(body).dropped_as_route == ("/admin/macros",)
+
+
+def test_checked_keeps_its_dedupe_guard_because_it_holds_derived_prefixes(
+    tmp_path: Path,
+) -> None:
+    """The asymmetry that makes `checked`'s guard live while the route
+    bucket's was dead — pinned so the two are not "tidied" together.
+
+    `dropped_as_route` only ever receives a candidate `path`, and the
+    extractor already made those distinct. `checked` also receives a
+    DERIVED value: the spaced-bare arm appends `path.split(" ", 1)[0]`
+    when the prose-glue fallback fires. That prefix can equal a later,
+    genuinely distinct candidate, so `checked` can be offered the same
+    string twice and its `if path in checked` guard is reachable.
+
+    Here the glued candidate `<dir> TCP/IP` and the plain `<dir>` are two
+    separate extractor candidates; the first contributes `<dir>` to
+    `checked` via the fallback, the second arrives as itself.
+    """
+    directory = tmp_path / "bm-audit-derived-prefix"
+    directory.mkdir()
+    real = str(directory)
+    body = f"{real} TCP/IP keepalive, and also {real} again."
+    paths = [path for path, _, _ in _extract_candidates(body)]
+    # Two distinct candidates: the extractor's dedupe does NOT collapse
+    # these, so the collision is created downstream, not upstream.
+    assert paths == [f"{real} TCP/IP", real], paths
+    # ...and `checked` still names the directory exactly once.
+    assert detect_path_drift(body).checked == (real,)
 
 
 def test_accepted_false_negative_shapes_all_reach_the_report() -> None:

@@ -567,8 +567,18 @@ def detect_path_drift(
                 # would read as a route on its manufactured tail and skip
                 # the prefix-existence fallback that recovers the real
                 # path.
-                if path not in dropped_as_route:
-                    dropped_as_route.append(path)
+                #
+                # Appended unguarded, unlike `checked` below. Every value
+                # that lands here is a candidate `path`, and
+                # `_extract_candidates` already dedupes those (it keys an
+                # index on the comparison form and appends only on a
+                # miss), so one route cannot arrive twice — a
+                # `not in dropped_as_route` guard would be unreachable.
+                # `checked` needs its guard for a reason that does not
+                # apply here: the spaced-bare arm above appends a DERIVED
+                # `prefix`, which a later, genuinely distinct candidate
+                # can equal.
+                dropped_as_route.append(path)
                 continue
         if path in checked:
             continue
@@ -1032,9 +1042,10 @@ def _is_under_home(s: str) -> bool:
     directory, and a byte comparison would exempt one spelling and drop
     the other as a route. That is the same false-negative divergence the
     home escape was added to kill, just one layer down. The probe is
-    gated behind the miss so the common path stays two string
-    comparisons, and it is only consulted for candidates that already
-    failed their existence check.
+    gated behind the miss: a candidate that is not home-shaped under ANY
+    casing is settled by string comparison alone and never touches the
+    filesystem, and even a case-modulo match is only probed for
+    candidates that already failed their existence check.
     """
     home = os.path.expanduser("~")
     if not home or home == "~" or home == os.sep:
@@ -1071,7 +1082,8 @@ def _home_ignores_case(home: str) -> bool:
     the conservative direction, since without cased characters no
     candidate could have differed by case in the home prefix anyway.
 
-    Read-only and allocation-free: two `stat` calls, no file is created.
+    Read-only: two `stat` calls and no file is created. (Not
+    allocation-free — the case flip builds a new string.)
     Deliberately NOT memoised — `$HOME` is read fresh on every call
     upstream (the suite monkeypatches it), and the probe only runs for a
     candidate that already matched home modulo case, which is rare
