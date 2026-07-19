@@ -47,9 +47,12 @@ The `mp.get_context("spawn")` tests DO still skip on Windows, but for
 a different and narrower reason than the docstring used to claim:
 their marker-file rendezvous, sleep budgets, and spawn-jitter
 assumptions were written and tuned against POSIX process semantics and
-have never been validated on the Windows runner. That is a real
-coverage gap in the Windows locking path, not a statement that there
-is nothing there to test — see each marker's reason string.
+have never been validated on the Windows runner. The gap that leaves
+is a real-`msvcrt`, real-multi-process one; the branch's own logic is
+exercised on every platform by `tests/test_fsutil.py`'s
+`TestFlockWindows`, which injects a fake `msvcrt` through
+`sys.modules`. So the skip is a statement about the rendezvous
+harness, not about the lock — see each marker's reason string.
 """
 
 from __future__ import annotations
@@ -325,9 +328,15 @@ def test_store_locked_persists_lockfile_after_exit(tmp_path: Path) -> None:
     created" — verifiably false since 2.7: `_flock_windows` opens the
     sidecar with `os.O_CREAT` before taking the `msvcrt` lock and
     never unlinks it, so both assertions below hold there. The skip
-    was suppressing the ONLY assertion in this module that exercises
-    the Windows lock branch at all (it carries `# pragma: no cover`,
-    so nothing else covers it either).
+    rested on a false premise, which is the whole reason it went; the
+    removal is not a claim that the Windows branch is otherwise
+    untested. It is well covered — `tests/test_fsutil.py`'s
+    `TestFlockWindows` drives `_flock_windows` on every platform via a
+    fake `msvcrt` injected through `sys.modules` (lock/unlock
+    symmetry, the retry/backoff loop, the timeout, and
+    `BETTERMEMORY_FLOCK_TIMEOUT` parsing). What that class does not
+    assert is the sidecar's on-disk lifecycle, which is what the two
+    assertions below pin.
     """
     from bettermemory.store import _locked
 
