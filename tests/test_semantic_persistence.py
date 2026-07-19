@@ -12,6 +12,7 @@ import logging
 import os
 from collections.abc import Iterator
 from pathlib import Path
+from typing import Any
 
 import pytest
 
@@ -229,18 +230,28 @@ def test_flush_chmods_before_rename(
 
     call_order: list[str] = []
     real_fchmod = os.fchmod
-    real_replace = Path.replace
+    real_replace = os.replace
 
     def spy_fchmod(fd: int, mode: int) -> None:
         call_order.append("fchmod")
         real_fchmod(fd, mode)
 
-    def spy_replace(self: Path, target: str | Path) -> Path:
+    def spy_replace(src: Any, dst: Any, **kwargs: Any) -> None:
         call_order.append("replace")
-        return real_replace(self, target)
+        real_replace(src, dst, **kwargs)
 
     monkeypatch.setattr(os, "fchmod", spy_fchmod)
-    monkeypatch.setattr(Path, "replace", spy_replace)
+    # Spy on `os.replace`, NOT `Path.replace`: the flush routes its
+    # rename through `_fsutil.replace_atomic` (so it picks up the
+    # Windows PermissionError retry), and that helper calls
+    # `os.replace` directly. Spying on `Path.replace` silently stopped
+    # firing when the call site moved, leaving both assertions below
+    # unreachable — this test only runs where numpy is installed, so
+    # the two embeddings CI legs were the only place that showed up.
+    # `_fsutil.replace_atomic` is the single sanctioned rename site
+    # (pinned by tests/test_fsutil.py::TestEveryRenameRoutesThrough-
+    # ReplaceAtomic), so `os.replace` is the stable thing to watch.
+    monkeypatch.setattr(os, "replace", spy_replace)
 
     configure_persistent_cache(tmp_path, "test-model")
     cached_embed(_FakeModel(), "01" + "B" * 24, "k", "body")
@@ -254,7 +265,7 @@ def test_flush_chmods_before_rename(
         "before-rename discipline is missing; the .npz is world-"
         "readable at the visible path for a microsecond window."
     )
-    assert "replace" in call_order, "Path.replace was never called"
+    assert "replace" in call_order, "os.replace was never called"
     assert call_order.index("fchmod") < call_order.index("replace"), (
         f"fchmod must run before rename, got call order {call_order!r}"
     )
