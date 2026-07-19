@@ -2205,13 +2205,40 @@ def test_restore_threaded_one_winner(tmp_path: Path) -> None:
         f"Expected exactly one race-loss outcome, got {len(losers)}. "
         f"Outcomes: {outcomes}"
     )
-    # Loser's message must carry the "raced with" hint — otherwise it's
-    # the legacy bare-error shape that the W7 fix retired.
+    # The loser's message must be one of the recognised structured
+    # race-loss shapes. It is NOT safe to demand the under-lock
+    # "raced with" hint specifically: `restore` legitimately answers
+    # from its pre-lock fast path (`store.py:1123`) when the winner
+    # finished the whole restore before the loser reached that check,
+    # and the bare "is active; nothing to restore" is the accurate
+    # answer for what that check observed. `go.set()` releases both
+    # threads together but guarantees nothing about how far each gets
+    # before the other completes, so the interleaving that reaches the
+    # lock is a scheduling accident, not an invariant.
+    #
+    # This is the same conclusion the cross-process variant below
+    # reached (see `_w7_concurrent_restore_worker` and the loser loop
+    # in `test_restore_multiprocess_one_winner`), and it is why the
+    # strict form flaked on the macos-latest and windows-latest legs
+    # while passing locally and on ubuntu — a false failure on correct
+    # behaviour. The under-lock branch this test used to over-claim is
+    # pinned DETERMINISTICALLY, without threads, by
+    # `test_restore_raises_not_tombstoned_when_active_appears_under_lock`
+    # (monkeypatches `_find_path_for_id` to fire the recheck) and by
+    # `test_restore_after_concurrent_restore_raises_structured_failure`.
+    # What this test uniquely pins is the real-thread distribution:
+    # exactly one winner, exactly one structured loss, and the disk
+    # invariant below.
     loser_msg = losers[0]["msg"]
     assert isinstance(loser_msg, str)
-    assert "raced with" in loser_msg, (
-        f"Loser's message {loser_msg!r} missing the 'raced with' hint — "
-        f"W7 regression: the race-loss shape is no longer structured."
+    assert (
+        "raced with" in loser_msg
+        or "is active; nothing to restore" in loser_msg
+        or "no tombstone with id" in loser_msg
+    ), (
+        f"Loser's message {loser_msg!r} is not a recognised structured "
+        f"race-loss shape — W7 regression: race-loss regressed to an "
+        f"unstructured form."
     )
 
     # Disk invariant: exactly one active .md for the id, no tombstone.
@@ -2403,9 +2430,17 @@ def test_multi_process_concurrent_restore_no_oserror_leak(
     # path. That held on Linux and locally but flaked on the macOS CI
     # runner, whose process-scheduling jitter let a loser slip to the
     # fast-path — a false failure on correct behaviour. The under-lock
-    # "raced with" message is pinned deterministically elsewhere
-    # (test_restore_*_raises_* + test_restore_threaded_one_winner); this
-    # cross-process test's job is the real-process invariants: no bare
+    # "raced with" message is pinned deterministically elsewhere: by
+    # test_restore_raises_not_tombstoned_when_active_appears_under_lock
+    # and test_restore_after_concurrent_restore_raises_structured_failure,
+    # both of which monkeypatch the recheck rather than racing for it.
+    # (An earlier version of this comment also named
+    # test_restore_threaded_one_winner as a deterministic pin. It never
+    # was — being threaded rather than multi-process only narrows the
+    # window, it does not close it, and that test duly failed the strict
+    # assertion on macos-latest at a032057 and on windows-latest at
+    # 7e24dfa. It now accepts the same three shapes this loop does.)
+    # This cross-process test's job is the real-process invariants: no bare
     # OSError, exactly one winner, and every loss structured.
     for r in losers:
         msg = r["msg"]
