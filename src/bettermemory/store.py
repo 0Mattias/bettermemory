@@ -2026,9 +2026,10 @@ def _has_confirmed_index_gap(root: Path, disk_paths: dict[str, Path]) -> bool:
 
     The load-bearing property this check leans on: at each of those six
     call sites the file step and the index step sit inside the SAME
-    `_locked(<that memory's active .md path>)` block — five carry the
-    audit-H1 "index upsert under lock is intentional" note verbatim,
-    `restore` spells the same H1 invariant out longhand. So the memory's
+    `_locked(<that memory's active .md path>)` block, and each of the
+    six pins that pairing with a comment citing audit H1 — most share
+    one stock phrasing, `tombstone` carries its `index remove` variant,
+    and `restore` spells the invariant out longhand. So the memory's
     own file lock is a happens-after edge on the writer, and taking it
     is a synchronization with the actual writer rather than a guess
     about how long that writer will take:
@@ -2142,14 +2143,24 @@ def _warn_on_index_divergence(root: Path) -> None:
     there would send the user to a repair that can never clear the
     warning.
 
-    Best-effort on the INPUTS: an OSError reading the directory, or a
-    sqlite issue inside `status`, ends the check silently — with no
-    reading of the store there is nothing to report but noise. Once the
-    inputs are in hand a failure to EVALUATE them is different: a gap
-    we cannot resolve is a gap we cannot call transient, so it warns.
-    Both of those paths return normally rather than propagating — this
-    runs at every Store construction, so neither is allowed to turn a
-    diagnostic into a boot failure.
+    Degraded paths do not all get the same answer:
+
+    - An OSError from either directory walk (`count_active_memory_files`
+      up front, `scan_active_memory_ids` on the refine path) ends the
+      check SILENTLY. With the disk side unread there is nothing to
+      compare, and nothing to report but noise.
+    - A sqlite problem inside `status` never reaches those handlers at
+      all: `status` is contractually non-raising and returns the
+      degraded `corrupt=True` shape instead, which this function's
+      corrupt-index branch WARNS on. An index too broken to read is
+      reported, not swallowed.
+    - A failure to EVALUATE a gap whose inputs are already in hand
+      (`_has_confirmed_index_gap` raising) also warns — a gap we cannot
+      resolve is a gap we cannot call transient.
+
+    None of those three propagates: this runs at every Store
+    construction, so no branch may turn a diagnostic into a boot
+    failure.
 
     Lazy import on `index` to keep the Store module loadable in the
     pure-file-store scenarios (`tests/test_store.py` runs without
