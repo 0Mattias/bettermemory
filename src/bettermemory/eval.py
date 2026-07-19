@@ -253,6 +253,13 @@ class EvalReport:
         str  # currently the rule the most-recent miss event used, or "" if none
     )
     total_events_scanned: int
+    # Events whose own `ts` falls inside the `--since` window — the
+    # window-scoped twin of `total_events_scanned` (which counts the
+    # WHOLE log, because the invalidation markers are resolved before
+    # the window filter). Equal to `total_events_scanned` when the
+    # window is all-time. Every per-window denominator surface must
+    # read this one, never the all-time count.
+    events_in_window: int
 
     retrieval_occurrences: int  # denominator for memory_helped_rate
     explicit_endorsements_with_excerpt: int  # numerator
@@ -294,6 +301,7 @@ class EvalReport:
             "scope_filter": self.scope_filter,
             "threshold_rule": self.threshold_rule,
             "total_events_scanned": self.total_events_scanned,
+            "events_in_window": self.events_in_window,
             "counts": {
                 "retrieval_occurrences": self.retrieval_occurrences,
                 "explicit_endorsements_with_excerpt": self.explicit_endorsements_with_excerpt,
@@ -446,6 +454,7 @@ def compute_eval(
     turns_no_signal = 0
     silent_misses = 0
     total_events_scanned = 0
+    events_in_window = 0
 
     # Per-memory counts for cold-endorsement rollup.
     retrieval_count: dict[str, int] = {}
@@ -491,6 +500,18 @@ def compute_eval(
         if not isinstance(ev, dict):
             continue
         total_events_scanned += 1
+        # Window membership is decided up front — BEFORE the marker
+        # short-circuits below, which deliberately bypass the window
+        # filter — so `events_in_window` covers exactly the population
+        # `total_events_scanned` does, only window-scoped. An event with
+        # a missing or unparseable `ts` counts as out-of-window, the
+        # same predicate the filter further down applies.
+        in_window = True
+        if cutoff is not None:
+            event_ts = _parse_ts(ev.get("ts"))
+            in_window = event_ts is not None and event_ts >= cutoff
+        if in_window:
+            events_in_window += 1
 
         kind = ev.get("kind")
         # Invalidation markers — resolved BEFORE the `since` window
@@ -519,10 +540,8 @@ def compute_eval(
                 acknowledged_miss_event_ids.add(target)
             continue
 
-        if cutoff is not None:
-            ts = _parse_ts(ev.get("ts"))
-            if ts is None or ts < cutoff:
-                continue
+        if not in_window:
+            continue
 
         if kind in ("search", "list"):
             # `list` is bundled with `search` because `audit.py` and the
@@ -744,6 +763,7 @@ def compute_eval(
         scope_filter=scope,
         threshold_rule=threshold_rule,
         total_events_scanned=total_events_scanned,
+        events_in_window=events_in_window,
         retrieval_occurrences=retrieval_occurrences,
         explicit_endorsements_with_excerpt=explicit_endorsements_with_excerpt,
         applied_total=applied_total,
@@ -2293,6 +2313,35 @@ _KNOWN_SIDE_EFFECT_KINDS: frozenset[str] = frozenset(
     }
 )
 
+# The subset of the roster above recorded INSIDE a live client session,
+# under that client's own session id. Verified at the call sites:
+# ``search_miss`` / ``proposals_enqueued`` come off the Stop hook's
+# recorder (hook.py) — the same recorder that writes that session's
+# ``turn_audited`` rows — and ``pending_expired`` is drained
+# handler-side through the live session's recorder
+# (handlers/_shared.py).
+_IN_SESSION_SIDE_EFFECT_KINDS: frozenset[str] = frozenset(
+    {"search_miss", "pending_expired", "proposals_enqueued"}
+)
+
+# Event kinds recorded by an admin/CLI surface OUTSIDE any client
+# session, under a fresh throwaway session id. Derived as the
+# complement of the in-session subset rather than hand-listed, so a new
+# entry on the roster above lands here automatically instead of
+# quietly falling behind.
+#
+# INVARIANT: a "session" observed only through these kinds never
+# existed as a client session. Every consumer that counts sessions must
+# exclude them, and they must all read THIS constant so they cannot
+# drift apart: ``compute_report``'s published distinct-session tally
+# (counting them publishes phantom sessions in the store-shape line)
+# and doctor's ``_check_audit_turn_cadence`` census (whose
+# ``_ADMIN_EVENT_KINDS`` is pinned as a superset of this derivation by
+# the parity test in tests/test_doctor.py).
+ADMIN_RECORDED_EVENT_KINDS: frozenset[str] = (
+    _KNOWN_SIDE_EFFECT_KINDS - _IN_SESSION_SIDE_EFFECT_KINDS
+)
+
 
 @dataclass
 class ToolUsageRow:
@@ -2581,6 +2630,11 @@ def compute_report(
     for ev in event_list:
         if not isinstance(ev, dict):
             continue
+        if ev.get("kind") in ADMIN_RECORDED_EVENT_KINDS:
+            # Recorded outside any client session under a throwaway
+            # session id — see ADMIN_RECORDED_EVENT_KINDS. Counting one
+            # would publish a session that never existed.
+            continue
         sid = ev.get("session_id") or ev.get("session")
         if isinstance(sid, str) and sid:
             sessions.add(sid)
@@ -2636,9 +2690,16 @@ def _count_phrase(n: int, singular: str, plural: str) -> str:
 
 def _md_denominator_note(label: str, report: EvalReport) -> str:
     """One-line counts context under the rate table — window shape a
-    reader needs to judge the CIs. Counts only."""
+    reader needs to judge the CIs. Counts only.
+
+    Every figure on the line is window-scoped, including the leading
+    event count: it reads `events_in_window`, NOT the all-time
+    `total_events_scanned` (which counts the whole log because the
+    invalidation markers resolve ahead of the window filter). Mixing
+    the two published an all-time figure under a `last Nd:` label.
+    """
     parts = [
-        _count_phrase(report.total_events_scanned, "event scanned", "events scanned"),
+        _count_phrase(report.events_in_window, "event scanned", "events scanned"),
         _count_phrase(
             report.retrieval_occurrences,
             "retrieval occurrence",
@@ -2854,6 +2915,13 @@ def render_report_markdown(doc: ReportDocument) -> str:
     lines.append("| tool | calls | share |")
     lines.append("|---|---|---|")
     for usage_row in doc.tool_usage.rows[:10]:
+        if not usage_row.has_telemetry:
+            # Mirrors render_tool_usage_text: a tool that emits no
+            # dedicated event of its own publishes as "not counted",
+            # never as a bare zero a reader would take for "nobody ever
+            # called it".
+            lines.append(f"| `{usage_row.tool}` (no telemetry) | — | — |")
+            continue
         share = f"{usage_row.share * 100:.1f}%" if usage_row.share is not None else "—"
         lines.append(f"| `{usage_row.tool}` | {usage_row.count} | {share} |")
     lines.append("")
@@ -2892,6 +2960,7 @@ __all__ = [
     "THRESHOLD_RULES",
     "WIDENING_RULES",
     "TOOLS_WITHOUT_TELEMETRY",
+    "ADMIN_RECORDED_EVENT_KINDS",
     "DEFAULT_SINCE_SPEC",
     "DEFAULT_ENDORSEMENT_MIN_RETRIEVALS",
     "DEFAULT_SILENT_MISS_LIMIT",

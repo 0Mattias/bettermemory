@@ -19,10 +19,12 @@ from typing import Any
 import pytest
 
 from bettermemory.eval import (
+    ADMIN_RECORDED_EVENT_KINDS,
     DEFAULT_ENDORSEMENT_MIN_RETRIEVALS,
     THRESHOLD_RULES,
     TOOLS_WITHOUT_TELEMETRY,
     RateCI,
+    _IN_SESSION_SIDE_EFFECT_KINDS,
     _KNOWN_SIDE_EFFECT_KINDS,
     _TOOL_EVENT_KIND_TO_TOOL,
     _wilson_interval,
@@ -735,6 +737,9 @@ class TestSilentMissInvalidation:
             "scope_filter": None,
             "threshold_rule": "v1_top1_high",
             "total_events_scanned": 8,
+            # No `--since` window, so the window-scoped twin equals the
+            # all-time count.
+            "events_in_window": 8,
             "counts": {
                 "retrieval_occurrences": 2,
                 "explicit_endorsements_with_excerpt": 1,
@@ -2199,6 +2204,46 @@ class TestComputeReport:
         doc = compute_report([], events, version="0-test")
         assert doc.distinct_session_count == 2
 
+    def test_admin_cli_events_do_not_invent_distinct_sessions(self) -> None:
+        """Admin/CLI event kinds are recorded outside any client session
+        under a fresh throwaway session id (see
+        ``ADMIN_RECORDED_EVENT_KINDS``). Counting their ids publishes a
+        "Store shape: N distinct sessions" figure inflated by sessions
+        that never existed — one `doctor --fix` run would manufacture a
+        second "session" on a single-session store."""
+        events = [
+            _ev("search", session="s-real"),
+            _ev("doctor_fix", session="cli-doctor-run"),
+            _ev("silent_miss_cutoff", session="cli-ack-run"),
+        ]
+        doc = compute_report([], events, version="0-test")
+        assert doc.distinct_session_count == 1
+
+    def test_in_session_side_effects_still_count_as_sessions(self) -> None:
+        """The complement of the exclusion above: side-effect kinds the
+        recorder writes INSIDE a live client session carry that client's
+        own session id and must keep counting — over-excluding would
+        under-report the store shape just as badly."""
+        events = [_ev("search_miss", session="s-real")]
+        doc = compute_report([], events, version="0-test")
+        assert doc.distinct_session_count == 1
+
+    def test_admin_recorded_kinds_derive_from_the_side_effect_roster(self) -> None:
+        """``ADMIN_RECORDED_EVENT_KINDS`` is the ONE shared constant the
+        session-counting surfaces read. Pin the derivation so a typo in
+        the in-session list can't silently reclassify a kind: every name
+        in the in-session subset must exist on the roster it subtracts
+        from, and no in-session kind may leak into the admin set."""
+        unknown = _IN_SESSION_SIDE_EFFECT_KINDS - _KNOWN_SIDE_EFFECT_KINDS
+        assert not unknown, (
+            f"_IN_SESSION_SIDE_EFFECT_KINDS names kind(s) {sorted(unknown)} "
+            f"that _KNOWN_SIDE_EFFECT_KINDS does not carry — a typo here "
+            f"silently leaves a real admin kind counted as a session."
+        )
+        assert not (ADMIN_RECORDED_EVENT_KINDS & _IN_SESSION_SIDE_EFFECT_KINDS)
+        assert "doctor_fix" in ADMIN_RECORDED_EVENT_KINDS
+        assert "silent_miss_cutoff" in ADMIN_RECORDED_EVENT_KINDS
+
     def test_version_defaults_to_installed_package_metadata(self) -> None:
         doc = compute_report([], [])
         assert isinstance(doc.version, str)
@@ -2228,6 +2273,8 @@ class TestRenderReportMarkdown:
     def test_rate_cells_render_counts_rate_and_ci(self) -> None:
         mem = _mem()
         events = [
+            # Aged out of the 30d window — in the all-time column only.
+            _ev("search", ts="2026-01-01T00:00:00.000+00:00", returned=[mem.id]),
             _ev("search", returned=[mem.id]),
             _ev(
                 "use",
@@ -2249,6 +2296,13 @@ class TestRenderReportMarkdown:
         # rate [lo, hi] shape docs/eval-results.md publishes.
         assert "| `memory_helped_rate` | 1/1 = **1.00**" in md
         assert "Wilson 95%" in md
+        # Every figure on a `last Nd:` denominator note is window-scoped,
+        # the leading event count included. One of the three events aged
+        # out, so the window figure must sit strictly BELOW the all-time
+        # figure — publishing `total_events_scanned` (which counts the
+        # whole log) under the window label read as an in-window count.
+        assert "- last 30d: 2 events scanned ·" in md
+        assert "- all time: 3 events scanned ·" in md
 
     def test_single_column_when_window_is_all_time(self) -> None:
         doc = compute_report([], [], since=None, version="0-test")
@@ -2353,6 +2407,22 @@ class TestRenderReportMarkdown:
         # ...while the numbers those events feed still render.
         assert "0/5 = **0.00**" in md  # helped rate over 5 retrievals
         assert "1/1 = **1.00**" in md  # silent-miss rate 1/1
+
+    def test_untelemetered_tool_row_is_marked_not_published_as_zero(self) -> None:
+        """A tool in ``TOOLS_WITHOUT_TELEMETRY`` emits no dedicated event,
+        so its rollup count is structurally 0. Published as a bare
+        ``| memory_health | 0 | 0.0% |`` row it is indistinguishable from
+        a tool nobody ever called — the artifact then implies nobody uses
+        memory_health. Mirror the text renderer's "(no telemetry)"
+        treatment instead."""
+        events = [_ev("search"), _ev("show")]
+        doc = compute_report([], events, version="0-test")
+        # Non-vacuity: the untelemetered row is actually inside the
+        # top-10 slice the renderer publishes.
+        assert "memory_health" in [r.tool for r in doc.tool_usage.rows[:10]]
+        md = render_report_markdown(doc)
+        assert "| `memory_health` (no telemetry) | — | — |" in md
+        assert "| `memory_health` | 0 |" not in md
 
 
 class TestReportCLI:
