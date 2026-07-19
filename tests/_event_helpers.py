@@ -38,11 +38,10 @@ Usage::
 
 from __future__ import annotations
 
-import json
 from pathlib import Path
 from typing import Any
 
-from bettermemory.events import EVENT_LOG_FILENAME, Recorder, iter_events
+from bettermemory.events import Recorder, iter_events
 
 
 class EventLog:
@@ -80,21 +79,16 @@ class EventLog:
 
     @property
     def last_event(self) -> dict[str, Any]:
-        """Most-recent event from the active log.
+        """Most-recent event across the sharded active log.
 
-        Reads only the last line for speed; on a fresh empty log
-        raises ``IndexError`` rather than silently returning ``None``
-        so a caller that expects an event but the recorder is
-        disabled or the path is wrong fails loudly.
+        Goes through ``iter_events`` (which merges the per-shard files
+        chronologically) rather than tailing a single file — the active
+        log is sharded, so "the last line of one file" is no longer the
+        most-recent event. On a fresh empty log raises ``IndexError``
+        rather than silently returning ``None`` so a caller expecting an
+        event fails loudly when the recorder is disabled or misrouted.
         """
-        path = self.root / EVENT_LOG_FILENAME
-        # Read the last line directly. Cheaper than parsing the whole
-        # log when callers only want the most-recent record (common
-        # case: assert immediately after ``emit``).
-        with path.open("rb") as fh:
-            content = fh.read().rstrip(b"\n")
-        if not content:
+        events = list(iter_events(self.root))
+        if not events:
             raise IndexError("event log is empty")
-        last_newline = content.rfind(b"\n")
-        line = content[last_newline + 1 :] if last_newline != -1 else content
-        return json.loads(line)
+        return events[-1]

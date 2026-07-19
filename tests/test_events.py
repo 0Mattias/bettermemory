@@ -31,7 +31,9 @@ def test_record_appends_one_jsonl_line(tmp_path: Path) -> None:
     rec = Recorder(root=tmp_path, session_id="sess_test")
     rec.record("write", id="01HXYZ", scopes=["tools"])
 
-    log_path = tmp_path / EVENT_LOG_FILENAME
+    # The active log is sharded; this session's events land in its own
+    # shard file (`rec.path`), not the legacy `.events.jsonl`.
+    log_path = rec.path
     assert log_path.exists()
     lines = log_path.read_text(encoding="utf-8").splitlines()
     assert len(lines) == 1
@@ -86,6 +88,85 @@ def test_iter_events_skips_invalid_utf8_in_active_log(tmp_path: Path) -> None:
 
     events = list(iter_events(tmp_path))  # must not raise
     assert [e["kind"] for e in events] == ["write", "show"]
+
+
+# ---------------------------------------------------------------------------
+# Active-log sharding (swarm-convergence): the global append lock is
+# gone — writers stripe across per-shard files — and readers merge them.
+# ---------------------------------------------------------------------------
+
+
+def test_same_session_maps_to_a_stable_shard(tmp_path: Path) -> None:
+    """A session id resolves to one shard file deterministically, so
+    its events stay in a single ts-ordered stream (what the merge
+    relies on) and two recorders for the same session share a file."""
+    r1 = Recorder(root=tmp_path, session_id="stable-session")
+    r2 = Recorder(root=tmp_path, session_id="stable-session")
+    assert r1.path == r2.path
+    assert r1.path != (tmp_path / EVENT_LOG_FILENAME)  # not the legacy name
+
+
+def test_sessions_stripe_across_multiple_shard_files(tmp_path: Path) -> None:
+    """Many sessions distribute across shard files rather than
+    serialising on one — the whole point of the shard — and every
+    event is still readable through the merged reader."""
+    for i in range(60):
+        Recorder(root=tmp_path, session_id=f"session-{i}").record(
+            "write", id=f"m{i:03d}"
+        )
+
+    shard_files = list(tmp_path.glob(".events.*.jsonl"))
+    assert len(shard_files) > 1, "sessions must stripe across shards, not one file"
+    # No global legacy file was created by the sharded writers.
+    assert not (tmp_path / EVENT_LOG_FILENAME).exists()
+
+    events = list(iter_events(tmp_path))
+    assert len(events) == 60
+    assert {e["id"] for e in events} == {f"m{i:03d}" for i in range(60)}
+
+
+def test_iter_events_merges_shards_preserving_per_session_order(tmp_path: Path) -> None:
+    """Interleaved writes from two sessions (likely different shards)
+    come back with every event present and each session's own order
+    intact — cross-session order under a ts tie is not asserted (it's
+    genuinely ambiguous), per-session order is the contract."""
+    a = Recorder(root=tmp_path, session_id="sess-a")
+    b = Recorder(root=tmp_path, session_id="sess-b")
+    for i in range(5):
+        a.record("write", id=f"a{i}")
+        b.record("write", id=f"b{i}")
+
+    ids = [e["id"] for e in iter_events(tmp_path)]
+    assert sorted(ids) == sorted(
+        [f"a{i}" for i in range(5)] + [f"b{i}" for i in range(5)]
+    )
+    assert [x for x in ids if x[0] == "a"] == [f"a{i}" for i in range(5)]
+    assert [x for x in ids if x[0] == "b"] == [f"b{i}" for i in range(5)]
+
+
+def test_legacy_events_jsonl_merges_in_after_sharding(tmp_path: Path) -> None:
+    """A pre-upgrade store's single `.events.jsonl` is read as one more
+    source and merged chronologically with the new shard writes — no
+    migration, no lost history."""
+    legacy = tmp_path / EVENT_LOG_FILENAME
+    legacy.write_text(
+        json.dumps(
+            {
+                "ts": "2020-01-01T00:00:00Z",
+                "session": "old",
+                "kind": "write",
+                "id": "old1",
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    Recorder(root=tmp_path, session_id="new-session").record("write", id="new1")
+
+    ids = [e["id"] for e in iter_events(tmp_path)]
+    assert "old1" in ids and "new1" in ids
+    # The 2020 legacy event sorts before the just-now sharded write.
+    assert ids.index("old1") < ids.index("new1")
 
 
 def test_iter_events_skips_valid_json_non_object_lines(tmp_path: Path) -> None:
@@ -224,7 +305,7 @@ def test_rotation_archives_when_max_bytes_exceeded(tmp_path: Path) -> None:
     rec = Recorder(root=tmp_path, session_id="sess_test", max_bytes=200)
     # First write fills well under 200 bytes. Active log present, no archive.
     rec.record("write", id="01HXYZ", scopes=["tools"])
-    assert (tmp_path / EVENT_LOG_FILENAME).stat().st_size > 0
+    assert rec.path.stat().st_size > 0  # this session's active shard
     archives_before = list(tmp_path.glob(".events-*.jsonl.gz"))
     assert archives_before == []
 
@@ -630,8 +711,9 @@ def test_record_redacts_query_by_default(tmp_path: Path) -> None:
     assert q["len"] == len(query)
     assert len(q["hash"]) == 16
     # The full query is not recoverable from the on-disk event log —
-    # the bytes that lived past the preview are gone.
-    line = (tmp_path / EVENT_LOG_FILENAME).read_text(encoding="utf-8")
+    # the bytes that lived past the preview are gone. Read the session's
+    # active shard file (`rec.path`), where the event actually landed.
+    line = rec.path.read_text(encoding="utf-8")
     assert "sk-very-secret-tail-bytes-here" not in line
 
 

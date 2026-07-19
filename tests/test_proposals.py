@@ -842,8 +842,9 @@ def test_accept_proposal_refuses_credential_body(
     # span — marker snippets are pre-redacted by the detector itself.
     assert token not in str(result)
     # No event on a refusal — the accept record fires only when the write
-    # actually lands (accept_proposal docstring step 6).
-    assert not (tmp_path / ".events.jsonl").exists()
+    # actually lands (accept_proposal docstring step 6). No shard (or
+    # legacy) event file should exist.
+    assert not list(tmp_path.glob(".events*.jsonl"))
 
 
 def test_accept_proposal_acknowledge_credential_bypasses_refusal(
@@ -916,7 +917,10 @@ def test_accept_proposal_acknowledge_credential_bypasses_refusal(
     assert len(accept_events) == 1
     assert accept_events[0]["proposal_id"] == "ack1"
     assert accept_events[0]["credentials_acknowledged"] == ["aws-access-key-id"]
-    assert token not in (tmp_path / ".events.jsonl").read_text(encoding="utf-8")
+    raw = "".join(
+        p.read_text(encoding="utf-8") for p in sorted(tmp_path.glob(".events*.jsonl"))
+    )
+    assert token not in raw
 
 
 def test_cli_proposals_accept_acknowledge_credential_flag(
@@ -998,7 +1002,10 @@ def test_cli_proposals_accept_acknowledge_credential_flag(
     assert len(accept_events) == 1
     assert accept_events[0]["proposal_id"] == "cliack1"
     assert accept_events[0]["credentials_acknowledged"] == ["aws-access-key-id"]
-    assert token not in (store.root / ".events.jsonl").read_text(encoding="utf-8")
+    raw = "".join(
+        p.read_text(encoding="utf-8") for p in sorted(store.root.glob(".events*.jsonl"))
+    )
+    assert token not in raw
 
 
 def test_cli_proposals_accept_json_credential_refusal_is_data_exit_zero(

@@ -762,7 +762,6 @@ def test_consolidate_does_not_demote_fact_endorsed_in_rotated_archive(
     import gzip
     import json as _json
 
-    from bettermemory.events import EVENT_LOG_FILENAME, iter_all_events
     from bettermemory.health import compute_health
 
     m = store.write(content="a load-bearing fact worth keeping", scopes=["tools"])
@@ -790,9 +789,10 @@ def test_consolidate_does_not_demote_fact_endorsed_in_rotated_archive(
     # active-log shape is production-faithful (`returned` field).
     rec = Recorder(root=memory_dir, session_id="post-rotation", enabled=True)
     rec.record("search", query="anything", returned=[m.id])
-    # Sanity: the active log holds only the search; the applied lives in the
-    # archive. iter_all_events stitches both back together chronologically.
-    assert (memory_dir / EVENT_LOG_FILENAME).exists()
+    # Sanity: the active log (this session's shard) holds only the search;
+    # the applied lives in the archive. iter_all_events stitches both back
+    # together chronologically.
+    assert rec.path.exists()
     all_events = list(iter_all_events(memory_dir))
     kinds = sorted(str(e.get("kind")) for e in all_events)
     assert kinds == ["search", "use"], kinds

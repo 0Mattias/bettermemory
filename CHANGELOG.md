@@ -7,6 +7,41 @@ breaking changes, minor for additive features, patch for fixes. The
 [compatibility contract](CONTRIBUTING.md#versioning-and-the-compatibility-contract)
 spells out exactly what's stable.
 
+## 3.24.0 - 2026-07-19
+
+One additive feature. Minor rather than patch because the event log's
+on-disk layout changes (a new sharded active-file shape) and a new
+`sync` ignore line ships — but it is fully backward-compatible: a
+pre-upgrade `.events.jsonl` is still read, no migration runs, and
+every read/consumer contract is byte-identical.
+
+### Changed
+
+- **Event-log active file is sharded to kill the last global write
+  lock (swarm-convergence).** Every `Recorder.record` used to append
+  to one `.events.jsonl` under a single `fcntl` flock, so every agent
+  sharing a store serialised on it — the Phase-0 fleet benchmark
+  (`bench/swarm.py`) measured that lock at ~7-17% of throughput. The
+  active log now splits into a fixed set of per-shard files at the
+  store root, `.events.00.jsonl` … `.events.{SHARD_COUNT-1:02d}.jsonl`
+  (16 shards), and a Recorder picks its shard by `crc32(session_id) %
+  SHARD_COUNT`. Writers from different sessions land on different files
+  and no longer contend; fixed striping (not one file per session)
+  keeps the file count and a reader's simultaneously-open fds bounded
+  no matter how many sessions a store accumulates. `iter_events` merges
+  the shards — plus any legacy pre-sharding `.events.jsonl`, read-only
+  from here on — into chronological order by event `ts` with a
+  streaming `heapq.merge`; every other reader (`iter_all_events`,
+  `iter_events_window`) and consumer composes on top of it unchanged,
+  as do rotation, gzip archives, and crash recovery (still one shared
+  scheme). `sync` now also excludes `.events.*.jsonl` so the per-shard
+  segments — which carry session ids and, in verbatim mode, raw query
+  text — never leave the host. After the change the benchmark's
+  event-log tax drops to ~1% (the residual is per-event redaction +
+  fsync, not the lock). Nine tests pin the new behaviour: striping,
+  per-session shard stability, cross-shard chronological merge with
+  per-session order preserved, and legacy `.events.jsonl` merge-in.
+
 ## 3.23.0 - 2026-07-12
 
 One additive feature. Minor rather than patch because `eval --report`

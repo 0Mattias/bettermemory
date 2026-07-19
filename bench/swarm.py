@@ -59,7 +59,7 @@ if str(_SRC) not in sys.path:
 
 
 from bettermemory import index as _index  # noqa: E402
-from bettermemory.events import Recorder  # noqa: E402
+from bettermemory.events import SHARD_COUNT, Recorder  # noqa: E402
 from bettermemory.search import search as run_search  # noqa: E402
 from bettermemory.store import (  # noqa: E402
     ConcurrentUpdateError,
@@ -375,11 +375,13 @@ def _format_text(sweep: list[dict[str, Any]], ab: dict[str, Any]) -> str:
         tax = 100 * (1 - on["throughput_ops_s"] / off["throughput_ops_s"])
         speedup = off["throughput_ops_s"] / on["throughput_ops_s"]
         lines.append(
-            f"Event-log tax at {on['agents']} agents: "
+            f"Event-log cost at {on['agents']} agents: "
             f"{on['throughput_ops_s']:.0f} ops/s with logging on vs "
             f"{off['throughput_ops_s']:.0f} off "
             f"({tax:.0f}% of throughput, {speedup:.2f}x). "
-            f"That gap is the global `.events.jsonl` lock — Phase 1's target."
+            f"The active log is now {SHARD_COUNT}-way sharded (no global "
+            f"lock), so this residual is per-event redaction + fsync, not "
+            f"cross-session contention."
         )
     lines.append("")
     return "\n".join(lines)

@@ -911,23 +911,28 @@ async def test_episode_handoff_pre_window_deferred_confirm_hedges_not_false_empt
     # `write_confirm` event so the confirm-time proof is absent, exactly as a
     # log written before the stamp existed would look. The bare pending
     # `episode_promote` remains (it never carried the confirm-linking key).
-    log_path = memory_dir / ".events.jsonl"
-    stripped: list[str] = []
+    # The active log is sharded; the confirm event lives in one segment.
+    # Rewrite every segment in place so the test needn't know which.
     saw_confirm_with_id = False
-    for line in log_path.read_text().splitlines():
-        if not line.strip():
-            continue
-        event = _json.loads(line)
-        if event.get("kind") == "write_confirm" and event.get("episode_id") is not None:
-            saw_confirm_with_id = True
-            event.pop("episode_id")
-        stripped.append(_json.dumps(event))
+    for seg in memory_dir.glob(".events*.jsonl"):
+        stripped: list[str] = []
+        for line in seg.read_text(encoding="utf-8").splitlines():
+            if not line.strip():
+                continue
+            event = _json.loads(line)
+            if (
+                event.get("kind") == "write_confirm"
+                and event.get("episode_id") is not None
+            ):
+                saw_confirm_with_id = True
+                event.pop("episode_id")
+            stripped.append(_json.dumps(event))
+        seg.write_text("\n".join(stripped) + "\n" if stripped else "", encoding="utf-8")
     assert saw_confirm_with_id, (
         "precondition: the confirm event must have carried an episode_id to "
         "strip (the post-window stamp); the reconstruction is meaningless "
         "otherwise"
     )
-    log_path.write_text("\n".join(stripped) + "\n")
 
     # Reader: resolves the zero-episode S_a via its events' worktree_root.
     server_r = build_server(config=cfg, store=Store(memory_dir), state=SessionState())

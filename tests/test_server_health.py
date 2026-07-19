@@ -124,17 +124,20 @@ async def test_memory_health_window_days_filters_dead_and_cold(
     # under test is retrieved-NEVER-applied.
     from datetime import datetime, timedelta, timezone
 
-    events_path = memory_dir / ".events.jsonl"
     aged = (datetime.now(timezone.utc) - timedelta(days=3)).isoformat()
-    lines = []
-    for line in events_path.read_text(encoding="utf-8").splitlines():
-        event = json.loads(line)
-        if event["kind"] == "use":
-            continue
-        if event["kind"] == "search":
-            event["ts"] = aged
-        lines.append(json.dumps(event))
-    events_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    # The active log is sharded; the session's events live in one shard
+    # file, but transform every active segment so the test doesn't need
+    # to know which. Drop `use`, age `search`, rewrite each in place.
+    for seg in memory_dir.glob(".events*.jsonl"):
+        lines = []
+        for line in seg.read_text(encoding="utf-8").splitlines():
+            event = json.loads(line)
+            if event["kind"] == "use":
+                continue
+            if event["kind"] == "search":
+                event["ts"] = aged
+            lines.append(json.dumps(event))
+        seg.write_text("\n".join(lines) + "\n" if lines else "", encoding="utf-8")
 
     # Query from a FRESH server session: the original session still holds
     # the search's pending use-token, and any further tool turn on it

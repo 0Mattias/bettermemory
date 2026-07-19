@@ -144,8 +144,12 @@ async def test_secret_never_written_to_event_log(
         scopes=["tools"],
         acknowledge_credential=True,
     )
-    events_file = memory_dir / ".events.jsonl"
-    raw = events_file.read_text(encoding="utf-8") if events_file.exists() else ""
+    # Scan every active shard segment (and any legacy log), not one
+    # file — the event log is sharded. The glob matches `.events.jsonl`
+    # and `.events.NN.jsonl` but not the `.gz` archives.
+    raw = "".join(
+        p.read_text(encoding="utf-8") for p in sorted(memory_dir.glob(".events*.jsonl"))
+    )
     assert secret not in raw
     # The kind, however, is logged so override-rate analytics works.
     assert "openai-anthropic-key" in raw
@@ -303,8 +307,12 @@ async def test_update_secret_never_in_event_log(
     )
     secret = _GITHUB
     await _call(server, "memory_update", id=created["id"], content=f"token {secret}")
-    events_file = memory_dir / ".events.jsonl"
-    raw = events_file.read_text(encoding="utf-8") if events_file.exists() else ""
+    # Scan every active shard segment (and any legacy log), not one
+    # file — the event log is sharded. The glob matches `.events.jsonl`
+    # and `.events.NN.jsonl` but not the `.gz` archives.
+    raw = "".join(
+        p.read_text(encoding="utf-8") for p in sorted(memory_dir.glob(".events*.jsonl"))
+    )
     assert secret not in raw
     assert "github-token" in raw
 
@@ -357,6 +365,10 @@ async def test_update_acknowledge_credential_records_kinds(
     assert committed, "no committed update event recorded"
     assert "aws-access-key-id" in committed[-1].get("credentials_acknowledged", [])
     # ...and the raw secret must never reach the event log — kind only.
-    events_file = memory_dir / ".events.jsonl"
-    raw = events_file.read_text(encoding="utf-8") if events_file.exists() else ""
+    # Scan every active shard segment (and any legacy log), not one
+    # file — the event log is sharded. The glob matches `.events.jsonl`
+    # and `.events.NN.jsonl` but not the `.gz` archives.
+    raw = "".join(
+        p.read_text(encoding="utf-8") for p in sorted(memory_dir.glob(".events*.jsonl"))
+    )
     assert _AWS not in raw

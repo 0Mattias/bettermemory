@@ -1259,7 +1259,8 @@ class TestCLI:
         _ingest(source_a)
         log = store_dir / EVENT_LOG_FILENAME
         assert len(Store(store_dir).load_all()) == 1  # the ingest committed
-        assert not log.exists()  # ...but conjured no event log
+        # ...but conjured no event log — neither legacy nor any shard.
+        assert not list(store_dir.glob(".events*.jsonl"))
         assert not list(store_dir.glob(".events-*.jsonl.gz"))  # nor rotation residue
 
         # Lane 2 — a log already exists (written while telemetry was
@@ -1285,10 +1286,9 @@ class TestCLI:
         source_c = tmp_path / "source-c"
         _write_auto_memory(source_c, "opt-in-c")
         _ingest(source_c)
-        log2 = store_dir2 / EVENT_LOG_FILENAME
-        assert log2.exists()
-        events = [
-            json.loads(line) for line in log2.read_text(encoding="utf-8").splitlines()
-        ]
+        from bettermemory.events import iter_events
+
+        assert list(store_dir2.glob(".events*.jsonl"))  # a shard was created
+        events = list(iter_events(store_dir2))
         assert [e["kind"] for e in events] == ["write"]
         assert events[0]["triggered_from"] == "cli_ingest"

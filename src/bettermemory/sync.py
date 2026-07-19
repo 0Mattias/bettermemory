@@ -90,6 +90,13 @@ _GITIGNORE_LINES = [
     f"{INDEX_FILENAME}-wal",
     EVENT_LOG_FILENAME,
     f"{EVENT_LOG_FILENAME}.*.gz",
+    # Per-shard active event segments (`.events.00.jsonl` …). Same
+    # host-local, regenerable status as the legacy single log above —
+    # and the same privacy stake: they carry session ids and (verbatim
+    # mode) raw query text. `git add -A` would otherwise push them to
+    # every clone. The pattern matches the sharded names but not the
+    # legacy `.events.jsonl` (already covered on the line above).
+    ".events.*.jsonl",
     f"{EMBEDDING_FILENAME_PREFIX}*{EMBEDDING_FILENAME_SUFFIX}",
     # Write-reflex proposal queue. Host-local, transient state like the
     # event log — but with a sharper edge: it holds RAW captured user text

@@ -199,9 +199,27 @@ ops/sec sustained, zero corruption across the invariant suite."
 Whatever N and X are, they're real. This single step converts the
 category of claim from marketing to fact.
 
-### Phase 1 — Shard the event log (kill the global lock)
+### Phase 1b — Shard the event log — SHIPPED 2026-07-19 (v3.24.0)
 
-The one true global serialization point. Remove it.
+The one true global serialization point. Removed.
+
+Shipped as fixed-K striping rather than the per-session files sketched
+below — one file per session proliferates unboundedly and blows a
+reader's open-fd budget, whereas 16 fixed shards bound both. The
+active log splits into `.events.NN.jsonl` (NN = `crc32(session_id) %
+16`), so writers from different sessions append to different files and
+no longer contend on one flock. Rotation, archives, and crash recovery
+are unchanged and shared; `iter_events` merges the shards plus any
+pre-sharding legacy `.events.jsonl` by event `ts` (a `heapq.merge`,
+open fds bounded by the shard count), and because every other reader
+composes on top of `iter_events`, nothing downstream changed. `sync`
+excludes the shard files (they carry query text); measured event-log
+tax dropped from ~7-17% to ~1% (the residual is per-event fsync, not
+the lock). 9 new tests in `tests/test_events.py` pin striping,
+per-session stability, cross-shard merge order, and legacy
+backward-compat.
+
+The original per-session sketch, kept for the record:
 
 - Replace the single `.events.jsonl` with per-writer segments:
   `.events/<session_id>.jsonl`. Each agent owns its segment and

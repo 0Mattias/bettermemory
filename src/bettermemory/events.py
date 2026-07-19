@@ -1,9 +1,18 @@
 """Append-only JSONL event log for instrumentation.
 
-The `Recorder` writes one JSON object per line to `<root>/.events.jsonl`.
-Rotates to `.events-<timestamp>.jsonl.gz` when the active file crosses
-`max_bytes`. The log lives next to the memories so it shares the same trust
-boundary — no separate permissions story, no separate gitignore decisions.
+The `Recorder` writes one JSON object per line to a per-shard active
+file `<root>/.events.NN.jsonl` (NN = a stable hash of the session id,
+mod `SHARD_COUNT`). Sharding the active log means writers from
+different sessions append to different files instead of serialising on
+one global append lock — the Phase-0 fleet benchmark measured that
+lock at ~7-17% of throughput. Fixed striping (not one file per
+session) bounds both the file count and a reader's open-fd count.
+Readers merge the shards plus any pre-sharding legacy `.events.jsonl`
+by event `ts`; a shard rotates to `.events-<timestamp>.jsonl.gz` when
+it crosses `max_bytes` (rotation, archives, and crash recovery are
+unchanged and shared across shards). The log lives next to the
+memories so it shares the same trust boundary — no separate
+permissions story, no separate gitignore decisions.
 
 Events are append-only by design. They're the substrate that downstream
 tooling reads from:
@@ -29,12 +38,13 @@ from __future__ import annotations
 
 import gzip
 import hashlib
+import heapq
 import json
 import logging
 import os
 import re
 import zlib
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Iterator
@@ -48,6 +58,21 @@ log = logging.getLogger("bettermemory.events")
 EVENT_LOG_FILENAME = ".events.jsonl"
 ARCHIVE_PREFIX = ".events-"
 ARCHIVE_SUFFIX = ".jsonl.gz"
+
+# Active-log sharding (swarm-convergence). The active log is split into
+# a fixed set of per-shard files at the store root:
+# `.events.00.jsonl` … `.events.{SHARD_COUNT-1:02d}.jsonl`. A Recorder
+# picks its shard by a stable crc32 of its session id, so different
+# sessions append to different files and no longer contend on one
+# global flock. Fixed striping (rather than one file per session)
+# keeps the file count and a reader's simultaneously-open fds bounded
+# no matter how many sessions a store accumulates. 16 gives a ~1/16
+# residual collision probability between any two concurrent sessions —
+# enough to erase the measured contention while staying a small,
+# always-scannable set. Legacy stores keep their single `.events.jsonl`;
+# it becomes one more read-only source the readers merge in.
+SHARD_COUNT = 16
+_SEGMENT_TEMPLATE = ".events.{:02d}.jsonl"
 # Fields whose values are model/user-typed free text and may carry
 # secrets. Redacted in `Recorder.record` when
 # `telemetry.log_queries_verbatim = false` (the default since 2.6.8).
@@ -199,15 +224,27 @@ class Recorder:
     # debugging your own ranker, less so for shared boxes. Wired from
     # `TelemetryConfig.log_queries_verbatim` at server construction.
     log_queries_verbatim: bool = False
+    # Shard index this recorder appends to, derived from `session_id` in
+    # `__post_init__`. Not a constructor argument.
+    _shard: int = field(init=False, default=0)
 
     def __post_init__(self) -> None:
         self.root = Path(self.root)
+        # crc32 is deterministic across processes and interpreter runs
+        # (unlike the salted builtin hash()), so a session always maps
+        # to the same shard file and its events stay ts-ordered within
+        # it — the property `iter_events`' heapq.merge relies on.
+        self._shard = zlib.crc32(self.session_id.encode("utf-8")) % SHARD_COUNT
         if self.enabled:
             self.root.mkdir(parents=True, exist_ok=True)
 
     @property
     def path(self) -> Path:
-        return self.root / EVENT_LOG_FILENAME
+        """This recorder's active shard file. Per-session by construction,
+        so concurrent writers from different sessions don't serialise on
+        one append lock. Readers merge every shard plus any legacy
+        `.events.jsonl`."""
+        return self.root / _SEGMENT_TEMPLATE.format(self._shard)
 
     def record(self, kind: str, **fields: Any) -> None:
         """Append one event of the given `kind`. Extra `fields` are merged
@@ -585,23 +622,69 @@ def _iter_json_lines(f: Any) -> Iterator[dict[str, Any]]:
         yield parsed
 
 
-def iter_events(root: Path) -> Iterator[dict[str, Any]]:
-    """Yield all events from the *active* log only.
+_TS_MIN = datetime.min.replace(tzinfo=timezone.utc)
 
-    Skips malformed lines defensively (single-process writers make corruption
-    unlikely, but the read side stays robust against external editing — a
-    stray non-UTF-8 byte or hand-edit must not crash the reader). Does not
-    read rotated archives — call `iter_all_events` for that.
+
+def _event_ts_key(event: dict[str, Any]) -> datetime:
+    """Merge key for the active shards: the event's parsed `ts`, or a
+    UTC-min sentinel for a missing/unparseable one so a corrupt
+    timestamp sorts deterministically first rather than raising inside
+    the merge."""
+    ts = parse_event_ts(event.get("ts"))
+    return ts if ts is not None else _TS_MIN
+
+
+def _active_segment_paths(root: Path) -> list[Path]:
+    """Every active event segment on disk: each per-shard
+    `.events.NN.jsonl` that exists, plus a legacy pre-sharding
+    `.events.jsonl` if present. Post-upgrade writes only ever go to
+    shards, so the legacy file is read-only from here on — it merges in
+    as one more ts-ordered source, no migration required."""
+    paths: list[Path] = []
+    legacy = root / EVENT_LOG_FILENAME
+    if legacy.exists():
+        paths.append(legacy)
+    for shard in range(SHARD_COUNT):
+        seg = root / _SEGMENT_TEMPLATE.format(shard)
+        if seg.exists():
+            paths.append(seg)
+    return paths
+
+
+def iter_events(root: Path) -> Iterator[dict[str, Any]]:
+    """Yield events from the *active* segments — the per-shard
+    `.events.NN.jsonl` files plus any legacy `.events.jsonl` — merged
+    into chronological order by event `ts`.
+
+    Each segment is appended by a single stream of writers under that
+    shard's lock, so it is already ts-ordered; `heapq.merge` across the
+    segments yields the global chronological order without buffering,
+    with open fds bounded by the shard count. Skips malformed lines
+    defensively — single-process-per-shard writers make corruption
+    unlikely, but the read side stays robust against external editing
+    (a stray non-UTF-8 byte or hand-edit must not crash the reader).
+    Does not read rotated archives — call `iter_all_events` for that.
     """
-    path = root / EVENT_LOG_FILENAME
-    if not path.exists():
+    paths = _active_segment_paths(root)
+    if not paths:
         return
+    handles: list[Any] = []
     try:
-        f = path.open("rb")
-    except OSError:
-        return
-    with f:
-        yield from _iter_json_lines(f)
+        streams: list[Iterator[dict[str, Any]]] = []
+        for path in paths:
+            try:
+                f = path.open("rb")
+            except OSError:
+                continue
+            handles.append(f)
+            streams.append(_iter_json_lines(f))
+        yield from heapq.merge(*streams, key=_event_ts_key)
+    finally:
+        for handle in handles:
+            try:
+                handle.close()
+            except OSError:  # pragma: no cover
+                pass
 
 
 _TRAILING_COUNTER_RE = re.compile(r"-(\d+)$")

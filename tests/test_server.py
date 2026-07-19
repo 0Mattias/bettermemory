@@ -863,12 +863,9 @@ async def test_search_since_prior_session_records_boundary_on_event(
         since_prior_session=True,
     )
 
-    events_path = memory_dir / ".events.jsonl"
-    search_events = [
-        json.loads(line)
-        for line in events_path.read_text().splitlines()
-        if json.loads(line)["kind"] == "search"
-    ]
+    from bettermemory.events import iter_events
+
+    search_events = [e for e in iter_events(memory_dir) if e["kind"] == "search"]
     assert search_events, "expected at least one search event"
     latest = search_events[-1]
     assert latest["since_prior_session"] is True
@@ -2034,13 +2031,9 @@ async def test_episode_write_event_recorded_with_kind_episode_write(
     """The recorder fires a dedicated `episode_write` event so the
     tool-usage rollup counts it independently from memory_write."""
     await _call(server, "episode_write", body="some takeaway")
-    events_path = memory_dir / ".events.jsonl"
-    lines = events_path.read_text().splitlines()
-    ep_events = [
-        json.loads(line)
-        for line in lines
-        if json.loads(line)["kind"] == "episode_write"
-    ]
+    from bettermemory.events import iter_events
+
+    ep_events = [e for e in iter_events(memory_dir) if e["kind"] == "episode_write"]
     assert ep_events
     assert ep_events[-1]["session"].startswith("sess_")
 
@@ -5107,12 +5100,9 @@ async def test_scope_overview_delta_uses_recorder_session_not_state(
     assert overview["curation_pending_new_since_last_session"] is not None
     # And the recorded scope_overview event uses recorder-id-B as its
     # session tag (proves the audit-trail stays internally consistent).
-    events_path = memory_dir / ".events.jsonl"
-    last = [
-        json.loads(line)
-        for line in events_path.read_text().splitlines()
-        if json.loads(line).get("kind") == "scope_overview"
-    ][-1]
+    from bettermemory.events import iter_events
+
+    last = [e for e in iter_events(memory_dir) if e.get("kind") == "scope_overview"][-1]
     assert last["session"] == "recorder-id-B"
 
 
@@ -5136,13 +5126,9 @@ async def test_scope_overview_delta_event_recorded_carries_boundary(
     # record. The field name on the recorded event mirrors the return-dict
     # key with a `prior_session_boundary` companion so an eval pass can
     # re-trace the math.
-    events_path = memory_dir / ".events.jsonl"
-    lines = events_path.read_text().splitlines()
-    scope_events = [
-        json.loads(line)
-        for line in lines
-        if json.loads(line)["kind"] == "scope_overview"
-    ]
+    from bettermemory.events import iter_events
+
+    scope_events = [e for e in iter_events(memory_dir) if e["kind"] == "scope_overview"]
     assert scope_events, "expected at least one scope_overview event"
     latest = scope_events[-1]
     assert "prior_session_boundary" in latest
@@ -6296,7 +6282,9 @@ async def test_memory_proposals_accept_acknowledge_credential_end_to_end(
     assert accept_events[0]["credentials_acknowledged"] == ["aws-access-key-id"]
     # Kind only, never the value — the raw secret shape must not be
     # recoverable from the audit log.
-    raw_log = (memory_dir / ".events.jsonl").read_text(encoding="utf-8")
+    raw_log = "".join(
+        p.read_text(encoding="utf-8") for p in sorted(memory_dir.glob(".events*.jsonl"))
+    )
     assert aws_example not in raw_log
 
 
