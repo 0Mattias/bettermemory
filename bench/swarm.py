@@ -8,10 +8,38 @@ It spawns N real agent processes (fresh interpreters under
 — `fork` would share the parent's fds and short-circuit the
 cross-process locks) against one shared store. Each agent runs a
 realistic, read-heavy op-mix (search / write / update / verify /
-remove) on its OWN memories plus a shared read corpus, so the only
-*global* contention point is the single append-locked
-`.events.jsonl`. That is deliberate: it isolates the one bottleneck
-the swarm plan's Phase 1 removes.
+remove) on its OWN memories plus a shared read corpus.
+
+Where the contention actually is at HEAD — three tiers, because
+naming the wrong one is how a contention benchmark misleads:
+
+*Per-memory, disjoint.* Every mutator holds an exclusive `flock` on
+the single `.md` it touches (`store._locked(path)`). Agents only
+ever mutate memories they wrote themselves, and bodies carry the
+agent id so even fresh-write filename slugs rarely collide — these
+locks stay disjoint, and the run measures the store rather than
+same-memory fighting.
+
+*Per-shard, 16-way.* The active event log has been striped since
+3.24.0. A `Recorder` appends to `.events.NN.jsonl` where
+`NN = crc32(session_id) % SHARD_COUNT`, and locks only that shard.
+Each agent is its own session (`agent-<n>`), so appends collide only
+when two agents hash to the same shard — chance below `SHARD_COUNT`
+(16) agents, guaranteed above it.
+
+*Store-global — the remaining bottleneck.* `.index.sqlite`. Every
+write / update / verify / remove calls `index.upsert` / `index.remove`
+from INSIDE the per-file flock, and SQLite's WAL mode admits many
+concurrent readers but exactly ONE writer per database. So every
+mutation the whole fleet performs funnels through that single
+writer, and each of those transactions additionally re-derives
+`meta.indexed_count` with a `SELECT COUNT(*)` over `memories`.
+Searches are WAL readers: they neither block nor are blocked.
+
+So the sweep measures a ~50% read half that scales with cores against
+a ~50% mutation half that serialises on one SQLite writer. When the
+curve flattens, that is the first thing to suspect — not the event
+log, which stopped being a store-global lock in 3.24.0.
 
 Three things come out:
 
@@ -19,11 +47,21 @@ Three things come out:
    agent count climbs. This is the real, measured number that
    replaces the invented "200+".
 2. The event-log tax — the same workload run with event-logging on
-   vs off at the top agent count. The gap is the cost of the global
-   lock, i.e. the size of the prize Phase 1 is going after.
-3. A corruption check — after every run, every .md parses, every
-   event-log line is valid JSON, and no agent crashed. This is the
-   "zero corruption" half of any honest claim.
+   vs off at the top agent count. Before 3.24.0 this measured a
+   store-global append lock, and the 7-17% it came back with is what
+   motivated sharding. Post-sharding the gap is the residual
+   *per-event* cost — redaction, append, fsync, plus whatever
+   same-shard collisions the agent count forces — not cross-session
+   serialisation.
+3. A corruption check — after every run: no agent process crashed,
+   every active .md parses and the parsed count matches the files on
+   disk, every tombstone carries `removed` frontmatter, and every
+   active event segment is valid JSONL end to end. The gate prints
+   the evidence it collected (segments opened, event lines parsed,
+   memories parsed) next to its verdict, because a gate that passes
+   without having read anything is worse than no gate — see
+   `_check_event_log`, which is exactly how this one failed before.
+   This is the "zero corruption" half of any honest claim.
 
 Usage:
 
@@ -87,7 +125,9 @@ _VOCAB = (
 # Realistic agent op-mix (weights). Read-heavy: agents search far more
 # than they write. update/verify/remove act on the agent's OWN
 # memories, so per-file locks stay disjoint and the shared contention
-# is the event log, not same-memory fighting.
+# is the store-global one — the single SQLite writer on `.index.sqlite`
+# that every mutation passes through — not same-memory fighting.
+# Roughly half these ops mutate, so half of them hit that writer.
 _OPS = ("search", "write", "update", "verify", "remove")
 _WEIGHTS = (50, 18, 18, 12, 2)
 
@@ -107,8 +147,12 @@ def _query(rng: random.Random) -> str:
 def _agent(args: tuple[str, int, int, int, bool]) -> dict[str, Any]:
     """One agent process: run `num_ops` mixed operations against the
     shared store, timing each and recording an event per op when
-    `record_events` is set (mirroring the MCP handler telemetry that
-    hits the global `.events.jsonl` lock on every real tool call).
+    `record_events` is set — mirroring the MCP handler telemetry that
+    fires on every real tool call. Each agent passes its own
+    `session_id`, so its `Recorder` lands on the shard
+    `crc32(session_id) % SHARD_COUNT` and takes only that shard's
+    append lock; the store-global serialisation the mutating ops below
+    hit is the single SQLite writer on `.index.sqlite`, not the log.
 
     Returns per-op latencies and an outcome tally. Contention outcomes
     (a peer tombstoned our target, or the CAS rejected a stale
@@ -237,9 +281,19 @@ def _seed_corpus(root: Path, n: int, seed: int) -> None:
 def _check_invariants(
     root: Path, results: list[dict[str, Any]], *, expect_events: bool
 ) -> dict[str, Any]:
-    """Post-run corruption check: every .md parses, every event-log
-    line is valid JSON, no agent crashed. Returns a report dict with a
-    boolean `ok`.
+    """Post-run corruption check. Four things, in order:
+
+    1. No agent process crashed (a crash surfaces as a non-dict result).
+    2. Every active `.md` parses, AND the parsed count equals the
+       number of `.md` files on disk (`Store.load_all` skips malformed
+       files, so a gap means a torn write slipped through).
+    3. Every tombstone carries `removed` frontmatter.
+    4. Every active event segment is valid JSONL end to end.
+
+    Returns a report dict with a boolean `ok`, the `problems` list, and
+    the COUNTS the gate actually inspected (`md_parsed`, `segments`,
+    `event_lines`, `event_bytes`) — the caller prints those next to the
+    verdict so a pass is auditable rather than merely asserted.
 
     `expect_events` is the run's own `events` flag. When it is set the
     check is required to have READ something — see `_check_event_log`
@@ -280,6 +334,8 @@ def _check_invariants(
     return {
         "ok": not problems,
         "problems": problems,
+        "md_parsed": len(parsed),
+        "md_on_disk": len(md_files),
         "segments": log["segments"],
         "event_bytes": log["event_bytes"],
         "event_lines": log["event_lines"],
@@ -435,18 +491,25 @@ def _format_text(sweep: list[dict[str, Any]], ab: dict[str, Any]) -> str:
     # Peak + honest one-liner.
     peak = max(sweep, key=lambda m: m["throughput_ops_s"])
     all_ok = all(m["corruption"]["ok"] for m in sweep)
-    # The corruption verdict carries its own evidence: how many event
-    # lines it actually parsed. A "zero corruption" claim next to
-    # `0 events` is a gate that read nothing, and should read as such.
-    checked = sum(m["corruption"]["event_lines"] for m in sweep)
     lines.append(
         f"Peak sustained: {peak['throughput_ops_s']:.0f} ops/s at "
-        f"{peak['agents']} agents"
-        + (
-            f", zero corruption across the sweep ({checked} event lines verified)."
-            if all_ok
-            else "."
-        )
+        f"{peak['agents']} agents."
+    )
+    # The corruption verdict carries its own evidence: what the gate
+    # actually opened. "Zero corruption" next to `0 segments / 0 event
+    # lines` is a gate that read nothing and must read as such — that
+    # is precisely how the pre-fix version survived (see
+    # `_check_event_log`). Printed unconditionally, so a FAIL row is
+    # just as auditable as a pass.
+    md_seen = sum(m["corruption"]["md_parsed"] for m in sweep)
+    segs = sum(m["corruption"]["segments"] for m in sweep)
+    ev_lines = sum(m["corruption"]["event_lines"] for m in sweep)
+    ev_bytes = sum(m["corruption"]["event_bytes"] for m in sweep)
+    lines.append(
+        f"Corruption gate: {'zero corruption' if all_ok else 'FAILED'} across "
+        f"{len(sweep)} sweep point(s) — inspected {md_seen} memory file(s), "
+        f"{segs} active event segment(s), {ev_lines} event line(s) "
+        f"({ev_bytes} bytes) parsed as JSON."
     )
     if not all_ok:
         for m in sweep:
