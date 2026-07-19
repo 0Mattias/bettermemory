@@ -1926,6 +1926,63 @@ def test_pull_refuses_and_advises_resolution_on_a_conflicted_merge(
     )
 
 
+def test_push_refuses_to_commit_or_ship_conflict_markers(
+    memory_dir: Path, bare_remote: Path, tmp_path: Path
+) -> None:
+    """🔴 DATA CORRUPTION, and the distributing one. `_stage_and_commit`
+    holds the package's only `git add -A`, and of its two callers `push`
+    was the one that reached it without a conflict guard, so on a repo
+    holding unmerged files it staged the `<<<<<<<` markers as resolved
+    content, committed them, and then SENT them to the remote. Verified
+    empirically against the pre-remediation commit: `sync.push` returned
+    `{'committed': True, 'pushed': True}` and left `<<<<<<< HEAD` in a
+    memory body at the tip of `main` on both the clone and the bare remote.
+
+    Worse than the `auto` variant this shares a fixture with: that one
+    corrupted local history the user could still `git reset` away, while
+    this one hands the markers to every clone that pulls.
+
+    Asserts on the BARE REMOTE as well as the clone, because "did not
+    commit" and "did not push" are separate failures — a guard placed after
+    the commit would still fix only the first.
+
+    Mutation-sound: drop `_require_no_unresolved_conflict` from `push` and
+    this fails on the very first assertion, with `sync.push` returning
+    rather than raising."""
+    other = _wedge_a_conflicted_merge(memory_dir, bare_remote, tmp_path)
+    before_local = _git(other, "rev-parse", "main").strip()
+    before_remote = _git(bare_remote, "rev-parse", "main").strip()
+
+    with pytest.raises(sync.SyncError) as excinfo:
+        sync.push(other)
+
+    # `main`, not `HEAD`: the sibling `auto` test documents that a failed
+    # rebase can leave HEAD detached while the corrupt commit sits on the
+    # branch tip, so the branch ref is the one that has to be pinned.
+    assert _git(other, "rev-parse", "main").strip() == before_local, (
+        "push committed onto main with unmerged files present"
+    )
+    assert _git(bare_remote, "rev-parse", "main").strip() == before_remote, (
+        "push SHIPPED a commit to the remote with unmerged files present — "
+        "every clone that pulls now gets the conflict markers"
+    )
+    # Both sides, all refs: the corruption is only contained if neither
+    # repo can hand a marker-bearing blob to anyone.
+    _assert_no_commit_carries_conflict_markers(other)
+    _assert_no_commit_carries_conflict_markers(bare_remote)
+
+    message = str(excinfo.value)
+    # The user is already running `sync push`; telling them to run it is
+    # both circular and destructive. That text is what the dirty-worktree
+    # branch used to emit on this state.
+    assert "Run `bettermemory sync push`" not in message, (
+        f"push's own refusal tells the user to run `sync push`: {message}"
+    )
+    assert "resolve" in message.lower(), (
+        f"the error does not tell the user to resolve the conflict: {message}"
+    )
+
+
 def test_pull_still_works_on_a_clean_worktree(
     memory_dir: Path, bare_remote: Path, tmp_path: Path
 ) -> None:

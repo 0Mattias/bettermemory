@@ -965,10 +965,13 @@ def _commit_local_changes(root: Path, message: str) -> bool:
     rebase-only guard let `auto` commit `<<<<<<< HEAD` onto the tip of
     `main`, where the next push would ship it to every clone.
 
-    `push` runs `_stage_and_commit` WITHOUT this guard and still has that
-    exposure when invoked directly on a conflicted repo. That is a
-    pre-existing defect (its `git add -A` predates this change), left
-    alone here and reported rather than silently widened into this fix.
+    `push` carries the same guard, added after this one. Both callers of
+    `_stage_and_commit` now check before they reach it, so no route to the
+    single `git add -A` is unguarded. `auto` runs commit -> pull -> push
+    and each step gates independently, but the first to see a conflict
+    raises and aborts the run, so the user gets one message rather than
+    three: on a conflicted store `auto` stops here and never reaches
+    `pull` or `push` at all.
     """
     _require_no_unresolved_conflict(root)
     with flock_excl(root / _SYNC_LOCK_NAME):
@@ -1025,6 +1028,31 @@ def push(
     # back to an in-process-only yield with a one-shot `logger.warning`
     # — visible in operator logs, never silent.
     with flock_excl(root / _SYNC_LOCK_NAME):
+        # UNRESOLVED CONFLICTS FIRST, before the `git add -A` inside
+        # `_stage_and_commit` — the only `git add -A` in this package.
+        # `push` was the caller that reached it without asking: on a repo
+        # holding unmerged files it staged the `<<<<<<<` markers as if
+        # they were resolved content, committed them, and then SHIPPED
+        # them to the remote. Verified empirically on a two-clone
+        # conflicted merge against the pre-guard commit — `push` returned
+        # `committed=True, pushed=True` and left `<<<<<<< HEAD` in a
+        # memory body at the tip of `main` on both the clone and the bare
+        # remote.
+        #
+        # That distributing half is why this matters more here than on the
+        # local-only paths: every clone that pulls afterwards gets memory
+        # bodies full of markers, and undoing that reaches past the user's
+        # own repo into every copy that already fetched it.
+        #
+        # INSIDE the lock, not before it. `push` may block here for as
+        # long as `BETTERMEMORY_FLOCK_TIMEOUT` allows (default 30s), so a
+        # check taken before the acquire describes a worktree that another
+        # process — or the user's own hand-run `git merge` — has had that
+        # whole window to conflict. Checking after the acquire makes
+        # guard-then-stage one atomic boundary, which is also where `pull`
+        # puts its copy.
+        _require_no_unresolved_conflict(root)
+
         committed = _stage_and_commit(root, message)
 
         # Even when nothing was committed this turn, prior commits may
