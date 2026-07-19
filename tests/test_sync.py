@@ -9,6 +9,7 @@ hermetic.
 from __future__ import annotations
 
 import fnmatch
+import logging
 import shutil
 import subprocess
 from pathlib import Path
@@ -171,10 +172,24 @@ def test_every_store_root_sidecar_is_gitignored() -> None:
     """STRUCTURAL GUARD. `sync push` runs `git add -A`, so any file the
     runtime writes into the store root that is absent from `_GITIGNORE_LINES`
     is staged, committed, and pushed to every clone — permanently, in
-    plaintext. This has now happened three times, each time silently: the
-    write-reflex proposal queue (raw user text that never passed the
-    credential gate), orphaned atomic-write `*.tmp` sidecars (which carry a
-    full memory body), and the ingest watermark (absolute host paths).
+    plaintext. This has now happened SIX times, each time silently:
+
+    * the write-reflex proposal queue `.write_proposals.jsonl` (raw user text
+      that never passed the credential gate);
+    * orphaned atomic-write `*.tmp` sidecars (which carry a full memory body,
+      or the raw proposals queue);
+    * the ingest watermark `.ingest-watermark.json` (absolute host paths);
+    * the auto-consolidate clock (host-local debounce state, rewritten on
+      every decision, so it also conflicts on every pull);
+    * `episodes/` (host-local session run-state — it synced only by omission,
+      being a directory the dotfile-oriented discovery never evaluated);
+    * the rotated event-log archives `.events-{ts}.jsonl.gz` (session ids and,
+      in verbatim mode, raw query text).
+
+    The count and the list matter: this docstring claimed THREE for several
+    releases after the sixth had shipped, which understates the base rate of
+    the very class the guard exists to close and makes the guard look more
+    speculative than it is.
 
     Every leak shared a shape: the sidecar's `*_FILENAME` constant lives in
     its owning module, `sync.py` must list it by hand, and forgetting to
@@ -552,6 +567,67 @@ def test_init_uses_atomic_write_for_gitignore(
     assert path == memory_dir / ".gitignore"
     assert b".index.sqlite" in data
     assert b".events.jsonl" in data
+
+
+def test_init_reports_an_unreadable_gitignore_instead_of_claiming_canonical(
+    memory_dir: Path,
+) -> None:
+    """🟡 HONEST REPORTING. `_reconcile_gitignore` swallows an OSError on the
+    read and stands down (deliberately — we cannot know what is in the file,
+    and clobbering a user's exclusions is worse). But it used to signal that
+    stand-down with the SAME value it used for success: a bare `[]`, which
+    also means "every pattern was already present". `init` mapped the empty
+    list onto the action line ".gitignore already in canonical shape" — so a
+    store whose `.gitignore` could not be read at all was reported to the
+    user as CORRECT, and the user had no way to learn otherwise.
+
+    The outcome is explicit now, so the failure is stated in the action list
+    and exposed as a machine-readable `gitignore_error` for `--json`
+    consumers. A directory at the `.gitignore` path is the portable way to
+    make the read fail.
+
+    Mutation-sound: revert `_reconcile_gitignore` to returning `[]` on the
+    read OSError and this fails on both the `gitignore_error` assertion and
+    the "must not claim canonical" assertion."""
+    sync.init(memory_dir)
+    gitignore = memory_dir / ".gitignore"
+    gitignore.unlink()
+    gitignore.mkdir()
+
+    result = sync.init(memory_dir)
+
+    error = result["gitignore_error"]
+    assert isinstance(error, str) and error, (
+        f"an unreadable .gitignore was not reported as an error: {result}"
+    )
+    assert ".gitignore" in error, f"the error does not name the file: {error!r}"
+
+    actions = result["actions"]
+    assert isinstance(actions, list)
+    assert not any("already in canonical shape" in str(a) for a in actions), (
+        "init reported an UNREADABLE .gitignore to the user as already "
+        f"correct — the exact false-assurance this pins: {actions}"
+    )
+    assert any("NOT reconciled" in str(a) for a in actions), (
+        f"init's action list does not surface the failure: {actions}"
+    )
+    # …and the stand-down really stood down: the path is as we left it.
+    assert gitignore.is_dir()
+
+
+def test_init_reports_canonical_shape_when_the_gitignore_is_complete(
+    memory_dir: Path,
+) -> None:
+    """The other side of the pin above: when the reconcile genuinely finds
+    nothing missing, `gitignore_error` is None and the canonical-shape action
+    line is still the one the user sees. Without this, a fix that reported
+    "NOT reconciled" unconditionally would satisfy the test above."""
+    sync.init(memory_dir)
+    result = sync.init(memory_dir)
+    assert result["gitignore_error"] is None
+    actions = result["actions"]
+    assert isinstance(actions, list)
+    assert any("already in canonical shape" in str(a) for a in actions), actions
 
 
 def test_init_sets_remote(memory_dir: Path, bare_remote: Path) -> None:
@@ -1290,6 +1366,67 @@ def test_push_leaves_an_unreadable_gitignore_alone(
     )
 
 
+def test_push_survives_an_unwritable_gitignore(
+    memory_dir: Path,
+    bare_remote: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """🟡 READ AND WRITE MUST SHARE ONE POLICY. `_reconcile_gitignore`
+    guarded its READ against OSError with a deliberate stand-down (pinned by
+    `test_push_leaves_an_unreadable_gitignore_alone`) but left BOTH
+    `atomic_write_bytes` calls unguarded. That asymmetry was accidental, and
+    it became load-bearing when the reconcile moved onto the `push` path: an
+    unwritable `.gitignore` — read-only file, read-only mount, ENOSPC — now
+    raised a bare OSError out of `push`, so a push that previously succeeded
+    took down the user's whole sync.
+
+    The decided policy is stand down on BOTH halves: the reconcile is a
+    healing side-effect on the push path, not the push's purpose, and
+    trading "some ignore rules are not enforced yet" for "no memories reach
+    the remote at all" is the worse bargain. It must be LOUD, though —
+    logged at WARNING, naming the rules left unenforced — never silent.
+
+    The store is rolled back to its pre-3.24.0 shape first so the reconcile
+    has something to write; on an already-canonical file it never reaches
+    the writer and the test would pass vacuously.
+
+    Mutation-sound: remove the `try/except OSError` from
+    `_write_gitignore_or_stand_down` and this fails with the injected
+    OSError propagating out of `sync.push`."""
+    sync.init(memory_dir, remote=str(bare_remote))
+    gitignore = memory_dir / ".gitignore"
+    gitignore.write_text(_pre_shard_gitignore_text(), encoding="utf-8")
+    Store(memory_dir).write(content="durable fact", scopes=["tools"])
+
+    def unwritable(path: Path, data: bytes, *, mode: int | None = None) -> None:
+        raise OSError(30, "Read-only file system", str(path))
+
+    # `sync.py` imports `atomic_write_bytes` by name, so the spy has to
+    # replace the binding in `sync`'s own namespace.
+    monkeypatch.setattr(sync, "atomic_write_bytes", unwritable, raising=False)
+
+    with caplog.at_level(logging.WARNING, logger="bettermemory.sync"):
+        result = sync.push(memory_dir)
+
+    assert result["pushed"] is True, (
+        "an unwritable .gitignore took down a push that would otherwise "
+        "have succeeded — the user's memories stopped syncing entirely"
+    )
+    assert result["committed"] is True
+    # The stand-down is loud: the warning names the file and the rules that
+    # are still unenforced, so an operator can act on it.
+    warnings = [r.getMessage() for r in caplog.records if r.levelno >= logging.WARNING]
+    assert any("could not write" in m for m in warnings), (
+        f"the write stand-down was silent; warnings were: {warnings}"
+    )
+    assert any(".events.*.jsonl" in m for m in warnings), (
+        f"the warning does not name the ignore rule left unenforced: {warnings}"
+    )
+    # And the file really was left as it was — no partial write.
+    assert gitignore.read_text(encoding="utf-8") == _pre_shard_gitignore_text()
+
+
 def test_push_errors_without_remote(memory_dir: Path) -> None:
     """A push against a repo with no `origin` should raise SyncError
     with an actionable message. The CLI catches this and renders a
@@ -1463,6 +1600,199 @@ def test_pull_errors_without_remote(memory_dir: Path) -> None:
         sync.pull(memory_dir)
 
 
+def _edit_tracked_memory(memory_dir: Path, store: Store, memory_id: str) -> str:
+    """Append a line to an already-committed memory file, leaving the
+    worktree dirty exactly as a user editing a memory would. Returns the
+    file's repo-relative name."""
+    path = store._find_path_for_id(memory_id)
+    assert path is not None
+    path.write_text(
+        path.read_text(encoding="utf-8") + "\nedited locally\n", encoding="utf-8"
+    )
+    return path.name
+
+
+def test_pull_names_the_dirty_files_instead_of_a_raw_git_error(
+    memory_dir: Path, bare_remote: Path
+) -> None:
+    """🟡 ACTIONABLE FAILURE. `git pull --rebase` hard-refuses against a
+    dirty worktree, and a live memory store is dirty most of the time —
+    editing a memory and then syncing is the normal case. Pre-fix the user
+    got git's generic "cannot pull with rebase: You have unstaged changes"
+    wrapped in this wrapper's merge-conflict hint, which told them to run
+    `git rebase --continue` for a situation where no rebase had started:
+    advice that does nothing, attached to an error that never says WHICH
+    file is in the way.
+
+    The pre-check names the dirty files and the commands that fix it.
+
+    Mutation-sound: remove the `_dirty_tracked_paths` pre-check from `pull`
+    and this fails — git's own message contains neither the memory's
+    filename nor a usable next step."""
+    sync.init(memory_dir, remote=str(bare_remote))
+    store = Store(memory_dir)
+    memory = store.write(content="durable fact", scopes=["tools"])
+    sync.push(memory_dir)
+
+    edited = _edit_tracked_memory(memory_dir, store, memory.id)
+
+    with pytest.raises(sync.SyncError) as excinfo:
+        sync.pull(memory_dir)
+    message = str(excinfo.value)
+    assert edited in message, (
+        f"the dirty-worktree error does not name the file blocking the pull: {message}"
+    )
+    assert "sync auto" in message or "sync push" in message, (
+        f"the error gives the user no actionable next command: {message}"
+    )
+    # The inapplicable conflict hint must not be attached to this failure —
+    # no rebase has started, so `git rebase --continue` cannot help.
+    assert "rebase --continue" not in message, (
+        f"dirty-worktree failure still carries the merge-conflict hint: {message}"
+    )
+    # Untracked files are NOT the problem and must not be named: a rebase
+    # runs happily alongside them.
+    (memory_dir / "scratch.txt").write_text("untracked\n", encoding="utf-8")
+    with pytest.raises(sync.SyncError) as second:
+        sync.pull(memory_dir)
+    assert "scratch.txt" not in str(second.value)
+
+
+def _wedge_a_conflicted_rebase(
+    memory_dir: Path, bare_remote: Path, tmp_path: Path
+) -> Path:
+    """Leave a SECOND clone parked mid-rebase after a conflicted pull.
+
+    Divergent edits to the same memory on two clones, pushed from one and
+    committed on the other, make `git pull --rebase` stop with `UU` in
+    porcelain output and a live `.git/rebase-merge/`. Returns the wedged
+    clone."""
+    sync.init(memory_dir, remote=str(bare_remote))
+    store = Store(memory_dir)
+    memory = store.write(content="shared fact", scopes=["tools"])
+    sync.push(memory_dir)
+
+    other = tmp_path / "other_clone"
+    subprocess.run(
+        ["git", "clone", str(bare_remote), str(other)],
+        check=True,
+        capture_output=True,
+    )
+
+    origin_path = store._find_path_for_id(memory.id)
+    assert origin_path is not None
+    origin_path.write_text(
+        origin_path.read_text(encoding="utf-8") + "\nfrom the first host\n",
+        encoding="utf-8",
+    )
+    sync.push(memory_dir)
+
+    clone_path = other / origin_path.name
+    clone_path.write_text(
+        clone_path.read_text(encoding="utf-8") + "\nfrom the second host\n",
+        encoding="utf-8",
+    )
+    _git(other, "add", "-A")
+    _git(other, "commit", "-m", "second host edit")
+
+    with pytest.raises(sync.SyncError):
+        sync.pull(other)
+    assert sync._rebase_in_progress(other), (
+        "fixture did not actually wedge a rebase; the tests below would pass vacuously"
+    )
+    return other
+
+
+def test_pull_gives_rebase_advice_when_a_rebase_is_unfinished(
+    memory_dir: Path, bare_remote: Path, tmp_path: Path
+) -> None:
+    """A conflicted pull leaves the repo mid-rebase, and its `UU` entries are
+    INDISTINGUISHABLE from ordinary dirty files in `git status --porcelain`.
+    The dirty-worktree pre-check must therefore let the more specific state
+    win: telling a mid-rebase user to run `bettermemory sync push` would be
+    actively destructive, because push runs `git add -A` and would commit the
+    `<<<<<<<` conflict markers into their memories.
+
+    Mutation-sound: drop the `_rebase_in_progress` branch from `pull` and this
+    fails — the dirty-worktree message (with its `sync push` advice) is what
+    the user gets instead."""
+    other = _wedge_a_conflicted_rebase(memory_dir, bare_remote, tmp_path)
+
+    with pytest.raises(sync.SyncError) as excinfo:
+        sync.pull(other)
+    message = str(excinfo.value)
+
+    assert "rebase" in message.lower(), message
+    assert "git rebase --continue" in message, (
+        f"the mid-rebase error does not tell the user how to finish: {message}"
+    )
+    assert "git rebase --abort" in message, (
+        f"the mid-rebase error does not offer the escape hatch: {message}"
+    )
+    assert "Do NOT run `bettermemory sync push`" in message, (
+        "the error does not warn against the one command that would commit "
+        f"conflict markers into the store: {message}"
+    )
+
+
+def test_auto_refuses_to_commit_conflict_markers_mid_rebase(
+    memory_dir: Path, bare_remote: Path, tmp_path: Path
+) -> None:
+    """🔴 The sharp edge of committing BEFORE pulling. `auto` now stages and
+    commits first, which puts a `git add -A` ahead of `pull`'s own guard —
+    so on a repo parked mid-rebase it would commit the conflict markers into
+    the user's memories, silently, as if they were resolved content. `auto`
+    must refuse instead.
+
+    Mutation-sound: drop the `_rebase_in_progress` guard from
+    `_commit_local_changes` and this fails — a commit lands and the memory
+    file in the tree contains `<<<<<<<`."""
+    other = _wedge_a_conflicted_rebase(memory_dir, bare_remote, tmp_path)
+    before = _git(other, "rev-list", "--count", "HEAD").strip()
+
+    with pytest.raises(sync.SyncError, match="unfinished rebase"):
+        sync.auto(other)
+
+    after = _git(other, "rev-list", "--count", "HEAD").strip()
+    assert before == after, (
+        f"auto created a commit on a mid-rebase repo ({before} -> {after})"
+    )
+    tree = _git(other, "ls-tree", "-r", "--name-only", "HEAD").splitlines()
+    for name in tree:
+        if not name.endswith(".md"):
+            continue
+        body = _git(other, "show", f"HEAD:{name}")
+        assert "<<<<<<<" not in body, (
+            f"auto committed conflict markers into {name} — the store now "
+            "contains a corrupted memory"
+        )
+
+
+def test_pull_still_works_on_a_clean_worktree(
+    memory_dir: Path, bare_remote: Path, tmp_path: Path
+) -> None:
+    """Negative control for the pre-check: it must gate ONLY on dirty
+    TRACKED files. A clone with untracked-but-ignored runtime sidecars (the
+    normal state of any live store — index, event log) is clean as far as
+    the rebase is concerned and must still pull."""
+    sync.init(memory_dir, remote=str(bare_remote))
+    Store(memory_dir).write(content="python list comprehension", scopes=["tools"])
+    sync.push(memory_dir)
+
+    other_dir = tmp_path / "other_clone"
+    subprocess.run(
+        ["git", "clone", str(bare_remote), str(other_dir)],
+        check=True,
+        capture_output=True,
+    )
+    # Runtime sidecars a live store always has lying around.
+    (other_dir / EVENT_LOG_FILENAME).write_text("{}\n", encoding="utf-8")
+    (other_dir / "untracked-note.txt").write_text("scratch\n", encoding="utf-8")
+
+    result = sync.pull(other_dir)
+    assert result["pulled"] is True
+
+
 # ---------------------------------------------------------------------------
 # auto
 # ---------------------------------------------------------------------------
@@ -1490,6 +1820,87 @@ def test_auto_pulls_then_pushes(memory_dir: Path, bare_remote: Path) -> None:
     assert isinstance(push, dict)
     assert pull["pulled"] is True
     assert push["pushed"] is True
+
+
+def test_auto_succeeds_when_a_tracked_memory_has_local_edits(
+    memory_dir: Path, bare_remote: Path
+) -> None:
+    """🟡 THE HEADLINE BUG. `auto` pulled FIRST, and `git pull --rebase`
+    refuses to run against a dirty worktree — so `sync auto` failed OUTRIGHT
+    whenever any already-tracked memory file had local edits. That is the
+    NORMAL state of a live store: a user edits a memory, runs the "sync me"
+    one-shot, and gets a hard failure. Verified empirically against the
+    pre-fix source (init, push, edit one existing memory, `sync.auto`
+    raises `SyncError: cannot pull with rebase: You have unstaged changes`).
+
+    `auto` now commits local changes BEFORE it pulls. That is not a new side
+    effect — `auto`'s push step has always run `git add -A` and committed
+    everything in the worktree, so the same content reaches the same commit
+    either way; only the order changed, to the one git actually supports.
+
+    Mutation-sound: restore `auto` to `pull(...)` then `push(...)` and this
+    fails at the `sync.auto` call with git's dirty-worktree refusal.
+
+    Pins the whole round trip, not just the absence of an exception: the
+    edit must reach the remote, because an `auto` that "succeeds" without
+    shipping the user's edit is the same bug wearing a green test."""
+    sync.init(memory_dir, remote=str(bare_remote))
+    store = Store(memory_dir)
+    memory = store.write(content="durable fact", scopes=["tools"])
+    sync.push(memory_dir)
+
+    # The normal thing a user does between syncs: edit an existing memory.
+    edited = _edit_tracked_memory(memory_dir, store, memory.id)
+
+    result = sync.auto(memory_dir)
+
+    assert result["committed_before_pull"] is True, (
+        "auto did not commit the dirty worktree before pulling; the pull "
+        f"would have refused: {result}"
+    )
+    pull_result = result["pull"]
+    push_result = result["push"]
+    assert isinstance(pull_result, dict) and pull_result["pulled"] is True
+    assert isinstance(push_result, dict) and push_result["pushed"] is True
+
+    # The worktree is clean afterwards — the edit became a commit.
+    assert not sync._dirty_tracked_paths(memory_dir)
+    # …and the edit actually reached the remote, not just the local commit.
+    remote_history = _git(bare_remote, "log", "-p", "--all")
+    assert "edited locally" in remote_history, (
+        f"auto reported success but the edit to {edited} never reached the remote"
+    )
+
+
+def test_auto_is_a_no_op_commit_on_a_clean_worktree(
+    memory_dir: Path, bare_remote: Path
+) -> None:
+    """Negative control for the commit-before-pull step: on a clean store it
+    must NOT manufacture an empty commit. Without this, a fix that committed
+    unconditionally would satisfy the test above while dirtying every user's
+    history with one empty commit per cron tick."""
+    sync.init(memory_dir, remote=str(bare_remote))
+    Store(memory_dir).write(content="durable fact", scopes=["tools"])
+    sync.push(memory_dir)
+
+    before = _git(memory_dir, "rev-list", "--count", "HEAD").strip()
+    result = sync.auto(memory_dir)
+    after = _git(memory_dir, "rev-list", "--count", "HEAD").strip()
+
+    assert result["committed_before_pull"] is False, result
+    assert before == after, (
+        f"auto created a commit on a clean worktree ({before} -> {after})"
+    )
+
+
+def test_auto_errors_on_non_repo(tmp_path: Path) -> None:
+    """`auto` validates the repo itself now that it acts (commits) before
+    delegating to pull/push — the error must still point at `sync init`
+    rather than surfacing from a git call deeper down."""
+    plain = tmp_path / "plain"
+    plain.mkdir()
+    with pytest.raises(sync.SyncError, match="not a git repo"):
+        sync.auto(plain)
 
 
 # ---------------------------------------------------------------------------

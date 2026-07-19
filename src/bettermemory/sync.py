@@ -18,9 +18,14 @@ small CLI surface that does the right thing by default:
 - ``bettermemory sync pull [--remote NAME] [--no-reindex]`` — pull
   with rebase, then rebuild the FTS5 index from the new file
   contents (changes that landed via merge bypassed the Store
-  hooks, so the index is stale until rebuilt).
-- ``bettermemory sync auto`` — convenience: pull-rebase, then push.
-  The "sync me" one-shot for cron / shell aliases.
+  hooks, so the index is stale until rebuilt). Refuses, naming the
+  files, when a tracked memory has uncommitted edits: ``git pull
+  --rebase`` cannot run against a dirty worktree.
+- ``bettermemory sync auto`` — convenience: commit local edits,
+  pull-rebase, then push. The "sync me" one-shot for cron / shell
+  aliases. The commit comes FIRST precisely because the store is
+  normally dirty when a user reaches for this command; ``auto``'s
+  push step committed everything anyway, so only the order changed.
 
 Out of scope: conflict resolution for clashing memory edits. Git's
 default three-way merge handles non-overlapping edits perfectly;
@@ -195,9 +200,74 @@ def _missing_gitignore_patterns(current: str) -> list[str]:
     ]
 
 
-def _reconcile_gitignore(root: Path) -> list[str]:
+@dataclass(frozen=True)
+class _GitignoreReconcile:
+    """Explicit outcome of `_reconcile_gitignore`.
+
+    The helper used to return a bare `list[str]` of added patterns, which
+    collapsed two materially different results into the same value:
+    "every pattern was already present" and "the file could not be
+    read/written, so nothing was reconciled" both came back as `[]`. The
+    caller could not tell them apart, and `init()` mapped both onto the
+    action line ".gitignore already in canonical shape" — reporting an
+    UNREADABLE gitignore to the user as correct. Making the failure a
+    field rather than an indistinguishable empty list is what lets every
+    caller report honestly.
+
+    `error` is a human-readable reason the reconcile stood down (`None`
+    on success). When it is set, `added` is always empty: a stand-down
+    changes nothing on disk.
+    """
+
+    added: list[str]
+    error: str | None = None
+
+
+def _write_gitignore_or_stand_down(
+    gitignore: Path, payload: bytes, missing: list[str]
+) -> _GitignoreReconcile:
+    """Write `payload` to `gitignore`, standing down on OSError.
+
+    THE WRITE HALF OF THE STAND-DOWN POLICY. The read in
+    `_reconcile_gitignore` has always been guarded; both writes were not,
+    and that asymmetry was accidental rather than decided. It mattered
+    because the reconcile moved onto the `push` path: an unwritable
+    `.gitignore` (read-only file, read-only mount, a directory at the
+    path, ENOSPC) turned a push that previously succeeded into a hard
+    `OSError` — the user's memories stop reaching their remote entirely.
+
+    The policy is now the same on both halves: NEVER raise, always
+    report. Rationale, deliberately chosen rather than inherited:
+
+    * The reconcile is a healing side-effect on the push path, not the
+      push's purpose. Failing the push trades "some sidecar patterns are
+      not enforced yet" for "no memories sync at all", which is the worse
+      of the two outcomes.
+    * It matches what `test_push_leaves_an_unreadable_gitignore_alone`
+      already pins for the read half, so read and write now agree.
+    * The stand-down is LOUD, not silent: the reason names the file, the
+      errno, and every pattern left unenforced, and it is returned to the
+      caller (surfaced by `init` in its action list and `gitignore_error`
+      field, logged at WARNING by `push`).
+    * `doctor`'s `sync_tracked_ignored` check remains the backstop that
+      reports a store whose gitignore never caught up.
+    """
+    try:
+        atomic_write_bytes(gitignore, payload)
+    except OSError as exc:
+        reason = (
+            f"could not write {gitignore} ({exc.__class__.__name__}: {exc}); "
+            f"{len(missing)} regenerable/transient ignore rule(s) remain "
+            f"unenforced: {', '.join(missing)}"
+        )
+        log.warning("%s", reason)
+        return _GitignoreReconcile(added=[], error=reason)
+    return _GitignoreReconcile(added=missing)
+
+
+def _reconcile_gitignore(root: Path) -> _GitignoreReconcile:
     """Make the store's on-disk `.gitignore` cover every pattern in
-    `_GITIGNORE_LINES`, and return the lines that had to be added.
+    `_GITIGNORE_LINES`, and report which lines had to be added.
 
     THE UPGRADE PATH. `_GITIGNORE_LINES` grows over releases (the
     sharded event segments `.events.*.jsonl` joined it in 3.24.0), but
@@ -231,39 +301,49 @@ def _reconcile_gitignore(root: Path) -> list[str]:
     preserve. An UNREADABLE file is left alone with a warning: we cannot
     know what is in it, and clobbering a user's gitignore is a worse
     outcome than the caller's next `git add -A` behaving as it does
-    today (`doctor`'s `sync_tracked_ignored` check still reports it).
+    today (`doctor`'s `sync_tracked_ignored` check still reports it). An
+    UNWRITABLE file stands down the same way — see
+    `_write_gitignore_or_stand_down` for why read and write share one
+    policy rather than the accidental asymmetry they used to have.
+
+    Returns a `_GitignoreReconcile`, NOT a bare list: "nothing was
+    missing" and "the reconcile could not run" are different outcomes and
+    the caller has to be able to tell them apart to report honestly.
     """
     gitignore = root / ".gitignore"
     try:
         current = gitignore.read_text(encoding="utf-8") if gitignore.exists() else ""
     except OSError as exc:
-        log.warning(
-            "could not read %s (%s: %s) — leaving it untouched; regenerable "
-            "sidecars may not be excluded from this sync",
-            gitignore,
-            exc.__class__.__name__,
-            exc,
+        reason = (
+            f"could not read {gitignore} ({exc.__class__.__name__}: {exc}) — "
+            f"leaving it untouched; regenerable sidecars may not be excluded "
+            f"from this sync"
         )
-        return []
+        log.warning("%s", reason)
+        return _GitignoreReconcile(added=[], error=reason)
 
     if not current.strip():
         # No usable gitignore (absent, empty, whitespace-only). Nothing
         # to preserve, so write the canonical block verbatim — comments
         # and all. This is the shape a fresh `init` has always left.
         desired = "\n".join(_GITIGNORE_LINES) + "\n"
-        atomic_write_bytes(gitignore, desired.encode("utf-8"))
-        return _missing_gitignore_patterns(current)
+        return _write_gitignore_or_stand_down(
+            gitignore,
+            desired.encode("utf-8"),
+            _missing_gitignore_patterns(current),
+        )
 
     missing = _missing_gitignore_patterns(current)
     if not missing:
-        return []
+        return _GitignoreReconcile(added=[])
     # Preserve the file byte-for-byte and append. A file whose last line
     # has no trailing newline would otherwise get our first pattern glued
     # onto it, silently corrupting BOTH rules.
     prefix = current if current.endswith("\n") else current + "\n"
     block = "\n".join([_GITIGNORE_UPGRADE_HEADER, *missing]) + "\n"
-    atomic_write_bytes(gitignore, (prefix + block).encode("utf-8"))
-    return missing
+    return _write_gitignore_or_stand_down(
+        gitignore, (prefix + block).encode("utf-8"), missing
+    )
 
 
 # Default commit message when push is run without a custom one. The
@@ -425,6 +505,97 @@ def _redact_text(text: str) -> str:
     )
 
 
+def _parse_porcelain(porcelain: str) -> tuple[list[str], list[str]]:
+    """Split `git status --porcelain` (v1) output into (untracked, modified).
+
+    Porcelain v1 is fixed-width: chars 0-1 are the XY status code, char 2
+    is a separator space, the rest is the path. Splitting on the first
+    space is wrong for codes like `" M"` (modified, not staged) where the
+    first char is itself a space — that drops the leading status char
+    into the path. Slice by position instead.
+
+    Shared by `status()` and `_dirty_tracked_paths()` so the two cannot
+    drift: `pull`'s dirty-worktree pre-check and the `sync status` the
+    user runs to diagnose it must agree on what counts as modified, or
+    the error message names files `status` does not show.
+    """
+    untracked: list[str] = []
+    modified: list[str] = []
+    for line in porcelain.splitlines():
+        if len(line) < 4:
+            continue
+        code = line[:2]
+        path = line[3:].strip()
+        if not path:
+            continue
+        if code == "??":
+            untracked.append(path)
+        else:
+            modified.append(path)
+    return untracked, modified
+
+
+def _dirty_tracked_paths(root: Path) -> list[str]:
+    """Tracked paths carrying staged or unstaged changes.
+
+    This is exactly the set that makes `git pull --rebase` refuse to run
+    ("cannot pull with rebase: You have unstaged changes"). UNTRACKED
+    files are deliberately excluded — a rebase is happy to run alongside
+    them, so listing them in the error would name files that are not the
+    problem.
+    """
+    porcelain = _run_git(root, ["status", "--porcelain"], check=False).stdout
+    _untracked, modified = _parse_porcelain(porcelain)
+    return modified
+
+
+def _rebase_in_progress(root: Path) -> bool:
+    """True while an interrupted `git rebase` is still unfinished.
+
+    A conflicted `sync pull` leaves the repo mid-rebase with `UU` entries
+    in porcelain output. Those look exactly like "dirty tracked files" to
+    `_dirty_tracked_paths`, but the remedy is the OPPOSITE one: the user
+    must finish or abort the rebase, and must NOT let anything run
+    `git add -A` over the conflict markers. Callers check this FIRST so
+    the more specific state wins.
+
+    `git rev-parse --git-path` rather than `root / ".git" / …` because
+    `.git` is a FILE, not a directory, in a linked worktree or a
+    submodule — probing the literal path would report "no rebase" for
+    every such store.
+    """
+    for name in ("rebase-merge", "rebase-apply"):
+        result = _run_git(root, ["rev-parse", "--git-path", name], check=False)
+        if result.returncode != 0:
+            continue
+        candidate = Path(result.stdout.strip())
+        if not candidate.is_absolute():
+            candidate = root / candidate
+        if candidate.exists():
+            return True
+    return False
+
+
+def _rebase_in_progress_error(root: Path) -> SyncError:
+    """The one message for "finish your rebase first".
+
+    Deliberately tells the user NOT to reach for `sync push`: that path
+    runs `git add -A`, which would stage the conflict markers as if they
+    were resolved content and commit `<<<<<<<`/`>>>>>>>` into their
+    memories.
+    """
+    return SyncError(
+        f"an unfinished rebase is in progress in {root} — a previous "
+        f"`bettermemory sync pull` hit a merge conflict. Resolve the "
+        f"conflicted file(s) by hand, `git add` them, then run "
+        f"`git rebase --continue` from the memory directory; or "
+        f"`git rebase --abort` to recover the pre-pull state. Do NOT run "
+        f"`bettermemory sync push` while the rebase is unfinished: it runs "
+        f"`git add -A` and would commit the conflict markers into your "
+        f"memories."
+    )
+
+
 def _is_repo(root: Path) -> bool:
     """True iff `root` is the top of a git working tree. Avoids the
     edge case where `root` is *inside* a parent repo but not itself a
@@ -504,8 +675,16 @@ def init(
     # / lockfiles to the remote. init is no longer the ONLY caller: every
     # `push` reconciles too, which is what carries a newly-added pattern
     # to stores that were initialised before it existed.
-    added = _reconcile_gitignore(root)
-    if added:
+    # THREE outcomes, not two. `_reconcile_gitignore` used to return a
+    # bare list, so "nothing was missing" and "the file could not be
+    # read" were the same `[]` — and this branch reported an UNREADABLE
+    # gitignore to the user as ".gitignore already in canonical shape",
+    # i.e. told them the store was safe when we had no idea what was in
+    # the file. The outcome is explicit now, so the failure is stated.
+    reconcile = _reconcile_gitignore(root)
+    if reconcile.error is not None:
+        actions.append(f".gitignore NOT reconciled — {reconcile.error}")
+    elif reconcile.added:
         actions.append(".gitignore written")
     else:
         actions.append(".gitignore already in canonical shape")
@@ -526,6 +705,11 @@ def init(
         "root": str(root),
         "already_repo": already_repo,
         "actions": actions,
+        # Machine-readable twin of the action line above: `None` when the
+        # gitignore is in canonical shape, otherwise the reason the
+        # reconcile stood down. `--json` consumers (and the tests) need
+        # the failure as a field, not buried in prose.
+        "gitignore_error": reconcile.error,
     }
 
 
@@ -551,24 +735,7 @@ def status(root: Path) -> SyncStatus:
     branch = branch_result.stdout.strip() or None
 
     porcelain = _run_git(root, ["status", "--porcelain"], check=False).stdout
-    untracked: list[str] = []
-    modified: list[str] = []
-    for line in porcelain.splitlines():
-        # Porcelain v1 format is fixed-width: chars 0-1 are the XY status
-        # code, char 2 is a separator space, the rest is the path. Splitting
-        # on the first space is wrong for codes like " M" (modified, not
-        # staged) where the first char is itself a space — that drops the
-        # leading status char into the path. Slice by position instead.
-        if len(line) < 4:
-            continue
-        code = line[:2]
-        path = line[3:].strip()
-        if not path:
-            continue
-        if code == "??":
-            untracked.append(path)
-        else:
-            modified.append(path)
+    untracked, modified = _parse_porcelain(porcelain)
 
     remote_url = (
         _run_git(root, ["remote", "get-url", "origin"], check=False).stdout.strip()
@@ -609,6 +776,82 @@ def status(root: Path) -> SyncStatus:
     )
 
 
+def _stage_and_commit(root: Path, message: str) -> bool:
+    """Reconcile the gitignore, `git add -A`, commit iff anything staged.
+
+    Returns True iff a commit was created. THE CALLER MUST ALREADY HOLD
+    the sync lock — this helper deliberately does not take it, because
+    `flock` identity is per open-file-description: a nested
+    `flock_excl` on the same `.sync.lock` from the same process opens a
+    second descriptor and would DEADLOCK against the outer hold.
+
+    Extracted from `push` so `auto` can commit local edits BEFORE it
+    pulls (see `auto`) without duplicating the reconcile + stage +
+    commit discipline or reordering it by accident.
+    """
+    # Reconcile the on-disk `.gitignore` with `_GITIGNORE_LINES` BEFORE
+    # `git add -A` reads the tree, so a pattern added in a release AFTER
+    # this store was initialised takes effect on this very commit rather
+    # than never (see `_reconcile_gitignore`). Staging is the only place
+    # a stale gitignore can leak a sidecar, so it is the only place that
+    # has to reconcile.
+    #
+    # `pull` deliberately does NOT reconcile: `git pull --rebase` refuses
+    # to run against a dirty worktree ("cannot pull with rebase: You have
+    # unstaged changes", verified empirically), so writing an
+    # uncommitted `.gitignore` change from inside pull would break the
+    # NEXT pull of a pull-only clone — while fixing no leak, because pull
+    # stages nothing.
+    reconcile = _reconcile_gitignore(root)
+    if reconcile.error is not None:
+        # Stand down, do NOT abort: an unwritable gitignore must not take
+        # down a push that would otherwise succeed. See
+        # `_write_gitignore_or_stand_down` for the full policy.
+        log.warning(
+            "%s: .gitignore reconcile stood down before staging — %s",
+            root,
+            reconcile.error,
+        )
+    elif reconcile.added:
+        log.info(
+            "%s: added %d missing ignore rule(s) before staging: %s",
+            root / ".gitignore",
+            len(reconcile.added),
+            ", ".join(reconcile.added),
+        )
+    _run_git(root, ["add", "-A"])
+    diff = _run_git(root, ["diff", "--cached", "--quiet"], check=False)
+    if diff.returncode == 0:
+        return False
+    _run_git(root, ["commit", "-m", message])
+    return True
+
+
+def _commit_local_changes(root: Path, message: str) -> bool:
+    """`_stage_and_commit` under its own sync-lock hold.
+
+    Used by `auto` to clear the worktree before it pulls. Takes and
+    releases the lock rather than holding it across the whole `auto`
+    run, matching how `auto` has always treated its sub-operations: each
+    git op is its own atomic boundary, and nesting the same lock in one
+    process would deadlock (see `_stage_and_commit`).
+
+    Refuses while a rebase is unfinished. `auto` commits BEFORE it pulls,
+    which newly puts a `git add -A` ahead of the pull's own guard: on a
+    repo left mid-rebase by an earlier conflicted pull, that would stage
+    the conflict markers as resolved content and commit `<<<<<<<` into
+    the user's memories. The guard sits here because that is where the
+    commit-first reordering made the path reachable. `push` has always
+    had the same exposure when run directly on a mid-rebase repo and is
+    deliberately left alone here — a separate defect, reported rather
+    than silently widened into this change.
+    """
+    if _rebase_in_progress(root):
+        raise _rebase_in_progress_error(root)
+    with flock_excl(root / _SYNC_LOCK_NAME):
+        return _stage_and_commit(root, message)
+
+
 def push(
     root: Path,
     *,
@@ -643,38 +886,23 @@ def push(
     # one commit stale and the next sync corrects it. True sync↔Store
     # coordination would require `Store`'s mutators to take this same
     # lock — a global write-serialization tradeoff left as a
-    # deliberate, separate decision. On Windows `flock_excl` is a
-    # no-op (MVP single-process there).
+    # deliberate, separate decision.
+    #
+    # Windows IS serialised here, contrary to what this comment claimed
+    # until now. `_fsutil.flock_excl` has routed win32 to
+    # `_flock_windows` since 2.7: that helper takes a REAL cross-process
+    # advisory lock on the same `.sync.lock` sidecar via
+    # `msvcrt.locking(fd, LK_NBLCK, 1)`, retrying with capped
+    # exponential backoff (5ms doubling to a 100ms ceiling) until
+    # `BETTERMEMORY_FLOCK_TIMEOUT` (default 30s) and then raising
+    # `TimeoutError` rather than proceeding unlocked. So two `sync push`
+    # processes on Windows serialise exactly as they do on POSIX. The
+    # only degraded path is the fallback when `msvcrt` cannot be
+    # imported or the lockfile cannot be opened at all, and that falls
+    # back to an in-process-only yield with a one-shot `logger.warning`
+    # — visible in operator logs, never silent.
     with flock_excl(root / _SYNC_LOCK_NAME):
-        # Reconcile the on-disk `.gitignore` with `_GITIGNORE_LINES`
-        # BEFORE `git add -A` reads the tree, so a pattern added in a
-        # release AFTER this store was initialised takes effect on this
-        # very push rather than never (see `_reconcile_gitignore`). This
-        # is the only sync operation that stages anything, so it is the
-        # only one where a stale gitignore can leak a sidecar.
-        #
-        # `pull` deliberately does NOT reconcile: `git pull --rebase`
-        # refuses to run against a dirty worktree ("cannot pull with
-        # rebase: You have unstaged changes", verified empirically), so
-        # writing an uncommitted `.gitignore` change from inside pull
-        # would break the NEXT pull of a pull-only clone — while fixing
-        # no leak, because pull stages nothing. `auto` (pull + push)
-        # and any push therefore carry the healing.
-        added = _reconcile_gitignore(root)
-        if added:
-            log.info(
-                "%s: added %d missing ignore rule(s) before staging: %s",
-                root / ".gitignore",
-                len(added),
-                ", ".join(added),
-            )
-        _run_git(root, ["add", "-A"])
-        diff = _run_git(root, ["diff", "--cached", "--quiet"], check=False)
-        has_staged = diff.returncode != 0
-        committed = False
-        if has_staged:
-            _run_git(root, ["commit", "-m", message])
-            committed = True
+        committed = _stage_and_commit(root, message)
 
         # Even when nothing was committed this turn, prior commits may
         # not yet be on the remote. So push unconditionally — but only
@@ -728,6 +956,23 @@ def pull(
     Set `reindex=False` to skip the post-pull rebuild — useful in
     scripts that batch multiple sync operations and want to defer
     the index rebuild to the end.
+
+    Raises `SyncError` NAMING THE FILES when the worktree has
+    uncommitted changes to tracked memories. `git pull --rebase` refuses
+    to run in that state, and a live store is dirty most of the time —
+    editing a memory then syncing is the normal case, not the exotic
+    one. The raw git failure ("cannot pull with rebase: You have
+    unstaged changes") arrived wrapped in this wrapper's
+    conflict-resolution hint, which told the user to run `git rebase
+    --continue` for a situation where no rebase had started: advice that
+    does nothing. The pre-check turns that into an error that says which
+    files are dirty and which command fixes it.
+
+    `pull` deliberately does NOT commit them for you — pull is a
+    read-ward operation and silently committing a user's in-progress
+    edits would be a surprising side effect. `auto` DOES commit first
+    (it is going to commit everything in its push step anyway), so the
+    "sync me" one-shot works on a dirty store.
     """
     _require_git_name("remote", remote)
     root = Path(root).expanduser().resolve()
@@ -752,6 +997,34 @@ def pull(
             raise SyncError(
                 f"no remote named {remote!r}. Run "
                 f"`bettermemory sync init --remote <url>` or add it manually."
+            )
+
+        # An unfinished rebase FIRST: its `UU` entries are indistinguishable
+        # from ordinary dirty files in porcelain output, but the remedy is
+        # the opposite one. Without this ordering the dirty-worktree branch
+        # below would tell a mid-rebase user to run `sync push`, which would
+        # `git add -A` the conflict markers straight into their memories.
+        if _rebase_in_progress(root):
+            raise _rebase_in_progress_error(root)
+
+        # Dirty-worktree pre-check. `git pull --rebase` hard-refuses when a
+        # tracked file has uncommitted changes, and that is the NORMAL state
+        # of a live store: edit a memory, run sync. Checked here — after the
+        # remote check, which is the more fundamental misconfiguration —
+        # so the user gets the files by name instead of git's generic
+        # complaint plus an inapplicable `git rebase --continue` hint.
+        dirty = _dirty_tracked_paths(root)
+        if dirty:
+            shown = ", ".join(dirty[:10])
+            if len(dirty) > 10:
+                shown += f", and {len(dirty) - 10} more"
+            raise SyncError(
+                f"{len(dirty)} tracked file(s) in {root} have uncommitted "
+                f"changes, and `git pull --rebase` refuses to run against a "
+                f"dirty worktree: {shown}. Run `bettermemory sync push` to "
+                f"commit and send them first, or `bettermemory sync auto` "
+                f"(which commits before it pulls), or commit / revert them "
+                f"by hand."
             )
 
         # `--no-tags` keeps a hostile (or sloppy) remote from injecting refs
@@ -798,14 +1071,46 @@ def pull(
 
 
 def auto(root: Path, *, remote: str = "origin") -> dict[str, object]:
-    """Pull-rebase, then push. The shell-alias / cron one-shot for
-    "sync everything". Returns the combined status of both
-    operations."""
+    """Commit local edits, pull-rebase, then push. The shell-alias /
+    cron one-shot for "sync everything". Returns the combined status of
+    all three steps.
+
+    THE COMMIT COMES FIRST, and that ordering is the fix for a bug that
+    made this command unusable on a live store. `auto` used to pull
+    before it committed anything, and `git pull --rebase` hard-refuses
+    against a dirty worktree — so the moment a user edited a memory (the
+    normal reason to run a sync at all) `auto` failed outright with
+    git's "cannot pull with rebase: You have unstaged changes". Verified
+    empirically: init, push, edit one existing memory, `auto` raises.
+
+    Committing first is not a new side effect. `auto`'s push step has
+    always run `git add -A` and committed everything in the worktree, so
+    the same content reaches the same commit either way — the only
+    change is that it happens before the rebase instead of after, which
+    is the order git actually supports. The rebase then replays that
+    commit on top of the remote, exactly as a hand-run
+    `git commit && git pull --rebase && git push` would.
+
+    A commit is deliberately preferred over `git stash` around the pull:
+    a stash that fails to pop (conflict, crash between pull and pop)
+    strands the user's edits in a place they have to know to look for,
+    while a commit is durable, visible in `git log`, and is where the
+    content was headed anyway.
+    """
+    _require_git_name("remote", remote)
+    root = Path(root).expanduser().resolve()
+    if not _is_repo(root):
+        raise SyncError(
+            f"{root} is not a git repo. Run `bettermemory sync init` first."
+        )
+
+    committed_before_pull = _commit_local_changes(root, DEFAULT_COMMIT_MESSAGE)
     pull_result = pull(root, remote=remote)
     push_result = push(root, remote=remote)
     return {
         "root": str(root),
         "remote": remote,
+        "committed_before_pull": committed_before_pull,
         "pull": pull_result,
         "push": push_result,
     }
