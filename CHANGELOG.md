@@ -344,9 +344,24 @@ survive checking against the code and the tag.
   per-session ordering claim does hold (a session maps to a fixed shard
   by `crc32(session_id) % SHARD_COUNT`, so its own events stay in
   append order within one file); the *global* cross-consumer ordering
-  claim does not. This is a code defect, not just a documentation one,
-  and is corrected in a follow-up release — this file is newest-first,
-  so look above this entry for the one that lands the fix.
+  claim does not.
+
+  This is a code defect, not just a documentation one. The fix has
+  landed on `main` as `eace517` ("partition rotation by shard and make
+  read order real"), which replaces the archives-then-active walk with
+  a `heapq.merge` on the event `ts` across per-shard archive chains,
+  untagged legacy archives, orphan `.rotating` segments and the active
+  stream — so `iter_all_events` genuinely is chronological now. The
+  same commit repairs two sibling assumptions the shard split left
+  standing: an unshared rotation namespace (two shards crossing
+  `max_bytes` in the same UTC second could derive the same holding
+  path, and the second rename destroyed the first shard's segment) and
+  `iter_events_window`'s global `oldest_ts` shield. **That commit is
+  not in any tagged release yet** — it landed after `v3.25.2`. So do
+  not go looking above this entry for it: there is no release entry
+  describing it, and there will not be one until the next release is
+  cut. This sentence previously pointed the reader upward at an entry
+  that did not exist.
 
 ## 3.23.0 - 2026-07-12
 

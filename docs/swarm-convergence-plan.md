@@ -53,20 +53,33 @@ six hold:
 
 Not starting from zero. The correctness floor is genuinely built:
 
+*Citations here and below name **symbols**, not line numbers. This doc
+shipped six `file.py:NNN` references; checked against HEAD, five of
+the six pointed somewhere other than the code they claimed — two of
+them into a docstring (`index.py:32-45` into the module docstring,
+`events.py:237` into `_redact_query`'s), one at the wrong symbol
+entirely, two at ranges that had drifted. Only `store.py:298`
+(`Store.load_one`) still landed. A symbol survives the next edit; a
+line number does not.*
+
 - **Safety: DONE.** Per-memory-file `fcntl`/`msvcrt` locking
   (`_fsutil.flock_excl`), so disjoint memories never contend. The
-  SQLite FTS5 index upsert runs *inside* the per-file lock
-  ([index.py:32-45](../src/bettermemory/index.py)), so index order
+  SQLite FTS5 index upsert runs *inside* the per-file lock — every
+  mutator calls `_index_upsert_quietly` / `_index_remove_quietly`
+  from within its own `_locked(...)` block
+  ([store.py](../src/bettermemory/store.py)) — so index order
   matches disk order even under concurrent same-id writes (the audit
   H1 fix). Files are canonical, the index is a rebuildable cache.
 - **Same-memory races: DONE.** `Store.update` does an optimistic-CAS
   on the `updated` snapshot under the lock
-  ([store.py:393-478](../src/bettermemory/store.py)) and raises
+  ([store.py](../src/bettermemory/store.py)) and raises
   `ConcurrentUpdateError` instead of silently clobbering. Tombstone /
   rename races are rechecked under-lock.
 - **Read-side cohort: PARTIAL.** `swarm_id` exists, but only on
-  **episodes** (session run-state), for `episode_search(swarm_id=)` /
-  `list_by_swarm` fan-in ([episodes.py:92-114](../src/bettermemory/episodes.py)).
+  **episodes** (session run-state): `EpisodeStore.write` accepts the
+  tag and `EpisodeStore.list_by_swarm`
+  ([episodes.py](../src/bettermemory/episodes.py)) fans it back in,
+  which is what the `episode_search(swarm_id=)` handler calls.
   Durable memory has no swarm/agent concept.
 
 ### Where the gaps are
@@ -75,12 +88,14 @@ Not starting from zero. The correctness floor is genuinely built:
   line to the event log — but since 3.24.0 (Phase 1b) that log is no
   longer a single global file. The active log is 16 shards,
   `.events.NN.jsonl`, and a recorder picks its shard by
-  `crc32(session_id) % SHARD_COUNT`
-  ([events.py:237](../src/bettermemory/events.py)), so writers from
+  `crc32(session_id) % SHARD_COUNT` (`Recorder.__post_init__` in
+  [events.py](../src/bettermemory/events.py)), so writers from
   different sessions append to different files and no longer contend on
   one flock. The Phase-0 measurement below put that lock at 7-17% of
-  throughput; post-sharding the event-log tax is ~1%, and the residual
-  is per-event redaction + fsync rather than lock wait.
+  throughput; post-sharding the event-log tax is single-digit percent
+  (~1% on the 3.24.0 A/B, 2.5% on the HEAD re-run recorded under
+  Phase 0 below — a two-sample A/B, so treat the spread as noise), and
+  the residual is per-event redaction + fsync rather than lock wait.
 
   What remains is a *different* global write serialisation point: the
   FTS5 index. Every memory mutation (`write`, `update`,
@@ -90,9 +105,11 @@ Not starting from zero. The correctness floor is genuinely built:
   global serialization point" — it was not the only one; the index
   outlived it, and closing that is unclaimed work.
 
-  Test coverage is still the weak half: 4 workers x 50 ops
-  ([tests/test_concurrency.py](../tests/test_concurrency.py)) is a
-  correctness test, never a throughput one.
+  Test coverage is still the weak half:
+  [tests/test_concurrency.py](../tests/test_concurrency.py)'s flagship
+  invariant test runs 4 spawned workers x 50 ops, and its other
+  multi-process tests top out at 6 workers. Those are correctness
+  tests, never throughput ones.
 - **Non-duplication: NO.** The write-dedup gate checks the *committed*
   store. Two agents discovering the same fact in the same second never
   see each other's in-flight write, so a swarm produces N copies of
@@ -108,9 +125,19 @@ Not starting from zero. The correctness floor is genuinely built:
   from the README by `e2d43b4`).
 
 The honest one-line summary of today: *multiple agents can safely
-share one store at small scale, and its ceiling is now measured (see
-Phase 0 below) rather than guessed at — but it does not yet converge.*
-The plan below closes exactly that sentence.
+share one store at small scale, and one point on that curve is now
+measured rather than guessed at — but the ceiling is not, and it does
+not yet converge.*
+
+The word "ceiling" is deliberately withheld. Phase 0 measured a
+**point**: one 12-core box, throughput peaking at about core count and
+falling off beyond it. Phase 0's own text says why that is not a
+ceiling — *"past physical cores you measure the OS scheduler; a real
+ceiling needs a many-core box"* — and no many-core run has been done.
+An earlier revision of this line claimed the ceiling was measured;
+that overstated the project's own benchmark in the project's own
+favour, which is the exact bias this doc exists to resist. The plan
+below closes the rest of that sentence.
 
 ## Phase 0 results (measured 2026-07-18)
 
@@ -129,9 +156,32 @@ Fleet scaling, one shared store:
 |     12 |   318 |   11.3 |    204 |     OK     |
 |     24 |   198 |   10.0 |    739 |     OK     |
 
-- **Safety holds.** Zero corruption on every run through 24 agents:
-  every .md parsed, every event-log line valid JSON, no agent crashed.
-  Property 1 is real and now benchmarked, not asserted.
+- **Safety holds, and the event-log half has now been re-validated
+  against the sharded layout.** These rows were taken at `90d10b9`
+  (2026-07-18 21:12), when the active log was still the single
+  `.events.jsonl` and the benchmark's gate opened exactly that file —
+  so as measured, "every .md parsed, every event-log line valid JSON,
+  no agent crashed" was founded.
+
+  It stopped being founded four hours later. `59a1e08` (3.24.0)
+  sharded the active log into `.events.NN.jsonl` and the gate kept
+  opening the hard-coded `.events.jsonl`, which no longer exists on
+  any store the benchmark creates: `exists()` was False, the parse
+  loop never ran, and the gate reported clean having read zero bytes.
+  Every corruption claim made between `59a1e08` and `0f2789c`
+  (2026-07-19 06:58, which enumerates segments through the product's
+  own `events._active_segment_paths` and now fails loudly when a run
+  that recorded events verified nothing) is therefore unfounded — the
+  3.24.0 release commit's "zero-corruption unchanged" included. The
+  rows above were never re-run against the sharded layout.
+
+  **They have been now.** `bench/swarm.py` default sweep at HEAD
+  (2026-07-19, same 12-core box, repaired gate): zero corruption on
+  every run through 24 agents, with the gate carrying its evidence —
+  **7,650 event-log lines across 43 active segments (≈792 KB), every
+  line valid JSON**, every `.md` parsed, no agent crashed, 7,650 of
+  7,650 ops completed. Property 1 is benchmarked rather than asserted,
+  on the current on-disk layout.
 - **Throughput** climbs to a peak at core count (~318 ops/s at 12
   agents) then degrades under oversubscription (198 at 24). Past
   physical cores you measure the OS scheduler; a real ceiling needs a
@@ -149,19 +199,22 @@ The headline was somewhere else. A single-process corpus-scaling probe
 |    800 |    75.9 ms |       126.8 ms |
 |   3200 |   320.6 ms |       521.0 ms |
 
-**By-id operations are O(corpus).** `Store._find_path_for_id` and
-`load_one` walk and parse the entire active directory to resolve one
-id (store.py:298, store.py:1648). At 3200 memories a single update
+**By-id operations were O(corpus)** — past tense, and true only of the
+code as it stood on 2026-07-18; Phase 1 below fixed it, so do not read
+this paragraph as a description of HEAD. `Store._find_path_for_id` and
+`Store.load_one` walked and parsed the entire active directory to
+resolve one id. At 3200 memories a single update
 costs ~320 ms and a by-id read ~520 ms, climbing ~linearly. On the
 exact scenario this plan is for — a fleet accumulating a large shared
 store — this dominates everything else, the event-log lock included.
 The index already carries the id→filename map (`index.filenames_for_ids`);
 the mutation path just doesn't use it.
 
-Honest one-liner from Phase 0: *one store sustains ~300 ops/s across
+Honest one-liner from Phase 0: *one store sustained ~300 ops/s across
 up to ~a-dozen agents on a 12-core box with zero corruption; the first
 thing that will actually stop a growing fleet is O(corpus) by-id
-lookup, not the event-log lock.*
+lookup, not the event-log lock.* (Past tense throughout: this is the
+pre-Phase-1 store. On HEAD the same sweep peaks at ~811 ops/s.)
 
 ## Phases
 
@@ -197,6 +250,17 @@ Flat across corpus size — O(corpus) became O(1). At the fleet level
 corruption. The event-log tax dropped to ~1% now that ops are faster,
 confirming it is the right *next* (smaller) target, not the first one.
 
+Two caveats on those fleet numbers, both found by re-running the
+benchmark rather than by re-reading it. First, they were taken at
+`096218e`, before the event log was sharded, so the corruption clause
+was founded when written — but see the Phase 0 safety bullet for the
+window in which it stopped being. Second, **970 is a single
+unreplicated sample.** The HEAD re-run (2026-07-19, same 12-core box)
+peaks at **811 ops/s** with p99 **117 ms** at 24 agents. Different day,
+differently-loaded box, one sample each — not a contradiction, but
+"970" should not be quoted as *the* number without a deliberate
+re-measurement.
+
 Ordered by leverage-over-risk. Each phase is independently shippable
 and moves the honest claim forward (see the claim ladder at the end).
 
@@ -231,16 +295,59 @@ below — one file per session proliferates unboundedly and blows a
 reader's open-fd budget, whereas 16 fixed shards bound both. The
 active log splits into `.events.NN.jsonl` (NN = `crc32(session_id) %
 16`), so writers from different sessions append to different files and
-no longer contend on one flock. Rotation, archives, and crash recovery
-are unchanged and shared; `iter_events` merges the shards plus any
-pre-sharding legacy `.events.jsonl` by event `ts` (a `heapq.merge`,
-open fds bounded by the shard count), and because every other reader
-composes on top of `iter_events`, nothing downstream changed. `sync`
-excludes the shard files (they carry query text); measured event-log
-tax dropped from ~7-17% to ~1% (the residual is per-event fsync, not
-the lock). 9 new tests in `tests/test_events.py` pin striping,
-per-session stability, cross-shard merge order, and legacy
-backward-compat.
+no longer contend on one flock. `iter_events` merges the shards plus
+any pre-sharding legacy `.events.jsonl` by event `ts` (a
+`heapq.merge`, open fds bounded by the shard count). `sync` excludes
+the shard files (they carry query text); measured event-log tax
+dropped from ~7-17% to ~1% (the residual is per-event fsync, not the
+lock).
+
+**Four** new tests in `tests/test_events.py` pin striping, per-session
+shard stability, cross-shard merge order, and legacy backward-compat:
+`test_same_session_maps_to_a_stable_shard`,
+`test_sessions_stripe_across_multiple_shard_files`,
+`test_iter_events_merges_shards_preserving_per_session_order` and
+`test_legacy_events_jsonl_merges_in_after_sharding`. This doc said
+"9"; the release commit `59a1e08` adds exactly those four test
+functions and its other test edits are helper refactors. The "9"
+appears to have been carried over from the *other* commit in the
+`v3.24.0` tag, `096218e`, whose message likewise claims nine for
+`tests/test_indexed_lookup.py` — a file that contains eight test
+functions and no parametrisation. The CHANGELOG's 3.24.0 erratum
+corrected the same overcount in the release entry; this instance was
+missed at the time.
+
+**Two claims this section shipped with have since been falsified in
+code, not just in prose.** They read "rotation, archives, and crash
+recovery are unchanged and shared" and "because every other reader
+composes on top of `iter_events`, nothing downstream changed":
+
+- *Rotation was not safely shareable across shards.* The archive /
+  `.rotating` stem was `.events-{ts}` at one-second resolution with no
+  shard component, and only the `.gz` archive was probed before a name
+  was taken — check-then-act, safe only while the removed global
+  append lock made rotations mutually exclusive. Two shards crossing
+  `max_bytes` in the same UTC second derived the identical holding
+  path and the second rename destroyed the first shard's whole renamed
+  segment. Uniform crc32 striping fills shards *in phase*, so that was
+  the correlated case under exactly the swarm workload sharding was
+  built for. Crash recovery had the mirror bug: it could not tell a
+  crash orphan from another shard's live in-flight rotation.
+- *Not every reader composed on `iter_events`.* `iter_all_events`
+  yielded all archives and then all active segments, which stopped
+  being chronological the moment shards rotated independently — a
+  quiet shard's active segment can hold events older than a busy
+  shard's fresh archive. `iter_events_window`'s rotation shield
+  derived one global `oldest_ts` across all 16 shards and was
+  effectively dead on any store older than a session.
+
+Both were fixed after v3.25.2 by `eace517`, which partitions the
+rotation namespace by shard (`.events-{ts}-s{NN}`), probes the
+`.rotating` path as well as the archive, scopes orphan recovery to the
+owning shard under a store-wide `.events-rotate.lock`, decides window
+coverage per segment, and makes `iter_all_events` a real `heapq.merge`
+so the chronological guarantee is earned rather than asserted. At time
+of writing that fix is on `main` and **unreleased**.
 
 The original per-session sketch, kept for the record:
 
@@ -255,10 +362,20 @@ The original per-session sketch, kept for the record:
 - Backward-compat: a legacy single `.events.jsonl` is just "segment
   zero" at read time; no migration required, `reindex`-free.
 
-Risk: low. Append-only, per-owner files, read-time merge is a natural
-fit. This is the highest-throughput-per-line-of-code change in the
-plan and probably moves the ceiling by an order of magnitude on its
-own. Gate on Phase 0.
+Risk assessment as originally written, kept for the record: *"Low.
+Append-only, per-owner files, read-time merge is a natural fit. This
+is the highest-throughput-per-line-of-code change in the plan and
+probably moves the ceiling by an order of magnitude on its own. Gate
+on Phase 0."*
+
+Phase 0 falsified the last sentence before it was built, which is what
+gating on a benchmark is for: the event-log lock measured 7-17% of
+throughput, so removing it could not have been worth an order of
+magnitude, and the shipped result was ~1%. The order of magnitude came
+from Phase 1 (by-id lookup) instead. The "low risk" half did not hold
+either — see the two falsified claims above; sharding the writes
+without also partitioning the rotation namespace cost a data-loss
+defect that took until `eace517` to close.
 
 ### Phase 2 — Swarm provenance on durable memory
 
@@ -343,8 +460,13 @@ its benchmark number is recorded in this doc.
   small-scale, unmeasured.)
 - **+ Phase 0:** "benchmarked at N agents, X ops/sec, zero
   corruption." (A number, not a guess.)
-- **+ Phase 1:** "scales to a fleet — no global lock; throughput
-  climbs with agents." (The 200 becomes real, whatever the real N is.)
+- **+ Phases 1 and 1b (both shipped):** "scales to a fleet — no global
+  *event-log* lock; by-id work is O(1); throughput climbs with agents
+  up to about core count." (The 200 becomes real, whatever the real N
+  is.) The unqualified "no global lock" this rung used to license is
+  **not** sayable and never was: every memory mutation still
+  serialises on the single `.index.sqlite`. Say which lock you
+  removed, or say nothing.
 - **+ Phases 2-3:** "a fleet converges: independent agents collapse
   onto shared memories with provenance, instead of multiplying them."
 - **+ Phase 4:** "agents enrich the same memory concurrently and both
@@ -358,8 +480,13 @@ Phases **0-2** are the high-leverage, low-risk core. They make this
 claim fully true and defensible:
 
 > Built for agent fleets: multiple agents share one store with no
-> global lock, benchmarked at N agents with zero corruption, every
-> memory attributed to the agent that wrote it.
+> global event-log lock, benchmarked at N agents with zero
+> corruption, every memory attributed to the agent that wrote it.
+
+(The qualifier is load-bearing. This blurb previously read "with no
+global lock" — false while the FTS5 index still admits one writer at a
+time store-wide. Closing that is unclaimed work, not a shipped
+property; do not post the unqualified version until it is.)
 
 Phase 3 makes "converge" a strong word. Phase 4 makes it a strong
 demo. Phase 5 is the cross-machine stretch. Recommendation: land 0-2
