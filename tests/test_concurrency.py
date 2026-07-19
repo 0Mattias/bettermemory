@@ -34,9 +34,10 @@ Windows coverage. `_fsutil.flock_excl` — which `store._locked` and
 POSIX-only, but the Windows branch takes a real cross-process lock via
 `msvcrt.locking(fd, LK_NBLCK, 1)` on the same sidecar lockfile, with a
 retry/backoff loop (30s default, `BETTERMEMORY_FLOCK_TIMEOUT`). The
-silent-no-op branch was removed in 2.7; the only remaining no-op paths
-are the two degraded fallbacks (`msvcrt` unimportable, or the lockfile
-cannot be opened), and both emit a one-shot `logger.warning` first.
+silent-no-op branch was removed in 3.0.0; the only remaining no-op
+paths are the two degraded fallbacks (`msvcrt` unimportable, or the
+lockfile cannot be opened), and both emit a one-shot `logger.warning`
+first.
 
 So the platform-agnostic assertions run everywhere: the two
 lockfile-persistence tests below assert an invariant the Windows
@@ -325,8 +326,8 @@ def test_store_locked_persists_lockfile_after_exit(tmp_path: Path) -> None:
 
     Runs on every platform. This test previously skipped on Windows
     with the reason "flock_excl no-ops on Windows so no lockfile is
-    created" — verifiably false since 2.7: `_flock_windows` opens the
-    sidecar with `os.O_CREAT` before taking the `msvcrt` lock and
+    created" — verifiably false since 3.0.0: `_flock_windows` opens
+    the sidecar with `os.O_CREAT` before taking the `msvcrt` lock and
     never unlinks it, so both assertions below hold there. The skip
     rested on a false premise, which is the whole reason it went; the
     removal is not a claim that the Windows branch is otherwise
