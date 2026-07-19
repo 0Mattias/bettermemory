@@ -1670,6 +1670,26 @@ def test_mark_verified_cas_threaded_one_winner(tmp_path: Path) -> None:
                         "memory_id": exc.memory_id,
                     }
                 )
+        except BaseException as exc:  # noqa: BLE001 — diagnostic catch-all.
+            # Record, don't swallow. Catching only ConcurrentUpdateError
+            # meant a thread that died any OTHER way appended nothing at
+            # all, and the assertions below then reported the mystifying
+            # "expected exactly one stale-CAS loser, got 0" — naming the
+            # symptom while hiding the cause. That is exactly how the
+            # Windows `os.replace` PermissionError (see
+            # `_fsutil.replace_atomic`) presented before it was
+            # diagnosed. This arm does NOT paper over the product gap:
+            # an "errored" outcome satisfies neither assertion, so the
+            # test still fails — it just fails while naming the
+            # exception instead of leaving an unexplained empty slot.
+            with results_lock:
+                results.append(
+                    {
+                        "outcome": "errored",
+                        "marker": marker,
+                        "error": f"{type(exc).__name__}: {exc}",
+                    }
+                )
 
     threads = [
         threading.Thread(target=worker, args=("A", "/path-a")),
@@ -1686,7 +1706,13 @@ def test_mark_verified_cas_threaded_one_winner(tmp_path: Path) -> None:
     for t in threads:
         t.join(timeout=30)
 
-    outcomes = [r["outcome"] for r in results]
+    # Inline the exception text for `errored` slots so a crashed thread
+    # names itself in the assertion message, instead of showing up as a
+    # missing outcome the reader has to go hunting for.
+    outcomes = [
+        f"errored({r['error']})" if r["outcome"] == "errored" else r["outcome"]
+        for r in results
+    ]
     winners = [r for r in results if r["outcome"] == "won"]
     losers = [r for r in results if r["outcome"] == "lost-stale"]
     assert len(winners) == 1, (

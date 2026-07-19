@@ -20,6 +20,7 @@ import contextlib
 import io
 import os
 import sys
+import time
 import types
 from pathlib import Path
 
@@ -946,3 +947,144 @@ class TestAtomicWriteBytes:
         atomic_write_bytes(path, b"")
         assert path.exists()
         assert path.read_bytes() == b""
+
+
+# ---------------------------------------------------------------------------
+# replace_atomic — bounded, Windows-only retry around `os.replace`.
+#
+# POSIX renames over an open destination happily; Windows raises
+# PermissionError (ERROR_ACCESS_DENIED / ERROR_SHARING_VIOLATION) while a
+# handle is open. That transient window turned a concurrent store mutation
+# into a hard failure instead of the documented ConcurrentUpdateError, and
+# flaked test_mark_verified_cas_threaded_one_winner on the windows-latest leg.
+# ---------------------------------------------------------------------------
+
+
+class TestReplaceAtomicRetry:
+    def _force_win32(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """Take the Windows branch regardless of the host platform."""
+        # `_fsutil`'s `sys` / `time` globals ARE these module objects, so
+        # patching here is what the code under test sees. Patch the modules
+        # directly rather than reaching through `_fsutil.<mod>`, which mypy
+        # rejects as a non-exported attribute.
+        monkeypatch.setattr(sys, "platform", "win32")
+        # Keep the suite fast: the real backoff sleeps up to ~150ms.
+        monkeypatch.setattr(time, "sleep", lambda _s: None)
+
+    def test_retries_then_succeeds_on_windows(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A transient PermissionError is retried, not surfaced."""
+        self._force_win32(monkeypatch)
+        src, dst = tmp_path / "src", tmp_path / "dst"
+        src.write_bytes(b"payload")
+
+        calls: list[int] = []
+        real_replace = os.replace
+
+        def flaky(a: object, b: object) -> None:
+            calls.append(1)
+            if len(calls) < 3:
+                raise PermissionError(5, "Access is denied")
+            real_replace(a, b)  # type: ignore[arg-type]
+
+        monkeypatch.setattr(os, "replace", flaky)
+        _fsutil.replace_atomic(src, dst)
+
+        assert len(calls) == 3
+        assert dst.read_bytes() == b"payload"
+        assert not src.exists()
+
+    def test_reraises_original_error_after_budget(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A PERSISTENT failure still surfaces, with its real type and
+        errno — the retry must not convert a genuine permission problem
+        into a hang or a swallowed error."""
+        self._force_win32(monkeypatch)
+        src, dst = tmp_path / "src", tmp_path / "dst"
+        src.write_bytes(b"payload")
+
+        calls: list[int] = []
+
+        def always_denied(a: object, b: object) -> None:
+            calls.append(1)
+            raise PermissionError(5, "Access is denied")
+
+        monkeypatch.setattr(os, "replace", always_denied)
+        with pytest.raises(PermissionError) as excinfo:
+            _fsutil.replace_atomic(src, dst)
+
+        assert excinfo.value.errno == 5
+        assert len(calls) == _fsutil._REPLACE_ATTEMPTS
+
+    def test_does_not_retry_non_permission_errors(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Deliberately narrow: ENOSPC / EXDEV and friends are not
+        transient. A blanket `except OSError` here would disguise a full
+        disk as a slow rename."""
+        self._force_win32(monkeypatch)
+        src, dst = tmp_path / "src", tmp_path / "dst"
+        src.write_bytes(b"payload")
+
+        calls: list[int] = []
+
+        def no_space(a: object, b: object) -> None:
+            calls.append(1)
+            raise OSError(28, "No space left on device")
+
+        monkeypatch.setattr(os, "replace", no_space)
+        with pytest.raises(OSError) as excinfo:
+            _fsutil.replace_atomic(src, dst)
+
+        assert excinfo.value.errno == 28
+        assert len(calls) == 1, "non-transient errors must not be retried"
+
+    def test_posix_does_not_retry(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """On POSIX a PermissionError from os.replace is never the
+        open-handle race — it means the directory genuinely is not
+        writable. Retrying would delay a real diagnosis."""
+        monkeypatch.setattr(sys, "platform", "linux")
+        src, dst = tmp_path / "src", tmp_path / "dst"
+        src.write_bytes(b"payload")
+
+        calls: list[int] = []
+
+        def denied(a: object, b: object) -> None:
+            calls.append(1)
+            raise PermissionError(13, "Permission denied")
+
+        monkeypatch.setattr(os, "replace", denied)
+        with pytest.raises(PermissionError):
+            _fsutil.replace_atomic(src, dst)
+
+        assert len(calls) == 1, "POSIX must call straight through"
+
+    def test_atomic_write_bytes_routes_through_the_retry(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Pin the wiring: the store's write path must get the retry,
+        not just direct replace_atomic callers."""
+        self._force_win32(monkeypatch)
+        target = tmp_path / "memory.md"
+        target.write_bytes(b"old")
+
+        calls: list[int] = []
+        real_replace = os.replace
+
+        def flaky(a: object, b: object) -> None:
+            calls.append(1)
+            if len(calls) < 2:
+                raise PermissionError(32, "The process cannot access the file")
+            real_replace(a, b)  # type: ignore[arg-type]
+
+        monkeypatch.setattr(os, "replace", flaky)
+        _fsutil.atomic_write_bytes(target, b"new", mode=0o600)
+
+        assert len(calls) == 2
+        assert target.read_bytes() == b"new"
+        # The orphan-tmp cleanup must not have fired on the successful path.
+        assert not list(tmp_path.glob("*.tmp"))

@@ -90,6 +90,7 @@ from __future__ import annotations
 import contextlib
 import os
 import sys
+import time
 from collections.abc import Generator
 from pathlib import Path
 from typing import BinaryIO
@@ -234,7 +235,7 @@ def atomic_write_bytes(
                 with contextlib.suppress(OSError):
                     os.fchmod(f.fileno(), mode_before_rename)
             fsync_file(f.fileno())
-        os.replace(tmp_path, path)
+        replace_atomic(tmp_path, path)
         renamed = True
         if mode_before_rename is not None:
             # Defensive post-rename chmod (belt-and-suspenders): a no-op
@@ -258,6 +259,68 @@ def atomic_write_bytes(
         if not renamed:
             with contextlib.suppress(OSError):
                 tmp_path.unlink()
+
+
+# Windows-only retry budget for `replace_atomic`. Five attempts with a
+# doubling 10ms backoff caps the added latency at ~150ms before the
+# original error is re-raised — long enough to outlast the millisecond-
+# scale window where a racing reader still holds a handle, short enough
+# that a genuine permission failure is not disguised as a hang.
+_REPLACE_ATTEMPTS = 5
+_REPLACE_BACKOFF_S = 0.01
+
+
+def replace_atomic(src: Path, dst: Path) -> None:
+    """``os.replace(src, dst)`` with a bounded, Windows-only retry.
+
+    POSIX lets you rename over a destination that another process still
+    has open — the old inode simply lives on until the last handle
+    closes. Windows does not: `MoveFileEx` fails with
+    ``ERROR_ACCESS_DENIED`` (5) or ``ERROR_SHARING_VIOLATION`` (32),
+    both of which Python surfaces as ``PermissionError``, whenever the
+    destination has an open handle. Under concurrent access that window
+    is milliseconds wide and purely transient, but a bare ``os.replace``
+    turns it into a hard failure in the middle of the store's
+    write path.
+
+    The observable damage was two-fold. A concurrent store mutation on
+    Windows could raise ``PermissionError`` instead of the documented
+    ``ConcurrentUpdateError``, so callers written against the documented
+    contract crashed instead of losing the CAS cleanly. And
+    ``tests/test_concurrency.py::test_mark_verified_cas_threaded_one_winner``
+    flaked: its worker catches only ``ConcurrentUpdateError``, so a
+    thread that died on the rename contributed no result at all and the
+    assertion failed with the mystifying "expected exactly one
+    stale-CAS loser, got 0". That flake red-lighted the v3.25.0 release
+    run while the identical job passed on the same commit's CI run.
+
+    **Deliberately Windows-only.** On POSIX a ``PermissionError`` from
+    ``os.replace`` is never this race — it means the directory is
+    genuinely not writable, or the file is immutable. Retrying there
+    would add latency to a deterministic failure and delay a real
+    diagnosis, so the POSIX path calls straight through.
+
+    **Deliberately narrow.** Only ``PermissionError`` retries. ENOSPC,
+    EXDEV (cross-device rename), ENOENT and friends are not transient
+    and must propagate on the first attempt — a blanket ``except
+    OSError`` here would mask a full disk as a slow rename. After the
+    budget is spent the ORIGINAL error propagates unchanged, so a
+    persistent failure still surfaces with its true type and errno.
+    """
+    if sys.platform != "win32":
+        os.replace(src, dst)
+        return
+
+    delay = _REPLACE_BACKOFF_S
+    for attempt in range(_REPLACE_ATTEMPTS):
+        try:
+            os.replace(src, dst)
+            return
+        except PermissionError:
+            if attempt == _REPLACE_ATTEMPTS - 1:
+                raise
+            time.sleep(delay)
+            delay *= 2
 
 
 def bounded_read(path: Path, max_bytes: int) -> bytes:

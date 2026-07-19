@@ -49,7 +49,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Iterator
 
-from ._fsutil import flock_excl, fsync_dir, fsync_file
+from ._fsutil import flock_excl, fsync_dir, fsync_file, replace_atomic
 from .time_utils import parse_event_ts
 
 log = logging.getLogger("bettermemory.events")
@@ -406,7 +406,11 @@ class Recorder:
         )
         try:
             # Step 1: atomic rename. After this the active log is gone.
-            os.replace(self.path, rotating)
+            # `replace_atomic` so a Windows reader holding the active
+            # segment open cannot turn rotation into a hard failure —
+            # sharding multiplied the number of concurrent segment
+            # readers, which widened exactly this race.
+            replace_atomic(self.path, rotating)
             fsync_dir(self.root)
         except OSError as exc:
             log.warning("event log rotation rename failed: %s", exc)
@@ -483,7 +487,7 @@ class Recorder:
                 chmod_exc,
             )
         # Step 4: atomic rename to canonical archive name.
-        os.replace(tmp, archive)
+        replace_atomic(tmp, archive)
         fsync_dir(self.root)
         # Step 5: now that the archive is canonical, unlink the holding
         # file. A crash between this and the next fsync_dir leaves a
