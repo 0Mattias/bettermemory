@@ -127,7 +127,20 @@ Self-links are rejected. `memory_show` surfaces forward `links` on the source an
 
 Strips removal frontmatter; preserves `created`, `updated`, `last_verified_at`.
 
-Race-loss surface (W7, since 3.2.1). The handler translates `MemoryNotFoundError`, `NotTombstonedError`, and bare `OSError` from the store layer into `ValueError` at the MCP boundary — a structured callers-of-MCP boundary error rather than a leaked store-layer exception. Race-loss vs. genuine-not-found is disambiguated by the message: a `ValueError` whose message contains the substring `"raced with"` is the race-loss shape (a concurrent restore or prune completed between the find and the under-lock recheck — the id either already-active or already-gone), while a `ValueError` without that substring is a genuine not-found or already-active case (e.g. `"memory <id> is active; nothing to restore"` without the parenthetical hint). Callers that want to differentiate programmatically can match on the `"raced with"` substring; callers that just want to surface the message to the user can treat all `ValueError`s uniformly. No partial restore — either the active record exists with the full restored frontmatter, or the tombstone is untouched. Re-fetch via `memory_list` / `memory_list_tombstones` to determine which side of the race won and act accordingly.
+Failure surface (W7, since 3.2.1). The handler translates `MemoryNotFoundError`, `NotTombstonedError`, and bare `OSError` from the store layer into `ValueError` at the MCP boundary — a structured callers-of-MCP boundary error rather than a leaked store-layer exception. A failed restore arrives in one of two message shapes:
+
+- **Under-lock shape** — the message contains the substring `"raced with"`: `"memory <id> is active; nothing to restore (raced with concurrent restore)"` or `"no tombstone with id <id> (raced with concurrent restore or prune)"`. The store passed its pre-lock checks while the id was still tombstoned, then found the world had changed once it held the tombstone lock.
+- **Fast-path shape** — no `"raced with"` substring: `"memory <id> is active; nothing to restore"` or `"no tombstone with id <id>"`. The store's pre-lock check already observed the final state and returned before reaching the lock.
+
+**The substring is not a race discriminator, and the absence of `"raced with"` does NOT prove there was no race.** `Store.restore` raises from two sites, and which one a given caller hits is a scheduling accident. A caller that genuinely loses a race but arrives after the winner finished the *whole* restore (active record written, tombstone unlinked) never reaches the lock at all: it takes the pre-lock fast path and receives the bare message — a real race-loss reported in the same words as a caller who was simply mistaken about the id. The converse direction does hold: `"raced with"` is only ever emitted by the under-lock rechecks, so its presence does imply contention. Do not branch on the substring to decide whether concurrency was involved. (Documented through 3.25.2 as a two-way discriminator; that contract was never true of the code.)
+
+What callers CAN rely on:
+
+- **No partial restore.** Either the active record exists with the full restored frontmatter, or the tombstone is untouched. There is no half-restored state to clean up, under either message shape.
+- **Failure is always a `ValueError`** at the MCP boundary — never a leaked store-layer exception, never a bare `OSError` (disk-level failures are wrapped as `"failed to restore memory <id>: …"`).
+- **The outcome is observable, not inferable.** Re-fetch via `memory_show` / `memory_list` / `memory_list_tombstones` to learn the actual end state. An active id means the restore happened — by you or by whoever beat you — and that check is authoritative where the message is not.
+
+If your workflow's only question is "is this memory active now?", treat every `ValueError` uniformly and re-fetch; that answer is correct under all four messages. Programmatic race *detection* is not currently available on this surface — it would need an explicit signal (a distinct exception type, or a structured error payload) rather than a substring match.
 
 ### `memory_list_tombstones(scopes?)`
 

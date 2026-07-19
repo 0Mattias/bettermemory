@@ -29,9 +29,27 @@ The stress test alone wouldn't catch that — collisions are rare
 enough at 200 ops that the inode-split race wouldn't fire reliably.
 The targeted assertions below close the gap deterministically.
 
-Skipped on Windows: the locking primitive is a no-op there
-(`fcntl` is POSIX-only) and the MVP single-process assumption
-applies. The test would still pass — just trivially.
+Windows coverage. `_fsutil.flock_excl` — which `store._locked` and
+`events._locked` both alias — is NOT a no-op on Windows. `fcntl` is
+POSIX-only, but the Windows branch takes a real cross-process lock via
+`msvcrt.locking(fd, LK_NBLCK, 1)` on the same sidecar lockfile, with a
+retry/backoff loop (30s default, `BETTERMEMORY_FLOCK_TIMEOUT`). The
+silent-no-op branch was removed in 2.7; the only remaining no-op paths
+are the two degraded fallbacks (`msvcrt` unimportable, or the lockfile
+cannot be opened), and both emit a one-shot `logger.warning` first.
+
+So the platform-agnostic assertions run everywhere: the two
+lockfile-persistence tests below assert an invariant the Windows
+branch upholds (it creates the sidecar with `O_CREAT` and never
+unlinks it) and carry no skip.
+
+The `mp.get_context("spawn")` tests DO still skip on Windows, but for
+a different and narrower reason than the docstring used to claim:
+their marker-file rendezvous, sleep budgets, and spawn-jitter
+assumptions were written and tuned against POSIX process semantics and
+have never been validated on the Windows runner. That is a real
+coverage gap in the Windows locking path, not a statement that there
+is nothing there to test — see each marker's reason string.
 """
 
 from __future__ import annotations
@@ -164,7 +182,9 @@ def _worker(args: tuple[str, int, int]) -> dict[str, int]:
 
 @pytest.mark.skipif(
     sys.platform == "win32",
-    reason="fcntl-based locking is POSIX-only; MVP single-process on Windows",
+    reason="spawn-based rendezvous is tuned for POSIX process semantics "
+    "and unvalidated on the Windows runner; flock_excl itself is NOT a "
+    "no-op there (msvcrt lock) — see module docstring",
 )
 def test_multi_process_stress_no_corruption(tmp_path: Path) -> None:
     """The post-condition that retires the README caveat.
@@ -294,15 +314,20 @@ def test_multi_process_stress_no_corruption(tmp_path: Path) -> None:
 #      itself.
 
 
-@pytest.mark.skipif(
-    sys.platform == "win32",
-    reason="fcntl-based locking is POSIX-only; flock_excl no-ops on Windows so no lockfile is created",
-)
 def test_store_locked_persists_lockfile_after_exit(tmp_path: Path) -> None:
     """`_locked` must not unlink the lockfile on exit. The 2.6.3 fix
     removed the prior in-finally unlink; this test fails if anyone
     re-introduces it. The 0-byte file on disk is the price we pay
     for inode-stable mutual exclusion across processes.
+
+    Runs on every platform. This test previously skipped on Windows
+    with the reason "flock_excl no-ops on Windows so no lockfile is
+    created" — verifiably false since 2.7: `_flock_windows` opens the
+    sidecar with `os.O_CREAT` before taking the `msvcrt` lock and
+    never unlinks it, so both assertions below hold there. The skip
+    was suppressing the ONLY assertion in this module that exercises
+    the Windows lock branch at all (it carries `# pragma: no cover`,
+    so nothing else covers it either).
     """
     from bettermemory.store import _locked
 
@@ -321,13 +346,10 @@ def test_store_locked_persists_lockfile_after_exit(tmp_path: Path) -> None:
     )
 
 
-@pytest.mark.skipif(
-    sys.platform == "win32",
-    reason="fcntl-based locking is POSIX-only; flock_excl no-ops on Windows so no lockfile is created",
-)
 def test_events_locked_persists_lockfile_after_exit(tmp_path: Path) -> None:
     """Same invariant for `events._locked`. The 2.6.3 fix touched
-    both files because the bug was in both."""
+    both files because the bug was in both. Also runs on every
+    platform — same reasoning as the store variant above."""
     from bettermemory.events import _locked
 
     target = tmp_path / ".events.jsonl"
@@ -391,7 +413,9 @@ def _worker_time_acquire(root: str, attempt_marker: str, result_path: str) -> No
 
 @pytest.mark.skipif(
     sys.platform == "win32",
-    reason="fcntl-based locking is POSIX-only",
+    reason="spawn-based rendezvous is tuned for POSIX process semantics "
+    "and unvalidated on the Windows runner; flock_excl itself is NOT a "
+    "no-op there (msvcrt lock) — see module docstring",
 )
 def test_locked_serializes_two_spawned_processes(tmp_path: Path) -> None:
     """Cross-process mutual exclusion: while A holds the lock, B's
@@ -531,7 +555,9 @@ def _slug_collision_restore_worker(args: tuple[str, str]) -> str | None:
 
 @pytest.mark.skipif(
     sys.platform == "win32",
-    reason="fcntl-based locking is POSIX-only; MVP single-process on Windows",
+    reason="spawn-based rendezvous is tuned for POSIX process semantics "
+    "and unvalidated on the Windows runner; flock_excl itself is NOT a "
+    "no-op there (msvcrt lock) — see module docstring",
 )
 def test_multi_process_concurrent_slug_collision_writes_do_not_clobber(
     tmp_path: Path,
@@ -578,7 +604,9 @@ def test_multi_process_concurrent_slug_collision_writes_do_not_clobber(
 
 @pytest.mark.skipif(
     sys.platform == "win32",
-    reason="fcntl-based locking is POSIX-only; MVP single-process on Windows",
+    reason="spawn-based rendezvous is tuned for POSIX process semantics "
+    "and unvalidated on the Windows runner; flock_excl itself is NOT a "
+    "no-op there (msvcrt lock) — see module docstring",
 )
 def test_multi_process_concurrent_slug_collision_restores_do_not_clobber(
     tmp_path: Path,
@@ -954,7 +982,9 @@ def _w1_concurrent_tombstone_worker(args: tuple[str, str]) -> dict[str, str]:
 
 @pytest.mark.skipif(
     sys.platform == "win32",
-    reason="fcntl-based locking is POSIX-only; MVP single-process on Windows",
+    reason="spawn-based rendezvous is tuned for POSIX process semantics "
+    "and unvalidated on the Windows runner; flock_excl itself is NOT a "
+    "no-op there (msvcrt lock) — see module docstring",
 )
 def test_multi_process_concurrent_tombstone_no_oserror_leak(
     tmp_path: Path,
@@ -1295,7 +1325,9 @@ def _w2_disjoint_update_worker(
 
 @pytest.mark.skipif(
     sys.platform == "win32",
-    reason="fcntl-based locking is POSIX-only; MVP single-process on Windows",
+    reason="spawn-based rendezvous is tuned for POSIX process semantics "
+    "and unvalidated on the Windows runner; flock_excl itself is NOT a "
+    "no-op there (msvcrt lock) — see module docstring",
 )
 def test_multi_process_concurrent_disjoint_updates_no_silent_clobber(
     tmp_path: Path,
@@ -1798,7 +1830,9 @@ def _w8_disjoint_verify_worker(
 
 @pytest.mark.skipif(
     sys.platform == "win32",
-    reason="fcntl-based locking is POSIX-only; MVP single-process on Windows",
+    reason="spawn-based rendezvous is tuned for POSIX process semantics "
+    "and unvalidated on the Windows runner; flock_excl itself is NOT a "
+    "no-op there (msvcrt lock) — see module docstring",
 )
 def test_multi_process_concurrent_disjoint_verifies_no_silent_clobber(
     tmp_path: Path,
@@ -2218,7 +2252,8 @@ def test_restore_threaded_one_winner(tmp_path: Path) -> None:
     #
     # This is the same conclusion the cross-process variant below
     # reached (see `_w7_concurrent_restore_worker` and the loser loop
-    # in `test_restore_multiprocess_one_winner`), and it is why the
+    # in `test_multi_process_concurrent_restore_no_oserror_leak`),
+    # and it is why the
     # strict form flaked on the macos-latest and windows-latest legs
     # while passing locally and on ubuntu — a false failure on correct
     # behaviour. The under-lock branch this test used to over-claim is
@@ -2256,21 +2291,24 @@ def _w7_concurrent_restore_worker(
     Each worker process:
       1. Signals "ready" by touching its own ready-marker.
       2. Waits for the parent to release via a shared go-marker —
-         this rendezvous guarantees every worker is parked inside
-         `Store.restore` contention BEFORE any of them can win.
-         Without the barrier the first-spawned worker often finishes
-         the whole restore before later workers complete spawn
-         startup, routing those late workers through the pre-W7
-         fast-path checks ("is active; nothing to restore" /
-         "no tombstone with id ...") that don't engage the W7
-         under-lock recheck — masking the regression we pin here.
+         this rendezvous parks every worker immediately before
+         `Store.restore` so none of them is still in spawn startup
+         when the first one begins. Without the barrier the
+         first-spawned worker finishes the whole restore before later
+         workers are even alive, so nothing races at all. The barrier
+         makes lock contention likely; it does NOT make it certain
+         (see the parent test's comment).
       3. Calls `Store.restore(memory_id)`.
 
     Exactly one worker wins; the rest must lose with
-    `NotTombstonedError` or `MemoryNotFoundError`, each carrying the
-    "raced with" hint from the W7 under-lock recheck. No bare OSError
-    may leak — that's the W7 bug. Returns a dict describing the
-    outcome so the parent can assert on the distribution.
+    `NotTombstonedError` or `MemoryNotFoundError`. Losers may carry
+    either the "raced with" hint (the W7 under-lock recheck fired) or
+    the bare pre-lock message (the winner had already finished, so
+    this worker's PRE-LOCK check saw the final state and returned
+    before touching the lock) — both are correct race-loss outcomes.
+    No bare OSError may leak — that's the W7 bug. Returns a dict
+    describing the outcome so the parent can assert on the
+    distribution.
     """
     root, memory_id, ready_marker, go_marker = args
 
@@ -2315,7 +2353,9 @@ def _w7_concurrent_restore_worker(
 
 @pytest.mark.skipif(
     sys.platform == "win32",
-    reason="fcntl-based locking is POSIX-only; MVP single-process on Windows",
+    reason="spawn-based rendezvous is tuned for POSIX process semantics "
+    "and unvalidated on the Windows runner; flock_excl itself is NOT a "
+    "no-op there (msvcrt lock) — see module docstring",
 )
 def test_multi_process_concurrent_restore_no_oserror_leak(
     tmp_path: Path,
@@ -2338,17 +2378,31 @@ def test_multi_process_concurrent_restore_no_oserror_leak(
     # File-system barrier: every worker signals "ready" by touching
     # `ready_marker_<w>`; the parent waits for all N to appear then
     # releases via `go_marker`. Mirrors the rendezvous in the W2/W8
-    # multi-process tests above. Without this, spawn-startup jitter
-    # (≈200ms on macOS) lets the first-spawned worker often win and
-    # release the lock before the rest reach the contention point —
-    # routing those losers through the pre-W7 fast-path messages
-    # ("is active; nothing to restore" / "no tombstone with id ...")
-    # that don't engage the under-lock recheck. With the barrier all
-    # six workers race the file lock from a synchronised start, so
-    # every loser is forced through the W7 under-lock path and carries
-    # the "raced with" hint — enabling the strict assertion below to
-    # serve as a true W7 regression guard (parity with the threaded
-    # variant at `test_restore_threaded_one_winner`).
+    # multi-process tests above. Without it, spawn-startup jitter
+    # (≈200ms on macOS) lets the first-spawned worker win and release
+    # the lock before the rest have even finished interpreter startup,
+    # so the "race" degenerates into six sequential restores.
+    #
+    # What the barrier buys is narrowing, NOT determinism. It removes
+    # spawn jitter from the window, which makes lock contention the
+    # common case — but it cannot force any particular loser through
+    # the W7 under-lock path. A loser that wakes microseconds after
+    # the winner still finds the restore already complete at the
+    # PRE-LOCK check (`Store.restore` raises there before ever
+    # acquiring the tombstone lock) and reports the fast-path message
+    # with no "raced with" hint. That is correct behaviour, not a
+    # regression, and it is why the loser loop below accepts both
+    # shapes. An earlier revision of this comment claimed the barrier
+    # forced every loser under the lock; the strict assertion built on
+    # that claim flaked on the macOS CI runner and was removed — see
+    # the loop's own comment for the full history.
+    #
+    # The under-lock "raced with" branch is pinned DETERMINISTICALLY
+    # elsewhere, by monkeypatching rather than racing:
+    # `test_restore_raises_not_tombstoned_when_active_appears_under_lock`
+    # and `test_restore_after_concurrent_restore_raises_structured_failure`.
+    # What THIS test uniquely pins is the real-process distribution:
+    # no bare OSError, exactly one winner, every loss structured.
     barrier_dir = tmp_path / "_w7_barriers"
     barrier_dir.mkdir()
     go_marker = barrier_dir / "go"
@@ -2458,3 +2512,161 @@ def test_multi_process_concurrent_restore_no_oserror_leak(
     assert fresh.load_one(memory.id).id == memory.id
     with pytest.raises(MemoryNotFoundError):
         fresh.load_tombstone(memory.id)
+
+
+# ---------------------------------------------------------------------------
+# `memory_restore` failure-message contract — docs/api.md parity.
+# ---------------------------------------------------------------------------
+#
+# docs/api.md documented (through 3.25.2) that a `memory_restore`
+# ValueError containing "raced with" meant a lost race and that a
+# ValueError WITHOUT that substring was "a genuine not-found or
+# already-active case". The second half was never true: `Store.restore`
+# raises `NotTombstonedError` / `MemoryNotFoundError` from TWO sites —
+# the under-lock rechecks (structured, hinted) and the PRE-LOCK fast
+# path (bare) — and a caller that loses a real race but arrives after
+# the winner finished takes the fast path and gets the bare message.
+# The doc now describes both shapes and states plainly that the
+# absence of the hint proves nothing. The two tests below keep the
+# code and the doc from drifting apart again in either direction.
+
+
+def test_restore_race_loss_is_not_discriminable_by_message(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A lost restore race can surface WITH or WITHOUT "raced with".
+
+    Two legs, both of which are a caller losing a restore race, run
+    deterministically (no threads, no spawn):
+
+    - **Decisive loss** — the winner completed the entire restore
+      (active record written, tombstone unlinked) before the loser
+      reached `Store.restore`'s pre-lock checks. The loser never
+      acquires the tombstone lock: `_find_path_for_id` finds the
+      active record and it raises immediately with the BARE message.
+      Sequential restores reproduce this exactly, because the on-disk
+      state a decisive race-loser observes is byte-identical to the
+      state after a completed restore — that indistinguishability is
+      the whole point.
+    - **Narrow loss** — the winner landed while the loser was already
+      past the pre-lock checks, so the under-lock recheck fires and
+      the message carries the "raced with" hint.
+
+    Same logical event, two different message shapes. This pins the
+    asymmetry docs/api.md now documents: `"raced with"` present
+    implies contention, but `"raced with"` ABSENT implies nothing. If
+    a future change unifies the two messages (a legitimate product
+    improvement — it would make a real discriminator possible), this
+    test goes red and forces docs/api.md to be updated in lockstep
+    rather than silently re-acquiring a false contract.
+    """
+    # --- Leg 1: decisive loss → pre-lock fast path, bare message. ---
+    store = Store(tmp_path)
+    decisive = store.write(content="decisive restore race loser", scopes=["tools"])
+    store.tombstone(decisive.id, reason="fast-path shape setup")
+    store.restore(decisive.id)  # the winner, running to completion
+
+    with pytest.raises(NotTombstonedError) as decisive_exc:
+        store.restore(decisive.id)  # the loser, arriving too late to contend
+    decisive_msg = str(decisive_exc.value)
+    assert "is active; nothing to restore" in decisive_msg, (
+        f"expected the pre-lock active-check message, got {decisive_msg!r}"
+    )
+    assert "raced with" not in decisive_msg, (
+        f"pre-lock fast path unexpectedly carries the under-lock hint: "
+        f"{decisive_msg!r}. If `Store.restore`'s two raise sites were "
+        f"deliberately unified, docs/api.md's `memory_restore` failure "
+        f"surface must be rewritten to match — it currently documents "
+        f"these as two distinct shapes."
+    )
+
+    # --- Leg 2: narrow loss → under-lock recheck, hinted message. ---
+    narrow = store.write(content="narrow restore race loser", scopes=["tools"])
+    store.tombstone(narrow.id, reason="under-lock shape setup")
+
+    original_find = Store._find_tombstone_path_for_id
+    fired = {"done": False}
+
+    def racing_find(self: Store, mid: str) -> Path | None:
+        # Fire the "winner" AFTER the outer call cleared its pre-lock
+        # checks but BEFORE it takes the tombstone lock — the narrow
+        # interleaving the barrier-based tests can only hope for.
+        path = original_find(self, mid)
+        if path is not None and mid == narrow.id and not fired["done"]:
+            fired["done"] = True
+            self.restore(mid)
+        return path
+
+    monkeypatch.setattr(Store, "_find_tombstone_path_for_id", racing_find)
+    with pytest.raises(MemoryNotFoundError) as narrow_exc:
+        store.restore(narrow.id)
+    narrow_msg = str(narrow_exc.value)
+    monkeypatch.undo()
+    assert fired["done"], "the injected winner never ran; leg 2 proved nothing"
+    assert "raced with" in narrow_msg, (
+        f"under-lock recheck lost its race hint: {narrow_msg!r}"
+    )
+
+    # The contract, stated as one assertion: both legs are lost races,
+    # only one says so.
+    assert ("raced with" in narrow_msg) != ("raced with" in decisive_msg), (
+        f"Both restore-race losers now report the same shape "
+        f"({decisive_msg!r} / {narrow_msg!r}). That may be an improvement, "
+        f"but docs/api.md documents them as distinguishable-but-not-a-"
+        f"discriminator; update the doc before landing this."
+    )
+
+
+def test_api_md_does_not_promise_a_restore_race_discriminator() -> None:
+    """docs/api.md must not re-acquire the false "raced with" contract.
+
+    The retired text told callers that a `memory_restore` ValueError
+    without `"raced with"` was "a genuine not-found or already-active
+    case" and invited them to "differentiate programmatically" on the
+    substring. `test_restore_race_loss_is_not_discriminable_by_message`
+    above shows the store cannot honour that. Pin the corrected doc so
+    the promise cannot come back by editorial accident.
+
+    Lives here rather than in `tests/test_prompts.py` (where the other
+    api.md parity checks live) so the doc pin sits next to the
+    behavioural pin it depends on; the two are only meaningful
+    together.
+    """
+    api_md = Path(__file__).resolve().parents[1] / "docs" / "api.md"
+    text = api_md.read_text(encoding="utf-8")
+    start = text.index("### `memory_restore(id)`")
+    end = text.index("### ", start + 1)
+    section = text[start:end]
+
+    # The retired false promise, in both of its halves.
+    assert "genuine not-found or already-active case" not in section, (
+        "docs/api.md has regressed to promising that a `memory_restore` "
+        "ValueError without 'raced with' is a genuine not-found / "
+        "already-active case. It is not: `Store.restore`'s PRE-LOCK fast "
+        "path emits that bare message for real race-losers too."
+    )
+    assert "differentiate programmatically" not in section, (
+        "docs/api.md has regressed to inviting callers to branch on the "
+        "'raced with' substring. The substring is not a race discriminator."
+    )
+
+    # The corrections that replaced it.
+    assert "not a race discriminator" in section, (
+        "docs/api.md no longer states that the 'raced with' substring is "
+        "not a race discriminator."
+    )
+    assert "does NOT prove there was no race" in section, (
+        "docs/api.md no longer warns that the ABSENCE of 'raced with' "
+        "proves nothing about whether a race occurred."
+    )
+    for shape in ("Under-lock shape", "Fast-path shape"):
+        assert shape in section, (
+            f"docs/api.md no longer enumerates the {shape!r} of a failed "
+            f"`memory_restore`; callers need both to read a message."
+        )
+    assert "What callers CAN rely on" in section, (
+        "docs/api.md dropped the positive half of the contract — having "
+        "removed a guarantee, it must still tell callers what holds "
+        "(no partial restore; always a ValueError; re-fetch to learn the "
+        "outcome)."
+    )
