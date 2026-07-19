@@ -3853,6 +3853,16 @@ def test_fix_event_log_survives_a_segment_vanishing_before_its_stat(
     def _vanish_after_the_glob(directory: Path) -> list[Path]:
         files = real_event_log_files(directory)
         if ghost.exists():
+            # Restore write permission before unlinking. `chmod(0o400)`
+            # sets the READ-ONLY attribute on Windows and `os.unlink`
+            # refuses a read-only file there with PermissionError
+            # [WinError 5], which failed the windows-latest leg while
+            # passing on POSIX. The unwritable state was only needed for
+            # the `_check_event_log_writable` assertion above, which has
+            # already run — what this hook exists to simulate is the file
+            # VANISHING between the glob and the stat, and that is
+            # unaffected.
+            ghost.chmod(0o600)
             ghost.unlink()  # rotated away between the glob and the stat
         return files
 
