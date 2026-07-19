@@ -8,15 +8,19 @@ hermetic.
 
 from __future__ import annotations
 
+import contextlib
 import fnmatch
 import logging
 import shutil
 import subprocess
+import threading
+from collections.abc import Generator
 from pathlib import Path
 
 import pytest
 
 from bettermemory import sync
+from bettermemory._fsutil import flock_excl
 from bettermemory.doctor import DOCTOR_PROBE_FILENAME
 from bettermemory.episodes import EPISODES_DIR
 from bettermemory.events import EVENT_LOG_FILENAME, _SEGMENT_TEMPLATE
@@ -1981,6 +1985,172 @@ def test_push_refuses_to_commit_or_ship_conflict_markers(
     assert "resolve" in message.lower(), (
         f"the error does not tell the user to resolve the conflict: {message}"
     )
+
+
+def _arm_a_conflicting_stash(memory_dir: Path, bare_remote: Path) -> None:
+    """Leave `memory_dir` clean, synced, and holding a stash that will
+    CONFLICT the moment it is popped.
+
+    Chosen over `_wedge_a_conflicted_merge` for the TOCTOU test below
+    because this shape leaves the repo with NO divergence from the remote:
+    the conflict is purely local, so `auto`'s follow-on `pull --rebase` has
+    nothing to replay and cannot fail. That is what lets the corrupt run
+    finish silently instead of tripping over a later step. A conflicted
+    `git stash pop` also writes no `MERGE_HEAD` and no `rebase-merge/`
+    directory, so nothing but the porcelain `UU` code marks the state.
+
+    On return: `main` == `origin/main`, worktree clean, one stash entry
+    whose recorded change overlaps the committed one.
+    """
+    sync.init(memory_dir, remote=str(bare_remote))
+    store = Store(memory_dir)
+    memory = store.write(content="shared fact", scopes=["tools"])
+    sync.push(memory_dir)
+
+    path = store._find_path_for_id(memory.id)
+    assert path is not None
+    base = path.read_text(encoding="utf-8")
+
+    # Change A goes into the stash; the worktree reverts to `base`.
+    path.write_text(base + "\nfrom the stashed edit\n", encoding="utf-8")
+    _git(memory_dir, "stash", "push", "--", path.name)
+
+    # Change B is committed and pushed at the same spot, so the remote
+    # stays in sync while the stash becomes unappliable.
+    path.write_text(base + "\nfrom the committed edit\n", encoding="utf-8")
+    sync.push(memory_dir)
+
+    assert not _git(memory_dir, "status", "--porcelain").strip(), (
+        "fixture left the worktree dirty; the test needs a clean starting state"
+    )
+    assert (
+        _git(memory_dir, "rev-parse", "main").strip()
+        == _git(bare_remote, "rev-parse", "main").strip()
+    ), "fixture left the clone diverged from the remote"
+
+
+def test_auto_checks_for_conflicts_after_taking_the_sync_lock(
+    memory_dir: Path, bare_remote: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """🔴 DATA CORRUPTION, TOCTOU. `_commit_local_changes` used to run
+    `_require_no_unresolved_conflict` BEFORE `with flock_excl(...)` rather
+    than as the first statement inside it — unlike `push` and `pull`, which
+    both check after their acquire. A conflict arriving while `auto` waited
+    for a contended lock therefore landed after the only check that would
+    have caught it, and `git add -A` staged the markers as resolved content.
+
+    This is the silent variant, and the reason it is worth a test of its
+    own: with a purely-local conflicted `git stash pop` there is no
+    divergence from the remote, so the follow-on `pull --rebase` is a no-op
+    and never aborts the run. Against the pre-fix commit `sync.auto`
+    RETURNED NORMALLY — no exception at all — having committed `<<<<<<<`
+    onto `main` and PUSHED it to the bare remote. Verified empirically by
+    running this test with the guard restored to its pre-fix position: it
+    fails on the `isinstance(error, sync.SyncError)` assertion below,
+    reporting the returned dict. With that assertion temporarily moved
+    beneath them, the marker scans fail too — separately confirmed on the
+    clone and on the bare remote.
+
+    Deterministic, not timing-tuned. Two synchronisation points replace any
+    sleep: a holder thread signals once it actually holds `.sync.lock`, and
+    a one-shot wrapper around `sync.flock_excl` signals at the instant
+    `_commit_local_changes` reaches its acquire. That instant is exactly
+    the window under test — with the guard misplaced it has already run and
+    passed, and with the guard correctly placed it has not run yet — so the
+    conflict is injected at the one moment that distinguishes the two. The
+    60-second waits are deadlock failsafes, not timing assumptions: no
+    assertion here turns on how long a step takes.
+
+    A same-process thread is a real lock holder here: `flock` ownership is
+    per open file description, so a second `os.open` + `LOCK_EX` in the same
+    process blocks until the first releases (probed directly before this
+    test was written).
+    """
+    _arm_a_conflicting_stash(memory_dir, bare_remote)
+    before_local = _git(memory_dir, "rev-parse", "main").strip()
+    before_remote = _git(bare_remote, "rev-parse", "main").strip()
+
+    holder_holds_lock = threading.Event()
+    auto_reached_acquire = threading.Event()
+    holder_may_release = threading.Event()
+
+    def hold_the_sync_lock() -> None:
+        # The real `flock_excl`, captured at import: `sync.flock_excl` is
+        # monkeypatched below and must not be picked up here.
+        with flock_excl(memory_dir / sync._SYNC_LOCK_NAME):
+            holder_holds_lock.set()
+            holder_may_release.wait(timeout=60)
+
+    holder = threading.Thread(target=hold_the_sync_lock, daemon=True)
+    holder.start()
+    assert holder_holds_lock.wait(timeout=60), "lock holder never acquired"
+
+    reached_once = False
+
+    @contextlib.contextmanager
+    def signalling_flock_excl(path: Path, **kwargs: str) -> Generator[None]:
+        nonlocal reached_once
+        # First acquire only — that is `_commit_local_changes`'. `pull` and
+        # `push` take the same lock later in the same `auto` run and must
+        # not re-signal.
+        if not reached_once:
+            reached_once = True
+            auto_reached_acquire.set()
+        with flock_excl(path, **kwargs):
+            yield
+
+    monkeypatch.setattr(sync, "flock_excl", signalling_flock_excl)
+
+    outcome: dict[str, object] = {}
+
+    def run_auto() -> None:
+        try:
+            outcome["returned"] = sync.auto(memory_dir)
+        except BaseException as exc:  # noqa: BLE001 - re-asserted below
+            outcome["error"] = exc
+
+    auto_thread = threading.Thread(target=run_auto, daemon=True)
+    auto_thread.start()
+    assert auto_reached_acquire.wait(timeout=60), (
+        "`auto` never reached a `flock_excl` acquire — if the sync lock was "
+        "removed, this test no longer covers the window it was written for"
+    )
+
+    # THE WINDOW. `auto` is now blocked on the contended acquire. Expected
+    # to fail: the failure IS the conflicted state under test.
+    subprocess.run(
+        ["git", "stash", "pop"], cwd=memory_dir, capture_output=True, check=False
+    )
+    porcelain = _git(memory_dir, "status", "--porcelain")
+    assert any(line.startswith("UU") for line in porcelain.splitlines()), (
+        f"fixture did not wedge a conflicted stash pop; porcelain: {porcelain!r}"
+    )
+    assert not sync._rebase_in_progress(memory_dir), (
+        "fixture wedged a rebase, not a stash pop — the state under test is "
+        "the one that leaves no sentinel file"
+    )
+
+    holder_may_release.set()
+    auto_thread.join(timeout=60)
+    assert not auto_thread.is_alive(), "`auto` never finished after the release"
+    holder.join(timeout=60)
+
+    error = outcome.get("error")
+    assert isinstance(error, sync.SyncError), (
+        "`auto` did not refuse a conflict that landed during the lock wait; "
+        f"it returned {outcome.get('returned')!r}"
+    )
+
+    # `main`, not `HEAD`: the sibling conflict tests document that a failed
+    # rebase can detach HEAD while the corrupt commit sits on the branch tip.
+    assert _git(memory_dir, "rev-parse", "main").strip() == before_local, (
+        "auto committed onto main with unmerged files present"
+    )
+    assert _git(bare_remote, "rev-parse", "main").strip() == before_remote, (
+        "auto SHIPPED a commit to the remote with unmerged files present"
+    )
+    _assert_no_commit_carries_conflict_markers(memory_dir)
+    _assert_no_commit_carries_conflict_markers(bare_remote)
 
 
 def test_pull_still_works_on_a_clean_worktree(

@@ -965,16 +965,39 @@ def _commit_local_changes(root: Path, message: str) -> bool:
     rebase-only guard let `auto` commit `<<<<<<< HEAD` onto the tip of
     `main`, where the next push would ship it to every clone.
 
-    `push` carries the same guard, added after this one. Both callers of
-    `_stage_and_commit` now check before they reach it, so no route to the
-    single `git add -A` is unguarded. `auto` runs commit -> pull -> push
-    and each step gates independently, but the first to see a conflict
-    raises and aborts the run, so the user gets one message rather than
-    three: on a conflicted store `auto` stops here and never reaches
-    `pull` or `push` at all.
+    `push` carries the same guard, added after this one. Those are the two
+    call sites of `_stage_and_commit`, which holds the package's only
+    `git add -A`, so both routes to it now check.
+
+    The check is the FIRST statement inside the lock, not before the
+    acquire — matching `push` and `pull`, which both check after theirs.
+    It sat outside until now, and that was a TOCTOU hole rather than a
+    style wart: a conflict arriving while `auto` waited for a contended
+    lock landed after the only check that would have caught it. Verified
+    empirically against the pre-fix commit with an event-synchronised lock
+    holder: with a purely-local conflicted `git stash pop` injected during
+    the wait, `sync.auto` RETURNED NORMALLY — the markers were committed
+    onto `main` and pushed to the bare remote, with no error raised,
+    because the absence of remote divergence left the follow-on
+    `pull --rebase` with nothing to trip over.
+
+    A residual window remains and this is deliberately not an all-clear.
+    The lock serialises bettermemory's own sync operations against each
+    other; it does not stop the user's hand-run `git merge` (or an editor
+    plugin's) from conflicting the worktree between the predicate and the
+    `git add -A` a few statements later. This lock cannot cover that: it is
+    bettermemory's own mutex and the user's git does not take it. Moving the
+    check inside the lock shrinks the exposure from an unbounded lock wait
+    (see `push`'s note on POSIX blocking) to the short gap between the two
+    calls; it does not eliminate it.
+
+    `auto` runs commit -> pull -> push and each step gates independently,
+    but the first to see a conflict raises and aborts the run, so the user
+    gets one message rather than three: on a store already conflicted when
+    `auto` starts, it stops here and never reaches `pull` or `push`.
     """
-    _require_no_unresolved_conflict(root)
     with flock_excl(root / _SYNC_LOCK_NAME):
+        _require_no_unresolved_conflict(root)
         return _stage_and_commit(root, message)
 
 
@@ -1044,13 +1067,20 @@ def push(
         # bodies full of markers, and undoing that reaches past the user's
         # own repo into every copy that already fetched it.
         #
-        # INSIDE the lock, not before it. `push` may block here for as
-        # long as `BETTERMEMORY_FLOCK_TIMEOUT` allows (default 30s), so a
-        # check taken before the acquire describes a worktree that another
-        # process — or the user's own hand-run `git merge` — has had that
-        # whole window to conflict. Checking after the acquire makes
-        # guard-then-stage one atomic boundary, which is also where `pull`
-        # puts its copy.
+        # INSIDE the lock, not before it. The wait here is UNBOUNDED on
+        # POSIX — `flock_excl` routes to a bare blocking
+        # `fcntl.flock(fd, LOCK_EX)` with no deadline, and
+        # `BETTERMEMORY_FLOCK_TIMEOUT` is read only by `_flock_windows`,
+        # so it caps this wait on Windows (default 30s) and nowhere else.
+        # Verified on darwin: with that variable set to 1 and a holder
+        # keeping the lock 5s, the acquire returned after 5.00s instead of
+        # raising. An unbounded wait is the argument FOR checking after the
+        # acquire, not against it: a check taken beforehand describes a
+        # worktree that another process — or the user's own hand-run
+        # `git merge` — has had an open-ended window to conflict. Checking
+        # after makes guard-then-stage as close to one boundary as this
+        # wrapper can get, which is also where `pull` and
+        # `_commit_local_changes` put their copies.
         _require_no_unresolved_conflict(root)
 
         committed = _stage_and_commit(root, message)
