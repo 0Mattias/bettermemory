@@ -2312,6 +2312,17 @@ _needs_posix_store_names = pytest.mark.skipif(
     reason="store names containing ':' or '*' are illegal in Windows filenames",
 )
 
+_needs_posix_modes = pytest.mark.skipif(
+    sys.platform == "win32",
+    reason=(
+        "POSIX mode bits are not meaningful on Windows: `chmod(0o755)` does not "
+        "produce a group/other-readable directory, and `stat()` synthesises a "
+        "mode. Both the store-root heal and doctor's over-permissive check are "
+        "`sys.platform`-guarded to no-op there, so the assertions below describe "
+        "behaviour that deliberately does not exist on Windows."
+    ),
+)
+
 
 def _git_in(cwd: Path, *args: str) -> str:
     """Ad-hoc git for fixtures — raises with stderr on failure (mirrors
@@ -3749,6 +3760,7 @@ def test_fix_storage_directory_stands_down_when_already_writable(
     assert stat.S_IMODE(tmp_path.stat().st_mode) == mode_before
 
 
+@_needs_posix_modes
 def test_fix_storage_directory_tightens_over_permissive_root(tmp_path: Path) -> None:
     """The second fixable branch: a store root that is perfectly writable
     but carries group/other bits.
@@ -3772,6 +3784,7 @@ def test_fix_storage_directory_tightens_over_permissive_root(tmp_path: Path) -> 
     assert stat.S_IMODE(tmp_path.stat().st_mode) == 0o700
 
 
+@_needs_posix_modes
 def test_check_storage_directory_warns_on_over_permissive_root(tmp_path: Path) -> None:
     """The check half: doctor reports the exposure rather than passing a
     0o755 store as `ok`.
