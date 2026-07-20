@@ -2006,6 +2006,16 @@ def test_v4_index_with_stale_spelled_stream_heals_on_construction(
 # ---------------------------------------------------------------------------
 
 
+def _admit_all(_scopes: list[str], _origin: object) -> bool:
+    """Admission predicate that keeps everything — the unfiltered
+    baseline. The real caller binds `search.candidate_admitted` to a
+    request's scope/repo/worktree filters; these tests isolate the
+    counting from the filtering, which
+    `test_corpus_document_frequencies_counts_only_admitted_rows` covers
+    on its own."""
+    return True
+
+
 def test_corpus_document_frequencies_counts_body_and_scope_separately(
     store: Store, memory_dir: Path
 ) -> None:
@@ -2021,7 +2031,7 @@ def test_corpus_document_frequencies_counts_body_and_scope_separately(
     store.write(content="beta", scopes=["shared"])
 
     resolved = index.corpus_document_frequencies(
-        memory_dir, ["alpha", "beta", "shared", "never-written"]
+        memory_dir, ["alpha", "beta", "shared", "never-written"], admit=_admit_all
     )
 
     assert resolved is not None
@@ -2045,10 +2055,15 @@ def test_corpus_document_frequencies_degrades_to_none(tmp_path: Path) -> None:
     results — degrade the ranking, never fail the search.
     """
     # No index on disk at all.
-    assert index.corpus_document_frequencies(tmp_path, ["alpha"]) is None
+    assert (
+        index.corpus_document_frequencies(tmp_path, ["alpha"], admit=_admit_all) is None
+    )
     # No terms to look up — short-circuits before touching sqlite.
-    assert index.corpus_document_frequencies(tmp_path, []) is None
-    assert index.corpus_document_frequencies(tmp_path, ["", "  "]) is None
+    assert index.corpus_document_frequencies(tmp_path, [], admit=_admit_all) is None
+    assert (
+        index.corpus_document_frequencies(tmp_path, ["", "  "], admit=_admit_all)
+        is None
+    )
 
 
 def test_corpus_document_frequencies_survives_a_corrupt_index(
@@ -2061,4 +2076,101 @@ def test_corpus_document_frequencies_survives_a_corrupt_index(
     assert index_path.exists()
     index_path.write_bytes(b"this is not a sqlite database" * 40)
 
-    assert index.corpus_document_frequencies(memory_dir, ["alpha"]) is None
+    assert (
+        index.corpus_document_frequencies(memory_dir, ["alpha"], admit=_admit_all)
+        is None
+    )
+
+
+def test_corpus_document_frequencies_counts_only_admitted_rows(
+    store: Store, memory_dir: Path
+) -> None:
+    """The denominator is the collection the search will RANK, not the
+    whole store.
+
+    This is the reason the origin columns exist. Under auto-scope a
+    caller in repo A can only retrieve repo-A memories, so pricing term
+    rarity against repo B's memories describes a collection that caller
+    will never see. Here 'alpha' is in every body but only two rows are
+    admitted, so its df must be 2 of 2 — not 4 of 4.
+    """
+    from bettermemory.origin import Origin
+
+    repo_a = Origin(repo="git@github.com:example/a.git")
+    repo_b = Origin(repo="git@github.com:example/b.git")
+    store.write(content="alpha one", scopes=["tools"], origin=repo_a)
+    store.write(content="alpha two", scopes=["tools"], origin=repo_a)
+    store.write(content="alpha three", scopes=["tools"], origin=repo_b)
+    store.write(content="alpha four", scopes=["tools"], origin=repo_b)
+
+    def admit_only_a(_scopes: list[str], origin: object) -> bool:
+        return getattr(origin, "repo", None) == "git@github.com:example/a.git"
+
+    resolved = index.corpus_document_frequencies(
+        memory_dir, ["alpha"], admit=admit_only_a
+    )
+
+    assert resolved is not None
+    size, body_df, _scope_df = resolved
+    assert size == 2, "collection size must be the admitted set"
+    assert body_df["alpha"] == 2, "df must not count rows the caller cannot retrieve"
+
+
+def test_corpus_document_frequencies_returns_none_when_nothing_is_admitted(
+    store: Store, memory_dir: Path
+) -> None:
+    """An empty admitted set is not a corpus of size 0 — it means the
+    caller should fall back rather than divide by nothing."""
+    store.write(content="alpha", scopes=["tools"])
+
+    resolved = index.corpus_document_frequencies(
+        memory_dir, ["alpha"], admit=lambda _s, _o: False
+    )
+
+    assert resolved is None
+
+
+def test_index_round_trips_origin_columns(store: Store, memory_dir: Path) -> None:
+    """Schema v6 persists the origin block's repo/worktree, and an UPSERT
+    refreshes them — `migrate origin --repair` rewrites origins in place,
+    and a stale index value would keep filtering on the pre-repair repo."""
+    import sqlite3
+
+    from bettermemory.origin import Origin
+
+    memory = store.write(
+        content="alpha",
+        scopes=["tools"],
+        origin=Origin(repo="git@github.com:example/before.git", worktree_root="/w/one"),
+    )
+
+    def row_for(mid: str) -> sqlite3.Row:
+        conn = sqlite3.connect(index.index_path(memory_dir))
+        try:
+            conn.row_factory = sqlite3.Row
+            return conn.execute(
+                "SELECT origin_repo, origin_worktree FROM memories WHERE id = ?",
+                (mid,),
+            ).fetchone()
+        finally:
+            conn.close()
+
+    before = row_for(memory.id)
+    assert before["origin_repo"] == "git@github.com:example/before.git"
+    assert before["origin_worktree"] == "/w/one"
+
+    store.update(
+        memory.model_copy(
+            update={
+                "origin": Origin(
+                    repo="git@github.com:example/after.git", worktree_root="/w/two"
+                )
+            }
+        )
+    )
+
+    after = row_for(memory.id)
+    assert after["origin_repo"] == "git@github.com:example/after.git", (
+        "an upsert must refresh origin_repo, not keep the insert-time value"
+    )
+    assert after["origin_worktree"] == "/w/two"

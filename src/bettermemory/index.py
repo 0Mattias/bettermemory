@@ -71,10 +71,11 @@ import time
 from collections.abc import Iterable, Sequence
 from datetime import datetime
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 
 from ._fsutil import flock_excl
 from .models import Memory
+from .origin import Origin
 from .search import fts_index_text, fts_match_query, tokenizer_fingerprint
 
 log = logging.getLogger("bettermemory.index")
@@ -140,7 +141,18 @@ log = logging.getLogger("bettermemory.index")
 # `schema_version`, stamped in the same transaction; `_ensure_schema`
 # treats a fingerprint mismatch at the CURRENT version exactly like an
 # older version.
-SCHEMA_VERSION = 5
+#
+# Version 6 (origin columns): `memories` gains `origin_repo` /
+# `origin_worktree`, mirroring the origin block already on the .md file.
+# They exist so the BM25 corpus-statistics path can decide search
+# admission from an index row instead of parsing every body — see
+# `corpus_document_frequencies`. NOT a SQL filter: the columns are read
+# back out and fed to `search.candidate_admitted`, because `repos_match`
+# compares on `(host, owner, name)` AND consults per-process alternate
+# spellings, so admission is not expressible in SQL. Storing the raw
+# strings and deciding in Python is what keeps the IDF denominator
+# provably equal to the ranked set.
+SCHEMA_VERSION = 6
 
 # Pinned `search.tokenizer_fingerprint()` digest for the current
 # SCHEMA_VERSION. Consumed only by the ratchet test
@@ -184,7 +196,15 @@ CREATE TABLE IF NOT EXISTS memories (
     scopes_text TEXT NOT NULL,
     scopes_fts TEXT NOT NULL DEFAULT '',
     scopes_json TEXT NOT NULL,
-    filename TEXT NOT NULL DEFAULT ''
+    filename TEXT NOT NULL DEFAULT '',
+    -- Schema v6. Raw spellings, straight off the memory's origin block;
+    -- NULL for a legacy/global write with no origin. Never compared in
+    -- SQL — `corpus_document_frequencies` hands them to
+    -- `search.candidate_admitted` so the normalising `repos_match`
+    -- (and its per-process alternate spellings) stays the single
+    -- definition of "belongs to this caller".
+    origin_repo TEXT,
+    origin_worktree TEXT
 );
 
 -- The FTS table indexes the PREPROCESSED columns (schema v4): body_fts /
@@ -856,36 +876,59 @@ def filenames_for_ids(root: Path, ids: list[str]) -> dict[str, str]:
 
 
 def corpus_document_frequencies(
-    root: Path, terms: Sequence[str]
+    root: Path,
+    terms: Sequence[str],
+    *,
+    admit: Callable[[list[str], Origin | None], bool],
 ) -> tuple[int, dict[str, int], dict[str, int]] | None:
-    """Corpus-wide document frequencies for `terms`, straight from FTS5.
+    """Document frequencies for `terms` over the collection a search will
+    actually rank.
 
-    Returns `(corpus_size, body_df, scope_df)` where `body_df` counts
-    documents whose BODY contains the term and `scope_df` counts documents
-    containing it in body OR scopes — the same two denominators
-    `search.compute_idf` builds, but over the whole corpus instead of
-    whatever subset the caller happens to hold.
+    Returns `(collection_size, body_df, scope_df)` where `body_df` counts
+    admitted documents whose BODY carries the term and `scope_df` counts
+    admitted documents carrying it in body OR scopes — the two
+    denominators `search.compute_idf` builds.
 
-    Why this exists: above `_INDEX_THRESHOLD_DEFAULT` the search path hands
-    the ranker at most `_PREFILTER_CAP` candidates, and every one of them is
-    there BECAUSE it matched the query. Deriving df from that pool makes the
-    query's own discriminative terms look ubiquitous — df approaches N by
-    construction — and Okapi IDF collapses toward zero for exactly the terms
-    that should dominate the ranking. Measured on a 600-memory corpus where
-    8 documents carried a rare term, IDF fell from 4.26 to 0.06.
+    Why this exists: above `_INDEX_THRESHOLD_DEFAULT` the search path
+    hands the ranker at most `_PREFILTER_CAP` candidates, and every one is
+    there BECAUSE it matched the query. Deriving df from that pool makes
+    the query's own discriminative terms look ubiquitous — df approaches N
+    by construction — and Okapi IDF collapses toward zero for exactly the
+    terms that should dominate. Measured at 74x on a 600-memory corpus.
 
-    Implementation is a pair of `fts5vocab` views created in `temp.`, so
-    this needs no schema version and no migration: they are read-only
-    projections of the live FTS index. `'col'` gives the per-column
-    (body-only) counts; `'row'` gives the union across columns, which is
-    precisely the body-or-scopes denominator. Term spellings line up with
-    the Python ranker's without any mirroring because schema v4 indexes
-    `search.fts_index_text` output rather than the raw body.
+    `admit` is the caller's admission predicate, taking `(scopes, origin)`
+    and returning whether that memory survives the search filters. It is
+    `search.candidate_admitted` bound to this request's scope / repo /
+    worktree filters — the SAME predicate `_filter_candidates` runs.
+    Passing it in rather than filtering in SQL is the whole design:
+    `repos_match` compares on `(host, owner, name)` and consults
+    per-process alternate spellings registered by `origin.capture`, so
+    admission is not expressible in SQL, and any index-side approximation
+    would quietly disagree with the ranked set for precisely the
+    multi-remote stores alternates exist to serve. The columns are read
+    OUT and judged in Python; the denominator is provably the ranked set.
 
-    Returns None — never raises — when the index is absent, unreadable, or
-    older than the tokenizer-parity schema. The caller then keeps the
-    pool-derived behaviour, which is wrong in the way described above but
-    is what shipped, so degradation is never worse than the status quo.
+    Cost is two FTS lookups per term plus one columnar scan of
+    `(id, scopes_json, origin_repo, origin_worktree)`. That scan is
+    O(corpus) — measured 3.8 ms at 1K memories, 17 ms at 5K, 71 ms at 20K
+    — so it is honestly linear, just with a constant ~3.6 µs/row against
+    the per-file open + YAML parse that `load_all` pays for the same
+    coverage. 5K is where this module's docstring puts the file-walk
+    cliff, so the scan buys the prefilter's coverage back at a small
+    fraction of what the prefilter was avoiding.
+
+    If that ever needs to come down: the Python loop exists only because
+    `admit` is opaque here. `SELECT DISTINCT origin_repo, origin_worktree`
+    is a handful of rows in any real store, so admission could be decided
+    once per distinct origin and the row restriction pushed into SQL —
+    left undone deliberately, since it only pays above ~20K memories and
+    the scope-filter arm would still need the row-wise path.
+
+    Returns None — never raises — when the index is absent, unreadable,
+    older than the origin-column schema, or yields an empty collection.
+    The caller then keeps pool-derived statistics, which are wrong in the
+    way described above but are what shipped, so degradation is never
+    worse than the status quo.
     """
     if not terms:
         return None
@@ -895,45 +938,60 @@ def corpus_document_frequencies(
     unique = sorted({t for t in terms if t})
     if not unique:
         return None
-    # `_connect` itself raises on a corrupt file — it runs `PRAGMA
-    # journal_mode = WAL` on open — so it has to sit INSIDE the guard
-    # rather than above it, or page-level corruption escapes as a
-    # DatabaseError to a caller documented never to see one.
+    # `_connect` runs `PRAGMA journal_mode = WAL` on open and so raises on
+    # a corrupt file — it has to sit INSIDE the guard, or page-level
+    # corruption escapes as a DatabaseError to a caller documented never
+    # to see one.
     conn: sqlite3.Connection | None = None
     try:
         conn = _connect(path)
         _ensure_schema(conn, path)
-        row = conn.execute("SELECT COUNT(*) AS n FROM memories").fetchone()
-        corpus_size = int(row["n"]) if row else 0
-        if corpus_size <= 0:
+        admitted: set[str] = set()
+        for row in conn.execute(
+            "SELECT id, scopes_json, origin_repo, origin_worktree FROM memories"
+        ):
+            repo = row["origin_repo"]
+            worktree = row["origin_worktree"]
+            origin = (
+                Origin(repo=repo, worktree_root=worktree)
+                if (repo is not None or worktree is not None)
+                else None
+            )
+            # An origin carrying only `cwd` reconstructs as None here.
+            # That is not a lossy shortcut: `should_include_for_caller`
+            # reads only `repo` and `worktree_root`, so the two are
+            # indistinguishable to the admission rule.
+            try:
+                scopes = json.loads(row["scopes_json"])
+            except (TypeError, ValueError):
+                continue
+            if admit(list(scopes), origin):
+                admitted.add(row["id"])
+        if not admitted:
             return None
-        placeholders = ",".join("?" * len(unique))
-        # `IF NOT EXISTS` because a connection is per-call today but the
-        # helper must stay correct if that ever gets pooled.
-        conn.execute(
-            "CREATE VIRTUAL TABLE IF NOT EXISTS temp.vocab_col "
-            "USING fts5vocab(main, memories_fts, 'col')"
-        )
-        conn.execute(
-            "CREATE VIRTUAL TABLE IF NOT EXISTS temp.vocab_row "
-            "USING fts5vocab(main, memories_fts, 'row')"
-        )
-        body_df = {
-            r["term"]: int(r["doc"])
-            for r in conn.execute(
-                f"SELECT term, doc FROM temp.vocab_col "
-                f"WHERE col = 'body_fts' AND term IN ({placeholders})",
-                unique,
-            )
-        }
-        scope_df = {
-            r["term"]: int(r["doc"])
-            for r in conn.execute(
-                f"SELECT term, doc FROM temp.vocab_row WHERE term IN ({placeholders})",
-                unique,
-            )
-        }
-        return corpus_size, body_df, scope_df
+
+        def _ids_matching(match_expr: str) -> set[str]:
+            return {
+                r["id"]
+                for r in conn.execute(
+                    "SELECT m.id AS id FROM memories m "
+                    "JOIN memories_fts f ON f.rowid = m.rowid "
+                    "WHERE memories_fts MATCH ?",
+                    (match_expr,),
+                )
+            }
+
+        body_df: dict[str, int] = {}
+        scope_df: dict[str, int] = {}
+        for term in unique:
+            quoted = '"' + term.replace('"', '""') + '"'
+            body_hits = _ids_matching(f"body_fts : {quoted}") & admitted
+            any_hits = _ids_matching(quoted) & admitted
+            if body_hits:
+                body_df[term] = len(body_hits)
+            if any_hits:
+                scope_df[term] = len(any_hits)
+        return len(admitted), body_df, scope_df
     except (sqlite3.Error, IndexVersionError, OSError):
         # Same posture as every other read helper here: the index is a
         # derived cache, so a failure degrades the ranking rather than
@@ -1255,6 +1313,44 @@ def status(root: Path) -> dict[str, Any]:
         }
 
 
+def flag_needs_rebuild(root: Path) -> bool:
+    """Mark the index stale so search routes to `load_all` until a rebuild.
+
+    For bulk paths that rewrite `.md` files directly instead of going
+    through a `Store` mutator — `migrate` is the one in tree. Those writes
+    leave the index holding pre-migration frontmatter with no signal: the
+    S4 divergence check compares COUNTS, and a migration that rewrites
+    scopes or an origin block in place does not change the count, so the
+    skew is invisible to it.
+
+    Setting the flag is the conservative lever rather than a per-file
+    upsert: it is the same mechanism `_ensure_schema` uses for a version
+    bump, it fails SAFE (search falls back to the full scan, which is
+    slower but correct), and `Store.__post_init__`'s auto-rebuild clears
+    it on the next construction without the user doing anything.
+
+    Returns True when the flag landed. Best-effort and never raises: an
+    unwritable or absent index is already the degraded case, and a bulk
+    migration must not fail because a derived cache could not be marked.
+    """
+    path = index_path(root)
+    if not path.exists():
+        return False
+    try:
+        conn = _connect(path)
+        try:
+            with conn:
+                conn.execute(
+                    "INSERT OR REPLACE INTO meta(key, value) "
+                    "VALUES ('needs_rebuild', '1')"
+                )
+            return True
+        finally:
+            conn.close()
+    except (sqlite3.Error, OSError):
+        return False
+
+
 def record_rebuild_failure(root: Path) -> None:
     """Best-effort cross-process marker for the construction-time
     auto-rebuild backoff: stamp the wall-clock of a FAILED attempt in
@@ -1328,8 +1424,9 @@ def _insert_memory(conn: sqlite3.Connection, memory: Memory, filename: str) -> N
     conn.execute(
         "INSERT INTO memories("
         "id, created, updated, last_verified_at, confidence, category, "
-        "body, body_fts, scopes_text, scopes_fts, scopes_json, filename) "
-        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        "body, body_fts, scopes_text, scopes_fts, scopes_json, filename, "
+        "origin_repo, origin_worktree) "
+        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
         (
             memory.id,
             memory.created.isoformat(),
@@ -1343,6 +1440,8 @@ def _insert_memory(conn: sqlite3.Connection, memory: Memory, filename: str) -> N
             fts_index_text(" ".join(memory.scopes)),
             json.dumps(memory.scopes),
             filename,
+            memory.origin.repo if memory.origin else None,
+            memory.origin.worktree_root if memory.origin else None,
         ),
     )
     _sync_links(conn, memory)
@@ -1357,8 +1456,9 @@ def _upsert_memory(conn: sqlite3.Connection, memory: Memory, filename: str) -> N
     conn.execute(
         "INSERT INTO memories("
         "id, created, updated, last_verified_at, confidence, category, "
-        "body, body_fts, scopes_text, scopes_fts, scopes_json, filename) "
-        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) "
+        "body, body_fts, scopes_text, scopes_fts, scopes_json, filename, "
+        "origin_repo, origin_worktree) "
+        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) "
         "ON CONFLICT(id) DO UPDATE SET "
         "created = excluded.created, "
         "updated = excluded.updated, "
@@ -1370,7 +1470,13 @@ def _upsert_memory(conn: sqlite3.Connection, memory: Memory, filename: str) -> N
         "scopes_text = excluded.scopes_text, "
         "scopes_fts = excluded.scopes_fts, "
         "scopes_json = excluded.scopes_json, "
-        "filename = excluded.filename",
+        "filename = excluded.filename, "
+        # Must be in the update set, not just the insert: `migrate origin
+        # --repair` exists specifically to rewrite origins captured wrong,
+        # and an upsert that left these stale would keep filtering search
+        # admission on the pre-repair value.
+        "origin_repo = excluded.origin_repo, "
+        "origin_worktree = excluded.origin_worktree",
         (
             memory.id,
             memory.created.isoformat(),
@@ -1384,6 +1490,8 @@ def _upsert_memory(conn: sqlite3.Connection, memory: Memory, filename: str) -> N
             fts_index_text(" ".join(memory.scopes)),
             json.dumps(memory.scopes),
             filename,
+            memory.origin.repo if memory.origin else None,
+            memory.origin.worktree_root if memory.origin else None,
         ),
     )
     _sync_links(conn, memory)

@@ -575,6 +575,23 @@ def migrate_origin_in_directory(
             # write never landed.
             report.updated += 1
 
+    # This function rewrites `.md` files directly rather than through a
+    # Store mutator, so nothing has kept the FTS index in step. The S4
+    # divergence check compares COUNTS and a migration changes none — it
+    # rewrites scopes and origin blocks in place — so the skew is
+    # invisible to it, and the index would keep serving pre-migration
+    # scopes to the prefilter and pre-migration origins to the BM25
+    # admission filter until someone happened to run `reindex`.
+    #
+    # Flagging is best-effort and fails SAFE: search falls back to the
+    # full scan (slower, correct) and `Store.__post_init__` auto-rebuilds
+    # on the next construction. Dry runs persist nothing, so they must not
+    # flag; likewise a run that changed no file.
+    if not dry_run and report.updated:
+        from . import index as _index
+
+        _index.flag_needs_rebuild(memory_dir)
+
     return report
 
 

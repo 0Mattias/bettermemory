@@ -40,7 +40,7 @@ from functools import lru_cache
 from typing import Any, Callable, Literal, NamedTuple
 
 from .models import Memory, MemoryHit, SimilarHit, TombstonedMemory, snippet_for
-from .origin import should_include_for_caller
+from .origin import Origin, should_include_for_caller
 from .verify import detect_path_drift
 
 log = logging.getLogger("bettermemory.search")
@@ -1665,22 +1665,56 @@ def _filter_candidates(
     """
     scope_filter = set(scopes) if scopes else None
     excluded = excluded_scopes or set()
-    out: list[Memory] = []
-    for memory in memories:
-        memory_scope_set = set(memory.scopes)
-        if excluded and (memory_scope_set & excluded):
-            continue
-        if scope_filter is not None and not (memory_scope_set & scope_filter):
-            continue
-        if repo_filter is not None:
-            if not should_include_for_caller(
-                memory.origin,
-                repo_filter,
-                caller_worktree_root=worktree_filter,
-            ):
-                continue
-        out.append(memory)
-    return out
+    return [
+        memory
+        for memory in memories
+        if candidate_admitted(
+            memory.scopes,
+            memory.origin,
+            scope_filter=scope_filter,
+            excluded=excluded,
+            repo_filter=repo_filter,
+            worktree_filter=worktree_filter,
+        )
+    ]
+
+
+def candidate_admitted(
+    memory_scopes: list[str],
+    memory_origin: Origin | None,
+    *,
+    scope_filter: set[str] | None,
+    excluded: set[str],
+    repo_filter: str | None,
+    worktree_filter: str | None,
+) -> bool:
+    """Does one memory survive the search filters?
+
+    Split out of `_filter_candidates` so the BM25 corpus-statistics path
+    can decide admission from an INDEX row — id, scopes, origin — without
+    parsing a body. Both callers therefore run the identical predicate:
+    the IDF denominator is provably the same collection that gets ranked,
+    rather than a SQL approximation of it kept in sync by hand.
+
+    That parity is not optional here. `repos_match` compares on
+    `(host, owner, name)` and additionally consults per-process alternate
+    spellings registered by `origin.capture`, so the admission rule is not
+    expressible in SQL at all — any index-side filter would silently
+    disagree with the ranked set for exactly the multi-remote stores the
+    alternates mechanism exists to serve.
+    """
+    memory_scope_set = set(memory_scopes)
+    if excluded and (memory_scope_set & excluded):
+        return False
+    if scope_filter is not None and not (memory_scope_set & scope_filter):
+        return False
+    if repo_filter is not None and not should_include_for_caller(
+        memory_origin,
+        repo_filter,
+        caller_worktree_root=worktree_filter,
+    ):
+        return False
+    return True
 
 
 def _build_hit(

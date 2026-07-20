@@ -300,9 +300,9 @@ async def test_corpus_stats_are_not_consulted_below_the_prefilter_threshold(
 
     real = index_module.corpus_document_frequencies
 
-    def spy(root: Path, terms: Any) -> Any:
+    def spy(root: Path, terms: Any, **kwargs: Any) -> Any:
         calls.append(list(terms))
-        return real(root, terms)
+        return real(root, terms, **kwargs)
 
     monkeypatch.setattr(index_module, "corpus_document_frequencies", spy)
 

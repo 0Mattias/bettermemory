@@ -24,6 +24,7 @@ from ..time_utils import parse_event_ts
 from ..search import (
     CorpusStats,
     SearchMode,
+    candidate_admitted,
     _filter_candidates,
     _relevance_label_v2,
     search as run_search,
@@ -387,7 +388,25 @@ async def memory_search(
     def _corpus_stats(terms: list[str]) -> CorpusStats | None:
         from .. import index as _index
 
-        resolved = _index.corpus_document_frequencies(deps.store.root, terms)
+        # Bind THIS request's filters onto the same predicate
+        # `_filter_candidates` runs, so the document frequencies come from
+        # exactly the collection about to be ranked — not from the whole
+        # store. Under auto-scope those differ sharply: a store spanning
+        # several projects would otherwise price term rarity against
+        # memories the caller cannot retrieve.
+        def _admit(memory_scopes: list[str], origin: Any) -> bool:
+            return candidate_admitted(
+                memory_scopes,
+                origin,
+                scope_filter=set(scopes) if scopes else None,
+                excluded=set(state.disabled_scopes),
+                repo_filter=repo_filter,
+                worktree_filter=worktree_filter,
+            )
+
+        resolved = _index.corpus_document_frequencies(
+            deps.store.root, terms, admit=_admit
+        )
         if resolved is None:
             return None
         size, body_df, scope_df = resolved
