@@ -24,9 +24,12 @@ What is checked
 3. ``test-count`` — "the N tests in ``tests/x.py``" / "``tests/x.py``
    contains N tests" must match the count of test functions found by
    AST. Digits and English number words ("Nine") both parse.
-4. ``line-ref`` — a ``file.py:NNN`` citation must land in range, and for
-   the markdown-linked form the cited region must actually contain one of
-   the code identifiers named in the surrounding paragraph.
+4. ``line-ref`` — a ``file.py:NNN`` citation must land in range, and the
+   cited region must actually contain one of the code identifiers the
+   surrounding paragraph attributes to it. Both halves apply to the
+   markdown-linked and bare-backticked forms alike. When the paragraph
+   names no identifier that exists in the target at all, there is no
+   anchor to judge against and the rule stays quiet.
 5. ``file-count`` — "N files are named ``x.py``" must match how many files
    the repo scan actually resolves for that name.
 
@@ -40,9 +43,9 @@ fast each claim shape decays:
 * ``path`` and ``symbol`` claims are checked **everywhere**, changelog
   included. Both decay slowly enough to be worth pinning across history:
   measured at HEAD, the changelog carries 177 checked path tokens with 2
-  stale (~1%) and 16 symbol claims with 1 stale (~6%). Three allowlist
-  entries to cover the entire release history is a price worth paying
-  for full-history coverage.
+  stale (~1%) and 16 symbol claims with 1 stale (~6%). A handful of
+  allowlist entries to cover the entire release history is a price worth
+  paying for full-history coverage.
 * ``test-count`` and ``line-ref`` claims are checked in **living
   documents only** (README.md, docs/*.md). Test counts and line numbers
   rot mechanically with every refactor — pinning them against frozen
@@ -55,17 +58,33 @@ fast each claim shape decays:
 
 On src/ and tests/ docstrings: INCLUDED
 ---------------------------------------
-This was decided by measurement, not taste. Across all 812 docstrings in
-``src/``: 11 checked path claims, 3 symbol claims, 0 line-refs, 0
-test-counts. Including them adds real coverage at zero allowlist cost —
-both misfires found there (an illustrative ``docs/y.md``, and
-builder.py's past-tense "``_register_tools`` lived in ``server.py``")
-are handled by extractor rules, not exemptions.
+Decided by measurement, not taste — but the measurement is deliberately
+not written down here. A standing total ("across all N docstrings…") is
+precisely the rot-prone shape this module exists to catch, and it lands
+in this module's own blind spot: ``check_test_counts`` and
+``check_line_refs`` never run against Python sources at all, and the one
+counting shape that does, ``file-count``, matches phrasings about
+*files*, not about docstrings. A docstring total is therefore
+unfalsifiable here by construction. An earlier revision of this section
+stated three of them. All three were wrong by HEAD, two were already
+wrong on the day they were typed, and nothing in CI could notice.
 
-``tests/`` docstrings were added for the same reason, and after the same
-measurement: scanning all 2483 of them for ``path`` and ``symbol``
-claims produces zero failures, so the coverage is free. Only
-docstrings are read, never statement bodies — the self-tests below are
+The property that justified including them, and that survives any number
+of docstrings being added:
+
+* Only three shapes are run against Python sources at all — ``path``,
+  ``symbol`` and ``file-count`` (see ``collect_failures``) — and
+  docstrings are dense prose but sparse in even those, so extending the
+  corpus this way is cheap.
+* It costs nothing in exemptions. Every misfire found in a docstring —
+  an illustrative ``docs/y.md``, builder.py's past-tense
+  "``_register_tools`` lived in ``server.py``" — was answered with an
+  extractor rule, never an allowlist entry. That is the load-bearing
+  half, so it is derived rather than asserted from memory:
+  ``test_no_allowlist_entry_covers_a_docstring_source`` fails the moment
+  a docstring needs exempting.
+
+Only docstrings are read, never statement bodies — the self-tests below are
 built from deliberately invalid paths and symbols that exist precisely
 to be rejected, so scanning bodies would misfire by construction.
 **Corollary for anyone editing this file: keep synthetic examples in
@@ -165,7 +184,9 @@ nothing, so those tests are load-bearing, not decorative.
 from __future__ import annotations
 
 import ast
+import os
 import re
+import subprocess
 from dataclasses import dataclass
 from functools import lru_cache
 from pathlib import Path
@@ -173,6 +194,11 @@ from pathlib import Path
 import pytest
 
 _REPO_ROOT = Path(__file__).resolve().parents[1]
+
+# Every filesystem access in this module resolves from `_REPO_ROOT`, never
+# from the process CWD, so `pytest tests/` and `pytest` from a subdirectory
+# see the same corpus.
+_EVENTS_MODULE = "src/bettermemory/events.py"
 
 _CHANGELOG = "CHANGELOG.md"
 _PLAN_DOCS = frozenset(
@@ -259,7 +285,8 @@ _SYMBOL_IN_MODULE = re.compile(
 # the file's total. Bare "N tests in X" is a subset reading; see docstring.
 _TESTCOUNT_TOTAL = re.compile(
     rf"\b(?:all|the|its)\s+(?P<n>{_NUM})\s+(?:test|check)s?"
-    rf"(?:\s+functions?|\s+cases?)?\s+in\s+`{{1,2}}(?P<path>tests/[\w/]+\.py)`{{1,2}}",
+    rf"(?:\s+functions?|\s+cases?)?\s+in\s+`{{1,2}}(?P<path>tests/[\w/]+\.py)`{{1,2}}"
+    rf"(?P<tail>[^.]{{0,12}})",
     re.I,
 )
 # "`tests/x.py` contains N test functions" — the file is the subject, so
@@ -270,7 +297,11 @@ _TESTCOUNT_SUBJECT = re.compile(
     rf"(?:test|check)s?\b(?P<tail>[^.]{{0,12}})",
     re.I,
 )
-# A restrictive relative clause makes "has N tests that ..." a subset.
+# A restrictive relative clause makes a count a subset rather than a total,
+# and it does so in either phrasing — "has N tests that ..." and "the N tests
+# in `X` that ..." are the same English. Both patterns capture a `tail` and
+# both consult this, so the demotion cannot depend on which way round the
+# sentence was written.
 _RESTRICTIVE = re.compile(r"^\s*(that|which|covering|pinning|exercising)\b", re.I)
 
 # Matches "N files are named `x.py`" and the elided "N are named `x.py`",
@@ -356,12 +387,46 @@ _ALLOWLIST: dict[tuple[str, str, str], str] = {
         "when this entry shipped; the Round-3 wiring extraction moved it "
         "to builder.py. Accurate release note, since-refactored code."
     ),
+    (
+        "docs/swarm-convergence-plan.md",
+        "line-ref",
+        "events.py:237",
+    ): (
+        "Genuinely false and owned elsewhere: the paragraph says this "
+        "citation lands in `redact_query`'s docstring. It does not — the "
+        "cited line is blank, in the gap above `_safe_stem_component`, "
+        "and `redact_query` is defined far enough below it to fall "
+        "outside the proximity window. The doc is outside the file set "
+        "this repair may touch, so it is exempt here rather than fixed "
+        "here. Delete on repair."
+    ),
 }
-# NOTE: the `events.py:237` entry that sat here was REMOVED, not fixed —
-# the repair it was waiting on landed, `test_allowlist_has_no_stale_entries`
-# went red on the now-stale exemption, and deleting it is the ratchet
-# working exactly as intended. That is the whole design: an exemption
-# cannot outlive the defect it excuses.
+# NOTE on the entry directly above, which is the second time it has been
+# written. It sat here once before, was deleted as repaired, and was not
+# repaired. Reconstructed from history rather than from the commit message
+# that removed it:
+#
+#   * `fa45542` wrote the citation in markdown-LINKED form. That is the
+#     form `check_line_refs` anchor-checked, and it genuinely failed —
+#     on the anchor `crc32`, which the paragraph pinned to it then.
+#   * `3f55d1b` rewrote the same citation into a BARE backticked
+#     reference. `_LINEREF_BARE` only range-checked, and the line is
+#     comfortably inside the file, so the extractor stopped matching —
+#     while line 237 went on being cited for code that is not there.
+#   * The checker was authored against the pre-rewrite tree and landed by
+#     cherry-pick (`58b78dd`) onto the post-rewrite one, so its exemption
+#     was already stale on arrival. Running that commit's checker against
+#     that commit's tree reproduces it: no line-ref failure at all.
+#   * `704da7c` then deleted the entry — correctly, per the reverse guard
+#     — but recorded the cause as "the repair it was waiting on landed".
+#     No such repair landed; the citation is still in the doc.
+#
+# `test_allowlist_has_no_stale_entries` had already named both readings in
+# its own failure message. The second was the true one and the first was
+# written down as fact, so that message now spells out that the two causes
+# need opposite responses instead of just saying "delete the entry". And
+# `_anchor_miss` runs on both citation shapes, which is what puts this
+# entry back.
 
 
 # --------------------------------------------------------------------------
@@ -385,17 +450,24 @@ def _prose_sources() -> list[tuple[str, str]]:
     return out
 
 
-def _docstrings_under(pattern: str) -> list[tuple[str, int, str]]:
-    """``(relpath, first_line_of_literal, text)`` for each matched docstring.
+def _docstrings_under(prefix: str) -> list[tuple[str, int, str]]:
+    """``(relpath, first_line_of_literal, text)`` for each docstring under ``prefix``.
 
     Docstrings only — never statement bodies. Test modules are full of
     synthetic strings that exist precisely to be invalid, so scanning
     their bodies would misfire by construction.
+
+    Files come from ``_all_py_files()`` rather than a glob, so this corpus
+    inherits the same tracked-files discipline. A ``src/**/*.py`` glob
+    would happily descend into a vendored tree parked under ``src/`` or
+    ``tests/`` — and a docstring is prose, so a dependency's docstring
+    could fail this repo's CI on a claim nobody here wrote.
     """
     out: list[tuple[str, int, str]] = []
-    for path in sorted(_REPO_ROOT.glob(pattern)):
-        rel = path.relative_to(_REPO_ROOT).as_posix()
-        tree = ast.parse(path.read_text(encoding="utf-8"))
+    for rel in _all_py_files():
+        if not rel.startswith(prefix):
+            continue
+        tree = ast.parse((_REPO_ROOT / rel).read_text(encoding="utf-8"))
         for node in ast.walk(tree):
             if not isinstance(
                 node,
@@ -417,7 +489,7 @@ def _code_docstrings() -> list[tuple[str, int, str]]:
     and the origin of a false claim on its first commit — falls inside
     the corpus it polices.
     """
-    return _docstrings_under("src/**/*.py") + _docstrings_under("tests/**/*.py")
+    return _docstrings_under("src/") + _docstrings_under("tests/")
 
 
 # --------------------------------------------------------------------------
@@ -427,14 +499,75 @@ def _line_of(text: str, offset: int) -> int:
     return text.count("\n", 0, offset) + 1
 
 
+_SKIP_DIR_NAMES = frozenset(
+    {".git", ".claude", ".venv", "venv", "node_modules", "__pycache__", "build", "dist"}
+)
+
+
+def _git_tracked_py_files() -> tuple[str, ...] | None:
+    """Tracked ``*.py`` paths, or ``None`` when this is not a git checkout."""
+    try:
+        proc = subprocess.run(
+            ["git", "-C", str(_REPO_ROOT), "ls-files", "-z", "--", "*.py"],
+            capture_output=True,
+            check=False,
+            timeout=60,
+        )
+    except (OSError, subprocess.SubprocessError):  # pragma: no cover - no git
+        return None
+    if proc.returncode != 0:  # pragma: no cover - not a checkout
+        return None
+    rels = [rel for rel in proc.stdout.decode("utf-8").split("\0") if rel]
+    return tuple(sorted(rel for rel in rels if (_REPO_ROOT / rel).is_file()))
+
+
+def _walk_py_files() -> tuple[str, ...]:
+    """Corpus fallback for a tree with no git metadata.
+
+    Prunes as it descends rather than filtering afterwards. A directory
+    holding ``pyvenv.cfg`` is a virtualenv root per PEP 405 whatever it is
+    named, so that marker catches environments a name list would miss.
+    ``os.walk`` does not follow directory symlinks, so a link pointing into
+    an environment is skipped too.
+    """
+    out: list[str] = []
+    for dirpath, dirnames, filenames in os.walk(_REPO_ROOT):
+        here = Path(dirpath)
+        dirnames[:] = [
+            d
+            for d in dirnames
+            if d not in _SKIP_DIR_NAMES and not (here / d / "pyvenv.cfg").is_file()
+        ]
+        out.extend(
+            (here / name).relative_to(_REPO_ROOT).as_posix()
+            for name in filenames
+            if name.endswith(".py")
+        )
+    return tuple(sorted(out))
+
+
 @lru_cache(maxsize=None)
 def _all_py_files() -> tuple[str, ...]:
-    skip = {".git", ".claude", ".venv", "node_modules", "__pycache__", "build", "dist"}
-    return tuple(
-        p.relative_to(_REPO_ROOT).as_posix()
-        for p in _REPO_ROOT.rglob("*.py")
-        if not skip & set(p.relative_to(_REPO_ROOT).parts)
-    )
+    """Every Python file that belongs to this repo — and nothing vendored.
+
+    Tracked files, so an untracked dependency tree cannot enter the corpus
+    by any name. The previous rule was a directory-name skip list that
+    happened to contain ``.venv`` but not ``venv``, which is where this
+    repo's environment actually lives; the whole site-packages tree was
+    being scanned. That was not merely slow. ``_resolve_modules`` matches
+    on basename, so third-party modules became candidate readings of bare
+    references meant for ``src/`` — a dependency shipping ``events.py`` or
+    ``store.py`` could satisfy a claim about this project's module of that
+    name, and ``file-count`` answers were inflated by files nobody here
+    wrote.
+
+    The tradeoff of keying on tracked-ness: a brand-new file joins the
+    corpus when it is staged, not when it is created. That is the right
+    way round for a CI gate, which always runs against a committed tree,
+    and it is why the rule is tracked-ness rather than a smarter filter.
+    """
+    tracked = _git_tracked_py_files()
+    return _walk_py_files() if tracked is None else tracked
 
 
 @lru_cache(maxsize=None)
@@ -594,6 +727,8 @@ def check_test_counts(source: str, text: str) -> list[Failure]:
         window = text[max(0, match.start() - 40) : match.start()]
         if _DELTA_QUALIFIER.search(window) or _DELTA_QUALIFIER.search(match.group(0)):
             continue
+        if _RESTRICTIVE.match(match.group("tail")):
+            continue
         found.append(
             (
                 _line_of(text, match.start()),
@@ -649,8 +784,54 @@ def _paragraph_around(text: str, line: int) -> str:
     return "\n".join(lines[start : end + 1])
 
 
+@lru_cache(maxsize=None)
+def _module_lines(rel: str) -> tuple[str, ...]:
+    """Cached line list for a repo-relative source file."""
+    return tuple((_REPO_ROOT / rel).read_text(encoding="utf-8").splitlines())
+
+
+def _anchor_miss(
+    text: str, line: int, body: list[str], start: int, end: int
+) -> set[str] | None:
+    """Identifiers the paragraph pins to a citation but which are not near it.
+
+    Returns ``None`` when there is nothing to decide: no identifier in the
+    surrounding paragraph exists in the target file at all, so the citation
+    has no anchor to be measured against and the rule stays quiet. Returns
+    an empty set when at least one anchor lands within ``_ANCHOR_WINDOW``
+    lines. Both of those are passes — callers test falsiness, not identity.
+    """
+    blob = "\n".join(body)
+    anchors = {
+        ident
+        for ident in _CODE_IDENT.findall(_paragraph_around(text, line))
+        if re.search(rf"\b{re.escape(ident)}\b", blob)
+    }
+    if not anchors:
+        return None
+    near = "\n".join(body[max(0, start - 1 - _ANCHOR_WINDOW) : end + _ANCHOR_WINDOW])
+    if any(re.search(rf"\b{re.escape(a)}\b", near) for a in anchors):
+        return set()
+    return anchors
+
+
+def _anchor_detail(name: str, start: int, missed: set[str]) -> str:
+    return (
+        f"none of the identifiers the paragraph attributes to this citation "
+        f"({', '.join(sorted(missed))}) appear within {_ANCHOR_WINDOW} lines "
+        f"of {name}:{start}"
+    )
+
+
 def check_line_refs(source: str, text: str) -> list[Failure]:
-    """``file.py:NNN`` citations must be in range and land near their claim."""
+    """``file.py:NNN`` citations must be in range and land near their claim.
+
+    Both halves apply to both citation shapes: a citation is a citation
+    whether or not it is wrapped in a markdown link. The anchor half used
+    to run on linked citations only, and that gap is not hypothetical — it
+    is how a wrong citation shipped and how an allowlist entry covering it
+    silently stopped matching (see the ``_ALLOWLIST`` note).
+    """
     out: list[Failure] = []
     linked_spans: list[tuple[int, int]] = []
 
@@ -672,31 +853,10 @@ def check_line_refs(source: str, text: str) -> list[Failure]:
                 Failure(claim, f"cites line {end}; {name} has {len(body)} lines")
             )
             continue
-        # Anchor proximity: identifiers named in the same paragraph that
-        # exist in the target must appear near the cited region. If none of
-        # the paragraph's identifiers exist in the file at all, there is no
-        # anchor to check against and we say nothing.
-        blob = "\n".join(body)
-        anchors = {
-            ident
-            for ident in _CODE_IDENT.findall(_paragraph_around(text, line))
-            if re.search(rf"\b{re.escape(ident)}\b", blob)
-        }
-        if not anchors:
+        missed = _anchor_miss(text, line, body, start, end)
+        if not missed:
             continue
-        near = "\n".join(
-            body[max(0, start - 1 - _ANCHOR_WINDOW) : end + _ANCHOR_WINDOW]
-        )
-        if any(re.search(rf"\b{re.escape(a)}\b", near) for a in anchors):
-            continue
-        out.append(
-            Failure(
-                claim,
-                f"none of the identifiers the paragraph attributes to this "
-                f"citation ({', '.join(sorted(anchors))}) appear within "
-                f"{_ANCHOR_WINDOW} lines of {name}:{start}",
-            )
-        )
+        out.append(Failure(claim, _anchor_detail(name, start, missed)))
 
     for match in _LINEREF_BARE.finditer(text):
         if any(s <= match.start() < e for s, e in linked_spans):
@@ -708,16 +868,29 @@ def check_line_refs(source: str, text: str) -> list[Failure]:
         if not candidates:
             continue
         start = int(match.group("start"))
-        lengths = {
-            rel: len((_REPO_ROOT / rel).read_text(encoding="utf-8").splitlines())
-            for rel in candidates
-        }
-        if any(start <= n for n in lengths.values()):
-            continue
         line = _line_of(text, match.start())
         claim = Claim(source, line, "line-ref", f"{name}:{start}")
-        sizes = ", ".join(f"{rel} has {n}" for rel, n in sorted(lengths.items()))
-        out.append(Failure(claim, f"cites line {start}; {sizes}"))
+
+        lengths = {rel: len(_module_lines(rel)) for rel in candidates}
+        in_range = sorted(rel for rel, n in lengths.items() if start <= n)
+        if not in_range:
+            sizes = ", ".join(f"{rel} has {n}" for rel, n in sorted(lengths.items()))
+            out.append(Failure(claim, f"cites line {start}; {sizes}"))
+            continue
+
+        # Ambiguity is resolved the way `_resolve_modules` documents: a bare
+        # reference may name several files, and a claim that holds for any
+        # plausible reading is not false. So the anchor check reports only
+        # when every in-range candidate misses.
+        misses: dict[str, set[str]] = {}
+        for rel in in_range:
+            missed = _anchor_miss(text, line, list(_module_lines(rel)), start, start)
+            if not missed:  # anchor landed, or there was no anchor to check
+                break
+            misses[rel] = missed
+        else:
+            named = {anchor for found in misses.values() for anchor in found}
+            out.append(Failure(claim, _anchor_detail(name, start, named)))
     return out
 
 
@@ -774,8 +947,16 @@ def test_allowlist_has_no_stale_entries() -> None:
         )
         pytest.fail(
             f"{len(stale)} _ALLOWLIST entr(y/ies) no longer correspond to a real "
-            f"failure:\n{rendered}\n\nThe claim was fixed, or the extractor "
-            f"stopped matching it. Delete the entry — that is the ratchet."
+            f"failure:\n{rendered}\n\nTwo different things cause this and they "
+            f"need opposite responses:\n"
+            f"  (1) the claim was repaired — delete the entry, that is the "
+            f"ratchet;\n"
+            f"  (2) the extractor stopped matching a claim that is still "
+            f"false — the prose was reworded, or a rule narrowed. Deleting "
+            f"the entry then hides a live defect.\n"
+            f"Check the claim against the source before deleting. Recording "
+            f"(1) when it was really (2) has already happened once here; see "
+            f"the _ALLOWLIST note."
         )
 
 
@@ -783,6 +964,23 @@ def test_allowlist_entries_carry_a_reason() -> None:
     """Every exemption must say why, so review can judge it."""
     for key, reason in _ALLOWLIST.items():
         assert len(reason.strip()) >= 40, f"{key} needs a substantive reason"
+
+
+def test_no_allowlist_entry_covers_a_docstring_source() -> None:
+    """Derives the 'costs nothing in exemptions' claim in the module docstring.
+
+    Including ``src/`` and ``tests/`` docstrings in the corpus was
+    justified on the grounds that their misfires get answered with
+    extractor rules rather than allowlist entries. That is a standing
+    claim about the allowlist, so it is asserted here instead of being
+    written down as a count that would drift.
+    """
+    docstring_sources = {rel for rel, _, _ in _code_docstrings()}
+    offenders = sorted(key for key in _ALLOWLIST if key[0] in docstring_sources)
+    assert not offenders, (
+        f"a docstring source now needs an exemption: {offenders}. Fix the "
+        f"docstring — it is prose this repo owns and can simply correct."
+    )
 
 
 # --------------------------------------------------------------------------
@@ -933,8 +1131,7 @@ def _crc32_shard_line() -> int:
     real anchor-proximity logic against real source without inheriting
     the brittleness they are meant to police.
     """
-    src = Path("src/bettermemory/events.py").read_text(encoding="utf-8")
-    for i, line in enumerate(src.splitlines(), start=1):
+    for i, line in enumerate(_module_lines(_EVENTS_MODULE), start=1):
         if "crc32(" in line and not line.lstrip().startswith("#"):
             return i
     raise AssertionError(
@@ -952,10 +1149,8 @@ def test_detects_line_reference_pointing_at_the_wrong_place() -> None:
     when the file shifts.
     """
     anchor = _crc32_shard_line()
-    decoy = anchor + 200 if anchor > 200 else anchor + 200
-    total = len(
-        Path("src/bettermemory/events.py").read_text(encoding="utf-8").splitlines()
-    )
+    decoy = anchor + 200
+    total = len(_module_lines(_EVENTS_MODULE))
     if decoy > total:  # pragma: no cover - only if events.py shrinks sharply
         decoy = max(1, anchor - 200)
     text = (
@@ -1060,3 +1255,126 @@ def test_line_ref_uses_the_largest_plausible_candidate() -> None:
     text = "see verify.py:1700 for the detector"
     assert check_line_refs("docs/fake.md", text) == []
     assert len(check_line_refs("docs/fake.md", "see verify.py:999999 there")) == 1
+
+
+def test_bare_citation_is_anchor_checked_like_a_linked_one() -> None:
+    """The gap that let a wrong citation ship: bare cites were range-only.
+
+    Same sentence, same wrong line, only the markdown differs — so the
+    two forms must reach the same verdict. Before this, the linked form
+    failed and the bare form passed silently.
+    """
+    decoy = _crc32_shard_line() + 200
+    bare = f"a recorder picks its shard by `crc32(session_id)` (`events.py:{decoy}`)"
+    linked = (
+        "a recorder picks its shard by `crc32(session_id)` "
+        f"([events.py:{decoy}](../src/bettermemory/events.py))"
+    )
+    bare_fails = check_line_refs("docs/fake.md", bare)
+    assert len(bare_fails) == 1
+    assert "crc32" in bare_fails[0].detail
+    assert len(check_line_refs("docs/fake.md", linked)) == 1
+
+
+def test_bare_citation_that_lands_on_its_anchor_is_accepted() -> None:
+    """The anchor extension must not fire on a correct bare citation."""
+    anchor = _crc32_shard_line()
+    text = f"a recorder picks its shard by `crc32(session_id)` (`events.py:{anchor}`)"
+    assert check_line_refs("docs/fake.md", text) == []
+
+
+def test_bare_citation_without_a_resolvable_anchor_stays_quiet() -> None:
+    """No identifier from the paragraph exists in the target: nothing to judge.
+
+    This is the precision guard that keeps the extension from firing on
+    every incidental line number in the corpus.
+    """
+    text = "the shard rule is discussed at `events.py:10` in passing"
+    assert check_line_refs("docs/fake.md", text) == []
+
+
+def test_bare_citation_ambiguity_accepts_any_plausible_candidate() -> None:
+    """Two files are named ``episodes.py``; one satisfying the anchor is enough.
+
+    Real corpus shape. The anchor check must inherit ``_resolve_modules``'
+    rule — report only when the citation fails against every candidate —
+    or ambiguity becomes a false-positive engine.
+    """
+    assert len(_resolve_modules("episodes.py")) > 1
+    src = _REPO_ROOT / "src/bettermemory/episodes.py"
+    body = src.read_text(encoding="utf-8").splitlines()
+    target = next(
+        i for i, line in enumerate(body, start=1) if "def list_by_swarm" in line
+    )
+    text = f"`list_by_swarm(swarm_id)` walks the shard (`episodes.py:{target}`)"
+    assert check_line_refs("docs/fake.md", text) == []
+
+
+def test_restrictive_clause_demotes_a_total_marked_count_too() -> None:
+    """``_RESTRICTIVE`` must apply to both count phrasings, not just one.
+
+    "the N tests in `X` that ..." is a subset in exactly the way
+    "`X` has N tests that ..." is. The guard was wired to the subject
+    form only, so the same English escaped it when written the other way
+    round.
+    """
+    real = _test_function_count("tests/test_indexed_lookup.py")
+    assert real is not None
+    wrong = real + 3
+    subset = f"The {wrong} tests in `tests/test_indexed_lookup.py` that pin striping"
+    assert check_test_counts("docs/fake.md", subset) == []
+    # The same wrong number, without the restrictive clause, is a total.
+    total = f"The {wrong} tests in `tests/test_indexed_lookup.py` pin striping"
+    assert len(check_test_counts("docs/fake.md", total)) == 1
+
+
+def test_corpus_excludes_untracked_dependency_trees() -> None:
+    """A virtualenv in the tree must not become part of the scanned corpus.
+
+    The skip list this replaced named ``.venv`` but not ``venv``, so the
+    site-packages tree was scanned. Beyond the cost, ``_resolve_modules``
+    matches on basename, so a dependency's ``events.py`` became a
+    candidate reading of a claim about this project's ``events.py``.
+    """
+    corpus = _all_py_files()
+    assert corpus, "corpus is empty — the file discovery broke"
+    assert not [rel for rel in corpus if "site-packages" in rel]
+    assert all(rel.split("/")[0] not in _SKIP_DIR_NAMES for rel in corpus), (
+        "corpus contains a path under a directory that should have been pruned"
+    )
+    # The docstring corpus must inherit the same discipline. It used a
+    # `src/**/*.py` glob, which would descend into a vendored tree parked
+    # under src/ or tests/ — and a dependency's docstring failing this
+    # repo's CI is the worst version of this bug, not a milder one.
+    scanned = {rel for rel, _, _ in _code_docstrings()}
+    assert scanned <= set(corpus), (
+        f"the docstring corpus reaches files the tracked listing excludes: "
+        f"{sorted(scanned - set(corpus))[:10]}"
+    )
+    # Every module reference this file's own fixtures resolve must land in
+    # first-party code, or the ambiguity rules are being fed foreign files.
+    for name in ("events.py", "store.py", "verify.py", "episodes.py"):
+        assert all(
+            rel.startswith(("src/", "tests/", "bench/"))
+            for rel in _resolve_modules(name)
+        ), f"{name} resolves outside first-party code"
+
+
+def test_walk_fallback_admits_nothing_the_git_listing_excludes() -> None:
+    """The no-git fallback must not readmit what tracked-ness keeps out.
+
+    ``git ls-files`` is the primary because tracked-ness is categorical;
+    the walk runs only where there is no git metadata, and its pruning is
+    heuristic. So the direction that matters is pinned here: the walk may
+    miss a tracked file, but it may never admit an untracked one. The
+    reverse containment is deliberately not asserted — the skip list can
+    legitimately prune a directory someone has tracked a file inside.
+    """
+    tracked = _git_tracked_py_files()
+    if tracked is None:  # pragma: no cover - only outside a git checkout
+        pytest.skip("not a git checkout")
+    walked = _walk_py_files()
+    assert not set(walked) - set(tracked), (
+        f"the walk admits untracked files the git listing excludes: "
+        f"{sorted(set(walked) - set(tracked))[:10]}"
+    )
