@@ -2005,8 +2005,17 @@ def test_restore_after_concurrent_restore_raises_structured_failure(
 
     Contract: the loser surfaces a structured exception, NEVER a
     silent success that would clobber the parallel restore's active
-    file, and NEVER a bare `FileNotFoundError` / OSError that would
-    leak through the handler layer as a 500-shaped MCP error.
+    file, and NEVER a bare `FileNotFoundError` / OSError. That
+    contract lives at the Store layer, and what it buys is the
+    message rather than crash-avoidance: `handlers/restore.py`'s
+    `except OSError` arm would catch an escaping `FileNotFoundError`
+    (it is an `OSError` subclass) and re-raise it as the generic
+    "failed to restore memory <id>" `ValueError` — structured, but a
+    disk-failure shape for what is really a lost race. Losing the
+    recheck this test pins would also turn leg 2 of
+    `test_restore_race_loss_is_not_discriminable_by_message` red,
+    since that leg injects the same winner and asserts the loser
+    raises `MemoryNotFoundError` carrying "raced with".
     """
     store = Store(tmp_path)
     memory = store.write(content="will be raced on restore", scopes=["tools"])
@@ -2057,12 +2066,16 @@ def test_restore_raises_not_tombstoned_when_active_appears_under_lock(
 
     Branches are cited by enclosing function and by the distinguishing
     condition, never by line number — line-number citations in this
-    file have rotted more than once.
+    file have rotted more than once. The same discipline applies to
+    claims about what OTHER layers do with an escaping exception:
+    name the handler and the `except` arm that would catch it, or
+    don't make the claim.
 
     Setup: patch `_find_path_for_id` to return `None` on the FIRST
-    call and a non-None path on the SECOND. `Store.restore` has
-    exactly two `_find_path_for_id` call sites, and this flow reaches
-    both:
+    call and a non-None path on the SECOND. This flow makes exactly
+    two `_find_path_for_id` calls — the `call_count` assertion below
+    derives that count rather than asking you to trust this prose —
+    and they are, in order:
 
     1. The pre-lock "is the id already active?" guard, BEFORE
        `with _locked(tombstone_path)`. Its `NotTombstonedError` reads
@@ -2151,11 +2164,22 @@ def test_restore_raises_when_tombstone_vanishes_after_under_lock_recheck(
     (tombstone-recheck) and
     `test_restore_raises_not_tombstoned_when_active_appears_under_lock`
     (active-recheck). Neither reaches this catch — both raise before
-    the parse. Until this test landed, no test in the suite executed
-    the catch or its raise, so a regression dropping it — letting a
-    bare `FileNotFoundError` out, which the handler layer surfaces as
-    a 500-shaped MCP error instead of a structured `memory_restore`
-    failure — would have shipped green.
+    the parse. Measured against base 60b7553 by running the whole
+    suite with this test deselected: the `except FileNotFoundError`
+    arm and its `raise` came back unexecuted, while `restore`'s
+    pre-lock "already active?" guard and both under-lock rechecks all
+    reported their raises hit. So a regression dropping the arm would
+    have shipped green.
+
+    Dropping it would not produce a crash — `handlers/restore.py`
+    catches `OSError`, of which `FileNotFoundError` is a subclass. It
+    would downgrade the message instead: this window would report as
+    the generic "failed to restore memory <id>" disk-failure
+    `ValueError` rather than a `MemoryNotFoundError` carrying "raced
+    with concurrent restore or prune". The race-shape tests at the
+    end of this file would NOT catch that swap — their narrow leg
+    reaches the tombstone-recheck and raises before the parse, which
+    is precisely why this test has to exist.
 
     Construction — deterministic, no threads: patch `_find_path_for_id`
     so its SECOND call, `Store.restore`'s under-lock recheck, unlinks
