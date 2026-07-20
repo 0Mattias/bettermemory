@@ -333,14 +333,29 @@ def _check_storage_directory(cfg: Config) -> tuple[Diagnosis, Path | None]:
     # style nit: a memory's FILENAME carries the first ~43 chars of its
     # summary, so a 0o755 root hands every local account the gist of the
     # whole store from `ls` alone — the 0o600 on the bodies never comes
-    # into it. `Store.__post_init__` tightens this on open, so reaching
-    # here means that chmod could not land (sandboxed or network FS, or a
-    # root nobody has opened yet). Report rather than fail: the store is
-    # fully usable, and `--fix` retries the chmod.
+    # into it.
+    #
+    # This ATTEMPTS the tighten before judging, and warns only if it did
+    # not take. The alternative — report any 0o755 root as `warn` — would
+    # have flipped `doctor` from exit 0 to exit 1 for every store created
+    # before the root got its explicit mode, on the first run after
+    # upgrading, breaking the "exits 0 when it's wired correctly" contract
+    # that CI gates rely on. Since the heal is what `Store.__post_init__`
+    # does on open anyway, and the same helper backs both, the only
+    # condition that survives to `warn` here is the one worth a human's
+    # attention: a filesystem that refuses the chmod (sandbox, some
+    # network mounts). `--fix` retries it and reports the failure loudly.
+    #
+    # Yes, a check mutating is unusual. It is bounded by the same
+    # best-effort/POSIX-only contract as the Store heal, and this function
+    # already performs a probe WRITE below, so it was never a pure read.
     #
     # POSIX-only. Windows has no meaningful mode bits, and `stat()` there
     # synthesises a mode that would trip this unconditionally.
     if sys.platform != "win32":
+        from .store import _tighten_dir_mode
+
+        _tighten_dir_mode(directory)
         try:
             mode = stat.S_IMODE(directory.stat().st_mode)
         except OSError:
@@ -353,8 +368,9 @@ def _check_storage_directory(cfg: Config) -> tuple[Diagnosis, Path | None]:
                     status="warn",
                     message=(
                         f"Storage at {directory} is {oct(mode)} — readable "
-                        f"beyond its owner. Memory filenames embed the "
-                        f"first ~43 characters of each summary."
+                        f"beyond its owner, and it could not be tightened. "
+                        f"Memory filenames embed the first ~43 characters "
+                        f"of each summary."
                     ),
                     fix_hint=f"`chmod 700 {directory}` (or run `doctor --fix`).",
                     details=info,

@@ -3785,15 +3785,20 @@ def test_fix_storage_directory_tightens_over_permissive_root(tmp_path: Path) -> 
 
 
 @_needs_posix_modes
-def test_check_storage_directory_warns_on_over_permissive_root(tmp_path: Path) -> None:
-    """The check half: doctor reports the exposure rather than passing a
-    0o755 store as `ok`.
+def test_check_storage_directory_tightens_a_legacy_root_and_stays_ok(
+    tmp_path: Path,
+) -> None:
+    """A pre-existing 0o755 store must NOT turn `doctor` red.
 
-    `Store.__post_init__` tightens on open, so a user only reaches this
-    warn when the chmod could not land (sandboxed or network filesystem)
-    or nothing has opened the store yet. It stays `warn` rather than
-    `fail` because the store is completely usable — the finding is a
-    disclosure, not a breakage.
+    This is a compatibility guard, not a permissions test. `doctor`
+    returns 1 on `warn`, so reporting every legacy root as over-permissive
+    would flip `bettermemory doctor` from exit 0 to exit 1 on the first
+    run after upgrading — for every store in existence, since the root
+    only got an explicit mode in this release. Anything gating CI on
+    `doctor` would break.
+
+    The check tightens first and judges after, so the healthy path is
+    silent and still exits 0.
     """
     cfg = _config_for(tmp_path)
     tmp_path.chmod(0o755)
@@ -3801,12 +3806,42 @@ def test_check_storage_directory_warns_on_over_permissive_root(tmp_path: Path) -
     diagnosis, resolved = _check_storage_directory(cfg)
 
     assert resolved == tmp_path
+    assert diagnosis.status == "ok", (
+        "a legacy 0o755 root must be healed silently, not reported — "
+        "`warn` here is exit code 1 for every existing user"
+    )
+    assert stat.S_IMODE(tmp_path.stat().st_mode) == 0o700
+
+
+@_needs_posix_modes
+def test_check_storage_directory_warns_when_the_tighten_is_refused(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The only condition that survives to `warn`: a filesystem that
+    refuses the chmod, so the disclosure is real and a human has to act.
+
+    Sandboxed and some network mounts do this. `warn` rather than `fail`
+    because the store is entirely usable — the finding is a disclosure,
+    not a breakage.
+    """
+    cfg = _config_for(tmp_path)
+    tmp_path.chmod(0o755)
+
+    real_chmod = Path.chmod
+
+    def refuse(self: Path, mode: int, **kwargs: object) -> None:
+        if self == tmp_path:
+            raise PermissionError(13, "Operation not permitted")
+        real_chmod(self, mode, **kwargs)  # type: ignore[arg-type]
+
+    monkeypatch.setattr(Path, "chmod", refuse)
+
+    diagnosis, resolved = _check_storage_directory(cfg)
+
+    assert resolved == tmp_path
     assert diagnosis.status == "warn"
     assert "0o755" in diagnosis.message
     assert diagnosis.fix_hint is not None and "chmod 700" in diagnosis.fix_hint
-
-    tmp_path.chmod(0o700)
-    assert _check_storage_directory(cfg)[0].status == "ok"
 
 
 def test_fix_event_log_chmods_unwritable_file(tmp_path: Path) -> None:
