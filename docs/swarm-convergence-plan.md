@@ -54,23 +54,37 @@ six hold:
 Not starting from zero. The correctness floor is genuinely built:
 
 *Citations here and below name **symbols**, not line numbers. This doc
-shipped six `file.py:NNN` references; resolved against HEAD with an
-AST walk, four of the six no longer point at the code they claimed:
-`index.py:32-45` and `events.py:237` land in prose rather than code
-(the module docstring's "Concurrency" paragraph, and `redact_query`'s
-docstring — the function is `redact_query`, module-level and public,
-not `_redact_query`, which matches no symbol defined anywhere under
-`src/`); `store.py:393-478` straddles two
+shipped six `file.py:NNN` references; resolved against `60b7553` with
+an AST walk, four of the six do not point at the code they claimed.
+`index.py:32-45` points at prose rather than code — the module
+docstring's "Concurrency" paragraph. `store.py:393-478` straddles two
 functions, opening inside `Store.write` and closing inside the
-`Store.update` it meant to cite; and `store.py:1648` lands in
-`Store._path_for`, 14 lines short of the `Store._find_path_for_id` it
-names. Two still land: `store.py:298` is exactly `Store.load_one`, and
+`Store.update` it meant to cite. `store.py:1648` lands in
+`Store._path_for`, short of the `Store._find_path_for_id` it names. And
+`events.py:237` lands outside every function and class body in the
+file, nowhere near the `Recorder.__post_init__` shard pick it was cited
+for. Two land: `store.py:298` is exactly `Store.load_one`, and
 `episodes.py:92-114` brackets the `swarm_id` plumbing inside
-`EpisodeStore.write` (its parameter and its assignment), though not
-the `list_by_swarm` the same bullet also names. A symbol survives the next edit;
-a line number does not — and note that the earlier revision of this
-very paragraph got its own tally wrong, claiming five misses and a
-single survivor.*
+`EpisodeStore.write` (its parameter and its assignment), though not the
+`list_by_swarm` the same bullet also names.*
+
+*"Line numbers rot" is only part of the diagnosis, and this errata is
+implicated in the rest. Resolved against `59a1e08`, the commit that
+shipped them, the first three misses above already missed — their cited
+regions resolve identically there and at `60b7553` — so they were wrong
+on arrival rather than overtaken by a later edit. Only the `events.py`
+citation genuinely rotted, and the errata is what rotted it: the doc
+originally shipped `events.py:235-245`, which at `59a1e08` covered
+`Recorder.__post_init__`, line 237 there being the
+`crc32(session_id) % SHARD_COUNT` assignment itself. `fa45542` narrowed
+it to `events.py:237` against a tree in which that line had already
+moved, so the narrowed citation was wrong when written; `3f55d1b` then
+explained `events.py:237` as `redact_query`'s docstring — true of
+`fa45542`'s tree, already false of its own — and got the tally wrong
+besides, claiming five misses and a single survivor. A symbol survives
+the next edit and a line number does not; but what failed twice here was
+a re-measured line number, which is why every resolution above is
+pinned to a named commit.*
 
 - **Safety: DONE.** Per-memory-file `fcntl`/`msvcrt` locking
   (`_fsutil.flock_excl`), so disjoint memories never contend. The
@@ -279,10 +293,13 @@ id to its path via the index and returns it only when the named file
 still carries the id (`_id_still_at_path`); a stale / absent / lying
 index yields `None` and the caller falls back to the authoritative
 walk, so the index can only make the lookup faster, never wrong.
-`load_one` and `_find_path_for_id` (which backs `update` / `verify` /
-`tombstone` / `show`) both use it. Eight tests in
-`tests/test_indexed_lookup.py` pin the safety property (absent, stale,
-wrong-file, unindexed, tombstoned all stay correct). Measured effect:
+`load_one` and `_find_path_for_id` both use it; between them they carry
+`show`, `update`, `mark_verified`, `tombstone` and `restore`. Eight
+tests in `tests/test_indexed_lookup.py` pinned the safety property as of
+`096218e` (absent, stale, wrong-file, unindexed, tombstoned all stay
+correct); the file has grown since, so that count is anchored to the
+commit rather than stated as a present-tense total — see the counting
+note under Phase 1b. Measured effect:
 
 | corpus | update p50 before | after | by-id read before | after |
 |-------:|------------------:|------:|------------------:|------:|
