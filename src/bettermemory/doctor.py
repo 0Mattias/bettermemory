@@ -329,6 +329,39 @@ def _check_storage_directory(cfg: Config) -> tuple[Diagnosis, Path | None]:
             directory,
         )
 
+    # Group/other bits on the store root are a real disclosure, not a
+    # style nit: a memory's FILENAME carries the first ~43 chars of its
+    # summary, so a 0o755 root hands every local account the gist of the
+    # whole store from `ls` alone — the 0o600 on the bodies never comes
+    # into it. `Store.__post_init__` tightens this on open, so reaching
+    # here means that chmod could not land (sandboxed or network FS, or a
+    # root nobody has opened yet). Report rather than fail: the store is
+    # fully usable, and `--fix` retries the chmod.
+    #
+    # POSIX-only. Windows has no meaningful mode bits, and `stat()` there
+    # synthesises a mode that would trip this unconditionally.
+    if sys.platform != "win32":
+        try:
+            mode = stat.S_IMODE(directory.stat().st_mode)
+        except OSError:
+            mode = 0
+        if mode & 0o077:
+            info["mode"] = oct(mode)
+            return (
+                Diagnosis(
+                    name="storage_directory",
+                    status="warn",
+                    message=(
+                        f"Storage at {directory} is {oct(mode)} — readable "
+                        f"beyond its owner. Memory filenames embed the "
+                        f"first ~43 characters of each summary."
+                    ),
+                    fix_hint=f"`chmod 700 {directory}` (or run `doctor --fix`).",
+                    details=info,
+                ),
+                directory,
+            )
+
     return (
         Diagnosis(
             name="storage_directory",
@@ -2464,27 +2497,41 @@ def run_diagnostics() -> DoctorReport:
 def _fix_storage_directory(
     *, cfg: Config | None, directory: Path | None, diagnosis: Diagnosis
 ) -> FixResult | None:
-    """chmod 0700 an existing-but-unwritable store directory.
+    """chmod 0700 a store directory that is unwritable OR over-permissive.
 
-    Only the not-writable branch is auto-fixable: missing-parent,
-    path-is-a-file, and probe-write failures (ENOSPC, read-only mounts)
-    all need decisions or resources a chmod cannot supply. 0700 rather
-    than a minimal `u+w` is deliberate — the store carries private user
-    data, so the heal converges on the private posture the event-log
-    writer already enforces for its own file; the prior mode is recorded
-    in the result (and the event log) so the change is reversible from
-    the audit trail.
+    Two fixable branches, both converging on the same 0700:
+
+    * not writable by its owner — the historical case;
+    * writable but carrying group/other bits (0o755 from the default
+      umask). This one is the reason the writability test is no longer a
+      bare early-return: such a directory passes `os.access(W_OK)`
+      cleanly, so the chmod below used to be unreachable for it.
+
+    Everything else stays a hint: missing-parent, path-is-a-file, and
+    probe-write failures (ENOSPC, read-only mounts) all need decisions or
+    resources a chmod cannot supply. 0700 rather than a minimal `u+w` is
+    deliberate — the store carries private user data, so the heal
+    converges on the private posture the event-log writer already
+    enforces for its own file; the prior mode is recorded in the result
+    (and the event log) so the change is reversible from the audit trail.
     """
     if cfg is None or directory is None:
         return None
     if not directory.exists() or not directory.is_dir():
         return None
-    if os.access(directory, os.W_OK):
-        # Already writable (or running as root, where os.access is blind
-        # to modes) — whatever made the check red, it isn't the
-        # chmod-able branch.
-        return None
     old_mode = stat.S_IMODE(directory.stat().st_mode)
+    over_permissive = sys.platform != "win32" and bool(old_mode & 0o077)
+    if os.access(directory, os.W_OK) and not over_permissive:
+        # Already writable (or running as root, where os.access is blind
+        # to modes) AND not leaking to group/other — whatever made the
+        # check red, it isn't the chmod-able branch.
+        #
+        # The `over_permissive` half is why this is not a bare
+        # `os.access` early-return: a 0o755 store is perfectly writable
+        # by its owner, so the plain writability test returned None here
+        # and the chmod below was unreachable for the one case it most
+        # needed to handle.
+        return None
     try:
         directory.chmod(0o700)
     except OSError as exc:

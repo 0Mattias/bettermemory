@@ -99,6 +99,104 @@ def test_tombstone_dir_has_owner_only_permissions(store: Store) -> None:
     assert mode == 0o700, f"expected 0o700, got {oct(mode)}"
 
 
+@pytest.mark.skipif(os.name == "nt", reason="POSIX mode bits not meaningful on Windows")
+def test_store_root_has_owner_only_permissions_under_default_umask(
+    tmp_path: Path,
+) -> None:
+    """The store ROOT gets the same explicit 0o700 the tombstone dir has
+    always had, and it must not depend on the caller's umask.
+
+    Load-bearing because a memory's filename embeds the first ~43 chars
+    of its summary: under the usual 022 umask a 0o755 root let any local
+    account read the gist of the entire store from `ls`, which the 0o600
+    on the bodies does nothing to prevent. The umask is forced to 022
+    here rather than trusted — that is precisely the condition the bug
+    needed, so a test running under a stricter ambient umask would pass
+    against the unfixed code.
+    """
+    previous = os.umask(0o022)
+    try:
+        root = tmp_path / "fresh-store"
+        store = Store(root)
+        mode = store.root.stat().st_mode & 0o777
+    finally:
+        os.umask(previous)
+    assert mode == 0o700, f"expected 0o700, got {oct(mode)}"
+
+
+@pytest.mark.skipif(os.name == "nt", reason="POSIX mode bits not meaningful on Windows")
+@pytest.mark.parametrize(
+    ("starting_mode", "expected"),
+    [
+        (0o755, 0o700),  # the default-umask legacy store
+        (0o750, 0o700),  # group can still list filenames
+        (0o705, 0o700),  # other can list filenames
+        (0o770, 0o700),  # group has full access
+        (0o700, 0o700),  # already correct — untouched
+    ],
+)
+def test_store_root_mode_is_healed_on_open(
+    tmp_path: Path, starting_mode: int, expected: int
+) -> None:
+    """`mkdir(mode=…)` is a no-op on a directory that already exists, so
+    the explicit 0o700 above never reaches a store created by an earlier
+    version. Opening one heals it.
+
+    Every row lands on 0o700 because the heal MASKS to the owner triad
+    rather than assigning a constant, and 0o700 is the strictest mode a
+    store root can actually hold — a directory needs owner r/w/x for the
+    store to open `.tombstones` and write memories at all. So there is no
+    "owner went stricter" case to preserve here; the masking still
+    matters as the reason the heal cannot ADD an owner bit that was
+    deliberately absent, which `test_store_root_heal_is_best_effort`
+    covers from the other side.
+    """
+    root = tmp_path / "legacy-store"
+    root.mkdir()
+    os.chmod(root, starting_mode)
+
+    Store(root)
+
+    mode = root.stat().st_mode & 0o777
+    assert mode == expected, (
+        f"{oct(starting_mode)} -> {oct(mode)}, want {oct(expected)}"
+    )
+
+
+@pytest.mark.skipif(os.name == "nt", reason="POSIX mode bits not meaningful on Windows")
+def test_store_root_heal_is_best_effort_when_chmod_is_refused(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A filesystem that refuses `chmod` must not stop the store opening.
+
+    Sandboxed and network filesystems reject chmod on directories the
+    caller genuinely owns. The store is entirely usable in that state —
+    it is only the disclosure that persists — so the heal swallows OSError
+    and leaves `doctor` to report the residual exposure. Without this the
+    tightening would turn a cosmetic permission gap into a hard failure
+    to open the store at all, which is strictly worse than the bug.
+    """
+    root = tmp_path / "readonly-fs-store"
+    root.mkdir()
+    os.chmod(root, 0o755)
+
+    real_chmod = Path.chmod
+
+    def refuse(self: Path, mode: int, **kwargs: object) -> None:
+        if self == root:
+            raise PermissionError(13, "Operation not permitted")
+        real_chmod(self, mode, **kwargs)  # type: ignore[arg-type]
+
+    monkeypatch.setattr(Path, "chmod", refuse)
+
+    store = Store(root)  # must not raise
+
+    assert store.root == root.resolve()
+    # The exposure is still there — that is the honest outcome, and it is
+    # what the doctor check reports rather than silently claiming a heal.
+    assert root.stat().st_mode & 0o077
+
+
 def test_tombstoned_memory_load_one_raises_clearly(store: Store) -> None:
     memory = store.write(content="x", scopes=["tools"])
     store.tombstone(memory.id, reason="bad fact")

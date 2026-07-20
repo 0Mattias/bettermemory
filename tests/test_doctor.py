@@ -3727,9 +3727,19 @@ def test_fix_storage_directory_stands_down_when_already_writable(
     whose cause survives W_OK (probe-write failures — ENOSPC, a
     read-only mount) is not the chmod-able branch. The fixer declines
     and the directory keeps its healthy mode — an inverted guard would
-    'heal' a correctly-permissioned directory to 0o700."""
+    'heal' a correctly-permissioned directory to 0o700.
+
+    The probe mode is 0o700, not the 0o755 this test used before the
+    store-root tightening landed. 0o755 is no longer a stand-down case:
+    it is a disclosure in its own right (memory filenames carry ~43 chars
+    of each summary), so the fixer now acts on it regardless of what made
+    the check red. See
+    `test_fix_storage_directory_tightens_over_permissive_root` for that
+    arm. What this test still pins is the original property — that a
+    cause a chmod cannot address does not get a chmod applied to it.
+    """
     cfg = _config_for(tmp_path)
-    tmp_path.chmod(0o755)
+    tmp_path.chmod(0o700)
     assert os.access(tmp_path, os.W_OK)
     mode_before = stat.S_IMODE(tmp_path.stat().st_mode)
     diag = Diagnosis(
@@ -3737,6 +3747,53 @@ def test_fix_storage_directory_stands_down_when_already_writable(
     )
     assert run_fixes(DoctorReport(checks=[diag]), cfg=cfg, directory=tmp_path) == []
     assert stat.S_IMODE(tmp_path.stat().st_mode) == mode_before
+
+
+def test_fix_storage_directory_tightens_over_permissive_root(tmp_path: Path) -> None:
+    """The second fixable branch: a store root that is perfectly writable
+    but carries group/other bits.
+
+    This is the case the bare `os.access(W_OK)` early-return used to
+    swallow — 0o755 passes writability, so the fixer returned None and its
+    chmod was unreachable for the one mode most stores actually had.
+    """
+    cfg = _config_for(tmp_path)
+    tmp_path.chmod(0o755)
+    assert os.access(tmp_path, os.W_OK)
+    diag = Diagnosis(
+        name="storage_directory", status="warn", message="0o755 — readable beyond owner"
+    )
+
+    results = run_fixes(DoctorReport(checks=[diag]), cfg=cfg, directory=tmp_path)
+
+    assert len(results) == 1
+    assert results[0].applied is True
+    assert results[0].action == "chmod_storage_dir"
+    assert stat.S_IMODE(tmp_path.stat().st_mode) == 0o700
+
+
+def test_check_storage_directory_warns_on_over_permissive_root(tmp_path: Path) -> None:
+    """The check half: doctor reports the exposure rather than passing a
+    0o755 store as `ok`.
+
+    `Store.__post_init__` tightens on open, so a user only reaches this
+    warn when the chmod could not land (sandboxed or network filesystem)
+    or nothing has opened the store yet. It stays `warn` rather than
+    `fail` because the store is completely usable — the finding is a
+    disclosure, not a breakage.
+    """
+    cfg = _config_for(tmp_path)
+    tmp_path.chmod(0o755)
+
+    diagnosis, resolved = _check_storage_directory(cfg)
+
+    assert resolved == tmp_path
+    assert diagnosis.status == "warn"
+    assert "0o755" in diagnosis.message
+    assert diagnosis.fix_hint is not None and "chmod 700" in diagnosis.fix_hint
+
+    tmp_path.chmod(0o700)
+    assert _check_storage_directory(cfg)[0].status == "ok"
 
 
 def test_fix_event_log_chmods_unwritable_file(tmp_path: Path) -> None:

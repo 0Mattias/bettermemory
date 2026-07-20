@@ -9,6 +9,8 @@ from __future__ import annotations
 
 import errno
 import logging as _logging
+import stat
+import sys
 from dataclasses import dataclass
 from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
@@ -153,6 +155,31 @@ PARSE_SKIP_EXCEPTIONS: tuple[type[Exception], ...] = (Exception,)
 TOMBSTONE_DIR = ".tombstones"
 
 
+def _tighten_dir_mode(path: Path) -> None:
+    """Drop group/other bits from `path` when it carries any, leaving an
+    already-restrictive directory alone.
+
+    Exists because `Path.mkdir(mode=…)` only applies to a directory it
+    actually creates — a store that predates the explicit-0o700 change is
+    still whatever the caller's umask produced (0o755 under the usual 022),
+    and nothing else in the lifecycle re-checks it.
+
+    Best-effort by design. POSIX mode bits are meaningless on Windows, and
+    a sandboxed or network filesystem can reject `chmod` on a directory the
+    caller genuinely owns; in both cases the store is still fully usable and
+    `doctor` reports the residual exposure. Mirrors the guard/suppress shape
+    `_fsutil.atomic_write_bytes` uses for its fchmod.
+    """
+    if sys.platform == "win32":  # pragma: no cover - non-unix
+        return
+    try:
+        current = stat.S_IMODE(path.stat().st_mode)
+        if current & 0o077:
+            path.chmod(current & 0o700)
+    except OSError:
+        pass
+
+
 @dataclass
 class Store:
     """A memory store rooted at a single directory.
@@ -168,12 +195,28 @@ class Store:
 
     def __post_init__(self) -> None:
         self.root = Path(self.root).expanduser().resolve()
-        self.root.mkdir(parents=True, exist_ok=True)
+        # Explicit 0o700 for the same reason the tombstone dir below takes
+        # it: the store root is the access-control boundary SECURITY.md
+        # names, and a memory's FILENAME embeds the first ~43 chars of its
+        # summary. The 0o600 on the `.md` bodies is therefore worth nothing
+        # against a plain `ls` of a 0o755 root — under the common 022 umask
+        # every local account could read a slug like
+        # `2026-07-20-acquisition-talks-with-northstar-closing-in-…md`.
+        self.root.mkdir(parents=True, mode=0o700, exist_ok=True)
+        # `mkdir(mode=…)` is a no-op on a directory that already exists, so
+        # every store created before this landed is still 0o755 on disk.
+        # Heal it here — but only when the group/other bits are actually
+        # set, so an owner who deliberately went STRICTER than 0o700 keeps
+        # their choice. Best-effort and POSIX-only: Windows has no
+        # meaningful POSIX mode bits, and sandboxed filesystems may refuse
+        # chmod outright (same rationale as `_fsutil.atomic_write_bytes`).
+        _tighten_dir_mode(self.root)
         # Explicit 0o700 — don't rely on the caller's umask. Tombstones
         # carry the same trust boundary as active memories (paths cited
         # in `removed_reason`, body hashes for dedup), so directory-listing
         # them should require the owner just like the active store.
         (self.root / TOMBSTONE_DIR).mkdir(mode=0o700, exist_ok=True)
+        _tighten_dir_mode(self.root / TOMBSTONE_DIR)
         # Schema-upgrade auto-heal, BEFORE the divergence check: when a
         # SCHEMA_VERSION bump emptied the index (`meta.needs_rebuild`),
         # rebuild it from the canonical .md files now, so the migration
