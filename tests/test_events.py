@@ -1353,6 +1353,211 @@ def test_iter_events_window_ranks_archives_by_rotation_ts_not_mtime(
     )
 
 
+# ---------------------------------------------------------------------------
+# Same-UTC-second segment ordering
+#
+# Below the `{ts}` the archive naming carries no cross-session ordering
+# information, so segments that rotated in one second must be separated
+# on evidence rather than alphabetically. The two archives
+# `_write_same_second_pair` builds — `-s03-zzz` written FIRST,
+# `-s03-aaa` written SECOND — are the shape that
+# `test_two_sessions_on_one_shard_collide_on_the_parsed_write_order`
+# proves real rotation produces, with the names chosen so that an
+# alphabetical tiebreak is not merely arbitrary but backwards.
+# ---------------------------------------------------------------------------
+
+
+_SAME_SECOND_STEM = ".events-20260601T115500Z-s03"
+
+
+def _write_same_second_pair(
+    tmp_path: Path,
+    earlier_rows: list[dict[str, object]],
+    later_rows: list[dict[str, object]],
+) -> tuple[Path, Path]:
+    """Two shard-03 archives stamped with the SAME rotation second whose
+    names sort opposite to the order they were written in."""
+    import os
+
+    earlier = _write_window_archive(
+        tmp_path, f"{_SAME_SECOND_STEM}-zzz.jsonl.gz", earlier_rows
+    )
+    later = _write_window_archive(
+        tmp_path, f"{_SAME_SECOND_STEM}-aaa.jsonl.gz", later_rows
+    )
+    os.utime(earlier, ns=(1_000_000_000_000_000_000, 1_000_000_000_000_000_000))
+    os.utime(later, ns=(2_000_000_000_000_000_000, 2_000_000_000_000_000_000))
+    return earlier, later
+
+
+def test_same_second_archives_collide_on_the_parsed_write_order(
+    tmp_path: Path,
+) -> None:
+    """The premise of the two tests below: these names are genuinely
+    indistinguishable to the name-only key, so the tiebreak decides."""
+    from bettermemory.events import _archive_sort_key, _parse_rotated_name
+
+    earlier, later = _write_same_second_pair(tmp_path, [], [])
+    assert _parse_rotated_name(earlier.name) == _parse_rotated_name(later.name), (
+        "the pair must agree on (ts, shard, write order) or the tiebreak is "
+        "never reached and these tests prove nothing"
+    )
+    # ...and the name tiebreak ranks them backwards relative to the order
+    # they were written in.
+    assert _archive_sort_key(later) < _archive_sort_key(earlier)
+
+
+def test_iter_events_window_prepends_the_later_of_two_same_second_segments(
+    tmp_path: Path,
+) -> None:
+    """Same `{ts}`, same parsed write order: the segment written LAST
+    must be the one prepended.
+
+    Two sessions striping onto one shard produce this pair — once
+    `{ts}-s{NN}` is taken, the next rotation from each session claims
+    `{ts}-s{NN}-{its own id}`, and all of those parse to the same
+    in-second index. `_archive_sort_key`
+    then fell through to comparing the session ids ALPHABETICALLY,
+    which is fixed per pair of sessions and unrelated to which rotated
+    first. `iter_events_window` prepends exactly one segment per shard,
+    so naming the wrong one newest drops the events it exists to
+    recover — silently, and for that pair of sessions every time.
+    """
+    now = _window_now()
+    _write_same_second_pair(
+        tmp_path,
+        [{"ts": _window_ts(now, seconds_ago=400), "kind": "search", "id": "EARLIER"}],
+        [{"ts": _window_ts(now, seconds_ago=300), "kind": "search", "id": "LATER"}],
+    )
+    (tmp_path / ".events.03.jsonl").write_text(
+        json.dumps({"ts": _window_ts(now, seconds_ago=5), "kind": "write", "id": "ACT"})
+        + "\n",
+        encoding="utf-8",
+    )
+
+    ids = [e["id"] for e in iter_events_window(tmp_path, 600, now=now)]
+    assert ids == ["LATER", "ACT"], (
+        "the segment written last must be prepended; breaking a same-second "
+        f"tie on the session id's spelling prepends stale history: {ids}"
+    )
+
+
+def test_iter_all_events_orders_a_same_second_chain_chronologically(
+    tmp_path: Path,
+) -> None:
+    """A shard's chain is handed to `heapq.merge` as an ALREADY-SORTED
+    stream, and the merge does not re-check that.
+
+    So two segments of one shard placed in the wrong order propagate
+    straight into the output, and `iter_all_events`' documented
+    chronological guarantee — which `compute_health`'s `last_*`
+    timestamps, consolidate's fact demotion, eval and doctor all read as
+    meaning — silently stops holding.
+    """
+    from bettermemory.events import _event_ts_key
+
+    _write_same_second_pair(
+        tmp_path,
+        [{"ts": "2026-06-01T11:50:00Z", "kind": "write", "id": "EARLIER"}],
+        [{"ts": "2026-06-01T11:55:00Z", "kind": "write", "id": "LATER"}],
+    )
+
+    events = list(iter_all_events(tmp_path))
+    assert [e["id"] for e in events] == ["EARLIER", "LATER"]
+    keys = [_event_ts_key(e) for e in events]
+    assert keys == sorted(keys), (
+        "the per-shard chain was fed to heapq.merge out of order, so the "
+        f"merged output is not chronological: {[e['id'] for e in events]}"
+    )
+
+
+def test_parse_rotated_name_keeps_a_zero_padded_session_tail_whole(
+    tmp_path: Path,
+) -> None:
+    """A session id ending in zero-padded digits is not a counter.
+
+    `_next_rotation_paths` formats its collision counter from an int
+    starting at 1, so a generated counter never carries a leading zero.
+    Reading `sess-00028`'s own tail as one inflated that archive's
+    parsed in-second write order to 29, which outranks every real
+    rotation in the same second and hands
+    `_newest_rotated_segment_for_shard` the wrong segment. Genuine
+    counters must keep parsing.
+    """
+    from bettermemory.events import _parse_rotated_name
+
+    padded = ".events-20260601T115500Z-s03-sess-00028.jsonl.gz"
+    assert _parse_rotated_name(padded) == ("20260601T115500Z", 3, 1)
+
+    genuine = ".events-20260601T115500Z-s03-sess-00028-2.jsonl.gz"
+    assert _parse_rotated_name(genuine) == ("20260601T115500Z", 3, 3)
+
+
+def test_two_sessions_on_one_shard_collide_on_the_parsed_write_order(
+    tmp_path: Path,
+) -> None:
+    """Non-vacuity anchor: real rotation really does produce archives
+    that share a `{ts}` AND a parsed in-second write order.
+
+    The tests above hand-build that pair; this one drives two real
+    `Recorder`s whose session ids crc32-stripe onto the SAME shard, with
+    the clock frozen so every rotation lands in one UTC second. If this
+    stops holding — a naming change that made the in-second index
+    globally sequential, say — the tiebreak above is no longer reachable
+    from real rotation and those tests should be revisited rather than
+    trusted.
+    """
+    import zlib
+
+    from bettermemory import events as events_mod
+    from bettermemory.events import (
+        SHARD_COUNT,
+        _parse_rotated_name,
+        _rotated_segments,
+    )
+
+    target = 3
+    ids: list[str] = []
+    n = 0
+    while len(ids) < 2:
+        candidate = f"sess-{n:05d}"
+        if zlib.crc32(candidate.encode()) % SHARD_COUNT == target:
+            ids.append(candidate)
+        n += 1
+    first, second = ids
+
+    frozen = datetime(2030, 1, 1, 0, 0, 0, tzinfo=timezone.utc)
+
+    class _OneSecondClock(datetime):
+        @classmethod
+        def now(cls, tz: timezone | None = None) -> datetime:  # type: ignore[override]
+            return frozen
+
+    with patch.object(events_mod, "datetime", _OneSecondClock):
+        rec_a = Recorder(root=tmp_path, session_id=first, max_bytes=80)
+        rec_b = Recorder(root=tmp_path, session_id=second, max_bytes=80)
+        for i in range(6):
+            rec_a.record("write", id=f"A{i}", scopes=["tools"])
+            rec_b.record("write", id=f"B{i}", scopes=["tools"])
+
+    segments = _rotated_segments(tmp_path)
+    buckets: dict[tuple[str, int], list[str]] = {}
+    for path in segments:
+        ts, shard, order = _parse_rotated_name(path.name)
+        assert shard == target, f"expected both sessions on shard {target}: {path.name}"
+        buckets.setdefault((ts, order), []).append(path.name)
+    collisions = {key: names for key, names in buckets.items() if len(names) > 1}
+    assert collisions, (
+        "two sessions rotating on one shard in one second no longer produce "
+        f"segments that share a (ts, write order): {sorted(p.name for p in segments)}"
+    )
+
+    # Whatever the ordering resolves to, no event may be lost.
+    assert sorted(e["id"] for e in iter_all_events(tmp_path)) == sorted(
+        [f"A{i}" for i in range(6)] + [f"B{i}" for i in range(6)]
+    )
+
+
 def test_iter_all_events_is_chronological_across_shards(tmp_path: Path) -> None:
     """`iter_all_events` must be sorted by event `ts`, not "all archives
     then all active segments".

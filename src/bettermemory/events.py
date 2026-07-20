@@ -54,8 +54,9 @@ import re
 import zlib
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
+from itertools import groupby
 from pathlib import Path
-from typing import Any, Iterator
+from typing import Any, Iterable, Iterator
 
 from ._fsutil import flock_excl, fsync_dir, fsync_file, replace_atomic
 from .time_utils import parse_event_ts
@@ -161,8 +162,18 @@ def _utcnow_iso() -> str:
     return datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
 
 
-# Trailing `-N` collision counter on a rotated-segment stem.
-_TRAILING_COUNTER_RE = re.compile(r"-(\d+)$")
+# Trailing `-N` collision counter on a rotated-segment stem. `[1-9]\d*`
+# rather than `\d+`: `_next_rotation_paths` formats the counter from an
+# int that starts at 1, so a generated counter never carries a leading
+# zero, while zero-padded session ids (`sess-00028`) are ordinary.
+# Anchoring on the unpadded shape stops a padded id's own tail from
+# being read as a rotation counter — that inflated the archive's parsed
+# write order by the padded value (`sess-00028` parsed as counter 28)
+# and let it outrank every real rotation in its UTC second. The
+# ambiguity is not closable in general — an id ending `-7` is still
+# indistinguishable from counter 7 — which is why segment ordering does
+# not rest on this index alone; see `_segments_in_write_order`.
+_TRAILING_COUNTER_RE = re.compile(r"-([1-9]\d*)$")
 # Shard tag on a rotated-segment stem: `s{NN}` immediately after the
 # timestamp. Absent on pre-3.25 archives, which is why the parse
 # returns `None` rather than a default shard — an untagged archive's
@@ -195,11 +206,34 @@ def _parse_rotated_name(name: str) -> tuple[str, int | None, int]:
         .events-{ts}-{session}.jsonl.gz              -> (ts, None, 1)
         .events-{ts}-{session}-{k}.jsonl.gz          -> (ts, None, 1+k)
 
+    The `{session}` rows hold as written whenever `{session}` does not
+    itself end in `-{digits}`; see the write-order caveat below.
+
     Session ids carry arbitrary internal dashes — Claude Code stamps
     full UUIDs — so the counter is detected with an end-anchored regex
     rather than `split("-")[-1]`, and the shard tag is matched as an
     exact `s\\d\\d` token so a session id that merely starts with an
     `s` is not mistaken for one.
+
+    THE RETURNED WRITE ORDER IS A HINT, NOT A FACT. Two structural
+    limits, and callers that need real ordering must account for both:
+
+    * `{session}` and `{k}` are joined by the same `-` that occurs
+      inside session ids, so an id whose own tail is `-{digits}` reads
+      as a counter and inflates the index. `_TRAILING_COUNTER_RE`
+      rejects leading-zero tails, which removes the zero-padded class
+      (`sess-00028` parses as order 1, not 29) but leaves an id ending
+      `-7` ambiguous.
+    * Even parsed perfectly the index counts rotations PER SESSION, not
+      per shard. Once `{ts}-s{NN}` is taken, the next rotation from
+      each session striping onto that shard claims
+      `{ts}-s{NN}-{its own id}`, and every one of those parses to 1 —
+      the names record no relative order between them.
+
+    So this index orders one session's rotations within a UTC second
+    and nothing more. `_segments_in_write_order` is the caller-facing
+    ordering, and it resolves same-second groups against the
+    filesystem rather than trusting this number.
     """
     ts, _, remainder = _rotated_stem(name).partition("-")
     shard: int | None = None
@@ -922,13 +956,22 @@ def _archive_sort_key(path: Path) -> tuple[str, int, str]:
     in-second write-order index from `_parse_rotated_name` — several
     rotations of one shard can land in the same UTC second (tests with
     a tiny `max_bytes` hit it immediately). Tertiary is the filename
-    itself, so two DIFFERENT sessions rotating in the same second (both
-    parse to write-order 1) still get a total, deterministic order
-    instead of relying on sort stability.
+    itself, purely so the result is a TOTAL order rather than one that
+    leans on sort stability.
 
-    No `stat()` — the ordering is derived entirely from names. That
-    also removes a per-candidate syscall from `iter_events_window`,
-    which ranks candidates on every call.
+    NOT SUFFICIENT ON ITS OWN, by construction. Below the `{ts}` this
+    key is deterministic but not chronological: the secondary index
+    counts one session's rotations (see `_parse_rotated_name`'s
+    caveats), and once two candidates agree on it the tertiary decides
+    by comparing what is left of the filenames, which is the session
+    ids — and those carry no time information at all. Use
+    `_segments_in_write_order` — which builds on this key and then
+    resolves same-second groups against the filesystem — wherever the
+    ORDER of two segments is load-bearing. This function stays as the
+    cheap deterministic pre-order it can honestly deliver.
+
+    No `stat()` — this key is derived entirely from names, so sorting
+    with it alone costs no syscalls.
 
     Tolerates `.rotating` holding files alongside `.gz` archives: both
     share the same stem structure, differing only in suffix.
@@ -939,6 +982,75 @@ def _archive_sort_key(path: Path) -> tuple[str, int, str]:
     """
     ts, _, order = _parse_rotated_name(path.name)
     return (ts, order, path.name)
+
+
+def _segment_mtime_ns(path: Path) -> int:
+    """`st_mtime_ns` of a rotated segment, or 0 when it cannot be
+    stat'd.
+
+    A candidate can vanish between the directory scan and the sort — a
+    concurrent rotation unlinks a `.rotating` holding file the moment
+    its archive becomes canonical. 0 sorts such a segment to the front
+    of its second, which is the conservative end: it can lose a
+    newest-segment comparison, never win one on missing evidence.
+    """
+    try:
+        return path.stat().st_mtime_ns
+    except OSError:
+        return 0
+
+
+def _segments_in_write_order(paths: Iterable[Path]) -> list[Path]:
+    """Rotated segments ordered oldest-rotation-first.
+
+    `_archive_sort_key` orders any two segments whose `{ts}` stamps
+    differ, which is every pair that rotated in different seconds. What
+    it cannot do is order segments that SHARE a `{ts}`: inside one UTC
+    second the key falls back to a per-session rotation index and then
+    to comparing session ids. Two sessions striping onto the same shard
+    produce exactly that collision — once `{ts}-s{NN}` is taken, the
+    next rotation from each session claims `{ts}-s{NN}-{its own id}`,
+    and all of those parse to the same index. Which one sorted last
+    then came down to how the ids compared alphabetically: a fixed
+    answer per pair of sessions, and unrelated to which rotated first.
+
+    That mattered because `_newest_rotated_segment_for_shard` takes the
+    LAST segment of this order, and `iter_events_window` prepends that
+    segment and no other for the shard: naming the wrong one newest
+    drops the events the window reader exists to recover. It mattered
+    for `iter_all_events` too, whose per-shard chain is fed to
+    `heapq.merge` as an already-sorted stream — a chain in the wrong
+    order makes the merged output non-chronological, which its callers
+    read as meaning.
+
+    So same-second groups are re-ranked on `st_mtime_ns`, which is
+    evidence about when the segment was actually written rather than
+    what it was named. Order within a group is `(mtime, sort key)`, so
+    a filesystem with coarse mtime granularity degrades to the naming
+    order instead of to noise.
+
+    Two honest limits. An archive's mtime is when COMPRESSION finished,
+    so a segment reclaimed from a crashed rotation by
+    `_recover_orphan_rotations` carries a recovery-time mtime — inside
+    its own UTC-second group it will look like the last one written.
+    That is bounded to segments that rotated in the same second, which
+    is why mtime is used only as the within-second tiebreak and never
+    as the primary key it was through 3.25. And mtime for two
+    concurrent compressions reflects when each finished, not when each
+    started, so segments of very unequal size can invert.
+
+    Cost: a group of one is never stat'd, so a candidate set in which
+    no two segments share a `{ts}` keeps `_archive_sort_key`'s
+    syscall-free ranking exactly. Only the colliding members pay.
+    """
+    ordered = sorted(paths, key=_archive_sort_key)
+    resolved: list[Path] = []
+    for _, group in groupby(ordered, key=lambda p: _parse_rotated_name(p.name)[0]):
+        same_second = list(group)
+        if len(same_second) > 1:
+            same_second.sort(key=lambda p: (_segment_mtime_ns(p), _archive_sort_key(p)))
+        resolved.extend(same_second)
+    return resolved
 
 
 def _rotated_segments(root: Path) -> list[Path]:
@@ -994,21 +1106,28 @@ def iter_all_events(root: Path) -> Iterator[dict[str, Any]]:
     fact demotion, eval, doctor) all read order as meaning.
 
     Streams merged, in tie-break priority order: one chain per shard
-    over that shard's rotated archives (chronological within a shard by
-    construction — a shard rotates its own segment wholesale), one
-    chain for untagged pre-3.25 archives, one stream per orphan
-    `.rotating` holding file, and finally `iter_events(root)` for the
-    active segments. Equal timestamps resolve toward the earlier
-    stream, so a rotated segment still precedes the active tail it was
-    cut from.
+    over that shard's rotated archives (a shard rotates its own segment
+    wholesale, so its segments hold disjoint runs of time and chaining
+    them in rotation order is chronological), one chain for untagged
+    pre-3.25 archives, one stream per orphan `.rotating` holding file,
+    and finally `iter_events(root)` for the active segments. Equal
+    timestamps resolve toward the earlier stream, so a rotated segment
+    still precedes the active tail it was cut from.
+
+    Every chain is ordered by `_segments_in_write_order`, not by the
+    filename key alone. `heapq.merge` takes each chain as an
+    already-sorted stream and does not re-check that, so two segments
+    of one shard placed in the wrong order would propagate straight
+    into the output the consumers above read as meaning.
 
     The untagged-archive chain is the one approximate stream: those
     names predate the shard tag, so archives cut by DIFFERENT shards
-    land in one chain ordered by their filename rotation timestamp.
-    Ordering within that chain is therefore best-effort rather than
-    exact — two shards that rotated in the same UTC second have no
-    real order between them — but no events are lost, and it degrades
-    to exact as pre-3.25 archives age out of a store.
+    land in one chain. Ordering within that chain is therefore
+    best-effort rather than exact — the shard that cut each segment is
+    unrecoverable, so segments sharing a rotation second are separated
+    only by the mtime evidence `_segments_in_write_order` collects —
+    but no events are lost, and it degrades to exact as pre-3.25
+    archives age out of a store.
 
     Orphan `.rotating` holding files (produced when a rotation crashed
     after the active-log rename but before compression finished) are
@@ -1035,12 +1154,10 @@ def iter_all_events(root: Path) -> Iterator[dict[str, Any]]:
 
     streams: list[Iterator[dict[str, Any]]] = []
     for shard in sorted(by_shard):
-        streams.append(
-            _iter_segment_chain(sorted(by_shard[shard], key=_archive_sort_key))
-        )
+        streams.append(_iter_segment_chain(_segments_in_write_order(by_shard[shard])))
     if untagged:
-        streams.append(_iter_segment_chain(sorted(untagged, key=_archive_sort_key)))
-    for orphan in sorted(orphans, key=_archive_sort_key):
+        streams.append(_iter_segment_chain(_segments_in_write_order(untagged)))
+    for orphan in _segments_in_write_order(orphans):
         streams.append(_iter_segment(orphan))
     streams.append(iter_events(root))
     yield from heapq.merge(*streams, key=_event_ts_key)
@@ -1050,6 +1167,11 @@ def _newest_rotated_segment_for_shard(
     candidates: list[Path], shard: int | None
 ) -> Path | None:
     """Newest rotated segment attributable to `shard`, or None.
+
+    "Newest" is the last entry of `_segments_in_write_order`, so
+    candidates that rotated in the same UTC second are separated on
+    evidence of when they were written rather than on how their session
+    ids happen to compare alphabetically.
 
     Tagged candidates win: a `-s{NN}` archive states its shard, so when
     one exists for `shard` it is unambiguously the right history to
@@ -1083,14 +1205,14 @@ def _newest_rotated_segment_for_shard(
     """
     tagged = [p for p in candidates if _rotated_segment_shard(p) == shard]
     if tagged:
-        return max(tagged, key=_archive_sort_key)
+        return _segments_in_write_order(tagged)[-1]
     if shard is None:
         # `shard=None` IS the untagged bucket — nothing to fall back to.
         return None
     untagged = [p for p in candidates if _rotated_segment_shard(p) is None]
     if not untagged:
         return None
-    return max(untagged, key=_archive_sort_key)
+    return _segments_in_write_order(untagged)[-1]
 
 
 def _iter_segment(path: Path) -> Iterator[dict[str, Any]]:
@@ -1156,9 +1278,9 @@ def iter_events_window(
     This reader closes that gap without paying `iter_all_events`'s
     full-history cost: when the active log's oldest event is younger
     than ``now - window_seconds`` (or the log is empty/missing), the
-    newest rotated segment — latest archive by `_archive_sort_key`, or
-    an orphan `.rotating` holding file with no matching archive — is
-    prepended.
+    newest rotated segment — the last one in `_segments_in_write_order`,
+    which may be an archive or an orphan `.rotating` holding file with
+    no matching archive — is prepended.
 
     Coverage is decided PER ACTIVE SEGMENT, not globally. Since 3.24.0
     sharded the active log there is no single "oldest active event" to
@@ -1215,9 +1337,12 @@ def iter_events_window(
     skips it. What it does NOT cost is a stat per directory entry —
     `_rotated_segments` name-filters before `is_file()`, so a store
     whose root holds thousands of memory `.md` files and episodes pays
-    for their dirents only, and `_archive_sort_key` stats nothing.
-    Beyond that, the no-recent-rotation path costs one head-read per
-    active segment over `iter_events` and opens no archive. (An earlier
+    for their dirents only. Ranking the candidates is name-only too,
+    with one exception: `_segments_in_write_order` stats the members of
+    each group of candidates that share a `{ts}`, and a group of one is
+    never stat'd. Beyond that, the no-recent-rotation path costs one
+    head-read per active segment over `iter_events` and opens no
+    archive. (An earlier
     revision of this docstring also claimed the no-rotation path cost
     "exactly one extra timestamp parse" — that was carried over from
     the pre-sharding single-active-log implementation and contradicted
@@ -1281,7 +1406,7 @@ def iter_events_window(
         _consider(_newest_rotated_segment_for_shard(candidates, None))
 
     streams: list[Iterator[dict[str, Any]]] = [
-        _iter_segment(path) for path in sorted(prepend, key=_archive_sort_key)
+        _iter_segment(path) for path in _segments_in_write_order(prepend)
     ]
     streams.append(iter_events(root))
     yield from heapq.merge(*streams, key=_event_ts_key)
