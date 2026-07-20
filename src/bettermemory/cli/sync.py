@@ -17,9 +17,24 @@ def add_subparser(
         "init (set up the dir as a git repo + sensible .gitignore), "
         "status (show pending changes and remote tracking), "
         "push (commit + push), pull (rebase-pull + rebuild the index), "
-        "auto (pull then push — the shell-alias / cron one-shot)."
+        "auto (commit, pull-rebase, then push — the shell-alias / cron "
+        "one-shot)."
     )
-    parser = sub.add_parser("sync", help=help_text, description=help_text)
+    # `description=` gets the longer form: it is what `sync --help` prints,
+    # while `help=` is the one-liner in the top-level subcommand table.
+    # The refusal is spelled out here because it is the behaviour a user
+    # hits first on a store left mid-conflict, and an unexplained error is
+    # what sends people reaching for `push` — the one command that would
+    # commit the markers.
+    description = help_text + (
+        " push, pull and auto all refuse to run while a merge, rebase, "
+        "cherry-pick, revert or stash pop has left unresolved conflicts in "
+        "the memory directory. push and auto stage with `git add -A`, which "
+        "would commit the conflict markers into your memories; pull refuses "
+        "so that it never sends you to push on that state. Resolve the files "
+        "by hand and finish the operation first."
+    )
+    parser = sub.add_parser("sync", help=help_text, description=description)
     sync_sub = parser.add_subparsers(dest="sync_cmd")
 
     sync_init_help = "Initialise the memory dir as a git repo."
@@ -61,7 +76,14 @@ def add_subparser(
 
     sync_push_help = "Stage everything, commit (if changes), push."
     sync_push_parser = sync_sub.add_parser(
-        "push", help=sync_push_help, description=sync_push_help
+        "push",
+        help=sync_push_help,
+        description=(
+            sync_push_help + " Refuses while any file has unresolved merge "
+            "conflicts: staging runs `git add -A`, which would mark them "
+            "resolved without resolving them and push the `<<<<<<<` markers "
+            "to every clone."
+        ),
     )
     sync_push_parser.add_argument(
         "--remote",
@@ -87,7 +109,16 @@ def add_subparser(
 
     sync_pull_help = "Rebase-pull + rebuild the FTS5 index."
     sync_pull_parser = sync_sub.add_parser(
-        "pull", help=sync_pull_help, description=sync_pull_help
+        "pull",
+        help=sync_pull_help,
+        description=(
+            sync_pull_help + " Refuses, naming the files, when tracked "
+            "memories have uncommitted edits — `git pull --rebase` will not "
+            "run against a dirty worktree. Setting `rebase.autoStash` in git "
+            "config lifts that: git stashes and restores the edits around "
+            "the rebase, and this command stops pre-checking. Unresolved "
+            "merge conflicts are refused either way."
+        ),
     )
     sync_pull_parser.add_argument(
         "--remote",
@@ -110,9 +141,20 @@ def add_subparser(
         help="Emit JSON instead of human-readable text.",
     )
 
-    sync_auto_help = "Pull-rebase, then push. The shell-alias one-shot."
+    sync_auto_help = (
+        "Commit local edits, pull-rebase, then push. The shell-alias one-shot."
+    )
     sync_auto_parser = sync_sub.add_parser(
-        "auto", help=sync_auto_help, description=sync_auto_help
+        "auto",
+        help=sync_auto_help,
+        description=(
+            sync_auto_help + " The commit comes FIRST because a live store is "
+            "normally dirty when you reach for this, and `git pull --rebase` "
+            "will not run against a dirty worktree unless `rebase.autoStash` "
+            "is set; the push step staged and committed everything anyway, so "
+            "only the order changed. Refuses before committing anything if "
+            "any file has unresolved merge conflicts."
+        ),
     )
     sync_auto_parser.add_argument(
         "--remote",
@@ -287,7 +329,7 @@ def _cli_sync_pull(*, remote: str, reindex: bool, json_out: bool) -> None:
 
 
 def _cli_sync_auto(*, remote: str, json_out: bool) -> None:
-    """`bettermemory sync auto` — pull then push, one-shot."""
+    """`bettermemory sync auto` — commit, pull, then push, one-shot."""
     import json as _json
 
     from .. import sync as _sync

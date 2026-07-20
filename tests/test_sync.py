@@ -13,6 +13,7 @@ import fnmatch
 import logging
 import shutil
 import subprocess
+import sys
 import threading
 from collections.abc import Generator
 from pathlib import Path
@@ -718,6 +719,86 @@ def test_status_porcelain_parses_modified_path_cleanly(
     assert parsed.endswith(".md")
 
 
+def _awkward_but_legal_names() -> list[str]:
+    """File names that the newline-delimited porcelain format mangles.
+
+    A space forces git to C-quote the whole path (`"with space.md"`), and a
+    double quote is additionally backslash-escaped inside it. `core.quotePath`
+    does not switch that off — it governs non-ASCII bytes only. NTFS forbids
+    `"` in a file name, so the quote case is POSIX-only; the space case runs
+    everywhere the suite does.
+    """
+    names = ["with space.md"]
+    if sys.platform != "win32":
+        names.append('quo"te.md')
+    return names
+
+
+def test_status_reports_renamed_and_quoted_paths_verbatim(memory_dir: Path) -> None:
+    """🟡 THE PARSER MUST YIELD PATHS, NOT PORCELAIN FRAGMENTS.
+
+    Two shapes defeat a positional slice of newline-delimited porcelain:
+
+    * A rename is emitted as `XY ORIG_PATH -> PATH` on ONE line, so the
+      slice yields the literal `"orig.md -> renamed.md"` as a single path.
+    * A path containing a space or a quote is C-quoted, so the slice yields
+      a path wrapped in `"` with `\\`-escaped innards.
+
+    Both reach the user: `sync status` prints these as file names, and
+    `pull`'s dirty-worktree error names them as the files to go fix. A name
+    the user cannot find in their store is not an actionable error.
+
+    `-z` fixes both — it turns quoting off and moves ORIG_PATH into its own
+    field — and this test pins the outcome rather than the mechanism.
+
+    Non-vacuous by construction: it asserts git really did emit a rename
+    record before checking how it was parsed, so a git that stopped
+    detecting the rename fails the test instead of skipping the branch.
+    """
+    sync.init(memory_dir)
+    names = _awkward_but_legal_names()
+    for name in [*names, "orig.md"]:
+        (memory_dir / name).write_text("body\n", encoding="utf-8")
+    _git(memory_dir, "add", "-A")
+    _git(memory_dir, "commit", "-m", "seed")
+
+    _git(memory_dir, "mv", "orig.md", "renamed.md")
+    for name in names:
+        path = memory_dir / name
+        path.write_text(path.read_text(encoding="utf-8") + "edited\n", encoding="utf-8")
+
+    raw = subprocess.run(
+        ["git", "status", "--porcelain", "-z"],
+        cwd=memory_dir,
+        capture_output=True,
+        text=True,
+        check=True,
+    ).stdout
+    assert any(field.startswith("R") for field in raw.split("\0")), (
+        f"git did not record the `git mv` as a rename, so the rename branch "
+        f"of the parser is untested here: {raw!r}"
+    )
+
+    st = sync.status(memory_dir)
+
+    assert "renamed.md" in st.modified, (
+        f"the rename's destination path is not reported: {st.modified}"
+    )
+    assert not any("->" in path for path in st.modified), (
+        f"a porcelain rename arrow leaked into a path: {st.modified}"
+    )
+    assert "orig.md" not in st.modified, (
+        f"the rename's source path was reported as a modified file: {st.modified}"
+    )
+    for name in names:
+        assert name in st.modified, (
+            f"{name!r} is not reported under its real name: {st.modified}"
+        )
+    # One entry per edited file plus the rename — no ORIG_PATH field leaking
+    # in as an extra entry of its own.
+    assert len(st.modified) == len(names) + 1, st.modified
+
+
 def test_status_redacts_credentialed_remote_url(memory_dir: Path) -> None:
     """A remote URL with embedded credentials must not surface in
     SyncStatus.remote_url. The credential lives in git config (where
@@ -1380,10 +1461,15 @@ def test_push_survives_an_unwritable_gitignore(
     guarded its READ against OSError with a deliberate stand-down (pinned by
     `test_push_leaves_an_unreadable_gitignore_alone`) but left BOTH
     `atomic_write_bytes` calls unguarded. That asymmetry was accidental, and
-    it became load-bearing when the reconcile moved onto the `push` path: an
-    unwritable `.gitignore` — read-only file, read-only mount, ENOSPC — now
-    raised a bare OSError out of `push`, so a push that previously succeeded
-    took down the user's whole sync.
+    it became load-bearing when the reconcile moved onto the `push` path:
+    anything that broke the atomic write — an unwritable parent directory
+    (read-only mount, permissions), ENOSPC — now raised a bare OSError out of
+    `push`, so a push that previously succeeded took down the user's whole
+    sync. Note a read-only `.gitignore` FILE is not in that class: the write
+    is a rename into a writable directory, which POSIX allows regardless of
+    the target file's own mode. The OSError is injected below rather than
+    provoked for exactly that reason — the reachable causes are environmental
+    and not portably reproducible in a test.
 
     The decided policy is stand down on BOTH halves: the reconcile is a
     healing side-effect on the push path, not the push's purpose, and
@@ -1662,6 +1748,157 @@ def test_pull_names_the_dirty_files_instead_of_a_raw_git_error(
     assert "scratch.txt" not in str(second.value)
 
 
+def test_pull_defers_to_rebase_autostash(
+    memory_dir: Path, bare_remote: Path, tmp_path: Path
+) -> None:
+    """🔴 THE PRE-CHECK MUST NOT REFUSE WHERE GIT WOULD HAVE COPED.
+
+    `git pull --rebase` refuses against a dirty worktree only on a default
+    config. With `rebase.autoStash` set, git stashes the local edits,
+    rebases, and restores them — a configuration git supports precisely
+    because this situation is common. An unconditional pre-check therefore
+    turned a working `sync pull` into a hard error for exactly the users
+    who had configured their way out of the problem.
+
+    This test drives real git both ways from one fixture, so it pins the
+    behaviour against git itself rather than against a belief about git:
+    with autostash ON the pull must SUCCEED and the uncommitted edit must
+    survive it; with the same worktree and autostash OFF the pull must
+    still raise and name the file.
+
+    Mutation-sound in both directions. Drop the `_rebase_autostash_enabled`
+    gate in `pull` and the first half fails (SyncError where git was
+    willing); drop the pre-check entirely and the second half fails (git's
+    own message names neither the file nor a next step).
+
+    The second clone advances the remote by editing a DIFFERENT memory, so
+    the rebase has a commit to replay while the autostash pop has nothing
+    to collide with — the test is about the guard, not about conflict
+    resolution.
+    """
+    _git(memory_dir.parent, "config", "--global", "rebase.autoStash", "true")
+    sync.init(memory_dir, remote=str(bare_remote))
+    store = Store(memory_dir)
+    mine = store.write(content="edited on this host", scopes=["tools"])
+    theirs = store.write(content="edited on the other host", scopes=["tools"])
+    sync.push(memory_dir)
+
+    other = tmp_path / "other_clone"
+    subprocess.run(
+        ["git", "clone", str(bare_remote), str(other)],
+        check=True,
+        capture_output=True,
+    )
+    theirs_path = store._find_path_for_id(theirs.id)
+    assert theirs_path is not None
+    remote_copy = other / theirs_path.name
+    remote_copy.write_text(
+        remote_copy.read_text(encoding="utf-8") + "\nfrom the other host\n",
+        encoding="utf-8",
+    )
+    _git(other, "add", "-A")
+    _git(other, "commit", "-m", "other host edit")
+    _git(other, "push", "origin", "HEAD")
+
+    edited = _edit_tracked_memory(memory_dir, store, mine.id)
+    mine_path = store._find_path_for_id(mine.id)
+    assert mine_path is not None
+    assert sync._rebase_autostash_enabled(memory_dir) is True
+    assert sync._dirty_tracked_paths(memory_dir), (
+        "fixture left the worktree clean; the pre-check would not have fired "
+        "either way and the test would pass vacuously"
+    )
+
+    result = sync.pull(memory_dir)
+
+    assert result["pulled"] is True
+    # The uncommitted edit came back out of the autostash.
+    assert "edited locally" in mine_path.read_text(encoding="utf-8"), (
+        "the pull ran but the autostashed local edit was not restored"
+    )
+    # And the remote commit really did land, so the pull was not a no-op.
+    assert "from the other host" in (memory_dir / theirs_path.name).read_text(
+        "utf-8"
+    ), "the pull did not bring the remote commit down; nothing was rebased"
+
+    # Same dirty worktree, autostash off: the guard is back and it names
+    # the file. This is what proves the first half was the gate's doing.
+    _git(memory_dir.parent, "config", "--global", "rebase.autoStash", "false")
+    assert sync._rebase_autostash_enabled(memory_dir) is False
+    with pytest.raises(sync.SyncError) as excinfo:
+        sync.pull(memory_dir)
+    assert edited in str(excinfo.value)
+
+
+def test_pull_refuses_when_the_autostash_restore_conflicts(
+    memory_dir: Path, bare_remote: Path, tmp_path: Path
+) -> None:
+    """🟡 A PULL THAT EXITS 0 CAN STILL LEAVE CONFLICT MARKERS.
+
+    Autostash restores the stashed edits after the rebase, and that
+    restore can collide with what the rebase just brought down. Git then
+    prints "Applying autostash resulted in conflicts", leaves `UU` in the
+    worktree — and EXITS 0. Verified on git 2.50.1, which is why `pull`
+    checks the worktree rather than trusting the return code.
+
+    The stake is the reindex that comes next: on a zero exit `pull` would
+    rebuild the FTS5 index from the on-disk files, ingesting
+    `<<<<<<< Updated upstream` as memory body text and serving it in
+    search results. Refusing leaves the index describing the pre-pull
+    files — stale, but true.
+
+    This path only became reachable when the dirty-worktree pre-check
+    learned to defer to `rebase.autoStash`; before that, `pull` refused
+    before git could ever autostash.
+
+    Mutation-sound: drop the post-pull `_unmerged_paths` check and this
+    fails — `pull` returns `pulled=True` on a worktree full of markers.
+    """
+    _git(memory_dir.parent, "config", "--global", "rebase.autoStash", "true")
+    sync.init(memory_dir, remote=str(bare_remote))
+    store = Store(memory_dir)
+    memory = store.write(content="line one\nline two\nline three", scopes=["tools"])
+    sync.push(memory_dir)
+
+    local_path = store._find_path_for_id(memory.id)
+    assert local_path is not None
+
+    # The other clone rewrites the SAME line the local edit will touch, so
+    # the rebase succeeds and the autostash restore is what conflicts.
+    other = tmp_path / "other_clone"
+    subprocess.run(
+        ["git", "clone", str(bare_remote), str(other)],
+        check=True,
+        capture_output=True,
+    )
+    remote_copy = other / local_path.name
+    remote_copy.write_text(
+        remote_copy.read_text(encoding="utf-8").replace("line two", "from the remote"),
+        encoding="utf-8",
+    )
+    _git(other, "add", "-A")
+    _git(other, "commit", "-m", "other host edit")
+    _git(other, "push", "origin", "HEAD")
+
+    local_path.write_text(
+        local_path.read_text(encoding="utf-8").replace("line two", "from this host"),
+        encoding="utf-8",
+    )
+
+    with pytest.raises(sync.SyncError) as excinfo:
+        sync.pull(memory_dir)
+    message = str(excinfo.value)
+
+    # The worktree really is conflicted — the fixture reproduced the state.
+    assert sync._unmerged_paths(memory_dir), (
+        "the autostash restore did not conflict; the test would pass for the "
+        "wrong reason"
+    )
+    assert local_path.name in message, message
+    assert "<<<<<<<" in message, message
+    assert "Do NOT run `bettermemory sync push`" in message, message
+
+
 def _wedge_a_conflicted_rebase(
     memory_dir: Path, bare_remote: Path, tmp_path: Path
 ) -> Path:
@@ -1737,6 +1974,47 @@ def test_pull_gives_rebase_advice_when_a_rebase_is_unfinished(
         "the error does not warn against the one command that would commit "
         f"conflict markers into the store: {message}"
     )
+
+
+def test_autostash_does_not_relax_the_conflict_guard(
+    memory_dir: Path, bare_remote: Path, tmp_path: Path
+) -> None:
+    """🔴 THE TWO GUARDS ARE DISTINCT AND ONLY ONE OF THEM DEFERS TO CONFIG.
+
+    `rebase.autoStash` earns `pull` the right to skip its DIRTY-WORKTREE
+    pre-check, because git will stash and rebase instead of refusing. It
+    earns nothing for UNRESOLVED CONFLICTS: a worktree holding `<<<<<<<`
+    markers must still be refused, since the advice it needs (resolve, then
+    finish the operation) is unchanged and the command it must not be sent
+    to — `sync push`, which runs `git add -A` — is unchanged too.
+
+    Mutation-sound: widen the autostash gate to cover
+    `_require_no_unresolved_conflict` as well and this fails, because
+    `pull` would hand the conflicted worktree to git instead of raising.
+    """
+    wedged = _wedge_a_conflicted_rebase(memory_dir, bare_remote, tmp_path)
+    _git(wedged, "config", "--global", "rebase.autoStash", "true")
+
+    assert sync._rebase_autostash_enabled(wedged) is True, (
+        "the fixture did not actually enable autostash; the test would pass "
+        "for the wrong reason"
+    )
+    assert sync._unmerged_paths(wedged), (
+        "the fixture left nothing unmerged; the conflict guard would not have "
+        "fired either way"
+    )
+
+    with pytest.raises(sync.SyncError) as excinfo:
+        sync.pull(wedged)
+    message = str(excinfo.value)
+
+    assert "<<<<<<<" in message, (
+        f"autostash turned the conflict refusal into some other error: {message}"
+    )
+    assert "Do NOT run `bettermemory sync push`" in message, message
+    # Specifically NOT the dirty-worktree message, whose advice ("run sync
+    # push") is the destructive one on this state.
+    assert "refuses to run against a dirty worktree" not in message, message
 
 
 def test_auto_refuses_to_commit_conflict_markers_mid_rebase(

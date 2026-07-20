@@ -19,8 +19,9 @@ small CLI surface that does the right thing by default:
   with rebase, then rebuild the FTS5 index from the new file
   contents (changes that landed via merge bypassed the Store
   hooks, so the index is stale until rebuilt). Refuses, naming the
-  files, when a tracked memory has uncommitted edits: ``git pull
-  --rebase`` cannot run against a dirty worktree.
+  files, when a tracked memory has uncommitted edits — unless the
+  repo sets ``rebase.autoStash``, in which case git stashes and
+  restores them itself and the pull is allowed through.
 - ``bettermemory sync auto`` — convenience: commit local edits,
   pull-rebase, then push. The "sync me" one-shot for cron / shell
   aliases. The commit comes FIRST precisely because the store is
@@ -252,10 +253,27 @@ def _write_gitignore_or_stand_down(
     THE WRITE HALF OF THE STAND-DOWN POLICY. The read in
     `_reconcile_gitignore` has always been guarded; both writes were not,
     and that asymmetry was accidental rather than decided. It mattered
-    because the reconcile moved onto the `push` path: an unwritable
-    `.gitignore` (read-only file, read-only mount, a directory at the
-    path, ENOSPC) turned a push that previously succeeded into a hard
-    `OSError` — the user's memories stop reaching their remote entirely.
+    because the reconcile moved onto the `push` path: an `OSError` here
+    turned a push that previously succeeded into a hard failure — the
+    user's memories stop reaching their remote entirely.
+
+    The class that lands here is whatever breaks `atomic_write_bytes`'
+    write-tmp-then-rename in the store root: creating or writing the tmp
+    file fails (a read-only mount or otherwise unwritable parent
+    directory, ENOSPC), or the rename into place fails. Note what is NOT
+    in that class, because both were listed here before and neither
+    reaches this function:
+
+    * A read-only `.gitignore` FILE. The rename replaces a directory
+      entry, and POSIX permits that on a writable parent whatever the
+      target file's own mode says — `atomic_write_bytes` over a 0o444
+      file succeeds and rewrites it (verified directly).
+    * A DIRECTORY at the `.gitignore` path. `os.replace` would indeed
+      raise `IsADirectoryError`, but control never gets that far:
+      `_reconcile_gitignore` reads the path first, `read_text()` on a
+      directory raises the same error class, and the READ guard returns
+      `failed_stage="read"`. That is the exact shape
+      `test_push_leaves_an_unreadable_gitignore_alone` builds.
 
     The policy is now the same on both halves: NEVER raise, always
     report. Rationale, deliberately chosen rather than inherited:
@@ -490,7 +508,18 @@ def _run_git(
     """Run a git subcommand in `root`. By default raises `SyncError`
     on non-zero exit so the CLI can catch one exception type. Pass
     `check=False` for commands where the exit code is informational
-    (e.g. `git diff --quiet` returns 1 to mean "there are diffs")."""
+    (e.g. `git diff --quiet` returns 1 to mean "there are diffs").
+
+    Decoding is lenient (`errors="replace"`). git's output is not
+    guaranteed to be valid in the locale encoding: `status --porcelain
+    -z` emits path bytes verbatim (NUL-delimited output turns C-quoting
+    off), and error text can echo them too. Under the default strict
+    decoding `subprocess.run` itself raises `UnicodeDecodeError` before
+    this function can return — verified by feeding a subprocess an
+    undecodable byte both ways. A path rendered with U+FFFD in a
+    message is a worse name; a traceback out of `sync status` is a
+    worse outcome.
+    """
     binary = _require_git()
     cmd = [binary, *args]
     result = subprocess.run(
@@ -498,6 +527,7 @@ def _run_git(
         cwd=root,
         capture_output=True,
         text=True,
+        errors="replace",
         check=False,
     )
     if check and result.returncode != 0:
@@ -538,39 +568,81 @@ def _redact_text(text: str) -> str:
 _UNMERGED_CODES = frozenset({"DD", "AU", "UD", "UA", "DU", "AA", "UU"})
 
 
+# `-z` is not a nicety, it is what makes the parse below correct. In the
+# newline-delimited default, git C-quotes any path containing a space or a
+# double quote (`"with space.md"`, `"quo\"te.md"`), and setting
+# `core.quotePath=false` does not turn that off. Verified on git 2.50.1:
+# both spellings of the same repo quote those two names, and with `-z` they
+# come back raw and unquoted.
+_STATUS_ARGS = ["status", "--porcelain", "-z"]
+
+
 def _porcelain_entries(porcelain: str) -> list[tuple[str, str]]:
-    """Parse `git status --porcelain` (v1) into (XY code, path) pairs.
+    """Parse `git status --porcelain -z` (v1) into (XY code, path) pairs.
 
-    Porcelain v1 is fixed-width: chars 0-1 are the XY status code, char 2
-    is a separator space, the rest is the path. Splitting on the first
-    space is wrong for codes like `" M"` (modified, not staged) where the
-    first char is itself a space — that drops the leading status char
-    into the path. Slice by position instead.
+    Each record is fixed-width at the front: chars 0-1 are the XY status
+    code, char 2 is a separator space, the rest is the path. Splitting on
+    the first space is wrong for codes like `" M"` (modified, not staged)
+    where the first char is itself a space — that drops the leading status
+    char into the path. Slice by position instead.
 
-    THE ONE PARSER. `status()`, `_dirty_tracked_paths()` and
-    `_unmerged_paths()` all go through here so they cannot drift: the
-    conflict guard, `pull`'s dirty-worktree pre-check and the `sync
-    status` the user runs to diagnose either one must agree on what a
-    given line means, or the error message names files `status` does not
-    show.
+    RENAMES AND COPIES CARRY A SECOND PATH, and getting that wrong is why
+    this function changed. In the newline-delimited format git writes them
+    as `XY ORIG_PATH -> PATH` on one line, so a positional slice yielded
+    the literal string `"orig.md -> renamed.md"` as the path. Under `-z`
+    the record instead ends after PATH and ORIG_PATH follows as its own
+    NUL-delimited field (verified on git 2.50.1: a `git mv` produces
+    `R␣␣r1.md\\0f1.md\\0`), so the companion field is consumed and
+    discarded here — the destination path is the one every caller wants.
+
+    ONE PARSER, ONE COMMAND. `status()`, `_dirty_tracked_paths()` and
+    `_unmerged_paths()` reach git through `_status_entries()`, which pairs
+    this parser with `_STATUS_ARGS`; that pairing is the point, since a
+    parser expecting `-z` fed newline-delimited output would mis-read
+    every quoted path. The reason they share it: the conflict guard,
+    `pull`'s dirty-worktree pre-check and the `sync status` a user runs to
+    diagnose either one must agree on what a given record means, or an
+    error names files `status` does not show.
     """
     entries: list[tuple[str, str]] = []
-    for line in porcelain.splitlines():
-        if len(line) < 4:
+    fields = porcelain.split("\0")
+    i = 0
+    while i < len(fields):
+        field = fields[i]
+        i += 1
+        if len(field) < 4:
             continue
-        code = line[:2]
-        path = line[3:].strip()
+        code = field[:2]
+        path = field[3:]
+        if code[0] in ("R", "C"):
+            # Skip the ORIG_PATH companion field. The X column is where the
+            # rename/copy marker was observed (a `git mv` yields `R `), so
+            # that is the column tested; a code carrying R or C only in Y
+            # would leave its companion field to be read as its own entry,
+            # which costs a stray path in a list and nothing more.
+            i += 1
         if not path:
             continue
         entries.append((code, path))
     return entries
 
 
-def _parse_porcelain(porcelain: str) -> tuple[list[str], list[str]]:
-    """Split porcelain output into (untracked, modified)."""
+def _status_entries(root: Path) -> list[tuple[str, str]]:
+    """Run the one status command in `root` and parse it.
+
+    The single place `_STATUS_ARGS` and `_porcelain_entries` meet, so no
+    caller can pair one with the other's assumptions.
+    """
+    return _porcelain_entries(_run_git(root, _STATUS_ARGS, check=False).stdout)
+
+
+def _split_status_entries(
+    entries: list[tuple[str, str]],
+) -> tuple[list[str], list[str]]:
+    """Split parsed status entries into (untracked, modified)."""
     untracked: list[str] = []
     modified: list[str] = []
-    for code, path in _porcelain_entries(porcelain):
+    for code, path in entries:
         if code == "??":
             untracked.append(path)
         else:
@@ -581,14 +653,15 @@ def _parse_porcelain(porcelain: str) -> tuple[list[str], list[str]]:
 def _dirty_tracked_paths(root: Path) -> list[str]:
     """Tracked paths carrying staged or unstaged changes.
 
-    This is exactly the set that makes `git pull --rebase` refuse to run
-    ("cannot pull with rebase: You have unstaged changes"). UNTRACKED
-    files are deliberately excluded — a rebase is happy to run alongside
-    them, so listing them in the error would name files that are not the
-    problem.
+    This is the set that makes `git pull --rebase` refuse to run
+    ("cannot pull with rebase: You have unstaged changes") — unless the
+    repo enables `rebase.autoStash`, which is why `pull` consults
+    `_rebase_autostash_enabled` before it treats a non-empty result as a
+    reason to refuse. UNTRACKED files are deliberately excluded: a rebase
+    is happy to run alongside them, so listing them in the error would
+    name files that are not the problem.
     """
-    porcelain = _run_git(root, ["status", "--porcelain"], check=False).stdout
-    _untracked, modified = _parse_porcelain(porcelain)
+    _untracked, modified = _split_status_entries(_status_entries(root))
     return modified
 
 
@@ -612,10 +685,49 @@ def _unmerged_paths(root: Path) -> list[str]:
     `<<<<<<<` into the user's memories — permanently, and onward to
     every clone on the next push.
     """
-    porcelain = _run_git(root, ["status", "--porcelain"], check=False).stdout
-    return [
-        path for code, path in _porcelain_entries(porcelain) if code in _UNMERGED_CODES
-    ]
+    return [path for code, path in _status_entries(root) if code in _UNMERGED_CODES]
+
+
+def _rebase_autostash_enabled(root: Path) -> bool:
+    """True when this repo's git will autostash around a rebase.
+
+    `pull`'s dirty-worktree pre-check exists because `git pull --rebase`
+    normally refuses to run against uncommitted tracked changes. With
+    `rebase.autoStash` set, git does NOT refuse: it stashes the changes,
+    rebases, and restores them. Verified on git 2.50.1 against a
+    two-clone repo — the same pull that exits 128 with "cannot pull with
+    rebase: You have unstaged changes" exits 0 under
+    `-c rebase.autoStash=true`, printing "Created autostash" /
+    "Applied autostash" and leaving the local edit in the worktree. So a
+    pre-check that refused unconditionally broke a configuration git
+    supports, turning a working command into an error.
+
+    Asks git rather than reading a config file, so the setting resolves
+    the same way it would for the rebase itself. Spot-checked on 2.50.1:
+    an `includeIf.gitdir` conditional include and a `GIT_CONFIG_COUNT` /
+    `GIT_CONFIG_KEY_0` environment override are both reported here.
+    `--bool` is what normalises the spellings git accepts: `1`, `yes` and
+    `on` all come back as `true` (verified), which a raw string compare
+    would miss.
+
+    Conservative on anything that is not a clean `true`: an unset key
+    exits 1 and an unparseable value exits 128 ("bad boolean config
+    value"), and both are read as "not enabled" so the pre-check stays in
+    place. That is the safe direction — the pre-check's failure mode is a
+    clear message where git would have coped, not a lost edit. And an
+    unparseable value loses nothing: `git pull --rebase` fatals on it even
+    against a CLEAN worktree (verified), so that repo cannot rebase either
+    way and the pre-check is not what is stopping it.
+
+    Narrow by design: it answers for `rebase.autoStash`, the key git's
+    own rebase consults. `pull.autoStash` and `merge.autoStash` were both
+    tried against a dirty `git pull --rebase` on 2.50.1 and neither
+    changed the refusal, so neither is consulted here.
+    """
+    result = _run_git(
+        root, ["config", "--bool", "--get", "rebase.autoStash"], check=False
+    )
+    return result.returncode == 0 and result.stdout.strip() == "true"
 
 
 def _rebase_in_progress(root: Path) -> bool:
@@ -848,8 +960,7 @@ def status(root: Path) -> SyncStatus:
     branch_result = _run_git(root, ["branch", "--show-current"], check=False)
     branch = branch_result.stdout.strip() or None
 
-    porcelain = _run_git(root, ["status", "--porcelain"], check=False).stdout
-    untracked, modified = _parse_porcelain(porcelain)
+    untracked, modified = _split_status_entries(_status_entries(root))
 
     remote_url = (
         _run_git(root, ["remote", "get-url", "origin"], check=False).stdout.strip()
@@ -881,7 +992,7 @@ def status(root: Path) -> SyncStatus:
     return SyncStatus(
         is_repo=True,
         branch=branch,
-        has_changes=bool(porcelain.strip()),
+        has_changes=bool(untracked or modified),
         untracked=untracked,
         modified=modified,
         remote_url=remote_url,
@@ -910,12 +1021,14 @@ def _stage_and_commit(root: Path, message: str) -> bool:
     # a stale gitignore can leak a sidecar, so it is the only place that
     # has to reconcile.
     #
-    # `pull` deliberately does NOT reconcile: `git pull --rebase` refuses
-    # to run against a dirty worktree ("cannot pull with rebase: You have
-    # unstaged changes", verified empirically), so writing an
-    # uncommitted `.gitignore` change from inside pull would break the
+    # `pull` deliberately does NOT reconcile: by default `git pull
+    # --rebase` refuses to run against a dirty worktree ("cannot pull with
+    # rebase: You have unstaged changes", verified empirically), so writing
+    # an uncommitted `.gitignore` change from inside pull would break the
     # NEXT pull of a pull-only clone — while fixing no leak, because pull
-    # stages nothing.
+    # stages nothing. A store with `rebase.autoStash` set would survive it,
+    # but the reconcile is not worth making config-dependent for a path
+    # that stages nothing either way.
     reconcile = _reconcile_gitignore(root)
     if reconcile.error is not None:
         # Stand down, do NOT abort: an unwritable gitignore must not take
@@ -1039,7 +1152,7 @@ def push(
     #
     # Windows IS serialised here, contrary to what this comment claimed
     # until now. `_fsutil.flock_excl` has routed win32 to
-    # `_flock_windows` since 2.7: that helper takes a REAL cross-process
+    # `_flock_windows` since 3.0.0: that helper takes a REAL cross-process
     # advisory lock on the same `.sync.lock` sidecar via
     # `msvcrt.locking(fd, LK_NBLCK, 1)`, retrying with capped
     # exponential backoff (5ms doubling to a 100ms ceiling) until
@@ -1139,17 +1252,29 @@ def pull(
     the index rebuild to the end.
 
     Raises `SyncError` NAMING THE FILES when the worktree has
-    uncommitted changes to tracked memories. `git pull --rebase` refuses
-    to run in that state, and a live store is dirty most of the time —
-    editing a memory then syncing is the normal case, not the exotic
-    one. The raw git failure ("cannot pull with rebase: You have
-    unstaged changes") arrived wrapped in this wrapper's
-    conflict-resolution hint, which told the user to run `git rebase
-    --continue` for a situation where no rebase had started: advice that
-    does nothing. The pre-check turns that into an error that says which
-    files are dirty and which command fixes it.
+    uncommitted changes to tracked memories AND git would have refused
+    anyway. `git pull --rebase` refuses in that state by default, and a
+    live store is dirty most of the time — editing a memory then syncing
+    is the normal case, not the exotic one. The raw git failure ("cannot
+    pull with rebase: You have unstaged changes") arrived wrapped in this
+    wrapper's conflict-resolution hint, which told the user to run `git
+    rebase --continue` for a situation where no rebase had started:
+    advice that does nothing. The pre-check turns that into an error that
+    says which files are dirty and which command fixes it.
 
-    `pull` deliberately does NOT commit them for you — pull is a
+    THE PRE-CHECK DEFERS TO `rebase.autoStash`. Configured on, git
+    stashes the local edits, rebases, and restores them rather than
+    refusing, so a guard that fired unconditionally rejected a pull git
+    was willing to perform. `_rebase_autostash_enabled` decides that, and
+    it is deliberately the only thing that relaxes the check: the
+    unresolved-conflict guard ahead of it still refuses whatever the
+    config says.
+
+    Also raises when the pull EXITS 0 but leaves conflict markers, which
+    is what a colliding autostash restore does. That check sits before
+    the reindex so the FTS5 index is never rebuilt from marker text.
+
+    `pull` deliberately does NOT commit dirty files for you — pull is a
     read-ward operation and silently committing a user's in-progress
     edits would be a surprising side effect. `auto` DOES commit first
     (it is going to commit everything in its push step anyway), so the
@@ -1187,13 +1312,23 @@ def pull(
         # `git add -A` the conflict markers straight into their memories.
         _require_no_unresolved_conflict(root)
 
-        # Dirty-worktree pre-check. `git pull --rebase` hard-refuses when a
-        # tracked file has uncommitted changes, and that is the NORMAL state
-        # of a live store: edit a memory, run sync. Checked here — after the
-        # remote check, which is the more fundamental misconfiguration —
-        # so the user gets the files by name instead of git's generic
-        # complaint plus an inapplicable `git rebase --continue` hint.
-        dirty = _dirty_tracked_paths(root)
+        # Dirty-worktree pre-check, SKIPPED when git would have coped. A
+        # `git pull --rebase` normally hard-refuses when a tracked file has
+        # uncommitted changes, and that is the NORMAL state of a live store:
+        # edit a memory, run sync. Checked here — after the remote check,
+        # which is the more fundamental misconfiguration — so the user gets
+        # the files by name instead of git's generic complaint plus an
+        # inapplicable `git rebase --continue` hint.
+        #
+        # But "normally" is doing real work in that sentence: under
+        # `rebase.autoStash` git stashes, rebases and restores instead of
+        # refusing, and pre-empting it there broke `sync pull` for users
+        # whose git was configured to handle exactly this case. So the
+        # guard now only stands where git itself would have stopped — see
+        # `_rebase_autostash_enabled`. The conflict guard above is NOT
+        # conditional: autostash does not make committing `<<<<<<<`
+        # markers acceptable, and it runs before this check regardless.
+        dirty = [] if _rebase_autostash_enabled(root) else _dirty_tracked_paths(root)
         if dirty:
             shown = ", ".join(dirty[:10])
             if len(dirty) > 10:
@@ -1204,7 +1339,9 @@ def pull(
                 f"dirty worktree: {shown}. Run `bettermemory sync push` to "
                 f"commit and send them first, or `bettermemory sync auto` "
                 f"(which commits before it pulls), or commit / revert them "
-                f"by hand."
+                f"by hand. Setting `git config rebase.autoStash true` also "
+                f"clears this: git then stashes and restores them around the "
+                f"rebase, and this check steps aside."
             )
 
         # `--no-tags` keeps a hostile (or sloppy) remote from injecting refs
@@ -1228,6 +1365,40 @@ def pull(
                 "run `git rebase --continue` from the memory directory. "
                 "On crash mid-rebase, `git rebase --abort` recovers the "
                 "pre-pull state."
+            )
+
+        # A SUCCESSFUL PULL CAN STILL LEAVE CONFLICT MARKERS. Autostash
+        # restores the stashed edits after the rebase, and that restore can
+        # collide with what the rebase just brought down — at which point
+        # git reports "Applying autostash resulted in conflicts", leaves
+        # `UU` in the worktree, and EXITS 0. Verified on git 2.50.1 with a
+        # local edit and a remote commit touching the same line.
+        #
+        # Exit 0 is why this is checked rather than inferred from the return
+        # code, and it matters because the reindex is next: rebuilding the
+        # FTS5 index here would ingest `<<<<<<< Updated upstream` as memory
+        # body text and serve it in search results. Refusing instead leaves
+        # the index describing the pre-pull files, which is stale but true.
+        #
+        # Reachable only since the dirty-worktree pre-check learned to defer
+        # to `rebase.autoStash` — before that, pull refused before git could
+        # ever autostash. It costs one `git status` on every pull.
+        popped = _unmerged_paths(root)
+        if popped:
+            shown = ", ".join(popped[:10])
+            if len(popped) > 10:
+                shown += f", and {len(popped) - 10} more"
+            raise SyncError(
+                f"the rebase in {root} succeeded, but restoring your "
+                f"uncommitted edits on top of it produced conflicts in "
+                f"{len(popped)} file(s): {shown}. The index was NOT rebuilt, "
+                f"so it still describes the pre-pull files. Resolve the "
+                f"`<<<<<<<` / `=======` / `>>>>>>>` markers by hand and `git "
+                f"add` the file(s), then run `bettermemory reindex`. Git "
+                f"reports the original edits are also kept in `git stash "
+                f"list`. Do NOT run `bettermemory sync push` or `bettermemory "
+                f"sync auto` first: they run `git add -A`, which would commit "
+                f"the markers into your memories."
             )
 
         indexed: int | None = None
@@ -1258,10 +1429,13 @@ def auto(root: Path, *, remote: str = "origin") -> dict[str, object]:
     THE COMMIT COMES FIRST, and that ordering is the fix for a bug that
     made this command unusable on a live store. `auto` used to pull
     before it committed anything, and `git pull --rebase` hard-refuses
-    against a dirty worktree — so the moment a user edited a memory (the
-    normal reason to run a sync at all) `auto` failed outright with
-    git's "cannot pull with rebase: You have unstaged changes". Verified
+    against a dirty worktree unless the repo sets `rebase.autoStash` —
+    so on a default config, the moment a user edited a memory (the normal
+    reason to run a sync at all) `auto` failed outright with git's
+    "cannot pull with rebase: You have unstaged changes". Verified
     empirically: init, push, edit one existing memory, `auto` raises.
+    Committing first makes the order work for every config rather than
+    only for the autostashing one.
 
     Committing first is not a new side effect. `auto`'s push step has
     always run `git add -A` and committed everything in the worktree, so
