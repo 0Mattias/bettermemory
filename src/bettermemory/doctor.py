@@ -54,7 +54,7 @@ from pathlib import Path, PurePosixPath
 from typing import Any, Literal
 
 from .config import Config, TelemetryConfig, load_config
-from .eval import ADMIN_RECORDED_EVENT_KINDS
+from .eval import is_admin_recorded_event
 from .events import EVENT_LOG_FILENAME, iter_all_events
 from .init import KNOWN_CLIENTS, command_launches_bettermemory, find_binary
 from .store import Store, count_active_memory_files, count_unparseable_memory_files
@@ -834,34 +834,36 @@ def _check_event_log_writable(directory: Path) -> Diagnosis:
     )
 
 
-# `_ADMIN_EVENT_KINDS` is an ALIAS, imported at the top of this module,
-# for `eval.ADMIN_RECORDED_EVENT_KINDS` — never a local copy of its
-# contents. Event kinds emitted by admin/CLI surfaces (`doctor --fix`'s
-# audit trail; `consolidate --acknowledge-misses-before`'s bulk cutoff
-# marker) rather than by an MCP server session serving a client.
+# Admin-recorded events are excluded from the cadence census by calling
+# `eval.is_admin_recorded_event` — never by re-testing one of its axes
+# here. An event is admin-recorded when it comes from an admin/CLI
+# surface (`doctor --fix`'s audit trail, `consolidate`'s bulk markers
+# and acknowledgements) rather than from an MCP server session serving
+# a client.
 #
-# INVARIANT: every kind in that set is recorded outside any client
-# session, under a fresh throwaway session id, so a "session" observed
-# only through these kinds never had a Stop hook that could produce
-# `turn_audited`. `_check_audit_turn_cadence` excludes them from its
-# census entirely — counting them corrupts the ≥2-sessions denominator:
+# INVARIANT: such an event is recorded outside any client session,
+# under a fresh throwaway session id, so a "session" observed only
+# through them never had a Stop hook that could produce
+# `turn_audited`. Counting one corrupts the ≥2-sessions denominator:
 # `doctor --fix` on a store with one real session would manufacture the
 # second "session" whose missing `turn_audited` its own post-fix re-run
 # then warns about, flipping a fully-healed run's exit code to 1.
 #
-# The constant is DERIVED in eval.py (the complement of the in-session
-# subset over `_KNOWN_SIDE_EFFECT_KINDS`), so a newly-added admin kind
-# lands here automatically and this census cannot fall behind. That is
-# only true while this stays an import: the hand-written
-# `frozenset({"doctor_fix", "silent_miss_cutoff"})` that used to live
-# here compared EQUAL to the derivation on the day it was written and
-# would have silently drifted on the next kind. The parity pin in
-# tests/test_doctor.py asserts object IDENTITY with eval's constant for
-# exactly that reason — equality would not catch a re-hardcoded copy.
+# WHY THE PREDICATE AND NOT A CONSTANT: the classification has two
+# independent axes — the kind roster (`ADMIN_RECORDED_EVENT_KINDS`) and
+# the `cli_*` attribution prefix, which is what separates
+# `consolidate --acknowledge-debt`'s `kind="use"` rows from the
+# same-shaped rows a real client session emits. This module used to
+# test the kind axis alone, so those rows kept publishing a phantom
+# session here even after eval's own tally stopped counting them. The
+# predicate keeps both axes in one place and a new axis reaches this
+# census without a second edit.
 #
-# Bound by assignment rather than `import … as` so the alias is an
-# explicit export mypy can see through from the parity test.
-_ADMIN_EVENT_KINDS: frozenset[str] = ADMIN_RECORDED_EVENT_KINDS
+# `tests/test_eval.py::TestAdminRecordedParity` enforces the routing:
+# it AST-scans `src/` and fails any module other than eval.py that
+# names either axis constant, so re-testing one axis by hand here
+# breaks CI rather than silently disagreeing with eval about which
+# sessions ever existed.
 
 
 def _check_audit_turn_cadence(directory: Path) -> Diagnosis:
@@ -891,10 +893,11 @@ def _check_audit_turn_cadence(directory: Path) -> Diagnosis:
     trigger) without the corresponding turn_audited row, which is
     the real signal.
 
-    Admin/CLI event kinds (`_ADMIN_EVENT_KINDS`) are excluded from
-    the census entirely: they're recorded outside any client session
-    and can never produce `turn_audited`, so counting their sessions
-    (or events) would corrupt the denominator this heuristic rests on.
+    Admin/CLI events (everything `eval.is_admin_recorded_event`
+    accepts) are excluded from the census entirely: they're recorded
+    outside any client session and can never produce `turn_audited`,
+    so counting their sessions (or events) would corrupt the
+    denominator this heuristic rests on.
     """
     if not directory.exists():
         return Diagnosis(
@@ -908,8 +911,11 @@ def _check_audit_turn_cadence(directory: Path) -> Diagnosis:
     total_events = 0
     try:
         for event in iter_all_events(directory):
-            if event.get("kind") in _ADMIN_EVENT_KINDS:
-                # Not client-session activity — see _ADMIN_EVENT_KINDS.
+            if is_admin_recorded_event(event):
+                # Not client-session activity — see the comment above
+                # this function. Both exclusion axes come from the one
+                # shared predicate; testing either by hand here is what
+                # let acknowledge-debt's rows through before.
                 continue
             ts_raw = event.get("ts")
             if not isinstance(ts_raw, str):

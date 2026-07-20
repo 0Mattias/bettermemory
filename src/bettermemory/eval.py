@@ -2419,22 +2419,21 @@ _IN_SESSION_SIDE_EFFECT_KINDS: frozenset[str] = frozenset(
 # quietly falling behind.
 #
 # INVARIANT: a "session" observed only through these kinds never
-# existed as a client session. Every consumer that counts sessions must
-# exclude them, and none of them may keep a hand-written copy of the
-# roster — a fork drifts the moment a new admin kind lands here.
+# existed as a client session.
+#
+# This roster is ONE OF TWO axes and is not usable on its own — see
+# ``ADMIN_RECORDED_ATTRIBUTION_PREFIX`` below for the admin rows it
+# structurally cannot catch. Consumers therefore call
+# ``is_admin_recorded_event``; no other module in ``src/`` names this
+# constant in code (doctor.py mentions it in prose, explaining why it
+# calls the predicate instead).
 # ``tests/test_eval.py::TestAdminRecordedParity`` enforces both halves
 # mechanically: it AST-scans ``src/`` and ``tests/`` for any literal
 # set of event kinds that looks like a fork of this roster and asserts
-# each one equals this constant exactly, and it re-checks the same
-# equality against every admin-kind attribute reachable in
-# ``bettermemory.doctor``'s namespace. A future consumer that copies
-# the two names into its own frozenset trips the scan the moment its
-# copy diverges.
-#
-# Known consumers today: ``compute_report``'s published
-# distinct-session tally (counting them publishes phantom sessions in
-# the store-shape line) and doctor's ``_check_audit_turn_cadence``
-# census.
+# each one equals this constant exactly, and it AST-scans ``src/`` for
+# any module other than this one that names either axis constant —
+# which is how a consumer wires up half the classification. Both scans
+# self-test against a synthetic offender so neither can pass vacuously.
 ADMIN_RECORDED_EVENT_KINDS: frozenset[str] = (
     _KNOWN_SIDE_EFFECT_KINDS - _IN_SESSION_SIDE_EFFECT_KINDS
 )
@@ -2470,8 +2469,7 @@ def is_admin_recorded_event(ev: dict[str, Any]) -> bool:
     """True when ``ev`` was written by an admin/CLI surface rather than
     from inside a live client session.
 
-    THE predicate for session counting — both exclusion axes in one
-    place so a consumer can't wire up half of it. Kind-based
+    The single DEFINITION of that classification. Kind-based
     (``ADMIN_RECORDED_EVENT_KINDS``) catches the kinds only an admin
     surface ever emits; attribution-based
     (``ADMIN_RECORDED_ATTRIBUTION_PREFIX``) catches admin operations
@@ -2479,6 +2477,18 @@ def is_admin_recorded_event(ev: dict[str, Any]) -> bool:
     non-string/absent ``attribution`` reads as in-session, which is the
     correct back-compat fall-through: every pre-attribution event came
     off a real client.
+
+    Scope, stated precisely because the loose version of this sentence
+    has been wrong twice: every caller that excludes admin-recorded
+    events calls THIS, rather than testing one axis itself — that is
+    the invariant, and ``TestAdminRecordedParity`` enforces it from the
+    one side a static check can see: it fails any module in ``src/``
+    outside this one that names either axis constant in code, and any
+    literal set anywhere that forks the kind roster. It is NOT a claim
+    that every session tally in the
+    codebase excludes admin-recorded events; a tally that doesn't is a
+    gap in that tally, and the fix is to call this, never to re-derive
+    half the classification locally.
     """
     if ev.get("kind") in ADMIN_RECORDED_EVENT_KINDS:
         return True

@@ -912,18 +912,27 @@ def test_event_log_unwritable_hint_is_shape_aware_symlink_vs_regular(
 # ---------------------------------------------------------------------------
 
 
-def _write_event(directory: Path, kind: str, *, ts: str, session: str = "s1") -> None:
+def _write_event(
+    directory: Path,
+    kind: str,
+    *,
+    ts: str,
+    session: str = "s1",
+    **extra: object,
+) -> None:
     """Append one event line directly to the event log.
 
     We write raw JSONL rather than going through `events.Recorder` so
     the test can pin the timestamp without monkey-patching the clock.
     The `audit_turn_cadence` check reads via `iter_all_events`, which
-    parses the same JSONL.
+    parses the same JSONL. `extra` carries any additional payload
+    fields the event under test needs (`attribution`, `outcome`, …).
     """
     import json
 
     log = directory / ".events.jsonl"
-    payload = {"ts": ts, "session": session, "kind": kind}
+    payload: dict[str, object] = {"ts": ts, "session": session, "kind": kind}
+    payload.update(extra)
     with log.open("a", encoding="utf-8") as f:
         f.write(json.dumps(payload) + "\n")
 
@@ -1034,39 +1043,54 @@ def test_audit_turn_cadence_census_excludes_silent_miss_cutoff(
     assert diag.details["total_events"] == 1
 
 
-def test_admin_event_kinds_is_evals_constant_not_a_copy() -> None:
-    """doctor's cadence census must READ eval's shared constant.
+def test_cadence_census_uses_evals_shared_predicate() -> None:
+    """doctor's cadence census must route through eval's predicate.
 
-    `eval.ADMIN_RECORDED_EVENT_KINDS` was introduced with an invariant
-    comment stating that every consumer must read THAT constant so they
-    cannot drift apart — an invariant that was FALSE at its own
-    introduction, because doctor went on carrying its own hand-written
-    `frozenset({"doctor_fix", "silent_miss_cutoff"})` and this test
-    re-declared a third literal (`in_session`) of its own. Three copies
-    of one classification, all equal on the day they were written.
+    History, because the same mistake has now been made twice at two
+    different granularities. First doctor carried its own hand-written
+    `frozenset({"doctor_fix", "silent_miss_cutoff"})` while eval's
+    comment claimed no consumer kept a copy. That was repaired by
+    importing `ADMIN_RECORDED_EVENT_KINDS` — and then eval grew a
+    SECOND exclusion axis (`cli_*` attribution) behind
+    `is_admin_recorded_event`, whose docstring claimed to be the one
+    place both axes lived, while this census went on testing the kind
+    axis alone. Half the classification, again, asserted as whole.
 
-    IDENTITY, not equality, is the pin: a re-hardcoded literal with
-    today's contents compares equal and drifts on the next kind added
-    — which is exactly how the drift happened. `is` catches it the
-    moment the import is replaced by a copy.
+    So the pin is on the PREDICATE, by identity: doctor must hold
+    eval's function object itself, not a same-named local
+    reimplementation that agrees today and falls behind on the next
+    axis. `tests/test_eval.py::TestAdminRecordedParity` covers the
+    complementary direction — that no module outside eval reaches for
+    a single axis constant at all.
 
-    eval derives the constant as the complement of the in-session
+    eval derives the kind roster as the complement of the in-session
     subset over `_KNOWN_SIDE_EFFECT_KINDS`, so a NEW kind is classified
-    once, in eval, and lands in doctor's census automatically. Nothing
-    here re-states that classification; the partition assertions below
-    pin the derivation itself rather than duplicating its output."""
+    once, in eval, and lands in this census automatically. Nothing here
+    re-states that classification; the partition assertions below pin
+    the derivation itself rather than duplicating its output."""
     from bettermemory import doctor as doctor_mod
     from bettermemory.eval import (
         ADMIN_RECORDED_EVENT_KINDS,
         _IN_SESSION_SIDE_EFFECT_KINDS,
         _KNOWN_SIDE_EFFECT_KINDS,
+        is_admin_recorded_event,
     )
 
-    assert doctor_mod._ADMIN_EVENT_KINDS is ADMIN_RECORDED_EVENT_KINDS, (
+    # Read the module namespace rather than the attribute: doctor does
+    # not re-export the predicate, and the claim under test is exactly
+    # "doctor's globals hold eval's function object".
+    assert vars(doctor_mod).get("is_admin_recorded_event") is is_admin_recorded_event, (
         "doctor's census exclusion is no longer eval's "
-        "ADMIN_RECORDED_EVENT_KINDS but a copy of it — copies compare "
-        "equal today and drift on the next admin kind added. Import "
-        "the constant instead of re-declaring its contents."
+        "is_admin_recorded_event but a local stand-in (or absent) — a "
+        "stand-in agrees today and falls behind the moment eval grows "
+        "another exclusion axis, which is exactly how the `cli_*` "
+        "attribution axis came to be missing here."
+    )
+    assert not hasattr(doctor_mod, "_ADMIN_EVENT_KINDS"), (
+        "doctor is holding an admin-KIND roster again. The kind set is "
+        "one of two axes; consuming it directly is how this census "
+        "started manufacturing phantom sessions for admin CLI rows "
+        "that ride an in-session kind."
     )
 
     # The derivation is a real partition of eval's roster: nothing is
@@ -1106,6 +1130,72 @@ def test_audit_turn_cadence_excludes_every_admin_recorded_kind(
         assert diag.status == "ok", f"{kind} manufactured a phantom session"
         assert diag.details["sessions"] == 1
         assert diag.details["total_events"] == 1
+
+
+def test_audit_turn_cadence_excludes_cli_attributed_in_session_kinds(
+    tmp_path: Path,
+) -> None:
+    """The SECOND exclusion axis, behaviourally — the one kind-based
+    exclusion structurally cannot cover.
+
+    `bettermemory consolidate --acknowledge-debt` records
+    `kind="use", outcome="applied", auto=False` rows — the same shape
+    a model's `memory_record_use` call produces — under the fresh
+    throwaway `SessionState()` id its CLI entry point mints. Excluding by kind
+    would have to exclude `use` wholesale and blind the census to real
+    sessions, so the split runs off `attribution`.
+
+    Before this test, one real session plus one acknowledge-debt run
+    put `sessions` at 2 and flipped this check to `warn`: the exact
+    false positive the ≥2-session floor exists to prevent, reintroduced
+    through an axis the census wasn't consulting. Driven off
+    `ADMIN_RECORDED_ATTRIBUTION_PREFIX` so a renamed prefix cannot
+    leave this passing against a rule that no longer exists.
+    """
+    from datetime import datetime, timezone
+
+    from bettermemory.eval import ADMIN_RECORDED_ATTRIBUTION_PREFIX
+
+    now_iso = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+    _write_event(tmp_path, "search", ts=now_iso, session="the-real-one")
+    for i in range(3):
+        _write_event(
+            tmp_path,
+            "use",
+            ts=now_iso,
+            session="throwaway-cli-run",
+            outcome="applied",
+            auto=False,
+            attribution=f"{ADMIN_RECORDED_ATTRIBUTION_PREFIX}acknowledge_debt",
+            note=f"row {i}",
+        )
+
+    diag = _check_audit_turn_cadence(tmp_path)
+    assert diag.status == "ok", (
+        "acknowledge-debt's `use` rows manufactured a phantom session — "
+        "the census is excluding by kind alone again"
+    )
+    assert diag.details["sessions"] == 1
+    assert diag.details["total_events"] == 1
+
+    # Control: the SAME kind and session id, in-session attribution.
+    # Without this the test above would also pass if `use` were
+    # excluded wholesale, which would blind the census to real work.
+    other = tmp_path / "in_session"
+    other.mkdir()
+    _write_event(other, "search", ts=now_iso, session="the-real-one")
+    _write_event(
+        other,
+        "use",
+        ts=now_iso,
+        session="a-second-real-session",
+        outcome="applied",
+        auto=False,
+        attribution="model",
+    )
+    control = _check_audit_turn_cadence(other)
+    assert control.details["sessions"] == 2
+    assert control.details["total_events"] == 2
 
 
 def test_audit_turn_cadence_only_old_events_skips_warn(tmp_path: Path) -> None:

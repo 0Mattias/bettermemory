@@ -2989,6 +2989,39 @@ def _admin_roster_forks(
     return found
 
 
+_AXIS_CONSTANT_NAMES = frozenset(
+    {"ADMIN_RECORDED_EVENT_KINDS", "ADMIN_RECORDED_ATTRIBUTION_PREFIX"}
+)
+
+
+def _single_axis_uses(source: str, label: str) -> list[tuple[str, str, int]]:
+    """Every reference in ``source`` to ONE exclusion axis rather than to
+    the ``is_admin_recorded_event`` predicate that combines them.
+
+    Three shapes are caught: naming an axis constant (bare, imported, or
+    attribute-accessed off the module) and re-spelling the attribution
+    prefix as a string literal. Names are matched rather than resolved,
+    so an alias under a different name is still caught at its import.
+    """
+    found: list[tuple[str, str, int]] = []
+    for node in ast.walk(ast.parse(source)):
+        if isinstance(node, ast.Name) and node.id in _AXIS_CONSTANT_NAMES:
+            found.append((label, node.id, node.lineno))
+        elif isinstance(node, ast.Attribute) and node.attr in _AXIS_CONSTANT_NAMES:
+            found.append((label, node.attr, node.lineno))
+        elif isinstance(node, ast.ImportFrom):
+            for alias in node.names:
+                if alias.name in _AXIS_CONSTANT_NAMES:
+                    found.append((label, alias.name, node.lineno))
+        elif (
+            isinstance(node, ast.Constant)
+            and isinstance(node.value, str)
+            and node.value == ADMIN_RECORDED_ATTRIBUTION_PREFIX
+        ):
+            found.append((label, f"{node.value!r} (literal)", node.lineno))
+    return sorted(found, key=lambda f: (f[2], f[1]))
+
+
 class TestAdminRecordedParity:
     def test_fork_detector_catches_a_drifted_copy(self) -> None:
         """Pin the pin. The scan below is only worth anything if its
@@ -3037,32 +3070,87 @@ class TestAdminRecordedParity:
             f"disagree about which sessions ever existed."
         )
 
-    def test_doctor_admin_kind_attributes_equal_the_canonical_roster(self) -> None:
-        """The one consumer outside eval.py, checked by value rather than
-        by name so it survives the constant being imported, aliased, or
-        renamed on doctor's side. Any module attribute of doctor whose
-        name mentions ADMIN and whose value is a set of strings must be
-        this roster."""
-        from bettermemory import doctor
+    def test_single_axis_detector_fires_and_spares_the_predicate(self) -> None:
+        """Pin the pin, both directions. The scan below is worth nothing
+        if it can't see a half-wired consumer, and worse than nothing if
+        it flags a correctly-wired one.
 
-        candidates = {
-            name: value
-            for name, value in vars(doctor).items()
-            if "ADMIN" in name.upper()
-            and isinstance(value, (set, frozenset))
-            and all(isinstance(x, str) for x in value)
-        }
-        mismatched = {
-            name: sorted(value)
-            for name, value in candidates.items()
-            if frozenset(value) != ADMIN_RECORDED_EVENT_KINDS
-        }
-        assert not mismatched, (
-            f"doctor's admin-kind set(s) {mismatched} disagree with "
-            f"eval.ADMIN_RECORDED_EVENT_KINDS "
-            f"({sorted(ADMIN_RECORDED_EVENT_KINDS)}). The cadence census and "
-            f"the published session tally would then exclude different "
-            f"events from 'is this a real client session?'."
+        The two synthetic offenders are the two shapes of half-wiring:
+        testing the kind roster alone (which is how doctor's cadence
+        census let `--acknowledge-debt`'s rows through) and re-spelling
+        the attribution prefix as a literal.
+        """
+        kind_axis = (
+            "from bettermemory.eval import ADMIN_RECORDED_EVENT_KINDS\n"
+            "def count(ev):\n"
+            "    return ev.get('kind') not in ADMIN_RECORDED_EVENT_KINDS\n"
+        )
+        assert [n for _, n, _ in _single_axis_uses(kind_axis, "<kind>")] == [
+            "ADMIN_RECORDED_EVENT_KINDS",
+            "ADMIN_RECORDED_EVENT_KINDS",
+        ]
+
+        prefix_literal = (
+            "def count(ev):\n"
+            f"    return not ev.get('attribution', '').startswith("
+            f"{ADMIN_RECORDED_ATTRIBUTION_PREFIX!r})\n"
+        )
+        assert [n for _, n, _ in _single_axis_uses(prefix_literal, "<prefix>")] == [
+            f"{ADMIN_RECORDED_ATTRIBUTION_PREFIX!r} (literal)"
+        ]
+
+        # Negative control: the correct wiring must be silent, or the
+        # scan would just be a ban on the whole subject area.
+        correct = (
+            "from bettermemory.eval import is_admin_recorded_event\n"
+            "def count(ev):\n"
+            "    return not is_admin_recorded_event(ev)\n"
+        )
+        assert _single_axis_uses(correct, "<correct>") == []
+
+    def test_no_src_module_outside_eval_wires_up_a_single_axis(self) -> None:
+        """The invariant `is_admin_recorded_event`'s docstring states,
+        made mechanical.
+
+        The classification has two axes, and a consumer that reaches
+        for one constant has by construction implemented half of it.
+        That is not hypothetical: doctor's cadence census excluded
+        admin events by kind alone, so a `consolidate
+        --acknowledge-debt` run published a phantom session there while
+        eval's own tally had already stopped counting it — the two
+        surfaces disagreeing about which sessions ever existed, which
+        is precisely what the shared constant was introduced to
+        prevent.
+
+        So: no module in `src/` other than eval.py may name either axis
+        constant or re-spell the prefix. Callers use the predicate.
+        AST-based, so the prose in doctor.py explaining WHY it calls
+        the predicate — which mentions the constant by name — is not a
+        false positive.
+        """
+        repo_root = Path(__file__).resolve().parents[1]
+        eval_py = repo_root / "src" / "bettermemory" / "eval.py"
+        assert eval_py.is_file(), "definition site moved; update this scan"
+
+        offenders: list[tuple[str, str, int]] = []
+        scanned = 0
+        for py_file in sorted((repo_root / "src").rglob("*.py")):
+            if py_file == eval_py:
+                continue
+            scanned += 1
+            offenders.extend(
+                _single_axis_uses(
+                    py_file.read_text(encoding="utf-8"),
+                    str(py_file.relative_to(repo_root)),
+                )
+            )
+        assert scanned > 1, "scan found no modules — the walk is broken"
+        assert not offenders, (
+            f"module(s) outside eval.py wire up one exclusion axis by "
+            f"hand: {offenders}. Call `eval.is_admin_recorded_event` "
+            f"instead — it is the whole classification, and a consumer "
+            f"holding half of it silently disagrees with the rest of "
+            f"the codebase about which sessions are real."
         )
 
 
