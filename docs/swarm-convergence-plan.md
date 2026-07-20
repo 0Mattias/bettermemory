@@ -72,19 +72,24 @@ for. Two land: `store.py:298` is exactly `Store.load_one`, and
 implicated in the rest. Resolved against `59a1e08`, the commit that
 shipped them, the first three misses above already missed — their cited
 regions resolve identically there and at `60b7553` — so they were wrong
-on arrival rather than overtaken by a later edit. Only the `events.py`
-citation genuinely rotted, and the errata is what rotted it: the doc
-originally shipped `events.py:235-245`, which at `59a1e08` covered
-`Recorder.__post_init__`, line 237 there being the
-`crc32(session_id) % SHARD_COUNT` assignment itself. `fa45542` narrowed
-it to `events.py:237` against a tree in which that line had already
-moved, so the narrowed citation was wrong when written; `3f55d1b` then
-explained `events.py:237` as `redact_query`'s docstring — true of
-`fa45542`'s tree, already false of its own — and got the tally wrong
-besides, claiming five misses and a single survivor. A symbol survives
-the next edit and a line number does not; but what failed twice here was
-a re-measured line number, which is why every resolution above is
-pinned to a named commit.*
+on arrival rather than overtaken by a later edit. The `events.py`
+citation is the one that genuinely rotted, and the errata made it wrong
+sooner rather than doomed it. The doc originally shipped
+`events.py:235-245`; at `59a1e08` line 237 was the
+`self._shard = zlib.crc32(...) % SHARD_COUNT` assignment itself, in the
+tail of `Recorder.__post_init__` — though even there the range did not
+sit cleanly on that method, opening inside its body rather than at its
+`def` and running past its end into the adjacent `path` property.
+`fa45542` narrowed it to `events.py:237` against a tree in which that
+line had already moved, so the narrowed citation was wrong when written;
+`3f55d1b` then explained `events.py:237` as `redact_query`'s docstring —
+true of `fa45542`'s tree, already false of its own — and got the tally
+wrong besides, claiming five misses and a single survivor. The original
+range was not going to survive either way: at `60b7553`
+`events.py:235-245` lands in `_safe_stem_component`, a different
+function. A symbol survives the next edit and a line number does not;
+but what failed twice here was a re-measured line number, which is why
+every resolution above is pinned to a named commit.*
 
 - **Safety: DONE.** Per-memory-file `fcntl`/`msvcrt` locking
   (`_fsutil.flock_excl`), so disjoint memories never contend. The
