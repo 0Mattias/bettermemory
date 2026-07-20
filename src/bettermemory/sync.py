@@ -1152,9 +1152,10 @@ def push(
     #
     # Windows IS serialised here, contrary to what this comment claimed
     # until now. `_fsutil.flock_excl` has routed win32 to
-    # `_flock_windows` since 3.0.0: that helper takes a REAL cross-process
-    # advisory lock on the same `.sync.lock` sidecar via
-    # `msvcrt.locking(fd, LK_NBLCK, 1)`, retrying with capped
+    # `_flock_windows` since 3.0.0 — commit bc47593 replaced the bare
+    # `yield` that branch still held at v2.7.3 — and that helper takes
+    # a REAL cross-process advisory lock on the same `.sync.lock`
+    # sidecar via `msvcrt.locking(fd, LK_NBLCK, 1)`, retrying with capped
     # exponential backoff (5ms doubling to a 100ms ceiling) until
     # `BETTERMEMORY_FLOCK_TIMEOUT` (default 30s) and then raising
     # `TimeoutError` rather than proceeding unlocked. So two `sync push`
