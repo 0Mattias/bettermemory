@@ -7,6 +7,139 @@ breaking changes, minor for additive features, patch for fixes. The
 [compatibility contract](CONTRIBUTING.md#versioning-and-the-compatibility-contract)
 spells out exactly what's stable.
 
+## 3.26.0 - 2026-07-20
+
+Silent event-log data loss, and three ways `sync` could commit conflict
+markers into a memory store. Minor rather than patch because the on-disk
+rotated-archive filename changes shape, `PathDriftReport` gains a field,
+and `sync push` / `sync auto` / `sync pull` now REFUSE in situations
+where they previously succeeded. Read the upgrade notes at the bottom
+before upgrading a store you sync.
+
+### Fixed — event log
+
+- **Cross-shard rotation destroyed whole segments.** 3.24.0 sharded the
+  active event log and gave each shard its own append lock, but left the
+  rotation namespace global: the archive stem carried a one-second
+  timestamp and no shard component, and the `.rotating` holding path was
+  never existence-checked at all. Two shards crossing `max_bytes` in the
+  same second both renamed onto the identical path, and the second
+  `os.replace` unlinked the first shard's entire segment. `record()`
+  swallows the exception, so the only trace was a `rotation compress
+  failed` warning. Reproduced across separate OS processes; at a 500 KB
+  segment size single collisions destroyed hundreds to thousands of
+  events. Uniform crc32 striping makes shards fill in phase, so
+  same-second rotation is the correlated case under exactly the
+  concurrent workload sharding was built for — not a rare interleaving.
+  Rotation names are now partitioned by shard and both the archive and
+  the holding path are probed before a name is taken.
+- **`iter_all_events` was no longer chronological.** It yielded every
+  archive before every active segment — sound when one active file
+  rotated wholesale into strictly-older archives, wrong once shards
+  rotate independently, because a quiet shard's active segment can hold
+  events older than a busy shard's archive. It now `heapq.merge`s
+  per-shard archive chains with the active stream on the event
+  timestamp. Untagged archives from a pre-3.26 store have no known shard,
+  so they form one chain ordered among themselves by mtime; ordering
+  across that chain's members is best-effort by construction.
+- **`iter_events_window` could miss a shard's rotated history.** It
+  decided coverage from the globally-oldest event, so a single cold shard
+  holding a stale event suppressed the rotated-segment prepend for a
+  different shard that had just rotated. A session's own `search` event
+  could go invisible to the retrieval shield, re-firing the turn as a
+  false `search_miss` and inflating the published silent-miss rate.
+  Coverage is now decided per active segment.
+- **Same-second archives sorted by filename.** `_archive_sort_key` moved
+  off `mtime_ns` (a `.gz`'s mtime is when compression finished, not when
+  rotation happened) and now tiebreaks same-second segments on write
+  evidence rather than alphabetically.
+- **Crash-orphan recovery could reclaim a live rotation.** The sweep now
+  skips holding files tagged for another shard and runs under a
+  store-wide rotation lock.
+
+### Fixed — sync could commit conflict markers
+
+Three separate paths let `git add -A` stage a conflicted file as if it
+were resolved, committing `<<<<<<<` into a memory body — permanently, and
+in one case onward to every clone.
+
+- **`sync push` committed AND pushed them.** It never consulted the
+  conflict guard. Verified end to end: `push` returned
+  `committed=True, pushed=True` and left markers in a memory body at the
+  bare remote's `main` tip.
+- **`sync auto` committed them through a lock race.** Its guard ran
+  *before* taking the sync lock, so a conflict arriving during the wait
+  was invisible. In the worst shape — a conflicted `git stash pop`, which
+  leaves no sentinel file and no remote divergence for the follow-on
+  rebase to trip on — `auto` returned normally, with no error at all, and
+  the markers reached the remote. The guard now runs inside the lock, as
+  `push` and `pull` already did.
+- **The guard keyed on the wrong thing.** It probed for rebase sentinel
+  files, which cannot see a conflicted merge, cherry-pick, revert, or
+  stash pop. It now gates on git's seven unmerged porcelain codes
+  (`DD AU UD UA DU AA UU`), which covers all of them.
+
+A residual remains and is documented rather than claimed closed: the sync
+lock serialises bettermemory's own operations, not the user's hand-run
+git, so a conflict created between the guard and `git add -A` is still
+possible. The window is short but not zero.
+
+### Fixed — diagnostics and reporting
+
+- **`doctor --fix` deleted user-added `.gitignore` lines**, rewriting the
+  store's file wholesale. It now reconciles additively, and `sync` does
+  the same reconciliation on push rather than only at init — so a store
+  created before 3.24.0 finally gets the sharded-event-log ignore rule
+  instead of pushing raw telemetry to its remote.
+- **`doctor`'s event-log check probed only the first shard** while
+  returning a verdict covering all of them, so a mispermissioned segment
+  was invisible behind a green result.
+- **`eval --report` published misleading figures**: window-labelled
+  columns carrying all-time counts, phantom sessions from admin CLI
+  events, and untelemetered tools rendered indistinguishably from
+  never-called ones.
+- **The FTS5 divergence check cried wolf** on healthy stores, reporting
+  in-flight writes as an index desync and burning its one-shot warning
+  budget so a real desync could never be reported. It now settles on the
+  writer's lock instead of a timer.
+
+### Fixed — path drift
+
+- **3.25.2's route-suppression overshot.** It stopped inventing drift and
+  started hiding it: `/srv/docker/gitea`-shaped citations, and any
+  home-rooted path written in its absolute form, were silently dropped
+  rather than reported missing. The two spellings of one path now agree,
+  case-insensitive volumes are handled, and the suppressed set is
+  visible in a new `dropped_as_route` bucket on `PathDriftReport` — an
+  in-process bucket; it does not yet reach the MCP response surface.
+
+### Added
+
+- **`tests/test_doc_claims.py`** — a CI guard on the truth of shipped
+  prose. It extracts checkable claims from the changelog, README and
+  docs (paths, symbols, test counts, line citations) and fails when the
+  repo does not support one. Known-false claims sit in a ratcheted
+  allowlist: an exemption that stops matching a real failure also fails
+  the suite, so it cannot outlive the defect it excuses. This exists
+  because a documented claim being false is the single most common
+  defect class in this project's history.
+
+### Upgrade notes
+
+- **Rotated archives change filename shape** to
+  `.events-{ts}-s{NN}.jsonl.gz`. Existing untagged archives are still
+  read and recovered; no migration is needed and nothing is rewritten.
+  Tooling that globs the old shape by hand should be checked.
+- **`sync push`, `sync auto` and `sync pull` now raise** when the store
+  has unmerged files, instead of committing them. If you run `sync auto`
+  from cron or a shell alias, it will start failing on a conflicted
+  store rather than silently corrupting it. Resolve the conflict and
+  re-run; the error names the files.
+- **`sync push` now updates the store's `.gitignore`** to the current
+  canonical set. On a store initialised before 3.24.0 this adds the
+  sharded event-log rule, which stops raw event telemetry being pushed
+  to your remote. User-added lines are preserved.
+
 ## 3.25.2 - 2026-07-19
 
 A path-drift false positive that made healthy web-app memories look stale.
