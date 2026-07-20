@@ -400,6 +400,26 @@ _ALLOWLIST: dict[tuple[str, str, str], str] = {
         "this repair may touch, so it is exempt here rather than fixed "
         "here. Delete on repair."
     ),
+    (
+        "docs/swarm-convergence-plan.md",
+        "line-ref",
+        "events.py:235",
+    ): (
+        "NOT a false claim — a FALSE POSITIVE, and the only one in the "
+        "corpus. The paragraph quotes this citation as its SUBJECT: it "
+        "is arguing that the citation does not resolve, and says so in "
+        "the same sentence ('at `60b7553` `events.py:235-245` lands in "
+        "`_safe_stem_component`, a different function'). The extractor "
+        "reads the quoted form as an assertion and checks it, so prose "
+        "that says 'X is wrong' fails for X being wrong. Rewriting the "
+        "paragraph to dodge the rule would destroy the evidence it "
+        "analyses, and this module's own design note says contorting "
+        "shipped prose to appease a linter is worse than the drift. "
+        "The durable fix is an extractor rule that suppresses a "
+        "citation the surrounding prose marks as non-resolving; that is "
+        "queued, and it is a precision change to this checker rather "
+        "than a repair to the doc. Delete this entry when that lands."
+    ),
 }
 # NOTE on the entry directly above, which is the second time it has been
 # written. It sat here once before, was deleted as repaired, and was not
