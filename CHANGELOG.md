@@ -344,8 +344,8 @@ survive checking against the code and the tag.
   `test_iter_events_merges_shards_preserving_per_session_order` and
   `test_legacy_events_jsonl_merges_in_after_sharding`. Its other test
   edits are helper refactors, not additions. The "nine" appears to have
-  been carried over from the *other* commit in the tag, `096218e`,
-  whose message likewise claims nine for
+  been carried over from the one other commit in the tag whose message
+  states a test count — `096218e`, which likewise claims nine for
   `tests/test_indexed_lookup.py` — that commit adds eight test
   functions to that file, with no parametrisation to make up the
   difference. (Counted on `096218e` itself. The file has grown since,
@@ -399,15 +399,23 @@ survive checking against the code and the tag.
   order. No events are lost in any of these cases.
 
   Two things that would be convenient to assume, and are not true.
-  Nothing prunes rotated archives — `events.py` unlinks `.rotating`
-  holding files only, and no retention sweep exists anywhere in the
-  package — so an affected store does not grow out of the exception on
-  its own; the untagged archives stay until someone removes them.
-  And post-`eace517` code can still *create* an untagged archive:
+  No retention policy removes rotated archives, and no code path in the
+  package deletes a canonical one. The prune routines that do exist are
+  about other data: `EpisodeStore.prune_old_sessions` drops episode
+  session DIRECTORIES past a TTL, and `Store.prune_tombstones`
+  hard-deletes tombstone files past a retention cutoff — neither so
+  much as reads the event log's filenames. `events.py`'s own deletes
+  reach only non-canonical scratch: the `.rotating` holding file and
+  the `.jsonl.gz.tmp` of an in-progress compression, never a
+  `.jsonl.gz`. So an affected store does not grow out of the exception
+  on its own; the untagged archives stay until someone removes them by
+  hand. And post-`eace517` code can still *create* an untagged archive:
   `_recover_orphan_rotations` reclaims a pre-upgrade `.rotating` orphan
   by compressing it under its existing untagged stem. `iter_all_events`'
   own docstring flags the same untagged chain as its one approximate
-  stream.
+  stream — but that docstring also says the chain "degrades to exact as
+  pre-3.25 archives age out of a store", which is the assumption this
+  paragraph opened by correcting.
 
   `eace517` landed on `main` after the `v3.25.2` tag, so no release at
   or below 3.25.2 contains it, and the first release cut from `main`
