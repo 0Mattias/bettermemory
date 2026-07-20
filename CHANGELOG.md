@@ -7,6 +7,97 @@ breaking changes, minor for additive features, patch for fixes. The
 [compatibility contract](CONTRIBUTING.md#versioning-and-the-compatibility-contract)
 spells out exactly what's stable.
 
+## 3.27.0 - 2026-07-20
+
+A store root that was world-listable, and BM25 pricing term rarity
+against the wrong collection. Minor rather than patch because the index
+schema bumps to v6 (one-time rebuild on first use), the store root's
+permissions change on disk when it is opened, and search ranking moves
+for any store past the 500-memory prefilter threshold.
+
+### Fixed — store permissions
+
+- **The store root was created world-readable and world-listable.**
+  `Store.__post_init__` created it with a bare
+  `mkdir(parents=True, exist_ok=True)` — no mode — so under the usual 022
+  umask every store root on disk was `0o755`. Immediately below it, the
+  tombstone directory already took an explicit `mode=0o700` with a
+  comment saying not to rely on the caller's umask; the reasoning was
+  written down and simply never applied to the root.
+
+  This is a disclosure, not a tidiness point: a memory's **filename**
+  embeds the first ~43 characters of its summary, so a listable root
+  hands any local account the gist of the whole store from `ls` alone —
+  `2026-07-20-acquisition-talks-with-northstar-closing-in-<ulid>.md`.
+  The `0o600` on the bodies never came into it, and SECURITY.md names
+  filesystem permissions as the access-control boundary.
+
+  Roots created by earlier versions are healed when the store is opened.
+  The heal only ever CLEARS group/other bits, is POSIX-only, and is
+  best-effort: a sandboxed or network filesystem that refuses `chmod`
+  leaves the store fully usable and `doctor` reports the residual
+  exposure rather than failing to open it.
+
+- **`doctor` reports a root it could not tighten**, and its `--fix` chmod
+  is reachable again. The fixer previously returned early whenever the
+  directory was writable — which a `0o755` root is — so the chmod five
+  lines below could never run for the one mode nearly every store had.
+  The check heals before it judges, so a legacy root does not turn
+  `doctor` red on the first run after upgrading; only a chmod that
+  genuinely could not land surfaces as `warn`.
+
+### Fixed — search ranking
+
+- **BM25 priced term rarity against the wrong collection.** Above the
+  500-memory threshold the FTS prefilter hands the ranker at most 50
+  candidates, every one of them present *because* it matched the query.
+  Document frequency counted over that pool makes the query's own
+  discriminative terms look ubiquitous — df approaches N by construction
+  — and Okapi IDF collapses toward zero for exactly the terms that should
+  dominate, degenerating BM25 into length normalisation plus recency.
+  Measured through the live handler on a 608-memory store where 8
+  memories carried the queried term: `IDF` 0.0572 pool-derived against
+  4.2718 corpus-wide, a 74x error. The same arithmetic on a 63-memory
+  store with 3 carriers reads 0.1335 against 2.9 — the gap narrows with
+  the corpus but never closes.
+
+  Frequencies now come from the index, over the collection the search
+  will actually rank — scopes, excluded scopes, repo and worktree, the
+  same admission rule `_filter_candidates` applies. That matters under
+  auto-scope, where whole-store frequencies would price rarity against
+  memories the caller cannot retrieve. The rule is evaluated in Python on
+  index rows rather than pushed into SQL, because `repos_match` compares
+  on `(host, owner, name)` and consults per-process alternate spellings —
+  a SQL filter would quietly disagree with the ranked set for precisely
+  the multi-remote stores that mechanism exists to serve.
+
+  Stores below the threshold are unaffected: there the candidate pool
+  already is the collection, so the shipped ranking is unchanged.
+
+- **`migrate` left the index holding pre-migration frontmatter.** It
+  rewrites `.md` files directly rather than through a Store mutator, and
+  nothing kept the index in step — the startup divergence check compares
+  counts, and rewriting scopes or an origin block in place changes none,
+  so the skew was invisible. A migration that changed anything now flags
+  the index for rebuild, which fails safe (search falls back to the full
+  scan) and auto-heals on the next store construction.
+
+### Changed
+
+- **Index schema v6** adds `origin_repo` / `origin_worktree`, mirroring
+  the origin block already on each `.md` file, so search admission can be
+  decided without parsing bodies. As with every schema bump the existing
+  index is dropped and flagged for rebuild; the markdown files are
+  canonical and nothing is lost. Search routes to a full scan until the
+  rebuild completes.
+
+- **The server's `instructions` block no longer carries the `/loop`
+  sentence.** It told every connecting client to call `episode_handoff`
+  at entry and `episode_write` at exit — a directive for one operator's
+  audit-loop harness, resident in the system prompt of every user who had
+  no such workflow. The `episode_*` tools are unchanged and still
+  documented in their own descriptions.
+
 ## 3.26.0 - 2026-07-20
 
 Silent event-log data loss, and three ways `sync` could commit conflict
