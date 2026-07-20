@@ -71,13 +71,20 @@ survive checking against the code.
   platform note already records for Windows.)
 
   Wrong on the blast radius: "unchanged" is not true of the wider
-  class. Multi-segment extensionless paths whose parent is absent
-  locally are now **dropped rather than reported** — `/srv/docker/
-  gitea`, `/data/compose/stacks`, `/mnt/tank/media` and the rest of the
-  remote-host, NAS and deploy-target vocabulary that infrastructure
-  memories cite constantly. Those used to reach `path_drift.missing`
-  and no longer do. Anyone who wants the drift signal back on such a
-  path must attest it (`memory_verify(verified_paths=[...])` or
+  class. As 3.25.2 shipped, a multi-segment extensionless path whose
+  immediate parent is absent locally is **dropped rather than
+  reported** — `/srv/docker/gitea`, `/data/compose/stacks`,
+  `/mnt/tank/media` and the rest of the remote-host, NAS and
+  deploy-target vocabulary that infrastructure memories cite
+  constantly. Those used to reach `path_drift.missing` and no longer
+  do. (`main` has since added a third escape for home-rooted
+  candidates, so a path under this machine's `$HOME` is no longer
+  dropped; the three examples above are not under it and still are.
+  `_is_multi_segment_routelike`'s docstring states the drop condition
+  as a numbered shape — treat that as canonical over any prose here.)
+
+  Anyone who wants the drift signal back on such a path must attest it
+  (`memory_verify(verified_paths=[...])` or
   `verified_absent_paths=[...]`), which puts it behind the `not
   attested` guard and past the route check entirely.
 
@@ -141,19 +148,25 @@ strong.
   covered (`_fsutil.py` `atomic_write_bytes`, `events.py` rotation,
   `events.py` archive). But they are not all of them: the embedding
   cache's persistent flush in `semantic.py` performs a fourth
-  tmp → fsync → rename, and it calls `Path.replace` directly rather
-  than `_fsutil.replace_atomic`, so it never had the Windows retry.
-  It is therefore still exposed to the exact `PermissionError` race
-  3.25.1 set out to close — two flushes against one memory dir on
-  Windows can still fail the rename hard.
+  tmp → fsync → rename, and as 3.25.1 shipped it called `Path.replace`
+  directly rather than `_fsutil.replace_atomic`, so it never got the
+  Windows retry. That release therefore left the site exposed to the
+  exact `PermissionError` race it set out to close — two flushes
+  against one memory dir on Windows could still fail the rename hard.
 
   The consequence is milder than for the store proper: the embedding
   cache is a fully recomputable derived artifact, and the flush already
   swallows its own exceptions, so a lost rename costs a cache rebuild
   rather than data. It is a durability gap, not a correctness one — but
   the entry's "all three" asserted a completeness that did not hold.
-  The site is being brought onto `replace_atomic` in a follow-up
-  release.
+
+  The site has since been routed through `replace_atomic` by `b3cc470`,
+  which landed on `main` after the `v3.25.2` tag — so, as with
+  `eace517` in the 3.24.0 erratum, no release at or below 3.25.2
+  carries it and the first release cut from `main` after that point
+  does. Stated that way on purpose:
+  "in a follow-up release" was the previous wording, and a promise
+  about an unnamed future release cannot be checked or falsified.
 
 ## 3.25.0 - 2026-07-19
 
@@ -333,8 +346,11 @@ survive checking against the code and the tag.
   edits are helper refactors, not additions. The "nine" appears to have
   been carried over from the *other* commit in the tag, `096218e`,
   whose message likewise claims nine for
-  `tests/test_indexed_lookup.py` — that file contains eight test
-  functions and no parametrisation.
+  `tests/test_indexed_lookup.py` — that commit adds eight test
+  functions to that file, with no parametrisation to make up the
+  difference. (Counted on `096218e` itself. The file has grown since,
+  so a count taken against `main` answers a different question — which
+  is why this one names the commit.)
 
 - **"every read/consumer contract is byte-identical" was false as
   shipped.** The preamble's backward-compatibility claim, and the
@@ -351,17 +367,58 @@ survive checking against the code and the tag.
   read order real"), which replaces the archives-then-active walk with
   a `heapq.merge` on the event `ts` across per-shard archive chains,
   untagged legacy archives, orphan `.rotating` segments and the active
-  stream — so `iter_all_events` genuinely is chronological now. The
-  same commit repairs two sibling assumptions the shard split left
-  standing: an unshared rotation namespace (two shards crossing
-  `max_bytes` in the same UTC second could derive the same holding
-  path, and the second rename destroyed the first shard's segment) and
-  `iter_events_window`'s global `oldest_ts` shield. **That commit is
-  not in any tagged release yet** — it landed after `v3.25.2`. So do
-  not go looking above this entry for it: there is no release entry
-  describing it, and there will not be one until the next release is
-  cut. This sentence previously pointed the reader upward at an entry
-  that did not exist.
+  stream. The same commit repairs two sibling assumptions the shard
+  split left standing: an unshared rotation namespace (two shards
+  crossing `max_bytes` in the same UTC second could derive the same
+  holding path, and the second rename destroyed the first shard's
+  segment) and `iter_events_window`'s global `oldest_ts` shield.
+
+  **The restored ordering is not total, and the exception belongs in
+  this entry rather than rounded off it.** `heapq.merge` orders its
+  input streams against each other; it cannot repair a stream that is
+  not itself sorted. Every archive cut by a post-`eace517` rotation
+  carries a shard tag (`_next_rotation_paths` derives every candidate
+  stem from `{ARCHIVE_PREFIX}{ts}-s{shard:02d}`), so it joins its own
+  shard's chain, and such a chain is ts-ordered by construction — a
+  shard rotates its own segment wholesale, under that shard's append
+  lock. Archives whose names predate the tag have no recoverable shard
+  — `_rotated_segment_shard` returns `None` for them deliberately
+  rather than guessing shard 0 — so they all share ONE chain, sequenced
+  by the rotation timestamp in the filename. Rotation time is not event
+  time: two untagged archives cut by different shards can hold
+  overlapping event-time ranges, and when they do, that chain is not
+  ts-sorted and the merged output is not either.
+
+  So the guarantee is **total across shard-tagged archives, and
+  best-effort across untagged ones**. That bites a store which rotated
+  under a released version between 3.24.0 and 3.25.2 — the window where
+  the active log was sharded but all 16 shards still rotated into one
+  untagged namespace. A store that only ever rotated before 3.24.0 is
+  unaffected in practice: there was a single active log, so its
+  untagged archives came off one writer stream and are already in event
+  order. No events are lost in any of these cases.
+
+  Two things that would be convenient to assume, and are not true.
+  Nothing prunes rotated archives — `events.py` unlinks `.rotating`
+  holding files only, and no retention sweep exists anywhere in the
+  package — so an affected store does not grow out of the exception on
+  its own; the untagged archives stay until someone removes them.
+  And post-`eace517` code can still *create* an untagged archive:
+  `_recover_orphan_rotations` reclaims a pre-upgrade `.rotating` orphan
+  by compressing it under its existing untagged stem. `iter_all_events`'
+  own docstring flags the same untagged chain as its one approximate
+  stream.
+
+  `eace517` landed on `main` after the `v3.25.2` tag, so no release at
+  or below 3.25.2 contains it, and the first release cut from `main`
+  after that point does. That phrasing is deliberate: it is checkable
+  at any time (`git tag --contains eace517`) and it stays true through
+  the release that ships the commit, rather than needing someone to
+  remember to edit it during the cut. Both earlier revisions of this
+  sentence instead stated release membership as of the day they were
+  written — the first sent the reader up the file to an entry that did
+  not exist; the second asserts the commit is in no tagged release,
+  which is true only until the next cut.
 
 ## 3.23.0 - 2026-07-12
 
