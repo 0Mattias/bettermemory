@@ -217,3 +217,96 @@ async def test_masked_saturation_still_triggers_reload(
         "index-saturated slice masked by a loader drop: the in-repo matches "
         "ranked past the cap must still surface via the load_all reload"
     )
+
+
+# ---------------------------------------------------------------------------
+# BM25 corpus statistics across the prefilter boundary
+# ---------------------------------------------------------------------------
+
+
+async def test_prefiltered_search_prices_a_rare_term_off_the_whole_corpus(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """End-to-end: with the FTS prefilter live, the IDF the scorer
+    actually uses is the corpus's, not the candidate pool's.
+
+    Two choices here are deliberate, and both were arrived at by watching
+    the test FAIL to discriminate first:
+
+    * The assertion is on the IDF value, not on result ORDER. Order is the
+      more natural contract, but it does not discriminate: when every
+      candidate in the pool shares the collapsed weight, the ordering
+      among them is unchanged. The number is what broke.
+    * The query is a SINGLE rare term. A two-term query like
+      "alpha flock" matches every memory, so FTS fills the pool to its
+      50-row cap with non-matching-on-`flock` rows and the pool df comes
+      out at 3/50 — distorted, but not collapsed, and an assertion
+      written against it passes on the unfixed code.
+
+    With a lone rare term the pool IS the match set, every row contains
+    the term, and pool df hits 3/3.
+    """
+    monkeypatch.setenv("BETTERMEMORY_INDEX_THRESHOLD", "1")
+    store = Store(tmp_path)
+    for i in range(60):
+        store.write(content=f"alpha common filler-{i}", scopes=["tools"])
+    for i in range(3):
+        store.write(content=f"alpha flock rare-{i}", scopes=["tools"])
+
+    seen: list[dict[str, float]] = []
+    import bettermemory.search as search_module
+
+    real_compute_idf = search_module.compute_idf
+
+    def spy(memories: Any, **kwargs: Any) -> Any:
+        body_idf, scope_idf, avgdl = real_compute_idf(memories, **kwargs)
+        seen.append(body_idf)
+        return body_idf, scope_idf, avgdl
+
+    monkeypatch.setattr(search_module, "compute_idf", spy)
+
+    server = _build_server(tmp_path)
+    await _call(server, "memory_search", query="flock", max_results=5)
+
+    assert seen, "BM25 never ran"
+    flock_idf = max(m.get("flock", 0.0) for m in seen)
+    # df=3 of N=63 gives a whole-corpus IDF of ~2.9. Priced off a pool of
+    # 3 rows that all contain the term, it is ~0.13 — a 22x gap, and the
+    # same arithmetic reaches 74x on the 600-memory shape this was first
+    # measured on. Anything above 2.0 can only have come from the corpus.
+    assert flock_idf > 2.0, (
+        f"'flock' priced at IDF {flock_idf:.3f} — that is a pool-derived "
+        "denominator; the corpus value for 3-of-63 is ~2.9"
+    )
+
+
+async def test_corpus_stats_are_not_consulted_below_the_prefilter_threshold(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Below the threshold the full corpus IS the candidate pool, so the
+    lookup would be pure cost. The provider must not fire.
+
+    Guards the "shipped ranking stays byte-stable for small stores" claim
+    the change rests on — the overwhelming majority of stores are under
+    500 memories and must see no behaviour change at all.
+    """
+    monkeypatch.setenv("BETTERMEMORY_INDEX_THRESHOLD", "100000")
+    store = Store(tmp_path)
+    for i in range(5):
+        store.write(content=f"alpha filler-{i}", scopes=["tools"])
+
+    calls: list[list[str]] = []
+    import bettermemory.index as index_module
+
+    real = index_module.corpus_document_frequencies
+
+    def spy(root: Path, terms: Any) -> Any:
+        calls.append(list(terms))
+        return real(root, terms)
+
+    monkeypatch.setattr(index_module, "corpus_document_frequencies", spy)
+
+    server = _build_server(tmp_path)
+    await _call(server, "memory_search", query="alpha", max_results=5)
+
+    assert calls == [], f"corpus lookup ran below the threshold: {calls}"

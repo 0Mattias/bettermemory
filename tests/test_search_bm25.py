@@ -11,6 +11,8 @@ from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
 
+import pytest
+
 from bettermemory.models import Confidence, Memory, Source, generate_ulid
 from bettermemory.search import compute_idf, score_memory_bm25, search, tokenize
 
@@ -773,3 +775,106 @@ def test_find_similar_comparable_pair_widened_related_band_is_deliberate() -> No
     arm3 = find_similar(short_in_long_short, [_memory(short_in_long_long)])
     assert arm3, "short-in-long restatement must still be flagged"
     assert arm3[0].relevance == "medium"
+
+
+# ---------------------------------------------------------------------------
+# Corpus-wide IDF for prefiltered candidate pools
+# ---------------------------------------------------------------------------
+#
+# Above `_INDEX_THRESHOLD_DEFAULT` the search path hands the ranker at most
+# `_PREFILTER_CAP` candidates, every one of them selected BECAUSE it matched
+# the query. Counting document frequency over that pool makes the query's own
+# discriminative terms look ubiquitous — df approaches N by construction — and
+# Okapi IDF collapses toward zero for exactly the terms that should dominate.
+# `compute_idf(corpus_stats=…)` restores the real denominator.
+
+
+def test_pool_derived_idf_collapses_for_a_discriminative_term() -> None:
+    """Characterises the defect the corpus-stats path exists to fix.
+
+    Not a regression guard on desired behaviour — it PINS the broken
+    arithmetic so the fix below has something to be measured against, and
+    so a future change that silently makes pool-derived IDF sane doesn't
+    leave the corpus lookup looking pointless.
+    """
+    corpus = [_memory("alpha beta gamma flock") for _ in range(8)]
+    corpus += [_memory("alpha beta gamma") for _ in range(592)]
+
+    full_body_idf, _, _ = compute_idf(corpus)
+    # What the prefilter actually hands the scorer: only the matches.
+    pool = [m for m in corpus if "flock" in m.body]
+    pool_body_idf, _, _ = compute_idf(pool)
+
+    assert full_body_idf["flock"] > 4.0
+    assert pool_body_idf["flock"] < 0.1
+    assert full_body_idf["flock"] / pool_body_idf["flock"] > 40
+
+
+def test_corpus_stats_restore_idf_for_a_prefiltered_pool() -> None:
+    """The fix: supplying whole-corpus document frequencies makes a
+    query-biased pool score as if the full corpus had been walked."""
+    from bettermemory.search import CorpusStats
+
+    corpus = [_memory("alpha beta gamma flock") for _ in range(8)]
+    corpus += [_memory("alpha beta gamma") for _ in range(592)]
+    pool = [m for m in corpus if "flock" in m.body]
+
+    expected_body_idf, expected_scope_idf, _ = compute_idf(corpus)
+    stats = CorpusStats(
+        size=len(corpus),
+        body_df={"flock": 8, "alpha": 600},
+        scope_df={"flock": 8, "alpha": 600},
+    )
+    body_idf, scope_idf, avgdl = compute_idf(pool, corpus_stats=stats)
+
+    assert body_idf["flock"] == pytest.approx(expected_body_idf["flock"])
+    assert body_idf["alpha"] == pytest.approx(expected_body_idf["alpha"])
+    assert scope_idf["flock"] == pytest.approx(expected_scope_idf["flock"])
+    # avgdl stays pool-derived by design — it is a scalar length
+    # normaliser, and a corpus-wide average would cost a vocabulary scan
+    # per search. Pinned so the deliberate asymmetry is not read as an
+    # oversight by the next reader.
+    assert avgdl == pytest.approx(sum(len(tokenize(m.body)) for m in pool) / len(pool))
+
+
+def test_corpus_stats_override_per_term_not_wholesale() -> None:
+    """A term the corpus lookup does not carry keeps its pool-derived
+    value rather than vanishing from the map.
+
+    This is what makes the degraded path safe: a stale index, or a
+    tokenizer edge the FTS side spells differently, costs that one term
+    its corpus denominator instead of dropping it out of scoring
+    entirely (unknown terms contribute zero in `score_memory_bm25`).
+    """
+    from bettermemory.search import CorpusStats
+
+    pool = [_memory("alpha flock"), _memory("alpha gamma")]
+    baseline_body_idf, _, _ = compute_idf(pool)
+    stats = CorpusStats(size=600, body_df={"alpha": 600}, scope_df={})
+
+    body_idf, _, _ = compute_idf(pool, corpus_stats=stats)
+
+    assert body_idf["alpha"] < baseline_body_idf["alpha"]  # corpus-corrected
+    assert body_idf["flock"] == pytest.approx(baseline_body_idf["flock"])  # untouched
+    assert "gamma" in body_idf
+
+
+def test_corpus_stats_ignore_a_zero_document_frequency() -> None:
+    """A corpus df of 0 for a term we can see in a body in front of us
+    means the index disagrees with the filesystem — mid-write, or a stale
+    row. The pool-derived value is the better guess, so the override is
+    skipped rather than applied as `df=0`.
+
+    Applying it would be actively harmful: `log((N - 0 + 0.5)/(0 + 0.5) + 1)`
+    on a 600-doc corpus is ~7.3, so an indexing lag would hand a term the
+    single highest weight in the ranking.
+    """
+    from bettermemory.search import CorpusStats
+
+    pool = [_memory("alpha flock"), _memory("alpha gamma")]
+    baseline_body_idf, _, _ = compute_idf(pool)
+    stats = CorpusStats(size=600, body_df={"flock": 0}, scope_df={})
+
+    body_idf, _, _ = compute_idf(pool, corpus_stats=stats)
+
+    assert body_idf["flock"] == pytest.approx(baseline_body_idf["flock"])

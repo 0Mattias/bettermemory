@@ -22,6 +22,7 @@ from ..events import _event_id_list
 from ..models import utcnow, validate_scope
 from ..time_utils import parse_event_ts
 from ..search import (
+    CorpusStats,
     SearchMode,
     _filter_candidates,
     _relevance_label_v2,
@@ -278,6 +279,12 @@ async def memory_search(
     #    ids and load just those. The candidate pool is generous
     #    (50 candidates for a 5-result return) so the downstream
     #    rankers see enough variety to score well.
+    # False for every branch that does not go through the FTS prefilter —
+    # including `since_prior_session`, which slices `load_all()` by
+    # timestamp. That slice is narrower than the corpus but it is not
+    # QUERY-biased, so pool-derived document frequencies stay honest and
+    # the corpus lookup would be cost without benefit.
+    prefiltered = False
     if since_prior_session:
         if prior_boundary is None:
             memories = []
@@ -293,7 +300,7 @@ async def memory_search(
             # session" workflow.
             memories = [m for m in deps.store.load_all() if m.updated > prior_boundary]
     else:
-        memories, prefilter_saturated = deps._load_search_candidates(
+        memories, prefilter_saturated, prefiltered = deps._load_search_candidates(
             query, scopes=scopes
         )
         # Cap-starvation guard. The FTS prefilter threads only `scopes`
@@ -331,6 +338,13 @@ async def memory_search(
             )
             if len(survivors) < max_results:
                 memories = deps.store.load_all()
+                # The starvation reload replaced the query-biased slice
+                # with the whole corpus, so pool-derived statistics are
+                # corpus statistics again and the BM25 corpus-IDF lookup
+                # below must not fire. Clearing the flag here rather than
+                # re-deriving it later keeps the claim tied to the
+                # assignment that makes it true.
+                prefiltered = False
 
     # Usage-aware ranking (opt-in via [behavior] endorsement_boost). Tally how
     # many times the model has EXPLICITLY applied each candidate and hand the
@@ -363,6 +377,22 @@ async def memory_search(
             lookback_seconds=ATTRIBUTION_LOOKBACK_SECONDS,
         )
 
+    # BM25 corpus statistics. Only wired when the FTS prefilter actually
+    # served the candidates: that is the case where `memories` is a
+    # query-biased slice, so document frequencies counted over it make the
+    # query's own discriminative terms look ubiquitous and collapse their
+    # IDF toward zero (measured at 74x on a 600-memory corpus). When the
+    # full corpus was loaded, pool statistics ARE corpus statistics and the
+    # provider stays None so the shipped ranking is byte-stable.
+    def _corpus_stats(terms: list[str]) -> CorpusStats | None:
+        from .. import index as _index
+
+        resolved = _index.corpus_document_frequencies(deps.store.root, terms)
+        if resolved is None:
+            return None
+        size, body_df, scope_df = resolved
+        return CorpusStats(size=size, body_df=body_df, scope_df=scope_df)
+
     hits = run_search(
         memories,
         query,
@@ -381,6 +411,7 @@ async def memory_search(
         # candidates as hits sorted by `updated` desc instead of
         # short-circuiting to an empty list on the stopword check.
         allow_empty_query=since_prior_session,
+        corpus_stats_provider=_corpus_stats if prefiltered else None,
     )
     # Pin one `now` for the whole response so the verification verdict
     # is consistent across hits — the alternative (let each helper

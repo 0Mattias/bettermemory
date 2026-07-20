@@ -855,6 +855,95 @@ def filenames_for_ids(root: Path, ids: list[str]) -> dict[str, str]:
         conn.close()
 
 
+def corpus_document_frequencies(
+    root: Path, terms: Sequence[str]
+) -> tuple[int, dict[str, int], dict[str, int]] | None:
+    """Corpus-wide document frequencies for `terms`, straight from FTS5.
+
+    Returns `(corpus_size, body_df, scope_df)` where `body_df` counts
+    documents whose BODY contains the term and `scope_df` counts documents
+    containing it in body OR scopes — the same two denominators
+    `search.compute_idf` builds, but over the whole corpus instead of
+    whatever subset the caller happens to hold.
+
+    Why this exists: above `_INDEX_THRESHOLD_DEFAULT` the search path hands
+    the ranker at most `_PREFILTER_CAP` candidates, and every one of them is
+    there BECAUSE it matched the query. Deriving df from that pool makes the
+    query's own discriminative terms look ubiquitous — df approaches N by
+    construction — and Okapi IDF collapses toward zero for exactly the terms
+    that should dominate the ranking. Measured on a 600-memory corpus where
+    8 documents carried a rare term, IDF fell from 4.26 to 0.06.
+
+    Implementation is a pair of `fts5vocab` views created in `temp.`, so
+    this needs no schema version and no migration: they are read-only
+    projections of the live FTS index. `'col'` gives the per-column
+    (body-only) counts; `'row'` gives the union across columns, which is
+    precisely the body-or-scopes denominator. Term spellings line up with
+    the Python ranker's without any mirroring because schema v4 indexes
+    `search.fts_index_text` output rather than the raw body.
+
+    Returns None — never raises — when the index is absent, unreadable, or
+    older than the tokenizer-parity schema. The caller then keeps the
+    pool-derived behaviour, which is wrong in the way described above but
+    is what shipped, so degradation is never worse than the status quo.
+    """
+    if not terms:
+        return None
+    path = index_path(root)
+    if not path.exists():
+        return None
+    unique = sorted({t for t in terms if t})
+    if not unique:
+        return None
+    # `_connect` itself raises on a corrupt file — it runs `PRAGMA
+    # journal_mode = WAL` on open — so it has to sit INSIDE the guard
+    # rather than above it, or page-level corruption escapes as a
+    # DatabaseError to a caller documented never to see one.
+    conn: sqlite3.Connection | None = None
+    try:
+        conn = _connect(path)
+        _ensure_schema(conn, path)
+        row = conn.execute("SELECT COUNT(*) AS n FROM memories").fetchone()
+        corpus_size = int(row["n"]) if row else 0
+        if corpus_size <= 0:
+            return None
+        placeholders = ",".join("?" * len(unique))
+        # `IF NOT EXISTS` because a connection is per-call today but the
+        # helper must stay correct if that ever gets pooled.
+        conn.execute(
+            "CREATE VIRTUAL TABLE IF NOT EXISTS temp.vocab_col "
+            "USING fts5vocab(main, memories_fts, 'col')"
+        )
+        conn.execute(
+            "CREATE VIRTUAL TABLE IF NOT EXISTS temp.vocab_row "
+            "USING fts5vocab(main, memories_fts, 'row')"
+        )
+        body_df = {
+            r["term"]: int(r["doc"])
+            for r in conn.execute(
+                f"SELECT term, doc FROM temp.vocab_col "
+                f"WHERE col = 'body_fts' AND term IN ({placeholders})",
+                unique,
+            )
+        }
+        scope_df = {
+            r["term"]: int(r["doc"])
+            for r in conn.execute(
+                f"SELECT term, doc FROM temp.vocab_row WHERE term IN ({placeholders})",
+                unique,
+            )
+        }
+        return corpus_size, body_df, scope_df
+    except (sqlite3.Error, IndexVersionError, OSError):
+        # Same posture as every other read helper here: the index is a
+        # derived cache, so a failure degrades the ranking rather than
+        # failing the search.
+        return None
+    finally:
+        if conn is not None:
+            conn.close()
+
+
 def indexed_ids(root: Path, ids: Sequence[str] | None = None) -> set[str]:
     """Memory ids that currently have a row in the index.
 

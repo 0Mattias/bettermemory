@@ -168,11 +168,12 @@ class ToolHandlers:
 
     def _load_search_candidates(
         self, query: str, scopes: list[str] | None = None
-    ) -> tuple[list[Any], bool]:
+    ) -> tuple[list[Any], bool, bool]:
         """Either load all active memories or pre-filter via the FTS5
         index, depending on store size and index health.
 
-        Returns ``(candidates, prefilter_saturated)``.
+        Returns ``(candidates, prefilter_saturated, prefiltered)``.
+
         ``prefilter_saturated`` is True only when the FTS prefilter
         path served the candidates AND the index returned a full
         cap-sized slice (`_PREFILTER_CAP` rows) — the signal the
@@ -183,6 +184,16 @@ class ToolHandlers:
         mask saturation from a length check on the returned list.
         Every `load_all` branch reports False — the full corpus has
         no cap to be starved by.
+
+        ``prefiltered`` is the weaker, separate claim that the FTS path
+        served these candidates AT ALL, saturated or not. The two are not
+        interchangeable and the difference is load-bearing: a prefilter
+        that returns 30 rows is under the cap — so not saturated — but
+        every one of those rows is present BECAUSE it matched the query,
+        which is exactly the condition that collapses corpus statistics
+        derived from the pool. `handlers/search.py` keys the BM25
+        corpus-IDF lookup on this flag rather than on saturation; see
+        `index.corpus_document_frequencies`.
 
         When `scopes` is given it is threaded into the FTS pre-filter so
         the bounded candidate slice is drawn from IN-SCOPE matches. Without
@@ -221,7 +232,7 @@ class ToolHandlers:
         from . import index as _index
 
         if not query.strip():
-            return self.store.load_all(), False
+            return self.store.load_all(), False, False
         status = _index.status(self.store.root)
         # `needs_rebuild` means a schema-version migration dropped the
         # data tables and only incrementally-touched memories are back:
@@ -234,10 +245,10 @@ class ToolHandlers:
             or status.get("corrupt")
             or status.get("needs_rebuild")
         ):
-            return self.store.load_all(), False
+            return self.store.load_all(), False, False
         indexed_count = int(status.get("indexed_count", 0) or 0)
         if indexed_count < self._index_threshold():
-            return self.store.load_all(), False
+            return self.store.load_all(), False, False
 
         # Pre-filter via the index. 50 candidates is generous for a
         # default max_results of 5 — the downstream ranker reorders
@@ -277,12 +288,12 @@ class ToolHandlers:
                 type(exc).__name__,
                 exc,
             )
-            return self.store.load_all(), False
+            return self.store.load_all(), False, False
         if not candidate_pairs:
             # Stale index or query that genuinely matches nothing —
             # fall back to load_all so we don't silently miss recent
             # writes that aren't in the index yet.
-            return self.store.load_all(), False
+            return self.store.load_all(), False, False
         # Pin the saturation signal HERE, before the per-candidate
         # loading loop can drop rows — see the docstring.
         prefilter_saturated = len(candidate_pairs) == self._PREFILTER_CAP
@@ -331,8 +342,8 @@ class ToolHandlers:
             # working through schema upgrades and stale-index
             # windows" — actually holds. Hot path is the loaded
             # branch above; this is the safety net.
-            return self.store.load_all(), False
-        return loaded, prefilter_saturated
+            return self.store.load_all(), False, False
+        return loaded, prefilter_saturated, True
 
     # ---- delegations to per-tool modules --------------------------------
     #

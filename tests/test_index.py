@@ -1999,3 +1999,66 @@ def test_v4_index_with_stale_spelled_stream_heals_on_construction(
     # inflections of both words the 3.12.0 spelling silently missed.
     for q in ("todo", "TODOs", "cookie", "cookies"):
         assert [r[0] for r in index.query(memory_dir, q)] == [m.id], q
+
+
+# ---------------------------------------------------------------------------
+# Corpus document frequencies (BM25 IDF across the prefilter boundary)
+# ---------------------------------------------------------------------------
+
+
+def test_corpus_document_frequencies_counts_body_and_scope_separately(
+    store: Store, memory_dir: Path
+) -> None:
+    """The two denominators `search.compute_idf` needs, from FTS5.
+
+    `body_df` counts documents whose BODY carries the term; `scope_df`
+    counts body-OR-scopes. They must not be conflated and they must not be
+    summed: 'shared' below sits in one body and in every scope, so the
+    union is 3 rather than 1 + 3.
+    """
+    store.write(content="alpha shared", scopes=["shared"])
+    store.write(content="alpha", scopes=["shared"])
+    store.write(content="beta", scopes=["shared"])
+
+    resolved = index.corpus_document_frequencies(
+        memory_dir, ["alpha", "beta", "shared", "never-written"]
+    )
+
+    assert resolved is not None
+    size, body_df, scope_df = resolved
+    assert size == 3
+    assert body_df["alpha"] == 2
+    assert body_df["beta"] == 1
+    assert body_df["shared"] == 1
+    assert scope_df["shared"] == 3
+    # A term nobody wrote has no row at all rather than a 0 — callers
+    # branch on absence, and a 0 would price it as maximally rare.
+    assert "never-written" not in body_df
+    assert "never-written" not in scope_df
+
+
+def test_corpus_document_frequencies_degrades_to_none(tmp_path: Path) -> None:
+    """Every unusable input yields None, never an exception.
+
+    The index is a derived cache, so a caller that cannot get corpus
+    statistics must fall back to pool-derived ones and still return
+    results — degrade the ranking, never fail the search.
+    """
+    # No index on disk at all.
+    assert index.corpus_document_frequencies(tmp_path, ["alpha"]) is None
+    # No terms to look up — short-circuits before touching sqlite.
+    assert index.corpus_document_frequencies(tmp_path, []) is None
+    assert index.corpus_document_frequencies(tmp_path, ["", "  "]) is None
+
+
+def test_corpus_document_frequencies_survives_a_corrupt_index(
+    store: Store, memory_dir: Path
+) -> None:
+    """Page-level corruption surfaces out of the vocab reads, not the
+    schema gate — same routing every other read helper here takes."""
+    store.write(content="alpha", scopes=["tools"])
+    index_path = index.index_path(memory_dir)
+    assert index_path.exists()
+    index_path.write_bytes(b"this is not a sqlite database" * 40)
+
+    assert index.corpus_document_frequencies(memory_dir, ["alpha"]) is None

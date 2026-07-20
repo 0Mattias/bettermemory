@@ -1160,10 +1160,28 @@ _BM25_K1_DEFAULT = 1.2
 _BM25_B_DEFAULT = 0.75
 
 
+class CorpusStats(NamedTuple):
+    """Corpus-wide document frequencies, for when `memories` is a subset.
+
+    `size` is the whole corpus's document count; `body_df` / `scope_df` map
+    a term to how many documents in the WHOLE corpus carry it, in the body
+    and in body-or-scopes respectively — the two denominators `compute_idf`
+    otherwise derives from the list it was handed.
+
+    Built by `index.corpus_document_frequencies`, which see for why the
+    subset case needs this at all.
+    """
+
+    size: int
+    body_df: dict[str, int]
+    scope_df: dict[str, int]
+
+
 def compute_idf(
     memories: list[Memory],
     *,
     tokens: list[_MemoryTokens] | None = None,
+    corpus_stats: CorpusStats | None = None,
 ) -> tuple[dict[str, float], dict[str, float], float]:
     """Build the per-term IDF maps and the average doc length for BM25.
 
@@ -1203,6 +1221,25 @@ def compute_idf(
     ``tokens``: optional precomputed `_MemoryTokens`, index-aligned with
     `memories` — `search()` tokenizes each candidate once and threads the
     streams here. None recomputes them; identical output either way.
+
+    ``corpus_stats``: optional whole-corpus document frequencies. Supply it
+    whenever `memories` is a query-biased SUBSET rather than the corpus —
+    which is what the FTS prefilter produces above
+    `_INDEX_THRESHOLD_DEFAULT`. Without it, df is counted over candidates
+    that are present precisely because they matched, so a discriminative
+    query term's df approaches N and its Okapi IDF collapses toward zero:
+    BM25 degenerates into length normalisation plus recency for exactly the
+    term that should dominate. Measured at 74x on a 600-memory corpus.
+
+    Supplied stats OVERRIDE per term rather than replace the maps
+    wholesale: any term the corpus lookup does not carry (a stale index, a
+    tokenizer edge) keeps its pool-derived value, so the degraded path is
+    never worse than not passing stats at all.
+
+    ``avgdl`` stays pool-derived even with `corpus_stats`. It is a scalar
+    length normaliser, so a biased sample shifts scores by a roughly common
+    factor instead of inverting their order the way collapsed IDF does, and
+    a corpus-wide average would cost a full vocabulary scan per search.
     """
     n = len(memories)
     if n == 0:
@@ -1237,13 +1274,29 @@ def compute_idf(
 
     avgdl = total_len / n if n else 0.0
 
-    def _okapi(df: dict[str, int]) -> dict[str, float]:
+    def _okapi(df: dict[str, int], total: int) -> dict[str, float]:
         return {
-            term: math.log((n - dfi + 0.5) / (dfi + 0.5) + 1.0)
+            term: math.log((total - dfi + 0.5) / (dfi + 0.5) + 1.0)
             for term, dfi in df.items()
         }
 
-    return _okapi(body_df), _okapi(scope_df), avgdl
+    body_idf = _okapi(body_df, n)
+    scope_idf = _okapi(scope_df, n)
+
+    if corpus_stats is not None and corpus_stats.size > 0:
+        # Per-term override, not a wholesale swap — see the docstring. A
+        # corpus df of 0 is dropped rather than trusted: it means the index
+        # disagrees with a body we can see in front of us (mid-write, or a
+        # stale row), and the pool-derived value is the better guess there.
+        corpus_n = corpus_stats.size
+        for term, dfi in corpus_stats.body_df.items():
+            if term in body_idf and dfi > 0:
+                body_idf[term] = math.log((corpus_n - dfi + 0.5) / (dfi + 0.5) + 1.0)
+        for term, dfi in corpus_stats.scope_df.items():
+            if term in scope_idf and dfi > 0:
+                scope_idf[term] = math.log((corpus_n - dfi + 0.5) / (dfi + 0.5) + 1.0)
+
+    return body_idf, scope_idf, avgdl
 
 
 def score_memory_bm25(
@@ -1716,13 +1769,16 @@ def _score_bm25(
     applied_by_id: dict[str, int] | None = None,
     candidate_tokens: list[_MemoryTokens] | None = None,
     stopword_fallback: bool = False,
+    corpus_stats: CorpusStats | None = None,
 ) -> list[tuple[Memory, float, list[str]]]:
     """Run the BM25 scorer across all candidates. Returns
     `(memory, score, matched)` tuples for candidates with `score > 0`.
     `applied_by_id` / `candidate_tokens`: see `_score_keyword`;
-    `stopword_fallback`: see `score_memory_bm25`."""
+    `stopword_fallback`: see `score_memory_bm25`; `corpus_stats`: see
+    `compute_idf` — required for a correct ranking whenever `candidates`
+    is a query-filtered subset rather than the whole corpus."""
     body_idf_map, scope_idf_map, avgdl = compute_idf(
-        candidates, tokens=candidate_tokens
+        candidates, tokens=candidate_tokens, corpus_stats=corpus_stats
     )
     if avgdl <= 0:
         return []
@@ -1908,6 +1964,7 @@ def search(
     rrf_k: int = _RRF_K_DEFAULT,
     applied_by_id: dict[str, int] | None = None,
     allow_empty_query: bool = False,
+    corpus_stats_provider: Callable[[list[str]], CorpusStats | None] | None = None,
 ) -> list[MemoryHit]:
     """Rank `memories` against `query` and return up to `max_results` hits.
 
@@ -2040,6 +2097,17 @@ def search(
     # ~88% of cumulative search time). Pure perf: see `_MemoryTokens`.
     candidate_tokens = [_memory_tokens(m) for m in candidates]
 
+    # Corpus-wide document frequencies for the BM25 rankers, resolved from
+    # the SAME `query_tokens` the scorer will look up. That parity is the
+    # whole reason this is a provider rather than a precomputed value: the
+    # caller knowing which terms to fetch would mean re-deriving this
+    # tokenisation outside `search()`, and a hand-mirrored token pipeline is
+    # exactly the drift schema v4 removed. Only the BM25 branches consume
+    # it, so a keyword/semantic-only search never pays the lookup.
+    corpus_stats: CorpusStats | None = None
+    if corpus_stats_provider is not None and mode in ("bm25", "hybrid"):
+        corpus_stats = corpus_stats_provider(query_tokens)
+
     if mode == "keyword":
         scored = _score_keyword(
             candidates,
@@ -2065,6 +2133,7 @@ def search(
             applied_by_id=applied_by_id,
             candidate_tokens=candidate_tokens,
             stopword_fallback=stopword_fallback,
+            corpus_stats=corpus_stats,
         )
         scored.sort(key=lambda x: (x[1], x[0].created, x[0].id), reverse=True)
     elif mode == "semantic":
@@ -2120,6 +2189,7 @@ def search(
                 applied_by_id=applied_by_id,
                 candidate_tokens=candidate_tokens,
                 stopword_fallback=stopword_fallback,
+                corpus_stats=corpus_stats,
             ),
         ]
         if semantic_model is not None:
