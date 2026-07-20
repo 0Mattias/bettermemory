@@ -12,6 +12,15 @@ into ``sys.modules``. The Windows branch is ``# pragma: no cover`` on
 the POSIX CI host and Windows CI is currently aspirational, so these
 mocks are the only regression coverage we have for the retry, unlock-
 symmetry, and env-var-timeout discipline of that path.
+
+``TestFlockPosixWaitIsUnbounded`` pins the other half of that contract:
+the POSIX branch blocks in ``fcntl.flock(fd, LOCK_EX)`` with no
+deadline, and the timeout env-var the Windows branch reads does not
+reach it. Both halves are stated in ``flock_excl``'s docstring, and the
+asymmetry between them has already been mis-copied into a caller's
+prose — commit 60b7553 replaced a sync-lock comment that granted the
+POSIX wait the Windows 30s ceiling — so it is pinned mechanically here
+rather than left to review.
 """
 
 from __future__ import annotations
@@ -604,6 +613,245 @@ class TestFlockWindows:
             f"free until time.monotonic crosses the deadline); got "
             f"{second_call_attempts} attempts. If this is 1, the env-var "
             f"was cached from the first call rather than re-read."
+        )
+
+
+# ---------------------------------------------------------------------------
+# POSIX flock branch — the wait with no deadline
+# ---------------------------------------------------------------------------
+#
+# ``flock_excl``'s POSIX branch is a plain blocking ``fcntl.flock(fd,
+# LOCK_EX)``. It carries no deadline, and ``BETTERMEMORY_FLOCK_TIMEOUT``
+# — the knob the Windows branch reads — never reaches it. That
+# asymmetry is easy to miss when reading the helper, because the only
+# timeout figure in its docstring sits in the Windows paragraph, and a
+# caller that carried that figure over to describe its own POSIX lock
+# wait shipped a false 30s claim that commit 60b7553 had to correct.
+#
+# The tests below pin the halves that the docstring now states
+# explicitly, so a future edit that softens either one turns red:
+#   * behavioural — a real second interpreter holds the lock while this
+#     process acquires with the env-var ceiling set to 0; the acquire
+#     must block through it rather than raise.
+#   * structural — the env-var is read in exactly one function, and the
+#     POSIX branch names no non-blocking flock flag. Neither assertion
+#     depends on wall-clock, so neither can rot the way a measured
+#     figure would.
+
+
+_POSIX_LOCK_HOLDER = """
+import sys, time
+from pathlib import Path
+from bettermemory._fsutil import flock_excl
+
+target, marker, hold = sys.argv[1], sys.argv[2], float(sys.argv[3])
+with flock_excl(Path(target)):
+    Path(marker).touch()
+    time.sleep(hold)
+"""
+
+
+def _scoped_string_sites(
+    source: str, filename: str, value: str
+) -> list[tuple[int, str]]:
+    """Return ``(lineno, dotted enclosing scope)`` for every string
+    literal in ``source`` exactly equal to ``value``.
+
+    Exact equality is what keeps prose out of the result. A docstring
+    or an f-string fragment that merely mentions the name is a longer,
+    unequal constant, so only genuine lookups survive the filter.
+    """
+    tree = ast.parse(source, filename)
+    scoped = (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)
+    found: list[tuple[int, str]] = []
+
+    def walk(node: ast.AST, scope: tuple[str, ...]) -> None:
+        for child in ast.iter_child_nodes(node):
+            if isinstance(child, scoped):
+                walk(child, (*scope, child.name))
+                continue
+            if isinstance(child, ast.Constant) and child.value == value:
+                found.append((child.lineno, ".".join(scope)))
+            walk(child, scope)
+
+    walk(tree, ())
+    return found
+
+
+class TestFlockPosixWaitIsUnbounded:
+    @pytest.mark.skipif(
+        sys.platform == "win32",
+        reason="the win32 branch routes to _flock_windows, which is bounded "
+        "by BETTERMEMORY_FLOCK_TIMEOUT — the opposite of what this pins",
+    )
+    def test_acquire_blocks_past_the_flock_timeout_env_ceiling(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """The POSIX acquire waits for the holder, not for a deadline.
+
+        A second interpreter takes the same lock and holds it. This
+        process then acquires with ``BETTERMEMORY_FLOCK_TIMEOUT`` set
+        to ``0`` — a ceiling so tight that any code path consulting it
+        would give up on the first contended attempt. The acquire must
+        instead block until the holder releases.
+
+        Two failure modes this catches. If someone wires the env-var
+        into the POSIX branch, the ``TimeoutError`` branch below fires.
+        If the lock stops excluding at all, the acquire returns
+        immediately and the elapsed-time assertion fires. Only the
+        documented behaviour — block, then succeed — passes both.
+
+        The elapsed assertion deliberately uses a floor far below the
+        hold, not an equality: it asks whether the wait happened, which
+        is the property under test, and stays true on a loaded CI box
+        where the exact duration is not reproducible.
+        """
+        hold_seconds = 2.0
+        min_blocked = 0.5
+        target = tmp_path / "thing.md"
+        marker = tmp_path / "held.marker"
+
+        env = dict(os.environ)
+        # Importable root of the package under test, whether the suite
+        # runs against a source checkout or an installed copy.
+        env["PYTHONPATH"] = str(Path(bettermemory.__file__).parent.parent)
+        holder = subprocess.Popen(
+            [
+                sys.executable,
+                "-c",
+                _POSIX_LOCK_HOLDER,
+                str(target),
+                str(marker),
+                str(hold_seconds),
+            ],
+            env=env,
+        )
+        try:
+            # Rendezvous on the marker file rather than on a sleep, so
+            # the timer below starts from the holder's real acquisition.
+            rendezvous_deadline = time.monotonic() + 30
+            while not marker.exists():
+                assert holder.poll() is None, (
+                    f"holder process exited (rc={holder.returncode}) before it "
+                    f"signalled acquisition — the child could not take the lock"
+                )
+                assert time.monotonic() < rendezvous_deadline, (
+                    "holder never signalled acquisition within 30s"
+                )
+                time.sleep(0.01)
+
+            monkeypatch.setenv("BETTERMEMORY_FLOCK_TIMEOUT", "0")
+            start = time.monotonic()
+            try:
+                with _fsutil.flock_excl(target):
+                    waited = time.monotonic() - start
+            except TimeoutError as exc:  # pragma: no cover - regression path
+                pytest.fail(
+                    f"POSIX flock_excl raised TimeoutError after "
+                    f"{time.monotonic() - start:.2f}s ({exc}). The POSIX "
+                    f"branch must block in fcntl.flock(fd, LOCK_EX) with no "
+                    f"deadline; BETTERMEMORY_FLOCK_TIMEOUT is documented as "
+                    f"bounding the Windows branch only."
+                )
+        finally:
+            holder.wait(timeout=30)
+
+        assert waited >= min_blocked, (
+            f"acquire returned after only {waited:.3f}s while another "
+            f"process held the lock for {hold_seconds}s. Either the wait was "
+            f"cut short by a deadline (the env-var was set to 0), or the "
+            f"sidecar lock stopped excluding across processes."
+        )
+
+    def test_flock_timeout_env_is_read_in_one_function_only(self) -> None:
+        """``BETTERMEMORY_FLOCK_TIMEOUT`` is looked up only inside
+        ``_flock_windows``, which is what makes "it does not bound the
+        POSIX path" true rather than incidental.
+
+        Scanning the whole package, not just one module, is the point:
+        the claim in ``flock_excl``'s docstring is about where the
+        variable is honoured, and a lookup added in any other module
+        would falsify it just as squarely as one added next door.
+        """
+        package_root = Path(bettermemory.__file__).parent
+        modules = sorted(package_root.rglob("*.py"))
+        assert modules, f"found no modules under {package_root}"
+
+        sites: list[tuple[str, int, str]] = []
+        for module in modules:
+            for lineno, scope in _scoped_string_sites(
+                module.read_text(encoding="utf-8"),
+                str(module),
+                "BETTERMEMORY_FLOCK_TIMEOUT",
+            ):
+                sites.append(
+                    (module.relative_to(package_root).as_posix(), lineno, scope)
+                )
+
+        # Guard against the whole test passing for the wrong reason: if
+        # the extractor stopped matching, `offenders` would be empty too.
+        assert sites, (
+            "no lookup of BETTERMEMORY_FLOCK_TIMEOUT found anywhere in the "
+            "package — either the variable was renamed (update the docstring "
+            "in _fsutil.flock_excl too) or this extractor stopped matching."
+        )
+        offenders = [site for site in sites if site[2] != "_flock_windows"]
+        assert not offenders, (
+            "BETTERMEMORY_FLOCK_TIMEOUT is read outside `_flock_windows`:\n  "
+            + "\n  ".join(
+                f"{path}:{lineno} in {scope or '<module>'}"
+                for path, lineno, scope in offenders
+            )
+            + "\n\n`flock_excl`'s docstring tells callers this variable bounds "
+            "the Windows branch and nothing else. If a POSIX wait is now "
+            "bounded too, that paragraph is false and has to be rewritten "
+            "before this exemption changes."
+        )
+
+    def test_posix_branch_takes_a_blocking_lock_with_no_deadline(self) -> None:
+        """The POSIX branch names ``LOCK_EX`` and no non-blocking flag.
+
+        ``LOCK_NB`` is the flag that would turn the acquire into a
+        poll, which is the precondition for any retry-with-deadline
+        loop — the shape the Windows helper uses. Its absence, together
+        with the absence of a clock reference, is the structural form
+        of "this wait has no deadline". Unlike a timing measurement,
+        this assertion cannot go stale.
+        """
+        source = Path(_fsutil.__file__).read_text(encoding="utf-8")
+        tree = ast.parse(source, _fsutil.__file__)
+        matches = [
+            node
+            for node in ast.walk(tree)
+            if isinstance(node, ast.FunctionDef) and node.name == "flock_excl"
+        ]
+        assert len(matches) == 1, (
+            f"expected exactly one `flock_excl` definition in "
+            f"{_fsutil.__file__}, found {len(matches)}"
+        )
+        # `_flock_windows` is a sibling top-level function, so walking
+        # `flock_excl` sees the POSIX branch and the win32 delegation
+        # call — never the Windows helper's body.
+        attrs = {
+            node.attr
+            for node in ast.walk(matches[0])
+            if isinstance(node, ast.Attribute)
+        }
+
+        assert "LOCK_EX" in attrs, (
+            "the POSIX branch no longer references fcntl.LOCK_EX — "
+            "`flock_excl`'s docstring describes the acquire as a blocking "
+            "LOCK_EX and would need rewriting."
+        )
+        assert "LOCK_NB" not in attrs, (
+            "the POSIX branch now references a non-blocking lock flag. The "
+            "docstring states the acquire blocks with no deadline; a "
+            "poll-and-retry loop makes that false."
+        )
+        assert "monotonic" not in attrs, (
+            "the POSIX branch now reads a clock, which is what a deadline "
+            "check looks like. The docstring states this wait has no "
+            "deadline — reconcile the two before relaxing this."
         )
 
 

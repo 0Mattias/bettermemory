@@ -389,7 +389,7 @@ def bounded_tail_read(path: Path, max_bytes: int) -> bytes:
 
 
 # Module-level guard so the "Windows lock fell back to in-process only"
-# warning is emitted at most once per process. Pre-2.7 the Windows
+# warning is emitted at most once per process. Pre-3.0.0 the Windows
 # branch was a silent no-op; that's a real cross-process correctness
 # gap (two MCP processes pointed at the same memory directory could
 # race writes), so any fallback path is at least visible in the
@@ -403,10 +403,25 @@ def flock_excl(
 ) -> Generator[None, None, None]:
     """Cross-process exclusive lock on a sidecar lockfile next to ``path``.
 
+    THE TWO PLATFORM BRANCHES WAIT DIFFERENTLY, and the difference is
+    the thing to carry away: the POSIX acquire blocks with no deadline,
+    the Windows acquire gives up with ``TimeoutError``. Neither
+    branch's wording about waiting transfers to the other — a caller
+    documenting its own lock wait has to say which one it means.
+
     POSIX path: ``fcntl.flock(fd, LOCK_EX)`` on ``<path><lock_suffix>``.
     The lockfile is created (or opened) at ``path.with_suffix(suffix +
     lock_suffix)`` and held under ``LOCK_EX`` for the duration of the
-    ``with`` block. The lockfile is NOT unlinked on release — see the
+    ``with`` block. That acquire is BLOCKING AND UNBOUNDED: plain
+    ``LOCK_EX`` with no ``LOCK_NB``, no retry loop and no deadline
+    check, so contention alone does not end the wait — it lasts as
+    long as the current holder keeps the lock.
+    ``BETTERMEMORY_FLOCK_TIMEOUT`` does NOT bound this path; it is
+    read only by ``_flock_windows``. A caller that cannot afford an
+    open-ended wait has to impose its own bound above this helper,
+    because this branch offers none.
+
+    The lockfile is NOT unlinked on release — see the
     2.6.3 audit note: ``flock`` identity is per-inode; unlinking on
     release lets a third opener race in between the holder's
     ``os.open`` and a fresh ``O_CREAT``, ending up with two holders on
@@ -431,7 +446,7 @@ def flock_excl(
     Windows path (audit H3): ``msvcrt.locking(fd, LK_NBLCK, 1)`` on
     the same sidecar lockfile, with a retry-with-exponential-backoff
     loop because ``LK_NBLCK`` is non-blocking and raises ``OSError``
-    on contention. Pre-2.7 this branch was a silent ``yield`` no-op
+    on contention. Pre-3.0.0 this branch was a silent ``yield`` no-op
     — two MCP processes on Windows pointed at the same memory
     directory could race writes and corrupt files with no warning.
     ``msvcrt.locking`` is the closest Windows analog: it's a
@@ -439,7 +454,10 @@ def flock_excl(
     a single byte (offset 0, length 1) gives whole-file mutual
     exclusion in practice for our usage. The non-blocking variant
     plus a retry loop avoids the dead-process-holds-the-lock failure
-    mode that the blocking variant exhibits. Default timeout is
+    mode that the blocking variant exhibits. UNLIKE THE POSIX BRANCH
+    ABOVE, this wait IS bounded: once the deadline passes with the
+    lock still contended the loop stops retrying and raises
+    ``TimeoutError`` instead of yielding. Default timeout is
     30 seconds (overridable via ``BETTERMEMORY_FLOCK_TIMEOUT``);
     backoff caps at 100ms per sleep.
 
@@ -447,7 +465,7 @@ def flock_excl(
     it ships with CPython) or the lockfile can't be created at all,
     the helper falls back to an in-process-only yield and emits a
     one-shot ``logger.warning`` so the regression is visible in
-    operator logs. Pre-2.7 the no-op was permanent and silent.
+    operator logs. Pre-3.0.0 the no-op was permanent and silent.
 
     The lockfile is created with ``0o600`` mode (POSIX) or default
     Windows mode bits (Windows ignores POSIX bits anyway) so the
@@ -495,6 +513,12 @@ def _flock_windows(
     default) — bettermemory writes are interactive in nature; if
     nothing has progressed in 30 seconds the right behaviour is to
     surface an error to the caller rather than spin indefinitely.
+
+    That deadline is specific to THIS branch. ``flock_excl``'s POSIX
+    path takes a blocking ``fcntl.flock(fd, LOCK_EX)`` with no
+    deadline of any kind, so neither this timeout nor
+    ``BETTERMEMORY_FLOCK_TIMEOUT`` describes how long a POSIX caller
+    can be made to wait.
     """
     import logging
     import time
