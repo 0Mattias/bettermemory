@@ -198,9 +198,7 @@ def build_server(
             "settles as `applied` at turn end; call to override.\n\n"
             "Verify before relying. When staleness_verdict isn't fresh, "
             "spot-check; memory_verify if it holds, memory_update if "
-            "drifted.\n\n"
-            "For /loop iterations: episode_handoff at entry, "
-            "episode_write(takeaway=…) at exit."
+            "drifted."
         ),
     )
 
