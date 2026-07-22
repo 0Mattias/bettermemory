@@ -21,9 +21,14 @@ Planned work, in rough priority order. Plans change; the
   catch. `w2_top1_v2_high_from_medium` (promote medium→high only)
   is the flip candidate now; w1 as-is is ruled out. Methodology and
   aggregates: [eval/widening-labeling-2026-07-08.md](
-  eval/widening-labeling-2026-07-08.md). Flip when a follow-up
-  labeling pass over a few more weeks of data holds w2 at ≥~70%
-  precision; loosen or drop the idea if it doesn't.
+  eval/widening-labeling-2026-07-08.md). The second pass
+  (2026-07-22, 37 newly-accrued promotions) read ~54% charitable /
+  ~30% strict — the same ~50% picture on 3.4× the data:
+  [eval/widening-labeling-2026-07-22.md](
+  eval/widening-labeling-2026-07-22.md). Holding per the 50–70%
+  band rule; the ~mid-August pass is decisive — flat again means
+  drop, unless a refined candidate (scope-token-gated promotion,
+  same-session top hits excluded) supersedes w2 first.
 
 ## Not planned
 
