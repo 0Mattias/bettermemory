@@ -17,9 +17,18 @@ that has rotted is flagged instead of quoted back at you.
 
 ## Install
 
+Claude Code — two slash commands, zero config:
+
+```
+/plugin marketplace add 0Mattias/bettermemory
+/plugin install bettermemory@bettermemory
+```
+
+Anything else that speaks MCP:
+
 ```sh
 uv tool install bettermemory
-bettermemory init --client claude-code   # or claude-desktop / cursor / cline
+bettermemory init --client claude-desktop   # or cursor / cline / claude-code
 ```
 
 Restart the client. `bettermemory doctor` exits 0 when it's wired
@@ -47,8 +56,9 @@ flagging it. Offline, throwaway store.
 
 ## For agents
 
-You were likely handed this link with "set this up." Steps are
-idempotent and safe to re-run:
+You were likely handed this link with "set this up." On Claude Code,
+the two plugin commands above are the whole install — skip to step 3.
+Everywhere else, steps are idempotent and safe to re-run:
 
 1. `uv tool install bettermemory` — or `pipx install bettermemory`,
    or `pip install bettermemory` into a venv. Python 3.11–3.14.
