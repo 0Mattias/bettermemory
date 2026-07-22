@@ -1161,15 +1161,21 @@ _BM25_B_DEFAULT = 0.75
 
 
 class CorpusStats(NamedTuple):
-    """Corpus-wide document frequencies, for when `memories` is a subset.
+    """Document frequencies over the collection a search ranks, for when
+    `memories` is a subset of it.
 
-    `size` is the whole corpus's document count; `body_df` / `scope_df` map
-    a term to how many documents in the WHOLE corpus carry it, in the body
-    and in body-or-scopes respectively — the two denominators `compute_idf`
-    otherwise derives from the list it was handed.
+    `size` is the ranked collection's document count; `body_df` / `scope_df`
+    map a term to how many documents in that collection carry it, in the
+    body and in body-or-scopes respectively — the two denominators
+    `compute_idf` otherwise derives from the list it was handed.
 
-    Built by `index.corpus_document_frequencies`, which see for why the
-    subset case needs this at all.
+    "The collection" is deliberately NOT the whole store:
+    `index.corpus_document_frequencies` builds these over the admitted set
+    — scopes, excluded scopes, repo and worktree, the same rule
+    `_filter_candidates` applies — so the denominator describes documents
+    the caller could actually retrieve. A provider that fed whole-store
+    frequencies here would re-create the auto-scope mispricing c58c836
+    removed. Which see for why the subset case needs this at all.
     """
 
     size: int
@@ -1222,14 +1228,15 @@ def compute_idf(
     `memories` — `search()` tokenizes each candidate once and threads the
     streams here. None recomputes them; identical output either way.
 
-    ``corpus_stats``: optional whole-corpus document frequencies. Supply it
-    whenever `memories` is a query-biased SUBSET rather than the corpus —
-    which is what the FTS prefilter produces above
+    ``corpus_stats``: optional ranked-collection document frequencies —
+    counted over the ADMITTED set, not the whole store; see `CorpusStats`.
+    Supply it whenever `memories` is a query-biased SUBSET of that
+    collection — which is what the FTS prefilter produces above
     `_INDEX_THRESHOLD_DEFAULT`. Without it, df is counted over candidates
     that are present precisely because they matched, so a discriminative
     query term's df approaches N and its Okapi IDF collapses toward zero:
     BM25 degenerates into length normalisation plus recency for exactly the
-    term that should dominate. Measured at 74x on a 600-memory corpus.
+    term that should dominate. Measured at 74x on a 608-memory store.
 
     Supplied stats OVERRIDE per term rather than replace the maps
     wholesale: any term the corpus lookup does not carry (a stale index, a

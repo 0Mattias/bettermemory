@@ -894,7 +894,7 @@ def corpus_document_frequencies(
     there BECAUSE it matched the query. Deriving df from that pool makes
     the query's own discriminative terms look ubiquitous — df approaches N
     by construction — and Okapi IDF collapses toward zero for exactly the
-    terms that should dominate. Measured at 74x on a 600-memory corpus.
+    terms that should dominate. Measured at 74x on a 608-memory store.
 
     `admit` is the caller's admission predicate, taking `(scopes, origin)`
     and returning whether that memory survives the search filters. It is
