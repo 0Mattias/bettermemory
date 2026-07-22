@@ -2265,6 +2265,128 @@ def test_push_refuses_to_commit_or_ship_conflict_markers(
     )
 
 
+def test_push_refuses_conflict_markers_staged_without_porcelain_state(
+    memory_dir: Path, bare_remote: Path
+) -> None:
+    """🔴 The residual-TOCTOU close: marker CONTENT with no conflict STATE.
+
+    Every earlier guard gates on porcelain (`UU` entries), which
+    describes how a conflict was CREATED. The window none of them can
+    cover is content that arrives without that state — a half-resolved
+    file left by the user's editor after a hand-run resolution, or a
+    conflict landing between a caller's predicate and the `git add -A`.
+    Simulated here at rest: a worktree with NO unmerged entries whose
+    file bytes nonetheless carry a full marker triad. Every porcelain
+    guard passes; only the staged-index scan in `_stage_and_commit`
+    stands between these bytes and the remote.
+
+    Mutation-sound: remove the index scan and `push` returns
+    `{'committed': True, 'pushed': True}`, failing the first assertion.
+    """
+    sync.init(memory_dir, remote=str(bare_remote))
+    store = Store(memory_dir)
+    memory = store.write(content="clean baseline", scopes=["tools"])
+    sync.push(memory_dir)
+    before_local = _git(memory_dir, "rev-parse", "main").strip()
+    before_remote = _git(bare_remote, "rev-parse", "main").strip()
+
+    path = store._find_path_for_id(memory.id)
+    assert path is not None
+    path.write_text(
+        path.read_text(encoding="utf-8")
+        + "<<<<<<< HEAD\nours\n=======\ntheirs\n>>>>>>> other\n",
+        encoding="utf-8",
+    )
+    assert "UU" not in _git(memory_dir, "status", "--porcelain"), (
+        "fixture accidentally created porcelain conflict state — this "
+        "test exists to cover the NO-state window"
+    )
+
+    with pytest.raises(sync.SyncError) as excinfo:
+        sync.push(memory_dir)
+
+    assert _git(memory_dir, "rev-parse", "main").strip() == before_local, (
+        "push committed marker content that carried no porcelain state"
+    )
+    assert _git(bare_remote, "rev-parse", "main").strip() == before_remote, (
+        "push SHIPPED marker content to the remote — every clone that pulls now gets it"
+    )
+    _assert_no_commit_carries_conflict_markers(memory_dir)
+    _assert_no_commit_carries_conflict_markers(bare_remote)
+
+    message = str(excinfo.value)
+    assert "resolve" in message.lower(), (
+        f"the refusal does not tell the user to resolve: {message}"
+    )
+    assert path.name in message, (
+        f"the refusal does not name the offending file: {message}"
+    )
+
+
+def test_auto_refuses_conflict_markers_staged_without_porcelain_state(
+    memory_dir: Path, bare_remote: Path
+) -> None:
+    """`auto` reaches the same staged-index scan through its commit-first
+    ordering — `_commit_local_changes` -> `_stage_and_commit` — so the
+    no-porcelain-state window is closed on both public entry points, not
+    just `push`. Same shape as the push twin; asserts the local branch
+    tip because a refused `auto` never reaches its pull or push steps.
+    """
+    sync.init(memory_dir, remote=str(bare_remote))
+    store = Store(memory_dir)
+    memory = store.write(content="clean baseline", scopes=["tools"])
+    sync.push(memory_dir)
+    before_local = _git(memory_dir, "rev-parse", "main").strip()
+
+    path = store._find_path_for_id(memory.id)
+    assert path is not None
+    path.write_text(
+        path.read_text(encoding="utf-8")
+        + "<<<<<<< HEAD\nours\n=======\ntheirs\n>>>>>>> other\n",
+        encoding="utf-8",
+    )
+
+    with pytest.raises(sync.SyncError):
+        sync.auto(memory_dir)
+
+    assert _git(memory_dir, "rev-parse", "main").strip() == before_local, (
+        "auto committed marker content that carried no porcelain state"
+    )
+    _assert_no_commit_carries_conflict_markers(memory_dir)
+
+
+def test_marker_scan_ignores_setext_underlines_and_indented_quotes(
+    memory_dir: Path, bare_remote: Path
+) -> None:
+    """The scan's precision half: prose that only LOOKS marker-adjacent
+    ships.
+
+    Two legitimate shapes in real markdown memory bodies: a setext-style
+    H1 underline (seven-plus `=` at column 0 — the reason bare `=======`
+    is deliberately absent from `_STAGED_MARKER_PATTERN`), and a QUOTED
+    conflict example indented by one space (the workaround the refusal
+    message itself offers). A guard that bounced these would block
+    honest memories about git conflicts — this package's own operator
+    store carries exactly such bodies.
+    """
+    sync.init(memory_dir, remote=str(bare_remote))
+    store = Store(memory_dir)
+    store.write(
+        content=(
+            "Conflict notes\n=======\n\nHow a marker looks, quoted:\n"
+            " <<<<<<< HEAD\n =======\n >>>>>>> theirs\n"
+        ),
+        scopes=["tools"],
+    )
+
+    result = sync.push(memory_dir)
+
+    assert result["pushed"] is True, (
+        "the marker scan bounced legitimate markdown (setext underline "
+        "or an indented quoted marker)"
+    )
+
+
 def _arm_a_conflicting_stash(memory_dir: Path, bare_remote: Path) -> None:
     """Leave `memory_dir` clean, synced, and holding a stash that will
     CONFLICT the moment it is popped.

@@ -1001,6 +1001,24 @@ def status(root: Path) -> SyncStatus:
     )
 
 
+_STAGED_MARKER_PATTERN = r"^(<{7}( |$)|>{7}( |$)|\|{7}( |$))"
+"""Line-start conflict markers as `git grep -E` reads the INDEX.
+
+`<<<<<<< label`, `>>>>>>> label`, and the diff3 `||||||| base` line —
+the spellings git itself writes, always with a trailing space before
+the label (`( |$)` also accepts a hand-mangled marker whose label was
+deleted). Exactly seven repeat characters, matching git's default
+`conflict-marker-size`; an eighth breaks the match by design, so a
+decorative `<<<<<<<<` rule does not fire.
+
+Deliberately NOT the bare `=======` divider: a setext-style markdown
+H1 underline is seven-plus `=` at column 0 and memory bodies are
+markdown, so scanning for it would bounce legitimate prose. Excluding
+it costs no recall — git never writes a conflict block without its
+`<<<<<<<` and `>>>>>>>` lines, so every real conflict still matches.
+"""
+
+
 def _stage_and_commit(root: Path, message: str) -> bool:
     """Reconcile the gitignore, `git add -A`, commit iff anything staged.
 
@@ -1013,6 +1031,14 @@ def _stage_and_commit(root: Path, message: str) -> bool:
     Extracted from `push` so `auto` can commit local edits BEFORE it
     pulls (see `auto`) without duplicating the reconcile + stage +
     commit discipline or reordering it by accident.
+
+    Between staging and committing, the INDEX is scanned for line-start
+    conflict markers (`_STAGED_MARKER_PATTERN`) and the commit REFUSES
+    when any are present. Both callers gate on porcelain state before
+    staging, but those predicates race the user's own git — this scan
+    judges the staged bytes themselves, at the package's single
+    `git add -A` choke point, so conflict content that wins the race is
+    refused here rather than committed as resolved content.
     """
     # Reconcile the on-disk `.gitignore` with `_GITIGNORE_LINES` BEFORE
     # `git add -A` reads the tree, so a pattern added in a release AFTER
@@ -1050,6 +1076,42 @@ def _stage_and_commit(root: Path, message: str) -> bool:
     diff = _run_git(root, ["diff", "--cached", "--quiet"], check=False)
     if diff.returncode == 0:
         return False
+    # Staged-CONTENT marker scan — the one conflict mitigation here that
+    # does not depend on WHO created the conflict or WHEN. The porcelain
+    # guards in both callers run before the `git add -A` above, and the
+    # sync lock serialises only bettermemory's own operations: a conflict
+    # created by the user's hand-run git (or an editor plugin) in the gap
+    # between a caller's predicate and the add arrives in the index as
+    # apparently-resolved content. Judging the index itself — after the
+    # add, before the commit — catches those bytes however they got here.
+    scan = _run_git(
+        root,
+        ["grep", "--cached", "-nE", _STAGED_MARKER_PATTERN, "--", "."],
+        check=False,
+    )
+    if scan.returncode != 1:
+        # git grep: 0 = matches found, 1 = clean, >=2 = the scan itself
+        # failed. Both non-1 cases refuse — an unverified index does not
+        # get committed (this is a corruption guard, so it fails closed).
+        if scan.returncode == 0:
+            hits = scan.stdout.strip().splitlines()
+            shown = "\n  ".join(h[:120] for h in hits[:5])
+            more = f"\n  … and {len(hits) - 5} more" if len(hits) > 5 else ""
+            raise SyncError(
+                f"refusing to commit: conflict markers are staged in the "
+                f"store ({len(hits)} line(s)):\n  {shown}{more}\n"
+                "These look like unresolved merge/rebase/stash conflicts "
+                "swept up by staging. Resolve them (remove the marker "
+                "lines) and retry. If a memory legitimately QUOTES a "
+                "conflict, indent the quoted marker lines by one space — "
+                "a marker at column 0 is indistinguishable from real "
+                "corruption."
+            )
+        raise SyncError(
+            f"refusing to commit: the staged-content conflict scan failed "
+            f"(git grep exited {scan.returncode}): "
+            f"{scan.stderr.strip() or scan.stdout.strip()}"
+        )
     _run_git(root, ["commit", "-m", message])
     return True
 
@@ -1094,15 +1156,19 @@ def _commit_local_changes(root: Path, message: str) -> bool:
     because the absence of remote divergence left the follow-on
     `pull --rebase` with nothing to trip over.
 
-    A residual window remains and this is deliberately not an all-clear.
-    The lock serialises bettermemory's own sync operations against each
-    other; it does not stop the user's hand-run `git merge` (or an editor
-    plugin's) from conflicting the worktree between the predicate and the
-    `git add -A` a few statements later. This lock cannot cover that: it is
-    bettermemory's own mutex and the user's git does not take it. Moving the
-    check inside the lock shrinks the exposure from an unbounded lock wait
-    (see `push`'s note on POSIX blocking) to the short gap between the two
-    calls; it does not eliminate it.
+    A residual RACE remains on this predicate and that part is
+    deliberately not an all-clear: the lock serialises bettermemory's own
+    sync operations against each other; it does not stop the user's
+    hand-run `git merge` (or an editor plugin's) from conflicting the
+    worktree between the predicate and the `git add -A` a few statements
+    later — bettermemory's mutex is not the user's git's. What changed is
+    the CONSEQUENCE of losing that race: `_stage_and_commit` now scans
+    the staged index for marker lines before it commits, so conflict
+    content that slips past this predicate is refused at the choke point
+    instead of committed as resolved content. This predicate still earns
+    its place — it fires EARLY, before a partial stage, with the specific
+    merge/rebase/stash diagnosis; the index scan is the actor- and
+    timing-independent backstop behind it, not a replacement for it.
 
     `auto` runs commit -> pull -> push and each step gates independently,
     but the first to see a conflict raises and aborts the run, so the user
