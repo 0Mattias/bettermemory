@@ -156,8 +156,10 @@ def test_memory_detail_flags_stale_verification(client: Any, store: Store) -> No
     # The warn cue appears with the integer day age (>= the threshold).
     assert "stale (verified" in r.text
     assert "d ago)" in r.text
-    # And it carries the warn class, mirroring the tag warn vocabulary.
-    assert 'class="tag warn">stale' in r.text
+    # And it carries the warn class, mirroring the chip warn vocabulary
+    # (the 2026-07 overhaul renamed .tag to .chip; the contract is the
+    # warn-classed cue, not the class token's spelling).
+    assert 'class="chip warn">stale' in r.text
 
     # A freshly verified memory must NOT trip the cue.
     fresh = store.write(content="durable claim verified just now", scopes=["tools"])
@@ -165,6 +167,123 @@ def test_memory_detail_flags_stale_verification(client: Any, store: Store) -> No
     r2 = client.get(f"/memories/{fresh.id}")
     assert r2.status_code == 200
     assert "stale (verified" not in r2.text
+
+
+def test_search_uses_the_ranked_engine_not_a_substring_filter(
+    client: Any, store: Store
+) -> None:
+    """The 2026-07 overhaul's core fix. "alpha beta" has no contiguous
+    substring match in the body below — the pre-overhaul filter (a bare
+    `needle in summary.lower()`) returned zero rows for exactly this
+    query shape, live-reproduced against the operator store. The ranked
+    engine tokenizes, so both terms hit and the memory surfaces."""
+    m = store.write(
+        content=(
+            "alpha subsystem design notes\n\n"
+            "The beta rollout flag lives in the deploy config."
+        ),
+        scopes=["tools"],
+    )
+    r = client.get("/memories", params={"q": "alpha beta"})
+    assert r.status_code == 200
+    assert m.id in r.text, "ranked search failed to surface a two-token match"
+    assert "ranked hit" in r.text
+
+
+def test_search_hits_carry_the_staleness_verdict(client: Any, store: Store) -> None:
+    """Verdict parity: a never-verified hit must wear the same
+    spot-check-required verdict the MCP surface reports for it —
+    computed by the same compute_verification_status /
+    compute_staleness_verdict pair, never web-side arithmetic."""
+    store.write(content="gamma pipeline runbook", scopes=["tools"])
+    r = client.get("/memories", params={"q": "gamma runbook"})
+    assert r.status_code == 200
+    assert "spot-check required" in r.text
+
+
+def test_detail_flags_missing_cited_paths(
+    client: Any, store: Store, tmp_path: Path
+) -> None:
+    """The detail page runs the real path-drift check: cite a file,
+    delete it, and the page must show the missing bucket plus a
+    non-fresh verdict — the `bettermemory try` demo, on the web."""
+    target = tmp_path / "cited-then-deleted.md"
+    target.write_text("ephemeral", encoding="utf-8")
+    m = store.write(content=f"The runbook lives at {target}", scopes=["tools"])
+    target.unlink()
+    r = client.get(f"/memories/{m.id}")
+    assert r.status_code == 200
+    assert "Missing paths" in r.text
+    assert "spot-check" in r.text
+
+
+def test_eval_page_renders_the_three_rates(client: Any) -> None:
+    """The effectiveness telemetry reaches the UI — the same three
+    rates `eval --report` publishes, rendered read-only. On a fresh
+    store the denominators are zero and the page must say n/a rather
+    than inventing a number."""
+    r = client.get("/eval")
+    assert r.status_code == 200
+    for label in ("memory_helped_rate", "endorsement_rate", "silent_miss_rate"):
+        assert label in r.text
+    assert "n/a" in r.text
+
+
+def test_episodes_page_renders_takeaways(client: Any, store: Store) -> None:
+    from bettermemory.episodes import EpisodeStore
+
+    estore = EpisodeStore(store.root)
+    estore.write(
+        session_id="sess_webui_test",
+        body="round 1: drained the queue",
+        takeaway="round 1 takeaway marker",
+    )
+    r = client.get("/episodes")
+    assert r.status_code == 200
+    assert "round 1 takeaway marker" in r.text
+    assert "sess_webui_test" in r.text
+
+
+def test_episodes_page_empty_state(client: Any) -> None:
+    r = client.get("/episodes")
+    assert r.status_code == 200
+    assert "No episodes" in r.text
+
+
+def test_curation_page_previews_duplicates_without_mutating(
+    client: Any, store: Store
+) -> None:
+    """Two same-body memories clear the auto-dedup Jaccard threshold,
+    so the preview must show the pair — and the page is a dry run by
+    construction (`apply` is a literal False at the only call site),
+    so both memories must still be active afterwards."""
+    body = "identical duplicated fact about the deploy pipeline and its flags"
+    a = store.write(content=body, scopes=["tools"])
+    b = store.write(content=body, scopes=["tools"])
+    r = client.get("/curation")
+    assert r.status_code == 200
+    assert "Near-duplicates" in r.text
+    assert "Preview only" in r.text
+    assert store.load_one(a.id) is not None
+    assert store.load_one(b.id) is not None
+
+
+def test_new_pages_render_in_read_only_mode(ro_client: Any) -> None:
+    """The --tunnel posture extends to every new surface: all three are
+    GETs and must render read-only, wearing the badge, with no CSRF
+    plumbing emitted."""
+    for path in ("/eval", "/episodes", "/curation"):
+        r = ro_client.get(path)
+        assert r.status_code == 200, path
+        assert "read-only" in r.text, path
+        assert "csrf-token" not in r.text, path
+
+
+def test_nav_carries_the_new_pages(client: Any) -> None:
+    r = client.get("/")
+    assert r.status_code == 200
+    for href in ('href="/curation"', 'href="/eval"', 'href="/episodes"'):
+        assert href in r.text
 
 
 def test_memory_detail_404_when_missing(client: Any) -> None:

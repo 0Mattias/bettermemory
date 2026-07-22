@@ -1,11 +1,12 @@
-"""Local web UI for bettermemory (T4.3 of the v1.6 plan).
+"""Local web UI for bettermemory.
 
-A small FastAPI app that surfaces the curation surfaces (memory_health
-rollups, dead-weight, contradictions, never-verified) plus a memory
-browser, detail view, and one-click verify. The CLI tool surface is
-the canonical entrypoint for everyday writes / searches; the web UI's
-killer use case is the *curation* pass — looking at a list of
-dead-weight memories side-by-side beats reading them out via tool
+A small FastAPI app that surfaces the trust machinery — the staleness
+verdict, ranked search, memory_health rollups, eval telemetry, the
+episode journal, and a curation preview — plus a memory browser,
+detail view, and one-click verify. The CLI tool surface is the
+canonical entrypoint for everyday writes / searches; the web UI's
+killer use case is the *curation* pass — looking at the rot rollups
+and candidate lists side-by-side beats reading them out via tool
 calls.
 
 Scope:
@@ -14,7 +15,18 @@ Scope:
 - No editing UI: writes happen in-conversation via `memory_write`,
   not from the browser. The UI is read-mostly with one mutation —
   `memory_verify`, since "I just spot-checked this claim" is a
-  natural human action.
+  natural human action. Every other surface, including the eval,
+  episodes, and curation-preview pages, is strictly read-only.
+- Verdict parity with the MCP surface, by construction: search runs
+  through the same `search.search` ranker the handlers use, and the
+  staleness verdict routes through `compute_verification_status` /
+  `compute_staleness_verdict` / `compute_commit_drift` exactly as
+  `_response.py` and the `memory_show` handler wire them. The web
+  never re-derives a verdict with its own arithmetic, so it cannot
+  disagree with what the model sees. (List rows initialise the
+  verdict from verification + path drift, matching `_response`'s
+  per-hit initialisation; the detail page folds in commit drift the
+  way `memory_show` does — same split as the MCP surface itself.)
 - No JS framework: server-side rendered HTML, minimal inline CSS,
   no template engine. Each route returns a complete HTML response
   built from the helper functions below. Cheap to maintain, no
@@ -22,7 +34,9 @@ Scope:
 
 Gated behind the optional ``[ui]`` extra. The CLI's `bettermemory ui`
 subcommand surfaces a clean install hint when fastapi / uvicorn
-isn't available.
+isn't available. Module-level imports stay fastapi-free so importing
+this module never raises for users without the extra; the framework
+loads lazily inside `build_app` / `serve`.
 """
 
 from __future__ import annotations
@@ -36,16 +50,26 @@ import signal
 import subprocess
 import sys
 import threading
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 
 from .config import Config
+from .consolidate import consolidate
+from .episodes import EpisodeStore
+from .eval import compute_eval
+from .events import iter_all_events
 from .health import report_for_directory
 from .models import validate_scope
 from .origin import capture as capture_origin
+from .search import SearchMode, search as run_search
 from .store import MemoryNotFoundError, Store, TombstonedError
-from .verify import compute_verification_status
+from .verify import (
+    compute_commit_drift,
+    compute_staleness_verdict,
+    compute_verification_status,
+    detect_path_drift,
+)
 
 if TYPE_CHECKING:
     from types import FrameType
@@ -55,6 +79,12 @@ if TYPE_CHECKING:
 
 log = logging.getLogger("bettermemory.web")
 
+# Ranked-search result cap for the web list. Wider than memory_search's
+# default 5 because a human scans a page where a model pays per-token —
+# but still bounded, because rendering the whole store under a broad
+# query would bury the ranking this page exists to show off.
+_SEARCH_MAX_RESULTS = 30
+
 
 # ---------------------------------------------------------------------------
 # Rendering helpers
@@ -63,97 +93,151 @@ log = logging.getLogger("bettermemory.web")
 
 _BASE_STYLE = """
 :root {
-    --fg: #1a1a1a;
-    --muted: #666;
-    --bg: #fafafa;
-    --card: #fff;
-    --border: #e0e0e0;
-    --accent: #2563eb;
-    --warn: #d97706;
-    --bad: #dc2626;
-    --ok: #059669;
+    color-scheme: light dark;
+    --fg: #1c1c1a;
+    --muted: #6d6b64;
+    --bg: #faf9f6;
+    --card: #ffffff;
+    --border: #e3e1d9;
+    --border-soft: #eeece5;
+    --accent: #1d4ed8;
+    --ok: #0e7a4f;   --ok-bg: #e4f3eb;
+    --warn: #935800; --warn-bg: #fbf0d9;
+    --bad: #b3261e;  --bad-bg: #fbe5e3;
+    --code-bg: #f2f1ec;
+}
+@media (prefers-color-scheme: dark) {
+    :root {
+        --fg: #e7e5e0;
+        --muted: #96948c;
+        --bg: #131311;
+        --card: #1c1c19;
+        --border: #33322c;
+        --border-soft: #26251f;
+        --accent: #8ab4ff;
+        --ok: #53c08a;   --ok-bg: #14291d;
+        --warn: #dfa63f; --warn-bg: #2b2110;
+        --bad: #ef7168;  --bad-bg: #331413;
+        --code-bg: #22221e;
+    }
 }
 * { box-sizing: border-box; }
 body {
     font-family: -apple-system, system-ui, BlinkMacSystemFont, sans-serif;
     background: var(--bg);
     color: var(--fg);
-    max-width: 1000px;
+    max-width: 1080px;
     margin: 0 auto;
-    padding: 1rem;
-    line-height: 1.5;
+    padding: 1rem 1.25rem 3rem;
+    line-height: 1.55;
+    font-size: 15px;
 }
-header { border-bottom: 1px solid var(--border); padding-bottom: 0.5rem; margin-bottom: 1rem; }
-header a { color: var(--accent); text-decoration: none; margin-right: 1rem; font-weight: 500; }
-header a:hover { text-decoration: underline; }
-header strong { font-weight: 600; color: var(--fg); }
-h1 { font-size: 1.5rem; margin-top: 0; }
-h2 { font-size: 1.2rem; margin-top: 1.5rem; }
+header {
+    display: flex;
+    align-items: baseline;
+    gap: 1rem;
+    flex-wrap: wrap;
+    border-bottom: 1px solid var(--border);
+    padding-bottom: 0.6rem;
+    margin-bottom: 1.25rem;
+}
+nav { display: flex; gap: 0.9rem; flex-wrap: wrap; }
+nav a { color: var(--muted); text-decoration: none; font-weight: 500; padding-bottom: 2px; }
+nav a:hover { color: var(--fg); }
+nav a.active { color: var(--fg); border-bottom: 2px solid var(--accent); }
+.storepath { margin-left: auto; color: var(--muted); font-size: 0.82rem; }
+.storepath code { background: none; color: var(--muted); }
+h1 { font-size: 1.4rem; margin: 0 0 0.75rem; letter-spacing: -0.01em; }
+h2 { font-size: 1.05rem; margin: 1.75rem 0 0.5rem; }
+a { color: var(--accent); }
+code, .mono {
+    font-family: ui-monospace, "SF Mono", Menlo, monospace;
+    font-size: 0.86em;
+    background: var(--code-bg);
+    padding: 0.05rem 0.3rem;
+    border-radius: 4px;
+}
 .card {
     background: var(--card);
     border: 1px solid var(--border);
-    border-radius: 6px;
-    padding: 1rem;
-    margin-bottom: 0.75rem;
+    border-radius: 8px;
+    padding: 0.8rem 1rem;
+    margin-bottom: 0.6rem;
 }
-.muted { color: var(--muted); font-size: 0.9rem; }
-.tag {
+.card h3 { margin: 0 0 0.25rem; font-size: 0.98rem; }
+.card h3 a { color: var(--fg); text-decoration: none; }
+.card h3 a:hover { text-decoration: underline; }
+.muted { color: var(--muted); font-size: 0.86rem; }
+.chip {
     display: inline-block;
-    background: #eef2ff;
-    color: var(--accent);
-    padding: 0.1rem 0.5rem;
-    border-radius: 4px;
-    font-size: 0.85rem;
-    margin-right: 0.25rem;
-}
-.tag.warn { background: #fef3c7; color: var(--warn); }
-.tag.bad  { background: #fee2e2; color: var(--bad);  }
-.tag.ok   { background: #d1fae5; color: var(--ok);   }
-form { display: inline; }
-input[type="text"], textarea {
-    width: 100%;
-    padding: 0.5rem;
     border: 1px solid var(--border);
-    border-radius: 4px;
+    color: var(--muted);
+    padding: 0 0.45rem;
+    border-radius: 999px;
+    font-size: 0.78rem;
+    line-height: 1.5;
+    margin-right: 0.3rem;
+    white-space: nowrap;
+}
+.chip.ok   { background: var(--ok-bg);   color: var(--ok);   border-color: transparent; }
+.chip.warn { background: var(--warn-bg); color: var(--warn); border-color: transparent; }
+.chip.bad  { background: var(--bad-bg);  color: var(--bad);  border-color: transparent; }
+form { display: inline; }
+.searchbar { display: flex; gap: 0.5rem; flex-wrap: wrap; margin-bottom: 0.9rem; }
+.searchbar input[type="text"] { flex: 1 1 16rem; }
+input[type="text"], textarea {
+    padding: 0.45rem 0.6rem;
+    border: 1px solid var(--border);
+    border-radius: 6px;
     font-family: inherit;
-    font-size: 1rem;
+    font-size: 0.95rem;
+    background: var(--card);
+    color: var(--fg);
 }
 button {
     background: var(--accent);
-    color: #fff;
+    color: var(--bg);
     border: none;
-    padding: 0.4rem 0.8rem;
-    border-radius: 4px;
+    padding: 0.42rem 0.9rem;
+    border-radius: 6px;
     cursor: pointer;
     font-size: 0.9rem;
+    font-weight: 600;
 }
-button:hover { background: #1d4ed8; }
-button.secondary {
-    background: #fff;
-    color: var(--fg);
-    border: 1px solid var(--border);
-}
+button:hover { filter: brightness(1.08); }
 pre {
-    background: #f5f5f5;
+    background: var(--code-bg);
     padding: 0.75rem;
-    border-radius: 4px;
+    border-radius: 6px;
     overflow-x: auto;
-    font-size: 0.85rem;
+    font-size: 0.84rem;
+    line-height: 1.5;
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
 }
-ul.bare { list-style: none; padding: 0; }
-ul.bare li { padding: 0.25rem 0; }
-.bucket-summary { display: flex; gap: 1rem; flex-wrap: wrap; margin-bottom: 1rem; }
+ul.bare { list-style: none; padding: 0; margin: 0.25rem 0; }
+ul.bare li { padding: 0.28rem 0; border-bottom: 1px solid var(--border-soft); }
+ul.bare li:last-child { border-bottom: none; }
+table { border-collapse: collapse; width: 100%; font-size: 0.88rem; margin: 0.4rem 0 1rem; }
+th, td { text-align: left; padding: 0.35rem 0.6rem 0.35rem 0; border-bottom: 1px solid var(--border-soft); }
+th { color: var(--muted); font-weight: 500; font-size: 0.8rem; }
+td.num, th.num { text-align: right; padding-right: 1rem; font-variant-numeric: tabular-nums; }
+.bucket-summary { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 0.6rem; margin-bottom: 1rem; }
 .bucket-summary .item {
     background: var(--card);
     border: 1px solid var(--border);
-    padding: 0.5rem 0.75rem;
-    border-radius: 4px;
-    min-width: 100px;
+    padding: 0.55rem 0.75rem;
+    border-radius: 8px;
 }
-.bucket-summary .label { font-size: 0.8rem; color: var(--muted); display: block; }
-.bucket-summary .value { font-size: 1.4rem; font-weight: 600; }
+.bucket-summary .label { font-size: 0.76rem; color: var(--muted); display: block; }
+.bucket-summary .value { font-size: 1.35rem; font-weight: 650; font-variant-numeric: tabular-nums; }
 .bucket-summary .value.bad { color: var(--bad); }
 .bucket-summary .value.warn { color: var(--warn); }
+.bucket-summary .value.ok { color: var(--ok); }
+.hit-meta { display: flex; align-items: center; flex-wrap: wrap; gap: 0.15rem 0; margin-top: 0.3rem; }
+details { margin: 0.4rem 0; }
+details summary { cursor: pointer; color: var(--muted); font-size: 0.86rem; }
+.snippet { margin: 0.35rem 0 0; font-size: 0.9rem; color: var(--fg); }
 """
 
 
@@ -206,6 +290,7 @@ def _layout(
     csrf_token: str,
     *,
     read_only: bool = False,
+    active: str = "",
 ) -> str:
     """Render a full HTML page with the standard chrome.
 
@@ -235,21 +320,33 @@ def _layout(
         else f'<meta name="csrf-token" content="{html.escape(csrf_token)}"/>'
     )
     csrf_script = "" if read_only else f"<script>{_CSRF_JS}</script>"
-    ro_badge = '<span class="tag warn">read-only</span> ' if read_only else ""
+    ro_badge = '<span class="chip warn">read-only</span> ' if read_only else ""
+    nav_items = (
+        ("/", "Overview"),
+        ("/memories", "Memories"),
+        ("/health", "Health"),
+        ("/curation", "Curation"),
+        ("/eval", "Eval"),
+        ("/episodes", "Episodes"),
+        ("/tombstones", "Tombstones"),
+    )
+    nav_links: list[str] = []
+    for href, label in nav_items:
+        cls = ' class="active"' if href == active else ""
+        nav_links.append(f'<a href="{href}"{cls}>{label}</a>')
+    nav = "".join(nav_links)
     return (
         "<!doctype html>"
         "<html><head>"
         f"<title>{html.escape(title)} · bettermemory</title>"
+        '<meta name="viewport" content="width=device-width, initial-scale=1"/>'
         f"{csrf_meta}"
         f"<style>{_BASE_STYLE}</style>"
         "</head><body>"
         "<header>"
-        '<a href="/">Overview</a>'
-        '<a href="/memories">Memories</a>'
-        '<a href="/health">Health</a>'
-        '<a href="/tombstones">Tombstones</a>'
-        f'<span class="muted" style="float:right">{ro_badge}'
-        f"<strong>{html.escape(str(store_root))}</strong></span>"
+        f"<nav>{nav}</nav>"
+        f'<span class="storepath">{ro_badge}'
+        f"<code>{html.escape(str(store_root))}</code></span>"
         "</header>"
         f"<h1>{html.escape(title)}</h1>"
         f"{body}"
@@ -258,8 +355,66 @@ def _layout(
     )
 
 
-def _render_overview(report: Any) -> str:
-    """Dashboard summary built from a HealthReport."""
+# The web surface never invents verdict language: labels and severity
+# classes map one-to-one onto the strings `compute_staleness_verdict`
+# returns, and anything unexpected renders as itself with the warn
+# treatment rather than being silently dropped.
+_VERDICT_META = {
+    "fresh": ("fresh", "ok"),
+    "spot_check_recommended": ("spot-check recommended", "warn"),
+    "spot_check_required": ("spot-check required", "bad"),
+}
+
+
+def _verdict_chip(verdict: str) -> str:
+    label, cls = _VERDICT_META.get(verdict, (verdict, "warn"))
+    return f'<span class="chip {cls}">{html.escape(label)}</span>'
+
+
+def _scope_chips(scopes: Any) -> str:
+    return "".join(f'<span class="chip">{html.escape(str(sc))}</span>' for sc in scopes)
+
+
+def _date(dt: Any) -> str:
+    """Short date for list rows; full ISO stays on the detail page."""
+    try:
+        formatted = str(dt.strftime("%Y-%m-%d"))
+    except AttributeError:
+        formatted = str(dt)
+    return html.escape(formatted)
+
+
+def _verification_chip(
+    last_verified_at: datetime | None, *, stale_after_days: int, now: datetime
+) -> str:
+    """fresh / stale (verified Nd ago) / never-verified chip for a row.
+
+    Routes through `compute_verification_status` — the same helper the
+    MCP response layer uses — so a row chip can never disagree with the
+    detail page or a search hit for the same memory.
+    """
+    if last_verified_at is None:
+        return '<span class="chip bad">never verified</span>'
+    status = compute_verification_status(
+        last_verified_at, now=now, stale_after_days=stale_after_days
+    )
+    if status.status == "stale":
+        return (
+            f'<span class="chip warn">stale '
+            f"(verified {int(status.age_days or 0)}d ago)</span>"
+        )
+    return '<span class="chip ok">verified</span>'
+
+
+def _render_overview(report: Any, *, tombstone_count: int | None = None) -> str:
+    """Dashboard summary built from a HealthReport.
+
+    Verdict-first: the grid leads with the verification split and the
+    telemetry rollups (silent misses, cold endorsements, commit drift)
+    rather than celebrating zeros on the legacy rot axes — those axes
+    still render, but a healthy store's overview should say what IS
+    moving, not enumerate what isn't.
+    """
     n = report.total_active_memories
     debt = report.verification_debt
     # Read the uncapped totals, not len() of the capped row lists.
@@ -269,16 +424,22 @@ def _render_overview(report: Any) -> str:
     # freeze at 20 and the warn cue would saturate.
     never_verified = debt.never_verified_total if debt else 0
     stale_verifications = debt.stale_total if debt else 0
-    parts: list[str] = []
-    parts.append('<div class="bucket-summary">')
-    for label, value, cls in (
+    fresh = debt.fresh_count if debt else 0
+    misses = report.silent_misses.miss_total if report.silent_misses else 0
+    cold_endorse = (
+        report.cold_endorsement_memories.total
+        if report.cold_endorsement_memories
+        else 0
+    )
+    cards: list[tuple[str, int, str]] = [
         ("active memories", n, ""),
-        ("never verified", never_verified, "warn" if never_verified else ""),
+        ("verified fresh", fresh, "ok" if fresh else ""),
         (
             "stale verifications",
             stale_verifications,
             "warn" if stale_verifications else "",
         ),
+        ("never verified", never_verified, "warn" if never_verified else ""),
         ("dead weight", len(report.dead_weight), "bad" if report.dead_weight else ""),
         (
             "cold memories",
@@ -286,25 +447,53 @@ def _render_overview(report: Any) -> str:
             "warn" if report.cold_memories else "",
         ),
         (
-            "unresolved contradictions",
+            "contradictions",
             len(report.contradicted),
             "bad" if report.contradicted else "",
         ),
-    ):
+        ("silent misses", misses, "warn" if misses else ""),
+        ("cold endorsements", cold_endorse, "warn" if cold_endorse else ""),
+    ]
+    if report.commit_drift_debt is not None:
+        cards.append(
+            (
+                "commit-drifted",
+                report.commit_drift_debt.total_drifted,
+                "warn" if report.commit_drift_debt.total_drifted else "",
+            )
+        )
+    if tombstone_count is not None:
+        cards.append(("tombstones", tombstone_count, ""))
+
+    parts: list[str] = []
+    parts.append('<div class="bucket-summary">')
+    for label, value, cls in cards:
         parts.append(
             f'<div class="item"><span class="label">{html.escape(label)}</span>'
             f'<span class="value {cls}">{int(value)}</span></div>'
         )
     parts.append("</div>")
+    parts.append(
+        f'<p class="muted">{int(report.total_events)} events · '
+        f"{int(report.distinct_sessions)} sessions · "
+        f"window {int(report.window_days)}d</p>"
+    )
 
     if report.heavily_used:
         parts.append("<h2>Most-applied memories</h2>")
         parts.append('<ul class="bare">')
         for stats in report.heavily_used[:10]:
+            explicit = (
+                f" · {stats.explicit_applied_count} explicit"
+                if getattr(stats, "explicit_applied_count", 0)
+                else ""
+            )
             parts.append(
                 f'<li><a href="/memories/{html.escape(stats.id)}">'
                 f"{html.escape(stats.summary or stats.id)}</a> "
-                f'<span class="muted">applied {stats.applied_count}×</span></li>'
+                f"{_scope_chips(stats.scopes)}"
+                f'<span class="muted">applied {stats.applied_count}×'
+                f"{explicit}</span></li>"
             )
         parts.append("</ul>")
     else:
@@ -316,22 +505,93 @@ def _render_overview(report: Any) -> str:
     return "".join(parts)
 
 
-def _render_memory_list(
-    summaries: list[Any], *, query: str = "", scope_filter: str = ""
+def _render_search_bar(query: str, scope_filter: str) -> str:
+    return (
+        '<form method="get" action="/memories" class="searchbar">'
+        f'<input type="text" name="q" placeholder="Search — ranked by the same '
+        f'engine memory_search uses…" value="{html.escape(query)}"/>'
+        f'<input type="text" name="scope" placeholder="Scope filter (optional)…" '
+        f'value="{html.escape(scope_filter)}"/>'
+        '<button type="submit">Search</button>'
+        "</form>"
+    )
+
+
+def _render_hits(
+    hits: list[Any],
+    *,
+    query: str,
+    scope_filter: str,
+    stale_after_days: int,
+    now: datetime,
 ) -> str:
-    """List view with a top search/filter bar."""
-    parts: list[str] = []
-    parts.append('<form method="get" action="/memories">')
+    """Ranked search results, verdict-first.
+
+    Each hit's verdict is initialised exactly the way `_response.py`
+    initialises a search hit's: verification status + path drift, with
+    commit drift folded in only where repo context exists (the detail
+    page). Same functions, same inputs, no web-side arithmetic.
+    """
+    parts: list[str] = [_render_search_bar(query, scope_filter)]
     parts.append(
-        f'<input type="text" name="q" placeholder="Search summaries…" '
-        f'value="{html.escape(query)}" style="margin-bottom:0.5rem"/>'
+        f'<p class="muted">{len(hits)} ranked hit(s) for '
+        f"<strong>{html.escape(query)}</strong></p>"
     )
-    parts.append(
-        f'<input type="text" name="scope" placeholder="Filter by scope (optional)…" '
-        f'value="{html.escape(scope_filter)}" style="margin-bottom:0.5rem"/>'
-    )
-    parts.append('<button type="submit">Search</button>')
-    parts.append("</form>")
+    if not hits:
+        parts.append(
+            '<p class="muted">No hits. The ranker tokenizes and strips '
+            "stopwords, so try distinctive terms rather than exact phrases.</p>"
+        )
+        return "".join(parts)
+
+    for hit in hits:
+        verification = compute_verification_status(
+            hit.last_verified_at, now=now, stale_after_days=stale_after_days
+        )
+        verdict = compute_staleness_verdict(
+            verification=verification,
+            path_drift_missing=hit.path_drift_missing,
+            commit_drift_count=None,
+        )
+        cat = getattr(hit, "category", None)
+        cat_chip = ""
+        if cat is not None:
+            cat_val = str(getattr(cat, "value", cat))
+            if cat_val != "fact":
+                cat_chip = f'<span class="chip warn">{html.escape(cat_val)}</span>'
+        drift_chip = (
+            f'<span class="chip bad">paths missing: {hit.path_drift_missing}</span>'
+            if hit.path_drift_missing
+            else ""
+        )
+        matched = ", ".join(list(hit.match_terms)[:8])
+        title = (hit.snippet or hit.id).splitlines()[0][:140]
+        parts.append(
+            f'<div class="card">'
+            f'<h3><a href="/memories/{html.escape(hit.id)}">'
+            f"{html.escape(title)}</a></h3>"
+            f'<div class="hit-meta">{_verdict_chip(verdict)}'
+            f'<span class="chip">relevance {html.escape(hit.relevance)}</span>'
+            f"{cat_chip}{drift_chip}{_scope_chips(hit.scopes)}</div>"
+            f'<div class="muted">score {hit.score:g} · matched: '
+            f"{html.escape(matched) or '—'} · "
+            f'<span class="mono">{html.escape(hit.id)}</span> · '
+            f"updated {_date(hit.updated)}</div>"
+            f"</div>"
+        )
+    return "".join(parts)
+
+
+def _render_memory_list(
+    summaries: list[Any],
+    *,
+    query: str = "",
+    scope_filter: str = "",
+    stale_after_days: int,
+    now: datetime,
+) -> str:
+    """Browse view (no query): every memory, verification-chipped."""
+    parts: list[str] = [_render_search_bar(query, scope_filter)]
     parts.append(f'<p class="muted">{len(summaries)} memories</p>')
 
     if not summaries:
@@ -339,25 +599,25 @@ def _render_memory_list(
         return "".join(parts)
 
     for s in summaries:
-        scope_tags = " ".join(
-            f'<span class="tag">{html.escape(sc)}</span>' for sc in s.scopes
+        cat = getattr(s, "category", None)
+        cat_chip = ""
+        if cat is not None:
+            cat_val = str(getattr(cat, "value", cat))
+            if cat_val != "fact":
+                cat_chip = f'<span class="chip warn">{html.escape(cat_val)}</span>'
+        verify_chip = _verification_chip(
+            getattr(s, "last_verified_at", None),
+            stale_after_days=stale_after_days,
+            now=now,
         )
-        cat = (
-            f'<span class="tag warn">{html.escape(s.category.value)}</span>'
-            if getattr(s, "category", None) is not None
-            else ""
-        )
-        verified_at = getattr(s, "last_verified_at", None)
-        verify_tag = ""
-        if verified_at is None:
-            verify_tag = '<span class="tag bad">never verified</span>'
         parts.append(
             f'<div class="card">'
-            f'<a href="/memories/{html.escape(s.id)}"><strong>'
-            f"{html.escape(s.summary or s.id)}</strong></a><br/>"
-            f"{scope_tags}{cat}{verify_tag}"
-            f'<div class="muted">id={html.escape(s.id)} · created '
-            f"{html.escape(s.created.isoformat())}</div>"
+            f'<h3><a href="/memories/{html.escape(s.id)}">'
+            f"{html.escape(s.summary or s.id)}</a></h3>"
+            f'<div class="hit-meta">{verify_chip}{cat_chip}'
+            f"{_scope_chips(s.scopes)}</div>"
+            f'<div class="muted"><span class="mono">{html.escape(s.id)}</span> '
+            f"· created {_date(s.created)}</div>"
             f"</div>"
         )
     return "".join(parts)
@@ -366,39 +626,85 @@ def _render_memory_list(
 def _render_memory_detail(
     memory: Any, *, stale_after_days: int, read_only: bool = False
 ) -> str:
-    """Full body + metadata + verify form (form omitted in read-only mode).
+    """Full body + the complete staleness verdict + verify form.
 
-    `stale_after_days` is the verification freshness window (the
-    `behavior.verification_stale_days` config knob). When the memory
-    has been verified but the verification is older than the window,
-    a `stale (verified Nd ago)` warn tag is appended next to the raw
-    timestamp — the curation surface must not collapse verified-but-stale
-    into a bare "verified", since that's the exact memory the staleness
-    model exists to flag. The comparison routes through the same
-    `compute_verification_status` helper `_response` / `health` use, so
-    the web verdict can't drift from the rest of the system and the
-    naive/aware-datetime normalisation is handled in one place.
+    The verdict block mirrors the `memory_show` handler exactly:
+    `detect_path_drift` over the body with the verified/absent
+    attestations, `compute_verification_status` for the calendar axis,
+    `compute_commit_drift` (claim-anchored, only meaningful when this
+    server runs inside the memory's origin repo), and
+    `compute_staleness_verdict` folding all three. Same functions, same
+    inputs — the page cannot disagree with what the model sees for the
+    same memory. The `stale (verified Nd ago)` phrasing is a rendering
+    contract pinned by tests; keep it.
     """
-    scope_tags = " ".join(
-        f'<span class="tag">{html.escape(sc)}</span>' for sc in memory.scopes
+    now = datetime.now(timezone.utc)
+    drift = detect_path_drift(
+        memory.body,
+        verified_paths=memory.verified_paths,
+        absent_paths=memory.verified_absent_paths,
     )
+    verification = compute_verification_status(
+        memory.last_verified_at, now=now, stale_after_days=stale_after_days
+    )
+    commit_drift = compute_commit_drift(
+        memory.last_verified_at,
+        memory.origin.repo if memory.origin else None,
+        caller_origin=capture_origin(),
+        verified_paths=memory.verified_paths,
+        body=memory.body,
+    )
+    verdict = compute_staleness_verdict(
+        verification=verification,
+        path_drift_missing=len(drift.missing),
+        commit_drift_count=(
+            commit_drift.commits_since_verify if commit_drift is not None else None
+        ),
+    )
+
     verified_str = (
         html.escape(memory.last_verified_at.isoformat())
         if memory.last_verified_at is not None
         else "never"
     )
     stale_tag = ""
-    if memory.last_verified_at is not None:
-        status = compute_verification_status(
-            memory.last_verified_at,
-            now=datetime.now(timezone.utc),
-            stale_after_days=stale_after_days,
+    if verification.status == "stale":
+        stale_tag = (
+            f' <span class="chip warn">stale '
+            f"(verified {int(verification.age_days or 0)}d ago)</span>"
         )
-        if status.status == "stale":
-            stale_tag = (
-                f' <span class="tag warn">stale '
-                f"(verified {int(status.age_days or 0)}d ago)</span>"
+    cd_chip = ""
+    if commit_drift is not None:
+        if commit_drift.commits_since_verify:
+            cd_chip = (
+                f'<span class="chip warn">commit drift: '
+                f"{commit_drift.commits_since_verify} since verify</span>"
             )
+        else:
+            cd_chip = '<span class="chip ok">commit drift: clean</span>'
+
+    def _path_list(title: str, paths: Any, note: str = "") -> str:
+        if not paths:
+            return ""
+        items = "".join(f"<li><code>{html.escape(p)}</code></li>" for p in paths)
+        note_html = f'<p class="muted">{html.escape(note)}</p>' if note else ""
+        return f"<h2>{html.escape(title)}</h2>{note_html}<ul>{items}</ul>"
+
+    drift_sections = (
+        _path_list("Missing paths", drift.missing)
+        + _path_list("Verified paths (attested)", drift.verified)
+        + _path_list("Expected-absent paths", drift.expected_absent)
+        + _path_list(
+            "Route-suppressed candidates",
+            drift.dropped_as_route,
+            note=(
+                "Path-shaped strings the drift check dropped as probable "
+                "application routes rather than filesystem paths — "
+                "suppressed, not verified."
+            ),
+        )
+    )
+
     body_html = html.escape(memory.body)
 
     links_section = ""
@@ -413,24 +719,13 @@ def _render_memory_detail(
         )
         links_section = f"<h2>Links</h2><ul>{items}</ul>"
 
-    verified_paths_section = ""
-    if memory.verified_paths:
-        items = "".join(
-            f"<li><code>{html.escape(p)}</code></li>" for p in memory.verified_paths
-        )
-        verified_paths_section = f"<h2>Verified paths</h2><ul>{items}</ul>"
-    if memory.verified_absent_paths:
-        items = "".join(
-            f"<li><code>{html.escape(p)}</code></li>"
-            for p in memory.verified_absent_paths
-        )
-        verified_paths_section += f"<h2>Expected-absent paths</h2><ul>{items}</ul>"
-
     verify_section = (
         ""
         if read_only
         else (
             f"<h2>Verify</h2>"
+            f'<p class="muted">Spot-checked a claim against reality? Record it. '
+            f"Attested paths/commits need the CLI or memory_verify.</p>"
             f'<form method="post" action="/memories/{html.escape(memory.id)}/verify">'
             f'<input type="text" name="note" placeholder="Optional note (what you checked)"/>'
             f'<button type="submit">Mark verified now</button>'
@@ -439,16 +734,17 @@ def _render_memory_detail(
     )
     return (
         f'<div class="card">'
-        f"<div>{scope_tags}</div>"
-        f'<div class="muted">id={html.escape(memory.id)} · created '
-        f"{html.escape(memory.created.isoformat())} · updated "
+        f'<div class="hit-meta">{_verdict_chip(verdict)}{cd_chip}'
+        f"{_scope_chips(memory.scopes)}</div>"
+        f'<div class="muted"><span class="mono">{html.escape(memory.id)}</span> · '
+        f"created {html.escape(memory.created.isoformat())} · updated "
         f"{html.escape(memory.updated.isoformat())} · verified {verified_str}"
-        f"{stale_tag}"
+        f"{stale_tag} · paths checked: {len(drift.checked)}"
         f"</div>"
         f"<h2>Body</h2>"
         f"<pre>{body_html}</pre>"
+        f"{drift_sections}"
         f"{links_section}"
-        f"{verified_paths_section}"
         f"{verify_section}"
         f"</div>"
     )
@@ -498,9 +794,86 @@ def _render_health(report: Any) -> str:
             parts.append(
                 f'<li><a href="/memories/{html.escape(stats.id)}">'
                 f"{html.escape(stats.summary or stats.id)}</a> "
-                f'<span class="tag bad">contradicted</span></li>'
+                f'<span class="chip bad">contradicted</span></li>'
             )
         parts.append("</ul>")
+
+    cold_endorse = report.cold_endorsement_memories
+    if cold_endorse and cold_endorse.rows:
+        parts.append("<h2>Cold endorsements</h2>")
+        parts.append(
+            f'<p class="muted">Crossed the retrieval floor '
+            f"({cold_endorse.min_retrievals}+ hits) without a single "
+            f"explicit apply — over-surfaced by the ranker, or worth a "
+            f"deliberate endorsement.</p>"
+        )
+        parts.append('<ul class="bare">')
+        for stats in cold_endorse.rows[:20]:
+            parts.append(
+                f'<li><a href="/memories/{html.escape(stats.id)}">'
+                f"{html.escape(stats.summary or stats.id)}</a> "
+                f'<span class="muted">retrieved {stats.retrieval_count}× · '
+                f"0 explicit</span></li>"
+            )
+        parts.append("</ul>")
+
+    cd = report.commit_drift_debt
+    if cd is not None and cd.rows:
+        parts.append("<h2>Commit drift</h2>")
+        parts.append(
+            f'<p class="muted">Verified before commits landed on '
+            f"<code>{html.escape(cd.current_repo or '?')}</code> — the claims' "
+            f"ground truth moved. {cd.total_drifted} total.</p>"
+        )
+        parts.append('<ul class="bare">')
+        for row in cd.rows[:20]:
+            parts.append(
+                f'<li><a href="/memories/{html.escape(row.id)}">'
+                f"{html.escape(row.summary or row.id)}</a> "
+                f'<span class="chip warn">{row.commits_since_verify} commits '
+                f"since verify</span></li>"
+            )
+        parts.append("</ul>")
+
+    if report.recent_silent_misses:
+        parts.append("<h2>Recent silent misses</h2>")
+        parts.append(
+            '<p class="muted">Turns where retrieval should probably have '
+            "fired but didn't. Triage: real miss (lesson) or false positive "
+            "(acknowledge via memory_acknowledge_miss).</p>"
+        )
+        parts.append('<ul class="bare">')
+        for miss in report.recent_silent_misses[:10]:
+            top = (
+                f' → <a href="/memories/{html.escape(miss.top_hit_id)}" '
+                f'class="mono">{html.escape(miss.top_hit_id[:10])}…</a>'
+                if miss.top_hit_id
+                else ""
+            )
+            parts.append(
+                f"<li>“{html.escape(miss.query_preview or '')}”"
+                f'{top} <span class="muted">{html.escape(str(miss.ts)[:10])}'
+                f"</span></li>"
+            )
+        parts.append("</ul>")
+
+    if report.scope_health:
+        parts.append("<h2>Scope health</h2>")
+        parts.append(
+            "<table><tr><th>scope</th><th class='num'>active</th>"
+            "<th class='num'>dead</th><th class='num'>cold</th>"
+            "<th class='num'>contradicted</th><th class='num'>applied</th></tr>"
+        )
+        for sh in report.scope_health:
+            parts.append(
+                f"<tr><td><code>{html.escape(sh.scope)}</code></td>"
+                f'<td class="num">{sh.active}</td>'
+                f'<td class="num">{sh.dead}</td>'
+                f'<td class="num">{sh.cold}</td>'
+                f'<td class="num">{sh.contradicted}</td>'
+                f'<td class="num">{sh.applied_total}</td></tr>'
+            )
+        parts.append("</table>")
 
     if report.rare_scopes:
         parts.append("<h2>Rare scopes (possible typos)</h2>")
@@ -509,6 +882,188 @@ def _render_health(report: Any) -> str:
         )
         parts.append(f"<ul>{items}</ul>")
 
+    if report.recommendations:
+        parts.append("<h2>Recommendations</h2>")
+        for rec in report.recommendations:
+            parts.append(
+                f'<div class="card"><strong>{html.escape(rec.kind)}</strong>'
+                f"<p>{html.escape(rec.summary)}</p>"
+                f'<p class="muted">{html.escape(rec.action)}</p></div>'
+            )
+
+    return "".join(parts)
+
+
+def _fmt_rate(rate: Any) -> str:
+    """One RateCI as `0.07 [0.06, 0.09] · 91/1282` (or n/a on zero-denominator)."""
+    if rate is None or rate.rate is None:
+        n = getattr(rate, "numerator", 0) if rate is not None else 0
+        d = getattr(rate, "denominator", 0) if rate is not None else 0
+        return f"n/a · {n}/{d}"
+    ci = (
+        f" [{rate.lower:.2f}, {rate.upper:.2f}]"
+        if rate.lower is not None and rate.upper is not None
+        else ""
+    )
+    return f"{rate.rate:.2f}{ci} · {rate.numerator}/{rate.denominator}"
+
+
+def _render_eval(report: Any, *, window_days: int) -> str:
+    """The effectiveness telemetry, same numbers `eval --report` publishes.
+
+    Read-only render of `compute_eval` over the live event log. The
+    three rates are floors by design — the numerator counts only
+    explicit, claim-excerpt-backed endorsements — and the page says so
+    rather than dressing them up.
+    """
+    parts: list[str] = []
+    parts.append(
+        '<p class="muted">Floors, not estimates: the numerators count only '
+        "explicit, attested signals. Method: docs/eval.md · publishable "
+        "document: <code>bettermemory eval --report</code>.</p>"
+    )
+    parts.append("<table><tr><th>rate</th><th>value · 95% CI · n/d</th></tr>")
+    for label, rate in (
+        ("memory_helped_rate", report.memory_helped_rate),
+        ("endorsement_rate", report.endorsement_rate),
+        ("silent_miss_rate", report.silent_miss_rate),
+    ):
+        parts.append(
+            f"<tr><td><code>{html.escape(label)}</code></td>"
+            f"<td>{html.escape(_fmt_rate(rate))}</td></tr>"
+        )
+    parts.append("</table>")
+    parts.append(
+        f'<p class="muted">Window: last {window_days}d · '
+        f"{int(report.events_in_window)} events · "
+        f"{int(report.turns_audited)} turns audited · "
+        f"{int(report.turns_no_signal)} no-signal audits excluded</p>"
+    )
+
+    if report.by_model:
+        cols = sorted({k for v in report.by_model.values() for k in v})
+        parts.append("<h2>By model</h2>")
+        parts.append(
+            "<table><tr><th>model</th>"
+            + "".join(f"<th class='num'>{html.escape(c)}</th>" for c in cols)
+            + "</tr>"
+        )
+        for model in sorted(report.by_model):
+            row = report.by_model[model]
+            parts.append(
+                f"<tr><td><code>{html.escape(model)}</code></td>"
+                + "".join(f'<td class="num">{row.get(c, 0)}</td>' for c in cols)
+                + "</tr>"
+            )
+        parts.append("</table>")
+
+    parts.append(
+        '<p class="muted">Recent silent misses are triaged on the '
+        '<a href="/health">Health</a> page.</p>'
+    )
+    return "".join(parts)
+
+
+def _render_episodes(sessions: list[tuple[str, list[Any]]]) -> str:
+    """Session journals, newest first — the run-state tier memories
+    deliberately exclude. Read-only; episodes self-prune on TTL."""
+    if not sessions:
+        return (
+            '<p class="muted">No episodes. Sessions journal here via '
+            "episode_write; entries expire on a 30-day TTL.</p>"
+        )
+    parts: list[str] = [
+        f'<p class="muted">{len(sessions)} session(s) with episodes '
+        "(newest first, capped at 15)</p>"
+    ]
+    for session_id, episodes in sessions:
+        newest = episodes[0].created if episodes else None
+        parts.append(
+            f'<div class="card"><h3><span class="mono">'
+            f"{html.escape(session_id)}</span></h3>"
+            f'<div class="muted">{len(episodes)} episode(s)'
+            f"{' · newest ' + _date(newest) if newest else ''}</div>"
+        )
+        for ep in episodes[:5]:
+            takeaway = ep.takeaway or (ep.body or "").splitlines()[0][:160]
+            parts.append(
+                f"<details><summary>{_date(ep.created)} — "
+                f"{html.escape(takeaway[:180])}</summary>"
+                f"<pre>{html.escape(ep.body or '')}</pre></details>"
+            )
+        if len(episodes) > 5:
+            parts.append(
+                f'<p class="muted">… and {len(episodes) - 5} more in this session</p>'
+            )
+        parts.append("</div>")
+    return "".join(parts)
+
+
+def _render_curation(report: Any) -> str:
+    """The consolidate engine's dry-run preview — what a curation pass
+    WOULD do. Strictly read-only: applying happens in-conversation
+    (memory_curate) or via `bettermemory consolidate`, never from the
+    browser."""
+    parts: list[str] = [
+        '<p class="muted">Preview only — nothing on this page mutates the '
+        "store. Apply via <code>memory_curate</code> in conversation or "
+        "<code>bettermemory consolidate --yes</code>.</p>"
+    ]
+    any_content = False
+
+    if report.dedup_candidates:
+        any_content = True
+        parts.append("<h2>Near-duplicates</h2>")
+        for c in report.dedup_candidates:
+            parts.append(
+                f'<div class="card">'
+                f'<div class="hit-meta"><span class="chip warn">'
+                f"{c.similarity:.0%} similar</span>"
+                f'<span class="chip">{html.escape(c.method)}</span></div>'
+                f'<p>keep <a href="/memories/{html.escape(c.keeper_id)}">'
+                f"{html.escape(c.keeper_summary or c.keeper_id)}</a><br/>"
+                f'tombstone <a href="/memories/{html.escape(c.duplicate_id)}">'
+                f"{html.escape(c.duplicate_summary or c.duplicate_id)}</a></p>"
+                f"</div>"
+            )
+
+    if report.demotion_candidates:
+        any_content = True
+        parts.append("<h2>Demotion candidates</h2>")
+        parts.append('<ul class="bare">')
+        for d in report.demotion_candidates:
+            parts.append(
+                f'<li><span class="chip warn">{html.escape(d.kind)}</span> '
+                f'<a href="/memories/{html.escape(d.memory_id)}" class="mono">'
+                f"{html.escape(d.memory_id)}</a> "
+                f'<span class="muted">{html.escape(d.reason)}</span></li>'
+            )
+        parts.append("</ul>")
+
+    if report.cold_scope_suggestions:
+        any_content = True
+        parts.append("<h2>Cold scopes (suggest-only)</h2>")
+        items = "".join(
+            f"<li><code>{html.escape(str(s))}</code></li>"
+            for s in report.cold_scope_suggestions
+        )
+        parts.append(f"<ul>{items}</ul>")
+
+    if report.scope_typo_pairs:
+        any_content = True
+        parts.append("<h2>Scope typo pairs (suggest-only)</h2>")
+        items = "".join(
+            f"<li><code>{html.escape(str(p))}</code></li>"
+            for p in report.scope_typo_pairs
+        )
+        parts.append(f"<ul>{items}</ul>")
+
+    if not any_content:
+        parts.append(
+            '<p class="muted">Nothing to curate — no near-duplicates, '
+            "demotion candidates, cold scopes, or typo pairs in the "
+            "window.</p>"
+        )
     return "".join(parts)
 
 
@@ -519,9 +1074,9 @@ def _render_tombstones(tombstones: list[Any]) -> str:
     for t in tombstones:
         parts.append(
             f'<div class="card">'
-            f"<strong>{html.escape(t.summary or t.id)}</strong><br/>"
-            f'<span class="muted">id={html.escape(t.id)} · removed '
-            f"{html.escape(t.removed.isoformat())}</span>"
+            f"<h3>{html.escape(t.summary or t.id)}</h3>"
+            f'<div class="muted"><span class="mono">{html.escape(t.id)}</span> '
+            f"· removed {html.escape(t.removed.isoformat())}</div>"
             f"<p>Reason: {html.escape(t.removed_reason or '<none>')}</p>"
             f"</div>"
         )
@@ -616,9 +1171,16 @@ def build_app(
     # it here keeps a paste-bomb from inflating the event log.
     _NOTE_MAX_CHARS = 500
 
-    def _layout_resp(title: str, body: str) -> HTMLResponse:
+    def _layout_resp(title: str, body: str, active: str = "") -> HTMLResponse:
         return HTMLResponse(
-            _layout(title, body, store.root, csrf_token, read_only=read_only)
+            _layout(
+                title,
+                body,
+                store.root,
+                csrf_token,
+                read_only=read_only,
+                active=active,
+            )
         )
 
     def _check_csrf(header_token: str | None, form_token: str | None) -> None:
@@ -645,7 +1207,11 @@ def build_app(
             verification_stale_days=config.behavior.verification_stale_days,
             caller_origin=capture_origin(),
         )
-        return _layout_resp("Overview", _render_overview(report))
+        return _layout_resp(
+            "Overview",
+            _render_overview(report, tombstone_count=len(store.list_tombstones())),
+            active="/",
+        )
 
     @app.get("/memories", response_class=HTMLResponse)
     def memories(q: str = "", scope: str = "") -> HTMLResponse:
@@ -660,13 +1226,54 @@ def build_app(
                 scope = validate_scope(scope)
             except ValueError as exc:
                 raise HTTPException(status_code=400, detail=str(exc)) from exc
+        now = datetime.now(timezone.utc)
+        stale_days = config.behavior.verification_stale_days
+        if q.strip():
+            # The whole point of the 2026-07 overhaul: the web search IS
+            # the product's search. Same ranker, same tokenizer, same
+            # relevance labels as memory_search — a UI that ships a naive
+            # substring filter next to a tuned BM25 engine misrepresents
+            # the product on its own pitch. The full corpus is loaded
+            # (no FTS prefilter), so pool statistics are corpus
+            # statistics and no corpus_stats_provider is needed — the
+            # same reasoning the MCP handler applies on its load_all
+            # branch. `semantic` degrades to `hybrid` here: the web
+            # process never loads an embedding model, and hybrid without
+            # a model is exactly the ranking that leaves.
+            mode_raw = config.behavior.search_mode
+            if mode_raw not in ("keyword", "bm25", "hybrid", "semantic"):
+                mode_raw = "hybrid"
+            if mode_raw == "semantic":
+                mode_raw = "hybrid"
+            hits = run_search(
+                store.load_all(),
+                q,
+                scopes=[scope] if scope else None,
+                max_results=_SEARCH_MAX_RESULTS,
+                mode=cast(SearchMode, mode_raw),
+            )
+            return _layout_resp(
+                "Memories",
+                _render_hits(
+                    hits,
+                    query=q,
+                    scope_filter=scope,
+                    stale_after_days=stale_days,
+                    now=now,
+                ),
+                active="/memories",
+            )
         summaries = store.list_summaries(scopes=[scope] if scope else None)
-        if q:
-            needle = q.lower()
-            summaries = [s for s in summaries if needle in (s.summary or "").lower()]
         return _layout_resp(
             "Memories",
-            _render_memory_list(summaries, query=q, scope_filter=scope),
+            _render_memory_list(
+                summaries,
+                query=q,
+                scope_filter=scope,
+                stale_after_days=stale_days,
+                now=now,
+            ),
+            active="/memories",
         )
 
     @app.get("/memories/{memory_id}", response_class=HTMLResponse)
@@ -682,6 +1289,7 @@ def build_app(
                 stale_after_days=config.behavior.verification_stale_days,
                 read_only=read_only,
             ),
+            active="/memories",
         )
 
     @app.post("/memories/{memory_id}/verify")
@@ -755,12 +1363,61 @@ def build_app(
             verification_stale_days=config.behavior.verification_stale_days,
             caller_origin=capture_origin(),
         )
-        return _layout_resp("Health", _render_health(report))
+        return _layout_resp("Health", _render_health(report), active="/health")
+
+    @app.get("/curation", response_class=HTMLResponse)
+    def curation() -> HTMLResponse:
+        # Dry-run ONLY, by construction: `apply` is a literal False at
+        # the one call site the web surface has, so no route can be
+        # coaxed into mutating. The preview also records no event —
+        # mirrors the memory_curate handler's dry-run contract.
+        report = consolidate(
+            store,
+            window_days=30,
+            apply=False,
+            session_id="web-ui",
+        )
+        return _layout_resp(
+            "Curation preview", _render_curation(report), active="/curation"
+        )
+
+    @app.get("/eval", response_class=HTMLResponse)
+    def eval_page() -> HTMLResponse:
+        window_days = 30
+        report = compute_eval(
+            store.load_all(),
+            iter_all_events(store.root),
+            since=timedelta(days=window_days),
+            tombstoned_ids={t.id for t in store.list_tombstones()},
+        )
+        return _layout_resp(
+            "Eval",
+            _render_eval(report, window_days=window_days),
+            active="/eval",
+        )
+
+    @app.get("/episodes", response_class=HTMLResponse)
+    def episodes() -> HTMLResponse:
+        estore = EpisodeStore(store.root)
+        sessions: list[tuple[str, list[Any]]] = []
+        for sid in estore.iter_session_ids():
+            eps = estore.list_by_session(sid)
+            if eps:
+                eps = sorted(eps, key=lambda e: e.created, reverse=True)
+                sessions.append((sid, eps))
+        # Newest session first, judged by its newest episode; cap the
+        # page at 15 sessions — the journal is a tail, not an archive.
+        sessions.sort(key=lambda pair: pair[1][0].created, reverse=True)
+        return _layout_resp(
+            "Episodes", _render_episodes(sessions[:15]), active="/episodes"
+        )
 
     @app.get("/tombstones", response_class=HTMLResponse)
     def tombstones() -> HTMLResponse:
         tombs = store.list_tombstones()
-        return _layout_resp("Tombstones", _render_tombstones(tombs))
+        return _layout_resp(
+            "Tombstones", _render_tombstones(tombs), active="/tombstones"
+        )
 
     return app
 
