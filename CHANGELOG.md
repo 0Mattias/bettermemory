@@ -7,6 +7,114 @@ breaking changes, minor for additive features, patch for fixes. The
 [compatibility contract](CONTRIBUTING.md#versioning-and-the-compatibility-contract)
 spells out exactly what's stable.
 
+## 3.28.0 - 2026-07-23
+
+The learning-loop release: three features that move the store from
+"archive with telemetry" toward "system that learns from its own
+experience". A design review of what the system *lacked* found the
+adaptive loops half-built — negative outcomes collected but never fed
+back into ranking, recurrence suppressed by dedup instead of
+accumulated, and corpus-level disagreement computed by the dedup scan
+and thrown away with the report. All three close here. Every ranking
+change is opt-in and the shipped default ranking is byte-stable.
+
+### Added — negative outcomes demote ranking (`outcome_demotion`)
+
+- Endorsement has boosted explicitly-applied memories since the
+  `endorsement_boost` flag shipped; the negative half of the same
+  signal (`ignored` / `contradicted`) only ever annotated. With
+  `[behavior] outcome_demotion = true`, active negatives now slide a
+  memory down: `1 - 0.15*(1 - exp(-(ignored + 2*contradicted)/3))` —
+  the mirror of the endorsement curve, floored at -15% so it breaks
+  near-ties and can never bury a strongly-relevant hit. Contradicted
+  weighs double: an off-topic surfacing is often the query's fault; a
+  stored claim that disagreed with reality is the memory's.
+- "Active" is pinned server-side and matches what the other surfaces
+  already call settled: a 30-day window (mandatory-cutoff contract,
+  same as the endorsement tally), a later NON-AUTO `applied`
+  supersedes (`recent_negative_outcomes` parity), and a
+  `memory_update` / `memory_verify` postdating the event clears it
+  (`health._has_unresolved_contradiction`'s rule applied per-event).
+  Three independent guards against the rich-get-poorer spiral.
+- With the flag on, the per-search event read widens from the 600s
+  attribution horizon to the full 30-day negative window — which also
+  upgrades the `recent_negative_outcomes` annotation's 30-day contract
+  from best-effort (rotation luck) to guaranteed. The tallies cannot
+  cross-contaminate: each enforces its own cutoff internally.
+
+### Added — recurrence accumulates (`corroborations` +
+`corroboration_boost`)
+
+- Dedup used to SUPPRESS recurrence evidence: the tenth time a claim
+  re-entered a conversation, the write bounced and nothing accumulated
+  — a one-off remark and a bedrock preference had equal standing. Now
+  a duplicate-rejected `memory_write` credits the matched memory a
+  corroboration: persisted `corroborations` count plus
+  `last_corroborated`, a third timestamp axis (`updated` = content
+  edits, `last_verified_at` = reality-checks, `last_corroborated` =
+  recurrence). Once per (memory, session); best-effort by contract;
+  `updated` deliberately untouched — a recurrence must not fake a
+  rewrite. The rejection response says so (`corroboration_recorded`),
+  so the model stops treating duplicates as wasted calls.
+- Curation counts it as life: the freshest-touch window behind
+  `dead`-bucket health, the consolidate demotion pass, and cold-scope
+  detection all gain the fourth axis. A corroborated memory is not
+  dead weight.
+- Opt-in ranking nudge `[behavior] corroboration_boost = true`: same
+  +10% ceiling and saturating shape as endorsement, fed from the
+  record itself (no event-log walk). `episode_promote` routes through
+  the write path, so an episode restating a known fact corroborates it
+  for free.
+
+### Added — corpus-level inference (`memory_conflicts`,
+`episode_patterns`)
+
+- **The store can now notice its own contradictions.** New
+  numeric-divergence detector inside both dedup scans, beside the
+  polarity guard: near-identical bodies whose number-bearing tokens
+  mutually diverge ("port 5432" vs "port 5433", 3.27.0 vs 3.27.1) are
+  a value-level disagreement. Previously that pair was a DEDUP
+  CANDIDATE — an applying consolidate pass tombstoned one side on
+  recency rather than truth. Now both detectors' skips persist into a
+  verdict queue (`.conflicts.jsonl`) instead of dying with the report:
+  stable pair ids, re-scans refresh rather than duplicate, and rows
+  with dead members GC.
+- `memory_conflicts` (full surface) lists pending pairs with both
+  bodies inline and takes the model's verdict.
+  `verdict="contradiction"` writes the `contradicts` link (before the
+  verdict stamp, so the link's own `updated` bump can't re-trigger
+  anything) — both memories then surface it at retrieval, and
+  resolution proceeds through the normal verbs. `verdict="compatible"`
+  dismisses sticky — until either member's content changes, which
+  legitimately reopens the question. Scans run on demand
+  (`scan=True`) and automatically on every APPLYING consolidate pass;
+  dry-run stays zero-side-effect. `curation_pending` gains a
+  `conflicts` key in both the absolute and delta views.
+- `episode_patterns` (full surface) surfaces themes recurring across
+  ≥3 DISTINCT sessions' episodes — the consolidation no single session
+  can see. Detection is conservative (unstemmed distinctive terms,
+  ubiquity ceiling against project vocabulary, with a monothematic-
+  journal fallback); the model AUTHORS the promoted body and the write
+  routes through the full `memory_write` gate stack. Committed
+  promotes delete their member episodes; a `duplicate` rejection still
+  lands value — it corroborates the existing memory. Dismissals
+  persist keyed by member-set hash: sticky for that exact evidence,
+  reopened by a new member episode.
+
+### Changed
+
+- `memory_record_use`'s outcome table states the ranking consequence
+  of each outcome under the new flag; `memory_write`'s `duplicate`
+  bullet documents the corroboration credit. The eval tool map covers
+  the two new tools (+3 event kinds), and the eval markdown renderer
+  now PINS untelemetered rows into the published table past the top-10
+  slice — at 27 tools a structurally-zero row can never crack top-10,
+  and the "(no telemetry)" note must not silently vanish.
+- `sync push`'s gitignore covers the two new store-root sidecars
+  (`.conflicts.jsonl`, `.episode_patterns.jsonl`) — host-local
+  curation state, caught by the structural sidecar guard before it
+  could repeat the plaintext-push incident class.
+
 ## 3.27.0 - 2026-07-20
 
 A store root that was world-listable, and BM25 pricing term rarity
