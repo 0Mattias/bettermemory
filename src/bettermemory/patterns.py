@@ -282,9 +282,7 @@ class PatternDismissals:
             self._write_all_locked(rows)
 
     def _write_all_locked(self, rows: list[dict[str, Any]]) -> None:
-        body = "".join(
-            json.dumps(r, separators=(",", ":")) + "\n" for r in rows
-        )
+        body = "".join(json.dumps(r, separators=(",", ":")) + "\n" for r in rows)
         atomic_write_bytes(self.path, body.encode("utf-8"), mode_before_rename=0o600)
 
 

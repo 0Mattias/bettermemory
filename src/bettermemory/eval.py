@@ -3097,11 +3097,7 @@ def render_report_markdown(doc: ReportDocument) -> str:
     # can never crack a top-10 on count — sliced out, the note the row
     # carries would silently vanish from the published artifact.
     published = list(doc.tool_usage.rows[:10])
-    published.extend(
-        row
-        for row in doc.tool_usage.rows[10:]
-        if not row.has_telemetry
-    )
+    published.extend(row for row in doc.tool_usage.rows[10:] if not row.has_telemetry)
     for usage_row in published:
         if not usage_row.has_telemetry:
             # Mirrors render_tool_usage_text: a tool that emits no

@@ -100,7 +100,9 @@ def test_ubiquitous_vocabulary_is_not_a_pattern() -> None:
 
 def test_pattern_id_is_member_stable() -> None:
     eps = [
-        _episode("nginx certificate renewal failed silently", session=s, offset_minutes=i)
+        _episode(
+            "nginx certificate renewal failed silently", session=s, offset_minutes=i
+        )
         for i, s in enumerate(["sess-a", "sess-b", "sess-c"])
     ]
     a = find_episode_patterns(eps)[0]
@@ -109,9 +111,7 @@ def test_pattern_id_is_member_stable() -> None:
 
     # A new member episode changes the id — fresh evidence reopens a
     # dismissed pattern under a new identity.
-    eps.append(
-        _episode("nginx certificate renewal failed silently", session="sess-d")
-    )
+    eps.append(_episode("nginx certificate renewal failed silently", session="sess-d"))
     c = find_episode_patterns(eps)[0]
     assert c.id != a.id
 

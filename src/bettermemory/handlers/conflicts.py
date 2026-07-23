@@ -158,8 +158,7 @@ def _resolve_verdict(
 ) -> dict[str, Any]:
     if verdict not in ("contradiction", "compatible"):
         raise ValueError(
-            "resolve requires verdict='contradiction' or 'compatible', "
-            f"got {verdict!r}"
+            f"resolve requires verdict='contradiction' or 'compatible', got {verdict!r}"
         )
     candidate = next((c for c in queue.pending() if c.id == candidate_id), None)
     if candidate is None:

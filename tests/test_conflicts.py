@@ -121,8 +121,12 @@ def test_find_conflict_candidates_lifts_skips() -> None:
 def test_queue_upsert_resolve_and_resurrect(tmp_path: Path) -> None:
     root = tmp_path / "memories"
     root.mkdir()
-    a = _memory("the alpha api service binds listen port 8080 on the shared docker host")
-    b = _memory("the alpha api service binds listen port 8081 on the shared docker host")
+    a = _memory(
+        "the alpha api service binds listen port 8080 on the shared docker host"
+    )
+    b = _memory(
+        "the alpha api service binds listen port 8081 on the shared docker host"
+    )
     by_id = {a.id: a, b.id: b}
 
     first = scan_conflicts(root, [a, b])
@@ -135,7 +139,10 @@ def test_queue_upsert_resolve_and_resurrect(tmp_path: Path) -> None:
 
     queue = ConflictQueue(root)
     cand = queue.pending()[0]
-    assert queue.resolve(cand.id, status="dismissed", note="different services") is not None
+    assert (
+        queue.resolve(cand.id, status="dismissed", note="different services")
+        is not None
+    )
     assert conflicts_pending_count(root) == 0
 
     # Dismissal is sticky across scans while content is unchanged...
@@ -145,9 +152,7 @@ def test_queue_upsert_resolve_and_resurrect(tmp_path: Path) -> None:
     # ...but edited content resurrects the pair: the judged bodies are gone.
     a2 = a.model_copy(update={"updated": datetime.now(timezone.utc)})
     by_id[a.id] = a2
-    fourth = ConflictQueue(root).upsert_scan(
-        find_conflict_candidates([a2, b]), by_id
-    )
+    fourth = ConflictQueue(root).upsert_scan(find_conflict_candidates([a2, b]), by_id)
     assert fourth["resurrected"] == 1
     assert conflicts_pending_count(root) == 1
 
@@ -279,7 +284,9 @@ async def test_e2e_compatible_dismissal_and_errors(memory_dir: Path) -> None:
     with pytest.raises(Exception):
         await _call(server, "memory_conflicts", resolve=cid, verdict="nonsense")
     with pytest.raises(Exception):
-        await _call(server, "memory_conflicts", resolve="cf-missing", verdict="compatible")
+        await _call(
+            server, "memory_conflicts", resolve="cf-missing", verdict="compatible"
+        )
 
 
 async def test_e2e_applying_curate_feeds_queue(memory_dir: Path) -> None:

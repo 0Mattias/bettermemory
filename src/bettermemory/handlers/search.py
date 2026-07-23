@@ -460,12 +460,8 @@ async def memory_search(
         # which is exactly why their window arguments are mandatory.
         window_seconds = ATTRIBUTION_LOOKBACK_SECONDS
         if demotion_on:
-            window_seconds = max(
-                window_seconds, NEGATIVE_OUTCOME_WINDOW_DAYS * 86400
-            )
-        recent_events = list(
-            iter_events_window(deps.store.root, window_seconds)
-        )
+            window_seconds = max(window_seconds, NEGATIVE_OUTCOME_WINDOW_DAYS * 86400)
+        recent_events = list(iter_events_window(deps.store.root, window_seconds))
         tally_now = utcnow()
         if deps.config.behavior.endorsement_boost:
             applied_by_id = _explicit_applied_counts(

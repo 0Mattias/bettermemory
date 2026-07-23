@@ -2037,9 +2037,7 @@ def _parse_memory_file(path: Path) -> Memory:
         corroborations_raw = meta.get("corroborations")
         try:
             corroborations = (
-                max(0, int(corroborations_raw))
-                if corroborations_raw is not None
-                else 0
+                max(0, int(corroborations_raw)) if corroborations_raw is not None else 0
             )
         except (TypeError, ValueError):
             corroborations = 0

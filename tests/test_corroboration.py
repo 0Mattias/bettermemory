@@ -68,9 +68,7 @@ def test_corroboration_breaks_a_tie_only_when_enabled() -> None:
     mems = [a, b]
 
     default_winner = search(mems, "alpha beta gamma", mode="keyword")[0].id
-    boosted = search(
-        mems, "alpha beta gamma", mode="keyword", corroboration_boost=True
-    )
+    boosted = search(mems, "alpha beta gamma", mode="keyword", corroboration_boost=True)
     assert boosted[0].id == b.id, "corroborated memory should win the tie"
     # And the flag off (the shipped default) never reads the rollup.
     if default_winner != b.id:

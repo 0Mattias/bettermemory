@@ -144,7 +144,9 @@ _NOW = datetime(2026, 6, 1, 12, 0, 0, tzinfo=timezone.utc)
 _OLD = datetime(2026, 1, 1, tzinfo=timezone.utc)  # resolution floor, pre-window
 
 
-def _use(ts: str, outcome: str, ids: list[str], *, auto: bool = False) -> dict[str, Any]:
+def _use(
+    ts: str, outcome: str, ids: list[str], *, auto: bool = False
+) -> dict[str, Any]:
     return {"ts": ts, "kind": "use", "outcome": outcome, "auto": auto, "ids": ids}
 
 
@@ -284,8 +286,7 @@ async def test_e2e_ignored_demotes_score(memory_dir: Path) -> None:
 
     assert after[0]["id"] == mid
     assert after[0]["score"] < before[0]["score"], (
-        "an active ignored outcome must lower the score with "
-        "outcome_demotion on"
+        "an active ignored outcome must lower the score with outcome_demotion on"
     )
 
 
@@ -340,9 +341,9 @@ async def test_e2e_tie_flip_and_update_clears(memory_dir: Path) -> None:
     await _call(server, "memory_update", id=top, content=fixed_body + " v2")
     recovered = _unwrap(await _call(server, "memory_search", query="alpha beta gamma"))
     top_hit = next(h for h in recovered if h["id"] == top)
-    assert "recent_negative_outcomes" not in top_hit or top_hit[
-        "recent_negative_outcomes"
-    ], "sanity: hit shape intact"
+    assert (
+        "recent_negative_outcomes" not in top_hit or top_hit["recent_negative_outcomes"]
+    ), "sanity: hit shape intact"
     assert recovered[0]["id"] == top, (
         "after memory_update the negative no longer counts and the "
         "fresher memory should retake the tie"

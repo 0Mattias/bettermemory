@@ -926,9 +926,7 @@ def load_config(path: Path | None = None) -> Config:
             endorsement_boost=_coerce_bool(
                 behavior_raw.get("endorsement_boost"), False
             ),
-            outcome_demotion=_coerce_bool(
-                behavior_raw.get("outcome_demotion"), False
-            ),
+            outcome_demotion=_coerce_bool(behavior_raw.get("outcome_demotion"), False),
             corroboration_boost=_coerce_bool(
                 behavior_raw.get("corroboration_boost"), False
             ),
