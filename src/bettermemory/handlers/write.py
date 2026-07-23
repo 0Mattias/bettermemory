@@ -37,6 +37,7 @@ those tools complete the pending-write lifecycle this module owns.
 
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
@@ -60,6 +61,8 @@ from ._shared import (
 
 if TYPE_CHECKING:
     from .._handlers import ToolHandlers
+
+log = logging.getLogger("bettermemory.handlers.write")
 
 
 # ---------------------------------------------------------------------------
@@ -109,9 +112,12 @@ DESC_MEMORY_WRITE = (
     "token (API key, private-key PEM, JWT, `password=…`). Describe "
     "the secret instead of storing it, or pass "
     "`acknowledge_credential=True`.\n"
-    "- `duplicate` — content dedup fired. Prefer memory_update on "
-    "the matched id; pass `force=True` only when the new memory "
-    "is meaningfully different.\n"
+    "- `duplicate` — content dedup fired. NOT a wasted call: the "
+    "matched memory is credited a corroboration (recurrence is "
+    "evidence — `corroboration_recorded: true`, once per session), "
+    "which feeds curation freshness and the opt-in ranking nudge. "
+    "Prefer memory_update on the matched id; pass `force=True` only "
+    "when the new memory is meaningfully different.\n"
     "- `previously_removed` — overlap with a tombstone; inspect "
     "`removed_reason`. If the rejection still applies, drop the "
     "write; if the fact is now correct, memory_restore the "
@@ -563,6 +569,46 @@ _WRITE_GATES: tuple[WriteGate, ...] = (
 # ---------------------------------------------------------------------------
 
 
+def _corroborate_duplicate(
+    deps: "ToolHandlers", state: SessionState, result: "Reject"
+) -> None:
+    """Record a recurrence on the memory a duplicate write matched.
+
+    The counter measures INDEPENDENT re-entries of a claim, so the bump
+    is once per (memory, session) — `state.corroborated_ids` dedups
+    within the session, and only the TOP high-overlap match is credited
+    (a write that grazes three near-duplicates is one recurrence of one
+    claim, not three).
+
+    Best-effort by contract: the rejection response the model needs is
+    already built, and a telemetry bump must never turn a clean
+    "duplicate" answer into an error — store races (concurrent
+    tombstone) and size-cap refusals log at WARNING and drop. On
+    success the response gains `corroboration_recorded: true` +
+    `corroborations` (the new total), so the model knows the recurrence
+    was captured and doesn't force-write out of capture anxiety; the
+    reject event gains `corroborated_id` for the audit trail.
+    """
+    matches = result.response.get("matches") or []
+    if not matches or not isinstance(matches[0], dict):
+        return
+    top_id = matches[0].get("id")
+    if not isinstance(top_id, str) or not top_id:
+        return
+    if top_id in state.corroborated_ids:
+        result.response["corroboration_recorded"] = False
+        return
+    try:
+        bumped = deps.store.record_corroboration(top_id)
+    except Exception as exc:  # noqa: BLE001 — telemetry must not break the reject
+        log.warning("corroboration bump for %s failed: %s", top_id, exc)
+        return
+    state.corroborated_ids.add(top_id)
+    result.response["corroboration_recorded"] = True
+    result.response["corroborations"] = bumped.corroborations
+    result.event_kwargs["corroborated_id"] = top_id
+
+
 async def memory_write(
     deps: "ToolHandlers",
     content: str,
@@ -617,6 +663,12 @@ async def memory_write(
     for gate in _WRITE_GATES:
         result = gate.evaluate(deps, gc)
         if isinstance(result, Reject):
+            # Recurrence-as-evidence: a duplicate rejection IS the stored
+            # claim re-entering a conversation. Record the corroboration
+            # on the matched memory (once per session per memory) before
+            # the reject event goes out, so the event carries the id.
+            if result.response.get("status") == "duplicate":
+                _corroborate_duplicate(deps, state, result)
             deps.recorder.record("write", **result.event_kwargs)
             return result.response
         if isinstance(result, Pending):

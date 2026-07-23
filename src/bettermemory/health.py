@@ -100,15 +100,22 @@ _ENDORSEMENT_GRACE_DAYS = 2
 
 
 def _freshest_touch_ts(
-    created: datetime, updated: datetime, last_verified_at: datetime | None
+    created: datetime,
+    updated: datetime,
+    last_verified_at: datetime | None,
+    last_corroborated: datetime | None = None,
 ) -> float:
     """Epoch timestamp of the latest maintenance touch. A rewrite
-    (`updated`) or an attestation (`last_verified_at`) is active
-    maintenance, not rot, so the dead-weight window keys on the most
-    recent of the three rather than `created` alone."""
+    (`updated`), an attestation (`last_verified_at`), or a recurrence
+    (`last_corroborated` — the claim re-entered a conversation and
+    dedup credited it) is active life, not rot, so the dead-weight
+    window keys on the most recent of the four rather than `created`
+    alone."""
     ts = max(created.timestamp(), updated.timestamp())
     if last_verified_at is not None:
         ts = max(ts, last_verified_at.timestamp())
+    if last_corroborated is not None:
+        ts = max(ts, last_corroborated.timestamp())
     return ts
 
 
@@ -232,6 +239,10 @@ class MemoryStats:
     last_used_at: datetime | None = None
     last_contradicted_at: datetime | None = None
     last_verified_at: datetime | None = None
+    # Recurrence rollup from the memory record (not the event log) —
+    # feeds the freshest-touch window so a corroborated memory isn't
+    # dead weight.
+    last_corroborated: datetime | None = None
     category: Category | None = None
     # Chronological list of resolution-relevant events for this memory:
     # each entry is `{kind: "update"|"verify"|"contradicted"|"corrected",
@@ -1451,6 +1462,7 @@ def compute_health(
             created=m.created,
             updated=m.updated,
             last_verified_at=m.last_verified_at,
+            last_corroborated=m.last_corroborated,
             category=m.category,
         )
         origin_repo_by_id[m.id] = m.origin.repo if m.origin else None
@@ -1513,7 +1525,9 @@ def compute_health(
         first_seen = rollups.earliest_retrieval_by_id.get(s.id)
         if _is_dead_weight(
             category=s.category,
-            freshest_ts=_freshest_touch_ts(s.created, s.updated, s.last_verified_at),
+            freshest_ts=_freshest_touch_ts(
+                s.created, s.updated, s.last_verified_at, s.last_corroborated
+            ),
             retrieval_count=s.retrieval_count,
             applied_count=s.applied_count,
             has_unresolved_contradiction=s.has_unresolved_contradiction,
@@ -2689,7 +2703,9 @@ def curation_counts(
         first_seen = earliest_retrieval.get(m.id)
         if _is_dead_weight(
             category=m.category,
-            freshest_ts=_freshest_touch_ts(m.created, m.updated, m.last_verified_at),
+            freshest_ts=_freshest_touch_ts(
+                m.created, m.updated, m.last_verified_at, m.last_corroborated
+            ),
             retrieval_count=retrieval_counts.get(m.id, 0),
             applied_count=applied_counts.get(m.id, 0),
             has_unresolved_contradiction=_has_unresolved_contradiction(

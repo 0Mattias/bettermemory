@@ -149,6 +149,16 @@ async def memory_show(
         ),
         "commit_drift": (commit_drift.to_dict() if commit_drift is not None else None),
         "use_token": token_map[memory.id],
+        # Corroboration rollup — omitted while zero (absence-as-signal,
+        # matching the frontmatter and memory_to_dict shapes).
+        **(
+            {
+                "corroborations": memory.corroborations,
+                "last_corroborated": isoformat_optional(memory.last_corroborated),
+            }
+            if memory.corroborations
+            else {}
+        ),
         "verified_paths": list(memory.verified_paths),
         "verified_commits": list(memory.verified_commits),
         "verified_versions": list(memory.verified_versions),

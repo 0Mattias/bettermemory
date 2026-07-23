@@ -1169,6 +1169,21 @@ def _demotion_factor(ignored_count: int, contradicted_count: int) -> float:
     return 1.0 - 0.15 * (1.0 - math.exp(-weighted / 3.0))
 
 
+def _corroboration_factor(corroborations: int) -> float:
+    """1 + 0.1 * (1 - exp(-corroborations / 3)). Same shape and +10% cap
+    as `_endorsement_factor`, fed by a different signal: endorsement is
+    "the model deliberately APPLIED this in a reply"; corroboration is
+    "the claim independently RE-ENTERED a conversation and dedup caught
+    it" (`Store.record_corroboration`, once per session per memory). A
+    claim that keeps coming up wins a near-tie over a one-off remark —
+    recurrence accumulating into retrieval weight, capped so it can
+    never override relevance. Reads the persisted rollup on the Memory
+    record, so unlike the event-fed factors it costs no event-log walk."""
+    if corroborations <= 0:
+        return 1.0
+    return 1.0 + 0.1 * (1.0 - math.exp(-corroborations / 3.0))
+
+
 # ---------------------------------------------------------------------------
 # BM25 scorer (Okapi variant)
 # ---------------------------------------------------------------------------
@@ -1807,6 +1822,7 @@ def _score_keyword(
     half_life_days: float,
     applied_by_id: dict[str, int] | None = None,
     negative_by_id: dict[str, tuple[int, int]] | None = None,
+    corroboration_boost: bool = False,
     candidate_tokens: list[_MemoryTokens] | None = None,
 ) -> list[tuple[Memory, float, list[str]]]:
     """Run the original keyword scorer across all candidates. Returns
@@ -1839,6 +1855,8 @@ def _score_keyword(
             if negative_by_id:
                 ig, ct = negative_by_id.get(memory.id, (0, 0))
                 score *= _demotion_factor(ig, ct)
+            if corroboration_boost and memory.corroborations:
+                score *= _corroboration_factor(memory.corroborations)
             out.append((memory, score, matched))
     return out
 
@@ -1851,6 +1869,7 @@ def _score_bm25(
     half_life_days: float,
     applied_by_id: dict[str, int] | None = None,
     negative_by_id: dict[str, tuple[int, int]] | None = None,
+    corroboration_boost: bool = False,
     candidate_tokens: list[_MemoryTokens] | None = None,
     stopword_fallback: bool = False,
     corpus_stats: CorpusStats | None = None,
@@ -1886,6 +1905,8 @@ def _score_bm25(
             if negative_by_id:
                 ig, ct = negative_by_id.get(memory.id, (0, 0))
                 score *= _demotion_factor(ig, ct)
+            if corroboration_boost and memory.corroborations:
+                score *= _corroboration_factor(memory.corroborations)
             out.append((memory, score, matched))
     return out
 
@@ -1900,6 +1921,7 @@ def _score_semantic(
     matched_terms_fallback: list[str],
     applied_by_id: dict[str, int] | None = None,
     negative_by_id: dict[str, tuple[int, int]] | None = None,
+    corroboration_boost: bool = False,
     candidate_tokens: list[_MemoryTokens] | None = None,
 ) -> list[tuple[Memory, float, list[str]]]:
     """Cosine-similarity scoring over sentence-transformers embeddings.
@@ -1965,6 +1987,8 @@ def _score_semantic(
         if negative_by_id:
             ig, ct = negative_by_id.get(memory.id, (0, 0))
             score *= _demotion_factor(ig, ct)
+        if corroboration_boost and memory.corroborations:
+            score *= _corroboration_factor(memory.corroborations)
         # Report only the query tokens that LITERALLY hit this memory's
         # body or scopes (same overlap `score_memory` computes), not the
         # whole query — so a paraphrase-only hit carries honest match_terms
@@ -2056,6 +2080,7 @@ def search(
     rrf_k: int = _RRF_K_DEFAULT,
     applied_by_id: dict[str, int] | None = None,
     negative_by_id: dict[str, tuple[int, int]] | None = None,
+    corroboration_boost: bool = False,
     allow_empty_query: bool = False,
     corpus_stats_provider: Callable[[list[str]], CorpusStats | None] | None = None,
 ) -> list[MemoryHit]:
@@ -2104,6 +2129,11 @@ def search(
       (windowing, applied-supersedes, resolution clearing — see
       `handlers.search._active_negative_counts`); this layer just
       applies the factor. `None` (the default) is byte-stable.
+    - `corroboration_boost`: when True, a bounded `_corroboration_factor`
+      (≤ +10%) nudges memories whose persisted `corroborations` rollup is
+      non-zero — claims that keep independently re-entering conversations
+      win near-ties over one-off remarks. Reads the Memory record
+      directly (no event walk). False (the default) is byte-stable.
     - `allow_empty_query`: when True, an empty or stopword-only query
       no longer short-circuits to `[]`. Instead the function runs the
       `_filter_candidates` pass (scope / repo / worktree / excluded)
@@ -2217,6 +2247,7 @@ def search(
             half_life_days=half_life_days,
             applied_by_id=applied_by_id,
             negative_by_id=negative_by_id,
+            corroboration_boost=corroboration_boost,
             candidate_tokens=candidate_tokens,
         )
         # Sort by score, then created (newer wins on tie), then id as the
@@ -2234,6 +2265,7 @@ def search(
             half_life_days=half_life_days,
             applied_by_id=applied_by_id,
             negative_by_id=negative_by_id,
+            corroboration_boost=corroboration_boost,
             candidate_tokens=candidate_tokens,
             stopword_fallback=stopword_fallback,
             corpus_stats=corpus_stats,
@@ -2254,6 +2286,7 @@ def search(
                 matched_terms_fallback=list(dict.fromkeys(query_tokens)),
                 applied_by_id=applied_by_id,
                 negative_by_id=negative_by_id,
+                corroboration_boost=corroboration_boost,
                 candidate_tokens=candidate_tokens,
             )
         except Exception as exc:  # noqa: BLE001 — degrade to keyword on encode failure.
@@ -2273,6 +2306,7 @@ def search(
                 half_life_days=half_life_days,
                 applied_by_id=applied_by_id,
                 negative_by_id=negative_by_id,
+                corroboration_boost=corroboration_boost,
                 candidate_tokens=candidate_tokens,
             )
         scored.sort(key=lambda x: (x[1], x[0].created, x[0].id), reverse=True)
@@ -2285,6 +2319,7 @@ def search(
                 half_life_days=half_life_days,
                 applied_by_id=applied_by_id,
                 negative_by_id=negative_by_id,
+                corroboration_boost=corroboration_boost,
                 candidate_tokens=candidate_tokens,
             ),
             _score_bm25(
@@ -2294,6 +2329,7 @@ def search(
                 half_life_days=half_life_days,
                 applied_by_id=applied_by_id,
                 negative_by_id=negative_by_id,
+                corroboration_boost=corroboration_boost,
                 candidate_tokens=candidate_tokens,
                 stopword_fallback=stopword_fallback,
                 corpus_stats=corpus_stats,
@@ -2311,6 +2347,7 @@ def search(
                         matched_terms_fallback=list(dict.fromkeys(query_tokens)),
                         applied_by_id=applied_by_id,
                         negative_by_id=negative_by_id,
+                        corroboration_boost=corroboration_boost,
                         candidate_tokens=candidate_tokens,
                     )
                 )

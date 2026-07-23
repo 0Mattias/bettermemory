@@ -321,6 +321,18 @@ class Memory(BaseModel):
     (remote-host paths, platform-conditional locations, paths cited as
     NOT the real one). Path-drift excludes them from `missing` into an
     `expected_absent` bucket instead of raising a phantom drift signal.
+
+    `corroborations` / `last_corroborated` are the recurrence rollup:
+    bumped by `Store.record_corroboration` when a `memory_write` is
+    dedup-rejected against this memory — the stored claim re-entered a
+    conversation independently, which is evidence it still holds and
+    still matters. A third timestamp axis, orthogonal to the other two:
+    `updated` moves on content edits, `last_verified_at` on
+    reality-checks, `last_corroborated` on recurrence. Feeds the
+    freshest-touch curation window (a corroborated memory isn't dead
+    weight) and, under `[behavior] corroboration_boost`, a bounded
+    ranking nudge. Additive frontmatter fields — legacy memories load
+    as 0 / None.
     """
 
     id: str
@@ -338,6 +350,8 @@ class Memory(BaseModel):
     verified_versions: list[str] = Field(default_factory=list)
     verified_absent_paths: list[str] = Field(default_factory=list)
     links: list[MemoryLink] = Field(default_factory=list)
+    corroborations: int = Field(default=0, ge=0)
+    last_corroborated: datetime | None = None
 
     @field_validator("scopes")
     @classmethod

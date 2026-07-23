@@ -157,6 +157,13 @@ class SessionState:
     # delete), on cancel (preserving the episode so the user can
     # retry), and alongside `_expired_pending` when the TTL elapses.
     _promotion_episodes: dict[str, tuple[str, str]] = field(default_factory=dict)
+    # Memory ids already corroborated by a dedup-rejected write THIS
+    # session. One conversation restating the same claim five times is
+    # one recurrence, not five — the counter measures independent
+    # re-entries, so the bump is once per (memory, session). In-memory
+    # only: a server restart legitimately opens a new session, which is
+    # a new opportunity to corroborate.
+    corroborated_ids: set[str] = field(default_factory=set)
     # One-shot per-session marker for the passive curation-pressure
     # check that may inline a hint on the first `memory_write` of a
     # session. Set True the first time the check runs regardless of

@@ -767,7 +767,10 @@ def find_demotion_candidates(
         if not _is_dead_weight(
             category=memory.category,
             freshest_ts=_freshest_touch_ts(
-                memory.created, memory.updated, memory.last_verified_at
+                memory.created,
+                memory.updated,
+                memory.last_verified_at,
+                memory.last_corroborated,
             ),
             retrieval_count=retrieved_count,
             applied_count=applied.get(memory.id, 0),

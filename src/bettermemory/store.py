@@ -770,6 +770,89 @@ class Store:
             _index_upsert_quietly(self.root, new_memory, filename=existing_path.name)
         return new_memory
 
+    def record_corroboration(self, memory_id: str) -> Memory:
+        """Bump the corroboration rollup without touching `updated`.
+
+        A dedup-rejected `memory_write` against this memory is the stored
+        claim RECURRING — independent evidence it still holds and still
+        matters — not a content edit. So, like `mark_verified`, this
+        write moves its own fields only: `corroborations += 1`,
+        `last_corroborated = now`. `updated` stays put (recency ranking
+        and the outcome-demotion resolution rule both read `updated`; a
+        recurrence must not fake a rewrite) and verification state is
+        untouched (nothing was checked against reality).
+
+        No optimistic-concurrency CAS: the counter is monotonic, so two
+        racing bumps compose (n+2 is the correct total) rather than
+        clobber. The per-session dedup that keeps one conversation from
+        farming the counter lives at the handler layer
+        (`SessionState.corroborated_ids`).
+
+        Size caps: the redump adds a bounded ~60 bytes once (then only
+        count digits), but the record may already sit in the reserved
+        maintenance band, so the same `_lifecycle_redump_cap` /
+        `_lifecycle_redump_yaml_cap` discipline as `mark_verified`
+        applies — a corroboration must never grow a record past the
+        point where its own tombstone no longer fits.
+
+        Raises:
+            MemoryNotFoundError / TombstonedError: same find semantics as
+              `mark_verified` — callers treating this as best-effort
+              telemetry should catch and log rather than fail the
+              surrounding operation.
+        """
+        existing_path = self._find_path_for_id(memory_id)
+        if existing_path is None:
+            for tpath in self._iter_tombstone_paths():
+                try:
+                    post = frontmatter.load(tpath)
+                except (
+                    FileNotFoundError,
+                    ValueError,
+                    KeyError,
+                    OSError,
+                    yaml.YAMLError,
+                ):
+                    continue
+                if post.metadata.get("id") == memory_id:
+                    raise TombstonedError(
+                        f"memory {memory_id} was removed: "
+                        f"{post.metadata.get('removed_reason', '<no reason>')}"
+                    )
+            raise MemoryNotFoundError(f"no memory with id {memory_id}")
+
+        with _locked(existing_path):
+            # Same C2 recheck as `update` / `mark_verified`: the find walk
+            # above ran unlocked, so a concurrent tombstone/rename may
+            # have moved the file; without the recheck we could stamp a
+            # corroboration onto a DIFFERENT memory that reused the path.
+            if not _id_still_at_path(existing_path, memory_id):
+                raise MemoryNotFoundError(
+                    f"no memory with id {memory_id} (raced with "
+                    f"concurrent tombstone or rename)"
+                )
+            existing = self._load_path(existing_path)
+            new_memory = existing.model_copy(
+                update={
+                    "corroborations": existing.corroborations + 1,
+                    "last_corroborated": utcnow(),
+                }
+            )
+            try:
+                current_size = existing_path.stat().st_size
+            except OSError:
+                current_size = 0
+            current_yaml = _serialized_frontmatter_bytes(_memory_metadata(existing))
+            self._write_path(
+                existing_path,
+                new_memory,
+                max_file_bytes=_lifecycle_redump_cap(current_size),
+                max_yaml_bytes=_lifecycle_redump_yaml_cap(current_yaml),
+            )
+            # perf: index upsert under lock is intentional — see audit H1.
+            _index_upsert_quietly(self.root, new_memory, filename=existing_path.name)
+        return new_memory
+
     def tombstone(
         self,
         memory_id: str,
@@ -1947,6 +2030,28 @@ def _parse_memory_file(path: Path) -> Memory:
                     links.append(MemoryLink.model_validate(entry))
                 except (ValueError, KeyError):
                     continue
+        # Corroboration rollup is additive — legacy memories load as
+        # 0 / None. Malformed values degrade to the defaults rather than
+        # raising, same tolerance as `last_verified_at`: a hand-edited
+        # counter must not render the whole memory unloadable.
+        corroborations_raw = meta.get("corroborations")
+        try:
+            corroborations = (
+                max(0, int(corroborations_raw))
+                if corroborations_raw is not None
+                else 0
+            )
+        except (TypeError, ValueError):
+            corroborations = 0
+        corroborated_raw = meta.get("last_corroborated")
+        last_corroborated: datetime | None
+        if corroborated_raw is None:
+            last_corroborated = None
+        else:
+            try:
+                last_corroborated = _as_dt(corroborated_raw)
+            except ValueError:
+                last_corroborated = None
         return Memory(
             id=str(meta["id"]),
             created=_as_dt(meta["created"]),
@@ -1963,6 +2068,8 @@ def _parse_memory_file(path: Path) -> Memory:
             verified_versions=_load_str_list(meta.get("verified_versions")),
             verified_absent_paths=_load_str_list(meta.get("verified_absent_paths")),
             links=links,
+            corroborations=corroborations,
+            last_corroborated=last_corroborated,
         )
     except KeyError as exc:
         raise ValueError(f"{path}: missing field {exc.args[0]}") from exc
@@ -2695,6 +2802,13 @@ def _memory_metadata(memory: Memory) -> dict[str, object]:
     # identical to legacy ones on disk.
     if memory.category is not None:
         meta["category"] = memory.category.value
+    # Corroboration rollup is omitted while zero/None — same noise-floor
+    # rationale as `last_verified_at`: a never-corroborated memory stays
+    # byte-identical to the pre-field on-disk shape.
+    if memory.corroborations:
+        meta["corroborations"] = memory.corroborations
+    if memory.last_corroborated is not None:
+        meta["last_corroborated"] = memory.last_corroborated
     # Verified-claims lists are omitted when empty — same noise-floor
     # rationale as `last_verified_at`. They populate as a unit on
     # the `memory_verify` event that captured them.

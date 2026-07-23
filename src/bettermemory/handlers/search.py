@@ -529,6 +529,7 @@ async def memory_search(
         query,
         applied_by_id=applied_by_id,
         negative_by_id=negative_by_id,
+        corroboration_boost=deps.config.behavior.corroboration_boost,
         scopes=scopes,
         excluded_scopes=set(state.disabled_scopes),
         repo_filter=repo_filter,

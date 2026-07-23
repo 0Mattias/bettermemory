@@ -98,6 +98,17 @@ endorsement_boost = false
 # the usage loop in both directions.
 outcome_demotion = false
 
+# Recurrence as ranking evidence. Every time a memory_write is
+# dedup-rejected against an existing memory, that memory's persisted
+# `corroborations` rollup bumps (once per session per memory — the
+# recording is always on; it's cheap, additive telemetry). When THIS
+# flag is true, the rollup feeds a bounded ranking nudge (same +10%
+# ceiling and saturating shape as endorsement_boost): a claim that
+# keeps independently re-entering conversations wins a near-tie over a
+# one-off remark. No event-log read — the counter lives on the memory
+# record itself.
+corroboration_boost = false
+
 # When true, memory_write dedup uses cosine similarity on sentence
 # embeddings instead of Jaccard on token sets — catches paraphrases
 # like "the database" / "Postgres" that lexical overlap misses.
@@ -329,6 +340,9 @@ class BehaviorConfig:
     # Negative mirror of endorsement_boost: recently ignored/contradicted
     # memories slide down (bounded ≥0.85x). Opt-in — see DEFAULT_CONFIG.
     outcome_demotion: bool = False
+    # Recurrence-fed ranking nudge (bounded ≤ +10%) reading the persisted
+    # `corroborations` rollup. Opt-in — see DEFAULT_CONFIG.
+    corroboration_boost: bool = False
     # Semantic dedup is opt-in — see DEFAULT_CONFIG for prose.
     semantic_dedup: bool = False
     # Provider selection — "auto" (default), "torch", or "fastembed".
@@ -914,6 +928,9 @@ def load_config(path: Path | None = None) -> Config:
             ),
             outcome_demotion=_coerce_bool(
                 behavior_raw.get("outcome_demotion"), False
+            ),
+            corroboration_boost=_coerce_bool(
+                behavior_raw.get("corroboration_boost"), False
             ),
             semantic_dedup=_coerce_bool(behavior_raw.get("semantic_dedup"), False),
             semantic_provider=str(behavior_raw.get("semantic_provider", "auto")),

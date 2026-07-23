@@ -261,7 +261,7 @@ class ResponseBuilder:
             path_drift_missing=len(drift.missing),
             commit_drift_count=None,
         )
-        return {
+        out = {
             "id": memory.id,
             "scopes": memory.scopes,
             "confidence": memory.confidence.value,
@@ -278,6 +278,13 @@ class ResponseBuilder:
             "staleness_verdict": verdict,
             "origin": self.origin_to_dict(memory.origin),
         }
+        # Corroboration rollup — omitted while zero, the same
+        # absence-as-signal contract the on-disk frontmatter uses, so
+        # the common never-corroborated shape is unchanged.
+        if memory.corroborations:
+            out["corroborations"] = memory.corroborations
+            out["last_corroborated"] = isoformat_optional(memory.last_corroborated)
+        return out
 
     # ---- write / update / restore commit responses ----------------------
 
