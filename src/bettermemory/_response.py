@@ -63,6 +63,14 @@ __all__ = ["ResponseBuilder", "isoformat", "isoformat_optional"]
 isoformat = _isoformat_utc
 isoformat_optional = _isoformat_utc_optional
 
+# The window over which a negative use outcome (ignored / contradicted)
+# stays live: it feeds both `attach_recent_negative_outcomes` (the hit
+# annotation) and, when `[behavior] outcome_demotion` is on, the ranking
+# tally in `handlers.search._active_negative_counts`. One constant so
+# the annotation a model sees and the demotion it experiences can never
+# window-drift apart.
+NEGATIVE_OUTCOME_WINDOW_DAYS = 30
+
 
 class ResponseBuilder:
     """Serializer for the tool response shapes.
@@ -928,7 +936,7 @@ class ResponseBuilder:
         events: list[dict[str, Any]],
         *,
         now: datetime,
-        window_days: int = 30,
+        window_days: int = NEGATIVE_OUTCOME_WINDOW_DAYS,
     ) -> None:
         """Mutate `out` in-place, adding `recent_negative_outcomes` to any
         hit whose memory has been ignored or contradicted within the

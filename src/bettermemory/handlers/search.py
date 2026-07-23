@@ -20,6 +20,7 @@ from typing import TYPE_CHECKING, Any, cast
 
 from ..events import _event_id_list
 from ..models import utcnow, validate_scope
+from .._response import NEGATIVE_OUTCOME_WINDOW_DAYS
 from ..time_utils import parse_event_ts
 from ..search import (
     CorpusStats,
@@ -159,6 +160,80 @@ def _explicit_applied_counts(
         for mid in _event_id_list(ev.get("ids") or ev.get("memory_ids")):
             if mid in candidate_ids:
                 counts[mid] = counts.get(mid, 0) + 1
+    return counts
+
+
+def _active_negative_counts(
+    events: list[dict[str, Any]],
+    candidate_ids: set[str],
+    *,
+    now: datetime,
+    window_days: int,
+    resolution_ts_by_id: dict[str, datetime],
+) -> dict[str, tuple[int, int]]:
+    """Tally ACTIVE negative use outcomes (ignored, contradicted) per
+    candidate id, for the `[behavior] outcome_demotion` ranking factor.
+
+    "Active" reuses the exact liveness rules the
+    `recent_negative_outcomes` annotation applies, plus the resolution
+    clearing `health._has_unresolved_contradiction` established — the
+    ranker must never demote on evidence the other surfaces would call
+    settled:
+
+    - windowed: events older than `window_days` are dropped. The cutoff
+      is enforced HERE, not delegated to the caller — same mandatory-
+      window contract as `_explicit_applied_counts`, so a caller feeding
+      a wider event read cannot silently widen the tally.
+    - superseded: a later NON-AUTO `applied` clears every earlier
+      negative (the model re-validated the memory). An auto-fallback
+      apply carries no judgment and clears nothing — mirroring
+      `attach_recent_negative_outcomes`.
+    - resolved: a negative at or before the memory's resolution
+      timestamp — `max(updated, last_verified_at)`, supplied via
+      `resolution_ts_by_id` — judged a body that has since been
+      rewritten or re-attested, so it no longer testifies. This is
+      `health._has_unresolved_contradiction`'s rule applied per-event.
+    - `corrected` is audit-only and `applied` is the positive case:
+      neither counts negative.
+
+    Returns a SPARSE dict — ids with no active negatives are absent — so
+    the scorer's `.get(id, (0, 0))` default stays the common path."""
+    cutoff_ts = now.timestamp() - window_days * 86400
+    timelines: dict[str, list[tuple[datetime, str, bool]]] = {}
+    for ev in events:
+        if ev.get("kind") != "use":
+            continue
+        outcome = ev.get("outcome")
+        if outcome not in ("ignored", "contradicted", "applied"):
+            continue
+        ts = parse_event_ts(ev.get("ts"))
+        if ts is None or ts.timestamp() < cutoff_ts:
+            continue
+        auto = ev.get("auto") is True
+        for mid in _event_id_list(ev.get("ids") or ev.get("memory_ids")):
+            if mid in candidate_ids:
+                timelines.setdefault(mid, []).append((ts, str(outcome), auto))
+
+    counts: dict[str, tuple[int, int]] = {}
+    for mid, timeline in timelines.items():
+        timeline.sort(key=lambda entry: entry[0])
+        resolution_ts = resolution_ts_by_id.get(mid)
+        ignored = 0
+        contradicted = 0
+        for ts, outcome, auto in timeline:
+            if outcome == "applied":
+                if not auto:
+                    ignored = 0
+                    contradicted = 0
+                continue
+            if resolution_ts is not None and ts <= resolution_ts:
+                continue
+            if outcome == "ignored":
+                ignored += 1
+            else:
+                contradicted += 1
+        if ignored or contradicted:
+            counts[mid] = (ignored, contradicted)
     return counts
 
 
@@ -347,12 +422,15 @@ async def memory_search(
                 # assignment that makes it true.
                 prefiltered = False
 
-    # Usage-aware ranking (opt-in via [behavior] endorsement_boost). Tally how
-    # many times the model has EXPLICITLY applied each candidate and hand the
-    # counts to the ranker, which applies a bounded endorsement nudge. The
-    # event list is reused below for `recent_negative_outcomes`, so an enabled
-    # boost adds no extra I/O on a hit-producing search. Stays None (ranker
-    # neutral) when the flag is off — the shipped default is unchanged.
+    # Usage-aware ranking, both directions (each opt-in via [behavior]):
+    # `endorsement_boost` tallies how many times the model EXPLICITLY
+    # applied each candidate (bounded nudge up); `outcome_demotion`
+    # tallies still-active ignored/contradicted outcomes (bounded slide
+    # down — see `_active_negative_counts` for what "active" excludes).
+    # The event list is reused below for `recent_negative_outcomes`, so
+    # enabling either adds no extra I/O on a hit-producing search. Both
+    # stay None (ranker neutral) when their flag is off — the shipped
+    # default is unchanged.
     # Window-aware read (round 88): both audit producers (`hook.run_audit`,
     # `memory_audit_turn`) tally over `iter_events_window` while this
     # handler read the active log only (`iter_events`) — so the moment a
@@ -364,19 +442,53 @@ async def memory_search(
     # production tally's reset-on-rotation as a side effect.
     recent_events: list[dict[str, Any]] | None = None
     applied_by_id: dict[str, int] | None = None
-    if deps.config.behavior.endorsement_boost and memories:
+    negative_by_id: dict[str, tuple[int, int]] | None = None
+    demotion_on = deps.config.behavior.outcome_demotion
+    if (deps.config.behavior.endorsement_boost or demotion_on) and memories:
         from ..audit import ATTRIBUTION_LOOKBACK_SECONDS
         from ..events import iter_events_window
 
+        # One event read serves up to three consumers (endorsement tally,
+        # demotion tally, the recent_negative_outcomes annotation below).
+        # With demotion on, the read widens from the 600s attribution
+        # horizon to the full negative window: the demotion tally needs
+        # it, and the annotation's 30-day contract becomes guaranteed
+        # instead of best-effort (a 600s request only rotation-proofs
+        # 600s of coverage; older events survive by luck of the active
+        # log's size). The widened feed cannot widen the OTHER tallies —
+        # both count-functions enforce their own cutoffs internally,
+        # which is exactly why their window arguments are mandatory.
+        window_seconds = ATTRIBUTION_LOOKBACK_SECONDS
+        if demotion_on:
+            window_seconds = max(
+                window_seconds, NEGATIVE_OUTCOME_WINDOW_DAYS * 86400
+            )
         recent_events = list(
-            iter_events_window(deps.store.root, ATTRIBUTION_LOOKBACK_SECONDS)
+            iter_events_window(deps.store.root, window_seconds)
         )
-        applied_by_id = _explicit_applied_counts(
-            recent_events,
-            {m.id for m in memories},
-            now=utcnow(),
-            lookback_seconds=ATTRIBUTION_LOOKBACK_SECONDS,
-        )
+        tally_now = utcnow()
+        if deps.config.behavior.endorsement_boost:
+            applied_by_id = _explicit_applied_counts(
+                recent_events,
+                {m.id for m in memories},
+                now=tally_now,
+                lookback_seconds=ATTRIBUTION_LOOKBACK_SECONDS,
+            )
+        if demotion_on:
+            negative_by_id = _active_negative_counts(
+                recent_events,
+                {m.id for m in memories},
+                now=tally_now,
+                window_days=NEGATIVE_OUTCOME_WINDOW_DAYS,
+                resolution_ts_by_id={
+                    m.id: (
+                        max(m.updated, m.last_verified_at)
+                        if m.last_verified_at is not None
+                        else m.updated
+                    )
+                    for m in memories
+                },
+            )
 
     # BM25 corpus statistics. Only wired when the FTS prefilter actually
     # served the candidates: that is the case where `memories` is a
@@ -416,6 +528,7 @@ async def memory_search(
         memories,
         query,
         applied_by_id=applied_by_id,
+        negative_by_id=negative_by_id,
         scopes=scopes,
         excluded_scopes=set(state.disabled_scopes),
         repo_filter=repo_filter,

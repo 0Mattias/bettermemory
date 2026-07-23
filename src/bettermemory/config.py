@@ -82,6 +82,22 @@ search_mode = "hybrid"
 # so the signal tracks current usefulness rather than lifetime popularity.
 endorsement_boost = false
 
+# The negative half of usage-aware ranking. When true, memories the model
+# recently REJECTED slide down: `memory_record_use(ignored)` mildly
+# (~-4% once), `contradicted` at double weight (~-7% once), both on a
+# saturating curve floored at -15% — so like endorsement it can only
+# break near-ties, never bury a strongly-relevant hit. A negative stops
+# counting when (a) it ages out of the 30-day window, (b) a later
+# NON-AUTO applied re-validates the memory, or (c) memory_update /
+# memory_verify postdates it (the judged claim was fixed or re-attested).
+# `corrected` never demotes — the fix already landed. Off by default: it
+# reorders results and widens the per-search event read from the ~10-min
+# attribution window to the full 30-day negative window (which also
+# feeds `recent_negative_outcomes` annotations a complete window instead
+# of a best-effort one). Enable together with endorsement_boost to close
+# the usage loop in both directions.
+outcome_demotion = false
+
 # When true, memory_write dedup uses cosine similarity on sentence
 # embeddings instead of Jaccard on token sets — catches paraphrases
 # like "the database" / "Postgres" that lexical overlap misses.
@@ -310,6 +326,9 @@ class BehaviorConfig:
     # near-tie. Opt-in (default off): it reorders results and costs one
     # event-log read per search; see DEFAULT_CONFIG for prose.
     endorsement_boost: bool = False
+    # Negative mirror of endorsement_boost: recently ignored/contradicted
+    # memories slide down (bounded ≥0.85x). Opt-in — see DEFAULT_CONFIG.
+    outcome_demotion: bool = False
     # Semantic dedup is opt-in — see DEFAULT_CONFIG for prose.
     semantic_dedup: bool = False
     # Provider selection — "auto" (default), "torch", or "fastembed".
@@ -892,6 +911,9 @@ def load_config(path: Path | None = None) -> Config:
             ),
             endorsement_boost=_coerce_bool(
                 behavior_raw.get("endorsement_boost"), False
+            ),
+            outcome_demotion=_coerce_bool(
+                behavior_raw.get("outcome_demotion"), False
             ),
             semantic_dedup=_coerce_bool(behavior_raw.get("semantic_dedup"), False),
             semantic_provider=str(behavior_raw.get("semantic_provider", "auto")),

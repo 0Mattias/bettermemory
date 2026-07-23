@@ -1136,6 +1136,39 @@ def _endorsement_factor(applied_count: int) -> float:
     return 1.0 + 0.1 * (1.0 - math.exp(-applied_count / 3.0))
 
 
+def _demotion_factor(ignored_count: int, contradicted_count: int) -> float:
+    """1 - 0.15 * (1 - exp(-(ignored + 2*contradicted) / 3)). Bounded to
+    (0.85, 1.0] — the negative mirror of `_endorsement_factor`.
+
+    A memory the model has recently rejected (`memory_record_use(ignored)`
+    — retrieved but off-topic) or, worse, flagged as wrong
+    (`contradicted`) slides down slightly. Contradicted weighs double:
+    an off-topic surfacing is often the QUERY's fault, but a stored
+    claim that disagreed with reality is the memory's. The cap is
+    slightly deeper than endorsement's +10% on purpose — retrieving a
+    falsehood costs more than missing a bonus tie-break — but still a
+    near-tie signal, never a relevance override.
+
+    Three guards keep this from a rich-get-poorer death spiral (demoted →
+    less surfaced → never earns the clearing `applied`):
+
+    - counts come from a bounded window (the caller tallies over
+      `NEGATIVE_OUTCOME_WINDOW_DAYS`), so evidence expires;
+    - a later NON-AUTO `applied` supersedes earlier negatives (the same
+      rule `recent_negative_outcomes` uses — the model re-validated it);
+    - a `memory_update` or `memory_verify` newer than the negative event
+      clears it (the same resolution semantics as
+      `health._has_unresolved_contradiction` — the claim the event judged
+      no longer exists, or was re-attested true).
+
+    Both counts at 0 return exactly 1.0 (neutral), so the factor is a
+    no-op unless real negative counts are supplied."""
+    weighted = max(0, ignored_count) + 2 * max(0, contradicted_count)
+    if weighted <= 0:
+        return 1.0
+    return 1.0 - 0.15 * (1.0 - math.exp(-weighted / 3.0))
+
+
 # ---------------------------------------------------------------------------
 # BM25 scorer (Okapi variant)
 # ---------------------------------------------------------------------------
@@ -1773,6 +1806,7 @@ def _score_keyword(
     now: datetime,
     half_life_days: float,
     applied_by_id: dict[str, int] | None = None,
+    negative_by_id: dict[str, tuple[int, int]] | None = None,
     candidate_tokens: list[_MemoryTokens] | None = None,
 ) -> list[tuple[Memory, float, list[str]]]:
     """Run the original keyword scorer across all candidates. Returns
@@ -1782,6 +1816,11 @@ def _score_keyword(
     `applied_by_id` (optional) maps memory id → explicit-applied count; when
     given, a bounded `_endorsement_factor` nudges endorsed memories. None
     (the default) leaves scores untouched.
+
+    `negative_by_id` (optional) maps memory id → (active-ignored,
+    active-contradicted) counts; when given, a bounded `_demotion_factor`
+    slides recently-rejected memories down. None (the default) leaves
+    scores untouched.
 
     `candidate_tokens` (optional): precomputed `_MemoryTokens`,
     index-aligned with `candidates` — see `search()`."""
@@ -1797,6 +1836,9 @@ def _score_keyword(
         if score > 0:
             if applied_by_id:
                 score *= _endorsement_factor(applied_by_id.get(memory.id, 0))
+            if negative_by_id:
+                ig, ct = negative_by_id.get(memory.id, (0, 0))
+                score *= _demotion_factor(ig, ct)
             out.append((memory, score, matched))
     return out
 
@@ -1808,16 +1850,18 @@ def _score_bm25(
     now: datetime,
     half_life_days: float,
     applied_by_id: dict[str, int] | None = None,
+    negative_by_id: dict[str, tuple[int, int]] | None = None,
     candidate_tokens: list[_MemoryTokens] | None = None,
     stopword_fallback: bool = False,
     corpus_stats: CorpusStats | None = None,
 ) -> list[tuple[Memory, float, list[str]]]:
     """Run the BM25 scorer across all candidates. Returns
     `(memory, score, matched)` tuples for candidates with `score > 0`.
-    `applied_by_id` / `candidate_tokens`: see `_score_keyword`;
-    `stopword_fallback`: see `score_memory_bm25`; `corpus_stats`: see
-    `compute_idf` — required for a correct ranking whenever `candidates`
-    is a query-filtered subset rather than the whole corpus."""
+    `applied_by_id` / `negative_by_id` / `candidate_tokens`: see
+    `_score_keyword`; `stopword_fallback`: see `score_memory_bm25`;
+    `corpus_stats`: see `compute_idf` — required for a correct ranking
+    whenever `candidates` is a query-filtered subset rather than the
+    whole corpus."""
     body_idf_map, scope_idf_map, avgdl = compute_idf(
         candidates, tokens=candidate_tokens, corpus_stats=corpus_stats
     )
@@ -1839,6 +1883,9 @@ def _score_bm25(
         if score > 0:
             if applied_by_id:
                 score *= _endorsement_factor(applied_by_id.get(memory.id, 0))
+            if negative_by_id:
+                ig, ct = negative_by_id.get(memory.id, (0, 0))
+                score *= _demotion_factor(ig, ct)
             out.append((memory, score, matched))
     return out
 
@@ -1852,6 +1899,7 @@ def _score_semantic(
     half_life_days: float,
     matched_terms_fallback: list[str],
     applied_by_id: dict[str, int] | None = None,
+    negative_by_id: dict[str, tuple[int, int]] | None = None,
     candidate_tokens: list[_MemoryTokens] | None = None,
 ) -> list[tuple[Memory, float, list[str]]]:
     """Cosine-similarity scoring over sentence-transformers embeddings.
@@ -1914,6 +1962,9 @@ def _score_semantic(
         score = sim * _recency_factor(freshness, now, half_life_days)
         if applied_by_id:
             score *= _endorsement_factor(applied_by_id.get(memory.id, 0))
+        if negative_by_id:
+            ig, ct = negative_by_id.get(memory.id, (0, 0))
+            score *= _demotion_factor(ig, ct)
         # Report only the query tokens that LITERALLY hit this memory's
         # body or scopes (same overlap `score_memory` computes), not the
         # whole query — so a paraphrase-only hit carries honest match_terms
@@ -2004,6 +2055,7 @@ def search(
     semantic_model: Any | None = None,
     rrf_k: int = _RRF_K_DEFAULT,
     applied_by_id: dict[str, int] | None = None,
+    negative_by_id: dict[str, tuple[int, int]] | None = None,
     allow_empty_query: bool = False,
     corpus_stats_provider: Callable[[list[str]], CorpusStats | None] | None = None,
 ) -> list[MemoryHit]:
@@ -2044,6 +2096,14 @@ def search(
       recency) nudges endorsed memories up — a near-tie breaker, never a
       relevance override. `None` (the default) leaves scores untouched, so
       every existing caller and the package default are byte-stable.
+    - `negative_by_id`: optional map of memory id → (active-ignored,
+      active-contradicted) counts. When given, a bounded
+      `_demotion_factor` (≥ 0.85x) slides recently-rejected memories
+      down — the negative mirror of `applied_by_id`, with the same
+      near-tie-only ceiling. The caller owns the "active" semantics
+      (windowing, applied-supersedes, resolution clearing — see
+      `handlers.search._active_negative_counts`); this layer just
+      applies the factor. `None` (the default) is byte-stable.
     - `allow_empty_query`: when True, an empty or stopword-only query
       no longer short-circuits to `[]`. Instead the function runs the
       `_filter_candidates` pass (scope / repo / worktree / excluded)
@@ -2156,6 +2216,7 @@ def search(
             now=now,
             half_life_days=half_life_days,
             applied_by_id=applied_by_id,
+            negative_by_id=negative_by_id,
             candidate_tokens=candidate_tokens,
         )
         # Sort by score, then created (newer wins on tie), then id as the
@@ -2172,6 +2233,7 @@ def search(
             now=now,
             half_life_days=half_life_days,
             applied_by_id=applied_by_id,
+            negative_by_id=negative_by_id,
             candidate_tokens=candidate_tokens,
             stopword_fallback=stopword_fallback,
             corpus_stats=corpus_stats,
@@ -2191,6 +2253,7 @@ def search(
                 half_life_days=half_life_days,
                 matched_terms_fallback=list(dict.fromkeys(query_tokens)),
                 applied_by_id=applied_by_id,
+                negative_by_id=negative_by_id,
                 candidate_tokens=candidate_tokens,
             )
         except Exception as exc:  # noqa: BLE001 — degrade to keyword on encode failure.
@@ -2209,6 +2272,7 @@ def search(
                 now=now,
                 half_life_days=half_life_days,
                 applied_by_id=applied_by_id,
+                negative_by_id=negative_by_id,
                 candidate_tokens=candidate_tokens,
             )
         scored.sort(key=lambda x: (x[1], x[0].created, x[0].id), reverse=True)
@@ -2220,6 +2284,7 @@ def search(
                 now=now,
                 half_life_days=half_life_days,
                 applied_by_id=applied_by_id,
+                negative_by_id=negative_by_id,
                 candidate_tokens=candidate_tokens,
             ),
             _score_bm25(
@@ -2228,6 +2293,7 @@ def search(
                 now=now,
                 half_life_days=half_life_days,
                 applied_by_id=applied_by_id,
+                negative_by_id=negative_by_id,
                 candidate_tokens=candidate_tokens,
                 stopword_fallback=stopword_fallback,
                 corpus_stats=corpus_stats,
@@ -2244,6 +2310,7 @@ def search(
                         half_life_days=half_life_days,
                         matched_terms_fallback=list(dict.fromkeys(query_tokens)),
                         applied_by_id=applied_by_id,
+                        negative_by_id=negative_by_id,
                         candidate_tokens=candidate_tokens,
                     )
                 )
