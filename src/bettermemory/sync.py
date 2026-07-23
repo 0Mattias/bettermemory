@@ -58,12 +58,14 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from ._fsutil import atomic_write_bytes, flock_excl
+from .conflicts import CONFLICTS_FILENAME
 from .consolidate import AUTO_CONSOLIDATE_CLOCK_FILENAME
 from .doctor import DOCTOR_PROBE_FILENAME
 from .episodes import EPISODES_DIR
 from .events import ARCHIVE_PREFIX, EVENT_LOG_FILENAME
 from .index import INDEX_FILENAME
 from .ingest import INGEST_WATERMARK_FILENAME
+from .patterns import PATTERNS_FILENAME
 from .proposals import PROPOSALS_FILENAME
 from .semantic import EMBEDDING_FILENAME_PREFIX, EMBEDDING_FILENAME_SUFFIX
 
@@ -124,6 +126,16 @@ _GITIGNORE_LINES = [
     # sentences at capture as defense-in-depth; this keeps the whole queue —
     # including non-secret captures the user may not want synced — local.)
     PROPOSALS_FILENAME,
+    # Conflict-candidate verdict queue and episode-pattern dismissals
+    # (3.28.0). Both are host-local curation state derived from this
+    # host's store + journal: the conflict queue quotes memory summaries
+    # verbatim (content another clone may deliberately not hold), and
+    # pattern dismissals reference episode ids that exist only in this
+    # host's session directories. A clone inheriting either would show
+    # phantom pending work referencing memories/episodes it doesn't
+    # have. Regenerable: one scan / one listing call rebuilds them.
+    CONFLICTS_FILENAME,
+    PATTERNS_FILENAME,
     # Ingest watermark. Maps ABSOLUTE source-file paths on THIS host (e.g.
     # `~/.claude/projects/<sanitized-cwd>/memory/*.md`) to the content hashes
     # already imported, so `doctor`'s stranded-auto-memory check can tell

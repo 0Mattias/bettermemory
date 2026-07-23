@@ -171,15 +171,30 @@ class DedupCandidate:
 @dataclass
 class PolaritySkippedPair:
     """A pair whose similarity cleared the dedup threshold but whose
-    bodies differ in negation polarity. The polarity guard keeps such
-    pairs out of `dedup_candidates` — a high-similarity negated pair is
-    usually a contradiction to arbitrate, not a duplicate to merge —
-    but the guard also catches genuine duplicates whose phrasings
-    differ by an incidental negator ("X instead of Y" vs "X, not Y"),
-    so the skip is surfaced here for human review instead of vanishing.
-    Suggest-only: the apply path iterates `dedup_candidates` exclusively
-    and never tombstones a member of this list. No keeper/duplicate
-    roles — no merge decision was made."""
+    bodies disagree in a way that makes merging wrong. Two detectors
+    populate the list (`detector` says which):
+
+    - ``"polarity"``: the bodies differ in negation polarity. Stopword
+      stripping makes the negation invisible to the token sets, so a
+      high similarity here usually labels a contradiction as a
+      duplicate.
+    - ``"numeric"``: near-identical bodies whose number-bearing tokens
+      DIVERGE on both sides ("port 5432" vs "port 5433", version
+      3.27.0 vs 3.27.1). Token overlap on everything else pushes the
+      pair over the threshold, and a silent merge would tombstone one
+      of two claims that disagree about a value — a mis-curation, not
+      a dedup.
+
+    Either way the pair is a disagreement to arbitrate, not a duplicate
+    to merge; the guard keeps it out of `dedup_candidates` and the
+    conflict flow (`memory_conflicts` / `conflicts.scan_conflicts`)
+    takes it from here. The skip is surfaced rather than swallowed
+    because both detectors also catch benign cases (an incidental
+    negator; an added-detail number) that a human/model reviewer should
+    be able to wave through. Suggest-only: the apply path iterates
+    `dedup_candidates` exclusively and never tombstones a member of
+    this list. No keeper/duplicate roles — no merge decision was made.
+    """
 
     memory_id_a: str
     summary_a: str
@@ -187,6 +202,9 @@ class PolaritySkippedPair:
     summary_b: str
     similarity: float
     method: str  # "semantic" or "jaccard"
+    # Additive (3.28.0): rows serialized before the field default to
+    # "polarity", the only detector that existed.
+    detector: str = "polarity"
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -196,6 +214,7 @@ class PolaritySkippedPair:
             "summary_b": self.summary_b,
             "similarity": round(self.similarity, 4),
             "method": self.method,
+            "detector": self.detector,
         }
 
 
@@ -515,11 +534,43 @@ def _strip_provenance(body: str) -> str:
     return _PROVENANCE_RE.sub("", body)
 
 
+# Number-bearing tokens for the numeric-divergence guard. Length-capped
+# at 16 so long opaque identifiers (ULIDs, full SHAs, JWT fragments)
+# don't count — two bodies citing different record ids are referencing,
+# not disagreeing. Short version/port/date/count shapes all pass:
+# "5432", "3.27.0", "2026-07-20", "v2", "74f625d".
+_NUMERIC_TOKEN_RE = re.compile(r"[a-z0-9][a-z0-9.\-_]*")
+
+
+def _numeric_token_set(body: str) -> frozenset[str]:
+    """The digit-bearing tokens of a provenance-stripped body,
+    lowercased, trailing punctuation trimmed."""
+    out: set[str] = set()
+    for tok in _NUMERIC_TOKEN_RE.findall(body.lower()):
+        tok = tok.strip(".-_")
+        if tok and len(tok) <= 16 and any(c.isdigit() for c in tok):
+            out.add(tok)
+    return frozenset(out)
+
+
+def _numeric_divergence(nums_a: frozenset[str], nums_b: frozenset[str]) -> bool:
+    """True when BOTH sides carry number-bearing tokens the other lacks.
+
+    One-sided difference is additional detail, not disagreement:
+    "deployed v3 on 2026-07-20" vs "deployed v3" merges fine. Mutual
+    difference on bodies similar enough to clear the dedup threshold —
+    "port 5432" vs "port 5433" — is two claims disagreeing about a
+    value, and `_pick_keeper` would tombstone one of them on recency
+    rather than truth. That pair belongs to the conflict flow."""
+    return bool(nums_a - nums_b) and bool(nums_b - nums_a)
+
+
 def _polarity_skip(
-    a: Memory, b: Memory, similarity: float, method: str
+    a: Memory, b: Memory, similarity: float, method: str, detector: str = "polarity"
 ) -> PolaritySkippedPair:
-    """Build the report entry for a pair the polarity guard skipped.
-    Shared by both dedup paths so the surfaced shape can't drift."""
+    """Build the report entry for a pair a conflict guard skipped.
+    Shared by both dedup paths (and both detectors) so the surfaced
+    shape can't drift."""
     return PolaritySkippedPair(
         memory_id_a=a.id,
         summary_a=snippet_for(a.body, max_chars=100),
@@ -527,6 +578,7 @@ def _polarity_skip(
         summary_b=snippet_for(b.body, max_chars=100),
         similarity=similarity,
         method=method,
+        detector=detector,
     )
 
 
@@ -541,18 +593,25 @@ def _find_dedup_jaccard(
     # a compound the pair shares must stay one token (symmetric
     # expansion of a shared compound strictly inflates Jaccard; see
     # the helper's docstring), so it can't be precomputed per memory.
-    token_sets: list[tuple[Memory, set[str], bool]] = []
+    token_sets: list[tuple[Memory, set[str], bool, frozenset[str]]] = []
     for m in memories:
         body = _strip_provenance(m.body)
-        token_sets.append((m, _raw_content_token_set(body), _has_negation(body)))
+        token_sets.append(
+            (
+                m,
+                _raw_content_token_set(body),
+                _has_negation(body),
+                _numeric_token_set(body),
+            )
+        )
     out: list[DedupCandidate] = []
     skipped: list[PolaritySkippedPair] = []
     for i in range(len(token_sets)):
-        m_i, t_i, neg_i = token_sets[i]
+        m_i, t_i, neg_i, nums_i = token_sets[i]
         if not t_i:
             continue
         for j in range(i + 1, len(token_sets)):
-            m_j, t_j, neg_j = token_sets[j]
+            m_j, t_j, neg_j, nums_j = token_sets[j]
             if not t_j:
                 continue
             sim = _pairwise_content_jaccard(t_i, t_j)
@@ -569,6 +628,15 @@ def _find_dedup_jaccard(
                 # from the human-review report forever. Threshold
                 # filtering above keeps this list small.
                 skipped.append(_polarity_skip(m_i, m_j, sim, "jaccard"))
+                continue
+            if _numeric_divergence(nums_i, nums_j):
+                # Mutual numeric divergence on near-identical bodies:
+                # two claims disagreeing about a value ("port 5432" vs
+                # "5433"). Merging would tombstone one side on recency
+                # rather than truth — route to the conflict flow.
+                skipped.append(
+                    _polarity_skip(m_i, m_j, sim, "jaccard", detector="numeric")
+                )
                 continue
             keeper, duplicate = _pick_keeper(m_i, m_j)
             out.append(
@@ -595,7 +663,7 @@ def _find_dedup_semantic(
     # makes repeats cheap but we still pay the dict lookup, so a local
     # list is faster. Embeddings (and polarity) judge the
     # provenance-stripped body, mirroring the Jaccard path.
-    embedded: list[tuple[Memory, Any, bool]] = []
+    embedded: list[tuple[Memory, Any, bool, frozenset[str]]] = []
     for memory in memories:
         raw_body = memory.body.strip()
         body = _strip_provenance(memory.body).strip()
@@ -613,14 +681,14 @@ def _find_dedup_semantic(
         if body != raw_body:
             updated_key += "#unstamped"
         vec = cached_embed(model, memory.id, updated_key, body)
-        embedded.append((memory, vec, _has_negation(body)))
+        embedded.append((memory, vec, _has_negation(body), _numeric_token_set(body)))
 
     out: list[DedupCandidate] = []
     skipped: list[PolaritySkippedPair] = []
     for i in range(len(embedded)):
-        m_i, v_i, neg_i = embedded[i]
+        m_i, v_i, neg_i, nums_i = embedded[i]
         for j in range(i + 1, len(embedded)):
-            m_j, v_j, neg_j = embedded[j]
+            m_j, v_j, neg_j, nums_j = embedded[j]
             try:
                 sim = cosine_similarity_normalized(v_i, v_j)
             except ValueError:
@@ -642,6 +710,14 @@ def _find_dedup_semantic(
                 # but surface the pair on the report rather than
                 # dropping it silently (see the Jaccard loop's note).
                 skipped.append(_polarity_skip(m_i, m_j, sim, "semantic"))
+                continue
+            if _numeric_divergence(nums_i, nums_j):
+                # Same guard as the Jaccard loop: mutual numeric
+                # divergence is a value-level disagreement, not a
+                # paraphrase — embeddings barely notice a changed digit.
+                skipped.append(
+                    _polarity_skip(m_i, m_j, sim, "semantic", detector="numeric")
+                )
                 continue
             keeper, duplicate = _pick_keeper(m_i, m_j)
             out.append(
@@ -1079,6 +1155,30 @@ def consolidate(
 
     if not apply:
         return report
+
+    # Persist the conflict-shaped skips into the verdict queue
+    # (`memory_conflicts` arbitrates them later). Apply-side only: the
+    # dry-run contract is "zero side effects", and the report above
+    # already SHOWS the pairs either way. Best-effort — queue I/O must
+    # never fail a curation pass that is about to mutate the store.
+    if polarity_skipped:
+        try:
+            from .conflicts import ConflictQueue, skip_to_candidate
+            from .models import utcnow as _utcnow
+
+            now_iso = _utcnow().isoformat()
+            # Lift the report rows into queue rows here rather than
+            # re-running detection: same scan, same pairs. Dedup by pair
+            # id — the same pair can be flagged by both detectors.
+            deduped: dict[str, Any] = {}
+            for p in polarity_skipped:
+                cand = skip_to_candidate(p, created=now_iso)
+                deduped.setdefault(cand.id, cand)
+            ConflictQueue(store.root).upsert_scan(
+                list(deduped.values()), {m.id: m for m in memories}
+            )
+        except Exception:  # noqa: BLE001 — telemetry, not curation-critical
+            log.warning("conflict-queue upsert failed", exc_info=True)
 
     # Apply: tombstone duplicates first, then demote.
     #

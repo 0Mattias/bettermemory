@@ -1149,6 +1149,7 @@ async def test_scope_overview_returns_curation_pending(server: Any) -> None:
         "silent_misses",
         "unique_silent_miss_memories",
         "cold_endorsement_memories",
+        "conflicts",
     }
     # All counts must be integers.
     for v in res["curation_pending"].values():
@@ -1166,6 +1167,7 @@ async def test_scope_overview_curation_pending_zero_on_empty(server: Any) -> Non
         "silent_misses": 0,
         "unique_silent_miss_memories": 0,
         "cold_endorsement_memories": 0,
+        "conflicts": 0,
     }
 
 
@@ -1223,6 +1225,7 @@ def test_desc_memory_scope_overview_enumerates_curation_pending_keys() -> None:
         "silent_misses",
         "unique_silent_miss_memories",
         "cold_endorsement_memories",
+        "conflicts",
     }
     assert extracted == expected, (
         "DESC_MEMORY_SCOPE_OVERVIEW's curation_pending key list drifted "

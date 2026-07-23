@@ -40,8 +40,8 @@ memory_remove, memory_restore, memory_list_tombstones, memory_verify,
 memory_record_use, memory_health, memory_curate, memory_audit_turn,
 memory_acknowledge_miss,
 memory_proposals, memory_rename_scope, memory_scope_disable,
-memory_scope_enable, episode_write, episode_handoff, episode_search,
-episode_promote.
+memory_scope_enable, memory_conflicts, episode_write, episode_handoff,
+episode_search, episode_promote, episode_patterns.
 
 ## When to retrieve
 

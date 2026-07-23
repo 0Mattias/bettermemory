@@ -12,7 +12,9 @@ from typing import TYPE_CHECKING, Any
 
 from .._response import isoformat_optional
 from ..events import iter_all_events
+from ..conflicts import ConflictQueue
 from ..health import curation_counts, find_prior_session_boundary
+from ..time_utils import parse_event_ts
 from ..models import utcnow
 from ..origin import Origin, should_include_for_caller
 from ..proposals import ProposalQueue
@@ -42,7 +44,9 @@ DESC_MEMORY_SCOPE_OVERVIEW = (
     "should branch on:\n"
     "  {stale, never_verified, drifted, cold, dead, "
     "silent_misses, unique_silent_miss_memories, "
-    "cold_endorsement_memories}\n"
+    "cold_endorsement_memories, conflicts}\n"
+    "`conflicts` = contradiction pairs awaiting a "
+    "memory_conflicts verdict. "
     "Any non-zero `dead` or `drifted` is a cue to suggest a "
     "curation pass when the conversation has time. Non-zero "
     "`silent_misses` / `cold_endorsement_memories` means the "
@@ -173,6 +177,16 @@ async def memory_scope_overview(
         caller_origin=current_origin,
         tombstoned_ids=tombstoned_ids,
     )
+    # `conflicts` rides on the same rollup but comes from the verdict
+    # queue, not the event stream — pending memory-vs-memory
+    # contradiction candidates awaiting a memory_conflicts ruling. One
+    # small-file read; empty list when the queue was never created. The
+    # rows are loaded once here and reused for the delta view below (a
+    # pending candidate `created` after the prior session boundary is
+    # "new since last session"), keeping the two views' key sets equal —
+    # the model must not need a different branch per view.
+    pending_conflicts = ConflictQueue(deps.store.root).pending()
+    curation["conflicts"] = len(pending_conflicts)
     # Use the recorder's session_id, not `state.session_id`.
     # Every event the recorder writes is tagged `session =
     # self.session_id` (events.py:159) — that's the single
@@ -211,6 +225,17 @@ async def memory_scope_overview(
             since=prior_boundary,
             tombstoned_ids=tombstoned_ids,
         )
+        # Delta arm of the queue-derived `conflicts` key: candidates
+        # whose detection time postdates the boundary. A candidate with
+        # an unparseable `created` counts as new — same conservatism as
+        # the annotation walk's unprovable-ts handling, erring toward
+        # surfacing.
+        new_conflicts = 0
+        for cand in pending_conflicts:
+            created_ts = parse_event_ts(cand.created)
+            if created_ts is None or created_ts > prior_boundary:
+                new_conflicts += 1
+        curation_delta["conflicts"] = new_conflicts
 
     # Tombstone activity in the last 7 days. Helps the model spot
     # "you removed N memories about this area last week" before it

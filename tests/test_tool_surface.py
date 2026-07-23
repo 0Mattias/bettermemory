@@ -33,6 +33,10 @@ _GATED = {
     "memory_restore",
     "memory_list_tombstones",
     "memory_proposals",
+    # Corpus-inference pair (3.28.0) — curation-tier, same gate as
+    # memory_curate; the curate-loop skill is their main driver.
+    "memory_conflicts",
+    "episode_patterns",
 }
 
 # A representative sample of the always-registered core (retrieval / write /
@@ -52,7 +56,7 @@ _ALWAYS = {
 }
 
 _LEAN_COUNT = 18
-_FULL_COUNT = 25
+_FULL_COUNT = 27
 
 
 async def _registered(

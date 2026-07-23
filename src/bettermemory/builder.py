@@ -38,11 +38,13 @@ from mcp.server.fastmcp import FastMCP
 
 from ._handlers import (
     DESC_EPISODE_HANDOFF,
+    DESC_EPISODE_PATTERNS,
     DESC_EPISODE_PROMOTE,
     DESC_EPISODE_SEARCH,
     DESC_EPISODE_WRITE,
     DESC_MEMORY_ACKNOWLEDGE_MISS,
     DESC_MEMORY_AUDIT_TURN,
+    DESC_MEMORY_CONFLICTS,
     DESC_MEMORY_CURATE,
     DESC_MEMORY_HEALTH,
     DESC_MEMORY_LIST,
@@ -334,6 +336,17 @@ def _register_tools(
         )(handlers.memory_acknowledge_miss)
         mcp.tool(name="memory_rename_scope", description=DESC_MEMORY_RENAME_SCOPE)(
             handlers.memory_rename_scope
+        )
+        # Corpus-inference pair (3.28.0): the server detects
+        # memory-vs-memory contradiction candidates and cross-session
+        # episode patterns mechanically; these tools are where the model
+        # arbitrates. Curation-tier by nature — same gate as
+        # memory_curate, and the curate-loop skill is their main driver.
+        mcp.tool(name="memory_conflicts", description=DESC_MEMORY_CONFLICTS)(
+            handlers.memory_conflicts
+        )
+        mcp.tool(name="episode_patterns", description=DESC_EPISODE_PATTERNS)(
+            handlers.episode_patterns
         )
 
 

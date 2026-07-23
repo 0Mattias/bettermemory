@@ -1478,11 +1478,12 @@ class TestComputeToolUsage:
         without a missing-key guard. Untelemetered tools surface too."""
         report = compute_tool_usage([])
         tool_names = {row.tool for row in report.rows}
-        # The full 25 — explicit-mapped 24 (memory_* + memory_curate +
-        # memory_proposals + episode_write + episode_handoff +
-        # episode_search + episode_promote + memory_acknowledge_miss) plus
-        # the one in TOOLS_WITHOUT_TELEMETRY (memory_health).
-        assert len(report.rows) == 25
+        # The full 27 — explicit-mapped 26 (memory_* + memory_curate +
+        # memory_proposals + memory_conflicts + episode_write +
+        # episode_handoff + episode_search + episode_promote +
+        # episode_patterns + memory_acknowledge_miss) plus the one in
+        # TOOLS_WITHOUT_TELEMETRY (memory_health).
+        assert len(report.rows) == 27
         assert "memory_search" in tool_names
         assert "memory_health" in tool_names
         assert "episode_write" in tool_names
@@ -1595,7 +1596,7 @@ class TestComputeToolUsage:
 # either the runtime registrations or the eval-side enumeration trips
 # one assertion instead of leaving the prose silently out of sync.
 # Prose authors verify against this constant.
-_EXPECTED_TOOL_COUNT = 25
+_EXPECTED_TOOL_COUNT = 27
 
 
 async def test_tool_count_matches_registered_count(tmp_path: Path) -> None:
@@ -2423,9 +2424,12 @@ class TestRenderReportMarkdown:
         treatment instead."""
         events = [_ev("search"), _ev("show")]
         doc = compute_report([], events, version="0-test")
-        # Non-vacuity: the untelemetered row is actually inside the
-        # top-10 slice the renderer publishes.
-        assert "memory_health" in [r.tool for r in doc.tool_usage.rows[:10]]
+        # Non-vacuity, inverted since the 3.28.0 tool-count growth: a
+        # structurally-zero row can no longer crack a top-10-by-count
+        # slice (11 tools sort ahead of memory_health in this fixture),
+        # so the assertion below only passes because the renderer PINS
+        # untelemetered rows into the published table past the slice.
+        assert "memory_health" not in [r.tool for r in doc.tool_usage.rows[:10]]
         md = render_report_markdown(doc)
         assert "| `memory_health` (no telemetry) | — | — |" in md
         assert "| `memory_health` | 0 |" not in md

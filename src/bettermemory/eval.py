@@ -2354,6 +2354,15 @@ _TOOL_EVENT_KIND_TO_TOOL: dict[str, str] = {
     "episode_handoff": "episode_handoff",
     "episode_search": "episode_search",
     "episode_promote": "episode_promote",
+    # Corpus-inference pair (3.28.0). Both tools record only their
+    # ACTING modes (scan / verdict / promote / dismiss) — a pure listing
+    # call leaves no event, so their rows undercount reads. Same class
+    # as `curate`, which records only on apply: the mapped kinds count
+    # the calls that changed something, which is the half curation
+    # telemetry cares about.
+    "conflict_scan": "memory_conflicts",
+    "conflict_verdict": "memory_conflicts",
+    "episode_pattern": "episode_patterns",
 }
 
 # Tools that don't emit a dedicated event of their own; the rollup
@@ -3082,7 +3091,18 @@ def render_report_markdown(doc: ReportDocument) -> str:
     lines.append("")
     lines.append("| tool | calls | share |")
     lines.append("|---|---|---|")
-    for usage_row in doc.tool_usage.rows[:10]:
+    # The slice is top-10 by count, PLUS every untelemetered row pinned
+    # in regardless of rank: those rows exist to say "not counted" (see
+    # TOOLS_WITHOUT_TELEMETRY), and at 27 tools a structurally-zero row
+    # can never crack a top-10 on count — sliced out, the note the row
+    # carries would silently vanish from the published artifact.
+    published = list(doc.tool_usage.rows[:10])
+    published.extend(
+        row
+        for row in doc.tool_usage.rows[10:]
+        if not row.has_telemetry
+    )
+    for usage_row in published:
         if not usage_row.has_telemetry:
             # Mirrors render_tool_usage_text: a tool that emits no
             # dedicated event of its own publishes as "not counted",

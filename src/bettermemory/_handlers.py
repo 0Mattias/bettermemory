@@ -64,11 +64,13 @@ log = logging.getLogger("bettermemory._handlers")
 # manager rather than these constants, so the re-export exists for
 # server.py's benefit and back-compat with any out-of-tree caller.)
 DESC_EPISODE_HANDOFF = _handlers_pkg.DESC_EPISODE_HANDOFF
+DESC_EPISODE_PATTERNS = _handlers_pkg.DESC_EPISODE_PATTERNS
 DESC_EPISODE_PROMOTE = _handlers_pkg.DESC_EPISODE_PROMOTE
 DESC_EPISODE_SEARCH = _handlers_pkg.DESC_EPISODE_SEARCH
 DESC_EPISODE_WRITE = _handlers_pkg.DESC_EPISODE_WRITE
 DESC_MEMORY_ACKNOWLEDGE_MISS = _handlers_pkg.DESC_MEMORY_ACKNOWLEDGE_MISS
 DESC_MEMORY_AUDIT_TURN = _handlers_pkg.DESC_MEMORY_AUDIT_TURN
+DESC_MEMORY_CONFLICTS = _handlers_pkg.DESC_MEMORY_CONFLICTS
 DESC_MEMORY_CURATE = _handlers_pkg.DESC_MEMORY_CURATE
 DESC_MEMORY_HEALTH = _handlers_pkg.DESC_MEMORY_HEALTH
 DESC_MEMORY_LINKS_TAIL = _handlers_pkg.DESC_MEMORY_LINKS_TAIL
@@ -494,6 +496,52 @@ class ToolHandlers:
             ctx=ctx,
         )
 
+    async def episode_patterns(
+        self,
+        promote: str | None = None,
+        dismiss: str | None = None,
+        body: str | None = None,
+        scopes: list[str] | None = None,
+        category: str = "fact",
+        confidence: str = "medium",
+        source: str = "inferred",
+        min_sessions: int = 3,
+        max_patterns: int = 5,
+        ctx: Context | None = None,
+    ) -> dict[str, Any]:
+        return await _handlers_pkg.episode_patterns(
+            self,
+            promote=promote,
+            dismiss=dismiss,
+            body=body,
+            scopes=scopes,
+            category=category,
+            confidence=confidence,
+            source=source,
+            min_sessions=min_sessions,
+            max_patterns=max_patterns,
+            ctx=ctx,
+        )
+
+    async def memory_conflicts(
+        self,
+        scan: bool = False,
+        resolve: str | None = None,
+        verdict: str | None = None,
+        note: str | None = None,
+        max_results: int = 10,
+        ctx: Context | None = None,
+    ) -> dict[str, Any]:
+        return await _handlers_pkg.memory_conflicts(
+            self,
+            scan=scan,
+            resolve=resolve,
+            verdict=verdict,
+            note=note,
+            max_results=max_results,
+            ctx=ctx,
+        )
+
     async def memory_proposals(
         self,
         action: str = "list",
@@ -714,8 +762,10 @@ SemanticModelFactory: TypeAlias = Callable[[Config], Any]
 #   `handlers/_shared.py`.
 __all__ = [
     "Context",
+    "DESC_EPISODE_PATTERNS",
     "DESC_MEMORY_ACKNOWLEDGE_MISS",
     "DESC_MEMORY_AUDIT_TURN",
+    "DESC_MEMORY_CONFLICTS",
     "DESC_MEMORY_CURATE",
     "DESC_MEMORY_HEALTH",
     "DESC_MEMORY_LINKS_TAIL",

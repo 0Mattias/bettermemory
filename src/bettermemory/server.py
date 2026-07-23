@@ -36,7 +36,8 @@ so the consuming model sees an identical list):
 - Lifecycle: memory_remove, memory_restore, memory_list_tombstones
 - Verification: memory_verify
 - Curation:  memory_record_use, memory_health, memory_audit_turn,
-             memory_acknowledge_miss, memory_rename_scope
+             memory_acknowledge_miss, memory_rename_scope,
+             memory_conflicts, episode_patterns
 - Session:   memory_scope_disable / memory_scope_enable
 """
 
