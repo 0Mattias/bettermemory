@@ -17,16 +17,24 @@ Scope:
   `memory_verify`, since "I just spot-checked this claim" is a
   natural human action. Every other surface, including the eval,
   episodes, and curation-preview pages, is strictly read-only.
-- Verdict parity with the MCP surface, by construction: search runs
-  through the same `search.search` ranker the handlers use, and the
-  staleness verdict routes through `compute_verification_status` /
-  `compute_staleness_verdict` / `compute_commit_drift` exactly as
-  `_response.py` and the `memory_show` handler wire them. The web
-  never re-derives a verdict with its own arithmetic, so it cannot
-  disagree with what the model sees. (List rows initialise the
-  verdict from verification + path drift, matching `_response`'s
-  per-hit initialisation; the detail page folds in commit drift the
-  way `memory_show` does — same split as the MCP surface itself.)
+- Verdict parity with the MCP surface, by construction: ranked search
+  runs the same `search.search` ranker on the same config inputs
+  (`handlers.search.resolve_ranking_inputs`), then serialises each hit
+  through the same response pipeline `memory_search` runs —
+  `ResponseBuilder.hit_to_dict`, then `attach_commit_drift_counts` and
+  `attach_recent_negative_outcomes`. A rendered hit's verdict is
+  therefore the string `memory_search` returns for that hit in its
+  non-expanded form, commit-drift upgrade included; the web computes
+  no verdict arithmetic of its own. The detail page folds in commit
+  drift the way `memory_show` does — which is also where the
+  body-level refinement `expand_top` applies to the MCP top hit
+  lives, since no list surface loads bodies.
+  The one surface that stops short is the no-query BROWSE list
+  (`_render_memory_list`): `store.list_summaries` carries no body, so
+  neither path drift nor commit anchors are derivable without loading
+  every memory. Those rows deliberately wear a *verification* chip
+  (`compute_verification_status`) and never a staleness verdict, so
+  they cannot contradict the verdict-bearing surfaces.
 - No JS framework: server-side rendered HTML, minimal inline CSS,
   no template engine. Each route returns a complete HTML response
   built from the helper functions below. Cheap to maintain, no
@@ -54,11 +62,13 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, cast
 
+from ._response import ResponseBuilder
 from .config import Config
 from .consolidate import consolidate
 from .episodes import EpisodeStore
 from .eval import compute_eval
 from .events import iter_all_events
+from .handlers.search import resolve_ranking_inputs
 from .health import report_for_directory
 from .models import validate_scope
 from .origin import capture as capture_origin
@@ -376,12 +386,48 @@ def _scope_chips(scopes: Any) -> str:
 
 
 def _date(dt: Any) -> str:
-    """Short date for list rows; full ISO stays on the detail page."""
+    """Short date for list rows; full ISO stays on the detail page.
+
+    Accepts a `datetime` or an already-serialised ISO-8601 string — the
+    ranked-hit rows render from `ResponseBuilder.hit_to_dict` output,
+    which stringifies timestamps — trimming the string form to its date
+    prefix so both inputs render the same way.
+    """
     try:
         formatted = str(dt.strftime("%Y-%m-%d"))
     except AttributeError:
-        formatted = str(dt)
+        formatted = str(dt)[:10]
     return html.escape(formatted)
+
+
+def _commit_drift_chip(count: int | None) -> str:
+    """Commit-drift badge, shared by the ranked-hit rows and the detail
+    page so the two spell the same signal identically.
+
+    `None` means the signal isn't applicable for this memory (caller
+    outside its origin repo, never verified, or no claim anchors) and
+    renders nothing — mirroring the MCP surface's omit-the-key contract
+    rather than inventing a third "unknown" badge.
+    """
+    if count is None:
+        return ""
+    if count:
+        return f'<span class="chip warn">commit drift: {int(count)} since verify</span>'
+    return '<span class="chip ok">commit drift: clean</span>'
+
+
+def _negative_outcome_chips(entries: Any) -> str:
+    """`recent_negative_outcomes` badges — the same rejections
+    `memory_search` annotates a hit with, so a curator sees what the
+    model sees ("this was ignored twice; stop re-surfacing it")."""
+    if not entries:
+        return ""
+    parts: list[str] = []
+    for entry in entries:
+        label = str(entry.get("outcome") or "?")
+        count = int(entry.get("count_in_window") or 0)
+        parts.append(f'<span class="chip bad">{html.escape(label)} ×{count}</span>')
+    return "".join(parts)
 
 
 def _verification_chip(
@@ -518,19 +564,29 @@ def _render_search_bar(query: str, scope_filter: str) -> str:
 
 
 def _render_hits(
-    hits: list[Any],
+    hits: list[dict[str, Any]],
     *,
     query: str,
     scope_filter: str,
-    stale_after_days: int,
-    now: datetime,
 ) -> str:
     """Ranked search results, verdict-first.
 
-    Each hit's verdict is initialised exactly the way `_response.py`
-    initialises a search hit's: verification status + path drift, with
-    commit drift folded in only where repo context exists (the detail
-    page). Same functions, same inputs, no web-side arithmetic.
+    Takes SERIALISED hits — `ResponseBuilder.hit_to_dict` output with
+    `attach_commit_drift_counts` / `attach_recent_negative_outcomes`
+    already applied — not raw `MemoryHit`s. That is the parity contract:
+    the verdict rendered here is the string `memory_search` returns for
+    the same hit in its NON-expanded form, commit-drift upgrade
+    included. (`expand_top=True` additionally re-derives the top hit's
+    verdict from the loaded body; no list surface loads bodies, so that
+    refinement lives on the detail page instead, which does the same
+    body-level work per memory.) The previous shape recomputed the
+    verdict per row from verification + path drift only — the
+    pre-`attach` INITIAL value — so any hit whose commit drift raised
+    the verdict rendered a "fresh" chip the detail page contradicted one
+    click away.
+
+    Nothing here derives a verdict; it reads `staleness_verdict` off the
+    dict and maps it to a chip.
     """
     parts: list[str] = [_render_search_bar(query, scope_filter)]
     parts.append(
@@ -545,38 +601,36 @@ def _render_hits(
         return "".join(parts)
 
     for hit in hits:
-        verification = compute_verification_status(
-            hit.last_verified_at, now=now, stale_after_days=stale_after_days
-        )
-        verdict = compute_staleness_verdict(
-            verification=verification,
-            path_drift_missing=hit.path_drift_missing,
-            commit_drift_count=None,
-        )
-        cat = getattr(hit, "category", None)
+        hit_id = str(hit.get("id", ""))
+        cat_val = hit.get("category")
         cat_chip = ""
-        if cat is not None:
-            cat_val = str(getattr(cat, "value", cat))
-            if cat_val != "fact":
-                cat_chip = f'<span class="chip warn">{html.escape(cat_val)}</span>'
+        if cat_val is not None and str(cat_val) != "fact":
+            cat_chip = f'<span class="chip warn">{html.escape(str(cat_val))}</span>'
+        missing = int(hit.get("path_drift_missing") or 0)
         drift_chip = (
-            f'<span class="chip bad">paths missing: {hit.path_drift_missing}</span>'
-            if hit.path_drift_missing
-            else ""
+            f'<span class="chip bad">paths missing: {missing}</span>' if missing else ""
         )
-        matched = ", ".join(list(hit.match_terms)[:8])
-        title = (hit.snippet or hit.id).splitlines()[0][:140]
+        cd_count = hit.get("commit_drift_count")
+        cd_chip = _commit_drift_chip(
+            int(cd_count) if isinstance(cd_count, int) else None
+        )
+        neg_chips = _negative_outcome_chips(hit.get("recent_negative_outcomes"))
+        matched = ", ".join(list(hit.get("match_terms") or [])[:8])
+        title = (str(hit.get("snippet") or "") or hit_id).splitlines()[0][:140]
         parts.append(
             f'<div class="card">'
-            f'<h3><a href="/memories/{html.escape(hit.id)}">'
+            f'<h3><a href="/memories/{html.escape(hit_id)}">'
             f"{html.escape(title)}</a></h3>"
-            f'<div class="hit-meta">{_verdict_chip(verdict)}'
-            f'<span class="chip">relevance {html.escape(hit.relevance)}</span>'
-            f"{cat_chip}{drift_chip}{_scope_chips(hit.scopes)}</div>"
-            f'<div class="muted">score {hit.score:g} · matched: '
-            f"{html.escape(matched) or '—'} · "
-            f'<span class="mono">{html.escape(hit.id)}</span> · '
-            f"updated {_date(hit.updated)}</div>"
+            f'<div class="hit-meta">'
+            f"{_verdict_chip(str(hit.get('staleness_verdict', '')))}"
+            f'<span class="chip">relevance '
+            f"{html.escape(str(hit.get('relevance', '')))}</span>"
+            f"{cat_chip}{drift_chip}{cd_chip}{neg_chips}"
+            f"{_scope_chips(hit.get('scopes') or [])}</div>"
+            f'<div class="muted">score {float(hit.get("score") or 0.0):g} '
+            f"· matched: {html.escape(matched) or '—'} · "
+            f'<span class="mono">{html.escape(hit_id)}</span> · '
+            f"updated {_date(hit.get('updated'))}</div>"
             f"</div>"
         )
     return "".join(parts)
@@ -673,15 +727,9 @@ def _render_memory_detail(
             f' <span class="chip warn">stale '
             f"(verified {int(verification.age_days or 0)}d ago)</span>"
         )
-    cd_chip = ""
-    if commit_drift is not None:
-        if commit_drift.commits_since_verify:
-            cd_chip = (
-                f'<span class="chip warn">commit drift: '
-                f"{commit_drift.commits_since_verify} since verify</span>"
-            )
-        else:
-            cd_chip = '<span class="chip ok">commit drift: clean</span>'
+    cd_chip = _commit_drift_chip(
+        commit_drift.commits_since_verify if commit_drift is not None else None
+    )
 
     def _path_list(title: str, paths: Any, note: str = "") -> str:
         if not paths:
@@ -750,10 +798,80 @@ def _render_memory_detail(
     )
 
 
+# Which `HealthReport.to_dict()` keys the /health page actually puts on
+# screen (counting the `_render_overview` block it embeds), and which it
+# deliberately leaves off. The two sets partition the report's key set;
+# `test_web.py` pins that, so a bucket added to `HealthReport` cannot
+# land unrendered and unnoticed — it fails the test until someone either
+# renders it or files it under the disclaimed set with a reason.
+_HEALTH_RENDERED_BUCKETS = frozenset(
+    {
+        "window_days",
+        "total_active_memories",
+        "total_events",
+        "distinct_sessions",
+        "dead_weight",
+        "cold_memories",
+        "heavily_used",
+        "contradicted",
+        "scope_health",
+        "rare_scopes",
+        "orphan_use_events",
+        "verification_debt",
+        "commit_drift_debt",
+        "silent_misses",
+        "recent_silent_misses",
+        "cold_endorsement_memories",
+        "recommendations",
+    }
+)
+
+# Deliberately not rendered — each with the reason, because "we show
+# everything" was the claim this page could not keep.
+_HEALTH_DISCLAIMED_BUCKETS = frozenset(
+    {
+        # The page is generated per request; the header already says
+        # which store, and "now" is the only possible value.
+        "generated_at",
+        # Transient-marker fire/override rates: a write-path diagnostic
+        # (is the durability heuristic calibrated?), not a curation
+        # action a human takes from this page. `bettermemory health
+        # --json` carries it.
+        "marker_stats",
+        # Subsumed by the richer `scope_health` table below, which
+        # carries the same per-scope active count plus the rot columns.
+        "scope_distribution",
+    }
+)
+
+
 def _render_health(report: Any) -> str:
-    """Full memory_health rollup, every bucket rendered."""
+    """The memory_health rollup, rendered for a curation pass.
+
+    Not every bucket: `_HEALTH_RENDERED_BUCKETS` is what reaches the
+    page and `_HEALTH_DISCLAIMED_BUCKETS` is what doesn't (with the
+    reason on each). The two partition `HealthReport.to_dict()`'s keys
+    and a test enforces that, so a future bucket can't quietly go
+    missing here. For the full machine shape use `memory_health` or
+    `bettermemory health --json`.
+    """
     parts: list[str] = []
     parts.append(_render_overview(report))
+
+    orphans = int(getattr(report, "orphan_use_events", 0) or 0)
+    if orphans:
+        # Warn row only when it fired — a zero here is the healthy
+        # default and a permanent "0 orphans" line would be noise. The
+        # bucket is the fabrication smoke test: record_use against ids
+        # that resolve to neither an active nor a tombstoned memory.
+        parts.append(
+            f'<div class="card"><div class="hit-meta">'
+            f'<span class="chip bad">{orphans} orphan use event(s)</span></div>'
+            f'<p class="muted">record_use calls naming ids that exist neither '
+            f"as active memories nor as tombstones. A few can be a rotated "
+            f"log or a hard-deleted file; a growing count usually means "
+            f"fabricated ULIDs.</p></div>"
+        )
 
     if report.dead_weight:
         parts.append("<h2>Dead weight</h2>")
@@ -895,7 +1013,15 @@ def _render_health(report: Any) -> str:
 
 
 def _fmt_rate(rate: Any) -> str:
-    """One RateCI as `0.07 [0.06, 0.09] · 91/1282` (or n/a on zero-denominator)."""
+    """One RateCI as `0.07 [0.06, 0.09] · 91/1282` (or n/a on zero-denominator).
+
+    A `torn_read` rate carries the clamp warning `eval.render_text`
+    prints, mirrored to this cell: `RateCI.from_counts` clamps the
+    displayed value to 1.0 when the numerator exceeds the denominator,
+    and a bare "1.00" with a numerator larger than its denominator next
+    to it reads as a corrupt table rather than the measurement artifact
+    it usually is.
+    """
     if rate is None or rate.rate is None:
         n = getattr(rate, "numerator", 0) if rate is not None else 0
         d = getattr(rate, "denominator", 0) if rate is not None else 0
@@ -905,7 +1031,14 @@ def _fmt_rate(rate: Any) -> str:
         if rate.lower is not None and rate.upper is not None
         else ""
     )
-    return f"{rate.rate:.2f}{ci} · {rate.numerator}/{rate.denominator}"
+    torn = (
+        " · clamped to 1.0 (numerator > denominator — usually a windowing "
+        "artifact, where a use event is in-window while its retrieval aged "
+        "out; less often a log read mid-rotation)"
+        if getattr(rate, "torn_read", False)
+        else ""
+    )
+    return f"{rate.rate:.2f}{ci} · {rate.numerator}/{rate.denominator}{torn}"
 
 
 def _render_eval(report: Any, *, window_days: int) -> str:
@@ -1027,6 +1160,36 @@ def _render_curation(report: Any) -> str:
                 f"</div>"
             )
 
+    if report.polarity_skipped:
+        # The pairs the dedup guard kept OUT of `dedup_candidates`:
+        # similar enough to merge, but the bodies disagree (opposite
+        # negation polarity, or diverging numbers). Conflict-shaped, not
+        # duplicate-shaped — so it gets its own section rather than
+        # riding along under Near-duplicates, and points at the
+        # arbitration tool instead of a merge.
+        any_content = True
+        parts.append("<h2>Polarity-skipped pairs</h2>")
+        parts.append(
+            '<p class="muted">Above the dedup threshold but the two bodies '
+            "disagree — kept out of the merge list on purpose (the apply "
+            "path never touches these). Arbitrate via "
+            "<code>memory_conflicts</code>; wave through the benign ones "
+            "(an incidental negator, an added-detail number).</p>"
+        )
+        for ps in report.polarity_skipped:
+            parts.append(
+                f'<div class="card">'
+                f'<div class="hit-meta"><span class="chip warn">'
+                f"{ps.similarity:.0%} similar</span>"
+                f'<span class="chip">{html.escape(ps.method)}</span>'
+                f'<span class="chip bad">{html.escape(ps.detector)}</span></div>'
+                f'<p><a href="/memories/{html.escape(ps.memory_id_a)}">'
+                f"{html.escape(ps.summary_a or ps.memory_id_a)}</a><br/>"
+                f'<a href="/memories/{html.escape(ps.memory_id_b)}">'
+                f"{html.escape(ps.summary_b or ps.memory_id_b)}</a></p>"
+                f"</div>"
+            )
+
     if report.demotion_candidates:
         any_content = True
         parts.append("<h2>Demotion candidates</h2>")
@@ -1061,8 +1224,8 @@ def _render_curation(report: Any) -> str:
     if not any_content:
         parts.append(
             '<p class="muted">Nothing to curate — no near-duplicates, '
-            "demotion candidates, cold scopes, or typo pairs in the "
-            "window.</p>"
+            "polarity-skipped pairs, demotion candidates, cold scopes, or "
+            "typo pairs in the window.</p>"
         )
     return "".join(parts)
 
@@ -1197,16 +1360,30 @@ def build_app(
                 detail="missing or invalid CSRF token",
             )
 
-    @app.get("/", response_class=HTMLResponse)
-    def index() -> HTMLResponse:
-        report = report_for_directory(
+    def _health_report() -> Any:
+        """The one `report_for_directory` call shape both health-bearing
+        routes use, threading every config knob the `memory_health`
+        handler threads. Centralised so the overview and the health page
+        cannot end up computing different buckets from the same store —
+        `cold_endorsement_ratio_threshold` was previously dropped on
+        both, silently reverting the bucket to its strict
+        `explicit == 0` semantics for the web only.
+        """
+        return report_for_directory(
             store.root,
             window_days=30,
             heavily_used_top_k=10,
             heavily_used_min_applied=config.behavior.heavily_used_min_applied,
             verification_stale_days=config.behavior.verification_stale_days,
+            cold_endorsement_ratio_threshold=(
+                config.behavior.cold_endorsement_ratio_threshold
+            ),
             caller_origin=capture_origin(),
         )
+
+    @app.get("/", response_class=HTMLResponse)
+    def index() -> HTMLResponse:
+        report = _health_report()
         return _layout_resp(
             "Overview",
             _render_overview(report, tombstone_count=len(store.list_tombstones())),
@@ -1245,22 +1422,55 @@ def build_app(
                 mode_raw = "hybrid"
             if mode_raw == "semantic":
                 mode_raw = "hybrid"
+            memories_pool = store.load_all()
+            # The `[behavior]` ranking inputs, resolved through the same
+            # helper `handlers.search.memory_search` calls — flipping
+            # `endorsement_boost` / `outcome_demotion` /
+            # `corroboration_boost` or retuning the recency half-life
+            # now moves both surfaces or neither.
+            ranking = resolve_ranking_inputs(store.root, memories_pool, config.behavior)
             hits = run_search(
-                store.load_all(),
+                memories_pool,
                 q,
                 scopes=[scope] if scope else None,
                 max_results=_SEARCH_MAX_RESULTS,
                 mode=cast(SearchMode, mode_raw),
+                applied_by_id=ranking.applied_by_id,
+                negative_by_id=ranking.negative_by_id,
+                corroboration_boost=ranking.corroboration_boost,
+                half_life_days=ranking.half_life_days,
             )
+            # Serialise through the MCP response pipeline rather than
+            # re-deriving anything: `hit_to_dict` sets the initial
+            # verdict, `attach_commit_drift_counts` folds in the
+            # commit-drift upgrade (the step the web used to skip, so a
+            # drifted-but-calendar-fresh hit rendered a "fresh" chip its
+            # own detail page contradicted), and
+            # `attach_recent_negative_outcomes` annotates the rejections
+            # the model is told about.
+            builder = ResponseBuilder(stale_after_days=stale_days)
+            hit_dicts = [builder.hit_to_dict(h, now=now) for h in hits]
+            builder.attach_commit_drift_counts(
+                hit_dicts, hits, memories_pool, caller_origin=capture_origin()
+            )
+            if hit_dicts:
+                events = ranking.events
+                if events is None:
+                    # Neither ranking tally ran, so no event read has
+                    # been paid yet — take the annotation's own window,
+                    # exactly as the handler does on this branch.
+                    from .audit import ATTRIBUTION_LOOKBACK_SECONDS
+                    from .events import iter_events_window
+
+                    events = list(
+                        iter_events_window(store.root, ATTRIBUTION_LOOKBACK_SECONDS)
+                    )
+                builder.attach_recent_negative_outcomes(
+                    hit_dicts, hits, events, now=now
+                )
             return _layout_resp(
                 "Memories",
-                _render_hits(
-                    hits,
-                    query=q,
-                    scope_filter=scope,
-                    stale_after_days=stale_days,
-                    now=now,
-                ),
+                _render_hits(hit_dicts, query=q, scope_filter=scope),
                 active="/memories",
             )
         summaries = store.list_summaries(scopes=[scope] if scope else None)
@@ -1355,15 +1565,9 @@ def build_app(
 
     @app.get("/health", response_class=HTMLResponse)
     def health() -> HTMLResponse:
-        report = report_for_directory(
-            store.root,
-            window_days=30,
-            heavily_used_top_k=10,
-            heavily_used_min_applied=config.behavior.heavily_used_min_applied,
-            verification_stale_days=config.behavior.verification_stale_days,
-            caller_origin=capture_origin(),
+        return _layout_resp(
+            "Health", _render_health(_health_report()), active="/health"
         )
-        return _layout_resp("Health", _render_health(report), active="/health")
 
     @app.get("/curation", response_class=HTMLResponse)
     def curation() -> HTMLResponse:

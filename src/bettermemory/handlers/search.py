@@ -15,8 +15,10 @@ Description-edit history:
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from datetime import datetime
-from typing import TYPE_CHECKING, Any, cast
+from pathlib import Path
+from typing import TYPE_CHECKING, Any, NamedTuple, cast
 
 from ..events import _event_id_list
 from ..models import utcnow, validate_scope
@@ -41,6 +43,7 @@ from ._shared import Context, _advance_turn, _attach_use_tokens
 
 if TYPE_CHECKING:
     from .._handlers import ToolHandlers
+    from ..config import BehaviorConfig
 
 
 DESC_MEMORY_SEARCH = (
@@ -237,6 +240,114 @@ def _active_negative_counts(
     return counts
 
 
+class RankingInputs(NamedTuple):
+    """Every `[behavior]`-driven input `search.search` takes beyond the
+    query and the candidate list.
+
+    One shape so the two surfaces that rank memories — this handler and
+    the web UI's `/memories` search — cannot drift apart: a knob lands
+    in `resolve_ranking_inputs` once and both callers thread it. Before
+    this existed the web ran the same ranker with the config inputs
+    dropped, so `endorsement_boost` / `outcome_demotion` /
+    `corroboration_boost` / a tuned `recency_boost_half_life_days`
+    reordered results for the model and did nothing for the human
+    reading the curation page.
+
+    `events` is the raw windowed event read the two tallies shared —
+    `None` when neither tally ran. Exposed so a caller that needs the
+    same window for a downstream annotation
+    (`ResponseBuilder.attach_recent_negative_outcomes`) can reuse it
+    instead of paying a second read.
+    """
+
+    applied_by_id: dict[str, int] | None
+    negative_by_id: dict[str, tuple[int, int]] | None
+    corroboration_boost: bool
+    half_life_days: float
+    events: list[dict[str, Any]] | None
+
+
+def resolve_ranking_inputs(
+    root: Path,
+    memories: Sequence[Any],
+    behavior: "BehaviorConfig",
+    *,
+    now: datetime | None = None,
+) -> RankingInputs:
+    """Build the `RankingInputs` for one search over `memories`.
+
+    Usage-aware ranking, both directions (each opt-in via `[behavior]`):
+    `endorsement_boost` tallies how many times the model EXPLICITLY
+    applied each candidate (bounded nudge up); `outcome_demotion`
+    tallies still-active ignored/contradicted outcomes (bounded slide
+    down — see `_active_negative_counts` for what "active" excludes).
+    Both stay `None` (ranker neutral) when their flag is off, so the
+    shipped default ranking is unchanged.
+
+    Window-aware read (round 88): both audit producers
+    (`hook.run_audit`, `memory_audit_turn`) tally over
+    `iter_events_window`, so this reads the same substrate — reading the
+    active log only meant the tally silently reset to `{}` the moment a
+    rotation cut the applied events into an archive while the probes
+    still saw the history, and a near-tie top-1 could rank differently
+    in the audit than in the model's actual retrieval.
+
+    One event read serves up to three consumers (endorsement tally,
+    demotion tally, and the caller's `recent_negative_outcomes`
+    annotation). With demotion on, the read widens from the 600s
+    attribution horizon to the full negative window: the demotion tally
+    needs it, and the annotation's 30-day contract becomes guaranteed
+    instead of best-effort (a 600s request only rotation-proofs 600s of
+    coverage; older events survive by luck of the active log's size).
+    The widened feed cannot widen the OTHER tallies — both
+    count-functions enforce their own cutoffs internally, which is
+    exactly why their window arguments are mandatory.
+    """
+    applied_by_id: dict[str, int] | None = None
+    negative_by_id: dict[str, tuple[int, int]] | None = None
+    events: list[dict[str, Any]] | None = None
+    demotion_on = behavior.outcome_demotion
+    if (behavior.endorsement_boost or demotion_on) and memories:
+        from ..audit import ATTRIBUTION_LOOKBACK_SECONDS
+        from ..events import iter_events_window
+
+        window_seconds = ATTRIBUTION_LOOKBACK_SECONDS
+        if demotion_on:
+            window_seconds = max(window_seconds, NEGATIVE_OUTCOME_WINDOW_DAYS * 86400)
+        events = list(iter_events_window(root, window_seconds))
+        tally_now = now if now is not None else utcnow()
+        candidate_ids = {m.id for m in memories}
+        if behavior.endorsement_boost:
+            applied_by_id = _explicit_applied_counts(
+                events,
+                candidate_ids,
+                now=tally_now,
+                lookback_seconds=ATTRIBUTION_LOOKBACK_SECONDS,
+            )
+        if demotion_on:
+            negative_by_id = _active_negative_counts(
+                events,
+                candidate_ids,
+                now=tally_now,
+                window_days=NEGATIVE_OUTCOME_WINDOW_DAYS,
+                resolution_ts_by_id={
+                    m.id: (
+                        max(m.updated, m.last_verified_at)
+                        if m.last_verified_at is not None
+                        else m.updated
+                    )
+                    for m in memories
+                },
+            )
+    return RankingInputs(
+        applied_by_id=applied_by_id,
+        negative_by_id=negative_by_id,
+        corroboration_boost=behavior.corroboration_boost,
+        half_life_days=behavior.recency_boost_half_life_days,
+        events=events,
+    )
+
+
 async def memory_search(
     deps: "ToolHandlers",
     query: str,
@@ -422,69 +533,16 @@ async def memory_search(
                 # assignment that makes it true.
                 prefiltered = False
 
-    # Usage-aware ranking, both directions (each opt-in via [behavior]):
-    # `endorsement_boost` tallies how many times the model EXPLICITLY
-    # applied each candidate (bounded nudge up); `outcome_demotion`
-    # tallies still-active ignored/contradicted outcomes (bounded slide
-    # down — see `_active_negative_counts` for what "active" excludes).
-    # The event list is reused below for `recent_negative_outcomes`, so
-    # enabling either adds no extra I/O on a hit-producing search. Both
-    # stay None (ranker neutral) when their flag is off — the shipped
-    # default is unchanged.
-    # Window-aware read (round 88): both audit producers (`hook.run_audit`,
-    # `memory_audit_turn`) tally over `iter_events_window` while this
-    # handler read the active log only (`iter_events`) — so the moment a
-    # rotation cut the applied events into an archive, the production
-    # tally silently reset to {} while the probes still saw the history,
-    # and a near-tie top-1 could rank differently in the audit than in
-    # the model's actual retrieval. One substrate at all three sites,
-    # sharing the probes' attribution window; this also fixes the
-    # production tally's reset-on-rotation as a side effect.
-    recent_events: list[dict[str, Any]] | None = None
-    applied_by_id: dict[str, int] | None = None
-    negative_by_id: dict[str, tuple[int, int]] | None = None
-    demotion_on = deps.config.behavior.outcome_demotion
-    if (deps.config.behavior.endorsement_boost or demotion_on) and memories:
-        from ..audit import ATTRIBUTION_LOOKBACK_SECONDS
-        from ..events import iter_events_window
-
-        # One event read serves up to three consumers (endorsement tally,
-        # demotion tally, the recent_negative_outcomes annotation below).
-        # With demotion on, the read widens from the 600s attribution
-        # horizon to the full negative window: the demotion tally needs
-        # it, and the annotation's 30-day contract becomes guaranteed
-        # instead of best-effort (a 600s request only rotation-proofs
-        # 600s of coverage; older events survive by luck of the active
-        # log's size). The widened feed cannot widen the OTHER tallies —
-        # both count-functions enforce their own cutoffs internally,
-        # which is exactly why their window arguments are mandatory.
-        window_seconds = ATTRIBUTION_LOOKBACK_SECONDS
-        if demotion_on:
-            window_seconds = max(window_seconds, NEGATIVE_OUTCOME_WINDOW_DAYS * 86400)
-        recent_events = list(iter_events_window(deps.store.root, window_seconds))
-        tally_now = utcnow()
-        if deps.config.behavior.endorsement_boost:
-            applied_by_id = _explicit_applied_counts(
-                recent_events,
-                {m.id for m in memories},
-                now=tally_now,
-                lookback_seconds=ATTRIBUTION_LOOKBACK_SECONDS,
-            )
-        if demotion_on:
-            negative_by_id = _active_negative_counts(
-                recent_events,
-                {m.id for m in memories},
-                now=tally_now,
-                window_days=NEGATIVE_OUTCOME_WINDOW_DAYS,
-                resolution_ts_by_id={
-                    m.id: (
-                        max(m.updated, m.last_verified_at)
-                        if m.last_verified_at is not None
-                        else m.updated
-                    )
-                    for m in memories
-                },
-            )
+    # Config-driven ranking inputs (usage tallies + the boost/half-life
+    # knobs), resolved through the shared helper the web UI's /memories
+    # search calls too — see `resolve_ranking_inputs` for what each one
+    # does and why the event read is windowed. The event list it returns
+    # is reused below for `recent_negative_outcomes`, so enabling either
+    # tally adds no extra I/O on a hit-producing search.
+    ranking = resolve_ranking_inputs(deps.store.root, memories, deps.config.behavior)
+    recent_events: list[dict[str, Any]] | None = ranking.events
+    applied_by_id = ranking.applied_by_id
+    negative_by_id = ranking.negative_by_id
 
     # BM25 corpus statistics. Only wired when the FTS prefilter actually
     # served the candidates: that is the case where `memories` is a
@@ -525,13 +583,13 @@ async def memory_search(
         query,
         applied_by_id=applied_by_id,
         negative_by_id=negative_by_id,
-        corroboration_boost=deps.config.behavior.corroboration_boost,
+        corroboration_boost=ranking.corroboration_boost,
         scopes=scopes,
         excluded_scopes=set(state.disabled_scopes),
         repo_filter=repo_filter,
         worktree_filter=worktree_filter,
         max_results=max_results,
-        half_life_days=deps.config.behavior.recency_boost_half_life_days,
+        half_life_days=ranking.half_life_days,
         mode=cast(SearchMode, resolved_mode),
         semantic_model=semantic_model,
         # Browse mode for the natural "what's new since last session"
@@ -766,4 +824,9 @@ async def memory_search(
     return out
 
 
-__all__ = ["DESC_MEMORY_SEARCH", "memory_search"]
+__all__ = [
+    "DESC_MEMORY_SEARCH",
+    "RankingInputs",
+    "memory_search",
+    "resolve_ranking_inputs",
+]

@@ -25,6 +25,18 @@ from bettermemory.store import Store
 
 from .conftest import shielded_child_env
 
+# Reuse the commit-drift fixture helpers rather than re-implementing a
+# second git harness: the parity test below has to build the exact repo
+# shape `test_server_commit_drift.py` builds for the MCP surface, since
+# the point is that both surfaces read the same signal.
+from .test_server_commit_drift import (
+    _GIT_AVAILABLE,
+    _REMOTE,
+    _commit_at,
+    _commit_touching,
+    _init_repo,
+)
+
 
 # Skip the whole module when the ui extra isn't available.
 fastapi = pytest.importorskip("fastapi")
@@ -650,6 +662,273 @@ def test_navigation_links_present(client: Any) -> None:
     assert r.status_code == 200
     for path in ("/", "/memories", "/health", "/tombstones"):
         assert f'href="{path}"' in r.text
+
+
+# ---------------------------------------------------------------------------
+# Verdict parity with the MCP surface
+#
+# The web's entire trust claim is "it computes nothing itself". These
+# tests are the enforcement: each one fails if a surface starts deriving
+# its own answer, or if a config knob / response decorator lands on the
+# MCP side only.
+# ---------------------------------------------------------------------------
+
+
+def _app_with(memory_dir: Path, store: Store, behavior: Any) -> Any:
+    from bettermemory.web import build_app
+
+    cfg = Config(storage=StorageConfig(directory=str(memory_dir)), behavior=behavior)
+    return TestClient(build_app(cfg, store))
+
+
+@pytest.mark.skipif(not _GIT_AVAILABLE, reason="git not on PATH")
+def test_search_hits_fold_in_commit_drift_like_the_mcp_surface(
+    memory_dir: Path, store: Store, tmp_path: Path, monkeypatch: Any
+) -> None:
+    """The 🔴 regression this section exists for.
+
+    A memory verified moments ago is calendar-fresh and cites a path
+    that still exists, so verification + path drift alone say "fresh" —
+    which is exactly the initial verdict `hit_to_dict` sets and the old
+    `_render_hits` recomputed. `memory_search` then runs
+    `attach_commit_drift_counts`, which counts the commits that touched
+    the cited anchor since the verify and RAISES the verdict. The web
+    skipped that step, so this page rendered a green "fresh" chip while
+    its own detail page (which folds commit drift in) said spot-check —
+    the false-negative direction, steering a curator away from the
+    spot-check.
+    """
+    from datetime import datetime, timezone
+
+    from bettermemory.origin import Origin
+
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    _init_repo(repo)
+    notes = repo / "notes.md"
+    notes.write_text("anchor\n", encoding="utf-8")
+    subprocess.run(
+        ["git", "add", "notes.md"], cwd=repo, check=True, capture_output=True
+    )
+    _commit_at(repo, "add notes", when=datetime(2025, 1, 1, tzinfo=timezone.utc))
+
+    origin = Origin(cwd=str(repo), repo=_REMOTE, branch="main")
+    m = store.write(
+        content=f"epsilon widget rules live in {notes}",
+        scopes=["tools"],
+        origin=origin,
+    )
+    store.mark_verified(m.id)
+    # A commit that TOUCHES the cited anchor, after the verify.
+    _commit_touching(repo, "post", when=datetime(2099, 1, 1, tzinfo=timezone.utc))
+
+    monkeypatch.setattr("bettermemory.web.capture_origin", lambda cwd=None: origin)
+    client = _app_with(memory_dir, store, Config().behavior)
+
+    r = client.get("/memories", params={"q": "epsilon widget"})
+    assert r.status_code == 200
+    assert "commit drift: 1 since verify" in r.text
+    assert "spot-check recommended" in r.text
+    # And specifically NOT the green chip the pre-fix render produced.
+    assert '<span class="chip ok">fresh</span>' not in r.text
+    # The detail page for the same memory agrees — that agreement is the
+    # property the bug broke.
+    detail = client.get(f"/memories/{m.id}")
+    assert "commit drift: 1 since verify" in detail.text
+    assert "spot-check recommended" in detail.text
+
+
+def test_search_threads_every_ranking_input_the_handler_threads(
+    memory_dir: Path, store: Store, monkeypatch: Any
+) -> None:
+    """Ranking parity, pinned against future one-sided knobs.
+
+    `handlers.search.resolve_ranking_inputs` is the single source of the
+    config-driven ranker inputs, and every field it carries except the
+    shared event read is a `search.search` keyword. Asserting against
+    `RankingInputs._fields` means a knob added to the helper (and wired
+    into the MCP handler) fails HERE until the web threads it too —
+    which is the failure mode that let the web run the same ranker with
+    endorsement/demotion/corroboration all silently dropped.
+    """
+    from bettermemory.config import BehaviorConfig
+    from bettermemory.handlers.search import RankingInputs
+    from bettermemory.search import search as real_search
+
+    captured: dict[str, Any] = {}
+
+    def spy(*args: Any, **kwargs: Any) -> Any:
+        captured.update(kwargs)
+        return real_search(*args, **kwargs)
+
+    monkeypatch.setattr("bettermemory.web.run_search", spy)
+
+    store.write(content="delta pipeline runbook", scopes=["tools"])
+    client = _app_with(
+        memory_dir,
+        store,
+        BehaviorConfig(
+            endorsement_boost=True,
+            outcome_demotion=True,
+            corroboration_boost=True,
+            recency_boost_half_life_days=7.0,
+        ),
+    )
+    r = client.get("/memories", params={"q": "delta runbook"})
+    assert r.status_code == 200
+
+    expected = set(RankingInputs._fields) - {"events"}
+    assert expected <= set(captured), (
+        f"web search dropped ranking inputs: {sorted(expected - set(captured))}"
+    )
+    assert captured["corroboration_boost"] is True
+    assert captured["half_life_days"] == 7.0
+    # Both tallies RAN (empty dicts), rather than being left at the
+    # ranker-neutral None the dropped-input shape produced.
+    assert captured["applied_by_id"] == {}
+    assert captured["negative_by_id"] == {}
+
+
+def test_search_hits_carry_recent_negative_outcomes(
+    memory_dir: Path, store: Store
+) -> None:
+    """`attach_recent_negative_outcomes` is part of the hit pipeline the
+    model sees: a memory the model explicitly ignored is annotated so it
+    stops re-surfacing it. A curator scanning the same ranked list gets
+    the same annotation instead of a row that looks clean."""
+    from bettermemory.events import Recorder
+
+    m = store.write(content="zeta deployment checklist", scopes=["tools"])
+    rec = Recorder(root=store.root, session_id="test-negative")
+    rec.record("use", ids=[m.id], outcome="ignored", auto=False)
+
+    client = _app_with(memory_dir, store, Config().behavior)
+    r = client.get("/memories", params={"q": "zeta checklist"})
+    assert r.status_code == 200
+    assert "ignored ×1" in r.text
+
+
+def test_health_routes_thread_the_cold_endorsement_ratio_threshold(
+    memory_dir: Path, store: Store, monkeypatch: Any
+) -> None:
+    """Both health-bearing routes must pass the same knob the
+    `memory_health` handler passes. Dropping it silently reverted the
+    cold-endorsement bucket to its strict `explicit == 0` semantics on
+    the web only — the page a curator uses to decide what to prune."""
+    from bettermemory.config import BehaviorConfig
+    from bettermemory.health import report_for_directory as real_report
+
+    captured: list[dict[str, Any]] = []
+
+    def spy(root: Any, **kwargs: Any) -> Any:
+        captured.append(kwargs)
+        return real_report(root, **kwargs)
+
+    monkeypatch.setattr("bettermemory.web.report_for_directory", spy)
+
+    client = _app_with(
+        memory_dir, store, BehaviorConfig(cold_endorsement_ratio_threshold=0.25)
+    )
+    assert client.get("/").status_code == 200
+    assert client.get("/health").status_code == 200
+    assert len(captured) == 2, "both routes must build a health report"
+    for kwargs in captured:
+        assert kwargs["cold_endorsement_ratio_threshold"] == 0.25
+
+
+def test_curation_renders_polarity_skipped_pairs() -> None:
+    """The consolidate engine's polarity/numeric guard produces pairs
+    that are conflicts, not duplicates. The page dropped them entirely,
+    so a store whose ONLY finding was a skipped pair rendered "nothing
+    to curate" — the empty state actively contradicting the report."""
+    from bettermemory.consolidate import ConsolidateReport, PolaritySkippedPair
+    from bettermemory.web import _render_curation
+
+    report = ConsolidateReport(
+        polarity_skipped=[
+            PolaritySkippedPair(
+                memory_id_a="01AAAAAAAAAAAAAAAAAAAAAAAA",
+                summary_a="always use uv for dependency management",
+                memory_id_b="01BBBBBBBBBBBBBBBBBBBBBBBB",
+                summary_b="never use uv for dependency management",
+                similarity=0.93,
+                method="jaccard",
+                detector="polarity",
+            )
+        ]
+    )
+    out = _render_curation(report)
+    assert "Polarity-skipped" in out
+    assert "/memories/01AAAAAAAAAAAAAAAAAAAAAAAA" in out
+    assert "/memories/01BBBBBBBBBBBBBBBBBBBBBBBB" in out
+    assert "93% similar" in out
+    assert "memory_conflicts" in out
+    # It counts as content: the empty state must not fire alongside it.
+    assert "Nothing to curate" not in out
+    # And the empty state names the bucket, so "nothing to curate" is a
+    # claim about polarity-skipped pairs too.
+    assert "polarity-skipped pairs" in _render_curation(ConsolidateReport())
+
+
+def test_eval_rate_cell_flags_a_clamped_rate() -> None:
+    """`RateCI` clamps a torn/windowed rate to 1.0 and flags it; the CLI
+    prints the caveat. The web table dropped the flag, publishing a bare
+    1.00 next to a numerator larger than its denominator."""
+    from bettermemory.eval import RateCI
+    from bettermemory.web import _fmt_rate
+
+    torn = RateCI.from_counts(7, 3)
+    assert torn.torn_read is True
+    cell = _fmt_rate(torn)
+    assert "clamped to 1.0" in cell
+    assert "7/3" in cell
+    assert "clamped" not in _fmt_rate(RateCI.from_counts(1, 3))
+
+
+def _empty_health_report(**overrides: Any) -> Any:
+    from datetime import datetime, timezone
+
+    from bettermemory.health import HealthReport
+
+    return HealthReport(
+        generated_at=datetime.now(timezone.utc),
+        window_days=30,
+        total_active_memories=0,
+        total_events=0,
+        distinct_sessions=0,
+        **overrides,
+    )
+
+
+def test_health_page_accounts_for_every_report_bucket() -> None:
+    """The /health docstring used to claim "every bucket rendered" while
+    three never reached the page. The claim is now a declaration split
+    into rendered / deliberately-disclaimed, and this test is what keeps
+    it true: a bucket added to `HealthReport.to_dict()` fails here until
+    someone renders it or files it with a reason."""
+    from bettermemory.web import (
+        _HEALTH_DISCLAIMED_BUCKETS,
+        _HEALTH_RENDERED_BUCKETS,
+    )
+
+    keys = set(_empty_health_report().to_dict())
+    assert not (_HEALTH_RENDERED_BUCKETS & _HEALTH_DISCLAIMED_BUCKETS)
+    assert _HEALTH_RENDERED_BUCKETS | _HEALTH_DISCLAIMED_BUCKETS == keys, (
+        "unclassified HealthReport buckets: "
+        f"{sorted(keys - _HEALTH_RENDERED_BUCKETS - _HEALTH_DISCLAIMED_BUCKETS)}"
+    )
+
+
+def test_health_renders_orphan_use_events_when_non_zero() -> None:
+    """`orphan_use_events` is the fabrication smoke test — record_use
+    against ids that resolve to nothing. It now renders as a warn row
+    when it fires, and stays silent (not a permanent "0") when clean."""
+    from bettermemory.web import _render_health
+
+    fired = _render_health(_empty_health_report(orphan_use_events=3))
+    assert "3 orphan use event(s)" in fired
+    assert "fabricated ULIDs" in fired
+    assert "orphan use event" not in _render_health(_empty_health_report())
 
 
 # ---------------------------------------------------------------------------
