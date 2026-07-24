@@ -42,6 +42,7 @@ from pathlib import Path
 from typing import Iterable
 
 from .models import Memory
+from .verify import _fold_altsep
 
 
 # Cap the per-write evidence list — a body that mentions five different
@@ -332,9 +333,29 @@ def _home_alias(path: str) -> str | None:
     Bodies overwhelmingly cite home paths in `~` form, while
     `origin.cwd` (the substrate for `collect_project_roots`) is always
     absolute — both spellings have to be searchable.
+
+    SEPARATORS: home and `path` are folded through `verify._fold_altsep`
+    (alternate separator → primary) before the prefix check, so on
+    Windows the forward-slash and mixed spellings the OS accepts
+    (``C:/Users/me/work``, ``C:\\Users\\me/work``) read as home-rooted
+    exactly like the backslash-canonical form. The raw ``home + os.sep``
+    comparison used to misread those spellings as not home-rooted and
+    silently skip the alias search — the same false-negative class
+    `verify._is_under_home` shed. On POSIX ``os.altsep`` is None, the
+    fold is the identity, and a ``\\`` stays an ordinary filename
+    character, never a separator.
+
+    The returned alias keeps the tail in `path`'s ORIGINAL spelling
+    (the fold is length-preserving, so the slice offset agrees with the
+    folded comparison). The body search still probes exactly one alias
+    spelling — a body citing the tilde path in the other separator
+    family stays unmatched, a narrower, pre-existing limitation this
+    fold deliberately leaves in place (the same "quieter signal" bias
+    the root pass already documents).
     """
-    home = str(Path.home())
-    if path.startswith(home + os.sep):
+    home = _fold_altsep(str(Path.home()), os.sep, os.altsep)
+    folded = _fold_altsep(path, os.sep, os.altsep)
+    if folded.startswith(home + os.sep):
         return "~" + path[len(home) :]
     return None
 

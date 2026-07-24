@@ -2,13 +2,17 @@
 
 from __future__ import annotations
 
+import ntpath
 import os
 from datetime import datetime, timezone
 from pathlib import Path
 
+import pytest
+
 from bettermemory.models import Confidence, Memory, Source, generate_ulid
 from bettermemory.origin import Origin
 from bettermemory.scope_match import (
+    _home_alias,
     collect_project_roots,
     collect_project_scopes,
     detect_scope_mismatch,
@@ -520,6 +524,118 @@ def test_nested_roots_parent_path_outside_child_still_flags() -> None:
     )
     assert out.has_mismatch is True
     assert "projects:mono" in out.suggested_scopes
+
+
+# ---------------------------------------------------------------------------
+# _home_alias — separator folding (Windows spellings)
+#
+# Sibling of the gap `verify._is_under_home` shed: `_home_alias` used to
+# compare raw strings against `home + os.sep`, so a forward-slash or
+# mixed Windows spelling of a home-rooted project root read as NOT
+# home-rooted and the tilde-alias search was silently skipped. Closed by
+# folding both comparands through `verify._fold_altsep` before the
+# prefix check. Windows semantics are exercised from any platform via
+# explicit `ntpath` values (`_simulate_windows_home`); on a real Windows
+# runner the same monkeypatches are identity writes.
+# ---------------------------------------------------------------------------
+
+
+def _simulate_windows_home(monkeypatch: pytest.MonkeyPatch, home: str) -> None:
+    """Pin `_home_alias`'s inputs to explicit ntpath semantics.
+
+    Same shape as the helper of this name in `tests/test_verify.py`,
+    kept local because test modules here do not import from each other:
+    `os.sep` / `os.altsep` become the `ntpath` constants — identity
+    writes on a real Windows runner, the simulation everywhere else —
+    and the home env vars point `Path.home()` at `home` in its Windows
+    spelling: HOME for the POSIX `expanduser`, USERPROFILE for the
+    Windows one, with HOMEDRIVE/HOMEPATH cleared so USERPROFILE wins.
+    """
+    monkeypatch.setattr(os, "sep", ntpath.sep)
+    monkeypatch.setattr(os, "altsep", ntpath.altsep)
+    monkeypatch.setenv("HOME", home)
+    monkeypatch.setenv("USERPROFILE", home)
+    monkeypatch.delenv("HOMEDRIVE", raising=False)
+    monkeypatch.delenv("HOMEPATH", raising=False)
+
+
+def test_home_alias_recognises_forward_slash_windows_spelling(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The deferred sibling itself: `C:/Users/me/work` is a spelling
+    Windows accepts for a home-rooted root, and the raw `home + os.sep`
+    prefix check misread it as not home-rooted — returning None where
+    the backslash twin contracted. All spellings of one path must
+    contract alike; the tail keeps the root's own spelling."""
+    _simulate_windows_home(monkeypatch, r"C:\Users\bm-user")
+    # Backslash-canonical root — the pre-existing contract.
+    assert _home_alias(r"C:\Users\bm-user\work\bm-server") == r"~\work\bm-server"
+    # Forward-slash spelling of the SAME root: the closed gap.
+    assert _home_alias("C:/Users/bm-user/work/bm-server") == "~/work/bm-server"
+    # Mixed spelling — USERPROFILE's backslashes + a forward-slash tail.
+    assert _home_alias(r"C:\Users\bm-user/work") == "~/work"
+    # Home itself has no tail to contract — None, as before the fold.
+    assert _home_alias("C:/Users/bm-user") is None
+    # NOT home-rooted under any separator spelling: the fold must not
+    # widen the alias to merely drive-lettered paths or sibling homes.
+    assert _home_alias("D:/data/project") is None
+    assert _home_alias("C:/Users/bm-other/project") is None
+
+
+def test_home_alias_folds_the_home_spelling_too(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Both comparands fold: some Windows setups carry a forward-slash
+    USERPROFILE, and a backslash-spelled root under it is the same
+    path. (On a real Windows runner `Path.home()` renders
+    backslash-canonical whatever the env says; the fold is what makes
+    the POSIX simulation and the live leg agree.)"""
+    _simulate_windows_home(monkeypatch, "C:/Users/bm-user")
+    assert _home_alias(r"C:\Users\bm-user\project") == r"~\project"
+    assert _home_alias("C:/Users/bm-user/project") == "~/project"
+    assert _home_alias(r"D:\data\project") is None
+
+
+def test_home_alias_posix_backslash_stays_a_filename_character(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """On POSIX `os.altsep` is None and the fold must be the identity:
+    `home` + backslash + `child` names a FILE whose name contains a
+    backslash, not a subdirectory, so it must NOT contract. Gated on
+    the live `os.altsep` because under ntpath semantics the same
+    spelling really is a separator run (pinned above). Guards against
+    an over-eager fold that rewrites both characters unconditionally."""
+    if os.altsep is not None:
+        pytest.skip("this platform has an altsep; the fold is MEANT to fire here")
+    home = tmp_path / "bm-posix-home"
+    monkeypatch.setenv("HOME", str(home))
+    monkeypatch.setenv("USERPROFILE", str(home))
+    assert _home_alias(str(home) + os.sep + "child") == "~" + os.sep + "child"
+    assert _home_alias(str(home) + "\\child") is None
+
+
+def test_forward_slash_root_matches_tilde_citation_under_ntpath(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """End-to-end reach of the fold through `detect_scope_mismatch`: a
+    stored root in forward-slash Windows spelling never appears
+    verbatim in a body that cites the path in `~` form, so the alias is
+    the ONLY route to the match — pre-fold, the root was misread as not
+    home-rooted and the citation sailed through unflagged. The
+    D:-rooted control pins that folding widens nothing."""
+    _simulate_windows_home(monkeypatch, r"C:\Users\bm-user")
+    out = detect_scope_mismatch(
+        body="The audit loop lives under ~/work/bm-server these days.",
+        declared_scopes=["tools"],
+        project_scopes=set(),
+        project_roots={
+            "projects:bettermemory": "C:/Users/bm-user/work/bm-server",
+            "projects:other": "D:/work/bm-server",
+        },
+    )
+    assert out.has_mismatch is True
+    assert out.suggested_scopes == ("projects:bettermemory",)
+    assert out.matches[0].kind == "project_root"
 
 
 # ---------------------------------------------------------------------------
