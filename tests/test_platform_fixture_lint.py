@@ -245,25 +245,7 @@ class Finding:
 # Shapes already present at the ratchet base which this lint may not rewrite
 # (this repair touches only this new file). Each entry says WHY it is exempt;
 # the reverse guard deletes any entry that stops matching a live finding.
-_ALLOWLIST: dict[tuple[str, str, str], str] = {
-    (
-        "tests/test_origin.py",
-        "slash-concat",
-        "test_resolve_repo_pathspecs_drops_repo_root: str(tmp_path) + '/'",
-    ): (
-        "Pre-existing at the ratchet base and benign there: the test feeds "
-        "resolve_repo_pathspecs the trailing-slash spelling of the repo root "
-        "to pin that every root spelling is dropped. The resolver pushes "
-        "each input through Path(...).resolve(), and pathlib accepts '/' as "
-        "a separator on Windows too, so the drop still holds on that leg — "
-        "the fixture landed in 2fed751, first shipped in v3.17.1, and the "
-        "windows-latest leg has run it ever since. What the literal '/' "
-        "costs is fidelity, not correctness: on Windows the exercised "
-        "spelling is root plus '/' (mixed separators), never the native "
-        "root plus os.sep. Appending os.sep instead is the repair; delete "
-        "this entry when that lands."
-    ),
-}
+_ALLOWLIST: dict[tuple[str, str, str], str] = {}
 
 
 # ---------------------------------------------------------------------------
@@ -964,7 +946,8 @@ def test_root_and_double_slash_literals_are_not_claims() -> None:
 
 
 def test_flags_slash_constant_concatenated_onto_str_of_a_path() -> None:
-    """The live shape behind the one allowlist entry."""
+    """The shape behind the allowlist's founding entry — since repaired
+    (the origin fixture appends os.sep now), so no live instance remains."""
     fired = _rules_fired(
         """
         def test_trailing_slash_spelling(tmp_path):

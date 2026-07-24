@@ -740,12 +740,12 @@ def test_resolve_repo_pathspecs_drops_repo_root(tmp_path: Path) -> None:
     location claim, not a content claim — as a pathspec it would be "."
     and match every commit, so it must not survive resolution. All
     spellings of the root collapse to the same drop: absolute, trailing
-    slash, and the bare relative "."."""
+    native separator (os.sep), and the bare relative "."."""
     _init_repo(tmp_path)
     _make_commit(tmp_path, "first", when=datetime(2026, 1, 1, tzinfo=timezone.utc))
     resolved = resolve_repo_pathspecs(
         tmp_path,
-        [str(tmp_path), str(tmp_path) + "/", "."],
+        [str(tmp_path), str(tmp_path) + os.sep, "."],
     )
     assert resolved == []
 
