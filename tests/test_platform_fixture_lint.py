@@ -61,10 +61,14 @@ Suppressed on purpose, because they are the FIXED shapes
   assertion is the repair 1c8b10f made, not the defect.
 * The probe-then-skip idiom — bind the path, test it, ``pytest.skip``
   when absent. The ``/etc/hosts`` symlink fixture does this today.
-* Anything inside a unit (or module, via ``pytestmark``) that is
-  already gated off a platform: a ``skipif`` mentioning
-  ``sys.platform`` / ``os.name`` / win32, or an in-body platform skip.
-  A test that never runs on Windows may be as POSIX as it likes.
+* Anything inside a unit (or module, via ``pytestmark``) whose skip
+  provably excludes the windows-latest leg: a ``skipif`` condition, or
+  the test of an in-body ``if ...: pytest.skip(...)``, that statically
+  evaluates to True there. A test that never runs on Windows may be as
+  POSIX as it likes. Direction is the whole point — a gate that skips
+  some OTHER platform (``sys.platform == "darwin"``, or an inverted
+  ``!= "win32"``) leaves the unit running on exactly the leg these rules
+  protect, so it exempts nothing.
 
 What the detector cannot see — measured against the six instances
 ------------------------------------------------------------------
@@ -106,6 +110,23 @@ helper functions; execution orders that differ from source order
 legs (the mirror class); and ``PurePosixPath``, which declares its
 platform explicitly and touches no filesystem. The rule set is
 deliberately narrow; its value is what it catches tomorrow.
+
+The exemption's condition parser is literal in the same way, and every
+condition it cannot decide counts as NOT gated, so the unit is checked.
+It reads three probes (``sys.platform``, ``os.name``,
+``platform.system()``) compared against string literals — ``==``,
+``!=``, ``in``/``not in`` over a literal collection,
+``startswith``/``endswith``, and ``and``/``or``/``not`` over those. It
+does NOT resolve a condition through a name (``skipif(_IS_WINDOWS,
+...)``) or through a mark alias (``@_needs_posix_modes`` — a bare Name
+decorator is not a ``skipif`` call to begin with); it does not read
+direction out of ``reason=`` prose, which cannot prove which leg is
+skipped even when it says "Windows" (the ratchet base accepted exactly
+that, which is the hole this parser closes); it only honours a
+decorator whose own top-level call is ``skipif``, so a per-case
+``pytest.param(marks=pytest.mark.skipif(...))`` exempts nothing; and it
+only sees a ``pytest.skip`` in an ``if`` body, never in its ``else``.
+Each of those costs a false positive at worst, never a silent miss.
 
 How the ratchet works
 ---------------------
@@ -215,9 +236,15 @@ _PATH_ENV_VARS = frozenset(
 
 _OWNER_WRITE = 0o200
 
-# Tokens that mark a skip/gate as platform-shaped. Matched lowercased, so a
-# skipif whose reason says "Windows" counts as platform-shaped too.
-_PLATFORM_TOKENS = ("sys.platform", "os.name", "win32", "windows")
+# What each recognised platform probe evaluates to on the windows-latest leg —
+# the one leg these rules exist to protect. A skip exempts a unit only when its
+# condition is provably TRUE there, so the direction of the comparison decides
+# the exemption: `== "win32"` excludes Windows, `== "darwin"` does not.
+_WINDOWS_PROBE_VALUES: dict[str, str] = {
+    "sys.platform": "win32",
+    "os.name": "nt",
+    "platform.system()": "Windows",
+}
 
 
 # ---------------------------------------------------------------------------
@@ -467,26 +494,179 @@ def _has_probe_skip_for(unit: ast.AST, needles: set[str]) -> bool:
     return False
 
 
-def _platform_gated(unit: ast.AST) -> bool:
-    """Already gated off a platform: skipif marker or in-body platform skip."""
-    for deco in getattr(unit, "decorator_list", []):
-        src = ast.unparse(deco).lower()
-        if "skipif" in src and any(tok in src for tok in _PLATFORM_TOKENS):
+def _string_constant(node: ast.expr) -> str | None:
+    value = node.value if isinstance(node, ast.Constant) else None
+    return value if isinstance(value, str) else None
+
+
+def _string_collection(node: ast.expr) -> tuple[str, ...] | None:
+    """A literal tuple/list/set of string constants — never a bare string.
+
+    Keeping a lone constant out matters for ``in``: ``sys.platform in "win32"``
+    is a substring test, not membership, and the two must not be conflated.
+    """
+    if not isinstance(node, (ast.Tuple, ast.List, ast.Set)):
+        return None
+    members: list[str] = []
+    for elt in node.elts:
+        text = _string_constant(elt)
+        if text is None:
+            return None
+        members.append(text)
+    return tuple(members)
+
+
+def _windows_probe_value(node: ast.expr) -> str | None:
+    """The windows-latest value of a recognised platform probe, else ``None``."""
+    return _WINDOWS_PROBE_VALUES.get(ast.unparse(node))
+
+
+def _comparison_on_windows(node: ast.Compare) -> bool | None:
+    """Tri-state value of a single-operator comparison on the Windows leg."""
+    if len(node.ops) != 1:
+        return None
+    op, left, right = node.ops[0], node.left, node.comparators[0]
+    actual = _windows_probe_value(left)
+    if actual is not None:
+        if isinstance(op, (ast.Eq, ast.NotEq)):
+            other = _string_constant(right)
+            if other is None:
+                return None
+            return actual == other if isinstance(op, ast.Eq) else actual != other
+        if isinstance(op, (ast.In, ast.NotIn)):
+            members = _string_collection(right)
+            if members is None:
+                return None
+            return (
+                actual in members if isinstance(op, ast.In) else actual not in members
+            )
+        return None
+    # The mirrored spelling: `"win32" == sys.platform`, `"win" in sys.platform`.
+    actual = _windows_probe_value(right)
+    other = _string_constant(left)
+    if actual is None or other is None:
+        return None
+    if isinstance(op, ast.Eq):
+        return actual == other
+    if isinstance(op, ast.NotEq):
+        return actual != other
+    if isinstance(op, ast.In):
+        return other in actual
+    if isinstance(op, ast.NotIn):
+        return other not in actual
+    return None
+
+
+def _str_method_on_windows(node: ast.Call) -> bool | None:
+    """``<probe>.startswith(...)`` / ``.endswith(...)`` on the Windows leg."""
+    func = node.func
+    if not isinstance(func, ast.Attribute) or func.attr not in {
+        "startswith",
+        "endswith",
+    }:
+        return None
+    actual = _windows_probe_value(func.value)
+    if actual is None or len(node.args) != 1 or node.keywords:
+        return None
+    needle = _string_constant(node.args[0])
+    needles = (needle,) if needle is not None else _string_collection(node.args[0])
+    if needles is None:
+        return None
+    return (
+        actual.startswith(needles)
+        if func.attr == "startswith"
+        else actual.endswith(needles)
+    )
+
+
+def _truth_on_windows(node: ast.expr) -> bool | None:
+    """Statically evaluate a skip condition on the windows-latest leg.
+
+    ``True``/``False`` mean provably so; ``None`` means the condition is not
+    one of the recognised shapes. Only ``True`` exempts a unit — an unknown
+    condition falls through to being checked, which is the safe direction for
+    a lint whose whole job is the Windows leg.
+    """
+    if isinstance(node, ast.Constant) and isinstance(node.value, bool):
+        return node.value
+    if isinstance(node, ast.UnaryOp) and isinstance(node.op, ast.Not):
+        inner = _truth_on_windows(node.operand)
+        return None if inner is None else not inner
+    if isinstance(node, ast.BoolOp):
+        values = [_truth_on_windows(value) for value in node.values]
+        if isinstance(node.op, ast.And):
+            if any(value is False for value in values):
+                return False
+            return True if all(value is True for value in values) else None
+        if any(value is True for value in values):
             return True
+        return False if all(value is False for value in values) else None
+    if isinstance(node, ast.Call):
+        return _str_method_on_windows(node)
+    if isinstance(node, ast.Compare):
+        return _comparison_on_windows(node)
+    return None
+
+
+def _skipif_condition(node: ast.expr) -> ast.expr | None:
+    """The condition of a ``skipif`` call, or ``None`` if this is not one.
+
+    Only the node's OWN top-level call counts: a ``skipif`` nested inside a
+    ``pytest.param(marks=...)`` skips one parametrised case, not the unit.
+    """
+    if not isinstance(node, ast.Call) or not ast.unparse(node.func).endswith("skipif"):
+        return None
+    condition = next(
+        (kw.value for kw in node.keywords if kw.arg == "condition"),
+        node.args[0] if node.args else None,
+    )
+    if condition is None:
+        return None
+    # pytest also accepts a string condition, which it evals at collection.
+    text = _string_constant(condition)
+    if text is None:
+        return condition
+    try:
+        return ast.parse(text, mode="eval").body
+    except SyntaxError:  # pragma: no cover - malformed condition string
+        return None
+
+
+def _excludes_windows(marks: list[ast.expr]) -> bool:
+    """Does any of these marks provably skip the unit on windows-latest?
+
+    Several ``skipif`` marks skip when ANY of their conditions holds, so one
+    Windows-true condition is enough.
+    """
+    for mark in marks:
+        condition = _skipif_condition(mark)
+        if condition is not None and _truth_on_windows(condition) is True:
+            return True
+    return False
+
+
+def _platform_gated(unit: ast.AST) -> bool:
+    """Provably skipped on windows-latest: skipif marker or in-body skip.
+
+    Direction-aware on purpose: a ``skipif`` that skips some other platform
+    still runs here, so it exempts nothing (see the module docstring).
+    """
+    if _excludes_windows(list(getattr(unit, "decorator_list", []))):
+        return True
     for node in ast.walk(unit):
-        if not isinstance(node, ast.If):
+        if not isinstance(node, ast.If) or _truth_on_windows(node.test) is not True:
             continue
-        test_src = ast.unparse(node.test)
-        if "sys.platform" not in test_src and "os.name" not in test_src:
-            continue
-        for inner in ast.walk(node):
-            if isinstance(inner, ast.Call) and ast.unparse(inner.func).endswith("skip"):
-                return True
+        for stmt in node.body:
+            for inner in ast.walk(stmt):
+                if isinstance(inner, ast.Call) and ast.unparse(inner.func).endswith(
+                    "skip"
+                ):
+                    return True
     return False
 
 
 def _module_platform_gated(tree: ast.Module) -> bool:
-    """A module-level ``pytestmark`` skipif on platform exempts the file."""
+    """A module-level ``pytestmark`` skipif that excludes Windows exempts the file."""
     for stmt in tree.body:
         if not isinstance(stmt, ast.Assign):
             continue
@@ -494,8 +674,11 @@ def _module_platform_gated(tree: ast.Module) -> bool:
             isinstance(t, ast.Name) and t.id == "pytestmark" for t in stmt.targets
         ):
             continue
-        src = ast.unparse(stmt.value).lower()
-        if "skipif" in src and any(tok in src for tok in _PLATFORM_TOKENS):
+        value = stmt.value
+        marks = (
+            list(value.elts) if isinstance(value, (ast.List, ast.Tuple)) else [value]
+        )
+        if _excludes_windows(marks):
             return True
     return False
 
@@ -930,6 +1113,152 @@ def test_platform_gated_units_and_modules_are_exempt() -> None:
     assert _rules_fired(gated_function) == []
     assert _rules_fired(inline_gate) == []
     assert _rules_fired(module_mark) == []
+
+
+def test_gates_pointed_at_another_platform_do_not_exempt() -> None:
+    """The direction the skip points is what decides the exemption.
+
+    Every snippet here mentions a platform, and every one of them still RUNS
+    on windows-latest — the leg these rules protect — so the POSIX literal in
+    the body has to fire. Treating "mentions a platform" as an exemption is
+    what let a single mac-direction ``skipif`` reopen the whole class.
+    """
+    darwin_skipif = """
+        @pytest.mark.skipif(sys.platform == "darwin", reason="flaky on macOS")
+        def test_runs_on_windows():
+            open("/etc/passwd").close()
+        """
+    inverted_skipif = """
+        @pytest.mark.skipif(sys.platform != "win32", reason="Windows-only")
+        def test_runs_on_windows():
+            open("/etc/passwd").close()
+        """
+    inverted_os_name = """
+        @pytest.mark.skipif(os.name != "nt", reason="Windows-only")
+        def test_runs_on_windows():
+            open("/etc/passwd").close()
+        """
+    negated_prefix = """
+        @pytest.mark.skipif(
+            not sys.platform.startswith("win"), reason="Windows-only"
+        )
+        def test_runs_on_windows():
+            open("/etc/passwd").close()
+        """
+    inline_darwin_skip = """
+        def test_runs_on_windows():
+            if sys.platform == "darwin":
+                pytest.skip("not on macOS")
+            open("/etc/passwd").close()
+        """
+    darwin_module_mark = """
+        pytestmark = pytest.mark.skipif(sys.platform == "darwin", reason="macOS")
+
+        def test_runs_on_windows():
+            open("/etc/passwd").close()
+        """
+    for label, snippet in (
+        ("darwin skipif", darwin_skipif),
+        ("inverted sys.platform", inverted_skipif),
+        ("inverted os.name", inverted_os_name),
+        ("negated prefix", negated_prefix),
+        ("inline darwin skip", inline_darwin_skip),
+        ("darwin pytestmark", darwin_module_mark),
+    ):
+        assert [rule for rule, _ in _rules_fired(snippet)] == ["posix-literal"], label
+
+
+def test_windows_excluding_conditions_the_parser_recognises() -> None:
+    """The spellings that DO prove the windows-latest leg never runs it."""
+    spellings = (
+        'sys.platform.startswith("win")',
+        'sys.platform in ("win32", "cygwin")',
+        'sys.platform in {"win32"}',
+        '"win32" == sys.platform',
+        '"win" in sys.platform',
+        'os.name == "nt"',
+        'platform.system() == "Windows"',
+        'sys.platform == "win32" or os.name == "nt"',
+        'os.name == "nt" and sys.platform == "win32"',
+        'not (sys.platform != "win32")',
+        'sys.platform not in ("linux", "darwin")',
+    )
+    for condition in spellings:
+        snippet = f"""
+        @pytest.mark.skipif({condition}, reason="POSIX-only")
+        def test_posix_only():
+            open("/etc/passwd").close()
+        """
+        assert _rules_fired(snippet) == [], condition
+        inline = f"""
+        def test_posix_only():
+            if {condition}:
+                pytest.skip("POSIX-only")
+            open("/etc/passwd").close()
+        """
+        assert _rules_fired(inline) == [], condition
+
+
+def test_string_form_skipif_condition_is_parsed_not_taken_as_truthy() -> None:
+    """pytest evaluates a string condition at collection; so does this parser.
+
+    A non-empty string is truthy to Python but says nothing about direction —
+    reading it as a condition keeps both legs of the ratchet honest.
+    """
+    excluded = """
+        @pytest.mark.skipif('sys.platform == "win32"', reason="POSIX-only")
+        def test_posix_only():
+            open("/etc/passwd").close()
+        """
+    not_excluded = """
+        @pytest.mark.skipif('sys.platform == "darwin"', reason="macOS")
+        def test_runs_on_windows():
+            open("/etc/passwd").close()
+        """
+    assert _rules_fired(excluded) == []
+    assert [rule for rule, _ in _rules_fired(not_excluded)] == ["posix-literal"]
+
+
+def test_undecidable_gates_fall_through_to_being_checked() -> None:
+    """The disclosed narrowing: what the condition parser cannot read is not
+    an exemption. A name it cannot resolve, a ``reason`` that merely says
+    "Windows", a ``skipif`` that gates one parametrised case, and a skip in an
+    ``else`` branch all cost a false positive rather than a silent miss."""
+    opaque_name = """
+        @pytest.mark.skipif(_IS_WINDOWS, reason="POSIX-only")
+        def test_maybe_gated():
+            open("/etc/passwd").close()
+        """
+    reason_prose_only = """
+        @pytest.mark.skipif(
+            shutil.which("git") is None, reason="POSIX mode bits, not Windows"
+        )
+        def test_maybe_gated():
+            open("/etc/passwd").close()
+        """
+    per_case_mark = """
+        @pytest.mark.parametrize(
+            "n",
+            [pytest.param(1, marks=pytest.mark.skipif(os.name == "nt", reason="x"))],
+        )
+        def test_one_case_gated(n):
+            open("/etc/passwd").close()
+        """
+    skip_in_else_branch = """
+        def test_gated_the_long_way_round():
+            if sys.platform != "win32":
+                pass
+            else:
+                pytest.skip("POSIX-only")
+            open("/etc/passwd").close()
+        """
+    for label, snippet in (
+        ("opaque name", opaque_name),
+        ("reason prose only", reason_prose_only),
+        ("per-case mark", per_case_mark),
+        ("skip in else", skip_in_else_branch),
+    ):
+        assert [rule for rule, _ in _rules_fired(snippet)] == ["posix-literal"], label
 
 
 def test_root_and_double_slash_literals_are_not_claims() -> None:
