@@ -213,7 +213,7 @@ Returns `{pending, pending_total}` — each pending row is `{id, a, b, similarit
 
 ### `memory_audit_turn(user_message, assistant_response?, lookback_seconds?)`
 
-Silent-miss telemetry. Fires from a client-side end-of-turn hook with the user's message. Runs a search probe over the active store using the configured ranker and asks whether a `search`, `show`, or `list` event landed in the same session within `lookback_seconds` (default 60s, clamped to [1, 600]).
+Silent-miss telemetry. Fires from a client-side end-of-turn hook with the user's message. Runs a search probe over the pool and ranking inputs `memory_search` would have used for that message — same candidate set, same `[behavior]` factors, same configured search mode — and asks whether a `search`, `show`, or `list` event landed in the same session within `lookback_seconds` (default 60s, clamped to [1, 600]). Because the pool is built by production's own path, above the FTS5 prefilter's index threshold it is a capped, query-biased slice rather than the whole active store — and it is drawn with the raw user message, not the query the model would have typed, so it matches production's *mechanism*, not necessarily production's *rows*.
 
 Always emits `turn_audited` so audit cadence stays visible. Emits `search_miss` additionally when a high-relevance probe hit exists AND no retrieval happened in the window. The threshold rule is versioned (`THRESHOLD_RULE_V1 = "v1_top1_high"`) and recorded on every event so a calibration pass can replay historical logs.
 
