@@ -115,6 +115,49 @@ change is opt-in and the shipped default ranking is byte-stable.
   curation state, caught by the structural sidecar guard before it
   could repeat the plaintext-push incident class.
 
+### Erratum (2026-07-24)
+
+The entry above is left as it shipped. It is incomplete: the preamble
+counts "three features", but tag `v3.28.0` carries two further
+substantive commits that received no entry anywhere in this file — the
+same omission class as v3.24.0's `096218e`, caught this time by the
+release-window coverage check that now lives in
+`tests/test_changelog.py`. Stated now as the bullets the release
+should have carried:
+
+- **Web UI overhauled — verdict parity, ranked search, three new
+  read-only pages (`74f625d`).** The UI had frozen around the 3.18
+  surface while eval telemetry, the episode tier, and the curation
+  engine shipped around it, and its `/memories` search was a
+  contiguous-substring filter over the summary line — a query could
+  return zero rows against a store whose memory bodies carried it.
+  Search now runs through the same `search.search` ranker
+  `memory_search` uses (`semantic` degrades to `hybrid`: the web
+  process loads no embedding model), and pages speak the staleness
+  verdict through the same `compute_staleness_verdict` chain the MCP
+  handlers use — the web computes no verdict arithmetic of its own.
+  Three read-only pages close the feature gap (`/eval`, `/episodes`,
+  `/curation`) and `/health` gains the modern buckets. The mutation
+  surface is unchanged: verify stays the only POST, still answered
+  403 in the `--tunnel` posture.
+
+- **`sync` refuses to commit staged conflict markers (`295f20a`).**
+  Closes the residual 3.26.0 disclosed ("a conflict created between
+  the guard and `git add -A` is still possible"): the porcelain
+  guards describe how a conflict was CREATED, so conflict content
+  arriving from the user's own git between a caller's predicate and
+  the stage was committed as if resolved. `_stage_and_commit` — the
+  package's single `git add -A` choke point, reached by `push` and
+  `auto` alike — now scans the index between staging and committing
+  for line-start `<<<<<<<` / `>>>>>>>` / `|||||||` markers (exactly
+  seven, per git's default `conflict-marker-size`; deliberately not
+  the bare `=======` divider, which a setext markdown underline puts
+  at column 0 in legitimate memory bodies) and refuses with
+  file-and-line detail when any are staged. The scan fails closed — a
+  git-grep failure refuses rather than commits. Losing the predicate
+  race now costs a refusal instead of a corrupt commit; the race
+  itself is not claimed gone.
+
 ## 3.27.0 - 2026-07-20
 
 A store root that was world-listable, and BM25 pricing term rarity

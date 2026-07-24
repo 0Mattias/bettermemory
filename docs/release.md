@@ -80,12 +80,18 @@ uv lock
 #    match). test_changelog.py is included because it pins the
 #    `## <X.Y.Z> - <date>` heading from step 3 — a
 #    forgotten heading otherwise passes here and only trips in the full
-#    release-workflow suite.
+#    release-workflow suite. Its release-window coverage check is inert
+#    at this point (the new tag doesn't exist yet), which is why step 6
+#    re-runs the file after tagging.
 pytest tests/test_plugin.py tests/test_version.py tests/test_changelog.py -q
 
-# 6. Commit, tag, push.
+# 6. Commit, tag, re-check the changelog against the tag, then push.
+#    The tag-window coverage check only sees the new tag once it
+#    exists, and a coverage gap caught here costs a local re-tag
+#    (`git tag -d v<X.Y.Z>`) instead of a post-release erratum.
 git commit -am "release: <X.Y.Z>"
 git tag -a v<X.Y.Z> -m "v<X.Y.Z>"
+pytest tests/test_changelog.py -q
 git push origin main
 git push origin v<X.Y.Z>
 ```
@@ -110,6 +116,12 @@ Once you are satisfied, bump pyproject.toml back to the real version (without th
 ## Version-tag mismatch protection
 
 The build job verifies that the pyproject.toml version matches the tag (`v<X.Y.Z>` to `<X.Y.Z>`). Tagging `v1.2.3` while pyproject still says `1.2.2` aborts the workflow before any artifact is uploaded. Fix the version, force-push the tag (`git tag -af v<X.Y.Z>`), and re-push.
+
+## Release-window CHANGELOG coverage
+
+`test_newest_tag_window_commits_are_represented` in `tests/test_changelog.py` guards the omission class where a commit ships inside a release tag with no trace in that release's notes — the way `096218e` shipped inside `v3.24.0` and had to be repaired by erratum. For the newest `v<X.Y.Z>` tag it walks every non-merge commit in the window from the previous tag and requires each one to be represented in that release's `## <X.Y.Z> - <date>` entry. Commits whose conventional-commit type is trivial (docs, style, test, chore, ci, build, bench, release), or whose every scope is test/docs/ci/bench tooling, are exempt. Every other commit must either share a two-word phrase from its subject with the entry, or have its short SHA cited in the entry — the deterministic escape hatch when the entry deliberately paraphrases (and the shape erratum bullets already use).
+
+The check needs the tag to exist: during step 5 it evaluates the previous, already-frozen window, and on CI's shallow checkouts — which lack the tag pair and the window's history — it skips. The moment it has teeth is between `git tag` and `git push origin v<X.Y.Z>`, which is exactly where step 6 re-runs it.
 
 ## Yanking a bad release
 
