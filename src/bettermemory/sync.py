@@ -1106,6 +1106,20 @@ def _commit_signing_enabled(root: Path) -> bool:
     UNSIGNED commit where the user configured signing. It is bounded by
     what `--bool` actually mis-parses (nothing that git itself would have
     accepted as true), not by an assumption.
+
+    The result is pinned END-TO-END, not by inspection, because the stake
+    is a security property rather than a convenience:
+    `test_push_signs_exactly_when_the_store_asked_for_it` configures a real
+    `gpg.format=ssh` key and asserts that the commit `sync push` produces
+    verifies (`%G?` reports `G`), with the unsigned default asserted in the
+    same store. Its sibling
+    `test_push_keeps_signing_commits_when_commit_gpgsign_is_set` covers the
+    other direction — a signing attempt that FAILS must abort the push —
+    and deliberately does not stand alone: a failure-mode test cannot tell
+    "signs correctly" apart from "errors whenever signing is on", since
+    both leave HEAD where it was. The `gpg.format` axis was measured on
+    2.50.1 for `ssh` and `openpgp`; `x509` shares the same `gpg.format`
+    dispatch and was not measured.
     """
     result = _run_git(
         root, ["config", "--bool", "--get", "commit.gpgSign"], check=False
@@ -1189,6 +1203,37 @@ def _commit_snapshot_tree(root: Path, tree: str, message: str) -> None:
     `_cleanup_commit_message`. Merge-conclusion semantics are not in it
     either, because `_require_no_sequencer_state` refuses that state
     rather than approximating it.
+
+    WHY THOSE COSTS WERE PAID rather than bought back. The obvious
+    alternative keeps porcelain `git commit` — hooks, signing and merge
+    conclusion all for free — and moves the marker scan AFTER it: grep the
+    committed tree, and on a hit `git reset --soft` the commit away. That
+    is detection instead of prevention, and it was weighed and rejected on
+    two grounds, both measured on git 2.50.1 rather than argued:
+
+    * The marker commit EXISTS at the branch tip while the scan runs.
+      Anything that pushes in that window publishes exactly what the guard
+      exists to stop — the user's own `git push`, a background agent, or a
+      `post-commit` hook, which has already run by the time a hit is
+      detected. The sync lock serialises this package's operations, not
+      theirs (the same reason `_commit_local_changes` documents a residual
+      race on its porcelain predicate). Refusing before the commit object
+      exists is the only form of the guarantee that does not depend on who
+      else is running.
+    * The rollback cannot restore what the commit consumed. On a resolved
+      merge, `git commit` writes the two-parent commit and clears
+      `MERGE_HEAD`; a following `git reset --soft` moves HEAD back but
+      does NOT bring `MERGE_HEAD` with it, and `git merge --abort` then
+      fails outright ("There is no merge to abort (MERGE_HEAD missing)").
+      The user is left able to neither conclude nor back out.
+      `_require_no_sequencer_state` refusing that state leaves both routes
+      open, which is why it is a refusal and not a repair.
+
+    Neither ground touches the hook gap, which is a real loss with no
+    compensating argument — only a narrow blast radius (a store from
+    `sync init` carries git's inert `.sample` hooks, so it costs nothing
+    unless the user installed a real one) and an escape hatch (enforce it
+    server-side on the remote instead).
     """
     body = _cleanup_commit_message(message)
     if not body:

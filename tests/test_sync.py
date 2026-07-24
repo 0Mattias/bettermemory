@@ -2671,13 +2671,18 @@ def test_push_keeps_signing_commits_when_commit_gpgsign_is_set(
 
     `git commit` honours the config; `git commit-tree` does not (verified
     on git 2.50.1 — it returns an unsigned commit where `git commit`
-    fails), so the plumbing path passes `-S` itself. Without a keyring in
-    the test environment the observable proof is the failure mode: point
-    `gpg.program` at a binary that does not exist and a signing attempt
-    must turn into a `SyncError` with nothing committed. Drop the `-S`
-    and the push instead succeeds, quietly recording an UNSIGNED commit in
-    a store whose owner asked for signatures — which is the regression
-    this pins.
+    fails), so the plumbing path passes `-S` itself. This half pins the
+    FAILURE mode: point `gpg.program` at a binary that does not exist and
+    a signing attempt must turn into a `SyncError` with nothing committed.
+    Drop the `-S` and the push instead succeeds, quietly recording an
+    UNSIGNED commit in a store whose owner asked for signatures — which is
+    the regression this pins.
+
+    It is deliberately only half. "Aborts when signing fails" and "always
+    aborts when signing is on" are the same observation from here — both
+    leave HEAD where it was — so the positive direction needs a real key
+    and a real signature, which is
+    `test_push_signs_exactly_when_the_store_asked_for_it` below.
     """
     sync.init(memory_dir, remote=str(bare_remote))
     Store(memory_dir).write(content="clean baseline", scopes=["tools"])
@@ -2693,6 +2698,121 @@ def test_push_keeps_signing_commits_when_commit_gpgsign_is_set(
 
     assert _git(memory_dir, "rev-parse", "main").strip() == before, (
         "push recorded a commit although signing was configured and failed"
+    )
+
+
+def _configure_ssh_signing(repo: Path, keydir: Path) -> bool:
+    """Point `repo` at a throwaway ssh signing key, or report it can't be.
+
+    SSH rather than OpenPGP because it needs no keyring daemon and no
+    agent socket: `ssh-keygen` writes a key pair, and an
+    `gpg.ssh.allowedSignersFile` naming the committer is all `%G?` needs to
+    report a VERIFIED signature. That keeps the test hermetic on every
+    platform in the matrix.
+
+    Returns False when `ssh-keygen` is missing or refuses, so the caller
+    skips rather than asserting against an environment that cannot sign at
+    all. `commit.gpgSign` is deliberately NOT set here — the caller turns
+    signing on at the point in the story where it wants it.
+    """
+    keygen = shutil.which("ssh-keygen")
+    if keygen is None:
+        return False
+    keydir.mkdir(parents=True, exist_ok=True)
+    key = keydir / "signing_key"
+    generated = subprocess.run(
+        [keygen, "-q", "-t", "ed25519", "-N", "", "-C", "bettermemory-sync-test"]
+        + ["-f", str(key)],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if generated.returncode != 0:
+        return False
+    public = key.with_name(key.name + ".pub")
+    fields = public.read_text(encoding="utf-8").split()
+    # The principal has to match the committer, which the `memory_dir`
+    # fixture configures. Read it back rather than repeating the literal,
+    # so the two cannot drift apart.
+    email = _git(repo, "config", "user.email").strip()
+    allowed = keydir / "allowed_signers"
+    allowed.write_text(f"{email} {fields[0]} {fields[1]}\n", encoding="utf-8")
+    _git(repo, "config", "gpg.format", "ssh")
+    _git(repo, "config", "user.signingkey", public.as_posix())
+    _git(repo, "config", "gpg.ssh.allowedSignersFile", allowed.as_posix())
+    return True
+
+
+def _head_signature(repo: Path) -> str:
+    """`git log`'s `%G?` for HEAD: `G` verified, `N` unsigned, others bad."""
+    return _git(repo, "log", "-1", "--pretty=%G?").strip()
+
+
+def test_push_signs_exactly_when_the_store_asked_for_it(
+    memory_dir: Path, bare_remote: Path, tmp_path: Path
+) -> None:
+    """The commit `sync push` produces carries a REAL signature.
+
+    The security property the move off porcelain `git commit` had to carry
+    over. `git commit` honours `commit.gpgSign`, `git commit-tree` ignores
+    it, and a store whose owner requires signed commits getting an
+    unsigned stream instead is a trust regression, not a documentation
+    item. Its sibling above observes only the failure mode, which cannot
+    distinguish a working signing path from one that always errors — so
+    this one configures a real key and reads the signature back.
+
+    Both directions in one store, in the order the regression would
+    appear: an unconfigured store must NOT sign (an unconditional `-S`
+    would break every store without a key), then `commit.gpgSign=true`
+    must produce a signature that verifies.
+
+    Two skips, both anti-vacuity guards rather than escapes: the store
+    must actually start out unsigned (otherwise something outside this
+    test is signing and neither half means anything), and porcelain must
+    be able to sign in this environment (ssh signing needs git >= 2.34 and
+    an `ssh-keygen` git itself can reach). Past those, the assertions are
+    unconditional.
+
+    Mutation-sound, verified by reverting the code under it: drop the `-S`
+    from `_commit_snapshot_tree` and the signed half fails reporting `N`;
+    pass `-S` unconditionally and the unsigned half fails.
+    """
+    sync.init(memory_dir, remote=str(bare_remote))
+    store = Store(memory_dir)
+
+    store.write(content="a fact committed without signing", scopes=["tools"])
+    assert sync.push(memory_dir)["committed"] is True
+    unsigned_state = _head_signature(memory_dir)
+    if unsigned_state != "N":
+        pytest.skip(
+            f"a store with no signing config produced {unsigned_state!r}, not "
+            "'N' — something outside this test is signing commits, so "
+            "neither direction can be measured here"
+        )
+
+    if not _configure_ssh_signing(memory_dir, tmp_path / "signing"):
+        pytest.skip("ssh-keygen unavailable — cannot build a signing key")
+    _git(memory_dir, "config", "commit.gpgSign", "true")
+
+    # Control: prove PORCELAIN signs here before demanding it of the sync
+    # path, so a git that cannot do ssh signing at all skips instead of
+    # reporting a regression this package did not cause.
+    store.write(content="a control fact committed by porcelain", scopes=["tools"])
+    _git(memory_dir, "add", "-A")
+    _git(memory_dir, "commit", "-m", "porcelain control")
+    control_state = _head_signature(memory_dir)
+    if control_state != "G":
+        pytest.skip(
+            f"porcelain `git commit` reported {control_state!r} rather than "
+            "'G' — this git cannot produce a verifiable ssh signature"
+        )
+
+    store.write(content="a fact that must be signed", scopes=["tools"])
+    assert sync.push(memory_dir)["committed"] is True
+    assert _head_signature(memory_dir) == "G", (
+        "the commit `sync push` created carries no verifiable signature "
+        "although commit.gpgSign is set — the sync path silently downgraded "
+        "a store whose owner requires signed commits"
     )
 
 
