@@ -17,6 +17,7 @@ from bettermemory.scope_match import (
     collect_project_scopes,
     detect_scope_mismatch,
 )
+from bettermemory.verify import _home_ignores_case
 
 
 def _utc(year: int, month: int, day: int) -> datetime:
@@ -741,6 +742,316 @@ def test_nested_roots_other_family_parent_path_outside_child_still_flags(
     assert out.has_mismatch is True
     assert out.matches[0].kind == "project_root"
     assert "projects:mono" in out.suggested_scopes
+
+
+# ---------------------------------------------------------------------------
+# Pass-1 span suppression — separator folding of the body search itself.
+#
+# The comparison-boundary folds above cannot reach `_declared_root_spans`:
+# it SEARCHES the body, so a raw `body.find` of each declared root's
+# verbatim spelling (plus its single-spelling tilde alias) yielded no span
+# when the body cited the root in the other separator family — and the
+# parent project's name token, a segment of every child path, was flagged
+# on a correctly-tagged child write even though pass 2 stayed quiet. The
+# span search now runs over the folded body with folded needles; the fold
+# is length-preserving, so spans stay in original body coordinates.
+# Windows semantics exercised from any platform via `_simulate_windows_home`
+# (identity writes on a real Windows runner).
+# ---------------------------------------------------------------------------
+
+
+def test_pass1_token_suppressed_when_declared_child_root_other_family(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The pass-1 twin of the covers fold: the declared child root is
+    stored in the forward-slash family while the body cites the child
+    path in backslashes. Raw `body.find` yielded no span, so the
+    parent's name token was flagged on a correctly-tagged child write
+    even though the pass-2 root hit was already suppressed. The folded
+    span search recognises the citation."""
+    _simulate_windows_home(monkeypatch, r"C:\Users\bm-user")
+    out = detect_scope_mismatch(
+        body=(
+            r"Auth middleware lives at C:\Users\bm-user\work\mono\services\api\auth.go"
+            " now."
+        ),
+        declared_scopes=["projects:mono-api"],
+        project_scopes={"projects:mono", "projects:mono-api"},
+        project_roots={
+            "projects:mono": r"C:\Users\bm-user\work\mono",
+            "projects:mono-api": "C:/Users/bm-user/work/mono/services/api",
+        },
+    )
+    assert out.has_mismatch is False
+
+
+def test_pass1_token_suppressed_via_tilde_alias_other_family(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Alias needle of the folded span search: the body cites the child
+    tree through the home alias in backslashes, while the alias built
+    from the forward-slash declared root keeps the forward tail — only
+    the FOLDED search can place the span that suppresses the parent's
+    name token."""
+    _simulate_windows_home(monkeypatch, r"C:\Users\bm-user")
+    out = detect_scope_mismatch(
+        body=r"Auth middleware lives at ~\work\mono\services\api\auth.go now.",
+        declared_scopes=["projects:mono-api"],
+        project_scopes={"projects:mono", "projects:mono-api"},
+        project_roots={
+            "projects:mono": r"C:\Users\bm-user\work\mono",
+            "projects:mono-api": "C:/Users/bm-user/work/mono/services/api",
+        },
+    )
+    assert out.has_mismatch is False
+
+
+def test_pass1_token_still_fires_outside_child_tree_other_family(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Control: the folded span search must not over-suppress. A path
+    under the parent but outside the declared child's subtree produces
+    no child-root span, so the parent's name token legitimately
+    flags — whatever the separator families involved."""
+    _simulate_windows_home(monkeypatch, r"C:\Users\bm-user")
+    out = detect_scope_mismatch(
+        body=r"The CI config lives at C:\Users\bm-user\work\mono\ci\pipeline.yml.",
+        declared_scopes=["projects:mono-api"],
+        project_scopes={"projects:mono", "projects:mono-api"},
+        project_roots={
+            "projects:mono": r"C:\Users\bm-user\work\mono",
+            "projects:mono-api": "C:/Users/bm-user/work/mono/services/api",
+        },
+    )
+    assert out.has_mismatch is True
+    assert out.matches[0].kind == "project_name"
+    assert "projects:mono" in out.suggested_scopes
+
+
+# ---------------------------------------------------------------------------
+# CASE axis — byte-first comparisons with a filesystem-probe retry.
+#
+# Every root comparison in the module used to settle on bytes alone (after
+# the separator fold), so on a case-folding volume — Windows NTFS, default
+# macOS APFS — a case-variant spelling of one directory (the lowercase
+# drive letter some shells record into a synced store, a re-cased segment
+# in a hand-edited one) slipped the degenerate-home guard and lost the
+# shared/nested-root suppressions. Closed by mirroring the byte-then-probe
+# pairing of `verify._is_under_home`: bytes first, and only a case-modulo
+# match asks the filesystem (`verify._home_ignores_case`) whether the
+# anchoring directory's volume folds case. Like verify's own case test,
+# the follows-the-filesystem tests below assert BOTH directions against
+# the live volume — case sensitivity is a per-volume property, so neither
+# branch can be pinned by platform. The probe fails closed: a directory
+# absent from the local filesystem keeps byte semantics (the disclosed
+# residue for cross-machine stores), pinned by the unprobeable-store test.
+# ---------------------------------------------------------------------------
+
+
+def test_collect_project_roots_case_variant_home_follows_the_filesystem(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A home cwd recorded in a case-variant spelling names the SAME
+    directory on a folding volume, so byte equality let it through as a
+    store-wide prefix-matching root — the cascade the guard exists to
+    stop. On a case-sensitive volume the spelling is a genuinely
+    different directory and must stay a legitimate root."""
+    home = tmp_path / "BmCaseHome"
+    home.mkdir()
+    monkeypatch.setenv("HOME", str(home))
+    monkeypatch.setenv("USERPROFILE", str(home))
+    reskinned = str(home).swapcase()
+    assert reskinned != str(home), "fixture assumption: home must have cased chars"
+    kept_root = str(home) + os.sep + "work" + os.sep + "bm-server"
+    dotfiles = _memory(scopes=["projects:dotfiles"], cwd=reskinned)
+    kept = _memory(scopes=["projects:bettermemory"], cwd=kept_root)
+    out = collect_project_roots([dotfiles, kept])
+    if _home_ignores_case(str(home)):
+        assert out == {"projects:bettermemory": kept_root}
+    else:
+        assert out == {
+            "projects:dotfiles": reskinned,
+            "projects:bettermemory": kept_root,
+        }
+
+
+def test_home_alias_case_variant_home_prefix_follows_the_filesystem(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A root whose leading portion spells home in a different case is
+    home-rooted on a folding volume — the byte prefix check silently
+    skipped the alias search for it, the same false-negative class the
+    separator fold closed. On a case-sensitive volume it is NOT
+    home-rooted and must not contract. The tail keeps the root's own
+    spelling either way."""
+    home = tmp_path / "BmCaseHome"
+    home.mkdir()
+    monkeypatch.setenv("HOME", str(home))
+    monkeypatch.setenv("USERPROFILE", str(home))
+    tail = os.sep + os.sep.join(("work", "bm-server"))
+    reskinned = str(home).swapcase() + tail
+    if _home_ignores_case(str(home)):
+        assert _home_alias(reskinned) == "~" + tail
+    else:
+        assert _home_alias(reskinned) is None
+
+
+def test_shared_root_case_variant_follows_the_filesystem(tmp_path: Path) -> None:
+    """The shared-root suppression across a case-variant pair: two
+    scopes recorded one directory in different casings. On a folding
+    volume the collision is real and the correctly-tagged write must
+    not bounce demanding the foreign scope; on a case-sensitive volume
+    the re-cased spelling is a different directory and flagging it is
+    the honest verdict."""
+    shared = tmp_path / "BmWebapp"
+    shared.mkdir()
+    exact = str(shared)
+    reskinned = exact.swapcase()
+    assert reskinned != exact, "fixture assumption: cased path"
+    body = (
+        "The webapp dev server config is "
+        + reskinned
+        + os.sep
+        + "vite.config.ts; HMR needs port 5174."
+    )
+    out = detect_scope_mismatch(
+        body=body,
+        declared_scopes=["projects:bm-app"],
+        project_scopes=set(),
+        project_roots={
+            "projects:bm-lab": reskinned,
+            "projects:bm-app": exact,
+        },
+    )
+    if _home_ignores_case(exact):
+        assert out.has_mismatch is False
+    else:
+        assert out.has_mismatch is True
+        assert out.suggested_scopes == ("projects:bm-lab",)
+
+
+def test_nested_roots_case_variant_child_follows_the_filesystem(
+    tmp_path: Path,
+) -> None:
+    """The covers checks across a case-variant pair: the declared child
+    root is recorded re-cased relative to the candidate parent and the
+    body's citation. On a folding volume the child still extends the
+    parent at the match and the parent hit stays suppressed; on a
+    case-sensitive volume the stored child spelling is a different
+    directory and the parent is honestly flagged."""
+    parent = tmp_path / "BmMono"
+    child = parent / "services" / "api"
+    child.mkdir(parents=True)
+    parent_exact = str(parent)
+    child_exact = str(child)
+    child_reskinned = child_exact.swapcase()
+    assert child_reskinned != child_exact, "fixture assumption: cased path"
+    body = "Auth middleware lives at " + child_exact + os.sep + "auth.go now."
+    out = detect_scope_mismatch(
+        body=body,
+        declared_scopes=["projects:bm-child"],
+        project_scopes=set(),
+        project_roots={
+            "projects:bm-parent": parent_exact,
+            "projects:bm-child": child_reskinned,
+        },
+    )
+    if _home_ignores_case(child_exact):
+        assert out.has_mismatch is False
+    else:
+        assert out.has_mismatch is True
+        assert "projects:bm-parent" in out.suggested_scopes
+
+
+def test_pass1_span_case_variant_citation_follows_the_filesystem(
+    tmp_path: Path,
+) -> None:
+    """CASE leg of the folded span search: the body cites the declared
+    child tree in a re-cased spelling. On a folding volume the span
+    still lands and the parent's name token stays suppressed; on a
+    case-sensitive volume the citation names a different tree and the
+    token honestly flags the parent scope."""
+    parent = tmp_path / "quasar"
+    child = parent / "services" / "api"
+    child.mkdir(parents=True)
+    child_exact = str(child)
+    reskinned = child_exact.swapcase()
+    assert reskinned != child_exact, "fixture assumption: cased path"
+    body = "Auth middleware lives at " + reskinned + os.sep + "auth.go now."
+    out = detect_scope_mismatch(
+        body=body,
+        declared_scopes=["projects:quasar-api"],
+        project_scopes={"projects:quasar", "projects:quasar-api"},
+        project_roots={
+            "projects:quasar": str(parent),
+            "projects:quasar-api": child_exact,
+        },
+    )
+    if _home_ignores_case(child_exact):
+        assert out.has_mismatch is False
+    else:
+        assert out.has_mismatch is True
+        assert out.matches[0].kind == "project_name"
+        assert out.suggested_scopes == ("projects:quasar",)
+
+
+def test_case_variant_windows_store_unprobeable_keeps_byte_semantics(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The disclosed residue of probe-don't-assume: a case-variant pair
+    in a store synced from another machine cannot be probed (the
+    directories exist on no CI leg — `bm-user` is nobody's runner
+    account), so the case leg fails closed and byte semantics stay.
+    The candidate is flagged exactly as before the case fix —
+    conservative, and pinned so replacing the probe with a platform
+    guess has to face this test."""
+    _simulate_windows_home(monkeypatch, r"C:\Users\bm-user")
+    out = detect_scope_mismatch(
+        body=(
+            r"The webapp dev server config is c:\users\bm-user\code\webapp"
+            r"\vite.config.ts; HMR needs port 5174."
+        ),
+        declared_scopes=["projects:webapp"],
+        project_scopes=set(),
+        project_roots={
+            "projects:homelab": r"c:\users\bm-user\code\webapp",
+            "projects:webapp": r"C:\Users\bm-user\code\webapp",
+        },
+    )
+    assert out.has_mismatch is True
+    assert out.suggested_scopes == ("projects:homelab",)
+
+
+def test_case_variant_drive_letter_suppressed_when_volume_folds(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The positive twin of the unprobeable test: the same synced-store
+    shape — a lowercase drive letter recorded by another shell — with
+    the volume verdict pinned to case-folding, because no CI leg can
+    conjure a folding volume for a path that must NOT exist locally.
+    The probe itself runs against live volumes in the
+    follows-the-filesystem tests above and in verify.py's own suite.
+    With the verdict pinned, the re-cased spelling reads as the
+    declared root and the correctly-tagged write stays quiet."""
+    _simulate_windows_home(monkeypatch, r"C:\Users\bm-user")
+
+    def _volume_folds(path: str) -> bool:
+        return True
+
+    monkeypatch.setattr("bettermemory.scope_match._home_ignores_case", _volume_folds)
+    out = detect_scope_mismatch(
+        body=(
+            r"The webapp dev server config is c:\users\bm-user\code\webapp"
+            r"\vite.config.ts; HMR needs port 5174."
+        ),
+        declared_scopes=["projects:webapp"],
+        project_scopes=set(),
+        project_roots={
+            "projects:homelab": r"c:\users\bm-user\code\webapp",
+            "projects:webapp": r"C:\Users\bm-user\code\webapp",
+        },
+    )
+    assert out.has_mismatch is False
 
 
 # ---------------------------------------------------------------------------

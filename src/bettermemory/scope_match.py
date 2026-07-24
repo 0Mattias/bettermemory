@@ -42,7 +42,7 @@ from pathlib import Path
 from typing import Iterable
 
 from .models import Memory
-from .verify import _fold_altsep
+from .verify import _fold_altsep, _home_ignores_case
 
 
 # Cap the per-write evidence list — a body that mentions five different
@@ -225,12 +225,18 @@ def detect_scope_mismatch(
         folded_declared_roots = {
             _fold_altsep(dr, os.sep, os.altsep) for dr in declared_roots
         }
+        # Lowercased twin of the folded twin, for the case-modulo leg of
+        # the same identity check. Pure string prep — whether a
+        # case-variant pair really names one directory is decided by a
+        # filesystem probe at the comparison, never assumed.
+        lowered_declared_roots = {fdr.lower() for fdr in folded_declared_roots}
         for scope, root in sorted(project_roots.items()):
             if scope in declared or scope in suggested:
                 continue
             if not root:
                 continue
-            if _fold_altsep(root, os.sep, os.altsep) in folded_declared_roots:
+            folded_root = _fold_altsep(root, os.sep, os.altsep)
+            if folded_root in folded_declared_roots:
                 # The candidate's inferred root names the same directory
                 # as a declared scope's root — byte-identical, or (on
                 # Windows) the same path in the other separator family,
@@ -244,6 +250,27 @@ def detect_scope_mismatch(
                 # spellings diverged — the same raw-comparison class
                 # `_home_alias` shed, failing toward noise instead of
                 # silence.
+                continue
+            if folded_root.lower() in lowered_declared_roots and _home_ignores_case(
+                root
+            ):
+                # CASE leg of the same identity check, mirroring the
+                # byte-then-probe pairing of `verify._is_under_home`:
+                # the folded comparison above settles every store on its
+                # own, and only a case-modulo collision asks the
+                # filesystem (`_home_ignores_case` — generic over any
+                # path despite its name) whether the candidate's own
+                # spelling resolves case-insensitively. On a folding
+                # volume (Windows NTFS, default macOS APFS) a re-cased
+                # spelling — the lowercase drive letter some shells
+                # record into a synced store — names the SAME directory,
+                # and byte membership kept losing this suppression
+                # exactly like the separator gap above. The probe fails
+                # closed: a candidate directory absent from the local
+                # filesystem (a store synced from another machine)
+                # cannot be probed and keeps byte semantics — the
+                # deliberate residue of probe-don't-assume, disclosed
+                # here rather than papered over with a platform guess.
                 continue
             # Substring match — if the body contains the project root as
             # a literal substring (absolute, or tilde-contracted when the
@@ -325,6 +352,18 @@ def collect_project_roots(memories: Iterable[Memory]) -> dict[str, str]:
     — through as a store-wide prefix-matching root: the exact
     fail-open cascade the guard exists to stop. Kept roots stay in
     the store's ORIGINAL spelling; only the guard comparison folds.
+
+    CASE: the folded comparison against home is byte-first; a cwd that
+    spells home only modulo case (the lowercase drive letter some
+    shells record, a re-cased ``/users/me`` segment in a hand-edited
+    store) is dropped only when the filesystem confirms home's volume
+    folds case — `verify._home_ignores_case`, the same probe
+    `verify._is_under_home` pairs with its fold, asked lazily and at
+    most once per call. On a folding volume such a spelling IS the
+    home directory, and byte equality let it through as a store-wide
+    prefix-matching root; on a case-sensitive volume it is genuinely a
+    different directory and stays a legitimate root. The ``os.sep``
+    arm needs no case leg — separators carry no case.
     """
     by_scope: dict[str, Counter[str]] = {}
     for m in memories:
@@ -337,6 +376,9 @@ def collect_project_roots(memories: Iterable[Memory]) -> dict[str, str]:
             by_scope.setdefault(scope, Counter())[cwd] += 1
     out: dict[str, str] = {}
     home = _fold_altsep(str(Path.home()), os.sep, os.altsep)
+    # Probed lazily: only a case-modulo home spelling ever asks the
+    # filesystem, and at most once per call.
+    home_folds_case: bool | None = None
     for scope, counter in by_scope.items():
         # `most_common(1)` returns [(value, count)]; pick the value.
         root = counter.most_common(1)[0][0]
@@ -352,6 +394,14 @@ def collect_project_roots(memories: Iterable[Memory]) -> dict[str, str]:
             # sides folded: byte-identical on POSIX, and on Windows it
             # also catches the ``\`` spelling of the root marker.)
             continue
+        if folded.lower() == home.lower():
+            # Case-variant spelling of home — the same directory on a
+            # folding volume, a different one on a sensitive volume.
+            # Ask the filesystem, don't guess (CASE paragraph above).
+            if home_folds_case is None:
+                home_folds_case = _home_ignores_case(home)
+            if home_folds_case:
+                continue
         out[scope] = root
     return out
 
@@ -375,17 +425,37 @@ def _home_alias(path: str) -> str | None:
     fold is the identity, and a ``\\`` stays an ordinary filename
     character, never a separator.
 
+    CASE: the folded prefix check is byte-first, and a prefix that
+    spells home only modulo case contracts only when the filesystem
+    confirms home's volume folds case (`verify._home_ignores_case`,
+    the probe `verify._is_under_home` pairs with its own fold). On a
+    default macOS APFS volume ``/users/me/work`` IS home-rooted, and
+    the byte check silently skipped the alias search for it — the same
+    false-negative class the separator fold above closed. The prefix
+    slice is cut at raw length before lowering, so the tail offset
+    below never depends on case-transformed text; a home that cannot
+    be probed fails closed and keeps byte semantics.
+
     The returned alias keeps the tail in `path`'s ORIGINAL spelling
     (the fold is length-preserving, so the slice offset agrees with the
-    folded comparison). The body search still probes exactly one alias
-    spelling — a body citing the tilde path in the other separator
-    family stays unmatched, a narrower, pre-existing limitation this
-    fold deliberately leaves in place (the same "quieter signal" bias
-    the root pass already documents).
+    folded comparison). The suggestion-direction body search
+    (`_find_root_occurrence`) still probes exactly one alias spelling —
+    a body citing the tilde path in another separator family or casing
+    stays unmatched THERE, a narrower, pre-existing limitation
+    deliberately kept (the same "quieter signal" bias the root pass
+    already documents). The suppression-direction span search
+    (`_declared_root_spans`) folds instead: its misses fail toward
+    noise, not silence.
     """
     home = _fold_altsep(str(Path.home()), os.sep, os.altsep)
     folded = _fold_altsep(path, os.sep, os.altsep)
-    if folded.startswith(home + os.sep):
+    prefix = home + os.sep
+    if folded.startswith(prefix):
+        return "~" + path[len(home) :]
+    if folded[: len(prefix)].lower() == prefix.lower() and _home_ignores_case(home):
+        # Case-modulo home prefix, confirmed by the volume (CASE in the
+        # docstring). Slice first, lower second: the offset arithmetic
+        # never runs on case-transformed text.
         return "~" + path[len(home) :]
     return None
 
@@ -442,15 +512,41 @@ def _declared_root_spans(
     body: str, declared: set[str], project_roots: dict[str, str]
 ) -> list[tuple[int, int]]:
     """Spans of every occurrence of a declared scope's root in `body`
-    (absolute and tilde-contracted spellings).
+    (absolute and tilde-contracted spellings), in ORIGINAL body
+    coordinates.
 
     Used to suppress project-name token hits that sit inside a path the
     write's own tags already cover — with nested project trees the
     parent project's name is a segment of every child path, so without
     this a correctly-tagged child write would always be gated to add
     the parent scope.
+
+    SEPARATORS: the search runs over the FOLDED body with FOLDED
+    needles (`verify._fold_altsep`; identity on POSIX). A raw
+    `body.find` probed only each root's verbatim spelling plus its
+    single-spelling tilde alias, so a body citing a declared root in
+    the other separator family yielded no span and the parent's name
+    token was flagged on a correctly-tagged child write — the pass-1
+    twin of the noise-direction gaps `_declared_root_covers` closed. A
+    comparison-boundary fold cannot reach this one; the body search
+    itself has to fold. The fold is length-preserving, so a span found
+    in the folded body maps 1:1 onto the raw body the caller indexes.
+
+    CASE: a byte-exact hit in folded space counts unconditionally — on
+    Windows the two separator families spell one path by OS contract,
+    not per volume. A case-variant hit counts only when the filesystem
+    confirms the declared root's volume folds case
+    (`_home_ignores_case(root)` — generic over any path despite its
+    name; probed lazily, at most once per root, and only when a
+    case-variant occurrence actually appears). A declared root absent
+    from the local filesystem fails the probe closed and contributes
+    byte-exact spans only — the same disclosed residue as the other
+    root-anchored probes in this module. `re.IGNORECASE` matches
+    without rewriting the subject, so the case leg never disturbs span
+    coordinates either.
     """
     spans: list[tuple[int, int]] = []
+    folded_body = _fold_altsep(body, os.sep, os.altsep)
     for scope in declared:
         root = project_roots.get(scope)
         if not root:
@@ -459,14 +555,25 @@ def _declared_root_spans(
         alias = _home_alias(root)
         if alias is not None:
             needles.append(alias)
+        root_folds_case: bool | None = None
         for needle in needles:
+            folded_needle = _fold_altsep(needle, os.sep, os.altsep)
+            pattern = re.compile(re.escape(folded_needle), re.IGNORECASE)
             start = 0
             while True:
-                idx = body.find(needle, start)
-                if idx < 0:
+                m = pattern.search(folded_body, start)
+                if m is None:
                     break
-                spans.append((idx, idx + len(needle)))
-                start = idx + 1
+                if folded_body[m.start() : m.end()] != folded_needle:
+                    # Case-variant occurrence — real only where the
+                    # volume folds case (CASE in the docstring).
+                    if root_folds_case is None:
+                        root_folds_case = _home_ignores_case(root)
+                    if not root_folds_case:
+                        start = m.start() + 1
+                        continue
+                spans.append((m.start(), m.end()))
+                start = m.start() + 1
     return spans
 
 
@@ -502,19 +609,45 @@ def _declared_root_covers(
     length-preserving, so `idx`/`len` arithmetic and the
     `_boundary_after` check keep running against the RAW body, and
     `spelled` keeps its original spelling throughout.
+
+    CASE: both checks compare bytes first; only a case-modulo match
+    consults the filesystem, and the retry is dropped unless
+    `_home_ignores_case(dr)` — generic over any path despite its name,
+    anchored on the declared root, the tree the write claims to work
+    in — confirms the volume folds case. That covers a declared child
+    root re-cased against the candidate parent (the lowercase drive
+    letter some shells record into a synced store) and a body citation
+    re-cased against the stored child spelling; byte-only comparison
+    lost both suppressions, the same noise direction as the separator
+    gap above. The probe fails closed: a declared root absent from the
+    local filesystem cannot be probed and keeps byte semantics
+    (verify.py's probe anchor — home — always exists locally; this
+    module's root anchors may be foreign, the disclosed residue).
+    Prefix slices are cut at raw lengths before lowering, so no offset
+    arithmetic ever runs on case-transformed text.
     """
     folded_root = _fold_altsep(root, os.sep, os.altsep)
     for dr in sorted(declared_roots):
         folded_dr = _fold_altsep(dr, os.sep, os.altsep)
-        if len(folded_dr) <= len(folded_root) or not folded_dr.startswith(folded_root):
+        if len(folded_dr) <= len(folded_root):
             continue
+        if not folded_dr.startswith(folded_root):
+            if folded_dr[: len(folded_root)].lower() != folded_root.lower():
+                continue
+            if not _home_ignores_case(dr):
+                continue
         spelled = _home_alias(dr) if contracted else dr
         if spelled is None:
             continue
         cited = body[idx : idx + len(spelled)]
-        if _fold_altsep(cited, os.sep, os.altsep) == _fold_altsep(
-            spelled, os.sep, os.altsep
-        ) and _boundary_after(body, idx + len(spelled)):
+        folded_cited = _fold_altsep(cited, os.sep, os.altsep)
+        folded_spelled = _fold_altsep(spelled, os.sep, os.altsep)
+        if folded_cited != folded_spelled:
+            if folded_cited.lower() != folded_spelled.lower():
+                continue
+            if not _home_ignores_case(dr):
+                continue
+        if _boundary_after(body, idx + len(spelled)):
             return True
     return False
 
