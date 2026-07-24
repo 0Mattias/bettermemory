@@ -7,6 +7,7 @@ spinning up the full stdio transport.
 from __future__ import annotations
 
 import json
+import warnings
 from pathlib import Path
 from typing import Any
 
@@ -5714,45 +5715,139 @@ async def _lean_descriptions(tmp_path: Path) -> dict[str, str]:
     return {t.name: (t.description or "") for t in await mcp.list_tools()}
 
 
+# The budget, as named constants: the failure text, the pressure warning and
+# the recorded measurement all read the same numbers, so none can drift from
+# what the assert enforces.
+_DESC_BUDGET_CEILING = 27_500
+# Soft line. Crossing it warns instead of failing, so the pressure is visible
+# to whoever caused it rather than only to whoever trips the ratchet later.
+_DESC_BUDGET_PRESSURE = _DESC_BUDGET_CEILING - 100
+# Per-tool `_lean_descriptions` lengths, measured in the commit that set the
+# ceiling above. DIAGNOSTIC ONLY: nothing asserts these, so an entry that goes
+# stale degrades the failure message and never the verdict, and a tool absent
+# from here is reported as new rather than raising. The recorded total is a
+# `sum()` over this table rather than a second literal, so the two cannot
+# disagree. Re-measure it in the same commit as any deliberate recalibration.
+_DESC_BASELINE = {
+    "episode_handoff": 1560,
+    "episode_promote": 1597,
+    "episode_search": 3071,
+    "episode_write": 2350,
+    "memory_audit_turn": 1365,
+    "memory_list": 454,
+    "memory_record_use": 1556,
+    "memory_remove": 463,
+    "memory_scope_disable": 231,
+    "memory_scope_enable": 55,
+    "memory_scope_overview": 2812,
+    "memory_search": 3467,
+    "memory_show": 851,
+    "memory_update": 2234,
+    "memory_verify": 1625,
+    "memory_write": 3132,
+    "memory_write_cancel": 216,
+    "memory_write_confirm": 206,
+}
+
+
+def _desc_budget_breakdown(descs: dict[str, str]) -> str:
+    """Which descriptions moved against `_DESC_BASELINE`, largest first.
+
+    The reader who meets this budget is usually editing a DESC in some other
+    file and has no map from "the total is over" to "the thing you just
+    typed". One number cannot give them that map; this does."""
+    rows: list[tuple[int, str]] = []
+    for name, desc in descs.items():
+        was = _DESC_BASELINE.get(name)
+        now = len(desc)
+        if was is None:
+            rows.append((now, f"  {name}: {now} (not in the baseline)"))
+        elif now != was:
+            rows.append((now - was, f"  {name}: {was} -> {now} ({now - was:+d})"))
+    for name, was in _DESC_BASELINE.items():
+        if name not in descs:
+            rows.append((-was, f"  {name}: {was} -> gone from the lean surface"))
+    if not rows:
+        return "  (every description matches the baseline)"
+    rows.sort(key=lambda row: -row[0])
+    return "\n".join(text for _, text in rows)
+
+
 async def test_default_on_descriptions_fit_budget(tmp_path: Path) -> None:
     """Counter-valve to the instructions-block budget. The lean default-on
     tool descriptions are resident in context on every turn — including the
     90%+ of turns that never touch memory — so their total size is a per-turn
     tax the project exists to minimise.
 
-    This is a RATCHET. When it trips, the first move is to collapse duplicated
-    POLICY prose into its canonical home (the `instructions` block), NOT to
-    raise the ceiling. Genuine field-discoverability reference (see
-    test_prompts.py's "pin each field in its DESC" philosophy) may grow a
-    description legitimately; when it does, offset it by trimming policy
-    redundancy elsewhere, or raise the ceiling deliberately with that
-    justification in the commit. Never raise it to re-admit triplicated
-    policy."""
+    This is a RATCHET against SUSTAINED re-bloat: the surface grew by
+    restating the opt-in / announce / proactive-write policy in description
+    after description (the section comment above records that leak), and the
+    ceiling locks in the collapse that closed it. Verbatim re-triplication
+    has a sharper instrument —
+    `test_policy_lives_once_not_triplicated_in_descriptions` below fails on
+    the second copy of any phrase it tracks, at any size — so this guard is
+    the aggregate backstop, not the precise one. When it trips, the first
+    move is still to collapse
+    duplicated POLICY prose into its canonical home, the `instructions`
+    block. The slack exists for genuine field-discoverability reference
+    (`tests/test_prompts.py`'s "pin each field in its DESC" philosophy), not
+    for policy.
+
+    Two rules on the ceiling itself. The earlier single rule — never raise it
+    — was written while there was slack to spend, and once the slack ran out
+    it started arbitrating edits that had nothing to do with policy:
+
+    1. NEVER raise it to make a failing total pass by re-admitting collapsed
+       policy. That is the regression this guard exists for, and no amount of
+       rationale in the commit makes it a different move.
+    2. A raise is legitimate only as a deliberate RECALIBRATION of the slack:
+       the measured total does not move, `_DESC_BASELINE` is re-measured in
+       the same commit, and the new ceiling is a round number rather than
+       whatever the current total happens to need plus epsilon.
+
+    The raise to `_DESC_BUDGET_CEILING` was the second kind, and the case for
+    it is what the alternative was costing. The previous 27,250 was itself a
+    3.8.0 raise to admit one field-pin; by the 3.28.0 release commit (8e12b99)
+    the total had reached 27,248 — two characters of slack. At that width the
+    guard stops being a budget and becomes a tripwire on unrelated work: the
+    `DESC_MEMORY_AUDIT_TURN` correction in 8fc7afc landed net -3 characters,
+    with +2 the most it could have spent. And the failure surfaced far from
+    its cause, so
+    it now names which descriptions moved and by how much, with
+    `_DESC_BUDGET_PRESSURE` warning while there is still room to react."""
     descs = await _lean_descriptions(tmp_path)
     total = sum(len(d) for d in descs.values())
-    # The sweep is complete: 27,930 (pre-collapse) -> 27,681 (3.6.2 did the two
-    # policy-heaviest, memory_search/memory_write) -> 26,976 (the remaining 16
-    # default-on descriptions audited; residual policy-dup and cross-description
-    # restatements collapsed, all field reference preserved). The ceiling
-    # ratchets DOWN to lock that in; headroom is deliberately tight, mirroring
-    # the instructions-block guard. When it trips, collapse duplicated POLICY
-    # into the canonical `instructions` block, NOT raise the ceiling. A
-    # legitimate new field-pin (test_handler_descs_enumerate_*) may justify a
-    # deliberate raise — with that rationale in the commit, never to re-admit
-    # triplicated policy.
-    #   3.8.0: +~70 raising 27,100 -> 27,250. The credential gate added a new
-    #   default-on write status (`credential_warning`) and its override
-    #   (`acknowledge_credential`) to DESC_MEMORY_WRITE — a genuine field-pin,
-    #   symmetric to the existing `transient_warning`/`acknowledge_transient`
-    #   line, NOT re-admitted policy. The bullet was kept to one tight line
-    #   (trigger shapes + override); the full detail lives in api.md and the
-    #   runtime hint, so the per-turn tax is the minimum the new field needs.
-    assert total <= 27_250, (
+    # The recorded trail, totals and ceilings kept apart. Figures up to 3.6.4
+    # are as recorded by the commits that took them; 27,248 is these same 18
+    # constants read back out of 8e12b99; the current total is `_DESC_BASELINE`'s.
+    #   totals:   27,930 pre-collapse -> 27,681 (3.6.2 collapsed the two
+    #             policy-heaviest, memory_search / memory_write) -> 26,976
+    #             (3.6.4 audited the remaining 16 default-on descriptions;
+    #             residual policy-dup collapsed, all field reference kept) ->
+    #             27,248 at 8e12b99 -> the `_DESC_BASELINE` total here.
+    #   ceilings: 27,800 -> 27,100 (3.6.4 ratcheted the sweep in) -> 27,250
+    #             (3.8.0, for one field-pin: the credential gate's
+    #             `credential_warning` status and its `acknowledge_credential`
+    #             override, added to DESC_MEMORY_WRITE symmetrically with the
+    #             existing transient pair) -> `_DESC_BUDGET_CEILING`.
+    assert total <= _DESC_BUDGET_CEILING, (
         f"lean default-on tool descriptions total {total} chars "
-        f"(~{total // 4} tokens), over the 27,250 ceiling. These are paid in "
-        f"context EVERY turn. Collapse duplicated policy into the "
-        f"`instructions` block (the canonical home) rather than raising this."
+        f"(~{total // 4} tokens), over the {_DESC_BUDGET_CEILING} ceiling. "
+        f"These are paid in context EVERY turn. Collapse duplicated policy "
+        f"into the `instructions` block (the canonical home); a ceiling raise "
+        f"is a recalibration with its own rules, in this test's docstring. "
+        f"Against the recorded baseline:\n" + _desc_budget_breakdown(descs)
     )
+    if total > _DESC_BUDGET_PRESSURE:
+        warnings.warn(
+            f"lean default-on tool descriptions are at {total} of the "
+            f"{_DESC_BUDGET_CEILING}-char ceiling — "
+            f"{_DESC_BUDGET_CEILING - total} chars left, which is under one "
+            f"field-pin. Collapse duplicated policy into the `instructions` "
+            f"block now, while this is still a warning. Against the recorded "
+            f"baseline:\n" + _desc_budget_breakdown(descs),
+            stacklevel=2,
+        )
 
 
 async def test_policy_lives_once_not_triplicated_in_descriptions(

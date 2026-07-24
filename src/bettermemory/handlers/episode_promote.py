@@ -96,16 +96,16 @@ tree's episode only when you mean to take ownership of the fact.
 Deliberately NOT mirrored into `DESC_EPISODE_PROMOTE`: it was drafted
 there and pulled back out. `test_default_on_descriptions_fit_budget` is
 a ratchet on the default-on descriptions, which are resident in context
-on EVERY turn including the ~90% that never touch memory, and the total
-currently sits exactly at its ceiling. That test's own instruction is to
-collapse policy rather than raise the ceiling, and this is a behavioural
-caveat rather than the field-discoverability pin that would justify a
-deliberate raise. The audience that needs the reasoning — the next
-reader of this handler — is reading this docstring, which costs nothing
-per turn. The DESC already states the delete plainly; a caller only ever
-holds a foreign id by having opted into a cross-tree read first. If you
-want it in the DESC, buy the room by trimming policy elsewhere and say
-so in the commit — do not just raise the ceiling.
+on EVERY turn including the ~90% that never touch memory, and what slack
+it carries is reserved for field-discoverability pins. This is a
+behavioural caveat, not such a pin. The audience that needs the
+reasoning — the next reader of this handler — is reading this docstring,
+which costs nothing per turn. The DESC already states the delete
+plainly; a caller only ever holds a foreign id by having opted into a
+cross-tree read first. If you want it in the DESC anyway, buy the room
+by trimming policy elsewhere and say so in the commit; raising the
+ceiling to fit one more paragraph is the move that test's docstring
+rules out.
 """
 
 from __future__ import annotations
