@@ -310,11 +310,30 @@ _RELOCATION_LOOKBACK = 60
 # outside every function and class body, nowhere near the shard pick it
 # was cited for" is evidence under discussion, not an assertion that the
 # citation holds, and checking the quote against HEAD fails the prose
-# precisely when it is right. Verdict phrasings only — words that pass
-# judgement on a citation qua citation — so an ordinary wrong citation in
-# live prose stays checked. Multi-word markers use `\s+` because markdown
-# wraps mid-phrase. Proximity is bounded by `_NONRESOLVING_WINDOW` on
-# both sides so a verdict on one citation cannot exempt a paragraph.
+# precisely when it is right.
+#
+# What belongs here: a verdict on how a citation resolves, or a
+# provenance construction that takes a citation as its *object* — which
+# is why "originally shipped" carries a trailing `file.py:NNN` shape
+# rather than sitting here as two bare words. What does not: vocabulary
+# that merely turns up near a citation. A bare `\brotted\b` alternative
+# used to sit here and was exactly that — `rotted` is this project's own
+# word for a stale memory, live in ordinary living-document prose
+# (README.md's opening paragraph, when this was written) — so a wrong
+# citation within `_NONRESOLVING_WINDOW` of any such sentence was exempt
+# with no CI signal. Dropping it changed no verdict in the corpus at the
+# time: the single erratum citation its window reached keeps both the
+# "originally shipped" construction and its paragraph's commit pin.
+# `test_house_vocabulary_near_a_citation_does_not_suppress_it` pins the
+# behaviour so the hole cannot be reopened silently.
+#
+# The honest residual: some alternatives here are still bare phrases
+# rather than constructions over a citation (`nowhere near`, `short of
+# the`, `narrowed it to`). They are far narrower English than a house
+# word, but the guarantee against a paragraph-wide pass is the window
+# bound below, not the phrasing. Multi-word markers use `\s+` because
+# markdown wraps mid-phrase; proximity is bounded by
+# `_NONRESOLVING_WINDOW` on both sides.
 _NONRESOLVING_PROSE = re.compile(
     r"\b(?:do(?:es)?|did)\s+not\s+(?:point|resolve|land|sit)\b"
     r"|\bpoints?\s+at\s+prose\b"
@@ -325,10 +344,11 @@ _NONRESOLVING_PROSE = re.compile(
     r"|\bwrong\s+(?:when\s+written|on\s+arrival)\b"
     r"|\balready\s+(?:false|wrong|moved)\b"
     r"|\bnon-resolving\b"
-    r"|\boriginally\s+shipped\b"
+    # Provenance, but only over a citation: the marker must take a
+    # `file.py:NNN` (bare, backticked, or markdown-linked) as its object.
+    r"|\boriginally\s+shipped\s+\[?`{0,2}[\w/]+\.py:\d+"
     r"|\bnarrowed\s+it\s+to\b"
-    r"|\ba\s+different\s+(?:function|method|class)\b"
-    r"|\brotted\b",
+    r"|\ba\s+different\s+(?:function|method|class)\b",
     re.I,
 )
 _NONRESOLVING_WINDOW = 120
@@ -1642,6 +1662,40 @@ def test_nonresolving_verdict_must_sit_near_the_citation() -> None:
     far = "an earlier citation straddles two functions. " + padding + plain
     assert _NONRESOLVING_PROSE.search(far) is not None
     assert len(check_line_refs("docs/fake.md", far)) == 1
+
+
+def test_house_vocabulary_near_a_citation_does_not_suppress_it() -> None:
+    """A suppression marker must judge a citation, not merely sit beside one.
+
+    ``rotted`` is this project's own word for a stale memory — README's
+    opening paragraph uses it that way, of a memory and nowhere near a
+    citation. While it sat in ``_NONRESOLVING_PROSE`` as a bare
+    alternative, any wrong citation within ``_NONRESOLVING_WINDOW`` of
+    such an ordinary sentence was exempt, and no CI signal said so. Same
+    for the provenance marker, which now has to take the citation as its
+    object: "originally shipped" about anything else leaves a nearby
+    citation checked.
+
+    Both fixtures are one clause away from a citation the checker
+    otherwise reports, so each asserts the false-negative direction the
+    suppression rules must not have.
+    """
+    decoy = _crc32_shard_line() + 200
+    cited = f"a recorder picks its shard by `crc32(session_id)` (`events.py:{decoy}`)"
+    assert len(check_line_refs("docs/fake.md", cited)) == 1
+    rotted = "a memory that has rotted is flagged rather than quoted back; " + cited
+    assert re.search(r"\brotted\b", rotted), "fixture lost the house word"
+    assert len(check_line_refs("docs/fake.md", rotted)) == 1
+    shipped = "the sharded recorder originally shipped in 3.24.0, and " + cited
+    assert re.search(r"\boriginally\s+shipped\b", shipped), "fixture lost the marker"
+    assert len(check_line_refs("docs/fake.md", shipped)) == 1
+    # The construction the errata actually use — marker plus the citation
+    # it is about — must still suppress, or the tightening has gone too far.
+    quoted = (
+        f"the doc originally shipped `events.py:{decoy}` for the "
+        "`crc32(session_id)` shard pick"
+    )
+    assert check_line_refs("docs/fake.md", quoted) == []
 
 
 def test_citation_pinned_to_a_named_commit_is_not_checked() -> None:
