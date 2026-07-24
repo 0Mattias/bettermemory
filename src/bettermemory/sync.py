@@ -70,7 +70,7 @@ from .proposals import PROPOSALS_FILENAME
 from .semantic import EMBEDDING_FILENAME_PREFIX, EMBEDDING_FILENAME_SUFFIX
 
 # Coarse store-wide lock for push/pull. The git operations the sync
-# wrapper invokes (`git add -A`, `git commit`, `git pull --rebase`)
+# wrapper invokes (`git add -A`, `git commit-tree`, `git pull --rebase`)
 # are not atomic with respect to the in-process Store: `add -A`
 # snapshots whatever is on disk at that instant, so a concurrent
 # `Store.write` mid-`add` ships a half-written file-set; `pull
@@ -742,6 +742,31 @@ def _rebase_autostash_enabled(root: Path) -> bool:
     return result.returncode == 0 and result.stdout.strip() == "true"
 
 
+def _git_path_exists(root: Path, name: str) -> bool:
+    """True when `<git-dir>/<name>` exists, located the way git locates it.
+
+    `git rev-parse --git-path` rather than `root / ".git" / …` because
+    `.git` is a FILE, not a directory, in a linked worktree or a
+    submodule — probing the literal path would report "absent" for every
+    such store, whatever the state actually is. git prints the path
+    relative to the current directory when it can, so a relative answer is
+    anchored to `root` (which every caller has already confirmed is the
+    top of the worktree) before the existence test.
+
+    Shared by the two in-progress-operation probes below —
+    `_rebase_in_progress` and `_require_no_sequencer_state` — so both
+    resolve the git dir identically rather than one of them growing its
+    own literal-`.git` shortcut.
+    """
+    result = _run_git(root, ["rev-parse", "--git-path", name], check=False)
+    if result.returncode != 0:
+        return False
+    candidate = Path(result.stdout.strip())
+    if not candidate.is_absolute():
+        candidate = root / candidate
+    return candidate.exists()
+
+
 def _rebase_in_progress(root: Path) -> bool:
     """True while an interrupted `git rebase` is still unfinished.
 
@@ -752,22 +777,10 @@ def _rebase_in_progress(root: Path) -> bool:
     (an interactive `edit` stop, or conflicts the user already staged but
     has not continued past) — a state with no `U` codes where a commit
     would still land somewhere the user does not expect.
-
-    `git rev-parse --git-path` rather than `root / ".git" / …` because
-    `.git` is a FILE, not a directory, in a linked worktree or a
-    submodule — probing the literal path would report "no rebase" for
-    every such store.
     """
-    for name in ("rebase-merge", "rebase-apply"):
-        result = _run_git(root, ["rev-parse", "--git-path", name], check=False)
-        if result.returncode != 0:
-            continue
-        candidate = Path(result.stdout.strip())
-        if not candidate.is_absolute():
-            candidate = root / candidate
-        if candidate.exists():
-            return True
-    return False
+    return any(
+        _git_path_exists(root, name) for name in ("rebase-merge", "rebase-apply")
+    )
 
 
 def _unresolved_conflict_error(
@@ -1031,6 +1044,179 @@ it costs no recall — git never writes a conflict block without its
 """
 
 
+# Sequencer states in which a plain `git commit` does something
+# `commit-tree` + `update-ref` provably cannot reproduce, so the plumbing
+# commit path refuses rather than guessing. `MERGE_HEAD` is the one that
+# matters: verified on git 2.50.1, `git commit` in that state writes a
+# TWO-PARENT merge commit and clears the sentinel, while `commit-tree -p
+# HEAD` writes a one-parent commit and leaves `MERGE_HEAD` behind — the
+# merged branch's history silently unreachable and the store parked
+# mid-merge forever. `CHERRY_PICK_HEAD` / `REVERT_HEAD` contribute no
+# extra parent but are cleared by `git commit` the same way.
+#
+# Not reachable through an unmerged worktree (`_require_no_unresolved_conflict`
+# refuses that first, on both callers) — this covers the narrower state
+# where the user RESOLVED and `git add`ed the conflict but has not yet
+# concluded the operation, which carries no `U` codes and no rebase
+# sentinel.
+_SEQUENCER_SENTINELS = ("MERGE_HEAD", "CHERRY_PICK_HEAD", "REVERT_HEAD")
+
+
+def _require_no_sequencer_state(root: Path) -> None:
+    """Raise unless `root` has no half-finished merge / cherry-pick / revert.
+
+    A guard the porcelain commit path never needed, introduced by the move
+    to `commit-tree`. See `_SEQUENCER_SENTINELS` for what git does that
+    the plumbing cannot. Fails CLOSED and names the state, in the same
+    voice as `_unresolved_conflict_error`, whose non-rebase branch already
+    tells users to conclude these operations with a plain `git commit`.
+    """
+    pending = [name for name in _SEQUENCER_SENTINELS if _git_path_exists(root, name)]
+    if not pending:
+        return
+    raise SyncError(
+        f"refusing to commit: {root} has an unfinished operation "
+        f"({', '.join(pending)}) whose conflicts are already resolved. "
+        "Concluding it correctly needs `git commit` (a merge records a "
+        "second parent and clears the state); this wrapper commits a "
+        "snapshot tree it has scanned for conflict markers, which cannot "
+        "reproduce that. Finish it by hand with `git commit` from the "
+        "memory directory — or back it out with `git merge --abort` "
+        "(`git cherry-pick --abort` / `git revert --abort`) — then re-run "
+        "the sync."
+    )
+
+
+def _commit_signing_enabled(root: Path) -> bool:
+    """True when this repo's git would sign a plain `git commit`.
+
+    `git commit` honours `commit.gpgSign`; `git commit-tree` does NOT —
+    verified on git 2.50.1, where a repo with `commit.gpgSign=true` and an
+    unusable signing key fails `git commit` (exit 128, "gpg failed to sign
+    the data") while `git commit-tree` cheerfully returns an UNSIGNED
+    commit. So the plumbing path has to pass `-S` itself or it would
+    silently downgrade a store whose owner requires signed commits.
+
+    Same `--bool` normalisation and same conservative reading as
+    `_rebase_autostash_enabled`: `1` / `yes` / `on` all come back as
+    `true`, an unset key exits 1 and an unparseable value exits 128, and
+    anything that is not a clean `true` is read as "not enabled". The
+    conservative direction differs in consequence from the autostash
+    probe, and that is worth stating plainly: misreading here produces an
+    UNSIGNED commit where the user configured signing. It is bounded by
+    what `--bool` actually mis-parses (nothing that git itself would have
+    accepted as true), not by an assumption.
+    """
+    result = _run_git(
+        root, ["config", "--bool", "--get", "commit.gpgSign"], check=False
+    )
+    return result.returncode == 0 and result.stdout.strip() == "true"
+
+
+def _cleanup_commit_message(message: str) -> str:
+    """git's `--cleanup=whitespace`, applied in-process.
+
+    `git commit -m` runs this cleanup on the message; `git commit-tree -m`
+    stores it near-verbatim (it only guarantees a trailing newline), so the
+    plumbing path has to apply it or a `--message` with stray whitespace
+    would produce a different commit than the porcelain path did. The three
+    rules are git's documented ones: strip trailing whitespace from every
+    line, collapse runs of blank lines to one, drop leading and trailing
+    blank lines.
+
+    Verified byte-for-byte against real `git commit -m` on git 2.50.1 over
+    padded subjects, interior blank-line runs, tab-indented bodies and
+    trailing-whitespace lines: the stored commit bodies were identical in
+    every non-empty case. The EMPTY case is the one that cannot be matched
+    by cleanup alone — `git commit` refuses an empty message outright
+    (exit 1) while `commit-tree` accepts one — so the caller refuses it
+    explicitly instead.
+    """
+    kept: list[str] = []
+    for raw in message.split("\n"):
+        line = raw.rstrip()
+        if not line and (not kept or not kept[-1]):
+            continue
+        kept.append(line)
+    while kept and not kept[-1]:
+        kept.pop()
+    return "\n".join(kept)
+
+
+def _commit_snapshot_tree(root: Path, tree: str, message: str) -> None:
+    """Commit exactly `tree` onto the current branch, or raise.
+
+    The write half of the snapshot discipline: `_stage_and_commit` scans a
+    tree object, and this commits THAT object, so the bytes that were
+    judged are the bytes that ship. A plain `git commit` cannot be used for
+    that — it re-reads the index, which anything on the machine may have
+    changed since the scan.
+
+    HEAD is read once and passed back to `git update-ref` as the expected
+    old value, which makes the ref write a compare-and-swap. That is not a
+    nicety: `commit-tree` bakes the parent into the commit object, so if
+    another actor advanced the branch after the parent was read, writing
+    unconditionally would ORPHAN their commit. The CAS turns that into a
+    refusal (verified on git 2.50.1: "cannot lock ref 'HEAD': is at … but
+    expected …", exit 128) and `_run_git`'s default `check=True` surfaces
+    it as a `SyncError`. An unborn HEAD passes the empty old value, which
+    git reads as "must not already exist", and `commit-tree` is given no
+    `-p` at all so the result is a root commit.
+
+    `update-ref` dereferences HEAD exactly as `git commit` does — moving
+    the branch on an attached HEAD, moving HEAD itself when detached (both
+    verified on 2.50.1) — and the reflog subject matches git's own
+    `commit: <subject>` / `commit (initial): <subject>` spelling so
+    `git reflog` in a synced store reads no differently than before.
+
+    WHAT THIS PATH DOES NOT DO, stated plainly because it is a real
+    behavioural difference and not a theoretical one:
+
+    * IT RUNS NO HOOKS. `pre-commit`, `prepare-commit-msg`, `commit-msg`
+      and `post-commit` all fire for `git commit` and none of them fire
+      here. Confirmed on 2.50.1 with a `pre-commit` that exits 1: the
+      porcelain commit is vetoed, the plumbing commit is created. A store
+      initialised by `sync init` has only git's inert `.sample` hooks, so
+      this changes nothing for the default shape — but a user who
+      installed a real hook in their memory store loses it on the sync
+      path, and would have to enforce it elsewhere (e.g. a server-side
+      hook on the remote).
+    * It does not write `COMMIT_EDITMSG`, which `git commit` leaves behind
+      as a scratch record of the last message.
+
+    Signing and message cleanup are NOT in that list — they are reproduced
+    explicitly, see `_commit_signing_enabled` and
+    `_cleanup_commit_message`. Merge-conclusion semantics are not in it
+    either, because `_require_no_sequencer_state` refuses that state
+    rather than approximating it.
+    """
+    body = _cleanup_commit_message(message)
+    if not body:
+        # Matches `git commit`, which aborts on an empty message rather
+        # than recording one. `commit-tree` would accept it.
+        raise SyncError(
+            "refusing to commit: the commit message is empty after "
+            "whitespace cleanup. Pass a non-blank `--message`."
+        )
+
+    _require_no_sequencer_state(root)
+
+    head = _run_git(root, ["rev-parse", "--verify", "HEAD"], check=False)
+    parent = head.stdout.strip() if head.returncode == 0 else ""
+
+    args = ["commit-tree", tree]
+    if parent:
+        args += ["-p", parent]
+    if _commit_signing_enabled(root):
+        args.append("-S")
+    args += ["-m", body]
+    commit = _run_git(root, args).stdout.strip()
+
+    subject = body.split("\n", 1)[0]
+    reflog = f"commit: {subject}" if parent else f"commit (initial): {subject}"
+    _run_git(root, ["update-ref", "-m", reflog, "HEAD", commit, parent])
+
+
 def _stage_and_commit(root: Path, message: str) -> bool:
     """Reconcile the gitignore, `git add -A`, commit iff anything staged.
 
@@ -1044,13 +1230,36 @@ def _stage_and_commit(root: Path, message: str) -> bool:
     pulls (see `auto`) without duplicating the reconcile + stage +
     commit discipline or reordering it by accident.
 
-    Between staging and committing, the INDEX is scanned for line-start
-    conflict markers (`_STAGED_MARKER_PATTERN`) and the commit REFUSES
-    when any are present. Both callers gate on porcelain state before
-    staging, but those predicates race the user's own git — this scan
-    judges the staged bytes themselves, at the package's single
+    Between staging and committing, the staged content is scanned for
+    line-start conflict markers (`_STAGED_MARKER_PATTERN`) and the commit
+    REFUSES when any are present. Both callers gate on porcelain state
+    before staging, but those predicates race the user's own git — this
+    scan judges the staged bytes themselves, at the package's single
     `git add -A` choke point, so conflict content that wins the race is
     refused here rather than committed as resolved content.
+
+    THE SCAN AND THE COMMIT SHARE ONE SNAPSHOT, which is what makes the
+    refusal a guarantee rather than a likelihood. `git write-tree` freezes
+    the index into an immutable tree object; the scan greps THAT object
+    and, on a clean result, `_commit_snapshot_tree` commits THAT object.
+    The previous shape — `git grep --cached` followed by a plain
+    `git commit` — was check-then-act against shared mutable state: the
+    commit re-read the index, so marker content that a user's hand-run
+    `git add` staged in the gap between the two commands was committed
+    having never been scanned. Nothing can enter the commit after the
+    scan now, because the commit does not consult the index at all.
+
+    What that does NOT do is stop anyone from restaging in the gap. It
+    changes where such content lands: bytes staged after `write-tree` are
+    simply absent from this commit and stay in the index, so the NEXT
+    sync stages them, scans them, and refuses or ships them on their own
+    merits. The invariant is "every byte this package commits was scanned
+    in the state it was committed in", not "the index holds still".
+
+    Fail-closed in both directions. `git write-tree` itself errors on an
+    index with unmerged entries (verified on git 2.50.1, exit 128), and
+    `_run_git`'s default `check=True` turns that into a `SyncError`, so a
+    conflict state that somehow reached here cannot be snapshotted either.
     """
     # Reconcile the on-disk `.gitignore` with `_GITIGNORE_LINES` BEFORE
     # `git add -A` reads the tree, so a pattern added in a release AFTER
@@ -1088,25 +1297,44 @@ def _stage_and_commit(root: Path, message: str) -> bool:
     diff = _run_git(root, ["diff", "--cached", "--quiet"], check=False)
     if diff.returncode == 0:
         return False
+    # SNAPSHOT the index into an immutable tree object. Everything from
+    # here on judges and commits this one object, never the index again —
+    # see the docstring for why check-then-act on the shared index was not
+    # good enough.
+    tree = _run_git(root, ["write-tree"]).stdout.strip()
+
     # Staged-CONTENT marker scan — the one conflict mitigation here that
     # does not depend on WHO created the conflict or WHEN. The porcelain
     # guards in both callers run before the `git add -A` above, and the
     # sync lock serialises only bettermemory's own operations: a conflict
     # created by the user's hand-run git (or an editor plugin) in the gap
     # between a caller's predicate and the add arrives in the index as
-    # apparently-resolved content. Judging the index itself — after the
+    # apparently-resolved content. Judging the snapshot itself — after the
     # add, before the commit — catches those bytes however they got here.
+    #
+    # Positional tree-ish instead of `--cached`; identical exit-code
+    # contract (verified on git 2.50.1: 0 on a hit, 1 on a clean tree,
+    # 128 on an unparseable tree-ish), and the pathspec resolves against
+    # the tree rather than the worktree.
     scan = _run_git(
         root,
-        ["grep", "--cached", "-nE", _STAGED_MARKER_PATTERN, "--", "."],
+        ["grep", "-nE", _STAGED_MARKER_PATTERN, tree, "--", "."],
         check=False,
     )
     if scan.returncode != 1:
         # git grep: 0 = matches found, 1 = clean, >=2 = the scan itself
-        # failed. Both non-1 cases refuse — an unverified index does not
+        # failed. Both non-1 cases refuse — unverified content does not
         # get committed (this is a corruption guard, so it fails closed).
         if scan.returncode == 0:
-            hits = scan.stdout.strip().splitlines()
+            # Grepping a tree-ish prefixes every hit with `<tree>:`, which
+            # `--cached` did not. Strip it so the refusal keeps naming
+            # `path:line:text` and nothing else — a 40-char OID in front
+            # of each hit would push the real content out of the 120-char
+            # excerpt below.
+            hits = [
+                line.removeprefix(f"{tree}:")
+                for line in scan.stdout.strip().splitlines()
+            ]
             shown = "\n  ".join(h[:120] for h in hits[:5])
             more = f"\n  … and {len(hits) - 5} more" if len(hits) > 5 else ""
             raise SyncError(
@@ -1124,7 +1352,7 @@ def _stage_and_commit(root: Path, message: str) -> bool:
             f"(git grep exited {scan.returncode}): "
             f"{scan.stderr.strip() or scan.stdout.strip()}"
         )
-    _run_git(root, ["commit", "-m", message])
+    _commit_snapshot_tree(root, tree, message)
     return True
 
 
@@ -1174,13 +1402,26 @@ def _commit_local_changes(root: Path, message: str) -> bool:
     hand-run `git merge` (or an editor plugin's) from conflicting the
     worktree between the predicate and the `git add -A` a few statements
     later — bettermemory's mutex is not the user's git's. What changed is
-    the CONSEQUENCE of losing that race: `_stage_and_commit` now scans
-    the staged index for marker lines before it commits, so conflict
-    content that slips past this predicate is refused at the choke point
-    instead of committed as resolved content. This predicate still earns
-    its place — it fires EARLY, before a partial stage, with the specific
-    merge/rebase/stash diagnosis; the index scan is the actor- and
-    timing-independent backstop behind it, not a replacement for it.
+    the CONSEQUENCE of losing that race: `_stage_and_commit` snapshots the
+    index into a tree object, scans THAT for marker lines, and commits
+    THAT same object, so conflict content that slips past this predicate
+    is refused at the choke point instead of committed as resolved
+    content. This predicate still earns its place — it fires EARLY, before
+    a partial stage, with the specific merge/rebase/stash diagnosis; the
+    snapshot scan is the actor- and timing-independent backstop behind it,
+    not a replacement for it.
+
+    Be precise about what the snapshot does and does not buy, because the
+    two are easy to conflate. It CLOSES the check-then-act gap that the
+    earlier `git grep --cached` + `git commit` pair left open: those two
+    commands read the shared index twice, so anything staged between them
+    shipped unscanned, and no amount of locking on bettermemory's side
+    could have covered it. It does NOT stop content from being staged
+    concurrently — nothing here can. Bytes that arrive after the
+    `write-tree` are simply not part of this commit; they stay in the
+    index and get scanned on their own terms by the next sync. So the
+    guarantee is about the COMMIT, not about the index: every byte this
+    package commits was scanned in exactly the state it was committed in.
 
     `auto` runs commit -> pull -> push and each step gates independently,
     but the first to see a conflict raises and aborts the run, so the user

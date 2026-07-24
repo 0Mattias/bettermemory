@@ -2387,6 +2387,338 @@ def test_marker_scan_ignores_setext_underlines_and_indented_quotes(
     )
 
 
+def test_push_refuses_when_the_staged_marker_scan_itself_fails(
+    memory_dir: Path, bare_remote: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """🟡 The scan's FAIL-CLOSED branch, which shipped with no test at all.
+
+    `_stage_and_commit` treats `git grep` exit >= 2 as "the scan did not
+    run" and refuses, because an unverified snapshot must not be
+    committed. Nothing exercised that branch, so a refactor that flipped
+    it open — reading any non-zero code as "clean", say — would have kept
+    the suite green while silently retiring the guard on the ship path.
+    That is the guard-decay pattern this module's history is full of.
+
+    Monkeypatches `_run_git` in the shape the credential-redaction tests
+    already use: intercept one subcommand, hand back a synthetic
+    `CompletedProcess`, delegate everything else to the real thing. Asserts
+    the refusal AND that neither the local branch nor the remote moved —
+    "raised an error" and "committed nothing" are separate properties, and
+    a guard placed after the commit would satisfy only the first.
+
+    Mutation-sound: relax the check to `if scan.returncode == 0` and this
+    fails on the first assertion, with `sync.push` returning a committed,
+    pushed result built from a snapshot nothing ever scanned.
+    """
+    sync.init(memory_dir, remote=str(bare_remote))
+    Store(memory_dir).write(content="clean baseline", scopes=["tools"])
+    sync.push(memory_dir)
+    before_local = _git(memory_dir, "rev-parse", "main").strip()
+    before_remote = _git(bare_remote, "rev-parse", "main").strip()
+
+    # Something must actually be staged, or `_stage_and_commit` returns
+    # before it ever reaches the scan and the test proves nothing.
+    Store(memory_dir).write(content="a second clean fact", scopes=["tools"])
+
+    original_run_git = sync._run_git
+    scan_attempted = False
+
+    def fake_run_git(
+        root: Path, args: list[str], *, check: bool = True
+    ) -> subprocess.CompletedProcess[str]:
+        nonlocal scan_attempted
+        if args and args[0] == "grep":
+            scan_attempted = True
+            return subprocess.CompletedProcess(
+                args=["git", *args],
+                returncode=2,
+                stdout="",
+                stderr="fatal: unable to read tree object",
+            )
+        return original_run_git(root, args, check=check)
+
+    monkeypatch.setattr(sync, "_run_git", fake_run_git)
+
+    with pytest.raises(sync.SyncError) as excinfo:
+        sync.push(memory_dir)
+
+    assert scan_attempted, (
+        "`push` never ran the marker scan — this test no longer covers the "
+        "branch it was written for"
+    )
+
+    message = str(excinfo.value)
+    assert "scan failed" in message, (
+        f"the refusal does not say the scan itself failed: {message}"
+    )
+    assert "git grep exited 2" in message, (
+        f"the refusal does not surface the scanner's exit code: {message}"
+    )
+
+    # `_git` shells out directly, so the monkeypatch above cannot mask a
+    # commit that really happened.
+    assert _git(memory_dir, "rev-parse", "main").strip() == before_local, (
+        "push committed on top of a snapshot the conflict scan never verified"
+    )
+    assert _git(bare_remote, "rev-parse", "main").strip() == before_remote, (
+        "push SHIPPED an unverified snapshot to the remote"
+    )
+
+
+def test_push_commits_the_snapshot_the_scan_approved(
+    memory_dir: Path, bare_remote: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """🟡 CHECK-THEN-ACT on the shared index, closed by a tree snapshot.
+
+    The scan used to read the index (`git grep --cached`) and the commit
+    used to read it AGAIN (`git commit`). Two reads of shared mutable
+    state with a gap between them: marker content staged by anything else
+    on the machine in that gap — a user's hand-run `git add` mid-sync, an
+    editor plugin — was committed having never been scanned, which is a
+    slice of the very race the scan was added to close.
+
+    The window is reproduced exactly rather than approximated: the fake
+    `_run_git` lets the real scan run, then, at the instant it returns,
+    appends a marker triad to a tracked memory and `git add`s it. Under
+    the old shape the following `git commit` picked that up. Under the
+    snapshot shape the commit is built from the tree object that was
+    scanned, so the injected bytes cannot reach it.
+
+    The `git diff --cached` assertion is what keeps this test honest: it
+    proves the index really was mutated in the gap, so a green result
+    means "the commit ignored the mutation", not "the mutation never
+    happened". Those leftover bytes staying staged IS the new invariant —
+    they are not silently dropped, they simply belong to a later commit,
+    which will scan them on its own terms.
+
+    Mutation-sound: restore `git grep --cached` + `_run_git(["commit", ...])`
+    and this fails in `_assert_no_commit_carries_conflict_markers`, with
+    `<<<<<<< HEAD` in a memory body at the tip of `main` and on the remote.
+    """
+    sync.init(memory_dir, remote=str(bare_remote))
+    store = Store(memory_dir)
+    memory = store.write(content="clean baseline", scopes=["tools"])
+    sync.push(memory_dir)
+
+    store.write(content="a second clean fact", scopes=["tools"])
+    path = store._find_path_for_id(memory.id)
+    assert path is not None
+
+    original_run_git = sync._run_git
+    staged_in_the_gap = False
+
+    def fake_run_git(
+        root: Path, args: list[str], *, check: bool = True
+    ) -> subprocess.CompletedProcess[str]:
+        nonlocal staged_in_the_gap
+        result = original_run_git(root, args, check=check)
+        if args and args[0] == "grep" and not staged_in_the_gap:
+            staged_in_the_gap = True
+            # THE WINDOW: between the scan and the commit, somebody else's
+            # git stages conflict content into the shared index.
+            path.write_text(
+                path.read_text(encoding="utf-8")
+                + "<<<<<<< HEAD\nours\n=======\ntheirs\n>>>>>>> other\n",
+                encoding="utf-8",
+            )
+            original_run_git(root, ["add", "-A"])
+        return result
+
+    monkeypatch.setattr(sync, "_run_git", fake_run_git)
+
+    result = sync.push(memory_dir)
+
+    assert staged_in_the_gap, (
+        "the marker scan never ran, so nothing was injected — this test no "
+        "longer covers the window it was written for"
+    )
+    assert result["committed"] is True, (
+        "the clean change was not committed at all; the test needs a real "
+        "commit for the snapshot assertion to mean anything"
+    )
+    # The corruption check FIRST, so a regression reports the thing that
+    # actually went wrong. If the commit swallowed the injected bytes,
+    # both this and the staging check below fail, and only this one names
+    # the reason.
+    _assert_no_commit_carries_conflict_markers(memory_dir)
+    _assert_no_commit_carries_conflict_markers(bare_remote)
+    # Anti-vacuity guard, reached only once history is known clean: the
+    # injected bytes are still STAGED (index vs HEAD) after the push
+    # returned, which proves the index really did change inside the
+    # window rather than the injection having quietly missed.
+    assert "<<<<<<<" in _git(memory_dir, "diff", "--cached"), (
+        "the injected content never reached the index — the check-then-act "
+        "window was not actually exercised"
+    )
+
+
+def test_push_refuses_rather_than_orphaning_a_commit_that_lands_mid_sync(
+    memory_dir: Path, bare_remote: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The compare-and-swap the plumbing commit path depends on.
+
+    `git commit-tree` bakes the parent into the commit object, so the
+    parent has to be read before the ref is written. If someone else's
+    commit lands on the branch in between and the ref write is
+    unconditional, that commit stops being reachable — the sync's own
+    commit points past it. Plain `git commit` never had this exposure;
+    the move to plumbing created it, and `git update-ref`'s optional
+    old-value argument is what closes it.
+
+    The window is reproduced at the one instant that distinguishes the
+    two: the fake fires when `commit-tree` returns, which is after the
+    parent was read and before `update-ref` runs.
+
+    Mutation-sound: drop the old-value argument from the `update-ref`
+    call and this fails on the final assertion, with the hand-run commit
+    unreachable from any ref.
+    """
+    sync.init(memory_dir, remote=str(bare_remote))
+    store = Store(memory_dir)
+    store.write(content="clean baseline", scopes=["tools"])
+    sync.push(memory_dir)
+    store.write(content="a second clean fact", scopes=["tools"])
+
+    original_run_git = sync._run_git
+    interloper: dict[str, str] = {}
+
+    def fake_run_git(
+        root: Path, args: list[str], *, check: bool = True
+    ) -> subprocess.CompletedProcess[str]:
+        result = original_run_git(root, args, check=check)
+        if args and args[0] == "commit-tree" and "tip" not in interloper:
+            # THE WINDOW: a hand-run commit advances the branch after the
+            # sync read its parent.
+            (root / "hand-written.md").write_text("by hand\n", encoding="utf-8")
+            original_run_git(root, ["add", "--", "hand-written.md"])
+            original_run_git(root, ["commit", "-m", "hand-run commit"])
+            interloper["tip"] = original_run_git(
+                root, ["rev-parse", "HEAD"]
+            ).stdout.strip()
+        return result
+
+    monkeypatch.setattr(sync, "_run_git", fake_run_git)
+
+    with pytest.raises(sync.SyncError):
+        sync.push(memory_dir)
+
+    assert "tip" in interloper, (
+        "`commit-tree` never ran — this test no longer covers the window it "
+        "was written for"
+    )
+    assert _git(memory_dir, "rev-parse", "main").strip() == interloper["tip"], (
+        "the sync overwrote a commit that landed mid-sync; that commit is "
+        "now unreachable from any branch"
+    )
+
+
+def test_push_refuses_to_conclude_a_half_finished_merge(
+    memory_dir: Path, bare_remote: Path, tmp_path: Path
+) -> None:
+    """The one semantic `commit-tree` cannot reproduce, refused explicitly.
+
+    A merge whose conflicts the user RESOLVED and `git add`ed carries no
+    `UU` codes and no rebase sentinel, so every conflict guard in this
+    module passes — but `MERGE_HEAD` is still there. A plain `git commit`
+    would conclude it as a two-parent merge commit and clear the state;
+    `git commit-tree -p HEAD` writes a ONE-parent commit and leaves the
+    sentinel, which loses the merged branch from history and parks the
+    store mid-merge. Verified on git 2.50.1 in both directions.
+
+    So the plumbing path refuses instead of approximating, and points at
+    the command that does it properly. That is a deliberate behaviour
+    change: before the snapshot rework, `sync push` would silently
+    conclude this merge with a "bettermemory: sync" message.
+    """
+    other = _wedge_a_conflicted_merge(memory_dir, bare_remote, tmp_path)
+
+    for line in _git(other, "status", "--porcelain").splitlines():
+        if line.startswith("UU"):
+            name = line[3:]
+            (other / name).write_text("resolved by hand\n", encoding="utf-8")
+            _git(other, "add", "--", name)
+
+    porcelain = _git(other, "status", "--porcelain")
+    assert not any(line.startswith("UU") for line in porcelain.splitlines()), (
+        f"fixture did not resolve the conflict; porcelain: {porcelain!r}"
+    )
+    assert sync._git_path_exists(other, "MERGE_HEAD"), (
+        "fixture left no MERGE_HEAD — the state under test is a RESOLVED "
+        "but unconcluded merge"
+    )
+    before = _git(other, "rev-parse", "main").strip()
+
+    with pytest.raises(sync.SyncError) as excinfo:
+        sync.push(other)
+
+    assert _git(other, "rev-parse", "main").strip() == before, (
+        "push wrote a single-parent commit over an unconcluded merge, "
+        "dropping the merged branch from history"
+    )
+    message = str(excinfo.value)
+    assert "MERGE_HEAD" in message, (
+        f"the refusal does not name the state that blocked it: {message}"
+    )
+    assert "git commit" in message, (
+        f"the refusal does not point at the command that concludes it: {message}"
+    )
+
+
+def test_push_keeps_signing_commits_when_commit_gpgsign_is_set(
+    memory_dir: Path, bare_remote: Path, tmp_path: Path
+) -> None:
+    """`commit.gpgSign` survives the move off porcelain `git commit`.
+
+    `git commit` honours the config; `git commit-tree` does not (verified
+    on git 2.50.1 — it returns an unsigned commit where `git commit`
+    fails), so the plumbing path passes `-S` itself. Without a keyring in
+    the test environment the observable proof is the failure mode: point
+    `gpg.program` at a binary that does not exist and a signing attempt
+    must turn into a `SyncError` with nothing committed. Drop the `-S`
+    and the push instead succeeds, quietly recording an UNSIGNED commit in
+    a store whose owner asked for signatures — which is the regression
+    this pins.
+    """
+    sync.init(memory_dir, remote=str(bare_remote))
+    Store(memory_dir).write(content="clean baseline", scopes=["tools"])
+    sync.push(memory_dir)
+    before = _git(memory_dir, "rev-parse", "main").strip()
+
+    _git(memory_dir, "config", "commit.gpgSign", "true")
+    _git(memory_dir, "config", "gpg.program", str(tmp_path / "no-such-gpg-binary"))
+    Store(memory_dir).write(content="a fact that must be signed", scopes=["tools"])
+
+    with pytest.raises(sync.SyncError):
+        sync.push(memory_dir)
+
+    assert _git(memory_dir, "rev-parse", "main").strip() == before, (
+        "push recorded a commit although signing was configured and failed"
+    )
+
+
+def test_push_refuses_a_commit_message_that_is_only_whitespace(
+    memory_dir: Path, bare_remote: Path
+) -> None:
+    """Porcelain parity on the empty-message edge.
+
+    `git commit -m "   "` aborts ("empty commit message"); `git commit-tree
+    -m "   "` happily records one. `_cleanup_commit_message` reproduces
+    git's `--cleanup=whitespace` byte-for-byte on every non-empty message,
+    but cleanup alone cannot reproduce a REFUSAL, so the empty result is
+    rejected explicitly. This pins the behaviour the porcelain path had,
+    on the path that replaced it.
+    """
+    sync.init(memory_dir, remote=str(bare_remote))
+    Store(memory_dir).write(content="clean baseline", scopes=["tools"])
+
+    with pytest.raises(sync.SyncError, match="empty"):
+        sync.push(memory_dir, message="   \n\n  ")
+
+    assert not _git(memory_dir, "rev-list", "--all").strip(), (
+        "a commit was recorded despite the blank message"
+    )
+
+
 def _arm_a_conflicting_stash(memory_dir: Path, bare_remote: Path) -> None:
     """Leave `memory_dir` clean, synced, and holding a stash that will
     CONFLICT the moment it is popped.
