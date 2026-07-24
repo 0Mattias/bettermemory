@@ -327,27 +327,47 @@ _RELOCATION_LOOKBACK = 60
 # `test_house_vocabulary_near_a_citation_does_not_suppress_it` pins the
 # behaviour so the hole cannot be reopened silently.
 #
-# The honest residual: some alternatives here are still bare phrases
-# rather than constructions over a citation (`nowhere near`, `short of
-# the`, `narrowed it to`). They are far narrower English than a house
-# word, but the guarantee against a paragraph-wide pass is the window
-# bound below, not the phrasing. Multi-word markers use `\s+` because
-# markdown wraps mid-phrase; proximity is bounded by
+# Three further alternatives have since had the same treatment.
+# `nowhere near`, `short of the` and `narrowed it to` are ordinary
+# English before they are verdicts — "nowhere near as fast", "stops
+# short of the attestation block", "the triage narrowed it to the
+# recorder" — so as bare phrases each exempted any citation that
+# happened to sit within `_NONRESOLVING_WINDOW` of such a sentence.
+# Each now has to name what the erratum is judging: the citation itself
+# for `narrowed it to`, the code the citation missed for the other two.
+# In the documents this rule actually runs against, all three occurred
+# only inside the swarm-plan errata when this landed and every one of
+# those constructions still matches, so the exposure closed was
+# prospective and no suppression was orphaned.
+# `test_bare_phrase_markers_must_name_what_they_judge` pins both
+# directions for each.
+#
+# The honest residual: this tightening is per-alternative, and not every
+# alternative has had it. Which ones have is legible in the pattern
+# itself — an alternative ending in a `file.py:NNN` shape or a
+# backticked identifier takes the citation, or the code it missed, as
+# its object; the rest match on wording alone and rely on that wording
+# being rare outside a verdict. The guarantee against a paragraph-wide
+# pass is the window bound below, not the phrasing. Multi-word markers
+# use `\s+` because markdown wraps mid-phrase; proximity is bounded by
 # `_NONRESOLVING_WINDOW` on both sides.
 _NONRESOLVING_PROSE = re.compile(
     r"\b(?:do(?:es)?|did)\s+not\s+(?:point|resolve|land|sit)\b"
     r"|\bpoints?\s+at\s+prose\b"
     r"|\blands?\s+outside\b"
-    r"|\bnowhere\s+near\b"
+    # Landing verdicts, but only over the code the citation missed: the
+    # marker must name it, as a backticked identifier.
+    r"|\bnowhere\s+near\s+(?:the\s+)?`{1,2}[A-Za-z_][\w.]*`"
     r"|\bstraddles\b"
-    r"|\bshort\s+of\s+the\b"
+    r"|\bshort\s+of\s+the\s+`{1,2}[A-Za-z_][\w.]*`"
     r"|\bwrong\s+(?:when\s+written|on\s+arrival)\b"
     r"|\balready\s+(?:false|wrong|moved)\b"
     r"|\bnon-resolving\b"
-    # Provenance, but only over a citation: the marker must take a
-    # `file.py:NNN` (bare, backticked, or markdown-linked) as its object.
+    # Provenance and re-measurement, but only over a citation: the marker
+    # must take a `file.py:NNN` (bare, backticked, or markdown-linked)
+    # as its object.
     r"|\boriginally\s+shipped\s+\[?`{0,2}[\w/]+\.py:\d+"
-    r"|\bnarrowed\s+it\s+to\b"
+    r"|\bnarrowed\s+it\s+to\s+\[?`{0,2}[\w/]+\.py:\d+"
     r"|\ba\s+different\s+(?:function|method|class)\b",
     re.I,
 )
@@ -1696,6 +1716,55 @@ def test_house_vocabulary_near_a_citation_does_not_suppress_it() -> None:
         "`crc32(session_id)` shard pick"
     )
     assert check_line_refs("docs/fake.md", quoted) == []
+
+
+def test_bare_phrase_markers_must_name_what_they_judge() -> None:
+    """Three markers that used to match on wording alone, not on a verdict.
+
+    ``nowhere near``, ``short of the`` and ``narrowed it to`` are
+    ordinary English before they are verdicts — "nowhere near as fast",
+    "stops short of the attestation block" (a real assertion message, in
+    ``tests/test_prompts.py``), "the triage narrowed it to the
+    recorder". While each sat in ``_NONRESOLVING_PROSE`` as a bare
+    phrase, a wrong citation within ``_NONRESOLVING_WINDOW`` of any such
+    sentence was exempt from both halves of the check, with no CI signal
+    saying so.
+
+    Each now has to name what the erratum is judging — the citation
+    itself, or the code the citation missed. Both directions are pinned
+    per marker: the ordinary sentence must leave the citation checked,
+    and the erratum construction must still suppress it, because a
+    tightening that only managed the first would have broken the prose
+    these markers exist for.
+    """
+    decoy = _crc32_shard_line() + 200
+    cited = f"a recorder picks its shard by `crc32(session_id)` (`events.py:{decoy}`)"
+    assert len(check_line_refs("docs/fake.md", cited)) == 1
+
+    loose_near = "the fallback is nowhere near as fast, and " + cited
+    assert re.search(r"\bnowhere\s+near\b", loose_near), "fixture lost the phrase"
+    assert len(check_line_refs("docs/fake.md", loose_near)) == 1
+    tight_near = cited + ", nowhere near the `Recorder.__post_init__` it names"
+    assert check_line_refs("docs/fake.md", tight_near) == []
+
+    loose_short = "the documented shape stops short of the attestation block; " + cited
+    assert re.search(r"\bshort\s+of\s+the\b", loose_short), "fixture lost the phrase"
+    assert len(check_line_refs("docs/fake.md", loose_short)) == 1
+    tight_short = cited + ", short of the `Recorder.__post_init__` it names"
+    assert check_line_refs("docs/fake.md", tight_short) == []
+
+    loose_narrowed = "the triage narrowed it to the recorder, and " + cited
+    assert re.search(r"\bnarrowed\s+it\s+to\b", loose_narrowed), "fixture lost it"
+    assert len(check_line_refs("docs/fake.md", loose_narrowed)) == 1
+    tight_narrowed = (
+        f"a later commit narrowed it to `events.py:{decoy}` for the "
+        "`crc32(session_id)` shard pick"
+    )
+    assert check_line_refs("docs/fake.md", tight_narrowed) == []
+    # Same sentence, marker removed: proves the marker does the
+    # suppressing rather than the citation never having been checked.
+    unmarked = tight_narrowed.replace("narrowed it to", "cites")
+    assert len(check_line_refs("docs/fake.md", unmarked)) == 1
 
 
 def test_citation_pinned_to_a_named_commit_is_not_checked() -> None:
