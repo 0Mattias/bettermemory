@@ -44,8 +44,12 @@ Rows whose members stop being active (tombstoned, merged) are dropped
 on the next full-corpus upsert — a conflict with a dead side is moot.
 `upsert_scan` is the ONLY garbage collector, which is why every
 applying consolidate pass calls it unconditionally: a pass that only
-upserted when it had fresh candidates would strand dead rows in the
-`curation_pending.conflicts` count indefinitely.
+upserted when it had fresh candidates would strand those rows in the
+file indefinitely. Until a scan collects one, no reporting surface
+advertises it — `split_judgeable` is the shared filter both the
+`memory_conflicts` listing and `memory_scope_overview`'s
+`curation_pending.conflicts` count run their rows through — but each of
+them re-pays a liveness check on it every time they report.
 
 On-disk: ``<root>/.conflicts.jsonl`` — one JSON object per line,
 0o600, atomically rewritten under a per-file ``flock`` (the
@@ -58,6 +62,7 @@ from __future__ import annotations
 import hashlib
 import json
 import logging
+from collections.abc import Callable, Iterable
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -364,9 +369,64 @@ def scan_conflicts(
     return queue.upsert_scan(fresh, {m.id: m for m in memories})
 
 
+def split_judgeable(
+    pending: Iterable[ConflictCandidate],
+    is_active: Callable[[str], bool],
+) -> tuple[list[ConflictCandidate], int]:
+    """Split pending rows into the judgeable ones and a count of the rest.
+
+    The single definition of "this queued row is real arbitration
+    work": both members still active. A row failing it cannot be ruled
+    on at all — `_load_active_member` refuses the verdict and the
+    remedy is a scan, not a judgment — so a surface that counts it
+    advertises work that resolves to nothing, and a cue that keeps
+    resolving to nothing teaches the model to stop following it.
+
+    Every surface that reports a pending count runs its rows through
+    here: `memory_conflicts`'s `pending_total` (and the list beside it)
+    and `memory_scope_overview`'s `curation_pending.conflicts`. They
+    hold different liveness authorities — per-row `store.load_one` vs.
+    membership in the full-corpus `load_all` snapshot the overview
+    already paid for — which is exactly why the *predicate* is shared
+    rather than each surface re-deriving it: the two counts point at
+    each other, and the whole point of the fix is that they agree.
+    (The two authorities coincide by construction: `load_one` walks the
+    same active set `load_all` materialises and refuses anything
+    `load_all` skips.)
+
+    `is_active` is called left-to-right and short-circuits, so an
+    authority that pays real I/O per member does not price the second
+    side of an already-dead pair. Input order is preserved (callers
+    sort by similarity before windowing), and the whole iterable is
+    consumed — a caller that renders only a window still gets a total
+    over everything.
+
+    Report-only: nothing is GC'd here. `upsert_scan` stays the queue's
+    only collector, ruling on liveness from one full-corpus snapshot
+    under the file lock.
+    """
+    judgeable: list[ConflictCandidate] = []
+    omitted = 0
+    for cand in pending:
+        if is_active(cand.a_id) and is_active(cand.b_id):
+            judgeable.append(cand)
+        else:
+            omitted += 1
+    return judgeable, omitted
+
+
 def conflicts_pending_count(root: Path) -> int:
-    """Cheap rollup for `curation_pending`. One small-file read; 0 when
-    the queue has never been created."""
+    """Raw count of rows sitting in `pending` status on disk. One
+    small-file read; 0 when the queue has never been created.
+
+    Deliberately NOT what the model-facing surfaces report: a row whose
+    member has since been removed is still `pending` in the file but is
+    not judgeable work, so both `memory_conflicts`'s `pending_total`
+    and `memory_scope_overview`'s `curation_pending.conflicts` filter it
+    out through `split_judgeable`. This counts the file — the probe for
+    "has a scan collected that row yet?", not for "is there arbitration
+    work?".
+    """
     try:
         return len(ConflictQueue(root).pending())
     except Exception:  # noqa: BLE001 — a corrupt queue must not break health
@@ -381,4 +441,5 @@ __all__ = [
     "conflicts_pending_count",
     "find_conflict_candidates",
     "scan_conflicts",
+    "split_judgeable",
 ]

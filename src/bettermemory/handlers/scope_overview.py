@@ -12,7 +12,7 @@ from typing import TYPE_CHECKING, Any
 
 from .._response import isoformat_optional
 from ..events import iter_all_events
-from ..conflicts import ConflictQueue
+from ..conflicts import ConflictQueue, split_judgeable
 from ..health import curation_counts, find_prior_session_boundary
 from ..time_utils import parse_event_ts
 from ..models import utcnow
@@ -45,6 +45,12 @@ DESC_MEMORY_SCOPE_OVERVIEW = (
     "  {stale, never_verified, drifted, cold, dead, "
     "silent_misses, unique_silent_miss_memories, "
     "cold_endorsement_memories, conflicts}\n"
+    # Deliberately unqualified: the count is now exactly "pairs
+    # memory_conflicts can still rule on" (see the handler's
+    # `split_judgeable` call), so this one line stayed true when the
+    # counter was fixed and costs no extra per-turn chars. The
+    # cross-surface contract is spelled out where it is free —
+    # DESC_MEMORY_CONFLICTS (full-surface only) and api.md.
     "`conflicts` = contradiction pairs awaiting a "
     "memory_conflicts verdict. "
     "Any non-zero `dead` or `drifted` is a cue to suggest a "
@@ -185,8 +191,31 @@ async def memory_scope_overview(
     # pending candidate `created` after the prior session boundary is
     # "new since last session"), keeping the two views' key sets equal —
     # the model must not need a different branch per view.
-    pending_conflicts = ConflictQueue(deps.store.root).pending()
-    curation["conflicts"] = len(pending_conflicts)
+    #
+    # Judgeable rows only, via the same `split_judgeable` the
+    # `memory_conflicts` listing filters through. This count is the cue
+    # that sends the model to that tool, so counting a row the tool
+    # cannot list or rule on (a member was removed since the last scan;
+    # `_load_active_member` refuses the verdict) would advertise
+    # arbitration work that resolves to an empty response — and a cue
+    # that keeps resolving to nothing is a cue the model learns to skip.
+    # Liveness comes from the `load_all` snapshot already in hand, so
+    # the filter costs a set build and no extra reads; `memory_conflicts`
+    # answers the same question with per-row `load_one`, which is why
+    # only the predicate is shared and not the authority behind it.
+    #
+    # Excluded, never GC'd: dropping the row would need the queue's
+    # lock and a rewrite from a read path every session-start call makes,
+    # racing the scan for no gain — and `load_all` skips unparseable or
+    # momentarily unreadable files, so "absent from the snapshot" is not
+    # proof a memory died. `upsert_scan` stays the only collector; every
+    # applying curation pass runs it unconditionally.
+    active_ids = {m.id for m in all_memories}
+    judgeable_conflicts, _unjudgeable_conflicts = split_judgeable(
+        ConflictQueue(deps.store.root).pending(),
+        lambda member_id: member_id in active_ids,
+    )
+    curation["conflicts"] = len(judgeable_conflicts)
     # Use the recorder's session_id, not `state.session_id`.
     # Every event the recorder writes is tagged `session =
     # self.session_id` (events.py:159) — that's the single
@@ -226,12 +255,15 @@ async def memory_scope_overview(
             tombstoned_ids=tombstoned_ids,
         )
         # Delta arm of the queue-derived `conflicts` key: candidates
-        # whose detection time postdates the boundary. A candidate with
+        # whose detection time postdates the boundary. Walks the same
+        # judgeable rows the absolute view counted — a row nobody can
+        # rule on is not new work either, and a delta that outran its
+        # own absolute count would be its own phantom. A candidate with
         # an unparseable `created` counts as new — same conservatism as
         # the annotation walk's unprovable-ts handling, erring toward
         # surfacing.
         new_conflicts = 0
-        for cand in pending_conflicts:
+        for cand in judgeable_conflicts:
             created_ts = parse_event_ts(cand.created)
             if created_ts is None or created_ts > prior_boundary:
                 new_conflicts += 1

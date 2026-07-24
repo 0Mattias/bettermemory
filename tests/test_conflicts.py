@@ -18,10 +18,12 @@ import pytest
 
 from bettermemory.config import BehaviorConfig, Config, StorageConfig
 from bettermemory.conflicts import (
+    ConflictCandidate,
     ConflictQueue,
     conflicts_pending_count,
     find_conflict_candidates,
     scan_conflicts,
+    split_judgeable,
 )
 from bettermemory.consolidate import (
     _find_dedup_with_skips,
@@ -168,6 +170,47 @@ def test_queue_gc_drops_rows_with_dead_members(tmp_path: Path) -> None:
     result = ConflictQueue(root).upsert_scan([], {a.id: a})
     assert result["dropped"] == 1
     assert conflicts_pending_count(root) == 0
+
+
+def test_split_judgeable_short_circuits_and_keeps_order() -> None:
+    """The shared judgeable-row filter, used by both counting surfaces.
+
+    Input order is preserved (callers sort by similarity before
+    windowing) and `is_active` short-circuits, so an authority that pays
+    real I/O per member never prices the second side of an already-dead
+    pair.
+    """
+
+    def _cand(cid: str, a_id: str, b_id: str) -> ConflictCandidate:
+        return ConflictCandidate(
+            id=cid,
+            a_id=a_id,
+            b_id=b_id,
+            summary_a="a",
+            summary_b="b",
+            similarity=0.9,
+            method="jaccard",
+            detector="numeric",
+            created=_T.isoformat(),
+        )
+
+    queued = [
+        _cand("cf-1", "live-1", "live-2"),
+        _cand("cf-dead", "gone", "live-2"),
+        _cand("cf-2", "live-2", "live-3"),
+    ]
+    asked: list[str] = []
+
+    def is_active(memory_id: str) -> bool:
+        asked.append(memory_id)
+        return memory_id != "gone"
+
+    judgeable, omitted = split_judgeable(queued, is_active)
+    assert [c.id for c in judgeable] == ["cf-1", "cf-2"]
+    assert omitted == 1
+    # `cf-dead`'s live second member is never asked about — the dead
+    # first side already settled the pair.
+    assert asked == ["live-1", "live-2", "gone", "live-2", "live-3"]
 
 
 # ---------------------------------------------------------------------------
@@ -357,11 +400,11 @@ async def test_e2e_dead_member_row_is_not_counted_as_pending(
     assert "No pending conflict candidates" not in listed["hint"]
 
     # Deliberate: listing is a read path and does not GC. The row lives
-    # until a scan, and the rollup that counts raw rows still sees it —
-    # which is why the hint names both the remedy and that mismatch.
+    # on disk until a scan — which is why the hint names the remedy —
+    # but no tool response advertises it.
     assert conflicts_pending_count(memory_dir) == 1
     overview = _unwrap(await _call(server, "memory_scope_overview"))
-    assert overview["curation_pending"]["conflicts"] == 1
+    assert overview["curation_pending"]["conflicts"] == 0
 
     rescan = _unwrap(await _call(server, "memory_conflicts", scan=True))
     assert rescan["pending_total"] == 0
@@ -369,6 +412,84 @@ async def test_e2e_dead_member_row_is_not_counted_as_pending(
     settled = _unwrap(await _call(server, "memory_conflicts"))
     assert settled["pending_total"] == 0
     assert settled["hint"].startswith("No pending conflict candidates")
+
+
+async def test_e2e_scope_overview_conflicts_agrees_with_memory_conflicts(
+    memory_dir: Path,
+) -> None:
+    """The session-start cue and the tool it points at must describe the
+    same store.
+
+    `curation_pending.conflicts` is what tells the model arbitration
+    work exists and sends it to memory_conflicts. Counting rows that
+    tool can neither list nor rule on made the two surfaces disagree
+    outright — conflicts=1 beside a memory_conflicts response listing
+    nothing — which teaches the model to stop following the cue.
+    """
+    server = _build(memory_dir)
+    await _seed_conflicting_pair(server)
+
+    # Positive control first: with both members alive the cue is
+    # non-zero and equal to the tool's own total, so the agreement
+    # asserted below is not a filter that always answers zero.
+    scanned = _unwrap(await _call(server, "memory_conflicts", scan=True))
+    overview = _unwrap(await _call(server, "memory_scope_overview"))
+    assert scanned["pending_total"] == 1
+    assert overview["curation_pending"]["conflicts"] == 1
+
+    await _call(
+        server,
+        "memory_remove",
+        id=scanned["pending"][0]["b"]["id"],
+        reason="the 5433 claim was plain wrong",
+    )
+
+    listed = _unwrap(await _call(server, "memory_conflicts"))
+    overview = _unwrap(await _call(server, "memory_scope_overview"))
+    assert listed["pending"] == []
+    assert overview["curation_pending"]["conflicts"] == listed["pending_total"] == 0
+    # Agreement by a shared filter, not by a GC either surface ran: the
+    # row is still pending on disk, waiting for a scan.
+    assert conflicts_pending_count(memory_dir) == 1
+
+
+async def test_scope_overview_conflicts_delta_excludes_dead_member_rows(
+    memory_dir: Path,
+) -> None:
+    """The delta arm counts the same judgeable rows as the absolute one.
+
+    A candidate detected after the prior-session boundary is new work; a
+    candidate nobody can rule on is not work at all. The delta view is
+    what the model branches on when deciding whether to *prompt* about
+    curation, so a phantom there costs a whole prompted pass that finds
+    nothing.
+    """
+    session_a = _build(memory_dir)
+    await _seed_conflicting_pair(session_a)
+
+    # Second session: detection runs now, so the candidate's `created`
+    # postdates every session-A event and the delta arm sees it as new.
+    session_b = _build(memory_dir)
+    scanned = _unwrap(await _call(session_b, "memory_conflicts", scan=True))
+    dead_id = scanned["pending"][0]["b"]["id"]
+    overview = _unwrap(await _call(session_b, "memory_scope_overview"))
+    delta = overview["curation_pending_new_since_last_session"]
+    assert delta is not None, "no prior-session boundary — delta arm untested"
+    assert overview["curation_pending"]["conflicts"] == delta["conflicts"] == 1
+
+    await _call(
+        session_b,
+        "memory_remove",
+        id=dead_id,
+        reason="the 5433 claim was plain wrong",
+    )
+
+    overview = _unwrap(await _call(session_b, "memory_scope_overview"))
+    delta = overview["curation_pending_new_since_last_session"]
+    assert delta is not None
+    assert overview["curation_pending"]["conflicts"] == 0
+    assert delta["conflicts"] == 0
+    assert conflicts_pending_count(memory_dir) == 1
 
 
 async def test_e2e_pending_total_counts_past_the_max_results_window(
@@ -449,9 +570,14 @@ async def test_e2e_applying_pass_gcs_dead_rows_without_fresh_skips(
 ) -> None:
     """`upsert_scan` is the queue's only garbage collector, so the
     applying pass has to call it even when the scan found nothing fresh.
-    Gated on fresh skips, a row whose member died stayed pending forever
-    and `curation_pending.conflicts` kept advertising work that a
-    curation pass would find nothing to do about."""
+    Gated on fresh skips, a row whose member died stayed `pending` on
+    disk forever with nothing able to collect it — every later read
+    re-paying a liveness check to keep excluding it, and the queue file
+    growing rows no verdict can ever retire.
+
+    The on-disk count is the load-bearing assertion here: the reporting
+    surfaces filter dead rows out on their own now, so they would read
+    zero either way. Only the raw count can tell GC from filtering."""
     server = _build(memory_dir)
     _a_id, b_id = await _seed_conflicting_pair(server)
     await _call(server, "memory_curate", dry_run=False)

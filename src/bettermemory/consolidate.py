@@ -1168,10 +1168,13 @@ def consolidate(
     # active against the full-corpus liveness map it is handed. Gating
     # the call on `polarity_skipped` stranded dead rows forever the
     # moment fresh skips stopped (arbitrate the last pair, tombstone a
-    # member, and the phantom stays pending), and that count is a
-    # model-facing session-start cue via `curation_pending.conflicts` —
-    # a counter that keeps prompting a curation pass which finds nothing
-    # teaches the model to ignore the cue. `upsert_scan([])` merges
+    # member, and the row stays `pending` on disk with nothing able to
+    # collect it). The model-facing counters no longer inflate on such a
+    # row — `memory_conflicts` and the `curation_pending.conflicts`
+    # session-start cue both exclude it via `conflicts.split_judgeable`,
+    # so neither prompts a pass that would find nothing — but that is a
+    # per-report liveness filter, not a fix for the row: this pass is
+    # the only thing that ever removes it. `upsert_scan([])` merges
     # nothing and still GCs.
     try:
         from .conflicts import ConflictQueue, skip_to_candidate

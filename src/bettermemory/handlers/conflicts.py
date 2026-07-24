@@ -33,7 +33,12 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any
 
-from ..conflicts import ConflictCandidate, ConflictQueue, scan_conflicts
+from ..conflicts import (
+    ConflictCandidate,
+    ConflictQueue,
+    scan_conflicts,
+    split_judgeable,
+)
 from ..models import LinkType, Memory, MemoryLink
 from ..store import ConcurrentUpdateError, MemoryNotFoundError, TombstonedError
 from ._shared import Context, _advance_turn
@@ -81,7 +86,9 @@ DESC_MEMORY_CONFLICTS = (
     "(both members still active), so it exceeds the number of rows "
     "returned only when `max_results` truncated the list. A queued row "
     "whose member died since the last scan is in neither the list nor "
-    "the total, and `hint` says how many were left out."
+    "the total — nor in the `curation_pending.conflicts` count "
+    "memory_scope_overview points here with — and `hint` says how many "
+    "were left out."
 )
 
 
@@ -129,18 +136,20 @@ async def memory_conflicts(
         if omitted:
             # Say it once, in the one place that knows the number. The
             # row is NOT dropped here (see `_render_pending`), so the
-            # remedy has to name the scan — and the raw-row count the
-            # curation rollup reads still includes it, which is the only
-            # way a caller could otherwise see a number disagreeing with
-            # this one.
+            # remedy has to name the scan. No counter contradicts this
+            # hint any more: the session-start rollup filters the same
+            # rows out through the same `split_judgeable`, so the only
+            # number that still sees them is the on-disk row count,
+            # which no tool response reports.
             out["hint"] = (
                 f"{omitted} queued candidate(s) name a memory that is no "
                 "longer active, so they are omitted from `pending` and "
-                "`pending_total` — a one-sided pair cannot be judged. Only a "
-                "full scan drops them: memory_conflicts(scan=True), or the "
-                "automatic scan every applying curation pass runs. Until then "
-                "memory_scope_overview's curation_pending.conflicts still "
-                "counts them."
+                "`pending_total` — a one-sided pair cannot be judged. The "
+                "rows sit in the queue until a full scan drops them: "
+                "memory_conflicts(scan=True), or the automatic scan every "
+                "applying curation pass runs. Nothing advertises them "
+                "meanwhile — memory_scope_overview's "
+                "curation_pending.conflicts leaves them out too."
             )
         elif not rows:
             out["hint"] = (
@@ -176,6 +185,14 @@ def _render_pending(
     still count — the total is deliberately allowed to exceed
     `len(rows)`, which is how a caller learns to raise `max_results`.
 
+    The judgeable/omitted split itself is `conflicts.split_judgeable`,
+    shared with `memory_scope_overview`'s `curation_pending.conflicts`
+    counter — the session-start cue that sends the model *here*. Each
+    surface supplies its own liveness authority (per-row `load_one`
+    below; a full-corpus snapshot there) but neither owns the rule,
+    because a cue that points at an empty list is the same phantom
+    count in a second place.
+
     Dead rows are reported, never GC'd here. `upsert_scan` stays the
     queue's only garbage collector: it rules on liveness from one
     full-corpus snapshot, while this path has only per-row `load_one`
@@ -186,50 +203,47 @@ def _render_pending(
     racing the scan. The rows are short-lived anyway: every applying
     curation pass GCs unconditionally.
     """
-    sides_by_id: dict[str, dict[str, Any] | None] = {}
+    live_sides: dict[str, dict[str, Any]] = {}
+    dead_ids: set[str] = set()
 
-    def side(memory_id: str) -> dict[str, Any] | None:
-        """Memoized so a memory in two candidate pairs is loaded once —
-        and so a dead id costs its full-directory `load_one` walk once."""
-        if memory_id not in sides_by_id:
-            try:
-                m = deps.store.load_one(memory_id)
-            except (MemoryNotFoundError, TombstonedError):
-                sides_by_id[memory_id] = None
-            else:
-                sides_by_id[memory_id] = {
-                    "id": m.id,
-                    "body": m.body,
-                    "scopes": m.scopes,
-                    "updated": m.updated.isoformat(),
-                }
-        return sides_by_id[memory_id]
+    def is_active(memory_id: str) -> bool:
+        """Liveness by per-row `load_one`, memoized in both directions —
+        a memory in two candidate pairs is loaded once, and a dead id
+        costs its full-directory `load_one` walk once. The rendered side
+        falls out of the same load, so a judgeable row never re-reads to
+        build its row."""
+        if memory_id in live_sides:
+            return True
+        if memory_id in dead_ids:
+            return False
+        try:
+            m = deps.store.load_one(memory_id)
+        except (MemoryNotFoundError, TombstonedError):
+            dead_ids.add(memory_id)
+            return False
+        live_sides[memory_id] = {
+            "id": m.id,
+            "body": m.body,
+            "scopes": m.scopes,
+            "updated": m.updated.isoformat(),
+        }
+        return True
 
-    rows: list[dict[str, Any]] = []
-    listable = 0
-    omitted = 0
-    for cand in pending:
-        a = side(cand.a_id)
-        # Short-circuit: a miss costs a full-directory walk inside
-        # `load_one`, so don't price the second member once the pair is
-        # already unjudgeable.
-        b = side(cand.b_id) if a is not None else None
-        if a is None or b is None:
-            omitted += 1
-            continue
-        listable += 1
-        if len(rows) < max_results:
-            rows.append(
-                {
-                    "id": cand.id,
-                    "similarity": cand.similarity,
-                    "method": cand.method,
-                    "detector": cand.detector,
-                    "a": dict(a),
-                    "b": dict(b),
-                }
-            )
-    return rows, listable, omitted
+    judgeable, omitted = split_judgeable(pending, is_active)
+    rows = [
+        {
+            "id": cand.id,
+            "similarity": cand.similarity,
+            "method": cand.method,
+            "detector": cand.detector,
+            # Present in `live_sides` by construction: `split_judgeable`
+            # only keeps a row once `is_active` has loaded both members.
+            "a": dict(live_sides[cand.a_id]),
+            "b": dict(live_sides[cand.b_id]),
+        }
+        for cand in judgeable[:max_results]
+    ]
+    return rows, len(judgeable), omitted
 
 
 def _load_active_member(deps: "ToolHandlers", memory_id: str) -> Memory:
