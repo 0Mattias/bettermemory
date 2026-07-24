@@ -382,6 +382,223 @@ possible. The window is short but not zero.
   sharded event-log rule, which stops raw event telemetry being pushed
   to your remote. User-added lines are preserved.
 
+### Erratum (2026-07-24)
+
+The entry above is left as it shipped. It is incomplete: tag
+`v3.26.0`'s window (`v3.25.2..v3.26.0`) carries ten substantive fix
+commits that received no entry anywhere in this file — the same
+omission class as v3.24.0's `096218e` and the two commits the v3.28.0
+erratum repairs. The release-window coverage check in
+`tests/test_changelog.py` judges only the newest tag's window by
+design — older entries are a frozen record it deliberately does not
+re-litigate — so nothing in CI forces this repair: the ten surfaced by
+retro-running that check against this window (the adjacent
+`v3.26.0..v3.27.0` window retro-runs clean), and the repair is
+editorial. The entry summarized four Fixed themes and dropped the rest
+of the round wholesale — several of the ten touch the very subsystems
+it covers. Stated now as the bullets the release should have carried:
+
+- **A 3.24.x/3.25.x store's rotated history went invisible to
+  windowed reads (`7f76801`).** The shard-partitioned rotation
+  namespace (`eace517`, the first event-log bullet above) made
+  `_newest_rotated_segment_for_shard` accept only candidates whose
+  parsed shard matched the active segment's, deliberately refusing
+  untagged ones. A store upgrading from 3.24.0/3.25.x is exactly the
+  shape that owns ONLY untagged archives — its active log was already
+  sharded while rotation had not yet learned the `-s{NN}` tag — so its
+  windowed reader could never reach its own rotated history until
+  every pre-upgrade archive aged out; a regression, confirmed by
+  running the pre-`eace517` module against identical on-disk state.
+  The fallback is restored: tagged candidates win, untagged ones are
+  eligible only when a shard has none — over-inclusion of same-store
+  events, which the ts-merge and the caller's window filter absorb,
+  versus under-inclusion that loses events the caller cannot recover.
+  Same commit: window coverage now derives from the union of the
+  shards with an active segment and the tagged shards among the
+  rotated candidates, so a shard with rotated history but no active
+  file on disk (reachable mid-rotation and after a crash) still gets
+  its history prepended; `_archive_sort_key` stopped ranking archives
+  by mtime — a segment recovered from a days-old crashed rotation
+  carries the mtime of TODAY's compression, so recovery displaced
+  real history — and ranks by the rotation timestamp stamped in the
+  filename (the "moved off `mtime_ns`" half of the same-second bullet
+  above; the write-evidence tiebreak arrived separately, `f6659b8`);
+  and `Recorder.session_id` is folded through `_safe_stem_component`
+  before it lands in a rotation filename, where a separator or `..`
+  could have pointed the rename outside the store root.
+
+- **The embedding-cache rename skipped the Windows-safe helper
+  (`b3cc470`).** 3.25.1 added `replace_atomic` — a bounded retry for
+  Windows' refusal to rename over an open destination — and wired
+  three call sites; a fourth was missed: `flush_persistent_cache` in
+  `semantic.py` renamed the embedding-cache `.npz` into place with a
+  bare `Path.replace`. The miss was structural: the rename primitive
+  has four stdlib spellings and the 3.25.1 sweep grepped for one. The
+  site is a genuine instance — cache hydration opens the destination
+  with no lock, so a second MCP server on the same store is exactly
+  the open handle Windows refuses, and the flush's enclosing
+  `except Exception` swallowed the resulting PermissionError into a
+  warning. The Windows symptom was an embedding cache that silently
+  never persisted, re-embedding the whole store on every start. The
+  rename now routes through the helper, and the durable half is an
+  AST guard in `tests/test_fsutil.py` that finds every rename-shaped
+  call in the package — all spellings, aliased imports included — and
+  permits them only inside the helper itself.
+
+- **That guard was itself half-closed, and flush failures stayed
+  unobservable (`9a7b087`).** An adversarial verifier planted
+  `shutil.move` in the package and the new guard passed green:
+  `shutil.move` degrades to `os.rename` on a same-filesystem move, so
+  it carries the identical open-destination exposure. Zero live
+  instances existed — a guard repair, not a live bug — but the
+  detector was an enumeration of known spellings, so widening it by
+  one name would repeat the mistake at a different offset. It now
+  also covers `os.renames`, Python 3.14's `Path.move` /
+  `Path.move_into`, and every import aliasing of `shutil` — and, the
+  part that ends the pattern, a test DERIVES the expected coverage
+  from the running stdlib, so a spelling nobody thought of turns the
+  guard red instead of leaving it vacuously green. The arity rule's
+  docstring had justified itself with a false premise
+  (`datetime.replace` is not keyword-only); it now names the accepted
+  false positive instead. Same commit: `replace_atomic` joined
+  `_fsutil.__all__`, and the embedding-cache flush gained a
+  consecutive-failure counter (`persistent_cache_flush_failures`)
+  with a WARNING-to-ERROR escalation at three in a row, because a
+  cache that permanently cannot persist was indistinguishable in the
+  log from one that lost a single race.
+
+- **`flock_excl`'s prose mis-dated its own history and let callers
+  infer a bounded POSIX wait (`02c37d7`).** Three comments dated the
+  removal of the Windows lock's silent no-op to 2.7; the branch is
+  still a bare `yield` at `v2.7.3` and the commit introducing
+  `msvcrt.locking` first ships in `v3.0.0`, so all three now read
+  3.0.0 — the correction `82b010a` had already made in the test
+  suite. And the docstring named the 30s `BETTERMEMORY_FLOCK_TIMEOUT`
+  ceiling only in its Windows paragraph while saying nothing about
+  the POSIX wait — the likely origin of the false sync-lock comment
+  `60b7553` had to delete, which applied that ceiling to a POSIX
+  acquire that has none. The docstring now states the asymmetry from
+  both ends — the POSIX acquire is blocking and unbounded (plain
+  `LOCK_EX`, no deadline; the env var is read only by
+  `_flock_windows`), the Windows acquire is bounded and raises
+  `TimeoutError` — with behavioural and AST pins so neither claim can
+  rot silently.
+
+- **`migrate --repair`'s printed action list could lie, or never
+  arrive (`8ef0f2f`).** The report is what a user reads before
+  applying a bulk mutation over the whole store, and it had three
+  ways to go wrong. A torn record whose `scopes` value held a
+  non-string element raised `TypeError` from outside the per-file
+  try/except — the routing lookups hash every element — so ONE
+  malformed memory aborted the entire plan, with nothing repaired and
+  no report at all; scopes are now screened through
+  `_routable_scopes`, the bad record lands in `report.malformed` (the
+  CLI prints it as "Malformed (skipped)") and planning continues,
+  with `plan_repair` filtering identically so the exported entry
+  point cannot abort for a direct caller either. The
+  `repaired_anchored` / `repaired_demoted` breakdown was incremented
+  BEFORE the write was attempted, so a failed write left the summary
+  overstating what landed; both counters now move only after a
+  successful write, keeping the dry-run action list equal to what
+  apply persists on the success path. And
+  `migrate_origin_in_directory`'s docstring claimed both flags are
+  inert when `repair=False` — untrue for `keep_global`, which gates
+  the legacy backfill on exactly that path; it now states each flag's
+  real gating.
+
+- **Four more window-labelled "Events scanned" figures were all-time,
+  and phantom sessions had a second way in (`f90fa18`).** The
+  diagnostics bullet above covers `5832717`, which fixed the markdown
+  denominator note; the text renderers were still wrong:
+  `render_text`, `render_threshold_sweep_text`,
+  `render_widening_preview_text` and `render_tool_usage_text` each
+  stamped a "— last {window}" header over `total_events_scanned`,
+  which counts the WHOLE log (marker resolution runs ahead of the
+  window filter by design). `ThresholdSweepReport`,
+  `WideningPreviewReport` and `ToolUsageReport` now carry their own
+  window-scoped `events_in_window` twin, computed over exactly the
+  population the all-time counter covers, and all four renderers read
+  it. The session-tally exclusion also became two-axis
+  (`is_admin_recorded_event`): `consolidate --acknowledge-debt`
+  records `kind="use"` rows — a kind genuine sessions also emit, so
+  kind-based exclusion structurally cannot catch them without
+  blinding the tally to real sessions — under a throwaway session id,
+  and the rows' `cli_` attribution prefix (verified present on the
+  real write path) is the second axis. Scoped to the session tally
+  only: those rows still count as genuine endorsements. An AST parity
+  scan now holds any literal fork of the admin-kind roster equal to
+  the canonical set, because the comment claiming every consumer
+  reads the shared constant was false at its own introduction —
+  doctor carried a hand-written copy.
+
+- **The fifth all-time-under-a-window-label surface (`d85798e`).**
+  `WideningDetailReport` declared only the all-time counter, and its
+  `to_dict` emitted it right next to `window_seconds` — the CLI dumps
+  that dict verbatim for `eval --widening-preview --detail --json`,
+  so a JSON consumer read an all-time figure under a window label. It
+  has no "Events scanned" text row, which is how the `f90fa18` sweep
+  missed it and then asserted in a comment that the report publishes
+  no event count at all. The report now carries the
+  `events_in_window` twin, fed from the count the shared audit walk
+  already computed, and an AST enumeration test asserts that every
+  dataclass in the module declaring the all-time field declares the
+  window twin, and that every `to_dict` emitting one key emits the
+  other — the convention is enforced rather than left to an eye that
+  had by then missed a surface twice.
+
+- **`doctor`'s cadence census applied half the admin classification
+  (`69decd3`).** `_check_audit_turn_cadence` excluded admin-recorded
+  events by the kind roster alone, so the `kind="use"` rows that only
+  `f90fa18`'s attribution axis can catch still landed in its session
+  census: one real session plus one `consolidate --acknowledge-debt`
+  run put the census at two and flipped the check from `ok` to
+  `warn` — the exact false positive the two-session floor was added
+  to kill, re-entering through the axis this consumer wasn't reading.
+  The census now calls `is_admin_recorded_event` and holds no roster
+  of its own, and an AST scan fails any module outside `eval.py` that
+  names either axis in code — because "imports the shared constant"
+  had proven satisfiable while still implementing half the rule.
+
+- **Two green-in-isolation repairs collided on a changed sync return
+  type (`e88fc88`).** One repair changed `_reconcile_gitignore` to
+  return a `_GitignoreReconcile` instead of a bare list (so "every
+  pattern already present" and "could not read/write the file" stop
+  collapsing onto one `[]`), while another rewrote doctor's
+  `_fix_sync_gitignore` to reuse that helper; each was verified
+  against a base where the other did not exist, their file sets were
+  disjoint, and the integrated result called `len()` on the
+  dataclass. Unwrapping the added-lines list was not enough: the same
+  sync change stopped RAISING on write failure — it stands down and
+  reports — so doctor's `except OSError` no longer saw that case. The
+  result now carries `failed_stage` ("read" / "write" / None) and
+  doctor branches on it: a write stand-down (knew exactly what to
+  append, could not) reports an honest not-applied fix result; a read
+  stand-down (never learned what an overwrite would destroy)
+  correctly declines and leaves the finding manual. `push` and `init`
+  still treat both halves identically — never fail a sync over a
+  healing side-effect — which is why the distinction lives in the
+  result rather than in two return types.
+
+- **The path-drift bucket's honest reach sentence has a commit behind
+  it (`211b68f`).** The caveat closing the path-drift bullet above —
+  "an in-process bucket; it does not yet reach the MCP response
+  surface" — is this commit's finding, not part of the bucket's
+  design. The route-suppression repair (`c1ede35`) had shipped a
+  `has_findings` predicate on `PathDriftReport` whose docstring
+  claimed to BE the retrieval surfaces' emit gate and claimed that
+  gate would notice a newly added bucket. Both claims were false, the
+  second self-refutingly so: `dropped_as_route` IS a new bucket, the
+  real gates (inline expressions in the show/search handlers) never
+  consulted the predicate, and nothing noticed. The dead predicate —
+  zero consumers outside its own unit test — is deleted, `has_drift`
+  now documents itself as one term of the gate rather than the gate,
+  and the bucket's reach is stated as measured: in-process callers
+  always see it; a mixed report (drift plus suppressed routes) does
+  ship it, because the gates emit the whole `to_dict()` once they
+  fire; and a route-ONLY report — precisely the case the bucket was
+  added for — reached no MCP surface at all, documented as the
+  residual defect instead of as shipped observability.
+
 ## 3.25.2 - 2026-07-19
 
 A path-drift false positive that made healthy web-app memories look stale.
