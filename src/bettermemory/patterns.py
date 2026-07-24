@@ -33,7 +33,9 @@ content-stable pattern id (hash of the member episode ids). A
 dismissed pattern stays gone — until a NEW episode joins the cluster,
 which changes the member set, which changes the id: fresh evidence
 legitimately reopens the question. Rows whose members have all aged
-out (episodes TTL at ~30 days) are GC'd opportunistically on load.
+out (episodes TTL at ~30 days) are GC'd opportunistically on read —
+under the same exclusive flock the read's snapshot is taken beneath,
+so a peer's concurrent `dismiss()` can't be rewritten away.
 
 Promotion synergy: promoting a pattern whose fact is ALREADY stored
 dedup-rejects through the normal write path — which now records a
@@ -255,15 +257,33 @@ class PatternDismissals:
     def dismissed_ids(self, live_episode_ids: set[str]) -> set[str]:
         """Ids to filter from the candidate list. GCs rows whose member
         episodes have ALL aged out — the pattern can never recur with
-        that exact member set, so the row is dead weight."""
-        rows = self.load()
-        kept = [
-            r
-            for r in rows
-            if any(mid in live_episode_ids for mid in r.get("member_ids", []))
-        ]
-        if len(kept) != len(rows):
-            with flock_excl(self.path):
+        that exact member set, so the row is dead weight.
+
+        LOCK THEN LOAD THEN REWRITE, in that order — the same shape
+        `ConflictQueue.upsert_scan` uses, and for the same reason. This
+        method both reads and (opportunistically) REWRITES the whole
+        file, so the snapshot it rewrites from has to be taken under the
+        lock that guards the rewrite. Loading first and locking only
+        around the write left a window in which a peer process's
+        `dismiss()` could append a row after our snapshot and before our
+        lock: the rewrite then persisted the stale pre-lock view and the
+        peer's dismissal vanished, silently resurfacing a pattern the
+        user had just hidden.
+
+        The lock is now taken on every call, not only when the GC has
+        work. That is deliberate: deciding whether the GC fires requires
+        the loaded rows, so any "peek first, lock only if needed" shape
+        reintroduces exactly the load-outside-the-lock window this
+        docstring exists to close.
+        """
+        with flock_excl(self.path):
+            rows = self.load()
+            kept = [
+                r
+                for r in rows
+                if any(mid in live_episode_ids for mid in r.get("member_ids", []))
+            ]
+            if len(kept) != len(rows):
                 self._write_all_locked(kept)
         return {str(r["id"]) for r in kept}
 

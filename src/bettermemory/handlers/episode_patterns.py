@@ -21,6 +21,17 @@ confirm-time cleanup isn't wired, and the worst case — journal entries
 surviving until their ~30-day TTL — is the pre-existing behavior for
 every unpromoted episode. On any other non-committed status the
 episodes are untouched so the caller can adjust and retry.
+
+READ-SURFACE FILTERS: the listing walk applies the same two hides
+`episode_search` documents as the uniformity contract ("episodes are
+the third leg") — the session's `disabled_scopes` and, by default, the
+caller's git worktree. This surface is a bare cross-session discovery
+walk with no explicit selector (no `swarm_id` / `parent_session_id`
+carve-out to honor), so both filters apply unconditionally to it. The
+stakes are higher here than on a pure read: the filtered pool is also
+what `promote` bulk-DELETES from on commit, so an unguarded walk would
+destroy a sibling worktree's journal entries — a cross-boundary
+destructive act, not just a leak.
 """
 
 from __future__ import annotations
@@ -65,17 +76,80 @@ DESC_EPISODE_PATTERNS = (
     "stays valid while the members live. Detection is conservative "
     "(>= 3 episodes, >= 3 sessions, ubiquitous project vocabulary "
     "excluded) — an empty list usually just means the journal is "
-    "young or already consolidated."
+    "young or already consolidated.\n\n"
+    "READ FILTERS (same hides episode_search / episode_handoff "
+    "enforce): episodes whose scopes are in this session's "
+    "`disabled_scopes` are dropped before detection, and by default "
+    "(`auto_scope=True`) so are episodes written from a DIFFERENT git "
+    "worktree of the same repository sharing one memory root. Both "
+    "apply to promote/dismiss too — a pattern you cannot see is "
+    "neither promotable nor dismissible, which is what keeps the "
+    "commit-time member DELETION inside your own worktree. Legacy "
+    "episodes with no captured worktree, and callers outside any git "
+    "checkout, pass through. Set `auto_scope=False` to sweep every "
+    "worktree sharing the root (scope-disable still applies)."
 )
 
 
 def _all_episodes(deps: "ToolHandlers") -> list[Episode]:
+    """Every episode on disk, unfiltered.
+
+    Deliberately UNfiltered: this pool is the liveness authority for the
+    dismissal GC (`PatternDismissals.dismissed_ids`), which drops rows
+    whose member episodes have all aged out. Feeding it the caller-
+    filtered pool would make "invisible from here" look like "aged out"
+    and silently delete a dismissal recorded in another worktree (or
+    against a scope this session happens to have disabled). Detection
+    and the promote-time deletion run over `_visible_episodes(...)`
+    instead.
+    """
     out: list[Episode] = []
     for sid in deps.episode_store.iter_session_ids():
         try:
             out.extend(deps.episode_store.list_by_session(sid))
         except ValueError:
             continue
+    return out
+
+
+def _visible_episodes(
+    episodes: list[Episode],
+    *,
+    excluded_scopes: set[str],
+    apply_worktree_filter: bool,
+    caller_worktree: str | None,
+) -> list[Episode]:
+    """The subset of `episodes` this caller may see — and therefore the
+    only ones detection may cluster and `promote` may delete.
+
+    Mirrors `episode_search`'s two filters verbatim:
+
+    - Session-disabled scopes are an opt-out hide honored uniformly
+      across the read surface (memory_search, memory_list,
+      episode_search, episode_handoff); the same `excluded & scopes`
+      short-circuit lands here.
+    - Worktree isolation via the permissive `worktrees_match` (either
+      side None → True), so legacy / pre-origin episodes and callers
+      outside any git checkout still pass through — the same trade
+      `should_include_for_caller` makes for `memory_search`.
+
+    Unlike `episode_search` there is no explicit-selector carve-out to
+    make: `episode_patterns` has no `swarm_id` / `parent_session_id`
+    equivalent, so its walk is *always* the bare discovery walk that
+    filter guards. `auto_scope=False` remains the explicit escape hatch
+    for a deliberate cross-worktree sweep.
+    """
+    from ..origin import worktrees_match
+
+    out: list[Episode] = []
+    for ep in episodes:
+        if excluded_scopes and (set(ep.scopes) & excluded_scopes):
+            continue
+        if apply_worktree_filter:
+            ep_worktree = ep.origin.worktree_root if ep.origin else None
+            if not worktrees_match(ep_worktree, caller_worktree):
+                continue
+        out.append(ep)
     return out
 
 
@@ -90,6 +164,7 @@ async def episode_patterns(
     source: str = "inferred",
     min_sessions: int = 3,
     max_patterns: int = 5,
+    auto_scope: bool = True,
     ctx: Context | None = None,
 ) -> dict[str, Any]:
     if promote is not None and dismiss is not None:
@@ -99,18 +174,42 @@ async def episode_patterns(
     if max_patterns < 1:
         raise ValueError("max_patterns must be a positive integer")
 
-    # The promote path routes through memory_write, which advances the
-    # turn itself — same single-advance contract episode_promote documents.
+    # Route capture_origin through the parent ``_handlers`` module so the
+    # test suite's monkey-patch propagates here too — the same shim
+    # discipline `memory_search` / `episode_search` / `episode_handoff` use.
+    from .. import _handlers as _h
+
+    # `for_request` is a pure lookup (creates the state on first touch),
+    # so calling it on BOTH paths is free. The turn advance is what stays
+    # conditional: the promote path routes through memory_write, which
+    # advances the turn itself — same single-advance contract
+    # episode_promote documents. We need `state` unconditionally now
+    # because `disabled_scopes` gates the candidate pool that promote
+    # resolves its target from.
+    state = deps.sessions.for_request(ctx)
     if promote is None:
-        state = deps.sessions.for_request(ctx)
         _advance_turn(state, deps.recorder)
 
-    episodes = _all_episodes(deps)
+    caller_worktree: str | None = None
+    if auto_scope:
+        current_origin = _h.capture_origin()
+        caller_worktree = current_origin.worktree_root if current_origin else None
+
+    all_episodes = _all_episodes(deps)
+    episodes = _visible_episodes(
+        all_episodes,
+        excluded_scopes=set(state.disabled_scopes),
+        apply_worktree_filter=auto_scope,
+        caller_worktree=caller_worktree,
+    )
     candidates = find_episode_patterns(
         episodes, min_sessions=min_sessions, max_patterns=max_patterns
     )
     dismissals = PatternDismissals(deps.store.root)
-    live_ids = {ep.id for ep in episodes}
+    # Liveness for the dismissal GC comes from the UNFILTERED pool: a
+    # row is dead only when its members are gone from DISK, not when
+    # they're merely hidden from this caller (see `_all_episodes`).
+    live_ids = {ep.id for ep in all_episodes}
     dismissed = dismissals.dismissed_ids(live_ids)
     candidates = [c for c in candidates if c.id not in dismissed]
 
@@ -158,6 +257,12 @@ async def episode_patterns(
         response["pattern_episode_ids"] = target.episode_ids
         if response.get("status") == "committed":
             deleted = 0
+            # Keyed off the VISIBLE pool, not `all_episodes`: the delete
+            # set can never reach past the read filters that produced the
+            # candidate. `target.episode_ids` already comes from a
+            # candidate detected over `episodes`, so this is belt-and-
+            # braces — but it is the line that makes "no cross-worktree
+            # deletion" true by construction rather than by derivation.
             by_id = {ep.id: ep for ep in episodes}
             for eid in target.episode_ids:
                 ep = by_id.get(eid)
@@ -180,6 +285,10 @@ async def episode_patterns(
 
     return {
         "patterns": [c.to_dict() for c in candidates],
+        # The VISIBLE count — what detection actually clustered over.
+        # Reporting the on-disk total would overstate the evidence base
+        # and make a scope-hidden or cross-worktree journal look like it
+        # was considered and found unpatterned.
         "episodes_scanned": len(episodes),
         **(
             {}

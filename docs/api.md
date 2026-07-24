@@ -315,13 +315,20 @@ Distill a journal takeaway into a durable memory. Routes through `memory_write` 
 
 Returns the `memory_write` response shape with one extra field: `promoted_from_episode_id: str` so the caller can correlate. On `status="committed"` the source episode is deleted (the durable memory is the authoritative artifact). On `status="pending"` (user-inference promotion or `require_write_confirmation`), the episode is held; `memory_write_confirm(pending_id)` deletes the source episode on commit, and `memory_write_cancel(pending_id)` preserves the episode so the caller can rephrase and re-promote. On any other non-committed status (duplicate, previously_removed, transient_warning, scope_mismatch, ungrounded) the episode is left intact.
 
-### `episode_patterns(promote?, dismiss?, body?, scopes?, category?, confidence?, source?, min_sessions?, max_patterns?)`
+### `episode_patterns(promote?, dismiss?, body?, scopes?, category?, confidence?, source?, min_sessions?, max_patterns?, auto_scope?)`
 
 The cross-session half of consolidation: where `episode_promote` distills one journal entry, this surfaces themes recurring across many sessions' episodes — clusters sharing distinctive terms across at least `min_sessions: int = 3` distinct sessions (ubiquitous project vocabulary excluded), capped at `max_patterns: int = 5` candidates. Candidates recompute on every call (episodes churn constantly); ids are content-stable hashes of the member set, so a listed id stays valid while the members live. Modes are mutually exclusive:
 
 - Default (no args) — list candidates: `{id, terms, episode_ids, distinct_sessions, snippets}` per pattern, one snippet per member episode so it is judgeable in place. An empty list usually just means the journal is young or already consolidated.
 - `promote: str` + `body` + `scopes` — write the durable memory. The model authors `body` itself (the terms are evidence pointers, not a synthesis); `category: str = "fact"`, `confidence: str = "medium"`, `source: str = "inferred"` are accepted as on `memory_write`, and the write routes through the full `memory_write` gate stack. On `status="committed"` the member episodes are deleted (distilled); a `duplicate` rejection records a corroboration on the existing memory (recurrence landing where it belongs); on `status="pending"` (user-inference) the member episodes stay in place until their TTL. On any other non-committed status they are untouched so the caller can adjust and retry.
 - `dismiss: str` — not worth consolidating (incidental vocabulary overlap). Sticky for that exact episode set; a new episode joining the theme legitimately reopens it under a fresh id.
+
+The candidate pool honors the same two read-surface hides `episode_search` / `episode_handoff` enforce, applied *before* detection so they gate promote and dismiss as well as the listing:
+
+- Episodes whose scopes intersect the session's `disabled_scopes` are dropped (the uniform opt-out hide, as on `memory_search` / `memory_list`).
+- `auto_scope: bool = True`. Drops episodes whose `origin.worktree_root` doesn't match the caller's, mirroring `memory_search.auto_scope`. Unlike `episode_search` there is no explicit-selector carve-out — this surface has no `swarm_id` / `parent_session_id` equivalent, so the whole walk is the bare discovery walk the filter guards. Legacy / no-origin episodes and callers outside any git checkout pass through. Set `False` to sweep every worktree sharing the memory root (the scope hide still applies).
+
+Because both filters run before detection, a pattern you cannot see is neither promotable nor dismissible — which is what confines the commit-time member deletion to your own worktree. `episodes_scanned` reports the *visible* count, not the on-disk total. Dismissal rows are GC'd against the on-disk episode set rather than the filtered one, so a dismissal recorded in another worktree is not collected by your listing call.
 
 ## Naming conventions
 

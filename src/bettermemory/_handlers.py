@@ -507,6 +507,7 @@ class ToolHandlers:
         source: str = "inferred",
         min_sessions: int = 3,
         max_patterns: int = 5,
+        auto_scope: bool = True,
         ctx: Context | None = None,
     ) -> dict[str, Any]:
         return await _handlers_pkg.episode_patterns(
@@ -520,6 +521,7 @@ class ToolHandlers:
             source=source,
             min_sessions=min_sessions,
             max_patterns=max_patterns,
+            auto_scope=auto_scope,
             ctx=ctx,
         )
 
