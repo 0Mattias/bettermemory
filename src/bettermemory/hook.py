@@ -388,9 +388,12 @@ def run_audit(
     # `probe_for_miss` re-applies inside `run_search` (it derives the
     # repo/worktree pair from `caller_origin` exactly this way), so the
     # document frequencies price exactly the collection about to be
-    # ranked. `min_survivors` is PRODUCTION's result width
+    # ranked. `min_survivors` is the width of a DEFAULT `memory_search`
     # (`default_max_results`), not the probe's `_TOP_HITS_RETAINED`: the
-    # starvation guard has to fire on the same slices production's would.
+    # starvation guard has to fire on the same slices a default-width
+    # retrieval's would. It does NOT track a wider or narrower REQUEST —
+    # there is no request on this path, and `resolve_search_pool` records
+    # what that leaves open.
     #
     # `probe_pool` is deliberately NOT named `memories`: it is a capped,
     # query-biased SEARCH pool, and anything downstream that wants the

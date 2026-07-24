@@ -8,7 +8,10 @@ in-filter matches all rank #51+ globally returns ZERO hits on the
 prefilter path even though matching memories exist — the cap-starvation
 failure mode the `_load_search_candidates` docstring itself names. The
 guard dry-runs the authoritative filter on a cap-saturated slice and
-reloads the full corpus when fewer than `max_results` candidates survive.
+reloads the full corpus when fewer than the caller's `min_survivors`
+candidates survive — `max_results` for a `memory_search` request,
+`behavior.default_max_results` for the silent-miss audit producers, which
+describe a search that never happened and so carry no request width.
 
 Lives in its own file (not test_search*.py — those belong to another
 batch this round) and exercises the guard through the MCP tool surface,
@@ -18,13 +21,18 @@ mirroring tests/test_server_search_index.py.
 from __future__ import annotations
 
 import json
+from datetime import timedelta
 from pathlib import Path
 from typing import Any
 
 import pytest
 
 from bettermemory import index
-from bettermemory.config import Config, StorageConfig
+from bettermemory.audit import probe_for_miss
+from bettermemory.config import BehaviorConfig, Config, StorageConfig
+from bettermemory.handlers.search import resolve_search_pool
+from bettermemory.hook import run_audit
+from bettermemory.models import utcnow
 from bettermemory.origin import Origin
 from bettermemory.server import build_server
 from bettermemory.session import SessionState
@@ -310,3 +318,177 @@ async def test_corpus_stats_are_not_consulted_below_the_prefilter_threshold(
     await _call(server, "memory_search", query="alpha", max_results=5)
 
     assert calls == [], f"corpus lookup ran below the threshold: {calls}"
+
+
+# ---------------------------------------------------------------------------
+# `min_survivors`: the guard's width is per-caller, and it is load-bearing
+# ---------------------------------------------------------------------------
+
+
+def _build_width_divergence_store(root: Path) -> tuple[Store, list[str], list[str]]:
+    """A store engineered so the in-filter survivors of the cap-saturated
+    FTS slice land strictly between the two `min_survivors` widths.
+
+    Three cohorts against the query "alpha beta":
+
+    * 40 short repo-B decoys dense in BOTH terms — best BM25, they take
+      the head of the top-50 slice, and the caller's repo filter strips
+      every one of them post-cap.
+    * 12 short origin-less memories mentioning only "alpha" — good enough
+      BM25 to fill the rest of the slice, but coverage 1/2 = "medium"
+      under `_relevance_label`, which is BELOW the miss threshold.
+    * 8 origin-less memories that match both terms once each under ~400
+      words of padding — coverage 2/2 = "high", sunk past the cap by BM25
+      length normalisation.
+
+    Origin-less memories pass the repo filter as global (so they survive
+    post-cap) while carrying no `projects:` scope and no origin repo, which
+    keeps `audit._caller_in_top_hit_project` out of the verdict.
+    """
+    store = Store(root)
+    for i in range(40):
+        store.write(
+            content="alpha beta " * 6 + f"decoy-{i}",
+            scopes=["tools"],
+            origin=Origin(repo=REPO_B),
+        )
+    partial_ids = [
+        store.write(
+            content="alpha " * 6 + f"partial-{i}", scopes=["tools"], origin=None
+        ).id
+        for i in range(12)
+    ]
+    pad = " ".join(f"pad{j}" for j in range(400))
+    full_ids = [
+        store.write(
+            content=f"alpha beta {pad} full-{i}", scopes=["tools"], origin=None
+        ).id
+        for i in range(8)
+    ]
+    index.rebuild(root, store.iter_active())
+    return store, partial_ids, full_ids
+
+
+def test_min_survivors_width_can_flip_the_probe_verdict(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The starvation width is not cosmetic: the same store, the same
+    query and the same probe reach OPPOSITE verdicts at the two widths
+    `resolve_search_pool`'s callers pass.
+
+    `memory_search` passes the request's `max_results`; both silent-miss
+    producers pass `behavior.default_max_results`, because the search they
+    describe is the one the model did not make. This pins how far that
+    difference travels — not to pool size, but all the way to the miss
+    verdict, which reads only the rank-1 hit. It is the evidence
+    `resolve_search_pool`'s docstring cites; if the widths are ever
+    unified, this test is the thing that has to be re-argued.
+    """
+    monkeypatch.setenv("BETTERMEMORY_INDEX_THRESHOLD", "1")
+    store, partial_ids, full_ids = _build_width_divergence_store(tmp_path)
+    caller = Origin(cwd="/projects/a", repo=REPO_A, worktree_root="/projects/a")
+
+    top50 = [cid for cid, _ in index.query(tmp_path, "alpha beta", max_results=50)]
+    assert len(top50) == 50, "precondition: the FTS slice must be cap-saturated"
+    assert not (set(full_ids) & set(top50)), (
+        "precondition drift: the both-terms matches landed inside the FTS "
+        "top-50, so the two widths would see the same pool — pad harder"
+    )
+    survivors = len(set(partial_ids) & set(top50))
+    assert 5 < survivors < 25, (
+        f"precondition drift: {survivors} in-filter survivors must sit "
+        "strictly between the default width (5) and the request width (25), "
+        "or only one side of the guard fires"
+    )
+
+    pools = {
+        width: resolve_search_pool(
+            store,
+            "alpha beta",
+            excluded_scopes=set(),
+            repo_filter=caller.repo,
+            worktree_filter=caller.worktree_root,
+            min_survivors=width,
+        )
+        for width in (5, 25)
+    }
+    assert len(pools[5].memories) == 50, "the default width keeps the capped slice"
+    assert len(pools[25].memories) == 60, "the request width reloads the full corpus"
+
+    # `now` is pushed past the creation shield: every memory here was
+    # written seconds ago and would otherwise be dropped as too young to
+    # be retrieval-miss evidence.
+    now = utcnow() + timedelta(hours=1)
+    verdicts = {}
+    rank1 = {}
+    for width, pool in pools.items():
+        report = probe_for_miss(
+            pool.memories,
+            "alpha beta",
+            recent_events=[],
+            session_id="sess-width",
+            now=now,
+            caller_origin=caller,
+            excluded_scopes=set(),
+            mode="hybrid",
+            corpus_stats_provider=pool.corpus_stats_provider,
+        )
+        verdicts[width] = report.verdict
+        rank1[width] = report.top_hits[0].id if report.top_hits else None
+
+    assert verdicts == {5: "ok", 25: "miss"}, (
+        f"expected the width to flip the verdict, got {verdicts}"
+    )
+    assert rank1[5] in partial_ids
+    assert rank1[25] in full_ids
+
+
+async def test_both_audit_producers_size_the_guard_for_a_default_search(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Both silent-miss producers pass `behavior.default_max_results` as
+    `min_survivors` — the width of the default search their counterfactual
+    describes.
+
+    Pinned against a NON-default config value so a hardcoded 5 (or the
+    probe's own `_TOP_HITS_RETAINED`) cannot pass by coincidence. The two
+    producers are separate code paths that have drifted before, and the
+    previous test shows the width reaching the verdict.
+    """
+    monkeypatch.setenv("BETTERMEMORY_INDEX_THRESHOLD", "1")
+    store = Store(tmp_path)
+    for i in range(3):
+        store.write(content=f"alpha beta filler-{i}", scopes=["tools"])
+    index.rebuild(tmp_path, store.iter_active())
+
+    cfg = Config(
+        storage=StorageConfig(directory=str(tmp_path)),
+        behavior=BehaviorConfig(default_max_results=7),
+    )
+
+    import bettermemory.handlers.audit_turn as audit_turn_mod
+    import bettermemory.handlers.search as search_mod
+
+    widths: list[int] = []
+    real = search_mod.resolve_search_pool
+
+    def spy(*args: Any, **kwargs: Any) -> Any:
+        widths.append(int(kwargs["min_survivors"]))
+        return real(*args, **kwargs)
+
+    monkeypatch.setattr(search_mod, "resolve_search_pool", spy)
+    monkeypatch.setattr(audit_turn_mod, "resolve_search_pool", spy)
+
+    run_audit(
+        user_message="alpha beta",
+        assistant_response="hi",
+        session_id="sess-widths",
+        config=cfg,
+    )
+    server = build_server(config=cfg, store=Store(tmp_path), state=SessionState())
+    await _call(server, "memory_audit_turn", user_message="alpha beta")
+
+    assert widths == [7, 7], (
+        "both producers must size the starvation guard for a default "
+        f"search (default_max_results=7), got {widths}"
+    )

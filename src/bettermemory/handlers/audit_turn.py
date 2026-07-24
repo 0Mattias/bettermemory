@@ -155,9 +155,12 @@ async def memory_audit_turn(
     # verdict on its own. The filters handed here are the ones
     # `probe_for_miss` will re-apply inside `run_search`, so the document
     # frequencies price exactly the collection about to be ranked.
-    # `min_survivors` is PRODUCTION's result width
+    # `min_survivors` is the width of a DEFAULT `memory_search`
     # (`default_max_results`), not the probe's `_TOP_HITS_RETAINED`: the
-    # starvation guard has to fire on the same slices production's would.
+    # starvation guard has to fire on the same slices a default-width
+    # retrieval's would. It does NOT track a wider or narrower REQUEST —
+    # there is no request on this path, and `resolve_search_pool` records
+    # what that leaves open.
     probe_pool = resolve_search_pool(
         deps.store,
         user_message,

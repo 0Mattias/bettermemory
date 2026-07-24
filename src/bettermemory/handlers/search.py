@@ -464,15 +464,39 @@ def resolve_search_pool(
       ARE corpus statistics and the provider stays None so the shipped
       ranking is byte-stable.
 
-    `min_survivors` is the starvation threshold. Production passes the
-    REQUEST's `max_results`; an audit producer has no request to read, so
-    it passes `behavior.default_max_results` — production's own default
-    and the closest available stand-in. That is a deliberate residual
-    divergence in the property this helper exists to close: a model that
-    called `memory_search(max_results=25)` starved its prefilter on a
-    slice the probe (at the default 5) would not, and the two would then
-    rank different pools after all. Closing it would need the producers
-    to know a width they cannot observe.
+    `min_survivors` is the starvation threshold, and the two callers pass
+    DIFFERENT values on purpose — each the width of the search it is
+    describing:
+
+    - `memory_search` passes the REQUEST's `max_results`. That is the
+      guard's whole purpose: a request for 50 results that finds 6
+      in-filter survivors in the capped slice must reload, or it serves
+      six hits while matching memories sit past the cap — the round-85
+      failure this guard exists for. Pinning production to the config
+      default instead would re-open that failure for every above-default
+      request, so the divergence must not be closed from this end.
+    - Both audit producers pass `behavior.default_max_results`. The search
+      they describe is the one the model did NOT make: a counterfactual
+      carrying no `max_results` of its own, i.e. a default search. There
+      is no request to read on that path — the miss verdict's own
+      precondition is that no retrieval happened.
+
+    The widths are not interchangeable, and the difference reaches the
+    verdict rather than stopping at pool size, so it is measured rather
+    than asserted: `test_min_survivors_width_can_flip_the_probe_verdict`
+    in `tests/test_search_prefilter.py` builds a store whose in-filter
+    survivors sit between the two thresholds, and the same probe reports
+    `ok` at the default width and `miss` at a request width of 25. The
+    comparison is a strict `<`, so the asymmetry reverses for a request
+    NARROWER than the default: there the audit reloads where production
+    keeps the capped slice.
+
+    What that leaves standing: a model habitually passing an
+    above-default `max_results` is audited against a narrower
+    counterfactual than its own habit. Nothing on the audit path can
+    observe that habit, and deriving it from an earlier turn's search
+    would make this turn's verdict depend on unrelated history — so it is
+    left open rather than guessed.
 
     Pass the same `scopes` / `excluded_scopes` / `repo_filter` /
     `worktree_filter` that will be handed to `search.search`: the
@@ -684,9 +708,11 @@ async def memory_search(
         # The prefilter, the cap-starvation guard and the corpus-stats
         # wiring are one decision — see `resolve_search_pool`, which the
         # two audit producers share so the silent-miss probe ranks this
-        # same pool. `min_survivors` is THIS request's `max_results`
-        # (the producers pass `default_max_results`; the docstring names
-        # that residual).
+        # same pool. `min_survivors` is THIS request's `max_results` —
+        # the audit producers pass `default_max_results` instead, which
+        # `resolve_search_pool` records as a deliberate difference (each
+        # caller sizes the guard for the search it describes), not a
+        # drift to close.
         pool = resolve_search_pool(
             deps.store,
             query,

@@ -673,8 +673,15 @@ def probe_for_miss(
     callers that pass a full `load_all()` correctly leave this None,
     because for them pool statistics ARE corpus statistics.
 
-    Two honest residuals in that pool parity, neither closed here:
+    Honest residuals in that pool parity, none of them closed here:
 
+    - The producers size the pool's cap-starvation guard for a DEFAULT
+      search (`behavior.default_max_results`), since the search they
+      describe is the one that did not happen and carries no width of its
+      own. A model habitually passing a wider `max_results` is therefore
+      measured against a narrower counterfactual than its own habit;
+      `handlers.search.resolve_search_pool` carries the measurement of
+      how far that can travel.
     - The producers build the pool from the RAW USER MESSAGE, because
       that is the only query text a turn-end audit has. The model would
       have typed a distilled query, so above the index threshold the FTS
