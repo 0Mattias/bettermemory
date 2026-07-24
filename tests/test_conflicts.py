@@ -203,31 +203,32 @@ def _unwrap(res: Any) -> Any:
     return res.get("result", res) if isinstance(res, dict) and "result" in res else res
 
 
-async def _seed_conflicting_pair(server: Any) -> tuple[str, str]:
+async def _seed_pair(server: Any, body_a: str, body_b: str) -> tuple[str, str]:
     first = await _call(
-        server,
-        "memory_write",
-        content=(
-            "the homelab postgres instance backing grafana metrics "
-            "listens on tcp port 5432"
-        ),
-        scopes=["infrastructure"],
+        server, "memory_write", content=body_a, scopes=["infrastructure"]
     )
     # force=True: the write-time dedup gate would otherwise reject the
     # conflicting claim as a duplicate — which is exactly why corpus
     # scan exists: conflicting pairs mostly enter via force or via
     # drift between sessions.
     second = await _call(
+        server, "memory_write", content=body_b, scopes=["infrastructure"], force=True
+    )
+    return first["id"], second["id"]
+
+
+async def _seed_conflicting_pair(server: Any) -> tuple[str, str]:
+    return await _seed_pair(
         server,
-        "memory_write",
-        content=(
+        (
+            "the homelab postgres instance backing grafana metrics "
+            "listens on tcp port 5432"
+        ),
+        (
             "the homelab postgres instance backing grafana metrics "
             "listens on tcp port 5433"
         ),
-        scopes=["infrastructure"],
-        force=True,
     )
-    return first["id"], second["id"]
 
 
 async def test_e2e_scan_list_and_confirm_contradiction(memory_dir: Path) -> None:
@@ -326,6 +327,70 @@ async def test_e2e_contradiction_verdict_refuses_when_target_is_dead(
     rescan = _unwrap(await _call(server, "memory_conflicts", scan=True))
     assert rescan["pending_total"] == 0
     assert conflicts_pending_count(memory_dir) == 0
+
+
+async def test_e2e_dead_member_row_is_not_counted_as_pending(
+    memory_dir: Path,
+) -> None:
+    """A row the listing path cannot render must not be counted either.
+
+    Counted from the raw queue, one dead-member row made a single
+    payload contradict itself three ways: `pending: []`, `pending_total:
+    1`, and a hint saying there was nothing pending. `pending_total` is
+    the number the model reads to decide whether arbitration work
+    exists, so it has to agree with the list beside it.
+    """
+    server = _build(memory_dir)
+    await _seed_conflicting_pair(server)
+    scanned = _unwrap(await _call(server, "memory_conflicts", scan=True))
+    b_id = scanned["pending"][0]["b"]["id"]
+    await _call(
+        server, "memory_remove", id=b_id, reason="the 5433 claim was plain wrong"
+    )
+
+    listed = _unwrap(await _call(server, "memory_conflicts"))
+    assert listed["pending"] == []
+    assert listed["pending_total"] == len(listed["pending"]) == 0
+    assert "no longer active" in listed["hint"]
+    assert "scan=True" in listed["hint"]
+    # The old text claimed nothing was queued while the total said 1.
+    assert "No pending conflict candidates" not in listed["hint"]
+
+    # Deliberate: listing is a read path and does not GC. The row lives
+    # until a scan, and the rollup that counts raw rows still sees it —
+    # which is why the hint names both the remedy and that mismatch.
+    assert conflicts_pending_count(memory_dir) == 1
+    overview = _unwrap(await _call(server, "memory_scope_overview"))
+    assert overview["curation_pending"]["conflicts"] == 1
+
+    rescan = _unwrap(await _call(server, "memory_conflicts", scan=True))
+    assert rescan["pending_total"] == 0
+    assert conflicts_pending_count(memory_dir) == 0
+    settled = _unwrap(await _call(server, "memory_conflicts"))
+    assert settled["pending_total"] == 0
+    assert settled["hint"].startswith("No pending conflict candidates")
+
+
+async def test_e2e_pending_total_counts_past_the_max_results_window(
+    memory_dir: Path,
+) -> None:
+    """Excluding unrenderable rows must not collapse the total into
+    `len(pending)`: a caller whose list was truncated by `max_results`
+    would then have no way to learn more is queued."""
+    server = _build(memory_dir)
+    await _seed_conflicting_pair(server)
+    await _seed_pair(
+        server,
+        "the alpha api service binds its listen port 8080 on the shared docker host",
+        "the alpha api service binds its listen port 8081 on the shared docker host",
+    )
+    scanned = _unwrap(await _call(server, "memory_conflicts", scan=True))
+    assert scanned["pending_total"] == 2
+
+    windowed = _unwrap(await _call(server, "memory_conflicts", max_results=1))
+    assert len(windowed["pending"]) == 1
+    assert windowed["pending_total"] == 2
+    assert "hint" not in windowed
 
 
 async def test_e2e_compatible_clears_standing_contradicts_links(

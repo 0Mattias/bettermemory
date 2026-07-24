@@ -33,7 +33,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any
 
-from ..conflicts import ConflictQueue, scan_conflicts
+from ..conflicts import ConflictCandidate, ConflictQueue, scan_conflicts
 from ..models import LinkType, Memory, MemoryLink
 from ..store import ConcurrentUpdateError, MemoryNotFoundError, TombstonedError
 from ._shared import Context, _advance_turn
@@ -76,7 +76,12 @@ DESC_MEMORY_CONFLICTS = (
     "alone.\n\n"
     "Returns `{pending: [...], pending_total}` (+ `scan` counters or "
     "the `resolved` echo). Each pending row: `{id, a, b, similarity, "
-    "method, detector}` where a/b are `{id, body, scopes, updated}`."
+    "method, detector}` where a/b are `{id, body, scopes, updated}`. "
+    "`pending_total` counts the candidates that are judgeable right now "
+    "(both members still active), so it exceeds the number of rows "
+    "returned only when `max_results` truncated the list. A queued row "
+    "whose member died since the last scan is in neither the list nor "
+    "the total, and `hint` says how many were left out."
 )
 
 
@@ -117,43 +122,114 @@ async def memory_conflicts(
 
     pending = queue.pending()
     pending.sort(key=lambda c: c.similarity, reverse=True)
-    rows: list[dict[str, Any]] = []
-    for cand in pending[:max_results]:
-        sides: dict[str, Any] = {}
-        for key, mid in (("a", cand.a_id), ("b", cand.b_id)):
-            try:
-                m = deps.store.load_one(mid)
-            except (MemoryNotFoundError, TombstonedError):
-                sides = {}
-                break
-            sides[key] = {
-                "id": m.id,
-                "body": m.body,
-                "scopes": m.scopes,
-                "updated": m.updated.isoformat(),
-            }
-        if not sides:
-            # A member vanished since the last scan; the next full scan
-            # GCs the row. Skip rather than surface a one-sided pair.
-            continue
-        rows.append(
-            {
-                "id": cand.id,
-                "similarity": cand.similarity,
-                "method": cand.method,
-                "detector": cand.detector,
-                **sides,
-            }
-        )
+    rows, listable, omitted = _render_pending(deps, pending, max_results=max_results)
     out["pending"] = rows
-    out["pending_total"] = len(pending)
-    if not rows and resolve is None and not scan:
-        out["hint"] = (
-            "No pending conflict candidates. Run memory_conflicts(scan=True) "
-            "after bulk writes, or rely on the automatic scan every applying "
-            "curation pass performs."
-        )
+    out["pending_total"] = listable
+    if resolve is None and not scan:
+        if omitted:
+            # Say it once, in the one place that knows the number. The
+            # row is NOT dropped here (see `_render_pending`), so the
+            # remedy has to name the scan — and the raw-row count the
+            # curation rollup reads still includes it, which is the only
+            # way a caller could otherwise see a number disagreeing with
+            # this one.
+            out["hint"] = (
+                f"{omitted} queued candidate(s) name a memory that is no "
+                "longer active, so they are omitted from `pending` and "
+                "`pending_total` — a one-sided pair cannot be judged. Only a "
+                "full scan drops them: memory_conflicts(scan=True), or the "
+                "automatic scan every applying curation pass runs. Until then "
+                "memory_scope_overview's curation_pending.conflicts still "
+                "counts them."
+            )
+        elif not rows:
+            out["hint"] = (
+                "No pending conflict candidates. Run memory_conflicts(scan=True) "
+                "after bulk writes, or rely on the automatic scan every applying "
+                "curation pass performs."
+            )
     return out
+
+
+def _render_pending(
+    deps: "ToolHandlers",
+    pending: list[ConflictCandidate],
+    *,
+    max_results: int,
+) -> tuple[list[dict[str, Any]], int, int]:
+    """Render pending candidates into response rows.
+
+    Returns `(rows, listable, omitted)`: the rows inside the
+    `max_results` window, how many candidates could have been rendered
+    in total, and how many were left out because a member no longer
+    loads.
+
+    `listable` — not `len(pending)` — is what the handler reports as
+    `pending_total`, and the whole queue is walked to compute it rather
+    than just the window. A row whose member vanished since the last
+    scan cannot be judged (`_load_active_member` refuses the verdict), so
+    counting it would put a nonzero total beside the very list it is
+    missing from, next to a hint saying there is nothing to do. That
+    number is what the model reads to decide whether arbitration work
+    exists; a count that disagrees with its own list is worth more than
+    the extra indexed loads walking the tail costs. Rows past the window
+    still count — the total is deliberately allowed to exceed
+    `len(rows)`, which is how a caller learns to raise `max_results`.
+
+    Dead rows are reported, never GC'd here. `upsert_scan` stays the
+    queue's only garbage collector: it rules on liveness from one
+    full-corpus snapshot, while this path has only per-row `load_one`
+    misses — which a momentarily unparseable or unreadable file also
+    produces. Deleting arbitration state from a read path on that
+    evidence trades a phantom count (now fixed at the reporting layer)
+    for lost judgment, and turns every list call into a locked rewrite
+    racing the scan. The rows are short-lived anyway: every applying
+    curation pass GCs unconditionally.
+    """
+    sides_by_id: dict[str, dict[str, Any] | None] = {}
+
+    def side(memory_id: str) -> dict[str, Any] | None:
+        """Memoized so a memory in two candidate pairs is loaded once —
+        and so a dead id costs its full-directory `load_one` walk once."""
+        if memory_id not in sides_by_id:
+            try:
+                m = deps.store.load_one(memory_id)
+            except (MemoryNotFoundError, TombstonedError):
+                sides_by_id[memory_id] = None
+            else:
+                sides_by_id[memory_id] = {
+                    "id": m.id,
+                    "body": m.body,
+                    "scopes": m.scopes,
+                    "updated": m.updated.isoformat(),
+                }
+        return sides_by_id[memory_id]
+
+    rows: list[dict[str, Any]] = []
+    listable = 0
+    omitted = 0
+    for cand in pending:
+        a = side(cand.a_id)
+        # Short-circuit: a miss costs a full-directory walk inside
+        # `load_one`, so don't price the second member once the pair is
+        # already unjudgeable.
+        b = side(cand.b_id) if a is not None else None
+        if a is None or b is None:
+            omitted += 1
+            continue
+        listable += 1
+        if len(rows) < max_results:
+            rows.append(
+                {
+                    "id": cand.id,
+                    "similarity": cand.similarity,
+                    "method": cand.method,
+                    "detector": cand.detector,
+                    "a": dict(a),
+                    "b": dict(b),
+                }
+            )
+    return rows, listable, omitted
 
 
 def _load_active_member(deps: "ToolHandlers", memory_id: str) -> Memory:
