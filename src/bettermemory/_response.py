@@ -438,12 +438,14 @@ class ResponseBuilder:
         whose memory is anchored to the caller's current repo and has been
         verified at some point.
 
-        The signal mirrors `path_drift_checked` / `path_drift_missing`: a
-        cheap integer surfaced on every hit so the model can self-triage
-        which hit to expand without a memory_show round-trip. Cost is
-        bounded — one `commit_author_timestamps` call for the whole search,
-        then a per-hit `bisect_right` against the sorted timestamp list.
-        Independent of result count.
+        The signal mirrors `path_drift_checked` / `path_drift_missing` in
+        KIND — a cheap integer the model self-triages on, picking which hit
+        to expand without a memory_show round-trip — but NOT in coverage:
+        those two are unconditional in `hit_to_dict`'s return literal and
+        ride every hit, whereas this one is gated (the omission list
+        below). Cost is bounded — one `commit_author_timestamps` call for
+        the whole search, then a per-hit `bisect_right` against the sorted
+        timestamp list. Independent of result count.
 
         Omitted (key absent from the dict, not set to null) when:
 
@@ -457,9 +459,22 @@ class ResponseBuilder:
           that resolve inside the caller's repo (the claim-anchored
           drift policy; see `verify.resolve_commit_drift_count`).
 
-        Absence-as-signal mirrors `path_drift`'s null-when-clean contract
-        and keeps the hit shape uniform: a consumer either sees the field
-        or doesn't, no third "unknown" branch to filter.
+        Absence-as-signal IS the right analogy to `path_drift` here — but
+        only once the surface is named, because `path_drift` answers to two
+        opposite conventions and this docstring gets to claim only one of
+        them. The dicts decorated here are `hit_to_dict` output (this
+        method hard-requires that shape: it reads `hit_dict["verification"]`
+        unguarded below), and on THAT shape `path_drift` is itself gated —
+        on its own condition, but with the same absent-not-null result: a
+        hit with nothing to report carries no `path_drift` key at all, never
+        a null one. So omitting the count keeps the hit uniform: a consumer
+        either sees a field or doesn't, no third "unknown" branch to
+        filter. `memory_show` spends
+        the same two names on the OPPOSITE convention — `path_drift` /
+        `commit_drift` always emitted, `null` as the no-signal value, as
+        `handlers.show._links_payload` spells out. Both statements are
+        accurate about their own surface; don't reconcile this paragraph
+        into the other's wording.
         """
         if caller_origin.repo is None or caller_origin.cwd is None:
             return
