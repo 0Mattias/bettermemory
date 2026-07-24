@@ -61,7 +61,9 @@ Suppressed on purpose, because they are the FIXED shapes
   assertion is the repair 1c8b10f made, not the defect.
 * The probe-then-skip idiom — bind the path, test it, ``pytest.skip``
   when absent. The ``/etc/hosts`` symlink fixture does this today.
-  Direction decides here exactly as it does for the platform gate. The
+  Direction decides here exactly as it does for the platform gate, and
+  so does position — a skip excuses the filesystem touches written
+  after it, never one that has already run. The
   condition has to be provably true when the path is MISSING, which
   means a NEGATED presence probe (``not target.exists()``,
   ``not os.path.isfile(...)``) naming the flagged path, composed only
@@ -78,8 +80,9 @@ Suppressed on purpose, because they are the FIXED shapes
 * Anything inside a unit (or module, via ``pytestmark``) whose skip
   provably excludes the windows-latest leg: a ``skipif`` condition, or
   the test of an in-body ``if ...: pytest.skip(...)``, that statically
-  evaluates to True there. A test that never runs on Windows may be as
-  POSIX as it likes. Direction is the whole point — a gate that skips
+  evaluates to True there. Code that never runs on Windows may be as
+  POSIX as it likes — for a mark that is the whole unit, for an in-body
+  skip it is what follows. Direction is the whole point — a gate that skips
   some OTHER platform (``sys.platform == "darwin"``, or an inverted
   ``!= "win32"``) leaves the unit running on exactly the leg these rules
   protect, so it exempts nothing.
@@ -150,20 +153,36 @@ skip call itself has to be spelled with a final segment of exactly
 ``skip``, which admits ``pytest.skip`` and a bare ``skip`` but not a
 wrapper helper and not ``pytest.importorskip`` (that one skips on a
 missing import, not on a platform, so crediting it would exempt units
-outright); and a skip counts only where the branch its gate selected
+outright); a skip counts only where the branch its gate selected
 reaches it as a statement — never in an ``else``, never behind a
 further ``if`` the same gate cannot also decide, and never inside a
 loop, ``with``, ``try`` or nested ``def``, whose execution this parser
-does not model.
+does not model; and an in-body skip never reaches backwards, because a
+call that has already touched the filesystem cannot be un-run by a skip
+written below it (a decorator or ``pytestmark`` sits ahead of the whole
+body and still excuses all of it).
+
+Both gates weigh that last one the same way, through ``_gate_excuses``,
+which is also where the exception lives: only the shapes that TOUCH the
+filesystem where they stand — a POSIX literal handed to a read, a
+mutation or ``open``, and the ``unlink`` half of a chmod-unlink pair —
+are ordered against the gate.
 
 Where it is generous rather than strict, each taking a gate at face
 value and each pinned by a self-test below, so a later tightening has
 to come here and rewrite this:
 
-* a gate anywhere in the unit's statement chain suppresses, including
-  one written BELOW the shape it excuses — source position is never
-  compared, so a probe-then-skip that would run after the flagged call
-  still exempts it (the same holds for the platform gate);
+* the shapes that merely BUILD a value — a ``Path`` constructor, a
+  ``/`` composition, a ``setenv``, a slash-concatenation — are excused
+  by a gate anywhere in the unit, including one written below them.
+  None of them touches the filesystem where it stands, so a unit that
+  skips at all never reaches the consequence; and ordering them would
+  flag the probe-then-skip idiom's own first half, which binds the path
+  a line before the gate that tests it. Whatever consumes such a value
+  is judged on its own position wherever these rules read the consuming
+  call at all; a writing ``Path`` method (``write_text``, ``mkdir``) is
+  not one they read, gate or no gate, which is the narrowness the rule
+  set declares above rather than anything this comparison adds;
 * a needle matches a ``Name`` or an equal string constant anywhere in
   the gate's condition, without proving that occurrence is the same
   binding or an argument the probe actually consults.
@@ -743,8 +762,20 @@ def _is_skip_call(node: ast.expr) -> bool:
     return ast.unparse(node.func).rsplit(".", 1)[-1] == "skip"
 
 
-def _reaches_skip(body: list[ast.stmt], proven: Callable[[ast.expr], bool]) -> bool:
-    """Does entering this branch reach a ``skip`` call?
+def _source_position(node: ast.stmt | ast.expr) -> tuple[int, int]:
+    """``(lineno, col_offset)`` — the order gates and shapes are compared in."""
+    return (node.lineno, node.col_offset)
+
+
+# Where a decorator or a module-level mark sits: ahead of every statement in
+# the body, so it excuses the whole unit no matter how the body is ordered.
+_BEFORE_BODY = (-1, -1)
+
+
+def _reached_skip_position(
+    body: list[ast.stmt], proven: Callable[[ast.expr], bool]
+) -> tuple[int, int] | None:
+    """Where entering this branch reaches a ``skip`` call, if it reaches one.
 
     Only the statement chain counts, plus a nested ``if`` whose own test
     ``proven`` also decides — two conditions that hold together do reach the
@@ -752,47 +783,81 @@ def _reaches_skip(body: list[ast.stmt], proven: Callable[[ast.expr], bool]) -> b
     an ``else`` branch (the condition selected the other one), a loop, a
     ``with``, a ``try``, or a nested ``def``, none of which is guaranteed to
     run the skip.
+
+    The position reported is the skip statement's own rather than the gate's,
+    because that is where the unit stops: a filesystem touch written between
+    the gate and the skip it selects still runs.
     """
     for stmt in body:
         if isinstance(stmt, ast.Expr) and _is_skip_call(stmt.value):
-            return True
-        if (
-            isinstance(stmt, ast.If)
-            and proven(stmt.test)
-            and _reaches_skip(stmt.body, proven)
-        ):
-            return True
-    return False
+            return _source_position(stmt)
+        if isinstance(stmt, ast.If) and proven(stmt.test):
+            position = _reached_skip_position(stmt.body, proven)
+            if position is not None:
+                return position
+    return None
 
 
-def _gated_skip(unit: ast.AST, proven: Callable[[ast.expr], bool]) -> bool:
-    """Is there an ``if <proven>:`` in this unit that reaches a skip?
+def _gated_skip_position(
+    unit: ast.AST, proven: Callable[[ast.expr], bool]
+) -> tuple[int, int] | None:
+    """Where an ``if <proven>:`` in this unit skips it, if one does.
 
     The skip must sit under a gate ``proven`` decides — a bare ``skip(...)``
     in the unit body is not read as an exemption here, and the search starts
     at the unit's own statement chain rather than walking every ``if`` in the
     subtree, so a gate buried inside a loop, a ``with``, or a nested ``def``
     proves nothing about what runs. Shared by both gates so the two read one
-    shape.
+    shape. Statements come in source order, so the first gate found is the
+    earliest, which is the one that excuses the most.
     """
     body: list[ast.stmt] = getattr(unit, "body", [])
-    return any(
-        isinstance(stmt, ast.If)
-        and proven(stmt.test)
-        and _reaches_skip(stmt.body, proven)
-        for stmt in body
-    )
+    for stmt in body:
+        if isinstance(stmt, ast.If) and proven(stmt.test):
+            position = _reached_skip_position(stmt.body, proven)
+            if position is not None:
+                return position
+    return None
 
 
-def _platform_gated(unit: ast.AST, bindings: dict[str, ast.expr]) -> bool:
-    """Provably skipped on windows-latest: skipif marker or in-body skip.
+def _gate_excuses(
+    gate: tuple[int, int] | None,
+    node: ast.stmt | ast.expr,
+    *,
+    touches_here: bool,
+) -> bool:
+    """Does a gate at ``gate`` excuse the shape flagged at ``node``?
+
+    ``None`` is no gate at all and excuses nothing. Otherwise a skip stops
+    only what has not run yet, so the comparison depends on where the shape's
+    hazard lands. A shape that TOUCHES the filesystem where it stands — a
+    POSIX literal handed to a read, a mutation or ``open``, or the ``unlink``
+    half of a chmod-unlink pair — has already raised (or already landed
+    somewhere foreign) by the time a skip below it runs, so only a gate ahead
+    of it excuses it. Shapes that merely BUILD a value touch nothing where
+    they stand, and any unit that skips at all never reaches their
+    consequence; ordering those against the gate would flag the
+    probe-then-skip idiom's own first half, whose whole shape is to bind the
+    path before testing it.
+    """
+    if gate is None:
+        return False
+    return not touches_here or gate < _source_position(node)
+
+
+def _platform_gate(
+    unit: ast.AST, bindings: dict[str, ast.expr]
+) -> tuple[int, int] | None:
+    """Where this unit becomes provably skipped on windows-latest, if it does.
 
     Direction-aware on purpose: a ``skipif`` that skips some other platform
-    still runs here, so it exempts nothing (see the module docstring).
+    still runs here, so it exempts nothing (see the module docstring). A mark
+    covers the unit from ``_BEFORE_BODY``; an in-body skip covers from where
+    it stands.
     """
     if _excludes_windows(list(getattr(unit, "decorator_list", [])), bindings):
-        return True
-    return _gated_skip(unit, lambda test: _truth_on_windows(test) is True)
+        return _BEFORE_BODY
+    return _gated_skip_position(unit, lambda test: _truth_on_windows(test) is True)
 
 
 def _module_platform_gated(tree: ast.Module, bindings: dict[str, ast.expr]) -> bool:
@@ -890,22 +955,24 @@ def _false_when_absent(node: ast.expr, needles: set[str]) -> bool:
     return _is_presence_probe(node, needles)
 
 
-def _has_probe_skip_for(
+def _probe_skip_gate(
     unit: ast.AST, needles: set[str], bindings: dict[str, ast.expr]
-) -> bool:
-    """Does this unit skip itself when the probed path is absent?
+) -> tuple[int, int] | None:
+    """Where this unit skips itself when the probed path is absent, if it does.
 
     The probe-then-skip idiom: bind the path, test it, skip when it is not
-    there. Three narrowings, each the same shape as the platform gate's: only
+    there. Four narrowings, each the same shape as the platform gate's: only
     a real ``skipif`` CONDITION counts (``reason=`` prose can name a path
-    without gating on it), only an absence-proving condition counts, and only
-    a skip the selected branch actually reaches counts.
+    without gating on it), only an absence-proving condition counts, only a
+    skip the selected branch actually reaches counts, and — once
+    ``_gate_excuses`` weighs the position returned here — only shapes the skip
+    runs ahead of are excused.
     """
     for deco in getattr(unit, "decorator_list", []):
         condition = _skipif_condition(deco, bindings)
         if condition is not None and _true_when_absent(condition, needles):
-            return True
-    return _gated_skip(unit, lambda test: _true_when_absent(test, needles))
+            return _BEFORE_BODY
+    return _gated_skip_position(unit, lambda test: _true_when_absent(test, needles))
 
 
 # ---------------------------------------------------------------------------
@@ -940,7 +1007,11 @@ def _fs_category(callee: str) -> str | None:
 
 
 def _scan_posix_literals(
-    source: str, unit_name: str, unit: ast.AST, bindings: dict[str, ast.expr]
+    source: str,
+    unit_name: str,
+    unit: ast.AST,
+    bindings: dict[str, ast.expr],
+    platform_gate: tuple[int, int] | None,
 ) -> list[Finding]:
     """Rule ``posix-literal``: absolute POSIX constants used as paths."""
     findings: list[Finding] = []
@@ -953,7 +1024,11 @@ def _scan_posix_literals(
             # division never takes str), and an absolute right side REPLACES
             # the left — silently on POSIX, drive-relatively on Windows.
             lit = _resolve_str(node.right, bound)
-            if _is_posix_absolute(lit):
+            # Composing the path touches nothing where it stands, so a gate
+            # anywhere in the unit excuses it.
+            if _is_posix_absolute(lit) and not _gate_excuses(
+                platform_gate, node, touches_here=False
+            ):
                 findings.append(
                     Finding(
                         source,
@@ -979,7 +1054,13 @@ def _scan_posix_literals(
                 else None
             )
             lit = _resolve_str(value_node, bound)
-            if var in _PATH_ENV_VARS and _is_posix_absolute(lit):
+            # Planting the variable touches nothing where it stands; what
+            # reads it later is judged on its own position.
+            if (
+                var in _PATH_ENV_VARS
+                and _is_posix_absolute(lit)
+                and not _gate_excuses(platform_gate, node, touches_here=False)
+            ):
                 findings.append(
                     Finding(
                         source,
@@ -1003,20 +1084,28 @@ def _scan_posix_literals(
                 break
         if lit is None:
             continue
-        if category in ("read", "ctor") and _inside_gate_condition(node, parents):
+        # A constructor builds a path object and touches nothing; a read or a
+        # mutation reaches the filesystem where it stands.
+        touches_here = category != "ctor"
+        if _gate_excuses(platform_gate, node, touches_here=touches_here):
             continue
-        needles = {lit}
-        holder = parents.get(node)
-        if (
-            isinstance(holder, ast.Assign)
-            and len(holder.targets) == 1
-            and isinstance(holder.targets[0], ast.Name)
-        ):
-            needles.add(holder.targets[0].id)
-        if category in ("read", "ctor") and _has_probe_skip_for(
-            unit, needles, bindings
-        ):
-            continue
+        if category in ("read", "ctor"):
+            if _inside_gate_condition(node, parents):
+                continue
+            needles = {lit}
+            holder = parents.get(node)
+            if (
+                isinstance(holder, ast.Assign)
+                and len(holder.targets) == 1
+                and isinstance(holder.targets[0], ast.Name)
+            ):
+                needles.add(holder.targets[0].id)
+            if _gate_excuses(
+                _probe_skip_gate(unit, needles, bindings),
+                node,
+                touches_here=touches_here,
+            ):
+                continue
         findings.append(
             Finding(
                 source,
@@ -1030,7 +1119,9 @@ def _scan_posix_literals(
     return findings
 
 
-def _scan_slash_concat(source: str, unit_name: str, unit: ast.AST) -> list[Finding]:
+def _scan_slash_concat(
+    source: str, unit_name: str, unit: ast.AST, platform_gate: tuple[int, int] | None
+) -> list[Finding]:
     """Rule ``slash-concat``: a slash-edged constant glued onto ``str(...)``."""
     findings: list[Finding] = []
     bound = _once_bound_strings(unit)
@@ -1052,6 +1143,11 @@ def _scan_slash_concat(source: str, unit_name: str, unit: ast.AST) -> list[Findi
         value = _resolve_str(other, bound)
         if not _is_slash_edged(value):
             continue
+        # Gluing the string touches nothing; whatever consumes the mixed
+        # separators later is what fails, and a unit that skips never gets
+        # there.
+        if _gate_excuses(platform_gate, node, touches_here=False):
+            continue
         findings.append(
             Finding(
                 source,
@@ -1065,7 +1161,9 @@ def _scan_slash_concat(source: str, unit_name: str, unit: ast.AST) -> list[Findi
     return findings
 
 
-def _scan_chmod_unlink(source: str, unit_name: str, unit: ast.AST) -> list[Finding]:
+def _scan_chmod_unlink(
+    source: str, unit_name: str, unit: ast.AST, platform_gate: tuple[int, int] | None
+) -> list[Finding]:
     """Rule ``chmod-unlink``: write bit cleared, then the same receiver unlinked.
 
     Sequencing is by source position across the whole unit, nested defs
@@ -1073,6 +1171,10 @@ def _scan_chmod_unlink(source: str, unit_name: str, unit: ast.AST) -> list[Findi
     this rule exists for (set up read-only, hook unlinks later). Receivers
     match by unparsed text; an unknown (non-literal) mode conservatively
     counts as restoring the write bit, trading recall for precision.
+
+    The unlink is what raises on Windows, so it is the call a platform gate is
+    weighed against: a skip between the chmod and the unlink means the unlink
+    never runs there, and a skip below both means it already has.
     """
     findings: list[Finding] = []
     calls = sorted(
@@ -1106,6 +1208,8 @@ def _scan_chmod_unlink(source: str, unit_name: str, unit: ast.AST) -> list[Findi
                 receiver = ast.unparse(call.args[0])
             if receiver not in restrictive:
                 continue
+            if _gate_excuses(platform_gate, call, touches_here=True):
+                continue
             mode, chmod_line = restrictive.pop(receiver)
             findings.append(
                 Finding(
@@ -1129,11 +1233,15 @@ def scan_source(source: str, text: str) -> list[Finding]:
         return []
     findings: list[Finding] = []
     for unit_name, unit in _analysis_units(tree):
-        if _platform_gated(unit, bindings):
+        platform_gate = _platform_gate(unit, bindings)
+        if platform_gate == _BEFORE_BODY:
+            # A mark excludes the whole unit, so there is nothing to weigh.
             continue
-        findings.extend(_scan_posix_literals(source, unit_name, unit, bindings))
-        findings.extend(_scan_slash_concat(source, unit_name, unit))
-        findings.extend(_scan_chmod_unlink(source, unit_name, unit))
+        findings.extend(
+            _scan_posix_literals(source, unit_name, unit, bindings, platform_gate)
+        )
+        findings.extend(_scan_slash_concat(source, unit_name, unit, platform_gate))
+        findings.extend(_scan_chmod_unlink(source, unit_name, unit, platform_gate))
     return findings
 
 
@@ -1761,17 +1869,20 @@ def test_a_skip_the_gate_does_not_reach_is_not_an_exemption() -> None:
 
 def test_documented_generosities_of_the_exemption() -> None:
     """Pins the two spots the module docstring calls generous rather than
-    strict, so the prose cannot drift from the code: a gate is credited
-    wherever it sits in the unit (source position is never compared, so one
-    written BELOW the shape still excuses it), and a needle matched anywhere
-    in the condition counts even where the probe does not consult it. If
-    either is tightened later, this test fails and the docstring has to be
-    rewritten in the same change."""
-    gate_below_the_shape = """
-        def test_reads_the_host_file():
-            assert os.path.isfile("/etc/hosts")
-            if not os.path.exists("/etc/hosts"):
-                pytest.skip("requires /etc/hosts")
+    strict, so the prose cannot drift from the code: a shape that only BUILDS
+    a value is credited to a gate wherever the gate sits, including below it,
+    and a needle matched anywhere in the condition counts even where the probe
+    does not consult it. If either is tightened later, this test fails and the
+    docstring has to be rewritten in the same change."""
+    builders_below_the_gate = """
+        def test_builds_paths(monkeypatch, tmp_path, home):
+            seed = Path("/tmp/seed")
+            replaced = tmp_path / "/etc/hosts"
+            exact = str(home) + "/bm-audit-case-fold"
+            monkeypatch.setenv("HOME", "/home/nobody")
+            if sys.platform == "win32":
+                pytest.skip("POSIX-only")
+            return seed, replaced, exact
         """
     needle_in_an_unconsulted_position = """
         def test_reads_the_host_file():
@@ -1779,8 +1890,146 @@ def test_documented_generosities_of_the_exemption() -> None:
                 pytest.skip("requires a host file")
             assert os.path.isfile("/etc/hosts")
         """
-    assert _rules_fired(gate_below_the_shape) == []
+    assert _rules_fired(builders_below_the_gate) == []
     assert _rules_fired(needle_in_an_unconsulted_position) == []
+
+
+def test_a_gate_below_a_filesystem_touch_does_not_reach_back_to_excuse_it() -> None:
+    """A skip stops what has not run yet, and nothing else.
+
+    Every snippet writes its gate BELOW a call that reaches the filesystem
+    where it stands, so on windows-latest that call has already raised (or
+    already landed somewhere foreign) by the time the skip would run. Both
+    gates appear, because the search they share used to scan the unit's whole
+    statement chain without comparing source position — the third generation
+    of one family, after the platform gate and then the probe gate were made
+    direction-aware. ``touch inside the gate`` is why the comparison is
+    against the SKIP and not the ``if`` above it: that call runs on Windows
+    before the skip beneath it does.
+    """
+    platform_gate_below_a_read = (
+        """
+        def test_reads_the_host_file():
+            os.stat("/etc/hosts")
+            if sys.platform == "win32":
+                pytest.skip("POSIX-only")
+        """,
+        ["posix-literal"],
+    )
+    platform_gate_below_an_open = (
+        """
+        def test_reads_the_host_file():
+            open("/etc/passwd").close()
+            if os.name == "nt":
+                pytest.skip("POSIX-only")
+        """,
+        ["posix-literal"],
+    )
+    platform_gate_below_a_chmod_unlink = (
+        """
+        def test_cleanup(victim):
+            victim.chmod(0o400)
+            victim.unlink()
+            if sys.platform == "win32":
+                pytest.skip("POSIX permission semantics")
+        """,
+        ["chmod-unlink"],
+    )
+    probe_gate_below_a_read = (
+        """
+        def test_reads_the_host_file():
+            assert os.path.isfile("/etc/hosts")
+            if not os.path.exists("/etc/hosts"):
+                pytest.skip("requires /etc/hosts")
+        """,
+        ["posix-literal"],
+    )
+    probe_gate_below_a_read_bound_to_the_needle = (
+        """
+        def test_stats_the_host_file():
+            probe = os.stat("/etc/hosts")
+            if not os.path.exists(probe):
+                pytest.skip("requires /etc/hosts")
+        """,
+        ["posix-literal"],
+    )
+    touch_inside_the_gate_above_its_skip = (
+        """
+        def test_reads_the_host_file():
+            if sys.platform == "win32":
+                os.stat("/etc/hosts")
+                pytest.skip("POSIX-only")
+        """,
+        ["posix-literal"],
+    )
+    for label, (snippet, expected) in (
+        ("platform gate below a read", platform_gate_below_a_read),
+        ("platform gate below an open", platform_gate_below_an_open),
+        ("platform gate below a chmod/unlink", platform_gate_below_a_chmod_unlink),
+        ("probe gate below a read", probe_gate_below_a_read),
+        ("probe gate below a bound read", probe_gate_below_a_read_bound_to_the_needle),
+        ("touch inside the gate", touch_inside_the_gate_above_its_skip),
+    ):
+        assert [rule for rule, _ in _rules_fired(snippet)] == expected, label
+
+
+def test_a_gate_above_the_shape_still_excuses_it() -> None:
+    """The direction the position comparison must not break.
+
+    Each snippet is one from
+    ``test_a_gate_below_a_filesystem_touch_does_not_reach_back_to_excuse_it``
+    with the gate moved above the shape, plus the two mark spellings — a
+    decorator sits ahead of the whole body by construction, so it excuses
+    every shape in it and is never ordered against one. Without these the
+    tightening above would just be a way to switch the exemptions off.
+    """
+    platform_gate_above_a_read = """
+        def test_reads_the_host_file():
+            if sys.platform == "win32":
+                pytest.skip("POSIX-only")
+            os.stat("/etc/hosts")
+        """
+    platform_mark_above_a_read = """
+        @pytest.mark.skipif(sys.platform == "win32", reason="POSIX-only")
+        def test_reads_the_host_file():
+            os.stat("/etc/hosts")
+        """
+    platform_gate_above_a_chmod_unlink = """
+        def test_cleanup(victim):
+            if sys.platform == "win32":
+                pytest.skip("POSIX permission semantics")
+            victim.chmod(0o400)
+            victim.unlink()
+        """
+    probe_gate_above_a_read = """
+        def test_reads_the_host_file():
+            if not os.path.exists("/etc/hosts"):
+                pytest.skip("requires /etc/hosts")
+            assert os.path.isfile("/etc/hosts")
+        """
+    probe_gate_above_a_read_bound_to_the_needle = """
+        def test_stats_the_host_file():
+            if not os.path.exists("/etc/hosts"):
+                pytest.skip("requires /etc/hosts")
+            probe = os.stat("/etc/hosts")
+            return probe
+        """
+    probe_mark_above_a_read = """
+        @pytest.mark.skipif(
+            not os.path.exists("/etc/hosts"), reason="host file absent"
+        )
+        def test_reads_the_host_file():
+            os.stat("/etc/hosts")
+        """
+    for label, snippet in (
+        ("platform gate above a read", platform_gate_above_a_read),
+        ("platform mark above a read", platform_mark_above_a_read),
+        ("platform gate above a chmod/unlink", platform_gate_above_a_chmod_unlink),
+        ("probe gate above a read", probe_gate_above_a_read),
+        ("probe gate above a bound read", probe_gate_above_a_read_bound_to_the_needle),
+        ("probe mark above a read", probe_mark_above_a_read),
+    ):
+        assert _rules_fired(snippet) == [], label
 
 
 def test_undecidable_gates_fall_through_to_being_checked() -> None:
