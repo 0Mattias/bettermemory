@@ -1014,6 +1014,27 @@ def _is_single_segment_routelike(s: str) -> bool:
     return "." not in segment
 
 
+def _fold_altsep(p: str, sep: str, altsep: str | None) -> str:
+    """Fold the platform's ALTERNATE path separator into the primary one.
+
+    On Windows (``sep="\\\\"``, ``altsep="/"``) the OS accepts both
+    characters interchangeably, so ``C:/Users/me/x`` and the mixed
+    ``C:\\Users\\me/x`` (the exact shape ``ntpath.expanduser`` returns
+    for ``~/x``) are spellings of the backslash-canonical path — the
+    same equivalence `_normalize_for_compare` gets from ``pathlib`` on
+    that platform. On POSIX ``altsep`` is None and the fold is the
+    identity: ``\\`` is a legal filename character there, never a
+    separator, and folding it would invent directory boundaries the
+    filesystem does not have.
+
+    ``sep`` / ``altsep`` are explicit parameters (the caller passes the
+    live ``os.sep`` / ``os.altsep``) so Windows semantics stay
+    unit-testable from any platform by passing ``ntpath.sep`` /
+    ``ntpath.altsep``.
+    """
+    return p.replace(altsep, sep) if altsep else p
+
+
 def _is_under_home(s: str) -> bool:
     """True when `s` expands to the user's home directory or something
     inside it.
@@ -1034,6 +1055,24 @@ def _is_under_home(s: str) -> bool:
     some container images) disables the exemption: treating every
     absolute path as home-rooted would nullify the route rule wholesale.
 
+    SEPARATORS: home, candidate, and the derived prefix are all folded
+    through `_fold_altsep` (alternate separator → primary) before any
+    comparison, so on Windows the forward-slash and mixed spellings the
+    OS accepts — ``C:/Users/me/x/y/z``, ``C:\\Users\\me/x`` — are
+    recognised as home-rooted exactly like the backslash form. The raw
+    comparison against ``home + os.sep`` used to miss those spellings
+    and report them as not home-rooted (a deliberately deferred gap,
+    closed here). On POSIX ``os.altsep`` is None, the fold is the
+    identity, and behaviour is unchanged — including for filenames that
+    legitimately contain ``\\``. The root-home guard runs on the FOLDED
+    spelling for the same reason: on Windows ``HOME=/`` folds to
+    ``os.sep``, and a root home must keep disabling the exemption or
+    every slash-rooted candidate would read as home-rooted and nullify
+    the route rule. `_home_ignores_case` receives the folded home; on
+    the one platform where folding rewrites anything, both spellings
+    stat the same filesystem entry, so the probe's verdict is
+    unaffected.
+
     CASE: the byte comparison runs first and settles every candidate on
     a case-sensitive filesystem. Only when it MISSES do we ask the
     filesystem whether it folds case (`_home_ignores_case`) and retry
@@ -1048,9 +1087,12 @@ def _is_under_home(s: str) -> bool:
     candidates that already failed their existence check.
     """
     home = os.path.expanduser("~")
-    if not home or home == "~" or home == os.sep:
+    if not home or home == "~":
         return False
-    expanded = os.path.expanduser(s)
+    home = _fold_altsep(home, os.sep, os.altsep)
+    if home == os.sep:
+        return False
+    expanded = _fold_altsep(os.path.expanduser(s), os.sep, os.altsep)
     prefix = home if home.endswith(os.sep) else home + os.sep
     if expanded == home or expanded.startswith(prefix):
         return True

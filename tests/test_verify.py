@@ -13,7 +13,9 @@ ask to spot-check.
 
 from __future__ import annotations
 
+import ntpath
 import os
+import posixpath
 import shutil
 import subprocess
 from datetime import datetime, timedelta, timezone
@@ -36,6 +38,7 @@ from bettermemory.verify import (
     _PLACEHOLDER_PREFIXES,
     _RELATIVE_CITATION_RE,
     _extract_candidates,
+    _fold_altsep,
     _home_ignores_case,
     _is_multi_segment_routelike,
     _is_under_home,
@@ -2624,13 +2627,12 @@ def test_home_exemption_follows_the_filesystem_on_case(
     monkeypatch.setenv("HOME", str(home))
     monkeypatch.setenv("USERPROFILE", str(home))
 
-    # Built with `os.sep`, not a literal "/": `_is_under_home` compares
-    # against `home + os.sep`, so on Windows a forward-slash tail makes
-    # the prefix check miss and the exemption returns False for reasons
-    # that have nothing to do with case folding — which is all this test
-    # is about. (That miss is a real, separate gap: Windows accepts "/"
-    # as a separator, so a body citing `C:/Users/me/x` is not recognised
-    # as home-rooted. Queued as its own item; do not conflate it here.)
+    # Built with `os.sep` so the fixture stays single-variable: this
+    # test is about CASE folding only. `_is_under_home` now folds
+    # `os.altsep` into `os.sep` before comparing, so a forward-slash
+    # tail would be recognised on Windows too — the separator axis has
+    # its own coverage in the "separator folding" section below; keeping
+    # the spelling platform-native here keeps the two axes independent.
     tail = os.sep + os.sep.join(("bm-audit-case-fold", "src", "handlers"))
     exact = str(home) + tail
     reskinned = str(home).swapcase() + tail
@@ -2668,6 +2670,150 @@ def test_home_case_probe_is_conservative_when_it_cannot_probe() -> None:
     """
     assert _home_ignores_case("/1234") is False
     assert _home_ignores_case("/bm-audit-no-such-Home/nested") is False
+
+
+# ---------------------------------------------------------------------------
+# Home exemption — separator folding.
+#
+# Windows accepts "/" interchangeably with "\" in paths, and
+# `_normalize_for_compare` (via `pathlib`) already treats the two
+# spellings as one path on that platform. `_is_under_home` used to
+# compare raw strings against `home + os.sep`, so a forward-slash or
+# mixed spelling of a home-rooted citation read as NOT under home — the
+# gap the case-fold fixture above documented as "queued as its own
+# item". Closed now: both sides fold `os.altsep` into `os.sep` before
+# the prefix check. Windows semantics are exercised from any platform
+# via explicit `ntpath` values (`_simulate_windows_home`); on a real
+# Windows runner the same monkeypatches are identity writes.
+# ---------------------------------------------------------------------------
+
+
+def test_fold_altsep_is_windows_only_by_parameter() -> None:
+    """The fold rewrites the alternate separator under `ntpath` values
+    and is the identity under `posixpath` values — `\\` is a legal POSIX
+    filename character, so folding it there would invent directory
+    boundaries the filesystem does not have. Pure-string helper, so the
+    two platforms' semantics are both pinned on every runner."""
+    folded = _fold_altsep("C:/Users/me/x", ntpath.sep, ntpath.altsep)
+    assert folded == r"C:\Users\me\x"
+    # Mixed spelling — the exact shape `ntpath.expanduser` returns for
+    # `~/x` (USERPROFILE's backslashes + the citation's forward slash).
+    mixed = _fold_altsep(r"C:\Users\me/x", ntpath.sep, ntpath.altsep)
+    assert mixed == r"C:\Users\me\x"
+    # POSIX: altsep is None, so BOTH characters survive untouched.
+    assert posixpath.altsep is None
+    weird = r"back\slash and/slash"
+    assert _fold_altsep(weird, posixpath.sep, posixpath.altsep) == weird
+
+
+def _simulate_windows_home(monkeypatch: pytest.MonkeyPatch, home: str) -> None:
+    """Pin `_is_under_home`'s inputs to explicit ntpath semantics.
+
+    `os.sep` / `os.altsep` are set to the `ntpath` constants — identity
+    writes on a real Windows runner, the simulation everywhere else —
+    and the home env vars to `home` in its Windows spelling: HOME for
+    the POSIX `expanduser`, USERPROFILE for the Windows one, with
+    HOMEDRIVE/HOMEPATH cleared so USERPROFILE wins (same env discipline
+    as `test_home_relative_single_segment_still_extracted`).
+    """
+    monkeypatch.setattr(os, "sep", ntpath.sep)
+    monkeypatch.setattr(os, "altsep", ntpath.altsep)
+    monkeypatch.setenv("HOME", home)
+    monkeypatch.setenv("USERPROFILE", home)
+    monkeypatch.delenv("HOMEDRIVE", raising=False)
+    monkeypatch.delenv("HOMEPATH", raising=False)
+
+
+def test_is_under_home_recognises_forward_slash_windows_spelling(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The deferred item itself: `C:/Users/me/project` is a spelling
+    Windows accepts for a home-rooted path, and the raw `home + os.sep`
+    prefix check missed it — the citation read as not home-rooted, the
+    opposite verdict from its backslash twin. All spellings of one path
+    must agree, matching `_normalize_for_compare` (whose `pathlib`
+    normalisation already folds `/` into `\\` on Windows)."""
+    _simulate_windows_home(monkeypatch, r"C:\Users\bm-audit-user")
+    # The backslash-canonical spelling — the pre-existing contract.
+    assert _is_under_home(r"C:\Users\bm-audit-user\project") is True
+    # Forward-slash spelling of the SAME path: the closed gap.
+    assert _is_under_home("C:/Users/bm-audit-user/project") is True
+    # Mixed spelling — what `ntpath.expanduser` produces for `~/project`.
+    assert _is_under_home(r"C:\Users\bm-audit-user/project") is True
+    # Home itself, forward-slash spelled.
+    assert _is_under_home("C:/Users/bm-audit-user") is True
+    # NOT under home under any separator spelling: folding must not
+    # widen the exemption to merely drive-lettered paths.
+    assert _is_under_home("D:/data/project") is False
+    assert _is_under_home("C:/Users/bm-audit-other/project") is False
+
+
+def test_is_under_home_folds_the_home_spelling_too(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The fold has to apply to BOTH comparands: some Windows setups
+    carry a forward-slash USERPROFILE (`C:/Users/me`), and a
+    backslash-spelled citation under it is the same path."""
+    _simulate_windows_home(monkeypatch, "C:/Users/bm-audit-user")
+    assert _is_under_home(r"C:\Users\bm-audit-user\project") is True
+    assert _is_under_home("C:/Users/bm-audit-user/project") is True
+    assert _is_under_home(r"D:\data\project") is False
+
+
+def test_root_home_still_disables_exemption_under_folding(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """`HOME=/` disables the exemption (documented on `_is_under_home`),
+    and the fold must not weaken that: under ntpath semantics `/` folds
+    to `os.sep` itself, so the root guard has to test the FOLDED home —
+    otherwise every slash-rooted candidate would read as home-rooted and
+    the route rule would be nullified wholesale."""
+    _simulate_windows_home(monkeypatch, "/")
+    assert _is_under_home("/Users/bm-audit-user/project") is False
+    assert _is_under_home("C:/Users/bm-audit-user/project") is False
+
+
+def test_forward_slash_home_citation_reports_drift_not_route(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """End-to-end reach of the fold through `detect_path_drift`: the
+    route rule consults `_is_under_home` only for slash-rooted
+    candidates, so the configuration where the separator gap flipped a
+    real VERDICT is a drive-less Windows home (`HOMEPATH`-style
+    `\\Users\\me`, which `ntpath.expanduser` returns verbatim). A
+    vanished-repo citation under such a home, written with forward
+    slashes, has an absent parent, so pre-fold it was dropped as a route
+    — the silent false negative the home escape exists to kill. Folded,
+    it is honest drift: checked, missing, and NOT in
+    `dropped_as_route`."""
+    _simulate_windows_home(monkeypatch, r"\Users\bm-audit-user")
+    cited = "/Users/bm-audit-user/bm-audit-vanished/repo"
+    assert _is_under_home(cited) is True
+    assert _is_multi_segment_routelike(cited) is False
+    report = detect_path_drift(f"the tree lived at `{cited}` before the rename")
+    assert cited in report.checked
+    assert cited in report.missing
+    assert report.dropped_as_route == ()
+
+
+def test_posix_backslash_is_a_filename_character_not_a_separator(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """On POSIX `os.altsep` is None and the fold must be the identity: a
+    backslash run names a FILE whose name contains backslashes, not a
+    nested directory, so a `home\\child` spelling must NOT read as under
+    home. Gated on the live `os.altsep` because under ntpath semantics
+    the same spelling really IS a separator run (pinned above). Guards
+    against an over-eager fold that rewrites both characters
+    unconditionally."""
+    if os.altsep is not None:
+        pytest.skip("this platform has an altsep; the fold is MEANT to fire here")
+    home = tmp_path / "bm-audit-posix-home"
+    home.mkdir()
+    monkeypatch.setenv("HOME", str(home))
+    monkeypatch.setenv("USERPROFILE", str(home))
+    assert _is_under_home(f"{home}/child") is True
+    assert _is_under_home(str(home) + r"\child") is False
 
 
 def test_bare_app_routes_are_still_suppressed() -> None:
