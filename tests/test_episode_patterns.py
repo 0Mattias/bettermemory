@@ -416,6 +416,121 @@ async def test_patterns_promote_cannot_delete_other_worktree_episodes(
     )
 
 
+async def test_promote_by_explicit_id_deliberately_crosses_worktrees(
+    memory_dir: Path, monkeypatch: Any
+) -> None:
+    """CONTRAST to the test above — the carve-out, pinned so a future
+    "make promote match patterns" reflex fails loudly instead of silently
+    breaking swarm consolidation.
+
+    `episode_patterns` filters because it DISCOVERS its own delete set: a
+    bare cross-session walk picks the members and the caller commits to
+    them sight-unseen, so the read filters are the only bound on what it
+    can destroy. `episode_promote` takes one caller-typed 26-char ULID —
+    the explicit id IS the bound, the same carve-out `episode_search`
+    makes for `swarm_id` / `parent_session_id` and `episode_handoff`
+    makes for `prior_session_id`, and the one every by-id durable surface
+    (`memory_show` … the destructive `memory_remove`) already makes.
+
+    Filtering here would break the fan-in it exists to serve: a
+    coordinator gathers sub-agent takeaways via the explicitly-exempt
+    `episode_search(swarm_id=…)` — each sub-agent in its own worktree —
+    and promoting the good ones is the endpoint of that gather. Under a
+    worktree filter every such promote would fail "no episode with id …"
+    for an id the server had just returned.
+
+    Also pins the blast radius: promotion deletes EXACTLY the named
+    episode. A's two other journal entries survive untouched.
+    """
+    origin_a, origin_b, _server_a, server_b = await _journal_two_worktrees(
+        memory_dir, monkeypatch
+    )
+
+    _set_origin(monkeypatch, origin_b)
+    # Learn one of A's episode ids through a deliberate cross-tree read —
+    # `auto_scope=False` is one of the few surfaces that legitimately
+    # hands a caller a foreign episode id (the default-scoped walks never
+    # do). This mirrors how a coordinator gets ids out of a swarm fan-in.
+    foreign = _unwrap(await _call(server_b, "episode_search", auto_scope=False))
+    a_eps = [e for e in foreign if "tailscale" in e["body"]]
+    assert len(a_eps) == 3, f"expected A's 3 episodes via the escape hatch: {a_eps}"
+    target = a_eps[0]["id"]
+    before = _episode_ids_on_disk(memory_dir)
+
+    promoted = _unwrap(
+        await _call(
+            server_b,
+            "episode_promote",
+            episode_id=target,
+            scopes=["infrastructure"],
+        )
+    )
+    assert promoted["status"] == "committed", (
+        f"an explicit ULID must promote across the worktree boundary — this is "
+        f"the swarm-consolidation endpoint, not a leak; got {promoted}"
+    )
+    assert promoted["promoted_from_episode_id"] == target
+
+    after = _episode_ids_on_disk(memory_dir)
+    assert after == before - {target}, (
+        "promote must delete EXACTLY the named episode — the explicit ULID is "
+        f"the bound on the blast radius; removed {before - after}"
+    )
+
+    # And the relocation the module docstring warns about is real: the
+    # durable memory carries B's origin, so it has left A's default
+    # auto-scoped retrieval (still reachable by id / auto_scope=False).
+    _set_origin(monkeypatch, origin_a)
+    server_a2 = _build(memory_dir)
+    scoped = _unwrap(await _call(server_a2, "memory_search", query="tailscale exit"))
+    assert promoted["id"] not in [h["id"] for h in scoped], (
+        "promoted memory is stamped with the promoter's worktree; if it were "
+        "visible to A's auto-scoped search the relocation caveat would be stale"
+    )
+    shown = _unwrap(await _call(server_a2, "memory_show", id=promoted["id"]))
+    assert shown["id"] == promoted["id"], "by-id access must still reach it"
+
+
+async def test_promote_by_explicit_id_ignores_disabled_scopes(
+    memory_dir: Path,
+) -> None:
+    """The scope half of the same carve-out. `memory_scope_disable` is a
+    retrieval-time hide for DISCOVERY surfaces, not an access-control
+    gate: no by-id surface in the server (`memory_show`, `memory_update`,
+    `memory_verify`, `memory_restore`, `memory_remove`) consults it, and
+    answering "no such episode" about an id the caller is holding would
+    be the wrong contract. Contrast
+    `test_patterns_listing_honors_disabled_scopes`, where the hide DOES
+    gate promote/dismiss because there the candidate pool is discovered
+    rather than named."""
+    body = "the diun watcher flagged a stale grafana image once more"
+    server = await _journal_across_sessions(
+        memory_dir, [body] * 3, scopes=["projects:zeta"]
+    )
+    eps = _unwrap(await _call(server, "episode_search"))
+    assert eps, "expected the journal entries to be visible before the hide"
+    target = eps[0]["id"]
+
+    await _call(server, "memory_scope_disable", scope="projects:zeta")
+    # The discovery surface is now blind to them...
+    assert _unwrap(await _call(server, "episode_search")) == []
+    # ...but the explicitly-named id still promotes, and still deletes.
+    promoted = _unwrap(
+        await _call(
+            server,
+            "episode_promote",
+            episode_id=target,
+            scopes=["projects:zeta"],
+        )
+    )
+    assert promoted["status"] == "committed", (
+        f"an explicitly-named episode must stay promotable while its scope is "
+        f"session-disabled (scope_disable hides discovery, not by-id access); "
+        f"got {promoted}"
+    )
+    assert target not in _episode_ids_on_disk(memory_dir)
+
+
 async def test_patterns_listing_honors_disabled_scopes(memory_dir: Path) -> None:
     """`scope_disable` is an explicit user hide honored uniformly across
     the read surface. Pre-fix `episode_patterns` never consulted
