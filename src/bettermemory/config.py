@@ -232,13 +232,15 @@ max_scopes_per_write = 64
 curation_hint_threshold = 5
 curation_hint_enabled = true
 
-# Tool-surface breadth. Lean by default: the seven curation / power-user
-# tools (memory_health, memory_curate, memory_acknowledge_miss,
-# memory_rename_scope, memory_restore, memory_list_tombstones,
-# memory_proposals) are NOT registered on the MCP server, keeping the
-# per-turn tool-description context lean for the common case. They stay
-# reachable via the `bettermemory` CLI (memory_curate wraps `consolidate`).
-# Set true for the full surface — the curate-loop skill needs it.
+# Tool-surface breadth. Lean by default: the curation / power-user tools
+# — the ones serving a deliberate curation pass rather than a
+# conversational turn — are NOT registered on the MCP server, keeping the
+# per-turn tool-description context lean for the common case. The set
+# grows as curation-tier tools are added, so it isn't listed here:
+# `docs/api.md` (in the repo linked at the top of this file) names which
+# tools the gate covers and maps each to its `bettermemory` CLI
+# counterpart — not all have one. Set true for the full surface — the
+# curate-loop skill needs it.
 # (memory_proposals also surfaces when [proposals] auto_propose is on.)
 full_tool_surface = false
 
@@ -428,13 +430,14 @@ class BehaviorConfig:
     # the in-conversation surfacing loop the audit identified.
     curation_hint_threshold: int = 5
     curation_hint_enabled: bool = True
-    # Tool-surface breadth. When False, the curation / power-user MCP tools —
-    # memory_health, memory_acknowledge_miss, memory_rename_scope,
-    # memory_restore, memory_list_tombstones, memory_proposals — are NOT
-    # registered, trimming six tools (and their long descriptions) out of the
-    # context every client pays on every turn. They stay reachable via the
-    # `bettermemory` CLI, and memory_proposals also auto-registers whenever
-    # [proposals] auto_propose is on.
+    # Tool-surface breadth. When False, the curation / power-user MCP tools
+    # are NOT registered, keeping their (long) descriptions out of the context
+    # every client pays on every turn. `builder._register_tools` holds the gate
+    # and states the membership rule that decides what belongs in it;
+    # `tests/test_tool_surface.py::_GATED` pins the set; docs/api.md maps each
+    # gated tool to its `bettermemory` CLI counterpart, and names the ones that
+    # have none. memory_proposals also auto-registers whenever [proposals]
+    # auto_propose is on.
     #
     # Deliberate default asymmetry (see `load_config` and the round-trip test
     # in tests/test_config.py): this dataclass default is True, so an
@@ -445,10 +448,16 @@ class BehaviorConfig:
     # property of the config object; the loader is the policy layer (and these
     # objects are frozen, so policy can't be applied post-construction). The
     # curate-loop skill drives memory_health / memory_acknowledge_miss /
-    # memory_restore as MCP tools, so it needs full_tool_surface = true. The
-    # cut was measured in the dogfood event log: 43% of sessions never called
-    # any memory tool, and these six had 0-8 organic calls each across 190
-    # sessions.
+    # memory_restore as MCP tools, so it needs full_tool_surface = true.
+    #
+    # The ORIGINAL cut was measured in the dogfood event log: 43% of sessions
+    # never called any memory tool, and the six tools gated at that time —
+    # memory_health, memory_acknowledge_miss, memory_rename_scope,
+    # memory_restore, memory_list_tombstones, memory_proposals — had 0-8
+    # organic calls each across 190 sessions. That census is a historical
+    # record of why the gate exists, NOT the current gated set: tools gated
+    # since qualify under the membership rule instead, and the measurement
+    # predates them.
     full_tool_surface: bool = True
 
 

@@ -263,11 +263,24 @@ class ResponseBuilder:
     ) -> dict[str, Any]:
         """Full memory shape used by `memory_list(with_bodies=True)`.
 
-        Same fields as `memory_show` plus the `summary` line so a consumer
-        can treat the response uniformly with the body-less `memory_list`
-        shape. Includes the `verification` block for parity with the rest
-        of the retrieval surface — a `with_bodies=True` listing carries the
-        same staleness signal a `memory_show` would.
+        A strict SUBSET of `memory_show`'s fields, plus the `summary` line
+        so a consumer can treat the response uniformly with the body-less
+        `memory_list` shape. The subset direction is the contract: every
+        key here also appears on `memory_show`, but not the reverse —
+        `memory_show` additionally computes the per-id extras a single-id
+        read earns (the drift reports, the use token, the attestation
+        lists, the link graph), and a listing that walked the store would
+        pay for those N times. Do NOT read this as shape parity: code that
+        needs a `memory_show`-only field has to call `memory_show`.
+
+        Includes the `verification` block for parity with the rest of the
+        retrieval surface — a `with_bodies=True` listing carries the same
+        staleness signal a `memory_show` would. One caveat on a shared key:
+        `staleness_verdict` is computed here WITHOUT a commit-drift
+        contribution (`commit_drift_count=None`, since no per-row repo is
+        resolved), so it can read fresher than the same memory's
+        `memory_show` verdict. `path_drift` does contribute — the body is
+        loaded on this path, unlike `list_row_to_dict`'s.
         """
         from .models import first_summary_line
 

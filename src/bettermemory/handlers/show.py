@@ -179,10 +179,13 @@ def _links_payload(deps: "ToolHandlers", memory: Any) -> dict[str, Any]:
     ways (e.g. "this memory is superseded by X" alongside "X
     supersedes this").
 
-    Both lists are omitted when empty (absence-as-signal contract,
-    matches `path_drift` / `commit_drift`). Reverse links carry the
-    source `memory_id` so the consumer can navigate to the linking
-    memory; forward links carry the `target_id`.
+    Both lists are omitted when empty — absence-as-signal, so a
+    consumer branches on key presence. That is the same contract the
+    `corroborations` pair in the caller's return literal uses, and the
+    OPPOSITE of the one `path_drift` / `commit_drift` take: those two
+    keys are always emitted, with `null` as the no-signal value. Reverse
+    links carry `source_id` so the consumer can navigate to the linking
+    memory; forward links carry `target_id`.
 
     Fallback: if the index file doesn't exist (fresh install, just
     deleted) OR exists but reports zero indexed rows,
