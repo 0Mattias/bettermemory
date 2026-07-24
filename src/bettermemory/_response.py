@@ -110,8 +110,12 @@ class ResponseBuilder:
         `path_drift_checked` / `path_drift_missing` stay around as cheap
         triage counts on every hit. `path_drift` is the rich shape that
         carries the actual paths (`{checked, missing, verified}`),
-        emitted only when the body has drift or verified attestations
-        — matching `memory_show`'s `path_drift` contract. A
+        emitted only when the missing / verified / expected-absent buckets
+        are not all empty — the same three-bucket GATE `memory_show`
+        applies, but not the same no-signal SHAPE: `memory_show` renders a
+        failing gate as an explicit `null`, this surface omits the key
+        entirely (`attach_commit_drift_counts` below has the long form —
+        the two are easy to conflate and have been). A
         `spot_check_recommended` hit with `path_drift.missing =
         ["src/auth/middleware.py"]` is directly actionable: the model
         memory_updates the rotted bit or memory_verifies the rest, no
