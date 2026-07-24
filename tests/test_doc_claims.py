@@ -25,10 +25,13 @@ What is checked
    contains N tests" must match the count of test functions found by
    AST. Digits and English number words ("Nine") both parse.
 4. ``line-ref`` — a ``file.py:NNN`` or ``file.py:NNN-MMM`` citation must
-   land in range — a range by its end line — and the cited region must
-   actually contain one of the code identifiers the surrounding
-   paragraph attributes to it. Both halves apply to the markdown-linked
-   and bare-backticked forms alike, a range's end included. When the
+   land in range and the cited region must actually contain one of the
+   code identifiers the surrounding paragraph attributes to it. A range
+   must run forward: one whose start is past its end (the truncated-end
+   typo) fails loudly as malformed rather than being silently reordered,
+   and a forward range is then bounded by its end line — which bounds
+   its start too. Both halves apply to the markdown-linked and
+   bare-backticked forms alike, a range's end included. When the
    paragraph names no identifier that exists in the target at all, there
    is no anchor to judge against and the rule stays quiet. A citation
    the nearby prose marks as non-resolving, or whose paragraph pins its
@@ -929,6 +932,14 @@ def _anchor_detail(name: str, start: int, missed: set[str]) -> str:
     )
 
 
+def _malformed_range_detail(start: int, end: int) -> str:
+    return (
+        f"malformed range: start {start} is past end {end} — rejected as "
+        f"written (a truncated end digit is the usual cause), never "
+        f"silently reordered"
+    )
+
+
 def check_line_refs(source: str, text: str) -> list[Failure]:
     """``file.py:NNN`` citations must be in range and land near their claim.
 
@@ -944,6 +955,20 @@ def check_line_refs(source: str, text: str) -> list[Failure]:
     a bare citation with a bogus end shipped silently where its linked
     twin failed. Both shapes now parse the end, range-check by it, and
     extend the anchor window to it.
+
+    The start line closes the last gap of that family. Range-checking a
+    range only by its end leaves a reversed one — start past end, the
+    shape a truncated end digit produces — validating nothing but that
+    (in-range) end, so an out-of-range start shipped silently in both
+    shapes. The verdict is loud: a reversed range fails as malformed
+    exactly as written, in both shapes, never silently reordered into
+    the range the author probably meant. Rejecting reversal is also the
+    whole start bound: a forward range's start cannot exceed its end, so
+    the existing end check bounds the full span and a start past the
+    file's last line cannot ship — there is no third, separate check to
+    rot. Like the rest of the range half, the malformed verdict is
+    suppressed for quoted-as-non-resolving and commit-pinned citations:
+    quoted evidence keeps its exact shipped shape, malformed included.
 
     Neither half runs on a citation the surrounding prose marks as
     non-resolving (``_quoted_as_nonresolving``): an erratum quoting its
@@ -967,12 +992,16 @@ def check_line_refs(source: str, text: str) -> list[Failure]:
         subject = f"{name}:{match.group('start')}"
         target = ((_REPO_ROOT / source).parent / match.group("target")).resolve()
         claim = Claim(source, line, "line-ref", subject)
+        start = int(match.group("start"))
+        end = int(match.group("end") or start)
+        if start > end:
+            # Tree-independent, so it precedes every filesystem check.
+            out.append(Failure(claim, _malformed_range_detail(start, end)))
+            continue
         if not target.is_file():
             out.append(Failure(claim, f"link target missing: {match.group('target')}"))
             continue
         body = target.read_text(encoding="utf-8").splitlines()
-        start = int(match.group("start"))
-        end = int(match.group("end") or start)
         if end > len(body):
             out.append(
                 Failure(claim, f"cites line {end}; {name} has {len(body)} lines")
@@ -1000,6 +1029,10 @@ def check_line_refs(source: str, text: str) -> list[Failure]:
         if _quoted_as_commit_pinned(text, line):
             continue
         claim = Claim(source, line, "line-ref", f"{name}:{start}")
+
+        if start > end:
+            out.append(Failure(claim, _malformed_range_detail(start, end)))
+            continue
 
         lengths = {rel: len(_module_lines(rel)) for rel in candidates}
         in_range = sorted(rel for rel, n in lengths.items() if end <= n)
@@ -1463,6 +1496,88 @@ def test_bare_range_end_extends_the_anchor_window() -> None:
         f"(`events.py:{start}-{anchor}`)"
     )
     assert check_line_refs("docs/fake.md", text) == []
+
+
+def test_reversed_range_is_rejected_as_malformed_in_both_shapes() -> None:
+    """A reversed range must fail loud as written, never silently reorder.
+
+    The main fixture is the truncated-end typo shape: the start far past
+    the file's last line, the end comfortably inside it, and no
+    identifier from the paragraph resolvable in the target — so nothing
+    but the range half can fire, and range-checking only the end passes
+    exactly this shape in both citation forms. That is the silent-ship
+    direction this test pins closed. The last fixture drops the
+    out-of-range start: reversal alone is the defect, wherever the
+    endpoints land.
+    """
+    total = len(_module_lines(_EVENTS_MODULE))
+    start, end = total + 200, 10
+    bare = f"the recorder setup is discussed at `events.py:{start}-{end}` in passing"
+    bare_fails = check_line_refs("docs/fake.md", bare)
+    assert len(bare_fails) == 1
+    assert "malformed range" in bare_fails[0].detail
+    linked = (
+        "the recorder setup is discussed at "
+        f"[events.py:{start}-{end}](../src/bettermemory/events.py) in passing"
+    )
+    linked_fails = check_line_refs("docs/fake.md", linked)
+    assert len(linked_fails) == 1
+    assert "malformed range" in linked_fails[0].detail
+    in_range = f"the recorder setup is discussed at `events.py:{end + 40}-{end}`"
+    assert end + 40 < total, "events.py shrank under this fixture; re-derive it"
+    in_range_fails = check_line_refs("docs/fake.md", in_range)
+    assert len(in_range_fails) == 1
+    assert "malformed range" in in_range_fails[0].detail
+
+
+def test_forward_and_equal_endpoint_ranges_stay_quiet() -> None:
+    """The malformed verdict is strict reversal, nothing wider.
+
+    A forward range and the degenerate single-line range (start equal to
+    end) are exactly as valid as before, in both shapes — reporting
+    either would be the false-positive direction, the one that gets a
+    checker disabled.
+    """
+    anchor = _crc32_shard_line()
+    start = max(1, anchor - 3)
+    forward = (
+        "a recorder picks its shard by `crc32(session_id)` "
+        f"(`events.py:{start}-{anchor}`)"
+    )
+    assert check_line_refs("docs/fake.md", forward) == []
+    equal = (
+        "a recorder picks its shard by `crc32(session_id)` "
+        f"(`events.py:{anchor}-{anchor}`)"
+    )
+    assert check_line_refs("docs/fake.md", equal) == []
+    linked = (
+        "a recorder picks its shard by `crc32(session_id)` "
+        f"([events.py:{start}-{anchor}](../src/bettermemory/events.py))"
+    )
+    assert check_line_refs("docs/fake.md", linked) == []
+
+
+def test_reversed_range_quoted_as_evidence_is_not_checked() -> None:
+    """Quoted evidence keeps its exact shipped shape, malformed included.
+
+    An erratum quoting a truncated range in order to say it does not
+    resolve is not asserting it, and neither is one resolving its quotes
+    against a named commit — the malformed verdict inherits the same
+    suppression as the rest of the range half, or the checker fails
+    prose precisely when it is right about the defect. Both suppression
+    rules are exercised.
+    """
+    total = len(_module_lines(_EVENTS_MODULE))
+    quoted = (
+        f"the doc shipped `events.py:{total + 200}-10` — a truncated end — "
+        "and it does not resolve at HEAD"
+    )
+    assert check_line_refs("docs/fake.md", quoted) == []
+    pinned = (
+        "resolved against `0123abc`, "
+        f"`events.py:{total + 200}-10` bracketed the recorder setup"
+    )
+    assert check_line_refs("docs/fake.md", pinned) == []
 
 
 def test_bare_citation_ambiguity_accepts_any_plausible_candidate() -> None:
