@@ -280,7 +280,7 @@ class ResponseBuilder:
         contribution (`commit_drift_count=None`, since no per-row repo is
         resolved), so it can read fresher than the same memory's
         `memory_show` verdict. `path_drift` does contribute — the body is
-        loaded on this path, unlike `list_row_to_dict`'s.
+        loaded on this path, unlike `summary_to_dict`'s.
         """
         from .models import first_summary_line
 
