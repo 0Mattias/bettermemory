@@ -24,13 +24,14 @@ What is checked
 3. ``test-count`` — "the N tests in ``tests/x.py``" / "``tests/x.py``
    contains N tests" must match the count of test functions found by
    AST. Digits and English number words ("Nine") both parse.
-4. ``line-ref`` — a ``file.py:NNN`` citation must land in range, and the
-   cited region must actually contain one of the code identifiers the
-   surrounding paragraph attributes to it. Both halves apply to the
-   markdown-linked and bare-backticked forms alike. When the paragraph
-   names no identifier that exists in the target at all, there is no
-   anchor to judge against and the rule stays quiet. A citation the
-   nearby prose marks as non-resolving, or whose paragraph pins its
+4. ``line-ref`` — a ``file.py:NNN`` or ``file.py:NNN-MMM`` citation must
+   land in range — a range by its end line — and the cited region must
+   actually contain one of the code identifiers the surrounding
+   paragraph attributes to it. Both halves apply to the markdown-linked
+   and bare-backticked forms alike, a range's end included. When the
+   paragraph names no identifier that exists in the target at all, there
+   is no anchor to judge against and the rule stays quiet. A citation
+   the nearby prose marks as non-resolving, or whose paragraph pins its
    resolution to a named commit, is quoted evidence rather than an
    assertion and is skipped — see the deliberately-not-checked list.
 5. ``file-count`` — "N files are named ``x.py``" must match how many files
@@ -395,7 +396,9 @@ _FILECOUNT = re.compile(
 _LINEREF_LINKED = re.compile(
     r"\[(?P<name>[\w./]+\.py):(?P<start>\d+)(?:-(?P<end>\d+))?\]\((?P<target>[^)]+)\)"
 )
-_LINEREF_BARE = re.compile(r"`{0,2}(?P<name>[\w/]+\.py):(?P<start>\d+)`{0,2}")
+_LINEREF_BARE = re.compile(
+    r"`{0,2}(?P<name>[\w/]+\.py):(?P<start>\d+)(?:-(?P<end>\d+))?`{0,2}"
+)
 _CODE_IDENT = re.compile(r"`{1,2}([A-Za-z_][A-Za-z0-9_]*)(?:\(|`)")
 
 # Slack for the anchor-proximity check. Generous on purpose: a citation
@@ -935,6 +938,13 @@ def check_line_refs(source: str, text: str) -> list[Failure]:
     is how a wrong citation shipped and how an allowlist entry covering it
     silently stopped matching (see the ``_ALLOWLIST`` note).
 
+    The same symmetry covers a range's end line. ``_LINEREF_BARE`` used
+    to stop parsing at the start, so the end of a bare range was neither
+    range-checked nor anchor-checked while the linked form checked both —
+    a bare citation with a bogus end shipped silently where its linked
+    twin failed. Both shapes now parse the end, range-check by it, and
+    extend the anchor window to it.
+
     Neither half runs on a citation the surrounding prose marks as
     non-resolving (``_quoted_as_nonresolving``): an erratum quoting its
     own rotten citation is not asserting it. Nor on one whose paragraph
@@ -985,16 +995,17 @@ def check_line_refs(source: str, text: str) -> list[Failure]:
         if _quoted_as_nonresolving(text, *match.span()):
             continue
         start = int(match.group("start"))
+        end = int(match.group("end") or start)
         line = _line_of(text, match.start())
         if _quoted_as_commit_pinned(text, line):
             continue
         claim = Claim(source, line, "line-ref", f"{name}:{start}")
 
         lengths = {rel: len(_module_lines(rel)) for rel in candidates}
-        in_range = sorted(rel for rel, n in lengths.items() if start <= n)
+        in_range = sorted(rel for rel, n in lengths.items() if end <= n)
         if not in_range:
             sizes = ", ".join(f"{rel} has {n}" for rel, n in sorted(lengths.items()))
-            out.append(Failure(claim, f"cites line {start}; {sizes}"))
+            out.append(Failure(claim, f"cites line {end}; {sizes}"))
             continue
 
         # Ambiguity is resolved the way `_resolve_modules` documents: a bare
@@ -1003,7 +1014,7 @@ def check_line_refs(source: str, text: str) -> list[Failure]:
         # when every in-range candidate misses.
         misses: dict[str, set[str]] = {}
         for rel in in_range:
-            missed = _anchor_miss(text, line, list(_module_lines(rel)), start, start)
+            missed = _anchor_miss(text, line, list(_module_lines(rel)), start, end)
             if not missed:  # anchor landed, or there was no anchor to check
                 break
             misses[rel] = missed
@@ -1409,6 +1420,48 @@ def test_bare_citation_without_a_resolvable_anchor_stays_quiet() -> None:
     every incidental line number in the corpus.
     """
     text = "the shard rule is discussed at `events.py:10` in passing"
+    assert check_line_refs("docs/fake.md", text) == []
+
+
+def test_bare_range_end_is_range_checked_like_a_linked_one() -> None:
+    """A bogus end in a bare range must fail exactly as it does linked.
+
+    ``_LINEREF_BARE`` used to stop parsing at the start line, so the end
+    of a bare range was never checked against the file at all — the
+    bogus half shipped silently while the linked twin failed.
+    """
+    bare = "the recorder setup spans `events.py:5-999999` in full"
+    bare_fails = check_line_refs("docs/fake.md", bare)
+    assert len(bare_fails) == 1
+    assert "cites line 999999" in bare_fails[0].detail
+    linked = (
+        "the recorder setup spans "
+        "[events.py:5-999999](../src/bettermemory/events.py) in full"
+    )
+    linked_fails = check_line_refs("docs/fake.md", linked)
+    assert len(linked_fails) == 1
+    assert "cites line 999999" in linked_fails[0].detail
+
+
+def test_bare_range_end_extends_the_anchor_window() -> None:
+    """A valid bare range is judged by its whole span, not its start.
+
+    The fixture puts the anchor inside the cited range but more than
+    ``_ANCHOR_WINDOW`` lines past its start — the first assertion pins
+    that geometry — so a parse that drops the end reports this correct
+    citation as a miss: the false-positive direction, the one that gets
+    a checker disabled.
+    """
+    anchor = _crc32_shard_line()
+    start = max(1, anchor - _ANCHOR_WINDOW - 5)
+    assert anchor - start > _ANCHOR_WINDOW, (
+        "events.py no longer leaves room for this fixture ahead of the "
+        "crc32 shard pick; repoint the range at whatever precedes it"
+    )
+    text = (
+        "a recorder picks its shard by `crc32(session_id)` "
+        f"(`events.py:{start}-{anchor}`)"
+    )
     assert check_line_refs("docs/fake.md", text) == []
 
 
